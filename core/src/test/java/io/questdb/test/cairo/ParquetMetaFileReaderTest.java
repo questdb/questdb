@@ -314,6 +314,60 @@ public class ParquetMetaFileReaderTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testCyclicMvccChainRejected() throws Exception {
+        // Forge an MVCC chain that doubles back on itself. resolveFooter walks
+        // back via prev_parquet_meta_file_size; a cyclic chain like B -> A -> B
+        // (or self-loop A -> A) must terminate with a clean CairoException
+        // rather than an infinite loop or SIGBUS. The strict-monotone check
+        // (prevSize < currentSize) at ParquetMetaFileReader.java:669 is what
+        // breaks the cycle. This test forges the second snapshot's prevSize
+        // so the chain walk is asked to step from currentSize=newTotalLen
+        // back to prevSize=newTotalLen, which violates the monotonicity guard.
+        assertMemoryLeak(() -> {
+            try (ParquetMetaTestFile file = buildFile(1, 100, 50, 1000)) {
+                long origLen = file.dataLen;
+                int origFooterLength = Unsafe.getInt(file.dataPtr + origLen - 4);
+                long origFooterOffset = origLen - 4 - Integer.toUnsignedLong(origFooterLength);
+                int rowGroupEntry = Unsafe.getInt(file.dataPtr + origFooterOffset + 40);
+
+                // Append a second footer (same layout as
+                // testFooterChainWalkResolvesCorrectFooter), then overwrite
+                // its prev_parquet_meta_file_size with the published total
+                // size — the chain step would point back at the same snapshot
+                // it just resolved, i.e. prevSize == currentSize.
+                int newFooterBytes = 52;
+                long newTotalLen = origLen + newFooterBytes;
+                long newBuf = Unsafe.malloc(newTotalLen, MemoryTag.NATIVE_DEFAULT);
+                try {
+                    Unsafe.copyMemory(file.dataPtr, newBuf, origLen);
+                    long fa = newBuf + origLen;
+                    Unsafe.putLong(fa, 200L);             // parquet_footer_offset
+                    Unsafe.putInt(fa + 8, 80);            // parquet_footer_length
+                    Unsafe.putInt(fa + 12, 1);            // row_group_count
+                    Unsafe.putLong(fa + 16, 0L);          // unused_bytes
+                    Unsafe.putLong(fa + 24, newTotalLen); // prev_parquet_meta_file_size == currentSize (cycle)
+                    Unsafe.putLong(fa + 32, 0L);          // footer_feature_flags
+                    Unsafe.putInt(fa + 40, rowGroupEntry);
+                    Unsafe.putInt(fa + 44, 0);            // CRC placeholder
+                    Unsafe.putInt(fa + 48, 48);           // trailer
+                    Unsafe.putLong(newBuf, newTotalLen);  // publish snapshot
+                    patchCrc(newBuf, newTotalLen);
+
+                    ParquetMetaFileReader reader = new ParquetMetaFileReader();
+                    reader.of(newBuf, newTotalLen);
+                    // The latest footer's derived parquet size is 288. Request
+                    // a non-matching size so the chain walk advances and trips
+                    // the monotonicity guard. resolveFooter signals "no match
+                    // and chain refuses to continue" by returning false.
+                    Assert.assertFalse(reader.resolveFooter(9999L));
+                } finally {
+                    Unsafe.free(newBuf, newTotalLen, MemoryTag.NATIVE_DEFAULT);
+                }
+            }
+        });
+    }
+
+    @Test
     public void testDesignatedTimestampColumnIndex() throws Exception {
         assertMemoryLeak(() -> {
             // Build with designated timestamp at column 0.
@@ -884,6 +938,201 @@ public class ParquetMetaFileReaderTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testReadPartitionMetaDtsAtFirstColumn() throws Exception {
+        // Designated timestamp column index at the lower boundary (0). This
+        // is the boundary case for the dtsIndex < -1 || dtsIndex >= columnCount
+        // guard in resolveFooter; it must not trip when DTS == 0 and
+        // columnCount > 0. readPartitionMeta itself ignores DTS, but this
+        // regression-guards the boundary alongside the row-count surface that
+        // the enterprise StoragePolicyJob.readParquetMetaSidecar relies on.
+        assertMemoryLeak(() -> {
+            try (ParquetMetaTestFile file = buildFileWithDts(0, 3, 12L)) {
+                ParquetMetaFileReader reader = new ParquetMetaFileReader();
+                reader.of(file.dataPtr, file.parquetMetaFileSize);
+                Assert.assertTrue(reader.resolveFooter(Long.MAX_VALUE));
+                Assert.assertEquals(0, reader.getDesignatedTimestampColumnIndex());
+
+                long buf = Unsafe.malloc(16, MemoryTag.NATIVE_DEFAULT);
+                try {
+                    reader.readPartitionMeta(buf);
+                    Assert.assertEquals(12L, Unsafe.getLong(buf));
+                    Assert.assertEquals(-1L, Unsafe.getLong(buf + 8));
+                } finally {
+                    Unsafe.free(buf, 16, MemoryTag.NATIVE_DEFAULT);
+                }
+                reader.clear();
+            }
+        });
+    }
+
+    @Test
+    public void testReadPartitionMetaDtsAtLastColumn() throws Exception {
+        // Designated timestamp at columnCount - 1 — the upper boundary the
+        // resolveFooter dtsIndex guard accepts. Asserts the boundary does not
+        // trip and readPartitionMeta still surfaces the row count.
+        assertMemoryLeak(() -> {
+            try (ParquetMetaTestFile file = buildFileWithDts(2, 3, 7L)) {
+                ParquetMetaFileReader reader = new ParquetMetaFileReader();
+                reader.of(file.dataPtr, file.parquetMetaFileSize);
+                Assert.assertTrue(reader.resolveFooter(Long.MAX_VALUE));
+                Assert.assertEquals(2, reader.getDesignatedTimestampColumnIndex());
+
+                long buf = Unsafe.malloc(16, MemoryTag.NATIVE_DEFAULT);
+                try {
+                    reader.readPartitionMeta(buf);
+                    Assert.assertEquals(7L, Unsafe.getLong(buf));
+                    Assert.assertEquals(-1L, Unsafe.getLong(buf + 8));
+                } finally {
+                    Unsafe.free(buf, 16, MemoryTag.NATIVE_DEFAULT);
+                }
+                reader.clear();
+            }
+        });
+    }
+
+    @Test
+    public void testReadPartitionMetaMultiRowGroup() throws Exception {
+        // Total row count is the sum across every row group; verifies the
+        // checked_add accumulator in read_partition_meta_impl on a multi-rg
+        // _pm. This is the surface StoragePolicyJob.readParquetMetaSidecar
+        // consumes as the partition's authoritative row count.
+        assertMemoryLeak(() -> {
+            try (ParquetMetaTestFile file = buildFile(2, 3L, 7L, 2L)) {
+                ParquetMetaFileReader reader = new ParquetMetaFileReader();
+                reader.of(file.dataPtr, file.parquetMetaFileSize);
+                Assert.assertTrue(reader.resolveFooter(Long.MAX_VALUE));
+
+                long buf = Unsafe.malloc(16, MemoryTag.NATIVE_DEFAULT);
+                try {
+                    reader.readPartitionMeta(buf);
+                    Assert.assertEquals(12L, Unsafe.getLong(buf));
+                    Assert.assertEquals(-1L, Unsafe.getLong(buf + 8));
+                } finally {
+                    Unsafe.free(buf, 16, MemoryTag.NATIVE_DEFAULT);
+                }
+                reader.clear();
+            }
+        });
+    }
+
+    @Test
+    public void testReadPartitionMetaTruncatedFooter() throws Exception {
+        // Truncate the published snapshot 4 bytes short of its real footer
+        // start so the trailer-derived footer offset lands inside the column
+        // descriptor region. The Rust-side parser inside readPartitionMeta
+        // must reject this with a CairoException — the StoragePolicyJob
+        // sidecar contract treats any such failure as "stale, will reconvert"
+        // (StoragePolicyJob.java:675-681). A SIGSEGV instead would skip that
+        // contract.
+        assertMemoryLeak(() -> {
+            try (ParquetMetaTestFile file = buildFile(1, 100)) {
+                long origSize = file.parquetMetaFileSize;
+                long shrunkSize = origSize - 4;
+                Assert.assertTrue("shrunk size below precondition", shrunkSize >= 36);
+                Unsafe.putLong(file.dataPtr, shrunkSize);
+                patchCrc(file.dataPtr, shrunkSize);
+
+                ParquetMetaFileReader reader = new ParquetMetaFileReader();
+                reader.of(file.dataPtr, shrunkSize);
+                try {
+                    reader.resolveFooter(Long.MAX_VALUE);
+                    Assert.fail("expected CairoException");
+                } catch (CairoException expected) {
+                    Assert.assertTrue(
+                            expected.getMessage(),
+                            expected.getMessage().contains("invalid _pm")
+                                    || expected.getMessage().contains("footer")
+                                    || expected.getMessage().contains("checksum")
+                                    || expected.getMessage().contains("checkSum")
+                    );
+                }
+                reader.clear();
+            }
+        });
+    }
+
+    @Test
+    public void testReadPartitionMetaWellFormedFooter() throws Exception {
+        // Happy-path coverage of the readPartitionMeta JNI surface that
+        // StoragePolicyJob.readParquetMetaSidecar invokes after openAndMapRO.
+        // Verifies row_count is the sum of row group sizes and squash_tracker
+        // is -1 when the SQUASH_TRACKER feature section is absent (the case
+        // for every _pm produced by the standard writer path).
+        assertMemoryLeak(() -> {
+            try (ParquetMetaTestFile file = buildFile(2, 5L)) {
+                ParquetMetaFileReader reader = new ParquetMetaFileReader();
+                reader.of(file.dataPtr, file.parquetMetaFileSize);
+                Assert.assertTrue(reader.resolveFooter(Long.MAX_VALUE));
+
+                long buf = Unsafe.malloc(16, MemoryTag.NATIVE_DEFAULT);
+                try {
+                    reader.readPartitionMeta(buf);
+                    Assert.assertEquals(5L, Unsafe.getLong(buf));
+                    Assert.assertEquals(-1L, Unsafe.getLong(buf + 8));
+                } finally {
+                    Unsafe.free(buf, 16, MemoryTag.NATIVE_DEFAULT);
+                }
+                reader.clear();
+            }
+        });
+    }
+
+    @Test
+    public void testReadPartitionMetaZeroColumns() throws Exception {
+        // A _pm with columnCount == 0 still has to expose a usable row count
+        // through readPartitionMeta. The reader's column descriptor loop and
+        // headerEndOffset arithmetic both have to handle the zero case
+        // without underflow. The writer requires row groups to declare at
+        // least one column, so the only column-zero file the writer can
+        // produce is also row-group-zero — readPartitionMeta must still
+        // report row_count == 0 cleanly.
+        assertMemoryLeak(() -> {
+            try (ParquetMetaTestFile file = buildFile(0)) {
+                ParquetMetaFileReader reader = new ParquetMetaFileReader();
+                reader.of(file.dataPtr, file.parquetMetaFileSize);
+                Assert.assertTrue(reader.resolveFooter(Long.MAX_VALUE));
+                Assert.assertEquals(0, reader.getColumnCount());
+                Assert.assertEquals(0, reader.getRowGroupCount());
+
+                long buf = Unsafe.malloc(16, MemoryTag.NATIVE_DEFAULT);
+                try {
+                    reader.readPartitionMeta(buf);
+                    Assert.assertEquals(0L, Unsafe.getLong(buf));
+                    Assert.assertEquals(-1L, Unsafe.getLong(buf + 8));
+                } finally {
+                    Unsafe.free(buf, 16, MemoryTag.NATIVE_DEFAULT);
+                }
+                reader.clear();
+            }
+        });
+    }
+
+    @Test
+    public void testReadPartitionMetaZeroRowGroups() throws Exception {
+        // A _pm with no row groups must report row_count == 0; the JNI
+        // accumulator loop should be a no-op rather than reading past the
+        // (empty) row group table.
+        assertMemoryLeak(() -> {
+            try (ParquetMetaTestFile file = buildFile(2)) {
+                ParquetMetaFileReader reader = new ParquetMetaFileReader();
+                reader.of(file.dataPtr, file.parquetMetaFileSize);
+                Assert.assertTrue(reader.resolveFooter(Long.MAX_VALUE));
+                Assert.assertEquals(0, reader.getRowGroupCount());
+
+                long buf = Unsafe.malloc(16, MemoryTag.NATIVE_DEFAULT);
+                try {
+                    reader.readPartitionMeta(buf);
+                    Assert.assertEquals(0L, Unsafe.getLong(buf));
+                    Assert.assertEquals(-1L, Unsafe.getLong(buf + 8));
+                } finally {
+                    Unsafe.free(buf, 16, MemoryTag.NATIVE_DEFAULT);
+                }
+                reader.clear();
+            }
+        });
+    }
+
+    @Test
     public void testReopenWithOf() throws Exception {
         assertMemoryLeak(() -> {
             try (
@@ -902,6 +1151,40 @@ public class ParquetMetaFileReaderTest extends AbstractCairoTest {
                 Assert.assertEquals(2, reader.getRowGroupCount());
                 Assert.assertEquals(99, reader.getRowGroupSize(0));
                 Assert.assertEquals(101, reader.getRowGroupSize(1));
+            }
+        });
+    }
+
+    @Test
+    public void testSelfReferentialPrevSize() throws Exception {
+        // Single-snapshot _pm whose footer claims its own committed size as
+        // prev_parquet_meta_file_size. The strict-monotone guard in
+        // resolveFooter must reject the chain step instead of looping back to
+        // the same footer (which would walk forever or read identical bytes).
+        assertMemoryLeak(() -> {
+            try (ParquetMetaTestFile file = buildFile(1, 100, 50, 1000)) {
+                long len = file.dataLen;
+                int footerLength = Unsafe.getInt(file.dataPtr + len - 4);
+                long footerOffset = len - 4 - Integer.toUnsignedLong(footerLength);
+
+                long buf = Unsafe.malloc(len, MemoryTag.NATIVE_DEFAULT);
+                try {
+                    Unsafe.copyMemory(file.dataPtr, buf, len);
+                    // FOOTER_PREV_PARQUET_META_FILE_SIZE_OFF == 24 from
+                    // footer start.
+                    Unsafe.putLong(buf + footerOffset + 24, len);
+                    patchCrc(buf, len);
+
+                    ParquetMetaFileReader reader = new ParquetMetaFileReader();
+                    reader.of(buf, len);
+                    // Latest footer's parquet size is 158; request a different
+                    // size so the chain walk has to step. The self-referential
+                    // prev forces resolveFooter to either reject (false) or
+                    // throw — anything but loop or SIGBUS.
+                    Assert.assertFalse(reader.resolveFooter(9999L));
+                } finally {
+                    Unsafe.free(buf, len, MemoryTag.NATIVE_DEFAULT);
+                }
             }
         });
     }
@@ -1065,6 +1348,27 @@ public class ParquetMetaFileReaderTest extends AbstractCairoTest {
                 ParquetMetaFileWriter.addRowGroup(writerPtr, numRows);
             }
             ParquetMetaFileWriter.setParquetFooter(writerPtr, parquetFooterOff, parquetFooterLen);
+            long resultPtr = ParquetMetaFileWriter.finish(writerPtr);
+            return new ParquetMetaTestFile(resultPtr);
+        } finally {
+            ParquetMetaFileWriter.destroyWriter(writerPtr);
+        }
+    }
+
+    private static ParquetMetaTestFile buildFileWithDts(int dtsIndex, int columnCount, long... rowGroupSizes) {
+        long writerPtr = ParquetMetaFileWriter.create();
+        try {
+            ParquetMetaFileWriter.setDesignatedTimestamp(writerPtr, dtsIndex);
+            for (int i = 0; i < columnCount; i++) {
+                try (DirectUtf8Sink name = new DirectUtf8Sink(16)) {
+                    name.put("col_").put(i);
+                    ParquetMetaFileWriter.addColumn(writerPtr, name.ptr(), name.size(), i, 5, 0, 0, 0, 0, 0);
+                }
+            }
+            for (long numRows : rowGroupSizes) {
+                ParquetMetaFileWriter.addRowGroup(writerPtr, numRows);
+            }
+            ParquetMetaFileWriter.setParquetFooter(writerPtr, 0, 0);
             long resultPtr = ParquetMetaFileWriter.finish(writerPtr);
             return new ParquetMetaTestFile(resultPtr);
         } finally {

@@ -561,6 +561,135 @@ public class Mig940Test extends AbstractCairoTest {
         });
     }
 
+    @Test
+    public void testMigrateSplitPartition() throws Exception {
+        // Mig940 iterates partitions by index in _txn (Mig940.java:151) and
+        // resolves directory paths via setPathForNativePartition(timestamp,
+        // nameTxn). This test exercises the path-resolution surface for a
+        // partition that originated as a split — i.e., its nameTxn is
+        // non-zero. CONVERT to parquet may merge split sub-partitions into a
+        // single physical directory, so the contract under test is "every
+        // post-CONVERT parquet partition entry, no matter how its nameTxn
+        // got bumped, gets a regenerated _pm". A regression that resolved
+        // paths by floored timestamp alone would skip these.
+        node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_SPLIT_MIN_SIZE, 1);
+        assertMemoryLeak(TestFilesFacadeImpl.INSTANCE, () -> {
+            execute("CREATE TABLE t (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO t VALUES" +
+                    "(1, '2024-06-10T00:00:00.000000Z')," +
+                    "(2, '2024-06-10T01:00:00.000000Z')," +
+                    "(3, '2024-06-10T02:00:00.000000Z')," +
+                    "(4, '2024-06-10T03:00:00.000000Z')," +
+                    // Trailing 2024-06-11 row makes 2024-06-11 the active
+                    // partition so 2024-06-10 is inactive and convertible.
+                    "(5, '2024-06-11T00:00:00.000000Z')");
+
+            final FilesFacade ff = configuration.getFilesFacade();
+            final TableToken token = engine.verifyTableName("t");
+
+            // Holding a reader pins the current partition snapshot so the next
+            // O3 insert lands as a split rather than getting squashed back
+            // into the original directory.
+            try (TableReader ignored = engine.getReader(token)) {
+                execute("INSERT INTO t VALUES(99, '2024-06-10T02:30:00.000000Z')");
+            }
+
+            int splitPartitionCountBeforeConvert;
+            try (TableReader reader = engine.getReader(token)) {
+                splitPartitionCountBeforeConvert = reader.getPartitionCount();
+            }
+            // Confirm the split actually produced more than one physical entry
+            // for 2024-06-10 — otherwise the test would not be exercising the
+            // gap's pre-condition. Expect 3+ entries (2024-06-10 splits +
+            // 2024-06-11 active).
+            Assert.assertTrue(
+                    "expected at least 3 partition entries after O3 split, got "
+                            + splitPartitionCountBeforeConvert,
+                    splitPartitionCountBeforeConvert >= 3
+            );
+
+            execute("ALTER TABLE t CONVERT PARTITION TO PARQUET WHERE ts < '2024-06-11'");
+
+            // Snapshot whatever the post-CONVERT layout looks like. CONVERT
+            // may merge the split sub-partitions into a single parquet
+            // directory or preserve them; either way Mig940 must regenerate a
+            // _pm for every parquet entry. Capture nameTxns — at least one
+            // will be non-zero because CONVERT bumps it.
+            int partitionCount;
+            long[] partitionTimestamps;
+            long[] partitionNameTxns;
+            boolean[] isParquetEntry;
+            try (TableReader reader = engine.getReader(token)) {
+                partitionCount = reader.getPartitionCount();
+                partitionTimestamps = new long[partitionCount];
+                partitionNameTxns = new long[partitionCount];
+                isParquetEntry = new boolean[partitionCount];
+                for (int i = 0; i < partitionCount; i++) {
+                    partitionTimestamps[i] = reader.getTxFile().getPartitionTimestampByIndex(i);
+                    partitionNameTxns[i] = reader.getTxFile().getPartitionNameTxn(i);
+                    isParquetEntry[i] = reader.getTxFile().isPartitionParquet(i);
+                }
+            }
+            int parquetCount = 0;
+            boolean anyNonZeroNameTxn = false;
+            for (int i = 0; i < partitionCount; i++) {
+                if (isParquetEntry[i]) {
+                    parquetCount++;
+                    if (partitionNameTxns[i] != 0) {
+                        anyNonZeroNameTxn = true;
+                    }
+                }
+            }
+            Assert.assertTrue("expected at least one parquet partition", parquetCount >= 1);
+            Assert.assertTrue(
+                    "expected at least one parquet partition with non-zero nameTxn (CONVERT bumps it)",
+                    anyNonZeroNameTxn
+            );
+
+            // Delete every parquet sub-partition's _pm so the migration has
+            // to regenerate them all.
+            for (int i = 0; i < partitionCount; i++) {
+                if (!isParquetEntry[i]) {
+                    continue;
+                }
+                try (Path path = new Path()) {
+                    path.of(configuration.getDbRoot()).concat(token);
+                    TableUtils.setPathForParquetPartitionMetadata(path, ColumnType.TIMESTAMP, PartitionBy.DAY, partitionTimestamps[i], partitionNameTxns[i]);
+                    Assert.assertTrue("_pm should exist before deletion: " + path, ff.exists(path.$()));
+                    ff.remove(path.$());
+                    Assert.assertFalse("_pm should be deleted: " + path, ff.exists(path.$()));
+                }
+            }
+
+            runMig940(token);
+
+            // Every parquet sub-directory now has a regenerated, valid _pm.
+            for (int i = 0; i < partitionCount; i++) {
+                if (!isParquetEntry[i]) {
+                    continue;
+                }
+                try (Path path = new Path()) {
+                    path.of(configuration.getDbRoot()).concat(token);
+                    TableUtils.setPathForParquetPartitionMetadata(path, ColumnType.TIMESTAMP, PartitionBy.DAY, partitionTimestamps[i], partitionNameTxns[i]);
+                    Assert.assertTrue("_pm regenerated for sub-partition " + i + " at " + path, ff.exists(path.$()));
+
+                    long pmSize = ParquetMetaFileReader.readParquetMetaFileSize(ff, path.$());
+                    Assert.assertTrue("regenerated _pm size > 0", pmSize > 0);
+                    long pmAddr = TableUtils.mapRO(ff, path.$(), LOG, pmSize, MemoryTag.MMAP_DEFAULT);
+                    try {
+                        ParquetMetaFileReader r = new ParquetMetaFileReader();
+                        r.of(pmAddr, pmSize);
+                        Assert.assertTrue("resolveFooter on regenerated _pm " + i, r.resolveFooter(Long.MAX_VALUE));
+                        Assert.assertEquals(2, r.getColumnCount());
+                        Assert.assertTrue("at least one row group", r.getRowGroupCount() >= 1);
+                    } finally {
+                        ff.munmap(pmAddr, pmSize, MemoryTag.MMAP_DEFAULT);
+                    }
+                }
+            }
+        });
+    }
+
     private void runMig940(TableToken token) {
         engine.releaseAllWriters();
         engine.releaseAllReaders();

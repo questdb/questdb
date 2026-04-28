@@ -365,6 +365,110 @@ public class ShowPartitionsTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testShowPartitionsParquetAllNullValueColumnRowGroup() throws Exception {
+        // Force a row group whose entire non-timestamp column is NULL
+        // (null_count == num_values boundary). The _pm row-group min/max for
+        // the timestamp must remain accurate; SHOW PARTITIONS surfaces only
+        // the timestamp range, but the underlying _pm contains chunks for
+        // every column. A regression that crashes on an all-NULL chunk's
+        // stats would surface as a SHOW PARTITIONS failure rather than a
+        // silent garbled timestamp.
+        String tableName = testTableName(testName.getMethodName());
+        node1.setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_ROW_GROUP_SIZE, 4);
+        assertMemoryLeak(() -> {
+            execute(
+                    "CREATE TABLE " + tableName + " (id INT, v LONG, ts TIMESTAMP)" +
+                            " TIMESTAMP(ts) PARTITION BY DAY" + (isWal ? " WAL" : "")
+            );
+            // Eight rows in one partition — the first row group of 4 has v
+            // entirely NULL, the second has v populated. Timestamp column is
+            // never NULL (designated timestamps cannot be). The trailing
+            // 2023-01-02 row pushes 2023-01-01 out of the "active partition"
+            // slot so non-WAL CONVERT is allowed against it.
+            execute(
+                    "INSERT INTO " + tableName + " VALUES" +
+                            "(1, NULL, '2023-01-01T00:00:00.000000Z'),"
+                            + "(2, NULL, '2023-01-01T01:00:00.000000Z'),"
+                            + "(3, NULL, '2023-01-01T02:00:00.000000Z'),"
+                            + "(4, NULL, '2023-01-01T03:00:00.000000Z'),"
+                            + "(5, 5,    '2023-01-01T04:00:00.000000Z'),"
+                            + "(6, 6,    '2023-01-01T05:00:00.000000Z'),"
+                            + "(7, 7,    '2023-01-01T06:00:00.000000Z'),"
+                            + "(8, 8,    '2023-01-01T07:00:00.000000Z'),"
+                            + "(9, 9,    '2023-01-02T00:00:00.000000Z')"
+            );
+            if (isWal) {
+                drainWalQueue();
+            }
+            execute("ALTER TABLE " + tableName + " CONVERT PARTITION TO PARQUET LIST '2023-01-01'");
+            if (isWal) {
+                drainWalQueue();
+            }
+
+            assertQueryNoLeakCheck(
+                    "name\tminTimestamp\tmaxTimestamp\tnumRows\tisParquet\n" +
+                            "2023-01-01\t2023-01-01T00:00:00.000000Z\t2023-01-01T07:00:00.000000Z\t8\ttrue\n" +
+                            "2023-01-02\t2023-01-02T00:00:00.000000Z\t2023-01-02T00:00:00.000000Z\t1\tfalse\n",
+                    "SELECT name, minTimestamp, maxTimestamp, numRows, isParquet" +
+                            " FROM table_partitions('" + tableName + "')" +
+                            " WHERE attached" +
+                            " ORDER BY name",
+                    null, true, true, true
+            );
+
+            // Underlying data is still queryable — sum() over the partial-NULL
+            // column returns the populated values without exploding on the
+            // all-NULL chunk.
+            assertSql("sum\n35\n", "SELECT sum(v) FROM " + tableName);
+        });
+    }
+
+    @Test
+    public void testShowPartitionsParquetWithNullsInValueColumn() throws Exception {
+        // A converted partition that has NULL values in a non-timestamp
+        // column. The _pm carries a per-chunk null_count for v, but the
+        // designated timestamp column is unaffected. SHOW PARTITIONS must
+        // still surface the correct ts min/max.
+        String tableName = testTableName(testName.getMethodName());
+        assertMemoryLeak(() -> {
+            execute(
+                    "CREATE TABLE " + tableName + " (id INT, v LONG, ts TIMESTAMP)" +
+                            " TIMESTAMP(ts) PARTITION BY DAY" + (isWal ? " WAL" : "")
+            );
+            execute(
+                    "INSERT INTO " + tableName + " VALUES" +
+                            "(1, 10,   '2023-01-01T00:00:00.000000Z'),"
+                            + "(2, NULL, '2023-01-01T06:00:00.000000Z'),"
+                            + "(3, 30,   '2023-01-01T12:00:00.000000Z'),"
+                            + "(4, NULL, '2023-01-01T18:00:00.000000Z'),"
+                            + "(5, 50,   '2023-01-02T00:00:00.000000Z')"
+            );
+            if (isWal) {
+                drainWalQueue();
+            }
+            execute("ALTER TABLE " + tableName + " CONVERT PARTITION TO PARQUET LIST '2023-01-01'");
+            if (isWal) {
+                drainWalQueue();
+            }
+
+            assertQueryNoLeakCheck(
+                    "name\tminTimestamp\tmaxTimestamp\tnumRows\tisParquet\n" +
+                            "2023-01-01\t2023-01-01T00:00:00.000000Z\t2023-01-01T18:00:00.000000Z\t4\ttrue\n" +
+                            "2023-01-02\t2023-01-02T00:00:00.000000Z\t2023-01-02T00:00:00.000000Z\t1\tfalse\n",
+                    "SELECT name, minTimestamp, maxTimestamp, numRows, isParquet" +
+                            " FROM table_partitions('" + tableName + "')" +
+                            " WHERE attached" +
+                            " ORDER BY name",
+                    null, true, true, true
+            );
+
+            // NULLs survived the round trip and the underlying data is
+            // queryable.
+            assertSql("count\n2\n", "SELECT count() FROM " + tableName + " WHERE v IS NULL");
+        });
+    }
+
+    @Test
     public void testShowPartitionsSelectActive() throws Exception {
         String tableName = testTableName(testName.getMethodName());
         assertMemoryLeak(() -> {
