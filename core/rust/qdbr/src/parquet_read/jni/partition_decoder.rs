@@ -214,7 +214,7 @@ fn parquet_meta_decode_row_group_filtered_impl<const FILL_NULLS: bool>(
     crate::parquet_read::parquet_meta_decode::decode_row_group_filtered::<FILL_NULLS>(
         ctx,
         row_group_bufs,
-        file_data,
+        crate::parquet_read::parquet_meta_decode::ColumnChunkSource::File(file_data),
         parquet_meta_reader,
         column_offset,
         col_pairs,
@@ -278,7 +278,7 @@ fn parquet_meta_decode_row_group_impl(
     crate::parquet_read::parquet_meta_decode::decode_row_group(
         ctx,
         row_group_bufs,
-        file_data,
+        crate::parquet_read::parquet_meta_decode::ColumnChunkSource::File(file_data),
         parquet_meta_reader,
         col_pairs,
         row_group_index as usize,
