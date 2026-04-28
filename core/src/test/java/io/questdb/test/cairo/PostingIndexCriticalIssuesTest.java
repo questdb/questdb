@@ -302,13 +302,13 @@ public class PostingIndexCriticalIssuesTest extends AbstractCairoTest {
      * Critical #4 and #5 are style violations enforced by static
      * analysis, not JUnit. They cannot be expressed as red unit tests.
      * Reference checks:
-     *   #4 Banner comments forbidden by CLAUDE.md:
-     *      grep -rn "// ===\|// ---" core/src/test/java/io/questdb/test/cairo/PostingIndex*.java
-     *      grep -rn "// ===\|// ---" core/src/test/java/io/questdb/test/cairo/CoveringIndex*.java
-     *      Both must return zero matches.
-     *   #5 assertSql vs assertQueryNoLeakCheck:
-     *      grep -c "assertSql\b" core/src/test/java/io/questdb/test/cairo/CoveringIndexTest.java
-     *      Must be zero (or only inside helper methods).
+     * #4 Banner comments forbidden by CLAUDE.md:
+     * grep -rn "// ===\|// ---" core/src/test/java/io/questdb/test/cairo/PostingIndex*.java
+     * grep -rn "// ===\|// ---" core/src/test/java/io/questdb/test/cairo/CoveringIndex*.java
+     * Both must return zero matches.
+     * #5 assertSql vs assertQueryNoLeakCheck:
+     * grep -c "assertSql\b" core/src/test/java/io/questdb/test/cairo/CoveringIndexTest.java
+     * Must be zero (or only inside helper methods).
      * These are noted here so the red-test set covers all critical findings,
      * even those that are not JUnit-testable.
      */

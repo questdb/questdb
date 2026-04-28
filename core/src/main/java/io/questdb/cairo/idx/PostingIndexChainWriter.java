@@ -88,23 +88,23 @@ public final class PostingIndexChainWriter {
      * the caller is still responsible for syncing the file if durability
      * across power loss is required.
      *
-     * @param keyMem          the .pk memory mapping (writable + readable)
-     * @param sealTxn         the suffix for {@code .pv.{sealTxn}} and
-     *                        {@code .pc{i}.{sealTxn}} files. Must be greater than
-     *                        the current {@link #getGenCounter()} so monotonicity
-     *                        is preserved across the chain.
-     * @param txnAtSeal       the table {@code _txn} value this entry takes
-     *                        effect at. Readers pin via the scoreboard before
-     *                        querying and pick the entry where
-     *                        {@code txnAtSeal <= pinned _txn}.
-     * @param valueMemSize    bytes in {@code .pv.{sealTxn}}.
-     * @param maxValue        highest row id covered by this entry.
-     * @param keyCount        distinct keys at this seal.
-     * @param genCount        number of gen-dir entries the caller has written
-     *                        starting at the entry's gen-dir region.
-     * @param blockCapacity   block capacity for this entry.
-     * @param coveringFormat  reserved (currently 0). Lets sidecar formats
-     *                        evolve per-seal in future.
+     * @param keyMem         the .pk memory mapping (writable + readable)
+     * @param sealTxn        the suffix for {@code .pv.{sealTxn}} and
+     *                       {@code .pc{i}.{sealTxn}} files. Must be greater than
+     *                       the current {@link #getGenCounter()} so monotonicity
+     *                       is preserved across the chain.
+     * @param txnAtSeal      the table {@code _txn} value this entry takes
+     *                       effect at. Readers pin via the scoreboard before
+     *                       querying and pick the entry where
+     *                       {@code txnAtSeal <= pinned _txn}.
+     * @param valueMemSize   bytes in {@code .pv.{sealTxn}}.
+     * @param maxValue       highest row id covered by this entry.
+     * @param keyCount       distinct keys at this seal.
+     * @param genCount       number of gen-dir entries the caller has written
+     *                       starting at the entry's gen-dir region.
+     * @param blockCapacity  block capacity for this entry.
+     * @param coveringFormat reserved (currently 0). Lets sidecar formats
+     *                       evolve per-seal in future.
      * @return the byte offset where the new entry starts.
      */
     public long appendNewEntry(

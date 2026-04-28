@@ -6419,7 +6419,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
      * @param columnName    column name
      * @param columnNameTxn column name txn
      * @return true if the posting index key file exists with a non-empty
-     *         v2 chain (at least one published seal entry).
+     * v2 chain (at least one published seal entry).
      */
     private boolean isPostingIndexSealed(int plen, CharSequence columnName, long columnNameTxn) {
         LPSZ keyFile = io.questdb.cairo.idx.PostingIndexUtils.keyFileName(

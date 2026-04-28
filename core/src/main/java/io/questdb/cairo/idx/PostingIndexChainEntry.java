@@ -53,7 +53,9 @@ import io.questdb.std.Unsafe;
  */
 public final class PostingIndexChainEntry {
 
-    /** Reusable read snapshot. Fields populated by {@link #read}. */
+    /**
+     * Reusable read snapshot. Fields populated by {@link #read}.
+     */
     public static final class Snapshot {
         public int blockCapacity;
         public int coveringFormat;

@@ -140,8 +140,8 @@ public final class PostingIndexChainHeader {
      * mid-flight on it complete their seqlock retry and pick up the new
      * page on the next iteration.
      *
-     * @param keyMem            the .pk memory mapping (writable)
-     * @param activePageOffset  current active page offset (PAGE_A_OFFSET or PAGE_B_OFFSET)
+     * @param keyMem             the .pk memory mapping (writable)
+     * @param activePageOffset   current active page offset (PAGE_A_OFFSET or PAGE_B_OFFSET)
      * @param newHeadEntryOffset byte offset of the latest entry (V2_NO_HEAD if empty)
      * @param newEntryCount      number of live entries in the chain
      * @param newRegionBase      byte offset of the oldest live entry's start

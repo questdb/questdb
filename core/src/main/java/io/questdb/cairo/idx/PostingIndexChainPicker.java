@@ -59,15 +59,15 @@ public final class PostingIndexChainPicker {
      * picked entry on success.
      *
      * @return one of the RESULT_* codes:
-     *   <ul>
-     *     <li>{@code RESULT_OK} — entry was found and {@code into} is populated;</li>
-     *     <li>{@code RESULT_EMPTY_CHAIN} — chain has no entries at all;</li>
-     *     <li>{@code RESULT_NO_VISIBLE_ENTRY} — chain is non-empty but every
-     *         entry has {@code txnAtSeal > pinnedTableTxn} (only happens
-     *         immediately after a snapshot restore or pre-first-seal);</li>
-     *     <li>{@code RESULT_HEADER_UNREADABLE} — header seqlock retries
-     *         exhausted; caller should treat as I/O error.</li>
-     *   </ul>
+     * <ul>
+     *   <li>{@code RESULT_OK} — entry was found and {@code into} is populated;</li>
+     *   <li>{@code RESULT_EMPTY_CHAIN} — chain has no entries at all;</li>
+     *   <li>{@code RESULT_NO_VISIBLE_ENTRY} — chain is non-empty but every
+     *       entry has {@code txnAtSeal > pinnedTableTxn} (only happens
+     *       immediately after a snapshot restore or pre-first-seal);</li>
+     *   <li>{@code RESULT_HEADER_UNREADABLE} — header seqlock retries
+     *       exhausted; caller should treat as I/O error.</li>
+     * </ul>
      */
     public static int pick(
             MemoryR keyMem,
