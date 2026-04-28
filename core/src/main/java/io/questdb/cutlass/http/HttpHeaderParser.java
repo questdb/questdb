@@ -305,13 +305,13 @@ public class HttpHeaderParser implements Mutable, QuietCloseable, HttpRequestHea
                 throw HttpException.instance("header is too large");
             }
 
-            char b = (char) Unsafe.getUnsafe().getByte(p++);
+            char b = (char) Unsafe.getByte(p++);
 
             if (b == '\r') {
                 continue;
             }
 
-            Unsafe.getUnsafe().putByte(_wptr++, (byte) b);
+            Unsafe.putByte(_wptr++, (byte) b);
 
             switch (b) {
                 case ':':
@@ -361,30 +361,30 @@ public class HttpHeaderParser implements Mutable, QuietCloseable, HttpRequestHea
     }
 
     private static long cookieSkipBytes(long p, long hi) {
-        while (p < hi && Unsafe.getUnsafe().getByte(p) != ';') {
+        while (p < hi && Unsafe.getByte(p) != ';') {
             p++;
         }
         return p;
     }
 
     private static boolean isEquals(long p) {
-        return Unsafe.getUnsafe().getByte(p) == '=';
+        return Unsafe.getByte(p) == '=';
     }
 
     private static int lowercaseByte(long p) {
-        return Unsafe.getUnsafe().getByte(p) | 0x20;
+        return Unsafe.getByte(p) | 0x20;
     }
 
     private static int swarLowercaseInt(long p) {
-        return Unsafe.getUnsafe().getInt(p) | 0x20202020;
+        return Unsafe.getInt(p) | 0x20202020;
     }
 
     private static long swarLowercaseLong(long p) {
-        return Unsafe.getUnsafe().getLong(p) | 0x2020202020202020L;
+        return Unsafe.getLong(p) | 0x2020202020202020L;
     }
 
     private static int swarLowercaseShort(long p) {
-        return Unsafe.getUnsafe().getShort(p) | 0x2020;
+        return Unsafe.getShort(p) | 0x2020;
     }
 
     private static DirectUtf8String unquote(CharSequence key, DirectUtf8String that) {
@@ -423,7 +423,7 @@ public class HttpHeaderParser implements Mutable, QuietCloseable, HttpRequestHea
         long p0 = lo;
         int nonSpaceCount = 0; // non-space character count since p0
         for (long p = lo; p < hi; p++) {
-            char c = (char) Unsafe.getUnsafe().getByte(p);
+            char c = (char) Unsafe.getByte(p);
             switch (c | 32) {
                 case '=':
                     if (p0 == p) {
@@ -629,7 +629,7 @@ public class HttpHeaderParser implements Mutable, QuietCloseable, HttpRequestHea
         DirectUtf8String name = null;
 
         while (p <= hi) {
-            char b = (char) Unsafe.getUnsafe().getByte(p++);
+            char b = (char) Unsafe.getByte(p++);
 
             if (b == ' ' && swallowSpace) {
                 _lo = p;
@@ -714,11 +714,11 @@ public class HttpHeaderParser implements Mutable, QuietCloseable, HttpRequestHea
             }
 
             p = HttpSemantics.swallowOWS(nameHi, hi);
-            if ((char) Unsafe.getUnsafe().getByte(p) != '=') {
+            if ((char) Unsafe.getByte(p) != '=') {
                 throw HttpException.instance("Malformed ")
                         .put(HEADER_CONTENT_TYPE)
                         .put(" header, expected '=' but got '")
-                        .put((char) Unsafe.getUnsafe().getByte(p))
+                        .put((char) Unsafe.getByte(p))
                         .put('\'');
             }
             p = HttpSemantics.swallowOWS(p + 1, hi);
@@ -746,7 +746,7 @@ public class HttpHeaderParser implements Mutable, QuietCloseable, HttpRequestHea
         // media-type format is: type "/" subtype
         // type and subtype are tokens
         long p = HttpSemantics.swallowTokens(lo, hi);
-        if (p > hi || ((char) Unsafe.getUnsafe().getByte(p) != '/')) {
+        if (p > hi || ((char) Unsafe.getByte(p) != '/')) {
             return p;
         }
         return HttpSemantics.swallowTokens(p + 1, hi);
@@ -759,7 +759,7 @@ public class HttpHeaderParser implements Mutable, QuietCloseable, HttpRequestHea
                 throw HttpException.instance("url is too long");
             }
 
-            char b = (char) Unsafe.getUnsafe().getByte(p++);
+            char b = (char) Unsafe.getByte(p++);
 
             if (b == '\r') {
                 continue;
@@ -816,7 +816,7 @@ public class HttpHeaderParser implements Mutable, QuietCloseable, HttpRequestHea
                 default:
                     break;
             }
-            Unsafe.getUnsafe().putByte(_wptr++, (byte) b);
+            Unsafe.putByte(_wptr++, (byte) b);
         }
         return (int) (p - lo);
     }
@@ -827,11 +827,11 @@ public class HttpHeaderParser implements Mutable, QuietCloseable, HttpRequestHea
         }
 
         long p = lo;
-        char b = (char) Unsafe.getUnsafe().getByte(p++);
+        char b = (char) Unsafe.getByte(p++);
         // fast path for unquoted tokens
         if (b != '"') {
             // Instead of relying on swallowTokens we are being more lenient and allow any characters until the ';' delimiter.
-            while (p < hi && ((char) Unsafe.getUnsafe().getByte(p) != ';')) {
+            while (p < hi && ((char) Unsafe.getByte(p) != ';')) {
                 p++;
             }
             parameterValue.of(p, csPool.next().of(lo, p));
@@ -841,7 +841,7 @@ public class HttpHeaderParser implements Mutable, QuietCloseable, HttpRequestHea
         final long s_lo = sink.size();
         boolean escaped = false;
         while (p <= hi) {
-            b = (char) Unsafe.getUnsafe().getByte(p++);
+            b = (char) Unsafe.getByte(p++);
 
             if (escaped || (b != '\\' && b != '"')) {
                 sink.put(b);
@@ -865,7 +865,7 @@ public class HttpHeaderParser implements Mutable, QuietCloseable, HttpRequestHea
                 throw HttpException.instance("protocol line is too long");
             }
 
-            char b = (char) Unsafe.getUnsafe().getByte(p++);
+            char b = (char) Unsafe.getByte(p++);
 
             if (b == '\r') {
                 continue;
@@ -898,7 +898,7 @@ public class HttpHeaderParser implements Mutable, QuietCloseable, HttpRequestHea
                 default:
                     break;
             }
-            Unsafe.getUnsafe().putByte(_wptr++, (byte) b);
+            Unsafe.putByte(_wptr++, (byte) b);
         }
         return (int) (p - lo);
     }
@@ -925,7 +925,7 @@ public class HttpHeaderParser implements Mutable, QuietCloseable, HttpRequestHea
 
         DirectUtf8String name = null;
         while (rp < hi) {
-            char b = (char) Unsafe.getUnsafe().getByte(rp++);
+            char b = (char) Unsafe.getByte(rp++);
             switch (b) {
                 case '=':
                     if (_lo < wp) {
@@ -941,13 +941,13 @@ public class HttpHeaderParser implements Mutable, QuietCloseable, HttpRequestHea
                     _lo = rp - offset;
                     break;
                 case '+':
-                    Unsafe.getUnsafe().putByte(wp++, (byte) ' ');
+                    Unsafe.putByte(wp++, (byte) ' ');
                     continue;
                 case '%':
                     try {
                         if (rp + 1 < hi) {
                             byte bb = (byte) Numbers.parseHexInt(temp.of(rp, rp += 2).asAsciiCharSequence());
-                            Unsafe.getUnsafe().putByte(wp++, bb);
+                            Unsafe.putByte(wp++, bb);
                             offset += 2;
                             continue;
                         }
@@ -957,7 +957,7 @@ public class HttpHeaderParser implements Mutable, QuietCloseable, HttpRequestHea
                 default:
                     break;
             }
-            Unsafe.getUnsafe().putByte(wp++, (byte) b);
+            Unsafe.putByte(wp++, (byte) b);
         }
 
         if (_lo < wp && name != null) {

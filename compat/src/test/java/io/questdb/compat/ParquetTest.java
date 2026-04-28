@@ -60,7 +60,6 @@ import io.questdb.std.str.Utf8Sequence;
 import io.questdb.std.str.Utf8s;
 import org.apache.avro.generic.GenericData;
 import org.apache.avro.generic.GenericRecord;
-import org.apache.hadoop.conf.Configuration;
 import org.apache.parquet.avro.AvroParquetReader;
 import org.apache.parquet.column.ColumnDescriptor;
 import org.apache.parquet.column.statistics.Statistics;
@@ -71,8 +70,8 @@ import org.apache.parquet.hadoop.metadata.BlockMetaData;
 import org.apache.parquet.hadoop.metadata.ColumnChunkMetaData;
 import org.apache.parquet.hadoop.metadata.FileMetaData;
 import org.apache.parquet.hadoop.metadata.ParquetMetadata;
-import org.apache.parquet.hadoop.util.HadoopInputFile;
 import org.apache.parquet.io.InputFile;
+import org.apache.parquet.io.LocalInputFile;
 import org.apache.parquet.io.api.Binary;
 import org.apache.parquet.schema.MessageType;
 import org.apache.parquet.schema.PrimitiveType;
@@ -284,9 +283,7 @@ public class ParquetTest extends AbstractTest {
                         0.0,
                         -1L
                 );
-                Configuration configuration = new Configuration();
-                final org.apache.hadoop.fs.Path parquetPath = new org.apache.hadoop.fs.Path(parquetPathStr);
-                final InputFile inputFile = HadoopInputFile.fromPath(parquetPath, configuration);
+                final InputFile inputFile = new LocalInputFile(java.nio.file.Path.of(parquetPathStr));
 
                 try (ParquetFileReader parquetFileReader = ParquetFileReader.open(inputFile)) {
                     ParquetMetadata metadata = parquetFileReader.getFooter();
@@ -562,9 +559,7 @@ public class ParquetTest extends AbstractTest {
                         -1L
                 );
 
-                Configuration configuration = new Configuration();
-                final org.apache.hadoop.fs.Path parquetPath = new org.apache.hadoop.fs.Path(parquetPathStr);
-                final InputFile inputFile = HadoopInputFile.fromPath(parquetPath, configuration);
+                final InputFile inputFile = new LocalInputFile(java.nio.file.Path.of(parquetPathStr));
 
                 try (ParquetFileReader parquetFileReader = ParquetFileReader.open(inputFile)) {
                     ParquetMetadata metadata = parquetFileReader.getFooter();
@@ -659,9 +654,7 @@ public class ParquetTest extends AbstractTest {
                         -1L
                 );
 
-                Configuration configuration = new Configuration();
-                final org.apache.hadoop.fs.Path parquetPath = new org.apache.hadoop.fs.Path(parquetPathStr);
-                final InputFile inputFile = HadoopInputFile.fromPath(parquetPath, configuration);
+                final InputFile inputFile = new LocalInputFile(java.nio.file.Path.of(parquetPathStr));
 
                 try (ParquetFileReader parquetFileReader = ParquetFileReader.open(inputFile)) {
                     ParquetMetadata metadata = parquetFileReader.getFooter();
@@ -747,9 +740,7 @@ public class ParquetTest extends AbstractTest {
                         -1L
                 );
 
-                Configuration configuration = new Configuration();
-                final org.apache.hadoop.fs.Path parquetPath = new org.apache.hadoop.fs.Path(parquetPathStr);
-                final InputFile inputFile = HadoopInputFile.fromPath(parquetPath, configuration);
+                final InputFile inputFile = new LocalInputFile(java.nio.file.Path.of(parquetPathStr));
 
                 try (ParquetFileReader parquetFileReader = ParquetFileReader.open(inputFile)) {
                     ParquetMetadata metadata = parquetFileReader.getFooter();
@@ -961,7 +952,7 @@ public class ParquetTest extends AbstractTest {
         long ptr = Unsafe.malloc(arr.length, MemoryTag.NATIVE_DEFAULT);
         try (BorrowedArray borrowedArray = new BorrowedArray()) {
             for (int i = 0; i < arr.length; i++) {
-                Unsafe.getUnsafe().putByte(ptr + i, arr[i]);
+                Unsafe.putByte(ptr + i, arr[i]);
             }
 
             // the shape is padded to 8 bytes, hence Long.BYTES
@@ -1070,9 +1061,7 @@ public class ParquetTest extends AbstractTest {
                 );
 
                 LOG.info().$("Took: ").$((System.nanoTime() - start) / 1_000_000).$("ms").$();
-                Configuration configuration = new Configuration();
-                final org.apache.hadoop.fs.Path parquetPath = new org.apache.hadoop.fs.Path(parquetPathStr);
-                final InputFile inputFile = HadoopInputFile.fromPath(parquetPath, configuration);
+                final InputFile inputFile = new LocalInputFile(java.nio.file.Path.of(parquetPathStr));
 
                 try (
                         ParquetFileReader parquetFileReader = ParquetFileReader.open(inputFile);
@@ -1169,9 +1158,7 @@ public class ParquetTest extends AbstractTest {
                 );
 
                 LOG.info().$("Took: ").$((System.nanoTime() - start) / 1_000_000).$("ms").$();
-                Configuration configuration = new Configuration();
-                final org.apache.hadoop.fs.Path parquetPath = new org.apache.hadoop.fs.Path(parquetPathStr);
-                final InputFile inputFile = HadoopInputFile.fromPath(parquetPath, configuration);
+                final InputFile inputFile = new LocalInputFile(java.nio.file.Path.of(parquetPathStr));
 
                 try (
                         ParquetFileReader parquetFileReader = ParquetFileReader.open(inputFile);
@@ -1379,9 +1366,7 @@ public class ParquetTest extends AbstractTest {
 
                 LOG.info().$("Took: ").$((System.nanoTime() - start) / 1_000_000).$("ms").$();
                 long partitionRowCount = reader.getPartitionRowCount(partitionIndex);
-                Configuration configuration = new Configuration();
-                final org.apache.hadoop.fs.Path parquetPath = new org.apache.hadoop.fs.Path(parquetPathStr);
-                final InputFile inputFile = HadoopInputFile.fromPath(parquetPath, configuration);
+                final InputFile inputFile = new LocalInputFile(java.nio.file.Path.of(parquetPathStr));
                 validateParquetData(inputFile, serverMain.getEngine(), reader.getTableToken(), partitionRowCount, partitionName.toString(), rawArrayEncoding);
                 validateParquetMetadata(inputFile, partitionRowCount, rawArrayEncoding);
             }

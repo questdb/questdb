@@ -131,7 +131,7 @@ public interface GroupByFunction extends Function, Mutable {
             long baseRowId
     ) {
         for (long i = 0; i < rowCount; i++) {
-            long encoded = Unsafe.getUnsafe().getLong(batchAddr + (i << 3));
+            long encoded = Unsafe.getLong(batchAddr + (i << 3));
             long valueOffset = Map.decodeBatchOffset(encoded);
             int rowIndex = Map.decodeBatchRowIndex(encoded);
             boolean isNew = Map.isNewBatchEntry(encoded);

@@ -75,7 +75,7 @@ final class PGNonNullBinaryArrayView extends MutableArray implements FlatArrayVi
     public double getDoubleAtAbsIndex(int flatIndex) {
         final long addr = lo + Integer.BYTES + ((long) flatIndex * (Double.BYTES + Integer.BYTES));
         assert addr < hi;
-        long networkOrderVal = Unsafe.getUnsafe().getLong(addr);
+        long networkOrderVal = Unsafe.getLong(addr);
         return Double.longBitsToDouble(Numbers.bswap(networkOrderVal));
     }
 
@@ -83,7 +83,7 @@ final class PGNonNullBinaryArrayView extends MutableArray implements FlatArrayVi
     public long getLongAtAbsIndex(int flatIndex) {
         final long addr = lo + Integer.BYTES + ((long) flatIndex * (Long.BYTES + Integer.BYTES));
         assert addr < hi;
-        long networkOrderVal = Unsafe.getUnsafe().getLong(addr);
+        long networkOrderVal = Unsafe.getLong(addr);
         return Numbers.bswap(networkOrderVal);
     }
 
@@ -144,7 +144,7 @@ final class PGNonNullBinaryArrayView extends MutableArray implements FlatArrayVi
         for (long p = lo; p < hi; p += increment) {
 
             // element size as reported by the client
-            int actualElementSizeBE = Unsafe.getUnsafe().getInt(p);
+            int actualElementSizeBE = Unsafe.getInt(p);
 
             // -1 is a special value that indicates a NULL element
             // no need to swap bytes since -1 is always -1, regardless of endianness, it's all 1s
