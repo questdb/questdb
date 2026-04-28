@@ -1000,6 +1000,29 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         }
     }
 
+    // Cheap structural predicate for the parallel top-K gate. Returns true when
+    // the outer factory, or a single projection wrapper above it, can reach a
+    // page-frame leaf that feeds AsyncTopKRecordCursorFactory. The unified
+    // generateOrderBy branch relies on this predicate to decide whether to
+    // attempt the gate at all; a negative answer falls through to Sort light
+    // without any translation or wrapper inspection.
+    //
+    // Only a single projection layer is peeled. Two or more stacked projection
+    // wrappers above the filter (rare today) silently fall through to Sort
+    // light rather than recursing; that keeps the predicate O(1) and the
+    // wrapper overrides for translateOrderByColumnToBase / rewrapOverTopK
+    // still chain correctly when they run.
+    private static boolean canReachPageFrameLeafForTopK(RecordCursorFactory f) {
+        if (f.supportsPageFrameCursor() || f.supportsFilterStealing()) {
+            return true;
+        }
+        if (f.isProjection()) {
+            RecordCursorFactory base = f.getBaseFactory();
+            return base != null && (base.supportsPageFrameCursor() || base.supportsFilterStealing());
+        }
+        return false;
+    }
+
     private static void coerceRuntimeConstantType(Function func, int type, SqlExecutionContext context, CharSequence message, int pos) throws SqlException {
         if (isUndefined(func.getType())) {
             func.assignType(type, context.getBindVariableService());
@@ -1395,6 +1418,88 @@ public class SqlCodeGenerator implements Mutable, Closeable {
 
     private void backupWhereClause(ExpressionNode node) {
         processNodeQueryModels(node, backupWhereClauseRef);
+    }
+
+    // Builds AsyncTopKRecordCursorFactory on pageFrameLeaf. When filterFactory
+    // supports filter stealing, its filter state (compiled filter, bind vars,
+    // filter expr, filter function) is transferred into the new top-K factory
+    // and filterFactory.halfClose() releases the rest; when it does not, the
+    // top-K factory runs with null filter state. Callers translate ORDER BY
+    // keys into base coordinates before calling, since the translation varies
+    // per projection wrapper shape (identity for the direct case, cross-index
+    // lookup for SelectedRecord, passthrough resolution for VirtualRecord).
+    private RecordCursorFactory buildAsyncTopKOverStolenFilter(
+            SqlExecutionContext executionContext,
+            RecordCursorFactory filterFactory,
+            RecordCursorFactory pageFrameLeaf,
+            RecordMetadata baseMetadata,
+            ListColumnFilter baseOrderByFilter,
+            int baseFirstOrderByIdx,
+            long lo
+    ) throws SqlException {
+        final int baseTimestampIndex = baseMetadata.getTimestampIndex();
+        final int baseOrderedByTimestampIndex = isTimestamp(baseMetadata.getColumnType(baseFirstOrderByIdx))
+                ? baseFirstOrderByIdx : -1;
+        final GenericRecordMetadata baseOrderedMetadata;
+        if (baseFirstOrderByIdx == baseTimestampIndex) {
+            baseOrderedMetadata = GenericRecordMetadata.copyOf(baseMetadata);
+        } else {
+            baseOrderedMetadata = GenericRecordMetadata.copyOfSansTimestamp(baseMetadata);
+            baseOrderedMetadata.setTimestampIndex(baseOrderedByTimestampIndex);
+        }
+
+        CompiledFilter stolenCompiledFilter = null;
+        MemoryCARW stolenBindVarMemory = null;
+        ObjList<Function> stolenBindVarFunctions = null;
+        Function stolenFilter = null;
+        ExpressionNode stolenFilterExpr = null;
+        IntHashSet stolenFilterUsedColumnIndexes = null;
+        if (filterFactory.supportsFilterStealing()) {
+            stolenCompiledFilter = filterFactory.getCompiledFilter();
+            stolenBindVarMemory = filterFactory.getBindVarMemory();
+            stolenBindVarFunctions = filterFactory.getBindVarFunctions();
+            stolenFilter = filterFactory.getFilter();
+            stolenFilterExpr = filterFactory.getStealFilterExpr();
+            stolenFilterUsedColumnIndexes = new IntHashSet();
+            collectColumnIndexes(sqlNodeStack, baseMetadata, stolenFilterExpr, stolenFilterUsedColumnIndexes);
+            filterFactory.halfClose();
+        }
+
+        final ObjList<Function> perWorkerFilters;
+        try {
+            perWorkerFilters = compileWorkerFiltersConditionally(
+                    executionContext,
+                    stolenFilter,
+                    executionContext.getSharedQueryWorkerCount(),
+                    stolenFilterExpr,
+                    baseMetadata
+            );
+        } catch (Throwable th) {
+            Misc.free(stolenCompiledFilter);
+            Misc.free(stolenBindVarMemory);
+            Misc.freeObjList(stolenBindVarFunctions);
+            Misc.free(stolenFilter);
+            throw th;
+        }
+
+        return new AsyncTopKRecordCursorFactory(
+                executionContext.getCairoEngine(),
+                configuration,
+                executionContext.getMessageBus(),
+                baseOrderedMetadata,
+                pageFrameLeaf,
+                stolenFilter,
+                stolenFilterUsedColumnIndexes,
+                perWorkerFilters,
+                stolenCompiledFilter,
+                stolenBindVarMemory,
+                stolenBindVarFunctions,
+                recordComparatorCompiler,
+                baseOrderByFilter,
+                baseMetadata,
+                lo,
+                executionContext.getSharedQueryWorkerCount()
+        );
     }
 
     private GenericRecordMetadata buildQueryMetadata(
@@ -4270,7 +4375,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                 filteredSymbolKeyIndices != null ? filteredSymbolKeyIndices[0] : null,
                                 filteredSymbolKeyIndices != null ? filteredSymbolKeyIndices[1] : null
                         );
-                    } else if (slave.isProjection()) {
+                    } else if (slave.isProjection() && slave.getColumnCrossIndex() != null) {
+                        // peel requires a column cross index; only SelectedRecord provides one
                         RecordCursorFactory projectionBase = slave.getBaseFactory();
                         // We know projectionBase does not support supportsTimeFrameCursor, because
                         // Projections forward this call to its base factory and if we are in this branch
@@ -4402,7 +4508,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                             toleranceInterval
                     );
                 }
-                if (slave.isProjection()) {
+                if (slave.isProjection() && slave.getColumnCrossIndex() != null) {
+                    // peel requires a column cross index; only SelectedRecord provides one
                     RecordCursorFactory projectionBase = slave.getBaseFactory();
                     // We know projectionBase does not support supportsTimeFrameCursor, because
                     // projections forward this call to its base factory, and if we are in this branch,
@@ -6534,56 +6641,60 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                     }
                                 }
 
+                                // Unified parallel top-K gate: handles the direct page-frame,
+                                // direct filter-stealing, and projection-peel shapes through a
+                                // single branch. The wrapper (if any) answers two questions via
+                                // default methods on RecordCursorFactory: how to translate an
+                                // ORDER BY column index into the base metadata, and how to
+                                // re-wrap the freshly-built top-K so the output shape is
+                                // preserved. See io.questdb.cairo.sql.RecordCursorFactory
+                                // for the default methods and the per-wrapper overrides.
                                 final boolean parallelTopKEnabled = executionContext.isParallelTopKEnabled();
-                                if (parallelTopKEnabled && (recordCursorFactory.supportsPageFrameCursor() || recordCursorFactory.supportsFilterStealing())) {
-                                    IQueryModel.restoreWhereClause(expressionNodePool, model);
+                                if (parallelTopKEnabled && canReachPageFrameLeafForTopK(recordCursorFactory)) {
+                                    final RecordCursorFactory projectionWrapper = recordCursorFactory.isProjection()
+                                            ? recordCursorFactory : null;
+                                    final RecordCursorFactory filterFactory = projectionWrapper != null
+                                            ? projectionWrapper.getBaseFactory() : recordCursorFactory;
+                                    final RecordCursorFactory pageFrameLeaf = filterFactory.supportsFilterStealing()
+                                            ? filterFactory.getBaseFactory() : filterFactory;
 
-                                    RecordCursorFactory baseFactory = recordCursorFactory;
-                                    CompiledFilter compiledFilter = null;
-                                    MemoryCARW bindVarMemory = null;
-                                    ObjList<Function> bindVarFunctions = null;
-                                    Function filter = null;
-                                    ExpressionNode filterExpr = null;
-                                    IntHashSet filterUsedColumnIndexes = null;
-                                    if (recordCursorFactory.supportsFilterStealing()) {
-                                        baseFactory = recordCursorFactory.getBaseFactory();
-                                        compiledFilter = recordCursorFactory.getCompiledFilter();
-                                        bindVarMemory = recordCursorFactory.getBindVarMemory();
-                                        bindVarFunctions = recordCursorFactory.getBindVarFunctions();
-                                        filter = recordCursorFactory.getFilter();
-                                        filterExpr = recordCursorFactory.getStealFilterExpr();
-                                        filterUsedColumnIndexes = new IntHashSet();
-                                        collectColumnIndexes(sqlNodeStack, baseFactory.getMetadata(), filterExpr, filterUsedColumnIndexes);
-                                        recordCursorFactory.halfClose();
-                                    }
+                                    if (pageFrameLeaf != null && pageFrameLeaf.supportsPageFrameCursor()) {
+                                        final RecordMetadata baseMetadata = pageFrameLeaf.getMetadata();
+                                        final ListColumnFilter baseOrderByFilter = new ListColumnFilter();
+                                        int baseFirstOrderByIdx = -1;
+                                        boolean allKeysResolved = true;
+                                        for (int i = 0, n = listColumnFilterA.size(); i < n; i++) {
+                                            int signed = listColumnFilterA.getQuick(i);
+                                            int projectedIdx = (signed > 0 ? signed : -signed) - 1;
+                                            int baseIdx = recordCursorFactory.translateOrderByColumnToBase(projectedIdx);
+                                            if (baseIdx < 0) {
+                                                allKeysResolved = false;
+                                                break;
+                                            }
+                                            baseOrderByFilter.add(signed > 0 ? (baseIdx + 1) : -(baseIdx + 1));
+                                            if (i == 0) {
+                                                baseFirstOrderByIdx = baseIdx;
+                                            }
+                                        }
 
-                                    final IQueryModel nested = model.getNestedModel();
-                                    assert nested != null;
+                                        if (allKeysResolved) {
+                                            IQueryModel.restoreWhereClause(expressionNodePool, model);
 
-                                    return new AsyncTopKRecordCursorFactory(
-                                            executionContext.getCairoEngine(),
-                                            configuration,
-                                            executionContext.getMessageBus(),
-                                            orderedMetadata,
-                                            baseFactory,
-                                            filter,
-                                            filterUsedColumnIndexes,
-                                            compileWorkerFiltersConditionally(
+                                            final RecordCursorFactory topK = buildAsyncTopKOverStolenFilter(
                                                     executionContext,
-                                                    filter,
-                                                    executionContext.getSharedQueryWorkerCount(),
-                                                    filterExpr,
-                                                    baseFactory.getMetadata()
-                                            ),
-                                            compiledFilter,
-                                            bindVarMemory,
-                                            bindVarFunctions,
-                                            recordComparatorCompiler,
-                                            listColumnFilterA.copy(),
-                                            metadata,
-                                            lo,
-                                            executionContext.getSharedQueryWorkerCount()
-                                    );
+                                                    filterFactory,
+                                                    pageFrameLeaf,
+                                                    baseMetadata,
+                                                    baseOrderByFilter,
+                                                    baseFirstOrderByIdx,
+                                                    lo
+                                            );
+
+                                            return projectionWrapper == null
+                                                    ? topK
+                                                    : projectionWrapper.rewrapOverTopK(topK, orderedMetadata);
+                                        }
+                                    }
                                 }
                             }
                         }

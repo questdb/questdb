@@ -320,6 +320,23 @@ public interface RecordCursorFactory extends Closeable, Sinkable, Plannable {
     default void revertFromSampleByIndexPageFrameCursorFactory() {
     }
 
+    /**
+     * Re-wraps a freshly-built top-K factory so this factory's output shape is preserved.
+     * Default is a pass-through — factories that do not project simply return the top-K.
+     * Projection wrappers override to re-create themselves over the new base.
+     * <p>
+     * Ownership: after this call the caller must not close the original wrapper; its
+     * state has either transferred to the returned factory or been dropped on the floor,
+     * matching the AsOf/LatestBy peel precedent.
+     *
+     * @param topK            newly-built top-K factory over the page-frame leaf
+     * @param orderedMetadata projected output metadata for the re-wrapped factory
+     * @return re-wrapped factory, or {@code topK} unchanged for non-projecting factories
+     */
+    default RecordCursorFactory rewrapOverTopK(RecordCursorFactory topK, RecordMetadata orderedMetadata) {
+        return topK;
+    }
+
     default void setPushdownFilterCondition(ObjList<PushdownFilterExtractor.PushdownFilterCondition> pushdownFilterConditions) {
     }
 
@@ -383,6 +400,22 @@ public interface RecordCursorFactory extends Closeable, Sinkable, Plannable {
 
     default void toSink(@NotNull CharSink<?> sink) {
         throw new UnsupportedOperationException("Unsupported for: " + getClass());
+    }
+
+    /**
+     * Translates an ORDER BY column index expressed in this factory's output metadata
+     * to the corresponding column index in the base (page-frame) metadata.
+     * <p>
+     * Returns the input unchanged for factories that do not re-arrange or hide base
+     * columns. Returns a negative value if the projected column cannot be resolved
+     * to a base column (for example, a computed {@code VirtualRecord} column); the
+     * caller must fall back to the generic sort path in that case.
+     *
+     * @param projectedIndex column index in this factory's output metadata
+     * @return column index in the base metadata, or a negative value if unresolvable
+     */
+    default int translateOrderByColumnToBase(int projectedIndex) {
+        return projectedIndex;
     }
 
     /**
