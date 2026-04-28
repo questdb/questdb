@@ -990,7 +990,7 @@ public class AlterTableConvertPartitionTest extends AbstractCairoTest {
             public long openRONoCache(LPSZ path) {
                 long fd = super.openRONoCache(path);
                 String parent = partitionDirRef.get();
-                if (parent != null && parent.equals(Utf8s.toString(path))) {
+                if (parent != null && parent.equals(Utf8s.stringFromUtf8Bytes(path))) {
                     partitionDirFd.set(fd);
                 }
                 return fd;
@@ -1000,7 +1000,7 @@ public class AlterTableConvertPartitionTest extends AbstractCairoTest {
             public long openRW(LPSZ name, int opts) {
                 long fd = super.openRW(name, opts);
                 if (fd > -1 && Utf8s.endsWithAscii(name, Files.SEPARATOR + PARQUET_METADATA_FILE_NAME)) {
-                    String pmPath = Utf8s.toString(name);
+                    String pmPath = Utf8s.stringFromUtf8Bytes(name);
                     pmFd.set(fd);
                     partitionDirRef.set(pmPath.substring(0, pmPath.length() - PARQUET_METADATA_FILE_NAME.length() - 1));
                 }
@@ -1055,7 +1055,7 @@ public class AlterTableConvertPartitionTest extends AbstractCairoTest {
             public long openRONoCache(LPSZ path) {
                 long fd = super.openRONoCache(path);
                 String parent = partitionDirRef.get();
-                if (parent != null && parent.equals(Utf8s.toString(path))) {
+                if (parent != null && parent.equals(Utf8s.stringFromUtf8Bytes(path))) {
                     partitionDirFd.set(fd);
                 }
                 return fd;
@@ -1065,7 +1065,7 @@ public class AlterTableConvertPartitionTest extends AbstractCairoTest {
             public long openRW(LPSZ name, int opts) {
                 long fd = super.openRW(name, opts);
                 if (fd > -1 && Utf8s.endsWithAscii(name, Files.SEPARATOR + PARQUET_METADATA_FILE_NAME)) {
-                    String pmPath = Utf8s.toString(name);
+                    String pmPath = Utf8s.stringFromUtf8Bytes(name);
                     pmFd.set(fd);
                     partitionDirRef.set(pmPath.substring(0, pmPath.length() - PARQUET_METADATA_FILE_NAME.length() - 1));
                 }
