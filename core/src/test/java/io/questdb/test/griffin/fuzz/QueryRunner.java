@@ -208,6 +208,18 @@ public final class QueryRunner {
             }
             return Result.failed(sql, a.failure);
         }
+        // Both threw the same allowlisted exception class but with different
+        // messages. For a non-deterministic query, a per-row cast/numeric
+        // exception fires on whichever row the iterator visits first, and
+        // parallel GROUP BY / hash join paths can return rows in different
+        // orders across runs. The two outcomes are consistent (both rejected
+        // the result set with the same kind of error), so treat as skip.
+        if (!deterministic
+                && a.failure != null && b.failure != null
+                && a.exceptionClass.equals(b.exceptionClass)
+                && isAcceptedSkip(a.failure)) {
+            return Result.skipped(a.exceptionClass + ": (varies)");
+        }
         // Anything else: divergence (one succeeded, one threw; or both threw
         // different exceptions/messages).
         return Result.failed(sql, divergence(a, b, rowsA, rowsB));
