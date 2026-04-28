@@ -599,6 +599,12 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
             hasExplicitTo = false;
             hasDataForCurrentBucket = false;
             isEmittingFills = false;
+            // Defensive reset: only the variable-width PREV_SLOT path reads
+            // hasPrevForCurrentGap, and that path is reached only when
+            // needsPrevPositioning is true (which always sets it before use).
+            // When needsPrevPositioning is false, no getter consults this
+            // field, but a clean default keeps the state predictable.
+            hasPrevForCurrentGap = false;
         }
 
         private void compileDispatchPlan(int columnCount) {
@@ -670,13 +676,18 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
                     if (!keyPresent[keyIdx]) {
                         fillRecord.isGapFilling = true;
                         fillTimestampFunc.value = nextBucketTimestamp;
-                        hasPrevForCurrentGap = keysMapRecord.getLong(HAS_PREV_SLOT) != 0;
-                        if (hasPrevForCurrentGap && needsPrevPositioning) {
-                            // Position prevRecord only when at least one PREV col still
-                            // needs the recordAt-based path (variable-width source). When
-                            // all PREV cols are slot-eligible, dispatch is served from
-                            // keysMapRecord and recordAt drops out of the hot path.
-                            baseCursor.recordAt(prevRecord, keysMapRecord.getLong(PREV_ROWID_SLOT));
+                        // PREV_CACHE_SLOT getters now read the cached slot
+                        // unconditionally because the slot is pre-filled with the
+                        // per-type null sentinel in initialize(). The HAS_PREV_SLOT
+                        // load and the hasPrevForCurrentGap field write only matter
+                        // for the variable-width PREV_SLOT path, which is reachable
+                        // only when needsPrevPositioning is true.
+                        if (needsPrevPositioning) {
+                            boolean hasPrev = keysMapRecord.getLong(HAS_PREV_SLOT) != 0;
+                            hasPrevForCurrentGap = hasPrev;
+                            if (hasPrev) {
+                                baseCursor.recordAt(prevRecord, keysMapRecord.getLong(PREV_ROWID_SLOT));
+                            }
                         }
                         return true;
                     }
@@ -724,6 +735,7 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
             if (keysMap != null) {
                 keysMap.clear();
                 int keyIdx = 0;
+                int prevSlotCount = fixedPrevSrcCols.size();
                 while (baseCursor.hasNext()) {
                     circuitBreaker.statefulThrowExceptionIfTripped();
                     MapKey key = keysMap.withKey();
@@ -732,6 +744,44 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
                     if (value.isNew()) {
                         value.putLong(KEY_INDEX_SLOT, keyIdx++);
                         value.putLong(HAS_PREV_SLOT, 0L);
+                        // Pre-fill cached PREV slots with their per-type null
+                        // sentinel -- mirrors what the FillRecord
+                        // PREV_CACHE_SLOT getters used to return when
+                        // hasPrevForCurrentGap was false. Once the slot carries
+                        // the sentinel up front, the per-cell hasPrev branch in
+                        // those getters drops out and gap rows for keys whose
+                        // prev value has not yet been observed still read the
+                        // same null/zero/NaN value.
+                        for (int i = 0; i < prevSlotCount; i++) {
+                            int slot = KEY_POS_OFFSET + i;
+                            switch (fixedPrevTypeTags.getQuick(i)) {
+                                case ColumnType.DOUBLE -> value.putDouble(slot, Double.NaN);
+                                case ColumnType.FLOAT -> value.putFloat(slot, Float.NaN);
+                                case ColumnType.LONG, ColumnType.DATE, ColumnType.TIMESTAMP ->
+                                        value.putLong(slot, Numbers.LONG_NULL);
+                                case ColumnType.GEOLONG -> value.putLong(slot, GeoHashes.NULL);
+                                case ColumnType.DECIMAL64 -> value.putLong(slot, Decimals.DECIMAL64_NULL);
+                                case ColumnType.INT, ColumnType.SYMBOL -> value.putInt(slot, Numbers.INT_NULL);
+                                case ColumnType.IPv4 -> value.putInt(slot, Numbers.IPv4_NULL);
+                                case ColumnType.GEOINT -> value.putInt(slot, GeoHashes.INT_NULL);
+                                case ColumnType.DECIMAL32 -> value.putInt(slot, Decimals.DECIMAL32_NULL);
+                                case ColumnType.SHORT -> value.putShort(slot, (short) 0);
+                                case ColumnType.GEOSHORT -> value.putShort(slot, GeoHashes.SHORT_NULL);
+                                case ColumnType.DECIMAL16 -> value.putShort(slot, Decimals.DECIMAL16_NULL);
+                                case ColumnType.BYTE -> value.putByte(slot, (byte) 0);
+                                case ColumnType.GEOBYTE -> value.putByte(slot, GeoHashes.BYTE_NULL);
+                                case ColumnType.DECIMAL8 -> value.putByte(slot, Decimals.DECIMAL8_NULL);
+                                case ColumnType.BOOLEAN -> value.putBool(slot, false);
+                                case ColumnType.CHAR -> value.putChar(slot, (char) 0);
+                                default -> {
+                                    // Mirrors updateKeyPrevRowId: SqlCodeGenerator's
+                                    // isFixedSizePrevSlotEligible filter gates the
+                                    // tags that reach this loop. An unknown tag
+                                    // here means the gate and this switch have
+                                    // fallen out of sync.
+                                }
+                            }
+                        }
                     }
                 }
                 keyCount = keyIdx;
@@ -988,10 +1038,7 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
                 if (!isGapFilling) return baseRecord.getBool(col);
                 int code = dispatchCode[col];
                 if (code == DISPATCH_KEY_SLOT) return keysMapRecord.getBool(dispatchSlot[col]);
-                if (code == DISPATCH_PREV_CACHE_SLOT) {
-                    if (hasPrevForCurrentGap) return keysMapRecord.getBool(dispatchSlot[col]);
-                    return false;
-                }
+                if (code == DISPATCH_PREV_CACHE_SLOT) return keysMapRecord.getBool(dispatchSlot[col]);
                 if (code == DISPATCH_PREV_SLOT) {
                     if (hasPrevForCurrentGap) return prevRecord.getBool(dispatchSlot[col]);
                     return false;
@@ -1005,10 +1052,7 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
                 if (!isGapFilling) return baseRecord.getByte(col);
                 int code = dispatchCode[col];
                 if (code == DISPATCH_KEY_SLOT) return keysMapRecord.getByte(dispatchSlot[col]);
-                if (code == DISPATCH_PREV_CACHE_SLOT) {
-                    if (hasPrevForCurrentGap) return keysMapRecord.getByte(dispatchSlot[col]);
-                    return 0;
-                }
+                if (code == DISPATCH_PREV_CACHE_SLOT) return keysMapRecord.getByte(dispatchSlot[col]);
                 if (code == DISPATCH_PREV_SLOT) {
                     if (hasPrevForCurrentGap) return prevRecord.getByte(dispatchSlot[col]);
                     return 0;
@@ -1024,10 +1068,7 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
                 if (!isGapFilling) return baseRecord.getChar(col);
                 int code = dispatchCode[col];
                 if (code == DISPATCH_KEY_SLOT) return keysMapRecord.getChar(dispatchSlot[col]);
-                if (code == DISPATCH_PREV_CACHE_SLOT) {
-                    if (hasPrevForCurrentGap) return keysMapRecord.getChar(dispatchSlot[col]);
-                    return 0;
-                }
+                if (code == DISPATCH_PREV_CACHE_SLOT) return keysMapRecord.getChar(dispatchSlot[col]);
                 if (code == DISPATCH_PREV_SLOT) {
                     if (hasPrevForCurrentGap) return prevRecord.getChar(dispatchSlot[col]);
                     return 0;
@@ -1064,10 +1105,7 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
                 if (!isGapFilling) return baseRecord.getDecimal16(col);
                 int code = dispatchCode[col];
                 if (code == DISPATCH_KEY_SLOT) return keysMapRecord.getDecimal16(dispatchSlot[col]);
-                if (code == DISPATCH_PREV_CACHE_SLOT) {
-                    if (hasPrevForCurrentGap) return keysMapRecord.getShort(dispatchSlot[col]);
-                    return Decimals.DECIMAL16_NULL;
-                }
+                if (code == DISPATCH_PREV_CACHE_SLOT) return keysMapRecord.getShort(dispatchSlot[col]);
                 if (code == DISPATCH_PREV_SLOT) {
                     if (hasPrevForCurrentGap) return prevRecord.getDecimal16(dispatchSlot[col]);
                     return Decimals.DECIMAL16_NULL;
@@ -1104,10 +1142,7 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
                 if (!isGapFilling) return baseRecord.getDecimal32(col);
                 int code = dispatchCode[col];
                 if (code == DISPATCH_KEY_SLOT) return keysMapRecord.getDecimal32(dispatchSlot[col]);
-                if (code == DISPATCH_PREV_CACHE_SLOT) {
-                    if (hasPrevForCurrentGap) return keysMapRecord.getInt(dispatchSlot[col]);
-                    return Decimals.DECIMAL32_NULL;
-                }
+                if (code == DISPATCH_PREV_CACHE_SLOT) return keysMapRecord.getInt(dispatchSlot[col]);
                 if (code == DISPATCH_PREV_SLOT) {
                     if (hasPrevForCurrentGap) return prevRecord.getDecimal32(dispatchSlot[col]);
                     return Decimals.DECIMAL32_NULL;
@@ -1121,10 +1156,7 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
                 if (!isGapFilling) return baseRecord.getDecimal64(col);
                 int code = dispatchCode[col];
                 if (code == DISPATCH_KEY_SLOT) return keysMapRecord.getDecimal64(dispatchSlot[col]);
-                if (code == DISPATCH_PREV_CACHE_SLOT) {
-                    if (hasPrevForCurrentGap) return keysMapRecord.getLong(dispatchSlot[col]);
-                    return Decimals.DECIMAL64_NULL;
-                }
+                if (code == DISPATCH_PREV_CACHE_SLOT) return keysMapRecord.getLong(dispatchSlot[col]);
                 if (code == DISPATCH_PREV_SLOT) {
                     if (hasPrevForCurrentGap) return prevRecord.getDecimal64(dispatchSlot[col]);
                     return Decimals.DECIMAL64_NULL;
@@ -1138,10 +1170,7 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
                 if (!isGapFilling) return baseRecord.getDecimal8(col);
                 int code = dispatchCode[col];
                 if (code == DISPATCH_KEY_SLOT) return keysMapRecord.getDecimal8(dispatchSlot[col]);
-                if (code == DISPATCH_PREV_CACHE_SLOT) {
-                    if (hasPrevForCurrentGap) return keysMapRecord.getByte(dispatchSlot[col]);
-                    return Decimals.DECIMAL8_NULL;
-                }
+                if (code == DISPATCH_PREV_CACHE_SLOT) return keysMapRecord.getByte(dispatchSlot[col]);
                 if (code == DISPATCH_PREV_SLOT) {
                     if (hasPrevForCurrentGap) return prevRecord.getDecimal8(dispatchSlot[col]);
                     return Decimals.DECIMAL8_NULL;
@@ -1155,10 +1184,7 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
                 if (!isGapFilling) return baseRecord.getDouble(col);
                 int code = dispatchCode[col];
                 if (code == DISPATCH_KEY_SLOT) return keysMapRecord.getDouble(dispatchSlot[col]);
-                if (code == DISPATCH_PREV_CACHE_SLOT) {
-                    if (hasPrevForCurrentGap) return keysMapRecord.getDouble(dispatchSlot[col]);
-                    return Double.NaN;
-                }
+                if (code == DISPATCH_PREV_CACHE_SLOT) return keysMapRecord.getDouble(dispatchSlot[col]);
                 if (code == DISPATCH_PREV_SLOT) {
                     if (hasPrevForCurrentGap) return prevRecord.getDouble(dispatchSlot[col]);
                     return Double.NaN;
@@ -1172,10 +1198,7 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
                 if (!isGapFilling) return baseRecord.getFloat(col);
                 int code = dispatchCode[col];
                 if (code == DISPATCH_KEY_SLOT) return keysMapRecord.getFloat(dispatchSlot[col]);
-                if (code == DISPATCH_PREV_CACHE_SLOT) {
-                    if (hasPrevForCurrentGap) return keysMapRecord.getFloat(dispatchSlot[col]);
-                    return Float.NaN;
-                }
+                if (code == DISPATCH_PREV_CACHE_SLOT) return keysMapRecord.getFloat(dispatchSlot[col]);
                 if (code == DISPATCH_PREV_SLOT) {
                     if (hasPrevForCurrentGap) return prevRecord.getFloat(dispatchSlot[col]);
                     return Float.NaN;
@@ -1189,10 +1212,7 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
                 if (!isGapFilling) return baseRecord.getGeoByte(col);
                 int code = dispatchCode[col];
                 if (code == DISPATCH_KEY_SLOT) return keysMapRecord.getGeoByte(dispatchSlot[col]);
-                if (code == DISPATCH_PREV_CACHE_SLOT) {
-                    if (hasPrevForCurrentGap) return keysMapRecord.getByte(dispatchSlot[col]);
-                    return GeoHashes.BYTE_NULL;
-                }
+                if (code == DISPATCH_PREV_CACHE_SLOT) return keysMapRecord.getByte(dispatchSlot[col]);
                 if (code == DISPATCH_PREV_SLOT) {
                     if (hasPrevForCurrentGap) return prevRecord.getGeoByte(dispatchSlot[col]);
                     return GeoHashes.BYTE_NULL;
@@ -1206,10 +1226,7 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
                 if (!isGapFilling) return baseRecord.getGeoInt(col);
                 int code = dispatchCode[col];
                 if (code == DISPATCH_KEY_SLOT) return keysMapRecord.getGeoInt(dispatchSlot[col]);
-                if (code == DISPATCH_PREV_CACHE_SLOT) {
-                    if (hasPrevForCurrentGap) return keysMapRecord.getInt(dispatchSlot[col]);
-                    return GeoHashes.INT_NULL;
-                }
+                if (code == DISPATCH_PREV_CACHE_SLOT) return keysMapRecord.getInt(dispatchSlot[col]);
                 if (code == DISPATCH_PREV_SLOT) {
                     if (hasPrevForCurrentGap) return prevRecord.getGeoInt(dispatchSlot[col]);
                     return GeoHashes.INT_NULL;
@@ -1223,10 +1240,7 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
                 if (!isGapFilling) return baseRecord.getGeoLong(col);
                 int code = dispatchCode[col];
                 if (code == DISPATCH_KEY_SLOT) return keysMapRecord.getGeoLong(dispatchSlot[col]);
-                if (code == DISPATCH_PREV_CACHE_SLOT) {
-                    if (hasPrevForCurrentGap) return keysMapRecord.getLong(dispatchSlot[col]);
-                    return GeoHashes.NULL;
-                }
+                if (code == DISPATCH_PREV_CACHE_SLOT) return keysMapRecord.getLong(dispatchSlot[col]);
                 if (code == DISPATCH_PREV_SLOT) {
                     if (hasPrevForCurrentGap) return prevRecord.getGeoLong(dispatchSlot[col]);
                     return GeoHashes.NULL;
@@ -1240,10 +1254,7 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
                 if (!isGapFilling) return baseRecord.getGeoShort(col);
                 int code = dispatchCode[col];
                 if (code == DISPATCH_KEY_SLOT) return keysMapRecord.getGeoShort(dispatchSlot[col]);
-                if (code == DISPATCH_PREV_CACHE_SLOT) {
-                    if (hasPrevForCurrentGap) return keysMapRecord.getShort(dispatchSlot[col]);
-                    return GeoHashes.SHORT_NULL;
-                }
+                if (code == DISPATCH_PREV_CACHE_SLOT) return keysMapRecord.getShort(dispatchSlot[col]);
                 if (code == DISPATCH_PREV_SLOT) {
                     if (hasPrevForCurrentGap) return prevRecord.getGeoShort(dispatchSlot[col]);
                     return GeoHashes.SHORT_NULL;
@@ -1257,10 +1268,7 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
                 if (!isGapFilling) return baseRecord.getIPv4(col);
                 int code = dispatchCode[col];
                 if (code == DISPATCH_KEY_SLOT) return keysMapRecord.getIPv4(dispatchSlot[col]);
-                if (code == DISPATCH_PREV_CACHE_SLOT) {
-                    if (hasPrevForCurrentGap) return keysMapRecord.getIPv4(dispatchSlot[col]);
-                    return Numbers.IPv4_NULL;
-                }
+                if (code == DISPATCH_PREV_CACHE_SLOT) return keysMapRecord.getIPv4(dispatchSlot[col]);
                 if (code == DISPATCH_PREV_SLOT) {
                     if (hasPrevForCurrentGap) return prevRecord.getIPv4(dispatchSlot[col]);
                     return Numbers.IPv4_NULL;
@@ -1274,10 +1282,7 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
                 if (!isGapFilling) return baseRecord.getInt(col);
                 int code = dispatchCode[col];
                 if (code == DISPATCH_KEY_SLOT) return keysMapRecord.getInt(dispatchSlot[col]);
-                if (code == DISPATCH_PREV_CACHE_SLOT) {
-                    if (hasPrevForCurrentGap) return keysMapRecord.getInt(dispatchSlot[col]);
-                    return Numbers.INT_NULL;
-                }
+                if (code == DISPATCH_PREV_CACHE_SLOT) return keysMapRecord.getInt(dispatchSlot[col]);
                 if (code == DISPATCH_PREV_SLOT) {
                     if (hasPrevForCurrentGap) return prevRecord.getInt(dispatchSlot[col]);
                     return Numbers.INT_NULL;
@@ -1304,10 +1309,7 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
                 if (!isGapFilling) return baseRecord.getLong(col);
                 int code = dispatchCode[col];
                 if (code == DISPATCH_KEY_SLOT) return keysMapRecord.getLong(dispatchSlot[col]);
-                if (code == DISPATCH_PREV_CACHE_SLOT) {
-                    if (hasPrevForCurrentGap) return keysMapRecord.getLong(dispatchSlot[col]);
-                    return Numbers.LONG_NULL;
-                }
+                if (code == DISPATCH_PREV_CACHE_SLOT) return keysMapRecord.getLong(dispatchSlot[col]);
                 if (code == DISPATCH_PREV_SLOT) {
                     if (hasPrevForCurrentGap) return prevRecord.getLong(dispatchSlot[col]);
                     return Numbers.LONG_NULL;
@@ -1398,10 +1400,7 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
                 if (!isGapFilling) return baseRecord.getShort(col);
                 int code = dispatchCode[col];
                 if (code == DISPATCH_KEY_SLOT) return keysMapRecord.getShort(dispatchSlot[col]);
-                if (code == DISPATCH_PREV_CACHE_SLOT) {
-                    if (hasPrevForCurrentGap) return keysMapRecord.getShort(dispatchSlot[col]);
-                    return 0;
-                }
+                if (code == DISPATCH_PREV_CACHE_SLOT) return keysMapRecord.getShort(dispatchSlot[col]);
                 if (code == DISPATCH_PREV_SLOT) {
                     if (hasPrevForCurrentGap) return prevRecord.getShort(dispatchSlot[col]);
                     return 0;
@@ -1461,10 +1460,10 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
                     return symbolCache[col].valueOf(keysMapRecord.getInt(dispatchSlot[col]));
                 }
                 if (code == DISPATCH_PREV_CACHE_SLOT) {
-                    if (hasPrevForCurrentGap) {
-                        return symbolCache[col].valueOf(keysMapRecord.getInt(dispatchSlot[col]));
-                    }
-                    return null;
+                    // Slot is initialised to Numbers.INT_NULL (=
+                    // SymbolTable.VALUE_IS_NULL); valueOf returns null in that
+                    // case per the SymbolTable contract.
+                    return symbolCache[col].valueOf(keysMapRecord.getInt(dispatchSlot[col]));
                 }
                 if (code == DISPATCH_PREV_SLOT) {
                     if (hasPrevForCurrentGap) return prevRecord.getSymA(dispatchSlot[col]);
@@ -1484,10 +1483,7 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
                     return symbolCache[col].valueBOf(keysMapRecord.getInt(dispatchSlot[col]));
                 }
                 if (code == DISPATCH_PREV_CACHE_SLOT) {
-                    if (hasPrevForCurrentGap) {
-                        return symbolCache[col].valueBOf(keysMapRecord.getInt(dispatchSlot[col]));
-                    }
-                    return null;
+                    return symbolCache[col].valueBOf(keysMapRecord.getInt(dispatchSlot[col]));
                 }
                 if (code == DISPATCH_PREV_SLOT) {
                     if (hasPrevForCurrentGap) return prevRecord.getSymB(dispatchSlot[col]);
@@ -1503,10 +1499,7 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
                 int code = dispatchCode[col];
                 if (code == DISPATCH_TIMESTAMP_FILL) return fillTimestampFunc.value;
                 if (code == DISPATCH_KEY_SLOT) return keysMapRecord.getTimestamp(dispatchSlot[col]);
-                if (code == DISPATCH_PREV_CACHE_SLOT) {
-                    if (hasPrevForCurrentGap) return keysMapRecord.getTimestamp(dispatchSlot[col]);
-                    return Numbers.LONG_NULL;
-                }
+                if (code == DISPATCH_PREV_CACHE_SLOT) return keysMapRecord.getTimestamp(dispatchSlot[col]);
                 if (code == DISPATCH_PREV_SLOT) {
                     if (hasPrevForCurrentGap) return prevRecord.getTimestamp(dispatchSlot[col]);
                     return Numbers.LONG_NULL;
