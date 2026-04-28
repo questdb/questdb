@@ -1,8 +1,8 @@
 #![allow(clippy::not_unsafe_ptr_arg_deref)]
 
 mod buffers;
-mod parquet_meta;
 mod partition_decoder;
+mod file_decoder;
 
 use crate::parquet::error::{ParquetErrorExt, ParquetResult};
 use crate::parquet::qdb_metadata::ParquetFieldId;

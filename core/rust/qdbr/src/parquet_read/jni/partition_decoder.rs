@@ -1,103 +1,166 @@
-use std::io::Cursor;
 use std::slice;
 
 use crate::allocator::QdbAllocator;
 use crate::parquet::error::{fmt_err, ParquetResult};
-use crate::parquet_read::jni::{validate_jni_column_types, DecodeMode};
+use crate::parquet_metadata::jni::reader::JniParquetMetaReader;
+use crate::parquet_metadata::reader::ParquetMetaReader;
+use crate::parquet_read::jni::validate_jni_column_types;
 use crate::parquet_read::row_groups::ParquetColumnIndex;
-use crate::parquet_read::{
-    ColumnFilterPacked, ColumnMeta, DecodeContext, ParquetDecoder, RowGroupBuffers,
-};
+use crate::parquet_read::{DecodeContext, RowGroupBuffers};
 use jni::objects::JClass;
 use jni::JNIEnv;
 use qdb_core::col_type::ColumnType;
-use std::mem::{offset_of, size_of};
 
+/// Decode a row group using metadata from a `_pm` sidecar file.
+///
+/// Column types, byte ranges, codecs, and descriptors are read from the
+/// `_pm` binary format via [`ParquetMetaReader`]. The `columns` array
+/// uses the same `[parquet_column_index, column_type]` pair format as
+/// `PartitionDecoder` for compatibility with `PageFrameMemoryPool`.
+/// The `column_type` from Java is used for Symbol→Varchar and
+/// Varchar→VarcharSlice overrides; the base type comes from `_pm`.
 #[no_mangle]
-#[allow(clippy::not_unsafe_ptr_arg_deref)]
-pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionDecoder_create(
+pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_ParquetPartitionDecoder_decodeRowGroup(
     mut env: JNIEnv,
     _class: JClass,
     allocator: *const QdbAllocator,
-    file_ptr: *const u8, // mmapped file's address
-    file_size: u64,      // mmapped file's size
-) -> *mut ParquetDecoder {
+    ctx: *mut DecodeContext,
+    parquet_file_ptr: *const u8,
+    parquet_file_size: u64,
+    parquet_meta_reader_ptr: *const JniParquetMetaReader,
+    row_group_bufs: *mut RowGroupBuffers,
+    columns: *const (ParquetColumnIndex, ColumnType), // [index, type] pairs
+    column_count: u32,
+    row_group_index: u32,
+    row_group_lo: u32,
+    row_group_hi: u32,
+) -> u32 {
     let env = &mut env;
-    if allocator.is_null() {
-        let err = fmt_err!(InvalidLayout, "allocator pointer is null");
-        return err.into_cairo_exception().throw(env);
-    }
-    if file_ptr.is_null() {
-        let err = fmt_err!(InvalidLayout, "file pointer is null");
-        return err.into_cairo_exception().throw(env);
-    }
-    let file_size_usize = match usize::try_from(file_size) {
-        Ok(v) => v,
-        Err(_) => {
-            let err = fmt_err!(
-                InvalidLayout,
-                "file size {} exceeds addressable range",
-                file_size
-            );
-            return err.into_cairo_exception().throw(env);
-        }
-    };
-    let buf = unsafe { slice::from_raw_parts(file_ptr, file_size_usize) };
-    let mut reader: Cursor<&[u8]> = Cursor::new(buf);
-    let allocator = unsafe { &*allocator }.clone();
-    match ParquetDecoder::read(allocator, &mut reader, file_size) {
-        Ok(decoder) => Box::into_raw(Box::new(decoder)),
+    let res = parquet_meta_decode_row_group_impl(
+        allocator,
+        ctx,
+        parquet_file_ptr,
+        parquet_file_size,
+        parquet_meta_reader_ptr,
+        row_group_bufs,
+        columns,
+        column_count,
+        row_group_index,
+        row_group_lo,
+        row_group_hi,
+    );
+    match res {
+        Ok(count) => count as u32,
         Err(mut err) => {
-            err.add_context(format!(
-                "could not read parquet file with read size {file_size}"
-            ));
-            err.add_context("error in PartitionDecoder.create");
+            err.add_context("error in ParquetMetaPartitionDecoder.decodeRowGroup");
             err.into_cairo_exception().throw(env)
         }
     }
 }
 
 #[no_mangle]
-#[allow(clippy::not_unsafe_ptr_arg_deref)]
-pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionDecoder_destroy(
-    _env: JNIEnv,
+pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_ParquetPartitionDecoder_decodeRowGroupWithRowFilter(
+    mut env: JNIEnv,
     _class: JClass,
-    decoder: *mut ParquetDecoder,
-) {
-    if decoder.is_null() {
-        return;
-    }
-
-    drop(unsafe { Box::from_raw(decoder) });
-}
-
-#[no_mangle]
-pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionDecoder_createDecodeContext(
-    _env: JNIEnv,
-    _class: JClass,
-    file_ptr: *const u8,
-    file_size: u64,
-) -> *mut DecodeContext {
-    Box::into_raw(Box::new(DecodeContext::new(file_ptr, file_size)))
-}
-
-#[no_mangle]
-#[allow(clippy::not_unsafe_ptr_arg_deref)]
-pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionDecoder_destroyDecodeContext(
-    _env: JNIEnv,
-    _class: JClass,
+    allocator: *const QdbAllocator,
     ctx: *mut DecodeContext,
+    parquet_file_ptr: *const u8,
+    parquet_file_size: u64,
+    parquet_meta_reader_ptr: *const JniParquetMetaReader,
+    row_group_bufs: *mut RowGroupBuffers,
+    column_offset: u32,
+    columns: *const (ParquetColumnIndex, ColumnType),
+    column_count: u32,
+    row_group_index: u32,
+    row_group_lo: u32,
+    row_group_hi: u32,
+    filtered_rows_ptr: *const i64,
+    filtered_rows_size: i64,
 ) {
-    if !ctx.is_null() {
-        drop(unsafe { Box::from_raw(ctx) });
+    let env = &mut env;
+    let filtered_rows_count = if filtered_rows_size < 0 {
+        0usize
+    } else {
+        filtered_rows_size as usize
+    };
+    let res = parquet_meta_decode_row_group_filtered_impl::<false>(
+        allocator,
+        ctx,
+        parquet_file_ptr,
+        parquet_file_size,
+        parquet_meta_reader_ptr,
+        row_group_bufs,
+        column_offset as usize,
+        columns,
+        column_count,
+        row_group_index,
+        row_group_lo,
+        row_group_hi,
+        filtered_rows_ptr,
+        filtered_rows_count,
+    );
+    if let Err(mut err) = res {
+        err.add_context("error in ParquetMetaPartitionDecoder.decodeRowGroupWithRowFilter");
+        let _: () = err.into_cairo_exception().throw(env);
+    }
+}
+
+#[no_mangle]
+pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_ParquetPartitionDecoder_decodeRowGroupWithRowFilterFillNulls(
+    mut env: JNIEnv,
+    _class: JClass,
+    allocator: *const QdbAllocator,
+    ctx: *mut DecodeContext,
+    parquet_file_ptr: *const u8,
+    parquet_file_size: u64,
+    parquet_meta_reader_ptr: *const JniParquetMetaReader,
+    row_group_bufs: *mut RowGroupBuffers,
+    column_offset: u32,
+    columns: *const (ParquetColumnIndex, ColumnType),
+    column_count: u32,
+    row_group_index: u32,
+    row_group_lo: u32,
+    row_group_hi: u32,
+    filtered_rows_ptr: *const i64,
+    filtered_rows_size: i64,
+) {
+    let env = &mut env;
+    let filtered_rows_count = if filtered_rows_size < 0 {
+        0usize
+    } else {
+        filtered_rows_size as usize
+    };
+    let res = parquet_meta_decode_row_group_filtered_impl::<true>(
+        allocator,
+        ctx,
+        parquet_file_ptr,
+        parquet_file_size,
+        parquet_meta_reader_ptr,
+        row_group_bufs,
+        column_offset as usize,
+        columns,
+        column_count,
+        row_group_index,
+        row_group_lo,
+        row_group_hi,
+        filtered_rows_ptr,
+        filtered_rows_count,
+    );
+    if let Err(mut err) = res {
+        err.add_context(
+            "error in ParquetMetaPartitionDecoder.decodeRowGroupWithRowFilterFillNulls",
+        );
+        let _: () = err.into_cairo_exception().throw(env);
     }
 }
 
 #[allow(clippy::too_many_arguments)]
-fn decode_row_group_impl<const MODE: u8>(
-    env: &mut JNIEnv,
-    decoder: *const ParquetDecoder,
+fn parquet_meta_decode_row_group_filtered_impl<const FILL_NULLS: bool>(
+    _allocator: *const QdbAllocator,
     ctx: *mut DecodeContext,
+    parquet_file_ptr: *const u8,
+    parquet_file_size: u64,
+    parquet_meta_reader_ptr: *const JniParquetMetaReader,
     row_group_bufs: *mut RowGroupBuffers,
     column_offset: usize,
     columns: *const (ParquetColumnIndex, ColumnType),
@@ -107,539 +170,435 @@ fn decode_row_group_impl<const MODE: u8>(
     row_group_hi: u32,
     filtered_rows_ptr: *const i64,
     filtered_rows_count: usize,
-) -> u32 {
-    let res = (|| -> ParquetResult<usize> {
-        if decoder.is_null() {
-            return Err(fmt_err!(InvalidLayout, "decoder pointer is null"));
-        }
-        if ctx.is_null() {
-            return Err(fmt_err!(InvalidLayout, "decode context pointer is null"));
-        }
-        if row_group_bufs.is_null() {
-            return Err(fmt_err!(InvalidLayout, "row group buffers pointer is null"));
-        }
-        if columns.is_null() {
-            return Err(fmt_err!(InvalidLayout, "columns pointer is null"));
-        }
-        match MODE {
-            x if x == DecodeMode::NoFilter as u8 => {}
-            _ => {
-                if filtered_rows_ptr.is_null() && filtered_rows_count > 0 {
-                    return Err(fmt_err!(InvalidLayout, "filtered rows pointer is null"));
-                }
-                let row_group_span = row_group_hi.saturating_sub(row_group_lo) as usize;
-                if filtered_rows_count > row_group_span {
-                    return Err(fmt_err!(
-                        InvalidLayout,
-                        "filtered rows count {} exceeds row group span {}",
-                        filtered_rows_count,
-                        row_group_span
-                    ));
-                }
-            }
-        }
-
-        let decoder = unsafe { &*decoder };
-        let ctx = unsafe { &mut *ctx };
-        let row_group_bufs = unsafe { &mut *row_group_bufs };
-        let columns = unsafe { slice::from_raw_parts(columns, column_count as usize) };
-        let filtered_rows = if filtered_rows_ptr.is_null() {
-            &[]
-        } else {
-            unsafe { slice::from_raw_parts(filtered_rows_ptr, filtered_rows_count) }
-        };
-
-        validate_jni_column_types(columns).and_then(|()| match MODE {
-            x if x == DecodeMode::NoFilter as u8 => decoder.decode_row_group(
-                ctx,
-                row_group_bufs,
-                columns,
-                row_group_index,
-                row_group_lo,
-                row_group_hi,
-            ),
-            x if x == DecodeMode::FilterSkip as u8 => decoder.decode_row_group_filtered::<false>(
-                ctx,
-                row_group_bufs,
-                column_offset,
-                columns,
-                row_group_index,
-                row_group_lo,
-                row_group_hi,
-                filtered_rows,
-            ),
-            _ => decoder.decode_row_group_filtered::<true>(
-                ctx,
-                row_group_bufs,
-                column_offset,
-                columns,
-                row_group_index,
-                row_group_lo,
-                row_group_hi,
-                filtered_rows,
-            ),
-        })
-    })();
-
-    match res {
-        Ok(row_count) => row_count as u32,
-        Err(mut err) => {
-            let (context_msg, method_name) = match MODE {
-                x if x == DecodeMode::NoFilter as u8 => (
-                    format!("could not decode row group {row_group_index}"),
-                    "error in PartitionDecoder.decodeRowGroup",
-                ),
-                x if x == DecodeMode::FilterSkip as u8 => (
-                    format!("could not decode row group {row_group_index} with row filter"),
-                    "error in PartitionDecoder.decodeRowGroupWithRowFilter",
-                ),
-                _ => (
-                    format!(
-                        "could not decode row group {row_group_index} with row filter (fill nulls)"
-                    ),
-                    "error in PartitionDecoder.decodeRowGroupWithRowFilterFillNulls",
-                ),
-            };
-            err.add_context(context_msg);
-            err.add_context(method_name);
-            err.into_cairo_exception().throw(env)
-        }
+) -> ParquetResult<usize> {
+    if ctx.is_null() {
+        return Err(fmt_err!(InvalidType, "decode context pointer is null"));
     }
-}
-
-#[no_mangle]
-pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionDecoder_canSkipRowGroup(
-    mut env: JNIEnv,
-    _class: JClass,
-    decoder: *const ParquetDecoder,
-    row_group_index: u32,
-    file_ptr: *const u8,
-    file_size: u64,
-    filters: *const ColumnFilterPacked,
-    filter_count: u32,
-    filter_buf_end: u64,
-) -> bool {
-    let env = &mut env;
-    let res = (|| -> ParquetResult<bool> {
-        if decoder.is_null() {
-            return Err(fmt_err!(InvalidLayout, "decoder pointer is null"));
-        }
-        if filters.is_null() && filter_count > 0 {
-            return Err(fmt_err!(InvalidLayout, "filters pointer is null"));
-        }
-        if file_ptr.is_null() {
-            return Err(fmt_err!(InvalidLayout, "file pointer is null"));
-        }
-
-        let decoder = unsafe { &*decoder };
-        let filters = if filter_count == 0 {
-            &[]
-        } else {
-            unsafe { slice::from_raw_parts(filters, filter_count as usize) }
-        };
-        let file_data = unsafe { slice::from_raw_parts(file_ptr, file_size as usize) };
-
-        decoder.can_skip_row_group(row_group_index, file_data, filters, filter_buf_end)
-    })();
-
-    match res {
-        Ok(can_skip) => can_skip,
-        Err(mut err) => {
-            err.add_context(format!(
-                "could not check bloom filter for row group {row_group_index}"
-            ));
-            err.add_context("error in PartitionDecoder.canSkipRowGroup");
-            err.into_cairo_exception().throw(env)
-        }
+    if row_group_bufs.is_null() {
+        return Err(fmt_err!(InvalidType, "row group buffers pointer is null"));
     }
-}
-
-const QUESTDB_ENCODING_PLAIN: i32 = 1;
-const QUESTDB_ENCODING_RLE_DICTIONARY: i32 = 2;
-const QUESTDB_ENCODING_DELTA_LENGTH_BYTE_ARRAY: i32 = 3;
-const QUESTDB_ENCODING_DELTA_BINARY_PACKED: i32 = 4;
-const QUESTDB_ENCODING_BYTE_STREAM_SPLIT: i32 = 5;
-
-// Parquet spec encoding ordinals (from parquet.thrift Encoding enum).
-const PARQUET_ENCODING_PLAIN: i32 = 0;
-const PARQUET_ENCODING_DELTA_BINARY_PACKED: i32 = 5;
-const PARQUET_ENCODING_DELTA_LENGTH_BYTE_ARRAY: i32 = 6;
-const PARQUET_ENCODING_RLE_DICTIONARY: i32 = 8;
-const PARQUET_ENCODING_BYTE_STREAM_SPLIT: i32 = 9;
-
-fn questdb_encoding_id_to_parquet_encoding(encoding_id: i32) -> ParquetResult<i32> {
-    match encoding_id {
-        QUESTDB_ENCODING_PLAIN => Ok(PARQUET_ENCODING_PLAIN),
-        QUESTDB_ENCODING_RLE_DICTIONARY => Ok(PARQUET_ENCODING_RLE_DICTIONARY),
-        QUESTDB_ENCODING_DELTA_LENGTH_BYTE_ARRAY => Ok(PARQUET_ENCODING_DELTA_LENGTH_BYTE_ARRAY),
-        QUESTDB_ENCODING_DELTA_BINARY_PACKED => Ok(PARQUET_ENCODING_DELTA_BINARY_PACKED),
-        QUESTDB_ENCODING_BYTE_STREAM_SPLIT => Ok(PARQUET_ENCODING_BYTE_STREAM_SPLIT),
-        _ => Err(fmt_err!(
+    if columns.is_null() && column_count > 0 {
+        return Err(fmt_err!(InvalidType, "columns pointer is null"));
+    }
+    if filtered_rows_ptr.is_null() && filtered_rows_count > 0 {
+        return Err(fmt_err!(InvalidType, "filtered rows pointer is null"));
+    }
+    if parquet_meta_reader_ptr.is_null() {
+        return Err(fmt_err!(
             InvalidType,
-            "unsupported parquet encoding id {}",
-            encoding_id
-        )),
+            "JniParquetMetaReader pointer is null"
+        ));
     }
-}
-
-#[no_mangle]
-#[allow(clippy::not_unsafe_ptr_arg_deref)]
-pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionDecoder_rowGroupColumnHasEncoding(
-    mut env: JNIEnv,
-    _class: JClass,
-    decoder: *const ParquetDecoder,
-    row_group_index: u32,
-    column_index: u32,
-    encoding_id: i32,
-) -> bool {
-    let env = &mut env;
-    let res = (|| -> ParquetResult<bool> {
-        if decoder.is_null() {
-            return Err(fmt_err!(InvalidLayout, "decoder pointer is null"));
-        }
-
-        let parquet_encoding = questdb_encoding_id_to_parquet_encoding(encoding_id)?;
-        let decoder = unsafe { &*decoder };
-        decoder.row_group_column_has_encoding(row_group_index, column_index, parquet_encoding)
-    })();
-
-    match res {
-        Ok(has_encoding) => has_encoding,
-        Err(mut err) => {
-            err.add_context(format!(
-                "could not read encodings for row group {}, column {}",
-                row_group_index, column_index
-            ));
-            err.add_context("error in PartitionDecoder.rowGroupColumnHasEncoding");
-            err.into_cairo_exception().throw(env)
-        }
+    if parquet_file_ptr.is_null() || parquet_file_size == 0 {
+        return Err(fmt_err!(
+            InvalidType,
+            "parquet file pointer is null or size is zero"
+        ));
     }
-}
 
-#[no_mangle]
-pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionDecoder_decodeRowGroup(
-    mut env: JNIEnv,
-    _class: JClass,
-    decoder: *const ParquetDecoder,
-    ctx: *mut DecodeContext,
-    row_group_bufs: *mut RowGroupBuffers,
-    columns: *const (ParquetColumnIndex, ColumnType),
-    column_count: u32,
-    row_group_index: u32,
-    row_group_lo: u32,
-    row_group_hi: u32,
-) -> u32 {
-    let env = &mut env;
-    decode_row_group_impl::<{ DecodeMode::NoFilter as u8 }>(
-        env,
-        decoder,
+    let parquet_meta_reader: &ParquetMetaReader = unsafe { &*parquet_meta_reader_ptr }.reader();
+    let file_data = unsafe { slice::from_raw_parts(parquet_file_ptr, parquet_file_size as usize) };
+    let ctx = unsafe { &mut *ctx };
+    let row_group_bufs = unsafe { &mut *row_group_bufs };
+    let col_pairs = if columns.is_null() {
+        &[]
+    } else {
+        unsafe { slice::from_raw_parts(columns, column_count as usize) }
+    };
+    let filtered_rows = if filtered_rows_ptr.is_null() {
+        &[]
+    } else {
+        unsafe { slice::from_raw_parts(filtered_rows_ptr, filtered_rows_count) }
+    };
+
+    crate::parquet_read::parquet_meta_decode::decode_row_group_filtered::<FILL_NULLS>(
         ctx,
         row_group_bufs,
-        0,
-        columns,
-        column_count,
-        row_group_index,
-        row_group_lo,
-        row_group_hi,
-        std::ptr::null(),
-        0,
+        file_data,
+        parquet_meta_reader,
+        column_offset,
+        col_pairs,
+        row_group_index as usize,
+        row_group_lo as usize,
+        row_group_hi as usize,
+        filtered_rows,
     )
 }
 
-#[no_mangle]
-pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionDecoder_decodeRowGroupWithRowFilter(
-    mut env: JNIEnv,
-    _class: JClass,
-    decoder: *const ParquetDecoder,
+#[allow(clippy::too_many_arguments)]
+fn parquet_meta_decode_row_group_impl(
+    _allocator: *const QdbAllocator,
     ctx: *mut DecodeContext,
+    parquet_file_ptr: *const u8,
+    parquet_file_size: u64,
+    parquet_meta_reader_ptr: *const JniParquetMetaReader,
     row_group_bufs: *mut RowGroupBuffers,
-    column_offset: u32,
     columns: *const (ParquetColumnIndex, ColumnType),
     column_count: u32,
     row_group_index: u32,
     row_group_lo: u32,
     row_group_hi: u32,
-    filtered_rows_ptr: *const i64,
-    filtered_rows_size: i64,
-) {
-    let env = &mut env;
-    let filtered_rows_count = if filtered_rows_size < 0 {
-        0usize
+) -> ParquetResult<usize> {
+    if ctx.is_null() {
+        return Err(fmt_err!(InvalidType, "decode context pointer is null"));
+    }
+    if row_group_bufs.is_null() {
+        return Err(fmt_err!(InvalidType, "row group buffers pointer is null"));
+    }
+    if columns.is_null() && column_count > 0 {
+        return Err(fmt_err!(InvalidType, "columns pointer is null"));
+    }
+    if column_count > 0 {
+        let col_pairs = unsafe { slice::from_raw_parts(columns, column_count as usize) };
+        validate_jni_column_types(col_pairs)?;
+    }
+    if parquet_meta_reader_ptr.is_null() {
+        return Err(fmt_err!(
+            InvalidType,
+            "JniParquetMetaReader pointer is null"
+        ));
+    }
+    if parquet_file_ptr.is_null() || parquet_file_size == 0 {
+        return Err(fmt_err!(
+            InvalidType,
+            "parquet file pointer is null or size is zero"
+        ));
+    }
+
+    let parquet_meta_reader: &ParquetMetaReader = unsafe { &*parquet_meta_reader_ptr }.reader();
+    let file_data = unsafe { slice::from_raw_parts(parquet_file_ptr, parquet_file_size as usize) };
+    let ctx = unsafe { &mut *ctx };
+    let row_group_bufs = unsafe { &mut *row_group_bufs };
+    let col_pairs = if columns.is_null() {
+        &[]
     } else {
-        filtered_rows_size as usize
+        unsafe { slice::from_raw_parts(columns, column_count as usize) }
     };
-    decode_row_group_impl::<{ DecodeMode::FilterSkip as u8 }>(
-        env,
-        decoder,
+
+    crate::parquet_read::parquet_meta_decode::decode_row_group(
         ctx,
         row_group_bufs,
-        column_offset as usize,
-        columns,
-        column_count,
-        row_group_index,
-        row_group_lo,
-        row_group_hi,
-        filtered_rows_ptr,
-        filtered_rows_count,
-    );
+        file_data,
+        parquet_meta_reader,
+        col_pairs,
+        row_group_index as usize,
+        row_group_lo as usize,
+        row_group_hi as usize,
+    )
 }
 
+/// Find the row group containing the given timestamp using `_pm` metadata.
+///
+/// Reads min/max timestamp stats directly from the `_pm` file's column chunks.
+/// Falls back to actual decode if stats are unavailable (should not happen for
+/// QDB-written partitions).
 #[no_mangle]
-pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionDecoder_decodeRowGroupWithRowFilterFillNulls(
+pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_ParquetPartitionDecoder_findRowGroupByTimestamp(
     mut env: JNIEnv,
     _class: JClass,
-    decoder: *const ParquetDecoder,
-    ctx: *mut DecodeContext,
-    row_group_bufs: *mut RowGroupBuffers,
-    column_offset: u32,
-    columns: *const (ParquetColumnIndex, ColumnType),
-    column_count: u32,
-    row_group_index: u32,
-    row_group_lo: u32,
-    row_group_hi: u32,
-    filtered_rows_ptr: *const i64,
-    filtered_rows_size: i64,
-) {
-    let env = &mut env;
-    let filtered_rows_count = if filtered_rows_size < 0 {
-        0usize
-    } else {
-        filtered_rows_size as usize
-    };
-    decode_row_group_impl::<{ DecodeMode::FilterFillNulls as u8 }>(
-        env,
-        decoder,
-        ctx,
-        row_group_bufs,
-        column_offset as usize,
-        columns,
-        column_count,
-        row_group_index,
-        row_group_lo,
-        row_group_hi,
-        filtered_rows_ptr,
-        filtered_rows_count,
-    );
-}
-
-#[no_mangle]
-#[allow(clippy::not_unsafe_ptr_arg_deref)]
-pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionDecoder_rowGroupMinTimestamp(
-    mut env: JNIEnv,
-    _class: JClass,
-    decoder: *const ParquetDecoder,
-    file_ptr: *const u8,
-    file_size: u64,
-    row_group_index: u32,
-    timestamp_column_index: u32,
+    allocator: *const QdbAllocator,
+    parquet_file_ptr: *const u8,
+    parquet_file_size: u64,
+    parquet_meta_reader_ptr: *const JniParquetMetaReader,
+    timestamp: i64,
+    row_lo: i64,
+    row_hi: i64,
+    timestamp_column_index: i32,
 ) -> i64 {
     let env = &mut env;
-    let res = (|| -> ParquetResult<i64> {
-        if decoder.is_null() {
-            return Err(fmt_err!(InvalidLayout, "decoder pointer is null"));
-        }
-        if file_ptr.is_null() {
-            return Err(fmt_err!(InvalidLayout, "file pointer is null"));
-        }
-
-        let decoder = unsafe { &*decoder };
-        decoder.row_group_min_timestamp(
-            file_ptr,
-            file_size,
-            row_group_index,
-            timestamp_column_index,
-        )
-    })();
-
+    let res = parquet_meta_find_row_group_by_timestamp_impl(
+        allocator,
+        parquet_file_ptr,
+        parquet_file_size,
+        parquet_meta_reader_ptr,
+        timestamp,
+        row_lo as usize,
+        row_hi as usize,
+        timestamp_column_index as usize,
+    );
     match res {
-        Ok(ts) => ts,
+        Ok(val) => val as i64,
         Err(mut err) => {
-            err.add_context(format!(
-                "could not get min timestamp for row group {row_group_index}"
-            ));
-            err.add_context("error in PartitionDecoder.rowGroupMinTimestamp");
+            err.add_context("error in ParquetMetaPartitionDecoder.findRowGroupByTimestamp");
             err.into_cairo_exception().throw(env)
         }
     }
 }
 
-#[no_mangle]
-#[allow(clippy::not_unsafe_ptr_arg_deref)]
-pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionDecoder_rowGroupMaxTimestamp(
-    mut env: JNIEnv,
-    _class: JClass,
-    decoder: *const ParquetDecoder,
-    file_ptr: *const u8,
-    file_size: u64,
-    row_group_index: u32,
-    timestamp_column_index: u32,
-) -> i64 {
-    let env = &mut env;
-    let res = (|| -> ParquetResult<i64> {
-        if decoder.is_null() {
-            return Err(fmt_err!(InvalidLayout, "decoder pointer is null"));
-        }
-        if file_ptr.is_null() {
-            return Err(fmt_err!(InvalidLayout, "file pointer is null"));
-        }
-
-        let decoder = unsafe { &*decoder };
-        decoder.row_group_max_timestamp(
-            file_ptr,
-            file_size,
-            row_group_index,
-            timestamp_column_index,
-        )
-    })();
-
-    match res {
-        Ok(ts) => ts,
-        Err(mut err) => {
-            err.add_context(format!(
-                "could not get max timestamp for row group {row_group_index}"
-            ));
-            err.add_context("error in PartitionDecoder.rowGroupMaxTimestamp");
-            err.into_cairo_exception().throw(env)
-        }
-    }
-}
-
-// See PartitionDecoder for more info on the returned value format.
-#[no_mangle]
-#[allow(clippy::not_unsafe_ptr_arg_deref)]
-pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionDecoder_findRowGroupByTimestamp(
-    mut env: JNIEnv,
-    _class: JClass,
-    decoder: *const ParquetDecoder,
-    file_ptr: *const u8,
-    file_size: u64,
+#[allow(clippy::too_many_arguments)]
+fn parquet_meta_find_row_group_by_timestamp_impl(
+    allocator: *const QdbAllocator,
+    parquet_file_ptr: *const u8,
+    parquet_file_size: u64,
+    parquet_meta_reader_ptr: *const JniParquetMetaReader,
     timestamp: i64,
     row_lo: usize,
     row_hi: usize,
-    timestamp_index: u32,
-) -> u64 {
-    let env = &mut env;
-    let res = (|| -> ParquetResult<u64> {
-        if decoder.is_null() {
-            return Err(fmt_err!(InvalidLayout, "decoder pointer is null"));
-        }
-        if file_ptr.is_null() {
-            return Err(fmt_err!(InvalidLayout, "file pointer is null"));
-        }
+    ts_col: usize,
+) -> ParquetResult<u64> {
+    if parquet_meta_reader_ptr.is_null() {
+        return Err(fmt_err!(
+            InvalidType,
+            "JniParquetMetaReader pointer is null"
+        ));
+    }
 
-        let decoder = unsafe { &*decoder };
-        decoder.find_row_group_by_timestamp(
-            file_ptr,
-            file_size,
-            timestamp,
+    if parquet_file_ptr.is_null() || parquet_file_size == 0 {
+        return Err(fmt_err!(
+            InvalidType,
+            "parquet file pointer is null or size is zero"
+        ));
+    }
+
+    let parquet_meta_reader: &ParquetMetaReader = unsafe { &*parquet_meta_reader_ptr }.reader();
+
+    let decode_ts = |rg_idx, ts_col, row_lo, row_hi| {
+        decode_single_ts_from_pm(
+            allocator,
+            parquet_file_ptr,
+            parquet_file_size,
+            parquet_meta_reader,
+            rg_idx,
+            ts_col,
             row_lo,
             row_hi,
-            timestamp_index,
         )
-    })();
+    };
 
-    match res {
-        Ok(row_group_index) => row_group_index,
-        Err(mut err) => {
-            err.add_context(format!("could not find row group by timestamp {timestamp}"));
-            err.add_context("error in PartitionDecoder.findRowGroupByTimestamp");
-            err.into_cairo_exception().throw(env)
+    crate::parquet_read::parquet_meta_decode::find_row_group_by_timestamp(
+        parquet_meta_reader,
+        timestamp,
+        row_lo,
+        row_hi,
+        ts_col,
+        decode_ts,
+    )
+}
+
+/// Decode a single timestamp value from the parquet file using `_pm` metadata.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn decode_single_ts_from_pm(
+    allocator: *const QdbAllocator,
+    parquet_file_ptr: *const u8,
+    parquet_file_size: u64,
+    parquet_meta_reader: &ParquetMetaReader,
+    rg_idx: usize,
+    ts_col: usize,
+    row_lo: usize,
+    row_hi: usize,
+) -> ParquetResult<i64> {
+    use crate::parquet_read::decode_column::{
+        decode_single_timestamp_value, reconstruct_descriptor,
+    };
+
+    let file_data = unsafe { slice::from_raw_parts(parquet_file_ptr, parquet_file_size as usize) };
+    let col_desc = parquet_meta_reader.column_descriptor(ts_col)?;
+    let rg_block = parquet_meta_reader.row_group(rg_idx)?;
+    let chunk = rg_block.column_chunk(ts_col)?;
+
+    let compression: parquet2::compression::Compression = chunk
+        .codec()
+        .map_err(|e| fmt_err!(InvalidType, "invalid codec: {}", e))?
+        .into();
+    let flags = crate::parquet_metadata::types::ColumnFlags(col_desc.flags);
+    let field_rep = flags
+        .repetition()
+        .unwrap_or(crate::parquet_metadata::types::FieldRepetition::Required);
+    let column_name = parquet_meta_reader.column_name(ts_col).unwrap_or("<ts>");
+    let descriptor = reconstruct_descriptor(
+        col_desc.physical_type,
+        col_desc.fixed_byte_len,
+        col_desc.max_rep_level,
+        col_desc.max_def_level,
+        column_name,
+        field_rep.into(),
+    );
+
+    decode_single_timestamp_value(
+        allocator,
+        file_data,
+        chunk.byte_range_start as usize,
+        chunk.total_compressed as usize,
+        compression,
+        descriptor,
+        chunk.num_values as i64,
+        column_name,
+        rg_idx,
+        row_lo,
+        row_hi,
+    )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::allocator::TestAllocatorState;
+    use crate::parquet::tests::ColumnTypeTagExt;
+    use crate::parquet_metadata::column_chunk::ColumnChunkRaw;
+    use crate::parquet_metadata::reader::ParquetMetaReader;
+    use crate::parquet_metadata::row_group::RowGroupBlockBuilder;
+    use crate::parquet_metadata::types::{Codec, ColumnFlags, FieldRepetition};
+    use crate::parquet_metadata::writer::ParquetMetaWriter;
+    use crate::parquet_write::file::ParquetWriter;
+    use crate::parquet_write::schema::{Column, ParquetEncodingConfig, Partition};
+    use parquet2::compression::CompressionOptions;
+    use parquet2::read::read_metadata_with_size;
+    use parquet2::write::Version;
+    use qdb_core::col_type::ColumnTypeTag;
+    use std::io::Cursor;
+
+    /// Parquet physical type ordinal for Int64 in the `_pm` format.
+    const PHYS_INT64: u8 = 2;
+
+    /// Writes a parquet file with a single i64 "ts" column and `with_statistics(false)`.
+    /// The column is marked `designated_timestamp: false` so the override at
+    /// `parquet_write/file.rs:419-420,540-541` does not force-enable statistics —
+    /// the resulting column chunk carries no min/max in the parquet footer.
+    ///
+    /// The matching `_pm` is then built manually via `ParquetMetaWriter` so its
+    /// column descriptor correctly declares the ts column as the designated
+    /// timestamp at index 0, while each row group's column chunk points at the
+    /// real byte range from the parquet metadata with `stat_flags = 0`. This is
+    /// precisely the state `decode_single_ts_from_pm` is meant to handle.
+    ///
+    /// Returns `(parquet_bytes, parquet_meta_bytes, parquet_meta_file_size)`.
+    fn build_parquet_and_parquet_meta_without_ts_stats(
+        num_row_groups: usize,
+        rows_per_group: usize,
+    ) -> (Vec<u8>, Vec<u8>, u64) {
+        let total_rows = num_row_groups * rows_per_group;
+        let ts_values: Vec<i64> = (0..total_rows as i64).collect();
+        let data_bytes: &[u8] = unsafe {
+            std::slice::from_raw_parts(ts_values.as_ptr() as *const u8, ts_values.len() * 8)
+        };
+        let data_static: &'static [u8] = Box::leak(data_bytes.to_vec().into_boxed_slice());
+
+        let col = Column {
+            id: 0,
+            name: "ts",
+            data_type: ColumnTypeTag::Timestamp.into_type(),
+            row_count: total_rows,
+            primary_data: data_static,
+            secondary_data: &[],
+            symbol_offsets: &[],
+            column_top: 0,
+            designated_timestamp: false,
+            not_null_hint: false,
+            designated_timestamp_ascending: true,
+            parquet_encoding_config: ParquetEncodingConfig::from_raw(0),
+        };
+        let partition = Partition { table: "test".to_string(), columns: vec![col] };
+
+        let mut parquet_buf = Vec::new();
+        ParquetWriter::new(&mut parquet_buf)
+            .with_statistics(false)
+            .with_compression(CompressionOptions::Uncompressed)
+            .with_version(Version::V1)
+            .with_row_group_size(Some(rows_per_group))
+            .finish(partition)
+            .unwrap();
+
+        let mut cursor = Cursor::new(&parquet_buf);
+        let metadata = read_metadata_with_size(&mut cursor, parquet_buf.len() as u64).unwrap();
+        assert_eq!(metadata.row_groups.len(), num_row_groups);
+
+        let col_desc = &metadata.schema_descr.columns()[0];
+        let max_rep_level: u8 = col_desc.descriptor.max_rep_level.try_into().unwrap();
+        let max_def_level: u8 = col_desc.descriptor.max_def_level.try_into().unwrap();
+        let repetition = FieldRepetition::from(col_desc.base_type.get_field_info().repetition);
+
+        let mut writer = ParquetMetaWriter::new();
+        writer
+            .designated_timestamp(0)
+            .add_column(
+                "ts",
+                0,
+                ColumnTypeTag::Timestamp as i32,
+                ColumnFlags::new().with_repetition(repetition),
+                0,
+                PHYS_INT64,
+                max_rep_level,
+                max_def_level,
+            )
+            .parquet_footer(0, 0);
+
+        for rg_idx in 0..num_row_groups {
+            let rg_meta = &metadata.row_groups[rg_idx];
+            let col_chunk = &rg_meta.columns()[0];
+            let (byte_range_start, total_compressed) = col_chunk.byte_range();
+            let num_values = col_chunk.num_values().max(0) as u64;
+
+            let mut chunk = ColumnChunkRaw::zeroed();
+            chunk.codec = Codec::Uncompressed as u8;
+            chunk.num_values = num_values;
+            chunk.byte_range_start = byte_range_start;
+            chunk.total_compressed = total_compressed;
+            // stat_flags intentionally left at 0 so the fallback decoder is used.
+
+            let mut rg = RowGroupBlockBuilder::new(1);
+            rg.set_num_rows(rows_per_group as u64);
+            rg.set_column_chunk(0, chunk).unwrap();
+            writer.add_row_group(rg);
         }
+
+        let (parquet_meta_bytes, parquet_meta_file_size) = writer.finish().unwrap();
+        (parquet_buf, parquet_meta_bytes, parquet_meta_file_size)
     }
-}
 
-#[no_mangle]
-pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionDecoder_columnCountOffset(
-    _env: JNIEnv,
-    _class: JClass,
-) -> usize {
-    offset_of!(ParquetDecoder, col_count)
-}
+    /// Decode a timestamp via `decode_single_ts_from_pm`. Builds the allocator
+    /// pointer the same way production callers do through the JNI boundary.
+    fn decode_ts(
+        parquet_bytes: &[u8],
+        reader: &ParquetMetaReader,
+        rg_idx: usize,
+        ts_col: usize,
+        row_lo: usize,
+        row_hi: usize,
+    ) -> ParquetResult<i64> {
+        let tas = TestAllocatorState::new();
+        let allocator = tas.allocator();
+        let allocator_ptr: *const QdbAllocator = &allocator;
+        decode_single_ts_from_pm(
+            allocator_ptr,
+            parquet_bytes.as_ptr(),
+            parquet_bytes.len() as u64,
+            reader,
+            rg_idx,
+            ts_col,
+            row_lo,
+            row_hi,
+        )
+    }
 
-#[no_mangle]
-pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionDecoder_rowCountOffset(
-    _env: JNIEnv,
-    _class: JClass,
-) -> usize {
-    offset_of!(ParquetDecoder, row_count)
-}
+    #[test]
+    fn decode_first_and_last_timestamps_in_row_group_0() {
+        let (parquet_bytes, parquet_meta_bytes, parquet_meta_file_size) =
+            build_parquet_and_parquet_meta_without_ts_stats(1, 100);
+        let reader =
+            ParquetMetaReader::from_file_size(&parquet_meta_bytes, parquet_meta_file_size).unwrap();
+        assert_eq!(decode_ts(&parquet_bytes, &reader, 0, 0, 0, 1).unwrap(), 0);
+        assert_eq!(
+            decode_ts(&parquet_bytes, &reader, 0, 0, 99, 100).unwrap(),
+            99
+        );
+    }
 
-#[no_mangle]
-pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionDecoder_rowGroupCountOffset(
-    _env: JNIEnv,
-    _class: JClass,
-) -> usize {
-    offset_of!(ParquetDecoder, row_group_count)
-}
+    #[test]
+    fn decode_crosses_row_group_boundary() {
+        let (parquet_bytes, parquet_meta_bytes, parquet_meta_file_size) =
+            build_parquet_and_parquet_meta_without_ts_stats(2, 50);
+        let reader =
+            ParquetMetaReader::from_file_size(&parquet_meta_bytes, parquet_meta_file_size).unwrap();
+        assert_eq!(decode_ts(&parquet_bytes, &reader, 1, 0, 0, 1).unwrap(), 50);
+    }
 
-#[no_mangle]
-pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionDecoder_rowGroupSizesPtrOffset(
-    _env: JNIEnv,
-    _class: JClass,
-) -> usize {
-    offset_of!(ParquetDecoder, row_group_sizes_ptr)
-}
-
-#[no_mangle]
-pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionDecoder_timestampIndexOffset(
-    _env: JNIEnv,
-    _class: JClass,
-) -> usize {
-    offset_of!(ParquetDecoder, timestamp_index)
-}
-
-#[no_mangle]
-pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionDecoder_columnsPtrOffset(
-    _env: JNIEnv,
-    _class: JClass,
-) -> usize {
-    offset_of!(ParquetDecoder, columns_ptr)
-}
-
-#[no_mangle]
-pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionDecoder_columnRecordTypeOffset(
-    _env: JNIEnv,
-    _class: JClass,
-) -> usize {
-    offset_of!(ColumnMeta, column_type)
-}
-
-#[no_mangle]
-pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionDecoder_columnRecordNamePtrOffset(
-    _env: JNIEnv,
-    _class: JClass,
-) -> usize {
-    offset_of!(ColumnMeta, name_ptr)
-}
-
-#[no_mangle]
-pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionDecoder_columnRecordNameSizeOffset(
-    _env: JNIEnv,
-    _class: JClass,
-) -> usize {
-    offset_of!(ColumnMeta, name_size)
-}
-
-#[no_mangle]
-pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionDecoder_columnIdsOffset(
-    _env: JNIEnv,
-    _class: JClass,
-) -> usize {
-    offset_of!(ColumnMeta, id)
-}
-
-#[no_mangle]
-pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionDecoder_columnRecordSize(
-    _env: JNIEnv,
-    _class: JClass,
-) -> usize {
-    size_of::<ColumnMeta>()
-}
-
-#[no_mangle]
-pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionDecoder_unusedBytesOffset(
-    _env: JNIEnv,
-    _class: JClass,
-) -> usize {
-    offset_of!(ParquetDecoder, unused_bytes)
+    #[test]
+    fn out_of_range_indices_error() {
+        let (parquet_bytes, parquet_meta_bytes, parquet_meta_file_size) =
+            build_parquet_and_parquet_meta_without_ts_stats(1, 10);
+        let reader =
+            ParquetMetaReader::from_file_size(&parquet_meta_bytes, parquet_meta_file_size).unwrap();
+        assert!(decode_ts(&parquet_bytes, &reader, 1, 0, 0, 1).is_err());
+        assert!(decode_ts(&parquet_bytes, &reader, 0, 99, 0, 1).is_err());
+    }
 }
