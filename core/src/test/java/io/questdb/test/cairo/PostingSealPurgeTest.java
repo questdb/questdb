@@ -268,73 +268,18 @@ public class PostingSealPurgeTest extends AbstractCairoTest {
         });
     }
 
-    @Test
-    public void testPostLiveOrphanDeletedInline() throws Exception {
-        assertMemoryLeak(() -> {
-            try (Path path = new Path().of(configuration.getDbRoot())) {
-                String name = "ps_purge_post_live";
-                int plen = path.size();
-                FilesFacade ff = configuration.getFilesFacade();
-
-                long liveSealTxn;
-                try (PostingIndexWriter writer = new PostingIndexWriter(
-                        configuration, path, name, COLUMN_NAME_TXN_NONE)) {
-                    for (int i = 0; i < 8; i++) {
-                        writer.add(i % BATCH_KEYS, i);
-                    }
-                    writer.setMaxValue(7);
-                    writer.commit();
-                    writer.seal();
-                    liveSealTxn = PostingIndexUtils.readSealTxnFromKeyFile(ff,
-                            PostingIndexUtils.keyFileName(path.trimTo(plen), name, COLUMN_NAME_TXN_NONE));
-                }
-                assertTrue("seal must produce a positive sealTxn", liveSealTxn > 0);
-
-                assertTrue("live .pv must exist after seal",
-                        ff.exists(PostingIndexUtils.valueFileName(
-                                path.trimTo(plen), name, COLUMN_NAME_TXN_NONE, liveSealTxn)));
-
-                final long orphanSealTxn = liveSealTxn + 1;
-                touchFile(ff, PostingIndexUtils.valueFileName(
-                        path.trimTo(plen), name, COLUMN_NAME_TXN_NONE, orphanSealTxn));
-                touchFile(ff, PostingIndexUtils.coverDataFileName(
-                        path.trimTo(plen), name, 0,
-                        COLUMN_NAME_TXN_NONE, COLUMN_NAME_TXN_NONE, orphanSealTxn));
-                assertTrue("fabricated post-live .pv must exist before reopen",
-                        ff.exists(PostingIndexUtils.valueFileName(
-                                path.trimTo(plen), name, COLUMN_NAME_TXN_NONE, orphanSealTxn)));
-                assertTrue("fabricated post-live .pc must exist before reopen",
-                        ff.exists(PostingIndexUtils.coverDataFileName(
-                                path.trimTo(plen), name, 0,
-                                COLUMN_NAME_TXN_NONE, COLUMN_NAME_TXN_NONE, orphanSealTxn)));
-
-                try (PostingIndexWriter reopen = new PostingIndexWriter(configuration)) {
-                    reopen.of(path.trimTo(plen), name, COLUMN_NAME_TXN_NONE, false);
-                    assertTrue("live .pv must survive orphan scan", ff.exists(PostingIndexUtils.valueFileName(
-                            path.trimTo(plen), name, COLUMN_NAME_TXN_NONE, liveSealTxn)));
-                    assertFalse("post-live .pv must be unlinked inline", ff.exists(PostingIndexUtils.valueFileName(
-                            path.trimTo(plen), name, COLUMN_NAME_TXN_NONE, orphanSealTxn)));
-                    assertFalse("post-live .pc must be unlinked inline", ff.exists(PostingIndexUtils.coverDataFileName(
-                            path.trimTo(plen), name, 0, COLUMN_NAME_TXN_NONE, COLUMN_NAME_TXN_NONE, orphanSealTxn)));
-
-                    for (int i = 8; i < 16; i++) {
-                        reopen.add(i % BATCH_KEYS, i);
-                    }
-                    reopen.setMaxValue(15);
-                    reopen.commit();
-                    reopen.seal();
-
-                    long newSealTxn = PostingIndexUtils.readSealTxnFromKeyFile(ff,
-                            PostingIndexUtils.keyFileName(path.trimTo(plen), name, COLUMN_NAME_TXN_NONE));
-                    assertEquals("next seal must reuse the post-live sealTxn slot",
-                            orphanSealTxn, newSealTxn);
-                    assertTrue("new sealed .pv must exist at the reused sealTxn",
-                            ff.exists(PostingIndexUtils.valueFileName(
-                                    path.trimTo(plen), name, COLUMN_NAME_TXN_NONE, newSealTxn)));
-                }
-            }
-        });
-    }
+    // testPostLiveOrphanDeletedInline relied on the v1
+    // logOrphanSealedFiles directory scan that ran on writer-open. v2
+    // routes orphan cleanup through the chain: any abandoned chain entry
+    // is dropped by recoveryDropAbandoned and queued for purge with a
+    // [0, MAX) window, but a fabricated standalone .pv with no
+    // corresponding chain entry is never reachable through the chain
+    // and so is intentionally NOT touched at writer-open. Such files
+    // can only arise from manual filesystem tampering or a snapshot
+    // restore artifact and are out of scope for the in-process recovery
+    // path. Recovery for genuinely abandoned (chain-tracked) entries is
+    // covered by PostingIndexOracleTest's recovery tests and
+    // PostingIndexChainWriterTest's testRecoveryDropAbandoned* set.
 
     @Test
     public void testPurgeRemovesCoverFiles() throws Exception {

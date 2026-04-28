@@ -169,35 +169,44 @@ public final class PostingIndexUtils {
     public static final byte ENCODING_ADAPTIVE = 0;
     public static final byte ENCODING_DELTA = 1;
     public static final byte ENCODING_EF = 2;
-    public static final int FORMAT_VERSION = 1;
     public static final int GEN_DIR_ENTRY_SIZE = 28;
     public static final int GEN_DIR_OFFSET_FILE_OFFSET = 0;
     public static final int GEN_DIR_OFFSET_KEY_COUNT = 16;
     public static final int GEN_DIR_OFFSET_MAX_KEY = 24;
     public static final int GEN_DIR_OFFSET_MIN_KEY = 20;
     public static final int GEN_DIR_OFFSET_SIZE = 8;
-    public static final int KEY_FILE_RESERVED = 8192; // was 64
+    public static final int KEY_FILE_RESERVED = 8192;
     public static final int LONG_OFFSETS_FLAG = 0x4000_0000;
     public static final int MAX_BLOCK_COUNT = 1_000_000; // corruption guard: 64M values at BLOCK_CAPACITY=64
-    public static final int MAX_GEN_COUNT = 143; // (4088-64)/28 = 143 (entry 142 ends at 4068 <= 4088)
+    // Maximum number of generations a single chain entry can carry. The
+    // bound comes from the per-entry gen-dir region, which lives in the
+    // remaining bytes of an entry's 4KB seqlock page (4088 - 64 header
+    // bytes) divided by GEN_DIR_ENTRY_SIZE = 28.
+    public static final int MAX_GEN_COUNT = 143;
     public static final int PACKED_BATCH_SIZE = BLOCK_CAPACITY;
     public static final long PAGE_A_OFFSET = 0;
     public static final long PAGE_B_OFFSET = 4096;
+    public static final int PAGE_SIZE = 4096;
+    public static final int PC_HEADER_SIZE = MAX_GEN_COUNT * Long.BYTES; // 1144
+    // Vestigial v1 page-offset constants. Production code no longer reads
+    // these — every value listed here either has a v2 equivalent in the
+    // V2_HEADER_OFFSET_* / V2_ENTRY_OFFSET_* set or is meaningless under
+    // v2's chain layout. They survive only as raw byte offsets used by a
+    // handful of legacy stress / concurrency tests that probe specific
+    // bytes of the .pk file to simulate corruption (the offsets happen
+    // to match v2 header bytes for the seqlock fields, and bytes for
+    // the v1-only fields are arbitrary "some byte in the header" probes
+    // in tests that no longer assert v1 semantics).
     public static final int PAGE_OFFSET_BLOCK_CAPACITY = 16;
     public static final int PAGE_OFFSET_FORMAT_VERSION = 36;
     public static final int PAGE_OFFSET_GEN_COUNT = 32;
     public static final int PAGE_OFFSET_GEN_DIR = 64;
     public static final int PAGE_OFFSET_KEY_COUNT = 20;
     public static final int PAGE_OFFSET_MAX_VALUE = 24;
-    // Per-page offsets
-    public static final int PAGE_OFFSET_SEAL_TXN = 40; // 8 bytes: sealTxn — the sealed-version suffix used for .pv and .pc<N> filenames
+    public static final int PAGE_OFFSET_SEAL_TXN = 40;
     public static final int PAGE_OFFSET_SEQUENCE_END = 4088;
     public static final int PAGE_OFFSET_SEQUENCE_START = 0;
     public static final int PAGE_OFFSET_VALUE_MEM_SIZE = 8;
-    // Double-buffered 4KB metadata pages (v2 format)
-    public static final int PAGE_SIZE = 4096;
-    public static final int PC_HEADER_SIZE = MAX_GEN_COUNT * Long.BYTES; // 1144
-    public static final long SEAL_TXN_TENTATIVE = -1L;
     // v2 chain layout — append-only chain of immutable seal entries.
     // The two header pages (A/B) at offsets 0 and 4096 are seqlock-protected
     // and contain only the chain head pointer and counters. Each entry lives
@@ -971,16 +980,6 @@ public final class PostingIndexUtils {
     }
 
     /**
-     * Offset of generation directory entry within a metadata page.
-     *
-     * @param pageBase the base offset of the page (PAGE_A_OFFSET or PAGE_B_OFFSET)
-     * @param genIndex the generation index
-     */
-    public static long getGenDirOffset(long pageBase, int genIndex) {
-        return pageBase + PAGE_OFFSET_GEN_DIR + (long) genIndex * GEN_DIR_ENTRY_SIZE;
-    }
-
-    /**
      * Builds the full path to the key file (.pk).
      * <p>
      * Filename format: <code>&lt;name&gt;.pk.&lt;postingColumnNameTxn&gt;</code>.
@@ -1007,19 +1006,21 @@ public final class PostingIndexUtils {
     }
 
     /**
-     * Same as {@link #readSealTxnFromKeyFile} but operates on an already-open file
-     * descriptor. Useful when the caller has just opened the .pk file for write
-     * and would otherwise pay an extra openRO/close pair.
+     * Walks the v2 chain via fd-based reads and returns the head entry's
+     * {@code SEAL_TXN}. Useful when the caller has just opened the .pk file
+     * (e.g. snapshot restore, seal-purge job) and would otherwise pay an
+     * extra openRO/close pair.
      * <p>
-     * Reads the four seqlock fields, picks the consistent page, reads SEAL_TXN,
-     * then re-reads SEQUENCE_START / SEQUENCE_END on the chosen page to confirm
-     * a writer did not begin a new generation between the seqlock check and the
-     * SEAL_TXN read. The two-page seqlock guarantees one of A or B is always
-     * stable across a single write, so a consistent snapshot is normally found
-     * within one or two iterations. Mirrors the in-process post-validation in
-     * {@code AbstractPostingIndexReader#readIndexMetadataFromBestPage}.
+     * Reads both header pages under the seqlock, picks the consistent page,
+     * extracts the head entry's offset, then reads SEAL_TXN from the entry
+     * header. Re-reads the chosen page's seqlock pair after the entry read
+     * to detect a concurrent publish that would have invalidated the
+     * snapshot. The two-page seqlock guarantees one of A or B is always
+     * stable across a single write, so a consistent snapshot is normally
+     * found within one or two iterations.
      * <p>
-     * Returns -1 if the file is too short, both metadata pages fail seq-lock
+     * Returns {@code -1} if the file is too short, the format version is
+     * not v2, the chain is empty, both header pages fail seqlock
      * validation, or every retry observes a torn read.
      */
     public static long readSealTxnFromKeyFd(FilesFacade ff, long keyFd) {
@@ -1028,14 +1029,19 @@ public final class PostingIndexUtils {
             return -1;
         }
         for (int attempt = 0; attempt < SEAL_TXN_READ_ATTEMPTS; attempt++) {
-            long seqA = ff.readNonNegativeLong(keyFd, PAGE_A_OFFSET + PAGE_OFFSET_SEQUENCE_START);
-            long seqEndA = ff.readNonNegativeLong(keyFd, PAGE_A_OFFSET + PAGE_OFFSET_SEQUENCE_END);
-            long seqB = ff.readNonNegativeLong(keyFd, PAGE_B_OFFSET + PAGE_OFFSET_SEQUENCE_START);
-            long seqEndB = ff.readNonNegativeLong(keyFd, PAGE_B_OFFSET + PAGE_OFFSET_SEQUENCE_END);
+            long seqA = ff.readNonNegativeLong(keyFd, PAGE_A_OFFSET + V2_HEADER_OFFSET_SEQUENCE_START);
+            long seqEndA = ff.readNonNegativeLong(keyFd, PAGE_A_OFFSET + V2_HEADER_OFFSET_SEQUENCE_END);
+            long seqB = ff.readNonNegativeLong(keyFd, PAGE_B_OFFSET + V2_HEADER_OFFSET_SEQUENCE_START);
+            long seqEndB = ff.readNonNegativeLong(keyFd, PAGE_B_OFFSET + V2_HEADER_OFFSET_SEQUENCE_END);
 
+            // Pages are stable when seqStart == seqEnd, even, and non-zero
+            // (zero indicates the inactive page that has never been
+            // published). Pick the higher seq among the stable ones.
+            boolean aStable = seqA == seqEndA && (seqA & 1L) == 0L && seqA != 0L;
+            boolean bStable = seqB == seqEndB && (seqB & 1L) == 0L && seqB != 0L;
             long pageOffset;
             long expectedSeq;
-            if (seqA == seqEndA && seqB == seqEndB) {
+            if (aStable && bStable) {
                 if (seqA >= seqB) {
                     pageOffset = PAGE_A_OFFSET;
                     expectedSeq = seqA;
@@ -1043,25 +1049,45 @@ public final class PostingIndexUtils {
                     pageOffset = PAGE_B_OFFSET;
                     expectedSeq = seqB;
                 }
-            } else if (seqA == seqEndA) {
+            } else if (aStable) {
                 pageOffset = PAGE_A_OFFSET;
                 expectedSeq = seqA;
-            } else if (seqB == seqEndB) {
+            } else if (bStable) {
                 pageOffset = PAGE_B_OFFSET;
                 expectedSeq = seqB;
             } else {
-                // Both pages mid-write — uncommon; retry.
                 continue;
             }
 
-            long sealTxn = ff.readNonNegativeLong(keyFd, pageOffset + PAGE_OFFSET_SEAL_TXN);
+            // Verify format and head-entry pointer, then read the head
+            // entry's sealTxn. ff.readNonNegativeLong returns -1 on
+            // negative or unreadable values, so V2_NO_HEAD (-1) and any
+            // I/O error fold into a single sentinel here.
+            long formatVersion = ff.readNonNegativeLong(keyFd, pageOffset + V2_HEADER_OFFSET_FORMAT_VERSION);
+            if (formatVersion != V2_FORMAT_VERSION) {
+                return -1;
+            }
+            long headEntryOffset = ff.readNonNegativeLong(keyFd, pageOffset + V2_HEADER_OFFSET_HEAD_ENTRY_OFFSET);
+            long regionBase = ff.readNonNegativeLong(keyFd, pageOffset + V2_HEADER_OFFSET_REGION_BASE);
+            long regionLimit = ff.readNonNegativeLong(keyFd, pageOffset + V2_HEADER_OFFSET_REGION_LIMIT);
 
-            // Post-check: re-read seqStart/seqEnd on the chosen page. If
-            // either differs from the pre-read seq, the writer started a
-            // new generation between the seqlock check and the SEAL_TXN
-            // read, so sealTxn may be from that uncommitted generation.
-            long postSeqStart = ff.readNonNegativeLong(keyFd, pageOffset + PAGE_OFFSET_SEQUENCE_START);
-            long postSeqEnd = ff.readNonNegativeLong(keyFd, pageOffset + PAGE_OFFSET_SEQUENCE_END);
+            // Empty chain or unreadable pointer.
+            if (headEntryOffset < 0 || headEntryOffset < regionBase || headEntryOffset >= regionLimit) {
+                long postSeqStart = ff.readNonNegativeLong(keyFd, pageOffset + V2_HEADER_OFFSET_SEQUENCE_START);
+                long postSeqEnd = ff.readNonNegativeLong(keyFd, pageOffset + V2_HEADER_OFFSET_SEQUENCE_END);
+                if (postSeqStart != expectedSeq || postSeqEnd != expectedSeq) {
+                    continue;
+                }
+                return -1;
+            }
+
+            long sealTxn = ff.readNonNegativeLong(keyFd, headEntryOffset + V2_ENTRY_OFFSET_SEAL_TXN);
+
+            // Post-check the seqlock pair on the chosen page. If a concurrent
+            // publish landed between our header read and our entry read,
+            // sealTxn may be from a state we never observed atomically.
+            long postSeqStart = ff.readNonNegativeLong(keyFd, pageOffset + V2_HEADER_OFFSET_SEQUENCE_START);
+            long postSeqEnd = ff.readNonNegativeLong(keyFd, pageOffset + V2_HEADER_OFFSET_SEQUENCE_END);
             if (postSeqStart == expectedSeq && postSeqEnd == expectedSeq) {
                 return sealTxn;
             }

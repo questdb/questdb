@@ -63,7 +63,9 @@ import java.util.Arrays;
 public abstract class AbstractPostingIndexReader implements IndexReader {
     private static final String INDEX_CORRUPT = "posting index is corrupt";
     private static final Log LOG = LogFactory.getLog(AbstractPostingIndexReader.class);
+    protected final PostingIndexChainEntry.Snapshot entryScratch = new PostingIndexChainEntry.Snapshot();
     protected final PostingGenLookup genLookup = new PostingGenLookup();
+    protected final PostingIndexChainHeader.Snapshot headerScratch = new PostingIndexChainHeader.Snapshot();
     protected final MemoryCMR infoMem = Vm.getCMRInstance();
     protected final MemoryMR keyMem = Vm.getCMRInstance();
     protected final Path sidecarBasePath = new Path();
@@ -78,16 +80,26 @@ public abstract class AbstractPostingIndexReader implements IndexReader {
     protected int genCount;
     protected int keyCount;
     protected RecordMetadata metadata;
-    private long activePageOffset;
+    // Last observed value of the chain header's GEN_COUNTER (last assigned
+    // sealTxn). Used by reloadConditionally to detect a chain advance without
+    // re-doing the full picker walk.
+    private long chainGenCounter = Long.MIN_VALUE;
     private MillisecondClock clock;
     private long columnTxn;
     private ColumnVersionReader columnVersionReader;
     private FilesFacade ff;
+    // Byte offset of the entry currently driving this reader's snapshot
+    // (V2_NO_HEAD if the chain is empty / no visible entry).
+    private long headEntryOffset = PostingIndexUtils.V2_NO_HEAD;
     private CharSequence indexColumnName;
     private int keyCountIncludingNulls;
-    private long keyFileSequence = -1;
     private long partitionTimestamp;
     private long partitionTxn;
+    // Strict-pin: the table txn that this reader is pinned at via the
+    // scoreboard. Picker selects the chain entry with the largest
+    // {@code txnAtSeal <= pinnedTableTxn}. Defaults to Long.MAX_VALUE so a
+    // reader opened without explicit plumbing falls back to "see the head".
+    private long pinnedTableTxn = Long.MAX_VALUE;
     private long spinLockTimeoutMs;
     private long valueFileTxn;
     private long valueMemSize = -1;
@@ -104,7 +116,9 @@ public abstract class AbstractPostingIndexReader implements IndexReader {
         keyCountIncludingNulls = 0;
         genCount = 0;
         valueMemSize = -1;
-        keyFileSequence = -1;
+        chainGenCounter = Long.MIN_VALUE;
+        headEntryOffset = PostingIndexUtils.V2_NO_HEAD;
+        pinnedTableTxn = Long.MAX_VALUE;
     }
 
     @Override
@@ -229,31 +243,31 @@ public abstract class AbstractPostingIndexReader implements IndexReader {
                         .put(", actual=").put(keyFileSize)
                         .put(", path=").put(keyFile).put(']');
             }
+            // Map the entire key file. v2 chain entries live past the
+            // reserved header region (>= KEY_FILE_RESERVED) so the mapping
+            // must cover the file's current length, not just the header.
             keyMem.of(
                     ff,
                     keyFile,
                     ff.getMapPageSize(),
-                    PostingIndexUtils.KEY_FILE_RESERVED,
+                    -1,
                     MemoryTag.MMAP_INDEX_READER,
                     CairoConfiguration.O_NONE,
                     -1
             );
 
-            readIndexMetadataFromBestPage(-1);
+            readIndexMetadataFromChain();
 
-            int version = keyMem.getInt(activePageOffset + PostingIndexUtils.PAGE_OFFSET_FORMAT_VERSION);
-            if (version != PostingIndexUtils.FORMAT_VERSION) {
-                throw CairoException.critical(0).put("Unsupported Posting index version: ").put(version);
+            if (headEntryOffset == PostingIndexUtils.V2_NO_HEAD || valueMemSize <= 0) {
+                // Chain is empty or not yet visible at our pin. Skip mapping
+                // the value file — readers will treat the partition as empty.
+                // A subsequent reloadConditionally() will lazily map .pv if
+                // the writer publishes an entry while we're open.
+                openSidecarFilesIfPresent(path.trimTo(pLen), columnName, columnNameTxn);
+                return;
             }
 
-            valueMem.of(
-                    ff,
-                    PostingIndexUtils.valueFileName(path.trimTo(pLen), columnName, columnNameTxn, valueFileTxn),
-                    valueMemSize,
-                    valueMemSize,
-                    MemoryTag.MMAP_INDEX_READER
-            );
-
+            mapValueMem(path.trimTo(pLen), columnName, columnNameTxn);
             openSidecarFilesIfPresent(path.trimTo(pLen), columnName, columnNameTxn);
         } catch (Throwable e) {
             close();
@@ -265,17 +279,62 @@ public abstract class AbstractPostingIndexReader implements IndexReader {
 
     @Override
     public void reloadConditionally() {
+        // Cheap pre-check: peek at the header's gen counter under seqlock. If
+        // the writer hasn't published since our last pick, nothing to do.
         Unsafe.loadFence();
-        long seqA = keyMem.getLong(PostingIndexUtils.PAGE_A_OFFSET + PostingIndexUtils.PAGE_OFFSET_SEQUENCE_START);
-        long seqB = keyMem.getLong(PostingIndexUtils.PAGE_B_OFFSET + PostingIndexUtils.PAGE_OFFSET_SEQUENCE_START);
-        if (Math.max(seqA, seqB) <= keyFileSequence) {
+        if (!PostingIndexChainHeader.readUnderSeqlock(keyMem, headerScratch)) {
+            // Header was unreadable this attempt; the next reload will try
+            // again. We keep the existing snapshot in the meantime.
             return;
         }
-        long prevSequence = keyFileSequence;
-        readIndexMetadataFromBestPage(valueFileTxn);
-        if (keyFileSequence != prevSequence && valueMemSize > 0) {
+        if (headerScratch.generationCounter <= chainGenCounter) {
+            return;
+        }
+
+        // The writer may have appended new chain entries past our current
+        // keyMem mapping. Extend the mapping to cover the whole file before
+        // re-picking. ff.length() is cheap on modern OSes.
+        if (ff != null) {
+            long fd = keyMem.getFd();
+            if (fd > 0) {
+                long fileLen = ff.length(fd);
+                if (fileLen > 0 && fileLen > keyMem.size()) {
+                    ((MemoryCMR) keyMem).extend(fileLen);
+                }
+            }
+        }
+
+        long prevValueMemSize = valueMemSize;
+        long prevValueFileTxn = valueFileTxn;
+        long prevHeadEntryOffset = headEntryOffset;
+        readIndexMetadataFromChain();
+        if (headEntryOffset == prevHeadEntryOffset || valueMemSize <= 0) {
+            return;
+        }
+        if (valueFileTxn != prevValueFileTxn || valueMem.size() == 0) {
+            // sealTxn advanced (new .pv.{N} filename) or .pv was never opened
+            // because the chain was previously empty. Close and reopen
+            // against the new path / size.
+            Misc.free(valueMem);
+            mapValueMem(sidecarBasePath, indexColumnName, columnTxn);
+        } else if (valueMemSize != prevValueMemSize) {
+            // Same .pv file, just grew or shrank in place.
             ((MemoryCMR) this.valueMem).changeSize(valueMemSize);
         }
+    }
+
+    /**
+     * Set the table-level txn that this reader is pinned at via the
+     * scoreboard. The picker selects the chain entry with the largest
+     * {@code txnAtSeal <= pinnedTableTxn}. Defaults to {@link Long#MAX_VALUE}
+     * for callers that haven't yet been wired to plumb {@code _txn}.
+     * <p>
+     * Must be called before {@link #of(...)} or before the next
+     * {@link #reloadConditionally()} for the new pin to take effect; the
+     * current snapshot is not re-picked retroactively.
+     */
+    public void setPinnedTableTxn(long pinnedTableTxn) {
+        this.pinnedTableTxn = pinnedTableTxn;
     }
 
     @TestOnly
@@ -523,6 +582,26 @@ public abstract class AbstractPostingIndexReader implements IndexReader {
         return newlyFound;
     }
 
+    /**
+     * Open the .pv value file using the picked entry's sealTxn-suffixed
+     * filename and the entry's recorded valueMemSize. The path is taken from
+     * {@code basePath} and trimmed back before returning.
+     */
+    private void mapValueMem(Path basePath, CharSequence columnName, long columnNameTxn) {
+        int pLen = basePath.size();
+        try {
+            valueMem.of(
+                    ff,
+                    PostingIndexUtils.valueFileName(basePath, columnName, columnNameTxn, valueFileTxn),
+                    valueMemSize,
+                    valueMemSize,
+                    MemoryTag.MMAP_INDEX_READER
+            );
+        } finally {
+            basePath.trimTo(pLen);
+        }
+    }
+
     private void openSidecarFilesIfPresent(
             Path path,
             CharSequence columnName,
@@ -581,103 +660,69 @@ public abstract class AbstractPostingIndexReader implements IndexReader {
         }
     }
 
-    private void readIndexMetadataFromBestPage(long pinnedSealTxn) {
+    /**
+     * Walk the v2 chain and pick the entry visible to this reader's pin,
+     * then promote its metadata into the active snapshot.
+     * <p>
+     * On chain-header unreadable failures we spin briefly and retry; the
+     * picker has its own bounded internal retry loop, so transient writer-
+     * mid-publish states are absorbed inside it.
+     */
+    private void readIndexMetadataFromChain() {
         final long deadline = clock.getTicks() + spinLockTimeoutMs;
-        long prevSeqStartA = Long.MIN_VALUE;
-        long prevSeqStartB = Long.MIN_VALUE;
         while (true) {
-            Unsafe.loadFence();
-            long memSize = keyMem.size();
-            if (ff != null) {
-                long fd = keyMem.getFd();
-                if (fd > 0) {
-                    long fileLen = ff.length(fd);
-                    if (fileLen >= 0 && fileLen < memSize) {
-                        memSize = fileLen;
-                    }
-                }
-            }
-            long seqStartA = memSize >= PostingIndexUtils.PAGE_SIZE ? keyMem.getLong(PostingIndexUtils.PAGE_A_OFFSET + PostingIndexUtils.PAGE_OFFSET_SEQUENCE_START) : 0;
-            long seqStartB = memSize >= PostingIndexUtils.KEY_FILE_RESERVED ? keyMem.getLong(PostingIndexUtils.PAGE_B_OFFSET + PostingIndexUtils.PAGE_OFFSET_SEQUENCE_START) : 0;
-
-            long bestPage = (seqStartB > seqStartA) ? PostingIndexUtils.PAGE_B_OFFSET : PostingIndexUtils.PAGE_A_OFFSET;
-            long otherPage = (bestPage == PostingIndexUtils.PAGE_A_OFFSET) ? PostingIndexUtils.PAGE_B_OFFSET : PostingIndexUtils.PAGE_A_OFFSET;
-
-            boolean anyPinMismatch = false;
-            for (int attempt = 0; attempt < 2; attempt++) {
-                long tryPage = (attempt == 0) ? bestPage : otherPage;
-                if (tryPage == PostingIndexUtils.PAGE_B_OFFSET && memSize < PostingIndexUtils.KEY_FILE_RESERVED) {
-                    continue;
-                }
-
-                long seqStart = keyMem.getLong(tryPage + PostingIndexUtils.PAGE_OFFSET_SEQUENCE_START);
-                Unsafe.loadFence();
-
-                long valueMemSize = keyMem.getLong(tryPage + PostingIndexUtils.PAGE_OFFSET_VALUE_MEM_SIZE);
-                int keyCount = keyMem.getInt(tryPage + PostingIndexUtils.PAGE_OFFSET_KEY_COUNT);
-                int genCount = keyMem.getInt(tryPage + PostingIndexUtils.PAGE_OFFSET_GEN_COUNT);
-                long sealTxn = keyMem.getLong(tryPage + PostingIndexUtils.PAGE_OFFSET_SEAL_TXN);
-
-                Unsafe.loadFence();
-                long seqEnd = keyMem.getLong(tryPage + PostingIndexUtils.PAGE_OFFSET_SEQUENCE_END);
-
-                if (seqStart == seqEnd && seqStart > 0
-                        && genCount >= 0 && genCount <= PostingIndexUtils.MAX_GEN_COUNT) {
-                    if (sealTxn < 0) {
-                        continue;
-                    }
-                    if (pinnedSealTxn >= 0 && sealTxn != pinnedSealTxn) {
-                        anyPinMismatch = true;
-                        continue;
-                    }
-                    // Fill the staging snapshot in genLookup. If the
-                    // post-check below fails, the active snapshot from the
-                    // previous successful read is still in place — a torn
-                    // read here cannot corrupt observable state.
-                    genLookup.snapshotMetadata(keyMem, genCount, tryPage);
-
-                    Unsafe.loadFence();
-                    if (keyMem.getLong(tryPage + PostingIndexUtils.PAGE_OFFSET_SEQUENCE_START) != seqStart) {
-                        break;
-                    }
-
-                    // Seqlock validated — promote the staging snapshot to
-                    // active before committing the dependent counters.
-                    genLookup.commitSnapshot();
-                    genLookup.invalidateCache();
-
-                    this.activePageOffset = tryPage;
-                    this.keyFileSequence = seqStart;
-                    this.valueMemSize = valueMemSize;
-                    this.keyCount = keyCount;
-                    this.genCount = genCount;
-                    this.valueFileTxn = sealTxn;
-                    this.keyCountIncludingNulls = columnTop > 0 ? keyCount + 1 : keyCount;
+            int result = PostingIndexChainPicker.pick(keyMem, pinnedTableTxn, headerScratch, entryScratch);
+            if (result == PostingIndexChainPicker.RESULT_HEADER_UNREADABLE) {
+                if (clock.getTicks() > deadline) {
+                    LOG.error().$(INDEX_CORRUPT).$(" [timeout=").$(spinLockTimeoutMs).$("ms]").$();
                     return;
                 }
+                Os.pause();
+                continue;
             }
 
-            // At least one page was seqlock-consistent but carried a newer
-            // sealTxn than our pin. sealTxn is monotonic, so retrying won't
-            // help — bail and let caller preserve the previous snapshot.
-            if (anyPinMismatch) {
+            // headerScratch.formatVersion is populated regardless of pick
+            // outcome (read under seqlock at the start of the picker).
+            if (headerScratch.formatVersion != PostingIndexUtils.V2_FORMAT_VERSION) {
+                throw CairoException.critical(0)
+                        .put("Unsupported Posting index version: ").put(headerScratch.formatVersion);
+            }
+
+            if (result == PostingIndexChainPicker.RESULT_OK) {
+                // Fill staging gen-dir snapshot from the picked entry's payload.
+                // Torn reads here are harmless — the active snapshot from the
+                // previous successful read is still in place until we commit.
+                genLookup.snapshotMetadata(keyMem, entryScratch.genCount, entryScratch.offset);
+                genLookup.commitSnapshot();
+                genLookup.invalidateCache();
+
+                this.headEntryOffset = entryScratch.offset;
+                this.chainGenCounter = headerScratch.generationCounter;
+                this.valueMemSize = entryScratch.valueMemSize;
+                this.keyCount = entryScratch.keyCount;
+                this.genCount = entryScratch.genCount;
+                this.valueFileTxn = entryScratch.sealTxn;
+                this.keyCountIncludingNulls = columnTop > 0 ? keyCount + 1 : keyCount;
                 return;
             }
 
-            // Neither page was seqlock-consistent; if both seqStarts are
-            // stuck (writer idle), the corruption won't self-heal.
-            if (seqStartA == prevSeqStartA && seqStartB == prevSeqStartB) {
-                LOG.critical().$(INDEX_CORRUPT).$(" [both pages invalid, no active writer]").$();
-                break;
-            }
-            prevSeqStartA = seqStartA;
-            prevSeqStartB = seqStartB;
-
-            if (clock.getTicks() > deadline) {
-                LOG.error().$(INDEX_CORRUPT).$(" [timeout=").$(spinLockTimeoutMs).$("ms]").$();
-                break;
-            }
-            Os.pause();
+            // RESULT_EMPTY_CHAIN or RESULT_NO_VISIBLE_ENTRY: chain has nothing
+            // visible to this reader yet (pre-first-seal or
+            // post-snapshot-restore). Promote an empty snapshot. The reader
+            // will report keyCount/genCount=0 and the caller skips mapping
+            // the .pv file in of().
+            this.headEntryOffset = PostingIndexUtils.V2_NO_HEAD;
+            this.chainGenCounter = headerScratch.generationCounter;
+            this.valueMemSize = 0;
+            this.keyCount = 0;
+            this.genCount = 0;
+            this.valueFileTxn = 0;
+            this.keyCountIncludingNulls = columnTop > 0 ? 1 : 0;
+            // Reset gen lookup to an empty staging snapshot and promote it.
+            genLookup.snapshotMetadata(keyMem, 0, 0L);
+            genLookup.commitSnapshot();
+            genLookup.invalidateCache();
+            return;
         }
     }
 

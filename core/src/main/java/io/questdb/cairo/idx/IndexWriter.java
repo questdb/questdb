@@ -223,9 +223,42 @@ public interface IndexWriter extends Closeable, Mutable {
     default void setCoveredColumnNameTxns(LongList txns) {
     }
 
+    /**
+     * Set the table-level {@code _txn} that the next {@link #of(Path, CharSequence, long)}
+     * (or any of its overloads) should treat as the most recently committed
+     * transaction. Posting v2 readers writers use this to drive the
+     * crash-recovery walk: any chain entry with {@code txnAtSeal > currentTableTxn}
+     * was published by a previous attempt that distressed before
+     * {@code txWriter.commit()}, and is dropped on the next open.
+     * <p>
+     * Default is no-op: BitmapIndexWriter has no chain to recover. The setter
+     * must be called <i>before</i> {@code of(...)} on every reopen that
+     * follows a possibly-distressed close. Pass a value &lt; 0 (or never call
+     * the setter) to skip recovery.
+     */
+    default void setCurrentTableTxn(long currentTableTxn) {
+    }
+
     void setMaxValue(long maxValue);
 
-    default void setPendingPublishTableTxn(long publishTableTxn) {
+    /**
+     * Set the table-level {@code _txn} that the next chain entry this writer
+     * publishes (during {@link #commit()} or {@link #seal()}) should record
+     * as its {@code txnAtSeal}. Posting v2 readers pin via the scoreboard
+     * and pick the chain entry with {@code txnAtSeal <= pinnedTxn}, so the
+     * value supplied here defines when the upcoming entry becomes visible.
+     * <p>
+     * Conventionally callers pass {@code txWriter.getTxn() + 1} (the
+     * forthcoming commit's txn) so the entry takes effect exactly when its
+     * encompassing transaction commits.
+     * <p>
+     * Default is no-op: BitmapIndexWriter has no chain. The setter must be
+     * called <i>before</i> the publish that should consume it (typically
+     * {@code commit()}); the writer reads the value once and resets the
+     * field, so a stale value cannot drive a later publish unless the
+     * setter is called again.
+     */
+    default void setNextTxnAtSeal(long txnAtSeal) {
     }
 
     /**

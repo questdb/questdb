@@ -699,6 +699,133 @@ public class PostingIndexOracleTest extends AbstractCairoTest {
         });
     }
 
+    @Test
+    public void testRecordPostingSealPurgeUsesChainDerivedInterval() throws Exception {
+        // Phase 4 invariant: when a seal supersedes a previous .pv file,
+        // the pending purge entry's [fromTableTxn, toTableTxn) window
+        // comes directly from the chain — fromTableTxn is the predecessor
+        // entry's txnAtSeal, toTableTxn is the new head's txnAtSeal.
+        // Phase 4 retired the v1 [0, Long.MAX_VALUE) fallback that fired
+        // whenever pendingPublishTableTxn was unset; this regression test
+        // would re-fail if that fallback ever crept back in.
+        assertMemoryLeak(() -> {
+            try (Path path = new Path().of(configuration.getDbRoot())) {
+                final int plen = path.size();
+                String name = "phase4_purge_window";
+
+                try (PostingIndexWriter writer = new PostingIndexWriter(
+                        configuration, path.trimTo(plen), name, COLUMN_NAME_TXN_NONE)) {
+                    // First chain entry: txnAtSeal=10, sealTxn=0.
+                    writer.setNextTxnAtSeal(10);
+                    for (int v = 0; v < BP_BATCH; v++) {
+                        writer.add(0, v);
+                    }
+                    writer.commit();
+
+                    // Second commit extends the head with a sparse gen but
+                    // does not bump sealTxn or append a new entry.
+                    for (int v = BP_BATCH; v < 2 * BP_BATCH; v++) {
+                        writer.add(0, v);
+                    }
+                    writer.commit();
+
+                    // Seal bumps sealTxn -> 1, appends a fresh chain entry,
+                    // and recordPostingSealPurge fires for the old sealTxn.
+                    writer.setMaxValue(2 * BP_BATCH - 1);
+                    writer.setNextTxnAtSeal(20);
+                    writer.seal();
+
+                    Assert.assertEquals("expected exactly one queued purge entry",
+                            1, writer.getPendingPurgesSizeForTesting());
+                    Assert.assertEquals("fromTxn must equal predecessor's txnAtSeal",
+                            10L, writer.getPendingPurgeFromTxnForTesting(0));
+                    Assert.assertEquals("toTxn must equal new head's txnAtSeal",
+                            20L, writer.getPendingPurgeToTxnForTesting(0));
+                    Assert.assertNotEquals("toTxn must not be the v1 [0, MAX) sentinel",
+                            Long.MAX_VALUE, writer.getPendingPurgeToTxnForTesting(0));
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testRecoveryDropsAbandonedHeadEntryOnReopen() throws Exception {
+        // A path-based PostingIndexWriter persists every committed chain
+        // entry to disk before the encompassing TableWriter#commit lands.
+        // If the host TableWriter distresses between the chain publish and
+        // txWriter.commit, the chain advertises a sealTxn that no committed
+        // _txn ever covered. The next open must call setCurrentTableTxn
+        // and have recoveryDropAbandoned remove the abandoned head before
+        // any reader can pin to it.
+        assertMemoryLeak(() -> {
+            try (Path path = new Path().of(configuration.getDbRoot())) {
+                final int plen = path.size();
+                String name = "recovery_abandoned";
+
+                // Phase 1: write+commit an entry recording txnAtSeal=100.
+                try (PostingIndexWriter writer = new PostingIndexWriter(
+                        configuration, path.trimTo(plen), name, COLUMN_NAME_TXN_NONE)) {
+                    writer.setNextTxnAtSeal(100);
+                    for (int v = 0; v < BP_BATCH; v++) {
+                        writer.add(0, v);
+                    }
+                    writer.commit();
+                }
+
+                // Phase 2: reopen with currentTableTxn=50, simulating the
+                // distress-then-recovery case where _txn never reached 100.
+                // The recovery walk must drop the head entry.
+                try (PostingIndexWriter writer = new PostingIndexWriter(configuration)) {
+                    writer.setCurrentTableTxn(50);
+                    writer.of(path.trimTo(plen), name, COLUMN_NAME_TXN_NONE, false);
+                    Assert.assertEquals("chain should be empty after recovery dropped the abandoned entry",
+                            0, writer.getKeyCount());
+                }
+
+                // Phase 3: a reader opening fresh now sees an empty chain
+                // (no key/value visible) — the abandoned entry is gone.
+                try (PostingIndexFwdReader reader = new PostingIndexFwdReader(
+                        configuration, path.trimTo(plen), name, COLUMN_NAME_TXN_NONE, -1, 0)) {
+                    Assert.assertEquals("reader keyCount after recovery", 0, reader.getKeyCount());
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testRecoveryKeepsCommittedEntryOnReopen() throws Exception {
+        // Sibling of testRecoveryDropsAbandonedHeadEntryOnReopen — verify
+        // the recovery walk leaves a committed entry alone when
+        // currentTableTxn covers it. Guards against an over-zealous walk
+        // that accidentally drops committed state.
+        assertMemoryLeak(() -> {
+            try (Path path = new Path().of(configuration.getDbRoot())) {
+                final int plen = path.size();
+                String name = "recovery_committed";
+
+                try (PostingIndexWriter writer = new PostingIndexWriter(
+                        configuration, path.trimTo(plen), name, COLUMN_NAME_TXN_NONE)) {
+                    writer.setNextTxnAtSeal(10);
+                    for (int v = 0; v < BP_BATCH; v++) {
+                        writer.add(0, v);
+                    }
+                    writer.commit();
+                }
+
+                // currentTableTxn=50 covers the entry's txnAtSeal=10, so it stays.
+                try (PostingIndexWriter writer = new PostingIndexWriter(configuration)) {
+                    writer.setCurrentTableTxn(50);
+                    writer.of(path.trimTo(plen), name, COLUMN_NAME_TXN_NONE, false);
+                    Assert.assertEquals("chain entry should survive when txnAtSeal <= currentTableTxn",
+                            1, writer.getKeyCount());
+                }
+
+                LongList vals = readAllBP(path.trimTo(plen), name, 0);
+                Assert.assertEquals("all values readable after recovery", BP_BATCH, vals.size());
+            }
+        });
+    }
+
     private LongList readAllBP(Path path, CharSequence name, int key) {
         LongList values = new LongList();
         try (PostingIndexFwdReader reader = new PostingIndexFwdReader(configuration, path, name, COLUMN_NAME_TXN_NONE, -1, 0)) {

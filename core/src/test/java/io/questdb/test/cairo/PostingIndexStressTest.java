@@ -2229,84 +2229,18 @@ public class PostingIndexStressTest extends AbstractCairoTest {
         });
     }
 
-    @Test
-    public void testPageFlipVisibility() throws Exception {
-        // Writer commits 10 times. After each commit, a fresh reader reload
-        // sees the correct data. Track which page the reader uses and verify
-        // the writer alternates between pages with monotonically increasing seqs.
-        assertMemoryLeak(() -> {
-            try (Path path = new Path().of(configuration.getDbRoot())) {
-                final int plen = path.size();
-                String name = "page_flip_vis";
+    // testPageFlipVisibility was a v1-protocol test that asserted strict
+    // page A/B alternation per commit. v2 publishes the chain header to
+    // the inactive page on every state change, but a single commit can
+    // produce multiple publishes (extendHead, updateHeadMaxValue), so the
+    // page used at commit-end is no longer a useful invariant.
+    // Per-commit reader visibility is exercised end-to-end by
+    // PostingIndexOracleTest.testReaderSurvivesWriterSeal and the broader
+    // CoveringIndexTest sweep.
 
-                try (PostingIndexWriter writer = new PostingIndexWriter(configuration, path, name, COLUMN_NAME_TXN_NONE)) {
-                    try (PostingIndexFwdReader reader = new PostingIndexFwdReader(
-                            configuration, path.trimTo(plen), name, COLUMN_NAME_TXN_NONE, -1, 0)) {
-
-                        long prevSeq = -1;
-                        long prevPageUsed = -1;
-
-                        for (int commit = 0; commit < 10; commit++) {
-                            long base = (long) commit * BP_BATCH;
-                            for (int v = 0; v < BP_BATCH; v++) {
-                                writer.add(0, base + v);
-                            }
-                            writer.setMaxValue(base + BP_BATCH - 1);
-                            writer.commit();
-
-                            // Reload reader to pick up the new commit
-                            reader.reloadConditionally();
-
-                            // Read seq_start from both pages to determine which is active
-                            long keyBase = reader.getKeyBaseAddress();
-                            long seqA = Unsafe.getUnsafe().getLong(
-                                    keyBase + PostingIndexUtils.PAGE_A_OFFSET + PostingIndexUtils.PAGE_OFFSET_SEQUENCE_START);
-                            long seqEndA = Unsafe.getUnsafe().getLong(
-                                    keyBase + PostingIndexUtils.PAGE_A_OFFSET + PostingIndexUtils.PAGE_OFFSET_SEQUENCE_END);
-                            long seqB = Unsafe.getUnsafe().getLong(
-                                    keyBase + PostingIndexUtils.PAGE_B_OFFSET + PostingIndexUtils.PAGE_OFFSET_SEQUENCE_START);
-                            long seqEndB = Unsafe.getUnsafe().getLong(
-                                    keyBase + PostingIndexUtils.PAGE_B_OFFSET + PostingIndexUtils.PAGE_OFFSET_SEQUENCE_END);
-
-                            long validA = (seqA == seqEndA) ? seqA : 0;
-                            long validB = (seqB == seqEndB) ? seqB : 0;
-                            long bestSeq = Math.max(validA, validB);
-                            long bestPage = (validB > validA) ? PostingIndexUtils.PAGE_B_OFFSET : PostingIndexUtils.PAGE_A_OFFSET;
-
-                            // Sequence must increase monotonically
-                            Assert.assertTrue("commit " + commit + ": seq " + bestSeq + " not > prevSeq " + prevSeq,
-                                    bestSeq > prevSeq);
-
-                            // Pages must alternate (writer writes to inactive, then flips)
-                            if (prevPageUsed >= 0) {
-                                Assert.assertNotEquals(
-                                        "commit " + commit + ": expected page flip but same page used",
-                                        prevPageUsed, bestPage);
-                            }
-
-                            prevSeq = bestSeq;
-                            prevPageUsed = bestPage;
-
-                            // Verify all data is readable
-                            RowCursor cursor = reader.getCursor(0, 0, Long.MAX_VALUE);
-                            int expectedCount = (commit + 1) * BP_BATCH;
-                            int count = 0;
-                            while (cursor.hasNext()) {
-                                Assert.assertEquals("commit " + commit + " val " + count,
-                                        count, cursor.next());
-                                count++;
-                            }
-                            Assert.assertEquals("commit " + commit + " count", expectedCount, count);
-                            Misc.free(cursor);
-                        }
-                    }
-                }
-            }
-        });
-    }
-
-    // ===================================================================
-    // Double-buffered metadata page protocol tests
+    // The "double-buffered metadata page" group below is a leftover from
+    // v1; v2 keeps two header pages strictly for the chain-header
+    // seqlock, with all state living in immutable chain entries.
     // ===================================================================
 
     @Test
@@ -3015,43 +2949,15 @@ public class PostingIndexStressTest extends AbstractCairoTest {
         });
     }
 
-    @Test
-    public void testRollbackToZeroCreatesNewValueFile() throws Exception {
-        assertMemoryLeak(() -> {
-            FilesFacade ff = configuration.getFilesFacade();
-            try (Path path = new Path().of(configuration.getDbRoot())) {
-                final int plen = path.size();
-
-                try (PostingIndexWriter writer = new PostingIndexWriter(configuration, path, "rb_zero_nf", COLUMN_NAME_TXN_NONE)) {
-                    for (int i = 10; i < 100; i++) {
-                        writer.add(0, i);
-                    }
-                    writer.setMaxValue(99);
-                    writer.commit();
-
-                    // Rollback to 5 — all values >= 10, none survive → triggers truncate
-                    writer.rollbackValues(5);
-
-                    long txn = PostingIndexUtils.readSealTxnFromKeyFile(
-                            ff, PostingIndexUtils.keyFileName(path.trimTo(plen), "rb_zero_nf", COLUMN_NAME_TXN_NONE));
-                    Assert.assertTrue("truncate via rollback should set VALUE_FILE_TXN > 0", txn > 0);
-
-                    Assert.assertEquals(0, writer.getKeyCount());
-                    RowCursor cursor = writer.getCursor(0);
-                    Assert.assertFalse(cursor.hasNext());
-                    Misc.free(cursor);
-                }
-
-                // Verify reader sees empty index
-                try (PostingIndexFwdReader reader = new PostingIndexFwdReader(
-                        configuration, path.trimTo(plen), "rb_zero_nf", COLUMN_NAME_TXN_NONE, -1, 0)) {
-                    RowCursor cursor = reader.getCursor(0, 0, Long.MAX_VALUE);
-                    Assert.assertFalse(cursor.hasNext());
-                    Misc.free(cursor);
-                }
-            }
-        });
-    }
+    // testRollbackToZeroCreatesNewValueFile asserted that
+    // readSealTxnFromKeyFile returned > 0 immediately after a rollback
+    // that triggers truncate. v2's truncate path resets the chain to
+    // empty (initKeyMemory writes the new starting genCounter, but no
+    // chain entry exists until the next commit). Empty-chain reads
+    // legitimately return -1, so the v1 assertion no longer holds.
+    // The rollback-to-empty-and-continue-writing flow is covered
+    // end-to-end by PostingIndexOracleTest's seal/commit/rollback cycle
+    // tests.
 
     @Test
     public void testSbbfOnlyDisabledCache() throws Exception {
@@ -3256,117 +3162,15 @@ public class PostingIndexStressTest extends AbstractCairoTest {
         });
     }
 
-    @Test
-    public void testStaleTentativeInvalidatedOnFdOpen() throws Exception {
-        // Simulates a failed-and-retried O3 commit. fd-based session 1 writes
-        // tentative metadata to page B and is then abandoned (the encompassing
-        // O3 commit fails and TableWriter rolls back without explicitly
-        // cleaning O3Basket writers). Session 2 opens fd-based on the same
-        // .pk; without the invalidation hook, page B's stale tentative state
-        // is later folded in by mergeTentativeIntoActiveIfAny — referencing
-        // .pv offsets the new attempt has overwritten. With the fix, session
-        // 2's open zeroes the inactive page so the merge skips it.
-        assertMemoryLeak(() -> {
-            FilesFacade ff = configuration.getFilesFacade();
-            final String name = "stale_tentative";
-            try (Path keyPath = new Path().of(configuration.getDbRoot());
-                 Path valPath = new Path().of(configuration.getDbRoot())) {
-                final int plen = keyPath.size();
-
-                PostingIndexUtils.keyFileName(keyPath, name, COLUMN_NAME_TXN_NONE);
-                long keyFd = ff.openRW(keyPath.$(), CairoConfiguration.O_NONE);
-                Assert.assertTrue("could not open key file", keyFd > 0);
-                keyPath.trimTo(plen);
-
-                PostingIndexUtils.valueFileName(valPath, name, COLUMN_NAME_TXN_NONE, 0);
-                long valueFd = ff.openRW(valPath.$(), CairoConfiguration.O_NONE);
-                Assert.assertTrue("could not open value file", valueFd > 0);
-                valPath.trimTo(plen);
-
-                // Session 1: fd-based init=true, write data and commit.
-                // Leaves page B with SEAL_TXN_TENTATIVE referencing
-                // session-1 .pv content.
-                try (PostingIndexWriter writer = new PostingIndexWriter(configuration)) {
-                    writer.of(configuration, keyFd, valueFd, true, PostingIndexUtils.BLOCK_CAPACITY);
-                    for (int i = 0; i < 64; i++) {
-                        writer.add(0, i);
-                    }
-                    writer.setMaxValue(63);
-                    writer.commit();
-                }
-
-                // Verify session 1 left page B as TENTATIVE. SEAL_TXN_TENTATIVE
-                // is -1L; readNonNegativeLong returns -1 for negative values,
-                // which is exactly what we want to detect here (the file is
-                // KEY_FILE_RESERVED bytes, so the read itself cannot fail).
-                PostingIndexUtils.keyFileName(keyPath, name, COLUMN_NAME_TXN_NONE);
-                long readFd = ff.openRO(keyPath.$());
-                Assert.assertTrue("could not reopen key file for reading", readFd > 0);
-                long pageBSealTxnAfterSession1;
-                try {
-                    pageBSealTxnAfterSession1 = ff.readNonNegativeLong(readFd,
-                            PostingIndexUtils.PAGE_B_OFFSET + PostingIndexUtils.PAGE_OFFSET_SEAL_TXN);
-                } finally {
-                    ff.close(readFd);
-                }
-                keyPath.trimTo(plen);
-                Assert.assertEquals(
-                        "session 1 should have parked tentative state on page B (sealTxn == -1)",
-                        -1L,
-                        pageBSealTxnAfterSession1);
-
-                // Reopen fds for session 2 (session 1's writer.close() released them).
-                PostingIndexUtils.keyFileName(keyPath, name, COLUMN_NAME_TXN_NONE);
-                keyFd = ff.openRW(keyPath.$(), CairoConfiguration.O_NONE);
-                keyPath.trimTo(plen);
-                PostingIndexUtils.valueFileName(valPath, name, COLUMN_NAME_TXN_NONE, 0);
-                valueFd = ff.openRW(valPath.$(), CairoConfiguration.O_NONE);
-                valPath.trimTo(plen);
-
-                // Session 2: fd-based init=false, no writes. The open itself
-                // must invalidate page B's stale tentative state.
-                try (PostingIndexWriter writer = new PostingIndexWriter(configuration)) {
-                    writer.of(configuration, keyFd, valueFd, false, PostingIndexUtils.BLOCK_CAPACITY);
-                }
-
-                PostingIndexUtils.keyFileName(keyPath, name, COLUMN_NAME_TXN_NONE);
-                readFd = ff.openRO(keyPath.$());
-                Assert.assertTrue("could not reopen key file for reading", readFd > 0);
-                long pageBSealTxnAfterSession2;
-                try {
-                    pageBSealTxnAfterSession2 = ff.readNonNegativeLong(readFd,
-                            PostingIndexUtils.PAGE_B_OFFSET + PostingIndexUtils.PAGE_OFFSET_SEAL_TXN);
-                } finally {
-                    ff.close(readFd);
-                }
-                keyPath.trimTo(plen);
-                Assert.assertEquals(
-                        "session 2 open should have invalidated page B's stale tentative (sealTxn == 0)",
-                        0L,
-                        pageBSealTxnAfterSession2);
-
-                // Path-based open + merge must not pick up any tentative
-                // state. keyCount and genCount are published only through
-                // writeMetadataPage (page B for tentative), so they expose
-                // whether a merge happened. The committed page A keeps
-                // keyCount=0 / genCount=0 from initKeyMemory; a folded-in
-                // tentative would lift them to session 1's keyCount=1 and
-                // genCount=1.
-                try (PostingIndexWriter writer = new PostingIndexWriter(configuration)) {
-                    writer.of(keyPath.trimTo(plen), name, COLUMN_NAME_TXN_NONE);
-                    writer.mergeTentativeIntoActiveIfAny();
-                    Assert.assertEquals(
-                            "after session 2 invalidation, keyCount must come from page A only",
-                            0,
-                            writer.getKeyCount());
-                    Assert.assertEquals(
-                            "after session 2 invalidation, genCount must come from page A only",
-                            0,
-                            writer.getGenCount());
-                }
-            }
-        });
-    }
+    // testStaleTentativeInvalidatedOnFdOpen targeted v1's tentative-slot
+    // protocol (a half-published page B that mergeTentativeIntoActiveIfAny
+    // could fold into the active state on the next open). v2 has no
+    // tentative slots: every chain publish is immediately durable, and the
+    // writer-open recovery walk (recoveryDropAbandoned) drops abandoned
+    // entries based on txnAtSeal vs currentTableTxn instead of pinning
+    // them to a separate metadata page. The recovery flow is covered by
+    // PostingIndexOracleTest.testRecoveryDropsAbandonedHeadEntryOnReopen
+    // and PostingIndexChainWriterTest.testRecoveryDropAbandoned*.
 
     @Test
     public void testStreamingScenarioWithIncrementalSeal() throws Exception {
@@ -3812,61 +3616,13 @@ public class PostingIndexStressTest extends AbstractCairoTest {
         });
     }
 
-    @Test
-    public void testTruncateCreatesNewValueFile() throws Exception {
-        assertMemoryLeak(() -> {
-            FilesFacade ff = configuration.getFilesFacade();
-            try (Path path = new Path().of(configuration.getDbRoot())) {
-                final int plen = path.size();
-
-                try (PostingIndexWriter writer = new PostingIndexWriter(configuration, path, "trunc_nf", COLUMN_NAME_TXN_NONE)) {
-                    for (int i = 0; i < BP_BATCH * 3; i++) {
-                        writer.add(0, i);
-                    }
-                    writer.setMaxValue(BP_BATCH * 3 - 1);
-                    writer.commit();
-
-                    writer.truncate();
-
-                    long txn = PostingIndexUtils.readSealTxnFromKeyFile(
-                            ff, PostingIndexUtils.keyFileName(path.trimTo(plen), "trunc_nf", COLUMN_NAME_TXN_NONE));
-                    Assert.assertTrue("truncate should set VALUE_FILE_TXN > 0", txn > 0);
-
-                    // Index should be empty
-                    Assert.assertEquals(0, writer.getKeyCount());
-
-                    // Write new data after truncate
-                    for (int i = 0; i < BP_BATCH; i++) {
-                        writer.add(0, i);
-                    }
-                    writer.setMaxValue(BP_BATCH - 1);
-                    writer.commit();
-
-                    RowCursor cursor = writer.getCursor(0);
-                    int count = 0;
-                    while (cursor.hasNext()) {
-                        Assert.assertEquals(count, cursor.next());
-                        count++;
-                    }
-                    Assert.assertEquals(BP_BATCH, count);
-                    Misc.free(cursor);
-                }
-
-                // Verify via reader
-                try (PostingIndexFwdReader reader = new PostingIndexFwdReader(
-                        configuration, path.trimTo(plen), "trunc_nf", COLUMN_NAME_TXN_NONE, -1, 0)) {
-                    RowCursor cursor = reader.getCursor(0, 0, Long.MAX_VALUE);
-                    int count = 0;
-                    while (cursor.hasNext()) {
-                        Assert.assertEquals(count, cursor.next());
-                        count++;
-                    }
-                    Assert.assertEquals(BP_BATCH, count);
-                    Misc.free(cursor);
-                }
-            }
-        });
-    }
+    // testTruncateCreatesNewValueFile asserted that
+    // readSealTxnFromKeyFile returned > 0 immediately after truncate. v2
+    // resets the chain to empty on truncate (no head entry until the next
+    // commit), so the read returns -1 until data is committed.
+    // truncate-then-write correctness is covered by the broader oracle
+    // tests, including the implicit truncate path in
+    // PostingIndexOracleTest.testReaderSurvivesWriterSeal.
 
     @Test
     public void testWriterRecoveryAfterDirtyShutdown() throws Exception {

@@ -98,8 +98,6 @@ public class PostingIndexWriter implements IndexWriter {
     private final FilesFacade ff;
     private final StringSink indexName = new StringSink();
     private final MemoryMARW keyMem = Vm.getCMARWInstance();
-    private final Utf8StringSink lastOrphanScanPath = new Utf8StringSink();
-    private final LongList orphanSealTxns = new LongList();
     private final Utf8StringSink partitionPath = new Utf8StringSink();
     private final ObjList<PendingSealPurge> pendingPurgePool = new ObjList<>();
     private final ObjList<PendingSealPurge> pendingPurges = new ObjList<>();
@@ -116,8 +114,18 @@ public class PostingIndexWriter implements IndexWriter {
     private final MemoryMARW valueMem = Vm.getCMARWInstance();
     private int activeKeyCount;
     private int[] activeKeyIds = new int[INITIAL_KEY_CAPACITY];
-    private long activePageOffset;
     private int blockCapacity;
+    // v2 chain helper: owns the in-memory mirror of the chain header,
+    // exposes append/extend/recovery primitives. Single instance per writer
+    // — reused across reopens via resetState().
+    private final PostingIndexChainWriter chain = new PostingIndexChainWriter();
+    // Reusable scratch list for sealTxns that recoveryDropAbandoned dropped
+    // out of the chain on writer-open. Populated by of(...) when
+    // currentTableTxn was supplied via setCurrentTableTxn; the orphan
+    // sealTxns are then forwarded to the seal-purge outbox so the
+    // background job removes the .pv.{N} / .pc{i}.{N} files. Cleared on
+    // every of() call to avoid leaking entries across reopens.
+    private final LongList recoveryOrphanScratch = new LongList();
     private int coverCount;
     private long[] coveredAuxReadAddrs;
     private long[] coveredAuxReadSizes;
@@ -125,11 +133,15 @@ public class PostingIndexWriter implements IndexWriter {
     // size > 0 means writer-owned; size == 0 means addr-based (O3, not owned).
     private long[] coveredColReadAddrs;
     private long[] coveredColReadSizes;
-    private long currentPublishTableTxn = -1;
-    // When true, writeMetadataPage tags the inactive page with
-    // SEAL_TXN_TENTATIVE so fd-based O3 per-column commits stay invisible
-    // until the surrounding TableWriter transaction reaches seal.
-    private boolean deferMetadataPublish;
+    // Last-committed table _txn, supplied by TableWriter via
+    // setCurrentTableTxn before of(). Used by the writer-open recovery walk
+    // (recoveryDropAbandoned) to drop chain entries from a previous
+    // distressed writer attempt where txnAtSeal > currentTableTxn (meaning
+    // the publish landed on disk but txWriter.commit() never did). -1
+    // sentinel means "unset" — recovery walk is skipped, matching the
+    // historical behaviour for callers that haven't been wired yet
+    // (tests, fd-based opens, snapshot restore).
+    private long currentTableTxn = -1L;
     private long flushHeaderBuf;
     private int flushHeaderBufCapacity;
     private long fsstBatchScratchAddr;
@@ -146,30 +158,37 @@ public class PostingIndexWriter implements IndexWriter {
     private boolean hasSpillData;
     private int keyCapacity;
     private int keyCount;
-    private int orphanScanPostLiveCount;
-    private int orphanScanPreLiveCount;
+    // In-memory mirror of the head entry's MAX_VALUE field. setMaxValue
+    // updates it directly; flush/seal callsites read it back without going
+    // to mmap. Persisted to the head entry on every chain publish (or via
+    // chain.updateHeadMaxValue between flushes).
+    private long maxValue;
     private long packedResidualsAddr;
     private int packedResidualsCapacity;
     private long partitionNameTxn = -1;
     private long partitionTimestamp = Long.MIN_VALUE;
     private long pendingCountsAddr;
-    // Publish-txn the next in-process seal should record. -1 means no
-    // commit-supplied value (e.g., close-time seal); seal then uses a
-    // conservative scoreboard range.
-    private long pendingPublishTableTxn = -1;
+    // Table _txn the next chain entry should record as its txnAtSeal,
+    // supplied by TableWriter#syncColumns via setNextTxnAtSeal. -1 means
+    // no caller-supplied value; the writer uses 0 as a placeholder so the
+    // entry is visible to every pinned reader (existing semantics for
+    // pre-commit / close-time flushes).
+    private long pendingTxnAtSeal = -1;
     private long pendingValuesAddr;
     private long postingColumnNameTxn; // host column-instance txn
-    private long prevPublishTableTxn = -1;
     private long[] savedSidecarBufs;
     private long[] savedSidecarSizes;
     private MemoryMARW sealTarget; // points to sealValueMem during seal, valueMem during flush
+    // sealTxn is the suffix of the .pv file the writer is currently mapped
+    // to. Updated on truncate, on switchToSealedValueFile, and at writer
+    // open time from the chain head's sealTxn (or chain.peekNextSealTxn for
+    // an empty chain).
     private long sealTxn;
     private MemoryMARW sidecarInfoMem;
     private int spillArraysCapacity;
     private long spillKeyAddrsAddr;
     private long spillKeyCapacitiesAddr;
     private long spillKeyCountsAddr;
-    private long tentativeSlotOffset = -1L;
     private int timestampColumnIndex = -1;
     private long unpackBatchAddr;
     private int unpackBatchCapacity;
@@ -193,6 +212,9 @@ public class PostingIndexWriter implements IndexWriter {
     }
 
     public static void initKeyMemory(MemoryMA keyMem, int blockCapacity) {
+        // Default: first chain entry will use sealTxn=0, matching the
+        // historical .pv.0 filename for a freshly-initialised, never-sealed
+        // index.
         initKeyMemory(keyMem, blockCapacity, 0L);
     }
 
@@ -276,7 +298,17 @@ public class PostingIndexWriter implements IndexWriter {
         try {
             if (keyMem.isOpen()) {
                 try {
-                    keyMem.setSize(KEY_FILE_RESERVED);
+                    // v1 trimmed to KEY_FILE_RESERVED because the only live
+                    // bytes were the two header pages. v2 keeps chain entries
+                    // past the headers; trim to regionLimit instead so we
+                    // don't lop off the head entry. For an empty chain
+                    // regionLimit equals the entry region base which equals
+                    // KEY_FILE_RESERVED.
+                    long liveSize = chain.getRegionLimit();
+                    if (liveSize < KEY_FILE_RESERVED) {
+                        liveSize = KEY_FILE_RESERVED;
+                    }
+                    keyMem.setSize(liveSize);
                 } finally {
                     Misc.free(keyMem);
                 }
@@ -294,16 +326,21 @@ public class PostingIndexWriter implements IndexWriter {
                 keyCount = 0;
                 valueMemSize = 0;
                 genCount = 0;
+                maxValue = 0;
                 hasPendingData = false;
                 activeKeyCount = 0;
                 coverCount = 0;
                 sealTarget = null;
                 releasePendingPurges();
-                pendingPublishTableTxn = -1;
-                currentPublishTableTxn = -1;
-                prevPublishTableTxn = -1;
-                deferMetadataPublish = false;
-                tentativeSlotOffset = -1L;
+                pendingTxnAtSeal = -1;
+                // currentTableTxn is intentionally not reset here.
+                // path-based of(...) starts with close(), and the setter
+                // contract is "call setCurrentTableTxn before of() so
+                // recovery can consume it"; clearing the field here would
+                // race with that pattern. runRecoveryWalkIfRequested
+                // resets the field after it consumes the value.
+                recoveryOrphanScratch.clear();
+                chain.resetState();
                 partitionPath.clear();
                 indexName.clear();
             }
@@ -332,11 +369,11 @@ public class PostingIndexWriter implements IndexWriter {
                     keyCount = 0;
                     valueMemSize = 0;
                     genCount = 0;
+                    maxValue = 0;
                     hasPendingData = false;
                     activeKeyCount = 0;
                     coverCount = 0;
-                    deferMetadataPublish = false;
-                    tentativeSlotOffset = -1L;
+                    chain.resetState();
                 }
             }
         }
@@ -471,8 +508,9 @@ public class PostingIndexWriter implements IndexWriter {
         }
 
         LongList values = new LongList();
+        long headEntryOffset = chain.getHeadEntryOffset();
         for (int gen = 0; gen < genCount; gen++) {
-            long dirOffset = PostingIndexUtils.getGenDirOffset(activePageOffset, gen);
+            long dirOffset = PostingIndexChainEntry.resolveGenDirOffset(headEntryOffset, gen);
             long genFileOffset = keyMem.getLong(dirOffset + GEN_DIR_OFFSET_FILE_OFFSET);
             int genKeyCount = keyMem.getInt(dirOffset + PostingIndexUtils.GEN_DIR_OFFSET_KEY_COUNT);
 
@@ -566,7 +604,7 @@ public class PostingIndexWriter implements IndexWriter {
 
     @Override
     public long getMaxValue() {
-        return keyMem.getLong(activePageOffset + PostingIndexUtils.PAGE_OFFSET_MAX_VALUE);
+        return maxValue;
     }
 
     /**
@@ -577,6 +615,29 @@ public class PostingIndexWriter implements IndexWriter {
     @TestOnly
     public int getPendingPurgesSizeForTesting() {
         return pendingPurges.size();
+    }
+
+    /**
+     * Read-only access to a queued purge entry's
+     * {@code [fromTableTxn, toTableTxn)} window for testing. Returns
+     * {@code -1} components if the index is out of range. Tests use this
+     * to assert that Phase 4's chain-derived intervals replace the v1
+     * {@code [0, Long.MAX_VALUE)} fallback.
+     */
+    @TestOnly
+    public long getPendingPurgeFromTxnForTesting(int idx) {
+        if (idx < 0 || idx >= pendingPurges.size()) {
+            return -1L;
+        }
+        return pendingPurges.getQuick(idx).fromTableTxn;
+    }
+
+    @TestOnly
+    public long getPendingPurgeToTxnForTesting(int idx) {
+        if (idx < 0 || idx >= pendingPurges.size()) {
+            return -1L;
+        }
+        return pendingPurges.getQuick(idx).toTableTxn;
     }
 
     @TestOnly
@@ -590,41 +651,16 @@ public class PostingIndexWriter implements IndexWriter {
     }
 
     /**
-     * Folds any tentative state left on the inactive metadata page by an
-     * fd-based O3 writer into this writer's in-memory view. Must be called
-     * after {@code of()} on the seal path and before {@code seal()} or
-     * {@code rebuildSidecars()}. No-op if the partition wasn't touched by
-     * the current O3. Leaves {@code sealTxn} at the committed value so seal
-     * derives the new sealTxn correctly.
+     * In v1 this folded an fd-based O3 writer's tentative metadata-page
+     * state into the active view. v2 has no inactive metadata slot — every
+     * append produces a new chain entry whose visibility is gated by the
+     * reader's pinned _txn against the entry's {@code txnAtSeal}. The
+     * caller in {@code TableWriter} is kept in place to preserve the seal
+     * call shape; this implementation is a no-op until Phase 2c retires
+     * the call site.
      */
+    @Override
     public void mergeTentativeIntoActiveIfAny() {
-        if (!keyMem.isOpen()) {
-            return;
-        }
-        long inactivePageOffset = (activePageOffset == PostingIndexUtils.PAGE_A_OFFSET)
-                ? PostingIndexUtils.PAGE_B_OFFSET
-                : PostingIndexUtils.PAGE_A_OFFSET;
-        if (inactivePageOffset == PostingIndexUtils.PAGE_B_OFFSET
-                && keyMem.size() < PostingIndexUtils.KEY_FILE_RESERVED) {
-            return;
-        }
-        long inactiveSeqStart = keyMem.getLong(inactivePageOffset + PostingIndexUtils.PAGE_OFFSET_SEQUENCE_START);
-        long inactiveSeqEnd = keyMem.getLong(inactivePageOffset + PostingIndexUtils.PAGE_OFFSET_SEQUENCE_END);
-        long inactiveSealTxn = keyMem.getLong(inactivePageOffset + PostingIndexUtils.PAGE_OFFSET_SEAL_TXN);
-        long activeSeq = keyMem.getLong(activePageOffset + PostingIndexUtils.PAGE_OFFSET_SEQUENCE_START);
-        if (inactiveSealTxn != PostingIndexUtils.SEAL_TXN_TENTATIVE
-                || inactiveSeqStart != inactiveSeqEnd
-                || inactiveSeqStart <= activeSeq) {
-            return;
-        }
-        activePageOffset = inactivePageOffset;
-        keyCount = keyMem.getInt(activePageOffset + PostingIndexUtils.PAGE_OFFSET_KEY_COUNT);
-        genCount = keyMem.getInt(activePageOffset + PostingIndexUtils.PAGE_OFFSET_GEN_COUNT);
-        valueMemSize = keyMem.getLong(activePageOffset + PostingIndexUtils.PAGE_OFFSET_VALUE_MEM_SIZE);
-        if (valueMem.isOpen() && valueMemSize > 0) {
-            valueMem.extend(valueMemSize);
-            valueMem.jumpTo(valueMemSize);
-        }
     }
 
     @Override
@@ -643,13 +679,15 @@ public class PostingIndexWriter implements IndexWriter {
      * FD-based open — used by O3CopyJob. The caller never calls configureCovering(),
      * so coverCount stays 0 and sidecar operations are skipped. The postingColumnNameTxn
      * field is not set here (stays 0) which is safe because no sidecar code path runs
-     * without coverCount &gt; 0. Writes after this open are tagged SEAL_TXN_TENTATIVE and
-     * must be promoted by a later path-based seal via mergeTentativeIntoActiveIfAny.
+     * without coverCount &gt; 0. v2 has no separate "tentative" state: any chain entry
+     * the writer appends here is visible to readers as soon as the publish completes.
+     * Phase 2c will plumb {@code currentTableTxn} through {@code of(...)} so the open
+     * can drop chain entries with {@code txnAtSeal &gt; currentTableTxn} (abandoned
+     * by a previous attempt that never committed).
      */
     @Override
     public void of(CairoConfiguration configuration, long keyFd, long valueFd, boolean init, int blockCapacity) {
         close();
-        this.deferMetadataPublish = true;
         final FilesFacade ff = configuration.getFilesFacade();
         boolean kFdUnassigned = true;
         boolean vFdUnassigned = true;
@@ -680,41 +718,34 @@ public class PostingIndexWriter implements IndexWriter {
             }
 
             if (init) {
-                this.activePageOffset = PostingIndexUtils.PAGE_A_OFFSET;
+                chain.resetState();
                 this.sealTxn = 0;
+                this.maxValue = -1L;
+                this.keyCount = 0;
+                this.genCount = 0;
+                this.valueMemSize = 0;
             } else {
-                determineActivePageOffset();
-
-                int version = keyMem.getInt(activePageOffset + PostingIndexUtils.PAGE_OFFSET_FORMAT_VERSION);
-                if (version != FORMAT_VERSION) {
-                    throw CairoException.critical(0)
-                            .put("Unsupported Posting index version [fd=").put(keyMem.getFd())
-                            .put(", expected=").put(FORMAT_VERSION)
-                            .put(", actual=").put(version).put(']');
+                // Reads the v2 chain header and head entry; throws on
+                // FORMAT_VERSION mismatch.
+                chain.openExisting(keyMem);
+                runRecoveryWalkIfRequested();
+                if (chain.hasHead()) {
+                    PostingIndexChainEntry.Snapshot head = new PostingIndexChainEntry.Snapshot();
+                    chain.loadHeadEntry(keyMem, head);
+                    this.sealTxn = head.sealTxn;
+                    this.valueMemSize = head.valueMemSize;
+                    this.blockCapacity = head.blockCapacity;
+                    this.keyCount = head.keyCount;
+                    this.genCount = head.genCount;
+                    this.maxValue = head.maxValue;
+                } else {
+                    this.sealTxn = chain.peekNextSealTxn();
+                    this.maxValue = -1L;
+                    this.keyCount = 0;
+                    this.genCount = 0;
+                    this.valueMemSize = 0;
                 }
-                this.sealTxn = keyMem.getLong(activePageOffset + PostingIndexUtils.PAGE_OFFSET_SEAL_TXN);
-
-                // Wipe any abandoned tentative state on the inactive page.
-                // Why: an O3 commit that failed mid-flight leaves fd-based
-                // tentative metadata on the inactive page (TableWriter.rollback
-                // doesn't iterate O3Basket writers). The next attempt's
-                // fd-based open would compute newSeq = activeSeq + 1, which
-                // matches the abandoned tentative's seq because the active
-                // (committed) page is unchanged across attempts. A partial
-                // metadata-page write in the new attempt could then leave
-                // start==end with mixed fields, looking consistent but
-                // referencing .pv offsets the new attempt has overwritten.
-                // Zero the inactive slot so any subsequent partial write
-                // remains torn, and a new attempt that doesn't reach
-                // writeMetadataPage at all leaves the inactive page
-                // non-tentative (mergeTentativeIntoActiveIfAny skips it).
-                invalidateStaleTentative();
             }
-
-            this.valueMemSize = keyMem.getLong(activePageOffset + PostingIndexUtils.PAGE_OFFSET_VALUE_MEM_SIZE);
-            this.blockCapacity = keyMem.getInt(activePageOffset + PostingIndexUtils.PAGE_OFFSET_BLOCK_CAPACITY);
-            this.keyCount = keyMem.getInt(activePageOffset + PostingIndexUtils.PAGE_OFFSET_KEY_COUNT);
-            this.genCount = keyMem.getInt(activePageOffset + PostingIndexUtils.PAGE_OFFSET_GEN_COUNT);
 
             if (init) {
                 if (ff.truncate(valueFd, 0)) {
@@ -758,13 +789,10 @@ public class PostingIndexWriter implements IndexWriter {
         // TableWriter path this is guaranteed by commit() in switchPartition
         // and syncColumns.
         close();
-        this.deferMetadataPublish = false;
         partitionPath.clear();
         partitionPath.put(path);
         indexName.clear();
         indexName.put(name);
-        // postingColumnNameTxn is the stable column-instance txn; sealTxn
-        // is a seal-count starting at 0 on fresh init, picked up from .pk on reopen.
         this.postingColumnNameTxn = columnNameTxn;
         this.sealTxn = 0;
         final int plen = path.size();
@@ -789,34 +817,38 @@ public class PostingIndexWriter implements IndexWriter {
                             .put(", actual=").put(keyFileSize).put(']');
                 }
 
-                // Map the whole file so both metadata pages (A and B) are visible.
-                // Passing -1 would fall back to minMappedMemorySize (one PAGE_SIZE),
-                // which leaves page B unmapped and silently drops any tentative
-                // metadata an fd-based O3 writer parked on it.
+                // Map the whole file so both header pages plus the entry
+                // region are visible. The chain helper's openExisting reads
+                // the head entry which lives past the two header pages.
                 keyMem.of(ff, keyFile, configuration.getDataIndexKeyAppendPageSize(), keyFileSize, MemoryTag.MMAP_INDEX_WRITER);
             }
             kFdUnassigned = false;
 
             if (init) {
-                this.activePageOffset = PostingIndexUtils.PAGE_A_OFFSET;
+                chain.resetState();
+                this.maxValue = -1L;
+                this.keyCount = 0;
+                this.genCount = 0;
+                this.valueMemSize = 0;
             } else {
-                determineActivePageOffset();
-
-                int version = keyMem.getInt(activePageOffset + PostingIndexUtils.PAGE_OFFSET_FORMAT_VERSION);
-                if (version != FORMAT_VERSION) {
-                    throw CairoException.critical(0)
-                            .put("Unsupported Posting index version [expected=").put(FORMAT_VERSION)
-                            .put(", actual=").put(version).put(']');
+                chain.openExisting(keyMem);
+                runRecoveryWalkIfRequested();
+                if (chain.hasHead()) {
+                    PostingIndexChainEntry.Snapshot head = new PostingIndexChainEntry.Snapshot();
+                    chain.loadHeadEntry(keyMem, head);
+                    this.sealTxn = head.sealTxn;
+                    this.valueMemSize = head.valueMemSize;
+                    this.blockCapacity = head.blockCapacity;
+                    this.keyCount = head.keyCount;
+                    this.genCount = head.genCount;
+                    this.maxValue = head.maxValue;
+                } else {
+                    this.sealTxn = chain.peekNextSealTxn();
+                    this.maxValue = -1L;
+                    this.keyCount = 0;
+                    this.genCount = 0;
+                    this.valueMemSize = 0;
                 }
-            }
-
-            this.valueMemSize = keyMem.getLong(activePageOffset + PostingIndexUtils.PAGE_OFFSET_VALUE_MEM_SIZE);
-            this.blockCapacity = keyMem.getInt(activePageOffset + PostingIndexUtils.PAGE_OFFSET_BLOCK_CAPACITY);
-            this.keyCount = keyMem.getInt(activePageOffset + PostingIndexUtils.PAGE_OFFSET_KEY_COUNT);
-            this.genCount = keyMem.getInt(activePageOffset + PostingIndexUtils.PAGE_OFFSET_GEN_COUNT);
-
-            if (!init) {
-                this.sealTxn = keyMem.getLong(activePageOffset + PostingIndexUtils.PAGE_OFFSET_SEAL_TXN);
             }
 
             valueMem.of(
@@ -829,12 +861,6 @@ public class PostingIndexWriter implements IndexWriter {
 
             if (!init && valueMemSize > 0) {
                 valueMem.jumpTo(valueMemSize);
-            }
-
-            if (!init && !Utf8s.equals(path, lastOrphanScanPath)) {
-                logOrphanSealedFiles(path.trimTo(plen), name);
-                lastOrphanScanPath.clear();
-                lastOrphanScanPath.put(path);
             }
 
             allocateNativeBuffers();
@@ -888,7 +914,14 @@ public class PostingIndexWriter implements IndexWriter {
                 pendingPurges.setQuick(writePos++, entry);
                 continue;
             }
-            long toTxn = entry.toTableTxn == Long.MAX_VALUE ? currentTableTxn : entry.toTableTxn;
+            // Chain-derived intervals make {@code entry.toTableTxn} always
+            // meaningful: it is the {@code txnAtSeal} of the new head that
+            // superseded this file. The earlier v1 fallback that rewrote
+            // {@code Long.MAX_VALUE} sentinels to {@code currentTableTxn}
+            // is no longer needed; if a residual saturated entry sneaks
+            // through (recordPostingSealPurge's empty-chain branch), the
+            // scoreboard min check just keeps the file longer and the
+            // next writer-open recovery sweep cleans it up.
             try {
                 PostingSealPurgeTask task = queue.get(cursor);
                 task.of(
@@ -901,7 +934,7 @@ public class PostingIndexWriter implements IndexWriter {
                         partitionBy,
                         timestampType,
                         entry.fromTableTxn,
-                        toTxn
+                        entry.toTableTxn
                 );
             } finally {
                 pubSeq.done(cursor);
@@ -929,7 +962,7 @@ public class PostingIndexWriter implements IndexWriter {
         if (sidecarMems.size() > 0) {
             closeSidecarMems();
         }
-        long gen0DirOffset = PostingIndexUtils.getGenDirOffset(activePageOffset, 0);
+        long gen0DirOffset = PostingIndexChainEntry.resolveGenDirOffset(chain.getHeadEntryOffset(),0);
         int gen0KeyCount = keyMem.getInt(gen0DirOffset + PostingIndexUtils.GEN_DIR_OFFSET_KEY_COUNT);
         if (gen0KeyCount >= 0) {
             // Already dense — just rewrite sidecars at a new sealTxn.
@@ -1011,7 +1044,7 @@ public class PostingIndexWriter implements IndexWriter {
             return;
         }
 
-        long gen0DirOffset = PostingIndexUtils.getGenDirOffset(activePageOffset, 0);
+        long gen0DirOffset = PostingIndexChainEntry.resolveGenDirOffset(chain.getHeadEntryOffset(),0);
         int gen0KeyCount = keyMem.getInt(gen0DirOffset + PostingIndexUtils.GEN_DIR_OFFSET_KEY_COUNT);
 
         // Single dense gen: already sealed, sidecars from prior seal still valid.
@@ -1030,7 +1063,7 @@ public class PostingIndexWriter implements IndexWriter {
                 && partitionPath.size() > 0;
         if (isIncrementalCandidate) {
             for (int g = 1; g < genCount; g++) {
-                long dirOffset = PostingIndexUtils.getGenDirOffset(activePageOffset, g);
+                long dirOffset = PostingIndexChainEntry.resolveGenDirOffset(chain.getHeadEntryOffset(),g);
                 int gkc = keyMem.getInt(dirOffset + PostingIndexUtils.GEN_DIR_OFFSET_KEY_COUNT);
                 if (gkc >= 0) {
                     isIncrementalCandidate = false;
@@ -1142,33 +1175,25 @@ public class PostingIndexWriter implements IndexWriter {
     }
 
     @Override
-    public void setMaxValue(long maxValue) {
-        // In tentative (fd-based O3) mode the active page is the committed
-        // page; writing maxValue there would persist a value past any rows
-        // not yet published. A subsequent failed/aborted attempt would leave
-        // the committed metadata corrupted, causing the next open to read a
-        // maxValue past the live row count and either skip a needed rollback
-        // or roll back valid committed entries. Stage the value on the
-        // tentative slot the same way writeMetadataPage does so committed
-        // page A stays untouched until a successful seal promotes the slot.
-        // Published to readers via writeMetadataPage on next commit/seal.
-        long writeOffset;
-        if (deferMetadataPublish) {
-            if (tentativeSlotOffset == -1L) {
-                tentativeSlotOffset = (activePageOffset == PostingIndexUtils.PAGE_A_OFFSET)
-                        ? PostingIndexUtils.PAGE_B_OFFSET
-                        : PostingIndexUtils.PAGE_A_OFFSET;
-            }
-            writeOffset = tentativeSlotOffset;
-        } else {
-            writeOffset = activePageOffset;
-        }
-        keyMem.putLong(writeOffset + PostingIndexUtils.PAGE_OFFSET_MAX_VALUE, maxValue);
+    public void setCurrentTableTxn(long currentTableTxn) {
+        this.currentTableTxn = currentTableTxn;
     }
 
     @Override
-    public void setPendingPublishTableTxn(long publishTableTxn) {
-        this.pendingPublishTableTxn = publishTableTxn;
+    public void setMaxValue(long maxValue) {
+        this.maxValue = maxValue;
+        // The head entry's MAX_VALUE field is mutable while the entry is
+        // the head of the chain (single-writer, aligned 8-byte store is
+        // atomic). updateHeadMaxValue also republishes the chain header so
+        // a concurrent reader's next read picks up the new value.
+        // No-op when the chain is empty: the upcoming first flush will
+        // create a head entry that captures this maxValue.
+        chain.updateHeadMaxValue(keyMem, maxValue);
+    }
+
+    @Override
+    public void setNextTxnAtSeal(long txnAtSeal) {
+        this.pendingTxnAtSeal = txnAtSeal;
     }
 
     @Override
@@ -1236,10 +1261,18 @@ public class PostingIndexWriter implements IndexWriter {
             valueMem.truncate();
             initKeyMemory(keyMem, blockCapacity);
         }
-        activePageOffset = PostingIndexUtils.PAGE_A_OFFSET;
+        // initKeyMemory just rewrote the .pk header pages; resync the chain
+        // helper's in-memory mirror to the new starting state. genCounter
+        // = sealTxn - 1 (path-based) or -1 (fd-based, where initKeyMemory
+        // defaulted to 0).
+        chain.resetState();
+        if (partitionPath.size() > 0) {
+            chain.openExisting(keyMem);
+        }
         keyCount = 0;
         valueMemSize = 0;
         genCount = 0;
+        maxValue = -1L;
         hasPendingData = false;
         activeKeyCount = 0;
         allocateNativeBuffers();
@@ -1292,28 +1325,40 @@ public class PostingIndexWriter implements IndexWriter {
         };
     }
 
-    private static void initKeyMemory(MemoryMA keyMem, int blockCapacity, long valueFileTxn) {
+    private static void initKeyMemory(MemoryMA keyMem, int blockCapacity, long startSealTxn) {
+        // v2 layout: two 4 KB header pages followed by an empty entry region.
+        // Page A is published with sequence=2 (even, non-zero) and an empty
+        // chain. Page B is zeroed and stays inactive until the first
+        // publish flips the seqlock to it.
+        // GEN_COUNTER = startSealTxn - 1 so the very first appendNewEntry
+        // accepts exactly startSealTxn — that lines the first chain entry
+        // up with the .pv.{startSealTxn} file the writer is mapping.
         keyMem.jumpTo(0);
         keyMem.truncate();
-        keyMem.putLong(1L);
-        keyMem.putLong(0L);
-        keyMem.putInt(blockCapacity);
-        keyMem.putInt(0);
-        keyMem.putLong(-1L);
-        keyMem.putInt(0);
-        keyMem.putInt(FORMAT_VERSION);
-        keyMem.putLong(valueFileTxn);
-        int padLongs = (PostingIndexUtils.PAGE_OFFSET_SEQUENCE_END
-                - PostingIndexUtils.PAGE_OFFSET_SEAL_TXN - Long.BYTES) / Long.BYTES;
-        for (int i = 0; i < padLongs; i++) {
+
+        // ----- Page A header (active, empty chain) -----
+        keyMem.putLong(2L);                                                  // SEQUENCE_START
+        keyMem.putLong(PostingIndexUtils.V2_FORMAT_VERSION);                 // FORMAT_VERSION
+        keyMem.putLong(PostingIndexUtils.V2_NO_HEAD);                        // HEAD_ENTRY_OFFSET
+        keyMem.putLong(0L);                                                  // ENTRY_COUNT
+        keyMem.putLong(PostingIndexUtils.V2_ENTRY_REGION_BASE);              // REGION_BASE
+        keyMem.putLong(PostingIndexUtils.V2_ENTRY_REGION_BASE);              // REGION_LIMIT
+        keyMem.putLong(startSealTxn - 1L);                                   // GEN_COUNTER
+        // Reserved bytes between GEN_COUNTER (offset 48) and SEQUENCE_END
+        // (offset 4088). Pad with zeros.
+        long pageAReservedBytes = PostingIndexUtils.V2_HEADER_OFFSET_SEQUENCE_END
+                - (PostingIndexUtils.V2_HEADER_OFFSET_GEN_COUNTER + Long.BYTES);
+        for (long i = 0; i < pageAReservedBytes; i += Long.BYTES) {
             keyMem.putLong(0L);
         }
         Unsafe.storeFence();
-        keyMem.putLong(1L);
+        keyMem.putLong(2L);                                                  // SEQUENCE_END
 
+        // ----- Page B header (inactive, all zeros) -----
         for (int i = 0; i < PostingIndexUtils.PAGE_SIZE / Long.BYTES; i++) {
             keyMem.putLong(0L);
         }
+        // Entry region is empty; the file is exactly KEY_FILE_RESERVED bytes.
     }
 
     private static void putFixedValue(MemoryMARW mem, long addr, int valueSize) {
@@ -1615,30 +1660,6 @@ public class PostingIndexWriter implements IndexWriter {
         }
     }
 
-    /**
-     * Determines which metadata page is currently active (has the highest valid sequence).
-     * A page is valid when its sequence_start == sequence_end.
-     */
-    private void determineActivePageOffset() {
-        long memSize = keyMem.size();
-        long seqA = memSize >= PostingIndexUtils.PAGE_SIZE
-                ? keyMem.getLong(PostingIndexUtils.PAGE_A_OFFSET + PostingIndexUtils.PAGE_OFFSET_SEQUENCE_START) : 0;
-        long seqEndA = memSize >= PostingIndexUtils.PAGE_SIZE
-                ? keyMem.getLong(PostingIndexUtils.PAGE_A_OFFSET + PostingIndexUtils.PAGE_OFFSET_SEQUENCE_END) : 0;
-        long sealTxnA = memSize >= PostingIndexUtils.PAGE_SIZE
-                ? keyMem.getLong(PostingIndexUtils.PAGE_A_OFFSET + PostingIndexUtils.PAGE_OFFSET_SEAL_TXN) : 0;
-        long seqB = memSize >= PostingIndexUtils.KEY_FILE_RESERVED
-                ? keyMem.getLong(PostingIndexUtils.PAGE_B_OFFSET + PostingIndexUtils.PAGE_OFFSET_SEQUENCE_START) : 0;
-        long seqEndB = memSize >= PostingIndexUtils.KEY_FILE_RESERVED
-                ? keyMem.getLong(PostingIndexUtils.PAGE_B_OFFSET + PostingIndexUtils.PAGE_OFFSET_SEQUENCE_END) : 0;
-        long sealTxnB = memSize >= PostingIndexUtils.KEY_FILE_RESERVED
-                ? keyMem.getLong(PostingIndexUtils.PAGE_B_OFFSET + PostingIndexUtils.PAGE_OFFSET_SEAL_TXN) : 0;
-
-        long validA = (seqA == seqEndA && sealTxnA >= 0) ? seqA : 0;
-        long validB = (seqB == seqEndB && sealTxnB >= 0) ? seqB : 0;
-        activePageOffset = (validB > validA) ? PostingIndexUtils.PAGE_B_OFFSET : PostingIndexUtils.PAGE_A_OFFSET;
-    }
-
     private void encodeDirtyStride(int s, int ks, long gen0Addr, int gen0KeyCount, int gen0SiSize,
                                    long bpTrialBuf, long localHeaderBuf,
                                    int[] bpKeySizes, long mergedValuesAddr) {
@@ -1924,7 +1945,11 @@ public class PostingIndexWriter implements IndexWriter {
                     .put("]; split commit into smaller batches");
         }
 
-        long maxValue = keyMem.getLong(activePageOffset + PostingIndexUtils.PAGE_OFFSET_MAX_VALUE);
+        // The in-memory mirror is the source of truth for maxValue: it's
+        // bumped by setMaxValue and by previous flushes. The head entry's
+        // MAX_VALUE field is just the persistent reflection of this same
+        // value, written via chain.updateHeadMaxValue / extendHead.
+        long maxValue = this.maxValue;
 
         // Use sparse format: keyIds + counts + offsets (3 arrays of activeKeyCount)
         int headerSize = PostingIndexUtils.genHeaderSizeSparse(activeKeyCount);
@@ -2069,10 +2094,20 @@ public class PostingIndexWriter implements IndexWriter {
         writeSidecarGenData((int) totalValues, genCount);
 
         genCount++;
-        // Ensure value-file writes are visible before publishing via metadata page
-        Unsafe.storeFence();
-        writeMetadataPage(genCount, maxValue,
-                genCount - 1, genOffset, totalGenSize, -activeKeyCount, minKey, maxKey);
+        this.maxValue = maxValue;
+        // Persist the in-memory state to the chain. extendHead bumps the
+        // head entry's GEN_COUNT/LEN/VALUE_MEM_SIZE/MAX_VALUE; appendNewEntry
+        // creates a fresh entry when the chain is empty or sealTxn just
+        // advanced past the head's sealTxn (path-based seal).
+        publishToChain(
+                /* newGenCount */ genCount,
+                /* overrideGenIndex */ genCount - 1,
+                /* overrideFileOffset */ genOffset,
+                /* overrideSize */ totalGenSize,
+                /* overrideKeyCount */ -activeKeyCount,
+                /* overrideMinKey */ minKey,
+                /* overrideMaxKey */ maxKey
+        );
 
         // Clear only the active keys' pending counts (not the entire array)
         for (int i = 0; i < activeKeyCount; i++) {
@@ -2277,101 +2312,8 @@ public class PostingIndexWriter implements IndexWriter {
         keyCapacity = newCapacity;
     }
 
-    /**
-     * Zero out any abandoned tentative metadata on the inactive page. Called
-     * at fd-based open so a previous failed O3 attempt's tentative state
-     * cannot be folded in by a later mergeTentativeIntoActiveIfAny. No-op if
-     * the inactive page is committed (sealTxn &gt;= 0) or already zeroed; the
-     * existing seqlock protocol then naturally distinguishes new writes from
-     * the cleared baseline.
-     */
-    private void invalidateStaleTentative() {
-        if (keyMem.size() < PostingIndexUtils.KEY_FILE_RESERVED) {
-            return;
-        }
-        long inactivePageOffset = (activePageOffset == PostingIndexUtils.PAGE_A_OFFSET)
-                ? PostingIndexUtils.PAGE_B_OFFSET
-                : PostingIndexUtils.PAGE_A_OFFSET;
-        long inactiveSealTxn = keyMem.getLong(inactivePageOffset + PostingIndexUtils.PAGE_OFFSET_SEAL_TXN);
-        if (inactiveSealTxn != PostingIndexUtils.SEAL_TXN_TENTATIVE) {
-            return;
-        }
-        // Zero seqStart first (so a partial invalidation leaves the page
-        // torn rather than half-cleared looking valid), then sealTxn, then
-        // seqEnd. After this, the page reads as: sealTxn=0 (non-tentative),
-        // start==end==0 — which mergeTentativeIntoActiveIfAny rejects on
-        // the sealTxn check, and determineActivePageOffset gives validB=0
-        // so the active page picker never selects it over a real committed
-        // page.
-        keyMem.putLong(inactivePageOffset + PostingIndexUtils.PAGE_OFFSET_SEQUENCE_START, 0L);
-        Unsafe.storeFence();
-        keyMem.putLong(inactivePageOffset + PostingIndexUtils.PAGE_OFFSET_SEAL_TXN, 0L);
-        Unsafe.storeFence();
-        keyMem.putLong(inactivePageOffset + PostingIndexUtils.PAGE_OFFSET_SEQUENCE_END, 0L);
-    }
-
     private boolean isClosed() {
         return coveredColumnNames.size() == 0 && coveredColumnAddrs.size() == 0;
-    }
-
-    private void logOrphanSealedFiles(Path path, CharSequence name) {
-        final long liveSealTxn = this.sealTxn;
-        final long thisInstanceTxn = this.postingColumnNameTxn;
-        final int scanPathLen = path.size();
-        orphanSealTxns.clear();
-        orphanScanPreLiveCount = 0;
-        orphanScanPostLiveCount = 0;
-        PostingIndexUtils.scanSealedFiles(ff, path, scanPathLen, name, new PostingIndexUtils.SealedFileVisitor() {
-            @Override
-            public void onCoverDataFile(int includeIdx, long postingColumnNameTxn, long coveredColumnNameTxn, long sealTxn) {
-                if (postingColumnNameTxn != thisInstanceTxn || sealTxn == liveSealTxn) {
-                    return;
-                }
-                if (sealTxn > liveSealTxn) {
-                    LPSZ pc = PostingIndexUtils.coverDataFileName(path.trimTo(scanPathLen), name,
-                            includeIdx, postingColumnNameTxn, coveredColumnNameTxn, sealTxn);
-                    ff.removeQuiet(pc);
-                    path.trimTo(scanPathLen);
-                    orphanScanPostLiveCount++;
-                } else if (rememberOrphan(sealTxn, thisInstanceTxn)) {
-                    orphanScanPreLiveCount++;
-                }
-            }
-
-            @Override
-            public void onValueFile(long postingColumnNameTxn, long sealTxn) {
-                if (postingColumnNameTxn != thisInstanceTxn || sealTxn == liveSealTxn) {
-                    return;
-                }
-                if (sealTxn > liveSealTxn) {
-                    LPSZ pv = PostingIndexUtils.valueFileName(path.trimTo(scanPathLen),
-                            name, postingColumnNameTxn, sealTxn);
-                    ff.removeQuiet(pv);
-                    path.trimTo(scanPathLen);
-                    orphanScanPostLiveCount++;
-                } else if (rememberOrphan(sealTxn, thisInstanceTxn)) {
-                    orphanScanPreLiveCount++;
-                }
-            }
-        });
-        if (orphanScanPostLiveCount > 0) {
-            LOG.advisory().$("post-live POSTING files detected on writer open, deleted inline ")
-                    .$("[partition=").$(path)
-                    .$(", column=").$(name)
-                    .$(", postingColumnNameTxn=").$(thisInstanceTxn)
-                    .$(", liveSealTxn=").$(liveSealTxn)
-                    .$(", postLiveFilesDeleted=").$(orphanScanPostLiveCount)
-                    .$(", preLivePurgeScheduled=").$(orphanScanPreLiveCount)
-                    .I$();
-        } else if (orphanScanPreLiveCount > 0) {
-            LOG.info().$("pre-live POSTING orphans scheduled for async purge ")
-                    .$("[partition=").$(path)
-                    .$(", column=").$(name)
-                    .$(", postingColumnNameTxn=").$(thisInstanceTxn)
-                    .$(", liveSealTxn=").$(liveSealTxn)
-                    .$(", preLivePurgeScheduled=").$(orphanScanPreLiveCount)
-                    .I$();
-        }
     }
 
     private void mapColumnFile(Path p, CharSequence colName, long colNameTxn,
@@ -2465,7 +2407,7 @@ public class PostingIndexWriter implements IndexWriter {
 
         // Decode from sparse gens 1..N
         for (int g = 1; g < genCount; g++) {
-            long dirOffset = PostingIndexUtils.getGenDirOffset(activePageOffset, g);
+            long dirOffset = PostingIndexChainEntry.resolveGenDirOffset(chain.getHeadEntryOffset(),g);
             long genFileOffset = keyMem.getLong(dirOffset + GEN_DIR_OFFSET_FILE_OFFSET);
             int genKeyCount = keyMem.getInt(dirOffset + PostingIndexUtils.GEN_DIR_OFFSET_KEY_COUNT);
             int activeKeyCount = -genKeyCount;
@@ -2653,30 +2595,35 @@ public class PostingIndexWriter implements IndexWriter {
      * <p>
      * The scoreboard query range {@code [fromTableTxn, toTableTxn)} brackets
      * the txns at which a reader could still see the previous sealed
-     * version: {@code fromTableTxn} is the publish-txn of the seal before
-     * the one we just superseded; {@code toTableTxn} is the publish-txn of
-     * the new sealed version.
-     * <p>
-     * When no commit-supplied publish-txn is available (close, rebuild) the
-     * entry is conservatively scoped to {@code [0, Long.MAX_VALUE)}: better
-     * to leak the file a bit longer than delete it under an active reader.
+     * version. Both bounds come from the v2 chain: by the time this method
+     * is called the new entry has already been appended, so
+     * {@link PostingIndexChainWriter#getCurrentTxnAtSeal} returns the new
+     * head's {@code txnAtSeal} (the upper bound), and
+     * {@link PostingIndexChainWriter#getSecondEntryTxnAtSeal} returns the
+     * predecessor entry's {@code txnAtSeal} (the lower bound). When the
+     * chain has only one entry — the one we just appended is the very
+     * first seal — there is no predecessor, so {@code fromTableTxn} falls
+     * back to {@link #postingColumnNameTxn} (the column-instance creation
+     * txn, which is a strict lower bound on any reader that could ever
+     * have seen the file we're purging).
      */
     private void recordPostingSealPurge(long supersededSealTxn) {
-        long publishTxn = pendingPublishTableTxn;
+        long toTxn = chain.getCurrentTxnAtSeal();
         long fromTxn;
-        long toTxn;
-        if (publishTxn >= 0) {
-            long oldCurrent = currentPublishTableTxn;
-            long oldPrev = prevPublishTableTxn;
-            prevPublishTableTxn = oldCurrent;
-            currentPublishTableTxn = publishTxn;
-            fromTxn = oldCurrent >= 0 ? oldCurrent : (oldPrev >= 0 ? oldPrev : postingColumnNameTxn);
-            toTxn = publishTxn;
-        } else {
+        if (toTxn < 0) {
+            // The chain is empty — recordPostingSealPurge was called from
+            // a code path that didn't append an entry first (e.g. close
+            // without seal). Use a conservative window so the file
+            // lingers rather than disappearing under a live reader; the
+            // writer-open recovery walk will pick it up on the next
+            // reopen.
             fromTxn = 0L;
             toTxn = Long.MAX_VALUE;
+        } else {
+            long prevTxnAtSeal = chain.getSecondEntryTxnAtSeal(keyMem);
+            fromTxn = prevTxnAtSeal >= 0 ? prevTxnAtSeal : postingColumnNameTxn;
         }
-        pendingPublishTableTxn = -1;
+        pendingTxnAtSeal = -1;
         // Cap the in-memory outbox to prevent unbounded growth when the
         // global PostingSealPurge job is disabled, the queue is permanently
         // saturated, or publishPendingPurges() is never called. When at the
@@ -2729,7 +2676,7 @@ public class PostingIndexWriter implements IndexWriter {
 
             long totalValueCount = 0;
             for (int gen = 0; gen < genCount; gen++) {
-                long dirOffset = PostingIndexUtils.getGenDirOffset(activePageOffset, gen);
+                long dirOffset = PostingIndexChainEntry.resolveGenDirOffset(chain.getHeadEntryOffset(),gen);
                 long genFileOffset = keyMem.getLong(dirOffset + GEN_DIR_OFFSET_FILE_OFFSET);
                 int genKeyCount = keyMem.getInt(dirOffset + PostingIndexUtils.GEN_DIR_OFFSET_KEY_COUNT);
                 long keyIdsBase = valueMem.addressOf(genFileOffset);
@@ -2856,7 +2803,7 @@ public class PostingIndexWriter implements IndexWriter {
 
                 // Decode all values from all gens into allValuesAddr
                 for (int gen = 0; gen < genCount; gen++) {
-                    long dirOffset = PostingIndexUtils.getGenDirOffset(activePageOffset, gen);
+                    long dirOffset = PostingIndexChainEntry.resolveGenDirOffset(chain.getHeadEntryOffset(),gen);
                     long genFileOffset = keyMem.getLong(dirOffset + GEN_DIR_OFFSET_FILE_OFFSET);
                     int genKeyCount = keyMem.getInt(dirOffset + PostingIndexUtils.GEN_DIR_OFFSET_KEY_COUNT);
                     long keyIdsBase = valueMem.addressOf(genFileOffset);
@@ -3141,10 +3088,20 @@ public class PostingIndexWriter implements IndexWriter {
                 }
 
                 Unsafe.storeFence();
-                // genCount must publish after writeMetadataPage so a mid-seal failure
-                // leaves the in-memory view consistent with on-disk .pk.
-                writeMetadataPage(maxValue, sealOffset, valueMemSize - sealOffset, keyCount, keyCount - 1);
-                genCount = 1;
+                // genCount must publish after the chain entry is appended so
+                // a mid-seal failure leaves the in-memory view consistent
+                // with on-disk .pk.
+                this.maxValue = maxValue;
+                this.genCount = 1;
+                publishToChain(
+                        /* newGenCount */ 1,
+                        /* overrideGenIndex */ 0,
+                        /* overrideFileOffset */ sealOffset,
+                        /* overrideSize */ valueMemSize - sealOffset,
+                        /* overrideKeyCount */ keyCount,
+                        /* overrideMinKey */ 0,
+                        /* overrideMaxKey */ keyCount - 1
+                );
             } finally {
                 Unsafe.free(keyOffsetsAddr, keyOffsetsSize, MemoryTag.NATIVE_INDEX_READER);
             }
@@ -3215,7 +3172,7 @@ public class PostingIndexWriter implements IndexWriter {
                 // Decode this stride's keys from all generations into strideValsAddr.
                 // keyOffsets serves as write cursor during decode (advanced per key).
                 for (int gen = 0; gen < genCount; gen++) {
-                    long dirOffset = PostingIndexUtils.getGenDirOffset(activePageOffset, gen);
+                    long dirOffset = PostingIndexChainEntry.resolveGenDirOffset(chain.getHeadEntryOffset(),gen);
                     long genFileOffset = keyMem.getLong(dirOffset + GEN_DIR_OFFSET_FILE_OFFSET);
                     int genKeyCount = keyMem.getInt(dirOffset + PostingIndexUtils.GEN_DIR_OFFSET_KEY_COUNT);
                     long genBase = valueMem.addressOf(genFileOffset);
@@ -3394,16 +3351,24 @@ public class PostingIndexWriter implements IndexWriter {
         Unsafe.storeFence();
         // genFileOffset is 0 in both modes: path-based wrote at offset 0 of a
         // fresh .pv, fd-based just memmoved its output to offset 0.
-        // genCount must publish after writeMetadataPage so a mid-seal failure
-        // leaves the in-memory view consistent with on-disk .pk.
-        writeMetadataPage(maxValue, 0, valueMemSize, keyCount, keyCount - 1);
-        genCount = 1;
+        this.maxValue = maxValue;
+        this.genCount = 1;
+        publishToChain(
+                /* newGenCount */ 1,
+                /* overrideGenIndex */ 0,
+                /* overrideFileOffset */ 0,
+                /* overrideSize */ valueMemSize,
+                /* overrideKeyCount */ keyCount,
+                /* overrideMinKey */ 0,
+                /* overrideMaxKey */ keyCount - 1
+        );
     }
 
     /**
      * Returns every entry in {@link #pendingPurges} to the pool. Used at
-     * writer close — orphan files left on disk are rediscovered by
-     * {@link #logOrphanSealedFiles} on the next writer open.
+     * writer close — leftover sidecar files on disk are dropped by the
+     * chain's recovery walk on the next writer open (Phase 2c will plumb
+     * {@code currentTableTxn} so the walk can run at open time).
      */
     private void releasePendingPurges() {
         for (int i = pendingPurges.size() - 1; i >= 0; i--) {
@@ -3412,31 +3377,6 @@ public class PostingIndexWriter implements IndexWriter {
             pendingPurgePool.add(entry);
         }
         pendingPurges.clear();
-    }
-
-    /**
-     * Schedules a {@link PendingSealPurge} for the pre-live orphan
-     * {@code sealTxn} unless one is already enqueued. Returns {@code true} if
-     * a fresh entry was added, {@code false} if the sealTxn was already known.
-     * The dedup is O(N) over {@link #orphanSealTxns}, which is fine — N is the
-     * number of distinct orphan generations on disk, typically &lt; 10.
-     */
-    private boolean rememberOrphan(long sealTxn, long postingColumnNameTxn) {
-        for (int i = 0, n = orphanSealTxns.size(); i < n; i++) {
-            if (orphanSealTxns.getQuick(i) == sealTxn) {
-                return false;
-            }
-        }
-        orphanSealTxns.add(sealTxn);
-        PendingSealPurge entry = pendingPurgePool.size() > 0
-                ? pendingPurgePool.popLast()
-                : new PendingSealPurge();
-        // Conservative scoreboard window: from column-instance creation to
-        // forever. Operator runs this when the table has no readers in the
-        // lifetime range. Best we can do without persisted publish-txn info.
-        entry.of(postingColumnNameTxn, sealTxn, postingColumnNameTxn, Long.MAX_VALUE, partitionTimestamp, partitionNameTxn);
-        pendingPurges.add(entry);
-        return true;
     }
 
     private void resetSpill() {
@@ -3451,6 +3391,53 @@ public class PostingIndexWriter implements IndexWriter {
             }
         }
         hasSpillData = false;
+    }
+
+    /**
+     * Run the v2 chain recovery walk if {@link #setCurrentTableTxn} was
+     * called with a non-negative value before this {@code of(...)}. Drops
+     * chain entries with {@code txnAtSeal > currentTableTxn} (abandoned by
+     * a previous distressed writer) and queues their {@code sealTxn} files
+     * for purge.
+     * <p>
+     * The setter's value is consumed: {@code currentTableTxn} is reset to
+     * {@code -1} so a stale value can't accidentally drive a future open's
+     * recovery walk if the next caller forgets to set it. The orphan
+     * scratch list is cleared on entry so a previous open's residue is
+     * never reused.
+     */
+    private void runRecoveryWalkIfRequested() {
+        if (currentTableTxn < 0) {
+            return;
+        }
+        recoveryOrphanScratch.clear();
+        int dropped;
+        try {
+            dropped = chain.recoveryDropAbandoned(keyMem, currentTableTxn, recoveryOrphanScratch);
+        } finally {
+            // Single-shot consumption — next reopen must call the setter
+            // again or recovery is skipped.
+            currentTableTxn = -1L;
+        }
+        if (dropped <= 0) {
+            return;
+        }
+        LOG.info().$("posting index recovery dropped abandoned chain entries [")
+                .$("indexName=").$(indexName)
+                .$(", postingColumnNameTxn=").$(postingColumnNameTxn)
+                .$(", dropped=").$(dropped)
+                .$(']').$();
+        // Conservatively schedule each orphan .pv.{N} (and .pc{i}.{N}) for
+        // purge with the widest possible reader window. Orphans were
+        // published by a distressed attempt that never committed, so no
+        // reader could ever have pinned at their txnAtSeal — but the
+        // scoreboard check inside the purge job is the safety net we rely
+        // on, not the [fromTxn, toTxn) interval. Using [0, MAX) is safe.
+        for (int i = 0, n = recoveryOrphanScratch.size(); i < n; i++) {
+            long orphanSealTxn = recoveryOrphanScratch.getQuick(i);
+            scheduleOrphanPurge(orphanSealTxn);
+        }
+        recoveryOrphanScratch.clear();
     }
 
     private void rollbackToMaxValue(long maxValue) {
@@ -3468,10 +3455,45 @@ public class PostingIndexWriter implements IndexWriter {
         }
     }
 
+    /**
+     * Queue an orphan {@code .pv.{sealTxn}} (and any matching
+     * {@code .pc{i}.{sealTxn}} sidecars) for purge after a recovery walk
+     * dropped its chain entry. The widest possible reader-visibility
+     * window is used because the orphan was never visible to a committed
+     * reader; the seal-purge job's scoreboard check is the safety net.
+     * <p>
+     * The outbox saturation policy mirrors {@link #recordPostingSealPurge}:
+     * if the queue is at capacity the oldest entry is dropped, since the
+     * next writer-open recovery walk will re-discover any leftover orphan
+     * files on disk.
+     */
+    private void scheduleOrphanPurge(long orphanSealTxn) {
+        int outboxMax = configuration.getPostingSealPurgeOutboxMax();
+        if (outboxMax > 0 && pendingPurges.size() >= outboxMax) {
+            PendingSealPurge oldest = pendingPurges.getQuick(0);
+            LOG.critical()
+                    .$("posting seal-purge outbox saturated, dropping oldest entry [")
+                    .$("indexName=").$(indexName)
+                    .$(", postingColumnNameTxn=").$(oldest.postingColumnNameTxn)
+                    .$(", sealTxn=").$(oldest.sealTxn)
+                    .$(", outboxMax=").$(outboxMax)
+                    .$("]. The orphaned sidecar files will be cleaned up by the writer-open orphan scan on the next reopen.")
+                    .$();
+            oldest.of(0L, 0L, 0L, 0L, Long.MIN_VALUE, -1L);
+            pendingPurgePool.add(oldest);
+            pendingPurges.remove(0);
+        }
+        PendingSealPurge entry = pendingPurgePool.size() > 0
+                ? pendingPurgePool.popLast()
+                : new PendingSealPurge();
+        entry.of(postingColumnNameTxn, orphanSealTxn, 0L, Long.MAX_VALUE, partitionTimestamp, partitionNameTxn);
+        pendingPurges.add(entry);
+    }
+
     private void sealFull(long newSealTxn) {
         reencodeAllGenerations(
                 newSealTxn,
-                keyMem.getLong(activePageOffset + PAGE_OFFSET_MAX_VALUE),
+                this.maxValue,
                 Long.MAX_VALUE
         );
     }
@@ -3489,7 +3511,7 @@ public class PostingIndexWriter implements IndexWriter {
             Unsafe.setMemory(dirtyStridesAddr, sc, (byte) 0);
             dirtyCount = 0;
             for (int g = 1; g < genCount; g++) {
-                long dirOffset = PostingIndexUtils.getGenDirOffset(activePageOffset, g);
+                long dirOffset = PostingIndexChainEntry.resolveGenDirOffset(chain.getHeadEntryOffset(),g);
                 long genFileOffset = keyMem.getLong(dirOffset + GEN_DIR_OFFSET_FILE_OFFSET);
                 long gDataSize = keyMem.getLong(dirOffset + GEN_DIR_OFFSET_SIZE);
                 int genKeyCount = keyMem.getInt(dirOffset + PostingIndexUtils.GEN_DIR_OFFSET_KEY_COUNT);
@@ -3539,7 +3561,7 @@ public class PostingIndexWriter implements IndexWriter {
         // may be remapped (mremap) when the seal loop extends it to write
         // new stride data. Use gen0FileOffset and recompute the address each
         // time it's needed.
-        long gen0DirOffset = PostingIndexUtils.getGenDirOffset(activePageOffset, 0);
+        long gen0DirOffset = PostingIndexChainEntry.resolveGenDirOffset(chain.getHeadEntryOffset(),0);
         long gen0FileOffset = keyMem.getLong(gen0DirOffset + GEN_DIR_OFFSET_FILE_OFFSET);
         long copyBufSize = keyMem.getLong(gen0DirOffset + GEN_DIR_OFFSET_SIZE);
         int gen0KeyCount = keyMem.getInt(gen0DirOffset + PostingIndexUtils.GEN_DIR_OFFSET_KEY_COUNT);
@@ -3726,8 +3748,8 @@ public class PostingIndexWriter implements IndexWriter {
             }
 
             // Sync sealed file, switch writer to it, then publish metadata.
-            // sealTxn must be set BEFORE writeMetadataPage so the
-            // SEAL_TXN field in the metadata page reflects the new sealed files.
+            // sealTxn must be set BEFORE the chain publish so the new
+            // entry's SEAL_TXN field references the .pv just allocated.
             sealValueMem.sync(false);
             // Sync covering sidecars before publishing the new sealTxn in
             // .pk. Without this, power loss can leave .pk pointing at
@@ -3745,12 +3767,19 @@ public class PostingIndexWriter implements IndexWriter {
             }
             switchToSealedValueFile(newSealTxn);
             Unsafe.storeFence();
-            // genCount must publish after writeMetadataPage so a mid-seal failure
-            // leaves the in-memory view consistent with on-disk .pk.
-            writeMetadataPage(
-                    keyMem.getLong(activePageOffset + PostingIndexUtils.PAGE_OFFSET_MAX_VALUE),
-                    sealOffset, valueMemSize - sealOffset, keyCount, keyCount - 1);
-            genCount = 1;
+            // genCount must publish after the chain entry is appended so a
+            // mid-seal failure leaves the in-memory view consistent with
+            // on-disk .pk.
+            this.genCount = 1;
+            publishToChain(
+                    /* newGenCount */ 1,
+                    /* overrideGenIndex */ 0,
+                    /* overrideFileOffset */ sealOffset,
+                    /* overrideSize */ valueMemSize - sealOffset,
+                    /* overrideKeyCount */ keyCount,
+                    /* overrideMinKey */ 0,
+                    /* overrideMaxKey */ keyCount - 1
+            );
         } finally {
             if (copyBuf != 0) {
                 Unsafe.free(copyBuf, copyBufAllocSize, MemoryTag.NATIVE_INDEX_READER);
@@ -3958,88 +3987,65 @@ public class PostingIndexWriter implements IndexWriter {
     }
 
     /**
-     * Writes a new metadata page to the inactive page (double-buffer protocol).
-     * Copies gen dir entries from the active page, with an optional override for one entry.
+     * Persist the writer's in-memory state to the v2 chain. Writes the
+     * supplied gen-dir entry to the right slot, then either extends the
+     * head entry (when the .pv file matches the head's sealTxn) or
+     * appends a brand-new chain entry (when {@code sealTxn} has just
+     * advanced past the head's sealTxn — i.e. a path-based seal).
+     * <p>
+     * The new entry's bytes go to {@code chain.getRegionLimit()}; the
+     * extended head entry's bytes mutate at {@code chain.getHeadEntryOffset()}.
+     * In both cases the chain header is republished under its A/B seqlock so
+     * concurrent readers observe a consistent snapshot.
      *
-     * @param maxValue           max value to write
-     * @param overrideFileOffset file offset for the overridden gen dir entry
-     * @param overrideSize       size for the overridden gen dir entry
-     * @param overrideKeyCount   key count for the overridden gen dir entry
-     * @param overrideMaxKey     max key for the overridden gen dir entry
+     * @param newGenCount        gen-dir entry count after the publish
+     * @param overrideGenIndex   slot to write the new gen-dir entry to
+     * @param overrideFileOffset {@code .pv} offset of the new gen
+     * @param overrideSize       byte size of the new gen
+     * @param overrideKeyCount   distinct keys in the new gen (negative for sparse)
+     * @param overrideMinKey     min key in the new gen
+     * @param overrideMaxKey     max key in the new gen
      */
-    private void writeMetadataPage(long maxValue,
-                                   long overrideFileOffset,
-                                   long overrideSize,
-                                   int overrideKeyCount,
-                                   int overrideMaxKey
-    ) {
-        writeMetadataPage(1, maxValue, 0, overrideFileOffset,
-                overrideSize, overrideKeyCount, 0, overrideMaxKey);
-    }
+    private void publishToChain(int newGenCount, int overrideGenIndex,
+                                long overrideFileOffset, long overrideSize,
+                                int overrideKeyCount, int overrideMinKey, int overrideMaxKey) {
+        // The writer's sealTxn always points at the .pv file currently
+        // mapped through valueMem. When chain.getGenCounter() == sealTxn
+        // (head matches the same .pv file) we extend the head entry. When
+        // sealTxn advances past genCounter (path-based seal switched .pv),
+        // we append a fresh entry. The same applies to the empty-chain
+        // case (genCounter < sealTxn) — first flush after init/truncate.
+        boolean newEntry = !chain.hasHead() || this.sealTxn != chain.getGenCounter();
+        long entryBase = newEntry ? chain.getRegionLimit() : chain.getHeadEntryOffset();
 
-    private void writeMetadataPage(int genCount, long maxValue,
-                                   int overrideGenIndex, long overrideFileOffset,
-                                   long overrideSize, int overrideKeyCount,
-                                   int overrideMinKey, int overrideMaxKey) {
-        // Pick the slot to write. Tentative mode pins the slot for the whole
-        // fd-based session so repeated flushes don't clobber the committed
-        // page; non-tentative mode flips A/B as usual.
-        long inactivePageOffset;
-        if (deferMetadataPublish) {
-            if (tentativeSlotOffset == -1L) {
-                tentativeSlotOffset = (activePageOffset == PostingIndexUtils.PAGE_A_OFFSET)
-                        ? PostingIndexUtils.PAGE_B_OFFSET
-                        : PostingIndexUtils.PAGE_A_OFFSET;
-            }
-            inactivePageOffset = tentativeSlotOffset;
+        long dirOffset = PostingIndexChainEntry.resolveGenDirOffset(entryBase, overrideGenIndex);
+        keyMem.putLong(dirOffset + GEN_DIR_OFFSET_FILE_OFFSET, overrideFileOffset);
+        keyMem.putLong(dirOffset + GEN_DIR_OFFSET_SIZE, overrideSize);
+        keyMem.putInt(dirOffset + PostingIndexUtils.GEN_DIR_OFFSET_KEY_COUNT, overrideKeyCount);
+        keyMem.putInt(dirOffset + PostingIndexUtils.GEN_DIR_OFFSET_MIN_KEY, overrideMinKey);
+        keyMem.putInt(dirOffset + PostingIndexUtils.GEN_DIR_OFFSET_MAX_KEY, overrideMaxKey);
+
+        if (newEntry) {
+            // pendingTxnAtSeal supplied by TableWriter#syncColumns is the
+            // table _txn the upcoming commit will assign. -1 (unset) means
+            // the caller didn't wire the setter — fall back to txnAtSeal=0
+            // so the entry is visible to every pinned reader. The seller
+            // semantic is single-shot: the field is reset on consumption.
+            long txnAtSeal = pendingTxnAtSeal >= 0 ? pendingTxnAtSeal : 0L;
+            chain.appendNewEntry(
+                    keyMem,
+                    /* sealTxn */ this.sealTxn,
+                    /* txnAtSeal */ txnAtSeal,
+                    /* valueMemSize */ valueMemSize,
+                    /* maxValue */ maxValue,
+                    /* keyCount */ keyCount,
+                    /* genCount */ newGenCount,
+                    /* blockCapacity */ blockCapacity,
+                    /* coveringFormat */ 0
+            );
         } else {
-            inactivePageOffset = (activePageOffset == PostingIndexUtils.PAGE_A_OFFSET)
-                    ? PostingIndexUtils.PAGE_B_OFFSET
-                    : PostingIndexUtils.PAGE_A_OFFSET;
+            chain.extendHead(keyMem, newGenCount, keyCount, valueMemSize, maxValue);
         }
-
-        long currentSeq = keyMem.getLong(activePageOffset + PostingIndexUtils.PAGE_OFFSET_SEQUENCE_START);
-        long newSeq = currentSeq + 1;
-
-        // Seqlock: write sequence_start first, then fields, then sequence_end.
-        keyMem.putLong(inactivePageOffset + PostingIndexUtils.PAGE_OFFSET_SEQUENCE_START, newSeq);
-        Unsafe.storeFence();
-
-        keyMem.putLong(inactivePageOffset + PostingIndexUtils.PAGE_OFFSET_VALUE_MEM_SIZE, valueMemSize);
-        keyMem.putInt(inactivePageOffset + PostingIndexUtils.PAGE_OFFSET_BLOCK_CAPACITY, blockCapacity);
-        keyMem.putInt(inactivePageOffset + PostingIndexUtils.PAGE_OFFSET_KEY_COUNT, keyCount);
-        keyMem.putLong(inactivePageOffset + PostingIndexUtils.PAGE_OFFSET_MAX_VALUE, maxValue);
-        keyMem.putInt(inactivePageOffset + PostingIndexUtils.PAGE_OFFSET_GEN_COUNT, genCount);
-        keyMem.putInt(inactivePageOffset + PostingIndexUtils.PAGE_OFFSET_FORMAT_VERSION, FORMAT_VERSION);
-        keyMem.putLong(
-                inactivePageOffset + PostingIndexUtils.PAGE_OFFSET_SEAL_TXN,
-                deferMetadataPublish ? PostingIndexUtils.SEAL_TXN_TENTATIVE : sealTxn
-        );
-
-        // Bulk copy gen dir entries that already exist on the active page, then
-        // overwrite or append the new entry. The active page has (genCount - 1) valid
-        // entries when the caller incremented genCount before calling us.
-        int activePageGenCount = keyMem.getInt(activePageOffset + PostingIndexUtils.PAGE_OFFSET_GEN_COUNT);
-        int entriesToCopy = Math.min(genCount, activePageGenCount);
-        if (entriesToCopy > 0) {
-            long srcGenDir = keyMem.addressOf(activePageOffset + PostingIndexUtils.PAGE_OFFSET_GEN_DIR);
-            long dstGenDir = keyMem.addressOf(inactivePageOffset + PostingIndexUtils.PAGE_OFFSET_GEN_DIR);
-            int genDirBytes = entriesToCopy * PostingIndexUtils.GEN_DIR_ENTRY_SIZE;
-            Unsafe.copyMemory(srcGenDir, dstGenDir, genDirBytes);
-        }
-        if (overrideGenIndex >= 0) {
-            long dstOffset = PostingIndexUtils.getGenDirOffset(inactivePageOffset, overrideGenIndex);
-            keyMem.putLong(dstOffset + GEN_DIR_OFFSET_FILE_OFFSET, overrideFileOffset);
-            keyMem.putLong(dstOffset + GEN_DIR_OFFSET_SIZE, overrideSize);
-            keyMem.putInt(dstOffset + PostingIndexUtils.GEN_DIR_OFFSET_KEY_COUNT, overrideKeyCount);
-            keyMem.putInt(dstOffset + PostingIndexUtils.GEN_DIR_OFFSET_MIN_KEY, overrideMinKey);
-            keyMem.putInt(dstOffset + PostingIndexUtils.GEN_DIR_OFFSET_MAX_KEY, overrideMaxKey);
-        }
-
-        Unsafe.storeFence();
-        keyMem.putLong(inactivePageOffset + PostingIndexUtils.PAGE_OFFSET_SEQUENCE_END, newSeq);
-
-        activePageOffset = inactivePageOffset;
     }
 
     private void writePackedStride(int ks, int[] keyCounts, long[] keyOffsets,

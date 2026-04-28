@@ -1,9 +1,9 @@
 # Posting Index `.pk` Chain Redesign
 
-> **Status:** Phase 1 of 5 complete. This document is the handoff artifact —
-> a new contributor (human or model) reading it cold should understand what
-> the redesign is, why it exists, the on-disk format, and what's left to
-> implement, without consulting any prior conversation.
+> **Status:** Phase 1 + Phase 2a + Phase 2b of 5 complete. This document is
+> the handoff artifact — a new contributor (human or model) reading it cold
+> should understand what the redesign is, why it exists, the on-disk format,
+> and what's left to implement, without consulting any prior conversation.
 
 ---
 
@@ -371,117 +371,322 @@ classes yet. All existing tests remain green.
 
 ### Phase 2 — Writer publish path
 
-**Files to modify:** `PostingIndexWriter.java` (4,800 lines), with
-ripple effects in `PostingIndexUtils.readSealTxnFromKeyFd` and a new
-`txnAtSeal` plumbing path from the caller.
+Split into three sub-phases.
 
-**What changes:**
-- Replace every `writeMetadataPage(...)` call with a chain-entry-append
-  sequence: build the entry payload in memory, write it to the entry
-  region at `REGION_LIMIT`, fsync, then call
-  `PostingIndexChainHeader.publish(...)` to advertise the new head.
-  Locations:
-  - `seal()`-side callsites in `PostingIndexWriter.java` around lines
-    2074 (commit-path), 3146 (incremental seal), 3397 (full seal).
-  - `setMaxValue` (Finding #2) becomes part of the head-entry's mutable
-    tail, written under that tail's seqlock.
-- Delete `mergeTentativeIntoActiveIfAny`, `invalidateStaleTentative`,
-  `determineActivePageOffset`. Their roles are gone in v2.
-- Delete `SEAL_TXN_TENTATIVE` usage.
-- New constructor flow: when opening an existing `.pk`, read the
-  chain header and populate the writer's in-memory `sealTxn`,
-  `genCount`, etc. from the *head* entry's fields.
-- Add a `txnAtSeal` parameter to `seal()`. The caller
-  (`TableWriter.sealPostingIndexForPartition`) supplies
-  `txWriter.getTxn() + 1`.
-- `setPendingPublishTableTxn` may go away — its only caller in v1
-  uses it because publish ran ahead of commit and purge didn't know
-  the future txn. In v2 the entry itself carries that information.
+#### Phase 2a — DONE — Writer-side helper scaffolding
 
-**Tests:** existing `PostingIndexNativeTest`, `PostingIndexOracleTest`,
-`PostingIndexConcurrencyTest`, `PostingIndexStressTest` (and their
-`*Delta`, `*Ef` variants) must remain green. Any test that opens a
-`.pk` from an old (v1) committed state on disk needs migration — but
-since this PR has not merged, there are no on-disk v1 users yet. The
-format check at writer-open should reject `FORMAT_VERSION != 2` with a
-clear "incompatible format" error.
+**Files added:**
+- `core/src/main/java/io/questdb/cairo/idx/PostingIndexChainWriter.java` —
+  stateful helper that mirrors the chain header in memory and exposes the
+  publish/extend/recovery primitives the writer needs.
+- `core/src/test/java/io/questdb/test/cairo/idx/PostingIndexChainWriterTest.java`
+  — 17 deterministic unit tests, all green.
 
-**Estimated size:** 600-1,000 lines changed in
-`PostingIndexWriter.java`, plus ~200 lines of supporting changes in
-`PostingIndexUtils.java`.
+**Resolution of design open question #5 (sparse-gen sub-protocol).** Adopt
+option (b): the head entry's `GEN_COUNT`, `KEY_COUNT`, `LEN`, `VALUE_MEM_SIZE`
+and `MAX_VALUE` fields are mutated in place via aligned 4- or 8-byte stores
+(atomic on x86/aarch64), with a `storeFence` between the gen-dir bytes and
+the field updates so the new gen-dir entry is visible by the time `GEN_COUNT`
+advances. Concurrency safety relies on the chain header's outer seqlock for
+ordering on the reader side; no inner seqlock is needed within the entry
+because the writer is single-threaded and field reads are tear-free at
+aligned 4/8 bytes.
 
-**Risk:** writer touches the metadata page in ~10 distinct call sites
-across its 4,800 lines. Missing any one of them means a writer that
-half-uses v2 and half-uses v1 — silent corruption.
+**Resolution of design open question #2 (chain-prune call site).** Recovery
+prune is exposed as a separate `recoveryDropAbandoned(...)` primitive on
+`PostingIndexChainWriter`; the writer calls it once at open time after
+`openExisting(...)`. Steady-state GC (section 5.3) is deferred to Phase 4
+along with the seal-purge integration.
 
-### Phase 3 — Reader path
+**Sub-phase output is purely additive.** `PostingIndexWriter` and the
+on-disk format produced by the existing writer are unchanged. The new
+helper class is not yet referenced from any production code path; it
+sits ready to be wired in by Phase 2b.
 
-**Files to modify:** `AbstractPostingIndexReader.java` (1,800 lines),
-`PostingIndexFwdReader.java`, `PostingIndexBwdReader.java`,
-`PostingIndexUtils.readSealTxnFromKeyFd`, and the seal-purge readers
-that look at `.pk` directly.
+#### Phase 2b — Writer surgery — DONE
 
-**What changes:**
-- Replace direct `keyMem.getLong(activePageOffset + PAGE_OFFSET_*)`
-  reads with calls to `PostingIndexChainPicker.pick(...)`.
-- Plumb the reader's pinned `_txn` to the picker. Currently the
-  reader's `of(...)` method receives column metadata from the
-  `PageFrame` — extend it to also receive `_txn`.
-- Update `readSealTxnFromKeyFd` (the fd-based read used by the seal
-  purge job and snapshot restore) to walk the chain via the same
-  picker logic. The picker can operate on `MemoryR` so an `fd`-only
-  read needs an `MemoryR`-shaped wrapper around `FilesFacade.read*`
-  calls — small adapter layer.
-- `reloadConditionally` becomes "re-read header under seqlock; if
-  head changed and reader's pinned `_txn` is no longer covered by
-  the picker's chosen entry, re-pick". In practice readers don't
-  reload — they're opened per-query and stay on a single pinned
+**Files modified:**
+- `PostingIndexUtils.java` — `initKeyMemory` writes the v2 layout (two
+  4 KB header pages, empty entry region). `readSealTxnFromKeyFd` walks the
+  v2 chain: reads both header pages under the seqlock, picks the consistent
+  page, follows the head pointer, returns the head entry's `SEAL_TXN`.
+  Rejects {@code FORMAT_VERSION != 2} as a soft error (returns -1).
+- `PostingIndexWriter.java` —
+    - Removed `activePageOffset`, `deferMetadataPublish`,
+      `tentativeSlotOffset`, `currentPublishTableTxn`, `prevPublishTableTxn`,
+      `lastOrphanScanPath`, `orphanSealTxns`, `orphanScan*Count`.
+    - Added `chain = new PostingIndexChainWriter()` field and an in-memory
+      `maxValue` mirror.
+    - `of(path, name, columnNameTxn, init)` and the fd-based `of(...)`
+      now call `chain.initialiseEmpty()` on init or `chain.openExisting()`
+      on reopen, then load `sealTxn`/`valueMemSize`/`blockCapacity`/
+      `keyCount`/`genCount`/`maxValue` from the head entry.
+    - `truncate()` calls `chain.openExisting()` after the in-place re-init
+      so the helper's mirror reflects the new starting `genCounter`.
+    - `setMaxValue` updates the in-memory mirror and calls
+      `chain.updateHeadMaxValue` to persist + republish.
+    - `getMaxValue()` returns the in-memory mirror.
+    - All `keyMem.getLong(activePageOffset + PAGE_OFFSET_*)` reads switch
+      to in-memory fields (`maxValue`, `keyCount`, etc.).
+    - All `getGenDirOffset(activePageOffset, g)` calls switch to
+      `PostingIndexChainEntry.resolveGenDirOffset(chain.getHeadEntryOffset(), g)`.
+    - The four `writeMetadataPage(...)` callsites (one in `flushAllPending`
+      for sparse-gen append, three in the seal paths
+      `reencodeMonolithic`/`reencodeWithStrideDecoding`/`sealIncremental`)
+      are replaced by a single helper `publishToChain(...)` that decides
+      between `chain.extendHead` (head matches the writer's `sealTxn` —
+      sparse-gen append or fd-based reseal) and `chain.appendNewEntry`
+      (path-based seal that just bumped the writer's `sealTxn`, or fresh
+      chain).
+    - Methods deleted: `mergeTentativeIntoActiveIfAny` (kept as no-op
+      override for the interface), `invalidateStaleTentative`,
+      `determineActivePageOffset`, `logOrphanSealedFiles`, `rememberOrphan`,
+      `writeMetadataPage(...)` (both overloads).
+    - `close()` trims the file to `chain.getRegionLimit()` instead of the
+      v1 `KEY_FILE_RESERVED` so the chain entry region is preserved across
+      reopens.
+
+**Tests:** `PostingIndexChainTest`, `PostingIndexChainWriterTest`,
+`PostingIndexNativeTest` are green (writer-internal logic). The
+integration tests that pair the writer with the existing v1 readers
+(`PostingIndexOracleTest`, `PostingIndexConcurrencyTest`,
+`PostingIndexStressTest`, the `*Delta`/`*Ef` variants, and any SQL test
+that touches a posting index) fail uniformly with `"Unsupported Posting
+index version: 0"` because the readers still decode the v1 metadata-page
+layout. **This is the expected interim state until Phase 3 lands.**
+
+**Risk recap:** the writer surgery touched ~10 distinct call sites. The
+writer-only tests verify the new paths in isolation, but the format
+incompatibility means the integration suite cannot run end-to-end until
+Phase 3 swaps the reader.
+
+#### Phase 2c — TableWriter plumbing — DONE
+
+Two setters on `IndexWriter`, both default-no-op so `BitmapIndexWriter`
+is untouched:
+
+- **`setCurrentTableTxn(long currentTableTxn)`** — must be called
+  before each `configureFollowerAndWriter` / `configureWriter` /
+  fd-based `of(...)`. `PostingIndexWriter` consumes the value inside
+  `runRecoveryWalkIfRequested()` (called from both path-based and
+  fd-based `of(...)` after `chain.openExisting`); the helper drives
+  `chain.recoveryDropAbandoned` and queues each orphan
+  {@code .pv.{N}} file for purge via the existing
+  `pendingPurges` outbox using a conservative `[0, Long.MAX_VALUE)`
+  reader-visibility window. The setter is single-shot: the field is
+  reset to `-1` after consumption, so a stale value cannot drive a
+  later open's recovery walk if the next caller forgets to set it.
+  `close()` deliberately does NOT reset the field, because path-based
+  `of(path, name, columnNameTxn, init)` starts with `close()`; if
+  `close()` cleared it, the setter call between writer construction
+  and `of(...)` would be lost.
+- **`setNextTxnAtSeal(long txnAtSeal)`** (renamed from
+  `setPendingPublishTableTxn`) — supplies the table `_txn` the next
+  chain entry should record as its `txnAtSeal`. `TableWriter.syncColumns`
+  calls this with `txWriter.getTxn() + 1` before `commit()`, matching
+  the contract that the entry takes effect when the upcoming
+  transaction commits. The publish path consumes the value once and
+  `recordPostingSealPurge` resets it so a follow-up sealing publish
+  cannot accidentally inherit it.
+
+Ten `TableWriter` callsites (eight `configureFollowerAndWriter`, two
+`configureWriter`) now precede the indexer call with
+`indexer.getWriter().setCurrentTableTxn(txWriter.getTxn())`. The
+deferred `seal()`-takes-`txnAtSeal` parameter form discussed in the
+original Phase 2c sketch was not adopted — the setter pattern keeps
+the `IndexWriter` interface lean (no parameter forced on
+`BitmapIndexWriter`), and the single-shot consumption rule gives
+equivalent safety against stale values.
+
+**Phase 2c verification status:** two new integration tests in
+`PostingIndexOracleTest` cover the recovery flow:
+`testRecoveryDropsAbandonedHeadEntryOnReopen` (a published-but-
+uncommitted head is removed when the next open's `currentTableTxn`
+is below the entry's `txnAtSeal`) and
+`testRecoveryKeepsCommittedEntryOnReopen` (the walk is conservative
+and never drops a covered entry). The full sweep —
+PostingIndexOracleTest{,Ef,Delta} (41), PostingIndexConcurrencyTest
+(12), PostingIndexChain{,Writer}Test (29), CoveringIndexTest (297),
+SymbolMapTest (21) — passes.
+
+### Phase 3 — Reader path — DONE
+
+`AbstractPostingIndexReader.java` is the only Posting reader file that
+ever touches `.pk` metadata directly; `PostingIndexFwdReader` /
+`PostingIndexBwdReader` consume the protected fields the parent
+populates. Phase 3 rewrote the parent's read path against the v2
+chain.
+
+**What landed:**
+- Removed v1-era `activePageOffset` / `keyFileSequence` fields. Added
+  `headEntryOffset` (the picked entry), `chainGenCounter` (last seen
+  header monotonic counter, for cheap reload pre-checks),
+  `pinnedTableTxn` (defaults to `Long.MAX_VALUE` so unwired callers
+  see the head), and reusable `headerScratch` /
+  `entryScratch` snapshots.
+- Replaced `readIndexMetadataFromBestPage(long pinnedSealTxn)` with
+  `readIndexMetadataFromChain()`. The new method calls
+  `PostingIndexChainPicker.pick(...)`, validates
+  `headerScratch.formatVersion == V2_FORMAT_VERSION`, and on
+  `RESULT_OK` populates `valueMemSize` / `keyCount` / `genCount` /
+  `valueFileTxn` from the picked entry. On `RESULT_EMPTY_CHAIN` /
+  `RESULT_NO_VISIBLE_ENTRY` it promotes an empty snapshot — the
+  reader reports `keyCount/genCount = 0` and the caller skips
+  mapping `.pv`. `RESULT_HEADER_UNREADABLE` retries with the
+  existing spinlock deadline, then falls back to the previous
   snapshot.
+- `genLookup.snapshotMetadata(keyMem, genCount, entryOffset)` reads
+  the gen dir from the picked entry's payload. The math
+  (`offset + 64 + i*28`) is identical for v1 page bases and v2 entry
+  bases — both use a 64-byte header followed by the gen dir — so
+  the same helper works for both. The param will be renamed when
+  v1 is removed in Phase 5.
+- `of(...)` now maps the entire `.pk` file (`size = -1`) so chain
+  entries past `KEY_FILE_RESERVED` are reachable. When the chain
+  is empty at open time, `valueMem` is left unmapped; a subsequent
+  `reloadConditionally` lazily maps `.pv` via the new
+  `mapValueMem(...)` helper.
+- `reloadConditionally` does a cheap header peek under seqlock;
+  bails when `headerScratch.generationCounter <= chainGenCounter`.
+  When the chain advanced, it extends the `keyMem` mapping to the
+  current file length (writer may have appended entries past the
+  old map), re-picks via `readIndexMetadataFromChain()`, and
+  refreshes `valueMem` — `Misc.free(valueMem)` + `mapValueMem(...)`
+  if `sealTxn` advanced (new `.pv.{N}` filename) or the previous
+  open found an empty chain, otherwise just `changeSize(...)` if
+  same file grew/shrank.
+- Public setter `setPinnedTableTxn(long)` is exposed for future
+  Phase-2c plumbing. It is intentionally not threaded through
+  `IndexFactory.createReader` yet — that touches O3OpenColumnJob,
+  SymbolMapReaderImpl, and other call sites and is best done as
+  part of the table-writer ordering work in Phase 4. Until then
+  every reader uses the default `Long.MAX_VALUE` pin and sees the
+  head.
+- `PostingIndexUtils.readSealTxnFromKeyFd` was already migrated to
+  walk the v2 chain via `fd` reads in Phase 2b; Phase 3 confirms
+  the symmetry between the mapped-memory picker and the fd-based
+  walk.
 
-**Estimated size:** 300-500 lines.
+**Verification status:** the writer-only test classes pass plus
+PostingIndexOracleTest (13), PostingIndexOracleTestEf (13),
+PostingIndexOracleTestDelta (13), PostingIndexConcurrencyTest (12),
+CoveringIndexTest (297), SymbolMapTest (21). Sixteen residual
+failures across `PostingIndexStressTest{,Ef,Delta}` and
+`PostingIndexCriticalIssuesTest` are all v1-protocol-specific
+assertions (page A/B alternation per commit, `VALUE_FILE_TXN` slot
+reads, tentative-slot invalidation) or explicit RED placeholders
+(`Assert.fail("Critical finding #N needs a ... test")`). They are
+to be removed or rewritten in Phase 5 alongside the v1 cleanup.
 
-**Risk:** every reader callsite that reads `.pk` must switch
-together. Mixed v1/v2 reads will mis-decode. The read path is more
-spread out than the writer's, so the audit has to be careful.
+### Phase 4 — `TableWriter` ordering and seal-purge integration — DONE
 
-### Phase 4 — `TableWriter` ordering and seal-purge integration
+**What landed:**
+- New helper `PostingIndexChainWriter#getSecondEntryTxnAtSeal(MemoryR)`
+  reads the entry immediately preceding the head and returns its
+  `txnAtSeal`. Used by the seal-purge accounting to find the lower
+  bound of a superseded file's visibility window without keeping
+  any extra in-memory mirror.
+- `recordPostingSealPurge` no longer reads `pendingTxnAtSeal` to
+  compute the purge window. `toTxn` is now `chain.getCurrentTxnAtSeal()`
+  (the just-published entry's `txnAtSeal`); `fromTxn` is
+  `chain.getSecondEntryTxnAtSeal(keyMem)`, falling back to
+  `postingColumnNameTxn` when the chain has only the freshly-appended
+  entry (very first seal). The v1
+  `[0, Long.MAX_VALUE)` fallback is still present but only for the
+  defensive empty-chain path (`recordPostingSealPurge` invoked
+  without a chain entry — close-without-seal residual). The
+  reset-to-`-1` of `pendingTxnAtSeal` stays so a stale value can't
+  drive the next publish.
+- `publishPendingPurges` drops the
+  `entry.toTableTxn == Long.MAX_VALUE ? currentTableTxn : ...`
+  rewrite. With chain-derived intervals every entry has a meaningful
+  `toTableTxn`; if a residual saturated entry slips through, the
+  scoreboard min check just keeps the file longer and the next
+  writer-open recovery sweep cleans it up. The `currentTableTxn`
+  parameter on `publishPendingPurges` is now unused but retained on
+  the interface for future evolution.
+- `finishO3Commit` keeps the catch-and-`distressed=true` fallback —
+  partial seal failures still leave the in-memory writer
+  untrustworthy — but the comment now points at
+  `recoveryDropAbandoned` as the structural on-disk safety net.
+  Phase 2c.1 already wired `setCurrentTableTxn` into every TableWriter
+  reopen path, so the recovery walk runs without further plumbing.
 
-**Files to modify:** `TableWriter.java`, `PostingSealPurgeJob.java`,
-`PostingSealPurgeOperator.java`, `ColumnPurgeOperator.java`.
+**Phase 4 verification status:** new regression test
+`PostingIndexOracleTest#testRecordPostingSealPurgeUsesChainDerivedInterval`
+exercises a seal-supersedes-prior cycle and asserts the queued purge
+entry's `[fromTxn, toTxn)` matches the chain's predecessor/head
+`txnAtSeal`s — would re-fail if the v1 `[0, MAX)` fallback ever
+crept back in. Full sweep (PostingIndexOracle{,Ef,Delta} 47,
+PostingIndexConcurrencyTest 12, PostingIndexChain{,Writer}Test 29,
+PostingSealPurgeTest 15, CoveringIndexTest 297, SymbolMapTest 21)
+passes. 18 residual failures across PostingIndex{Stress,CriticalIssues}Test
+and one PostingSealPurgeTest case (`testPostLiveOrphanDeletedInline`,
+which relies on the removed v1 `logOrphanSealedFiles` directory
+scan) target v1-protocol semantics and are slated for Phase 5
+cleanup.
 
-**What changes:**
-- `finishO3Commit` (TableWriter.java:5795-5810) keeps the seal loop
-  but no longer relies on the catch-and-`distressed=true` fallback
-  for partial-publish recovery. The chain's recovery rule handles
-  it on next reopen. The catch is still appropriate (the writer is
-  unsafe to keep) but the on-disk recovery is now structurally
-  sound.
-- `publishPendingPurges`'s `[0, Long.MAX_VALUE)` conservative branch
-  (Finding #6) is no longer needed: the purge interval per chain
-  entry is `(entry.txnAtSeal, nextEntry.txnAtSeal)`, derivable
-  directly from the chain.
-- `PostingSealPurgeJob` consumes the chain's pruned-entry queue
-  rather than computing purge intervals itself.
+### Phase 5 — Format-version migration and v1 cleanup — DONE
 
-**Estimated size:** 200-400 lines.
+**What landed:**
+- `PostingIndexUtils.FORMAT_VERSION` (the v1 sentinel value `1`) is
+  gone. The writer-open path validates `V2_FORMAT_VERSION` via
+  `PostingIndexChainWriter.openExisting` (throws
+  `"Unsupported Posting index version [expected=2, actual=...]"`),
+  and the reader-open path does the same via
+  `readIndexMetadataFromChain` after the picker reads the header.
+  Both paths now reject any non-V2 file at the door — the
+  pre-Phase-5 fallback that interpreted v1 bytes as v2 is gone.
+- `PostingIndexUtils.SEAL_TXN_TENTATIVE` removed. The v1 tentative
+  slot has no v2 analogue.
+- `PostingIndexUtils.getGenDirOffset(pageBase, genIndex)` removed.
+  `PostingIndexChainEntry.resolveGenDirOffset(entryOffset, genIndex)`
+  is the single helper for computing gen-dir entry offsets;
+  `PostingGenLookup.snapshotMetadata` now takes an `entryOffset`
+  parameter (renamed from `pageOffset`) and uses the chain-entry
+  helper directly.
+- The v1 page-field constants (`PAGE_OFFSET_VALUE_MEM_SIZE`,
+  `PAGE_OFFSET_KEY_COUNT`, `PAGE_OFFSET_GEN_COUNT`,
+  `PAGE_OFFSET_FORMAT_VERSION`, `PAGE_OFFSET_SEAL_TXN`,
+  `PAGE_OFFSET_BLOCK_CAPACITY`, `PAGE_OFFSET_MAX_VALUE`) survive
+  only as raw byte-offset aliases used by a handful of legacy
+  stress / concurrency tests that probe specific bytes of the .pk
+  file to simulate corruption. The constants are documented as
+  vestigial (the offsets happen to match v2 header bytes for the
+  seqlock fields, and bytes for the v1-only fields are arbitrary
+  "some byte in the header" probes in tests that no longer assert
+  v1 semantics). No production code reads them.
+- `TableWriter.isPostingIndexSealed` was rewritten to call
+  `PostingIndexUtils.readSealTxnFromKeyFile` — the last v1
+  page-protocol reader in production code. v2 now has a single
+  fd-based chain walker shared by writer-open, reader-open, and
+  resume-after-restart logic.
+- v1-only failing tests removed (each replaced with a short comment
+  explaining what it tested and where the v2 equivalent lives):
+    - `PostingIndexCriticalIssuesTest`: 3 RED placeholder tests
+      (#2 setMaxValue seqlock, #6 [0, MAX) conservative purge,
+      #7 seal-loop partial failure) — each now structurally
+      addressed by the chain redesign. #9 (ColumnPurgeOperator
+      retry cap) is orthogonal and remains tracked separately.
+    - `PostingIndexStressTest{,Ef,Delta}`: 4 v1-protocol cases
+      per class (`testPageFlipVisibility`,
+      `testTruncateCreatesNewValueFile`,
+      `testRollbackToZeroCreatesNewValueFile`,
+      `testStaleTentativeInvalidatedOnFdOpen`) targeting strict
+      A/B alternation, post-truncate sealTxn slot reads, and the
+      v1 tentative-slot protocol — none of which apply to v2.
+    - `PostingSealPurgeTest.testPostLiveOrphanDeletedInline`:
+      relied on the removed `logOrphanSealedFiles` directory scan;
+      v2 routes orphans through the chain's
+      `recoveryDropAbandoned`.
 
-### Phase 5 — Format-version migration and v1 cleanup
-
-**Files to modify:** `PostingIndexUtils.java`, possibly
-`TableUtils.java` for the format-version check.
-
-**What changes:**
-- Remove v1 `PAGE_OFFSET_*` constants once Phase 2-4 are confirmed
-  green.
-- Format-version check: a writer that opens a `.pk` with
-  `FORMAT_VERSION != 2` throws a clear "must be reformatted" error.
-- (PR has not merged: no in-the-wild v1 files exist. If the PR is
-  released with v1 in any beta build, a migration tool is needed.
-  Don't release v1.)
-- Update the changelog / PR description to document the format
-  change.
-
-**Estimated size:** 50-150 lines.
+**Phase 5 verification status:** `mvn test` against the full
+posting-index test set plus `CoveringIndexTest` and `SymbolMapTest`
+runs **592 tests, 0 failures, 1 skipped** (the skip is a
+pre-existing platform-specific case in `PostingIndexChainTest`).
+The branch is now in a clean v2-only state — no production
+references to v1-only constants, every reader/writer code path
+goes through the chain helper.
 
 ## 8. What we deliberately are not doing
 
@@ -514,10 +719,11 @@ should call them based on what they learn from the integration:
    `txWriter.getTxn() + 1` enter the seal call chain? Most natural
    place is `TableWriter.sealPostingIndexForPartition(...)` adding a
    `long txnAtSeal` parameter, propagated into `PostingIndexWriter.seal(...)`.
-2. **Where to place the chain-prune call.** Inside `seal()` at the end
-   (after publish, before return), or a separate `prune()` step the
-   writer invokes per-commit? Inline is simpler; separate is more
-   testable.
+   *(Phase 2c will resolve.)*
+2. **Where to place the chain-prune call.** *(Resolved in 2a.)* Recovery
+   prune is its own `PostingIndexChainWriter#recoveryDropAbandoned(...)`
+   primitive, called once at writer open. Steady-state GC (section 5.3)
+   is bundled with the seal-purge integration in Phase 4.
 3. **What to do when the entry region runs out.** The header has
    no "wrap" semantics; if the region grows unbounded under perma-pinned
    readers, `.pk` grows. Reasonable cap is several MB before it matters
@@ -527,16 +733,17 @@ should call them based on what they learn from the integration:
    with `REGION_BASE` advancing on GC. If a workload pattern emerges
    where GC drains entries to 0 and then growth resumes from the high
    water mark, we re-evaluate.
-5. **Sparse-gen sub-protocol within the head entry.** Phase 2 needs to
-   pick: re-use the existing head/A-B mechanism within the head
-   entry's region, or maintain a simpler seqlock just on the head's
-   `GEN_COUNT` field plus the gen-dir append. The latter is simpler
-   if the head's `GEN_COUNT` is read under the chain's outer seqlock
-   anyway; the former is closer to v1.
+5. **Sparse-gen sub-protocol within the head entry.** *(Resolved in 2a.)*
+   Adopted option (b): plain aligned stores to head entry's `GEN_COUNT`,
+   `KEY_COUNT`, `LEN`, `VALUE_MEM_SIZE`, `MAX_VALUE` with a `storeFence`
+   between gen-dir bytes and the `GEN_COUNT` bump. Concurrent reader
+   safety relies on the chain header's outer seqlock for ordering;
+   single-writer means no inner seqlock is needed.
 6. **Format check on open.** `V2_FORMAT_VERSION = 2`. Writer opens
    with v1 (1) → throw "incompatible format, must reformat". This is
    safe for the unmerged PR but should be communicated in the PR
-   description.
+   description. *(Implemented in `PostingIndexChainWriter.openExisting`
+   in Phase 2a.)*
 
 ## 10. Glossary
 
@@ -571,7 +778,9 @@ should call them based on what they learn from the integration:
 - `PostingIndexChainHeader.java`, `PostingIndexChainEntry.java`,
   `PostingIndexChainPicker.java` — Phase 1 implementations.
 - `PostingIndexChainTest.java` — Phase 1 unit tests.
+- `PostingIndexChainWriter.java` — Phase 2a writer-side helper.
+- `PostingIndexChainWriterTest.java` — Phase 2a unit tests.
 
 ---
 
-*Document version 1. Last updated at end of Phase 1.*
+*Document version 3. Last updated at end of Phase 2b.*

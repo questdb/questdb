@@ -1305,6 +1305,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                         ColumnIndexer indexer = indexers.get(columnIndex);
                         final long columnTop = columnVersionWriter.getColumnTopQuick(partitionTimestamp, columnIndex);
                         assert indexer != null;
+                        indexer.getWriter().setCurrentTableTxn(txWriter.getTxn());
                         indexer.configureFollowerAndWriter(path.trimTo(plen), columnName, columnNameTxn, getPrimaryColumn(columnIndex), columnTop, partitionTimestamp, partitionNameTxn);
                         configureCoveringIfNeeded(indexer, columnIndex, partitionTimestamp);
                     }
@@ -2833,6 +2834,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                             boolean keyFileExists = ff.exists(keyFileName(indexType, path, newColumnName, newColumnNameTxn));
                             path.trimTo(partitionPathLen);
                             if (keyFileExists) {
+                                indexer.getWriter().setCurrentTableTxn(txWriter.getTxn());
                                 indexer.configureFollowerAndWriter(
                                         path,
                                         newColumnName,
@@ -5799,10 +5801,18 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 sealPostingIndexesForO3Partitions();
             } catch (Throwable e) {
                 // O3 data is already on disk; a partial-seal failure leaves
-                // posting-index sidecars inconsistent with the column data.
-                // Mark the writer distressed so the pool replaces it on the
-                // next acquire instead of handing back a writer that thinks
-                // the commit succeeded.
+                // some partitions with a fresh chain entry whose txnAtSeal
+                // is the upcoming commit value while others are not yet
+                // republished. The on-disk recovery is now structurally
+                // sound: the v2 chain's recoveryDropAbandoned, run from
+                // PostingIndexWriter.of() on the next reopen, drops every
+                // entry with txnAtSeal > currentTableTxn — i.e. the
+                // entries the failed seal loop published before the
+                // encompassing txWriter.commit landed. The catch still
+                // marks the writer distressed because the in-memory
+                // writer state is no longer trustworthy after a partial
+                // seal; the pool replaces it instead of handing back a
+                // writer that thinks the commit succeeded.
                 LOG.critical().$("data is committed but posting-index seal failed `").$(e).$('`').$();
                 distressed = true;
                 throw e;
@@ -6225,6 +6235,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         final long columnTop = columnVersionWriter.getColumnTopQuick(lastPartitionTs, columnIndex);
 
         // set indexer up to continue functioning as normal
+        indexer.getWriter().setCurrentTableTxn(txWriter.getTxn());
         indexer.configureFollowerAndWriter(path.trimTo(plen), columnName, columnNameTxn, getPrimaryColumn(columnIndex), columnTop, lastPartitionTs, lastPartitionNameTxn);
         configureCoveringIfNeeded(indexer, columnIndex, lastPartitionTs);
         indexer.refreshSourceAndIndex(0, txWriter.getTransientRowCount());
@@ -6267,6 +6278,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         if (columnTop > -1 && partitionSize > columnTop) {
             long columnDataFd = openRO(ff, dFile(path.trimTo(plen), columnName, columnNameTxn), LOG);
             try {
+                indexer.getWriter().setCurrentTableTxn(txWriter.getTxn());
                 indexer.configureWriter(path.trimTo(plen), columnName, columnNameTxn, columnTop, timestamp, txWriter.getPartitionNameTxnByPartitionTimestamp(timestamp));
                 configureCoveringIfNeeded(indexer, columnIndex, timestamp);
                 indexer.index(ff, columnDataFd, columnTop, partitionSize);
@@ -6314,6 +6326,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             final long columnTop = columnVersionWriter.getColumnTop(timestamp, columnIndex);
 
             if (columnTop > -1 && partitionSize > columnTop) {
+                indexer.getWriter().setCurrentTableTxn(txWriter.getTxn());
                 indexer.configureWriter(path.trimTo(plen), columnName, columnNameTxn, columnTop, timestamp, txWriter.getPartitionNameTxnByPartitionTimestamp(timestamp));
 
                 parquetColumnIdsAndTypes.clear();
@@ -6390,55 +6403,24 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     }
 
     /**
-     * Checks whether a partition already has a fully-sealed posting index for the given column.
+     * Checks whether a partition already has a sealed posting index for the
+     * given column. The v2 .pk chain has at least one published entry
+     * (sealTxn >= 0) iff at least one seal landed for this partition; the
+     * fd-based chain walker enforces seqlock consistency internally.
      *
      * @param plen          path length. This is used to trim the shared path object to.
      * @param columnName    column name
      * @param columnNameTxn column name txn
-     * @return true if the posting index key file exists with a valid seqlock and genCount > 0
+     * @return true if the posting index key file exists with a non-empty
+     *         v2 chain (at least one published seal entry).
      */
     private boolean isPostingIndexSealed(int plen, CharSequence columnName, long columnNameTxn) {
-        keyFileName(IndexType.POSTING, path.trimTo(plen), columnName, columnNameTxn);
-        if (!ff.exists(path.$()) || ff.length(path.$()) < io.questdb.cairo.idx.PostingIndexUtils.KEY_FILE_RESERVED) {
+        LPSZ keyFile = io.questdb.cairo.idx.PostingIndexUtils.keyFileName(
+                path.trimTo(plen), columnName, columnNameTxn);
+        if (!ff.exists(keyFile)) {
             return false;
         }
-        // Read the key file header to check seqlock validity and genCount.
-        // Use ddlMem for temporary read — it's not in use during indexing.
-        long fd = ff.openRO(path.$());
-        if (fd < 0) {
-            return false;
-        }
-        try {
-            long addr = ff.mmap(fd, io.questdb.cairo.idx.PostingIndexUtils.KEY_FILE_RESERVED, 0, Files.MAP_RO, MemoryTag.MMAP_DEFAULT);
-            if (addr == -1) {
-                return false;
-            }
-            try {
-                // Check both pages, use the one with the higher valid sequence
-                long seqA = Unsafe.getLong(addr + io.questdb.cairo.idx.PostingIndexUtils.PAGE_A_OFFSET + io.questdb.cairo.idx.PostingIndexUtils.PAGE_OFFSET_SEQUENCE_START);
-                long seqEndA = Unsafe.getLong(addr + io.questdb.cairo.idx.PostingIndexUtils.PAGE_A_OFFSET + io.questdb.cairo.idx.PostingIndexUtils.PAGE_OFFSET_SEQUENCE_END);
-                long seqB = Unsafe.getLong(addr + io.questdb.cairo.idx.PostingIndexUtils.PAGE_B_OFFSET + io.questdb.cairo.idx.PostingIndexUtils.PAGE_OFFSET_SEQUENCE_START);
-                long seqEndB = Unsafe.getLong(addr + io.questdb.cairo.idx.PostingIndexUtils.PAGE_B_OFFSET + io.questdb.cairo.idx.PostingIndexUtils.PAGE_OFFSET_SEQUENCE_END);
-
-                long validA = (seqA == seqEndA) ? seqA : 0;
-                long validB = (seqB == seqEndB) ? seqB : 0;
-                long activePage = (validB > validA)
-                        ? io.questdb.cairo.idx.PostingIndexUtils.PAGE_B_OFFSET
-                        : io.questdb.cairo.idx.PostingIndexUtils.PAGE_A_OFFSET;
-                long activeSeq = Math.max(validA, validB);
-
-                if (activeSeq <= 0) {
-                    return false; // no valid page
-                }
-
-                int genCount = Unsafe.getInt(addr + activePage + io.questdb.cairo.idx.PostingIndexUtils.PAGE_OFFSET_GEN_COUNT);
-                return genCount > 0; // sealed if at least one generation exists
-            } finally {
-                ff.munmap(addr, io.questdb.cairo.idx.PostingIndexUtils.KEY_FILE_RESERVED, MemoryTag.MMAP_DEFAULT);
-            }
-        } finally {
-            ff.close(fd);
-        }
+        return io.questdb.cairo.idx.PostingIndexUtils.readSealTxnFromKeyFile(ff, keyFile) >= 0;
     }
 
     private void linkPartitionIndexFiles(long partitionTimestamp, int partitionDirLen, int newPartitionDirLen) {
@@ -7541,6 +7523,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             if (indexed) {
                 ColumnIndexer indexer = indexers.getQuick(columnIndex);
                 assert indexer != null;
+                indexer.getWriter().setCurrentTableTxn(txWriter.getTxn());
                 indexer.configureFollowerAndWriter(path.trimTo(plen), name, columnNameTxn, getPrimaryColumn(columnIndex), txWriter.getTransientRowCount(), partitionTimestamp, txWriter.getPartitionNameTxnByPartitionTimestamp(partitionTimestamp));
                 configureCoveringIfNeeded(indexer, columnIndex, txWriter.getLastPartitionTimestamp());
             }
@@ -7592,6 +7575,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
                     if (indexer != null) {
                         final long columnTop = columnVersionWriter.getColumnTopQuick(lastOpenPartitionTs, i);
+                        indexer.getWriter().setCurrentTableTxn(txWriter.getTxn());
                         indexer.configureFollowerAndWriter(path, name, columnNameTxn, getPrimaryColumn(i), columnTop, lastOpenPartitionTs, lastOpenPartitionTxnName);
                         configureCoveringIfNeeded(indexer, i, lastOpenPartitionTs);
                         // Recover from a crash that left .pk's sealTxn advanced
@@ -10745,6 +10729,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                             }
                         }
 
+                        indexer.getWriter().setCurrentTableTxn(txWriter.getTxn());
                         indexer.configureFollowerAndWriter(
                                 path.trimTo(plen), colName, colNameTxn,
                                 getPrimaryColumn(colIdx), columnTop,
@@ -10782,6 +10767,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                         indexer.clearCovering();
                     }
                 } else {
+                    indexer.getWriter().setCurrentTableTxn(txWriter.getTxn());
                     indexer.configureFollowerAndWriter(
                             path.trimTo(plen), colName, colNameTxn,
                             getPrimaryColumn(colIdx), columnTop,
@@ -10870,6 +10856,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                         }
                         CharSequence colName = metadata.getColumnName(colIdx);
                         long colNameTxn = columnVersionWriter.getColumnNameTxn(lastOpenPartitionTs, colIdx);
+                        indexer.getWriter().setCurrentTableTxn(txWriter.getTxn());
                         indexer.configureFollowerAndWriter(
                                 path.trimTo(plen), colName, colNameTxn,
                                 getPrimaryColumn(colIdx), columnTop,
@@ -11332,7 +11319,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         final long publishTxn = txWriter.getTxn() + 1;
         for (int i = 0, n = denseIndexers.size(); i < n; i++) {
             ColumnIndexer indexer = denseIndexers.getQuick(i);
-            indexer.getWriter().setPendingPublishTableTxn(publishTxn);
+            indexer.getWriter().setNextTxnAtSeal(publishTxn);
             try {
                 indexer.getWriter().commit();
             } catch (CairoException e) {

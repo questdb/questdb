@@ -81,8 +81,30 @@ public final class PostingIndexChainHeader {
      * Initialise both header pages on a freshly-created .pk file. Page A is
      * left in the active state with an empty chain; Page B is zeroed and
      * stays inactive until the first publish.
+     * <p>
+     * Convenience overload — equivalent to {@code initialiseEmpty(keyMem, 0L)}.
+     * After this call, the next sealTxn the writer should assign is {@code 0},
+     * matching the historical convention where the pre-seal {@code .pv} file
+     * is named {@code .pv.0}.
      */
     public static void initialiseEmpty(MemoryW keyMem) {
+        initialiseEmpty(keyMem, 0L);
+    }
+
+    /**
+     * Initialise both header pages on a freshly-created .pk file with a
+     * caller-supplied starting sealTxn. The {@link #publish} -side
+     * monotonicity rule requires each new entry's sealTxn to be strictly
+     * greater than the header's {@code GEN_COUNTER}; by writing
+     * {@code GEN_COUNTER = startSealTxn - 1} here we make the very first
+     * append accept exactly {@code startSealTxn}.
+     * <p>
+     * Used by {@code PostingIndexWriter} after {@code truncate()} where the
+     * writer has bumped its {@code sealTxn} field to a new value and the
+     * upcoming entry must reference exactly that sealTxn (so the on-disk
+     * {@code .pv.{N}} file matches the chain entry).
+     */
+    public static void initialiseEmpty(MemoryW keyMem, long startSealTxn) {
         // Page A: active, empty chain.
         writePageRaw(
                 keyMem,
@@ -93,7 +115,7 @@ public final class PostingIndexChainHeader {
                 /* entryCount */ 0L,
                 /* regionBase */ PostingIndexUtils.V2_ENTRY_REGION_BASE,
                 /* regionLimit */ PostingIndexUtils.V2_ENTRY_REGION_BASE,
-                /* genCounter */ 0L
+                /* genCounter */ startSealTxn - 1L
         );
         // Page B: inactive (sequence=0). Will be picked up on first publish.
         writePageRaw(

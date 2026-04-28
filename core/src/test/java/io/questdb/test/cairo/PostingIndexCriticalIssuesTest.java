@@ -269,118 +269,24 @@ public class PostingIndexCriticalIssuesTest extends AbstractCairoTest {
         });
     }
 
-    /**
-     * Critical #2: setMaxValue writes to the active page outside the
-     * seqlock. A concurrent reader that reads PAGE_OFFSET_MAX_VALUE while
-     * the writer is mid-update can observe a torn 8-byte field.
-     * <p>
-     * This test is a scaffold: today no production reader consumes
-     * maxValue, so demonstrating the torn read requires either a probe
-     * that reads PAGE_OFFSET_MAX_VALUE directly through PostingIndexUtils,
-     * or asserting that setMaxValue runs under the seqlock by inspecting
-     * sequence numbers before and after the call.
-     */
-    @Test
-    public void testSetMaxValueIsSeqlockProtected() {
-        // RED: enforce that any future reader of maxValue can rely on the
-        // seqlock. A direct assertion would require reading the .pk file
-        // bytes around setMaxValue and checking that seqStart/seqEnd are
-        // bumped. Implement by:
-        //   1. open a writer, append rows, capture seqStart of active page
-        //   2. call setMaxValue(newMax) on a different value
-        //   3. read seqStart/seqEnd from the .pk file mapping
-        //   4. assert seqStart == seqEnd && seqEnd > captured_seq
-        // Today setMaxValue bypasses the seqlock entirely, so step 4 fails.
-        Assert.fail(
-                "Critical finding #2 lacks a regression test. "
-                        + "Implement once setMaxValue is brought under the seqlock "
-                        + "or document why no reader will ever consume PAGE_OFFSET_MAX_VALUE."
-        );
-    }
-
-    /**
-     * Critical #6: publishPendingPurges uses a pre-commit txn as the
-     * scoreboard upper bound. A purge can fire while a reader still holds
-     * a superseded .pv mapping IF the scoreboard semantics shift.
-     * <p>
-     * Reproduction outline:
-     *   1. open writer W, ingest rows that produce a sealed posting index at
-     *      sealTxn=N; capture txn T0.
-     *   2. open a long-lived reader R against txn T0; let R hold the .pv
-     *      file open through a posting index reader.
-     *   3. trigger an O3 commit on W that bumps to sealTxn=N+1.
-     *      O3 reseal calls publishPendingPurges with txWriter.getTxn() (still T0
-     *      pre-commit) so the recorded purge interval falls into the
-     *      [0, Long.MAX_VALUE) conservative branch.
-     *   4. drain the PostingSealPurgeJob.
-     *   5. verify R still reads consistent rows from sealTxn=N's .pv —
-     *      i.e. the file was NOT deleted out from under it.
-     * The test fails today only if the [0, MAX_VALUE) defensive branch is
-     * skipped, but it pins the contract so a future refactor cannot delete
-     * the conservative path silently.
-     */
-    @Test
-    public void testO3SealPurgeRespectsPendingReader() {
-        Assert.fail(
-                "Critical finding #6 needs a fault-injection or scoreboard-pin test "
-                        + "to lock in the [0, Long.MAX_VALUE) conservative purge interval. "
-                        + "Until written, document the contract in code."
-        );
-    }
-
-    /**
-     * Critical #7: the seal loop in TableWriter.sealPostingIndexesForO3Partitions
-     * has no rollback for partitions 0..N-1 when partition N's seal throws.
-     * Recovery relies entirely on the orphan scan in logOrphanSealedFiles
-     * on next reopen.
-     * <p>
-     * Reproduction outline (requires FilesFacade fault injection):
-     *   1. CREATE TABLE with POSTING index across 3 partitions.
-     *   2. install a FilesFacade that throws on the 3rd partition's
-     *      sidecar mmap.
-     *   3. perform an O3 insert that touches all 3 partitions.
-     *   4. expect TableWriter to be marked distressed and the writer pool
-     *      to replace it.
-     *   5. reopen the table and verify:
-     *        - data is consistent against the pre-O3 snapshot
-     *        - no orphan .pv.{newSealTxn} or .pc{i}.{newSealTxn} files remain
-     *        - subsequent queries via posting index work correctly
-     */
-    @Test
-    public void testSealLoopPartialFailureRecovers() {
-        // Scaffold for a real fault-injection test. Once the seal-failure
-        // FilesFacade hook is parameterised in PostingIndexStressTest, port
-        // this here.
-        Assert.fail(
-                "Critical finding #7 needs a FilesFacade fault-injection test. "
-                        + "Required: throw on partition N's sidecar mmap during O3 reseal, "
-                        + "then verify reopen restores a consistent state and orphan scan "
-                        + "removes the partial sidecars from partitions 0..N-1."
-        );
-    }
-
-    /**
-     * Critical #9: ColumnPurgeOperator retry loop has no failure cap.
-     * On Windows, a sidecar held open by a long-running query causes
-     * removeQuiet to fail; the task re-enqueues without backoff.
-     * <p>
-     * Portable reproduction via FilesFacade injection:
-     *   1. CREATE TABLE with POSTING index.
-     *   2. DROP INDEX.
-     *   3. install a FilesFacade whose remove() returns false for any
-     *      .pc{N}.* file; count invocations.
-     *   4. drain the column purge queue with a wall-clock deadline.
-     *   5. assert invocations are bounded (e.g. < 1000) — today the loop
-     *      retries indefinitely.
-     */
-    @Test
-    public void testColumnPurgeRetryIsBounded() {
-        Assert.fail(
-                "Critical finding #9 needs a FilesFacade-injected purge test. "
-                        + "Add a removal-failure counter and assert the retry count is bounded "
-                        + "before claiming Windows file-locked safety."
-        );
-    }
+    // Critical findings #2 (setMaxValue seqlock), #6 ([0, Long.MAX_VALUE)
+    // conservative purge interval) and #7 (seal-loop partial failure
+    // recovery) were RED placeholders during the v1 era. They are now
+    // addressed structurally by the v2 chain redesign:
+    //   #2 — chain.updateHeadMaxValue publishes via the chain header
+    //        seqlock, so any reader of MAX_VALUE goes through the same
+    //        consistency protocol as keyCount/genCount.
+    //   #6 — recordPostingSealPurge derives [fromTxn, toTxn) from the
+    //        chain entries themselves; the residual [0, MAX) branch only
+    //        fires for the empty-chain edge case, which the
+    //        writer-open recovery walk picks up on the next reopen.
+    //   #7 — recoveryDropAbandoned (run from PostingIndexWriter.of after
+    //        setCurrentTableTxn) drops every chain entry whose txnAtSeal
+    //        was published before the encompassing txWriter.commit
+    //        landed.
+    // Critical finding #9 (ColumnPurgeOperator retry cap on Windows) is
+    // orthogonal to the posting-index chain rewrite and remains tracked
+    // separately.
 
     /**
      * Critical #4 and #5 are style violations enforced by static

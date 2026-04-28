@@ -237,12 +237,16 @@ public class PostingGenLookup implements Closeable {
     }
 
     /**
-     * Fill the staging snapshot from the writer's metadata page. Caller
-     * must validate the seqlock and then call {@link #commitSnapshot} to
-     * make the snapshot observable. Until the swap, the previous active
+     * Fill the staging snapshot from a v2 chain entry's gen-dir region.
+     * Caller must validate the seqlock and then call {@link #commitSnapshot}
+     * to make the snapshot observable. Until the swap, the previous active
      * snapshot is unchanged — torn reads here cannot corrupt anything.
+     *
+     * @param entryOffset byte offset of the chain entry in {@code keyMem};
+     *                    the gen-dir starts at
+     *                    {@code entryOffset + V2_ENTRY_HEADER_SIZE}.
      */
-    public void snapshotMetadata(MemoryMR keyMem, int genCount, long pageOffset) {
+    public void snapshotMetadata(MemoryMR keyMem, int genCount, long entryOffset) {
         Snapshot s = staging;
         s.genFileOffsets.clear();
         s.genDataSizes.clear();
@@ -251,7 +255,7 @@ public class PostingGenLookup implements Closeable {
         s.genMaxKeys.clear();
         s.anySparseGen = false;
         for (int i = 0; i < genCount; i++) {
-            long dirOffset = PostingIndexUtils.getGenDirOffset(pageOffset, i);
+            long dirOffset = PostingIndexChainEntry.resolveGenDirOffset(entryOffset, i);
             s.genFileOffsets.add(keyMem.getLong(dirOffset + PostingIndexUtils.GEN_DIR_OFFSET_FILE_OFFSET));
             s.genDataSizes.add(keyMem.getLong(dirOffset + PostingIndexUtils.GEN_DIR_OFFSET_SIZE));
             int kc = keyMem.getInt(dirOffset + PostingIndexUtils.GEN_DIR_OFFSET_KEY_COUNT);

@@ -78,8 +78,19 @@ public class PostingIndexChainTest {
         Assert.assertEquals(0, snapshot.entryCount);
         Assert.assertEquals(PostingIndexUtils.V2_ENTRY_REGION_BASE, snapshot.regionBase);
         Assert.assertEquals(PostingIndexUtils.V2_ENTRY_REGION_BASE, snapshot.regionLimit);
-        Assert.assertEquals(0, snapshot.generationCounter);
+        // Default initialiseEmpty leaves genCounter at -1 so the first
+        // appendNewEntry can use sealTxn=0 (matches .pv.0 naming).
+        Assert.assertEquals(-1L, snapshot.generationCounter);
         Assert.assertTrue(snapshot.isEmpty());
+    }
+
+    @Test
+    public void testInitialiseEmptyWithExplicitStartSealTxn() {
+        PostingIndexChainHeader.initialiseEmpty(mem, /* startSealTxn */ 7L);
+
+        PostingIndexChainHeader.Snapshot snapshot = new PostingIndexChainHeader.Snapshot();
+        Assert.assertTrue(PostingIndexChainHeader.readUnderSeqlock(mem, snapshot));
+        Assert.assertEquals(6L, snapshot.generationCounter);
     }
 
     @Test
