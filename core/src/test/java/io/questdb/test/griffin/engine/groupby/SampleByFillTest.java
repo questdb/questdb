@@ -4231,14 +4231,15 @@ public class SampleByFillTest extends AbstractCairoTest {
             // EXCEPT (set difference): rows in London not in Paris.
             // 00:00/10 matches; 01:00/null matches (NULL == NULL in EXCEPT).
             // Remaining: 02:00/20.
-            assertSql(
+            assertQueryNoLeakCheck(
                     "ts\tsum\n" +
                             "2024-01-01T02:00:00.000000Z\t20.0\n",
                     "(SELECT ts, sum(val) FROM t WHERE city='London' " +
                             "SAMPLE BY 1h FILL(NULL) ALIGN TO CALENDAR) " +
                             "EXCEPT " +
                             "(SELECT ts, sum(val) FROM t WHERE city='Paris' " +
-                            "SAMPLE BY 1h FILL(NULL) ALIGN TO CALENDAR)"
+                            "SAMPLE BY 1h FILL(NULL) ALIGN TO CALENDAR)",
+                    "ts", false, false
             );
         });
     }
@@ -4261,7 +4262,7 @@ public class SampleByFillTest extends AbstractCairoTest {
             // Paris buckets: 00:00=10, 01:00=null, 02:00=30.
             // INTERSECT (set intersection, dedup): rows present on both sides.
             // 00:00/10 and 01:00/null match; 02:00 differs (20 vs 30).
-            assertSql(
+            assertQueryNoLeakCheck(
                     "ts\tsum\n" +
                             "2024-01-01T00:00:00.000000Z\t10.0\n" +
                             "2024-01-01T01:00:00.000000Z\tnull\n",
@@ -4269,7 +4270,8 @@ public class SampleByFillTest extends AbstractCairoTest {
                             "SAMPLE BY 1h FILL(NULL) ALIGN TO CALENDAR) " +
                             "INTERSECT " +
                             "(SELECT ts, sum(val) FROM t WHERE city='Paris' " +
-                            "SAMPLE BY 1h FILL(NULL) ALIGN TO CALENDAR)"
+                            "SAMPLE BY 1h FILL(NULL) ALIGN TO CALENDAR)",
+                    "ts", false, false
             );
         });
     }
@@ -4290,7 +4292,7 @@ public class SampleByFillTest extends AbstractCairoTest {
             // London: 00:00=10, 01:00=null, 02:00=20.
             // Paris: 01:00=30, 02:00=null, 03:00=40.
             // UNION ALL preserves duplicates and emits side 1, then side 2.
-            assertSql(
+            assertQueryNoLeakCheck(
                     "ts\tsum\n" +
                             "2024-01-01T00:00:00.000000Z\t10.0\n" +
                             "2024-01-01T01:00:00.000000Z\tnull\n" +
@@ -4302,7 +4304,9 @@ public class SampleByFillTest extends AbstractCairoTest {
                             "SAMPLE BY 1h FILL(NULL) ALIGN TO CALENDAR) " +
                             "UNION ALL " +
                             "(SELECT ts, sum(val) FROM t WHERE city='Paris' " +
-                            "SAMPLE BY 1h FILL(NULL) ALIGN TO CALENDAR)"
+                            "SAMPLE BY 1h FILL(NULL) ALIGN TO CALENDAR)",
+                    // UNION ALL output has no designated timestamp column.
+                    null, false, false
             );
         });
     }
