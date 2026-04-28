@@ -312,9 +312,6 @@ unsafe impl Allocator for QdbAllocator {
         old_layout: Layout,
         new_layout: Layout,
     ) -> Result<NonNull<[u8]>, AllocError> {
-        if new_layout.size() == old_layout.size() {
-            return Ok(NonNull::slice_from_raw_parts(ptr, old_layout.size()));
-        }
         assert!(new_layout.size() > old_layout.size());
         let delta = new_layout.size() - old_layout.size();
         self.check_alloc_limit(delta)?;
@@ -336,9 +333,6 @@ unsafe impl Allocator for QdbAllocator {
         old_layout: Layout,
         new_layout: Layout,
     ) -> Result<NonNull<[u8]>, AllocError> {
-        if new_layout.size() == old_layout.size() {
-            return Ok(NonNull::slice_from_raw_parts(ptr, old_layout.size()));
-        }
         assert!(new_layout.size() > old_layout.size());
         let delta = new_layout.size() - old_layout.size();
         self.check_alloc_limit(delta)?;
@@ -360,9 +354,6 @@ unsafe impl Allocator for QdbAllocator {
         old_layout: Layout,
         new_layout: Layout,
     ) -> Result<NonNull<[u8]>, AllocError> {
-        if new_layout.size() == old_layout.size() {
-            return Ok(NonNull::slice_from_raw_parts(ptr, old_layout.size()));
-        }
         assert!(new_layout.size() < old_layout.size());
         let delta = old_layout.size() - new_layout.size();
         let allocated = Global
