@@ -3127,17 +3127,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                             .put(']');
                 }
             } else {
-                // Source partition has no _pm sidecar. Regenerate it inline into the
-                // new partition directory before _txn is committed so readers never
-                // observe a parquet partition without its _pm. Without this, _txn
-                // commit below would publish a parquet partition that immediately
-                // throws on open because _pm is missing.
-                LOG.info()
-                        .$("source _pm missing, creating in new partition dir [path=").$substr(pathRootSize, path)
-                        .$(", parquetFileSize=").$(parquetFileSize)
-                        .I$();
-                other.trimTo(newPartitionDirLen);
-                createParquetMetadata(other, newPartitionDirLen, parquetFileSize);
+                return SWITCH_NO_PARQUET;
             }
 
             LOG.info().$("linking index files to parquet [path=").$substr(pathRootSize, path).I$();
