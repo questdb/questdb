@@ -41,6 +41,7 @@ import io.questdb.cairo.vm.api.MemoryMARW;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Unsafe;
+import io.questdb.std.Vect;
 import io.questdb.std.str.Path;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.std.TestFilesFacadeImpl;
@@ -518,6 +519,247 @@ public class Mig940Test extends AbstractCairoTest {
                 } finally {
                     ff.munmap(parquetMetaAddr, parquetMetaSize, MemoryTag.MMAP_DEFAULT);
                 }
+            }
+        });
+    }
+
+    @Test
+    public void testMigrateRunsAfterMig702EraStamp() throws Exception {
+        // EngineMigration.migrateEngineTo() short-circuits when _upgrade.d offset 4
+        // equals MIGRATION_VERSION (EngineMigration.java:114). If Mig940's slot
+        // collides with a slot that any prior, distinct migration once stamped
+        // into _upgrade.d, the dispatcher will see "already at MIGRATION_VERSION"
+        // on those databases and skip Mig940 — so their parquet partitions never
+        // get _pm sidecars and become unreadable.
+        //
+        // This test stamps _upgrade.d offset 4 to slot 427 (a historical
+        // migration stamp) and asserts Mig940 still runs and regenerates _pm.
+        // Pinning this requires Mig940 to be registered at a slot strictly
+        // greater than 427 with MIGRATION_VERSION bumped accordingly.
+        final int MIG702_SLOT = 427;
+
+        assertMemoryLeak(TestFilesFacadeImpl.INSTANCE, () -> {
+            execute("CREATE TABLE t (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO t VALUES(1, '2024-06-10T00:00:00.000000Z')");
+            execute("INSERT INTO t VALUES(2, '2024-06-11T00:00:00.000000Z')");
+            execute("ALTER TABLE t CONVERT PARTITION TO PARQUET WHERE ts > 0");
+
+            final FilesFacade ff = configuration.getFilesFacade();
+            final TableToken token = engine.verifyTableName("t");
+
+            long partitionTs;
+            long partitionNameTxn;
+            try (TableReader reader = engine.getReader(token)) {
+                partitionTs = reader.getTxFile().getPartitionTimestampByIndex(0);
+                partitionNameTxn = reader.getTxFile().getPartitionNameTxn(0);
+            }
+
+            // Drop _pm to mimic a parquet partition produced by a build that
+            // predates _pm sidecars.
+            try (Path path = new Path()) {
+                path.of(configuration.getDbRoot()).concat(token);
+                TableUtils.setPathForParquetPartitionMetadata(path, ColumnType.TIMESTAMP, PartitionBy.DAY, partitionTs, partitionNameTxn);
+                ff.remove(path.$());
+                Assert.assertFalse("_pm should be deleted", ff.exists(path.$()));
+            }
+
+            engine.releaseAllWriters();
+            engine.releaseAllReaders();
+            engine.releaseInactive();
+
+            // Engine setup wrote the new build's MIGRATION_VERSION into
+            // _upgrade.d offset 4. Overwrite it with 427 to mimic a database
+            // last touched by a build that stamped slot 427.
+            try (Path upgradePath = new Path().of(configuration.getDbRoot()).concat(TableUtils.UPGRADE_FILE_NAME)) {
+                long fd = TableUtils.openFileRWOrFail(ff, upgradePath.$(), configuration.getWriterFileOpenOpts());
+                long tempMem = Unsafe.malloc(Long.BYTES, MemoryTag.NATIVE_DEFAULT);
+                try {
+                    TableUtils.writeIntOrFail(ff, fd, 4, MIG702_SLOT, tempMem, upgradePath);
+                } finally {
+                    Unsafe.free(tempMem, Long.BYTES, MemoryTag.NATIVE_DEFAULT);
+                    ff.fsyncAndClose(fd);
+                }
+            }
+
+            // Drive the production upgrade path (force=false). If Mig940's slot
+            // collides with the stamp written above, the dispatcher returns early
+            // and Mig940 never runs.
+            EngineMigration.migrateEngineTo(engine, ColumnType.VERSION, ColumnType.MIGRATION_VERSION, false);
+
+            try (Path path = new Path()) {
+                path.of(configuration.getDbRoot()).concat(token);
+                TableUtils.setPathForParquetPartitionMetadata(path, ColumnType.TIMESTAMP, PartitionBy.DAY, partitionTs, partitionNameTxn);
+                Assert.assertTrue(
+                        "Mig940 must run when _upgrade.d carries a stamp from a prior, distinct migration; " +
+                                "otherwise databases at that stamp keep their parquet partitions without _pm sidecars",
+                        ff.exists(path.$())
+                );
+
+                long parquetMetaSize = ParquetMetaFileReader.readParquetMetaFileSize(ff, path.$());
+                Assert.assertTrue("_pm should have positive size", parquetMetaSize > 0);
+
+                long parquetMetaAddr = TableUtils.mapRO(ff, path.$(), LOG, parquetMetaSize, MemoryTag.MMAP_DEFAULT);
+                try {
+                    ParquetMetaFileReader reader = new ParquetMetaFileReader();
+                    reader.of(parquetMetaAddr, parquetMetaSize);
+                    reader.resolveFooter(Long.MAX_VALUE);
+                    Assert.assertEquals(2, reader.getColumnCount());
+                    Assert.assertEquals(1, reader.getRowGroupCount());
+                } finally {
+                    ff.munmap(parquetMetaAddr, parquetMetaSize, MemoryTag.MMAP_DEFAULT);
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testMigrateRollbackThenUpgradeViaEscapeHatch() throws Exception {
+        // Rollback-then-upgrade scenario from the PR's "Rollback safety" note.
+        // The on-disk shape after a rollback is:
+        //   - data.parquet has been advanced (e.g. by an O3 merge under the
+        //     older build that doesn't know about _pm).
+        //   - _txn field 3 carries the new parquet file size.
+        //   - _pm is left over from before the rollback, so its footer chain
+        //     has no footer matching _txn field 3.
+        //
+        // The dispatcher's normal upgrade path will not re-run Mig940 on its
+        // own because _upgrade.d already records MIGRATION_VERSION. The
+        // documented recovery is cairo.repeat.migration.from.version, which
+        // resets the recorded migration version (EngineMigration.java:110)
+        // so the dispatcher proceeds and Mig940 picks up the stale chain via
+        // isParquetMetadataStale() and regenerates _pm.
+        //
+        // This test stages the rollback shape by performing an O3 merge
+        // under the new build (which advances data.parquet, _pm, and _txn
+        // field 3 together) and then restoring _pm to its pre-merge bytes.
+        // It then drives the production upgrade path with force=false and
+        // asserts the regenerated _pm resolves to the post-merge parquet
+        // file size.
+        node1.setProperty(PropertyKey.CAIRO_REPEAT_MIGRATION_FROM_VERSION, ColumnType.VERSION);
+
+        assertMemoryLeak(TestFilesFacadeImpl.INSTANCE, () -> {
+            execute("CREATE TABLE t (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO t VALUES(1, '2024-06-10T00:00:00.000000Z')");
+            execute("INSERT INTO t VALUES(2, '2024-06-11T00:00:00.000000Z')");
+            execute("ALTER TABLE t CONVERT PARTITION TO PARQUET WHERE ts > 0");
+
+            final FilesFacade ff = configuration.getFilesFacade();
+            final TableToken token = engine.verifyTableName("t");
+
+            long partitionTs;
+            long preMergeNameTxn;
+            long preMergeParquetFileSize;
+            try (TableReader reader = engine.getReader(token)) {
+                partitionTs = reader.getTxFile().getPartitionTimestampByIndex(0);
+                preMergeNameTxn = reader.getTxFile().getPartitionNameTxn(0);
+                preMergeParquetFileSize = reader.getTxFile().getPartitionParquetFileSize(0);
+            }
+
+            // Capture the pre-merge _pm bytes. These are what an older build
+            // would leave on disk after rolling back from this build.
+            final long preMergePmSize;
+            final long preMergePmAddr;
+            try (Path path = new Path()) {
+                path.of(configuration.getDbRoot()).concat(token);
+                TableUtils.setPathForParquetPartitionMetadata(path, ColumnType.TIMESTAMP, PartitionBy.DAY, partitionTs, preMergeNameTxn);
+                preMergePmSize = ff.length(path.$());
+                Assert.assertTrue("pre-merge _pm exists with positive size", preMergePmSize > 0);
+                preMergePmAddr = Unsafe.malloc(preMergePmSize, MemoryTag.NATIVE_DEFAULT);
+                long mappedAddr = TableUtils.mapRO(ff, path.$(), LOG, preMergePmSize, MemoryTag.MMAP_DEFAULT);
+                try {
+                    Vect.memcpy(preMergePmAddr, mappedAddr, preMergePmSize);
+                } finally {
+                    ff.munmap(mappedAddr, preMergePmSize, MemoryTag.MMAP_DEFAULT);
+                }
+            }
+            try {
+                // O3 merge into the parquet partition: appends a new row group
+                // to data.parquet, adds a fresh footer to _pm, and advances
+                // _txn field 3 to the new parquet file size.
+                execute("INSERT INTO t VALUES(99, '2024-06-10T01:00:00.000000Z')");
+
+                long postMergeNameTxn;
+                long postMergeParquetFileSize;
+                try (TableReader reader = engine.getReader(token)) {
+                    postMergeNameTxn = reader.getTxFile().getPartitionNameTxn(0);
+                    postMergeParquetFileSize = reader.getTxFile().getPartitionParquetFileSize(0);
+                }
+                Assert.assertNotEquals(
+                        "the O3 merge must change the parquet file size for the test to be meaningful",
+                        preMergeParquetFileSize,
+                        postMergeParquetFileSize
+                );
+
+                // Restore _pm to its pre-merge bytes. data.parquet and _txn
+                // remain at the post-merge state, which is the rollback shape.
+                try (Path path = new Path()) {
+                    path.of(configuration.getDbRoot()).concat(token);
+                    TableUtils.setPathForParquetPartitionMetadata(path, ColumnType.TIMESTAMP, PartitionBy.DAY, partitionTs, postMergeNameTxn);
+                    long fd = ff.openRW(path.$(), 0);
+                    try {
+                        Assert.assertTrue("truncate _pm to 0", ff.truncate(fd, 0));
+                        Assert.assertEquals(
+                                "write captured pre-merge _pm bytes",
+                                preMergePmSize,
+                                ff.write(fd, preMergePmAddr, preMergePmSize, 0)
+                        );
+                    } finally {
+                        ff.close(fd);
+                    }
+                }
+
+                // Confirm the staged _pm is genuinely stale: its chain has no
+                // footer matching the post-merge parquet file size.
+                try (Path path = new Path()) {
+                    path.of(configuration.getDbRoot()).concat(token);
+                    TableUtils.setPathForParquetPartitionMetadata(path, ColumnType.TIMESTAMP, PartitionBy.DAY, partitionTs, postMergeNameTxn);
+                    long size = ParquetMetaFileReader.readParquetMetaFileSize(ff, path.$());
+                    long addr = TableUtils.mapRO(ff, path.$(), LOG, size, MemoryTag.MMAP_DEFAULT);
+                    try {
+                        ParquetMetaFileReader pmReader = new ParquetMetaFileReader();
+                        pmReader.of(addr, size);
+                        Assert.assertFalse(
+                                "stale _pm must not resolve the post-merge parquet file size",
+                                pmReader.resolveFooter(postMergeParquetFileSize)
+                        );
+                    } finally {
+                        ff.munmap(addr, size, MemoryTag.MMAP_DEFAULT);
+                    }
+                }
+
+                engine.releaseAllWriters();
+                engine.releaseAllReaders();
+                engine.releaseInactive();
+
+                // Production upgrade path with force=false. The escape hatch
+                // resets currentMigrationVersion to currentTableVersion so the
+                // dispatcher proceeds despite _upgrade.d already recording
+                // MIGRATION_VERSION.
+                EngineMigration.migrateEngineTo(engine, ColumnType.VERSION, ColumnType.MIGRATION_VERSION, false);
+
+                // _pm has been regenerated and now resolves to the post-merge
+                // parquet file size.
+                try (Path path = new Path()) {
+                    path.of(configuration.getDbRoot()).concat(token);
+                    TableUtils.setPathForParquetPartitionMetadata(path, ColumnType.TIMESTAMP, PartitionBy.DAY, partitionTs, postMergeNameTxn);
+                    Assert.assertTrue("_pm exists after migration", ff.exists(path.$()));
+                    long size = ParquetMetaFileReader.readParquetMetaFileSize(ff, path.$());
+                    Assert.assertTrue("_pm has positive size", size > 0);
+                    long addr = TableUtils.mapRO(ff, path.$(), LOG, size, MemoryTag.MMAP_DEFAULT);
+                    try {
+                        ParquetMetaFileReader pmReader = new ParquetMetaFileReader();
+                        pmReader.of(addr, size);
+                        Assert.assertTrue(
+                                "regenerated _pm must resolve the current parquet file size",
+                                pmReader.resolveFooter(postMergeParquetFileSize)
+                        );
+                        Assert.assertEquals(2, pmReader.getColumnCount());
+                    } finally {
+                        ff.munmap(addr, size, MemoryTag.MMAP_DEFAULT);
+                    }
+                }
+            } finally {
+                Unsafe.free(preMergePmAddr, preMergePmSize, MemoryTag.NATIVE_DEFAULT);
             }
         });
     }
