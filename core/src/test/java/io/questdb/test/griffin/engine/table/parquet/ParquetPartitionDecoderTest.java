@@ -170,44 +170,6 @@ public class ParquetPartitionDecoderTest extends AbstractCairoTest {
         }
     }
 
-
-    /**
-     * Test resolver that records the partition path and column count from
-     * the call, then aborts the decode by throwing a sentinel
-     * {@link CairoException}. The exception is intentional: it short-circuits
-     * the decode before any chunk pointers are dereferenced (the captured
-     * fields aren't real backing storage).
-     */
-    private static final class CapturingResolver implements ParquetColumnChunkResolver {
-        int calls;
-        long lastFirstByteLength = -1;
-        long lastFirstByteOffset = -1;
-        int lastColumnsSize;
-        String lastPartitionPath;
-
-        @Override
-        public void release(DirectLongList chunks, int columnsSize) {
-            // No-op: the resolver always throws before allocating buffers.
-        }
-
-        @Override
-        public void resolve(
-                DirectUtf8Sequence partitionPath,
-                DirectLongList byteRanges,
-                int columnsSize,
-                DirectLongList chunksOut
-        ) {
-            calls++;
-            lastColumnsSize = columnsSize;
-            lastPartitionPath = partitionPath.toString();
-            if (columnsSize > 0) {
-                lastFirstByteOffset = byteRanges.get(0);
-                lastFirstByteLength = byteRanges.get(1);
-            }
-            throw CairoException.critical(0).put("RESOLVER_REACHED");
-        }
-    }
-
     private static final class ParquetMetaTestFile implements AutoCloseable {
         final long dataLen;
         final long dataPtr;
