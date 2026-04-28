@@ -25,22 +25,38 @@
 package io.questdb.test.griffin.fuzz;
 
 import io.questdb.std.ObjList;
+import io.questdb.test.griffin.fuzz.FuzzTableFactory.ParquetMode;
 import io.questdb.test.griffin.fuzz.types.FuzzColumnType;
 
 /**
  * Generated table description: name, column list, and the designated
  * timestamp column name. The timestamp column is always present and is
  * also included as the last entry in {@link #getColumns()}.
+ * <p>
+ * Each primary table optionally points at a {@code shadow} sibling that
+ * holds identical row-level content but was created with independently
+ * random storage settings (parquet mode and per-column index flags).
+ * The shadow's {@link #getShadow()} is {@code null} -- the relation is
+ * one-way -- so iterating the test's primary list cannot accidentally
+ * pull in the shadow as a query target.
  */
 public final class FuzzTable {
     private final ObjList<FuzzColumn> columns;
     private final String name;
+    private final ParquetMode parquetMode;
+    private final FuzzTable shadow;
     private final String tsColumnName;
 
     public FuzzTable(String name, ObjList<FuzzColumn> columns, String tsColumnName) {
+        this(name, columns, tsColumnName, ParquetMode.NONE, null);
+    }
+
+    public FuzzTable(String name, ObjList<FuzzColumn> columns, String tsColumnName, ParquetMode parquetMode, FuzzTable shadow) {
         this.name = name;
         this.columns = columns;
         this.tsColumnName = tsColumnName;
+        this.parquetMode = parquetMode;
+        this.shadow = shadow;
     }
 
     public FuzzColumn getColumn(int index) {
@@ -76,6 +92,14 @@ public final class FuzzTable {
 
     public String getName() {
         return name;
+    }
+
+    public ParquetMode getParquetMode() {
+        return parquetMode;
+    }
+
+    public FuzzTable getShadow() {
+        return shadow;
     }
 
     public String getTsColumnName() {

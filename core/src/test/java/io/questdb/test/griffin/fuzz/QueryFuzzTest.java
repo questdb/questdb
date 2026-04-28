@@ -62,6 +62,13 @@ import java.util.List;
  *         JIT-on/off mode (default true). When enabled, every query is run
  *         twice and the materializations are compared; any divergence is
  *         reported as a failure.</li>
+ *     <li>{@code -Dquestdb.fuzz.diff.shadow=true|false} &mdash; differential
+ *         storage mode (default true). Each fuzz table has a shadow sibling
+ *         that holds identical data with independently random parquet/index
+ *         settings; every query is run against both and the materializations
+ *         compared. With both diffs enabled, three runs per query are
+ *         needed (primary @ JIT-on, primary @ JIT-off, shadow @ JIT-off)
+ *         and either divergence axis fails the query.</li>
  *     <li>{@code -Dquestdb.fuzz.s0=L -Dquestdb.fuzz.s1=L} - replay a
  *         specific seed pair, as printed in the run's "random seeds: ..."
  *         line. Use to reproduce a failure deterministically.</li>
@@ -82,23 +89,22 @@ public class QueryFuzzTest extends AbstractCairoTest {
             LOG.info().$("fuzz config: tables=").$(config.getNumTables())
                     .$(", rows=").$(config.getRowsPerTable())
                     .$(", queries=").$(config.getNumQueries())
-                    .$(", diffJit=").$(config.isDiffJitEnabled()).$();
+                    .$(", diffJit=").$(config.isDiffJitEnabled())
+                    .$(", diffShadow=").$(config.isDiffShadowEnabled()).$();
 
             FuzzTableFactory factory = new FuzzTableFactory(config);
             ObjList<FuzzTable> tables = new ObjList<>();
             for (int i = 0; i < config.getNumTables(); i++) {
-                FuzzTable t = factory.create(rnd, "fuzz_t" + i, QueryFuzzTest::execute);
+                FuzzTable t = factory.create(rnd, "fuzz_t" + i, QueryFuzzTest::execute, QueryFuzzTest::drainWalQueue);
                 tables.add(t);
-                StringBuilder sb = new StringBuilder("fuzz schema ").append(t.getName()).append(":");
-                for (int j = 0, n = t.getColumnCount(); j < n; j++) {
-                    sb.append(' ').append(t.getColumn(j).getName())
-                            .append('=').append(t.getColumn(j).getType().getDdl());
+                logSchema(t);
+                if (t.getShadow() != null) {
+                    logSchema(t.getShadow());
                 }
-                LOG.info().$safe(sb.toString()).$();
             }
-            drainWalQueue();
 
-            QueryRunner runner = new QueryRunner(engine, sqlExecutionContext, config.isDiffJitEnabled());
+            QueryRunner runner = new QueryRunner(engine, sqlExecutionContext,
+                    config.isDiffJitEnabled(), config.isDiffShadowEnabled(), tables);
             int skipped = 0;
             List<QueryRunner.Result> failures = new ArrayList<>();
             try (BufferedWriter dump = openDump(config.getDumpPath())) {
@@ -144,6 +150,20 @@ public class QueryFuzzTest extends AbstractCairoTest {
         }
         // Chain the first cause so the stack trace still points at real source.
         return new AssertionError(sb.toString(), failures.get(0).getFailure());
+    }
+
+    private static void logSchema(FuzzTable t) {
+        StringBuilder sb = new StringBuilder("fuzz schema ").append(t.getName())
+                .append(" (parquet=").append(t.getParquetMode()).append("):");
+        for (int j = 0, n = t.getColumnCount(); j < n; j++) {
+            FuzzColumn c = t.getColumn(j);
+            sb.append(' ').append(c.getName())
+                    .append('=').append(c.getType().getDdl());
+            if (c.isIndexed()) {
+                sb.append(" INDEX");
+            }
+        }
+        LOG.info().$safe(sb.toString()).$();
     }
 
     private static BufferedWriter openDump(String path) throws IOException {

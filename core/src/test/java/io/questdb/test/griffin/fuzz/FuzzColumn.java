@@ -27,12 +27,18 @@ package io.questdb.test.griffin.fuzz;
 import io.questdb.test.griffin.fuzz.types.FuzzColumnType;
 
 public final class FuzzColumn {
+    private final boolean isIndexed;
     private final String name;
     private final FuzzColumnType type;
 
     public FuzzColumn(String name, FuzzColumnType type) {
+        this(name, type, false);
+    }
+
+    public FuzzColumn(String name, FuzzColumnType type, boolean isIndexed) {
         this.name = name;
         this.type = type;
+        this.isIndexed = isIndexed;
     }
 
     public String getName() {
@@ -41,5 +47,9 @@ public final class FuzzColumn {
 
     public FuzzColumnType getType() {
         return type;
+    }
+
+    public boolean isIndexed() {
+        return isIndexed;
     }
 }

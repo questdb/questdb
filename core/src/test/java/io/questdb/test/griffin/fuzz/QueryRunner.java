@@ -36,9 +36,12 @@ import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.NumericException;
+import io.questdb.std.ObjList;
 import io.questdb.std.str.StringSink;
 
 import java.util.Arrays;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
 /**
  * Runs one generated query, materializes every value, and decides whether
@@ -59,43 +62,107 @@ import java.util.Arrays;
  * row via {@link CursorPrinter#printColumn}, which exercises the type's
  * read path end to end.
  * <p>
- * When constructed with {@code diffJit = true}, every query is run twice
- * &mdash; once with {@link SqlJitMode#JIT_MODE_ENABLED} and once with
- * {@link SqlJitMode#JIT_MODE_DISABLED} &mdash; and the two materializations
- * are compared as multisets (parallel GROUP BY and similar operators do not
- * guarantee row order, but they do guarantee the same set of rows). Any
- * difference in the multiset, exception class/message, or one path succeeding
- * while the other throws is reported as a failure. Queries that do not
- * engage the filter JIT path produce identical output in both modes, so the
- * toggle is safe to apply universally; the price is roughly doubled run
- * time per query.
+ * Differential modes:
+ * <ul>
+ *   <li>{@code diffJit} runs the same SQL on the primary table twice
+ *       &mdash; once with {@link SqlJitMode#JIT_MODE_ENABLED}, once with
+ *       {@link SqlJitMode#JIT_MODE_DISABLED} &mdash; and compares the
+ *       two materializations. Catches JIT vs. Java-filter divergences.</li>
+ *   <li>{@code diffShadow} rewrites the SQL to read from the shadow
+ *       sibling (same data, independently random parquet/index settings)
+ *       and compares the two materializations at JIT-off. Catches
+ *       silent storage divergences across native/parquet partitions and
+ *       across indexed/non-indexed symbol columns.</li>
+ * </ul>
+ * The two modes share a pivot: {@code primary @ JIT-off}. With both
+ * enabled, three runs per query are required (primary @ JIT-on, primary
+ * @ JIT-off, shadow @ JIT-off); the JIT diff compares the first two,
+ * the storage diff compares the second and third. Either divergence
+ * fails the query, and the failure message names the axis.
+ * <p>
+ * Row-set comparison is a multiset (line-sorted) so parallel iteration
+ * order does not produce false positives. {@code deterministic=false}
+ * queries (LIMIT over parallel GROUP BY / hash join etc.) compare row
+ * counts only, and accept the same allowlisted exception class with
+ * different per-row messages on each side.
  */
 public final class QueryRunner {
     private final boolean diffJit;
+    private final boolean diffShadow;
     private final CairoEngine engine;
     private final SqlExecutionContext executionContext;
+    private final Pattern[] primaryPatterns;
     private final StringSink rowsA = new StringSink();
     private final StringSink rowsB = new StringSink();
+    private final StringSink rowsC = new StringSink();
+    private final String[] shadowReplacements;
 
     public QueryRunner(CairoEngine engine, SqlExecutionContext executionContext, boolean diffJit) {
+        this(engine, executionContext, diffJit, false, null);
+    }
+
+    public QueryRunner(CairoEngine engine, SqlExecutionContext executionContext, boolean diffJit,
+                       boolean diffShadow, ObjList<FuzzTable> tables) {
         this.engine = engine;
         this.executionContext = executionContext;
         this.diffJit = diffJit;
+        this.diffShadow = diffShadow;
+        if (diffShadow) {
+            int n = tables.size();
+            primaryPatterns = new Pattern[n];
+            shadowReplacements = new String[n];
+            for (int i = 0; i < n; i++) {
+                FuzzTable t = tables.getQuick(i);
+                FuzzTable shadow = t.getShadow();
+                if (shadow == null) {
+                    throw new IllegalArgumentException("diffShadow requires every table to have a shadow sibling: " + t.getName());
+                }
+                primaryPatterns[i] = Pattern.compile("\\b" + Pattern.quote(t.getName()) + "\\b");
+                shadowReplacements[i] = Matcher.quoteReplacement(shadow.getName());
+            }
+        } else {
+            primaryPatterns = null;
+            shadowReplacements = null;
+        }
     }
 
     public Result run(GeneratedQuery query) {
         String sql = query.sql();
-        if (!diffJit) {
+        if (!diffJit && !diffShadow) {
             Outcome outcome = runOnce(sql, rowsA);
             return toResult(sql, outcome);
         }
         int prevJitMode = executionContext.getJitMode();
         try {
-            executionContext.setJitMode(SqlJitMode.JIT_MODE_ENABLED);
-            Outcome a = runOnce(sql, rowsA);
+            // Pivot: primary at JIT-off. The pivot is the right-hand side of
+            // the JIT comparison and the left-hand side of the storage
+            // comparison, so it runs whenever either diff is on.
             executionContext.setJitMode(SqlJitMode.JIT_MODE_DISABLED);
-            Outcome b = runOnce(sql, rowsB);
-            return reconcile(sql, a, b, rowsA, rowsB, query.deterministic());
+            Outcome bJ = runOnce(sql, rowsB);
+
+            Result jitResult = null;
+            if (diffJit) {
+                executionContext.setJitMode(SqlJitMode.JIT_MODE_ENABLED);
+                Outcome aJ = runOnce(sql, rowsA);
+                jitResult = reconcilePair(sql, aJ, bJ, rowsA, rowsB, query.deterministic(),
+                        "JIT divergence", "jit on ", "jit off");
+                if (jitResult.isFailed()) {
+                    return jitResult;
+                }
+            }
+
+            if (diffShadow) {
+                executionContext.setJitMode(SqlJitMode.JIT_MODE_DISABLED);
+                String shadowSql = rewriteForShadow(sql);
+                Outcome bS = runOnce(shadowSql, rowsC);
+                Result storageResult = reconcilePair(sql, bJ, bS, rowsB, rowsC, query.deterministic(),
+                        "storage divergence", "primary", "shadow ");
+                if (storageResult.isFailed()) {
+                    return storageResult;
+                }
+                return storageResult;
+            }
+            return jitResult;
         } finally {
             executionContext.setJitMode(prevJitMode);
         }
@@ -117,9 +184,9 @@ public final class QueryRunner {
     /**
      * Multiset comparison: the two row sets are equal iff they contain the same
      * lines, regardless of order. Parallel operators (GROUP BY, etc.) do not
-     * guarantee a stable iteration order across runs, but the JIT toggle does
-     * not affect which rows are produced -- only the per-row filter evaluation.
-     * So order divergence is normal; element-set divergence is a real bug.
+     * guarantee a stable iteration order across runs, but neither toggle
+     * affects which rows are produced -- only the per-row evaluation. So
+     * order divergence is normal; element-set divergence is a real bug.
      */
     private static boolean rowsetEquals(StringSink a, StringSink b) {
         // Fast path: identical text.
@@ -151,6 +218,79 @@ public final class QueryRunner {
         return Result.failed(sql, outcome.failure);
     }
 
+    private AssertionError divergence(String diffName, Outcome a, Outcome b,
+                                      CharSequence rowsA, CharSequence rowsB,
+                                      String labelA, String labelB) {
+        String msg = diffName + ":\n"
+                + "  " + labelA + ": " + renderOutcome(a, rowsA) + "\n"
+                + "  " + labelB + ": " + renderOutcome(b, rowsB);
+        Throwable cause = a.failure != null ? a.failure : b.failure;
+        return cause == null ? new AssertionError(msg) : new AssertionError(msg, cause);
+    }
+
+    /**
+     * Compares one outcome pair. Used for both the JIT axis (primary @ on vs
+     * primary @ off) and the storage axis (primary vs shadow). The {@code
+     * diffName} and {@code labelA}/{@code labelB} parameters only affect the
+     * failure message; the comparison logic itself is identical -- both axes
+     * must produce the same row multiset on a deterministic query, the same
+     * row count on a non-deterministic query, and the same exception class
+     * (modulo per-row message variance on non-deterministic queries) when
+     * both throw.
+     */
+    private Result reconcilePair(String sql, Outcome a, Outcome b, StringSink rowsA, StringSink rowsB,
+                                 boolean deterministic, String diffName, String labelA, String labelB) {
+        // Both succeeded.
+        if (a.failure == null && b.failure == null) {
+            if (rowsetEquals(rowsA, rowsB)) {
+                return Result.ok(a.rowsRead);
+            }
+            // Non-deterministic queries (LIMIT without fully-disambiguating
+            // ORDER BY over parallel GROUP BY / hash join, etc.) can return a
+            // different valid subset of rows on each run. Row content diff is
+            // meaningless for them, but a row count diff is still a real bug:
+            // the two paths must agree on how many rows survive the LIMIT,
+            // regardless of which rows they are.
+            if (!deterministic && a.rowsRead == b.rowsRead) {
+                return Result.ok(a.rowsRead);
+            }
+            return Result.failed(sql, divergence(diffName, a, b, rowsA, rowsB, labelA, labelB));
+        }
+        // Both threw the same exception. Outcome the same way the single-run
+        // path would: skip if allowlisted, fail if not.
+        if (a.failure != null && b.failure != null
+                && a.exceptionClass.equals(b.exceptionClass)
+                && a.exceptionMessage.equals(b.exceptionMessage)) {
+            if (isAcceptedSkip(a.failure)) {
+                return Result.skipped(a.exceptionClass + ": " + a.exceptionMessage);
+            }
+            return Result.failed(sql, a.failure);
+        }
+        // Both threw the same allowlisted exception class but with different
+        // messages. For a non-deterministic query, a per-row cast/numeric
+        // exception fires on whichever row the iterator visits first, and
+        // parallel GROUP BY / hash join paths can return rows in different
+        // orders across runs. The two outcomes are consistent (both rejected
+        // the result set with the same kind of error), so treat as skip.
+        if (!deterministic
+                && a.failure != null && b.failure != null
+                && a.exceptionClass.equals(b.exceptionClass)
+                && isAcceptedSkip(a.failure)) {
+            return Result.skipped(a.exceptionClass + ": (varies)");
+        }
+        // Anything else: divergence (one succeeded, one threw; or both threw
+        // different exceptions/messages).
+        return Result.failed(sql, divergence(diffName, a, b, rowsA, rowsB, labelA, labelB));
+    }
+
+    private String rewriteForShadow(String sql) {
+        String result = sql;
+        for (int i = 0; i < primaryPatterns.length; i++) {
+            result = primaryPatterns[i].matcher(result).replaceAll(shadowReplacements[i]);
+        }
+        return result;
+    }
+
     private Outcome runOnce(String sql, StringSink rows) {
         rows.clear();
         try (RecordCursorFactory factory = engine.select(sql, executionContext)) {
@@ -179,58 +319,6 @@ public final class QueryRunner {
             String msg = t.getMessage();
             return Outcome.error(t, msg == null ? "" : msg);
         }
-    }
-
-    private Result reconcile(String sql, Outcome a, Outcome b, StringSink rowsA, StringSink rowsB, boolean deterministic) {
-        // Both succeeded.
-        if (a.failure == null && b.failure == null) {
-            if (rowsetEquals(rowsA, rowsB)) {
-                return Result.ok(a.rowsRead);
-            }
-            // Non-deterministic queries (LIMIT without fully-disambiguating
-            // ORDER BY over parallel GROUP BY / hash join, etc.) can return a
-            // different valid subset of rows on each run. Row content diff is
-            // meaningless for them, but a row count diff is still a real bug:
-            // the engine's parallel and serial paths must agree on how many
-            // rows survive the LIMIT, regardless of which rows they are.
-            if (!deterministic && a.rowsRead == b.rowsRead) {
-                return Result.ok(a.rowsRead);
-            }
-            return Result.failed(sql, divergence(a, b, rowsA, rowsB));
-        }
-        // Both threw the same exception. Outcome the same way the single-run
-        // path would: skip if allowlisted, fail if not.
-        if (a.failure != null && b.failure != null
-                && a.exceptionClass.equals(b.exceptionClass)
-                && a.exceptionMessage.equals(b.exceptionMessage)) {
-            if (isAcceptedSkip(a.failure)) {
-                return Result.skipped(a.exceptionClass + ": " + a.exceptionMessage);
-            }
-            return Result.failed(sql, a.failure);
-        }
-        // Both threw the same allowlisted exception class but with different
-        // messages. For a non-deterministic query, a per-row cast/numeric
-        // exception fires on whichever row the iterator visits first, and
-        // parallel GROUP BY / hash join paths can return rows in different
-        // orders across runs. The two outcomes are consistent (both rejected
-        // the result set with the same kind of error), so treat as skip.
-        if (!deterministic
-                && a.failure != null && b.failure != null
-                && a.exceptionClass.equals(b.exceptionClass)
-                && isAcceptedSkip(a.failure)) {
-            return Result.skipped(a.exceptionClass + ": (varies)");
-        }
-        // Anything else: divergence (one succeeded, one threw; or both threw
-        // different exceptions/messages).
-        return Result.failed(sql, divergence(a, b, rowsA, rowsB));
-    }
-
-    private AssertionError divergence(Outcome a, Outcome b, CharSequence rowsA, CharSequence rowsB) {
-        String msg = "JIT divergence:\n"
-                + "  jit on : " + renderOutcome(a, rowsA) + "\n"
-                + "  jit off: " + renderOutcome(b, rowsB);
-        Throwable cause = a.failure != null ? a.failure : b.failure;
-        return cause == null ? new AssertionError(msg) : new AssertionError(msg, cause);
     }
 
     private static final class Outcome {

@@ -34,10 +34,12 @@ import io.questdb.std.Rnd;
  */
 public final class FuzzConfig {
     public static final String DIFF_JIT_PROP = "questdb.fuzz.diff.jit";
+    public static final String DIFF_SHADOW_PROP = "questdb.fuzz.diff.shadow";
     public static final String DUMP_PROP = "questdb.fuzz.dump";
     public static final String QUERIES_PROP = "questdb.fuzz.queries";
 
     private final boolean isDiffJitEnabled;
+    private final boolean isDiffShadowEnabled;
     private final String dumpPath;
     private final int maxColumnsPerTable;
     private final int minColumnsPerTable;
@@ -58,6 +60,7 @@ public final class FuzzConfig {
         this.numQueries = Integer.getInteger(QUERIES_PROP, 100);
         this.dumpPath = System.getProperty(DUMP_PROP);
         this.isDiffJitEnabled = Boolean.parseBoolean(System.getProperty(DIFF_JIT_PROP, "true"));
+        this.isDiffShadowEnabled = Boolean.parseBoolean(System.getProperty(DIFF_SHADOW_PROP, "true"));
     }
 
     public String getDumpPath() {
@@ -94,5 +97,9 @@ public final class FuzzConfig {
 
     public boolean isDiffJitEnabled() {
         return isDiffJitEnabled;
+    }
+
+    public boolean isDiffShadowEnabled() {
+        return isDiffShadowEnabled;
     }
 }
