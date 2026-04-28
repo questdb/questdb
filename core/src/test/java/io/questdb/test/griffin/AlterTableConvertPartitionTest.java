@@ -31,9 +31,13 @@ import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.SymbolMapWriter;
 import io.questdb.cairo.TableToken;
 import io.questdb.griffin.engine.table.ParquetRowGroupFilter;
+import io.questdb.std.Files;
 import io.questdb.std.FilesFacade;
+import io.questdb.std.Os;
 import io.questdb.std.datetime.microtime.Micros;
+import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
+import io.questdb.std.str.Utf8s;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.TestTimestampType;
 import io.questdb.test.cairo.Overrides;
@@ -43,6 +47,11 @@ import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
 
+import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicLong;
+import java.util.concurrent.atomic.AtomicReference;
+
+import static io.questdb.cairo.TableUtils.PARQUET_METADATA_FILE_NAME;
 import static io.questdb.cairo.TableUtils.PARQUET_PARTITION_NAME;
 
 public class AlterTableConvertPartitionTest extends AbstractCairoTest {
@@ -947,6 +956,141 @@ public class AlterTableConvertPartitionTest extends AbstractCairoTest {
                 TestUtils.assertContains(e.getMessage(), " SymbolMap is too short");
             }
             assertPartitionDoesNotExist(tableName, "1970-01.1");
+        });
+    }
+
+    @Test
+    public void testConvertPartitionDoesNotFsyncParquetMetadataInNoSyncMode() throws Exception {
+        setProperty(PropertyKey.CAIRO_COMMIT_MODE, "nosync");
+
+        final AtomicLong pmFd = new AtomicLong(-1);
+        final AtomicReference<String> partitionDirRef = new AtomicReference<>();
+        final AtomicLong partitionDirFd = new AtomicLong(-1);
+        final AtomicBoolean pmFsynced = new AtomicBoolean();
+        final AtomicBoolean partitionDirFsynced = new AtomicBoolean();
+
+        FilesFacade ff = new TestFilesFacadeImpl() {
+            @Override
+            public void fsync(long fd) {
+                if (fd == pmFd.get()) {
+                    pmFsynced.set(true);
+                }
+                super.fsync(fd);
+            }
+
+            @Override
+            public void fsyncAndClose(long fd) {
+                if (fd == partitionDirFd.get()) {
+                    partitionDirFsynced.set(true);
+                }
+                super.fsyncAndClose(fd);
+            }
+
+            @Override
+            public long openRONoCache(LPSZ path) {
+                long fd = super.openRONoCache(path);
+                String parent = partitionDirRef.get();
+                if (parent != null && parent.equals(Utf8s.toString(path))) {
+                    partitionDirFd.set(fd);
+                }
+                return fd;
+            }
+
+            @Override
+            public long openRW(LPSZ name, int opts) {
+                long fd = super.openRW(name, opts);
+                if (fd > -1 && Utf8s.endsWithAscii(name, Files.SEPARATOR + PARQUET_METADATA_FILE_NAME)) {
+                    String pmPath = Utf8s.toString(name);
+                    pmFd.set(fd);
+                    partitionDirRef.set(pmPath.substring(0, pmPath.length() - PARQUET_METADATA_FILE_NAME.length() - 1));
+                }
+                return fd;
+            }
+        };
+
+        assertMemoryLeak(ff, () -> {
+            final String tableName = "testConvertParquetMetadataNoSync";
+            createTable(
+                    tableName,
+                    "INSERT INTO " + tableName + " VALUES(1, '2024-06-10T00:00:00.000000Z')",
+                    "INSERT INTO " + tableName + " VALUES(2, '2024-06-15T00:00:00.000000Z')"
+            );
+            execute("ALTER TABLE " + tableName + " CONVERT PARTITION TO PARQUET LIST '2024-06-10'");
+
+            Assert.assertNotEquals("openRW for parquet metadata file was not intercepted", -1L, pmFd.get());
+            Assert.assertFalse("parquet metadata file must not be fsynced when commit mode is nosync", pmFsynced.get());
+            Assert.assertEquals("partition dir must not be opened with openRONoCache when commit mode is nosync", -1L, partitionDirFd.get());
+            Assert.assertFalse("partition dir must not be fsynced when commit mode is nosync", partitionDirFsynced.get());
+        });
+    }
+
+    @Test
+    public void testConvertPartitionFsyncsParquetMetadataInSyncMode() throws Exception {
+        setProperty(PropertyKey.CAIRO_COMMIT_MODE, "sync");
+
+        final AtomicLong pmFd = new AtomicLong(-1);
+        final AtomicReference<String> partitionDirRef = new AtomicReference<>();
+        final AtomicLong partitionDirFd = new AtomicLong(-1);
+        final AtomicBoolean pmFsynced = new AtomicBoolean();
+        final AtomicBoolean partitionDirFsynced = new AtomicBoolean();
+
+        FilesFacade ff = new TestFilesFacadeImpl() {
+            @Override
+            public void fsync(long fd) {
+                if (fd == pmFd.get()) {
+                    pmFsynced.set(true);
+                }
+                super.fsync(fd);
+            }
+
+            @Override
+            public void fsyncAndClose(long fd) {
+                if (fd == partitionDirFd.get()) {
+                    partitionDirFsynced.set(true);
+                }
+                super.fsyncAndClose(fd);
+            }
+
+            @Override
+            public long openRONoCache(LPSZ path) {
+                long fd = super.openRONoCache(path);
+                String parent = partitionDirRef.get();
+                if (parent != null && parent.equals(Utf8s.toString(path))) {
+                    partitionDirFd.set(fd);
+                }
+                return fd;
+            }
+
+            @Override
+            public long openRW(LPSZ name, int opts) {
+                long fd = super.openRW(name, opts);
+                if (fd > -1 && Utf8s.endsWithAscii(name, Files.SEPARATOR + PARQUET_METADATA_FILE_NAME)) {
+                    String pmPath = Utf8s.toString(name);
+                    pmFd.set(fd);
+                    partitionDirRef.set(pmPath.substring(0, pmPath.length() - PARQUET_METADATA_FILE_NAME.length() - 1));
+                }
+                return fd;
+            }
+        };
+
+        assertMemoryLeak(ff, () -> {
+            final String tableName = "testConvertParquetMetadataSync";
+            createTable(
+                    tableName,
+                    "INSERT INTO " + tableName + " VALUES(1, '2024-06-10T00:00:00.000000Z')",
+                    "INSERT INTO " + tableName + " VALUES(2, '2024-06-15T00:00:00.000000Z')"
+            );
+            execute("ALTER TABLE " + tableName + " CONVERT PARTITION TO PARQUET LIST '2024-06-10'");
+
+            Assert.assertNotEquals("openRW for parquet metadata file was not intercepted", -1L, pmFd.get());
+            Assert.assertTrue("parquet metadata file must be fsynced when commit mode is sync", pmFsynced.get());
+            if (Os.isWindows()) {
+                Assert.assertEquals("partition dir fsync is skipped on Windows", -1L, partitionDirFd.get());
+                Assert.assertFalse("partition dir fsync is skipped on Windows", partitionDirFsynced.get());
+            } else {
+                Assert.assertNotEquals("openRONoCache for partition dir was not intercepted", -1L, partitionDirFd.get());
+                Assert.assertTrue("partition dir must be fsynced when commit mode is sync", partitionDirFsynced.get());
+            }
         });
     }
 
