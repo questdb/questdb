@@ -26,6 +26,7 @@ package io.questdb.cairo.idx;
 
 import io.questdb.cairo.vm.api.MemoryR;
 import io.questdb.cairo.vm.api.MemoryW;
+import io.questdb.std.Unsafe;
 
 /**
  * Reads and writes individual seal entries in the v2 .pk chain.
@@ -104,13 +105,21 @@ public final class PostingIndexChainEntry {
      */
     public static long read(MemoryR keyMem, long entryOffset, Snapshot into) {
         into.offset = entryOffset;
+        // GEN_COUNT must be read FIRST. Pairs with the storeFence-guarded
+        // GEN_COUNT store in PostingIndexChainWriter.extendHead: the writer
+        // updates KEY_COUNT, LEN, VALUE_MEM_SIZE and MAX_VALUE in place,
+        // fences, then bumps GEN_COUNT last. By reading GEN_COUNT first
+        // and fencing after, this reader sees an old GEN_COUNT (with
+        // matching old fields) or a new GEN_COUNT (with matching new
+        // fields), but never new GEN_COUNT with old VALUE_MEM_SIZE.
+        into.genCount = keyMem.getInt(entryOffset + PostingIndexUtils.V2_ENTRY_OFFSET_GEN_COUNT);
+        Unsafe.getUnsafe().loadFence();
         into.len = keyMem.getLong(entryOffset + PostingIndexUtils.V2_ENTRY_OFFSET_LEN);
         into.sealTxn = keyMem.getLong(entryOffset + PostingIndexUtils.V2_ENTRY_OFFSET_SEAL_TXN);
         into.txnAtSeal = keyMem.getLong(entryOffset + PostingIndexUtils.V2_ENTRY_OFFSET_TXN_AT_SEAL);
         into.valueMemSize = keyMem.getLong(entryOffset + PostingIndexUtils.V2_ENTRY_OFFSET_VALUE_MEM_SIZE);
         into.maxValue = keyMem.getLong(entryOffset + PostingIndexUtils.V2_ENTRY_OFFSET_MAX_VALUE);
         into.keyCount = keyMem.getInt(entryOffset + PostingIndexUtils.V2_ENTRY_OFFSET_KEY_COUNT);
-        into.genCount = keyMem.getInt(entryOffset + PostingIndexUtils.V2_ENTRY_OFFSET_GEN_COUNT);
         into.blockCapacity = keyMem.getInt(entryOffset + PostingIndexUtils.V2_ENTRY_OFFSET_BLOCK_CAPACITY);
         into.coveringFormat = keyMem.getInt(entryOffset + PostingIndexUtils.V2_ENTRY_OFFSET_COVERING_FORMAT);
         into.prevEntryOffset = keyMem.getLong(entryOffset + PostingIndexUtils.V2_ENTRY_OFFSET_PREV_ENTRY_OFFSET);

@@ -58,6 +58,11 @@ public final class PostingIndexChainHeader {
         public long pageOffset;
         public long regionBase;
         public long regionLimit;
+        // Even, monotonically-advancing seqlock value of the picked page.
+        // Callers that need to extend the seqlock window past the header
+        // payload (e.g. across an in-place chain-entry mutation) re-validate
+        // this with {@link #stillStable}.
+        public long sequence;
 
         public boolean isEmpty() {
             return headEntryOffset == PostingIndexUtils.V2_NO_HEAD;
@@ -71,6 +76,7 @@ public final class PostingIndexChainHeader {
             this.regionLimit = 0;
             this.generationCounter = 0;
             this.pageOffset = -1;
+            this.sequence = 0;
         }
     }
 
@@ -246,9 +252,26 @@ public final class PostingIndexChainHeader {
             into.regionLimit = regionLimit;
             into.generationCounter = genCounter;
             into.pageOffset = pageOffset;
+            into.sequence = expectedSeq;
             return true;
         }
         return false;
+    }
+
+    /**
+     * Re-read the seqlock pair on the page picked by an earlier
+     * {@link #readUnderSeqlock} and return true if it has not advanced.
+     * Used by callers that need to extend the seqlock window past the
+     * header payload — e.g. to read chain-entry header bytes that the
+     * writer mutates in place via {@code extendHead} without an inner
+     * seqlock. If this returns false the caller must redo both the header
+     * read and the downstream entry read.
+     */
+    public static boolean stillStable(MemoryR keyMem, long pageOffset, long expectedSeq) {
+        long seqStart = keyMem.getLong(pageOffset + PostingIndexUtils.V2_HEADER_OFFSET_SEQUENCE_START);
+        long seqEnd = keyMem.getLong(pageOffset + PostingIndexUtils.V2_HEADER_OFFSET_SEQUENCE_END);
+        Unsafe.getUnsafe().loadFence();
+        return seqStart == expectedSeq && seqEnd == expectedSeq;
     }
 
     private static void writePageRaw(

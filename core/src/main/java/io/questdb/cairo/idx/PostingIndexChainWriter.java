@@ -184,15 +184,26 @@ public final class PostingIndexChainWriter {
             throw new IllegalStateException("posting index chain is empty; no head entry to extend");
         }
         long newLen = PostingIndexChainEntry.entrySize(newGenCount);
-        // The gen-dir bytes are written by the caller before this call.
-        // The fence here makes those writes globally visible before the
-        // GEN_COUNT bump that publishes the new gen to readers.
-        Unsafe.getUnsafe().storeFence();
-        keyMem.putInt(headEntryOffset + PostingIndexUtils.V2_ENTRY_OFFSET_GEN_COUNT, newGenCount);
+        // GEN_COUNT must be written LAST. It is the field readers latch on
+        // to (via PostingIndexChainEntry.read which reads it first under a
+        // loadFence) to gate visibility of all the other in-place updates,
+        // including VALUE_MEM_SIZE which sizes the readers' valueMem
+        // mapping. Storing GEN_COUNT before VALUE_MEM_SIZE — even with a
+        // single trailing storeFence — would let a reader observe a new
+        // GEN_COUNT with an old VALUE_MEM_SIZE and dereference past the
+        // mapping. The chain header's outer seqlock does NOT cover these
+        // in-place stores: extendHead mutates the entry before the
+        // publish() call that bumps the seqlock.
         keyMem.putInt(headEntryOffset + PostingIndexUtils.V2_ENTRY_OFFSET_KEY_COUNT, newKeyCount);
         keyMem.putLong(headEntryOffset + PostingIndexUtils.V2_ENTRY_OFFSET_LEN, newLen);
         keyMem.putLong(headEntryOffset + PostingIndexUtils.V2_ENTRY_OFFSET_VALUE_MEM_SIZE, newValueMemSize);
         keyMem.putLong(headEntryOffset + PostingIndexUtils.V2_ENTRY_OFFSET_MAX_VALUE, newMaxValue);
+        // Fence pairs with the loadFence after GEN_COUNT in
+        // PostingIndexChainEntry.read: if a reader observes the new
+        // GEN_COUNT, all stores above (and the gen-dir bytes the caller
+        // wrote before this call) are also visible.
+        Unsafe.getUnsafe().storeFence();
+        keyMem.putInt(headEntryOffset + PostingIndexUtils.V2_ENTRY_OFFSET_GEN_COUNT, newGenCount);
         Unsafe.getUnsafe().storeFence();
         long newRegionLimit = headEntryOffset + newLen;
         regionLimit = newRegionLimit;

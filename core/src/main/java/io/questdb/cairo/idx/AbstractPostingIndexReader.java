@@ -80,10 +80,11 @@ public abstract class AbstractPostingIndexReader implements IndexReader {
     protected int genCount;
     protected int keyCount;
     protected RecordMetadata metadata;
-    // Last observed value of the chain header's GEN_COUNTER (last assigned
-    // sealTxn). Used by reloadConditionally to detect a chain advance without
-    // re-doing the full picker walk.
-    private long chainGenCounter = Long.MIN_VALUE;
+    // Last successfully observed seqlock value of the chain header's active
+    // page. Used by reloadConditionally to detect any publish (appendNewEntry
+    // or extendHead — both republish the header) and skip the picker walk
+    // when nothing has changed since our last read.
+    private long chainSequence;
     private MillisecondClock clock;
     private long columnTxn;
     private ColumnVersionReader columnVersionReader;
@@ -116,7 +117,7 @@ public abstract class AbstractPostingIndexReader implements IndexReader {
         keyCountIncludingNulls = 0;
         genCount = 0;
         valueMemSize = -1;
-        chainGenCounter = Long.MIN_VALUE;
+        chainSequence = 0;
         headEntryOffset = PostingIndexUtils.V2_NO_HEAD;
         pinnedTableTxn = Long.MAX_VALUE;
     }
@@ -279,15 +280,18 @@ public abstract class AbstractPostingIndexReader implements IndexReader {
 
     @Override
     public void reloadConditionally() {
-        // Cheap pre-check: peek at the header's gen counter under seqlock. If
-        // the writer hasn't published since our last pick, nothing to do.
+        // Cheap pre-check: peek at the header's seqlock. If the writer
+        // hasn't republished since our last pick, nothing to do. The
+        // sequence advances on every publish — both appendNewEntry (new
+        // chain entry) and extendHead (in-place head mutation for sparse
+        // gens) — so this gate covers both update paths.
         Unsafe.loadFence();
         if (!PostingIndexChainHeader.readUnderSeqlock(keyMem, headerScratch)) {
             // Header was unreadable this attempt; the next reload will try
             // again. We keep the existing snapshot in the meantime.
             return;
         }
-        if (headerScratch.generationCounter <= chainGenCounter) {
+        if (headerScratch.sequence == chainSequence) {
             return;
         }
 
@@ -306,9 +310,8 @@ public abstract class AbstractPostingIndexReader implements IndexReader {
 
         long prevValueMemSize = valueMemSize;
         long prevValueFileTxn = valueFileTxn;
-        long prevHeadEntryOffset = headEntryOffset;
         readIndexMetadataFromChain();
-        if (headEntryOffset == prevHeadEntryOffset || valueMemSize <= 0) {
+        if (valueMemSize <= 0) {
             return;
         }
         if (valueFileTxn != prevValueFileTxn || valueMem.size() == 0) {
@@ -318,7 +321,9 @@ public abstract class AbstractPostingIndexReader implements IndexReader {
             Misc.free(valueMem);
             mapValueMem(sidecarBasePath, indexColumnName, columnTxn);
         } else if (valueMemSize != prevValueMemSize) {
-            // Same .pv file, just grew or shrank in place.
+            // Same .pv file, just grew or shrank in place. extendHead reuses
+            // the head entry but advances valueMemSize, so we must resize
+            // valueMem here even though headEntryOffset is unchanged.
             ((MemoryCMR) this.valueMem).changeSize(valueMemSize);
         }
     }
@@ -693,11 +698,26 @@ public abstract class AbstractPostingIndexReader implements IndexReader {
                 // Torn reads here are harmless — the active snapshot from the
                 // previous successful read is still in place until we commit.
                 genLookup.snapshotMetadata(keyMem, entryScratch.genCount, entryScratch.offset);
+                // Re-validate the chain header seqlock. extendHead mutates the
+                // head entry (GEN_COUNT, VALUE_MEM_SIZE) in place via separate
+                // aligned stores and republishes the header. Without this
+                // check the picker can observe e.g. new GEN_COUNT with old
+                // VALUE_MEM_SIZE, leading to a snapshot whose gen-dir entries
+                // reference offsets past the recorded valueMemSize. Retry on
+                // any concurrent publish.
+                if (!PostingIndexChainHeader.stillStable(keyMem, headerScratch.pageOffset, headerScratch.sequence)) {
+                    if (clock.getTicks() > deadline) {
+                        LOG.error().$(INDEX_CORRUPT).$(" [timeout=").$(spinLockTimeoutMs).$("ms]").$();
+                        return;
+                    }
+                    Os.pause();
+                    continue;
+                }
                 genLookup.commitSnapshot();
                 genLookup.invalidateCache();
 
                 this.headEntryOffset = entryScratch.offset;
-                this.chainGenCounter = headerScratch.generationCounter;
+                this.chainSequence = headerScratch.sequence;
                 this.valueMemSize = entryScratch.valueMemSize;
                 this.keyCount = entryScratch.keyCount;
                 this.genCount = entryScratch.genCount;
@@ -712,7 +732,7 @@ public abstract class AbstractPostingIndexReader implements IndexReader {
             // will report keyCount/genCount=0 and the caller skips mapping
             // the .pv file in of().
             this.headEntryOffset = PostingIndexUtils.V2_NO_HEAD;
-            this.chainGenCounter = headerScratch.generationCounter;
+            this.chainSequence = headerScratch.sequence;
             this.valueMemSize = 0;
             this.keyCount = 0;
             this.genCount = 0;
