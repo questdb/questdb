@@ -151,9 +151,9 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
             long targetWriterTxn,
             io.questdb.mp.SqlContinuation cont,
             io.questdb.mp.ContinuationResumeJob resumeJob,
-            long deadlineNanos
+            long deadlineMillis
     ) {
-        pooledTxnWaiter.reset(targetWriterTxn, cont, resumeJob, deadlineNanos);
+        pooledTxnWaiter.reset(targetWriterTxn, cont, resumeJob, deadlineMillis);
         return pooledTxnWaiter;
     }
 

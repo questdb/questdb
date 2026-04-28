@@ -44,7 +44,10 @@ public class SeqTxnTracker {
     private final TableWriterPressureControlImpl pressureControl;
     private final Queue<WaiterHolder> waiters = ConcurrentQueue.createConcurrentQueue(WaiterHolder::new);
     private volatile long dirtyWriterTxn;
-    private boolean dropped;
+    // Volatile because fireWaiters() and registerWaiter() read this outside the
+    // tracker monitor; without volatile they could observe a stale false after
+    // notifyOnDrop has flipped it to true.
+    private volatile boolean dropped;
     private volatile String errorMessage = "";
     private volatile ErrorTag errorTag = ErrorTag.NONE;
     @SuppressWarnings("FieldMayBeFinal")
@@ -66,9 +69,9 @@ public class SeqTxnTracker {
      * the cancellation and throw. Non-expired waiters are re-enqueued. Called periodically
      * by {@link io.questdb.cairo.wal.seq.WaiterTimeoutJob}.
      *
-     * @param nowNanos current time in nanoseconds, same clock domain as waiter deadlines
+     * @param nowMillis current time in milliseconds, same clock domain as waiter deadlines
      */
-    public void cancelExpiredWaiters(long nowNanos) {
+    public void cancelExpiredWaiters(long nowMillis) {
         WaiterHolder holder = HOLDER.get();
         TxnWaiter sentinel = null;
         while (waiters.tryDequeue(holder)) {
@@ -82,7 +85,7 @@ public class SeqTxnTracker {
                 enqueueHolder(holder, w);
                 return;
             }
-            if (w.isExpired(nowNanos)) {
+            if (w.isExpired(nowMillis)) {
                 if (w.tryCancel()) {
                     w.resumeJob.enqueue(w.cont);
                 }

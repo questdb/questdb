@@ -197,7 +197,11 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
     // taskFailure captures exceptions from the body; contShutdown terminates the loop on close.
     private volatile boolean contShutdown;
     private boolean currentCallComplete;
-    private boolean everSuspendedThisCall;
+    // Volatile because T1 writes this AFTER cont.run() returns (post-yield), but T3
+    // (the resume worker) reads it in the body's finally after a remount. The
+    // Continuation mount/yield/resume chain only synchronizes pre-yield state; a
+    // post-yield write needs its own happens-before edge to the resumer.
+    private volatile boolean everSuspendedThisCall;
     private boolean freezeRecvBuffer;
     private int namedStatementLimit;
     // PG wire protocol has two phases:
@@ -375,16 +379,40 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
 
     @Override
     public void close() {
-        // Drive the pooled continuation's loop to termination so its parked frames are
-        // released and any body references on the Java heap become eligible for GC.
-        // Safe to call even if the continuation has never run (run() on a fresh
-        // Continuation starts it; with contShutdown=true the loop exits immediately).
+        // Continuation shutdown sequence.
+        //
+        // close() is reached through the dispatcher's disconnect path. Before
+        // disconnect was queued, onPostResume already let the body unwind to the
+        // tail SqlContinuation.suspend(). At this point the cont is parked at the
+        // tail (or never started, for a context that handled no requests) -- it is
+        // not parked mid-task, because the dispatcher cannot disconnect a context
+        // whose fd is not registered with it, and a mid-task parked context's fd
+        // is intentionally not registered (PGServer returns false on
+        // OperationParkedException without registerChannel).
+        //
+        // We therefore do NOT call cont.run() here:
+        //   * If the cont is parked at the tail, its frames live on the Java heap
+        //     inside the Continuation object. Once close() returns and the
+        //     dispatcher releases its reference to this context, the whole graph
+        //     (context + cont + parked frames) is unreachable and GC reclaims the
+        //     parked stack along with everything else. There is no native memory
+        //     to release explicitly.
+        //   * If the cont never ran, it holds nothing to release.
+        //   * The mid-task case is unreachable through close(); a stray mid-task
+        //     parked cont (e.g. engine teardown that races the dispatcher) is
+        //     eventually rescued by the WaiterTimeoutJob: on its next sweep it
+        //     cancels the expired TxnWaiter and enqueues the cont on
+        //     ContinuationResumeJob; a worker resumes the body, the wake loop
+        //     observes cont.isShutdown() and throws, the body unwinds to the
+        //     tail suspend, and from there the cont is just GC garbage.
+        //
+        // The two flags below are what makes that GC path safe:
+        //   contShutdown    -- read by the outer continuationLoop's while-check,
+        //                      so if the cont is ever remounted, the body exits.
+        //   cont.shutdown() -- read by inner wake loops (wait_wal_table) so they
+        //                      throw instead of re-parking on a fresh TxnWaiter.
         contShutdown = true;
-        try {
-            cont.run();
-        } catch (Throwable ignore) {
-            // Best-effort cleanup; do not let a straggler exception prevent close.
-        }
+        cont.shutdown();
         // We're about to close the context, so no need to return pending factory to cache.
         clear();
         if (sqlExecutionContext != null) {

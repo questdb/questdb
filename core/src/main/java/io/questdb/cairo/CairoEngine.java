@@ -201,6 +201,7 @@ public class CairoEngine implements Closeable, WriterSource {
     private final ViewWalWriterPool viewWalWriterPool;
     private final SimpleWaitingLock walPurgeJobLock = new SimpleWaitingLock();
     private final WalWriterPool walWriterPool;
+    private final io.questdb.cairo.wal.seq.WaiterTimeoutJob waiterTimeoutJob;
     private final WriterPool writerPool;
     private volatile boolean closing;
     private @NotNull ConfigReloader configReloader = new ConfigReloader() {
@@ -242,6 +243,15 @@ public class CairoEngine implements Closeable, WriterSource {
             this.copyImportContext = new CopyImportContext(this, configuration);
             this.copyExportContext = new CopyExportContext(this);
             this.tableSequencerAPI = new TableSequencerAPI(this, configuration);
+            // Sweep parked TxnWaiters every 100ms; bounds resource retention when a
+            // wait_wal_table call is parked and the deadline elapses (e.g., client
+            // disconnect on an idle table). Same instance assigned to every worker via
+            // assign(Job); the job CAS-guards against double-sweeping.
+            this.waiterTimeoutJob = new io.questdb.cairo.wal.seq.WaiterTimeoutJob(
+                    configuration.getMillisecondClock(),
+                    100L,
+                    tableSequencerAPI::forEachTxnTracker
+            );
             this.messageBus = new MessageBusImpl(configuration);
             this.metrics = configuration.getMetrics();
             // Message bus and metrics must be initialized before the pools.
@@ -825,6 +835,17 @@ public class CairoEngine implements Closeable, WriterSource {
      */
     public io.questdb.mp.ContinuationResumeJob getContinuationResumeJob() {
         return continuationResumeJob;
+    }
+
+    /**
+     * Returns the periodic sweep that cancels {@link io.questdb.cairo.wal.seq.TxnWaiter}
+     * instances whose deadline has elapsed. Without this job assigned, parked
+     * suspending-function calls (e.g. {@code wait_wal_table}) cannot be cleaned up
+     * after a client disconnect or on idle tables, so it MUST be assigned to a worker
+     * pool for the SQL-suspend feature to be safe in production.
+     */
+    public io.questdb.cairo.wal.seq.WaiterTimeoutJob getWaiterTimeoutJob() {
+        return waiterTimeoutJob;
     }
 
     public CopyExportContext getCopyExportContext() {

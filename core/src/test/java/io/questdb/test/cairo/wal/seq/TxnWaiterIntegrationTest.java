@@ -224,13 +224,13 @@ public class TxnWaiterIntegrationTest {
         tracker.initTxns(1, 5, false);
 
         ContinuationResumeJob resumeJob = new ContinuationResumeJob();
-        AtomicLong fakeNowNanos = new AtomicLong(1_000_000_000L);
+        AtomicLong fakeNowMillis = new AtomicLong(1_000L);
 
         TestWorkerPool pool = new TestWorkerPool("txn-waiter-timeout-test", 1);
         pool.assign(resumeJob);
         WaiterTimeoutJob timeoutJob = new WaiterTimeoutJob(
-                fakeNowNanos::get,
-                1_000_000L, // 1ms sweep interval
+                fakeNowMillis::get,
+                1L, // 1ms sweep interval
                 consumer -> consumer.accept(tracker)
         );
         pool.assign(timeoutJob);
@@ -239,7 +239,7 @@ public class TxnWaiterIntegrationTest {
         AtomicReference<Boolean> observedCancelled = new AtomicReference<>();
         CountDownLatch doneLatch = new CountDownLatch(1);
 
-        long deadline = fakeNowNanos.get() + 50_000_000L; // 50ms in future
+        long deadline = fakeNowMillis.get() + 50L; // 50ms in future
 
         SqlContinuation cont = new SqlContinuation(() -> {
             TxnWaiter w = new TxnWaiter(100, self.get(), resumeJob, deadline);
@@ -256,7 +256,7 @@ public class TxnWaiterIntegrationTest {
 
             pool.start();
             // Advance virtual clock past the deadline; timeout job will sweep on its next tick.
-            fakeNowNanos.set(deadline + 1);
+            fakeNowMillis.set(deadline + 1);
 
             Assert.assertTrue("waiter did not time out", doneLatch.await(5, TimeUnit.SECONDS));
             Assert.assertEquals(Boolean.TRUE, observedCancelled.get());

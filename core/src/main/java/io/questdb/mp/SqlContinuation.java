@@ -39,6 +39,7 @@ import jdk.internal.vm.ContinuationScope;
 public final class SqlContinuation {
     public static final ContinuationScope SCOPE = new ContinuationScope("questdb-sql");
     private final Continuation cont;
+    private volatile boolean shutdown;
 
     public SqlContinuation(Runnable body) {
         this.cont = new Continuation(SCOPE, body);
@@ -73,6 +74,15 @@ public final class SqlContinuation {
     }
 
     /**
+     * Set when the owning context is closing. Suspending functions that loop on
+     * suspend/wake (e.g. {@code wait_wal_table}) must check this and exit instead of
+     * re-parking, so that {@link #run()} can drive the body all the way to completion.
+     */
+    public boolean isShutdown() {
+        return shutdown;
+    }
+
+    /**
      * Starts the continuation body or resumes it on the calling thread. Returns when
      * the body either completes (then {@link #isDone()} is true) or calls
      * {@link #suspend()} (then {@link #isDone()} is false and the frames are parked
@@ -80,5 +90,15 @@ public final class SqlContinuation {
      */
     public void run() {
         cont.run();
+    }
+
+    /**
+     * Marks this continuation as shutting down. Suspending functions that consult
+     * {@link #isShutdown()} between suspends must terminate their wake loop. Combined
+     * with a bounded {@link #run()} drive in the owning context's close path, this
+     * guarantees the body unwinds and the parked native stack is released.
+     */
+    public void shutdown() {
+        this.shutdown = true;
     }
 }

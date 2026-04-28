@@ -109,9 +109,9 @@ public interface SqlExecutionContext extends Sinkable, Closeable {
             long targetWriterTxn,
             io.questdb.mp.SqlContinuation cont,
             io.questdb.mp.ContinuationResumeJob resumeJob,
-            long deadlineNanos
+            long deadlineMillis
     ) {
-        return new io.questdb.cairo.wal.seq.TxnWaiter(targetWriterTxn, cont, resumeJob, deadlineNanos);
+        return new io.questdb.cairo.wal.seq.TxnWaiter(targetWriterTxn, cont, resumeJob, deadlineMillis);
     }
 
     default Rnd getAsyncRandom() {

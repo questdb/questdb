@@ -56,7 +56,7 @@ public final class TxnWaiter {
     public static final int STATE_PENDING = 0;
     static final long STATE_OFFSET = Unsafe.getFieldOffset(TxnWaiter.class, "state");
     SqlContinuation cont;
-    long deadlineNanos = NO_DEADLINE;
+    long deadlineMillis = NO_DEADLINE;
     ContinuationResumeJob resumeJob;
     long targetWriterTxn;
     volatile int state = STATE_PENDING;
@@ -68,19 +68,19 @@ public final class TxnWaiter {
         this(targetWriterTxn, cont, resumeJob, NO_DEADLINE);
     }
 
-    public TxnWaiter(long targetWriterTxn, SqlContinuation cont, ContinuationResumeJob resumeJob, long deadlineNanos) {
+    public TxnWaiter(long targetWriterTxn, SqlContinuation cont, ContinuationResumeJob resumeJob, long deadlineMillis) {
         this.targetWriterTxn = targetWriterTxn;
         this.cont = cont;
         this.resumeJob = resumeJob;
-        this.deadlineNanos = deadlineNanos;
+        this.deadlineMillis = deadlineMillis;
     }
 
     public boolean isCancelled() {
         return state == STATE_CANCELLED;
     }
 
-    public boolean isExpired(long nowNanos) {
-        return deadlineNanos != NO_DEADLINE && nowNanos >= deadlineNanos;
+    public boolean isExpired(long nowMillis) {
+        return deadlineMillis != NO_DEADLINE && nowMillis >= deadlineMillis;
     }
 
     public boolean isFired() {
@@ -92,11 +92,11 @@ public final class TxnWaiter {
      * {@link #state} back to PENDING; the volatile write on {@code state} synchronizes
      * the reset so any observer that reads state == PENDING sees the refreshed fields.
      */
-    public void reset(long targetWriterTxn, SqlContinuation cont, ContinuationResumeJob resumeJob, long deadlineNanos) {
+    public void reset(long targetWriterTxn, SqlContinuation cont, ContinuationResumeJob resumeJob, long deadlineMillis) {
         this.targetWriterTxn = targetWriterTxn;
         this.cont = cont;
         this.resumeJob = resumeJob;
-        this.deadlineNanos = deadlineNanos;
+        this.deadlineMillis = deadlineMillis;
         this.state = STATE_PENDING;
     }
 

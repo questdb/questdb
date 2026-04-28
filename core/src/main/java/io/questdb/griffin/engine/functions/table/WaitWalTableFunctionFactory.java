@@ -42,6 +42,7 @@ import io.questdb.mp.SqlContinuation;
 import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
 import io.questdb.std.Os;
+import io.questdb.std.datetime.millitime.MillisecondClock;
 
 public class WaitWalTableFunctionFactory implements FunctionFactory {
 
@@ -57,6 +58,12 @@ public class WaitWalTableFunctionFactory implements FunctionFactory {
     }
 
     private static class WaitWalFunction extends BooleanFunction implements Function {
+        // How long the parked continuation sleeps between connection-liveness probes.
+        // Each cycle wakes the body, runs statefulThrowExceptionIfTripped() (which
+        // tests the fd, the cancel flag, and the SQL timeout), and re-parks if the
+        // wait should continue. A 1s cycle keeps disconnect detection latency low
+        // without burning CPU on the timeout sweep.
+        private static final long WAKE_INTERVAL_MILLIS = 1_000L;
         private final CharSequence tableName;
         private SqlExecutionContext executionContext;
         private long seqTxn;
@@ -80,31 +87,51 @@ public class WaitWalTableFunctionFactory implements FunctionFactory {
 
             // Continuation path: the caller wrapped SQL execution under a SqlContinuation
             // gateway, so we can suspend the stack and release the carrier thread.
+            // Wakes every WAKE_INTERVAL_NANOS so the circuit breaker can probe the fd
+            // (broken connection), the cancel flag, and the SQL timeout. If the body
+            // is still healthy after the probe, we re-park; otherwise the breaker
+            // throws and the wait ends. This guarantees the wait can NEVER be
+            // unbounded: a dead client, an explicit cancel, or a timeout always wins.
             SqlContinuation cont = executionContext.getCurrentContinuation();
             if (cont != null && SqlContinuation.isMounted()) {
                 ContinuationResumeJob resumeJob = executionContext.getCairoEngine().getContinuationResumeJob();
-                TxnWaiter waiter = executionContext.borrowTxnWaiter(seqTxn, cont, resumeJob, TxnWaiter.NO_DEADLINE);
-                seqTxnTracker.registerWaiter(waiter);
-                executionContext.getCircuitBreaker().statefulThrowExceptionIfTripped();
-                if (SqlContinuation.suspend()) {
-                    // Body resumed on a worker after fire/cancel.
-                    if (waiter.isCancelled()) {
-                        executionContext.getCircuitBreaker().statefulThrowExceptionIfTripped();
-                        throw CairoException.nonCritical().put("wait_wal_table cancelled [tableName=").put(tableName).put("]");
+                MillisecondClock clock = executionContext.getCairoEngine().getConfiguration().getMillisecondClock();
+                while (seqTxnTracker.getWriterTxn() < seqTxn) {
+                    // Owning context is closing: do not re-park. Throwing unwinds the
+                    // body all the way to the continuation loop's tail suspend, which is
+                    // what the close path needs in order to drive cont.run() to isDone().
+                    if (cont.isShutdown()) {
+                        throw CairoException.nonCritical().put("wait_wal_table aborted, connection closing [tableName=").put(tableName).put("]");
                     }
+                    // Probe before re-parking: detects timeout, cancellation, broken
+                    // connection. If tripped, this throws and the wait ends.
+                    executionContext.getCircuitBreaker().statefulThrowExceptionIfTripped();
+                    throwIfSuspended();
+                    long deadline = clock.getTicks() + WAKE_INTERVAL_MILLIS;
+                    TxnWaiter waiter = executionContext.borrowTxnWaiter(seqTxn, cont, resumeJob, deadline);
+                    seqTxnTracker.registerWaiter(waiter);
+                    if (!SqlContinuation.suspend()) {
+                        // The JDK refused to yield because the carrier is pinned (a
+                        // synchronized or native frame sits above this call). The body
+                        // never unmounted, so this is the same carrier that registered
+                        // the waiter. Cancel the waiter so a concurrent fireWaiters does
+                        // not schedule a phantom resume of this still-mounted
+                        // continuation, then fall through to legacy polling.
+                        waiter.tryCancel();
+                        break;
+                    }
+                    // Resumed: either the waiter fired (target met or table state
+                    // changed) or the WaiterTimeoutJob cancelled it after WAKE_INTERVAL.
+                    // Loop top re-checks writerTxn and probes the breaker.
+                }
+                if (seqTxnTracker.getWriterTxn() >= seqTxn) {
                     throwIfSuspended();
                     return true;
                 }
-                // The JDK refused to yield because the carrier is pinned (e.g., a
-                // synchronized frame or a native frame sits above this call). The
-                // body never unmounted, so this is the same carrier that registered
-                // the waiter. Cancel the waiter so a concurrent fireWaiters does not
-                // schedule a phantom resume of this still-mounted continuation, then
-                // fall through to the legacy polling path.
-                waiter.tryCancel();
+                // else: yield was refused at least once; fall through to polling.
             }
 
-            // Legacy polling fallback: no continuation gateway in this execution path.
+            // Legacy polling fallback: no continuation gateway, or yield refused.
             for (int i = 0; seqTxnTracker.getWriterTxn() < seqTxn; i++) {
                 Os.sleep(1);
                 executionContext.getCircuitBreaker().statefulThrowExceptionIfTripped();
