@@ -1976,7 +1976,7 @@ public class WalColumnarRowAppender implements ColumnarRowAppender, QuietCloseab
                 .put("cannot parse ").put(ColumnType.nameOf(columnType))
                 .put(" from string [value=").put(value)
                 .put(", column=").put(walWriter.getMetadata().getColumnName(columnIndex))
-                .put("]");
+                .put(']');
     }
 
     private void putDecimal128ToDecimalColumn(

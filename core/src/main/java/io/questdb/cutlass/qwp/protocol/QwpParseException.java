@@ -122,6 +122,11 @@ public class QwpParseException extends Exception implements Sinkable, FlyweightM
         return this;
     }
 
+    public QwpParseException put(char value) {
+        messageSink.put(value);
+        return this;
+    }
+
     public QwpParseException put(long value) {
         messageSink.put(value);
         return this;
