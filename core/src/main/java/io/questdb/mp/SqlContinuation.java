@@ -56,9 +56,16 @@ public final class SqlContinuation {
      * Unmounts the current call stack off the carrier thread, returning control to
      * whoever called {@link #run()}. Must only be called from a frame that was reached
      * through {@code run()} of a SqlContinuation.
+     *
+     * <p>Returns {@code true} if the carrier was unmounted (the body will only continue
+     * on a future {@link #run()} call). Returns {@code false} if the JDK refused to
+     * yield because the carrier is pinned, e.g., a {@code synchronized} block or a
+     * native frame sits above this call on the stack. When {@code false} is returned,
+     * the body keeps running on the same carrier; callers must not assume they have
+     * been parked.
      */
-    public static void suspend() {
-        Continuation.yield(SCOPE);
+    public static boolean suspend() {
+        return Continuation.yield(SCOPE);
     }
 
     public boolean isDone() {

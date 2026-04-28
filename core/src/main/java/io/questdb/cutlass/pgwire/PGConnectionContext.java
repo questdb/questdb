@@ -455,7 +455,13 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
                     onPostResume(taskOperation, taskDispatcher, taskFailure);
                 }
             }
-            SqlContinuation.suspend();
+            // Tail-yield between client operations. The body just returned and holds
+            // no monitors at this stack depth, so yield should always succeed; if the
+            // JDK refuses, the next loop iteration would re-invoke the previous task
+            // with stale taskOperation, so surface the failure instead.
+            if (!SqlContinuation.suspend()) {
+                throw new IllegalStateException("PGConnectionContext continuation tail-yield was refused; carrier is pinned");
+            }
         }
     }
 

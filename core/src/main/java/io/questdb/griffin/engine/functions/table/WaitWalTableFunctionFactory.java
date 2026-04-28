@@ -86,13 +86,22 @@ public class WaitWalTableFunctionFactory implements FunctionFactory {
                 TxnWaiter waiter = executionContext.borrowTxnWaiter(seqTxn, cont, resumeJob, TxnWaiter.NO_DEADLINE);
                 seqTxnTracker.registerWaiter(waiter);
                 executionContext.getCircuitBreaker().statefulThrowExceptionIfTripped();
-                SqlContinuation.suspend();
-                if (waiter.isCancelled()) {
-                    executionContext.getCircuitBreaker().statefulThrowExceptionIfTripped();
-                    throw CairoException.nonCritical().put("wait_wal_table cancelled [tableName=").put(tableName).put("]");
+                if (SqlContinuation.suspend()) {
+                    // Body resumed on a worker after fire/cancel.
+                    if (waiter.isCancelled()) {
+                        executionContext.getCircuitBreaker().statefulThrowExceptionIfTripped();
+                        throw CairoException.nonCritical().put("wait_wal_table cancelled [tableName=").put(tableName).put("]");
+                    }
+                    throwIfSuspended();
+                    return true;
                 }
-                throwIfSuspended();
-                return true;
+                // The JDK refused to yield because the carrier is pinned (e.g., a
+                // synchronized frame or a native frame sits above this call). The
+                // body never unmounted, so this is the same carrier that registered
+                // the waiter. Cancel the waiter so a concurrent fireWaiters does not
+                // schedule a phantom resume of this still-mounted continuation, then
+                // fall through to the legacy polling path.
+                waiter.tryCancel();
             }
 
             // Legacy polling fallback: no continuation gateway in this execution path.
