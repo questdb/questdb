@@ -676,6 +676,21 @@ public abstract class AbstractPostingIndexReader implements IndexReader {
     private void readIndexMetadataFromChain() {
         final long deadline = clock.getTicks() + spinLockTimeoutMs;
         while (true) {
+            // The picker reads at offsets up to keyMem.size(); when a
+            // concurrent writer has published a new chain entry past our
+            // mmap, the picker returns HEADER_UNREADABLE rather than
+            // dereferencing past the mapping. Extend the mmap to the
+            // current file length before each attempt so the retry sees
+            // the writer's latest publish.
+            if (ff != null) {
+                long fd = keyMem.getFd();
+                if (fd > 0) {
+                    long fileLen = ff.length(fd);
+                    if (fileLen > 0 && fileLen > keyMem.size()) {
+                        ((MemoryCMR) keyMem).extend(fileLen);
+                    }
+                }
+            }
             int result = PostingIndexChainPicker.pick(keyMem, pinnedTableTxn, headerScratch, entryScratch);
             if (result == PostingIndexChainPicker.RESULT_HEADER_UNREADABLE) {
                 if (clock.getTicks() > deadline) {

@@ -6328,6 +6328,13 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             if (columnTop > -1 && partitionSize > columnTop) {
                 indexer.getWriter().setCurrentTableTxn(txWriter.getTxn());
                 indexer.configureWriter(path.trimTo(plen), columnName, columnNameTxn, columnTop, timestamp, txWriter.getPartitionNameTxnByPartitionTimestamp(timestamp));
+                // Mirror the native partition path: posting-index covering
+                // sidecars must be wired up before seal, otherwise .pci /
+                // .pc<N> files are not produced for parquet partitions on
+                // ALTER TABLE ADD INDEX TYPE POSTING INCLUDE (...). Queries
+                // against those partitions then silently use the slower
+                // fallback even though metadata advertises COVERING.
+                configureCoveringIfNeeded(indexer, columnIndex, timestamp);
 
                 parquetColumnIdsAndTypes.clear();
                 parquetColumnIdsAndTypes.add(parquetColumnIndex);

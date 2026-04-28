@@ -252,7 +252,12 @@ public final class BitpackUtils {
         int srcOffset = (int) (bitPos / 8);
         int skipBits = (int) (bitPos % 8);
 
-        // Pre-fill buffer past the skip bits
+        // Pre-fill buffer past the skip bits. Cap reads at 64 bufferBits so
+        // a 9th byte never collides with `b << 64` (which is a no-op in
+        // Java because the shift count is masked to 6 bits and would
+        // silently corrupt the low byte). After >>> skipBits the buffer
+        // can carry at most 64-skipBits useful bits; the main loop's
+        // spill mechanism reads any remaining bytes for the first value.
         long buffer = 0;
         int bufferBits = 0;
         if (skipBits == 0 && srcOffset + 8 <= totalBytes) {
@@ -261,7 +266,8 @@ public final class BitpackUtils {
             bufferBits = 64;
             srcOffset += 8;
         } else {
-            while (bufferBits < skipBits + bitWidth && srcOffset < totalBytes) {
+            int target = Math.min(skipBits + bitWidth, 64);
+            while (bufferBits < target && srcOffset < totalBytes) {
                 buffer |= ((Unsafe.getUnsafe().getByte(srcAddr + srcOffset) & 0xFFL) << bufferBits);
                 bufferBits += 8;
                 srcOffset++;

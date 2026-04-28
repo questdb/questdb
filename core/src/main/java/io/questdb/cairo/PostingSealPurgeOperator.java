@@ -100,6 +100,20 @@ public class PostingSealPurgeOperator implements Closeable, PostingIndexUtils.Se
         if (task.isEmpty()) {
             return true;
         }
+        // Validate any cached scoreboard before doing anything else.
+        // The cache is held across calls as an optimization for repeated
+        // tasks on the same table; if the cached table has been dropped
+        // (or recreated with a new tableId) we must release it now,
+        // otherwise it stays pinned until the operator close() — and
+        // the early-return paths below would skip the late
+        // cache-invalidation check that used to live here.
+        if (txnScoreboard != null) {
+            TableToken cachedToken = txnScoreboard.getTableToken();
+            TableToken liveCached = engine.getTableTokenIfExists(cachedToken.getTableName());
+            if (liveCached == null || liveCached.getTableId() != cachedToken.getTableId()) {
+                txnScoreboard = Misc.free(txnScoreboard);
+            }
+        }
         TableToken originalToken = task.getTableToken();
         TableToken liveToken = engine.getTableTokenIfExists(originalToken.getTableName());
         if (liveToken == null || liveToken.getTableId() != originalToken.getTableId()) {

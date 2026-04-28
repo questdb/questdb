@@ -123,13 +123,31 @@ public final class PostingIndexNative {
         int srcOffset = 0;
         long mask = (bitWidth == 64) ? -1L : (1L << bitWidth) - 1;
         int totalBytes = BitpackUtils.packedDataSize(valueCount, bitWidth);
+        // Spill mechanism mirrors C++ unpack_all_scalar and the Java
+        // BitpackUtils.unpackValuesFrom main loop. Required for
+        // bitWidth >= 57 because `b << bufferBits` with bufferBits > 56
+        // would lose the byte's high bits (Java masks the shift count
+        // to the low 6 bits). Without this fallback path silently
+        // corrupts data on platforms where the AVX2 native lib is
+        // unavailable (e.g., aarch64 builds, sandboxed CI, dev images
+        // missing the native artifact).
+        long spillBits = 0;
+        int spillCount = 0;
 
         for (int i = 0; i < valueCount; i++) {
             while (bufferBits < bitWidth && srcOffset < totalBytes) {
                 long b = Unsafe.getUnsafe().getByte(srcAddr + srcOffset) & 0xFFL;
-                buffer |= (b << bufferBits);
-                bufferBits += 8;
                 srcOffset++;
+                if (bufferBits <= 56) {
+                    buffer |= (b << bufferBits);
+                    bufferBits += 8;
+                } else {
+                    int fitBits = 64 - bufferBits;
+                    buffer |= (b << bufferBits);
+                    spillBits = b >>> fitBits;
+                    spillCount = 8 - fitBits;
+                    bufferBits = 64;
+                }
             }
             Unsafe.getUnsafe().putLong(destAddr + (long) i * Long.BYTES, minValue + (buffer & mask));
             // Java's >>> uses only the low 6 bits of the shift count, so
@@ -142,6 +160,11 @@ public final class PostingIndexNative {
                 buffer >>>= bitWidth;
             }
             bufferBits -= bitWidth;
+            if (spillCount > 0) {
+                buffer |= (spillBits << bufferBits);
+                bufferBits += spillCount;
+                spillCount = 0;
+            }
         }
     }
 

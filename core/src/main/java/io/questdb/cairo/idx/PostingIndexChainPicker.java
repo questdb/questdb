@@ -87,12 +87,25 @@ public final class PostingIndexChainPicker {
         long regionLimit = headerScratch.regionLimit;
         long entryCount = headerScratch.entryCount;
         long visited = 0;
+        // Mapped size is the upper bound for any read. The header reflects
+        // the writer's current published state, but the reader's mmap may
+        // be smaller if a publish raced with the reader's open or
+        // extend. Returning RESULT_HEADER_UNREADABLE on overshoot lets the
+        // caller extend the mapping and retry.
+        long mappedLimit = keyMem.size();
 
         while (entryOffset != PostingIndexUtils.V2_NO_HEAD) {
             // Sanity-check: the offset must lie inside the live region.
             // A corrupted PREV_ENTRY_OFFSET would otherwise drive the walk
             // off into garbage memory.
             if (entryOffset < regionBase || entryOffset >= regionLimit) {
+                return RESULT_HEADER_UNREADABLE;
+            }
+            // Bound against the reader's mapped size: the entry header
+            // must fit inside the mmap, otherwise getLong/getInt would
+            // assert under -ea (or SIGBUS without). Return HEADER_UNREADABLE
+            // so the caller can extend the mapping.
+            if (entryOffset + PostingIndexUtils.V2_ENTRY_HEADER_SIZE > mappedLimit) {
                 return RESULT_HEADER_UNREADABLE;
             }
             // Hard cap on iterations to defend against a corrupted prev
@@ -102,6 +115,12 @@ public final class PostingIndexChainPicker {
             }
 
             PostingIndexChainEntry.read(keyMem, entryOffset, into);
+            // The full entry (header + gen-dir payload) must fit inside
+            // the mapped region too. snapshotMetadata reads gen-dir
+            // entries at offsets up to entryOffset + into.len.
+            if (into.len <= 0 || entryOffset + into.len > mappedLimit) {
+                return RESULT_HEADER_UNREADABLE;
+            }
             if (into.txnAtSeal <= pinnedTableTxn) {
                 return RESULT_OK;
             }

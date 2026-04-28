@@ -7664,7 +7664,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             // Also works when the WHERE clause contains only interval (timestamp) filters — the interval
             // is pushed into IntervalPartitionFrameCursorFactory which bounds the row range per partition.
             if (columns.size() == 1 && columns.getQuick(0).getAst().type == LITERAL
-                    && !SqlHints.hasNoIndexHint(model)) {
+                    && !SqlHints.hasNoIndexHint(model)
+                    && !SqlHints.hasNoCoveringHint(model)) {
                 CharSequence colName = columns.getQuick(0).getAst().token;
                 IQueryModel tableModel = model.getNestedModel();
                 if (tableModel != null && tableModel.getTableName() != null
