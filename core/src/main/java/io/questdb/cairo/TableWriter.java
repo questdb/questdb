@@ -3127,6 +3127,9 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                             .put(']');
                 }
             } else {
+                if (newPartitionDirLen > 0 && !ff.rmdir(other.trimTo(newPartitionDirLen).slash())) {
+                    LOG.error().$("could not remove partition dir [path=").$(other).I$();
+                }
                 return SWITCH_NO_PARQUET;
             }
 
@@ -4651,46 +4654,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             }
         } finally {
             path.trimTo(plen);
-        }
-    }
-
-    /**
-     * Creates a fresh {@code _pm} sidecar at
-     * {@code path.trimTo(partitionDirLen) + PARQUET_METADATA_FILE_NAME}.
-     * Caller guarantees the file does not yet exist (creation, not recovery).
-     * Used by {@link #switchNativePartitionWithParquet} when the source
-     * partition lacks a {@code _pm} sidecar and we need to materialise one in
-     * the brand-new partition directory before the {@code _txn} commit
-     * publishes the new partition.
-     * <p>
-     * No swap-rename, no Windows lockout, because the target file does not
-     * exist yet — just openRW + generate + fsync + close.
-     */
-    private void createParquetMetadata(Path path, int partitionDirLen, long parquetFileSize) {
-        path.trimTo(partitionDirLen).concat(PARQUET_PARTITION_NAME).$();
-        long parquetFd = openRO(ff, path.$(), LOG);
-        try {
-            path.trimTo(partitionDirLen).concat(PARQUET_METADATA_FILE_NAME).$();
-            long parquetMetaFd = openRW(ff, path.$(), LOG, configuration.getWriterFileOpenOpts());
-            try {
-                long parquetMetaAllocator = Unsafe.getNativeAllocator(MemoryTag.NATIVE_PARQUET_PARTITION_UPDATER);
-                ParquetMetadataWriter.generate(parquetMetaAllocator, Files.toOsFd(parquetFd), parquetFileSize, Files.toOsFd(parquetMetaFd));
-                if (configuration.getCommitMode() != CommitMode.NOSYNC) {
-                    ff.fsync(parquetMetaFd);
-                }
-            } finally {
-                ff.close(parquetMetaFd);
-            }
-            if (!Os.isWindows() && configuration.getCommitMode() != CommitMode.NOSYNC) {
-                path.trimTo(partitionDirLen).$();
-                final long dirFd = TableUtils.openRONoCache(ff, path.$(), LOG);
-                if (dirFd != -1) {
-                    ff.fsyncAndClose(dirFd);
-                }
-            }
-        } finally {
-            ff.close(parquetFd);
-            path.trimTo(partitionDirLen);
         }
     }
 
