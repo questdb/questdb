@@ -16,7 +16,7 @@ stages:
         displayName: "on Azure workers"
         strategy:
           matrix:
-            linux-jdk17:
+            linux-jdk25:
               imageName: 'ubuntu-latest'
               poolName: "Azure Pipelines"
               os: Linux
@@ -34,11 +34,11 @@ stages:
             lfs: false
             submodules: true
 
-          # --- GraalVM CE 17.0.9 install + SHA256 verify (Linux) ---
+          # --- GraalVM CE 25.0.2 install + SHA256 verify (Linux) ---
           - bash: |
               set -eux
 
-              GRAAL_VERSION=17.0.9
+              GRAAL_VERSION=25.0.2
               TAG="jdk-${GRAAL_VERSION}"
               FILENAME="graalvm-community-jdk-${GRAAL_VERSION}_linux-x64_bin.tar.gz"
               BASE_URL="https://github.com/graalvm/graalvm-ce-builds/releases/download/${TAG}"
@@ -47,7 +47,7 @@ stages:
               curl -L -o "${FILENAME}" "${BASE_URL}/${FILENAME}"
               curl -L -o "${FILENAME}.sha256" "${BASE_URL}/${FILENAME}.sha256"
 
-              # .sha256 only contains the hash → wrap with filename for sha256sum -c
+              # .sha256 only contains the hash, wrap with filename for sha256sum -c
               HASH="$(cut -d ' ' -f1 "${FILENAME}.sha256")"
               echo "${HASH}  ${FILENAME}" | sha256sum -c -
 
@@ -57,14 +57,14 @@ stages:
               tar -xzf "${FILENAME}" -C "${INSTALL_DIR}" --strip-components=1
 
               echo "##vso[task.setvariable variable=GRAALVM_HOME]${INSTALL_DIR}"
-            displayName: "Install GraalVM Community 17.0.9 (Linux, SHA256 verified)"
+            displayName: "Install GraalVM Community 25.0.2 (Linux, SHA256 verified)"
             condition: eq( variables['os'], 'Linux')
 
-          # --- GraalVM CE 17.0.9 install + SHA256 verify (Windows) ---
+          # --- GraalVM CE 25.0.2 install + SHA256 verify (Windows) ---
           - powershell: |
               $ErrorActionPreference = "Stop"
 
-              $GRAAL_VERSION = "17.0.9"
+              $GRAAL_VERSION = "25.0.2"
               $tag = "jdk-$GRAAL_VERSION"
               $fileName = "graalvm-community-jdk-$GRAAL_VERSION`_windows-x64_bin.zip"
               $baseUrl = "https://github.com/graalvm/graalvm-ce-builds/releases/download/$tag"
@@ -89,7 +89,7 @@ stages:
               }
 
               # Extract
-              $dest = Join-Path $env:USERPROFILE "graalvm-ce-17"
+              $dest = Join-Path $env:USERPROFILE "graalvm-ce-25"
               if (Test-Path $dest) { Remove-Item $dest -Recurse -Force }
               Expand-Archive $zipPath -DestinationPath $dest
 
@@ -99,7 +99,7 @@ stages:
 
               Write-Host "GRAALVM_HOME = $graalHome"
               Write-Host "##vso[task.setvariable variable=GRAALVM_HOME]$graalHome"
-            displayName: "Install GraalVM Community 17.0.9 (Windows, SHA256 verified)"
+            displayName: "Install GraalVM Community 25.0.2 (Windows, SHA256 verified)"
             condition: eq( variables['os'], 'Windows')
 
           - task: Maven@3

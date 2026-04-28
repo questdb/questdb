@@ -54,6 +54,7 @@ public class SumLong256VectorAggregateFunction extends Long256Function implement
     private final Long256Impl sumB = new Long256Impl();
     private int valueOffset;
 
+    @SuppressWarnings("unused")
     public SumLong256VectorAggregateFunction(int keyKind, int columnIndex, int timestampIndex, int workerCount) {
         this.columnIndex = columnIndex;
         if (keyKind == GKK_MICRO_HOUR_INT) {
@@ -140,11 +141,11 @@ public class SumLong256VectorAggregateFunction extends Long256Function implement
 
     @Override
     public void initRosti(long pRosti) {
-        Unsafe.getUnsafe().putLong(Rosti.getInitialValueSlot(pRosti, valueOffset), 0);
-        Unsafe.getUnsafe().putLong(Rosti.getInitialValueSlot(pRosti, valueOffset) + Long.BYTES, 0);
-        Unsafe.getUnsafe().putLong(Rosti.getInitialValueSlot(pRosti, valueOffset) + 2 * Long.BYTES, 0);
-        Unsafe.getUnsafe().putLong(Rosti.getInitialValueSlot(pRosti, valueOffset) + 3 * Long.BYTES, 0);
-        Unsafe.getUnsafe().putLong(Rosti.getInitialValueSlot(pRosti, valueOffset + 1), 0);
+        Unsafe.putLong(Rosti.getInitialValueSlot(pRosti, valueOffset), 0);
+        Unsafe.putLong(Rosti.getInitialValueSlot(pRosti, valueOffset) + Long.BYTES, 0);
+        Unsafe.putLong(Rosti.getInitialValueSlot(pRosti, valueOffset) + 2 * Long.BYTES, 0);
+        Unsafe.putLong(Rosti.getInitialValueSlot(pRosti, valueOffset) + 3 * Long.BYTES, 0);
+        Unsafe.putLong(Rosti.getInitialValueSlot(pRosti, valueOffset + 1), 0);
     }
 
     @Override
@@ -169,10 +170,10 @@ public class SumLong256VectorAggregateFunction extends Long256Function implement
         long offset = 0;
         sum.setAll(0, 0, 0, 0);
         for (long i = 0; i < count; i++) {
-            final long l0 = Unsafe.getUnsafe().getLong(address + offset);
-            final long l1 = Unsafe.getUnsafe().getLong(address + offset + Long.BYTES);
-            final long l2 = Unsafe.getUnsafe().getLong(address + offset + Long.BYTES * 2);
-            final long l3 = Unsafe.getUnsafe().getLong(address + offset + Long.BYTES * 3);
+            final long l0 = Unsafe.getLong(address + offset);
+            final long l1 = Unsafe.getLong(address + offset + Long.BYTES);
+            final long l2 = Unsafe.getLong(address + offset + Long.BYTES * 2);
+            final long l3 = Unsafe.getLong(address + offset + Long.BYTES * 3);
 
             boolean isNull = l0 == Numbers.LONG_NULL &&
                     l1 == Numbers.LONG_NULL &&

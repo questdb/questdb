@@ -566,7 +566,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     }
 
     public static long getTimestampIndexValue(long timestampIndexAddr, long indexRow) {
-        return Unsafe.getUnsafe().getLong(timestampIndexAddr + indexRow * 16);
+        return Unsafe.getLong(timestampIndexAddr + indexRow * 16);
     }
 
     @Override
@@ -2670,7 +2670,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             // reset timestamp limits
             if (timestamp) {
                 txWriter.resetTimestamp();
-                timestampSetter = value -> {
+                timestampSetter = _ -> {
                 };
             }
 
@@ -3538,8 +3538,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     );
                     long applyCount = (binarySearchInsertionPoint < 0) ? -binarySearchInsertionPoint - 1 : binarySearchInsertionPoint + 1;
 
-                    long newMinLagTimestamp = Unsafe.getUnsafe().getLong(timestampAddr + applyCount * Long.BYTES);
-                    long newMaxTimestamp = Unsafe.getUnsafe().getLong(timestampAddr + (applyCount - 1) * Long.BYTES);
+                    long newMinLagTimestamp = Unsafe.getLong(timestampAddr + applyCount * Long.BYTES);
+                    long newMaxTimestamp = Unsafe.getLong(timestampAddr + (applyCount - 1) * Long.BYTES);
                     assert newMinLagTimestamp > commitToTimestamp && commitToTimestamp >= newMaxTimestamp;
 
                     applyLagToLastPartition(newMaxTimestamp, (int) applyCount, newMinLagTimestamp);
@@ -4113,12 +4113,12 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     private void clearTodoLog() {
         try {
             todoMem.putLong(0, ++todoTxn); // write txn, reader will first read txn at offset 24 and then at offset 0
-            Unsafe.getUnsafe().storeFence(); // make sure we do not write hash before writing txn (view from another thread)
+            Unsafe.storeFence(); // make sure we do not write hash before writing txn (view from another thread)
             todoMem.putLong(8, 0); // write out our instance hashes
             todoMem.putLong(16, 0);
-            Unsafe.getUnsafe().storeFence();
+            Unsafe.storeFence();
             todoMem.putLong(32, 0);
-            Unsafe.getUnsafe().storeFence();
+            Unsafe.storeFence();
             todoMem.putLong(24, todoTxn);
             // ensure the file is closed with the correct length
             todoMem.jumpTo(40);
@@ -4347,7 +4347,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     private void configureTimestampSetter() {
         int index = metadata.getTimestampIndex();
         if (index == -1) {
-            timestampSetter = value -> {
+            timestampSetter = _ -> {
             };
         } else {
             nullSetters.setQuick(index, NOOP);
@@ -4417,7 +4417,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                             indexWriter.add(nullKey, row);
                         }
                         for (long row = colTop; row < partitionRowCount; row++) {
-                            final int key = TableUtils.toIndexKey(Unsafe.getUnsafe().getInt(dataAddr + (row - colTop) * Integer.BYTES));
+                            final int key = TableUtils.toIndexKey(Unsafe.getInt(dataAddr + (row - colTop) * Integer.BYTES));
                             indexWriter.add(key, row);
                         }
                         indexWriter.setMaxValue(partitionRowCount - 1);
@@ -5003,7 +5003,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
                 try {
                     for (long n = 0; n < transientRowsAdded; n++) {
-                        long ts = Unsafe.getUnsafe().getLong(address + alignedExtraLen + (n << shl));
+                        long ts = Unsafe.getLong(address + alignedExtraLen + (n << shl));
                         o3TimestampMem.putLong128(ts, o3RowCount + n);
                     }
                 } finally {
@@ -6126,7 +6126,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     final long addr = rowGroupBuffers.getChunkDataPtr(0);
                     final long size = rowGroupBuffers.getChunkDataSize(0);
                     for (long p = addr, lim = addr + size; p < lim; p += 4, rowId++) {
-                        indexWriter.add(TableUtils.toIndexKey(Unsafe.getUnsafe().getInt(p)), rowId);
+                        indexWriter.add(TableUtils.toIndexKey(Unsafe.getInt(p)), rowId);
                     }
 
                     rowCount += rowGroupSize;
@@ -6553,16 +6553,16 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
         while ((blockIndex = o3PartitionUpdateSink.nextBlockIndex(blockIndex)) > -1L) {
             final long blockAddress = o3PartitionUpdateSink.getBlockAddress(blockIndex);
-            long partitionTimestamp = Unsafe.getUnsafe().getLong(blockAddress);
-            long timestampMin = Unsafe.getUnsafe().getLong(blockAddress + Long.BYTES);
+            long partitionTimestamp = Unsafe.getLong(blockAddress);
+            long timestampMin = Unsafe.getLong(blockAddress + Long.BYTES);
 
             if (partitionTimestamp != -1L && timestampMin != -1L) {
-                final long srcDataNewPartitionSize = Unsafe.getUnsafe().getLong(blockAddress + 2 * Long.BYTES);
-                final long srcDataOldPartitionSize = Unsafe.getUnsafe().getLong(blockAddress + 3 * Long.BYTES);
-                final long flags = Unsafe.getUnsafe().getLong(blockAddress + 4 * Long.BYTES);
+                final long srcDataNewPartitionSize = Unsafe.getLong(blockAddress + 2 * Long.BYTES);
+                final long srcDataOldPartitionSize = Unsafe.getLong(blockAddress + 3 * Long.BYTES);
+                final long flags = Unsafe.getLong(blockAddress + 4 * Long.BYTES);
                 final boolean partitionMutates = Numbers.decodeLowInt(flags) != 0;
                 final boolean isLastWrittenPartition = o3PartitionUpdateSink.nextBlockIndex(blockIndex) == -1;
-                final long o3SplitPartitionSize = Unsafe.getUnsafe().getLong(blockAddress + 5 * Long.BYTES);
+                final long o3SplitPartitionSize = Unsafe.getLong(blockAddress + 5 * Long.BYTES);
                 if (!partitionMutates && srcDataNewPartitionSize < 0) {
                     // noop
                     continue;
@@ -6635,7 +6635,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                         .$(", partitionTimestamp=").$ts(timestampDriver, partitionTimestamp)
                         .$(", partitionMutates=").$(partitionMutates)
                         .$(", isParquet=").$(isParquet)
-                        .$(", parquetFileSize=").$(Unsafe.getUnsafe().getLong(blockAddress + 7 * Long.BYTES))
+                        .$(", parquetFileSize=").$(Unsafe.getLong(blockAddress + 7 * Long.BYTES))
                         .$(", partitionIndexRaw=").$(partitionIndexRaw)
                         .$(", lastPartitionTimestamp=").$ts(timestampDriver, lastPartitionTimestamp)
                         .$(", srcDataOldPartitionSize=").$(srcDataOldPartitionSize)
@@ -6722,7 +6722,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                             }
                         }
                     } else {
-                        final long parquetFileSize = Unsafe.getUnsafe().getLong(blockAddress + 7 * Long.BYTES);
+                        final long parquetFileSize = Unsafe.getLong(blockAddress + 7 * Long.BYTES);
                         if (parquetFileSize > -1) {
                             // partitionMutates is true here, so this is a native
                             // partition that was mutated in place and then encoded
@@ -6738,7 +6738,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                         txWriter.bumpPartitionTableVersion();
                     }
                 } else {
-                    final long parquetFileSize = Unsafe.getUnsafe().getLong(blockAddress + 7 * Long.BYTES);
+                    final long parquetFileSize = Unsafe.getLong(blockAddress + 7 * Long.BYTES);
                     if (isParquet && parquetFileSize > -1) {
                         // Parquet rewrite: new file is in a txn-named directory.
                         // Bump the partition name txn and queue old dir for removal.
@@ -6828,12 +6828,12 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 final long mapSize = partitionSize * Long.BYTES;
                 final long addr = mapRO(ff, fd, mapSize, MemoryTag.MMAP_TABLE_WRITER);
                 try {
-                    long lastTs = Unsafe.getUnsafe().getLong(addr + (partitionSize - 1) * Long.BYTES);
+                    long lastTs = Unsafe.getLong(addr + (partitionSize - 1) * Long.BYTES);
 
                     long currentTs = lastTs - 1;
                     long row = partitionSize - 2;
                     for (; row >= 0; row--) {
-                        currentTs = Unsafe.getUnsafe().getLong(addr + row * Long.BYTES);
+                        currentTs = Unsafe.getLong(addr + row * Long.BYTES);
                         if (currentTs != lastTs) {
                             break;
                         }
@@ -7298,7 +7298,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 if (todoTxn != tableTxn || todoMem.getLong(24) != todoTxn) {
                     todoMem.putLong(8, configuration.getDatabaseIdLo());
                     todoMem.putLong(16, configuration.getDatabaseIdHi());
-                    Unsafe.getUnsafe().storeFence();
+                    Unsafe.storeFence();
                     todoMem.putLong(24, todoTxn);
                     return 0;
                 }
@@ -7617,9 +7617,9 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     latchCount++;
                     // Set column top memory to -1, no need to initialize partition update memory, it always set by O3 partition tasks
                     Vect.memset(partitionUpdateSinkAddr + (long) PARTITION_SINK_SIZE_LONGS * Long.BYTES, (long) metadata.getColumnCount() * Long.BYTES, -1);
-                    Unsafe.getUnsafe().putLong(partitionUpdateSinkAddr, partitionTimestamp);
+                    Unsafe.putLong(partitionUpdateSinkAddr, partitionTimestamp);
                     // original partition timestamp
-                    Unsafe.getUnsafe().putLong(partitionUpdateSinkAddr + 6 * Long.BYTES, partitionTimestamp);
+                    Unsafe.putLong(partitionUpdateSinkAddr + 6 * Long.BYTES, partitionTimestamp);
 
                     if (
                             isCommitReplaceMode()
@@ -8335,7 +8335,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 if (ColumnType.isSymbol(columnType)) {
                     // -1 is the indicator that column is remapped.
                     // Otherwise, the symbol remapping did not happen because there were no new symbols
-                    if (Unsafe.getUnsafe().getLong(columnSegmentAddressesBase) == -1L) {
+                    if (Unsafe.getLong(columnSegmentAddressesBase) == -1L) {
                         int primaryColumnIndex = getPrimaryColumnIndex(i);
                         MemoryCARW remappedColumn = o3MemColumns2.getQuick(primaryColumnIndex);
                         assert remappedColumn.size() >= (segmentCopyInfo.getTotalRows() << ColumnType.pow2SizeOf(columnType));
@@ -8527,7 +8527,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                             long dataAddresses;
                             int valueSizeBytes = ColumnType.isVarSize(columnType) ? -1 : ColumnType.sizeOf(columnType);
 
-                            if (!ColumnType.isSymbol(columnType) || Unsafe.getUnsafe().getLong(columnAddressBufferPrimary) == 0) {
+                            if (!ColumnType.isSymbol(columnType) || Unsafe.getLong(columnAddressBufferPrimary) == 0) {
                                 segmentFileCache.createAddressBuffersPrimary(i, columnCount, segmentCopyInfo.getSegmentCount(), columnAddressBufferPrimary);
                                 dataAddresses = columnAddressBufferPrimary;
                             } else {
@@ -8715,10 +8715,10 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 }
 
                 // Save the hint that this symbol is already re-mapped, and the results are in o3MemColumns2
-                Unsafe.getUnsafe().putLong(mappedAddrBuffPrimary, -1L);
+                Unsafe.putLong(mappedAddrBuffPrimary, -1L);
             } else {
                 // Save the hint that symbol column is not re-mapped
-                Unsafe.getUnsafe().putLong(mappedAddrBuffPrimary, 0);
+                Unsafe.putLong(mappedAddrBuffPrimary, 0);
                 LOG.debug().$("no new symbols, no remapping needed [table=").$(tableToken)
                         .$(", column=").$safe(metadata.getColumnName(columnIndex))
                         .$(", rows=").$(totalRows)
@@ -8753,7 +8753,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             final int shl = ColumnType.pow2SizeOf(columnType);
 
             // If this column used for deduplication, the pointers are already created
-            long firstPointer = Unsafe.getUnsafe().getLong(mappedAddrBuffPrimary);
+            long firstPointer = Unsafe.getLong(mappedAddrBuffPrimary);
             boolean pointersNotCreated = firstPointer == 0;
             if (pointersNotCreated) {
                 segmentFileCache.createAddressBuffersPrimary(columnIndex, metadata.getColumnCount(), segmentCopyInfo.getSegmentCount(), mappedAddrBuffPrimary);
@@ -9362,7 +9362,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     long size = 0L;
 
                     for (long ptr = mappedMem, hi = mappedMem + fileSize; ptr < hi; ptr += Long.BYTES) {
-                        long ts = Unsafe.getUnsafe().getLong(ptr);
+                        long ts = Unsafe.getLong(ptr);
                         if (ts >= maxTimestamp) {
                             maxTimestamp = ts;
                             size++;
@@ -9371,7 +9371,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                         }
                     }
                     if (size > 0) {
-                        attachMinTimestamp = Unsafe.getUnsafe().getLong(mappedMem);
+                        attachMinTimestamp = Unsafe.getLong(mappedMem);
                         attachMaxTimestamp = maxTimestamp;
                     }
                     return size;
@@ -9460,7 +9460,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         long offset = (transientRowCount - 1) * 8;
         long addr = mapAppendColumnBuffer(getPrimaryColumn(metadata.getTimestampIndex()), offset, 8, false);
         try {
-            return Unsafe.getUnsafe().getLong(Math.abs(addr));
+            return Unsafe.getLong(Math.abs(addr));
         } finally {
             mapAppendColumnBufferRelease(addr, offset, 8);
         }
@@ -9528,7 +9528,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                         // Create new index from scratch in the same directory
                         indexWriter.of(other.trimTo(dirLen), columnName, columnNameTxn, indexValueBlockCapacity);
                         for (long row = columnTop; row < partitionRowCount; row++) {
-                            int key = TableUtils.toIndexKey(Unsafe.getUnsafe().getInt(dataAddr + (row - columnTop) * Integer.BYTES));
+                            int key = TableUtils.toIndexKey(Unsafe.getInt(dataAddr + (row - columnTop) * Integer.BYTES));
                             indexWriter.add(key, row);
                         }
                         indexWriter.setMaxValue(partitionRowCount - 1);
@@ -10617,7 +10617,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             setPathForNativePartition(other.trimTo(pathSize), timestampType, partitionBy, targetPartition, targetPartitionNameTxn);
             other.concat(TableUtils.PARTITION_LAST_SQUASH_TIMESTAMP_FILE);
             long squashCounterFileFd = TableUtils.openRW(ff, other.$(), LOG, configuration.getWriterFileOpenOpts());
-            Unsafe.getUnsafe().putLong(tempMem16b, configuration.getMicrosecondClock().getTicks());
+            Unsafe.putLong(tempMem16b, configuration.getMicrosecondClock().getTicks());
 
             if (ff.write(squashCounterFileFd, tempMem16b, Long.BYTES, 0) != Long.BYTES) {
                 // Log as critical, this is not fatal
@@ -10747,10 +10747,10 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
         // this is a crude block to test things for now
         todoMem.putLong(0, ++todoTxn); // write txn, reader will first read txn at offset 24 and then at offset 0
-        Unsafe.getUnsafe().storeFence(); // make sure we do not write hash before writing txn (view from another thread)
+        Unsafe.storeFence(); // make sure we do not write hash before writing txn (view from another thread)
         todoMem.putLong(8, configuration.getDatabaseIdLo()); // write out our instance hashes
         todoMem.putLong(16, configuration.getDatabaseIdHi());
-        Unsafe.getUnsafe().storeFence();
+        Unsafe.storeFence();
         todoMem.putLong(24, todoTxn);
         todoMem.putLong(32, 1);
         todoMem.putLong(40, TODO_TRUNCATE);
@@ -10947,10 +10947,10 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
         while ((blockIndex = o3PartitionUpdateSink.nextBlockIndex(blockIndex)) > -1L) {
             long blockAddress = o3PartitionUpdateSink.getBlockAddress(blockIndex);
-            long partitionTimestamp = Unsafe.getUnsafe().getLong(blockAddress);
-            final long o3SplitPartitionSize = Unsafe.getUnsafe().getLong(blockAddress + 5 * Long.BYTES);
+            long partitionTimestamp = Unsafe.getLong(blockAddress);
+            final long o3SplitPartitionSize = Unsafe.getLong(blockAddress + 5 * Long.BYTES);
             // When partition is split, data partition timestamp and partition timestamp diverge
-            final long dataPartitionTimestamp = Unsafe.getUnsafe().getLong(blockAddress + 6 * Long.BYTES);
+            final long dataPartitionTimestamp = Unsafe.getLong(blockAddress + 6 * Long.BYTES);
 
             if (o3SplitPartitionSize > 0) {
                 // This is partition split. Copy all the column name txns from the donor partition.
@@ -10961,7 +10961,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 blockAddress += PARTITION_SINK_SIZE_LONGS * Long.BYTES;
                 for (int column = 0; column < columnCount; column++) {
 
-                    long colTop = Unsafe.getUnsafe().getLong(blockAddress);
+                    long colTop = Unsafe.getLong(blockAddress);
                     blockAddress += Long.BYTES;
                     if (colTop > -1L) {
                         // Upsert even when colTop value is 0.
@@ -11049,14 +11049,14 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     private void writeRestoreMetaTodo() {
         try {
             todoMem.putLong(0, txWriter.txn); // write txn, reader will first read txn at offset 24 and then at offset 0
-            Unsafe.getUnsafe().storeFence(); // make sure we do not write hash before writing txn (view from another thread)
+            Unsafe.storeFence(); // make sure we do not write hash before writing txn (view from another thread)
             todoMem.putLong(8, configuration.getDatabaseIdLo()); // write out our instance hashes
             todoMem.putLong(16, configuration.getDatabaseIdHi());
-            Unsafe.getUnsafe().storeFence();
+            Unsafe.storeFence();
             todoMem.putLong(32, 1);
             todoMem.putLong(40, TODO_RESTORE_META);
             todoMem.putLong(48, metaPrevIndex);
-            Unsafe.getUnsafe().storeFence();
+            Unsafe.storeFence();
             todoMem.putLong(24, txWriter.txn);
             todoMem.jumpTo(56);
             todoMem.sync(false);

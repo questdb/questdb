@@ -66,7 +66,7 @@ public class QwpCursorBoundsCheckFuzzTest {
             // Timestamp cursor (uncompressed)
             TYPE_TIMESTAMP, TYPE_TIMESTAMP_NANOS,
             // String cursor
-            TYPE_STRING, TYPE_VARCHAR,
+            TYPE_VARCHAR,
             // Symbol cursor (per-column dictionary mode)
             TYPE_SYMBOL,
             // GeoHash cursor
@@ -165,7 +165,7 @@ public class QwpCursorBoundsCheckFuzzTest {
 
     private static void copyToNative(byte[] src, long address) {
         for (int i = 0; i < src.length; i++) {
-            Unsafe.getUnsafe().putByte(address + i, src[i]);
+            Unsafe.putByte(address + i, src[i]);
         }
     }
 
@@ -306,7 +306,7 @@ public class QwpCursorBoundsCheckFuzzTest {
                     writeFixedWidthColumnData(out, rnd, valueCount, 8);
             case TYPE_UUID -> writeFixedWidthColumnData(out, rnd, valueCount, 16);
             case TYPE_LONG256 -> writeFixedWidthColumnData(out, rnd, valueCount, 32);
-            case TYPE_STRING, TYPE_VARCHAR -> writeStringColumnData(out, rnd, valueCount);
+            case TYPE_VARCHAR -> writeStringColumnData(out, rnd, valueCount);
             case TYPE_SYMBOL -> writeSymbolColumnData(out, rnd, valueCount);
             case TYPE_GEOHASH -> writeGeoHashColumnData(out, rnd, valueCount);
             case TYPE_DECIMAL64 -> writeDecimalColumnData(out, rnd, valueCount, 8);

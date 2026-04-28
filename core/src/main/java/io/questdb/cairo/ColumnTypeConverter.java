@@ -765,7 +765,7 @@ public class ColumnTypeConverter {
             dstFixMem.of(ff, dstFixFd, true, null, appendPageSize, rowCount * dstSize, memoryTag);
             dstFixMem.jumpTo(0);
             for (long lo = symbolMapAddress, hi = symbolMapAddress + rowCount * Integer.BYTES; lo < hi; lo += Integer.BYTES) {
-                int symbol = Unsafe.getUnsafe().getInt(lo);
+                int symbol = Unsafe.getInt(lo);
                 CharSequence str = symbolTable.valueOf(symbol);
                 converter.convert(str, dstFixMem);
             }
@@ -801,7 +801,7 @@ public class ColumnTypeConverter {
             dstVarMem.jumpTo(0);
 
             for (long lo = symbolMapAddress, hi = symbolMapAddress + rowCount * Integer.BYTES; lo < hi; lo += Integer.BYTES) {
-                int symbol = Unsafe.getUnsafe().getInt(lo);
+                int symbol = Unsafe.getInt(lo);
                 CharSequence str = symbolTable.valueOf(symbol);
                 if (str != null) {
                     StringTypeDriver.appendValue(dstFixMem, dstVarMem, str);
@@ -839,7 +839,7 @@ public class ColumnTypeConverter {
             dstVarMem.jumpTo(0);
 
             for (long lo = symbolMapAddress, hi = symbolMapAddress + rowCount * Integer.BYTES; lo < hi; lo += Integer.BYTES) {
-                int symbol = Unsafe.getUnsafe().getInt(lo);
+                int symbol = Unsafe.getInt(lo);
                 CharSequence str = symbolTable.valueOf(symbol);
                 if (str != null) {
                     sink.clear();
@@ -1015,19 +1015,19 @@ public class ColumnTypeConverter {
     }
 
     private static boolean stringFromBoolean(long srcAddr, CharSink<?> sink) {
-        byte value = Unsafe.getUnsafe().getByte(srcAddr);
+        byte value = Unsafe.getByte(srcAddr);
         sink.put(value != 0);
         return true;
     }
 
     private static boolean stringFromByte(long srcAddr, CharSink<?> sink) {
-        byte value = Unsafe.getUnsafe().getByte(srcAddr);
+        byte value = Unsafe.getByte(srcAddr);
         sink.put(value);
         return true;
     }
 
     private static boolean stringFromChar(long srcAddr, CharSink<?> sink) {
-        char value = Unsafe.getUnsafe().getChar(srcAddr);
+        char value = Unsafe.getChar(srcAddr);
         if (value != 0) {
             sink.put(value);
             return true;
@@ -1036,7 +1036,7 @@ public class ColumnTypeConverter {
     }
 
     private static boolean stringFromDouble(long srcAddr, CharSink<?> sink) {
-        double value = Unsafe.getUnsafe().getDouble(srcAddr);
+        double value = Unsafe.getDouble(srcAddr);
         if (!Numbers.isNull(value)) {
             sink.put(value);
             return true;
@@ -1045,7 +1045,7 @@ public class ColumnTypeConverter {
     }
 
     private static boolean stringFromFloat(long srcAddr, CharSink<?> sink) {
-        float value = Unsafe.getUnsafe().getFloat(srcAddr);
+        float value = Unsafe.getFloat(srcAddr);
         if (!Numbers.isNull(value)) {
             sink.put(value);
             return true;
@@ -1054,7 +1054,7 @@ public class ColumnTypeConverter {
     }
 
     private static boolean stringFromIPv4(long srcAddr, CharSink<?> sink) {
-        int value = Unsafe.getUnsafe().getInt(srcAddr);
+        int value = Unsafe.getInt(srcAddr);
         if (value != Numbers.IPv4_NULL) {
             Numbers.intToIPv4Sink(sink, value);
             return true;
@@ -1063,7 +1063,7 @@ public class ColumnTypeConverter {
     }
 
     private static boolean stringFromInt(long srcAddr, CharSink<?> sink) {
-        int value = Unsafe.getUnsafe().getInt(srcAddr);
+        int value = Unsafe.getInt(srcAddr);
         if (value != Numbers.INT_NULL) {
             sink.put(value);
             return true;
@@ -1072,7 +1072,7 @@ public class ColumnTypeConverter {
     }
 
     private static boolean stringFromLong(long srcAddr, CharSink<?> sink) {
-        long value = Unsafe.getUnsafe().getLong(srcAddr);
+        long value = Unsafe.getLong(srcAddr);
         if (value != Numbers.LONG_NULL) {
             sink.put(value);
             return true;
@@ -1081,14 +1081,14 @@ public class ColumnTypeConverter {
     }
 
     private static boolean stringFromShort(long srcAddr, CharSink<?> sink) {
-        short value = Unsafe.getUnsafe().getShort(srcAddr);
+        short value = Unsafe.getShort(srcAddr);
         sink.put(value);
         return true;
     }
 
     private static boolean stringFromUuid(long srcAddr, CharSink<?> sink) {
-        long lo = Unsafe.getUnsafe().getLong(srcAddr);
-        long hi = Unsafe.getUnsafe().getLong(srcAddr + 8L);
+        long lo = Unsafe.getLong(srcAddr);
+        long hi = Unsafe.getLong(srcAddr + 8L);
         if (lo != Numbers.LONG_NULL || hi != Numbers.LONG_NULL) {
             Numbers.appendUuid(lo, hi, sink);
             return true;

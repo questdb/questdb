@@ -54,8 +54,8 @@ public class BorrowedArray extends MutableArray implements Mutable {
         assert ColumnType.isArray(columnType) : "type class is not Array";
         final long rowOffset = ArrayTypeDriver.getAuxVectorOffsetStatic(rowNum);
         assert auxAddr + ArrayTypeDriver.ARRAY_AUX_WIDTH_BYTES <= auxLim;
-        final long crcAndOffset = Unsafe.getUnsafe().getLong(auxAddr + rowOffset);
-        final long sizeBytes = Unsafe.getUnsafe().getInt(auxAddr + rowOffset + Long.BYTES);
+        final long crcAndOffset = Unsafe.getLong(auxAddr + rowOffset);
+        final long sizeBytes = Unsafe.getInt(auxAddr + rowOffset + Long.BYTES);
         if (sizeBytes == 0) {
             ofNull();
             return this;

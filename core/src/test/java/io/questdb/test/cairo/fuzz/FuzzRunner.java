@@ -1143,7 +1143,7 @@ public class FuzzRunner {
             CheckWalTransactionsJob checkJob = new CheckWalTransactionsJob(engine);
             try (ApplyWal2TableJob job = new ApplyWal2TableJob(engine, 0)) {
                 while (done.get() == 0 && errors.isEmpty()) {
-                    Unsafe.getUnsafe().loadFence();
+                    Unsafe.loadFence();
                     while (job.run(0) || checkJob.run(0)) {
                         // Sometimes WAL Apply Job does not finish table in one go and return TableWriter to the pool
                         // where it can be fully closed before continuing the WAL application Test TableWriter closures.

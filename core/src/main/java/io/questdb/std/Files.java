@@ -428,14 +428,14 @@ public final class Files {
     }
 
     public static boolean notDots(long pUtf8NameZ) {
-        final byte b0 = Unsafe.getUnsafe().getByte(pUtf8NameZ);
+        final byte b0 = Unsafe.getByte(pUtf8NameZ);
 
         if (b0 != '.') {
             return true;
         }
 
-        final byte b1 = Unsafe.getUnsafe().getByte(pUtf8NameZ + 1);
-        return b1 != 0 && (b1 != '.' || Unsafe.getUnsafe().getByte(pUtf8NameZ + 2) != 0);
+        final byte b1 = Unsafe.getByte(pUtf8NameZ + 1);
+        return b1 != 0 && (b1 != '.' || Unsafe.getByte(pUtf8NameZ + 2) != 0);
     }
 
     public static long openAppend(LPSZ lpsz) {

@@ -164,6 +164,7 @@ pub struct QdbAllocator {
 
 const RSS_ORDERING: Ordering = Ordering::SeqCst;
 const COUNTER_ORDERING: Ordering = Ordering::AcqRel;
+const MIN_ALLOC_ALIGNMENT: usize = std::mem::align_of::<u128>();
 
 #[cfg(not(test))]
 impl QdbAllocator {
@@ -228,11 +229,17 @@ impl QdbAllocator {
 }
 
 impl QdbAllocator {
+    fn aligned_layout(layout: Layout) -> Layout {
+        let alignment = layout.align().max(MIN_ALLOC_ALIGNMENT);
+        Layout::from_size_align(layout.size(), alignment)
+            .expect("minimum allocator alignment must remain valid")
+    }
+
     fn check_alloc_limit(&self, requested_size: usize) -> Result<(), AllocError> {
         let rss_mem_limit = self.rss_mem_limit().load(RSS_ORDERING);
         if rss_mem_limit > 0 {
             let rss_mem_used = self.rss_mem_used().load(RSS_ORDERING);
-            let new_rss_mem_used = rss_mem_used + requested_size;
+            let new_rss_mem_used = rss_mem_used.saturating_add(requested_size);
             if new_rss_mem_used > rss_mem_limit {
                 ALLOC_ERROR.with(|error| {
                     *error.borrow_mut() = Some(AllocFailure::MemoryLimitExceeded {
@@ -279,7 +286,7 @@ unsafe impl Allocator for QdbAllocator {
     fn allocate(&self, layout: Layout) -> Result<NonNull<[u8]>, AllocError> {
         self.check_alloc_limit(layout.size())?;
         let allocated = Global
-            .allocate(layout)
+            .allocate(Self::aligned_layout(layout))
             .map_err(|error| save_oom_err(error, layout.size()))?;
         self.track_allocate(allocated.len());
         Ok(allocated)
@@ -288,14 +295,14 @@ unsafe impl Allocator for QdbAllocator {
     fn allocate_zeroed(&self, layout: Layout) -> Result<NonNull<[u8]>, AllocError> {
         self.check_alloc_limit(layout.size())?;
         let allocated = Global
-            .allocate_zeroed(layout)
+            .allocate_zeroed(Self::aligned_layout(layout))
             .map_err(|error| save_oom_err(error, layout.size()))?;
         self.track_allocate(allocated.len());
         Ok(allocated)
     }
 
     unsafe fn deallocate(&self, ptr: NonNull<u8>, layout: Layout) {
-        Global.deallocate(ptr, layout);
+        Global.deallocate(ptr, Self::aligned_layout(layout));
         self.track_deallocate(layout.size());
     }
 
@@ -312,7 +319,11 @@ unsafe impl Allocator for QdbAllocator {
         let delta = new_layout.size() - old_layout.size();
         self.check_alloc_limit(delta)?;
         let allocated = Global
-            .grow(ptr, old_layout, new_layout)
+            .grow(
+                ptr,
+                Self::aligned_layout(old_layout),
+                Self::aligned_layout(new_layout),
+            )
             .map_err(|error| save_oom_err(error, delta))?;
         let true_delta = allocated.len() - old_layout.size();
         self.track_grow(true_delta);
@@ -332,7 +343,11 @@ unsafe impl Allocator for QdbAllocator {
         let delta = new_layout.size() - old_layout.size();
         self.check_alloc_limit(delta)?;
         let allocated = Global
-            .grow_zeroed(ptr, old_layout, new_layout)
+            .grow_zeroed(
+                ptr,
+                Self::aligned_layout(old_layout),
+                Self::aligned_layout(new_layout),
+            )
             .map_err(|error| save_oom_err(error, delta))?;
         let true_delta = allocated.len() - old_layout.size();
         self.track_grow(true_delta);
@@ -351,7 +366,11 @@ unsafe impl Allocator for QdbAllocator {
         assert!(new_layout.size() < old_layout.size());
         let delta = old_layout.size() - new_layout.size();
         let allocated = Global
-            .shrink(ptr, old_layout, new_layout)
+            .shrink(
+                ptr,
+                Self::aligned_layout(old_layout),
+                Self::aligned_layout(new_layout),
+            )
             .map_err(|error| save_oom_err(error, delta))?;
         let true_delta = old_layout.size() - allocated.len();
         self.track_shrink(true_delta);
@@ -433,7 +452,8 @@ impl TestAllocatorState {
 #[cfg(test)]
 mod tests {
     use crate::allocator::{take_last_alloc_error, AllocFailure, TestAllocatorState};
-    use rand::Rng;
+    use rand::rngs::StdRng;
+    use rand::{RngExt, SeedableRng};
     use std::alloc::Allocator;
     use std::ptr::NonNull;
     use std::sync::{Arc, Barrier};
@@ -448,14 +468,31 @@ mod tests {
 
     #[test]
     fn test_alloc_fail() {
-        let tas = TestAllocatorState::new();
-        let allocator = tas.allocator();
-        let too_large = 1024 * 1024 * 1024 * 1024 * 1024; // 1024 TB
-        let layout = std::alloc::Layout::from_size_align(too_large, 16).unwrap();
-        let result = allocator.allocate(layout);
-        assert!(result.is_err());
+        const TOO_LARGE: usize = 1024 * 1024 * 1024 * 1024 * 1024; // 1024 TB
+        take_last_alloc_error();
+
+        #[cfg(miri)]
+        {
+            // Miri aborts on impossible host allocations before `Global.allocate`
+            // can report a recoverable `AllocError`, so verify the recorded OOM
+            // path directly.
+            super::save_oom_err(std::alloc::AllocError, TOO_LARGE);
+        }
+
+        #[cfg(not(miri))]
+        {
+            let tas = TestAllocatorState::new();
+            let allocator = tas.allocator();
+            let layout = std::alloc::Layout::from_size_align(TOO_LARGE, 16).unwrap();
+            let result = allocator.allocate(layout);
+            assert!(result.is_err());
+        }
+
         let last_err = take_last_alloc_error().unwrap();
-        assert!(matches!(last_err, AllocFailure::OutOfMemory { .. }));
+        assert!(matches!(
+            last_err,
+            AllocFailure::OutOfMemory { requested_size } if requested_size == TOO_LARGE
+        ));
     }
 
     #[test]
@@ -510,6 +547,19 @@ mod tests {
     }
 
     #[test]
+    fn test_min_alloc_alignment() {
+        let tas = TestAllocatorState::new();
+        let allocator = tas.allocator();
+        let layout = std::alloc::Layout::from_size_align(1, 1).unwrap();
+        let allocation = allocator.allocate(layout).unwrap();
+        let ptr = allocation.as_ptr() as *mut u8;
+        assert_eq!((ptr as usize) % super::MIN_ALLOC_ALIGNMENT, 0);
+
+        let allocation = NonNull::new(ptr).unwrap();
+        unsafe { allocator.deallocate(allocation, layout) };
+    }
+
+    #[test]
     fn test_grow() {
         let tas = TestAllocatorState::new();
         let allocator = tas.allocator();
@@ -558,7 +608,11 @@ mod tests {
         let tas = TestAllocatorState::new();
         let allocator = tas.allocator();
 
-        let thread_count = 64;
+        #[cfg(miri)]
+        let (thread_count, allocations_capacity, iterations) = (4, 64, 128usize);
+        #[cfg(not(miri))]
+        let (thread_count, allocations_capacity, iterations) = (64, 2048, 10_000usize);
+
         let barrier = Arc::new(Barrier::new(thread_count));
         let mut threads = Vec::with_capacity(thread_count);
         let alignments = [8, 16, 32, 64, 128];
@@ -582,16 +636,15 @@ mod tests {
             Op::Deallocate,
         ];
 
-        for _ in 0..thread_count {
+        for thread_idx in 0..thread_count {
             let mut alloc_count = 0;
             let mut realloc_count = 0;
             let allocator = allocator.clone();
             let barrier = barrier.clone();
             threads.push(std::thread::spawn(move || {
-                let mut allocations = Vec::with_capacity(2048);
-                let mut rng = rand::rng();
+                let mut allocations = Vec::with_capacity(allocations_capacity);
+                let mut rng = StdRng::seed_from_u64(thread_idx as u64 + 1);
                 barrier.wait();
-                let iterations = 10_000usize;
                 // Keep on allocating and deallocating randomly.
                 for _ in 0..iterations {
                     let op_index = rng.random_range(0..ops.len());

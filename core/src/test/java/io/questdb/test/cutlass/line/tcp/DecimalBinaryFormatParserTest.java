@@ -266,7 +266,7 @@ public class DecimalBinaryFormatParserTest {
             parser.reset();
             byte[] bytes1 = new byte[]{2, 2, 0x00, 0x64}; // 100 with scale 2
             for (int i = 0; i < bytes1.length; i++) {
-                Unsafe.getUnsafe().putByte(mem + i, bytes1[i]);
+                Unsafe.putByte(mem + i, bytes1[i]);
             }
 
             long start = mem;
@@ -285,7 +285,7 @@ public class DecimalBinaryFormatParserTest {
             parser.reset();
             byte[] bytes2 = new byte[]{0, 1, 0x0A}; // 10 with scale 0
             for (int i = 0; i < bytes2.length; i++) {
-                Unsafe.getUnsafe().putByte(mem + i, bytes2[i]);
+                Unsafe.putByte(mem + i, bytes2[i]);
             }
 
             start = mem;
@@ -313,14 +313,14 @@ public class DecimalBinaryFormatParserTest {
             Assert.assertEquals(1, parser.getNextExpectSize());
 
             // Set scale
-            Unsafe.getUnsafe().putByte(mem, (byte) 2);
+            Unsafe.putByte(mem, (byte) 2);
             parser.processNextBinaryPart(mem);
 
             // Now expects 1 byte for length
             Assert.assertEquals(1, parser.getNextExpectSize());
 
             // Set length to 10
-            Unsafe.getUnsafe().putByte(mem + 1, (byte) 10);
+            Unsafe.putByte(mem + 1, (byte) 10);
             parser.processNextBinaryPart(mem + 1);
 
             // Now expects 10 bytes for values
@@ -338,7 +338,7 @@ public class DecimalBinaryFormatParserTest {
             // Process some data
             long mem = Unsafe.malloc(10, MemoryTag.NATIVE_DEFAULT);
             try {
-                Unsafe.getUnsafe().putByte(mem, (byte) 2); // scale
+                Unsafe.putByte(mem, (byte) 2); // scale
                 parser.processNextBinaryPart(mem);
                 Assert.assertEquals(1, parser.getNextExpectSize());
 
@@ -357,7 +357,7 @@ public class DecimalBinaryFormatParserTest {
             parser.reset();
 
             for (int i = 0; i < bytes.length; i++) {
-                Unsafe.getUnsafe().putByte(mem + i, bytes[i]);
+                Unsafe.putByte(mem + i, bytes[i]);
             }
 
             boolean finish;
