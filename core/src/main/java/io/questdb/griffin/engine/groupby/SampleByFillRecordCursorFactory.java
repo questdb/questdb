@@ -366,6 +366,13 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
         // wired up in initialize() to turn the id back into a CharSequence.
         private final IntList prevValueSlot;
         private long simplePrevRowId = -1L;
+        // Per output column SymbolTable cache for SYMBOL output cols whose
+        // dispatch reads from a slot (DISPATCH_KEY_SLOT or
+        // DISPATCH_PREV_CACHE_SLOT). Populated in of() and used by
+        // getSymA/getSymB to short-circuit the MapRecord
+        // setSymbolTableResolver chain (one IntList.getQuick + one virtual
+        // getSymbolTable call per per-cell read).
+        private SymbolTable[] symbolCache;
         private final IntList symbolTableColIndices;
         private final TimestampDriver timestampDriver;
         private final int timestampIndex;
@@ -821,6 +828,33 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
             Function.init(constantFills, baseCursor, executionContext, null);
             fromFunc.init(baseCursor, executionContext);
             toFunc.init(baseCursor, executionContext);
+            // Cache one SymbolTable per output column whose getSymA/getSymB
+            // dispatch reads from a MapRecord/MapValue slot. JFR shows that on
+            // sparse keyed fills the SYMBOL key column dominates per-cell cost
+            // via the keysMapRecord.getSymA -> setSymbolTableResolver chain.
+            // Caching the resolver per output col cuts that chain to one
+            // valueOf call.
+            int columnCount = dispatchCode.length;
+            if (symbolCache == null || symbolCache.length < columnCount) {
+                symbolCache = new SymbolTable[columnCount];
+            } else {
+                Arrays.fill(symbolCache, 0, symbolCache.length, null);
+            }
+            int symTableSize = symbolTableColIndices.size();
+            for (int col = 0; col < columnCount; col++) {
+                int code = dispatchCode[col];
+                if (code != DISPATCH_KEY_SLOT && code != DISPATCH_PREV_CACHE_SLOT) {
+                    continue;
+                }
+                int slot = dispatchSlot[col];
+                if (slot < 0 || slot >= symTableSize) {
+                    continue;
+                }
+                int srcCol = symbolTableColIndices.getQuick(slot);
+                if (srcCol >= 0) {
+                    symbolCache[col] = baseCursor.getSymbolTable(srcCol);
+                }
+            }
             toTop();
         }
 
@@ -1414,13 +1448,15 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
             public CharSequence getSymA(int col) {
                 if (!isGapFilling) return baseRecord.getSymA(col);
                 int code = dispatchCode[col];
-                if (code == DISPATCH_KEY_SLOT) return keysMapRecord.getSymA(dispatchSlot[col]);
+                if (code == DISPATCH_KEY_SLOT) {
+                    // Cached SymbolTable + direct slot read shortcuts the
+                    // MapRecord setSymbolTableResolver chain.
+                    return symbolCache[col].valueOf(keysMapRecord.getInt(dispatchSlot[col]));
+                }
                 if (code == DISPATCH_PREV_CACHE_SLOT) {
-                    // SYMBOL cache slots store the 4-byte symbol id; the
-                    // setSymbolTableResolver wiring set up in initialize()
-                    // routes keysMapRecord.getSymA(slot) through the source
-                    // column's SymbolTable to recover the CharSequence.
-                    if (hasPrevForCurrentGap) return keysMapRecord.getSymA(dispatchSlot[col]);
+                    if (hasPrevForCurrentGap) {
+                        return symbolCache[col].valueOf(currentMapValue.getInt(dispatchSlot[col]));
+                    }
                     return null;
                 }
                 if (code == DISPATCH_PREV_SLOT) {
@@ -1437,9 +1473,13 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
             public CharSequence getSymB(int col) {
                 if (!isGapFilling) return baseRecord.getSymB(col);
                 int code = dispatchCode[col];
-                if (code == DISPATCH_KEY_SLOT) return keysMapRecord.getSymB(dispatchSlot[col]);
+                if (code == DISPATCH_KEY_SLOT) {
+                    return symbolCache[col].valueBOf(keysMapRecord.getInt(dispatchSlot[col]));
+                }
                 if (code == DISPATCH_PREV_CACHE_SLOT) {
-                    if (hasPrevForCurrentGap) return keysMapRecord.getSymB(dispatchSlot[col]);
+                    if (hasPrevForCurrentGap) {
+                        return symbolCache[col].valueBOf(currentMapValue.getInt(dispatchSlot[col]));
+                    }
                     return null;
                 }
                 if (code == DISPATCH_PREV_SLOT) {
