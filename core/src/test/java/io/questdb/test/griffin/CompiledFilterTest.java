@@ -1240,4 +1240,72 @@ public class CompiledFilterTest extends AbstractCairoTest {
             assertSqlRunWithJit(query);
         });
     }
+
+    @Test
+    public void testNarrowIntArithmeticPreservesNullInFloatContext() throws Exception {
+        assertMemoryLeak(() -> {
+            // Narrow int arithmetic (i8/i16/i32 add/sub/mul/div via int32_*)
+            // runs at i32 width and can carry INT_NULL: either an INT operand
+            // was INT_NULL, or division by zero produced INT_NULL via
+            // int32_div. Before the fix the kernel returned the result tagged
+            // with the narrower lhs dtype (e.g. i8 for BYTE * INT). The
+            // downstream f32 / f64 conversion then went through
+            // cvt_null_check(i8) = false and skipped the NaN substitution, so
+            // INT_NULL flowed into the float comparison as -2_147_483_648.0.
+            // Java's path (MulInt.getDouble = intToDouble(getInt)) substitutes
+            // NaN whenever the int product was INT_NULL, and the negating `<=`
+            // / `<` wrapper treats any NaN side as matching, so the two paths
+            // diverged.
+            //
+            // Rows: b/s/i columns drive the narrow arithmetic; the (0, 0,
+            // NULL) row covers div-by-zero and the i = NULL rows cover
+            // INT_NULL propagation through mul / add / sub.
+            execute("CREATE TABLE x (b BYTE, s SHORT, i INT, ts TIMESTAMP) " +
+                    "TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO x VALUES " +
+                    "(1, 1, NULL, '2024-01-01T00:00:00.000000Z')," +
+                    " (2, 2, NULL, '2024-01-01T00:00:00.000001Z')," +
+                    " (5, 5, 7, '2024-01-01T00:00:00.000002Z')," +
+                    " (0, 0, NULL, '2024-01-01T00:00:00.000003Z')");
+
+            sqlExecutionContext.setJitMode(SqlJitMode.JIT_MODE_ENABLED);
+
+            // BYTE * INT (the original fuzzer divergence). Three of the four
+            // rows have i = NULL, so the int product is INT_NULL and the
+            // f64 cast returns NaN; the (b=5, i=7) row gives 35 and 1.74256
+            // <= 35.0, so the predicate excludes every row.
+            assertSql("count\n0\n",
+                    "SELECT count(*) FROM x WHERE NOT ((0.348512 * b) <= (b * i))");
+            // Same shape with addition (int32_add propagates INT_NULL).
+            assertSql("count\n0\n",
+                    "SELECT count(*) FROM x WHERE NOT ((0.348512 * b) <= (b + i))");
+            // Subtraction: NaN rows still excluded; the (b=5, i=7) row gives
+            // -2, so NOT(1.74256 <= -2.0) matches and the count is 1.
+            assertSql("count\n1\n",
+                    "SELECT count(*) FROM x WHERE NOT ((0.348512 * b) <= (b - i))");
+            // SHORT * INT exercises the i16 narrow path.
+            assertSql("count\n0\n",
+                    "SELECT count(*) FROM x WHERE NOT ((0.348512 * s) <= (s * i))");
+            // Division by zero on narrow operands: int32_div returns INT_NULL
+            // when rhs is 0 even though both inputs are BYTE / SHORT, so the
+            // i32 widening matters here too. The (0, 0, _) row divides by
+            // zero -> NaN -> excluded; the (5, 5, _) row gives 1 and
+            // NOT(1.74256 <= 1.0) matches, so the count is 1.
+            assertSql("count\n1\n",
+                    "SELECT count(*) FROM x WHERE NOT ((0.348512 * b) <= (b / s))");
+
+            // JIT must still compile each predicate -- the fix is at the C++
+            // kernel level (result dtype tagging), the IR side is unchanged.
+            try (RecordCursorFactory factory = select(
+                    "SELECT count(*) FROM x WHERE NOT ((0.348512 * b) <= (b * i))")) {
+                Assert.assertTrue("BYTE * INT in DOUBLE context must still JIT",
+                        factory.usesCompiledFilter());
+            }
+            try (RecordCursorFactory factory = select(
+                    "SELECT count(*) FROM x WHERE NOT ((0.348512 * b) <= (b / s))")) {
+                Assert.assertTrue("BYTE / SHORT in DOUBLE context must still JIT",
+                        factory.usesCompiledFilter());
+            }
+        });
+    }
 }
