@@ -59,6 +59,7 @@ public class OhlcBarLabelsBoundsGroupByFunctionFactory implements FunctionFactor
                 null,
                 true,
                 argPositions.getQuick(0),
+                argPositions.getQuick(1),
                 0,
                 configuration.getStrFunctionMaxBufferLength()
         );

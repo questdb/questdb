@@ -59,6 +59,7 @@ public class OhlcBarBoundsWidthGroupByFunctionFactory implements FunctionFactory
                 args.getQuick(3),
                 false,
                 argPositions.getQuick(0),
+                argPositions.getQuick(1),
                 argPositions.getQuick(3),
                 configuration.getStrFunctionMaxBufferLength()
         );

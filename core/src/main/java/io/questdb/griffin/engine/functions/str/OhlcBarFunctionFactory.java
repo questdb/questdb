@@ -167,7 +167,7 @@ public class OhlcBarFunctionFactory implements FunctionFactory {
                 return width / 2;
             }
             double proportion = (value - low) / range;
-            int pos = (int) (proportion * (width - 1));
+            int pos = (int) Math.round(proportion * (width - 1));
             return Math.max(0, Math.min(width - 1, pos));
         }
 
@@ -200,7 +200,7 @@ public class OhlcBarFunctionFactory implements FunctionFactory {
 
             int bodyStart = Math.min(openPos, closePos);
             int bodyEnd = Math.max(openPos, closePos);
-            boolean isDoji = openPos == closePos;
+            boolean isDoji = open == close;
             boolean isBullish = close >= open;
 
             sink.clear();
@@ -231,7 +231,7 @@ public class OhlcBarFunctionFactory implements FunctionFactory {
             }
 
             if (sink.size() > maxBufferLength) {
-                throw CairoException.nonCritical().position(minArgPosition)
+                throw CairoException.nonCritical().position(widthPosition)
                         .put("breached memory limit set for ").put(name)
                         .put(" [maxBytes=").put(maxBufferLength)
                         .put(", actualBytes=").put(sink.size()).put(']');

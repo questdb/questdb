@@ -57,7 +57,7 @@ import org.jetbrains.annotations.Nullable;
  * literal constants, bind variables, or lateral join columns. This ensures
  * deterministic rendering regardless of execution path (serial or parallel).
  * <p>
- * <b>MapValue layout</b> (6 slots):
+ * <b>MapValue layout</b> (8 slots):
  * <pre>
  *   +0  LONG    firstRowId   (open row id; LONG_NULL = no observations)
  *   +1  DOUBLE  firstValue   (open price)
@@ -92,8 +92,8 @@ public class OhlcBarGroupByFunction extends VarcharFunction implements UnaryFunc
     private final int maxBufferLength;
     private final int maxWidth;
     private final Function minFunc;
+    private final int minPosition;
     private final String name;
-    private final boolean showLabels;
     private final DirectUtf8String viewA = new DirectUtf8String();
     private final DirectUtf8String viewB = new DirectUtf8String();
     private final @Nullable Function widthFunc;
@@ -118,6 +118,7 @@ public class OhlcBarGroupByFunction extends VarcharFunction implements UnaryFunc
             @Nullable Function widthFunc,
             boolean showLabels,
             int functionPosition,
+            int minPosition,
             int widthPosition,
             int maxBufferLength
     ) {
@@ -126,8 +127,8 @@ public class OhlcBarGroupByFunction extends VarcharFunction implements UnaryFunc
         this.minFunc = minFunc;
         this.maxFunc = maxFunc;
         this.widthFunc = widthFunc;
-        this.showLabels = showLabels;
         this.functionPosition = functionPosition;
+        this.minPosition = minPosition;
         this.widthPosition = widthPosition;
         this.maxBufferLength = maxBufferLength;
         this.labelSink = showLabels ? new Utf8StringSink() : null;
@@ -454,11 +455,11 @@ public class OhlcBarGroupByFunction extends VarcharFunction implements UnaryFunc
             return width / 2;
         }
         double proportion = (value - low) / range;
-        int pos = (int) (proportion * (width - 1));
+        int pos = (int) Math.round(proportion * (width - 1));
         return Math.max(0, Math.min(width - 1, pos));
     }
 
-    private void putChar(long out, int pos, char c) {
+    private void putBmpChar(long out, int pos, char c) {
         int packed = (0xE0 | ((c >> 12) & 0x0F))
                 | ((0x80 | ((c >> 6) & 0x3F)) << 8)
                 | ((0x80 | (c & 0x3F)) << 16);
@@ -480,7 +481,7 @@ public class OhlcBarGroupByFunction extends VarcharFunction implements UnaryFunc
             return -1;
         }
         if (scaleMin > scaleMax) {
-            throw CairoException.nonCritical().position(functionPosition)
+            throw CairoException.nonCritical().position(minPosition)
                     .put(name).put("() min must not exceed max [min=")
                     .put(scaleMin).put(", max=").put(scaleMax).put(']');
         }
@@ -494,7 +495,9 @@ public class OhlcBarGroupByFunction extends VarcharFunction implements UnaryFunc
 
         int bodyStart = Math.min(openPos, closePos);
         int bodyEnd = Math.max(openPos, closePos);
-        boolean isDoji = openPos == closePos;
+        // True doji only when open actually equals close, not just when
+        // they map to the same character position due to rounding.
+        boolean isDoji = open == close;
         boolean isBullish = close >= open;
 
         long barBytes = (long) width * 3;
@@ -520,6 +523,7 @@ public class OhlcBarGroupByFunction extends VarcharFunction implements UnaryFunc
                     .put(", actualBytes=").put(totalBytes).put(']');
         }
 
+        // +1 byte for putBmpChar's 4-byte write safety on the last char
         long out = allocator.malloc(totalBytes + 1);
 
         for (int i = 0; i < width; i++) {
@@ -533,7 +537,7 @@ public class OhlcBarGroupByFunction extends VarcharFunction implements UnaryFunc
             } else {
                 c = WICK;
             }
-            putChar(out, i, c);
+            putBmpChar(out, i, c);
         }
 
         if (labelSink != null && labelBytes > 0) {
