@@ -84,15 +84,16 @@ public class ArrayAggDoubleArrayGroupByFunction extends AbstractArrayAggDoubleGr
         }
         int count = Unsafe.getUnsafe().getInt(ptr);
         int capacity = Unsafe.getUnsafe().getInt(ptr + CAPACITY_OFFSET);
+        assert capacity != -1 : "array_agg: computeNext called on already-rendered buffer";
         int newCount = count + len;
         if (newCount < 0) {
-            throw CairoException.nonCritical().put("array_agg: array exceeds maximum capacity");
+            throw CairoException.nonCritical().put("array_agg: array size exceeds maximum supported size");
         }
         checkCapacityLimit(newCount);
         if (newCount > capacity) {
             int newCapacity = Numbers.ceilPow2(newCount);
             if (newCapacity < newCount) {
-                throw CairoException.nonCritical().put("array_agg: array exceeds maximum capacity");
+                throw CairoException.nonCritical().put("array_agg: array size exceeds maximum supported size");
             }
             long oldSize = HEADER_SIZE + (long) capacity * ENTRY_SIZE;
             long newSize = HEADER_SIZE + (long) newCapacity * ENTRY_SIZE;

@@ -707,6 +707,31 @@ public class ArrayAggDoubleArrayGroupByFunctionFactoryTest extends AbstractCairo
     }
 
     @Test
+    public void testSpecialDoubleValues() throws Exception {
+        // Verify that arbitrary IEEE 754 finite bit patterns round-trip unchanged
+        // through the per-element (rowId, value) buffer and the in-place compaction
+        // step. Covers Double.MAX_VALUE, Double.MIN_NORMAL, Double.MIN_VALUE
+        // (denormal), negative extremes, and signed zero.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE tab (arr DOUBLE[])");
+            execute("""
+                    INSERT INTO tab VALUES
+                    (ARRAY[1.7976931348623157E308, -1.7976931348623157E308]),
+                    (ARRAY[2.2250738585072014E-308, 4.9E-324]),
+                    (ARRAY[0.0, -0.0, 3.141592653589793])
+                    """);
+            assertQueryNoLeakCheck(
+                    "agg\n" +
+                            "[1.7976931348623157E308,-1.7976931348623157E308,2.2250738585072014E-308,5.0E-324,0.0,-0.0,3.141592653589793]\n",
+                    "SELECT array_agg(arr) agg FROM tab",
+                    null,
+                    false,
+                    true
+            );
+        });
+    }
+
+    @Test
     public void testToPlan() throws Exception {
         // Pin the query plan output so a regression in toPlan() is caught.
         assertMemoryLeak(() -> {

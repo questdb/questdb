@@ -341,6 +341,32 @@ public class ArrayAggDoubleGroupByFunctionFactoryTest extends AbstractCairoTest 
     }
 
     @Test
+    public void testNonFiniteInputsRenderAsNull() throws Exception {
+        // QuestDB DOUBLE[] rendering treats non-finite values as null. The buffer
+        // preserves the bit pattern via Unsafe.putDouble/getDouble, but the array
+        // sink converts NaN/+Inf/-Inf to the null literal during text output.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE tab (val DOUBLE)");
+            execute("""
+                    INSERT INTO tab VALUES
+                    (1.0),
+                    ('Infinity'::DOUBLE),
+                    (2.0),
+                    ('-Infinity'::DOUBLE),
+                    (3.0)
+                    """);
+            assertQueryNoLeakCheck(
+                    "arr\n" +
+                            "[1.0,null,2.0,null,3.0]\n",
+                    "SELECT array_agg(val) arr FROM tab",
+                    null,
+                    false,
+                    true
+            );
+        });
+    }
+
+    @Test
     public void testNullInputValues() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE tab (val DOUBLE)");
@@ -686,6 +712,35 @@ public class ArrayAggDoubleGroupByFunctionFactoryTest extends AbstractCairoTest 
             assertQueryNoLeakCheck(
                     "arr\n" +
                             "[42.0]\n",
+                    "SELECT array_agg(val) arr FROM tab",
+                    null,
+                    false,
+                    true
+            );
+        });
+    }
+
+    @Test
+    public void testSpecialDoubleValues() throws Exception {
+        // Verify that arbitrary IEEE 754 finite bit patterns round-trip unchanged
+        // through the (rowId, value) pair buffer and the in-place compaction step.
+        // Covers Double.MAX_VALUE, Double.MIN_NORMAL, Double.MIN_VALUE (denormal),
+        // negative extremes, and signed zero.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE tab (val DOUBLE)");
+            execute("""
+                    INSERT INTO tab VALUES
+                    (1.7976931348623157E308),
+                    (-1.7976931348623157E308),
+                    (2.2250738585072014E-308),
+                    (4.9E-324),
+                    (0.0),
+                    (-0.0),
+                    (3.141592653589793)
+                    """);
+            assertQueryNoLeakCheck(
+                    "arr\n" +
+                            "[1.7976931348623157E308,-1.7976931348623157E308,2.2250738585072014E-308,5.0E-324,0.0,-0.0,3.141592653589793]\n",
                     "SELECT array_agg(val) arr FROM tab",
                     null,
                     false,

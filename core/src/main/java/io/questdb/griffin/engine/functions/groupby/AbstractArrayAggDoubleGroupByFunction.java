@@ -122,7 +122,12 @@ public abstract class AbstractArrayAggDoubleGroupByFunction extends ArrayFunctio
                 double v = Unsafe.getUnsafe().getDouble(ptr + HEADER_SIZE + (long) i * ENTRY_SIZE + VALUE_OFFSET);
                 Unsafe.getUnsafe().putDouble(ptr + HEADER_SIZE + (long) i * Double.BYTES, v);
             }
-            // -1 marks the buffer as compacted so subsequent calls skip this step.
+            // -1 marks the buffer as compacted. The sentinel is load-bearing for correctness,
+            // not just a performance optimization: re-running compaction would read post-compaction
+            // values from offset i*16+8 (now garbage) and write them over already-compacted slots.
+            // toTop() rewinds the cursor without rebuilding the map, so subsequent renders MUST
+            // hit this skip path. computeFirst/computeNext/merge after compaction would also
+            // corrupt the buffer; the asserts in those methods guard against pipeline misuse.
             Unsafe.getUnsafe().putInt(ptr + CAPACITY_OFFSET, -1);
         }
         return borrowedArray.of(type, ptr, ptr + HEADER_SIZE, (int) ((long) count * Double.BYTES));
@@ -185,6 +190,8 @@ public abstract class AbstractArrayAggDoubleGroupByFunction extends ArrayFunctio
         if (srcCount == 0) {
             return;
         }
+        assert Unsafe.getUnsafe().getInt(srcPtr + CAPACITY_OFFSET) != -1
+                : "array_agg: merge called on already-rendered src buffer";
 
         long destPtr = destValue.getLong(valueIndex);
         if (destPtr == 0 || Unsafe.getUnsafe().getInt(destPtr) == 0) {
@@ -198,11 +205,13 @@ public abstract class AbstractArrayAggDoubleGroupByFunction extends ArrayFunctio
             destValue.putLong(valueIndex, newPtr);
             return;
         }
+        assert Unsafe.getUnsafe().getInt(destPtr + CAPACITY_OFFSET) != -1
+                : "array_agg: merge called on already-rendered dest buffer";
 
         int destCount = Unsafe.getUnsafe().getInt(destPtr);
         int mergedCount = destCount + srcCount;
         if (mergedCount < 0) {
-            throw CairoException.nonCritical().put("array_agg: merged array exceeds maximum capacity");
+            throw CairoException.nonCritical().put("array_agg: array size exceeds maximum supported size");
         }
         checkCapacityLimit(mergedCount);
         long mergedPtr = allocator.malloc(HEADER_SIZE + (long) mergedCount * ENTRY_SIZE);
