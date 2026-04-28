@@ -14742,6 +14742,333 @@ public class WindowFunctionTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testNthValueRowsExcludeCurrentRow() throws Exception {
+        // EXCLUDE CURRENT ROW with rowsHi=0 normalizes rowsHi to -1 in WindowContextImpl,
+        // so the frame becomes effectively rows between 3 preceding and 1 preceding.
+        // For nth_value(val, 2) the frame must skip the current row even when nominally
+        // declared as ending at CURRENT ROW.
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, val double) timestamp(ts)", timestampType.getTypeName());
+            execute("insert into tab values (1, 10.0), (2, 20.0), (3, 30.0), (4, 40.0), (5, 50.0)");
+
+            assertQueryNoLeakCheck(
+                    replaceTimestampSuffix1("""
+                            ts\tnv
+                            1970-01-01T00:00:00.000001Z\tnull
+                            1970-01-01T00:00:00.000002Z\tnull
+                            1970-01-01T00:00:00.000003Z\t20.0
+                            1970-01-01T00:00:00.000004Z\t20.0
+                            1970-01-01T00:00:00.000005Z\t30.0
+                            """),
+                    "select ts, nth_value(val, 2) over (" +
+                            "order by ts rows between 3 preceding and current row exclude current row) nv from tab",
+                    "ts",
+                    false,
+                    true
+            );
+        });
+    }
+
+    @Test
+    public void testNthValueRangeFrameOrderByDesc() throws Exception {
+        // RANGE frames are supported only on the designated timestamp; verify the DESC
+        // path through NthValueOverRangeFrameFunction. With ts DESC ordering, the row at
+        // ts=5 sees an empty preceding frame, the row at ts=4 sees [50.0], etc., so
+        // nth_value(val, 2) locks once two values are visible.
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, val double) timestamp(ts)", timestampType.getTypeName());
+            execute("insert into tab values (1, 10.0), (2, 20.0), (3, 30.0), (4, 40.0), (5, 50.0)");
+
+            assertQueryNoLeakCheck(
+                    replaceTimestampSuffix1("""
+                            ts\tnv
+                            1970-01-01T00:00:00.000005Z\tnull
+                            1970-01-01T00:00:00.000004Z\t40.0
+                            1970-01-01T00:00:00.000003Z\t40.0
+                            1970-01-01T00:00:00.000002Z\t40.0
+                            1970-01-01T00:00:00.000001Z\t40.0
+                            """),
+                    "select ts, nth_value(val, 2) over (" +
+                            "order by ts desc range between unbounded preceding and current row) nv from tab order by ts desc",
+                    "ts###DESC",
+                    false,
+                    true
+            );
+        });
+    }
+
+    @Test
+    public void testNtilePartitionedOrderByDesc() throws Exception {
+        // Partition by + order by ts DESC together. Each partition's rows are visited in
+        // descending timestamp order; ntile(2) buckets the partition rows accordingly.
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, i long, val double) timestamp(ts)", timestampType.getTypeName());
+            execute("insert into tab values " +
+                    "(1, 1, 10.0), (2, 1, 20.0), (3, 1, 30.0), (4, 1, 40.0), " +
+                    "(5, 2, 50.0), (6, 2, 60.0), (7, 2, 70.0)");
+
+            assertQueryNoLeakCheck(
+                    replaceTimestampSuffix1("""
+                            ts\ti\tbucket
+                            1970-01-01T00:00:00.000007Z\t2\t1
+                            1970-01-01T00:00:00.000006Z\t2\t1
+                            1970-01-01T00:00:00.000005Z\t2\t2
+                            1970-01-01T00:00:00.000004Z\t1\t1
+                            1970-01-01T00:00:00.000003Z\t1\t1
+                            1970-01-01T00:00:00.000002Z\t1\t2
+                            1970-01-01T00:00:00.000001Z\t1\t2
+                            """),
+                    "select ts, i, ntile(2) over (partition by i order by ts desc) bucket from tab order by ts desc",
+                    "ts###DESC",
+                    true,
+                    true
+            );
+        });
+    }
+
+    @Test
+    public void testCumeDistPartitionedOrderByDesc() throws Exception {
+        // cume_dist with partition by + order by ts DESC. Each partition is ranked
+        // independently in descending timestamp order. Mirrors the ntile DESC sibling.
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, i long, val double) timestamp(ts)", timestampType.getTypeName());
+            execute("insert into tab values " +
+                    "(1, 1, 10.0), (2, 1, 20.0), (3, 1, 30.0), (4, 1, 40.0), " +
+                    "(5, 2, 50.0), (6, 2, 60.0)");
+
+            assertQueryNoLeakCheck(
+                    replaceTimestampSuffix1("""
+                            ts\ti\tcd
+                            1970-01-01T00:00:00.000006Z\t2\t0.5
+                            1970-01-01T00:00:00.000005Z\t2\t1.0
+                            1970-01-01T00:00:00.000004Z\t1\t0.25
+                            1970-01-01T00:00:00.000003Z\t1\t0.5
+                            1970-01-01T00:00:00.000002Z\t1\t0.75
+                            1970-01-01T00:00:00.000001Z\t1\t1.0
+                            """),
+                    "select ts, i, cume_dist() over (partition by i order by ts desc) cd from tab order by ts desc",
+                    "ts###DESC",
+                    true,
+                    true
+            );
+        });
+    }
+
+    @Test
+    public void testNtilePartitionedByTwoColumns() throws Exception {
+        // Multi-column PARTITION BY exercises the composite key path through the partition
+        // map. With (i, j) as the composite key, four distinct partitions form: (1,1),
+        // (1,2), (2,1), (2,2).
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, i long, j long, val double) timestamp(ts)", timestampType.getTypeName());
+            execute("insert into tab values " +
+                    "(1, 1, 1, 10.0), (2, 1, 1, 20.0), (3, 1, 1, 30.0), (4, 1, 1, 40.0), " +
+                    "(5, 1, 2, 50.0), (6, 1, 2, 60.0), " +
+                    "(7, 2, 1, 70.0), " +
+                    "(8, 2, 2, 80.0), (9, 2, 2, 90.0), (10, 2, 2, 100.0)");
+
+            assertQueryNoLeakCheck(
+                    replaceTimestampSuffix1("""
+                            ts\ti\tj\tbucket
+                            1970-01-01T00:00:00.000001Z\t1\t1\t1
+                            1970-01-01T00:00:00.000002Z\t1\t1\t1
+                            1970-01-01T00:00:00.000003Z\t1\t1\t2
+                            1970-01-01T00:00:00.000004Z\t1\t1\t2
+                            1970-01-01T00:00:00.000005Z\t1\t2\t1
+                            1970-01-01T00:00:00.000006Z\t1\t2\t2
+                            1970-01-01T00:00:00.000007Z\t2\t1\t1
+                            1970-01-01T00:00:00.000008Z\t2\t2\t1
+                            1970-01-01T00:00:00.000009Z\t2\t2\t1
+                            1970-01-01T00:00:00.000010Z\t2\t2\t2
+                            """),
+                    "select ts, i, j, ntile(2) over (partition by i, j order by ts) bucket from tab",
+                    "ts",
+                    true,
+                    true
+            );
+        });
+    }
+
+    @Test
+    public void testCumeDistPartitionedByTwoColumns() throws Exception {
+        // Multi-column PARTITION BY for cume_dist. Each (i, j) partition is ranked
+        // independently. Mirrors the ntile two-column test.
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, i long, j long, val double) timestamp(ts)", timestampType.getTypeName());
+            execute("insert into tab values " +
+                    "(1, 1, 1, 10.0), (2, 1, 1, 20.0), " +
+                    "(3, 1, 2, 30.0), (4, 1, 2, 40.0), (5, 1, 2, 50.0), " +
+                    "(6, 2, 1, 60.0)");
+
+            assertQueryNoLeakCheck(
+                    replaceTimestampSuffix1("""
+                            ts\ti\tj\tcd
+                            1970-01-01T00:00:00.000001Z\t1\t1\t0.5
+                            1970-01-01T00:00:00.000002Z\t1\t1\t1.0
+                            1970-01-01T00:00:00.000003Z\t1\t2\t0.3333333333333333
+                            1970-01-01T00:00:00.000004Z\t1\t2\t0.6666666666666666
+                            1970-01-01T00:00:00.000005Z\t1\t2\t1.0
+                            1970-01-01T00:00:00.000006Z\t2\t1\t1.0
+                            """),
+                    "select ts, i, j, cume_dist() over (partition by i, j order by ts) cd from tab",
+                    "ts",
+                    true,
+                    true
+            );
+        });
+    }
+
+    @Test
+    public void testNtilePartitionedBySymbol() throws Exception {
+        // Symbol-typed partition keys go through SymbolFunction-based partitionBySink,
+        // distinct from LONG. Verifies that ntile resolves partitions correctly when the
+        // key is a symbol column.
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, s symbol, val double) timestamp(ts)", timestampType.getTypeName());
+            execute("insert into tab values " +
+                    "(1, 'a', 10.0), (2, 'a', 20.0), (3, 'a', 30.0), " +
+                    "(4, 'b', 40.0), (5, 'b', 50.0)");
+
+            assertQueryNoLeakCheck(
+                    replaceTimestampSuffix1("""
+                            ts\ts\tbucket
+                            1970-01-01T00:00:00.000001Z\ta\t1
+                            1970-01-01T00:00:00.000002Z\ta\t1
+                            1970-01-01T00:00:00.000003Z\ta\t2
+                            1970-01-01T00:00:00.000004Z\tb\t1
+                            1970-01-01T00:00:00.000005Z\tb\t2
+                            """),
+                    "select ts, s, ntile(2) over (partition by s order by ts) bucket from tab",
+                    "ts",
+                    true,
+                    true
+            );
+        });
+    }
+
+    @Test
+    public void testNthValuePartitionedBySymbol() throws Exception {
+        // Mirror of testNtilePartitionedBySymbol for nth_value. Each per-symbol partition
+        // independently locks the second value.
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, s symbol, val double) timestamp(ts)", timestampType.getTypeName());
+            execute("insert into tab values " +
+                    "(1, 'a', 10.0), (2, 'a', 20.0), (3, 'a', 30.0), " +
+                    "(4, 'b', 40.0), (5, 'b', 50.0), (6, 'b', 60.0)");
+
+            assertQueryNoLeakCheck(
+                    replaceTimestampSuffix1("""
+                            ts\ts\tnv
+                            1970-01-01T00:00:00.000001Z\ta\tnull
+                            1970-01-01T00:00:00.000002Z\ta\t20.0
+                            1970-01-01T00:00:00.000003Z\ta\t20.0
+                            1970-01-01T00:00:00.000004Z\tb\tnull
+                            1970-01-01T00:00:00.000005Z\tb\t50.0
+                            1970-01-01T00:00:00.000006Z\tb\t50.0
+                            """),
+                    "select ts, s, nth_value(val, 2) over (" +
+                            "partition by s order by ts rows between unbounded preceding and current row) nv from tab",
+                    "ts",
+                    false,
+                    true
+            );
+        });
+    }
+
+    @Test
+    public void testNthValueRowsNEqualsPartitionSize() throws Exception {
+        // n exactly equals the partition size, so the nth-value lock fires on the very
+        // last row of the partition. The lock-in fast path that skips per-row work after
+        // count >= n is exercised only by the trailing rows of partitions whose size is
+        // strictly larger than n; this test pins the count == n boundary instead.
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, i long, val double) timestamp(ts)", timestampType.getTypeName());
+            execute("insert into tab values " +
+                    "(1, 1, 10.0), (2, 1, 20.0), (3, 1, 30.0), " +
+                    "(4, 2, 40.0), (5, 2, 50.0), (6, 2, 60.0)");
+
+            assertQueryNoLeakCheck(
+                    replaceTimestampSuffix1("""
+                            ts\ti\tnv
+                            1970-01-01T00:00:00.000001Z\t1\tnull
+                            1970-01-01T00:00:00.000002Z\t1\tnull
+                            1970-01-01T00:00:00.000003Z\t1\t30.0
+                            1970-01-01T00:00:00.000004Z\t2\tnull
+                            1970-01-01T00:00:00.000005Z\t2\tnull
+                            1970-01-01T00:00:00.000006Z\t2\t60.0
+                            """),
+                    "select ts, i, nth_value(val, 3) over (" +
+                            "partition by i order by ts rows between unbounded preceding and current row) nv from tab",
+                    "ts",
+                    false,
+                    true
+            );
+        });
+    }
+
+    @Test
+    public void testNtileCumeDistNthValueNamedWindow() throws Exception {
+        // WINDOW w AS (...) names the same OVER clause once and reuses it across all three
+        // factories. This exercises the named-window resolution path for ntile / cume_dist
+        // / nth_value, which is otherwise covered only for sum / row_number elsewhere.
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, val double) timestamp(ts)", timestampType.getTypeName());
+            execute("insert into tab values " +
+                    "(1, 10.0), (2, 20.0), (3, 30.0), (4, 40.0), (5, 50.0)");
+
+            assertQueryNoLeakCheck(
+                    replaceTimestampSuffix1("""
+                            ts\tbucket\tcd\tnv
+                            1970-01-01T00:00:00.000001Z\t1\t0.2\t10.0
+                            1970-01-01T00:00:00.000002Z\t1\t0.4\t10.0
+                            1970-01-01T00:00:00.000003Z\t2\t0.6\t10.0
+                            1970-01-01T00:00:00.000004Z\t2\t0.8\t10.0
+                            1970-01-01T00:00:00.000005Z\t3\t1.0\t10.0
+                            """),
+                    "select ts, " +
+                            "ntile(3) over w bucket, " +
+                            "cume_dist() over w cd, " +
+                            "nth_value(val, 1) over w nv " +
+                            "from tab " +
+                            "window w as (order by ts)",
+                    "ts",
+                    true,
+                    true
+            );
+        });
+    }
+
+    @Test
+    public void testNtileCumeDistNthValueOverFilteredCursor() throws Exception {
+        // Base relation is a WHERE-filtered subquery; the window cursor only sees rows
+        // that survive the predicate. Ensures ntile / cume_dist / nth_value compose with
+        // an upstream filter rather than always reading the full table cursor.
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, i long, val double) timestamp(ts)", timestampType.getTypeName());
+            execute("insert into tab values " +
+                    "(1, 1, 10.0), (2, 2, 20.0), (3, 1, 30.0), (4, 2, 40.0), " +
+                    "(5, 1, 50.0), (6, 2, 60.0)");
+
+            assertQueryNoLeakCheck(
+                    replaceTimestampSuffix1("""
+                            ts\ti\tbucket\tcd\tnv
+                            1970-01-01T00:00:00.000001Z\t1\t1\t0.3333333333333333\tnull
+                            1970-01-01T00:00:00.000003Z\t1\t2\t0.6666666666666666\t30.0
+                            1970-01-01T00:00:00.000005Z\t1\t3\t1.0\t30.0
+                            """),
+                    "select ts, i, " +
+                            "ntile(3) over (order by ts) bucket, " +
+                            "cume_dist() over (order by ts) cd, " +
+                            "nth_value(val, 2) over (order by ts rows between unbounded preceding and current row) nv " +
+                            "from (select * from tab where i = 1)",
+                    "ts",
+                    true,
+                    true
+            );
+        });
+    }
+
+    @Test
     public void testStdDevPopCurrentRowSemantics() throws Exception {
         assertMemoryLeak(() -> {
             executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, j double) timestamp(ts)", timestampType.getTypeName());
