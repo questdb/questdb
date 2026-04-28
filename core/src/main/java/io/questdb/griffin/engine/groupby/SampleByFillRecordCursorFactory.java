@@ -1065,562 +1065,451 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
 
             @Override
             public ArrayView getArray(int col, int columnType) {
-                int code = currentDispatchCode[col];
-                if (code == DISPATCH_BASE) return baseRecord.getArray(col, columnType);
-                if (code == DISPATCH_KEY_SLOT) return keysMapRecord.getArray(dispatchSlot[col], columnType);
-                if (code == DISPATCH_PREV_SLOT) {
-                    if (hasPrevForCurrentGap) return prevRecord.getArray(dispatchSlot[col], columnType);
-                    return null;
-                }
-                if (code == DISPATCH_CONSTANT) return dispatchConstant[col].getArray(null);
-                return null;
+                return switch (currentDispatchCode[col]) {
+                    case DISPATCH_BASE -> baseRecord.getArray(col, columnType);
+                    case DISPATCH_KEY_SLOT -> keysMapRecord.getArray(dispatchSlot[col], columnType);
+                    case DISPATCH_PREV_SLOT -> hasPrevForCurrentGap ? prevRecord.getArray(dispatchSlot[col], columnType) : null;
+                    case DISPATCH_CONSTANT -> dispatchConstant[col].getArray(null);
+                    default -> null;
+                };
             }
 
             @Override
             public BinarySequence getBin(int col) {
-                int code = currentDispatchCode[col];
-                if (code == DISPATCH_BASE) return baseRecord.getBin(col);
-                if (code == DISPATCH_KEY_SLOT) return keysMapRecord.getBin(dispatchSlot[col]);
-                if (code == DISPATCH_PREV_SLOT) {
-                    if (hasPrevForCurrentGap) return prevRecord.getBin(dispatchSlot[col]);
-                    return null;
-                }
-                if (code == DISPATCH_CONSTANT) return dispatchConstant[col].getBin(null);
-                return null;
+                return switch (currentDispatchCode[col]) {
+                    case DISPATCH_BASE -> baseRecord.getBin(col);
+                    case DISPATCH_KEY_SLOT -> keysMapRecord.getBin(dispatchSlot[col]);
+                    case DISPATCH_PREV_SLOT -> hasPrevForCurrentGap ? prevRecord.getBin(dispatchSlot[col]) : null;
+                    case DISPATCH_CONSTANT -> dispatchConstant[col].getBin(null);
+                    default -> null;
+                };
             }
 
             @Override
             public long getBinLen(int col) {
-                int code = currentDispatchCode[col];
-                if (code == DISPATCH_BASE) return baseRecord.getBinLen(col);
-                if (code == DISPATCH_KEY_SLOT) return keysMapRecord.getBinLen(dispatchSlot[col]);
-                if (code == DISPATCH_PREV_SLOT) {
-                    if (hasPrevForCurrentGap) return prevRecord.getBinLen(dispatchSlot[col]);
-                    return -1;
-                }
-                if (code == DISPATCH_CONSTANT) return dispatchConstant[col].getBinLen(null);
-                return -1;
+                return switch (currentDispatchCode[col]) {
+                    case DISPATCH_BASE -> baseRecord.getBinLen(col);
+                    case DISPATCH_KEY_SLOT -> keysMapRecord.getBinLen(dispatchSlot[col]);
+                    case DISPATCH_PREV_SLOT -> hasPrevForCurrentGap ? prevRecord.getBinLen(dispatchSlot[col]) : -1;
+                    case DISPATCH_CONSTANT -> dispatchConstant[col].getBinLen(null);
+                    default -> -1;
+                };
             }
 
             @Override
             public boolean getBool(int col) {
-                int code = currentDispatchCode[col];
-                if (code == DISPATCH_BASE) return baseRecord.getBool(col);
-                if (code == DISPATCH_KEY_SLOT) return keysMapRecord.getBool(dispatchSlot[col]);
-                if (code == DISPATCH_PREV_CACHE_SLOT) return keysMapRecord.getBool(dispatchSlot[col]);
-                if (code == DISPATCH_PREV_SLOT) {
-                    if (hasPrevForCurrentGap) return prevRecord.getBool(dispatchSlot[col]);
-                    return false;
-                }
-                if (code == DISPATCH_CONSTANT) return dispatchConstant[col].getBool(null);
-                return false;
+                return switch (currentDispatchCode[col]) {
+                    case DISPATCH_BASE -> baseRecord.getBool(col);
+                    case DISPATCH_KEY_SLOT, DISPATCH_PREV_CACHE_SLOT -> keysMapRecord.getBool(dispatchSlot[col]);
+                    case DISPATCH_PREV_SLOT -> hasPrevForCurrentGap && prevRecord.getBool(dispatchSlot[col]);
+                    case DISPATCH_CONSTANT -> dispatchConstant[col].getBool(null);
+                    default -> false;
+                };
             }
 
             @Override
             public byte getByte(int col) {
-                int code = currentDispatchCode[col];
-                if (code == DISPATCH_BASE) return baseRecord.getByte(col);
-                if (code == DISPATCH_KEY_SLOT) return keysMapRecord.getByte(dispatchSlot[col]);
-                if (code == DISPATCH_PREV_CACHE_SLOT) return keysMapRecord.getByte(dispatchSlot[col]);
-                if (code == DISPATCH_PREV_SLOT) {
-                    if (hasPrevForCurrentGap) return prevRecord.getByte(dispatchSlot[col]);
-                    return 0;
-                }
-                // Constant byte fills go through getInt() to match the
-                // narrow-integer convention used by Function implementations.
-                if (code == DISPATCH_CONSTANT) return (byte) dispatchConstant[col].getInt(null);
-                return 0;
+                return switch (currentDispatchCode[col]) {
+                    case DISPATCH_BASE -> baseRecord.getByte(col);
+                    case DISPATCH_KEY_SLOT, DISPATCH_PREV_CACHE_SLOT -> keysMapRecord.getByte(dispatchSlot[col]);
+                    case DISPATCH_PREV_SLOT -> hasPrevForCurrentGap ? prevRecord.getByte(dispatchSlot[col]) : 0;
+                    // Constant byte fills go through getInt() to match the
+                    // narrow-integer convention used by Function implementations.
+                    case DISPATCH_CONSTANT -> (byte) dispatchConstant[col].getInt(null);
+                    default -> 0;
+                };
             }
 
             @Override
             public char getChar(int col) {
-                int code = currentDispatchCode[col];
-                if (code == DISPATCH_BASE) return baseRecord.getChar(col);
-                if (code == DISPATCH_KEY_SLOT) return keysMapRecord.getChar(dispatchSlot[col]);
-                if (code == DISPATCH_PREV_CACHE_SLOT) return keysMapRecord.getChar(dispatchSlot[col]);
-                if (code == DISPATCH_PREV_SLOT) {
-                    if (hasPrevForCurrentGap) return prevRecord.getChar(dispatchSlot[col]);
-                    return 0;
-                }
-                if (code == DISPATCH_CONSTANT) return dispatchConstant[col].getChar(null);
-                return 0;
+                return switch (currentDispatchCode[col]) {
+                    case DISPATCH_BASE -> baseRecord.getChar(col);
+                    case DISPATCH_KEY_SLOT, DISPATCH_PREV_CACHE_SLOT -> keysMapRecord.getChar(dispatchSlot[col]);
+                    case DISPATCH_PREV_SLOT -> hasPrevForCurrentGap ? prevRecord.getChar(dispatchSlot[col]) : 0;
+                    case DISPATCH_CONSTANT -> dispatchConstant[col].getChar(null);
+                    default -> 0;
+                };
             }
 
             @Override
             public void getDecimal128(int col, Decimal128 sink) {
-                int code = currentDispatchCode[col];
-                if (code == DISPATCH_BASE) {
-                    baseRecord.getDecimal128(col, sink);
-                    return;
+                switch (currentDispatchCode[col]) {
+                    case DISPATCH_BASE -> baseRecord.getDecimal128(col, sink);
+                    case DISPATCH_KEY_SLOT -> keysMapRecord.getDecimal128(dispatchSlot[col], sink);
+                    case DISPATCH_PREV_SLOT -> {
+                        if (hasPrevForCurrentGap) prevRecord.getDecimal128(dispatchSlot[col], sink);
+                        else sink.ofRawNull();
+                    }
+                    case DISPATCH_CONSTANT -> dispatchConstant[col].getDecimal128(null, sink);
+                    default -> sink.ofRawNull();
                 }
-                if (code == DISPATCH_KEY_SLOT) {
-                    keysMapRecord.getDecimal128(dispatchSlot[col], sink);
-                    return;
-                }
-                if (code == DISPATCH_PREV_SLOT) {
-                    if (hasPrevForCurrentGap) prevRecord.getDecimal128(dispatchSlot[col], sink);
-                    else sink.ofRawNull();
-                    return;
-                }
-                if (code == DISPATCH_CONSTANT) {
-                    dispatchConstant[col].getDecimal128(null, sink);
-                    return;
-                }
-                sink.ofRawNull();
             }
 
             @Override
             public short getDecimal16(int col) {
-                int code = currentDispatchCode[col];
-                if (code == DISPATCH_BASE) return baseRecord.getDecimal16(col);
-                if (code == DISPATCH_KEY_SLOT) return keysMapRecord.getDecimal16(dispatchSlot[col]);
-                if (code == DISPATCH_PREV_CACHE_SLOT) return keysMapRecord.getShort(dispatchSlot[col]);
-                if (code == DISPATCH_PREV_SLOT) {
-                    if (hasPrevForCurrentGap) return prevRecord.getDecimal16(dispatchSlot[col]);
-                    return Decimals.DECIMAL16_NULL;
-                }
-                if (code == DISPATCH_CONSTANT) return dispatchConstant[col].getDecimal16(null);
-                return Decimals.DECIMAL16_NULL;
+                return switch (currentDispatchCode[col]) {
+                    case DISPATCH_BASE -> baseRecord.getDecimal16(col);
+                    case DISPATCH_KEY_SLOT -> keysMapRecord.getDecimal16(dispatchSlot[col]);
+                    case DISPATCH_PREV_CACHE_SLOT -> keysMapRecord.getShort(dispatchSlot[col]);
+                    case DISPATCH_PREV_SLOT -> hasPrevForCurrentGap ? prevRecord.getDecimal16(dispatchSlot[col]) : Decimals.DECIMAL16_NULL;
+                    case DISPATCH_CONSTANT -> dispatchConstant[col].getDecimal16(null);
+                    default -> Decimals.DECIMAL16_NULL;
+                };
             }
 
             @Override
             public void getDecimal256(int col, Decimal256 sink) {
-                int code = currentDispatchCode[col];
-                if (code == DISPATCH_BASE) {
-                    baseRecord.getDecimal256(col, sink);
-                    return;
+                switch (currentDispatchCode[col]) {
+                    case DISPATCH_BASE -> baseRecord.getDecimal256(col, sink);
+                    case DISPATCH_KEY_SLOT -> keysMapRecord.getDecimal256(dispatchSlot[col], sink);
+                    case DISPATCH_PREV_SLOT -> {
+                        if (hasPrevForCurrentGap) prevRecord.getDecimal256(dispatchSlot[col], sink);
+                        else sink.ofRawNull();
+                    }
+                    case DISPATCH_CONSTANT -> dispatchConstant[col].getDecimal256(null, sink);
+                    default -> sink.ofRawNull();
                 }
-                if (code == DISPATCH_KEY_SLOT) {
-                    keysMapRecord.getDecimal256(dispatchSlot[col], sink);
-                    return;
-                }
-                if (code == DISPATCH_PREV_SLOT) {
-                    if (hasPrevForCurrentGap) prevRecord.getDecimal256(dispatchSlot[col], sink);
-                    else sink.ofRawNull();
-                    return;
-                }
-                if (code == DISPATCH_CONSTANT) {
-                    dispatchConstant[col].getDecimal256(null, sink);
-                    return;
-                }
-                sink.ofRawNull();
             }
 
             @Override
             public int getDecimal32(int col) {
-                int code = currentDispatchCode[col];
-                if (code == DISPATCH_BASE) return baseRecord.getDecimal32(col);
-                if (code == DISPATCH_KEY_SLOT) return keysMapRecord.getDecimal32(dispatchSlot[col]);
-                if (code == DISPATCH_PREV_CACHE_SLOT) return keysMapRecord.getInt(dispatchSlot[col]);
-                if (code == DISPATCH_PREV_SLOT) {
-                    if (hasPrevForCurrentGap) return prevRecord.getDecimal32(dispatchSlot[col]);
-                    return Decimals.DECIMAL32_NULL;
-                }
-                if (code == DISPATCH_CONSTANT) return dispatchConstant[col].getDecimal32(null);
-                return Decimals.DECIMAL32_NULL;
+                return switch (currentDispatchCode[col]) {
+                    case DISPATCH_BASE -> baseRecord.getDecimal32(col);
+                    case DISPATCH_KEY_SLOT -> keysMapRecord.getDecimal32(dispatchSlot[col]);
+                    case DISPATCH_PREV_CACHE_SLOT -> keysMapRecord.getInt(dispatchSlot[col]);
+                    case DISPATCH_PREV_SLOT -> hasPrevForCurrentGap ? prevRecord.getDecimal32(dispatchSlot[col]) : Decimals.DECIMAL32_NULL;
+                    case DISPATCH_CONSTANT -> dispatchConstant[col].getDecimal32(null);
+                    default -> Decimals.DECIMAL32_NULL;
+                };
             }
 
             @Override
             public long getDecimal64(int col) {
-                int code = currentDispatchCode[col];
-                if (code == DISPATCH_BASE) return baseRecord.getDecimal64(col);
-                if (code == DISPATCH_KEY_SLOT) return keysMapRecord.getDecimal64(dispatchSlot[col]);
-                if (code == DISPATCH_PREV_CACHE_SLOT) return keysMapRecord.getLong(dispatchSlot[col]);
-                if (code == DISPATCH_PREV_SLOT) {
-                    if (hasPrevForCurrentGap) return prevRecord.getDecimal64(dispatchSlot[col]);
-                    return Decimals.DECIMAL64_NULL;
-                }
-                if (code == DISPATCH_CONSTANT) return dispatchConstant[col].getDecimal64(null);
-                return Decimals.DECIMAL64_NULL;
+                return switch (currentDispatchCode[col]) {
+                    case DISPATCH_BASE -> baseRecord.getDecimal64(col);
+                    case DISPATCH_KEY_SLOT -> keysMapRecord.getDecimal64(dispatchSlot[col]);
+                    case DISPATCH_PREV_CACHE_SLOT -> keysMapRecord.getLong(dispatchSlot[col]);
+                    case DISPATCH_PREV_SLOT -> hasPrevForCurrentGap ? prevRecord.getDecimal64(dispatchSlot[col]) : Decimals.DECIMAL64_NULL;
+                    case DISPATCH_CONSTANT -> dispatchConstant[col].getDecimal64(null);
+                    default -> Decimals.DECIMAL64_NULL;
+                };
             }
 
             @Override
             public byte getDecimal8(int col) {
-                int code = currentDispatchCode[col];
-                if (code == DISPATCH_BASE) return baseRecord.getDecimal8(col);
-                if (code == DISPATCH_KEY_SLOT) return keysMapRecord.getDecimal8(dispatchSlot[col]);
-                if (code == DISPATCH_PREV_CACHE_SLOT) return keysMapRecord.getByte(dispatchSlot[col]);
-                if (code == DISPATCH_PREV_SLOT) {
-                    if (hasPrevForCurrentGap) return prevRecord.getDecimal8(dispatchSlot[col]);
-                    return Decimals.DECIMAL8_NULL;
-                }
-                if (code == DISPATCH_CONSTANT) return dispatchConstant[col].getDecimal8(null);
-                return Decimals.DECIMAL8_NULL;
+                return switch (currentDispatchCode[col]) {
+                    case DISPATCH_BASE -> baseRecord.getDecimal8(col);
+                    case DISPATCH_KEY_SLOT -> keysMapRecord.getDecimal8(dispatchSlot[col]);
+                    case DISPATCH_PREV_CACHE_SLOT -> keysMapRecord.getByte(dispatchSlot[col]);
+                    case DISPATCH_PREV_SLOT -> hasPrevForCurrentGap ? prevRecord.getDecimal8(dispatchSlot[col]) : Decimals.DECIMAL8_NULL;
+                    case DISPATCH_CONSTANT -> dispatchConstant[col].getDecimal8(null);
+                    default -> Decimals.DECIMAL8_NULL;
+                };
             }
 
             @Override
             public double getDouble(int col) {
-                int code = currentDispatchCode[col];
-                if (code == DISPATCH_BASE) return baseRecord.getDouble(col);
-                if (code == DISPATCH_KEY_SLOT) return keysMapRecord.getDouble(dispatchSlot[col]);
-                if (code == DISPATCH_PREV_CACHE_SLOT) return keysMapRecord.getDouble(dispatchSlot[col]);
-                if (code == DISPATCH_PREV_SLOT) {
-                    if (hasPrevForCurrentGap) return prevRecord.getDouble(dispatchSlot[col]);
-                    return Double.NaN;
-                }
-                if (code == DISPATCH_CONSTANT) return dispatchConstant[col].getDouble(null);
-                return Double.NaN;
+                return switch (currentDispatchCode[col]) {
+                    case DISPATCH_BASE -> baseRecord.getDouble(col);
+                    case DISPATCH_KEY_SLOT, DISPATCH_PREV_CACHE_SLOT -> keysMapRecord.getDouble(dispatchSlot[col]);
+                    case DISPATCH_PREV_SLOT -> hasPrevForCurrentGap ? prevRecord.getDouble(dispatchSlot[col]) : Double.NaN;
+                    case DISPATCH_CONSTANT -> dispatchConstant[col].getDouble(null);
+                    default -> Double.NaN;
+                };
             }
 
             @Override
             public float getFloat(int col) {
-                int code = currentDispatchCode[col];
-                if (code == DISPATCH_BASE) return baseRecord.getFloat(col);
-                if (code == DISPATCH_KEY_SLOT) return keysMapRecord.getFloat(dispatchSlot[col]);
-                if (code == DISPATCH_PREV_CACHE_SLOT) return keysMapRecord.getFloat(dispatchSlot[col]);
-                if (code == DISPATCH_PREV_SLOT) {
-                    if (hasPrevForCurrentGap) return prevRecord.getFloat(dispatchSlot[col]);
-                    return Float.NaN;
-                }
-                if (code == DISPATCH_CONSTANT) return dispatchConstant[col].getFloat(null);
-                return Float.NaN;
+                return switch (currentDispatchCode[col]) {
+                    case DISPATCH_BASE -> baseRecord.getFloat(col);
+                    case DISPATCH_KEY_SLOT, DISPATCH_PREV_CACHE_SLOT -> keysMapRecord.getFloat(dispatchSlot[col]);
+                    case DISPATCH_PREV_SLOT -> hasPrevForCurrentGap ? prevRecord.getFloat(dispatchSlot[col]) : Float.NaN;
+                    case DISPATCH_CONSTANT -> dispatchConstant[col].getFloat(null);
+                    default -> Float.NaN;
+                };
             }
 
             @Override
             public byte getGeoByte(int col) {
-                int code = currentDispatchCode[col];
-                if (code == DISPATCH_BASE) return baseRecord.getGeoByte(col);
-                if (code == DISPATCH_KEY_SLOT) return keysMapRecord.getGeoByte(dispatchSlot[col]);
-                if (code == DISPATCH_PREV_CACHE_SLOT) return keysMapRecord.getByte(dispatchSlot[col]);
-                if (code == DISPATCH_PREV_SLOT) {
-                    if (hasPrevForCurrentGap) return prevRecord.getGeoByte(dispatchSlot[col]);
-                    return GeoHashes.BYTE_NULL;
-                }
-                if (code == DISPATCH_CONSTANT) return dispatchConstant[col].getGeoByte(null);
-                return GeoHashes.BYTE_NULL;
+                return switch (currentDispatchCode[col]) {
+                    case DISPATCH_BASE -> baseRecord.getGeoByte(col);
+                    case DISPATCH_KEY_SLOT -> keysMapRecord.getGeoByte(dispatchSlot[col]);
+                    case DISPATCH_PREV_CACHE_SLOT -> keysMapRecord.getByte(dispatchSlot[col]);
+                    case DISPATCH_PREV_SLOT -> hasPrevForCurrentGap ? prevRecord.getGeoByte(dispatchSlot[col]) : GeoHashes.BYTE_NULL;
+                    case DISPATCH_CONSTANT -> dispatchConstant[col].getGeoByte(null);
+                    default -> GeoHashes.BYTE_NULL;
+                };
             }
 
             @Override
             public int getGeoInt(int col) {
-                int code = currentDispatchCode[col];
-                if (code == DISPATCH_BASE) return baseRecord.getGeoInt(col);
-                if (code == DISPATCH_KEY_SLOT) return keysMapRecord.getGeoInt(dispatchSlot[col]);
-                if (code == DISPATCH_PREV_CACHE_SLOT) return keysMapRecord.getInt(dispatchSlot[col]);
-                if (code == DISPATCH_PREV_SLOT) {
-                    if (hasPrevForCurrentGap) return prevRecord.getGeoInt(dispatchSlot[col]);
-                    return GeoHashes.INT_NULL;
-                }
-                if (code == DISPATCH_CONSTANT) return dispatchConstant[col].getGeoInt(null);
-                return GeoHashes.INT_NULL;
+                return switch (currentDispatchCode[col]) {
+                    case DISPATCH_BASE -> baseRecord.getGeoInt(col);
+                    case DISPATCH_KEY_SLOT -> keysMapRecord.getGeoInt(dispatchSlot[col]);
+                    case DISPATCH_PREV_CACHE_SLOT -> keysMapRecord.getInt(dispatchSlot[col]);
+                    case DISPATCH_PREV_SLOT -> hasPrevForCurrentGap ? prevRecord.getGeoInt(dispatchSlot[col]) : GeoHashes.INT_NULL;
+                    case DISPATCH_CONSTANT -> dispatchConstant[col].getGeoInt(null);
+                    default -> GeoHashes.INT_NULL;
+                };
             }
 
             @Override
             public long getGeoLong(int col) {
-                int code = currentDispatchCode[col];
-                if (code == DISPATCH_BASE) return baseRecord.getGeoLong(col);
-                if (code == DISPATCH_KEY_SLOT) return keysMapRecord.getGeoLong(dispatchSlot[col]);
-                if (code == DISPATCH_PREV_CACHE_SLOT) return keysMapRecord.getLong(dispatchSlot[col]);
-                if (code == DISPATCH_PREV_SLOT) {
-                    if (hasPrevForCurrentGap) return prevRecord.getGeoLong(dispatchSlot[col]);
-                    return GeoHashes.NULL;
-                }
-                if (code == DISPATCH_CONSTANT) return dispatchConstant[col].getGeoLong(null);
-                return GeoHashes.NULL;
+                return switch (currentDispatchCode[col]) {
+                    case DISPATCH_BASE -> baseRecord.getGeoLong(col);
+                    case DISPATCH_KEY_SLOT -> keysMapRecord.getGeoLong(dispatchSlot[col]);
+                    case DISPATCH_PREV_CACHE_SLOT -> keysMapRecord.getLong(dispatchSlot[col]);
+                    case DISPATCH_PREV_SLOT -> hasPrevForCurrentGap ? prevRecord.getGeoLong(dispatchSlot[col]) : GeoHashes.NULL;
+                    case DISPATCH_CONSTANT -> dispatchConstant[col].getGeoLong(null);
+                    default -> GeoHashes.NULL;
+                };
             }
 
             @Override
             public short getGeoShort(int col) {
-                int code = currentDispatchCode[col];
-                if (code == DISPATCH_BASE) return baseRecord.getGeoShort(col);
-                if (code == DISPATCH_KEY_SLOT) return keysMapRecord.getGeoShort(dispatchSlot[col]);
-                if (code == DISPATCH_PREV_CACHE_SLOT) return keysMapRecord.getShort(dispatchSlot[col]);
-                if (code == DISPATCH_PREV_SLOT) {
-                    if (hasPrevForCurrentGap) return prevRecord.getGeoShort(dispatchSlot[col]);
-                    return GeoHashes.SHORT_NULL;
-                }
-                if (code == DISPATCH_CONSTANT) return dispatchConstant[col].getGeoShort(null);
-                return GeoHashes.SHORT_NULL;
+                return switch (currentDispatchCode[col]) {
+                    case DISPATCH_BASE -> baseRecord.getGeoShort(col);
+                    case DISPATCH_KEY_SLOT -> keysMapRecord.getGeoShort(dispatchSlot[col]);
+                    case DISPATCH_PREV_CACHE_SLOT -> keysMapRecord.getShort(dispatchSlot[col]);
+                    case DISPATCH_PREV_SLOT -> hasPrevForCurrentGap ? prevRecord.getGeoShort(dispatchSlot[col]) : GeoHashes.SHORT_NULL;
+                    case DISPATCH_CONSTANT -> dispatchConstant[col].getGeoShort(null);
+                    default -> GeoHashes.SHORT_NULL;
+                };
             }
 
             @Override
             public int getIPv4(int col) {
-                int code = currentDispatchCode[col];
-                if (code == DISPATCH_BASE) return baseRecord.getIPv4(col);
-                if (code == DISPATCH_KEY_SLOT) return keysMapRecord.getIPv4(dispatchSlot[col]);
-                if (code == DISPATCH_PREV_CACHE_SLOT) return keysMapRecord.getIPv4(dispatchSlot[col]);
-                if (code == DISPATCH_PREV_SLOT) {
-                    if (hasPrevForCurrentGap) return prevRecord.getIPv4(dispatchSlot[col]);
-                    return Numbers.IPv4_NULL;
-                }
-                if (code == DISPATCH_CONSTANT) return dispatchConstant[col].getIPv4(null);
-                return Numbers.IPv4_NULL;
+                return switch (currentDispatchCode[col]) {
+                    case DISPATCH_BASE -> baseRecord.getIPv4(col);
+                    case DISPATCH_KEY_SLOT, DISPATCH_PREV_CACHE_SLOT -> keysMapRecord.getIPv4(dispatchSlot[col]);
+                    case DISPATCH_PREV_SLOT -> hasPrevForCurrentGap ? prevRecord.getIPv4(dispatchSlot[col]) : Numbers.IPv4_NULL;
+                    case DISPATCH_CONSTANT -> dispatchConstant[col].getIPv4(null);
+                    default -> Numbers.IPv4_NULL;
+                };
             }
 
             @Override
             public int getInt(int col) {
-                int code = currentDispatchCode[col];
-                if (code == DISPATCH_BASE) return baseRecord.getInt(col);
-                if (code == DISPATCH_KEY_SLOT) return keysMapRecord.getInt(dispatchSlot[col]);
-                if (code == DISPATCH_PREV_CACHE_SLOT) return keysMapRecord.getInt(dispatchSlot[col]);
-                if (code == DISPATCH_PREV_SLOT) {
-                    if (hasPrevForCurrentGap) return prevRecord.getInt(dispatchSlot[col]);
-                    return Numbers.INT_NULL;
-                }
-                if (code == DISPATCH_CONSTANT) return dispatchConstant[col].getInt(null);
-                return Numbers.INT_NULL;
+                return switch (currentDispatchCode[col]) {
+                    case DISPATCH_BASE -> baseRecord.getInt(col);
+                    case DISPATCH_KEY_SLOT, DISPATCH_PREV_CACHE_SLOT -> keysMapRecord.getInt(dispatchSlot[col]);
+                    case DISPATCH_PREV_SLOT -> hasPrevForCurrentGap ? prevRecord.getInt(dispatchSlot[col]) : Numbers.INT_NULL;
+                    case DISPATCH_CONSTANT -> dispatchConstant[col].getInt(null);
+                    default -> Numbers.INT_NULL;
+                };
             }
 
             @Override
             public Interval getInterval(int col) {
-                int code = currentDispatchCode[col];
-                if (code == DISPATCH_BASE) return baseRecord.getInterval(col);
-                if (code == DISPATCH_KEY_SLOT) return keysMapRecord.getInterval(dispatchSlot[col]);
-                if (code == DISPATCH_PREV_SLOT) {
-                    if (hasPrevForCurrentGap) return prevRecord.getInterval(dispatchSlot[col]);
-                    return Interval.NULL;
-                }
-                if (code == DISPATCH_CONSTANT) return dispatchConstant[col].getInterval(null);
-                return Interval.NULL;
+                return switch (currentDispatchCode[col]) {
+                    case DISPATCH_BASE -> baseRecord.getInterval(col);
+                    case DISPATCH_KEY_SLOT -> keysMapRecord.getInterval(dispatchSlot[col]);
+                    case DISPATCH_PREV_SLOT -> hasPrevForCurrentGap ? prevRecord.getInterval(dispatchSlot[col]) : Interval.NULL;
+                    case DISPATCH_CONSTANT -> dispatchConstant[col].getInterval(null);
+                    default -> Interval.NULL;
+                };
             }
 
             @Override
             public long getLong(int col) {
-                int code = currentDispatchCode[col];
-                if (code == DISPATCH_BASE) return baseRecord.getLong(col);
                 // The timestamp column is internally a 64-bit long: Record.getLong(timestampIndex)
                 // is a valid call from any caller that doesn't go through getTimestamp/TimestampFunction.
-                // Without this arm, fill rows would silently return LONG_NULL for the bucket timestamp,
-                // which masks as long as upstream callers route through getTimestamp -- but locks in a
-                // latent silent-data-corruption hazard. getDate() defaults to getLong() (Record.java:159),
-                // so this arm covers both.
-                if (code == DISPATCH_TIMESTAMP_FILL) return fillTimestampFunc.value;
-                if (code == DISPATCH_KEY_SLOT) return keysMapRecord.getLong(dispatchSlot[col]);
-                if (code == DISPATCH_PREV_CACHE_SLOT) return keysMapRecord.getLong(dispatchSlot[col]);
-                if (code == DISPATCH_PREV_SLOT) {
-                    if (hasPrevForCurrentGap) return prevRecord.getLong(dispatchSlot[col]);
-                    return Numbers.LONG_NULL;
-                }
-                if (code == DISPATCH_CONSTANT) return dispatchConstant[col].getLong(null);
-                return Numbers.LONG_NULL;
+                // Without DISPATCH_TIMESTAMP_FILL handling here, fill rows would silently return
+                // LONG_NULL for the bucket timestamp -- masked as long as upstream callers route
+                // through getTimestamp, but a latent silent-data-corruption hazard. getDate() defaults
+                // to getLong() (Record.java:159), so this arm covers both.
+                return switch (currentDispatchCode[col]) {
+                    case DISPATCH_BASE -> baseRecord.getLong(col);
+                    case DISPATCH_TIMESTAMP_FILL -> fillTimestampFunc.value;
+                    case DISPATCH_KEY_SLOT, DISPATCH_PREV_CACHE_SLOT -> keysMapRecord.getLong(dispatchSlot[col]);
+                    case DISPATCH_PREV_SLOT -> hasPrevForCurrentGap ? prevRecord.getLong(dispatchSlot[col]) : Numbers.LONG_NULL;
+                    case DISPATCH_CONSTANT -> dispatchConstant[col].getLong(null);
+                    default -> Numbers.LONG_NULL;
+                };
             }
 
             @Override
             public long getLong128Hi(int col) {
-                int code = currentDispatchCode[col];
-                if (code == DISPATCH_BASE) return baseRecord.getLong128Hi(col);
-                if (code == DISPATCH_KEY_SLOT) return keysMapRecord.getLong128Hi(dispatchSlot[col]);
-                if (code == DISPATCH_PREV_SLOT) {
-                    if (hasPrevForCurrentGap) return prevRecord.getLong128Hi(dispatchSlot[col]);
-                    return Numbers.LONG_NULL;
-                }
-                if (code == DISPATCH_CONSTANT) return dispatchConstant[col].getLong128Hi(null);
-                return Numbers.LONG_NULL;
+                return switch (currentDispatchCode[col]) {
+                    case DISPATCH_BASE -> baseRecord.getLong128Hi(col);
+                    case DISPATCH_KEY_SLOT -> keysMapRecord.getLong128Hi(dispatchSlot[col]);
+                    case DISPATCH_PREV_SLOT -> hasPrevForCurrentGap ? prevRecord.getLong128Hi(dispatchSlot[col]) : Numbers.LONG_NULL;
+                    case DISPATCH_CONSTANT -> dispatchConstant[col].getLong128Hi(null);
+                    default -> Numbers.LONG_NULL;
+                };
             }
 
             @Override
             public long getLong128Lo(int col) {
-                int code = currentDispatchCode[col];
-                if (code == DISPATCH_BASE) return baseRecord.getLong128Lo(col);
-                if (code == DISPATCH_KEY_SLOT) return keysMapRecord.getLong128Lo(dispatchSlot[col]);
-                if (code == DISPATCH_PREV_SLOT) {
-                    if (hasPrevForCurrentGap) return prevRecord.getLong128Lo(dispatchSlot[col]);
-                    return Numbers.LONG_NULL;
-                }
-                if (code == DISPATCH_CONSTANT) return dispatchConstant[col].getLong128Lo(null);
-                return Numbers.LONG_NULL;
+                return switch (currentDispatchCode[col]) {
+                    case DISPATCH_BASE -> baseRecord.getLong128Lo(col);
+                    case DISPATCH_KEY_SLOT -> keysMapRecord.getLong128Lo(dispatchSlot[col]);
+                    case DISPATCH_PREV_SLOT -> hasPrevForCurrentGap ? prevRecord.getLong128Lo(dispatchSlot[col]) : Numbers.LONG_NULL;
+                    case DISPATCH_CONSTANT -> dispatchConstant[col].getLong128Lo(null);
+                    default -> Numbers.LONG_NULL;
+                };
             }
 
             @Override
             public void getLong256(int col, CharSink<?> sink) {
-                int code = currentDispatchCode[col];
-                if (code == DISPATCH_BASE) {
-                    baseRecord.getLong256(col, sink);
-                    return;
-                }
-                if (code == DISPATCH_KEY_SLOT) {
-                    keysMapRecord.getLong256(dispatchSlot[col], sink);
-                    return;
-                }
-                if (code == DISPATCH_PREV_SLOT) {
-                    if (hasPrevForCurrentGap) prevRecord.getLong256(dispatchSlot[col], sink);
-                    return;
-                }
-                if (code == DISPATCH_CONSTANT) {
-                    dispatchConstant[col].getLong256(null, sink);
-                }
                 // Per the Record.getLong256(int, CharSink) contract: null Long256 appends nothing to
                 // the sink. The caller owns the delimiters on both sides, and an empty segment reads
                 // as an empty text value -- this is how QuestDB renders null Long256 in text output.
-                // Do NOT call sink.clear() here: it would erase row-prefix content written by the
-                // caller (e.g., CursorPrinter before the cell is rendered).
+                // Do NOT call sink.clear() in default/null arms: it would erase row-prefix content
+                // written by the caller (e.g., CursorPrinter before the cell is rendered).
+                switch (currentDispatchCode[col]) {
+                    case DISPATCH_BASE -> baseRecord.getLong256(col, sink);
+                    case DISPATCH_KEY_SLOT -> keysMapRecord.getLong256(dispatchSlot[col], sink);
+                    case DISPATCH_PREV_SLOT -> {
+                        if (hasPrevForCurrentGap) prevRecord.getLong256(dispatchSlot[col], sink);
+                    }
+                    case DISPATCH_CONSTANT -> dispatchConstant[col].getLong256(null, sink);
+                    default -> {
+                        // null sentinel: nothing to write
+                    }
+                }
             }
 
             @Override
             public Long256 getLong256A(int col) {
-                int code = currentDispatchCode[col];
-                if (code == DISPATCH_BASE) return baseRecord.getLong256A(col);
-                if (code == DISPATCH_KEY_SLOT) return keysMapRecord.getLong256A(dispatchSlot[col]);
-                if (code == DISPATCH_PREV_SLOT) {
-                    if (hasPrevForCurrentGap) return prevRecord.getLong256A(dispatchSlot[col]);
-                    return Long256Impl.NULL_LONG256;
-                }
-                if (code == DISPATCH_CONSTANT) return dispatchConstant[col].getLong256A(null);
-                return Long256Impl.NULL_LONG256;
+                return switch (currentDispatchCode[col]) {
+                    case DISPATCH_BASE -> baseRecord.getLong256A(col);
+                    case DISPATCH_KEY_SLOT -> keysMapRecord.getLong256A(dispatchSlot[col]);
+                    case DISPATCH_PREV_SLOT -> hasPrevForCurrentGap ? prevRecord.getLong256A(dispatchSlot[col]) : Long256Impl.NULL_LONG256;
+                    case DISPATCH_CONSTANT -> dispatchConstant[col].getLong256A(null);
+                    default -> Long256Impl.NULL_LONG256;
+                };
             }
 
             @Override
             public Long256 getLong256B(int col) {
-                int code = currentDispatchCode[col];
-                if (code == DISPATCH_BASE) return baseRecord.getLong256B(col);
-                if (code == DISPATCH_KEY_SLOT) return keysMapRecord.getLong256B(dispatchSlot[col]);
-                if (code == DISPATCH_PREV_SLOT) {
-                    if (hasPrevForCurrentGap) return prevRecord.getLong256B(dispatchSlot[col]);
-                    return Long256Impl.NULL_LONG256;
-                }
-                if (code == DISPATCH_CONSTANT) return dispatchConstant[col].getLong256B(null);
-                return Long256Impl.NULL_LONG256;
+                return switch (currentDispatchCode[col]) {
+                    case DISPATCH_BASE -> baseRecord.getLong256B(col);
+                    case DISPATCH_KEY_SLOT -> keysMapRecord.getLong256B(dispatchSlot[col]);
+                    case DISPATCH_PREV_SLOT -> hasPrevForCurrentGap ? prevRecord.getLong256B(dispatchSlot[col]) : Long256Impl.NULL_LONG256;
+                    case DISPATCH_CONSTANT -> dispatchConstant[col].getLong256B(null);
+                    default -> Long256Impl.NULL_LONG256;
+                };
             }
 
             @Override
             public short getShort(int col) {
-                int code = currentDispatchCode[col];
-                if (code == DISPATCH_BASE) return baseRecord.getShort(col);
-                if (code == DISPATCH_KEY_SLOT) return keysMapRecord.getShort(dispatchSlot[col]);
-                if (code == DISPATCH_PREV_CACHE_SLOT) return keysMapRecord.getShort(dispatchSlot[col]);
-                if (code == DISPATCH_PREV_SLOT) {
-                    if (hasPrevForCurrentGap) return prevRecord.getShort(dispatchSlot[col]);
-                    return 0;
-                }
-                // Constant short fills go through getInt() to match the
-                // narrow-integer convention used by Function implementations.
-                if (code == DISPATCH_CONSTANT) return (short) dispatchConstant[col].getInt(null);
-                return 0;
+                return switch (currentDispatchCode[col]) {
+                    case DISPATCH_BASE -> baseRecord.getShort(col);
+                    case DISPATCH_KEY_SLOT, DISPATCH_PREV_CACHE_SLOT -> keysMapRecord.getShort(dispatchSlot[col]);
+                    case DISPATCH_PREV_SLOT -> hasPrevForCurrentGap ? prevRecord.getShort(dispatchSlot[col]) : (short) 0;
+                    // Constant short fills go through getInt() to match the
+                    // narrow-integer convention used by Function implementations.
+                    case DISPATCH_CONSTANT -> (short) dispatchConstant[col].getInt(null);
+                    default -> (short) 0;
+                };
             }
 
             @Override
             public CharSequence getStrA(int col) {
-                int code = currentDispatchCode[col];
-                if (code == DISPATCH_BASE) return baseRecord.getStrA(col);
-                if (code == DISPATCH_KEY_SLOT) return keysMapRecord.getStrA(dispatchSlot[col]);
-                if (code == DISPATCH_PREV_SLOT) {
-                    if (hasPrevForCurrentGap) return prevRecord.getStrA(dispatchSlot[col]);
-                    return null;
-                }
-                if (code == DISPATCH_CONSTANT) return dispatchConstant[col].getStrA(null);
-                return null;
+                return switch (currentDispatchCode[col]) {
+                    case DISPATCH_BASE -> baseRecord.getStrA(col);
+                    case DISPATCH_KEY_SLOT -> keysMapRecord.getStrA(dispatchSlot[col]);
+                    case DISPATCH_PREV_SLOT -> hasPrevForCurrentGap ? prevRecord.getStrA(dispatchSlot[col]) : null;
+                    case DISPATCH_CONSTANT -> dispatchConstant[col].getStrA(null);
+                    default -> null;
+                };
             }
 
             @Override
             public CharSequence getStrB(int col) {
-                int code = currentDispatchCode[col];
-                if (code == DISPATCH_BASE) return baseRecord.getStrB(col);
-                if (code == DISPATCH_KEY_SLOT) return keysMapRecord.getStrB(dispatchSlot[col]);
-                if (code == DISPATCH_PREV_SLOT) {
-                    if (hasPrevForCurrentGap) return prevRecord.getStrB(dispatchSlot[col]);
-                    return null;
-                }
-                if (code == DISPATCH_CONSTANT) return dispatchConstant[col].getStrB(null);
-                return null;
+                return switch (currentDispatchCode[col]) {
+                    case DISPATCH_BASE -> baseRecord.getStrB(col);
+                    case DISPATCH_KEY_SLOT -> keysMapRecord.getStrB(dispatchSlot[col]);
+                    case DISPATCH_PREV_SLOT -> hasPrevForCurrentGap ? prevRecord.getStrB(dispatchSlot[col]) : null;
+                    case DISPATCH_CONSTANT -> dispatchConstant[col].getStrB(null);
+                    default -> null;
+                };
             }
 
             @Override
             public int getStrLen(int col) {
-                int code = currentDispatchCode[col];
-                if (code == DISPATCH_BASE) return baseRecord.getStrLen(col);
-                if (code == DISPATCH_KEY_SLOT) return keysMapRecord.getStrLen(dispatchSlot[col]);
-                if (code == DISPATCH_PREV_SLOT) {
-                    if (hasPrevForCurrentGap) return prevRecord.getStrLen(dispatchSlot[col]);
-                    return -1;
-                }
-                if (code == DISPATCH_CONSTANT) return dispatchConstant[col].getStrLen(null);
-                return -1;
+                return switch (currentDispatchCode[col]) {
+                    case DISPATCH_BASE -> baseRecord.getStrLen(col);
+                    case DISPATCH_KEY_SLOT -> keysMapRecord.getStrLen(dispatchSlot[col]);
+                    case DISPATCH_PREV_SLOT -> hasPrevForCurrentGap ? prevRecord.getStrLen(dispatchSlot[col]) : -1;
+                    case DISPATCH_CONSTANT -> dispatchConstant[col].getStrLen(null);
+                    default -> -1;
+                };
             }
 
             @Override
             public CharSequence getSymA(int col) {
                 int code = currentDispatchCode[col];
-                if (code == DISPATCH_BASE) return baseRecord.getSymA(col);
-                if (code == DISPATCH_KEY_SLOT) {
-                    // Cached SymbolTable + direct slot read shortcuts the
-                    // MapRecord setSymbolTableResolver chain.
-                    return symbolCache[col].valueOf(keysMapRecord.getInt(dispatchSlot[col]));
-                }
-                if (code == DISPATCH_PREV_CACHE_SLOT) {
-                    // Slot is initialised to Numbers.INT_NULL (=
-                    // SymbolTable.VALUE_IS_NULL); valueOf returns null in that
-                    // case per the SymbolTable contract.
-                    return symbolCache[col].valueOf(keysMapRecord.getInt(dispatchSlot[col]));
-                }
-                if (code == DISPATCH_PREV_SLOT) {
-                    if (hasPrevForCurrentGap) return prevRecord.getSymA(dispatchSlot[col]);
-                    return null;
-                }
-                // Constant symbol fills dispatch through Function.getSymbol()
-                // rather than Function.getSymA() by historical convention.
-                if (code == DISPATCH_CONSTANT) return dispatchConstant[col].getSymbol(null);
-                return null;
+                // KEY_SLOT and PREV_CACHE_SLOT both go through symbolCache + MapRecord int read
+                // (cached SymbolTable + direct slot read shortcuts the MapRecord setSymbolTableResolver
+                // chain; PREV_CACHE_SLOT initialised to Numbers.INT_NULL = SymbolTable.VALUE_IS_NULL,
+                // so valueOf returns null in that case per the SymbolTable contract).
+                // Constant symbol fills dispatch through Function.getSymbol() rather than
+                // Function.getSymA() by historical convention.
+                return switch (currentDispatchCode[col]) {
+                    case DISPATCH_BASE -> baseRecord.getSymA(col);
+                    case DISPATCH_KEY_SLOT, DISPATCH_PREV_CACHE_SLOT -> symbolCache[col].valueOf(keysMapRecord.getInt(dispatchSlot[col]));
+                    case DISPATCH_PREV_SLOT -> hasPrevForCurrentGap ? prevRecord.getSymA(dispatchSlot[col]) : null;
+                    case DISPATCH_CONSTANT -> dispatchConstant[col].getSymbol(null);
+                    default -> null;
+                };
             }
 
             @Override
             public CharSequence getSymB(int col) {
-                int code = currentDispatchCode[col];
-                if (code == DISPATCH_BASE) return baseRecord.getSymB(col);
-                if (code == DISPATCH_KEY_SLOT) {
-                    return symbolCache[col].valueBOf(keysMapRecord.getInt(dispatchSlot[col]));
-                }
-                if (code == DISPATCH_PREV_CACHE_SLOT) {
-                    return symbolCache[col].valueBOf(keysMapRecord.getInt(dispatchSlot[col]));
-                }
-                if (code == DISPATCH_PREV_SLOT) {
-                    if (hasPrevForCurrentGap) return prevRecord.getSymB(dispatchSlot[col]);
-                    return null;
-                }
-                if (code == DISPATCH_CONSTANT) return dispatchConstant[col].getSymbolB(null);
-                return null;
+                return switch (currentDispatchCode[col]) {
+                    case DISPATCH_BASE -> baseRecord.getSymB(col);
+                    case DISPATCH_KEY_SLOT, DISPATCH_PREV_CACHE_SLOT -> symbolCache[col].valueBOf(keysMapRecord.getInt(dispatchSlot[col]));
+                    case DISPATCH_PREV_SLOT -> hasPrevForCurrentGap ? prevRecord.getSymB(dispatchSlot[col]) : null;
+                    case DISPATCH_CONSTANT -> dispatchConstant[col].getSymbolB(null);
+                    default -> null;
+                };
             }
 
             @Override
             public long getTimestamp(int col) {
-                int code = currentDispatchCode[col];
-                if (code == DISPATCH_BASE) return baseRecord.getTimestamp(col);
-                if (code == DISPATCH_TIMESTAMP_FILL) return fillTimestampFunc.value;
-                if (code == DISPATCH_KEY_SLOT) return keysMapRecord.getTimestamp(dispatchSlot[col]);
-                if (code == DISPATCH_PREV_CACHE_SLOT) return keysMapRecord.getTimestamp(dispatchSlot[col]);
-                if (code == DISPATCH_PREV_SLOT) {
-                    if (hasPrevForCurrentGap) return prevRecord.getTimestamp(dispatchSlot[col]);
-                    return Numbers.LONG_NULL;
-                }
-                if (code == DISPATCH_CONSTANT) return dispatchConstant[col].getTimestamp(null);
-                return Numbers.LONG_NULL;
+                return switch (currentDispatchCode[col]) {
+                    case DISPATCH_BASE -> baseRecord.getTimestamp(col);
+                    case DISPATCH_TIMESTAMP_FILL -> fillTimestampFunc.value;
+                    case DISPATCH_KEY_SLOT, DISPATCH_PREV_CACHE_SLOT -> keysMapRecord.getTimestamp(dispatchSlot[col]);
+                    case DISPATCH_PREV_SLOT -> hasPrevForCurrentGap ? prevRecord.getTimestamp(dispatchSlot[col]) : Numbers.LONG_NULL;
+                    case DISPATCH_CONSTANT -> dispatchConstant[col].getTimestamp(null);
+                    default -> Numbers.LONG_NULL;
+                };
             }
 
             @Override
             public Utf8Sequence getVarcharA(int col) {
-                int code = currentDispatchCode[col];
-                if (code == DISPATCH_BASE) return baseRecord.getVarcharA(col);
-                if (code == DISPATCH_KEY_SLOT) return keysMapRecord.getVarcharA(dispatchSlot[col]);
-                if (code == DISPATCH_PREV_SLOT) {
-                    if (hasPrevForCurrentGap) return prevRecord.getVarcharA(dispatchSlot[col]);
-                    return null;
-                }
-                if (code == DISPATCH_CONSTANT) return dispatchConstant[col].getVarcharA(null);
-                return null;
+                return switch (currentDispatchCode[col]) {
+                    case DISPATCH_BASE -> baseRecord.getVarcharA(col);
+                    case DISPATCH_KEY_SLOT -> keysMapRecord.getVarcharA(dispatchSlot[col]);
+                    case DISPATCH_PREV_SLOT -> hasPrevForCurrentGap ? prevRecord.getVarcharA(dispatchSlot[col]) : null;
+                    case DISPATCH_CONSTANT -> dispatchConstant[col].getVarcharA(null);
+                    default -> null;
+                };
             }
 
             @Override
             public Utf8Sequence getVarcharB(int col) {
-                int code = currentDispatchCode[col];
-                if (code == DISPATCH_BASE) return baseRecord.getVarcharB(col);
-                if (code == DISPATCH_KEY_SLOT) return keysMapRecord.getVarcharB(dispatchSlot[col]);
-                if (code == DISPATCH_PREV_SLOT) {
-                    if (hasPrevForCurrentGap) return prevRecord.getVarcharB(dispatchSlot[col]);
-                    return null;
-                }
-                if (code == DISPATCH_CONSTANT) return dispatchConstant[col].getVarcharB(null);
-                return null;
+                return switch (currentDispatchCode[col]) {
+                    case DISPATCH_BASE -> baseRecord.getVarcharB(col);
+                    case DISPATCH_KEY_SLOT -> keysMapRecord.getVarcharB(dispatchSlot[col]);
+                    case DISPATCH_PREV_SLOT -> hasPrevForCurrentGap ? prevRecord.getVarcharB(dispatchSlot[col]) : null;
+                    case DISPATCH_CONSTANT -> dispatchConstant[col].getVarcharB(null);
+                    default -> null;
+                };
             }
 
             @Override
             public int getVarcharSize(int col) {
-                int code = currentDispatchCode[col];
-                if (code == DISPATCH_BASE) return baseRecord.getVarcharSize(col);
-                if (code == DISPATCH_KEY_SLOT) return keysMapRecord.getVarcharSize(dispatchSlot[col]);
-                if (code == DISPATCH_PREV_SLOT) {
-                    if (hasPrevForCurrentGap) return prevRecord.getVarcharSize(dispatchSlot[col]);
-                    return -1;
-                }
-                if (code == DISPATCH_CONSTANT) return dispatchConstant[col].getVarcharSize(null);
-                return -1;
+                return switch (currentDispatchCode[col]) {
+                    case DISPATCH_BASE -> baseRecord.getVarcharSize(col);
+                    case DISPATCH_KEY_SLOT -> keysMapRecord.getVarcharSize(dispatchSlot[col]);
+                    case DISPATCH_PREV_SLOT -> hasPrevForCurrentGap ? prevRecord.getVarcharSize(dispatchSlot[col]) : -1;
+                    case DISPATCH_CONSTANT -> dispatchConstant[col].getVarcharSize(null);
+                    default -> -1;
+                };
             }
         }
 
