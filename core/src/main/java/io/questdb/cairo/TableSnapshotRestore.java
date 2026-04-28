@@ -1000,48 +1000,51 @@ public class TableSnapshotRestore implements QuietCloseable {
                 .$(", columns=").$(columnNamesSink)
                 .I$();
 
-        // Second pass: create index files, open writers, build parquetColumns list
+        // Second pass opens BitmapIndexWriters into indexWriters; third pass decodes
+        // and commits them. Wrap both in a single try/finally so a failure during
+        // pass two (e.g. a per-column open error mid-loop) frees writers added by
+        // earlier iterations along with the third-pass commit phase.
         int indexedColumnCount = 0;
-        for (int columnIndex = 0; columnIndex < columnCount; columnIndex++) {
-            int parquetColumnIndex = getIndexedParquetColumnIndex(metadata, parquetMetadata, columnVersionReader, columnIndex, partitionTimestamp, partitionRowCount);
-            if (parquetColumnIndex == -1) {
-                continue;
-            }
-
-            final int writerIndex = metadata.getWriterIndex(columnIndex);
-            final CharSequence columnName = metadata.getColumnName(columnIndex);
-            final long columnNameTxn = columnVersionReader.getColumnNameTxn(partitionTimestamp, writerIndex);
-            final int indexBlockCapacity = metadata.getIndexValueBlockCapacity(columnIndex);
-
-            // Remove existing index files
-            removeIndexFiles(ff, path, partitionPathLen, columnName, columnNameTxn);
-
-            // Create new index files
-            createIndexFiles(ff, path, partitionPathLen, columnName, columnNameTxn, indexBlockCapacity);
-
-            // Open BitmapIndexWriter
-            BitmapIndexWriter indexWriter = new BitmapIndexWriter(configuration);
-            try {
-                indexWriter.of(path.trimTo(partitionPathLen), columnName, columnNameTxn);
-            } catch (CairoException e) {
-                LOG.error().$("could not open bitmap index writer [path=").$(path.trimTo(partitionPathLen))
-                        .$(", column=").$(columnName)
-                        .$(", errno=").$(e.getErrno())
-                        .I$();
-                Misc.free(indexWriter);
-                throw e;
-            }
-            indexWriters.add(indexWriter);
-
-            // Add to parquet columns list for decoding
-            parquetColumns.add(parquetColumnIndex);
-            parquetColumns.add(ColumnType.SYMBOL);
-
-            indexedColumnCount++;
-        }
-
-        // Third pass: decode row groups and populate all indexes together
         try {
+            for (int columnIndex = 0; columnIndex < columnCount; columnIndex++) {
+                int parquetColumnIndex = getIndexedParquetColumnIndex(metadata, parquetMetadata, columnVersionReader, columnIndex, partitionTimestamp, partitionRowCount);
+                if (parquetColumnIndex == -1) {
+                    continue;
+                }
+
+                final int writerIndex = metadata.getWriterIndex(columnIndex);
+                final CharSequence columnName = metadata.getColumnName(columnIndex);
+                final long columnNameTxn = columnVersionReader.getColumnNameTxn(partitionTimestamp, writerIndex);
+                final int indexBlockCapacity = metadata.getIndexValueBlockCapacity(columnIndex);
+
+                // Remove existing index files
+                removeIndexFiles(ff, path, partitionPathLen, columnName, columnNameTxn);
+
+                // Create new index files
+                createIndexFiles(ff, path, partitionPathLen, columnName, columnNameTxn, indexBlockCapacity);
+
+                // Open BitmapIndexWriter
+                BitmapIndexWriter indexWriter = new BitmapIndexWriter(configuration);
+                try {
+                    indexWriter.of(path.trimTo(partitionPathLen), columnName, columnNameTxn);
+                } catch (CairoException e) {
+                    LOG.error().$("could not open bitmap index writer [path=").$(path.trimTo(partitionPathLen))
+                            .$(", column=").$(columnName)
+                            .$(", errno=").$(e.getErrno())
+                            .I$();
+                    Misc.free(indexWriter);
+                    throw e;
+                }
+                indexWriters.add(indexWriter);
+
+                // Add to parquet columns list for decoding
+                parquetColumns.add(parquetColumnIndex);
+                parquetColumns.add(ColumnType.SYMBOL);
+
+                indexedColumnCount++;
+            }
+
+            // Third pass: decode row groups and populate all indexes together
             final int rowGroupCount = parquetMetadata.getRowGroupCount();
 
             // We need to track columnTop per indexed column - re-iterate to get them

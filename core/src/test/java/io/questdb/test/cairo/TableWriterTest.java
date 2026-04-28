@@ -2910,6 +2910,72 @@ public class TableWriterTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testSwitchNativePartitionWithParquetMissingPmDoesNotOrphanNewDir() throws Exception {
+        assertMemoryLeak(() -> {
+            int N = 10000;
+            create(FF, PartitionBy.DAY, N);
+
+            Rnd rnd = new Rnd();
+            long ts = timestampDriver.parseFloorLiteral("2013-03-04T00:00:00.000Z");
+            long interval = 60000L * 1000L;
+
+            try (TableWriter writer = newOffPoolWriter(configuration, PRODUCT)) {
+                populateProducts(writer, rnd, ts, N, interval);
+                writer.commit();
+            }
+
+            final TableToken token;
+            long partitionTs;
+            long destTxn;
+            try (TableWriter writer = newOffPoolWriter(configuration, PRODUCT)) {
+                token = writer.getTableToken();
+                TxWriter tx = writer.getTxWriter();
+
+                partitionTs = tx.getPartitionTimestampByIndex(0);
+                int partitionIndex = tx.getPartitionIndex(partitionTs);
+                long partitionNameTxn = tx.getPartitionNameTxn(partitionIndex);
+
+                // Stamp data.parquet but NOT _pm in the source partition dir to
+                // simulate a partition predating Mig940 or one whose _pm was
+                // manually removed. The switch must abort and leave nothing on
+                // disk for the destination version.
+                try (Path p = new Path()) {
+                    p.of(configuration.getDbRoot()).concat(token);
+                    TableUtils.setPathForParquetPartition(p, timestampType, PartitionBy.DAY, partitionTs, partitionNameTxn);
+                    Assert.assertTrue("failed to touch data.parquet", FF.touch(p.$()));
+                }
+
+                // Bump writer.txn past partition.nameTxn so the switch creates
+                // a distinct destination dir.
+                populateRow(writer, rnd, tx.getMaxTimestamp(), timestampDriver.fromMicros(interval));
+                writer.commit();
+
+                // Mark the partition as parquet-generated so the switch passes
+                // the isPartitionParquetGenerated guard and reaches the _pm
+                // existence check.
+                tx.setPartitionParquetGenerated(partitionIndex, true);
+
+                destTxn = writer.getTxn();
+                int rc = writer.switchNativePartitionWithParquet(partitionTs, 0L);
+                Assert.assertEquals(TableWriter.SWITCH_NO_PARQUET, rc);
+            }
+
+            // The switch must clean up the destination dir it created before
+            // it discovered _pm was missing. Otherwise the hard-linked
+            // data.parquet remains on disk in a directory _txn never
+            // references.
+            try (Path p = new Path()) {
+                p.of(configuration.getDbRoot()).concat(token);
+                TableUtils.setPathForNativePartition(p, timestampType, PartitionBy.DAY, partitionTs, destTxn);
+                Assert.assertFalse(
+                        "orphan partition dir [path=" + p + "]",
+                        FF.exists(p.$())
+                );
+            }
+        });
+    }
+
+    @Test
     public void testTableDoesNotExist() throws Exception {
         assertMemoryLeak(() -> {
             try {
