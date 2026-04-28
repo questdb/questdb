@@ -116,7 +116,7 @@ public class OhlcBarGroupByFunction extends VarcharFunction implements UnaryFunc
             Function minFunc,
             Function maxFunc,
             @Nullable Function widthFunc,
-            boolean showLabels,
+            boolean hasLabels,
             int functionPosition,
             int minPosition,
             int widthPosition,
@@ -131,8 +131,8 @@ public class OhlcBarGroupByFunction extends VarcharFunction implements UnaryFunc
         this.minPosition = minPosition;
         this.widthPosition = widthPosition;
         this.maxBufferLength = maxBufferLength;
-        this.labelSink = showLabels ? new Utf8StringSink() : null;
-        if (showLabels) {
+        this.labelSink = hasLabels ? new Utf8StringSink() : null;
+        if (hasLabels) {
             this.maxWidth = Math.max(1, (maxBufferLength - LABEL_RESERVE) / 3);
         } else {
             this.maxWidth = maxBufferLength / 3;

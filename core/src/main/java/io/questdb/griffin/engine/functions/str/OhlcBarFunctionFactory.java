@@ -94,7 +94,7 @@ public class OhlcBarFunctionFactory implements FunctionFactory {
         private final int maxWidth;
         private final String name;
         private final int minArgPosition;
-        private final boolean showLabels;
+        private final boolean hasLabels;
         private final Utf8StringSink sinkA = new Utf8StringSink();
         private final Utf8StringSink sinkB = new Utf8StringSink();
         private final int widthArgIndex;
@@ -104,14 +104,14 @@ public class OhlcBarFunctionFactory implements FunctionFactory {
                 String name,
                 ObjList<Function> args,
                 IntList argPositions,
-                boolean showLabels,
+                boolean hasLabels,
                 int maxWidth
         ) {
             this.name = name;
             this.args = args;
-            this.showLabels = showLabels;
+            this.hasLabels = hasLabels;
             this.maxBufferLength = maxWidth * 3;
-            this.maxWidth = showLabels ? Math.max(1, (maxWidth * 3 - 120) / 3) : maxWidth;
+            this.maxWidth = hasLabels ? Math.max(1, (maxWidth * 3 - 120) / 3) : maxWidth;
             this.minArgPosition = argPositions.getQuick(4);
             this.widthArgIndex = args.size() > 6 ? 6 : -1;
             this.widthPosition = widthArgIndex >= 0 ? argPositions.getQuick(6) : 0;
@@ -219,7 +219,7 @@ public class OhlcBarFunctionFactory implements FunctionFactory {
                 sink.put(c);
             }
 
-            if (showLabels) {
+            if (hasLabels) {
                 sink.putAscii(" O:");
                 Numbers.append(sink, open);
                 sink.putAscii(" H:");

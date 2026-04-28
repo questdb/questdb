@@ -31,8 +31,6 @@ import org.junit.Test;
 
 public class OhlcBarGroupByFunctionFactoryTest extends AbstractCairoTest {
 
-    // --- Aggregate ohlc_bar(price, min, max [, width]) tests ---
-
     @Test
     public void testAggregateBearish() throws Exception {
         assertMemoryLeak(() -> {
@@ -120,6 +118,49 @@ public class OhlcBarGroupByFunctionFactoryTest extends AbstractCairoTest {
                             "2024-01-01T01:00:00.000000Z\t\n" +
                             "2024-01-01T02:00:00.000000Z\t\u2800\u2800\u2588\u2588\u2800\n",
                     "SELECT ts, ohlc_bar(price, 0, 50, 5) FROM t SAMPLE BY 1h FILL(NULL)"
+            );
+        });
+    }
+
+    @Test
+    public void testAggregateFillNone() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (price DOUBLE, ts TIMESTAMP) TIMESTAMP(ts)");
+            execute("""
+                    INSERT INTO t VALUES
+                    (10.0, '2024-01-01T00:10:00.000000Z'),
+                    (20.0, '2024-01-01T00:20:00.000000Z'),
+                    (30.0, '2024-01-01T02:10:00.000000Z'),
+                    (40.0, '2024-01-01T02:20:00.000000Z')
+                    """);
+            // FILL(NONE) skips hour 01:00 entirely
+            assertSql(
+                    "ts\tohlc_bar\n" +
+                            "2024-01-01T00:00:00.000000Z\t\u2800\u2588\u2588\u2800\u2800\n" +
+                            "2024-01-01T02:00:00.000000Z\t\u2800\u2800\u2588\u2588\u2800\n",
+                    "SELECT ts, ohlc_bar(price, 0, 50, 5) FROM t SAMPLE BY 1h FILL(NONE)"
+            );
+        });
+    }
+
+    @Test
+    public void testAggregateFillPrev() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (price DOUBLE, ts TIMESTAMP) TIMESTAMP(ts)");
+            execute("""
+                    INSERT INTO t VALUES
+                    (10.0, '2024-01-01T00:10:00.000000Z'),
+                    (20.0, '2024-01-01T00:20:00.000000Z'),
+                    (30.0, '2024-01-01T02:10:00.000000Z'),
+                    (40.0, '2024-01-01T02:20:00.000000Z')
+                    """);
+            // FILL(PREV) copies hour 00's candle into hour 01
+            assertSql(
+                    "ts\tohlc_bar\n" +
+                            "2024-01-01T00:00:00.000000Z\t\u2800\u2588\u2588\u2800\u2800\n" +
+                            "2024-01-01T01:00:00.000000Z\t\u2800\u2588\u2588\u2800\u2800\n" +
+                            "2024-01-01T02:00:00.000000Z\t\u2800\u2800\u2588\u2588\u2800\n",
+                    "SELECT ts, ohlc_bar(price, 0, 50, 5) FROM t SAMPLE BY 1h FILL(PREV)"
             );
         });
     }
@@ -320,8 +361,6 @@ public class OhlcBarGroupByFunctionFactoryTest extends AbstractCairoTest {
         });
     }
 
-    // --- SQL composition tests ---
-
     @Test
     public void testAggregateCTE() throws Exception {
         assertMemoryLeak(() -> {
@@ -511,8 +550,6 @@ public class OhlcBarGroupByFunctionFactoryTest extends AbstractCairoTest {
             );
         });
     }
-
-    // --- Scalar ohlc_bar(open, high, low, close, min, max [, width]) tests ---
 
     @Test
     public void testScalarBasicBearish() throws Exception {
