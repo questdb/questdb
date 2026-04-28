@@ -334,7 +334,7 @@ public abstract class AbstractPostingIndexReader implements IndexReader {
      * {@code txnAtSeal <= pinnedTableTxn}. Defaults to {@link Long#MAX_VALUE}
      * for callers that haven't yet been wired to plumb {@code _txn}.
      * <p>
-     * Must be called before {@link #of(...)} or before the next
+     * Must be called before {@code of()} or before the next
      * {@link #reloadConditionally()} for the new pin to take effect; the
      * current snapshot is not re-picked retroactively.
      */
