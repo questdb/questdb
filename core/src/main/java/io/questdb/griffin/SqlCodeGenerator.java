@@ -3523,7 +3523,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                         // targeted error instead of falling through to the generic
                         // "not enough fill values" count-mismatch message.
                         throw SqlException.$(only.position,
-                                "FILL(PREV(").put(only.rhs.token).put(")) cannot be broadcast across aggregates; ")
+                                        "FILL(PREV(").put(only.rhs.token).put(")) cannot be broadcast across aggregates; ")
                                 .put("specify one fill value per aggregate");
                     }
                     final boolean isBareBroadcastable = only != null
@@ -3958,31 +3958,13 @@ public class SqlCodeGenerator implements Mutable, Closeable {
     // symbol id). Wide types (LONG128/256, UUID, DECIMAL128/256) and
     // variable-width types stay on the existing recordAt path.
     private static boolean isFixedSizePrevSlotEligible(int srcTag) {
-        switch (srcTag) {
-            case ColumnType.BOOLEAN:
-            case ColumnType.BYTE:
-            case ColumnType.CHAR:
-            case ColumnType.DATE:
-            case ColumnType.DECIMAL16:
-            case ColumnType.DECIMAL32:
-            case ColumnType.DECIMAL64:
-            case ColumnType.DECIMAL8:
-            case ColumnType.DOUBLE:
-            case ColumnType.FLOAT:
-            case ColumnType.GEOBYTE:
-            case ColumnType.GEOINT:
-            case ColumnType.GEOLONG:
-            case ColumnType.GEOSHORT:
-            case ColumnType.INT:
-            case ColumnType.IPv4:
-            case ColumnType.LONG:
-            case ColumnType.SHORT:
-            case ColumnType.SYMBOL:
-            case ColumnType.TIMESTAMP:
-                return true;
-            default:
-                return false;
-        }
+        return switch (srcTag) {
+            case ColumnType.BOOLEAN, ColumnType.BYTE, ColumnType.CHAR, ColumnType.DATE, ColumnType.DECIMAL16,
+                 ColumnType.DECIMAL32, ColumnType.DECIMAL64, ColumnType.DECIMAL8, ColumnType.DOUBLE, ColumnType.FLOAT,
+                 ColumnType.GEOBYTE, ColumnType.GEOINT, ColumnType.GEOLONG, ColumnType.GEOSHORT, ColumnType.INT,
+                 ColumnType.IPv4, ColumnType.LONG, ColumnType.SHORT, ColumnType.SYMBOL, ColumnType.TIMESTAMP -> true;
+            default -> false;
+        };
     }
 
     private RecordCursorFactory generateFilter(RecordCursorFactory factory, IQueryModel model, SqlExecutionContext executionContext) throws SqlException {

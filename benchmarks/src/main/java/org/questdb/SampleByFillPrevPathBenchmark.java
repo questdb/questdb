@@ -290,7 +290,7 @@ public class SampleByFillPrevPathBenchmark {
 
     private String buildSql() {
         final String alignment = "FAST_PATH".equals(path) ? "CALENDAR" : "FIRST OBSERVATION";
-        return "SELECT sym1, "+ aggFunc + "(d), ts FROM tab SAMPLE BY " + BUCKET + " FILL(PREV) ALIGN TO " + alignment;
+        return "SELECT sym1, " + aggFunc + "(d), ts FROM tab SAMPLE BY " + BUCKET + " FILL(PREV) ALIGN TO " + alignment;
     }
 
     private int resolveWorkerCount() {
