@@ -46,10 +46,12 @@ import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
+import io.questdb.cairo.sql.StaticSymbolTable;
 import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.engine.functions.SymbolFunction;
 import io.questdb.griffin.engine.functions.TimestampFunction;
 import io.questdb.griffin.engine.functions.constants.ConstantFunction;
 import io.questdb.griffin.engine.functions.constants.NullConstant;
@@ -844,7 +846,20 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
                 }
                 int srcCol = symbolTableColIndices.getQuick(slot);
                 if (srcCol >= 0) {
-                    symbolCache[col] = baseCursor.getSymbolTable(srcCol);
+                    // Unwrap the SymbolFunction wrapper (e.g., MapSymbolColumn)
+                    // when it advertises a static inner table. The wrapper's
+                    // valueOf delegates to that inner table; caching the inner
+                    // table directly drops the per-cell wrapper hop that JFR
+                    // attributes to MapSymbolColumn.valueOf in WORST_CASE
+                    // sparse fills.
+                    SymbolTable st = baseCursor.getSymbolTable(srcCol);
+                    if (st instanceof SymbolFunction) {
+                        StaticSymbolTable inner = ((SymbolFunction) st).getStaticSymbolTable();
+                        if (inner != null) {
+                            st = inner;
+                        }
+                    }
+                    symbolCache[col] = st;
                 }
             }
             toTop();
