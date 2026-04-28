@@ -13048,7 +13048,7 @@ public class SampleByTest extends AbstractCairoTest {
                                 Sample By Fill
                                   stride: '30m'
                                   fill: null
-                                    Sort
+                                    Encode sort light
                                       keys: [k]
                                         Async Group By workers: 1
                                           keys: [k]
@@ -16898,7 +16898,7 @@ public class SampleByTest extends AbstractCairoTest {
                             Sample By Fill
                               stride: '30m'
                               fill: value
-                                Sort
+                                Encode sort light
                                   keys: [k]
                                     Async Group By workers: 1
                                       keys: [k]
@@ -17022,7 +17022,7 @@ public class SampleByTest extends AbstractCairoTest {
                                 Sample By Fill
                                   stride: '30m'
                                   fill: value
-                                    Sort
+                                    Encode sort light
                                       keys: [k]
                                         Async Group By workers: 1
                                           keys: [k]
@@ -17059,7 +17059,7 @@ public class SampleByTest extends AbstractCairoTest {
                                 Sample By Fill
                                   stride: '30m'
                                   fill: value
-                                    Sort
+                                    Encode sort light
                                       keys: [k]
                                         Async Group By workers: 1
                                           keys: [k]
@@ -18289,7 +18289,7 @@ public class SampleByTest extends AbstractCairoTest {
                     "    Sample By Fill\n" +
                     "      stride: '1m'\n" +
                     "      fill: " + fill + "\n" +
-                    "        Sort\n" +
+                    "        Encode sort light\n" +
                     "          keys: [tstmp]\n" +
                     "            Async JIT Group By workers: 1\n" +
                     "              keys: [tstmp,sym]\n" +

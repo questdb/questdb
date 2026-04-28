@@ -63,7 +63,7 @@ public class SampleByFillTest extends AbstractCairoTest {
                                 Sample By Fill
                                   stride: '1h'
                                   fill: null
-                                    Sort
+                                    Encode sort light
                                       keys: [ts]
                                         Async Group By workers: 1
                                           keys: [ts,city]
@@ -96,7 +96,7 @@ public class SampleByFillTest extends AbstractCairoTest {
                                 Sample By Fill
                                   stride: '1h'
                                   fill: null
-                                    Sort
+                                    Encode sort light
                                       keys: [ts]
                                         Async Group By workers: 1
                                           keys: [ts,city]
@@ -126,7 +126,7 @@ public class SampleByFillTest extends AbstractCairoTest {
                             Sample By Fill
                               stride: '1h'
                               fill: null
-                                Sort
+                                Encode sort light
                                   keys: [ts]
                                     Async Group By workers: 1
                                       keys: [ts,city]
@@ -159,7 +159,7 @@ public class SampleByFillTest extends AbstractCairoTest {
                                 Sample By Fill
                                   stride: '1h'
                                   fill: null
-                                    Sort
+                                    Encode sort light
                                       keys: [ts]
                                         Async Group By workers: 1
                                           keys: [ts,city]
@@ -188,7 +188,7 @@ public class SampleByFillTest extends AbstractCairoTest {
                               range: ('2024-01-01','2024-01-01T04:00:00.000000Z')
                               stride: '1h'
                               fill: null
-                                Sort
+                                Encode sort light
                                   keys: [ts]
                                     Async Group By workers: 1
                                       keys: [ts]
@@ -1420,7 +1420,7 @@ public class SampleByFillTest extends AbstractCairoTest {
                             Sample By Fill
                               stride: '1m'
                               fill: null
-                                Sort
+                                Encode sort light
                                   keys: [ts]
                                     Async JIT Group By workers: 1
                                       keys: [ts,s]
@@ -2689,7 +2689,7 @@ public class SampleByFillTest extends AbstractCairoTest {
                             Sample By Fill
                               stride: '1h'
                               fill: mixed
-                                Sort
+                                Encode sort light
                                   keys: [ts]
                                     Async Group By workers: 1
                                       keys: [ts]
@@ -2805,7 +2805,7 @@ public class SampleByFillTest extends AbstractCairoTest {
                             Sample By Fill
                               stride: '1h'
                               fill: prev
-                                Sort
+                                Encode sort light
                                   keys: [ts]
                                     Async Group By workers: 1
                                       keys: [ts]
@@ -3770,6 +3770,9 @@ public class SampleByFillTest extends AbstractCairoTest {
         //
         // AbstractCairoTest.tearDown() restores property overrides via
         // Overrides.reset(), so no try/finally restore is needed here.
+        // Force the codegen to pick SortedRecordCursorFactory; the default
+        // light_encoded path does not exercise this construct-throw contract.
+        setProperty(PropertyKey.CAIRO_SQL_SAMPLEBY_FILL_SORT_STRATEGY, "full_recordchain");
         setProperty(PropertyKey.CAIRO_SQL_SORT_KEY_MAX_PAGES, -1);
 
         assertMemoryLeak(() -> {
@@ -3918,7 +3921,7 @@ public class SampleByFillTest extends AbstractCairoTest {
                             Sample By Fill
                               stride: '1h'
                               fill: mixed
-                                Sort
+                                Encode sort light
                                   keys: [ts]
                                     Async Group By workers: 1
                                       keys: [ts]
@@ -4095,7 +4098,7 @@ public class SampleByFillTest extends AbstractCairoTest {
                               range: (2024-05-31T23:00:00.000000Z,2024-06-01T03:00:00.000000Z)
                               stride: '1h'
                               fill: null
-                                Sort
+                                Encode sort light
                                   keys: [ts]
                                     Async Group By workers: 1
                                       keys: [ts]
@@ -4203,6 +4206,158 @@ public class SampleByFillTest extends AbstractCairoTest {
                             "(SELECT ts, sum(val) FROM t WHERE city='Paris' " +
                             "SAMPLE BY 1h FILL(NULL) ALIGN TO CALENDAR)"
             );
+        });
+    }
+
+    @Test
+    public void testFillKeyedLong() throws Exception {
+        // LONG key column. Exercises FillRecord.getLong's FILL_KEY arm with a
+        // signed-long key carried through gap rows. Two keys, mid-bucket gap,
+        // FILL(NULL) -- gap rows must keep the key value, not zero or LONG_NULL.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (k LONG, v DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO t VALUES " +
+                    "(1_000_001L, 10.0, '2024-01-01T00:00:00.000000Z')," +
+                    "(2_000_002L, 20.0, '2024-01-01T00:00:00.000000Z')," +
+                    "(1_000_001L, 11.0, '2024-01-01T02:00:00.000000Z')," +
+                    "(2_000_002L, 21.0, '2024-01-01T02:00:00.000000Z')");
+            assertQueryNoLeakCheck(
+                    """
+                            ts\tk\tsum
+                            2024-01-01T00:00:00.000000Z\t1000001\t10.0
+                            2024-01-01T00:00:00.000000Z\t2000002\t20.0
+                            2024-01-01T01:00:00.000000Z\t1000001\tnull
+                            2024-01-01T01:00:00.000000Z\t2000002\tnull
+                            2024-01-01T02:00:00.000000Z\t1000001\t11.0
+                            2024-01-01T02:00:00.000000Z\t2000002\t21.0
+                            """,
+                    "SELECT ts, k, sum(v) FROM t SAMPLE BY 1h FILL(NULL) ALIGN TO CALENDAR",
+                    "ts", false, false
+            );
+        });
+    }
+
+    @Test
+    public void testFillPrevCrossColumnStringSource() throws Exception {
+        // Cross-column FILL(PREV(s)) where source is a first(STRING) aggregate.
+        // STRING is variable-width, so the codegen routes through DISPATCH_PREV_SLOT
+        // (recordAt-based) rather than the fixed-size cache slot. Verifies the
+        // string aggregate's per-row value carries into the target column on gap rows.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (s STRING, val DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO x VALUES " +
+                    "('alpha', 1.0, '2024-01-01T00:00:00.000000Z')," +
+                    "('beta',  3.0, '2024-01-01T02:00:00.000000Z')");
+            // At 00:00 (data row): s1='alpha', tag='alpha'.
+            // At 01:00 (gap): s1=PREV(s1)='alpha', tag=PREV(s1)='alpha'.
+            // At 02:00 (data row): s1='beta', tag='beta' (data overrides fill).
+            assertQueryNoLeakCheck(
+                    """
+                            ts\ts1\ttag
+                            2024-01-01T00:00:00.000000Z\talpha\talpha
+                            2024-01-01T01:00:00.000000Z\talpha\talpha
+                            2024-01-01T02:00:00.000000Z\tbeta\tbeta
+                            """,
+                    "SELECT ts, first(s) AS s1, first(s) AS tag " +
+                            "FROM x SAMPLE BY 1h FILL(PREV, PREV(s1)) ALIGN TO CALENDAR",
+                    "ts", false, false
+            );
+        });
+    }
+
+    @Test
+    public void testFillPrevCrossColumnVarcharSource() throws Exception {
+        // Cross-column FILL(PREV(v)) where source is a first(VARCHAR) aggregate.
+        // VARCHAR is variable-width, exercising the DISPATCH_PREV_SLOT path with
+        // cross-column targeting -- the source's prior value lands in the target
+        // through baseCursor.recordAt + prevRecord.getVarcharA dispatch.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (v VARCHAR, val DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO x VALUES " +
+                    "('alpha', 1.0, '2024-01-01T00:00:00.000000Z')," +
+                    "('beta',  3.0, '2024-01-01T02:00:00.000000Z')");
+            assertQueryNoLeakCheck(
+                    """
+                            ts\tv1\ttag
+                            2024-01-01T00:00:00.000000Z\talpha\talpha
+                            2024-01-01T01:00:00.000000Z\talpha\talpha
+                            2024-01-01T02:00:00.000000Z\tbeta\tbeta
+                            """,
+                    "SELECT ts, first(v) AS v1, first(v) AS tag " +
+                            "FROM x SAMPLE BY 1h FILL(PREV, PREV(v1)) ALIGN TO CALENDAR",
+                    "ts", false, false
+            );
+        });
+    }
+
+    @Test
+    public void testFillPrevNegativeTimestamps() throws Exception {
+        // SAMPLE BY FILL with FROM anchored before 1970. The legacy cursor path
+        // rejected this with "cannot FILL for the timestamps before 1970"; the
+        // GROUP BY fast path routes through timestamp_floor_utc which handles
+        // negative timestamps natively. Designated-timestamp column rules
+        // forbid storing pre-1970 rows, so the data lives at 1970-01-02 and
+        // FROM/TO drives the pre-1970 fill grid.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (v DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO t VALUES " +
+                    "(10.0, '1970-01-02T00:00:00.000000Z')");
+            assertQueryNoLeakCheck(
+                    """
+                            ts\tfirst
+                            1969-12-31T22:00:00.000000Z\tnull
+                            1969-12-31T23:00:00.000000Z\tnull
+                            1970-01-01T00:00:00.000000Z\tnull
+                            1970-01-01T01:00:00.000000Z\tnull
+                            1970-01-01T02:00:00.000000Z\tnull
+                            1970-01-01T03:00:00.000000Z\tnull
+                            1970-01-01T04:00:00.000000Z\tnull
+                            1970-01-01T05:00:00.000000Z\tnull
+                            1970-01-01T06:00:00.000000Z\tnull
+                            1970-01-01T07:00:00.000000Z\tnull
+                            1970-01-01T08:00:00.000000Z\tnull
+                            1970-01-01T09:00:00.000000Z\tnull
+                            1970-01-01T10:00:00.000000Z\tnull
+                            1970-01-01T11:00:00.000000Z\tnull
+                            1970-01-01T12:00:00.000000Z\tnull
+                            1970-01-01T13:00:00.000000Z\tnull
+                            1970-01-01T14:00:00.000000Z\tnull
+                            1970-01-01T15:00:00.000000Z\tnull
+                            1970-01-01T16:00:00.000000Z\tnull
+                            1970-01-01T17:00:00.000000Z\tnull
+                            1970-01-01T18:00:00.000000Z\tnull
+                            1970-01-01T19:00:00.000000Z\tnull
+                            1970-01-01T20:00:00.000000Z\tnull
+                            1970-01-01T21:00:00.000000Z\tnull
+                            1970-01-01T22:00:00.000000Z\tnull
+                            1970-01-01T23:00:00.000000Z\tnull
+                            1970-01-02T00:00:00.000000Z\t10.0
+                            """,
+                    "SELECT ts, first(v) FROM t " +
+                            "SAMPLE BY 1h FROM '1969-12-31T22:00:00.000000Z' TO '1970-01-02T01:00:00.000000Z' " +
+                            "FILL(NULL) ALIGN TO CALENDAR",
+                    "ts", false, false
+            );
+        });
+    }
+
+    @Test
+    public void testFillRejectInvalidQuotedTimestamp() throws Exception {
+        // Quoted-but-malformed timestamp literal hits parseQuotedLiteral's
+        // NumericException catch in generateFill, which rethrows as
+        // SqlException("invalid fill value: ..."). Pins the error path on the
+        // new fast path; testTimestampFillValueUnquoted (in SampleByTest)
+        // covers the unquoted-literal sibling rejection.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (val DOUBLE, mark TIMESTAMP, ts TIMESTAMP) " +
+                    "TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO t VALUES " +
+                    "(1.0, '2024-01-01T00:00:00.000000Z'::TIMESTAMP, '2024-01-01T00:00:00.000000Z')," +
+                    "(2.0, '2024-01-01T01:00:00.000000Z'::TIMESTAMP, '2024-01-01T01:00:00.000000Z')");
+            String sql = "SELECT ts, first(val), first(mark) " +
+                    "FROM t SAMPLE BY 1h FILL(NULL, 'not-a-timestamp') ALIGN TO CALENDAR";
+            int badLiteralPos = sql.indexOf("'not-a-timestamp'");
+            assertExceptionNoLeakCheck(sql, badLiteralPos, "invalid fill value: 'not-a-timestamp'");
         });
     }
 }

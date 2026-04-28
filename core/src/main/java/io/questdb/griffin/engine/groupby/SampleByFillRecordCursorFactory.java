@@ -53,7 +53,6 @@ import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.SymbolFunction;
 import io.questdb.griffin.engine.functions.TimestampFunction;
-import io.questdb.griffin.engine.functions.constants.ConstantFunction;
 import io.questdb.griffin.engine.functions.constants.NullConstant;
 import io.questdb.std.BinarySequence;
 import io.questdb.std.Decimal128;
@@ -726,7 +725,14 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
                 if (isBaseCursorExhausted && !hasExplicitTo) {
                     return false;
                 }
-                // Next bucket is a gap — emit fills for all keys
+                // Reaching here implies the next bucket has no data of its own.
+                // Either a real data row is queued at a strictly later timestamp
+                // (gap before pending row), or the base cursor is exhausted and
+                // an explicit TO is driving the trailing fill window.
+                assert (hasPendingRow && pendingTs > nextBucketTimestamp)
+                        || (isBaseCursorExhausted && hasExplicitTo)
+                        : "next bucket must be a confirmed gap before re-entering inner emit";
+                // Next bucket is a gap -- emit fills for all keys
                 isEmittingFills = true;
                 keysMapCursor.toTop();
             }
@@ -1565,7 +1571,13 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
             }
         }
 
-        private static class FillTimestampConstant extends TimestampFunction implements ConstantFunction {
+        private static class FillTimestampConstant extends TimestampFunction {
+            // The cursor mutates `value` per gap bucket and reads it back through
+            // FillRecord.getTimestamp's DISPATCH_TIMESTAMP_FILL arm. The class
+            // intentionally does NOT implement ConstantFunction: `value` is not
+            // constant, and the framework never sees this instance, so the
+            // inherited Function defaults (isConstant() == false,
+            // isThreadSafe() == false) match the actual semantics.
             long value;
 
             FillTimestampConstant(int timestampType) {

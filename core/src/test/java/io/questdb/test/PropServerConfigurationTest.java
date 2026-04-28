@@ -34,6 +34,7 @@ import io.questdb.cairo.CairoConfigurationWrapper;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.CommitMode;
 import io.questdb.cairo.PartitionBy;
+import io.questdb.cairo.SampleBySortStrategy;
 import io.questdb.cairo.SecurityContext;
 import io.questdb.cairo.SqlJitMode;
 import io.questdb.cairo.TableUtils;
@@ -1745,6 +1746,42 @@ public class PropServerConfigurationTest {
 
             PropServerConfiguration configuration = newPropServerConfiguration(properties);
             Assert.assertNull(configuration.getHttpServerConfiguration().getStaticContentProcessorConfiguration().getKeepAliveHeader());
+        }
+    }
+
+    @Test
+    public void testSampleByFillSortStrategy() throws Exception {
+        Properties properties = new Properties();
+
+        // Empty value falls back to the LIGHT_ENCODED default.
+        properties.setProperty("cairo.sql.sampleby.fill.sort.strategy", "");
+        PropServerConfiguration configuration = newPropServerConfiguration(properties);
+        Assert.assertEquals(SampleBySortStrategy.LIGHT_ENCODED, configuration.getCairoConfiguration().getSampleByFillSortStrategy());
+
+        properties.setProperty("cairo.sql.sampleby.fill.sort.strategy", "light_encoded");
+        configuration = newPropServerConfiguration(properties);
+        Assert.assertEquals(SampleBySortStrategy.LIGHT_ENCODED, configuration.getCairoConfiguration().getSampleByFillSortStrategy());
+
+        properties.setProperty("cairo.sql.sampleby.fill.sort.strategy", "full_encoded");
+        configuration = newPropServerConfiguration(properties);
+        Assert.assertEquals(SampleBySortStrategy.FULL_ENCODED, configuration.getCairoConfiguration().getSampleByFillSortStrategy());
+
+        properties.setProperty("cairo.sql.sampleby.fill.sort.strategy", "light_recordchain");
+        configuration = newPropServerConfiguration(properties);
+        Assert.assertEquals(SampleBySortStrategy.LIGHT_RECORDCHAIN, configuration.getCairoConfiguration().getSampleByFillSortStrategy());
+
+        properties.setProperty("cairo.sql.sampleby.fill.sort.strategy", "full_recordchain");
+        configuration = newPropServerConfiguration(properties);
+        Assert.assertEquals(SampleBySortStrategy.FULL_RECORDCHAIN, configuration.getCairoConfiguration().getSampleByFillSortStrategy());
+
+        // Strict validation: any unknown value fails fast.
+        properties.setProperty("cairo.sql.sampleby.fill.sort.strategy", "bogus");
+        try {
+            newPropServerConfiguration(properties);
+            Assert.fail("Expected ServerConfigurationException for invalid strategy");
+        } catch (ServerConfigurationException e) {
+            TestUtils.assertContains(e.getMessage(), "cairo.sql.sampleby.fill.sort.strategy");
+            TestUtils.assertContains(e.getMessage(), "bogus");
         }
     }
 

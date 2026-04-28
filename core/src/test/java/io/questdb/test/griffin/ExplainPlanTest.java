@@ -6618,7 +6618,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                         Sample By Fill
                           stride: '1h'
                           fill: null
-                            Sort
+                            Encode sort light
                               keys: [ts]
                                 Async Group By workers: 1
                                   keys: [ts]
@@ -6636,7 +6636,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                         Sample By Fill
                           stride: '1h'
                           fill: null
-                            Sort
+                            Encode sort light
                               keys: [ts]
                                 Async Group By workers: 1
                                   keys: [ts]
@@ -6668,7 +6668,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                         Sample By Fill
                           stride: '1h'
                           fill: prev
-                            Sort
+                            Encode sort light
                               keys: [ts]
                                 Async Group By workers: 1
                                   keys: [s,ts]
@@ -6699,7 +6699,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                         Sample By Fill
                           stride: '1h'
                           fill: prev
-                            Sort
+                            Encode sort light
                               keys: [ts]
                                 Async Group By workers: 1
                                   keys: [ts]
@@ -6716,7 +6716,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                         Sample By Fill
                           stride: '1h'
                           fill: prev
-                            Sort
+                            Encode sort light
                               keys: [ts]
                                 GroupBy vectorized: false
                                   keys: [ts]
@@ -6751,7 +6751,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                         Sample By Fill
                           stride: '1h'
                           fill: value
-                            Sort
+                            Encode sort light
                               keys: [ts]
                                 Async Group By workers: 1
                                   keys: [s,ts]
@@ -6782,7 +6782,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                         Sample By Fill
                           stride: '1h'
                           fill: value
-                            Sort
+                            Encode sort light
                               keys: [ts]
                                 Async Group By workers: 1
                                   keys: [ts]
@@ -6800,7 +6800,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                         Sample By Fill
                           stride: '1h'
                           fill: value
-                            Sort
+                            Encode sort light
                               keys: [ts]
                                 Async Group By workers: 1
                                   keys: [ts]
@@ -7062,7 +7062,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                         Sample By Fill
                           stride: '1h'
                           fill: null
-                            Sort
+                            Encode sort light
                               keys: [ts]
                                 Async Group By workers: 1
                                   keys: [l,ts]
@@ -7119,7 +7119,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                         Sample By Fill
                           stride: '1d'
                           fill: value
-                            Sort
+                            Encode sort light
                               keys: [ts]
                                 Async Group By workers: 1
                                   keys: [l,ts]
@@ -7151,7 +7151,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                         Sample By Fill
                           stride: '1d'
                           fill: prev
-                            Sort
+                            Encode sort light
                               keys: [ts]
                                 Async Group By workers: 1
                                   keys: [l,ts]

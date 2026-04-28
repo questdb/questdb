@@ -42,6 +42,7 @@ import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.ProjectableRecordCursorFactory;
 import io.questdb.cairo.RecordSink;
 import io.questdb.cairo.RecordSinkFactory;
+import io.questdb.cairo.SampleBySortStrategy;
 import io.questdb.cairo.SqlJitMode;
 import io.questdb.cairo.SymbolMapReader;
 import io.questdb.cairo.TableColumnMetadata;
@@ -3845,19 +3846,19 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             // the optimizer strips the ORDER BY added by rewriteSampleBy before
             // code generation runs.
             //
-            // Sort strategy is parameterised through the
-            // "questdb.sample.by.sort" system property so benchmarks can
-            // compare the four (light/full) x (encoded/recordchain) factory
-            // combinations. Defaults to light_encoded, the cheapest when the
-            // base supports random access and the sort key is encodable -- both
-            // hold for a single-TIMESTAMP sort over AGB output.
+            // Sort strategy comes from cairo.sql.sampleby.fill.sort.strategy.
+            // The default LIGHT_ENCODED is the cheapest when the base supports
+            // random access and the sort key is encodable -- both hold for a
+            // single-TIMESTAMP sort over Async/GroupBy output. Strict validation
+            // at startup rejects unknown values, so the switch below is
+            // exhaustive over the four constants.
             final RecordMetadata sortMetadata = groupByFactory.getMetadata();
             listColumnFilterA.clear();
             listColumnFilterA.add(timestampIndex + 1); // positive = ascending
             entityColumnFilter.of(sortMetadata.getColumnCount());
-            final String sortChoice = System.getProperty("questdb.sample.by.sort", "light_encoded");
-            switch (sortChoice) {
-                case "light_encoded" -> {
+            final int sortStrategy = configuration.getSampleByFillSortStrategy();
+            switch (sortStrategy) {
+                case SampleBySortStrategy.LIGHT_ENCODED -> {
                     assert SortKeyEncoder.isSupported(sortMetadata, listColumnFilterA)
                             && groupByFactory.recordCursorSupportsRandomAccess();
                     groupByFactory = new EncodedSortLightRecordCursorFactory(
@@ -3867,7 +3868,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                             listColumnFilterA.copy()
                     );
                 }
-                case "full_encoded" -> {
+                case SampleBySortStrategy.FULL_ENCODED -> {
                     assert SortKeyEncoder.isSupported(sortMetadata, listColumnFilterA);
                     groupByFactory = new EncodedSortRecordCursorFactory(
                             configuration,
@@ -3877,7 +3878,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                             listColumnFilterA.copy()
                     );
                 }
-                case "light_recordchain" -> {
+                case SampleBySortStrategy.LIGHT_RECORDCHAIN -> {
                     assert groupByFactory.recordCursorSupportsRandomAccess();
                     groupByFactory = new SortedLightRecordCursorFactory(
                             configuration,
@@ -3887,7 +3888,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                             listColumnFilterA.copy()
                     );
                 }
-                case "full_recordchain" -> groupByFactory = new SortedRecordCursorFactory(
+                case SampleBySortStrategy.FULL_RECORDCHAIN -> groupByFactory = new SortedRecordCursorFactory(
                         configuration,
                         sortMetadata,
                         groupByFactory,
@@ -3895,9 +3896,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                         recordComparatorCompiler.newInstance(sortMetadata, listColumnFilterA),
                         listColumnFilterA.copy()
                 );
-                default -> throw new IllegalStateException(
-                        "unknown questdb.sample.by.sort value: " + sortChoice
-                );
+                default -> throw SqlException.$(0, "unknown sample-by fill sort strategy: ").put(sortStrategy);
             }
 
             final GenericRecordMetadata fillMetadata = GenericRecordMetadata.copyOfNew(groupByFactory.getMetadata());

@@ -4301,7 +4301,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                       range: ('2017-12-20','2018-01-31')
                       stride: '5d'
                       fill: null
-                        Sort
+                        Encode sort light
                           keys: [ts]
                             Async Group By workers: 1
                               keys: [ts]
@@ -4441,7 +4441,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                       range: ('2017-12-20','2018-01-31')
                       stride: '5d'
                       fill: null
-                        Sort
+                        Encode sort light
                           keys: [ts]
                             Async Group By workers: 1
                               keys: [ts]
@@ -4480,7 +4480,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                       range: ('2017-12-20','2018-01-31')
                       stride: '5d'
                       fill: value
-                        Sort
+                        Encode sort light
                           keys: [ts]
                             Async Group By workers: 1
                               keys: [ts]
@@ -4519,7 +4519,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                       range: (,'2018-01-31')
                       stride: '5d'
                       fill: null
-                        Sort
+                        Encode sort light
                           keys: [ts]
                             Async Group By workers: 1
                               keys: [ts]
@@ -4556,7 +4556,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                       range: ('2017-12-20',)
                       stride: '5d'
                       fill: null
-                        Sort
+                        Encode sort light
                           keys: [ts]
                             Async Group By workers: 1
                               keys: [ts]
@@ -4599,7 +4599,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                           range: ('2017-12-20','2018-01-31')
                           stride: '5d'
                           fill: null
-                            Sort
+                            Encode sort light
                               keys: [ts]
                                 Async Group By workers: 1
                                   keys: [ts]
@@ -4615,7 +4615,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                               range: ('2017-12-20','2018-01-31')
                               stride: '5d'
                               fill: null
-                                Sort
+                                Encode sort light
                                   keys: [ts]
                                     Async Group By workers: 1
                                       keys: [ts]
@@ -4636,7 +4636,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                           range: ('2017-12-20','2018-01-31')
                           stride: '5d'
                           fill: null
-                            Sort
+                            Encode sort light
                               keys: [ts]
                                 Async Group By workers: 1
                                   keys: [ts]
@@ -4652,7 +4652,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                               range: ('2017-12-20','2018-01-31')
                               stride: '5d'
                               fill: null
-                                Sort
+                                Encode sort light
                                   keys: [ts]
                                     Async Group By workers: 1
                                       keys: [ts]
@@ -4689,7 +4689,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                           range: ('2017-12-20','2018-01-31')
                           stride: '5d'
                           fill: null
-                            Sort
+                            Encode sort light
                               keys: [ts]
                                 Async Group By workers: 1
                                   keys: [ts]
@@ -4705,7 +4705,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                               range: ('2017-12-20','2018-01-31')
                               stride: '5d'
                               fill: null
-                                Sort
+                                Encode sort light
                                   keys: [ts]
                                     Async Group By workers: 1
                                       keys: [ts]
@@ -4737,7 +4737,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                           range: ('2017-12-20','2018-01-31')
                           stride: '5d'
                           fill: null
-                            Sort
+                            Encode sort light
                               keys: [ts]
                                 Async Group By workers: 1
                                   keys: [ts]
@@ -4753,7 +4753,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                               range: ('2017-12-20','2018-01-31')
                               stride: '5d'
                               fill: null
-                                Sort
+                                Encode sort light
                                   keys: [ts]
                                     Async Group By workers: 1
                                       keys: [ts]
@@ -4800,7 +4800,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                       range: ('2017-12-20','2018-01-31')
                       stride: '5d'
                       fill: null
-                        Sort
+                        Encode sort light
                           keys: [ts]
                             GroupBy vectorized: false
                               keys: [ts]
@@ -4852,7 +4852,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                                       range: ('2017-12-20','2018-01-31')
                                       stride: '5d'
                                       fill: null
-                                        Sort
+                                        Encode sort light
                                           keys: [five_days]
                                             Async Group By workers: 1
                                               keys: [five_days]
@@ -4867,7 +4867,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                                       range: ('2017-12-20','2018-01-31')
                                       stride: '10d'
                                       fill: null
-                                        Sort
+                                        Encode sort light
                                           keys: [ten_days]
                                             Async Group By workers: 1
                                               keys: [ten_days]
@@ -5038,7 +5038,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                       range: ('2017-12-20',)
                       stride: '5d'
                       fill: null
-                        Sort
+                        Encode sort light
                           keys: [ts]
                             Async Group By workers: 1
                               keys: [ts]
@@ -5057,7 +5057,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                       range: ('2017-12-20',)
                       stride: '5d'
                       fill: null
-                        Sort
+                        Encode sort light
                           keys: [ts]
                             Async Group By workers: 1
                               keys: [ts]
@@ -5098,7 +5098,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                                       range: ('2017-12-20','2018-01-31')
                                       stride: '5d'
                                       fill: null
-                                        Sort
+                                        Encode sort light
                                           keys: [ts]
                                             Async Group By workers: 1
                                               keys: [ts]
@@ -5113,7 +5113,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                                       range: ('2017-12-20','2018-01-31')
                                       stride: '5d'
                                       fill: null
-                                        Sort
+                                        Encode sort light
                                           keys: [ts]
                                             Async Group By workers: 1
                                               keys: [ts]
@@ -5165,7 +5165,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                                       range: ('2017-12-20','2018-01-31')
                                       stride: '5d'
                                       fill: null
-                                        Sort
+                                        Encode sort light
                                           keys: [ts]
                                             Async Group By workers: 1
                                               keys: [ts]
@@ -5180,7 +5180,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                                       range: ('2017-12-20','2018-01-31')
                                       stride: '5d'
                                       fill: null
-                                        Sort
+                                        Encode sort light
                                           keys: [ts]
                                             Async Group By workers: 1
                                               keys: [ts]
@@ -5305,7 +5305,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                               range: ('2017-12-20','2018-01-31')
                               stride: '5d'
                               fill: null
-                                Sort
+                                Encode sort light
                                   keys: [five_days]
                                     Async Group By workers: 1
                                       keys: [five_days]
