@@ -300,7 +300,12 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
     private static class SampleByFillCursor implements NoRandomAccessRecordCursor {
         // Dispatch codes compiled once per query from fillModes + outputColToKeyPos +
         // constantFills + timestampIndex into flat per-column arrays consumed by
-        // FillRecord.getXxx on every fill-row read. See compileDispatchPlan().
+        // FillRecord.getXxx on every read. See compileDispatchPlan(). Two
+        // parallel tables exist: fillDispatchCode encodes the per-column behaviour
+        // for fill rows, dataDispatchCode is uniformly DISPATCH_BASE so data rows
+        // pass through to baseRecord.getXxx. currentDispatchCode points at the
+        // active table and is swapped at row boundaries.
+        private static final int DISPATCH_BASE = 6;
         private static final int DISPATCH_CONSTANT = 0;
         private static final int DISPATCH_KEY_SLOT = 1;
         private static final int DISPATCH_NULL = 2;
@@ -318,9 +323,11 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
         private final long calendarOffset;
         private SqlExecutionCircuitBreaker circuitBreaker;
         private final ObjList<Function> constantFills;
-        private int[] dispatchCode;
+        private int[] currentDispatchCode;
+        private int[] dataDispatchCode;
         private Function[] dispatchConstant;
         private int[] dispatchSlot;
+        private int[] fillDispatchCode;
         private final IntList fillModes;
         private final FillRecord fillRecord = new FillRecord();
         private final FillTimestampConstant fillTimestampFunc;
@@ -482,7 +489,7 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
 
                 if (dataTs == nextBucketTimestamp) {
                     hasPendingRow = false;
-                    fillRecord.isGapFilling = false;
+                    currentDispatchCode = dataDispatchCode;
                     if (keysMap != null) {
                         hasDataForCurrentBucket = true;
                         MapKey mapKey = keysMap.withKey();
@@ -534,7 +541,7 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
                     }
 
                     // Non-keyed gap
-                    fillRecord.isGapFilling = true;
+                    currentDispatchCode = fillDispatchCode;
                     fillTimestampFunc.value = nextBucketTimestamp;
                     hasPrevForCurrentGap = hasSimplePrev;
                     if (hasPrevForCurrentGap && needsPrevPositioning) {
@@ -611,27 +618,34 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
             // Precompute per-output-column dispatch for FillRecord.getXxx once
             // per cursor. Inputs (fillModes, outputColToKeyPos, constantFills,
             // timestampIndex) are query-constants; the per-row FillRecord code
-            // consumes the flat dispatchCode/dispatchSlot/dispatchConstant arrays
-            // directly and avoids the 2-3 IntList.getQuick lookups + 4-branch
-            // conditional chain that dominated the 805-sample IntList.getQuick
-            // leaf in the JFR baseline.
-            if (dispatchCode == null || dispatchCode.length < columnCount) {
-                dispatchCode = new int[columnCount];
+            // consumes the flat fillDispatchCode / dataDispatchCode /
+            // dispatchSlot / dispatchConstant arrays directly. The two
+            // dispatch tables let row boundaries swap a single pointer
+            // (currentDispatchCode) instead of toggling an isGapFilling
+            // flag that every getter would have to consult per cell.
+            if (fillDispatchCode == null || fillDispatchCode.length < columnCount) {
+                fillDispatchCode = new int[columnCount];
+                dataDispatchCode = new int[columnCount];
                 dispatchSlot = new int[columnCount];
                 dispatchConstant = new Function[columnCount];
             }
+            // Data rows always pass through to baseRecord. The timestamp
+            // column uses the same arm because the existing FillRecord
+            // already returned baseRecord.getTimestamp(col) for non-fill
+            // rows.
+            Arrays.fill(dataDispatchCode, 0, columnCount, DISPATCH_BASE);
             for (int col = 0; col < columnCount; col++) {
                 dispatchConstant[col] = null;
                 if (col == timestampIndex) {
-                    dispatchCode[col] = DISPATCH_TIMESTAMP_FILL;
+                    fillDispatchCode[col] = DISPATCH_TIMESTAMP_FILL;
                     continue;
                 }
                 int mode = fillModes.getQuick(col);
                 if (mode == FILL_KEY) {
-                    dispatchCode[col] = DISPATCH_KEY_SLOT;
+                    fillDispatchCode[col] = DISPATCH_KEY_SLOT;
                     dispatchSlot[col] = outputColToKeyPos.getQuick(col);
                 } else if (mode >= 0 && outputColToKeyPos.getQuick(mode) >= 0) {
-                    dispatchCode[col] = DISPATCH_KEY_SLOT;
+                    fillDispatchCode[col] = DISPATCH_KEY_SLOT;
                     dispatchSlot[col] = outputColToKeyPos.getQuick(mode);
                 } else if (mode == FILL_PREV_SELF || mode >= 0) {
                     int slot = prevValueSlot.getQuick(col);
@@ -642,23 +656,27 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
                         // keysMapRecord.getXxx, with SymbolTable resolution
                         // through the cached symbolCache for SYMBOL output
                         // cols in getSymA/getSymB).
-                        dispatchCode[col] = DISPATCH_PREV_CACHE_SLOT;
+                        fillDispatchCode[col] = DISPATCH_PREV_CACHE_SLOT;
                         dispatchSlot[col] = slot;
                     } else {
                         // Variable-width or otherwise non-cacheable source
                         // (VARCHAR, STRING, BIN, ARRAY) -- fall back to the
                         // recordAt-based PREV path that materialises the row
                         // through prevRecord.
-                        dispatchCode[col] = DISPATCH_PREV_SLOT;
+                        fillDispatchCode[col] = DISPATCH_PREV_SLOT;
                         dispatchSlot[col] = mode >= 0 ? mode : col;
                     }
                 } else if (mode == FILL_CONSTANT) {
-                    dispatchCode[col] = DISPATCH_CONSTANT;
+                    fillDispatchCode[col] = DISPATCH_CONSTANT;
                     dispatchConstant[col] = constantFills.getQuick(col);
                 } else {
-                    dispatchCode[col] = DISPATCH_NULL;
+                    fillDispatchCode[col] = DISPATCH_NULL;
                 }
             }
+            // Default to fill mode so any consumer that reads before a
+            // row boundary swap gets defined dispatch behaviour. hasNext
+            // overwrites the pointer before returning the first row.
+            currentDispatchCode = fillDispatchCode;
         }
 
         private boolean emitNextFillRow() {
@@ -674,7 +692,7 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
                 while (keysMapCursor.hasNext()) {
                     int keyIdx = (int) keysMapRecord.getLong(KEY_INDEX_SLOT);
                     if (!keyPresent[keyIdx]) {
-                        fillRecord.isGapFilling = true;
+                        currentDispatchCode = fillDispatchCode;
                         fillTimestampFunc.value = nextBucketTimestamp;
                         // PREV_CACHE_SLOT getters now read the cached slot
                         // unconditionally because the slot is pre-filled with the
@@ -878,7 +896,7 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
             // via the keysMapRecord.getSymA -> setSymbolTableResolver chain.
             // Caching the resolver per output col cuts that chain to one
             // valueOf call.
-            int columnCount = dispatchCode.length;
+            int columnCount = fillDispatchCode.length;
             if (symbolCache == null || symbolCache.length < columnCount) {
                 symbolCache = new SymbolTable[columnCount];
             } else {
@@ -886,7 +904,7 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
             }
             int symTableSize = symbolTableColIndices.size();
             for (int col = 0; col < columnCount; col++) {
-                int code = dispatchCode[col];
+                int code = fillDispatchCode[col];
                 if (code != DISPATCH_KEY_SLOT && code != DISPATCH_PREV_CACHE_SLOT) {
                     continue;
                 }
@@ -992,12 +1010,11 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
          * an upstream change makes one of them reachable.
          */
         private class FillRecord implements Record {
-            boolean isGapFilling;
 
             @Override
             public ArrayView getArray(int col, int columnType) {
-                if (!isGapFilling) return baseRecord.getArray(col, columnType);
-                int code = dispatchCode[col];
+                int code = currentDispatchCode[col];
+                if (code == DISPATCH_BASE) return baseRecord.getArray(col, columnType);
                 if (code == DISPATCH_KEY_SLOT) return keysMapRecord.getArray(dispatchSlot[col], columnType);
                 if (code == DISPATCH_PREV_SLOT) {
                     if (hasPrevForCurrentGap) return prevRecord.getArray(dispatchSlot[col], columnType);
@@ -1009,8 +1026,8 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
 
             @Override
             public BinarySequence getBin(int col) {
-                if (!isGapFilling) return baseRecord.getBin(col);
-                int code = dispatchCode[col];
+                int code = currentDispatchCode[col];
+                if (code == DISPATCH_BASE) return baseRecord.getBin(col);
                 if (code == DISPATCH_KEY_SLOT) return keysMapRecord.getBin(dispatchSlot[col]);
                 if (code == DISPATCH_PREV_SLOT) {
                     if (hasPrevForCurrentGap) return prevRecord.getBin(dispatchSlot[col]);
@@ -1022,8 +1039,8 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
 
             @Override
             public long getBinLen(int col) {
-                if (!isGapFilling) return baseRecord.getBinLen(col);
-                int code = dispatchCode[col];
+                int code = currentDispatchCode[col];
+                if (code == DISPATCH_BASE) return baseRecord.getBinLen(col);
                 if (code == DISPATCH_KEY_SLOT) return keysMapRecord.getBinLen(dispatchSlot[col]);
                 if (code == DISPATCH_PREV_SLOT) {
                     if (hasPrevForCurrentGap) return prevRecord.getBinLen(dispatchSlot[col]);
@@ -1035,8 +1052,8 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
 
             @Override
             public boolean getBool(int col) {
-                if (!isGapFilling) return baseRecord.getBool(col);
-                int code = dispatchCode[col];
+                int code = currentDispatchCode[col];
+                if (code == DISPATCH_BASE) return baseRecord.getBool(col);
                 if (code == DISPATCH_KEY_SLOT) return keysMapRecord.getBool(dispatchSlot[col]);
                 if (code == DISPATCH_PREV_CACHE_SLOT) return keysMapRecord.getBool(dispatchSlot[col]);
                 if (code == DISPATCH_PREV_SLOT) {
@@ -1049,8 +1066,8 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
 
             @Override
             public byte getByte(int col) {
-                if (!isGapFilling) return baseRecord.getByte(col);
-                int code = dispatchCode[col];
+                int code = currentDispatchCode[col];
+                if (code == DISPATCH_BASE) return baseRecord.getByte(col);
                 if (code == DISPATCH_KEY_SLOT) return keysMapRecord.getByte(dispatchSlot[col]);
                 if (code == DISPATCH_PREV_CACHE_SLOT) return keysMapRecord.getByte(dispatchSlot[col]);
                 if (code == DISPATCH_PREV_SLOT) {
@@ -1065,8 +1082,8 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
 
             @Override
             public char getChar(int col) {
-                if (!isGapFilling) return baseRecord.getChar(col);
-                int code = dispatchCode[col];
+                int code = currentDispatchCode[col];
+                if (code == DISPATCH_BASE) return baseRecord.getChar(col);
                 if (code == DISPATCH_KEY_SLOT) return keysMapRecord.getChar(dispatchSlot[col]);
                 if (code == DISPATCH_PREV_CACHE_SLOT) return keysMapRecord.getChar(dispatchSlot[col]);
                 if (code == DISPATCH_PREV_SLOT) {
@@ -1079,11 +1096,11 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
 
             @Override
             public void getDecimal128(int col, Decimal128 sink) {
-                if (!isGapFilling) {
+                int code = currentDispatchCode[col];
+                if (code == DISPATCH_BASE) {
                     baseRecord.getDecimal128(col, sink);
                     return;
                 }
-                int code = dispatchCode[col];
                 if (code == DISPATCH_KEY_SLOT) {
                     keysMapRecord.getDecimal128(dispatchSlot[col], sink);
                     return;
@@ -1102,8 +1119,8 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
 
             @Override
             public short getDecimal16(int col) {
-                if (!isGapFilling) return baseRecord.getDecimal16(col);
-                int code = dispatchCode[col];
+                int code = currentDispatchCode[col];
+                if (code == DISPATCH_BASE) return baseRecord.getDecimal16(col);
                 if (code == DISPATCH_KEY_SLOT) return keysMapRecord.getDecimal16(dispatchSlot[col]);
                 if (code == DISPATCH_PREV_CACHE_SLOT) return keysMapRecord.getShort(dispatchSlot[col]);
                 if (code == DISPATCH_PREV_SLOT) {
@@ -1116,11 +1133,11 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
 
             @Override
             public void getDecimal256(int col, Decimal256 sink) {
-                if (!isGapFilling) {
+                int code = currentDispatchCode[col];
+                if (code == DISPATCH_BASE) {
                     baseRecord.getDecimal256(col, sink);
                     return;
                 }
-                int code = dispatchCode[col];
                 if (code == DISPATCH_KEY_SLOT) {
                     keysMapRecord.getDecimal256(dispatchSlot[col], sink);
                     return;
@@ -1139,8 +1156,8 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
 
             @Override
             public int getDecimal32(int col) {
-                if (!isGapFilling) return baseRecord.getDecimal32(col);
-                int code = dispatchCode[col];
+                int code = currentDispatchCode[col];
+                if (code == DISPATCH_BASE) return baseRecord.getDecimal32(col);
                 if (code == DISPATCH_KEY_SLOT) return keysMapRecord.getDecimal32(dispatchSlot[col]);
                 if (code == DISPATCH_PREV_CACHE_SLOT) return keysMapRecord.getInt(dispatchSlot[col]);
                 if (code == DISPATCH_PREV_SLOT) {
@@ -1153,8 +1170,8 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
 
             @Override
             public long getDecimal64(int col) {
-                if (!isGapFilling) return baseRecord.getDecimal64(col);
-                int code = dispatchCode[col];
+                int code = currentDispatchCode[col];
+                if (code == DISPATCH_BASE) return baseRecord.getDecimal64(col);
                 if (code == DISPATCH_KEY_SLOT) return keysMapRecord.getDecimal64(dispatchSlot[col]);
                 if (code == DISPATCH_PREV_CACHE_SLOT) return keysMapRecord.getLong(dispatchSlot[col]);
                 if (code == DISPATCH_PREV_SLOT) {
@@ -1167,8 +1184,8 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
 
             @Override
             public byte getDecimal8(int col) {
-                if (!isGapFilling) return baseRecord.getDecimal8(col);
-                int code = dispatchCode[col];
+                int code = currentDispatchCode[col];
+                if (code == DISPATCH_BASE) return baseRecord.getDecimal8(col);
                 if (code == DISPATCH_KEY_SLOT) return keysMapRecord.getDecimal8(dispatchSlot[col]);
                 if (code == DISPATCH_PREV_CACHE_SLOT) return keysMapRecord.getByte(dispatchSlot[col]);
                 if (code == DISPATCH_PREV_SLOT) {
@@ -1181,8 +1198,8 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
 
             @Override
             public double getDouble(int col) {
-                if (!isGapFilling) return baseRecord.getDouble(col);
-                int code = dispatchCode[col];
+                int code = currentDispatchCode[col];
+                if (code == DISPATCH_BASE) return baseRecord.getDouble(col);
                 if (code == DISPATCH_KEY_SLOT) return keysMapRecord.getDouble(dispatchSlot[col]);
                 if (code == DISPATCH_PREV_CACHE_SLOT) return keysMapRecord.getDouble(dispatchSlot[col]);
                 if (code == DISPATCH_PREV_SLOT) {
@@ -1195,8 +1212,8 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
 
             @Override
             public float getFloat(int col) {
-                if (!isGapFilling) return baseRecord.getFloat(col);
-                int code = dispatchCode[col];
+                int code = currentDispatchCode[col];
+                if (code == DISPATCH_BASE) return baseRecord.getFloat(col);
                 if (code == DISPATCH_KEY_SLOT) return keysMapRecord.getFloat(dispatchSlot[col]);
                 if (code == DISPATCH_PREV_CACHE_SLOT) return keysMapRecord.getFloat(dispatchSlot[col]);
                 if (code == DISPATCH_PREV_SLOT) {
@@ -1209,8 +1226,8 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
 
             @Override
             public byte getGeoByte(int col) {
-                if (!isGapFilling) return baseRecord.getGeoByte(col);
-                int code = dispatchCode[col];
+                int code = currentDispatchCode[col];
+                if (code == DISPATCH_BASE) return baseRecord.getGeoByte(col);
                 if (code == DISPATCH_KEY_SLOT) return keysMapRecord.getGeoByte(dispatchSlot[col]);
                 if (code == DISPATCH_PREV_CACHE_SLOT) return keysMapRecord.getByte(dispatchSlot[col]);
                 if (code == DISPATCH_PREV_SLOT) {
@@ -1223,8 +1240,8 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
 
             @Override
             public int getGeoInt(int col) {
-                if (!isGapFilling) return baseRecord.getGeoInt(col);
-                int code = dispatchCode[col];
+                int code = currentDispatchCode[col];
+                if (code == DISPATCH_BASE) return baseRecord.getGeoInt(col);
                 if (code == DISPATCH_KEY_SLOT) return keysMapRecord.getGeoInt(dispatchSlot[col]);
                 if (code == DISPATCH_PREV_CACHE_SLOT) return keysMapRecord.getInt(dispatchSlot[col]);
                 if (code == DISPATCH_PREV_SLOT) {
@@ -1237,8 +1254,8 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
 
             @Override
             public long getGeoLong(int col) {
-                if (!isGapFilling) return baseRecord.getGeoLong(col);
-                int code = dispatchCode[col];
+                int code = currentDispatchCode[col];
+                if (code == DISPATCH_BASE) return baseRecord.getGeoLong(col);
                 if (code == DISPATCH_KEY_SLOT) return keysMapRecord.getGeoLong(dispatchSlot[col]);
                 if (code == DISPATCH_PREV_CACHE_SLOT) return keysMapRecord.getLong(dispatchSlot[col]);
                 if (code == DISPATCH_PREV_SLOT) {
@@ -1251,8 +1268,8 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
 
             @Override
             public short getGeoShort(int col) {
-                if (!isGapFilling) return baseRecord.getGeoShort(col);
-                int code = dispatchCode[col];
+                int code = currentDispatchCode[col];
+                if (code == DISPATCH_BASE) return baseRecord.getGeoShort(col);
                 if (code == DISPATCH_KEY_SLOT) return keysMapRecord.getGeoShort(dispatchSlot[col]);
                 if (code == DISPATCH_PREV_CACHE_SLOT) return keysMapRecord.getShort(dispatchSlot[col]);
                 if (code == DISPATCH_PREV_SLOT) {
@@ -1265,8 +1282,8 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
 
             @Override
             public int getIPv4(int col) {
-                if (!isGapFilling) return baseRecord.getIPv4(col);
-                int code = dispatchCode[col];
+                int code = currentDispatchCode[col];
+                if (code == DISPATCH_BASE) return baseRecord.getIPv4(col);
                 if (code == DISPATCH_KEY_SLOT) return keysMapRecord.getIPv4(dispatchSlot[col]);
                 if (code == DISPATCH_PREV_CACHE_SLOT) return keysMapRecord.getIPv4(dispatchSlot[col]);
                 if (code == DISPATCH_PREV_SLOT) {
@@ -1279,8 +1296,8 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
 
             @Override
             public int getInt(int col) {
-                if (!isGapFilling) return baseRecord.getInt(col);
-                int code = dispatchCode[col];
+                int code = currentDispatchCode[col];
+                if (code == DISPATCH_BASE) return baseRecord.getInt(col);
                 if (code == DISPATCH_KEY_SLOT) return keysMapRecord.getInt(dispatchSlot[col]);
                 if (code == DISPATCH_PREV_CACHE_SLOT) return keysMapRecord.getInt(dispatchSlot[col]);
                 if (code == DISPATCH_PREV_SLOT) {
@@ -1293,8 +1310,8 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
 
             @Override
             public Interval getInterval(int col) {
-                if (!isGapFilling) return baseRecord.getInterval(col);
-                int code = dispatchCode[col];
+                int code = currentDispatchCode[col];
+                if (code == DISPATCH_BASE) return baseRecord.getInterval(col);
                 if (code == DISPATCH_KEY_SLOT) return keysMapRecord.getInterval(dispatchSlot[col]);
                 if (code == DISPATCH_PREV_SLOT) {
                     if (hasPrevForCurrentGap) return prevRecord.getInterval(dispatchSlot[col]);
@@ -1306,8 +1323,8 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
 
             @Override
             public long getLong(int col) {
-                if (!isGapFilling) return baseRecord.getLong(col);
-                int code = dispatchCode[col];
+                int code = currentDispatchCode[col];
+                if (code == DISPATCH_BASE) return baseRecord.getLong(col);
                 if (code == DISPATCH_KEY_SLOT) return keysMapRecord.getLong(dispatchSlot[col]);
                 if (code == DISPATCH_PREV_CACHE_SLOT) return keysMapRecord.getLong(dispatchSlot[col]);
                 if (code == DISPATCH_PREV_SLOT) {
@@ -1320,8 +1337,8 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
 
             @Override
             public long getLong128Hi(int col) {
-                if (!isGapFilling) return baseRecord.getLong128Hi(col);
-                int code = dispatchCode[col];
+                int code = currentDispatchCode[col];
+                if (code == DISPATCH_BASE) return baseRecord.getLong128Hi(col);
                 if (code == DISPATCH_KEY_SLOT) return keysMapRecord.getLong128Hi(dispatchSlot[col]);
                 if (code == DISPATCH_PREV_SLOT) {
                     if (hasPrevForCurrentGap) return prevRecord.getLong128Hi(dispatchSlot[col]);
@@ -1333,8 +1350,8 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
 
             @Override
             public long getLong128Lo(int col) {
-                if (!isGapFilling) return baseRecord.getLong128Lo(col);
-                int code = dispatchCode[col];
+                int code = currentDispatchCode[col];
+                if (code == DISPATCH_BASE) return baseRecord.getLong128Lo(col);
                 if (code == DISPATCH_KEY_SLOT) return keysMapRecord.getLong128Lo(dispatchSlot[col]);
                 if (code == DISPATCH_PREV_SLOT) {
                     if (hasPrevForCurrentGap) return prevRecord.getLong128Lo(dispatchSlot[col]);
@@ -1346,11 +1363,11 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
 
             @Override
             public void getLong256(int col, CharSink<?> sink) {
-                if (!isGapFilling) {
+                int code = currentDispatchCode[col];
+                if (code == DISPATCH_BASE) {
                     baseRecord.getLong256(col, sink);
                     return;
                 }
-                int code = dispatchCode[col];
                 if (code == DISPATCH_KEY_SLOT) {
                     keysMapRecord.getLong256(dispatchSlot[col], sink);
                     return;
@@ -1371,8 +1388,8 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
 
             @Override
             public Long256 getLong256A(int col) {
-                if (!isGapFilling) return baseRecord.getLong256A(col);
-                int code = dispatchCode[col];
+                int code = currentDispatchCode[col];
+                if (code == DISPATCH_BASE) return baseRecord.getLong256A(col);
                 if (code == DISPATCH_KEY_SLOT) return keysMapRecord.getLong256A(dispatchSlot[col]);
                 if (code == DISPATCH_PREV_SLOT) {
                     if (hasPrevForCurrentGap) return prevRecord.getLong256A(dispatchSlot[col]);
@@ -1384,8 +1401,8 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
 
             @Override
             public Long256 getLong256B(int col) {
-                if (!isGapFilling) return baseRecord.getLong256B(col);
-                int code = dispatchCode[col];
+                int code = currentDispatchCode[col];
+                if (code == DISPATCH_BASE) return baseRecord.getLong256B(col);
                 if (code == DISPATCH_KEY_SLOT) return keysMapRecord.getLong256B(dispatchSlot[col]);
                 if (code == DISPATCH_PREV_SLOT) {
                     if (hasPrevForCurrentGap) return prevRecord.getLong256B(dispatchSlot[col]);
@@ -1397,8 +1414,8 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
 
             @Override
             public short getShort(int col) {
-                if (!isGapFilling) return baseRecord.getShort(col);
-                int code = dispatchCode[col];
+                int code = currentDispatchCode[col];
+                if (code == DISPATCH_BASE) return baseRecord.getShort(col);
                 if (code == DISPATCH_KEY_SLOT) return keysMapRecord.getShort(dispatchSlot[col]);
                 if (code == DISPATCH_PREV_CACHE_SLOT) return keysMapRecord.getShort(dispatchSlot[col]);
                 if (code == DISPATCH_PREV_SLOT) {
@@ -1413,8 +1430,8 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
 
             @Override
             public CharSequence getStrA(int col) {
-                if (!isGapFilling) return baseRecord.getStrA(col);
-                int code = dispatchCode[col];
+                int code = currentDispatchCode[col];
+                if (code == DISPATCH_BASE) return baseRecord.getStrA(col);
                 if (code == DISPATCH_KEY_SLOT) return keysMapRecord.getStrA(dispatchSlot[col]);
                 if (code == DISPATCH_PREV_SLOT) {
                     if (hasPrevForCurrentGap) return prevRecord.getStrA(dispatchSlot[col]);
@@ -1426,8 +1443,8 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
 
             @Override
             public CharSequence getStrB(int col) {
-                if (!isGapFilling) return baseRecord.getStrB(col);
-                int code = dispatchCode[col];
+                int code = currentDispatchCode[col];
+                if (code == DISPATCH_BASE) return baseRecord.getStrB(col);
                 if (code == DISPATCH_KEY_SLOT) return keysMapRecord.getStrB(dispatchSlot[col]);
                 if (code == DISPATCH_PREV_SLOT) {
                     if (hasPrevForCurrentGap) return prevRecord.getStrB(dispatchSlot[col]);
@@ -1439,8 +1456,8 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
 
             @Override
             public int getStrLen(int col) {
-                if (!isGapFilling) return baseRecord.getStrLen(col);
-                int code = dispatchCode[col];
+                int code = currentDispatchCode[col];
+                if (code == DISPATCH_BASE) return baseRecord.getStrLen(col);
                 if (code == DISPATCH_KEY_SLOT) return keysMapRecord.getStrLen(dispatchSlot[col]);
                 if (code == DISPATCH_PREV_SLOT) {
                     if (hasPrevForCurrentGap) return prevRecord.getStrLen(dispatchSlot[col]);
@@ -1452,8 +1469,8 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
 
             @Override
             public CharSequence getSymA(int col) {
-                if (!isGapFilling) return baseRecord.getSymA(col);
-                int code = dispatchCode[col];
+                int code = currentDispatchCode[col];
+                if (code == DISPATCH_BASE) return baseRecord.getSymA(col);
                 if (code == DISPATCH_KEY_SLOT) {
                     // Cached SymbolTable + direct slot read shortcuts the
                     // MapRecord setSymbolTableResolver chain.
@@ -1477,8 +1494,8 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
 
             @Override
             public CharSequence getSymB(int col) {
-                if (!isGapFilling) return baseRecord.getSymB(col);
-                int code = dispatchCode[col];
+                int code = currentDispatchCode[col];
+                if (code == DISPATCH_BASE) return baseRecord.getSymB(col);
                 if (code == DISPATCH_KEY_SLOT) {
                     return symbolCache[col].valueBOf(keysMapRecord.getInt(dispatchSlot[col]));
                 }
@@ -1495,8 +1512,8 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
 
             @Override
             public long getTimestamp(int col) {
-                if (!isGapFilling) return baseRecord.getTimestamp(col);
-                int code = dispatchCode[col];
+                int code = currentDispatchCode[col];
+                if (code == DISPATCH_BASE) return baseRecord.getTimestamp(col);
                 if (code == DISPATCH_TIMESTAMP_FILL) return fillTimestampFunc.value;
                 if (code == DISPATCH_KEY_SLOT) return keysMapRecord.getTimestamp(dispatchSlot[col]);
                 if (code == DISPATCH_PREV_CACHE_SLOT) return keysMapRecord.getTimestamp(dispatchSlot[col]);
@@ -1510,8 +1527,8 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
 
             @Override
             public Utf8Sequence getVarcharA(int col) {
-                if (!isGapFilling) return baseRecord.getVarcharA(col);
-                int code = dispatchCode[col];
+                int code = currentDispatchCode[col];
+                if (code == DISPATCH_BASE) return baseRecord.getVarcharA(col);
                 if (code == DISPATCH_KEY_SLOT) return keysMapRecord.getVarcharA(dispatchSlot[col]);
                 if (code == DISPATCH_PREV_SLOT) {
                     if (hasPrevForCurrentGap) return prevRecord.getVarcharA(dispatchSlot[col]);
@@ -1523,8 +1540,8 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
 
             @Override
             public Utf8Sequence getVarcharB(int col) {
-                if (!isGapFilling) return baseRecord.getVarcharB(col);
-                int code = dispatchCode[col];
+                int code = currentDispatchCode[col];
+                if (code == DISPATCH_BASE) return baseRecord.getVarcharB(col);
                 if (code == DISPATCH_KEY_SLOT) return keysMapRecord.getVarcharB(dispatchSlot[col]);
                 if (code == DISPATCH_PREV_SLOT) {
                     if (hasPrevForCurrentGap) return prevRecord.getVarcharB(dispatchSlot[col]);
@@ -1536,8 +1553,8 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
 
             @Override
             public int getVarcharSize(int col) {
-                if (!isGapFilling) return baseRecord.getVarcharSize(col);
-                int code = dispatchCode[col];
+                int code = currentDispatchCode[col];
+                if (code == DISPATCH_BASE) return baseRecord.getVarcharSize(col);
                 if (code == DISPATCH_KEY_SLOT) return keysMapRecord.getVarcharSize(dispatchSlot[col]);
                 if (code == DISPATCH_PREV_SLOT) {
                     if (hasPrevForCurrentGap) return prevRecord.getVarcharSize(dispatchSlot[col]);
