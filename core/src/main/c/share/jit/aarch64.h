@@ -1124,6 +1124,25 @@ namespace questdb::aarch64 {
                 case opcodes::Not:
                     values.append(arena, bin_not(c, get_argument(c, values)));
                     break;
+                case opcodes::Sx_I64: {
+                    // Sign-extend the top of stack to i64. Used to widen narrow
+                    // integer operands (BYTE/SHORT/INT) before arithmetic so the
+                    // op dispatches to int64_*, matching the Java filter's
+                    // MulInt.getLong / AddInt.getLong (which compute via
+                    // ((long) l) OP r at long width). For i64 / f32 / f64 inputs
+                    // this is a no-op (left untouched).
+                    auto arg = get_argument(c, values);
+                    auto dt = arg.dtype();
+                    if (dt == data_type_t::i8 || dt == data_type_t::i16 || dt == data_type_t::i32) {
+                        values.append(arena, jit_value_t(
+                                int32_to_int64(c, arg.gp().w(), null_check),
+                                data_type_t::i64,
+                                arg.dkind()));
+                    } else {
+                        values.append(arena, arg);
+                    }
+                    break;
+                }
                 case opcodes::And_Sc: {
                     auto label_idx = static_cast<size_t>(instr.ipayload.lo);
                     auto arg = values.pop();

@@ -460,6 +460,100 @@ public class CompiledFilterTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testIntColumnArithmeticWidenedToLongInLongContext() throws Exception {
+        assertMemoryLeak(() -> {
+            // INT-INT arithmetic compared to a LONG column would compute at int32
+            // width on the JIT path (load_registers third branch + int32_*),
+            // wrapping for inputs that exceed INT_MAX. The Java filter promotes
+            // the inner expression via AddInt.getLong / MulInt.getLong /
+            // SubInt.getLong, computing at long width with no overflow. To match,
+            // the IR emitter inserts a SX_I64 opcode after each narrow operand
+            // when the predicate has both integer arithmetic and a LONG operand,
+            // so convert() promotes to i64 before the arithmetic dispatches to
+            // int64_*.
+            execute("CREATE TABLE x (a INT, b INT, l LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO x VALUES " +
+                    "(2147483640, 1, 0, '2024-01-01T00:00:00.000000Z')," +
+                    " (-2147483640, -1, 0, '2024-01-01T00:00:00.000001Z')," +
+                    " (46341, 46341, 0, '2024-01-01T00:00:00.000002Z')," +
+                    " (10, 5, 0, '2024-01-01T00:00:00.000003Z')");
+
+            sqlExecutionContext.setJitMode(SqlJitMode.JIT_MODE_ENABLED);
+            // a + b: 2147483640+1=2147483641 (positive long), -2147483640-1 negative,
+            // 46341+46341=92682 positive, 10+5=15 positive -> three rows match.
+            assertSql("count\n3\n", "SELECT count(*) FROM x WHERE (a + b) > l");
+            // a - b: 2147483640-1=positive, -2147483640-(-1)=negative,
+            // 46341-46341=0 (not > 0), 10-5=5 positive -> two rows match.
+            assertSql("count\n2\n", "SELECT count(*) FROM x WHERE (a - b) > l");
+            // a * b: 2147483640*1=positive, -2147483640*-1=positive long,
+            // 46341*46341=2_147_488_281L (positive long, overflows int32),
+            // 10*5=50 -> four rows match.
+            assertSql("count\n4\n", "SELECT count(*) FROM x WHERE (a * b) > l");
+
+            try (RecordCursorFactory factory = select("SELECT count(*) FROM x WHERE (a + b) > l")) {
+                Assert.assertTrue("INT-INT arithmetic in LONG context must still JIT",
+                        factory.usesCompiledFilter());
+            }
+            try (RecordCursorFactory factory = select("SELECT count(*) FROM x WHERE (a * b) > l")) {
+                Assert.assertTrue("INT*INT arithmetic in LONG context must still JIT",
+                        factory.usesCompiledFilter());
+            }
+        });
+    }
+
+    @Test
+    public void testByteIntArithmeticWidenedToLongInLongContext() throws Exception {
+        assertMemoryLeak(() -> {
+            // BYTE * INT can overflow int32 (e.g., 127 * 20_000_000), so the same
+            // SX_I64 widening must apply to non-INT narrow operands as well when
+            // the predicate has integer arithmetic and a LONG operand.
+            execute("CREATE TABLE x (b BYTE, i INT, l LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO x VALUES " +
+                    "(127, 20000000, 0, '2024-01-01T00:00:00.000000Z')," +
+                    " (-128, 20000000, 0, '2024-01-01T00:00:00.000001Z')," +
+                    " (10, 5, 0, '2024-01-01T00:00:00.000002Z')");
+
+            sqlExecutionContext.setJitMode(SqlJitMode.JIT_MODE_ENABLED);
+            // 127 * 20_000_000 = 2_540_000_000L (positive long, overflows int32);
+            // -128 * 20_000_000 negative; 10*5=50 positive -> two rows match.
+            assertSql("count\n2\n", "SELECT count(*) FROM x WHERE (b * i) > l");
+
+            try (RecordCursorFactory factory = select("SELECT count(*) FROM x WHERE (b * i) > l")) {
+                Assert.assertTrue("BYTE*INT in LONG context must still JIT",
+                        factory.usesCompiledFilter());
+            }
+        });
+    }
+
+    @Test
+    public void testIntColumnArithmeticInDoubleContextStaysAtIntWidth() throws Exception {
+        assertMemoryLeak(() -> {
+            // Negative case: in DOUBLE context the Java filter goes through
+            // CastIntToDouble.getDouble = intToDouble(getInt) at int width, so
+            // the JIT must NOT widen INT operands to i64. NarrowI64WidenDetector
+            // only triggers when a LONG operand is present, leaving the FLOAT /
+            // DOUBLE path at int width (matching int32_mul / int32_add overflow
+            // semantics on both sides).
+            execute("CREATE TABLE x (i INT, d DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO x VALUES " +
+                    "(46341, 0.0, '2024-01-01T00:00:00.000000Z')," +
+                    " (46340, 0.0, '2024-01-01T00:00:00.000001Z')," +
+                    " (10, 0.0, '2024-01-01T00:00:00.000002Z')");
+
+            sqlExecutionContext.setJitMode(SqlJitMode.JIT_MODE_ENABLED);
+            // 46341 * 46341 = 2_147_488_281 -> int32 wraps to negative -> excluded.
+            // 46340 * 46340 = 2_147_395_600 -> fits int32, positive -> included.
+            // 10 * 10 = 100 -> included. So two rows match.
+            assertSql("count\n2\n", "SELECT count(*) FROM x WHERE (i * i) > d");
+
+            try (RecordCursorFactory factory = select("SELECT count(*) FROM x WHERE (i * i) > d")) {
+                Assert.assertTrue("INT*INT in DOUBLE context must still JIT",
+                        factory.usesCompiledFilter());
+            }
+        });
+    }
+
+    @Test
     public void testNarrowMixedWidthArithmetic() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE x (s SHORT, i INT, d DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
