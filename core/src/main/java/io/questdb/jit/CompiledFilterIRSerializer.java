@@ -1430,11 +1430,18 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
     private void serializeUntypedNumber(long offset, int position, final CharSequence token, boolean negated) throws SqlException {
         long sign = negated ? -1 : 1;
 
-        try {
-            final int i = Numbers.parseInt(token);
-            putOperand(offset, IMM, I4_TYPE, sign * i);
-            return;
-        } catch (NumericException ignore) {
+        // Skip the parseInt fallback when the predicate has a LONG operand: the
+        // Java filter's SubLong / AddLong reaches into MulInt.getLong and
+        // computes at long width, so the JIT IMM must be I8 too. F4 / F8
+        // operands intentionally do not trigger this -- IntFunction.getDouble
+        // does intToDouble(getInt), keeping the int math at int width.
+        if (!predicateContext.localTypesObserver.hasI8()) {
+            try {
+                final int i = Numbers.parseInt(token);
+                putOperand(offset, IMM, I4_TYPE, sign * i);
+                return;
+            } catch (NumericException ignore) {
+            }
         }
 
         try {
@@ -1543,6 +1550,10 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
                 }
             }
             return UNDEFINED_CODE;
+        }
+
+        public boolean hasI8() {
+            return sizes[I8_INDEX] != 0;
         }
 
         public boolean hasMixedSizes() {
