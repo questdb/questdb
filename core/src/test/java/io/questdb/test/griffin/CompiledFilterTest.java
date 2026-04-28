@@ -577,10 +577,16 @@ public class CompiledFilterTest extends AbstractCairoTest {
 
             // var-size IS NULL / IS NOT NULL must continue to JIT (these lower
             // to EQ/NE against the NULL header IMM, which is the only legitimate
-            // var-size operand the JIT runtime supports).
+            // var-size operand the JIT runtime supports). BINARY non-equality vs
+            // NULL is rejected at SQL parse time before reaching the JIT path,
+            // so only IS [NOT] NULL is meaningful to assert here for it.
             String[] jitQueries = {
                     "SELECT count(*) FROM x WHERE v IS NULL",
+                    "SELECT count(*) FROM x WHERE v IS NOT NULL",
+                    "SELECT count(*) FROM x WHERE s IS NULL",
                     "SELECT count(*) FROM x WHERE s IS NOT NULL",
+                    "SELECT count(*) FROM x WHERE b IS NULL",
+                    "SELECT count(*) FROM x WHERE b IS NOT NULL",
             };
             for (String q : jitQueries) {
                 try (RecordCursorFactory factory = select(q)) {
