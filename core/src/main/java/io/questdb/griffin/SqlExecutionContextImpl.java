@@ -37,11 +37,14 @@ import io.questdb.cairo.sql.AtomicBooleanCircuitBreaker;
 import io.questdb.cairo.sql.BindVariableService;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.cairo.sql.VirtualRecord;
+import io.questdb.cairo.wal.seq.TxnWaiter;
 import io.questdb.griffin.engine.functions.rnd.SharedRandom;
 import io.questdb.griffin.engine.window.WindowContext;
 import io.questdb.griffin.engine.window.WindowContextImpl;
 import io.questdb.griffin.model.IntervalUtils;
 import io.questdb.griffin.model.RuntimeIntrinsicIntervalModel;
+import io.questdb.mp.ContinuationResumeJob;
+import io.questdb.mp.SqlContinuation;
 import io.questdb.std.Decimal128;
 import io.questdb.std.Decimal256;
 import io.questdb.std.Decimal64;
@@ -73,7 +76,7 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
     private final ObjStack<RuntimeIntrinsicIntervalModel> intervalModelObjStack = new ObjStack<>();
     private final MicrosecondClock microClock;
     private final NanosecondClock nanoClock;
-    private final io.questdb.cairo.wal.seq.TxnWaiter pooledTxnWaiter = new io.questdb.cairo.wal.seq.TxnWaiter();
+    private final TxnWaiter pooledTxnWaiter = new TxnWaiter();
     private final int sharedQueryWorkerCount;
     private final AtomicBooleanCircuitBreaker simpleCircuitBreaker;
     private final Telemetry<TelemetryTask> telemetry;
@@ -88,7 +91,7 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
     private boolean clockUseNow = false;
     private boolean cloneSymbolTables;
     private boolean containsSecret;
-    private io.questdb.mp.SqlContinuation currentContinuation;
+    private SqlContinuation currentContinuation;
     private int intervalFunctionType;
     private int jitMode;
     private long nowMicros;
@@ -147,10 +150,10 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
     }
 
     @Override
-    public io.questdb.cairo.wal.seq.TxnWaiter borrowTxnWaiter(
+    public TxnWaiter borrowTxnWaiter(
             long targetWriterTxn,
-            io.questdb.mp.SqlContinuation cont,
-            io.questdb.mp.ContinuationResumeJob resumeJob,
+            SqlContinuation cont,
+            ContinuationResumeJob resumeJob,
             long deadlineMillis
     ) {
         pooledTxnWaiter.reset(targetWriterTxn, cont, resumeJob, deadlineMillis);
@@ -249,7 +252,7 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
     }
 
     @Override
-    public io.questdb.mp.SqlContinuation getCurrentContinuation() {
+    public SqlContinuation getCurrentContinuation() {
         return currentContinuation;
     }
 
@@ -486,7 +489,7 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
     }
 
     @Override
-    public void setCurrentContinuation(io.questdb.mp.SqlContinuation cont) {
+    public void setCurrentContinuation(SqlContinuation cont) {
         this.currentContinuation = cont;
     }
 

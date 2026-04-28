@@ -58,8 +58,8 @@ public final class TxnWaiter {
     SqlContinuation cont;
     long deadlineMillis = NO_DEADLINE;
     ContinuationResumeJob resumeJob;
-    long targetWriterTxn;
     volatile int state = STATE_PENDING;
+    long targetWriterTxn;
 
     public TxnWaiter() {
     }

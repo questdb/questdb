@@ -36,10 +36,13 @@ import io.questdb.cairo.sql.BindVariableService;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.cairo.sql.TableRecordMetadata;
 import io.questdb.cairo.sql.VirtualRecord;
+import io.questdb.cairo.wal.seq.TxnWaiter;
 import io.questdb.griffin.engine.functions.rnd.SharedRandom;
 import io.questdb.griffin.engine.window.WindowContext;
 import io.questdb.griffin.model.IntrinsicModel;
 import io.questdb.griffin.model.RuntimeIntrinsicIntervalModel;
+import io.questdb.mp.ContinuationResumeJob;
+import io.questdb.mp.SqlContinuation;
 import io.questdb.std.Decimal128;
 import io.questdb.std.Decimal256;
 import io.questdb.std.Decimal64;
@@ -99,19 +102,18 @@ public interface SqlExecutionContext extends Sinkable, Closeable {
     }
 
     /**
-     * Returns a {@link io.questdb.cairo.wal.seq.TxnWaiter} scoped to this execution
-     * context. Implementations are free to pool a single instance and reuse it across
-     * suspending-function invocations (PGWire serializes queries per connection, so at
-     * most one wait is in flight per context at a time). The default implementation
-     * allocates a fresh waiter.
+     * Returns a {@link TxnWaiter} scoped to this execution context. Implementations are
+     * free to pool a single instance and reuse it across suspending-function invocations
+     * (PGWire serializes queries per connection, so at most one wait is in flight per
+     * context at a time). The default implementation allocates a fresh waiter.
      */
-    default io.questdb.cairo.wal.seq.TxnWaiter borrowTxnWaiter(
+    default TxnWaiter borrowTxnWaiter(
             long targetWriterTxn,
-            io.questdb.mp.SqlContinuation cont,
-            io.questdb.mp.ContinuationResumeJob resumeJob,
+            SqlContinuation cont,
+            ContinuationResumeJob resumeJob,
             long deadlineMillis
     ) {
-        return new io.questdb.cairo.wal.seq.TxnWaiter(targetWriterTxn, cont, resumeJob, deadlineMillis);
+        return new TxnWaiter(targetWriterTxn, cont, resumeJob, deadlineMillis);
     }
 
     default Rnd getAsyncRandom() {
@@ -135,7 +137,7 @@ public interface SqlExecutionContext extends Sinkable, Closeable {
      * obtain the reference they hand to a TxnWaiter; a null return means they must fall
      * back to blocking behavior.
      */
-    default @Nullable io.questdb.mp.SqlContinuation getCurrentContinuation() {
+    default @Nullable SqlContinuation getCurrentContinuation() {
         return null;
     }
 
@@ -296,11 +298,11 @@ public interface SqlExecutionContext extends Sinkable, Closeable {
     /**
      * Binds a SqlContinuation to this execution context so that suspending functions
      * can retrieve it via {@link #getCurrentContinuation()}. Must be called before
-     * {@link io.questdb.mp.SqlContinuation#run()} and cleared after completion.
-     * The default implementation is a no-op; contexts that support continuation-based
-     * suspension override it.
+     * {@link SqlContinuation#run()} and cleared after completion. The default
+     * implementation is a no-op; contexts that support continuation-based suspension
+     * override it.
      */
-    default void setCurrentContinuation(@Nullable io.questdb.mp.SqlContinuation cont) {
+    default void setCurrentContinuation(@Nullable SqlContinuation cont) {
     }
 
     void setIntervalFunctionType(int intervalType);
