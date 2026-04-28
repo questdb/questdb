@@ -1971,12 +1971,12 @@ public class WalColumnarRowAppender implements ColumnarRowAppender, QuietCloseab
                 .put(']');
     }
 
-    private CairoException numericParseError(DirectUtf8Sequence value, int columnIndex, int columnType) {
-        return CairoException.nonCritical()
+    private QwpParseException numericParseError(DirectUtf8Sequence value, int columnIndex, int columnType) {
+        return QwpParseException.instance(QwpParseException.ErrorCode.SCHEMA_MISMATCH)
                 .put("cannot parse ").put(ColumnType.nameOf(columnType))
                 .put(" from string [value=").put(value)
                 .put(", column=").put(walWriter.getMetadata().getColumnName(columnIndex))
-                .put(']');
+                .put("]");
     }
 
     private void putDecimal128ToDecimalColumn(

@@ -1037,6 +1037,55 @@ public class QwpSenderE2ETest extends AbstractQwpWebSocketTest {
     }
 
     @Test
+    public void testStringValueForDoubleColumnReturnsSchemaMismatchStatus() throws Exception {
+        runInContext((port) -> {
+            String table = "test_qwp_string_to_double_status";
+
+            try (QwpWebSocketSender sender = QwpWebSocketSender.connect("localhost", port)) {
+                sender.table(table)
+                        .doubleColumn("px", 1.5)
+                        .at(1_000_000, ChronoUnit.MICROS);
+                sender.flush();
+            }
+            drainWalQueue();
+
+            try (QwpWebSocketSender sender = QwpWebSocketSender.connect("localhost", port)) {
+                sender.table(table)
+                        .stringColumn("px", "not-a-double")
+                        .at(2_000_000, ChronoUnit.MICROS);
+                sender.flush();
+                Assert.fail("Expected LineSenderException");
+            } catch (LineSenderException e) {
+                String msg = e.getMessage();
+                Assert.assertTrue("Expected SCHEMA_MISMATCH, got: " + msg, msg.contains("SCHEMA_MISMATCH"));
+                Assert.assertFalse("Expected deterministic value error, not WRITE_ERROR: " + msg, msg.contains("WRITE_ERROR"));
+                Assert.assertTrue(
+                        "Expected parse details, got: " + msg,
+                        msg.contains("cannot parse DOUBLE from string")
+                                && msg.contains("not-a-double")
+                                && msg.contains("px")
+                );
+            }
+
+            try (QwpWebSocketSender sender = QwpWebSocketSender.connect("localhost", port)) {
+                sender.table(table)
+                        .doubleColumn("px", 2.5)
+                        .at(3_000_000, ChronoUnit.MICROS);
+                sender.flush();
+            }
+            drainWalQueue();
+
+            assertSql(
+                    "SELECT px, timestamp FROM " + table + " ORDER BY timestamp",
+                    """
+                            px\ttimestamp
+                            1.5\t1970-01-01T00:00:01.000000Z
+                            2.5\t1970-01-01T00:00:03.000000Z
+                            """);
+        });
+    }
+
+    @Test
     public void testCoercionToFloat() throws Exception {
         runInContext((port) -> {
             String table = "test_qwp_coerce_to_float";
