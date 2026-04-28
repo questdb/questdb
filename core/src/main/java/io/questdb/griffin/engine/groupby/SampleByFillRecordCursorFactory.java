@@ -389,6 +389,13 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
         private final TimestampDriver timestampDriver;
         private final int timestampIndex;
         private final TimestampSampler timestampSampler;
+        // Counts keys still pending a fill emission for the current bucket. Reset
+        // to keyCount at every bucket boundary; decremented when a data row marks
+        // a key present (the false->true flip is one-shot per (bucket,key) since
+        // upstream GROUP BY emits one row per pair). When toEmitCnt reaches 0 the
+        // bucket is dense (every key had data), so the gap-fill scan that walks
+        // K keys to find none-absent can be skipped entirely.
+        private int toEmitCnt;
         private final Function toFunc;
 
         private SampleByFillCursor(
@@ -515,6 +522,7 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
                         assert value != null : "key discovered in pass 1 must exist in keysMap";
                         int keyIdx = (int) value.getLong(KEY_INDEX_SLOT);
                         keyPresent[keyIdx] = true;
+                        toEmitCnt--;
                         if (hasPrevFill) {
                             updateKeyPrevRowId(value, baseRecord);
                         }
@@ -531,6 +539,17 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
                 if (dataTs > nextBucketTimestamp) {
                     // Gap — emit fill rows before advancing bucket.
                     if (hasDataForCurrentBucket && keysMap != null) {
+                        // Dense bucket fast-path: if every key already had data
+                        // in this bucket (toEmitCnt == 0), there are no fills to
+                        // emit. Skip the inner key-scan that would walk all K
+                        // keys looking for absents and find none.
+                        if (toEmitCnt == 0) {
+                            Arrays.fill(keyPresent, 0, keyCount, false);
+                            toEmitCnt = keyCount;
+                            nextBucketTimestamp = timestampSampler.nextTimestamp(nextBucketTimestamp);
+                            hasDataForCurrentBucket = false;
+                            continue;
+                        }
                         isEmittingFills = true;
                         keysMapCursor.toTop();
                         if (emitNextFillRow()) {
@@ -544,6 +563,7 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
                         isEmittingFills = true;
                         keysMapCursor.toTop();
                         Arrays.fill(keyPresent, 0, keyCount, false);
+                        toEmitCnt = keyCount;
                         if (emitNextFillRow()) {
                             return true;
                         }
@@ -722,6 +742,7 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
                 }
                 // Bucket exhausted -- advance
                 Arrays.fill(keyPresent, 0, keyCount, false);
+                toEmitCnt = keyCount;
                 nextBucketTimestamp = timestampSampler.nextTimestamp(nextBucketTimestamp);
                 hasDataForCurrentBucket = false;
                 isEmittingFills = false;
@@ -831,6 +852,7 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
                 } else {
                     Arrays.fill(keyPresent, 0, keyCount, false);
                 }
+                toEmitCnt = keyCount;
                 baseCursor.toTop();
                 keysMapRecord = keysMap.getRecord();
                 keysMapRecord.setSymbolTableResolver(baseCursor, symbolTableColIndices);
@@ -841,6 +863,7 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
                 if (keyPresent == null || keyPresent.length < 1) {
                     keyPresent = new boolean[1];
                 }
+                toEmitCnt = 1;
             }
 
             // Peek first row to determine range. The previous step either ran
