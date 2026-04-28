@@ -892,9 +892,7 @@ public class TableReader implements Closeable, SymbolTableSource {
         Misc.free(parquetMetaDecoders.getQuick(partitionIndex));
         parquetMetaDecoders.setQuick(partitionIndex, null);
         Misc.free(parquetMetadataPartitions.getQuick(partitionIndex));
-        parquetMetadataPartitions.setQuick(partitionIndex, NullMemoryCMR.INSTANCE);
         Misc.free(parquetPartitions.getQuick(partitionIndex));
-        parquetPartitions.setQuick(partitionIndex, NullMemoryCMR.INSTANCE);
         int columnBase = getColumnBase(partitionIndex);
         for (int i = 0; i < columnCount; i++) {
             closeIndexReader(columnBase, i);
