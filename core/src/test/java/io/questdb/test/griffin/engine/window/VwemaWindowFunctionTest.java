@@ -375,6 +375,51 @@ public class VwemaWindowFunctionTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testVwemaCachedWindowWithNullVolume() throws Exception {
+        // Forces cached execution via order-by-non-timestamp column and exercises invalid-input
+        // handling (NULL volume, zero volume) through pass1() for both VwemaOverPartitionFunction
+        // and VwemaOverUnboundedRowsFrameFunction. Invalid rows must keep the previous VWEMA;
+        // a partition that starts with an invalid row (lowest sort_key in the partition has NULL
+        // volume) must produce NULL until the first valid one.
+        assertMemoryLeak(() -> {
+            execute("create table tab (ts timestamp, sort_key long, sym symbol, price double, volume double) timestamp(ts)");
+            execute("insert into tab values " +
+                    "('2024-01-01T00:00:01.000000Z'::timestamp, 3, 'A', 30.0, 1.0), " +
+                    "('2024-01-01T00:00:02.000000Z'::timestamp, 2, 'B', 100.0, 1.0), " +
+                    "('2024-01-01T00:00:03.000000Z'::timestamp, 5, 'A', 50.0, 0.0), " +
+                    "('2024-01-01T00:00:04.000000Z'::timestamp, 1, 'B', 10.0, NULL), " +
+                    "('2024-01-01T00:00:05.000000Z'::timestamp, 4, 'A', 100.0, 1.0)");
+
+            // sort_key order, alpha = 2/(period+1) = 0.5:
+            //   no-partition stream:
+            //     sk=1 (B, p=10, v=NULL) invalid; never seen a valid row -> vwema=NULL
+            //     sk=2 (B, p=100, v=1)   first valid                    -> num=100, den=1, vwema=100
+            //     sk=3 (A, p=30, v=1)    valid                          -> num=65,  den=1, vwema=65
+            //     sk=4 (A, p=100, v=1)   valid                          -> num=82.5,den=1, vwema=82.5
+            //     sk=5 (A, p=50, v=0)    invalid (vol<=0)               -> keep            vwema=82.5
+            //   partition A: (sk=3,30,1) (sk=4,100,1) (sk=5,50,0)          -> 30, 65, 65
+            //   partition B: (sk=1,10,NULL) (sk=2,100,1)                   -> NULL (first row invalid), 100 (first valid)
+            assertQueryNoLeakCheck(
+                    """
+                            ts\tsort_key\tsym\tprice\tvolume\tvwema_no_part\tvwema_part
+                            2024-01-01T00:00:01.000000Z\t3\tA\t30.0\t1.0\t65.0\t30.0
+                            2024-01-01T00:00:02.000000Z\t2\tB\t100.0\t1.0\t100.0\t100.0
+                            2024-01-01T00:00:03.000000Z\t5\tA\t50.0\t0.0\t82.5\t65.0
+                            2024-01-01T00:00:04.000000Z\t1\tB\t10.0\tnull\tnull\tnull
+                            2024-01-01T00:00:05.000000Z\t4\tA\t100.0\t1.0\t82.5\t65.0
+                            """,
+                    "select ts, sort_key, sym, price, volume, " +
+                            "avg(price, 'period', 3, volume) over (order by sort_key) vwema_no_part, " +
+                            "avg(price, 'period', 3, volume) over (partition by sym order by sort_key) vwema_part " +
+                            "from tab",
+                    "ts",
+                    true,
+                    true
+            );
+        });
+    }
+
+    @Test
     public void testVwemaExceptionAlphaEqualsZero() throws Exception {
         // alpha=0.0 should be invalid (exclusive lower bound) - caught by general positive check
         assertException(
