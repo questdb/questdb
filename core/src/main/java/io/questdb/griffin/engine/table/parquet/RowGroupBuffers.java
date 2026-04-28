@@ -37,7 +37,7 @@ import io.questdb.std.Unsafe;
  * and sizes to {@code 0}. Consumers must treat that as a logical all-null chunk,
  * not as an invalid buffer.
  * <p>
- * The current {@code read_parquet()} direct cursor still uses {@link PartitionDecoder},
+ * The current {@code read_parquet()} direct cursor still uses {@link ParquetFileDecoder},
  * which materializes all requested chunks. If it ever switches to `_pm`, it must
  * honor the same zero-pointer convention before dereferencing these buffers.
  */

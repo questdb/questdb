@@ -45,7 +45,7 @@ import io.questdb.cairo.vm.NullMemoryCMR;
 import io.questdb.cairo.vm.api.MemoryR;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.griffin.engine.table.parquet.ParquetMetaPartitionDecoder;
+import io.questdb.griffin.engine.table.parquet.ParquetPartitionDecoder;
 import io.questdb.std.DirectLongList;
 import io.questdb.std.IntList;
 import io.questdb.std.LongList;
@@ -77,7 +77,7 @@ public class FwdTableReaderPageFrameCursor implements TablePageFrameCursor {
     private TableReader reader;
     // only native partition frames are reentered
     private long reenterPageFrameRowLimit;
-    private ParquetMetaPartitionDecoder reenterParquetDecoder;
+    private ParquetPartitionDecoder reenterParquetDecoder;
     private boolean reenterPartitionFrame = false; // true when the current Partition Frame is not entirely exhausted
     private long reenterPartitionHi;
     private int reenterPartitionIndex;
@@ -505,7 +505,7 @@ public class FwdTableReaderPageFrameCursor implements TablePageFrameCursor {
 
     private class TableReaderPageFrame implements PageFrame {
         private byte format;
-        private ParquetMetaPartitionDecoder parquetMetaDecoder;
+        private ParquetPartitionDecoder parquetMetaDecoder;
         private long partitionHi;
         private int partitionIndex;
         private long partitionLo;
@@ -549,7 +549,7 @@ public class FwdTableReaderPageFrameCursor implements TablePageFrameCursor {
         }
 
         @Override
-        public ParquetMetaPartitionDecoder getParquetDecoder() {
+        public ParquetPartitionDecoder getParquetDecoder() {
             assert parquetMetaDecoder != null || format != PartitionFormat.PARQUET;
             return parquetMetaDecoder;
         }

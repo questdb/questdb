@@ -30,7 +30,7 @@ import io.questdb.cairo.sql.PartitionFrameCursor;
 import io.questdb.cairo.sql.StaticSymbolTable;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.griffin.engine.table.parquet.ParquetMetaPartitionDecoder;
+import io.questdb.griffin.engine.table.parquet.ParquetPartitionDecoder;
 import io.questdb.griffin.model.RuntimeIntrinsicIntervalModel;
 import io.questdb.std.LongList;
 import io.questdb.std.Misc;
@@ -41,7 +41,7 @@ import static io.questdb.std.Vect.BIN_SEARCH_SCAN_UP;
 public abstract class AbstractIntervalPartitionFrameCursor implements PartitionFrameCursor {
     protected final IntervalPartitionFrame frame = new IntervalPartitionFrame();
     protected final RuntimeIntrinsicIntervalModel intervalModel;
-    protected final ParquetMetaPartitionDecoder parquetDecoder = new ParquetMetaPartitionDecoder();
+    protected final ParquetPartitionDecoder parquetDecoder = new ParquetPartitionDecoder();
     protected final int timestampIndex;
     private final NativeTimestampFinder nativeTimestampFinder = new NativeTimestampFinder();
     private final ParquetTimestampFinder parquetTimestampFinder;
@@ -215,13 +215,13 @@ public abstract class AbstractIntervalPartitionFrameCursor implements PartitionF
 
     protected static class IntervalPartitionFrame implements PartitionFrame {
         protected byte format;
-        protected ParquetMetaPartitionDecoder parquetMetaDecoder;
+        protected ParquetPartitionDecoder parquetMetaDecoder;
         protected int partitionIndex;
         protected long rowHi;
         protected long rowLo;
 
         @Override
-        public ParquetMetaPartitionDecoder getParquetMetaDecoder() {
+        public ParquetPartitionDecoder getParquetMetaDecoder() {
             return parquetMetaDecoder;
         }
 

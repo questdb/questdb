@@ -31,7 +31,7 @@ import io.questdb.cairo.vm.api.MemoryCR;
 import io.questdb.cairo.vm.api.MemoryMA;
 import io.questdb.cairo.vm.api.MemoryR;
 import io.questdb.griffin.engine.table.parquet.ParquetCompression;
-import io.questdb.griffin.engine.table.parquet.ParquetMetaPartitionDecoder;
+import io.questdb.griffin.engine.table.parquet.ParquetPartitionDecoder;
 import io.questdb.griffin.engine.table.parquet.PartitionDescriptor;
 import io.questdb.griffin.engine.table.parquet.PartitionUpdater;
 import io.questdb.griffin.engine.table.parquet.RowGroupBuffers;
@@ -114,7 +114,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
         FilesFacade ff = tableWriter.getFilesFacade();
         final O3ParquetMergeContext ctx = PARQUET_MERGE_CONTEXT.get();
         ctx.clear();
-        final ParquetMetaPartitionDecoder partitionDecoder = ctx.getPartitionDecoder();
+        final ParquetPartitionDecoder partitionDecoder = ctx.getPartitionDecoder();
         final RowGroupBuffers rowGroupBuffers = ctx.getRowGroupBuffers();
         final DirectIntList parquetColumns = ctx.getParquetColumns();
         final ParquetMetaFileReader parquetMetaReader = ctx.getParquetMetaReader();
@@ -2104,7 +2104,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
             ReadOnlyObjList<? extends MemoryCR> oooColumns,
             long sortedTimestampsAddr,
             TableWriter tableWriter,
-            ParquetMetaPartitionDecoder decoder,
+            ParquetPartitionDecoder decoder,
             int rowGroupSize,
             RowGroupBuffers rowGroupBuffers,
             int rowGroupIndex,
@@ -3255,7 +3255,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
             Path pathToTable,
             Path path,
             FilesFacade ff,
-            ParquetMetaPartitionDecoder partitionDecoder,
+            ParquetPartitionDecoder partitionDecoder,
             TableRecordMetadata tableWriterMetadata,
             DirectIntList parquetColumns,
             RowGroupBuffers rowGroupBuffers,

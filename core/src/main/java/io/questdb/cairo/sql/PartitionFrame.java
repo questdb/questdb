@@ -24,7 +24,7 @@
 
 package io.questdb.cairo.sql;
 
-import io.questdb.griffin.engine.table.parquet.ParquetMetaPartitionDecoder;
+import io.questdb.griffin.engine.table.parquet.ParquetPartitionDecoder;
 import org.jetbrains.annotations.Nullable;
 
 /**
@@ -45,7 +45,7 @@ public interface PartitionFrame {
      * @return pm-backed parquet decoder for table partitions; null for native partitions or read_parquet()
      */
     @Nullable
-    default ParquetMetaPartitionDecoder getParquetMetaDecoder() {
+    default ParquetPartitionDecoder getParquetMetaDecoder() {
         return null;
     }
 

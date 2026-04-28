@@ -25,7 +25,7 @@
 package io.questdb.cairo;
 
 import io.questdb.griffin.engine.table.parquet.OwnedMemoryPartitionDescriptor;
-import io.questdb.griffin.engine.table.parquet.ParquetMetaPartitionDecoder;
+import io.questdb.griffin.engine.table.parquet.ParquetPartitionDecoder;
 import io.questdb.griffin.engine.table.parquet.PartitionDescriptor;
 import io.questdb.griffin.engine.table.parquet.PartitionUpdater;
 import io.questdb.griffin.engine.table.parquet.RowGroupBuffers;
@@ -50,7 +50,7 @@ public class O3ParquetMergeContext implements Closeable {
     private IntIntHashMap parquetColIdToIdx;
     private DirectIntList parquetColumns;
     private ParquetMetaFileReader parquetMetaReader;
-    private ParquetMetaPartitionDecoder partitionDecoder;
+    private ParquetPartitionDecoder partitionDecoder;
     private OwnedMemoryPartitionDescriptor partitionDescriptor;
     private PartitionUpdater partitionUpdater;
     private LongList rgO3Ranges;
@@ -70,7 +70,7 @@ public class O3ParquetMergeContext implements Closeable {
         parquetColumns = new DirectIntList(64, MemoryTag.NATIVE_O3);
         parquetColIdToIdx = new IntIntHashMap();
         parquetMetaReader = new ParquetMetaFileReader();
-        partitionDecoder = new ParquetMetaPartitionDecoder();
+        partitionDecoder = new ParquetPartitionDecoder();
         partitionDescriptor = new OwnedMemoryPartitionDescriptor();
         partitionUpdater = new PartitionUpdater();
         rgO3Ranges = new LongList();
@@ -173,7 +173,7 @@ public class O3ParquetMergeContext implements Closeable {
         return parquetMetaReader;
     }
 
-    public ParquetMetaPartitionDecoder getPartitionDecoder() {
+    public ParquetPartitionDecoder getPartitionDecoder() {
         return partitionDecoder;
     }
 

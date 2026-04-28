@@ -28,8 +28,8 @@ import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.Reopenable;
 import io.questdb.griffin.engine.table.parquet.ParquetDecoder;
-import io.questdb.griffin.engine.table.parquet.ParquetMetaPartitionDecoder;
-import io.questdb.griffin.engine.table.parquet.PartitionDecoder;
+import io.questdb.griffin.engine.table.parquet.ParquetPartitionDecoder;
+import io.questdb.griffin.engine.table.parquet.ParquetFileDecoder;
 import io.questdb.griffin.engine.table.parquet.RowGroupBuffers;
 import io.questdb.std.DirectIntList;
 import io.questdb.std.DirectLongList;
@@ -71,8 +71,8 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
     private final int parquetCacheSize;
     // Contains [parquet_column_index, column_type] pairs.
     private final DirectIntList parquetColumns;
-    private final ParquetMetaPartitionDecoder parquetMetaDecoder;
-    private final PartitionDecoder legacyDecoder;
+    private final ParquetPartitionDecoder parquetMetaDecoder;
+    private final ParquetFileDecoder legacyDecoder;
     private ParquetDecoder activeDecoder;
     private PageFrameAddressCache addressCache;
 
@@ -88,8 +88,8 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
             frameMemory = new PageFrameMemoryImpl();
             fromParquetColumnIndexes = new IntList(16);
             parquetColumns = new DirectIntList(32, MemoryTag.NATIVE_DEFAULT, true);
-            parquetMetaDecoder = new ParquetMetaPartitionDecoder();
-            legacyDecoder = new PartitionDecoder();
+            parquetMetaDecoder = new ParquetPartitionDecoder();
+            legacyDecoder = new ParquetFileDecoder();
         } catch (Throwable th) {
             close();
             throw th;
@@ -335,14 +335,14 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
 
     private void activateDecoder(int frameIndex) {
         final ParquetDecoder frameDecoder = addressCache.getParquetDecoder(frameIndex);
-        if (frameDecoder instanceof ParquetMetaPartitionDecoder parquetMetaFrame) {
+        if (frameDecoder instanceof ParquetPartitionDecoder parquetMetaFrame) {
             if (parquetMetaDecoder.getFileAddr() != parquetMetaFrame.getFileAddr() || parquetMetaDecoder.getFileSize() != parquetMetaFrame.getFileSize()) {
                 parquetMetaDecoder.of(parquetMetaFrame);
                 buildColumnIdMap(parquetMetaDecoder);
             }
             activeDecoder = parquetMetaDecoder;
         } else {
-            PartitionDecoder legacyFrame = (PartitionDecoder) frameDecoder;
+            ParquetFileDecoder legacyFrame = (ParquetFileDecoder) frameDecoder;
             if (legacyDecoder.getFileAddr() != legacyFrame.getFileAddr() || legacyDecoder.getFileSize() != legacyFrame.getFileSize()) {
                 legacyDecoder.of(legacyFrame);
                 buildColumnIdMap(legacyDecoder);

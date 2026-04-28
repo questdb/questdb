@@ -42,7 +42,7 @@ import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.table.ParquetRowGroupFilter;
 import io.questdb.griffin.engine.table.PushdownFilterExtractor;
-import io.questdb.griffin.engine.table.parquet.PartitionDecoder;
+import io.questdb.griffin.engine.table.parquet.ParquetFileDecoder;
 import io.questdb.griffin.engine.table.parquet.RowGroupBuffers;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
@@ -73,7 +73,7 @@ import org.jetbrains.annotations.Nullable;
 /**
  * Page frame cursor for single-threaded read_parquet() SQL function.
  * <p>
- * This cursor currently reads external parquet files via {@link PartitionDecoder},
+ * This cursor currently reads external parquet files via {@link ParquetFileDecoder},
  * which materializes all requested chunks. It does not currently understand the
  * `_pm` zero-pointer all-null convention used by {@code ParquetMetaPartitionDecoder}.
  * If {@code read_parquet()} ever starts using `_pm`, the getters in this class
@@ -85,7 +85,7 @@ public class ReadParquetRecordCursor implements NoRandomAccessRecordCursor {
     private final LongList auxPtrs = new LongList();
     private final DirectIntList columns;
     private final LongList dataPtrs = new LongList();
-    private final PartitionDecoder decoder;
+    private final ParquetFileDecoder decoder;
     private final FilesFacade ff;
     private final DirectLongList filterList;
     private final MemoryCARWImpl filterValues;
@@ -107,7 +107,7 @@ public class ReadParquetRecordCursor implements NoRandomAccessRecordCursor {
         try {
             this.ff = ff;
             this.metadata = metadata;
-            this.decoder = new PartitionDecoder();
+            this.decoder = new ParquetFileDecoder();
             this.rowGroupBuffers = new RowGroupBuffers(MemoryTag.NATIVE_PARQUET_PARTITION_DECODER);
             this.columns = new DirectIntList(32, MemoryTag.NATIVE_DEFAULT);
             this.record = new ParquetRecord(metadata.getColumnCount());
@@ -142,11 +142,11 @@ public class ReadParquetRecordCursor implements NoRandomAccessRecordCursor {
      */
     public static boolean canProjectMetadata(
             RecordMetadata metadata,
-            PartitionDecoder decoder,
+            ParquetFileDecoder decoder,
             @Nullable DirectIntList columns,
             @Nullable ColumnMapping columnMapping
     ) {
-        final PartitionDecoder.Metadata parquetMetadata = decoder.metadata();
+        final ParquetFileDecoder.Metadata parquetMetadata = decoder.metadata();
 
         for (int i = 0; i < metadata.getColumnCount(); i++) {
             final int expectedType = metadata.getColumnType(i);
@@ -197,7 +197,7 @@ public class ReadParquetRecordCursor implements NoRandomAccessRecordCursor {
 
     @Override
     public void calculateSize(SqlExecutionCircuitBreaker circuitBreaker, Counter counter) {
-        PartitionDecoder.Metadata meta = decoder.metadata();
+        ParquetFileDecoder.Metadata meta = decoder.metadata();
         if (rowGroupIndex < 0) {
             counter.add(meta.getRowCount());
         } else {

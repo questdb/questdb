@@ -33,7 +33,7 @@ import io.questdb.cairo.vm.api.MemoryCMARW;
 import io.questdb.cairo.vm.api.MemoryMARW;
 import io.questdb.cairo.wal.WalUtils;
 import io.questdb.cairo.wal.seq.TableTransactionLogFile;
-import io.questdb.griffin.engine.table.parquet.ParquetMetaPartitionDecoder;
+import io.questdb.griffin.engine.table.parquet.ParquetPartitionDecoder;
 import io.questdb.griffin.engine.table.parquet.ParquetMetadataWriter;
 import io.questdb.griffin.engine.table.parquet.RowGroupBuffers;
 import io.questdb.log.Log;
@@ -746,7 +746,7 @@ public class TableSnapshotRestore implements QuietCloseable {
                     // Decoder lives strictly inside the parquet/_pm mmaps. Closing it
                     // before either munmap honors the documented clear-then-munmap
                     // contract of ParquetMetaPartitionDecoder.
-                    try (ParquetMetaPartitionDecoder partitionDecoder = new ParquetMetaPartitionDecoder()) {
+                    try (ParquetPartitionDecoder partitionDecoder = new ParquetPartitionDecoder()) {
                         partitionDecoder.of(parquetMetaAddr, parquetMetaFileSize, parquetAddr, parquetSize, MemoryTag.NATIVE_PARQUET_PARTITION_DECODER);
 
                         // Set path to native partition directory (where index files go)
@@ -963,7 +963,7 @@ public class TableSnapshotRestore implements QuietCloseable {
             CairoConfiguration configuration,
             Path path,
             int partitionPathLen,
-            ParquetMetaPartitionDecoder partitionDecoder,
+            ParquetPartitionDecoder partitionDecoder,
             RowGroupBuffers rowGroupBuffers,
             DirectIntList parquetColumns,
             ObjList<BitmapIndexWriter> indexWriters,

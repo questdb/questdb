@@ -69,14 +69,6 @@ public class ParquetFileDecoder implements ParquetDecoder, ParquetRowGroupSkippe
 
     public static native long createDecodeContext(long addr, long fileSize);
 
-    public static boolean decodeNoNeedToDecodeFlag(long encodedIndex) {
-        return (encodedIndex & 1) == 1;
-    }
-
-    public static int decodeRowGroupIndex(long encodedIndex) {
-        return (int) ((encodedIndex >> 1) - 1);
-    }
-
     public static native void destroyDecodeContext(long decodeContextPtr);
 
     /**
@@ -193,39 +185,6 @@ public class ParquetFileDecoder implements ParquetDecoder, ParquetRowGroupSkippe
                 rowHi,
                 filteredRows.getAddress(),
                 filteredRows.size()
-        );
-    }
-
-    /**
-     * Searches for the row group holding the given timestamp.
-     * Scan direction is always {@link Vect#BIN_SEARCH_SCAN_DOWN}.
-     * <p>
-     * The row group index can be calculated on the returned value
-     * via a {@link #decodeRowGroupIndex(long)} call. In case if the located
-     * position is at the end of a row group or between two row groups, the
-     * {@link #decodeNoNeedToDecodeFlag(long)} method will return true.
-     *
-     * @param timestamp      timestamp value to search for
-     * @param rowLo          row lo, inclusive
-     * @param rowHi          row hi, inclusive
-     * @param timestampIndex timestamp column index within the Parquet file
-     * @return encoded row group index and "no need to decode" flag
-     */
-    public long findRowGroupByTimestamp(
-            long timestamp,
-            long rowLo,
-            long rowHi,
-            int timestampIndex
-    ) {
-        assert ptr != 0;
-        return findRowGroupByTimestamp( // throws CairoException on error
-                ptr,
-                fileAddr,
-                fileSize,
-                timestamp,
-                rowLo,
-                rowHi,
-                timestampIndex
         );
     }
 

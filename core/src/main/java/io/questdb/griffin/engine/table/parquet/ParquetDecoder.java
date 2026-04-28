@@ -34,9 +34,9 @@ import io.questdb.std.DirectLongList;
  * {@link PageFrameMemoryPool} uses this interface to decode row groups without
  * knowing which metadata source backs the decoder. Two implementations exist:
  * <ul>
- *   <li>{@link ParquetMetaPartitionDecoder} reads metadata from the {@code _pm}
+ *   <li>{@link ParquetPartitionDecoder} reads metadata from the {@code _pm}
  *       sidecar file. The table reader path uses this for table partitions.</li>
- *   <li>{@link PartitionDecoder} parses the parquet footer directly. The
+ *   <li>{@link ParquetFileDecoder} parses the parquet footer directly. The
  *       {@code read_parquet()} SQL function uses this for external parquet
  *       files that have no {@code _pm} sidecar.</li>
  * </ul>
@@ -48,8 +48,8 @@ import io.questdb.std.DirectLongList;
  * <p>
  * Buffer contract:
  * <ul>
- *   <li>{@link PartitionDecoder} materializes decoded native buffers for every requested chunk.</li>
- *   <li>{@link ParquetMetaPartitionDecoder} may represent an all-null decoded chunk as
+ *   <li>{@link ParquetFileDecoder} materializes decoded native buffers for every requested chunk.</li>
+ *   <li>{@link ParquetPartitionDecoder} may represent an all-null decoded chunk as
  *       {@code dataPtr == 0 && auxPtr == 0 && dataSize == 0 && auxSize == 0} to avoid
  *       fetching and materializing parquet bytes.</li>
  * </ul>

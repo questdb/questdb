@@ -30,8 +30,8 @@ import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.sql.PartitionFormat;
 import io.questdb.griffin.engine.table.ParquetRowGroupFilter;
-import io.questdb.griffin.engine.table.parquet.ParquetMetaPartitionDecoder;
-import io.questdb.griffin.engine.table.parquet.PartitionDecoder;
+import io.questdb.griffin.engine.table.parquet.ParquetPartitionDecoder;
+import io.questdb.griffin.engine.table.parquet.ParquetFileDecoder;
 import io.questdb.griffin.engine.table.parquet.RowGroupBuffers;
 import io.questdb.std.DirectIntList;
 import io.questdb.std.FilesFacade;
@@ -656,7 +656,7 @@ public class ParquetWriteTest extends AbstractCairoTest {
                         continue;
                     }
                     reader.openPartition(i);
-                    ParquetMetaPartitionDecoder decoder = reader.getAndInitParquetMetaPartitionDecoder(i);
+                    ParquetPartitionDecoder decoder = reader.getAndInitParquetMetaPartitionDecoder(i);
                     rowGroupCountBefore = decoder.metadata().getRowGroupCount();
                     Assert.assertEquals("initial row group count", 2, rowGroupCountBefore);
                 }
@@ -683,7 +683,7 @@ public class ParquetWriteTest extends AbstractCairoTest {
                     }
                     reader.openPartition(i);
                     rowGroupCountAfterFirst = reader.getAndInitParquetMetaPartitionDecoder(i).metadata().getRowGroupCount();
-                    try (PartitionDecoder footerDecoder = new PartitionDecoder()) {
+                    try (ParquetFileDecoder footerDecoder = new ParquetFileDecoder()) {
                         footerDecoder.of(reader.getParquetAddr(i), reader.getParquetFileSize(i), MemoryTag.NATIVE_PARQUET_PARTITION_DECODER);
                         unusedAfterFirst = footerDecoder.metadata().getUnusedBytes();
                     }
@@ -719,7 +719,7 @@ public class ParquetWriteTest extends AbstractCairoTest {
                     }
                     reader.openPartition(i);
                     rowGroupCountAfterSecond = reader.getAndInitParquetMetaPartitionDecoder(i).metadata().getRowGroupCount();
-                    try (PartitionDecoder footerDecoder = new PartitionDecoder()) {
+                    try (ParquetFileDecoder footerDecoder = new ParquetFileDecoder()) {
                         footerDecoder.of(reader.getParquetAddr(i), reader.getParquetFileSize(i), MemoryTag.NATIVE_PARQUET_PARTITION_DECODER);
                         unusedAfterSecond = footerDecoder.metadata().getUnusedBytes();
                     }
@@ -2857,7 +2857,7 @@ public class ParquetWriteTest extends AbstractCairoTest {
                         continue;
                     }
                     reader.openPartition(i);
-                    try (PartitionDecoder footerDecoder = new PartitionDecoder()) {
+                    try (ParquetFileDecoder footerDecoder = new ParquetFileDecoder()) {
                         footerDecoder.of(reader.getParquetAddr(i), reader.getParquetFileSize(i), MemoryTag.NATIVE_PARQUET_PARTITION_DECODER);
                         unusedAfterUpdate = footerDecoder.metadata().getUnusedBytes();
                     }
@@ -2882,7 +2882,7 @@ public class ParquetWriteTest extends AbstractCairoTest {
                         continue;
                     }
                     reader.openPartition(i);
-                    try (PartitionDecoder footerDecoder = new PartitionDecoder()) {
+                    try (ParquetFileDecoder footerDecoder = new ParquetFileDecoder()) {
                         footerDecoder.of(reader.getParquetAddr(i), reader.getParquetFileSize(i), MemoryTag.NATIVE_PARQUET_PARTITION_DECODER);
                         long unusedAfterRewrite = footerDecoder.metadata().getUnusedBytes();
                         Assert.assertEquals("unused_bytes should be 0 after rewrite", 0, unusedAfterRewrite);
@@ -3185,7 +3185,7 @@ public class ParquetWriteTest extends AbstractCairoTest {
                 }
 
                 reader.openPartition(i);
-                ParquetMetaPartitionDecoder decoder = reader.getAndInitParquetMetaPartitionDecoder(i);
+                ParquetPartitionDecoder decoder = reader.getAndInitParquetMetaPartitionDecoder(i);
                 try (
                         RowGroupBuffers rowGroupBuffers = new RowGroupBuffers(MemoryTag.NATIVE_PARQUET_PARTITION_DECODER);
                         DirectIntList parquetColumns = new DirectIntList(4, MemoryTag.NATIVE_PARQUET_PARTITION_DECODER)

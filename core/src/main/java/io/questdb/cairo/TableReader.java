@@ -34,7 +34,7 @@ import io.questdb.cairo.vm.api.MemoryCMR;
 import io.questdb.cairo.vm.api.MemoryCR;
 import io.questdb.cairo.vm.api.MemoryMR;
 import io.questdb.cairo.vm.api.MemoryR;
-import io.questdb.griffin.engine.table.parquet.ParquetMetaPartitionDecoder;
+import io.questdb.griffin.engine.table.parquet.ParquetPartitionDecoder;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.BitSet;
@@ -96,7 +96,7 @@ public class TableReader implements Closeable, SymbolTableSource {
     private boolean hasActiveColumns;
     private int openPartitionCount;
     private LongList openPartitionInfo;
-    private ObjList<ParquetMetaPartitionDecoder> parquetMetaDecoders;
+    private ObjList<ParquetPartitionDecoder> parquetMetaDecoders;
     private ObjList<MemoryCMR> parquetMetadataPartitions;
     private ObjList<MemoryCMR> parquetPartitions;
     private int partitionCount;
@@ -312,17 +312,17 @@ public class TableReader implements Closeable, SymbolTableSource {
     }
 
     /**
-     * Returns a {@link ParquetMetaPartitionDecoder} backed by the _pm sidecar file for the given
+     * Returns a {@link ParquetPartitionDecoder} backed by the _pm sidecar file for the given
      * partition. The decoder reads metadata from the _pm file (no parquet footer parsing)
      * and delegates data decoding to the stateless Rust decode engine.
      *
      * @param partitionIndex the partition index
      * @return the initialized ParquetMetaPartitionDecoder
      */
-    public ParquetMetaPartitionDecoder getAndInitParquetMetaPartitionDecoder(int partitionIndex) {
-        ParquetMetaPartitionDecoder decoder = parquetMetaDecoders.getQuick(partitionIndex);
+    public ParquetPartitionDecoder getAndInitParquetMetaPartitionDecoder(int partitionIndex) {
+        ParquetPartitionDecoder decoder = parquetMetaDecoders.getQuick(partitionIndex);
         if (decoder == null) {
-            decoder = new ParquetMetaPartitionDecoder();
+            decoder = new ParquetPartitionDecoder();
             parquetMetaDecoders.setQuick(partitionIndex, decoder);
         }
         long parquetMetaAddr = getParquetMetadataAddr(partitionIndex);
@@ -1440,7 +1440,7 @@ public class TableReader implements Closeable, SymbolTableSource {
                     // Release native state on the existing decoder but keep the Java instance.
                     // getAndInitParquetMetaPartitionDecoder rebinds via of() on next access, and
                     // of() internally destroys stale state. Avoids a new allocation per reload.
-                    ParquetMetaPartitionDecoder parquetMetaDecoder = parquetMetaDecoders.getQuick(partitionIndex);
+                    ParquetPartitionDecoder parquetMetaDecoder = parquetMetaDecoders.getQuick(partitionIndex);
                     if (parquetMetaDecoder != null) {
                         parquetMetaDecoder.close();
                     }

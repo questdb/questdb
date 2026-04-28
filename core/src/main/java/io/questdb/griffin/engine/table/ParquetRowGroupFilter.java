@@ -31,7 +31,7 @@ import io.questdb.cairo.TimestampDriver;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.vm.MemoryCARWImpl;
 import io.questdb.griffin.engine.table.parquet.ParquetRowGroupSkipper;
-import io.questdb.griffin.engine.table.parquet.PartitionDecoder;
+import io.questdb.griffin.engine.table.parquet.ParquetFileDecoder;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.Decimal128;
@@ -65,7 +65,7 @@ public final class ParquetRowGroupFilter {
      * Call {@link #prepareFilterList} once per partition before using this method.
      *
      * @param rowGroupIndex the row group index to check
-     * @param skipper       the row group skipper (typically backed by {@link ParquetMetaFileReader} or {@link PartitionDecoder})
+     * @param skipper       the row group skipper (typically backed by {@link ParquetMetaFileReader} or {@link ParquetFileDecoder})
      * @param filterList    filter descriptors prepared by {@link #prepareFilterList}
      * @return true if the row group can be safely skipped, false otherwise
      */
@@ -107,7 +107,7 @@ public final class ParquetRowGroupFilter {
      * @return true if filters were prepared successfully and row group pruning should be attempted
      */
     public static boolean prepareFilterList(
-            PartitionDecoder.Metadata metadata,
+            ParquetFileDecoder.Metadata metadata,
             ObjList<PushdownFilterExtractor.PushdownFilterCondition> pushdownFilterConditions,
             DirectLongList filterList,
             MemoryCARWImpl filterValues
@@ -128,7 +128,7 @@ public final class ParquetRowGroupFilter {
     }
 
     private static boolean prepareFilterListImpl(
-            PartitionDecoder.Metadata legacyMetadata,
+            ParquetFileDecoder.Metadata legacyMetadata,
             ParquetMetaFileReader parquetMetaReader,
             ObjList<PushdownFilterExtractor.PushdownFilterCondition> pushdownFilterConditions,
             DirectLongList filterList,

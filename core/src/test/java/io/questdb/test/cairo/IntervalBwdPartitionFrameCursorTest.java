@@ -41,7 +41,7 @@ import io.questdb.cairo.sql.StaticSymbolTable;
 import io.questdb.cairo.sql.TableReferenceOutOfDateException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.cairo.ParquetMetaFileReader;
-import io.questdb.griffin.engine.table.parquet.ParquetMetaPartitionDecoder;
+import io.questdb.griffin.engine.table.parquet.ParquetPartitionDecoder;
 import io.questdb.griffin.engine.table.parquet.RowGroupBuffers;
 import io.questdb.griffin.model.RuntimeIntervalModel;
 import io.questdb.std.DirectIntList;
@@ -676,7 +676,7 @@ public class IntervalBwdPartitionFrameCursorTest extends AbstractCairoTest {
                 }
 
                 Assert.assertEquals(PartitionFormat.PARQUET, frame.getPartitionFormat());
-                ParquetMetaPartitionDecoder parquetDecoder = frame.getParquetMetaDecoder();
+                ParquetPartitionDecoder parquetDecoder = frame.getParquetMetaDecoder();
                 Assert.assertNotNull(parquetDecoder);
                 ParquetMetaFileReader parquetMetadata = parquetDecoder.metadata();
                 for (int i = 0, n = parquetMetadata.getRowGroupCount(); i < n; i++) {

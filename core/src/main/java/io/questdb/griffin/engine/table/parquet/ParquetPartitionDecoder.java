@@ -64,12 +64,10 @@ public class ParquetPartitionDecoder implements ParquetDecoder, QuietCloseable {
     }
 
     /**
-     * Decodes a row group. The {@code columns} list uses the same
-     * {@code [parquet_column_index, column_type]} pair format as
-     * {@link ParquetFileDecoder#decodeRowGroup} for compatibility with
-     * {@code PageFrameMemoryPool}. The column type from Java is used for
-     * Symbol->Varchar and Varchar->VarcharSlice overrides; the base type
-     * comes from the {@code _pm} file.
+     * Decodes a row group. The {@code columns} list uses the same {@code [parquet_column_index, column_type]}
+     * pair format as {@link ParquetFileDecoder#decodeRowGroup(RowGroupBuffers, DirectIntList, int, int, int)}
+     * for compatibility with {@code PageFrameMemoryPool}. The column type from Java is used for
+     * Symbol->Varchar and Varchar->VarcharSlice overrides; the base type comes from the {@code _pm} file.
      *
      * @param rowGroupBuffers output buffers
      * @param columns         [parquet_column_index, column_type] pairs

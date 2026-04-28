@@ -36,7 +36,7 @@ import io.questdb.std.DirectLongList;
  *   <li>{@link io.questdb.cairo.ParquetMetaFileReader} reads stats and bloom
  *       filter bitsets from the {@code _pm} sidecar file. Used by the table
  *       reader path.</li>
- *   <li>{@link PartitionDecoder} parses the parquet footer directly and reads
+ *   <li>{@link ParquetFileDecoder} parses the parquet footer directly and reads
  *       bloom filters from the parquet file. Used by the {@code read_parquet()}
  *       SQL function for external parquet files without a {@code _pm}
  *       sidecar.</li>

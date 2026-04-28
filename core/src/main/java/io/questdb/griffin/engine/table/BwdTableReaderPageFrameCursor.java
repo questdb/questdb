@@ -43,7 +43,7 @@ import io.questdb.cairo.vm.NullMemoryCMR;
 import io.questdb.cairo.vm.api.MemoryR;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.griffin.engine.table.parquet.ParquetMetaPartitionDecoder;
+import io.questdb.griffin.engine.table.parquet.ParquetPartitionDecoder;
 import io.questdb.std.DirectLongList;
 import io.questdb.std.IntList;
 import io.questdb.std.LongList;
@@ -76,7 +76,7 @@ public class BwdTableReaderPageFrameCursor implements TablePageFrameCursor {
     private PartitionFrameCursor partitionFrameCursor;
     private TableReader reader;
     private long reenterPageFrameRowLimit;
-    private ParquetMetaPartitionDecoder reenterParquetDecoder;
+    private ParquetPartitionDecoder reenterParquetDecoder;
     private boolean reenterPartitionFrame = false;
     private long reenterPartitionHi;
     private int reenterPartitionIndex;
@@ -526,7 +526,7 @@ public class BwdTableReaderPageFrameCursor implements TablePageFrameCursor {
         }
 
         @Override
-        public ParquetMetaPartitionDecoder getParquetDecoder() {
+        public ParquetPartitionDecoder getParquetDecoder() {
             assert reenterParquetDecoder != null || format != PartitionFormat.PARQUET;
             return reenterParquetDecoder;
         }
