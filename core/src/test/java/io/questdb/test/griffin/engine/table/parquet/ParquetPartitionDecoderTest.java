@@ -25,7 +25,7 @@
 package io.questdb.test.griffin.engine.table.parquet;
 
 import io.questdb.cairo.ParquetMetaFileWriter;
-import io.questdb.griffin.engine.table.parquet.ParquetMetaPartitionDecoder;
+import io.questdb.griffin.engine.table.parquet.ParquetPartitionDecoder;
 import io.questdb.std.DirectLongList;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Os;
@@ -36,7 +36,7 @@ import org.junit.BeforeClass;
 import org.junit.Test;
 
 /**
- * Lifecycle tests for {@link ParquetMetaPartitionDecoder} that guard the
+ * Lifecycle tests for {@link ParquetPartitionDecoder} that guard the
  * two critical invariants introduced when {@link io.questdb.cairo.ParquetMetaFileReader}
  * gained a lazy native handle:
  * <ol>
@@ -48,7 +48,7 @@ import org.junit.Test;
  *       {@link #testShallowCopyClosesReaderHandle}.</li>
  * </ol>
  */
-public class ParquetMetaPartitionDecoderTest extends AbstractCairoTest {
+public class ParquetPartitionDecoderTest extends AbstractCairoTest {
 
     @BeforeClass
     public static void loadNativeLib() {
@@ -66,7 +66,7 @@ public class ParquetMetaPartitionDecoderTest extends AbstractCairoTest {
                     ParquetMetaTestFile file1 = buildFile(1, 100);
                     ParquetMetaTestFile file2 = buildFile(2, 200)
             ) {
-                ParquetMetaPartitionDecoder decoder = new ParquetMetaPartitionDecoder();
+                ParquetPartitionDecoder decoder = new ParquetPartitionDecoder();
                 try {
                     // First init + lazy native handle allocation.
                     decoder.of(
@@ -113,8 +113,8 @@ public class ParquetMetaPartitionDecoderTest extends AbstractCairoTest {
         // freed when the shallow copy closes — even though owned == false.
         assertMemoryLeak(() -> {
             try (ParquetMetaTestFile file = buildFile(1, 100)) {
-                ParquetMetaPartitionDecoder source = new ParquetMetaPartitionDecoder();
-                ParquetMetaPartitionDecoder copy = new ParquetMetaPartitionDecoder();
+                ParquetPartitionDecoder source = new ParquetPartitionDecoder();
+                ParquetPartitionDecoder copy = new ParquetPartitionDecoder();
                 try {
                     source.of(
                             file.dataPtr,

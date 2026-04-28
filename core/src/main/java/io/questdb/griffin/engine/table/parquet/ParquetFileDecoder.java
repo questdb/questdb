@@ -43,7 +43,7 @@ import io.questdb.std.Vect;
 import io.questdb.std.str.DirectString;
 
 
-public class PartitionDecoder implements ParquetDecoder, ParquetRowGroupSkipper, QuietCloseable {
+public class ParquetFileDecoder implements ParquetDecoder, ParquetRowGroupSkipper, QuietCloseable {
     private static final long COLUMNS_PTR_OFFSET;
     private static final long COLUMN_COUNT_OFFSET;
     private final static long COLUMN_IDS_OFFSET;
@@ -51,7 +51,7 @@ public class PartitionDecoder implements ParquetDecoder, ParquetRowGroupSkipper,
     private static final long COLUMN_RECORD_NAME_SIZE_OFFSET;
     private static final long COLUMN_RECORD_TYPE_OFFSET;
     private static final long COLUMN_STRUCT_SIZE;
-    private static final Log LOG = LogFactory.getLog(PartitionDecoder.class);
+    private static final Log LOG = LogFactory.getLog(ParquetFileDecoder.class);
     private static final long ROW_COUNT_OFFSET;
     private static final long ROW_GROUP_COUNT_OFFSET;
     private static final long ROW_GROUP_SIZES_PTR_OFFSET;
@@ -283,7 +283,7 @@ public class PartitionDecoder implements ParquetDecoder, ParquetRowGroupSkipper,
      *
      * @param other the source decoder whose metadata will be shared (must remain valid)
      */
-    public void of(PartitionDecoder other) {
+    public void of(ParquetFileDecoder other) {
         this.fileAddr = other.fileAddr;
         this.fileSize = other.fileSize;
         this.ptr = other.ptr;

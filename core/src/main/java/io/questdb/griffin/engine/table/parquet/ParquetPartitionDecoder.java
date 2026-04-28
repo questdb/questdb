@@ -39,9 +39,9 @@ import io.questdb.std.Unsafe;
  * Java owns all metadata via {@link ParquetMetaFileReader}. Rust is a stateless
  * decode engine that receives explicit parameters per decode call. This is the
  * table partition path — the {@code read_parquet()} SQL function uses the
- * separate {@link PartitionDecoder} which parses the parquet footer.
+ * separate {@link ParquetFileDecoder} which parses the parquet footer.
  */
-public class ParquetMetaPartitionDecoder implements ParquetDecoder, QuietCloseable {
+public class ParquetPartitionDecoder implements ParquetDecoder, QuietCloseable {
     private final ParquetMetaFileReader parquetMetaReader = new ParquetMetaFileReader();
     private long allocator;
     private long decodeContextPtr;
@@ -66,7 +66,7 @@ public class ParquetMetaPartitionDecoder implements ParquetDecoder, QuietCloseab
     /**
      * Decodes a row group. The {@code columns} list uses the same
      * {@code [parquet_column_index, column_type]} pair format as
-     * {@link PartitionDecoder#decodeRowGroup} for compatibility with
+     * {@link ParquetFileDecoder#decodeRowGroup} for compatibility with
      * {@code PageFrameMemoryPool}. The column type from Java is used for
      * Symbol->Varchar and Varchar->VarcharSlice overrides; the base type
      * comes from the {@code _pm} file.
@@ -86,7 +86,7 @@ public class ParquetMetaPartitionDecoder implements ParquetDecoder, QuietCloseab
             int rowHi
     ) {
         if (decodeContextPtr == 0) {
-            decodeContextPtr = PartitionDecoder.createDecodeContext(parquetAddr, parquetSize);
+            decodeContextPtr = ParquetFileDecoder.createDecodeContext(parquetAddr, parquetSize);
         }
         return decodeRowGroup(
                 allocator,
@@ -113,7 +113,7 @@ public class ParquetMetaPartitionDecoder implements ParquetDecoder, QuietCloseab
             DirectLongList filteredRows
     ) {
         if (decodeContextPtr == 0) {
-            decodeContextPtr = PartitionDecoder.createDecodeContext(parquetAddr, parquetSize);
+            decodeContextPtr = ParquetFileDecoder.createDecodeContext(parquetAddr, parquetSize);
         }
         decodeRowGroupWithRowFilter(
                 allocator, decodeContextPtr, parquetAddr, parquetSize,
@@ -134,7 +134,7 @@ public class ParquetMetaPartitionDecoder implements ParquetDecoder, QuietCloseab
             DirectLongList filteredRows
     ) {
         if (decodeContextPtr == 0) {
-            decodeContextPtr = PartitionDecoder.createDecodeContext(parquetAddr, parquetSize);
+            decodeContextPtr = ParquetFileDecoder.createDecodeContext(parquetAddr, parquetSize);
         }
         decodeRowGroupWithRowFilterFillNulls(
                 allocator, decodeContextPtr, parquetAddr, parquetSize,
@@ -175,7 +175,7 @@ public class ParquetMetaPartitionDecoder implements ParquetDecoder, QuietCloseab
 
     /**
      * Returns the parquet file address (for cache invalidation and export).
-     * Equivalent to {@link PartitionDecoder#getFileAddr()}.
+     * Equivalent to {@link ParquetFileDecoder#getFileAddr()}.
      */
     public long getFileAddr() {
         return parquetAddr;
@@ -183,7 +183,7 @@ public class ParquetMetaPartitionDecoder implements ParquetDecoder, QuietCloseab
 
     /**
      * Returns the parquet file size.
-     * Equivalent to {@link PartitionDecoder#getFileSize()}.
+     * Equivalent to {@link ParquetFileDecoder#getFileSize()}.
      */
     public long getFileSize() {
         return parquetSize;
@@ -261,7 +261,7 @@ public class ParquetMetaPartitionDecoder implements ParquetDecoder, QuietCloseab
      * The source must remain valid for the lifetime of this instance — the
      * underlying mmap must outlive both the source and the copy.
      */
-    public void of(ParquetMetaPartitionDecoder other) {
+    public void of(ParquetPartitionDecoder other) {
         destroy();
         this.parquetMetaAddr = other.parquetMetaAddr;
         this.parquetMetaSize = other.parquetMetaSize;
@@ -340,7 +340,7 @@ public class ParquetMetaPartitionDecoder implements ParquetDecoder, QuietCloseab
 
     private void destroy() {
         if (decodeContextPtr != 0) {
-            PartitionDecoder.destroyDecodeContext(decodeContextPtr);
+            ParquetFileDecoder.destroyDecodeContext(decodeContextPtr);
             decodeContextPtr = 0;
         }
         parquetMetaReader.clear();

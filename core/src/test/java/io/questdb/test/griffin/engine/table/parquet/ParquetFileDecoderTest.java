@@ -30,7 +30,7 @@ import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableReaderMetadata;
 import io.questdb.cairo.TableUtils;
-import io.questdb.griffin.engine.table.parquet.PartitionDecoder;
+import io.questdb.griffin.engine.table.parquet.ParquetFileDecoder;
 import io.questdb.griffin.engine.table.parquet.PartitionDescriptor;
 import io.questdb.griffin.engine.table.parquet.PartitionEncoder;
 import io.questdb.griffin.engine.table.parquet.RowGroupBuffers;
@@ -45,7 +45,7 @@ import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
 
-public class PartitionDecoderTest extends AbstractCairoTest {
+public class ParquetFileDecoderTest extends AbstractCairoTest {
 
     @Test
     public void testMetadata() throws Exception {
@@ -88,7 +88,7 @@ public class PartitionDecoderTest extends AbstractCairoTest {
             long fileSize = 0;
             try (
                     Path path = new Path();
-                    PartitionDecoder partitionDecoder = new PartitionDecoder();
+                    ParquetFileDecoder parquetFileDecoder = new ParquetFileDecoder();
                     PartitionDescriptor partitionDescriptor = new PartitionDescriptor();
                     TableReader reader = engine.getReader("x")
             ) {
@@ -99,23 +99,23 @@ public class PartitionDecoderTest extends AbstractCairoTest {
                 fd = TableUtils.openRO(ff, path.$(), LOG);
                 fileSize = ff.length(fd);
                 addr = TableUtils.mapRO(ff, fd, fileSize, MemoryTag.MMAP_PARQUET_PARTITION_DECODER);
-                partitionDecoder.of(addr, fileSize, MemoryTag.NATIVE_PARQUET_PARTITION_DECODER);
-                Assert.assertEquals(reader.getMetadata().getColumnCount(), partitionDecoder.metadata().getColumnCount());
-                Assert.assertEquals(rows, partitionDecoder.metadata().getRowCount());
-                Assert.assertEquals(1, partitionDecoder.metadata().getRowGroupCount());
+                parquetFileDecoder.of(addr, fileSize, MemoryTag.NATIVE_PARQUET_PARTITION_DECODER);
+                Assert.assertEquals(reader.getMetadata().getColumnCount(), parquetFileDecoder.metadata().getColumnCount());
+                Assert.assertEquals(rows, parquetFileDecoder.metadata().getRowCount());
+                Assert.assertEquals(1, parquetFileDecoder.metadata().getRowGroupCount());
                 // designated timestamp is the last column
-                final int timestampIndex = partitionDecoder.metadata().getTimestampIndex();
-                Assert.assertEquals(partitionDecoder.metadata().getColumnCount() - 1, timestampIndex);
+                final int timestampIndex = parquetFileDecoder.metadata().getTimestampIndex();
+                Assert.assertEquals(parquetFileDecoder.metadata().getColumnCount() - 1, timestampIndex);
                 // and its name matches the designated column used in DDL
-                TestUtils.assertEquals("designated_ts", partitionDecoder.metadata().getColumnName(timestampIndex));
+                TestUtils.assertEquals("designated_ts", parquetFileDecoder.metadata().getColumnName(timestampIndex));
 
                 TableReaderMetadata readerMeta = reader.getMetadata();
-                Assert.assertEquals(readerMeta.getColumnCount(), partitionDecoder.metadata().getColumnCount());
+                Assert.assertEquals(readerMeta.getColumnCount(), parquetFileDecoder.metadata().getColumnCount());
 
                 for (int i = 0; i < columns; i++) {
-                    TestUtils.assertEquals("column: " + i, readerMeta.getColumnName(i), partitionDecoder.metadata().getColumnName(i));
-                    Assert.assertEquals("column: " + i, i, partitionDecoder.metadata().getColumnId(i));
-                    Assert.assertEquals("column: " + i, readerMeta.getColumnType(i), partitionDecoder.metadata().getColumnType(i));
+                    TestUtils.assertEquals("column: " + i, readerMeta.getColumnName(i), parquetFileDecoder.metadata().getColumnName(i));
+                    Assert.assertEquals("column: " + i, i, parquetFileDecoder.metadata().getColumnId(i));
+                    Assert.assertEquals("column: " + i, readerMeta.getColumnType(i), parquetFileDecoder.metadata().getColumnType(i));
                 }
             } finally {
                 ff.close(fd);
@@ -146,7 +146,7 @@ public class PartitionDecoderTest extends AbstractCairoTest {
                     Path path = new Path();
                     RowGroupBuffers rowGroupBuffers = new RowGroupBuffers(MemoryTag.NATIVE_PARQUET_PARTITION_DECODER);
                     DirectIntList columns = new DirectIntList(2, MemoryTag.NATIVE_PARQUET_PARTITION_DECODER);
-                    PartitionDecoder partitionDecoder = new PartitionDecoder()
+                    ParquetFileDecoder parquetFileDecoder = new ParquetFileDecoder()
             ) {
                 path.of(root).concat("x.parquet").$();
 
@@ -162,14 +162,14 @@ public class PartitionDecoderTest extends AbstractCairoTest {
                 fd = TableUtils.openRO(configuration.getFilesFacade(), path.$(), LOG);
                 fileSize = ff.length(fd);
                 addr = TableUtils.mapRO(ff, fd, fileSize, MemoryTag.MMAP_PARQUET_PARTITION_DECODER);
-                partitionDecoder.of(addr, fileSize, MemoryTag.NATIVE_PARQUET_PARTITION_DECODER);
+                parquetFileDecoder.of(addr, fileSize, MemoryTag.NATIVE_PARQUET_PARTITION_DECODER);
                 columns.add(0);
                 columns.add(ColumnType.LONG);
 
                 try {
                     // prevent more allocs
                     Unsafe.setRssMemLimit(Unsafe.getRssMemUsed());
-                    partitionDecoder.decodeRowGroup(rowGroupBuffers, columns, 0, 0, 1);
+                    parquetFileDecoder.decodeRowGroup(rowGroupBuffers, columns, 0, 0, 1);
                     Assert.fail("Expected CairoException for out of memory");
                 } catch (CairoException e) {
                     final String msg = e.getMessage();
@@ -182,7 +182,7 @@ public class PartitionDecoderTest extends AbstractCairoTest {
                 }
 
                 final long memBefore = Unsafe.getMemUsedByTag(MemoryTag.NATIVE_PARQUET_PARTITION_DECODER);
-                partitionDecoder.decodeRowGroup(rowGroupBuffers, columns, 0, 0, 1);
+                parquetFileDecoder.decodeRowGroup(rowGroupBuffers, columns, 0, 0, 1);
                 final long memAfter = Unsafe.getMemUsedByTag(MemoryTag.NATIVE_PARQUET_PARTITION_DECODER);
 
                 // Allocation happened in Rust code, associated to the `RowGroupBuffers` object.
@@ -227,7 +227,7 @@ public class PartitionDecoderTest extends AbstractCairoTest {
                     Path path = new Path();
                     RowGroupBuffers rowGroupBuffers = new RowGroupBuffers(MemoryTag.NATIVE_PARQUET_PARTITION_DECODER);
                     DirectIntList columns = new DirectIntList(2, MemoryTag.NATIVE_PARQUET_PARTITION_DECODER);
-                    PartitionDecoder partitionDecoder = new PartitionDecoder()
+                    ParquetFileDecoder parquetFileDecoder = new ParquetFileDecoder()
             ) {
                 // Check that the partition directory and data.parquet file now exists on disk.
                 path.of(root).concat("x~").concat("1970-01-05.1").slash$();
@@ -241,13 +241,13 @@ public class PartitionDecoderTest extends AbstractCairoTest {
                 fd = TableUtils.openRO(configuration.getFilesFacade(), path.$(), LOG);
                 fileSize = ff.length(fd);
                 addr = TableUtils.mapRO(ff, fd, fileSize, MemoryTag.MMAP_PARQUET_PARTITION_DECODER);
-                partitionDecoder.of(addr, fileSize, MemoryTag.NATIVE_PARQUET_PARTITION_DECODER);
+                parquetFileDecoder.of(addr, fileSize, MemoryTag.NATIVE_PARQUET_PARTITION_DECODER);
                 columns.add(0);
                 columns.add(ColumnType.LONG);
 
                 final CairoException badDecodeRowGroup = Assert.assertThrows(
                         CairoException.class,
-                        () -> partitionDecoder.decodeRowGroup(rowGroupBuffers, columns, 1000, 0, 1)
+                        () -> parquetFileDecoder.decodeRowGroup(rowGroupBuffers, columns, 1000, 0, 1)
                 );
                 TestUtils.assertContains(
                         badDecodeRowGroup.getMessage(),
