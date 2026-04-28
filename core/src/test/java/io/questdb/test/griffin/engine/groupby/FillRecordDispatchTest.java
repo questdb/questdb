@@ -24,7 +24,11 @@
 
 package io.questdb.test.griffin.engine.groupby;
 
+import io.questdb.cairo.sql.Record;
+import io.questdb.cairo.sql.RecordCursor;
+import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.test.AbstractCairoTest;
+import org.junit.Assert;
 import org.junit.Test;
 
 /**
@@ -588,6 +592,55 @@ public class FillRecordDispatchTest extends AbstractCairoTest {
                             "2024-01-01T02:00:00.000000Z\t3.0\n",
                     "SELECT ts, first(v) fv FROM x SAMPLE BY 1h FILL(PREV) ALIGN TO CALENDAR"
             );
+        });
+    }
+
+    @Test
+    public void testGetLongOnTimestampDuringGapReturnsBucketTs() throws Exception {
+        // The TIMESTAMP column is a 64-bit long internally, so Record.getLong(timestampIndex)
+        // is a valid call from any caller that doesn't route through getTimestamp(). Without
+        // a DISPATCH_TIMESTAMP_FILL arm in getLong(), gap-fill rows would silently return
+        // Numbers.LONG_NULL while getTimestamp() correctly returns the bucket boundary.
+        // This drives the cursor directly so the bug is observable rather than masked by
+        // upstream callers that happen to use getTimestamp(). getDate() defaults to
+        // getLong() (Record.java:159), so the same arm covers both.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (v DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO x VALUES " +
+                    "(1.0, '2024-01-01T00:00:00.000000Z')," +
+                    "(3.0, '2024-01-01T02:00:00.000000Z')");
+            try (RecordCursorFactory factory = select(
+                    "SELECT ts, first(v) fv FROM x SAMPLE BY 1h FILL(PREV) ALIGN TO CALENDAR")) {
+                try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                    final int tsIdx = factory.getMetadata().getColumnIndex("ts");
+                    final Record record = cursor.getRecord();
+                    final long[] expected = {
+                            1_704_067_200_000_000L,  // 2024-01-01T00:00:00 -- data row
+                            1_704_070_800_000_000L,  // 2024-01-01T01:00:00 -- GAP-FILL row
+                            1_704_074_400_000_000L   // 2024-01-01T02:00:00 -- data row
+                    };
+                    int row = 0;
+                    while (cursor.hasNext()) {
+                        Assert.assertEquals(
+                                "row " + row + " getTimestamp",
+                                expected[row],
+                                record.getTimestamp(tsIdx)
+                        );
+                        Assert.assertEquals(
+                                "row " + row + " getLong (DISPATCH_TIMESTAMP_FILL arm)",
+                                expected[row],
+                                record.getLong(tsIdx)
+                        );
+                        Assert.assertEquals(
+                                "row " + row + " getDate (defaults to getLong)",
+                                expected[row],
+                                record.getDate(tsIdx)
+                        );
+                        row++;
+                    }
+                    Assert.assertEquals("expected 3 rows", 3, row);
+                }
+            }
         });
     }
 

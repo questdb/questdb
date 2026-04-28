@@ -3668,12 +3668,15 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                             final TimestampDriver targetDriver = ColumnType.getTimestampDriver(targetColType);
                             try {
                                 final long parsed = targetDriver.parseQuotedLiteral(fillExpr.token);
-                                // Free the stale (wrong-unit) function parsed by
-                                // functionParser and null the slot in the same
-                                // statement before the replacement setQuick below
-                                // installs the unit-correct constant. Matches the
-                                // sibling ownership transfer at :3665.
-                                fillValues.setQuick(fillIdx, Misc.free(fillValues.getQuick(fillIdx)));
+                                // Null-then-free: if Misc.free's close() throws, the
+                                // outer catch's Misc.freeObjList(fillValues) must not
+                                // double-close the same instance. Nulling the slot
+                                // first leaves the post-throw freeObjList with a no-op
+                                // for this index. Most Function close()s are idempotent,
+                                // but the contract is not guaranteed.
+                                Function staleFunc = fillValues.getQuick(fillIdx);
+                                fillValues.setQuick(fillIdx, null);
+                                Misc.free(staleFunc);
                                 fillValues.setQuick(fillIdx, TimestampConstant.newInstance(parsed, targetColType));
                             } catch (NumericException e) {
                                 throw SqlException.position(fillExpr.position)

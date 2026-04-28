@@ -1354,6 +1354,13 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
             public long getLong(int col) {
                 int code = currentDispatchCode[col];
                 if (code == DISPATCH_BASE) return baseRecord.getLong(col);
+                // The timestamp column is internally a 64-bit long: Record.getLong(timestampIndex)
+                // is a valid call from any caller that doesn't go through getTimestamp/TimestampFunction.
+                // Without this arm, fill rows would silently return LONG_NULL for the bucket timestamp,
+                // which masks as long as upstream callers route through getTimestamp -- but locks in a
+                // latent silent-data-corruption hazard. getDate() defaults to getLong() (Record.java:159),
+                // so this arm covers both.
+                if (code == DISPATCH_TIMESTAMP_FILL) return fillTimestampFunc.value;
                 if (code == DISPATCH_KEY_SLOT) return keysMapRecord.getLong(dispatchSlot[col]);
                 if (code == DISPATCH_PREV_CACHE_SLOT) return keysMapRecord.getLong(dispatchSlot[col]);
                 if (code == DISPATCH_PREV_SLOT) {
