@@ -224,11 +224,6 @@ public class LogFactory implements Closeable {
         if (configured) {
             return;
         }
-        // Skip ring queue allocation during GraalVM native-image build.
-        // Native memory allocated here would have stale pointers at runtime.
-        if (Boolean.getBoolean("questdb.nativeimage.build")) {
-            return;
-        }
 
         configured = true;
 
@@ -414,11 +409,6 @@ public class LogFactory implements Closeable {
 
     public void startThread() {
         assert !closed.get();
-        // Skip thread start during GraalVM native-image build.
-        // Threads created at build time cannot survive into the image.
-        if (Boolean.getBoolean("questdb.nativeimage.build")) {
-            return;
-        }
         if (running.compareAndSet(false, true)) {
             for (int i = 0, n = jobs.size(); i < n; i++) {
                 loggingWorkerPool.assign(jobs.get(i));

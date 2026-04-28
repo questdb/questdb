@@ -27,23 +27,23 @@ package io.questdb.std.str;
 import io.questdb.std.Unsafe;
 import org.jetbrains.annotations.NotNull;
 
+import java.lang.reflect.Field;
+import java.nio.Buffer;
+import java.nio.ByteBuffer;
 import java.nio.charset.StandardCharsets;
 
 /**
  * A garbage-collected immutable UTF-8 string over owned native memory, originating from a Java String.
- *
- * Uses Unsafe.allocateMemory instead of ByteBuffer.allocateDirect to avoid
- * DirectByteBuffer objects in the GraalVM native-image heap. The byte data
- * is kept in a heap array so native memory can be re-allocated lazily after
- * image deserialization (where build-time pointers are invalid).
  */
 public class GcUtf8String implements DirectUtf8Sequence {
-    private final byte[] data;
+    private static final long BUFFER_ADDRESS_OFFSET;
+    @SuppressWarnings("FieldCanBeLocal")  // We need to hold a reference to `buffer` or it will be GC'd.
+    private final ByteBuffer buffer;  // We use a ByteBuffer here, instead of a ptr, to avoid Closeable requirement.
     @NotNull
     private final String original;
+    private final long ptr;
     private final int size;
     private final long zeroPaddedSixPrefix;
-    private volatile long ptr;
 
     public GcUtf8String(@NotNull String original) {
         // ***** NOTE *****
@@ -52,21 +52,18 @@ public class GcUtf8String implements DirectUtf8Sequence {
         // It is currently intended to be used for the `dirName` and `tableName` fields
         // of `TableToken` and similar things.
         this.original = original;
-        this.data = original.getBytes(StandardCharsets.UTF_8);
-        this.size = data.length;
-        this.zeroPaddedSixPrefix = computeZeroPaddedSixPrefix();
-        // ptr is allocated lazily on first ptr() call. This ensures native-image
-        // instances don't carry stale build-time pointers.
+        final byte[] bytes = original.getBytes(StandardCharsets.UTF_8);
+        this.buffer = ByteBuffer.allocateDirect(bytes.length);
+        this.buffer.put(bytes);
+        this.buffer.rewind();
+        this.ptr = Unsafe.getLong(this.buffer, BUFFER_ADDRESS_OFFSET);
+        this.size = bytes.length;
+        this.zeroPaddedSixPrefix = Utf8s.zeroPaddedSixPrefix(this);
     }
 
     @Override
     public @NotNull CharSequence asAsciiCharSequence() {
         return original;
-    }
-
-    @Override
-    public byte byteAt(int index) {
-        return data[index];
     }
 
     @Override
@@ -95,17 +92,7 @@ public class GcUtf8String implements DirectUtf8Sequence {
 
     @Override
     public long ptr() {
-        long p = ptr;
-        if (p == 0 && size > 0) {
-            synchronized (this) {
-                p = ptr;
-                if (p == 0) {
-                    p = allocateNative();
-                    ptr = p;
-                }
-            }
-        }
-        return p;
+        return ptr;
     }
 
     @Override
@@ -126,21 +113,13 @@ public class GcUtf8String implements DirectUtf8Sequence {
         return zeroPaddedSixPrefix;
     }
 
-    private long allocateNative() {
-        if (size == 0) {
-            return 0;
+    static {
+        Field addressField;
+        try {
+            addressField = Buffer.class.getDeclaredField("address");
+        } catch (NoSuchFieldException ex) {
+            throw new RuntimeException(ex);
         }
-        final long addr = Unsafe.getUnsafe().allocateMemory(size);
-        Unsafe.getUnsafe().copyMemory(data, Unsafe.BYTE_OFFSET, null, addr, size);
-        return addr;
-    }
-
-    private long computeZeroPaddedSixPrefix() {
-        final int limit = Math.min(size, 6);
-        long result = 0;
-        for (int i = 0; i < limit; i++) {
-            result |= (data[i] & 0xffL) << (8 * i);
-        }
-        return result;
+        BUFFER_ADDRESS_OFFSET = Unsafe.objectFieldOffset(addressField);
     }
 }

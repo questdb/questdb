@@ -146,8 +146,8 @@ public class FunctionFactoryScanner {
                     // It's ok, if it's not a module
                 }
             }
-        } catch (IOException | RuntimeException e) {
-            // It's ok, if it's not a module (or if running in native-image where jrt is unavailable)
+        } catch (IOException e) {
+            // It's ok, if it's not a module
         }
 
     }

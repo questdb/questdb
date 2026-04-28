@@ -72,7 +72,7 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     private final String installRoot;
     private final CharSequence legacyCheckpointRoot;
     private final DefaultTelemetryConfiguration telemetryConfiguration = new DefaultTelemetryConfiguration();
-    private volatile TextConfiguration textConfiguration;
+    private final TextConfiguration textConfiguration;
     private final VolumeDefinitions volumeDefinitions = new VolumeDefinitions();
     private final boolean writerMixedIOEnabled;
 
@@ -84,8 +84,7 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
         this.dbRoot = Chars.toString(dbRoot);
         this.installRoot = Chars.toString(installRoot);
         this.confRoot = PropServerConfiguration.rootSubdir(dbRoot, PropServerConfiguration.CONFIG_DIRECTORY);
-        // Lazily initialized to avoid runtime BytecodeAssembler calls in native-image.
-        // See getTextConfiguration().
+        this.textConfiguration = new DefaultTextConfiguration(Chars.toString(confRoot));
         this.checkpointRoot = PropServerConfiguration.rootSubdir(dbRoot, TableUtils.CHECKPOINT_DIRECTORY);
         this.legacyCheckpointRoot = PropServerConfiguration.rootSubdir(dbRoot, TableUtils.LEGACY_CHECKPOINT_DIRECTORY);
         Rnd rnd = new Rnd(NanosecondClockImpl.INSTANCE.getTicks(), MicrosecondClockImpl.INSTANCE.getTicks());
@@ -1324,17 +1323,7 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
 
     @Override
     public @NotNull TextConfiguration getTextConfiguration() {
-        TextConfiguration tc = textConfiguration;
-        if (tc == null) {
-            synchronized (this) {
-                tc = textConfiguration;
-                if (tc == null) {
-                    tc = new DefaultTextConfiguration(Chars.toString(confRoot));
-                    textConfiguration = tc;
-                }
-            }
-        }
-        return tc;
+        return textConfiguration;
     }
 
     @Override

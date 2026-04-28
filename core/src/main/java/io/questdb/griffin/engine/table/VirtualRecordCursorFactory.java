@@ -47,7 +47,7 @@ public class VirtualRecordCursorFactory extends AbstractRecordCursorFactory {
     private final ObjList<Function> functions;
     private final VirtualRecordCursorFactorySymbolTableSource internalSymbolTableSource;
     private final PriorityMetadata priorityMetadata;
-    private boolean supportsRandomAccess;
+    private final boolean supportsRandomAccess;
 
     public VirtualRecordCursorFactory(
             @NotNull RecordMetadata virtualMetadata,
@@ -157,11 +157,6 @@ public class VirtualRecordCursorFactory extends AbstractRecordCursorFactory {
     @Override
     public boolean recordCursorSupportsRandomAccess() {
         return supportsRandomAccess;
-    }
-
-    public void setRandomAccessEnabled(boolean enabled) {
-        this.supportsRandomAccess = enabled;
-        this.cursor.setRandomAccessEnabled(enabled);
     }
 
     @Override

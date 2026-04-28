@@ -47,9 +47,8 @@ public class VirtualFunctionRecordCursor implements RecordCursor {
     private final int memoizerCount;
     private final ObjList<MemoizerFunction> memoizers;
     private final PriorityMetadata priorityMetadata;
-    private final int virtualColumnReservedSlots;
-    private VirtualFunctionRecord recordB;
-    private boolean supportsRandomAccess;
+    private final VirtualFunctionRecord recordB;
+    private final boolean supportsRandomAccess;
     protected RecordCursor baseCursor;
 
     public VirtualFunctionRecordCursor(
@@ -63,7 +62,6 @@ public class VirtualFunctionRecordCursor implements RecordCursor {
         this.functions = functions;
         this.memoizers = memoizers;
         this.memoizerCount = memoizers.size();
-        this.virtualColumnReservedSlots = virtualColumnReservedSlots;
         if (supportsRandomAccess) {
             this.recordA = new VirtualFunctionRecord(functions, virtualColumnReservedSlots);
             this.recordB = new VirtualFunctionRecord(functions, virtualColumnReservedSlots);
@@ -141,13 +139,6 @@ public class VirtualFunctionRecordCursor implements RecordCursor {
     @Override
     public SymbolTable newSymbolTable(int columnIndex) {
         return ((SymbolFunction) functions.getQuick(columnIndex)).newSymbolTable();
-    }
-
-    public void setRandomAccessEnabled(boolean enabled) {
-        this.supportsRandomAccess = enabled;
-        if (enabled && recordB == null) {
-            this.recordB = new VirtualFunctionRecord(functions, virtualColumnReservedSlots);
-        }
     }
 
     public void of(RecordCursor cursor) {
