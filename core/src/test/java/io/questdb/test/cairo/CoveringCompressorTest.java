@@ -407,6 +407,47 @@ public class CoveringCompressorTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testReadLongAtBitWidth63HighBitsRoundTrip() throws Exception {
+        // BitpackUtils.unpackValue uses a per-byte OR loop. When bitShift + bitWidth > 64,
+        // the loop iterates 9 times, and the 9th iteration shifts a byte by 64 (Java treats
+        // as shift-by-0), OR'ing the value's high bits into the low byte where they get
+        // discarded by the subsequent right-shift. For bw=63 this drops bits 57..62 of the
+        // offset for any index where (index * 63) % 8 >= 2, i.e. indices {1, 2, 3, 4, 5, 6}
+        // out of every 8.
+        assertMemoryLeak(() -> {
+            // forBase=0, forMax=(1<<62)|3 -> span requires 63 bits.
+            long[] input = {
+                    0L,
+                    1L << 62,
+                    1L,
+                    (1L << 62) | 1L,
+                    2L,
+                    (1L << 62) | 2L,
+                    3L,
+                    (1L << 62) | 3L,
+            };
+            int count = input.length;
+            long srcAddr = Unsafe.malloc((long) count * Long.BYTES, MemoryTag.NATIVE_DEFAULT);
+            long destAddr = Unsafe.malloc(CoveringCompressor.maxCompressedSize(count, ColumnType.LONG), MemoryTag.NATIVE_DEFAULT);
+            try {
+                for (int i = 0; i < count; i++) {
+                    Unsafe.getUnsafe().putLong(srcAddr + (long) i * Long.BYTES, input[i]);
+                }
+                CoveringCompressor.compressLongs(srcAddr, count, destAddr);
+                // Assert the compressor really picked bw=63, otherwise the test premise is invalid.
+                int bw = Unsafe.getUnsafe().getByte(destAddr + 4) & 0xFF;
+                Assert.assertEquals("expected bw=63", 63, bw);
+                for (int i = 0; i < count; i++) {
+                    Assert.assertEquals("readLongAt at index " + i, input[i], CoveringCompressor.readLongAt(destAddr, i));
+                }
+            } finally {
+                Unsafe.free(srcAddr, (long) count * Long.BYTES, MemoryTag.NATIVE_DEFAULT);
+                Unsafe.free(destAddr, CoveringCompressor.maxCompressedSize(count, ColumnType.LONG), MemoryTag.NATIVE_DEFAULT);
+            }
+        });
+    }
+
+    @Test
     public void testSubnormalsAndExtremes() throws Exception {
         // Edge case doubles: subnormals, max/min values, zero
         assertMemoryLeak(() -> {

@@ -24,6 +24,7 @@
 
 package io.questdb.test.cairo;
 
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.ColumnVersionReader;
 import io.questdb.cairo.GenericRecordMetadata;
@@ -31,19 +32,24 @@ import io.questdb.cairo.IndexType;
 import io.questdb.cairo.TableColumnMetadata;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableReaderMetadata;
+import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.idx.CoveringRowCursor;
 import io.questdb.cairo.idx.FSSTNative;
 import io.questdb.cairo.idx.PostingIndexFwdReader;
 import io.questdb.cairo.idx.PostingIndexUtils;
 import io.questdb.cairo.idx.PostingIndexWriter;
+import io.questdb.cairo.security.AllowAllSecurityContext;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cairo.sql.RowCursor;
 import io.questdb.griffin.SqlException;
+import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.IntList;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
+import io.questdb.std.ObjList;
 import io.questdb.std.Unsafe;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
@@ -51,9 +57,11 @@ import io.questdb.std.str.Utf8s;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.std.TestFilesFacadeImpl;
 import io.questdb.test.tools.TestUtils;
+import org.jetbrains.annotations.NotNull;
 import org.junit.Test;
 
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicInteger;
 
 import static io.questdb.cairo.TableUtils.COLUMN_NAME_TXN_NONE;
 import static org.junit.Assert.*;
@@ -61,6 +69,134 @@ import static org.junit.Assert.*;
 public class CoveringIndexTest extends AbstractCairoTest {
 
     private static final ColumnVersionReader EMPTY_CVR = new ColumnVersionReader();
+
+    @Test
+    public void testAlterAddIndexAuthorizesIndexedColumnOnly() throws Exception {
+        // SecurityContext.authorizeAlterTableAddIndex must receive only the indexed
+        // column name. Passing covering column names through the same hook would let
+        // an enterprise ACL implementation that authorizes per-column treat covering
+        // columns as if they were being indexed, blurring the distinction between
+        // "may add an index on column X" and "may read column Y".
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t_acl (ts TIMESTAMP, sym SYMBOL, price DOUBLE, qty INT) TIMESTAMP(ts)");
+            ObjList<CharSequence> captured = new ObjList<>();
+            AllowAllSecurityContext recording = new AllowAllSecurityContext() {
+                @Override
+                public void authorizeAlterTableAddIndex(TableToken tableToken, @NotNull ObjList<CharSequence> columnNames) {
+                    captured.clear();
+                    for (int i = 0, n = columnNames.size(); i < n; i++) {
+                        captured.add(columnNames.get(i).toString());
+                    }
+                }
+            };
+            try (SqlExecutionContext ctx = new SqlExecutionContextImpl(engine, 1).with(recording)) {
+                execute("ALTER TABLE t_acl ALTER COLUMN sym ADD INDEX TYPE POSTING INCLUDE (price, qty)", ctx);
+            }
+            assertEquals("authorize must receive only the indexed column", 1, captured.size());
+            assertEquals("sym", captured.getQuick(0).toString());
+        });
+    }
+
+    @Test
+    public void testAlterAddIndexAuthorizesIndexedColumnOnlyWal() throws Exception {
+        // Same contract as the non-WAL path, but exercises AlterOperation.authorize()
+        // on the WAL-replay side, which builds the column list from extraStrInfo.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t_acl_wal (ts TIMESTAMP, sym SYMBOL, price DOUBLE, qty INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            ObjList<CharSequence> captured = new ObjList<>();
+            AllowAllSecurityContext recording = new AllowAllSecurityContext() {
+                @Override
+                public void authorizeAlterTableAddIndex(TableToken tableToken, @NotNull ObjList<CharSequence> columnNames) {
+                    captured.clear();
+                    for (int i = 0, n = columnNames.size(); i < n; i++) {
+                        captured.add(columnNames.get(i).toString());
+                    }
+                }
+            };
+            try (SqlExecutionContext ctx = new SqlExecutionContextImpl(engine, 1).with(recording)) {
+                execute("ALTER TABLE t_acl_wal ALTER COLUMN sym ADD INDEX TYPE POSTING INCLUDE (price, qty)", ctx);
+                drainWalQueue();
+            }
+            assertEquals("authorize must receive only the indexed column", 1, captured.size());
+            assertEquals("sym", captured.getQuick(0).toString());
+        });
+    }
+
+    @Test
+    public void testAlterAddIndexBuildOnMapFailedSurfacesError() throws Exception {
+        // When ff.mmap fails for a covering .d file during ALTER ADD INDEX, the
+        // build must surface a CairoException identifying the file rather than
+        // silently storing MAP_FAILED into coveredColReadAddrs. This exercises
+        // PostingIndexWriter.mapColumnFile, which opens its own fd via openRO
+        // and mmaps the whole file with MMAP_INDEX_WRITER.
+        final AtomicBoolean failArmed = new AtomicBoolean(false);
+        final long[] targetFd = {-1};
+        final AtomicInteger badMunmaps = new AtomicInteger(0);
+        ff = new TestFilesFacadeImpl() {
+            @Override
+            public long mmap(long fd, long len, long offset, int flags, int memoryTag) {
+                if (failArmed.get() && fd == targetFd[0] && memoryTag == MemoryTag.MMAP_INDEX_WRITER) {
+                    return FilesFacade.MAP_FAILED;
+                }
+                return super.mmap(fd, len, offset, flags, memoryTag);
+            }
+
+            @Override
+            public void munmap(long address, long size, int memoryTag) {
+                if (address == FilesFacade.MAP_FAILED) {
+                    badMunmaps.incrementAndGet();
+                    return; // skip the syscall: munmap(-1, ...) is undefined
+                }
+                super.munmap(address, size, memoryTag);
+            }
+
+            @Override
+            public long openRO(LPSZ name) {
+                long fd = super.openRO(name);
+                if (failArmed.get() && fd != -1 && name != null
+                        && Utf8s.endsWithAscii(name, "price.d")) {
+                    targetFd[0] = fd;
+                }
+                return fd;
+            }
+        };
+        assertMemoryLeak(ff, () -> {
+            execute("""
+                    CREATE TABLE t_build_fail (
+                        ts TIMESTAMP,
+                        sym SYMBOL,
+                        price DOUBLE
+                    ) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL
+                    """);
+            execute("""
+                    INSERT INTO t_build_fail VALUES
+                    ('2024-01-01T00:00:00', 'A', 10.0),
+                    ('2024-01-01T01:00:00', 'B', 20.0),
+                    ('2024-01-02T00:00:00', 'A', 30.0)
+                    """);
+            engine.releaseAllWriters();
+
+            failArmed.set(true);
+            CairoException caught = null;
+            try {
+                execute("ALTER TABLE t_build_fail ALTER COLUMN sym ADD INDEX TYPE POSTING INCLUDE (price)");
+            } catch (CairoException e) {
+                caught = e;
+            } catch (Throwable other) {
+                fail("expected CairoException from mapColumnFile, got "
+                        + other.getClass().getName() + ": " + other.getMessage());
+            }
+            failArmed.set(false);
+
+            assertNotNull("expected CairoException from mapColumnFile", caught);
+            String msg = caught.getMessage();
+            assertTrue("error must identify the mmap failure: " + msg,
+                    msg != null && msg.contains("could not mmap covered column"));
+            assertTrue("error must reference price.d: " + msg, msg.contains("price.d"));
+            assertEquals("munmap must never be called with MAP_FAILED address",
+                    0, badMunmaps.get());
+        });
+    }
 
     @Test
     public void testAlterAddIndexIncludeDuplicatePosition() throws Exception {
@@ -7251,8 +7387,6 @@ public class CoveringIndexTest extends AbstractCairoTest {
         });
     }
 
-    // ---- Wide table and wide INCLUDE edge case tests ----
-
     @Test
     public void testLatestByAllColumnTypes() throws Exception {
         // LATEST BY through CoveringRecord — exercises every type accessor
@@ -7774,6 +7908,162 @@ public class CoveringIndexTest extends AbstractCairoTest {
                 assertEquals(metadata.getColumnIndex("price"), covering.getQuick(0));
                 assertEquals(metadata.getColumnIndex("qty"), covering.getQuick(1));
             }
+        });
+    }
+
+    @Test
+    public void testMixedBitmapAndPostingIndexesInline() throws Exception {
+        // Two SYMBOL columns on the same table with different index types:
+        // a BITMAP-indexed column and a POSTING-indexed column with INCLUDE.
+        // Validates that the 2-bit IndexType encoding and IndexFactory dispatch
+        // route each column to the correct reader/writer.
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE t_mixed (
+                        ts TIMESTAMP,
+                        bsym SYMBOL INDEX,
+                        psym SYMBOL INDEX TYPE POSTING INCLUDE (price),
+                        price DOUBLE
+                    ) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL
+                    """);
+            execute("""
+                    INSERT INTO t_mixed VALUES
+                    ('2024-01-01T00:00:00', 'A', 'X', 1.0),
+                    ('2024-01-01T01:00:00', 'B', 'Y', 2.0),
+                    ('2024-01-01T02:00:00', 'A', 'X', 3.0),
+                    ('2024-01-02T00:00:00', 'B', 'Y', 4.0),
+                    ('2024-01-02T01:00:00', 'A', 'X', 5.0)
+                    """);
+            engine.releaseAllWriters();
+
+            try (TableReader r = engine.getReader("t_mixed")) {
+                TableReaderMetadata metadata = r.getMetadata();
+                int bsymIdx = metadata.getColumnIndex("bsym");
+                int psymIdx = metadata.getColumnIndex("psym");
+                assertTrue(metadata.isColumnIndexed(bsymIdx));
+                assertTrue(metadata.isColumnIndexed(psymIdx));
+                assertEquals(IndexType.BITMAP, metadata.getColumnIndexType(bsymIdx));
+                assertEquals(IndexType.POSTING, metadata.getColumnIndexType(psymIdx));
+                assertFalse(metadata.getColumnMetadata(bsymIdx).isCovering());
+                assertTrue(metadata.getColumnMetadata(psymIdx).isCovering());
+            }
+
+            // Each indexed column must answer queries via its own index type.
+            assertSql("""
+                    bsym\tcount
+                    A\t3
+                    B\t2
+                    """, "SELECT bsym, count() FROM t_mixed WHERE bsym IN ('A','B') ORDER BY bsym");
+            assertSql("""
+                    psym\tprice
+                    X\t1.0
+                    X\t3.0
+                    X\t5.0
+                    """, "SELECT psym, price FROM t_mixed WHERE psym = 'X'");
+        });
+    }
+
+    @Test
+    public void testMixedBitmapAndPostingIndexesPersistAcrossReopen() throws Exception {
+        // The 2-bit IndexType field in column metadata flags must round-trip
+        // through table close + reopen. A buggy encoding would lose the
+        // BITMAP/POSTING distinction after restart.
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE t_mixed_reopen (
+                        ts TIMESTAMP,
+                        bsym SYMBOL INDEX,
+                        psym SYMBOL INDEX TYPE POSTING INCLUDE (price),
+                        price DOUBLE
+                    ) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL
+                    """);
+            execute("INSERT INTO t_mixed_reopen VALUES ('2024-01-01T00:00:00', 'A', 'X', 1.0)");
+            engine.releaseAllWriters();
+            engine.releaseAllReaders();
+
+            try (TableReader r = engine.getReader("t_mixed_reopen")) {
+                TableReaderMetadata metadata = r.getMetadata();
+                assertEquals(IndexType.BITMAP, metadata.getColumnIndexType(metadata.getColumnIndex("bsym")));
+                assertEquals(IndexType.POSTING, metadata.getColumnIndexType(metadata.getColumnIndex("psym")));
+            }
+        });
+    }
+
+    @Test
+    public void testMixedBitmapAndPostingIndexesViaAlter() throws Exception {
+        // Add the two index types via separate ALTER statements to a table
+        // with no inline index, then verify both indexes service queries.
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE t_mixed_alter (
+                        ts TIMESTAMP,
+                        bsym SYMBOL,
+                        psym SYMBOL,
+                        price DOUBLE
+                    ) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL
+                    """);
+            execute("""
+                    INSERT INTO t_mixed_alter VALUES
+                    ('2024-01-01T00:00:00', 'A', 'X', 1.0),
+                    ('2024-01-01T01:00:00', 'B', 'Y', 2.0),
+                    ('2024-01-02T00:00:00', 'A', 'X', 3.0)
+                    """);
+            execute("ALTER TABLE t_mixed_alter ALTER COLUMN bsym ADD INDEX");
+            execute("ALTER TABLE t_mixed_alter ALTER COLUMN psym ADD INDEX TYPE POSTING INCLUDE (price)");
+            engine.releaseAllWriters();
+
+            try (TableReader r = engine.getReader("t_mixed_alter")) {
+                TableReaderMetadata metadata = r.getMetadata();
+                assertEquals(IndexType.BITMAP, metadata.getColumnIndexType(metadata.getColumnIndex("bsym")));
+                assertEquals(IndexType.POSTING, metadata.getColumnIndexType(metadata.getColumnIndex("psym")));
+            }
+            assertSql("""
+                    count
+                    2
+                    """, "SELECT count() FROM t_mixed_alter WHERE bsym = 'A'");
+            assertSql("""
+                    psym\tprice
+                    X\t1.0
+                    X\t3.0
+                    """, "SELECT psym, price FROM t_mixed_alter WHERE psym = 'X'");
+        });
+    }
+
+    @Test
+    public void testMixedBitmapAndPostingIndexesWal() throws Exception {
+        // Same mixed-index shape, but the table is WAL-enabled. Validates
+        // that SequencerMetadata persists both index types through WAL replay.
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE t_mixed_wal (
+                        ts TIMESTAMP,
+                        bsym SYMBOL INDEX,
+                        psym SYMBOL INDEX TYPE POSTING INCLUDE (price),
+                        price DOUBLE
+                    ) TIMESTAMP(ts) PARTITION BY DAY WAL
+                    """);
+            execute("""
+                    INSERT INTO t_mixed_wal VALUES
+                    ('2024-01-01T00:00:00', 'A', 'X', 1.0),
+                    ('2024-01-01T01:00:00', 'B', 'Y', 2.0),
+                    ('2024-01-02T00:00:00', 'A', 'X', 3.0)
+                    """);
+            drainWalQueue();
+
+            try (TableReader r = engine.getReader("t_mixed_wal")) {
+                TableReaderMetadata metadata = r.getMetadata();
+                assertEquals(IndexType.BITMAP, metadata.getColumnIndexType(metadata.getColumnIndex("bsym")));
+                assertEquals(IndexType.POSTING, metadata.getColumnIndexType(metadata.getColumnIndex("psym")));
+            }
+            assertSql("""
+                    count
+                    2
+                    """, "SELECT count() FROM t_mixed_wal WHERE bsym = 'A'");
+            assertSql("""
+                    psym\tprice
+                    X\t1.0
+                    X\t3.0
+                    """, "SELECT psym, price FROM t_mixed_wal WHERE psym = 'X'");
         });
     }
 
@@ -9395,8 +9685,6 @@ public class CoveringIndexTest extends AbstractCairoTest {
         });
     }
 
-    // --- Issue 1: INCLUDE validation on WAL and CREATE TABLE paths ---
-
     @Test
     public void testShowColumnsWithBitmapIndex() throws Exception {
         assertMemoryLeak(() -> {
@@ -9904,8 +10192,6 @@ public class CoveringIndexTest extends AbstractCairoTest {
         });
     }
 
-    // --- Issue 3: Index restart skips already-indexed partitions ---
-
     @Test
     public void testVarcharPageFrameDataCorrectness() throws Exception {
         // Verify VARCHAR values are correctly read through the page frame path
@@ -9932,8 +10218,6 @@ public class CoveringIndexTest extends AbstractCairoTest {
             assertSql("name\nshort\nmedium_length_string\nthis is a longer string that exceeds the inline limit of nine bytes\n\n\n", "SELECT name FROM t_vw_data WHERE sym = 'A'");
         });
     }
-
-    // --- Issue 4: Page frame with BINARY covered column (GROUP BY) ---
 
     @Test
     public void testVarcharPageFrameInList() throws Exception {
@@ -9962,8 +10246,6 @@ public class CoveringIndexTest extends AbstractCairoTest {
                     """, "SELECT name FROM t_vw_in WHERE sym IN ('A', 'B') ORDER BY ts");
         });
     }
-
-    // --- Issue 5: DISTINCT end-to-end ---
 
     @Test
     public void testVarcharPageFrameMultiPartition() throws Exception {
@@ -10030,8 +10312,6 @@ public class CoveringIndexTest extends AbstractCairoTest {
         });
     }
 
-    // --- Issue 6: Covered TIMESTAMP values correct through seal + delta compression ---
-
     @Test
     public void testVarcharPageFrameVectorizedGroupBy() throws Exception {
         // Vectorized GROUP BY on covered DOUBLE column should work even when
@@ -10071,8 +10351,6 @@ public class CoveringIndexTest extends AbstractCairoTest {
                     """, "SELECT count(*), min(price), max(price) FROM t_vw_agg WHERE sym = 'A'");
         });
     }
-
-    // --- Auto-include designated timestamp in INCLUDE ---
 
     @Test
     public void testVarcharPageFrameWithFilter() throws Exception {

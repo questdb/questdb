@@ -284,7 +284,12 @@ public class ColumnPurgeJob extends SynchronizedJob implements Closeable {
                         }
                         int timestampType;
                         byte indexType = IndexType.BITMAP; // default to BITMAP for backward compatibility
-                        try (TableMetadata metadata = engine.getTableMetadata(tableToken)) {
+                        // Read metadata from the user table being purged, not from the
+                        // purge-log table (this.tableToken). Reading the wrong token
+                        // makes timestampType and indexType reflect the log table's
+                        // schema, which silently breaks POSTING file cleanup after
+                        // a restart that replays in-flight purge tasks.
+                        try (TableMetadata metadata = engine.getTableMetadata(token)) {
                             timestampType = metadata.getTimestampType();
                             int columnIndex = metadata.getColumnIndexQuiet(columnName);
                             if (columnIndex > -1) {

@@ -196,26 +196,22 @@ public final class BitpackUtils {
         int byteOffset = (int) (bitOffset / 8);
         int bitShift = (int) (bitOffset % 8);
 
-        // Read enough bytes to cover the value
-        long value = 0;
-        int bitsRead = 0;
-        int bytesNeeded = (bitShift + bitWidth + 7) / 8;
-
-        for (int i = 0; i < bytesNeeded; i++) {
-            long b = Unsafe.getUnsafe().getByte(srcAddr + byteOffset + i) & 0xFFL;
-            value |= (b << bitsRead);
-            bitsRead += 8;
+        // First byte contributes (8 - bitShift) bits after dropping the skipped prefix.
+        // Subsequent bytes each contribute 8 bits at the next free position. This keeps
+        // the maximum left-shift at <= 56, avoiding the Java shift-mod-64 overflow that
+        // would otherwise drop the high bits when bitShift + bitWidth > 64.
+        long value = (Unsafe.getUnsafe().getByte(srcAddr + byteOffset) & 0xFFL) >>> bitShift;
+        int valueBits = 8 - bitShift;
+        int byteIdx = 1;
+        while (valueBits < bitWidth) {
+            long b = Unsafe.getUnsafe().getByte(srcAddr + byteOffset + byteIdx) & 0xFFL;
+            value |= (b << valueBits);
+            valueBits += 8;
+            byteIdx++;
         }
 
-        // Shift and mask to get the offset
-        value >>>= bitShift;
-        long mask = (1L << bitWidth) - 1;
-        if (bitWidth == 64) {
-            mask = -1L; // All bits set
-        }
-        long offset = value & mask;
-
-        return minValue + offset;
+        long mask = (bitWidth == 64) ? -1L : (1L << bitWidth) - 1;
+        return minValue + (value & mask);
     }
 
     /**

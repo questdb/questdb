@@ -1237,7 +1237,12 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                 indexType,
                 coveringColumnNames
         );
-        securityContext.authorizeAlterTableAddIndex(tableToken, alterOperationBuilder.getExtraStrInfo());
+        // Authorize against the indexed column only. Covering INCLUDE columns
+        // are not part of the ADD INDEX privilege; passing them here would let
+        // an enterprise ACL conflate INDEX and READ permissions.
+        columnNames.clear();
+        columnNames.add(columnName);
+        securityContext.authorizeAlterTableAddIndex(tableToken, columnNames);
         compiledQuery.ofAlter(alterOperationBuilder.build());
     }
 

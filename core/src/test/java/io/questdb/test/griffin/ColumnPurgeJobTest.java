@@ -1168,6 +1168,64 @@ public class ColumnPurgeJobTest extends AbstractCairoTest {
         });
     }
 
+    @Test
+    public void testReplayedPurgeRemovesPostingFiles() throws Exception {
+        // Regression test for ColumnPurgeJob.processTableRecords using the wrong
+        // table token when re-deriving indexType on restart-replay. The buggy
+        // code reads metadata from the purge-log table; for any user column
+        // not coincidentally named like a log column, indexType silently
+        // defaults to BITMAP and the POSTING-specific .pk file is never
+        // removed by replayed purge tasks.
+        assertMemoryLeak(() -> {
+            setCurrentMicros(0);
+            try (ColumnPurgeJob purgeJob = createPurgeJob()) {
+                execute("CREATE TABLE t_posting_replay AS" +
+                        " (SELECT timestamp_sequence('1970-01-01T02', 24 * 60 * 60 * 1000000L)::" + timestampType.getTypeName() + " ts," +
+                        " x," +
+                        " rnd_symbol('A', 'B', 'C', 'D') sym" +
+                        " FROM long_sequence(5))" +
+                        " TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
+                execute("ALTER TABLE t_posting_replay ALTER COLUMN sym ADD INDEX TYPE POSTING INCLUDE (x)");
+
+                try (TableReader rdr = getReader("t_posting_replay")) {
+                    update("UPDATE t_posting_replay SET sym = 'Z' WHERE ts >= '1970-01-03'");
+                    runPurgeJob(purgeJob); // task persisted to log; purge blocked by reader
+                    rdr.openPartition(0);
+                }
+                // Reader released, but purge job is closing without re-running purge,
+                // so the persisted task survives to be replayed by the next instance.
+            }
+
+            try (Path path = new Path()) {
+                // The bare sym.pk file (column version 0) is OLD after the UPDATE
+                // bumped the column to version 2. It must still exist before
+                // replay because purge was blocked by the open reader.
+                assertPostingKeyFileExists(path, "t_posting_replay", "1970-01-03", "sym", true);
+                assertPostingKeyFileExists(path, "t_posting_replay", "1970-01-04", "sym", true);
+                assertPostingKeyFileExists(path, "t_posting_replay", "1970-01-05", "sym", true);
+
+                try (ColumnPurgeJob purgeJob = createPurgeJob()) {
+                    // Constructor's processTableRecords replays the persisted task.
+                    // With the fix, metadata is read from the user table and
+                    // indexType=POSTING, so the .pk file is purged.
+                    // Without the fix, indexType defaulted to BITMAP because
+                    // metadata was read from the purge-log table (no such
+                    // column), and .pk would survive.
+                    assertPostingKeyFileExists(path, "t_posting_replay", "1970-01-03", "sym", false);
+                    assertPostingKeyFileExists(path, "t_posting_replay", "1970-01-04", "sym", false);
+                    assertPostingKeyFileExists(path, "t_posting_replay", "1970-01-05", "sym", false);
+                    Assert.assertEquals(0, purgeJob.getOutstandingPurgeTasks());
+                }
+            }
+        });
+    }
+
+    private void assertPostingKeyFileExists(Path path, String tableName, String partition, String columnName, boolean exist) {
+        TableToken tt = engine.verifyTableName(tableName);
+        path.of(configuration.getDbRoot()).concat(tt).concat(partition).concat(columnName).put(".pk").$();
+        Assert.assertEquals(Utf8s.toString(path), exist, TestFilesFacadeImpl.INSTANCE.exists(path.$()));
+    }
+
     private void assertIndexFilesExist(String[] partitions, Path path, String tableName, String colSuffix, boolean exist) {
         for (int i = 0; i < partitions.length; i++) {
             String partition = partitions[i];

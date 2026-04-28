@@ -62,10 +62,6 @@ public class PostingIndexStressTest extends AbstractCairoTest {
 
     private static final int BP_BATCH = PostingIndexUtils.BLOCK_CAPACITY; // 64
 
-    // ===================================================================
-    // Fuzz: randomized workloads verified against in-memory oracle
-    // ===================================================================
-
     @Test
     public void testBothPagesCorrupted() throws Exception {
         // Write valid data, then corrupt BOTH metadata pages (mismatched
@@ -225,10 +221,6 @@ public class PostingIndexStressTest extends AbstractCairoTest {
             }
         });
     }
-
-    // ===================================================================
-    // Stress: repeated seal/compact/reopen cycles
-    // ===================================================================
 
     @Test
     public void testConcurrentBwdReadersWhileWriterCommits() throws Exception {
@@ -502,10 +494,6 @@ public class PostingIndexStressTest extends AbstractCairoTest {
             }
         });
     }
-
-    // ===================================================================
-    // Edge cases
-    // ===================================================================
 
     @Test
     public void testConcurrentMultiKeyReadersWhileWriting() throws Exception {
@@ -1201,10 +1189,6 @@ public class PostingIndexStressTest extends AbstractCairoTest {
         });
     }
 
-    // ===================================================================
-    // Concurrent reader/writer stress tests
-    // ===================================================================
-
     @Test
     public void testEdgeExactBlockBoundary() throws Exception {
         assertMemoryLeak(() -> {
@@ -1361,10 +1345,6 @@ public class PostingIndexStressTest extends AbstractCairoTest {
         });
     }
 
-    // ===================================================================
-    // Multi-key concurrent stress
-    // ===================================================================
-
     @Test
     public void testEdgeNonExistentKey() throws Exception {
         assertMemoryLeak(() -> {
@@ -1419,10 +1399,6 @@ public class PostingIndexStressTest extends AbstractCairoTest {
         });
     }
 
-    // ===================================================================
-    // Compact safety under concurrent readers
-    // ===================================================================
-
     @Test
     public void testEdgeSealEmptyIndex() throws Exception {
         assertMemoryLeak(() -> {
@@ -1453,10 +1429,6 @@ public class PostingIndexStressTest extends AbstractCairoTest {
             }
         });
     }
-
-    // ===================================================================
-    // Rollback tests
-    // ===================================================================
 
     @Test
     public void testEdgeSingleValuePerKey() throws Exception {
@@ -2001,10 +1973,6 @@ public class PostingIndexStressTest extends AbstractCairoTest {
         });
     }
 
-    // ===================================================================
-    // Compaction overlap test
-    // ===================================================================
-
     @Test
     public void testMaxGenCountAutoSeal() throws Exception {
         // Write exactly MAX_GEN_COUNT+1 batches to trigger auto-seal.
@@ -2133,10 +2101,6 @@ public class PostingIndexStressTest extends AbstractCairoTest {
         });
     }
 
-    // ===================================================================
-    // Concurrent backward reader stress tests
-    // ===================================================================
-
     @Test
     public void testMultipleRollbacksBumpTxnSequentially() throws Exception {
         assertMemoryLeak(() -> {
@@ -2238,10 +2202,6 @@ public class PostingIndexStressTest extends AbstractCairoTest {
     // PostingIndexOracleTest.testReaderSurvivesWriterSeal and the broader
     // CoveringIndexTest sweep.
 
-    // The "double-buffered metadata page" group below is a leftover from
-    // v1; v2 keeps two header pages strictly for the chain-header
-    // seqlock, with all state living in immutable chain entries.
-    // ===================================================================
 
     @Test
     public void testPartialKeyFileRecovery() {
@@ -2598,10 +2558,6 @@ public class PostingIndexStressTest extends AbstractCairoTest {
         });
     }
 
-    // ===================================================================
-    // Corruption detection and crash safety tests
-    // ===================================================================
-
     @Test
     public void testRollbackAfterSeal() throws Exception {
         assertMemoryLeak(() -> {
@@ -2921,10 +2877,6 @@ public class PostingIndexStressTest extends AbstractCairoTest {
         });
     }
 
-    // ===================================================================
-    // Tier-specific lookup tests
-    // ===================================================================
-
     @Test
     public void testRollbackToZero() throws Exception {
         assertMemoryLeak(() -> {
@@ -3227,10 +3179,6 @@ public class PostingIndexStressTest extends AbstractCairoTest {
             }
         });
     }
-
-    // ===================================================================
-    // New-file safety tests: rollback and truncate create new .pv files
-    // ===================================================================
 
     @Test
     public void testStressHotKey() throws Exception {

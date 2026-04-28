@@ -2257,7 +2257,7 @@ public class PostingIndexWriter implements IndexWriter {
         }
         // size > 0 means name-based: writer-owned mmap, remap if file grew
         if (offset + needed > size) {
-            Files.munmap(addr, size, MemoryTag.MMAP_INDEX_WRITER);
+            ff.munmap(addr, size, MemoryTag.MMAP_INDEX_WRITER);
             coveredColReadAddrs[covIdx] = 0;
             if (coveredColumnNames.size() > 0 && coveredPartitionPath.size() > 0) {
                 mapColumnFile(Path.getThreadLocal(coveredPartitionPath),
@@ -2327,7 +2327,13 @@ public class PostingIndexWriter implements IndexWriter {
             try {
                 long fileSize = ff.length(fd);
                 if (fileSize > 0) {
-                    addrs[idx] = Files.mmap(fd, fileSize, 0, Files.MAP_RO, MemoryTag.MMAP_INDEX_WRITER);
+                    long mapped = ff.mmap(fd, fileSize, 0, Files.MAP_RO, MemoryTag.MMAP_INDEX_WRITER);
+                    if (mapped == FilesFacade.MAP_FAILED) {
+                        throw CairoException.critical(ff.errno())
+                                .put("could not mmap covered column [file=").put(fileName)
+                                .put(", size=").put(fileSize).put(']');
+                    }
+                    addrs[idx] = mapped;
                     sizes[idx] = fileSize;
                 }
             } finally {
@@ -3876,12 +3882,12 @@ public class PostingIndexWriter implements IndexWriter {
 
     private void unmapCoveredColumn(int c) {
         if (coveredColReadAddrs != null && coveredColReadAddrs[c] != 0 && coveredColReadSizes[c] > 0) {
-            Files.munmap(coveredColReadAddrs[c], coveredColReadSizes[c], MemoryTag.MMAP_INDEX_WRITER);
+            ff.munmap(coveredColReadAddrs[c], coveredColReadSizes[c], MemoryTag.MMAP_INDEX_WRITER);
             coveredColReadAddrs[c] = 0;
             coveredColReadSizes[c] = 0;
         }
         if (coveredAuxReadAddrs != null && coveredAuxReadAddrs[c] != 0 && coveredAuxReadSizes[c] > 0) {
-            Files.munmap(coveredAuxReadAddrs[c], coveredAuxReadSizes[c], MemoryTag.MMAP_INDEX_WRITER);
+            ff.munmap(coveredAuxReadAddrs[c], coveredAuxReadSizes[c], MemoryTag.MMAP_INDEX_WRITER);
             coveredAuxReadAddrs[c] = 0;
             coveredAuxReadSizes[c] = 0;
         }
@@ -3892,12 +3898,12 @@ public class PostingIndexWriter implements IndexWriter {
             for (int c = 0; c < coveredColReadAddrs.length; c++) {
                 // Only unmap if owned (size > 0). Size == 0 means O3 addr path.
                 if (coveredColReadAddrs[c] != 0 && coveredColReadSizes[c] > 0) {
-                    Files.munmap(coveredColReadAddrs[c], coveredColReadSizes[c], MemoryTag.MMAP_INDEX_WRITER);
+                    ff.munmap(coveredColReadAddrs[c], coveredColReadSizes[c], MemoryTag.MMAP_INDEX_WRITER);
                 }
                 coveredColReadAddrs[c] = 0;
                 coveredColReadSizes[c] = 0;
                 if (coveredAuxReadAddrs != null && coveredAuxReadAddrs[c] != 0 && coveredAuxReadSizes[c] > 0) {
-                    Files.munmap(coveredAuxReadAddrs[c], coveredAuxReadSizes[c], MemoryTag.MMAP_INDEX_WRITER);
+                    ff.munmap(coveredAuxReadAddrs[c], coveredAuxReadSizes[c], MemoryTag.MMAP_INDEX_WRITER);
                 }
                 if (coveredAuxReadAddrs != null) {
                     coveredAuxReadAddrs[c] = 0;

@@ -199,7 +199,7 @@ public class AlterOperation extends AbstractOperation implements Mutable {
                     securityContext.authorizeAlterTableAlterColumnType(tableToken, getAuthColumnNames());
             case CHANGE_SYMBOL_CAPACITY ->
                     securityContext.authorizeAlterTableAlterSymbolCapacity(tableToken, getAuthColumnNames());
-            case ADD_INDEX -> securityContext.authorizeAlterTableAddIndex(tableToken, getAuthColumnNames());
+            case ADD_INDEX -> securityContext.authorizeAlterTableAddIndex(tableToken, getAuthIndexedColumn());
             case DROP_INDEX -> securityContext.authorizeAlterTableDropIndex(tableToken, getAuthColumnNames());
             case ADD_SYMBOL_CACHE, REMOVE_SYMBOL_CACHE ->
                     securityContext.authorizeAlterTableAlterColumnCache(tableToken, getAuthColumnNames());
@@ -800,6 +800,17 @@ public class AlterOperation extends AbstractOperation implements Mutable {
         authColumnNames.clear();
         for (int i = 0, n = activeExtraStrInfo.size(); i < n; i++) {
             authColumnNames.add(Chars.toString(activeExtraStrInfo.getStrA(i)));
+        }
+        return authColumnNames;
+    }
+
+    // ADD INDEX stores [indexedColumn, cov1, cov2, ...] in extraStrInfo.
+    // Authorization only covers the indexed column; covering INCLUDE columns
+    // are not part of the ADD INDEX privilege.
+    private ObjList<CharSequence> getAuthIndexedColumn() {
+        authColumnNames.clear();
+        if (activeExtraStrInfo.size() > 0) {
+            authColumnNames.add(Chars.toString(activeExtraStrInfo.getStrA(0)));
         }
         return authColumnNames;
     }
