@@ -314,6 +314,57 @@ public class CreateMatViewTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testCreateMatViewConcurrentParse() throws Exception {
+        // Regression: SqlParser.tableNamePositions and tableNames used to be
+        // static fields shared across all parser instances, which meant
+        // concurrent CREATE MATERIALIZED VIEW compilations could clobber each
+        // other's collected base-table names mid-validation and report a
+        // spurious "base table is not referenced" or "query references
+        // multiple tables" error. After the fix the collections are per-parser.
+        assertMemoryLeak(() -> {
+            final int threadCount = 4;
+            final int iterations = 100;
+            for (int t = 0; t < threadCount; t++) {
+                execute("create table base_" + t + " (sym symbol, price double, ts timestamp) timestamp(ts) partition by DAY WAL");
+            }
+
+            final CyclicBarrier barrier = new CyclicBarrier(threadCount);
+            final AtomicInteger errorCounter = new AtomicInteger();
+            final Thread[] threads = new Thread[threadCount];
+            for (int t = 0; t < threadCount; t++) {
+                final int threadId = t;
+                threads[t] = new Thread(() -> {
+                    try (SqlExecutionContext executionContext = TestUtils.createSqlExecutionCtx(engine)) {
+                        barrier.await();
+                        final String tableName = "base_" + threadId;
+                        final String viewName = "mv_" + threadId;
+                        for (int i = 0; i < iterations; i++) {
+                            execute(
+                                    "create materialized view " + viewName + " as " +
+                                            "select sym, last(price) price, ts from " + tableName + " sample by 1h",
+                                    executionContext
+                            );
+                            execute("drop materialized view " + viewName, executionContext);
+                        }
+                    } catch (Throwable e) {
+                        e.printStackTrace(System.out);
+                        errorCounter.incrementAndGet();
+                    } finally {
+                        Path.clearThreadLocals();
+                    }
+                });
+                threads[t].start();
+            }
+
+            for (Thread thread : threads) {
+                thread.join();
+            }
+
+            Assert.assertEquals(0, errorCounter.get());
+        });
+    }
+
+    @Test
     public void testCreateMatViewCopySymbolCapacity() throws Exception {
         assertMemoryLeak(() -> {
             createTable(TABLE1);
