@@ -203,8 +203,8 @@ public final class ConcurrentTimeFrameCursorImpl implements ConcurrentTimeFrameC
                 // Cache miss - read timestamps directly from frame memory
                 final PageFrameMemory frameMemory = frameMemoryPool.navigateTo(frameIndex);
                 final long timestampAddress = frameMemory.getPageAddress(timestampIndex);
-                timestampLo = Unsafe.getUnsafe().getLong(timestampAddress);
-                timestampHi = Unsafe.getUnsafe().getLong(timestampAddress + (rowCount - 1) * 8);
+                timestampLo = Unsafe.getLong(timestampAddress);
+                timestampHi = Unsafe.getLong(timestampAddress + (rowCount - 1) * 8);
                 frameTimestampCache.set(cacheOffset, timestampLo);
                 frameTimestampCache.set(cacheOffset + 1, timestampHi);
             }

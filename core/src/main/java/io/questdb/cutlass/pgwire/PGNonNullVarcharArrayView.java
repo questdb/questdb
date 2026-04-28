@@ -98,7 +98,7 @@ public final class PGNonNullVarcharArrayView extends ArrayView implements FlatAr
         if (elementAddr == -1) {
             return null;
         }
-        int elementLen = Numbers.bswap(Unsafe.getUnsafe().getInt(elementAddr));
+        int elementLen = Numbers.bswap(Unsafe.getInt(elementAddr));
         return view.of(elementAddr + Integer.BYTES, elementAddr + Integer.BYTES + elementLen, isAsciis.get(index));
     }
 
@@ -109,7 +109,7 @@ public final class PGNonNullVarcharArrayView extends ArrayView implements FlatAr
 
     private static boolean isAscii(long addr, int len) {
         for (int i = 0; i < len; i++) {
-            if (Unsafe.getUnsafe().getByte(addr + i) < 0) {
+            if (Unsafe.getByte(addr + i) < 0) {
                 return false;
             }
         }
@@ -131,8 +131,10 @@ public final class PGNonNullVarcharArrayView extends ArrayView implements FlatAr
     }
 
     void addDimLen(int dimLen) {
+        // compute the new length first; on overflow multiplyExact throws and shape stays consistent
+        int newLen = Math.multiplyExact(flatViewLength, dimLen);
         shape.add(dimLen);
-        flatViewLength *= dimLen;
+        flatViewLength = newLen;
     }
 
     /**
@@ -150,7 +152,7 @@ public final class PGNonNullVarcharArrayView extends ArrayView implements FlatAr
         isAsciis.setPos(elementCount);
         long ptr = lo;
         for (int i = 0; i < elementCount; i++) {
-            int elementLenBE = Unsafe.getUnsafe().getInt(ptr);
+            int elementLenBE = Unsafe.getInt(ptr);
             // -1 indicates NULL element
             if (elementLenBE == -1) {
                 elementOffsets.setQuick(i, -1);

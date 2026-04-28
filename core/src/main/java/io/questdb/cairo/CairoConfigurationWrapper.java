@@ -362,6 +362,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
+    public int getGroupByBatchSize() {
+        return getDelegate().getGroupByBatchSize();
+    }
+
+    @Override
     public int getGroupByMapCapacity() {
         return getDelegate().getGroupByMapCapacity();
     }
@@ -804,6 +809,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     @Override
     public int getQueryRegistryPoolSize() {
         return getDelegate().getQueryRegistryPoolSize();
+    }
+
+    @Override
+    public io.questdb.cutlass.qwp.codec.@NotNull QwpServerInfoProvider getQwpServerInfoProvider() {
+        return getDelegate().getQwpServerInfoProvider();
     }
 
     @Override

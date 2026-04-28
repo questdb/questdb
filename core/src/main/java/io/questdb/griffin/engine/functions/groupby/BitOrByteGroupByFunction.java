@@ -26,25 +26,66 @@ package io.questdb.griffin.engine.functions.groupby;
 
 import io.questdb.cairo.ArrayColumnTypes;
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.map.Map;
 import io.questdb.cairo.map.MapValue;
 import io.questdb.cairo.sql.Function;
+import io.questdb.cairo.sql.PageFrameMemoryRecord;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.engine.functions.ByteFunction;
 import io.questdb.griffin.engine.functions.GroupByFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
+import io.questdb.griffin.engine.groupby.FlyweightPackedMapValue;
+import io.questdb.griffin.engine.groupby.GroupByUtils;
+import io.questdb.std.Unsafe;
 import org.jetbrains.annotations.NotNull;
 
 public class BitOrByteGroupByFunction extends ByteFunction implements GroupByFunction, UnaryFunction {
     private final Function arg;
+    private final int argColumnIndex;
     private int valueIndex;
 
     public BitOrByteGroupByFunction(@NotNull Function arg) {
         this.arg = arg;
+        this.argColumnIndex = GroupByUtils.directArgColumnIndex(arg, ColumnType.BYTE);
     }
 
     @Override
     public void computeFirst(MapValue mapValue, Record record, long rowId) {
         mapValue.putByte(valueIndex, arg.getByte(record));
+    }
+
+    @Override
+    public void computeKeyedBatch(
+            PageFrameMemoryRecord record,
+            FlyweightPackedMapValue mapValue,
+            long baseValueAddr,
+            long batchAddr,
+            long rowCount,
+            long baseRowId
+    ) {
+        // The etalon (all-zeros) is the identity element for OR, so we can fold
+        // the first row and every subsequent row through the same branchless update.
+        final long valueColumnOffset = mapValue.getOffset(valueIndex);
+        // Fast path: arg is a direct byte column with data on the current frame.
+        // Zero page address means a column top; fall through to the record-based path.
+        final long argAddr = argColumnIndex >= 0 ? record.getPageAddress(argColumnIndex) : 0;
+        if (argAddr != 0) {
+            for (long i = 0; i < rowCount; i++) {
+                final long encoded = Unsafe.getLong(batchAddr + (i << 3));
+                final long rowIndex = Map.decodeBatchRowIndex(encoded);
+                final byte value = Unsafe.getByte(argAddr + rowIndex);
+                final long addr = baseValueAddr + Map.decodeBatchOffset(encoded) + valueColumnOffset;
+                Unsafe.putByte(addr, (byte) (Unsafe.getByte(addr) | value));
+            }
+        } else {
+            for (long i = 0; i < rowCount; i++) {
+                final long encoded = Unsafe.getLong(batchAddr + (i << 3));
+                record.setRowIndex(Map.decodeBatchRowIndex(encoded));
+                final byte value = arg.getByte(record);
+                final long addr = baseValueAddr + Map.decodeBatchOffset(encoded) + valueColumnOffset;
+                Unsafe.putByte(addr, (byte) (Unsafe.getByte(addr) | value));
+            }
+        }
     }
 
     @Override

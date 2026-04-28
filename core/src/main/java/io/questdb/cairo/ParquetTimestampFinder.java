@@ -185,7 +185,7 @@ public class ParquetTimestampFinder implements TimestampFinder, Mutable, QuietCl
             if (rowIndex >= rowCount && rowIndex < rowCount + size) {
                 int rowLo = (int) (rowIndex - rowCount);
                 partitionDecoder.decodeRowGroup(rowGroupBuffers, timestampIdAndType, rowGroupIndex, rowLo, rowLo + 1);
-                return Unsafe.getUnsafe().getLong(rowGroupBuffers.getChunkDataPtr(0));
+                return Unsafe.getLong(rowGroupBuffers.getChunkDataPtr(0));
             }
             rowCount += size;
         }

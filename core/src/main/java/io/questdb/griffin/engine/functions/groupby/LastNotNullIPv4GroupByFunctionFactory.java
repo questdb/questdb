@@ -58,12 +58,12 @@ public class LastNotNullIPv4GroupByFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public void computeBatch(MapValue mapValue, long ptr, int count, long startRowId) {
-            if (count > 0) {
-                long hi = ptr + (count - 1) * 4L;
-                long offset = count - 1;
-                for (; hi >= ptr; hi -= 4L) {
-                    int value = Unsafe.getUnsafe().getInt(hi);
+        public void computeBatch(MapValue mapValue, long dataAddr, int rowCount, long startRowId) {
+            if (rowCount > 0) {
+                long hi = dataAddr + (rowCount - 1) * 4L;
+                long offset = rowCount - 1;
+                for (; hi >= dataAddr; hi -= 4L) {
+                    int value = Unsafe.getInt(hi);
                     if (value != Numbers.IPv4_NULL) {
                         long rowId = startRowId + offset;
                         long existingRowId = mapValue.getLong(valueIndex);

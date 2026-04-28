@@ -158,13 +158,13 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
         resumeActions.extendAndSet(QUERY_RECORD, this::onResumeQueryRecord);
         resumeActions.extendAndSet(QUERY_RECORD_SUFFIX, this::onResumeQueryRecordSuffix);
         resumeActions.extendAndSet(QUERY_SUFFIX, this::onResumeQuerySuffix);
-        resumeActions.extendAndSet(QUERY_ERROR, (response, columnCount) -> onResumeError(response));
-        resumeActions.extendAndSet(QUERY_DONE, (response, columnCount) -> response.done());
-        resumeActions.extendAndSet(QUERY_BAD_UTF8, (response, columnCount) -> onResumeBadUtf8(response));
-        resumeActions.extendAndSet(QUERY_EMPTY_QUERY, (response, columnCount) -> onResumeEmptyQuery(response));
-        resumeActions.extendAndSet(QUERY_CONFIRMATION, (response, columnCount) -> onResumeConfirmation(response));
-        resumeActions.extendAndSet(QUERY_INSERT_CONFIRMATION, (response, columnCount) -> onResumeInsertConfirmation(response));
-        resumeActions.extendAndSet(QUERY_UPDATE_CONFIRMATION, (response, columnCount) -> onResumeUpdateConfirmation(response));
+        resumeActions.extendAndSet(QUERY_ERROR, (response, _) -> onResumeError(response));
+        resumeActions.extendAndSet(QUERY_DONE, (response, _) -> response.done());
+        resumeActions.extendAndSet(QUERY_BAD_UTF8, (response, _) -> onResumeBadUtf8(response));
+        resumeActions.extendAndSet(QUERY_EMPTY_QUERY, (response, _) -> onResumeEmptyQuery(response));
+        resumeActions.extendAndSet(QUERY_CONFIRMATION, (response, _) -> onResumeConfirmation(response));
+        resumeActions.extendAndSet(QUERY_INSERT_CONFIRMATION, (response, _) -> onResumeInsertConfirmation(response));
+        resumeActions.extendAndSet(QUERY_UPDATE_CONFIRMATION, (response, _) -> onResumeUpdateConfirmation(response));
         this.nanosecondClock = nanosecondClock;
         this.statementTimeout = httpConnectionContext.getRequestHeader().getStatementTimeout();
         this.keepAliveHeader = keepAliveHeader;
@@ -1017,7 +1017,7 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
         boolean quoted = false;
         boolean escaped = false;
         while (rawLo < rawHi) {
-            byte b = Unsafe.getUnsafe().getByte(rawLo);
+            byte b = Unsafe.getByte(rawLo);
             if (b < 0) {
                 int n = Utf8s.utf8DecodeMultiByte(rawLo, rawHi, b, columnNameSink);
                 if (n == -1) {

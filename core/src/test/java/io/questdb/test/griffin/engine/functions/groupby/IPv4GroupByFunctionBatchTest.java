@@ -298,7 +298,7 @@ public class IPv4GroupByFunctionBatchTest {
         lastAllocated = Unsafe.malloc(lastSize, MemoryTag.NATIVE_DEFAULT);
         long addr = lastAllocated;
         for (int value : values) {
-            Unsafe.getUnsafe().putInt(addr, value);
+            Unsafe.putInt(addr, value);
             addr += Integer.BYTES;
         }
         return lastAllocated;

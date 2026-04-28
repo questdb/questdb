@@ -62,14 +62,14 @@ public class LastGeoHashGroupByFunctionFactory implements FunctionFactory {
         return switch (ColumnType.tagOf(type)) {
             case ColumnType.GEOBYTE -> new FirstGeoHashGroupByFunctionByte(type, function) {
                 @Override
-                public void computeBatch(MapValue mapValue, long ptr, int count, long startRowId) {
-                    if (count > 0) {
-                        long lastRowId = startRowId + count - 1;
+                public void computeBatch(MapValue mapValue, long dataAddr, int rowCount, long startRowId) {
+                    if (rowCount > 0) {
+                        long lastRowId = startRowId + rowCount - 1;
                         long existingRowId = mapValue.getLong(valueIndex);
                         if (lastRowId > existingRowId || existingRowId == Numbers.LONG_NULL) {
                             mapValue.putLong(valueIndex, lastRowId);
-                            final long addr = ptr + ((long) count - 1) * Byte.BYTES;
-                            mapValue.putByte(valueIndex + 1, Unsafe.getUnsafe().getByte(addr));
+                            final long addr = dataAddr + ((long) rowCount - 1) * Byte.BYTES;
+                            mapValue.putByte(valueIndex + 1, Unsafe.getByte(addr));
                         }
                     }
                 }
@@ -96,14 +96,14 @@ public class LastGeoHashGroupByFunctionFactory implements FunctionFactory {
             };
             case ColumnType.GEOSHORT -> new FirstGeoHashGroupByFunctionShort(type, function) {
                 @Override
-                public void computeBatch(MapValue mapValue, long ptr, int count, long startRowId) {
-                    if (count > 0) {
-                        long lastRowId = startRowId + count - 1;
+                public void computeBatch(MapValue mapValue, long dataAddr, int rowCount, long startRowId) {
+                    if (rowCount > 0) {
+                        long lastRowId = startRowId + rowCount - 1;
                         long existingRowId = mapValue.getLong(valueIndex);
                         if (lastRowId > existingRowId || existingRowId == Numbers.LONG_NULL) {
                             mapValue.putLong(valueIndex, lastRowId);
-                            final long addr = ptr + ((long) count - 1) * Short.BYTES;
-                            mapValue.putShort(valueIndex + 1, Unsafe.getUnsafe().getShort(addr));
+                            final long addr = dataAddr + ((long) rowCount - 1) * Short.BYTES;
+                            mapValue.putShort(valueIndex + 1, Unsafe.getShort(addr));
                         }
                     }
                 }
@@ -130,14 +130,14 @@ public class LastGeoHashGroupByFunctionFactory implements FunctionFactory {
             };
             case ColumnType.GEOINT -> new FirstGeoHashGroupByFunctionInt(type, function) {
                 @Override
-                public void computeBatch(MapValue mapValue, long ptr, int count, long startRowId) {
-                    if (count > 0) {
-                        long lastRowId = startRowId + count - 1;
+                public void computeBatch(MapValue mapValue, long dataAddr, int rowCount, long startRowId) {
+                    if (rowCount > 0) {
+                        long lastRowId = startRowId + rowCount - 1;
                         long existingRowId = mapValue.getLong(valueIndex);
                         if (lastRowId > existingRowId || existingRowId == Numbers.LONG_NULL) {
                             mapValue.putLong(valueIndex, lastRowId);
-                            final long addr = ptr + ((long) count - 1) * Integer.BYTES;
-                            mapValue.putInt(valueIndex + 1, Unsafe.getUnsafe().getInt(addr));
+                            final long addr = dataAddr + ((long) rowCount - 1) * Integer.BYTES;
+                            mapValue.putInt(valueIndex + 1, Unsafe.getInt(addr));
                         }
                     }
                 }
@@ -164,14 +164,14 @@ public class LastGeoHashGroupByFunctionFactory implements FunctionFactory {
             };
             default -> new FirstGeoHashGroupByFunctionLong(type, function) {
                 @Override
-                public void computeBatch(MapValue mapValue, long ptr, int count, long startRowId) {
-                    if (count > 0) {
-                        long lastRowId = startRowId + count - 1;
+                public void computeBatch(MapValue mapValue, long dataAddr, int rowCount, long startRowId) {
+                    if (rowCount > 0) {
+                        long lastRowId = startRowId + rowCount - 1;
                         long existingRowId = mapValue.getLong(valueIndex);
                         if (lastRowId > existingRowId || existingRowId == Numbers.LONG_NULL) {
                             mapValue.putLong(valueIndex, lastRowId);
-                            final long addr = ptr + ((long) count - 1) * Long.BYTES;
-                            mapValue.putLong(valueIndex + 1, Unsafe.getUnsafe().getLong(addr));
+                            final long addr = dataAddr + ((long) rowCount - 1) * Long.BYTES;
+                            mapValue.putLong(valueIndex + 1, Unsafe.getLong(addr));
                         }
                     }
                 }

@@ -26,12 +26,16 @@ package io.questdb.griffin.engine.functions.groupby;
 
 import io.questdb.cairo.ArrayColumnTypes;
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.map.Map;
 import io.questdb.cairo.map.MapValue;
 import io.questdb.cairo.sql.Function;
+import io.questdb.cairo.sql.PageFrameMemoryRecord;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.engine.functions.GroupByFunction;
 import io.questdb.griffin.engine.functions.IPv4Function;
 import io.questdb.griffin.engine.functions.UnaryFunction;
+import io.questdb.griffin.engine.groupby.FlyweightPackedMapValue;
+import io.questdb.griffin.engine.groupby.GroupByUtils;
 import io.questdb.std.Numbers;
 import io.questdb.std.Unsafe;
 import org.jetbrains.annotations.NotNull;
@@ -39,19 +43,21 @@ import org.jetbrains.annotations.NotNull;
 public class MinIPv4GroupByFunction extends IPv4Function implements GroupByFunction, UnaryFunction {
     private static final long IPv4_NULL_AS_LONG = Numbers.ipv4ToLong(Numbers.IPv4_NULL);
     private final Function arg;
+    private final int argColumnIndex;
     private int valueIndex;
 
     public MinIPv4GroupByFunction(@NotNull Function arg) {
         this.arg = arg;
+        this.argColumnIndex = GroupByUtils.directArgColumnIndex(arg, ColumnType.IPv4);
     }
 
     @Override
-    public void computeBatch(MapValue mapValue, long ptr, int count, long startRowId) {
-        if (count > 0) {
-            final long hi = ptr + count * (long) Integer.BYTES;
+    public void computeBatch(MapValue mapValue, long dataAddr, int rowCount, long startRowId) {
+        if (rowCount > 0) {
+            final long hi = dataAddr + rowCount * (long) Integer.BYTES;
             long min = IPv4_NULL_AS_LONG;
-            for (; ptr < hi; ptr += Integer.BYTES) {
-                long value = Numbers.ipv4ToLong(Unsafe.getUnsafe().getInt(ptr));
+            for (; dataAddr < hi; dataAddr += Integer.BYTES) {
+                long value = Numbers.ipv4ToLong(Unsafe.getInt(dataAddr));
                 if (value != IPv4_NULL_AS_LONG && (value < min || min == IPv4_NULL_AS_LONG)) {
                     min = value;
                 }
@@ -68,6 +74,52 @@ public class MinIPv4GroupByFunction extends IPv4Function implements GroupByFunct
     @Override
     public void computeFirst(MapValue mapValue, Record record, long rowId) {
         mapValue.putInt(valueIndex, arg.getIPv4(record));
+    }
+
+    @Override
+    public void computeKeyedBatch(
+            PageFrameMemoryRecord record,
+            FlyweightPackedMapValue mapValue,
+            long baseValueAddr,
+            long batchAddr,
+            long rowCount,
+            long baseRowId
+    ) {
+        final long valueColumnOffset = mapValue.getOffset(valueIndex);
+        // Fast path: arg is a direct IPv4 column with data on the current frame.
+        // Zero page address means a column top; fall through to the record-based path.
+        final long argAddr = argColumnIndex >= 0 ? record.getPageAddress(argColumnIndex) : 0;
+        if (argAddr != 0) {
+            for (long i = 0; i < rowCount; i++) {
+                final long encoded = Unsafe.getLong(batchAddr + (i << 3));
+                final long rowIndex = Map.decodeBatchRowIndex(encoded);
+                final int value = Unsafe.getInt(argAddr + (rowIndex << 2));
+                if (value != Numbers.IPv4_NULL) {
+                    final long addr = baseValueAddr + Map.decodeBatchOffset(encoded) + valueColumnOffset;
+                    final int current = Unsafe.getInt(addr);
+                    final long valueAsLong = Numbers.ipv4ToLong(value);
+                    final long currentAsLong = Numbers.ipv4ToLong(current);
+                    if (current == Numbers.IPv4_NULL || valueAsLong < currentAsLong) {
+                        Unsafe.putInt(addr, value);
+                    }
+                }
+            }
+        } else {
+            for (long i = 0; i < rowCount; i++) {
+                final long encoded = Unsafe.getLong(batchAddr + (i << 3));
+                record.setRowIndex(Map.decodeBatchRowIndex(encoded));
+                final int value = arg.getIPv4(record);
+                if (value != Numbers.IPv4_NULL) {
+                    final long addr = baseValueAddr + Map.decodeBatchOffset(encoded) + valueColumnOffset;
+                    final int current = Unsafe.getInt(addr);
+                    final long valueAsLong = Numbers.ipv4ToLong(value);
+                    final long currentAsLong = Numbers.ipv4ToLong(current);
+                    if (current == Numbers.IPv4_NULL || valueAsLong < currentAsLong) {
+                        Unsafe.putInt(addr, value);
+                    }
+                }
+            }
+        }
     }
 
     @Override
