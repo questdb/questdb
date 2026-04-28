@@ -276,7 +276,9 @@ public class TablesFunctionFactory implements FunctionFactory {
                 @Override
                 public char getChar(int col) {
                     if (col == TABLE_TYPE_COLUMN) {
-                        if (table.getTableToken().isMatView()) {
+                        if (table.getTableToken().isLiveView()) {
+                            return 'L';
+                        } else if (table.getTableToken().isMatView()) {
                             return 'M';
                         } else if (table.getTableToken().isView()) {
                             return 'V';

@@ -287,6 +287,12 @@ public class CompiledQueryImpl implements CompiledQuery, Mutable {
         this.isExecutedAtParseTime = true;
     }
 
+    public void ofCreateLiveView(Operation createLiveViewOp) {
+        of(CREATE_LIVE_VIEW);
+        this.operation = createLiveViewOp;
+        this.isExecutedAtParseTime = false;
+    }
+
     public void ofCreateView(CreateViewOperation createViewOp) {
         of(CREATE_VIEW);
         this.operation = createViewOp;

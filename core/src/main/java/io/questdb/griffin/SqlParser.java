@@ -32,12 +32,14 @@ import io.questdb.cairo.MicrosTimestampDriver;
 import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableUtils;
+import io.questdb.cairo.lv.LiveViewDefinition;
 import io.questdb.cairo.mv.MatViewDefinition;
 import io.questdb.cairo.view.ViewDefinition;
 import io.questdb.cutlass.text.Atomicity;
 import io.questdb.griffin.engine.functions.json.JsonExtractTypedFunctionFactory;
 import io.questdb.griffin.engine.groupby.TimestampSampler;
 import io.questdb.griffin.engine.groupby.TimestampSamplerFactory;
+import io.questdb.griffin.engine.ops.CreateLiveViewOperationBuilder;
 import io.questdb.griffin.engine.ops.CreateMatViewOperationBuilder;
 import io.questdb.griffin.engine.ops.CreateMatViewOperationBuilderImpl;
 import io.questdb.griffin.engine.ops.CreateTableOperationBuilder;
@@ -115,6 +117,7 @@ public class SqlParser {
     private final ObjectPool<CompileViewModel> compileViewModelPool;
     private final CairoConfiguration configuration;
     private final ObjectPool<ExportModel> copyModelPool;
+    private final CreateLiveViewOperationBuilder createLiveViewOperationBuilder = new CreateLiveViewOperationBuilder();
     private final CreateMatViewOperationBuilderImpl createMatViewOperationBuilder = new CreateMatViewOperationBuilderImpl();
     private final ObjectPool<CreateTableColumnModel> createTableColumnModelPool;
     private final CreateTableOperationBuilderImpl createTableOperationBuilder = createMatViewOperationBuilder.getCreateTableOperationBuilder();
@@ -1251,6 +1254,9 @@ public class SqlParser {
         if (isViewKeyword(tok)) {
             return parseCreateView(lexer, executionContext, sqlParserCallback);
         }
+        if (isLiveKeyword(tok)) {
+            return parseCreateLiveView(lexer, sqlParserCallback);
+        }
         if (isMaterializedKeyword(tok)) {
             if (!configuration.isMatViewEnabled()) {
                 throw SqlException.$(0, "materialized views are disabled");
@@ -1258,6 +1264,94 @@ public class SqlParser {
             return parseCreateMatView(lexer, executionContext, sqlParserCallback);
         }
         return parseCreateTable(lexer, tok, executionContext, sqlParserCallback);
+    }
+
+    private ExecutionModel parseCreateLiveView(
+            GenericLexer lexer,
+            SqlParserCallback sqlParserCallback
+    ) throws SqlException {
+        final CreateLiveViewOperationBuilder builder = createLiveViewOperationBuilder;
+        builder.clear();
+
+        expectTok(lexer, "view");
+
+        // optional IF NOT EXISTS
+        CharSequence tok = tok(lexer, "live view name");
+        if (isIfKeyword(tok)) {
+            expectTok(lexer, "not");
+            expectTok(lexer, "exists");
+            builder.setIgnoreIfExists(true);
+            tok = tok(lexer, "live view name");
+        }
+
+        // view name
+        builder.setViewName(Chars.toString(GenericLexer.unquote(tok)));
+        builder.setViewNamePosition(lexer.lastTokenPosition());
+
+        // LAG duration (required, must be > 0)
+        tok = tok(lexer, "'lag'");
+        if (!isLagKeyword(tok)) {
+            throw SqlException.position(lexer.lastTokenPosition()).put("'lag' expected");
+        }
+        CharSequence lagTok = tok(lexer, "lag duration");
+        int lagPos = lexer.lastTokenPosition();
+        long lagValue = SqlUtil.expectIntervalValue(lagTok, lagPos);
+        char lagUnit = SqlUtil.expectIntervalUnit(lagTok, lagPos);
+        if (lagValue <= 0) {
+            throw SqlException.$(lagPos, "lag must be positive");
+        }
+        builder.setLagValue(lagValue);
+        builder.setLagUnit(lagUnit);
+
+        // RETENTION duration (required, must be > 0, must be >= LAG)
+        tok = tok(lexer, "'retention'");
+        if (!isRetentionKeyword(tok)) {
+            throw SqlException.position(lexer.lastTokenPosition()).put("'retention' expected");
+        }
+        CharSequence retTok = tok(lexer, "retention duration");
+        int retPos = lexer.lastTokenPosition();
+        long retentionValue = SqlUtil.expectIntervalValue(retTok, retPos);
+        char retentionUnit = SqlUtil.expectIntervalUnit(retTok, retPos);
+        if (retentionValue <= 0) {
+            throw SqlException.$(retPos, "retention must be positive");
+        }
+        long lagMicros = LiveViewDefinition.toMicros(lagValue, lagUnit);
+        long retentionMicros = LiveViewDefinition.toMicros(retentionValue, retentionUnit);
+        if (retentionMicros < lagMicros) {
+            throw SqlException.$(retPos, "retention must be greater than or equal to lag");
+        }
+        builder.setRetentionValue(retentionValue);
+        builder.setRetentionUnit(retentionUnit);
+
+        // expect AS
+        tok = tok(lexer, "'as'");
+        if (!isAsKeyword(tok)) {
+            throw SqlException.position(lexer.lastTokenPosition()).put("'as' expected");
+        }
+
+        // parse SELECT
+        int selectStart = lexer.getPosition();
+        tok = tok(lexer, "'(' or 'select'");
+        boolean hasParens = Chars.equals(tok, '(');
+        if (!hasParens) {
+            lexer.unparseLast();
+        }
+        IQueryModel queryModel = parseDml(lexer, lexer.getPosition(), sqlParserCallback);
+        if (hasParens) {
+            expectTok(lexer, ")");
+        }
+        int selectEnd = lexer.getPosition() - (hasParens ? 1 : 0);
+        builder.setSelectSql(Chars.toString(lexer.getContent(), selectStart, selectEnd));
+        builder.setSelectModel(queryModel);
+
+        // extract base table name from query model
+        IQueryModel from = queryModel.getNestedModel() != null ? queryModel.getNestedModel() : queryModel;
+        if (from.getTableName() == null) {
+            throw SqlException.$(selectStart, "live view requires a single base table in FROM clause");
+        }
+        builder.setBaseTableName(Chars.toString(from.getTableName()));
+
+        return builder;
     }
 
     private ExecutionModel parseCreateMatView(
@@ -2453,11 +2547,15 @@ public class SqlParser {
                         expectTok(lexer, "view");
                         parseTableName(lexer, model);
                         showKind = IQueryModel.SHOW_CREATE_MAT_VIEW;
+                    } else if (tok != null && isLiveKeyword(tok)) {
+                        expectTok(lexer, "view");
+                        parseTableName(lexer, model);
+                        showKind = IQueryModel.SHOW_CREATE_LIVE_VIEW;
                     } else if (tok != null && isViewKeyword(tok)) {
                         parseTableName(lexer, model);
                         showKind = IQueryModel.SHOW_CREATE_VIEW;
                     } else {
-                        throw SqlException.position(lexer.lastTokenPosition()).put("expected 'TABLE' or 'VIEW' or 'MATERIALIZED VIEW'");
+                        throw SqlException.position(lexer.lastTokenPosition()).put("expected 'TABLE' or 'VIEW' or 'MATERIALIZED VIEW' or 'LIVE VIEW'");
                     }
                 } else {
                     showKind = sqlParserCallback.parseShowSql(lexer, model, tok, expressionNodePool);

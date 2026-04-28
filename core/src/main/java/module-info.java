@@ -122,6 +122,7 @@ open module io.questdb {
     exports io.questdb.std.json;
     exports io.questdb.griffin.engine.functions.json;
     exports io.questdb.griffin.engine.table.parquet;
+    exports io.questdb.cairo.lv;
     exports io.questdb.cairo.mv;
     exports io.questdb.cairo.file;
     exports io.questdb.cairo.arr;

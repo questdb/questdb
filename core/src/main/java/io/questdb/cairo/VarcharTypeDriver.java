@@ -239,6 +239,10 @@ public class VarcharTypeDriver implements ColumnTypeDriver {
         return size(header);
     }
 
+    public static int getSingleMemValueByteCount(@Nullable Utf8Sequence value) {
+        return value != null ? Integer.BYTES + value.size() : Integer.BYTES;
+    }
+
     /**
      * Reads a VarcharSlice value from the aux vector.
      * VarcharSlice aux format: [length(i32), reserved(u32), pointer(u64)]
@@ -268,10 +272,6 @@ public class VarcharTypeDriver implements ColumnTypeDriver {
             return TableUtils.NULL_LEN;
         }
         return header >>> 4;
-    }
-
-    public static int getSingleMemValueByteCount(@Nullable Utf8Sequence value) {
-        return value != null ? Integer.BYTES + value.size() : Integer.BYTES;
     }
 
     /**
@@ -479,6 +479,7 @@ public class VarcharTypeDriver implements ColumnTypeDriver {
         return 0;
     }
 
+    @Override
     public long getDataVectorOffset(long auxMemAddr, long row) {
         long auxEntry = auxMemAddr + VARCHAR_AUX_WIDTH_BYTES * row;
         assert Unsafe.getInt(auxEntry) != 0;

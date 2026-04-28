@@ -1285,6 +1285,21 @@ public class SqlKeywords {
                 && (tok.charAt(3) | 32) == 's';
     }
 
+    public static boolean isLagKeyword(CharSequence tok) {
+        return tok.length() == 3
+                && (tok.charAt(0) | 32) == 'l'
+                && (tok.charAt(1) | 32) == 'a'
+                && (tok.charAt(2) | 32) == 'g';
+    }
+
+    public static boolean isLiveKeyword(CharSequence tok) {
+        return tok.length() == 4
+                && (tok.charAt(0) | 32) == 'l'
+                && (tok.charAt(1) | 32) == 'i'
+                && (tok.charAt(2) | 32) == 'v'
+                && (tok.charAt(3) | 32) == 'e';
+    }
+
     public static boolean isMaterializedKeyword(CharSequence tok) {
         return tok.length() == 12
                 && (tok.charAt(0) | 32) == 'm'
@@ -2448,6 +2463,19 @@ public class SqlKeywords {
                 && (tok.charAt(3) | 32) == 'u'
                 && (tok.charAt(4) | 32) == 'e'
                 && (tok.charAt(5) | 32) == 's';
+    }
+
+    public static boolean isRetentionKeyword(CharSequence tok) {
+        return tok.length() == 9
+                && (tok.charAt(0) | 32) == 'r'
+                && (tok.charAt(1) | 32) == 'e'
+                && (tok.charAt(2) | 32) == 't'
+                && (tok.charAt(3) | 32) == 'e'
+                && (tok.charAt(4) | 32) == 'n'
+                && (tok.charAt(5) | 32) == 't'
+                && (tok.charAt(6) | 32) == 'i'
+                && (tok.charAt(7) | 32) == 'o'
+                && (tok.charAt(8) | 32) == 'n';
     }
 
     public static boolean isViewKeyword(CharSequence tok) {

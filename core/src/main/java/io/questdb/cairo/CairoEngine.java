@@ -32,6 +32,12 @@ import io.questdb.Telemetry;
 import io.questdb.cairo.file.BlockFileReader;
 import io.questdb.cairo.file.BlockFileWriter;
 import io.questdb.cairo.frm.file.FrameFactory;
+import io.questdb.cairo.lv.LiveViewDefinition;
+import io.questdb.cairo.lv.LiveViewInstance;
+import io.questdb.cairo.lv.LiveViewRegistry;
+import io.questdb.cairo.lv.LiveViewStateStore;
+import io.questdb.cairo.lv.LiveViewStateStoreImpl;
+import io.questdb.cairo.lv.LiveViewTableStructure;
 import io.questdb.cairo.mig.EngineMigration;
 import io.questdb.cairo.mv.MatViewDefinition;
 import io.questdb.cairo.mv.MatViewGraph;
@@ -107,10 +113,16 @@ import io.questdb.griffin.SqlCompilerFactoryImpl;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.SqlExecutionContextImpl;
+import io.questdb.griffin.engine.ops.CreateLiveViewOperation;
 import io.questdb.griffin.engine.ops.CreateMatViewOperation;
 import io.questdb.griffin.engine.ops.CreateViewOperation;
 import io.questdb.griffin.engine.ops.Operation;
+import io.questdb.griffin.engine.QueryProgress;
 import io.questdb.griffin.engine.ops.UpdateOperation;
+import io.questdb.griffin.engine.table.PageFrameRecordCursorFactory;
+import io.questdb.griffin.engine.window.CachedWindowRecordCursorFactory;
+import io.questdb.griffin.engine.window.WindowFunction;
+import io.questdb.griffin.engine.window.WindowRecordCursorFactory;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.log.LogRecord;
@@ -171,6 +183,8 @@ public class CairoEngine implements Closeable, WriterSource {
     private final ConcurrentHashMap<TableToken> createTableLock = new ConcurrentHashMap<>();
     private final DataID dataID;
     private final FunctionFactoryCache ffCache;
+    private final LiveViewRegistry liveViewRegistry = new LiveViewRegistry();
+    private final LiveViewStateStore liveViewStateStore = new LiveViewStateStoreImpl();
     private final MatViewGraph matViewGraph;
     private final Queue<MatViewTimerTask> matViewTimerQueue;
     private final MessageBusImpl messageBus;
@@ -314,6 +328,7 @@ public class CairoEngine implements Closeable, WriterSource {
             case CREATE_TABLE_AS_SELECT:
             case CREATE_MAT_VIEW:
             case CREATE_VIEW:
+            case CREATE_LIVE_VIEW:
             case DROP:
                 assert sqlExecutionContext.getCairoEngine() == compiler.getEngine();
                 try (Operation op = cq.getOperation()) {
@@ -529,6 +544,52 @@ public class CairoEngine implements Closeable, WriterSource {
                         rec.I$();
                     }
                 }
+                if (tableToken.isLiveView() && TableUtils.isLiveViewDefinitionFileExists(configuration, path, tableToken.getDirName())) {
+                    try {
+                        if (liveViewRegistry.getViewInstance(tableToken.getTableName()) == null) {
+                            final GenericRecordMetadata metadata;
+                            try (TableReaderMetadata readerMetadata = new TableReaderMetadata(configuration, tableToken)) {
+                                readerMetadata.loadMetadata();
+                                metadata = GenericRecordMetadata.copyOfNew(readerMetadata);
+                            }
+                            final TableToken baseTableToken = tableNameRegistry.getTableToken(
+                                    LiveViewDefinition.readBaseTableName(reader, path, pathLen, tableToken)
+                            );
+                            final boolean baseTableExists = baseTableToken != null && !tableNameRegistry.isTableDropped(baseTableToken);
+                            LiveViewDefinition definition = LiveViewDefinition.readFrom(
+                                    reader,
+                                    path,
+                                    pathLen,
+                                    tableToken,
+                                    baseTableToken,
+                                    metadata
+                            );
+                            LiveViewInstance instance = new LiveViewInstance(definition);
+                            if (!baseTableExists) {
+                                LOG.info().$("base table for live view does not exist [table=").$safe(definition.getBaseTableName())
+                                        .$(", view=").$(tableToken)
+                                        .I$();
+                                instance.invalidate("base table does not exist");
+                            } else if (!baseTableToken.isWal()) {
+                                LOG.info().$("base table for live view is not WAL table [table=").$safe(definition.getBaseTableName())
+                                        .$(", view=").$(tableToken)
+                                        .I$();
+                                instance.invalidate("base table is not WAL table");
+                            }
+                            liveViewRegistry.registerView(instance);
+                            liveViewStateStore.registerBaseTable(definition.getBaseTableName());
+                        }
+                    } catch (Throwable th) {
+                        final LogRecord rec = LOG.error().$("could not load live view [view=").$(tableToken);
+                        if (th instanceof CairoException ce) {
+                            rec.$(", msg=").$safe(ce.getFlyweightMessage())
+                                    .$(", errno=").$(ce.getErrno());
+                        } else {
+                            rec.$(", msg=").$safe(th.getMessage());
+                        }
+                        rec.I$();
+                    }
+                }
             }
         }
     }
@@ -559,6 +620,8 @@ public class CairoEngine implements Closeable, WriterSource {
         matViewGraph.clear();
         matViewStateStore.clear();
         matViewTimerQueue.clear();
+        liveViewRegistry.clear();
+        liveViewStateStore.clear();
         boolean b1 = readerPool.releaseAll();
         boolean b2 = writerPool.releaseAll();
         boolean b3 = tableSequencerAPI.releaseAll();
@@ -597,6 +660,8 @@ public class CairoEngine implements Closeable, WriterSource {
         Misc.free(checkpointAgent);
         Misc.free(metadataCache);
         Misc.free(scoreboardPool);
+        Misc.free(liveViewRegistry);
+        Misc.free(liveViewStateStore);
         Misc.free(matViewStateStore);
         Misc.free(settingsStore);
         Misc.free(frameFactory);
@@ -610,6 +675,83 @@ public class CairoEngine implements Closeable, WriterSource {
 
     public void configureThreadLocalReaderPoolSupervisor(@NotNull ResourcePoolSupervisor<ReaderPool.R> supervisor) {
         readerPool.configureThreadLocalPoolSupervisor(supervisor);
+    }
+
+    public void createLiveView(
+            CreateLiveViewOperation op,
+            TableToken baseTableToken,
+            SqlExecutionContext executionContext
+    ) throws SqlException {
+        // reject DEDUP base tables: incremental refresh reads raw WAL segments, which
+        // contain the pre-dedup row stream and cannot be reconciled with the applied
+        // base table state. See LiveViewRefreshJob for the incremental refresh design.
+        try (TableMetadata baseMetadata = getTableMetadata(baseTableToken)) {
+            for (int i = 0, n = baseMetadata.getColumnCount(); i < n; i++) {
+                if (baseMetadata.isDedupKey(i)) {
+                    throw SqlException.$(op.getViewNamePosition(),
+                            "live view cannot be created over a base table with DEDUP keys");
+                }
+            }
+        }
+
+        // compile the SELECT to validate and get metadata. The live-view-compile flag
+        // suppresses indexed-symbol key extraction in WhereClauseParser so the planner
+        // emits a plain FilteredRecordCursorFactory shape that the incremental refresh
+        // path can handle.
+        GenericRecordMetadata metadata;
+        try (SqlCompiler compiler = getSqlCompiler()) {
+            executionContext.setLiveViewCompile(true);
+            CompiledQuery cq;
+            try {
+                cq = compiler.compile(op.getSelectSql(), executionContext);
+            } finally {
+                executionContext.setLiveViewCompile(false);
+            }
+            try (RecordCursorFactory factory = cq.getRecordCursorFactory()) {
+                validateLiveViewFactory(factory, baseTableToken, op.getViewNamePosition());
+                metadata = GenericRecordMetadata.copyOfNew(factory.getMetadata());
+            }
+        }
+
+        // create disk directory with _meta and _txn via the standard infrastructure
+        LiveViewTableStructure struct = new LiveViewTableStructure(op.getViewName(), metadata);
+        try (
+                MemoryMARW mem = Vm.getCMARWInstance();
+                BlockFileWriter blockFileWriter = new BlockFileWriter(configuration.getFilesFacade(), configuration.getCommitMode());
+                Path path = new Path()
+        ) {
+            TableToken liveViewToken = createTableOrViewOrMatViewUnsecure(
+                    executionContext.getSecurityContext(),
+                    mem,
+                    blockFileWriter,
+                    path,
+                    op.isIgnoreIfExists(),
+                    struct,
+                    false,
+                    false,
+                    TableUtils.TABLE_KIND_REGULAR_TABLE
+            );
+
+            // write _lv definition file
+            path.of(configuration.getDbRoot()).concat(liveViewToken);
+            blockFileWriter.of(path.concat(LiveViewDefinition.LIVE_VIEW_DEFINITION_FILE_NAME).$());
+            LiveViewDefinition definition = new LiveViewDefinition(
+                    op.getViewName(),
+                    op.getSelectSql(),
+                    op.getBaseTableName(),
+                    baseTableToken,
+                    op.getLagValue(),
+                    op.getLagUnit(),
+                    op.getRetentionValue(),
+                    op.getRetentionUnit(),
+                    metadata
+            );
+            LiveViewDefinition.append(definition, blockFileWriter);
+
+            LiveViewInstance instance = new LiveViewInstance(definition);
+            liveViewRegistry.registerView(instance);
+            liveViewStateStore.registerBaseTable(definition.getBaseTableName());
+        }
     }
 
     public @NotNull MatViewDefinition createMatView(
@@ -713,6 +855,23 @@ public class CairoEngine implements Closeable, WriterSource {
         readerPool.detach(reader);
     }
 
+    public void dropLiveView(CharSequence name) {
+        LiveViewInstance instance = liveViewRegistry.removeView(name);
+        if (instance != null) {
+            // Mark the instance dropped and attempt an immediate free. If a refresh or
+            // reader is currently holding a lock, tryCloseIfDropped() bails and the
+            // winning party (refresh finally hook or cursor close) performs the free.
+            instance.markAsDropped();
+            instance.tryCloseIfDropped();
+        }
+        TableToken token = tableNameRegistry.getTableToken(name);
+        if (token != null) {
+            try (Path path = new Path()) {
+                dropTableOrViewOrMatView(path, token);
+            }
+        }
+    }
+
     public void dropTableOrViewOrMatView(@Transient Path path, TableToken tableToken) {
         verifyTableToken(tableToken);
         if (tableToken.isWal()) {
@@ -722,6 +881,7 @@ public class CairoEngine implements Closeable, WriterSource {
                 notifyViewStoresAboutDrop(tableToken);
                 matViewStateStore.removeViewState(tableToken);
                 matViewGraph.removeView(tableToken);
+                liveViewRegistry.invalidateViewsForBaseTable(tableToken.getTableName(), "base table drop");
                 recentWriteTracker.removeTable(tableToken);
             } else {
                 LOG.info().$("table is already dropped [table=").$(tableToken).I$();
@@ -743,6 +903,7 @@ public class CairoEngine implements Closeable, WriterSource {
                     // Then it can push the scoreboard max txn value into incorrect state.
                     scoreboardPool.remove(tableToken);
                     notifyViewStoresAboutDrop(tableToken);
+                    liveViewRegistry.invalidateViewsForBaseTable(tableToken.getTableName(), "base table drop");
                     recentWriteTracker.removeTable(tableToken);
                 } finally {
                     unlockTableUnsafe(tableToken, null, false);
@@ -861,6 +1022,14 @@ public class CairoEngine implements Closeable, WriterSource {
             return getTableMetadata(tableToken, desiredVersion);
         }
         return getSequencerMetadata(tableToken, desiredVersion);
+    }
+
+    public LiveViewRegistry getLiveViewRegistry() {
+        return liveViewRegistry;
+    }
+
+    public LiveViewStateStore getLiveViewStateStore() {
+        return liveViewStateStore;
     }
 
     public @NotNull MatViewGraph getMatViewGraph() {
@@ -1353,6 +1522,10 @@ public class CairoEngine implements Closeable, WriterSource {
         }
     }
 
+    public void invalidateLiveViewsForBaseTable(TableToken baseTableToken, String reason) {
+        liveViewRegistry.invalidateViewsForBaseTable(baseTableToken.getTableName(), reason);
+    }
+
     public boolean isClosing() {
         return closing;
     }
@@ -1454,9 +1627,14 @@ public class CairoEngine implements Closeable, WriterSource {
 
     @Nullable
     public TableToken lockTableName(CharSequence tableName, int tableId, boolean isView, boolean isMatView, boolean isWal) {
+        return lockTableName(tableName, tableId, isView, isMatView, false, isWal);
+    }
+
+    @Nullable
+    public TableToken lockTableName(CharSequence tableName, int tableId, boolean isView, boolean isMatView, boolean isLiveView, boolean isWal) {
         final String tableNameStr = Chars.toString(tableName);
         final String dirName = TableUtils.getTableDir(configuration.mangleTableDirNames(), tableNameStr, tableId, isWal);
-        return lockTableName(tableNameStr, dirName, tableId, isView, isMatView, isWal);
+        return tableNameRegistry.lockTableName(tableNameStr, dirName, tableId, isView, isMatView, isLiveView, isWal);
     }
 
     @Nullable
@@ -1487,6 +1665,10 @@ public class CairoEngine implements Closeable, WriterSource {
             return true;
         }
         return false;
+    }
+
+    public void notifyLiveViewBaseTableCommit(TableToken baseTableToken, long seqTxn) {
+        liveViewStateStore.notifyBaseTableCommit(baseTableToken, seqTxn);
     }
 
     public void notifyMatViewBaseTableCommit(MatViewRefreshTask task, long seqTxn) {
@@ -1672,6 +1854,7 @@ public class CairoEngine implements Closeable, WriterSource {
                             if (fromTableToken.isWal()) {
                                 matViewStateStore.enqueueInvalidateDependentViews(fromTableToken, "table rename operation");
                             }
+                            liveViewRegistry.invalidateViewsForBaseTable(fromTableToken.getTableName(), "base table rename");
                         } else {
                             LOG.info()
                                     .$("failed to rename table [from=").$safe(fromTableName)
@@ -1989,6 +2172,74 @@ public class CairoEngine implements Closeable, WriterSource {
         }
     }
 
+    private static void validateLiveViewFactory(
+            RecordCursorFactory factory,
+            TableToken baseTableToken,
+            int position
+    ) throws SqlException {
+        // SqlCompiler wraps every compiled query in a QueryProgress factory for registry tracking;
+        // unwrap it (and any other transparent wrappers that expose getBaseFactory()) so we can
+        // reason about the actual query shape.
+        RecordCursorFactory root = factory;
+        while (root instanceof QueryProgress) {
+            root = root.getBaseFactory();
+        }
+        if (root instanceof CachedWindowRecordCursorFactory) {
+            throw SqlException.$(position, "live view select may only use window functions that support incremental refresh; " +
+                    "this query requires caching or multi-pass evaluation");
+        }
+        if (!(root instanceof WindowRecordCursorFactory wf)) {
+            throw SqlException.$(position, "live view select must contain at least one window function");
+        }
+        // incremental refresh only handles window functions that emit a value per input row
+        // without looking ahead or buffering state across multiple passes
+        ObjList<WindowFunction> fns = wf.getWindowFunctions();
+        for (int i = 0, n = fns.size(); i < n; i++) {
+            if (fns.getQuick(i).getPassCount() != WindowFunction.ZERO_PASS) {
+                throw SqlException.$(position, "live view select may only use window functions that support incremental refresh");
+            }
+        }
+
+        // V1 incremental refresh drives window functions manually over rows read directly
+        // from WAL segments, so the factory tree must be exactly:
+        //     WindowRecordCursorFactory -> [FilteredRecordCursorFactory?] -> PageFrameRecordCursorFactory
+        // with no join, projection or grouping in between. See LiveViewRefreshJob.
+        //
+        // A single filter factory (FilteredRecordCursorFactory / AsyncFilteredRecordCursorFactory /
+        // AsyncJitFilteredRecordCursorFactory) may sit between the window and the page frame factory;
+        // the refresh job applies its Function filter row-by-row to WAL segment rows during
+        // incremental refresh. Indexed-symbol key extraction is suppressed during live view
+        // compilation (see SqlExecutionContext.isLiveViewCompile and WhereClauseParser), so the
+        // planner never pushes the filter into the row cursor factory.
+        RecordCursorFactory base = wf.getBaseFactory();
+        if (base.getFilter() != null) {
+            base = base.getBaseFactory();
+            if (base == null) {
+                throw SqlException.$(position, "live view select has a malformed filter factory");
+            }
+        }
+        for (RecordCursorFactory f = base.getBaseFactory(); f != null; f = f.getBaseFactory()) {
+            if (f.getFilter() != null) {
+                throw SqlException.$(position, "live view select cannot use nested filter factories yet");
+            }
+        }
+        if (!(base instanceof PageFrameRecordCursorFactory pfrcf) || base.getBaseFactory() != null) {
+            throw SqlException.$(position, "live view select must be a simple scan of a single WAL base table; " +
+                    "joins, subqueries, GROUP BY, ORDER BY and LIMIT are not supported yet");
+        }
+        if (pfrcf.hasFilter()) {
+            // Defensive: WhereClauseParser is supposed to have suppressed indexed-symbol key
+            // extraction for live view compiles, so the planner shouldn't produce an indexed
+            // row cursor factory here. If it ever does, the filter Function is invisible to
+            // the incremental refresh path and rows would slip through unfiltered.
+            throw SqlException.$(position, "live view select produced an indexed row cursor factory unexpectedly");
+        }
+        TableToken scannedToken = base.getTableToken();
+        if (scannedToken == null || !scannedToken.equals(baseTableToken)) {
+            throw SqlException.$(position, "live view select must read from the declared base table");
+        }
+    }
+
     // caller has to acquire the lock before this method is called and release the lock after the call
     private void createTableOrMatViewInVolumeUnsafe(MemoryMARW mem, @Nullable BlockFileWriter blockFileWriter, Path path, TableStructure struct, TableToken tableToken) {
         if (TableUtils.TABLE_DOES_NOT_EXIST != TableUtils.existsInVolume(configuration.getFilesFacade(), path, tableToken.getDirName())) {
@@ -2051,7 +2302,7 @@ public class CairoEngine implements Closeable, WriterSource {
         final int tableId = (int) tableIdGenerator.getNextId();
 
         while (true) {
-            TableToken tableToken = lockTableName(tableName, tableId, struct.isView(), struct.isMatView(), struct.isWalEnabled());
+            TableToken tableToken = lockTableName(tableName, tableId, struct.isView(), struct.isMatView(), struct.isLiveView(), struct.isWalEnabled());
             if (tableToken == null) {
                 if (ifNotExists) {
                     tableToken = getTableTokenIfExists(tableName);

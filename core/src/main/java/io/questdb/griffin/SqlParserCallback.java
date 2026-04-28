@@ -33,6 +33,7 @@ import io.questdb.griffin.engine.ops.CreateMatViewOperationBuilder;
 import io.questdb.griffin.engine.ops.CreateTableOperationBuilder;
 import io.questdb.griffin.engine.ops.CreateTableOperationBuilderImpl;
 import io.questdb.griffin.engine.ops.CreateViewOperationBuilder;
+import io.questdb.griffin.engine.table.ShowCreateLiveViewRecordCursorFactory;
 import io.questdb.griffin.engine.table.ShowCreateMatViewRecordCursorFactory;
 import io.questdb.griffin.engine.table.ShowCreateTableRecordCursorFactory;
 import io.questdb.griffin.engine.table.ShowCreateViewRecordCursorFactory;
@@ -47,6 +48,16 @@ import org.jetbrains.annotations.Nullable;
 import static io.questdb.griffin.SqlKeywords.isTtlKeyword;
 
 public interface SqlParserCallback {
+
+    static @NotNull TableToken getLiveViewToken(ExpressionNode tableNameExpr, SqlExecutionContext executionContext, Path path) throws SqlException {
+        final TableToken viewToken = getTableToken(tableNameExpr, executionContext, path,
+                SqlException.$(tableNameExpr.position, "live view does not exist [view=").put(tableNameExpr.token).put(']')
+        );
+        if (!viewToken.isLiveView()) {
+            throw SqlException.$(tableNameExpr.position, "live view name expected, got table name");
+        }
+        return viewToken;
+    }
 
     static @NotNull TableToken getMatViewToken(ExpressionNode tableNameExpr, SqlExecutionContext executionContext, Path path) throws SqlException {
         final TableToken viewToken = getTableToken(tableNameExpr, executionContext, path,
@@ -72,6 +83,11 @@ public interface SqlParserCallback {
             throw SqlException.$(tableNameExpr.position, "view name expected, got table name");
         }
         return viewToken;
+    }
+
+    default RecordCursorFactory generateShowCreateLiveViewFactory(IQueryModel model, SqlExecutionContext executionContext, Path path) throws SqlException {
+        final TableToken viewToken = getLiveViewToken(model.getTableNameExpr(), executionContext, path);
+        return new ShowCreateLiveViewRecordCursorFactory(viewToken, model.getTableNameExpr().position);
     }
 
     default RecordCursorFactory generateShowCreateMatViewFactory(IQueryModel model, SqlExecutionContext executionContext, Path path) throws SqlException {

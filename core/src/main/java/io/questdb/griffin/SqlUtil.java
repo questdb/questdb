@@ -339,6 +339,31 @@ public class SqlUtil {
         }
     }
 
+    public static char expectIntervalUnit(CharSequence tok, int position) throws SqlException {
+        final int len = tok.length();
+        final int k = findEndOfDigitsPos(tok, len, position);
+        int nChars = len - k;
+        if (nChars >= 1 && nChars <= 2) {
+            char c = tok.charAt(k);
+            if (c == 's' || c == 'm' || c == 'h' || c == 'd') {
+                if (nChars == 1) {
+                    return c;
+                }
+            }
+        }
+        throw SqlException.$(position + len, "invalid interval qualifier ").put(tok);
+    }
+
+    public static long expectIntervalValue(CharSequence tok, int position) throws SqlException {
+        final int len = tok.length();
+        final int k = findEndOfDigitsPos(tok, len, position);
+        try {
+            return Numbers.parseLong(tok, 0, k);
+        } catch (NumericException ex) {
+            throw SqlException.$(position, "invalid interval value ").put(tok);
+        }
+    }
+
     public static long expectMicros(CharSequence tok, int position) throws SqlException {
         final int len = tok.length();
         final int k = findEndOfDigitsPos(tok, len, position);

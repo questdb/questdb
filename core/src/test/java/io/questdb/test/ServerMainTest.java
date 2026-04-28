@@ -260,6 +260,60 @@ public class ServerMainTest extends AbstractBootstrapTest {
     }
 
     @Test
+    public void testLiveViewSurvivesServerRestart() throws Exception {
+        assertMemoryLeak(() -> {
+            // First server: create base table and live view
+            try (
+                    final ServerMain serverMain = new ServerMain(new Bootstrap(new PropBootstrapConfiguration() {
+                        @Override
+                        public boolean useSite() {
+                            return false;
+                        }
+                    }, getServerMainArgs()));
+                    SqlExecutionContext sqlExecutionContext = new SqlExecutionContextImpl(serverMain.getEngine(), 1).with(AllowAllSecurityContext.INSTANCE)
+            ) {
+                serverMain.start();
+
+                serverMain.getEngine().execute(
+                        "CREATE TABLE trades (symbol SYMBOL, price DOUBLE, ts TIMESTAMP)" +
+                                " TIMESTAMP(ts) PARTITION BY HOUR WAL",
+                        sqlExecutionContext
+                );
+
+                StringSink sink = new StringSink();
+                TestUtils.assertSql(
+                        serverMain.getEngine(),
+                        sqlExecutionContext,
+                        "SELECT wait_wal_table('trades')",
+                        sink,
+                        "wait_wal_table('trades')\ntrue\n"
+                );
+
+                serverMain.getEngine().execute(
+                        "CREATE LIVE VIEW live_rn LAG 1s RETENTION 1h AS" +
+                                " SELECT symbol, price, ts, row_number() OVER (PARTITION BY symbol ORDER BY ts) AS rn" +
+                                " FROM trades",
+                        sqlExecutionContext
+                );
+
+                Assert.assertTrue(serverMain.getEngine().getLiveViewRegistry().hasView("live_rn"));
+            }
+
+            // Second server: verify live view definition survives restart
+            try (
+                    final ServerMain serverMain = new ServerMain(getServerMainArgs())
+            ) {
+                serverMain.start();
+
+                Assert.assertTrue(serverMain.getEngine().getLiveViewRegistry().hasView("live_rn"));
+                TableToken token = serverMain.getEngine().getTableTokenIfExists("live_rn");
+                Assert.assertNotNull(token);
+                Assert.assertTrue(token.isLiveView());
+            }
+        });
+    }
+
+    @Test
     public void testPgWirePort() throws Exception {
         assertMemoryLeak(() -> {
             try (final ServerMain serverMain = new ServerMain(getServerMainArgs())) {

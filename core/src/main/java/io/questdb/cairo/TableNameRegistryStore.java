@@ -356,12 +356,12 @@ public class TableNameRegistryStore extends GrowOnlyTableNameRegistryStore {
                                     && TableUtils.exists(ff, path, configuration.getDbRoot(), dirNameSink) == TableUtils.TABLE_EXISTS
                     ) {
                         int tableId;
-                        boolean isWal;
+                        boolean isWalTable;
                         String tableName;
 
                         try {
                             tableId = readTableId(path, dirName, ff);
-                            isWal = tableId < 0;
+                            isWalTable = tableId < 0;
                             tableId = Math.abs(tableId);
                             tableName = TableUtils.readTableName(path.of(configuration.getDbRoot()).concat(dirNameSink), plimit, tableNameRoMemory, ff);
                         } catch (CairoException e) {
@@ -384,10 +384,13 @@ public class TableNameRegistryStore extends GrowOnlyTableNameRegistryStore {
                             boolean isProtected = tableFlagResolver.isProtected(tableName);
                             boolean isSystem = tableFlagResolver.isSystem(tableName);
                             boolean isPublic = tableFlagResolver.isPublic(tableName);
-                            boolean isMatView = isMatViewDefinitionFileExists(configuration, path, dirName);
-                            boolean isView = isViewDefinitionFileExists(configuration, path, dirName);
+                            TableToken.Type type = isLiveViewDefinitionFileExists(configuration, path, dirName) ? TableToken.Type.LIVE_VIEW
+                                    : isMatViewDefinitionFileExists(configuration, path, dirName) ? TableToken.Type.MAT_VIEW
+                                    : isViewDefinitionFileExists(configuration, path, dirName) ? TableToken.Type.VIEW
+                                    : TableToken.Type.TABLE;
+                            boolean isWal = isWalTable || type.isImplicitlyWal();
                             String dbLogName = configuration.getDbLogName();
-                            TableToken token = new TableToken(tableName, dirName, dbLogName, tableId, isView, isMatView, isWal, isSystem, isProtected, isPublic);
+                            TableToken token = new TableToken(tableName, dirName, dbLogName, tableId, type, isWal, isSystem, isProtected, isPublic);
                             TableToken existingTableToken = tableNameToTableTokenMap.get(tableName);
 
                             if (existingTableToken != null) {
@@ -484,11 +487,10 @@ public class TableNameRegistryStore extends GrowOnlyTableNameRegistryStore {
                         boolean isProtected = tableFlagResolver.isProtected(tableName);
                         boolean isSystem = tableFlagResolver.isSystem(tableName);
                         boolean isPublic = tableFlagResolver.isPublic(tableName);
-                        boolean isView = tableType == TABLE_TYPE_VIEW;
-                        boolean isMatView = tableType == TABLE_TYPE_MAT;
-                        boolean isWal = tableType == TABLE_TYPE_WAL || isView || isMatView;
+                        TableToken.Type type = tableTypeOf(tableType);
+                        boolean isWal = tableType == TABLE_TYPE_WAL || type.isImplicitlyWal();
                         String dbLogName = configuration.getDbLogName();
-                        token = new TableToken(tableName, dirName, dbLogName, tableId, isView, isMatView, isWal, isSystem, isProtected, isPublic);
+                        token = new TableToken(tableName, dirName, dbLogName, tableId, type, isWal, isSystem, isProtected, isPublic);
                     }
                     dirNameToTableTokenMap.put(dirName, ReverseTableMapItem.ofDropped(token));
                 }
@@ -514,11 +516,10 @@ public class TableNameRegistryStore extends GrowOnlyTableNameRegistryStore {
                     boolean isProtected = tableFlagResolver.isProtected(tableName);
                     boolean isSystem = tableFlagResolver.isSystem(tableName);
                     boolean isPublic = tableFlagResolver.isPublic(tableName);
-                    boolean isView = tableType == TABLE_TYPE_VIEW;
-                    boolean isMatView = tableType == TableUtils.TABLE_TYPE_MAT;
-                    boolean isWal = tableType == TableUtils.TABLE_TYPE_WAL || isView || isMatView;
+                    TableToken.Type type = tableTypeOf(tableType);
+                    boolean isWal = tableType == TABLE_TYPE_WAL || type.isImplicitlyWal();
                     String dbLogName = configuration.getDbLogName();
-                    final TableToken token = new TableToken(tableName, dirName, dbLogName, tableId, isView, isMatView, isWal, isSystem, isProtected, isPublic);
+                    final TableToken token = new TableToken(tableName, dirName, dbLogName, tableId, type, isWal, isSystem, isProtected, isPublic);
                     tableNameToTableTokenMap.put(tableName, token);
                     if (!Chars.startsWith(token.getDirName(), token.getTableName())) {
                         // This table is renamed, log system to real table name mapping

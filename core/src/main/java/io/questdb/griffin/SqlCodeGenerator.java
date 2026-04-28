@@ -27,6 +27,7 @@ package io.questdb.griffin;
 import io.questdb.TelemetryEvent;
 import io.questdb.TelemetryOrigin;
 import io.questdb.cairo.ArrayColumnTypes;
+import io.questdb.cairo.lv.LiveViewInstance;
 import io.questdb.cairo.BitmapIndexReader;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoException;
@@ -71,6 +72,7 @@ import io.questdb.griffin.engine.EmptyTableRecordCursorFactory;
 import io.questdb.griffin.engine.ExplainPlanFactory;
 import io.questdb.griffin.engine.LimitOverflowException;
 import io.questdb.griffin.engine.LimitRecordCursorFactory;
+import io.questdb.griffin.engine.lv.LiveViewRecordCursorFactory;
 import io.questdb.griffin.engine.RecordComparator;
 import io.questdb.griffin.engine.functions.GroupByFunction;
 import io.questdb.griffin.engine.functions.SymbolFunction;
@@ -8935,6 +8937,12 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             supportsRandomAccess = false;
         } else {
             supportsRandomAccess = true;
+        }
+
+        // check if this is a live view
+        final LiveViewInstance lvInstance = executionContext.getCairoEngine().getLiveViewRegistry().getViewInstance(tableName);
+        if (lvInstance != null) {
+            return new LiveViewRecordCursorFactory(lvInstance);
         }
 
         final TableToken tableToken = executionContext.getTableToken(tableName);

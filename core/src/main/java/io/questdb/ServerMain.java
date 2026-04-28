@@ -30,6 +30,8 @@ import io.questdb.cairo.CairoException;
 import io.questdb.cairo.DataID;
 import io.questdb.cairo.FlushQueryCacheJob;
 import io.questdb.cairo.TableToken;
+import io.questdb.cairo.lv.LiveViewRefreshJob;
+import io.questdb.cairo.lv.LiveViewTimerJob;
 import io.questdb.cairo.mv.MatViewRefreshJob;
 import io.questdb.cairo.mv.MatViewTimerJob;
 import io.questdb.cairo.view.ViewCompilerJob;
@@ -68,17 +70,17 @@ import java.util.concurrent.atomic.AtomicBoolean;
 import static io.questdb.PropertyKey.*;
 
 public class ServerMain implements Closeable {
-    private final CairoEngine engine;
     private final Bootstrap bootstrap;
     private final AtomicBoolean closed = new AtomicBoolean();
+    private final CairoEngine engine;
     private final FreeOnExit freeOnExit = new FreeOnExit();
     private final AtomicBoolean running = new AtomicBoolean();
-    private WorkerPoolManager workerPoolManager;
     private Thread compileViewsThread;
     private HttpServer httpServer;
     private Thread hydrateMetadataThread;
     private boolean initialized;
     private PGServer pgServer;
+    private WorkerPoolManager workerPoolManager;
 
     public ServerMain(String... args) {
         this(new Bootstrap(args));
@@ -500,10 +502,14 @@ public class ServerMain implements Closeable {
                         WorkerPoolManager.Requester.MAT_VIEW_REFRESH
                 );
                 setupMatViewJobs(mvRefreshWorkerPool, engine, workerPoolManager.getSharedQueryWorkerCount());
+                // Live view refresh shares the mat view refresh pool: same workload shape
+                // (compile SELECT, run cursor, materialize) triggered by WAL commits, same
+                // CPU/latency profile, one capacity knob to tune.
+                setupLiveViewJobs(mvRefreshWorkerPool, engine, workerPoolManager.getSharedQueryWorkerCount());
             } else {
-                log.advisory().$("mat view refresh is disabled; set ")
+                log.advisory().$("mat view and live view refresh are disabled; set ")
                         .$(MAT_VIEW_REFRESH_WORKER_COUNT.getPropertyPath())
-                        .$(" to a positive value or keep default to enable mat view refresh.")
+                        .$(" to a positive value or keep default to enable refresh.")
                         .$();
             }
         }
@@ -526,6 +532,17 @@ public class ServerMain implements Closeable {
 
     protected Job setupEngineMaintenanceJob(CairoEngine engine) {
         return new EngineMaintenanceJob(engine);
+    }
+
+    protected void setupLiveViewJobs(WorkerPool lvWorkerPool, CairoEngine engine, int sharedQueryWorkerCount) {
+        for (int i = 0, workerCount = lvWorkerPool.getWorkerCount(); i < workerCount; i++) {
+            // create job per worker
+            final LiveViewRefreshJob liveViewRefreshJob = new LiveViewRefreshJob(i, engine, sharedQueryWorkerCount);
+            lvWorkerPool.assign(i, liveViewRefreshJob);
+            lvWorkerPool.freeOnExit(liveViewRefreshJob);
+        }
+        final LiveViewTimerJob liveViewTimerJob = new LiveViewTimerJob(engine);
+        lvWorkerPool.assign(liveViewTimerJob);
     }
 
     protected void setupMatViewJobs(WorkerPool mvWorkerPool, CairoEngine engine, int sharedQueryWorkerCount) {

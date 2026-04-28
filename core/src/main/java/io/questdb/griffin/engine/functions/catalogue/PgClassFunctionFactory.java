@@ -179,6 +179,7 @@ public class PgClassFunctionFactory implements FunctionFactory {
         private int fixedRelPos = -1;
         private int tableIndex = -1;
         private String tableName;
+        private TableToken tableToken;
 
         public PgClassRecordCursor() {
             this.record.of(staticReadingRecord);
@@ -230,9 +231,9 @@ public class PgClassFunctionFactory implements FunctionFactory {
             if (tableIndex == tableBucket.size()) {
                 return false;
             }
-            TableToken token = tableBucket.get(tableIndex++);
-            tableName = token.getTableName();
-            intValues[INDEX_OID] = token.getTableId();
+            tableToken = tableBucket.get(tableIndex++);
+            tableName = tableToken.getTableName();
+            intValues[INDEX_OID] = tableToken.getTableId();
             return true;
         }
 
@@ -272,6 +273,11 @@ public class PgClassFunctionFactory implements FunctionFactory {
                         return 'p';
                     case 16:
                         // relkind
+                        if (tableToken.isLiveView() || tableToken.isView()) {
+                            return 'v';
+                        } else if (tableToken.isMatView()) {
+                            return 'm';
+                        }
                         return 'r';
                     default:
                         // relreplident

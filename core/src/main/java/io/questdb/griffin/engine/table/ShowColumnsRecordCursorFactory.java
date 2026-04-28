@@ -139,7 +139,7 @@ public class ShowColumnsRecordCursorFactory extends AbstractRecordCursorFactory 
             try (MetadataCacheReader metadataRO = engine.getMetadataCache().readLock()) {
                 final CairoTable cairoTable = metadataRO.getTable(tableToken);
                 if (cairoTable != null) {
-                    if (tableToken.isView()) {
+                    if (tableToken.isView() || tableToken.isLiveView()) {
                         return of(cairoTable, null);
                     }
                     try (TableReader tableReader = engine.getReader(tableToken)) {

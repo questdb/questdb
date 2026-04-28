@@ -66,7 +66,7 @@ public class ReaderPool extends AbstractMultiTenantPool<ReaderPool.R> {
 
     @Override
     public ReaderPool.R get(TableToken tableToken) {
-        if (tableToken.isView()) {
+        if (tableToken.isView() || tableToken.isLiveView()) {
             throw CairoException.critical(0).put("cannot get a reader for view [view=").put(tableToken).put(']');
         }
         return super.get(tableToken);

@@ -53,6 +53,20 @@ public interface WindowFunction extends Function {
     default void computeNext(Record record) {
     }
 
+    /**
+     * Drops partition-by accumulator state whose last-seen row timestamp falls
+     * below {@code cutoffTs}. Default no-op; partitioned window functions that
+     * maintain per-key state override this to shed keys that retention has made
+     * unreachable (their last row has fallen outside the retained window and no
+     * warm-path replay can reach it).
+     * <p>
+     * Called from the live view refresh path after {@code applyRetention} has
+     * advanced the retention cutoff. Non-partitioned window functions keep the
+     * no-op default.
+     */
+    default void evictStalePartitionState(long cutoffTs) {
+    }
+
     @Override
     default ArrayView getArray(Record rec) {
         throw new UnsupportedOperationException();
@@ -192,6 +206,27 @@ public interface WindowFunction extends Function {
     @Override
     default Long256 getLong256B(Record rec) {
         throw new UnsupportedOperationException();
+    }
+
+    /**
+     * @return the maximum number of microseconds the function needs to look back from
+     * the current row. Used by live view cold-path classification: a late row arriving
+     * with {@code ts < oldest_visible_ts - max(lookback)} across all functions cannot
+     * affect any visible output and may be skipped.
+     * <p>
+     * Returns {@code -1} (the default) when the lookback is not expressible as a
+     * timestamp delta, i.e.:
+     * <ul>
+     *     <li>UNBOUNDED PRECEDING frame (accumulator depends on all prior rows),</li>
+     *     <li>ROWS N PRECEDING frame (lookback is row-count, not time-based),</li>
+     *     <li>ranking/numbering functions whose implicit frame spans the whole
+     *         partition up to the current row.</li>
+     * </ul>
+     * RANGE-bounded frames override this to return {@code abs(rowsLo)} micros.
+     * The default is conservative — unknown = must not skip.
+     */
+    default long getMaxLookbackMicros() {
+        return -1;
     }
 
     /**
