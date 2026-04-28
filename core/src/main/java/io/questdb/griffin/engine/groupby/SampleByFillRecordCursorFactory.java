@@ -798,11 +798,8 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
                                 case ColumnType.BOOLEAN -> value.putBool(slot, false);
                                 case ColumnType.CHAR -> value.putChar(slot, (char) 0);
                                 default -> {
-                                    // Mirrors updateKeyPrevRowId: SqlCodeGenerator's
-                                    // isFixedSizePrevSlotEligible filter gates the
-                                    // tags that reach this loop. An unknown tag
-                                    // here means the gate and this switch have
-                                    // fallen out of sync.
+                                    assert false : "unsupported fixed-size FILL(PREV) source type: "
+                                            + ColumnType.nameOf(fixedPrevTypeTags.getQuick(i));
                                 }
                             }
                         }
@@ -981,9 +978,8 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
                     case ColumnType.DECIMAL32 -> value.putInt(slot, record.getDecimal32(srcCol));
                     case ColumnType.DECIMAL64 -> value.putLong(slot, record.getDecimal64(srcCol));
                     default -> {
-                        // SqlCodeGenerator's isFixedSizePrevSlotEligible filter
-                        // gates which tags reach this loop; an unknown tag here
-                        // means the gate and this switch fell out of sync.
+                        assert false : "unsupported fixed-size FILL(PREV) source type: "
+                                + ColumnType.nameOf(tag);
                     }
                 }
             }

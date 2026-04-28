@@ -1839,6 +1839,14 @@ public class PropServerConfigurationTest {
 
     @Test
     public void testSampleByFillSortStrategy() throws Exception {
+        // Absent property falls back to the default (separate code path
+        // from the empty-string fallback below).
+        {
+            PropServerConfiguration cfg = newPropServerConfiguration(new Properties());
+            Assert.assertEquals(SampleBySortStrategy.LIGHT_ENCODED,
+                    cfg.getCairoConfiguration().getSampleByFillSortStrategy());
+        }
+
         Properties properties = new Properties();
 
         // Empty value falls back to the LIGHT_ENCODED default.
@@ -1861,6 +1869,17 @@ public class PropServerConfigurationTest {
         properties.setProperty("cairo.sql.sampleby.fill.sort.strategy", "full_recordchain");
         configuration = newPropServerConfiguration(properties);
         Assert.assertEquals(SampleBySortStrategy.FULL_RECORDCHAIN, configuration.getCairoConfiguration().getSampleByFillSortStrategy());
+
+        // Case-insensitivity: the parser lowercases both operands via
+        // Chars.equalsLowerCaseAscii, so user-facing config files can use
+        // mixed-case values.
+        properties.setProperty("cairo.sql.sampleby.fill.sort.strategy", "FULL_ENCODED");
+        configuration = newPropServerConfiguration(properties);
+        Assert.assertEquals(SampleBySortStrategy.FULL_ENCODED, configuration.getCairoConfiguration().getSampleByFillSortStrategy());
+
+        properties.setProperty("cairo.sql.sampleby.fill.sort.strategy", "Light_RecordChain");
+        configuration = newPropServerConfiguration(properties);
+        Assert.assertEquals(SampleBySortStrategy.LIGHT_RECORDCHAIN, configuration.getCairoConfiguration().getSampleByFillSortStrategy());
 
         // Strict validation: any unknown value fails fast.
         properties.setProperty("cairo.sql.sampleby.fill.sort.strategy", "bogus");

@@ -3905,7 +3905,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                         recordComparatorCompiler.newInstance(sortMetadata, listColumnFilterA),
                         listColumnFilterA.copy()
                 );
-                default -> throw SqlException.$(0, "unknown sample-by fill sort strategy: ").put(sortStrategy);
+                default -> throw new IllegalStateException("unknown sample-by fill sort strategy: "
+                        + SampleBySortStrategy.toString(sortStrategy));
             }
 
             final GenericRecordMetadata fillMetadata = GenericRecordMetadata.copyOfNew(groupByFactory.getMetadata());

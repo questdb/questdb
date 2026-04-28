@@ -4239,26 +4239,28 @@ public class SampleByFillTest extends AbstractCairoTest {
 
     @Test
     public void testFillPrevCrossColumnStringSource() throws Exception {
-        // Cross-column FILL(PREV(s)) where source is a first(STRING) aggregate.
-        // STRING is variable-width, so the codegen routes through DISPATCH_PREV_SLOT
-        // (recordAt-based) rather than the fixed-size cache slot. Verifies the
-        // string aggregate's per-row value carries into the target column on gap rows.
+        // Cross-column FILL(PREV(s1)) where two first(STRING) aggregates pull
+        // from different columns. STRING is variable-width, so the codegen
+        // routes through DISPATCH_PREV_SLOT (recordAt-based). The two source
+        // columns hold distinct values per row so the gap-row tag value
+        // reveals which slot the cross-column dispatch targets:
+        //   data row: s1=first(s),   tag=first(s2)   -- different
+        //   gap  row: s1=PREV(s1),   tag=PREV(s1)    -- both equal s1's prev
+        // A regression that targets s2's slot instead of s1's would surface
+        // 'X' (rather than 'alpha') in the gap row's tag column.
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE x (s STRING, val DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE x (s STRING, s2 STRING, val DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
             execute("INSERT INTO x VALUES " +
-                    "('alpha', 1.0, '2024-01-01T00:00:00.000000Z')," +
-                    "('beta',  3.0, '2024-01-01T02:00:00.000000Z')");
-            // At 00:00 (data row): s1='alpha', tag='alpha'.
-            // At 01:00 (gap): s1=PREV(s1)='alpha', tag=PREV(s1)='alpha'.
-            // At 02:00 (data row): s1='beta', tag='beta' (data overrides fill).
+                    "('alpha', 'X', 1.0, '2024-01-01T00:00:00.000000Z')," +
+                    "('beta',  'Y', 3.0, '2024-01-01T02:00:00.000000Z')");
             assertQueryNoLeakCheck(
                     """
                             ts\ts1\ttag
-                            2024-01-01T00:00:00.000000Z\talpha\talpha
+                            2024-01-01T00:00:00.000000Z\talpha\tX
                             2024-01-01T01:00:00.000000Z\talpha\talpha
-                            2024-01-01T02:00:00.000000Z\tbeta\tbeta
+                            2024-01-01T02:00:00.000000Z\tbeta\tY
                             """,
-                    "SELECT ts, first(s) AS s1, first(s) AS tag " +
+                    "SELECT ts, first(s) AS s1, first(s2) AS tag " +
                             "FROM x SAMPLE BY 1h FILL(PREV, PREV(s1)) ALIGN TO CALENDAR",
                     "ts", false, false
             );
@@ -4267,23 +4269,24 @@ public class SampleByFillTest extends AbstractCairoTest {
 
     @Test
     public void testFillPrevCrossColumnVarcharSource() throws Exception {
-        // Cross-column FILL(PREV(v)) where source is a first(VARCHAR) aggregate.
-        // VARCHAR is variable-width, exercising the DISPATCH_PREV_SLOT path with
-        // cross-column targeting -- the source's prior value lands in the target
-        // through baseCursor.recordAt + prevRecord.getVarcharA dispatch.
+        // Same shape as testFillPrevCrossColumnStringSource but with VARCHAR
+        // source columns. Exercises the DISPATCH_PREV_SLOT path with
+        // cross-column targeting through baseCursor.recordAt +
+        // prevRecord.getVarcharA dispatch. The 'alpha' (rather than 'X') in
+        // the gap row's tag column proves the dispatch follows s1's slot.
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE x (v VARCHAR, val DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE x (v VARCHAR, v2 VARCHAR, val DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
             execute("INSERT INTO x VALUES " +
-                    "('alpha', 1.0, '2024-01-01T00:00:00.000000Z')," +
-                    "('beta',  3.0, '2024-01-01T02:00:00.000000Z')");
+                    "('alpha', 'X', 1.0, '2024-01-01T00:00:00.000000Z')," +
+                    "('beta',  'Y', 3.0, '2024-01-01T02:00:00.000000Z')");
             assertQueryNoLeakCheck(
                     """
                             ts\tv1\ttag
-                            2024-01-01T00:00:00.000000Z\talpha\talpha
+                            2024-01-01T00:00:00.000000Z\talpha\tX
                             2024-01-01T01:00:00.000000Z\talpha\talpha
-                            2024-01-01T02:00:00.000000Z\tbeta\tbeta
+                            2024-01-01T02:00:00.000000Z\tbeta\tY
                             """,
-                    "SELECT ts, first(v) AS v1, first(v) AS tag " +
+                    "SELECT ts, first(v) AS v1, first(v2) AS tag " +
                             "FROM x SAMPLE BY 1h FILL(PREV, PREV(v1)) ALIGN TO CALENDAR",
                     "ts", false, false
             );
@@ -4291,7 +4294,7 @@ public class SampleByFillTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testFillPrevNegativeTimestamps() throws Exception {
+    public void testFillNullNegativeTimestamps() throws Exception {
         // SAMPLE BY FILL with FROM anchored before 1970. The legacy cursor path
         // rejected this with "cannot FILL for the timestamps before 1970"; the
         // GROUP BY fast path routes through timestamp_floor_utc which handles
@@ -4336,6 +4339,37 @@ public class SampleByFillTest extends AbstractCairoTest {
                     "SELECT ts, first(v) FROM t " +
                             "SAMPLE BY 1h FROM '1969-12-31T22:00:00.000000Z' TO '1970-01-02T01:00:00.000000Z' " +
                             "FILL(NULL) ALIGN TO CALENDAR",
+                    "ts", false, false
+            );
+        });
+    }
+
+    @Test
+    public void testFillPrevNegativeTimestamps() throws Exception {
+        // FILL(PREV) sibling of testFillNullNegativeTimestamps. Pre-1970
+        // bucket timestamps flow through DISPATCH_PREV_SLOT /
+        // DISPATCH_PREV_CACHE_SLOT during the pre-fill walk. Buckets before
+        // the first data row emit null (no prev); once a data row is seen,
+        // FILL(PREV) carries it forward across subsequent gap buckets.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (v DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO t VALUES " +
+                    "(10.0, '1970-01-01T01:00:00.000000Z')," +
+                    "(20.0, '1970-01-01T03:00:00.000000Z')");
+            assertQueryNoLeakCheck(
+                    """
+                            ts\tfirst
+                            1969-12-31T22:00:00.000000Z\tnull
+                            1969-12-31T23:00:00.000000Z\tnull
+                            1970-01-01T00:00:00.000000Z\tnull
+                            1970-01-01T01:00:00.000000Z\t10.0
+                            1970-01-01T02:00:00.000000Z\t10.0
+                            1970-01-01T03:00:00.000000Z\t20.0
+                            1970-01-01T04:00:00.000000Z\t20.0
+                            """,
+                    "SELECT ts, first(v) FROM t " +
+                            "SAMPLE BY 1h FROM '1969-12-31T22:00:00.000000Z' TO '1970-01-01T05:00:00.000000Z' " +
+                            "FILL(PREV) ALIGN TO CALENDAR",
                     "ts", false, false
             );
         });
