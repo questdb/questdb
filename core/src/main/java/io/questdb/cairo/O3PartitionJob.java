@@ -446,7 +446,9 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                                                 tableWriterMetadata,
                                                 tableToParquetIdx,
                                                 timestampIndex,
-                                                metadataPosition
+                                                metadataPosition,
+                                                ctx.getActiveToDecodeIdx(columnCount),
+                                                ctx.getActiveColIndices(columnCount)
                                         );
                                     } else if (hasSchemaChange) {
                                         copyRowGroupWithNullColumns(
@@ -1749,247 +1751,6 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
             );
         } finally {
             Unsafe.free(descAddr, descSize, MemoryTag.NATIVE_O3);
-        }
-    }
-
-    static void convertFixedColumnToString(
-            int srcType,
-            long srcDataPtr,
-            int rowCount,
-            long auxAddr,
-            long dataAddr
-    ) {
-        StringSink sink = new StringSink();
-        long dataOffset = 0;
-
-        // STRING aux starts with initial offset 0.
-        Unsafe.getUnsafe().putLong(auxAddr, 0L);
-
-        // Resolve the per-type formatter once so the inner loop is a direct virtual
-        // call instead of a 12-way switch per row.
-        final ColumnTypeConverter.Fixed2VarConverter converter =
-                ColumnTypeConverter.getFixedToVarConverter(srcType, ColumnType.STRING);
-        final long elemSize = ColumnType.sizeOf(srcType);
-
-        for (int i = 0; i < rowCount; i++) {
-            sink.clear();
-            boolean hasValue = converter.convert(srcDataPtr + i * elemSize, sink);
-
-            if (!hasValue) {
-                // Null: write -1 as length prefix.
-                Unsafe.getUnsafe().putInt(dataAddr + dataOffset, -1);
-                dataOffset += Integer.BYTES;
-            } else {
-                int charCount = sink.length();
-                Unsafe.getUnsafe().putInt(dataAddr + dataOffset, charCount);
-                dataOffset += Integer.BYTES;
-                for (int j = 0; j < charCount; j++) {
-                    Unsafe.getUnsafe().putChar(dataAddr + dataOffset + (long) j * Character.BYTES, sink.charAt(j));
-                }
-                dataOffset += (long) charCount * Character.BYTES;
-            }
-            Unsafe.getUnsafe().putLong(auxAddr + (long) (i + 1) * Long.BYTES, dataOffset);
-        }
-    }
-
-    static void convertFixedColumnToVarchar(
-            int srcType,
-            long srcDataPtr,
-            int rowCount,
-            long auxAddr,
-            long dataAddr
-    ) {
-        Utf8StringSink sink = new Utf8StringSink();
-        long dataOffset = 0;
-
-        // Resolve the per-type formatter once so the inner loop is a direct virtual
-        // call instead of a 12-way switch per row.
-        final ColumnTypeConverter.Fixed2VarConverter converter =
-                ColumnTypeConverter.getFixedToVarConverter(srcType, ColumnType.VARCHAR);
-        final long elemSize = ColumnType.sizeOf(srcType);
-
-        for (int i = 0; i < rowCount; i++) {
-            sink.clear();
-            boolean hasValue = converter.convert(srcDataPtr + i * elemSize, sink);
-            boolean isNull = !hasValue;
-            long auxEntryAddr = auxAddr + (long) i * VarcharTypeDriver.VARCHAR_AUX_WIDTH_BYTES;
-
-            if (isNull) {
-                Unsafe.getUnsafe().putInt(auxEntryAddr, VarcharTypeDriver.VARCHAR_HEADER_FLAG_NULL);
-                Unsafe.getUnsafe().putInt(auxEntryAddr + 4, 0);
-                Unsafe.getUnsafe().putShort(auxEntryAddr + 8, (short) 0);
-                Unsafe.getUnsafe().putShort(auxEntryAddr + 10, (short) dataOffset);
-                Unsafe.getUnsafe().putInt(auxEntryAddr + 12, (int) (dataOffset >> 16));
-            } else {
-                int size = sink.size();
-                boolean ascii = sink.isAscii();
-
-                if (size <= VarcharTypeDriver.VARCHAR_MAX_BYTES_FULLY_INLINED) {
-                    // Inline: header byte + up to 9 bytes of data.
-                    int flags = 1; // HEADER_FLAG_INLINED
-                    if (ascii) {
-                        flags |= 2; // HEADER_FLAG_ASCII
-                    }
-                    Unsafe.getUnsafe().putByte(auxEntryAddr, (byte) ((size << 4) | flags));
-                    for (int j = 0; j < size; j++) {
-                        Unsafe.getUnsafe().putByte(auxEntryAddr + 1 + j, sink.byteAt(j));
-                    }
-                    for (int j = size; j < VarcharTypeDriver.VARCHAR_MAX_BYTES_FULLY_INLINED; j++) {
-                        Unsafe.getUnsafe().putByte(auxEntryAddr + 1 + j, (byte) 0);
-                    }
-                    Unsafe.getUnsafe().putShort(auxEntryAddr + 10, (short) dataOffset);
-                    Unsafe.getUnsafe().putInt(auxEntryAddr + 12, (int) (dataOffset >> 16));
-                } else {
-                    // Spill: header int + 6-byte prefix in aux, full value in data.
-                    int flags = ascii ? 2 : 0; // HEADER_FLAG_ASCII, not INLINED
-                    Unsafe.getUnsafe().putInt(auxEntryAddr, (size << 4) | flags);
-                    for (int j = 0; j < VarcharTypeDriver.VARCHAR_INLINED_PREFIX_BYTES; j++) {
-                        Unsafe.getUnsafe().putByte(auxEntryAddr + 4 + j, sink.byteAt(j));
-                    }
-                    Unsafe.getUnsafe().putShort(auxEntryAddr + 10, (short) dataOffset);
-                    Unsafe.getUnsafe().putInt(auxEntryAddr + 12, (int) (dataOffset >> 16));
-                    for (int j = 0; j < size; j++) {
-                        Unsafe.getUnsafe().putByte(dataAddr + dataOffset + j, sink.byteAt(j));
-                    }
-                    dataOffset += size;
-                }
-            }
-        }
-    }
-
-    static long estimateStringDataSize(int srcType, int rowCount) {
-        // 4 bytes length prefix + maxChars * 2 bytes UTF-16LE per row.
-        // Null values use only 4 bytes.
-        int maxCharsPerRow = switch (srcType) {
-            case ColumnType.BOOLEAN -> 5;
-            case ColumnType.BYTE -> 4;
-            case ColumnType.SHORT -> 6;
-            case ColumnType.CHAR -> 1;
-            case ColumnType.INT -> 11;
-            case ColumnType.LONG -> 20;
-            case ColumnType.FLOAT -> 15;
-            case ColumnType.DOUBLE -> 25;
-            case ColumnType.DATE, ColumnType.TIMESTAMP, ColumnType.TIMESTAMP_NANO -> 30;
-            case ColumnType.IPv4 -> 15;
-            case ColumnType.UUID -> 36;
-            default -> 40;
-        };
-        return (long) (Integer.BYTES + maxCharsPerRow * Character.BYTES) * rowCount;
-    }
-
-    static long estimateVarcharDataSize(int srcType, int rowCount) {
-        // Only spilled values (>9 UTF-8 bytes) consume data buffer space.
-        int maxBytesPerRow = switch (srcType) {
-            case ColumnType.BOOLEAN, ColumnType.BYTE, ColumnType.SHORT, ColumnType.CHAR -> 0;
-            case ColumnType.INT -> 11;
-            case ColumnType.LONG -> 20;
-            case ColumnType.FLOAT -> 15;
-            case ColumnType.DOUBLE -> 25;
-            case ColumnType.DATE, ColumnType.TIMESTAMP, ColumnType.TIMESTAMP_NANO -> 30;
-            case ColumnType.IPv4 -> 15;
-            case ColumnType.UUID -> 36;
-            default -> 40;
-        };
-        return (long) maxBytesPerRow * rowCount;
-    }
-
-    static void convertVarColumnToFixed(
-            int srcType,
-            int dstType,
-            long dataPtr,
-            long auxPtr,
-            int rowCount,
-            long dstPtr
-    ) {
-        boolean isVarchar = ColumnType.isVarchar(srcType);
-        Utf8StringSink utf8Sink = isVarchar ? new Utf8StringSink() : null;
-        StringSink strSink = !isVarchar ? new StringSink() : null;
-
-        for (int i = 0; i < rowCount; i++) {
-            CharSequence value;
-            if (isVarchar) {
-                // Read VARCHAR_SLICE format: 16-byte aux entries with pointer at offset 8.
-                long auxEntryAddr = auxPtr + (long) i * VarcharTypeDriver.VARCHAR_AUX_WIDTH_BYTES;
-                int header = Unsafe.getUnsafe().getInt(auxEntryAddr);
-                if ((header & VarcharTypeDriver.VARCHAR_HEADER_FLAG_NULL) != 0) {
-                    writeFixedNull(dstType, dstPtr, i);
-                    continue;
-                }
-                int size = header >>> 4;
-                long ptr = Unsafe.getUnsafe().getLong(auxEntryAddr + 8);
-                utf8Sink.clear();
-                for (int j = 0; j < size; j++) {
-                    utf8Sink.putAny(Unsafe.getUnsafe().getByte(ptr + j));
-                }
-                value = utf8Sink.asAsciiCharSequence();
-            } else {
-                // Read STRING format: 8-byte aux entries (offsets), data has [len_i32][chars...].
-                long offset = Unsafe.getUnsafe().getLong(auxPtr + (long) i * Long.BYTES);
-                int len = Unsafe.getUnsafe().getInt(dataPtr + offset);
-                if (len < 0) {
-                    writeFixedNull(dstType, dstPtr, i);
-                    continue;
-                }
-                strSink.clear();
-                long charAddr = dataPtr + offset + Integer.BYTES;
-                for (int j = 0; j < len; j++) {
-                    strSink.put(Unsafe.getUnsafe().getChar(charAddr + (long) j * Character.BYTES));
-                }
-                value = strSink;
-            }
-
-            writeFixedParsedValue(dstType, dstPtr, i, value);
-        }
-    }
-
-    private static void writeFixedNull(int dstType, long dstPtr, int rowIndex) {
-        switch (ColumnType.tagOf(dstType)) {
-            case ColumnType.BOOLEAN, ColumnType.BYTE -> Unsafe.getUnsafe().putByte(dstPtr + rowIndex, (byte) 0);
-            case ColumnType.SHORT -> Unsafe.getUnsafe().putShort(dstPtr + ((long) rowIndex << 1), (short) 0);
-            case ColumnType.CHAR -> Unsafe.getUnsafe().putChar(dstPtr + ((long) rowIndex << 1), (char) 0);
-            case ColumnType.INT, ColumnType.IPv4 -> Unsafe.getUnsafe().putInt(dstPtr + ((long) rowIndex << 2), Numbers.INT_NULL);
-            case ColumnType.LONG, ColumnType.DATE, ColumnType.TIMESTAMP -> Unsafe.getUnsafe().putLong(dstPtr + ((long) rowIndex << 3), Numbers.LONG_NULL);
-            case ColumnType.FLOAT -> Unsafe.getUnsafe().putFloat(dstPtr + ((long) rowIndex << 2), Float.NaN);
-            case ColumnType.DOUBLE -> Unsafe.getUnsafe().putDouble(dstPtr + ((long) rowIndex << 3), Double.NaN);
-            case ColumnType.UUID -> {
-                long addr = dstPtr + ((long) rowIndex << 4);
-                Unsafe.getUnsafe().putLong(addr, Numbers.LONG_NULL);
-                Unsafe.getUnsafe().putLong(addr + Long.BYTES, Numbers.LONG_NULL);
-            }
-        }
-    }
-
-    private static void writeFixedParsedValue(int dstType, long dstPtr, int rowIndex, CharSequence value) {
-        try {
-            switch (ColumnType.tagOf(dstType)) {
-                case ColumnType.BOOLEAN -> {
-                    boolean b = SqlKeywords.isTrueKeyword(value);
-                    Unsafe.getUnsafe().putByte(dstPtr + rowIndex, (byte) (b ? 1 : 0));
-                }
-                case ColumnType.BYTE -> Unsafe.getUnsafe().putByte(dstPtr + rowIndex, (byte) Numbers.parseInt(value));
-                case ColumnType.SHORT -> Unsafe.getUnsafe().putShort(dstPtr + ((long) rowIndex << 1), (short) Numbers.parseInt(value));
-                case ColumnType.CHAR -> {
-                    char c = value.length() > 0 ? value.charAt(0) : 0;
-                    Unsafe.getUnsafe().putChar(dstPtr + ((long) rowIndex << 1), c);
-                }
-                case ColumnType.INT -> Unsafe.getUnsafe().putInt(dstPtr + ((long) rowIndex << 2), Numbers.parseInt(value));
-                case ColumnType.LONG -> Unsafe.getUnsafe().putLong(dstPtr + ((long) rowIndex << 3), Numbers.parseLong(value));
-                case ColumnType.FLOAT -> Unsafe.getUnsafe().putFloat(dstPtr + ((long) rowIndex << 2), Numbers.parseFloat(value));
-                case ColumnType.DOUBLE -> Unsafe.getUnsafe().putDouble(dstPtr + ((long) rowIndex << 3), Numbers.parseDouble(value));
-                // parseFloorLiteral accepts higher-precision input (micros/nanos) by
-                // truncating extras, matching ColumnTypeConverter's STRING->DATE/TIMESTAMP path.
-                case ColumnType.DATE -> Unsafe.getUnsafe().putLong(dstPtr + ((long) rowIndex << 3), MillisTimestampDriver.INSTANCE.parseFloorLiteral(value));
-                case ColumnType.TIMESTAMP -> Unsafe.getUnsafe().putLong(dstPtr + ((long) rowIndex << 3), MicrosTimestampDriver.INSTANCE.parseFloorLiteral(value));
-                case ColumnType.IPv4 -> Unsafe.getUnsafe().putInt(dstPtr + ((long) rowIndex << 2), Numbers.parseIPv4Quiet(value));
-                case ColumnType.UUID -> {
-                    long addr = dstPtr + ((long) rowIndex << 4);
-                    Unsafe.getUnsafe().putLong(addr, Uuid.parseLo(value));
-                    Unsafe.getUnsafe().putLong(addr + Long.BYTES, Uuid.parseHi(value));
-                }
-                default -> writeFixedNull(dstType, dstPtr, rowIndex);
-            }
-        } catch (NumericException e) {
-            writeFixedNull(dstType, dstPtr, rowIndex);
         }
     }
 
@@ -3487,6 +3248,23 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
         }
     }
 
+    private static void removePhantomPartitionDir(
+            Path pathToTable,
+            TableWriter tableWriter,
+            long partitionTimestamp,
+            long txn
+    ) {
+        // Remove empty partition dir to not create a partition that is not used but can be counted
+        // by partition purging logic as a valid version
+        Path path = Path.getThreadLocal(pathToTable);
+        setPathForNativePartition(path, tableWriter.getTimestampType(), tableWriter.getPartitionBy(), partitionTimestamp, txn);
+        FilesFacade ff = tableWriter.getConfiguration().getFilesFacade();
+        if (!ff.rmdir(path)) {
+            // This is not critical, the read error will be transient
+            LOG.error().$("could not remove phantom partition dir, it may cause transient missing file read errors [errno=").$(ff.errno()).$(", path=").$(path).I$();
+        }
+    }
+
     /**
      * Decodes a parquet row group, applies type conversions for columns that
      * have been ALTER-ed, and writes the result as a new row group via
@@ -3506,15 +3284,15 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
             TableRecordMetadata tableWriterMetadata,
             IntList tableToParquetIdx,
             int timestampIndex,
-            int metadataPosition
+            int metadataPosition,
+            IntList activeToDecodeIdx,
+            IntList activeColIndices
     ) {
         // Phase 1: Build the decode list with correct decode types for each column.
         parquetColumns.clear();
         final int columnCount = tableWriterMetadata.getColumnCount();
         int decodeColCount = 0;
         // Map from active column position -> decode buffer index (-1 if missing).
-        final int[] activeToDecodeIdx = new int[columnCount];
-        final int[] activeColIndices = new int[columnCount];
         int activeColCount = 0;
 
         for (int columnIndex = 0; columnIndex < columnCount; columnIndex++) {
@@ -3554,12 +3332,12 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                     decodeType = srcType;
                 }
                 parquetColumns.add(decodeType);
-                activeToDecodeIdx[activeColCount] = decodeColCount;
+                activeToDecodeIdx.setQuick(activeColCount, decodeColCount);
                 decodeColCount++;
             } else {
-                activeToDecodeIdx[activeColCount] = -1;
+                activeToDecodeIdx.setQuick(activeColCount, -1);
             }
-            activeColIndices[activeColCount] = columnIndex;
+            activeColIndices.setQuick(activeColCount, columnIndex);
             activeColCount++;
         }
 
@@ -3576,9 +3354,9 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
 
         try {
             for (int ai = 0; ai < activeColCount; ai++) {
-                int columnIndex = activeColIndices[ai];
+                int columnIndex = activeColIndices.getQuick(ai);
                 int columnType = tableWriterMetadata.getColumnType(columnIndex);
-                int decodeIdx = activeToDecodeIdx[ai];
+                int decodeIdx = activeToDecodeIdx.getQuick(ai);
                 final String columnName = tableWriterMetadata.getColumnName(columnIndex);
                 final int columnId = tableWriterMetadata.getColumnMetadata(columnIndex).getOriginalWriterIndex();
                 final int parquetEncodingConfig = tableWriterMetadata.getColumnMetadata(columnIndex).getParquetEncodingConfig();
@@ -3740,23 +3518,6 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                     }
                 }
             }
-        }
-    }
-
-    private static void removePhantomPartitionDir(
-            Path pathToTable,
-            TableWriter tableWriter,
-            long partitionTimestamp,
-            long txn
-    ) {
-        // Remove empty partition dir to not create a partition that is not used but can be counted
-        // by partition purging logic as a valid version
-        Path path = Path.getThreadLocal(pathToTable);
-        setPathForNativePartition(path, tableWriter.getTimestampType(), tableWriter.getPartitionBy(), partitionTimestamp, txn);
-        FilesFacade ff = tableWriter.getConfiguration().getFilesFacade();
-        if (!ff.rmdir(path)) {
-            // This is not critical, the read error will be transient
-            LOG.error().$("could not remove phantom partition dir, it may cause transient missing file read errors [errno=").$(ff.errno()).$(", path=").$(path).I$();
         }
     }
 
@@ -3948,6 +3709,257 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
         Unsafe.getUnsafe().putLong(partitionUpdateSinkAddr + 4 * Long.BYTES, partitionMutates); // partitionMutates
         Unsafe.getUnsafe().putLong(partitionUpdateSinkAddr + 5 * Long.BYTES, 0); // o3SplitPartitionSize
         Unsafe.getUnsafe().putLong(partitionUpdateSinkAddr + 7 * Long.BYTES, -1); // update parquet partition file size
+    }
+
+    private static void writeFixedNull(int dstType, long dstPtr, int rowIndex) {
+        switch (ColumnType.tagOf(dstType)) {
+            case ColumnType.BOOLEAN, ColumnType.BYTE -> Unsafe.getUnsafe().putByte(dstPtr + rowIndex, (byte) 0);
+            case ColumnType.SHORT -> Unsafe.getUnsafe().putShort(dstPtr + ((long) rowIndex << 1), (short) 0);
+            case ColumnType.CHAR -> Unsafe.getUnsafe().putChar(dstPtr + ((long) rowIndex << 1), (char) 0);
+            case ColumnType.INT, ColumnType.IPv4 ->
+                    Unsafe.getUnsafe().putInt(dstPtr + ((long) rowIndex << 2), Numbers.INT_NULL);
+            case ColumnType.LONG, ColumnType.DATE, ColumnType.TIMESTAMP ->
+                    Unsafe.getUnsafe().putLong(dstPtr + ((long) rowIndex << 3), Numbers.LONG_NULL);
+            case ColumnType.FLOAT -> Unsafe.getUnsafe().putFloat(dstPtr + ((long) rowIndex << 2), Float.NaN);
+            case ColumnType.DOUBLE -> Unsafe.getUnsafe().putDouble(dstPtr + ((long) rowIndex << 3), Double.NaN);
+            case ColumnType.UUID -> {
+                long addr = dstPtr + ((long) rowIndex << 4);
+                Unsafe.getUnsafe().putLong(addr, Numbers.LONG_NULL);
+                Unsafe.getUnsafe().putLong(addr + Long.BYTES, Numbers.LONG_NULL);
+            }
+        }
+    }
+
+    private static void writeFixedParsedValue(int dstType, long dstPtr, int rowIndex, CharSequence value) {
+        try {
+            switch (ColumnType.tagOf(dstType)) {
+                case ColumnType.BOOLEAN -> {
+                    boolean b = SqlKeywords.isTrueKeyword(value);
+                    Unsafe.getUnsafe().putByte(dstPtr + rowIndex, (byte) (b ? 1 : 0));
+                }
+                case ColumnType.BYTE -> Unsafe.getUnsafe().putByte(dstPtr + rowIndex, (byte) Numbers.parseInt(value));
+                case ColumnType.SHORT ->
+                        Unsafe.getUnsafe().putShort(dstPtr + ((long) rowIndex << 1), (short) Numbers.parseInt(value));
+                case ColumnType.CHAR -> {
+                    char c = value.length() > 0 ? value.charAt(0) : 0;
+                    Unsafe.getUnsafe().putChar(dstPtr + ((long) rowIndex << 1), c);
+                }
+                case ColumnType.INT ->
+                        Unsafe.getUnsafe().putInt(dstPtr + ((long) rowIndex << 2), Numbers.parseInt(value));
+                case ColumnType.LONG ->
+                        Unsafe.getUnsafe().putLong(dstPtr + ((long) rowIndex << 3), Numbers.parseLong(value));
+                case ColumnType.FLOAT ->
+                        Unsafe.getUnsafe().putFloat(dstPtr + ((long) rowIndex << 2), Numbers.parseFloat(value));
+                case ColumnType.DOUBLE ->
+                        Unsafe.getUnsafe().putDouble(dstPtr + ((long) rowIndex << 3), Numbers.parseDouble(value));
+                // parseFloorLiteral accepts higher-precision input (micros/nanos) by
+                // truncating extras, matching ColumnTypeConverter's STRING->DATE/TIMESTAMP path.
+                case ColumnType.DATE ->
+                        Unsafe.getUnsafe().putLong(dstPtr + ((long) rowIndex << 3), MillisTimestampDriver.INSTANCE.parseFloorLiteral(value));
+                case ColumnType.TIMESTAMP ->
+                        Unsafe.getUnsafe().putLong(dstPtr + ((long) rowIndex << 3), MicrosTimestampDriver.INSTANCE.parseFloorLiteral(value));
+                case ColumnType.IPv4 ->
+                        Unsafe.getUnsafe().putInt(dstPtr + ((long) rowIndex << 2), Numbers.parseIPv4Quiet(value));
+                case ColumnType.UUID -> {
+                    long addr = dstPtr + ((long) rowIndex << 4);
+                    Unsafe.getUnsafe().putLong(addr, Uuid.parseLo(value));
+                    Unsafe.getUnsafe().putLong(addr + Long.BYTES, Uuid.parseHi(value));
+                }
+                default -> writeFixedNull(dstType, dstPtr, rowIndex);
+            }
+        } catch (NumericException e) {
+            writeFixedNull(dstType, dstPtr, rowIndex);
+        }
+    }
+
+    static void convertFixedColumnToString(
+            int srcType,
+            long srcDataPtr,
+            int rowCount,
+            long auxAddr,
+            long dataAddr
+    ) {
+        StringSink sink = new StringSink();
+        long dataOffset = 0;
+
+        // STRING aux starts with initial offset 0.
+        Unsafe.getUnsafe().putLong(auxAddr, 0L);
+
+        // Resolve the per-type formatter once so the inner loop is a direct virtual
+        // call instead of a 12-way switch per row.
+        final ColumnTypeConverter.Fixed2VarConverter converter =
+                ColumnTypeConverter.getFixedToVarConverter(srcType, ColumnType.STRING);
+        final long elemSize = ColumnType.sizeOf(srcType);
+
+        for (int i = 0; i < rowCount; i++) {
+            sink.clear();
+            boolean hasValue = converter.convert(srcDataPtr + i * elemSize, sink);
+
+            if (!hasValue) {
+                // Null: write -1 as length prefix.
+                Unsafe.getUnsafe().putInt(dataAddr + dataOffset, -1);
+                dataOffset += Integer.BYTES;
+            } else {
+                int charCount = sink.length();
+                Unsafe.getUnsafe().putInt(dataAddr + dataOffset, charCount);
+                dataOffset += Integer.BYTES;
+                for (int j = 0; j < charCount; j++) {
+                    Unsafe.getUnsafe().putChar(dataAddr + dataOffset + (long) j * Character.BYTES, sink.charAt(j));
+                }
+                dataOffset += (long) charCount * Character.BYTES;
+            }
+            Unsafe.getUnsafe().putLong(auxAddr + (long) (i + 1) * Long.BYTES, dataOffset);
+        }
+    }
+
+    static void convertFixedColumnToVarchar(
+            int srcType,
+            long srcDataPtr,
+            int rowCount,
+            long auxAddr,
+            long dataAddr
+    ) {
+        Utf8StringSink sink = new Utf8StringSink();
+        long dataOffset = 0;
+
+        // Resolve the per-type formatter once so the inner loop is a direct virtual
+        // call instead of a 12-way switch per row.
+        final ColumnTypeConverter.Fixed2VarConverter converter =
+                ColumnTypeConverter.getFixedToVarConverter(srcType, ColumnType.VARCHAR);
+        final long elemSize = ColumnType.sizeOf(srcType);
+
+        for (int i = 0; i < rowCount; i++) {
+            sink.clear();
+            boolean hasValue = converter.convert(srcDataPtr + i * elemSize, sink);
+            boolean isNull = !hasValue;
+            long auxEntryAddr = auxAddr + (long) i * VarcharTypeDriver.VARCHAR_AUX_WIDTH_BYTES;
+
+            if (isNull) {
+                Unsafe.getUnsafe().putInt(auxEntryAddr, VarcharTypeDriver.VARCHAR_HEADER_FLAG_NULL);
+                Unsafe.getUnsafe().putInt(auxEntryAddr + 4, 0);
+                Unsafe.getUnsafe().putShort(auxEntryAddr + 8, (short) 0);
+                Unsafe.getUnsafe().putShort(auxEntryAddr + 10, (short) dataOffset);
+                Unsafe.getUnsafe().putInt(auxEntryAddr + 12, (int) (dataOffset >> 16));
+            } else {
+                int size = sink.size();
+                boolean ascii = sink.isAscii();
+
+                if (size <= VarcharTypeDriver.VARCHAR_MAX_BYTES_FULLY_INLINED) {
+                    // Inline: header byte + up to 9 bytes of data.
+                    int flags = 1; // HEADER_FLAG_INLINED
+                    if (ascii) {
+                        flags |= 2; // HEADER_FLAG_ASCII
+                    }
+                    Unsafe.getUnsafe().putByte(auxEntryAddr, (byte) ((size << 4) | flags));
+                    for (int j = 0; j < size; j++) {
+                        Unsafe.getUnsafe().putByte(auxEntryAddr + 1 + j, sink.byteAt(j));
+                    }
+                    for (int j = size; j < VarcharTypeDriver.VARCHAR_MAX_BYTES_FULLY_INLINED; j++) {
+                        Unsafe.getUnsafe().putByte(auxEntryAddr + 1 + j, (byte) 0);
+                    }
+                    Unsafe.getUnsafe().putShort(auxEntryAddr + 10, (short) dataOffset);
+                    Unsafe.getUnsafe().putInt(auxEntryAddr + 12, (int) (dataOffset >> 16));
+                } else {
+                    // Spill: header int + 6-byte prefix in aux, full value in data.
+                    int flags = ascii ? 2 : 0; // HEADER_FLAG_ASCII, not INLINED
+                    Unsafe.getUnsafe().putInt(auxEntryAddr, (size << 4) | flags);
+                    for (int j = 0; j < VarcharTypeDriver.VARCHAR_INLINED_PREFIX_BYTES; j++) {
+                        Unsafe.getUnsafe().putByte(auxEntryAddr + 4 + j, sink.byteAt(j));
+                    }
+                    Unsafe.getUnsafe().putShort(auxEntryAddr + 10, (short) dataOffset);
+                    Unsafe.getUnsafe().putInt(auxEntryAddr + 12, (int) (dataOffset >> 16));
+                    for (int j = 0; j < size; j++) {
+                        Unsafe.getUnsafe().putByte(dataAddr + dataOffset + j, sink.byteAt(j));
+                    }
+                    dataOffset += size;
+                }
+            }
+        }
+    }
+
+    static void convertVarColumnToFixed(
+            int srcType,
+            int dstType,
+            long dataPtr,
+            long auxPtr,
+            int rowCount,
+            long dstPtr
+    ) {
+        boolean isVarchar = ColumnType.isVarchar(srcType);
+        Utf8StringSink utf8Sink = isVarchar ? new Utf8StringSink() : null;
+        StringSink strSink = !isVarchar ? new StringSink() : null;
+
+        for (int i = 0; i < rowCount; i++) {
+            CharSequence value;
+            if (isVarchar) {
+                // Read VARCHAR_SLICE format: 16-byte aux entries with pointer at offset 8.
+                long auxEntryAddr = auxPtr + (long) i * VarcharTypeDriver.VARCHAR_AUX_WIDTH_BYTES;
+                int header = Unsafe.getUnsafe().getInt(auxEntryAddr);
+                if ((header & VarcharTypeDriver.VARCHAR_HEADER_FLAG_NULL) != 0) {
+                    writeFixedNull(dstType, dstPtr, i);
+                    continue;
+                }
+                int size = header >>> 4;
+                long ptr = Unsafe.getUnsafe().getLong(auxEntryAddr + 8);
+                utf8Sink.clear();
+                for (int j = 0; j < size; j++) {
+                    utf8Sink.putAny(Unsafe.getUnsafe().getByte(ptr + j));
+                }
+                value = utf8Sink.asAsciiCharSequence();
+            } else {
+                // Read STRING format: 8-byte aux entries (offsets), data has [len_i32][chars...].
+                long offset = Unsafe.getUnsafe().getLong(auxPtr + (long) i * Long.BYTES);
+                int len = Unsafe.getUnsafe().getInt(dataPtr + offset);
+                if (len < 0) {
+                    writeFixedNull(dstType, dstPtr, i);
+                    continue;
+                }
+                strSink.clear();
+                long charAddr = dataPtr + offset + Integer.BYTES;
+                for (int j = 0; j < len; j++) {
+                    strSink.put(Unsafe.getUnsafe().getChar(charAddr + (long) j * Character.BYTES));
+                }
+                value = strSink;
+            }
+
+            writeFixedParsedValue(dstType, dstPtr, i, value);
+        }
+    }
+
+    static long estimateStringDataSize(int srcType, int rowCount) {
+        // 4 bytes length prefix + maxChars * 2 bytes UTF-16LE per row.
+        // Null values use only 4 bytes.
+        int maxCharsPerRow = switch (srcType) {
+            case ColumnType.BOOLEAN -> 5;
+            case ColumnType.BYTE -> 4;
+            case ColumnType.SHORT -> 6;
+            case ColumnType.CHAR -> 1;
+            case ColumnType.INT -> 11;
+            case ColumnType.LONG -> 20;
+            case ColumnType.FLOAT -> 15;
+            case ColumnType.DOUBLE -> 25;
+            case ColumnType.DATE, ColumnType.TIMESTAMP, ColumnType.TIMESTAMP_NANO -> 30;
+            case ColumnType.IPv4 -> 15;
+            case ColumnType.UUID -> 36;
+            default -> 40;
+        };
+        return (long) (Integer.BYTES + maxCharsPerRow * Character.BYTES) * rowCount;
+    }
+
+    static long estimateVarcharDataSize(int srcType, int rowCount) {
+        // Only spilled values (>9 UTF-8 bytes) consume data buffer space.
+        int maxBytesPerRow = switch (srcType) {
+            case ColumnType.BOOLEAN, ColumnType.BYTE, ColumnType.SHORT, ColumnType.CHAR -> 0;
+            case ColumnType.INT -> 11;
+            case ColumnType.LONG -> 20;
+            case ColumnType.FLOAT -> 15;
+            case ColumnType.DOUBLE -> 25;
+            case ColumnType.DATE, ColumnType.TIMESTAMP, ColumnType.TIMESTAMP_NANO -> 30;
+            case ColumnType.IPv4 -> 15;
+            case ColumnType.UUID -> 36;
+            default -> 40;
+        };
+        return (long) maxBytesPerRow * rowCount;
     }
 
     @Override

@@ -777,6 +777,86 @@ fn is_var_to_fixed_target(tag: ColumnTypeTag) -> bool {
     )
 }
 
+/// Outcome of validating a column-type conversion request.
+#[derive(Clone, Copy)]
+enum DecodeAs {
+    /// Decode using the target type directly: source and target share a physical
+    /// representation, so the page decoder produces the target width.
+    Target,
+    /// Decode using the source type; `post_convert` (or Java, for var/fixed swaps)
+    /// performs the conversion after decode.
+    Source,
+}
+
+/// Validates a fixed-to-fixed type conversion request (ALTER COLUMN TYPE)
+/// and decides what type the page-decode dispatch should use.
+///
+/// The output buffer is sized for the target type. Some conversions can be
+/// decoded directly into the target representation (`Target`); others require
+/// the source physical type during decode because encoding-specific decoders
+/// (e.g. DeltaBinaryPacked) cannot cross physical type boundaries — those
+/// return `Source` and rely on `post_convert` afterwards.
+///
+/// Returns `None` when the conversion is not supported.
+fn plan_decode_conversion(src_tag: ColumnTypeTag, dst_tag: ColumnTypeTag) -> Option<DecodeAs> {
+    use ColumnTypeTag::*;
+    match (src_tag, dst_tag) {
+        // Int32-family widening/narrowing (Byte/Short/Int share Int32 physical).
+        // Safe for all encodings: decoder produces target width directly.
+        (Byte, Short | Int)
+        | (Short, Int | Byte)
+        | (Int, Short | Byte)
+        // Int64-family reinterpretation (Long/Date/Timestamp share Int64 physical).
+        | (Long | Date | Timestamp, Long)
+        | (Long, Timestamp | Date) => Some(DecodeAs::Target),
+
+        // Cross-physical int (Int32 <-> Int64) and cross-family numeric:
+        // keep source type for decode; post_convert converts.
+        (Byte | Short | Int, Long | Date | Timestamp)
+        | (Long | Date | Timestamp, Byte | Short | Int)
+        | (Byte | Short | Int | Long | Date | Timestamp, Float | Double)
+        | (Float | Double, Byte | Short | Int | Long | Date | Timestamp)
+        | (Float, Double)
+        | (Double, Float)
+        // Date <-> Timestamp and Timestamp nano <-> micro need post-decode scaling.
+        | (Date, Timestamp)
+        | (Timestamp, Date)
+        | (Timestamp, Timestamp)
+        // Fixed -> Boolean: decode at source width, post_convert contracts to 1 byte
+        // so that null sentinels (i32::MIN, i64::MIN, NaN) map to 0 (false).
+        | (Byte | Short | Int | Long | Date | Timestamp | Float | Double, Boolean)
+        // Boolean -> fixed: decode 1-byte booleans, post_convert expands.
+        | (Boolean, Byte | Short | Int | Long | Float | Double | Date | Timestamp)
+        // Fixed -> var-size (VARCHAR, STRING): post_convert produces var-size output.
+        | (Byte | Short | Int | Long | Float | Double | Date | Timestamp
+            | Boolean | IPv4 | Uuid | Char,
+            Varchar | String) => Some(DecodeAs::Source),
+
+        // Var -> fixed-size: decode as source var type; Java converts after decode.
+        (Varchar | String, dst) if is_var_to_fixed_target(dst) => Some(DecodeAs::Source),
+
+        // String / Varchar / Symbol -> String / Varchar: parquet stores all three as
+        // BYTE_ARRAY (UTF-8), so just remap to the target type and decode directly.
+        (String | Varchar | Symbol, String | Varchar) => Some(DecodeAs::Target),
+
+        // Array pass-through: same element type and dimensions.
+        (Array, Array) => Some(DecodeAs::Target),
+
+        // Decimal -> Decimal: different precision/scale.
+        // The decoder sign-extends or truncates to the target size.
+        (Decimal8 | Decimal16 | Decimal32 | Decimal64 | Decimal128 | Decimal256,
+            Decimal8 | Decimal16 | Decimal32 | Decimal64 | Decimal128 | Decimal256) => {
+            Some(DecodeAs::Target)
+        }
+
+        // Fixed integer -> Decimal: keep source type for decode;
+        // post_convert widens and scales by 10^(target_scale).
+        (Byte | Short | Int | Long, dst) if is_decimal_tag(dst) => Some(DecodeAs::Source),
+
+        _ => None,
+    }
+}
+
 /// Decompress a varchar_slice dictionary page into a fresh buffer drawn from `buf_pool`, then
 /// move that buffer into `persistent_bufs` so it lives for the full column-chunk decode.
 ///
@@ -874,117 +954,14 @@ impl ParquetDecoder {
             let original_column_type = column_type;
             let src_tag = column_type.tag();
             if column_type != to_column_type {
-                // Allow fixed-to-fixed type conversions (ALTER COLUMN TYPE).
-                // The output buffer is sized for the target type. The decode dispatch
-                // reads the source physical type from parquet and converts on the fly.
-                match (src_tag, to_column_type.tag()) {
-                    // Fixed → fixed widening, narrowing, and reinterpretation
-                    // within the same numeric family (integer↔integer).
-                    // The decode dispatch handles cross-size integer conversions
-                    // (e.g. INT32→i8 for LONG→BYTE).
-                    //
-                    // Int32-family widening/narrowing (Byte/Short/Int share Int32 physical).
-                    // Safe for all encodings: decoder produces target width directly.
-                    (ColumnTypeTag::Byte, ColumnTypeTag::Short | ColumnTypeTag::Int) |
-                    (ColumnTypeTag::Short, ColumnTypeTag::Int | ColumnTypeTag::Byte) |
-                    (ColumnTypeTag::Int, ColumnTypeTag::Short | ColumnTypeTag::Byte) |
-                    // Int64-family reinterpretation (Long/Date/Timestamp share Int64 physical).
-                    (ColumnTypeTag::Long | ColumnTypeTag::Date | ColumnTypeTag::Timestamp,
-                     ColumnTypeTag::Long) |
-                    (ColumnTypeTag::Long, ColumnTypeTag::Timestamp | ColumnTypeTag::Date) => {
-                        column_type = to_column_type;
-                    }
-                    // Cross-physical int (Int32↔Int64), cross-family (int↔float/double, float↔double).
-                    // Keep source type for decode because encoding-specific decoders
-                    // (e.g. DeltaBinaryPacked) cannot cross physical type boundaries.
-                    // post_convert handles the numeric conversion afterward.
-                    (ColumnTypeTag::Byte | ColumnTypeTag::Short | ColumnTypeTag::Int,
-                     ColumnTypeTag::Long | ColumnTypeTag::Date | ColumnTypeTag::Timestamp) |
-                    (ColumnTypeTag::Long | ColumnTypeTag::Date | ColumnTypeTag::Timestamp,
-                     ColumnTypeTag::Byte | ColumnTypeTag::Short | ColumnTypeTag::Int) |
-                    (ColumnTypeTag::Byte | ColumnTypeTag::Short | ColumnTypeTag::Int |
-                     ColumnTypeTag::Long | ColumnTypeTag::Date | ColumnTypeTag::Timestamp,
-                     ColumnTypeTag::Float | ColumnTypeTag::Double) |
-                    (ColumnTypeTag::Float | ColumnTypeTag::Double,
-                     ColumnTypeTag::Byte | ColumnTypeTag::Short | ColumnTypeTag::Int |
-                     ColumnTypeTag::Long | ColumnTypeTag::Date | ColumnTypeTag::Timestamp) |
-                    (ColumnTypeTag::Float, ColumnTypeTag::Double) |
-                    (ColumnTypeTag::Double, ColumnTypeTag::Float) => {
-                        // Keep column_type as source; post_convert converts.
-                    }
-                    // Date ↔ Timestamp (needs post-decode scaling in post_convert)
-                    (ColumnTypeTag::Date, ColumnTypeTag::Timestamp) |
-                    (ColumnTypeTag::Timestamp, ColumnTypeTag::Date) |
-                    // Timestamp nano ↔ micro (needs post-decode scaling)
-                    (ColumnTypeTag::Timestamp, ColumnTypeTag::Timestamp) |
-                    // Fixed → Boolean: keep source type for decode so each
-                    // value is decoded at full width; post_convert contracts
-                    // to 1-byte booleans (non-zero → 1, zero → 0).
-                    (ColumnTypeTag::Byte | ColumnTypeTag::Short | ColumnTypeTag::Int |
-                     ColumnTypeTag::Long | ColumnTypeTag::Date | ColumnTypeTag::Timestamp |
-                     ColumnTypeTag::Float | ColumnTypeTag::Double,
-                     ColumnTypeTag::Boolean) => {
-                        // Keep column_type as source type.
-                    }
-                    // Boolean → Int: decode as boolean, post-expand to i32
-                    (ColumnTypeTag::Boolean, ColumnTypeTag::Int) => {
-                        // Keep column_type as Boolean for decode; post-processing
-                        // expands the 1-byte boolean values to 4-byte integers.
-                    }
-                    // Boolean → other fixed types: decode as boolean, post-expand
-                    (ColumnTypeTag::Boolean,
-                     ColumnTypeTag::Byte | ColumnTypeTag::Short | ColumnTypeTag::Long |
-                     ColumnTypeTag::Float | ColumnTypeTag::Double |
-                     ColumnTypeTag::Date | ColumnTypeTag::Timestamp) => {
-                        // Keep column_type as Boolean for decode; post_convert expands.
-                    }
-                    // Fixed → var-size (VARCHAR, STRING): decode as source fixed type,
-                    // post_convert produces the target var-size format.
-                    (ColumnTypeTag::Byte | ColumnTypeTag::Short | ColumnTypeTag::Int |
-                     ColumnTypeTag::Long | ColumnTypeTag::Float | ColumnTypeTag::Double |
-                     ColumnTypeTag::Date | ColumnTypeTag::Timestamp |
-                     ColumnTypeTag::Boolean | ColumnTypeTag::IPv4 | ColumnTypeTag::Uuid |
-                     ColumnTypeTag::Char,
-                     ColumnTypeTag::Varchar | ColumnTypeTag::String) => {
-                        // Keep column_type as source; post_convert produces var-size output.
-                    }
-                    // Var → fixed-size: decode as source var type.
-                    // Java handles batch conversion after decode.
-                    (ColumnTypeTag::Varchar | ColumnTypeTag::String, dst)
-                        if is_var_to_fixed_target(dst) =>
-                    {
-                        // Keep column_type as source var type; Java converts.
-                    }
-                    // String ↔ Varchar ↔ Symbol: parquet stores all three as
-                    // BYTE_ARRAY (UTF-8), so we just remap to the target type
-                    // and decode directly.
-                    (ColumnTypeTag::String | ColumnTypeTag::Varchar | ColumnTypeTag::Symbol,
-                     ColumnTypeTag::String | ColumnTypeTag::Varchar) => {
-                        column_type = to_column_type;
-                    }
-                    // Array pass-through: same element type and dimensions.
-                    (src_t, dst_t) if src_t == dst_t
-                        && src_t == ColumnTypeTag::Array => {
-                        column_type = to_column_type;
-                    }
-                    // Decimal → Decimal: different precision/scale.
-                    // The decoder sign-extends or truncates to the target size.
-                    (ColumnTypeTag::Decimal8 | ColumnTypeTag::Decimal16 |
-                     ColumnTypeTag::Decimal32 | ColumnTypeTag::Decimal64 |
-                     ColumnTypeTag::Decimal128 | ColumnTypeTag::Decimal256,
-                     ColumnTypeTag::Decimal8 | ColumnTypeTag::Decimal16 |
-                     ColumnTypeTag::Decimal32 | ColumnTypeTag::Decimal64 |
-                     ColumnTypeTag::Decimal128 | ColumnTypeTag::Decimal256) => {
-                        column_type = to_column_type;
-                    }
-                    // Fixed integer → Decimal: keep source type for decode,
-                    // post_convert widens and scales by 10^(target_scale).
-                    (ColumnTypeTag::Byte | ColumnTypeTag::Short |
-                     ColumnTypeTag::Int | ColumnTypeTag::Long,
-                     dst) if is_decimal_tag(dst) => {
-                        // Keep column_type as source fixed type.
-                    }
-                    _ => {
+                // Fixed-to-fixed type conversion (ALTER COLUMN TYPE). The output
+                // buffer is sized for the target type; the decode dispatch reads the
+                // source physical type from parquet and either produces the target
+                // width directly or relies on post_convert afterwards.
+                match plan_decode_conversion(src_tag, to_column_type.tag()) {
+                    Some(DecodeAs::Target) => column_type = to_column_type,
+                    Some(DecodeAs::Source) => {} // post_convert handles the conversion
+                    None => {
                         return Err(fmt_err!(
                             InvalidType,
                             "requested column type {} does not match file column type {}, column index: {}",
@@ -1138,113 +1115,10 @@ impl ParquetDecoder {
             let original_column_type = column_type;
             let src_tag = column_type.tag();
             if column_type != to_column_type {
-                match (src_tag, to_column_type.tag()) {
-                    // Fixed → fixed widening, narrowing, and reinterpretation
-                    // within the same numeric family (integer↔integer).
-                    // The decode dispatch handles cross-size integer conversions
-                    // (e.g. INT32→i8 for LONG→BYTE).
-                    //
-                    // Int32-family widening/narrowing (Byte/Short/Int share Int32 physical).
-                    // Safe for all encodings: decoder produces target width directly.
-                    (ColumnTypeTag::Byte, ColumnTypeTag::Short | ColumnTypeTag::Int) |
-                    (ColumnTypeTag::Short, ColumnTypeTag::Int | ColumnTypeTag::Byte) |
-                    (ColumnTypeTag::Int, ColumnTypeTag::Short | ColumnTypeTag::Byte) |
-                    // Int64-family reinterpretation (Long/Date/Timestamp share Int64 physical).
-                    (ColumnTypeTag::Long | ColumnTypeTag::Date | ColumnTypeTag::Timestamp,
-                     ColumnTypeTag::Long) |
-                    (ColumnTypeTag::Long, ColumnTypeTag::Timestamp | ColumnTypeTag::Date) => {
-                        column_type = to_column_type;
-                    }
-                    // Cross-physical int (Int32↔Int64), cross-family (int↔float/double, float↔double).
-                    // Keep source type for decode because encoding-specific decoders
-                    // (e.g. DeltaBinaryPacked) cannot cross physical type boundaries.
-                    // post_convert handles the numeric conversion afterward.
-                    (ColumnTypeTag::Byte | ColumnTypeTag::Short | ColumnTypeTag::Int,
-                     ColumnTypeTag::Long | ColumnTypeTag::Date | ColumnTypeTag::Timestamp) |
-                    (ColumnTypeTag::Long | ColumnTypeTag::Date | ColumnTypeTag::Timestamp,
-                     ColumnTypeTag::Byte | ColumnTypeTag::Short | ColumnTypeTag::Int) |
-                    (ColumnTypeTag::Byte | ColumnTypeTag::Short | ColumnTypeTag::Int |
-                     ColumnTypeTag::Long | ColumnTypeTag::Date | ColumnTypeTag::Timestamp,
-                     ColumnTypeTag::Float | ColumnTypeTag::Double) |
-                    (ColumnTypeTag::Float | ColumnTypeTag::Double,
-                     ColumnTypeTag::Byte | ColumnTypeTag::Short | ColumnTypeTag::Int |
-                     ColumnTypeTag::Long | ColumnTypeTag::Date | ColumnTypeTag::Timestamp) |
-                    (ColumnTypeTag::Float, ColumnTypeTag::Double) |
-                    (ColumnTypeTag::Double, ColumnTypeTag::Float) => {
-                        // Keep column_type as source; post_convert converts.
-                    }
-                    // Date ↔ Timestamp (needs post-decode scaling in post_convert)
-                    (ColumnTypeTag::Date, ColumnTypeTag::Timestamp) |
-                    (ColumnTypeTag::Timestamp, ColumnTypeTag::Date) |
-                    // Timestamp nano ↔ micro (needs post-decode scaling)
-                    (ColumnTypeTag::Timestamp, ColumnTypeTag::Timestamp) |
-                    // Fixed → Boolean: keep source type for decode;
-                    // post_convert contracts to 1-byte booleans.
-                    (ColumnTypeTag::Byte | ColumnTypeTag::Short | ColumnTypeTag::Int |
-                     ColumnTypeTag::Long | ColumnTypeTag::Date | ColumnTypeTag::Timestamp |
-                     ColumnTypeTag::Float | ColumnTypeTag::Double,
-                     ColumnTypeTag::Boolean) => {
-                        // Keep column_type as source type.
-                    }
-                    // Boolean → Int: decode as boolean, post-expand to i32
-                    (ColumnTypeTag::Boolean, ColumnTypeTag::Int) => {
-                        // Keep column_type as Boolean for decode; post-processing
-                        // expands the 1-byte boolean values to 4-byte integers.
-                    }
-                    // Boolean → other fixed types: decode as boolean, post-expand
-                    (ColumnTypeTag::Boolean,
-                     ColumnTypeTag::Byte | ColumnTypeTag::Short | ColumnTypeTag::Long |
-                     ColumnTypeTag::Float | ColumnTypeTag::Double |
-                     ColumnTypeTag::Date | ColumnTypeTag::Timestamp) => {
-                        // Keep column_type as Boolean for decode; post_convert expands.
-                    }
-                    // Fixed → var-size (VARCHAR, STRING): decode as source fixed type,
-                    // post_convert produces the target var-size format.
-                    (ColumnTypeTag::Byte | ColumnTypeTag::Short | ColumnTypeTag::Int |
-                     ColumnTypeTag::Long | ColumnTypeTag::Float | ColumnTypeTag::Double |
-                     ColumnTypeTag::Date | ColumnTypeTag::Timestamp |
-                     ColumnTypeTag::Boolean | ColumnTypeTag::IPv4 | ColumnTypeTag::Uuid |
-                     ColumnTypeTag::Char,
-                     ColumnTypeTag::Varchar | ColumnTypeTag::String) => {
-                        // Keep column_type as source; post_convert produces var-size output.
-                    }
-                    // Var → fixed-size: decode as source var type.
-                    // Java handles batch conversion after decode.
-                    (ColumnTypeTag::Varchar | ColumnTypeTag::String, dst)
-                        if is_var_to_fixed_target(dst) =>
-                    {
-                        // Keep column_type as source var type; Java converts.
-                    }
-                    // String ↔ Varchar ↔ Symbol: parquet stores all three as
-                    // BYTE_ARRAY (UTF-8), so we just remap to the target type
-                    // and decode directly.
-                    (ColumnTypeTag::String | ColumnTypeTag::Varchar | ColumnTypeTag::Symbol,
-                     ColumnTypeTag::String | ColumnTypeTag::Varchar) => {
-                        column_type = to_column_type;
-                    }
-                    // Array pass-through: same element type and dimensions.
-                    (src_t, dst_t) if src_t == dst_t
-                        && src_t == ColumnTypeTag::Array => {
-                        column_type = to_column_type;
-                    }
-                    // Decimal → Decimal: different precision/scale.
-                    // The decoder sign-extends or truncates to the target size.
-                    (ColumnTypeTag::Decimal8 | ColumnTypeTag::Decimal16 |
-                     ColumnTypeTag::Decimal32 | ColumnTypeTag::Decimal64 |
-                     ColumnTypeTag::Decimal128 | ColumnTypeTag::Decimal256,
-                     ColumnTypeTag::Decimal8 | ColumnTypeTag::Decimal16 |
-                     ColumnTypeTag::Decimal32 | ColumnTypeTag::Decimal64 |
-                     ColumnTypeTag::Decimal128 | ColumnTypeTag::Decimal256) => {
-                        column_type = to_column_type;
-                    }
-                    // Fixed integer → Decimal: keep source type for decode,
-                    // post_convert widens and scales by 10^(target_scale).
-                    (ColumnTypeTag::Byte | ColumnTypeTag::Short |
-                     ColumnTypeTag::Int | ColumnTypeTag::Long,
-                     dst) if is_decimal_tag(dst) => {
-                        // Keep column_type as source fixed type.
-                    }
-                    _ => {
+                match plan_decode_conversion(src_tag, to_column_type.tag()) {
+                    Some(DecodeAs::Target) => column_type = to_column_type,
+                    Some(DecodeAs::Source) => {} // post_convert handles the conversion
+                    None => {
                         return Err(fmt_err!(
                             InvalidType,
                             "requested column type {} does not match file column type {}, column index: {}",

@@ -236,7 +236,9 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     private final MessageBus ownMessageBus;
     private final boolean parallelIndexerEnabled;
     private final DirectIntList parquetBloomFilterIndexes;
+    private final IntIntHashMap parquetColIdToIdx = new IntIntHashMap();
     private final DirectIntList parquetColumnIdsAndTypes;
+    private final IntList parquetDecodedTableColumnIdx = new IntList();
     private final PartitionDecoder parquetDecoder = new PartitionDecoder();
     private final int partitionBy;
     private final DateFormat partitionDirFmt;
@@ -9097,7 +9099,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             // The parquet file stores column IDs equal to originalWriterIndex, which may differ
             // from the current writer index after a column-type conversion. Build a map from
             // parquet column id to parquet column slot so we can look columns up by original id.
-            final IntIntHashMap parquetColIdToIdx = new IntIntHashMap();
+            parquetColIdToIdx.clear();
             for (int i = 0, n = parquetMetadata.getColumnCount(); i < n; i++) {
                 if (!ColumnType.isUndefined(parquetMetadata.getColumnType(i))) {
                     parquetColIdToIdx.put(parquetMetadata.getColumnId(i), i);
@@ -9107,7 +9109,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             parquetColumnIdsAndTypes.clear();
             int decodedColumnCount = 0;
             final int tableColumnCount = this.metadata.getColumnCount();
-            final int[] decodedTableColumnIdx = new int[tableColumnCount];
+            parquetDecodedTableColumnIdx.setPos(tableColumnCount);
 
             for (int i = 0; i < tableColumnCount; i++) {
                 final int tableColumnType = this.metadata.getColumnType(i);
@@ -9148,7 +9150,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
                 parquetColumnIdsAndTypes.add(parquetIdx);
                 parquetColumnIdsAndTypes.add(decodeType);
-                decodedTableColumnIdx[decodedColumnCount] = i;
+                parquetDecodedTableColumnIdx.setQuick(decodedColumnCount, i);
 
                 // Open destination files based on TABLE type (not parquet type).
                 final long auxIndex = columnFdAndDataSize.size();
@@ -9178,7 +9180,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 );
                 parquetRowCount += rowGroupRowCount;
                 for (int columnIndex = 0; columnIndex < decodedColumnCount; columnIndex++) {
-                    final int tableColIdx = decodedTableColumnIdx[columnIndex];
+                    final int tableColIdx = parquetDecodedTableColumnIdx.getQuick(columnIndex);
                     final int tableColumnType = this.metadata.getColumnType(tableColIdx);
                     final int parquetIdx = parquetColumnIdsAndTypes.get(2L * columnIndex);
                     final int parquetColumnType = parquetMetadata.getColumnType(parquetIdx);
