@@ -296,22 +296,38 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
     }
 
     private static class SampleByFillCursor implements NoRandomAccessRecordCursor {
+        // Dispatch codes compiled once per query from fillModes + outputColToKeyPos +
+        // constantFills + timestampIndex into flat per-column arrays consumed by
+        // FillRecord.getXxx on every fill-row read. See compileDispatchPlan().
+        private static final int DISPATCH_CONSTANT = 0;
+        private static final int DISPATCH_KEY_SLOT = 1;
+        private static final int DISPATCH_NULL = 2;
+        // Cached FILL_PREV: read currentMapValue.getXxx(dispatchSlot[col]) for
+        // fixed-size scalar types, or keysMapRecord.getSymA/B(dispatchSlot[col])
+        // for SYMBOL slots (the resolver wired up by setSymbolTableResolver()
+        // turns the cached symbol id back into a CharSequence). The source
+        // value was copied into the MapValue slot at update time, so no
+        // recordAt/RecordChain traversal happens on emit.
+        private static final int DISPATCH_PREV_CACHE_SLOT = 5;
+        private static final int DISPATCH_PREV_SLOT = 3;
+        private static final int DISPATCH_TIMESTAMP_FILL = 4;
+
         private RecordCursor baseCursor;
         private Record baseRecord;
         private final long calendarOffset;
         private SqlExecutionCircuitBreaker circuitBreaker;
         private final ObjList<Function> constantFills;
-        // Per-emit MapValue cached by emitNextFillRow so FillRecord getters
-        // can read fixed-size FILL_PREV cached values via prevValueSlot
-        // without re-fetching the MapValue per column read.
+        // MapValue currently being emitted in emitNextFillRow; cached so the
+        // FillRecord getters can read PREV cache slots without re-positioning
+        // the keysMap cursor on every per-column read.
         private MapValue currentMapValue;
+        private int[] dispatchCode;
+        private Function[] dispatchConstant;
+        private int[] dispatchSlot;
         private final IntList fillModes;
         private final FillRecord fillRecord = new FillRecord();
         private final FillTimestampConstant fillTimestampFunc;
-        // Per-slot source col index; slot is implicitly PREV_ROWID_SLOT + 1 + i.
         private final IntList fixedPrevSrcCols;
-        // Per-slot ColumnType.tagOf of the source col (SYMBOL kept as SYMBOL
-        // so updateKeyPrevRowId knows to read the int symbol id).
         private final IntList fixedPrevTypeTags;
         private final Function fromFunc;
         private boolean hasDataForCurrentBucket;
@@ -324,9 +340,9 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
         private boolean isEmittingFills;
         private boolean isInitialized;
         private int keyCount;
-        // Absolute MapRecord position where user key columns begin.
-        // KEY_POS_OFFSET (3) plus the number of cached prev-value slots
-        // appended by SqlCodeGenerator after populateMapValueTypes.
+        // Position in MapRecord where user key columns start. KEY_POS_OFFSET +
+        // numFixedPrevSlots, baked into outputColToKeyPos so dispatchSlot[col]
+        // values for KEY_SLOT entries are absolute MapRecord positions.
         private final int keyPosOffset;
         private boolean[] keyPresent;
         private final RecordSink keySink;
@@ -334,20 +350,20 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
         private MapRecordCursor keysMapCursor;
         private MapRecord keysMapRecord;
         private long maxTimestamp;
-        // True if at least one FILL_PREV output column has a variable-width
-        // source col. When false, emitNextFillRow's recordAt is skipped:
-        // every FILL_PREV col is served by prevValueSlot/prevSymbolTable.
+        // True when at least one FILL_PREV output column reads a variable-width
+        // source (VARCHAR/BIN/STRING/ARRAY) or non-keyed FILL_PREV is in use --
+        // i.e. the recordAt-based PREV path is reachable. False allows
+        // emitNextFillRow to skip baseCursor.recordAt entirely.
         private final boolean needsPrevPositioning;
         private long nextBucketTimestamp;
         private final IntList outputColToKeyPos = new IntList();
         private long pendingTs;
         private Record prevRecord;
-        // Per-output-col cached SymbolTable for SYMBOL FILL_PREV reads.
-        // Populated in of() once the base cursor is captured. null entries
-        // for non-SYMBOL output columns or columns with prevValueSlot < 0.
-        private SymbolTable[] prevSymbolTable;
-        // Per-output-col MapValue slot index for slot-eligible FILL_PREV
-        // reads. -1 means "not slot-eligible, fall through to recordAt path".
+        // Per output column: index into the MapValue value section where the
+        // cached fixed-size PREV value lives, or -1 if not slot-eligible.
+        // SYMBOL slots store the 4-byte symbol id and are read via
+        // keysMapRecord.getSymA/B(slot), which uses the symbolTableResolver
+        // wired up in initialize() to turn the id back into a CharSequence.
         private final IntList prevValueSlot;
         private long simplePrevRowId = -1L;
         private final IntList symbolTableColIndices;
@@ -396,14 +412,16 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
             this.keyPosOffset = KEY_POS_OFFSET + fixedPrevSrcCols.size();
 
             // Key columns in the MapRecord follow the fixed-width value header
-            // (KEY_INDEX_SLOT, HAS_PREV_SLOT, PREV_ROWID_SLOT) plus any
-            // appended fixed-size FILL_PREV cache slots. keyPosOffset bakes
-            // both contributions in so FillRecord getters can keep using
-            // outputColToKeyPos.getQuick(col) directly without an extra add.
+            // (KEY_INDEX_SLOT, HAS_PREV_SLOT, PREV_ROWID_SLOT) plus any appended
+            // fixed-size FILL_PREV cache slots. keyPosOffset bakes both
+            // contributions in so dispatchSlot[col] values for KEY_SLOT entries
+            // resolve to the right MapRecord position.
             outputColToKeyPos.setAll(metadata.getColumnCount(), -1);
             for (int i = 0, n = keyColIndices.size(); i < n; i++) {
                 outputColToKeyPos.setQuick(keyColIndices.getQuick(i), keyPosOffset + i);
             }
+
+            compileDispatchPlan(metadata.getColumnCount());
         }
 
         @Override
@@ -516,10 +534,10 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
                     fillTimestampFunc.value = nextBucketTimestamp;
                     hasPrevForCurrentGap = hasSimplePrev;
                     if (hasPrevForCurrentGap && needsPrevPositioning) {
-                        // Position prevRecord once for variable-width FILL_PREV
-                        // columns; FillRecord getters read from it directly.
-                        // Skipped when every FILL_PREV col is slot-eligible
-                        // (no recordAt needed -- slot path covers everything).
+                        // Position prevRecord once; FillRecord getters read from it directly.
+                        // Non-keyed FILL_PREV always needs positioning because there is no
+                        // MapValue to cache slots in -- SqlCodeGenerator forces
+                        // needsPrevPositioning on for any non-keyed FILL_PREV column.
                         baseCursor.recordAt(prevRecord, simplePrevRowId);
                     }
                     nextBucketTimestamp = timestampSampler.nextTimestamp(nextBucketTimestamp);
@@ -579,6 +597,60 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
             isEmittingFills = false;
         }
 
+        private void compileDispatchPlan(int columnCount) {
+            // Precompute per-output-column dispatch for FillRecord.getXxx once
+            // per cursor. Inputs (fillModes, outputColToKeyPos, constantFills,
+            // timestampIndex) are query-constants; the per-row FillRecord code
+            // consumes the flat dispatchCode/dispatchSlot/dispatchConstant arrays
+            // directly and avoids the 2-3 IntList.getQuick lookups + 4-branch
+            // conditional chain that dominated the 805-sample IntList.getQuick
+            // leaf in the JFR baseline.
+            if (dispatchCode == null || dispatchCode.length < columnCount) {
+                dispatchCode = new int[columnCount];
+                dispatchSlot = new int[columnCount];
+                dispatchConstant = new Function[columnCount];
+            }
+            for (int col = 0; col < columnCount; col++) {
+                dispatchConstant[col] = null;
+                if (col == timestampIndex) {
+                    dispatchCode[col] = DISPATCH_TIMESTAMP_FILL;
+                    continue;
+                }
+                int mode = fillModes.getQuick(col);
+                if (mode == FILL_KEY) {
+                    dispatchCode[col] = DISPATCH_KEY_SLOT;
+                    dispatchSlot[col] = outputColToKeyPos.getQuick(col);
+                } else if (mode >= 0 && outputColToKeyPos.getQuick(mode) >= 0) {
+                    dispatchCode[col] = DISPATCH_KEY_SLOT;
+                    dispatchSlot[col] = outputColToKeyPos.getQuick(mode);
+                } else if (mode == FILL_PREV_SELF || mode >= 0) {
+                    int slot = prevValueSlot.getQuick(col);
+                    if (slot >= 0) {
+                        // Source value is cached in the keysMap MapValue at the
+                        // assigned slot. The same dispatch handles fixed-size
+                        // scalars (read via currentMapValue.getXxx) and SYMBOL
+                        // (read via keysMapRecord.getSymA/B which uses the
+                        // existing setSymbolTableResolver wiring to turn the
+                        // cached id into a CharSequence).
+                        dispatchCode[col] = DISPATCH_PREV_CACHE_SLOT;
+                        dispatchSlot[col] = slot;
+                    } else {
+                        // Variable-width or otherwise non-cacheable source
+                        // (VARCHAR, STRING, BIN, ARRAY) -- fall back to the
+                        // recordAt-based PREV path that materialises the row
+                        // through prevRecord.
+                        dispatchCode[col] = DISPATCH_PREV_SLOT;
+                        dispatchSlot[col] = mode >= 0 ? mode : col;
+                    }
+                } else if (mode == FILL_CONSTANT) {
+                    dispatchCode[col] = DISPATCH_CONSTANT;
+                    dispatchConstant[col] = constantFills.getQuick(col);
+                } else {
+                    dispatchCode[col] = DISPATCH_NULL;
+                }
+            }
+        }
+
         private boolean emitNextFillRow() {
             while (true) {
                 circuitBreaker.statefulThrowExceptionIfTripped();
@@ -589,19 +661,20 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
                     if (!keyPresent[keyIdx]) {
                         fillRecord.isGapFilling = true;
                         fillTimestampFunc.value = nextBucketTimestamp;
-                        // Cache the MapValue and HAS_PREV flag once per fill
-                        // row so the 30+ FillRecord getters avoid
-                        // re-materialising the MapValue via
-                        // keysMapRecord.getValue() on every per-column read,
-                        // and the slot-eligible PREV branch can read
-                        // currentMapValue.getXxx(slot) directly.
-                        currentMapValue = value;
+                        // Cache the HAS_PREV flag once per fill row so the 30+
+                        // FillRecord getters avoid re-materialising the MapValue
+                        // via keysMapRecord.getValue() on every per-column read.
                         hasPrevForCurrentGap = value.getLong(HAS_PREV_SLOT) != 0;
+                        // Cache the MapValue so DISPATCH_PREV_CACHE_SLOT and
+                        // DISPATCH_PREV_CACHE_SYMBOL getters can read directly
+                        // from it without re-materialising the keysMap cursor
+                        // position on every per-column read.
+                        currentMapValue = value;
                         if (hasPrevForCurrentGap && needsPrevPositioning) {
-                            // Position prevRecord once for variable-width
-                            // FILL_PREV columns; FillRecord getters read from
-                            // it directly. Skipped when every FILL_PREV col
-                            // is slot-eligible (slot path covers everything).
+                            // Position prevRecord only when at least one PREV col still
+                            // needs the recordAt-based path (variable-width source). When
+                            // all PREV cols are slot-eligible, dispatch is served from
+                            // currentMapValue and recordAt drops out of the hot path.
                             baseCursor.recordAt(prevRecord, value.getLong(PREV_ROWID_SLOT));
                         }
                         return true;
@@ -627,17 +700,6 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
                 isEmittingFills = true;
                 keysMapCursor.toTop();
             }
-        }
-
-        private int fillMode(int col) {
-            return fillModes.getQuick(col);
-        }
-
-        private boolean hasKeyPrev() {
-            // Both keyed and non-keyed emission paths cache the PREV availability
-            // into hasPrevForCurrentGap right before each fill row is emitted
-            // (see emitNextFillRow and the non-keyed gap branch in hasNext).
-            return hasPrevForCurrentGap;
         }
 
         private void initialize() {
@@ -759,26 +821,6 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
             Function.init(constantFills, baseCursor, executionContext, null);
             fromFunc.init(baseCursor, executionContext);
             toFunc.init(baseCursor, executionContext);
-            // Cache SymbolTable per output column for SYMBOL FILL_PREV reads.
-            // Skip when no slot is allocated (prevValueSlot[col] < 0) or the
-            // source col is not SYMBOL (typeTag was already a fixed-size
-            // numeric/temporal/etc.). One pass over output columns is cheap
-            // and avoids repeating the lookup per emit row.
-            if (prevSymbolTable == null || prevSymbolTable.length < prevValueSlot.size()) {
-                prevSymbolTable = new SymbolTable[prevValueSlot.size()];
-            } else {
-                Arrays.fill(prevSymbolTable, null);
-            }
-            for (int col = 0, n = prevValueSlot.size(); col < n; col++) {
-                int slot = prevValueSlot.getQuick(col);
-                if (slot < 0) continue;
-                int slotIdx = slot - (PREV_ROWID_SLOT + 1);
-                int typeTag = fixedPrevTypeTags.getQuick(slotIdx);
-                if (typeTag == ColumnType.SYMBOL) {
-                    int srcCol = fixedPrevSrcCols.getQuick(slotIdx);
-                    prevSymbolTable[col] = baseCursor.getSymbolTable(srcCol);
-                }
-            }
             toTop();
         }
 
@@ -790,85 +832,44 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
         private void updateKeyPrevRowId(MapValue value, Record record) {
             value.putLong(HAS_PREV_SLOT, 1L);
             value.putLong(PREV_ROWID_SLOT, record.getRowId());
-            // Cache slot-eligible (fixed-size + SYMBOL) FILL_PREV source col
-            // values directly in the MapValue so the FillRecord getters do
-            // not have to recordAt() into the sort buffer at emit time.
-            // Skipping the loop entirely when no slots exist is the
-            // common-path early-out for queries with no slot-eligible
-            // FILL_PREV cols (e.g., FILL(NULL)/FILL(VALUE)/FILL_KEY only).
+            // Copy each fixed-size FILL_PREV source value into its cached
+            // MapValue slot. Per-row cost is N small writes onto the same
+            // cache-hot MapValue page already touched for HAS_PREV/PREV_ROWID;
+            // amortised over many fill rows that would otherwise pay
+            // recordAt + RecordChain on every read.
             for (int i = 0, n = fixedPrevSrcCols.size(); i < n; i++) {
-                final int slot = PREV_ROWID_SLOT + 1 + i;
-                final int srcCol = fixedPrevSrcCols.getQuick(i);
-                // The set of cases here must mirror
-                // SqlCodeGenerator.isFixedSizePrevSlotEligible -- if a tag
-                // is added there it must also be added here, and vice
-                // versa. Wide types (LONG128/256, UUID, DECIMAL128/256)
-                // and variable-width types are excluded by the eligibility
-                // gate and never reach this switch.
-                switch (fixedPrevTypeTags.getQuick(i)) {
-                    case ColumnType.DOUBLE:
-                        value.putDouble(slot, record.getDouble(srcCol));
-                        break;
-                    case ColumnType.LONG:
-                        value.putLong(slot, record.getLong(srcCol));
-                        break;
-                    case ColumnType.DATE:
-                        value.putLong(slot, record.getDate(srcCol));
-                        break;
-                    case ColumnType.TIMESTAMP:
-                        value.putLong(slot, record.getTimestamp(srcCol));
-                        break;
-                    case ColumnType.GEOLONG:
-                        value.putLong(slot, record.getGeoLong(srcCol));
-                        break;
-                    case ColumnType.INT:
-                        value.putInt(slot, record.getInt(srcCol));
-                        break;
-                    case ColumnType.IPv4:
-                        value.putInt(slot, record.getIPv4(srcCol));
-                        break;
-                    case ColumnType.GEOINT:
-                        value.putInt(slot, record.getGeoInt(srcCol));
-                        break;
-                    case ColumnType.SYMBOL:
-                        value.putInt(slot, record.getInt(srcCol));
-                        break;
-                    case ColumnType.FLOAT:
-                        value.putFloat(slot, record.getFloat(srcCol));
-                        break;
-                    case ColumnType.SHORT:
-                        value.putShort(slot, record.getShort(srcCol));
-                        break;
-                    case ColumnType.GEOSHORT:
-                        value.putShort(slot, record.getGeoShort(srcCol));
-                        break;
-                    case ColumnType.BYTE:
-                        value.putByte(slot, record.getByte(srcCol));
-                        break;
-                    case ColumnType.GEOBYTE:
-                        value.putByte(slot, record.getGeoByte(srcCol));
-                        break;
-                    case ColumnType.CHAR:
-                        value.putChar(slot, record.getChar(srcCol));
-                        break;
-                    case ColumnType.BOOLEAN:
-                        value.putBool(slot, record.getBool(srcCol));
-                        break;
-                    case ColumnType.DECIMAL64:
-                        value.putLong(slot, record.getDecimal64(srcCol));
-                        break;
-                    case ColumnType.DECIMAL32:
-                        value.putInt(slot, record.getDecimal32(srcCol));
-                        break;
-                    case ColumnType.DECIMAL16:
-                        value.putShort(slot, record.getDecimal16(srcCol));
-                        break;
-                    case ColumnType.DECIMAL8:
-                        value.putByte(slot, record.getDecimal8(srcCol));
-                        break;
-                    default:
-                        throw new IllegalStateException(
-                                "unsupported prev-value slot type tag: " + fixedPrevTypeTags.getQuick(i));
+                int slot = KEY_POS_OFFSET + i;
+                int srcCol = fixedPrevSrcCols.getQuick(i);
+                int tag = fixedPrevTypeTags.getQuick(i);
+                switch (tag) {
+                    case ColumnType.DOUBLE -> value.putDouble(slot, record.getDouble(srcCol));
+                    case ColumnType.FLOAT -> value.putFloat(slot, record.getFloat(srcCol));
+                    case ColumnType.LONG -> value.putLong(slot, record.getLong(srcCol));
+                    case ColumnType.DATE -> value.putLong(slot, record.getDate(srcCol));
+                    case ColumnType.TIMESTAMP -> value.putLong(slot, record.getTimestamp(srcCol));
+                    case ColumnType.GEOLONG -> value.putLong(slot, record.getGeoLong(srcCol));
+                    case ColumnType.INT -> value.putInt(slot, record.getInt(srcCol));
+                    case ColumnType.IPv4 -> value.putInt(slot, record.getIPv4(srcCol));
+                    case ColumnType.GEOINT -> value.putInt(slot, record.getGeoInt(srcCol));
+                    // SYMBOL stores the 4-byte symbol id; getSymA/getSymB read
+                    // it back via keysMapRecord which routes the slot through
+                    // the symbolTableResolver wired up in initialize().
+                    case ColumnType.SYMBOL -> value.putInt(slot, record.getInt(srcCol));
+                    case ColumnType.SHORT -> value.putShort(slot, record.getShort(srcCol));
+                    case ColumnType.GEOSHORT -> value.putShort(slot, record.getGeoShort(srcCol));
+                    case ColumnType.BYTE -> value.putByte(slot, record.getByte(srcCol));
+                    case ColumnType.GEOBYTE -> value.putByte(slot, record.getGeoByte(srcCol));
+                    case ColumnType.CHAR -> value.putChar(slot, record.getChar(srcCol));
+                    case ColumnType.BOOLEAN -> value.putBool(slot, record.getBool(srcCol));
+                    case ColumnType.DECIMAL8 -> value.putByte(slot, record.getDecimal8(srcCol));
+                    case ColumnType.DECIMAL16 -> value.putShort(slot, record.getDecimal16(srcCol));
+                    case ColumnType.DECIMAL32 -> value.putInt(slot, record.getDecimal32(srcCol));
+                    case ColumnType.DECIMAL64 -> value.putLong(slot, record.getDecimal64(srcCol));
+                    default -> {
+                        // SqlCodeGenerator's isFixedSizePrevSlotEligible filter
+                        // gates which tags reach this loop; an unknown tag here
+                        // means the gate and this switch fell out of sync.
+                    }
                 }
             }
         }
@@ -878,6 +879,13 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
          * the GROUP BY pipeline always supplies a fill mode (FILL_KEY, FILL_PREV_SELF,
          * cross-column, or FILL_CONSTANT) for every output column, so those branches
          * are unreachable in practice.
+         * <p>
+         * Every output column is compiled once by compileDispatchPlan() into a
+         * single dispatch code (DISPATCH_KEY_SLOT, DISPATCH_PREV_SLOT,
+         * DISPATCH_CONSTANT, DISPATCH_TIMESTAMP_FILL, DISPATCH_NULL) plus an
+         * optional slot index (for KEY_SLOT / PREV_SLOT) or Function reference
+         * (for CONSTANT). The per-row dispatch below consumes those flat arrays
+         * directly; no IntList.getQuick lookups, no fill-mode conditional chain.
          * <p>
          * PREV fill uses a single rowId per key (keyed) or one simplePrevRowId
          * (non-keyed); the fill emit path calls baseCursor.recordAt(prevRecord,
@@ -898,84 +906,92 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
             @Override
             public ArrayView getArray(int col, int columnType) {
                 if (!isGapFilling) return baseRecord.getArray(col, columnType);
-                int mode = fillMode(col);
-                if (mode == FILL_KEY) return keysMapRecord.getArray(outputColToKeyPos.getQuick(col), columnType);
-                if (mode >= 0 && outputColToKeyPos.getQuick(mode) >= 0)
-                    return keysMapRecord.getArray(outputColToKeyPos.getQuick(mode), columnType);
-                if ((mode == FILL_PREV_SELF || mode >= 0) && hasKeyPrev())
-                    return prevRecord.getArray(mode >= 0 ? mode : col, columnType);
-                if (mode == FILL_CONSTANT) return constantFills.getQuick(col).getArray(null);
+                int code = dispatchCode[col];
+                if (code == DISPATCH_KEY_SLOT) return keysMapRecord.getArray(dispatchSlot[col], columnType);
+                if (code == DISPATCH_PREV_SLOT) {
+                    if (hasPrevForCurrentGap) return prevRecord.getArray(dispatchSlot[col], columnType);
+                    return null;
+                }
+                if (code == DISPATCH_CONSTANT) return dispatchConstant[col].getArray(null);
                 return null;
             }
 
             @Override
             public BinarySequence getBin(int col) {
                 if (!isGapFilling) return baseRecord.getBin(col);
-                int mode = fillMode(col);
-                if (mode == FILL_KEY) return keysMapRecord.getBin(outputColToKeyPos.getQuick(col));
-                if (mode >= 0 && outputColToKeyPos.getQuick(mode) >= 0)
-                    return keysMapRecord.getBin(outputColToKeyPos.getQuick(mode));
-                if ((mode == FILL_PREV_SELF || mode >= 0) && hasKeyPrev())
-                    return prevRecord.getBin(mode >= 0 ? mode : col);
-                if (mode == FILL_CONSTANT) return constantFills.getQuick(col).getBin(null);
+                int code = dispatchCode[col];
+                if (code == DISPATCH_KEY_SLOT) return keysMapRecord.getBin(dispatchSlot[col]);
+                if (code == DISPATCH_PREV_SLOT) {
+                    if (hasPrevForCurrentGap) return prevRecord.getBin(dispatchSlot[col]);
+                    return null;
+                }
+                if (code == DISPATCH_CONSTANT) return dispatchConstant[col].getBin(null);
                 return null;
             }
 
             @Override
             public long getBinLen(int col) {
                 if (!isGapFilling) return baseRecord.getBinLen(col);
-                int mode = fillMode(col);
-                if (mode == FILL_KEY) return keysMapRecord.getBinLen(outputColToKeyPos.getQuick(col));
-                if (mode >= 0 && outputColToKeyPos.getQuick(mode) >= 0)
-                    return keysMapRecord.getBinLen(outputColToKeyPos.getQuick(mode));
-                if ((mode == FILL_PREV_SELF || mode >= 0) && hasKeyPrev())
-                    return prevRecord.getBinLen(mode >= 0 ? mode : col);
-                if (mode == FILL_CONSTANT) return constantFills.getQuick(col).getBinLen(null);
+                int code = dispatchCode[col];
+                if (code == DISPATCH_KEY_SLOT) return keysMapRecord.getBinLen(dispatchSlot[col]);
+                if (code == DISPATCH_PREV_SLOT) {
+                    if (hasPrevForCurrentGap) return prevRecord.getBinLen(dispatchSlot[col]);
+                    return -1;
+                }
+                if (code == DISPATCH_CONSTANT) return dispatchConstant[col].getBinLen(null);
                 return -1;
             }
 
             @Override
             public boolean getBool(int col) {
                 if (!isGapFilling) return baseRecord.getBool(col);
-                int mode = fillMode(col);
-                if (mode == FILL_KEY) return keysMapRecord.getBool(outputColToKeyPos.getQuick(col));
-                if (mode >= 0 && outputColToKeyPos.getQuick(mode) >= 0)
-                    return keysMapRecord.getBool(outputColToKeyPos.getQuick(mode));
-                int prevSlot = prevValueSlot.getQuick(col);
-                if (prevSlot >= 0 && hasKeyPrev()) return currentMapValue.getBool(prevSlot);
-                if ((mode == FILL_PREV_SELF || mode >= 0) && hasKeyPrev())
-                    return prevRecord.getBool(mode >= 0 ? mode : col);
-                if (mode == FILL_CONSTANT) return constantFills.getQuick(col).getBool(null);
+                int code = dispatchCode[col];
+                if (code == DISPATCH_KEY_SLOT) return keysMapRecord.getBool(dispatchSlot[col]);
+                if (code == DISPATCH_PREV_CACHE_SLOT) {
+                    if (hasPrevForCurrentGap) return currentMapValue.getBool(dispatchSlot[col]);
+                    return false;
+                }
+                if (code == DISPATCH_PREV_SLOT) {
+                    if (hasPrevForCurrentGap) return prevRecord.getBool(dispatchSlot[col]);
+                    return false;
+                }
+                if (code == DISPATCH_CONSTANT) return dispatchConstant[col].getBool(null);
                 return false;
             }
 
             @Override
             public byte getByte(int col) {
                 if (!isGapFilling) return baseRecord.getByte(col);
-                int mode = fillMode(col);
-                if (mode == FILL_KEY) return keysMapRecord.getByte(outputColToKeyPos.getQuick(col));
-                if (mode >= 0 && outputColToKeyPos.getQuick(mode) >= 0)
-                    return keysMapRecord.getByte(outputColToKeyPos.getQuick(mode));
-                int prevSlot = prevValueSlot.getQuick(col);
-                if (prevSlot >= 0 && hasKeyPrev()) return currentMapValue.getByte(prevSlot);
-                if ((mode == FILL_PREV_SELF || mode >= 0) && hasKeyPrev())
-                    return prevRecord.getByte(mode >= 0 ? mode : col);
-                if (mode == FILL_CONSTANT) return (byte) constantFills.getQuick(col).getInt(null);
+                int code = dispatchCode[col];
+                if (code == DISPATCH_KEY_SLOT) return keysMapRecord.getByte(dispatchSlot[col]);
+                if (code == DISPATCH_PREV_CACHE_SLOT) {
+                    if (hasPrevForCurrentGap) return currentMapValue.getByte(dispatchSlot[col]);
+                    return 0;
+                }
+                if (code == DISPATCH_PREV_SLOT) {
+                    if (hasPrevForCurrentGap) return prevRecord.getByte(dispatchSlot[col]);
+                    return 0;
+                }
+                // Constant byte fills go through getInt() to match the
+                // narrow-integer convention used by Function implementations.
+                if (code == DISPATCH_CONSTANT) return (byte) dispatchConstant[col].getInt(null);
                 return 0;
             }
 
             @Override
             public char getChar(int col) {
                 if (!isGapFilling) return baseRecord.getChar(col);
-                int mode = fillMode(col);
-                if (mode == FILL_KEY) return keysMapRecord.getChar(outputColToKeyPos.getQuick(col));
-                if (mode >= 0 && outputColToKeyPos.getQuick(mode) >= 0)
-                    return keysMapRecord.getChar(outputColToKeyPos.getQuick(mode));
-                int prevSlot = prevValueSlot.getQuick(col);
-                if (prevSlot >= 0 && hasKeyPrev()) return currentMapValue.getChar(prevSlot);
-                if ((mode == FILL_PREV_SELF || mode >= 0) && hasKeyPrev())
-                    return prevRecord.getChar(mode >= 0 ? mode : col);
-                if (mode == FILL_CONSTANT) return constantFills.getQuick(col).getChar(null);
+                int code = dispatchCode[col];
+                if (code == DISPATCH_KEY_SLOT) return keysMapRecord.getChar(dispatchSlot[col]);
+                if (code == DISPATCH_PREV_CACHE_SLOT) {
+                    if (hasPrevForCurrentGap) return currentMapValue.getChar(dispatchSlot[col]);
+                    return 0;
+                }
+                if (code == DISPATCH_PREV_SLOT) {
+                    if (hasPrevForCurrentGap) return prevRecord.getChar(dispatchSlot[col]);
+                    return 0;
+                }
+                if (code == DISPATCH_CONSTANT) return dispatchConstant[col].getChar(null);
                 return 0;
             }
 
@@ -985,21 +1001,18 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
                     baseRecord.getDecimal128(col, sink);
                     return;
                 }
-                int mode = fillMode(col);
-                if (mode == FILL_KEY) {
-                    keysMapRecord.getDecimal128(outputColToKeyPos.getQuick(col), sink);
+                int code = dispatchCode[col];
+                if (code == DISPATCH_KEY_SLOT) {
+                    keysMapRecord.getDecimal128(dispatchSlot[col], sink);
                     return;
                 }
-                if (mode >= 0 && outputColToKeyPos.getQuick(mode) >= 0) {
-                    keysMapRecord.getDecimal128(outputColToKeyPos.getQuick(mode), sink);
+                if (code == DISPATCH_PREV_SLOT) {
+                    if (hasPrevForCurrentGap) prevRecord.getDecimal128(dispatchSlot[col], sink);
+                    else sink.ofRawNull();
                     return;
                 }
-                if ((mode == FILL_PREV_SELF || mode >= 0) && hasKeyPrev()) {
-                    prevRecord.getDecimal128(mode >= 0 ? mode : col, sink);
-                    return;
-                }
-                if (mode == FILL_CONSTANT) {
-                    constantFills.getQuick(col).getDecimal128(null, sink);
+                if (code == DISPATCH_CONSTANT) {
+                    dispatchConstant[col].getDecimal128(null, sink);
                     return;
                 }
                 sink.ofRawNull();
@@ -1008,15 +1021,17 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
             @Override
             public short getDecimal16(int col) {
                 if (!isGapFilling) return baseRecord.getDecimal16(col);
-                int mode = fillMode(col);
-                if (mode == FILL_KEY) return keysMapRecord.getDecimal16(outputColToKeyPos.getQuick(col));
-                if (mode >= 0 && outputColToKeyPos.getQuick(mode) >= 0)
-                    return keysMapRecord.getDecimal16(outputColToKeyPos.getQuick(mode));
-                int prevSlot = prevValueSlot.getQuick(col);
-                if (prevSlot >= 0 && hasKeyPrev()) return currentMapValue.getShort(prevSlot);
-                if ((mode == FILL_PREV_SELF || mode >= 0) && hasKeyPrev())
-                    return prevRecord.getDecimal16(mode >= 0 ? mode : col);
-                if (mode == FILL_CONSTANT) return constantFills.getQuick(col).getDecimal16(null);
+                int code = dispatchCode[col];
+                if (code == DISPATCH_KEY_SLOT) return keysMapRecord.getDecimal16(dispatchSlot[col]);
+                if (code == DISPATCH_PREV_CACHE_SLOT) {
+                    if (hasPrevForCurrentGap) return currentMapValue.getShort(dispatchSlot[col]);
+                    return Decimals.DECIMAL16_NULL;
+                }
+                if (code == DISPATCH_PREV_SLOT) {
+                    if (hasPrevForCurrentGap) return prevRecord.getDecimal16(dispatchSlot[col]);
+                    return Decimals.DECIMAL16_NULL;
+                }
+                if (code == DISPATCH_CONSTANT) return dispatchConstant[col].getDecimal16(null);
                 return Decimals.DECIMAL16_NULL;
             }
 
@@ -1026,21 +1041,18 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
                     baseRecord.getDecimal256(col, sink);
                     return;
                 }
-                int mode = fillMode(col);
-                if (mode == FILL_KEY) {
-                    keysMapRecord.getDecimal256(outputColToKeyPos.getQuick(col), sink);
+                int code = dispatchCode[col];
+                if (code == DISPATCH_KEY_SLOT) {
+                    keysMapRecord.getDecimal256(dispatchSlot[col], sink);
                     return;
                 }
-                if (mode >= 0 && outputColToKeyPos.getQuick(mode) >= 0) {
-                    keysMapRecord.getDecimal256(outputColToKeyPos.getQuick(mode), sink);
+                if (code == DISPATCH_PREV_SLOT) {
+                    if (hasPrevForCurrentGap) prevRecord.getDecimal256(dispatchSlot[col], sink);
+                    else sink.ofRawNull();
                     return;
                 }
-                if ((mode == FILL_PREV_SELF || mode >= 0) && hasKeyPrev()) {
-                    prevRecord.getDecimal256(mode >= 0 ? mode : col, sink);
-                    return;
-                }
-                if (mode == FILL_CONSTANT) {
-                    constantFills.getQuick(col).getDecimal256(null, sink);
+                if (code == DISPATCH_CONSTANT) {
+                    dispatchConstant[col].getDecimal256(null, sink);
                     return;
                 }
                 sink.ofRawNull();
@@ -1049,219 +1061,243 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
             @Override
             public int getDecimal32(int col) {
                 if (!isGapFilling) return baseRecord.getDecimal32(col);
-                int mode = fillMode(col);
-                if (mode == FILL_KEY) return keysMapRecord.getDecimal32(outputColToKeyPos.getQuick(col));
-                if (mode >= 0 && outputColToKeyPos.getQuick(mode) >= 0)
-                    return keysMapRecord.getDecimal32(outputColToKeyPos.getQuick(mode));
-                int prevSlot = prevValueSlot.getQuick(col);
-                if (prevSlot >= 0 && hasKeyPrev()) return currentMapValue.getInt(prevSlot);
-                if ((mode == FILL_PREV_SELF || mode >= 0) && hasKeyPrev())
-                    return prevRecord.getDecimal32(mode >= 0 ? mode : col);
-                if (mode == FILL_CONSTANT) return constantFills.getQuick(col).getDecimal32(null);
+                int code = dispatchCode[col];
+                if (code == DISPATCH_KEY_SLOT) return keysMapRecord.getDecimal32(dispatchSlot[col]);
+                if (code == DISPATCH_PREV_CACHE_SLOT) {
+                    if (hasPrevForCurrentGap) return currentMapValue.getInt(dispatchSlot[col]);
+                    return Decimals.DECIMAL32_NULL;
+                }
+                if (code == DISPATCH_PREV_SLOT) {
+                    if (hasPrevForCurrentGap) return prevRecord.getDecimal32(dispatchSlot[col]);
+                    return Decimals.DECIMAL32_NULL;
+                }
+                if (code == DISPATCH_CONSTANT) return dispatchConstant[col].getDecimal32(null);
                 return Decimals.DECIMAL32_NULL;
             }
 
             @Override
             public long getDecimal64(int col) {
                 if (!isGapFilling) return baseRecord.getDecimal64(col);
-                int mode = fillMode(col);
-                if (mode == FILL_KEY) return keysMapRecord.getDecimal64(outputColToKeyPos.getQuick(col));
-                if (mode >= 0 && outputColToKeyPos.getQuick(mode) >= 0)
-                    return keysMapRecord.getDecimal64(outputColToKeyPos.getQuick(mode));
-                int prevSlot = prevValueSlot.getQuick(col);
-                if (prevSlot >= 0 && hasKeyPrev()) return currentMapValue.getLong(prevSlot);
-                if ((mode == FILL_PREV_SELF || mode >= 0) && hasKeyPrev())
-                    return prevRecord.getDecimal64(mode >= 0 ? mode : col);
-                if (mode == FILL_CONSTANT) return constantFills.getQuick(col).getDecimal64(null);
+                int code = dispatchCode[col];
+                if (code == DISPATCH_KEY_SLOT) return keysMapRecord.getDecimal64(dispatchSlot[col]);
+                if (code == DISPATCH_PREV_CACHE_SLOT) {
+                    if (hasPrevForCurrentGap) return currentMapValue.getLong(dispatchSlot[col]);
+                    return Decimals.DECIMAL64_NULL;
+                }
+                if (code == DISPATCH_PREV_SLOT) {
+                    if (hasPrevForCurrentGap) return prevRecord.getDecimal64(dispatchSlot[col]);
+                    return Decimals.DECIMAL64_NULL;
+                }
+                if (code == DISPATCH_CONSTANT) return dispatchConstant[col].getDecimal64(null);
                 return Decimals.DECIMAL64_NULL;
             }
 
             @Override
             public byte getDecimal8(int col) {
                 if (!isGapFilling) return baseRecord.getDecimal8(col);
-                int mode = fillMode(col);
-                if (mode == FILL_KEY) return keysMapRecord.getDecimal8(outputColToKeyPos.getQuick(col));
-                if (mode >= 0 && outputColToKeyPos.getQuick(mode) >= 0)
-                    return keysMapRecord.getDecimal8(outputColToKeyPos.getQuick(mode));
-                int prevSlot = prevValueSlot.getQuick(col);
-                if (prevSlot >= 0 && hasKeyPrev()) return currentMapValue.getByte(prevSlot);
-                if ((mode == FILL_PREV_SELF || mode >= 0) && hasKeyPrev())
-                    return prevRecord.getDecimal8(mode >= 0 ? mode : col);
-                if (mode == FILL_CONSTANT) return constantFills.getQuick(col).getDecimal8(null);
+                int code = dispatchCode[col];
+                if (code == DISPATCH_KEY_SLOT) return keysMapRecord.getDecimal8(dispatchSlot[col]);
+                if (code == DISPATCH_PREV_CACHE_SLOT) {
+                    if (hasPrevForCurrentGap) return currentMapValue.getByte(dispatchSlot[col]);
+                    return Decimals.DECIMAL8_NULL;
+                }
+                if (code == DISPATCH_PREV_SLOT) {
+                    if (hasPrevForCurrentGap) return prevRecord.getDecimal8(dispatchSlot[col]);
+                    return Decimals.DECIMAL8_NULL;
+                }
+                if (code == DISPATCH_CONSTANT) return dispatchConstant[col].getDecimal8(null);
                 return Decimals.DECIMAL8_NULL;
             }
 
             @Override
             public double getDouble(int col) {
                 if (!isGapFilling) return baseRecord.getDouble(col);
-                int mode = fillMode(col);
-                if (mode == FILL_KEY) return keysMapRecord.getDouble(outputColToKeyPos.getQuick(col));
-                if (mode >= 0 && outputColToKeyPos.getQuick(mode) >= 0)
-                    return keysMapRecord.getDouble(outputColToKeyPos.getQuick(mode));
-                int prevSlot = prevValueSlot.getQuick(col);
-                if (prevSlot >= 0 && hasKeyPrev()) return currentMapValue.getDouble(prevSlot);
-                if ((mode == FILL_PREV_SELF || mode >= 0) && hasKeyPrev())
-                    return prevRecord.getDouble(mode >= 0 ? mode : col);
-                if (mode == FILL_CONSTANT) return constantFills.getQuick(col).getDouble(null);
+                int code = dispatchCode[col];
+                if (code == DISPATCH_KEY_SLOT) return keysMapRecord.getDouble(dispatchSlot[col]);
+                if (code == DISPATCH_PREV_CACHE_SLOT) {
+                    if (hasPrevForCurrentGap) return currentMapValue.getDouble(dispatchSlot[col]);
+                    return Double.NaN;
+                }
+                if (code == DISPATCH_PREV_SLOT) {
+                    if (hasPrevForCurrentGap) return prevRecord.getDouble(dispatchSlot[col]);
+                    return Double.NaN;
+                }
+                if (code == DISPATCH_CONSTANT) return dispatchConstant[col].getDouble(null);
                 return Double.NaN;
             }
 
             @Override
             public float getFloat(int col) {
                 if (!isGapFilling) return baseRecord.getFloat(col);
-                int mode = fillMode(col);
-                if (mode == FILL_KEY) return keysMapRecord.getFloat(outputColToKeyPos.getQuick(col));
-                if (mode >= 0 && outputColToKeyPos.getQuick(mode) >= 0)
-                    return keysMapRecord.getFloat(outputColToKeyPos.getQuick(mode));
-                int prevSlot = prevValueSlot.getQuick(col);
-                if (prevSlot >= 0 && hasKeyPrev()) return currentMapValue.getFloat(prevSlot);
-                if ((mode == FILL_PREV_SELF || mode >= 0) && hasKeyPrev())
-                    return prevRecord.getFloat(mode >= 0 ? mode : col);
-                if (mode == FILL_CONSTANT) return constantFills.getQuick(col).getFloat(null);
+                int code = dispatchCode[col];
+                if (code == DISPATCH_KEY_SLOT) return keysMapRecord.getFloat(dispatchSlot[col]);
+                if (code == DISPATCH_PREV_CACHE_SLOT) {
+                    if (hasPrevForCurrentGap) return currentMapValue.getFloat(dispatchSlot[col]);
+                    return Float.NaN;
+                }
+                if (code == DISPATCH_PREV_SLOT) {
+                    if (hasPrevForCurrentGap) return prevRecord.getFloat(dispatchSlot[col]);
+                    return Float.NaN;
+                }
+                if (code == DISPATCH_CONSTANT) return dispatchConstant[col].getFloat(null);
                 return Float.NaN;
             }
 
             @Override
             public byte getGeoByte(int col) {
                 if (!isGapFilling) return baseRecord.getGeoByte(col);
-                int mode = fillMode(col);
-                if (mode == FILL_KEY) return keysMapRecord.getGeoByte(outputColToKeyPos.getQuick(col));
-                if (mode >= 0 && outputColToKeyPos.getQuick(mode) >= 0)
-                    return keysMapRecord.getGeoByte(outputColToKeyPos.getQuick(mode));
-                int prevSlot = prevValueSlot.getQuick(col);
-                if (prevSlot >= 0 && hasKeyPrev()) return currentMapValue.getByte(prevSlot);
-                if ((mode == FILL_PREV_SELF || mode >= 0) && hasKeyPrev())
-                    return prevRecord.getGeoByte(mode >= 0 ? mode : col);
-                if (mode == FILL_CONSTANT) return constantFills.getQuick(col).getGeoByte(null);
+                int code = dispatchCode[col];
+                if (code == DISPATCH_KEY_SLOT) return keysMapRecord.getGeoByte(dispatchSlot[col]);
+                if (code == DISPATCH_PREV_CACHE_SLOT) {
+                    if (hasPrevForCurrentGap) return currentMapValue.getByte(dispatchSlot[col]);
+                    return GeoHashes.BYTE_NULL;
+                }
+                if (code == DISPATCH_PREV_SLOT) {
+                    if (hasPrevForCurrentGap) return prevRecord.getGeoByte(dispatchSlot[col]);
+                    return GeoHashes.BYTE_NULL;
+                }
+                if (code == DISPATCH_CONSTANT) return dispatchConstant[col].getGeoByte(null);
                 return GeoHashes.BYTE_NULL;
             }
 
             @Override
             public int getGeoInt(int col) {
                 if (!isGapFilling) return baseRecord.getGeoInt(col);
-                int mode = fillMode(col);
-                if (mode == FILL_KEY) return keysMapRecord.getGeoInt(outputColToKeyPos.getQuick(col));
-                if (mode >= 0 && outputColToKeyPos.getQuick(mode) >= 0)
-                    return keysMapRecord.getGeoInt(outputColToKeyPos.getQuick(mode));
-                int prevSlot = prevValueSlot.getQuick(col);
-                if (prevSlot >= 0 && hasKeyPrev()) return currentMapValue.getInt(prevSlot);
-                if ((mode == FILL_PREV_SELF || mode >= 0) && hasKeyPrev())
-                    return prevRecord.getGeoInt(mode >= 0 ? mode : col);
-                if (mode == FILL_CONSTANT) return constantFills.getQuick(col).getGeoInt(null);
+                int code = dispatchCode[col];
+                if (code == DISPATCH_KEY_SLOT) return keysMapRecord.getGeoInt(dispatchSlot[col]);
+                if (code == DISPATCH_PREV_CACHE_SLOT) {
+                    if (hasPrevForCurrentGap) return currentMapValue.getInt(dispatchSlot[col]);
+                    return GeoHashes.INT_NULL;
+                }
+                if (code == DISPATCH_PREV_SLOT) {
+                    if (hasPrevForCurrentGap) return prevRecord.getGeoInt(dispatchSlot[col]);
+                    return GeoHashes.INT_NULL;
+                }
+                if (code == DISPATCH_CONSTANT) return dispatchConstant[col].getGeoInt(null);
                 return GeoHashes.INT_NULL;
             }
 
             @Override
             public long getGeoLong(int col) {
                 if (!isGapFilling) return baseRecord.getGeoLong(col);
-                int mode = fillMode(col);
-                if (mode == FILL_KEY) return keysMapRecord.getGeoLong(outputColToKeyPos.getQuick(col));
-                if (mode >= 0 && outputColToKeyPos.getQuick(mode) >= 0)
-                    return keysMapRecord.getGeoLong(outputColToKeyPos.getQuick(mode));
-                int prevSlot = prevValueSlot.getQuick(col);
-                if (prevSlot >= 0 && hasKeyPrev()) return currentMapValue.getLong(prevSlot);
-                if ((mode == FILL_PREV_SELF || mode >= 0) && hasKeyPrev())
-                    return prevRecord.getGeoLong(mode >= 0 ? mode : col);
-                if (mode == FILL_CONSTANT) return constantFills.getQuick(col).getGeoLong(null);
+                int code = dispatchCode[col];
+                if (code == DISPATCH_KEY_SLOT) return keysMapRecord.getGeoLong(dispatchSlot[col]);
+                if (code == DISPATCH_PREV_CACHE_SLOT) {
+                    if (hasPrevForCurrentGap) return currentMapValue.getLong(dispatchSlot[col]);
+                    return GeoHashes.NULL;
+                }
+                if (code == DISPATCH_PREV_SLOT) {
+                    if (hasPrevForCurrentGap) return prevRecord.getGeoLong(dispatchSlot[col]);
+                    return GeoHashes.NULL;
+                }
+                if (code == DISPATCH_CONSTANT) return dispatchConstant[col].getGeoLong(null);
                 return GeoHashes.NULL;
             }
 
             @Override
             public short getGeoShort(int col) {
                 if (!isGapFilling) return baseRecord.getGeoShort(col);
-                int mode = fillMode(col);
-                if (mode == FILL_KEY) return keysMapRecord.getGeoShort(outputColToKeyPos.getQuick(col));
-                if (mode >= 0 && outputColToKeyPos.getQuick(mode) >= 0)
-                    return keysMapRecord.getGeoShort(outputColToKeyPos.getQuick(mode));
-                int prevSlot = prevValueSlot.getQuick(col);
-                if (prevSlot >= 0 && hasKeyPrev()) return currentMapValue.getShort(prevSlot);
-                if ((mode == FILL_PREV_SELF || mode >= 0) && hasKeyPrev())
-                    return prevRecord.getGeoShort(mode >= 0 ? mode : col);
-                if (mode == FILL_CONSTANT) return constantFills.getQuick(col).getGeoShort(null);
+                int code = dispatchCode[col];
+                if (code == DISPATCH_KEY_SLOT) return keysMapRecord.getGeoShort(dispatchSlot[col]);
+                if (code == DISPATCH_PREV_CACHE_SLOT) {
+                    if (hasPrevForCurrentGap) return currentMapValue.getShort(dispatchSlot[col]);
+                    return GeoHashes.SHORT_NULL;
+                }
+                if (code == DISPATCH_PREV_SLOT) {
+                    if (hasPrevForCurrentGap) return prevRecord.getGeoShort(dispatchSlot[col]);
+                    return GeoHashes.SHORT_NULL;
+                }
+                if (code == DISPATCH_CONSTANT) return dispatchConstant[col].getGeoShort(null);
                 return GeoHashes.SHORT_NULL;
             }
 
             @Override
             public int getIPv4(int col) {
                 if (!isGapFilling) return baseRecord.getIPv4(col);
-                int mode = fillMode(col);
-                if (mode == FILL_KEY) return keysMapRecord.getIPv4(outputColToKeyPos.getQuick(col));
-                if (mode >= 0 && outputColToKeyPos.getQuick(mode) >= 0)
-                    return keysMapRecord.getIPv4(outputColToKeyPos.getQuick(mode));
-                int prevSlot = prevValueSlot.getQuick(col);
-                if (prevSlot >= 0 && hasKeyPrev()) return currentMapValue.getInt(prevSlot);
-                if ((mode == FILL_PREV_SELF || mode >= 0) && hasKeyPrev())
-                    return prevRecord.getIPv4(mode >= 0 ? mode : col);
-                if (mode == FILL_CONSTANT) return constantFills.getQuick(col).getIPv4(null);
+                int code = dispatchCode[col];
+                if (code == DISPATCH_KEY_SLOT) return keysMapRecord.getIPv4(dispatchSlot[col]);
+                if (code == DISPATCH_PREV_CACHE_SLOT) {
+                    if (hasPrevForCurrentGap) return currentMapValue.getIPv4(dispatchSlot[col]);
+                    return Numbers.IPv4_NULL;
+                }
+                if (code == DISPATCH_PREV_SLOT) {
+                    if (hasPrevForCurrentGap) return prevRecord.getIPv4(dispatchSlot[col]);
+                    return Numbers.IPv4_NULL;
+                }
+                if (code == DISPATCH_CONSTANT) return dispatchConstant[col].getIPv4(null);
                 return Numbers.IPv4_NULL;
             }
 
             @Override
             public int getInt(int col) {
                 if (!isGapFilling) return baseRecord.getInt(col);
-                int mode = fillMode(col);
-                if (mode == FILL_KEY) return keysMapRecord.getInt(outputColToKeyPos.getQuick(col));
-                if (mode >= 0 && outputColToKeyPos.getQuick(mode) >= 0)
-                    return keysMapRecord.getInt(outputColToKeyPos.getQuick(mode));
-                int prevSlot = prevValueSlot.getQuick(col);
-                if (prevSlot >= 0 && hasKeyPrev()) return currentMapValue.getInt(prevSlot);
-                if ((mode == FILL_PREV_SELF || mode >= 0) && hasKeyPrev())
-                    return prevRecord.getInt(mode >= 0 ? mode : col);
-                if (mode == FILL_CONSTANT) return constantFills.getQuick(col).getInt(null);
+                int code = dispatchCode[col];
+                if (code == DISPATCH_KEY_SLOT) return keysMapRecord.getInt(dispatchSlot[col]);
+                if (code == DISPATCH_PREV_CACHE_SLOT) {
+                    if (hasPrevForCurrentGap) return currentMapValue.getInt(dispatchSlot[col]);
+                    return Numbers.INT_NULL;
+                }
+                if (code == DISPATCH_PREV_SLOT) {
+                    if (hasPrevForCurrentGap) return prevRecord.getInt(dispatchSlot[col]);
+                    return Numbers.INT_NULL;
+                }
+                if (code == DISPATCH_CONSTANT) return dispatchConstant[col].getInt(null);
                 return Numbers.INT_NULL;
             }
 
             @Override
             public Interval getInterval(int col) {
                 if (!isGapFilling) return baseRecord.getInterval(col);
-                int mode = fillMode(col);
-                if (mode == FILL_KEY) return keysMapRecord.getInterval(outputColToKeyPos.getQuick(col));
-                if (mode >= 0 && outputColToKeyPos.getQuick(mode) >= 0)
-                    return keysMapRecord.getInterval(outputColToKeyPos.getQuick(mode));
-                if ((mode == FILL_PREV_SELF || mode >= 0) && hasKeyPrev())
-                    return prevRecord.getInterval(mode >= 0 ? mode : col);
-                if (mode == FILL_CONSTANT) return constantFills.getQuick(col).getInterval(null);
+                int code = dispatchCode[col];
+                if (code == DISPATCH_KEY_SLOT) return keysMapRecord.getInterval(dispatchSlot[col]);
+                if (code == DISPATCH_PREV_SLOT) {
+                    if (hasPrevForCurrentGap) return prevRecord.getInterval(dispatchSlot[col]);
+                    return Interval.NULL;
+                }
+                if (code == DISPATCH_CONSTANT) return dispatchConstant[col].getInterval(null);
                 return Interval.NULL;
             }
 
             @Override
             public long getLong(int col) {
                 if (!isGapFilling) return baseRecord.getLong(col);
-                int mode = fillMode(col);
-                if (mode == FILL_KEY) return keysMapRecord.getLong(outputColToKeyPos.getQuick(col));
-                if (mode >= 0 && outputColToKeyPos.getQuick(mode) >= 0)
-                    return keysMapRecord.getLong(outputColToKeyPos.getQuick(mode));
-                int prevSlot = prevValueSlot.getQuick(col);
-                if (prevSlot >= 0 && hasKeyPrev()) return currentMapValue.getLong(prevSlot);
-                if ((mode == FILL_PREV_SELF || mode >= 0) && hasKeyPrev())
-                    return prevRecord.getLong(mode >= 0 ? mode : col);
-                if (mode == FILL_CONSTANT) return constantFills.getQuick(col).getLong(null);
+                int code = dispatchCode[col];
+                if (code == DISPATCH_KEY_SLOT) return keysMapRecord.getLong(dispatchSlot[col]);
+                if (code == DISPATCH_PREV_CACHE_SLOT) {
+                    if (hasPrevForCurrentGap) return currentMapValue.getLong(dispatchSlot[col]);
+                    return Numbers.LONG_NULL;
+                }
+                if (code == DISPATCH_PREV_SLOT) {
+                    if (hasPrevForCurrentGap) return prevRecord.getLong(dispatchSlot[col]);
+                    return Numbers.LONG_NULL;
+                }
+                if (code == DISPATCH_CONSTANT) return dispatchConstant[col].getLong(null);
                 return Numbers.LONG_NULL;
             }
 
             @Override
             public long getLong128Hi(int col) {
                 if (!isGapFilling) return baseRecord.getLong128Hi(col);
-                int mode = fillMode(col);
-                if (mode == FILL_KEY) return keysMapRecord.getLong128Hi(outputColToKeyPos.getQuick(col));
-                if (mode >= 0 && outputColToKeyPos.getQuick(mode) >= 0)
-                    return keysMapRecord.getLong128Hi(outputColToKeyPos.getQuick(mode));
-                if ((mode == FILL_PREV_SELF || mode >= 0) && hasKeyPrev())
-                    return prevRecord.getLong128Hi(mode >= 0 ? mode : col);
-                if (mode == FILL_CONSTANT) return constantFills.getQuick(col).getLong128Hi(null);
+                int code = dispatchCode[col];
+                if (code == DISPATCH_KEY_SLOT) return keysMapRecord.getLong128Hi(dispatchSlot[col]);
+                if (code == DISPATCH_PREV_SLOT) {
+                    if (hasPrevForCurrentGap) return prevRecord.getLong128Hi(dispatchSlot[col]);
+                    return Numbers.LONG_NULL;
+                }
+                if (code == DISPATCH_CONSTANT) return dispatchConstant[col].getLong128Hi(null);
                 return Numbers.LONG_NULL;
             }
 
             @Override
             public long getLong128Lo(int col) {
                 if (!isGapFilling) return baseRecord.getLong128Lo(col);
-                int mode = fillMode(col);
-                if (mode == FILL_KEY) return keysMapRecord.getLong128Lo(outputColToKeyPos.getQuick(col));
-                if (mode >= 0 && outputColToKeyPos.getQuick(mode) >= 0)
-                    return keysMapRecord.getLong128Lo(outputColToKeyPos.getQuick(mode));
-                if ((mode == FILL_PREV_SELF || mode >= 0) && hasKeyPrev())
-                    return prevRecord.getLong128Lo(mode >= 0 ? mode : col);
-                if (mode == FILL_CONSTANT) return constantFills.getQuick(col).getLong128Lo(null);
+                int code = dispatchCode[col];
+                if (code == DISPATCH_KEY_SLOT) return keysMapRecord.getLong128Lo(dispatchSlot[col]);
+                if (code == DISPATCH_PREV_SLOT) {
+                    if (hasPrevForCurrentGap) return prevRecord.getLong128Lo(dispatchSlot[col]);
+                    return Numbers.LONG_NULL;
+                }
+                if (code == DISPATCH_CONSTANT) return dispatchConstant[col].getLong128Lo(null);
                 return Numbers.LONG_NULL;
             }
 
@@ -1271,21 +1307,17 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
                     baseRecord.getLong256(col, sink);
                     return;
                 }
-                int mode = fillMode(col);
-                if (mode == FILL_KEY) {
-                    keysMapRecord.getLong256(outputColToKeyPos.getQuick(col), sink);
+                int code = dispatchCode[col];
+                if (code == DISPATCH_KEY_SLOT) {
+                    keysMapRecord.getLong256(dispatchSlot[col], sink);
                     return;
                 }
-                if (mode >= 0 && outputColToKeyPos.getQuick(mode) >= 0) {
-                    keysMapRecord.getLong256(outputColToKeyPos.getQuick(mode), sink);
+                if (code == DISPATCH_PREV_SLOT) {
+                    if (hasPrevForCurrentGap) prevRecord.getLong256(dispatchSlot[col], sink);
                     return;
                 }
-                if ((mode == FILL_PREV_SELF || mode >= 0) && hasKeyPrev()) {
-                    prevRecord.getLong256(mode >= 0 ? mode : col, sink);
-                    return;
-                }
-                if (mode == FILL_CONSTANT) {
-                    constantFills.getQuick(col).getLong256(null, sink);
+                if (code == DISPATCH_CONSTANT) {
+                    dispatchConstant[col].getLong256(null, sink);
                 }
                 // Per the Record.getLong256(int, CharSink) contract: null Long256 appends nothing to
                 // the sink. The caller owns the delimiters on both sides, and an empty segment reads
@@ -1297,173 +1329,181 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
             @Override
             public Long256 getLong256A(int col) {
                 if (!isGapFilling) return baseRecord.getLong256A(col);
-                int mode = fillMode(col);
-                if (mode == FILL_KEY) return keysMapRecord.getLong256A(outputColToKeyPos.getQuick(col));
-                if (mode >= 0 && outputColToKeyPos.getQuick(mode) >= 0)
-                    return keysMapRecord.getLong256A(outputColToKeyPos.getQuick(mode));
-                if ((mode == FILL_PREV_SELF || mode >= 0) && hasKeyPrev())
-                    return prevRecord.getLong256A(mode >= 0 ? mode : col);
-                if (mode == FILL_CONSTANT) return constantFills.getQuick(col).getLong256A(null);
+                int code = dispatchCode[col];
+                if (code == DISPATCH_KEY_SLOT) return keysMapRecord.getLong256A(dispatchSlot[col]);
+                if (code == DISPATCH_PREV_SLOT) {
+                    if (hasPrevForCurrentGap) return prevRecord.getLong256A(dispatchSlot[col]);
+                    return Long256Impl.NULL_LONG256;
+                }
+                if (code == DISPATCH_CONSTANT) return dispatchConstant[col].getLong256A(null);
                 return Long256Impl.NULL_LONG256;
             }
 
             @Override
             public Long256 getLong256B(int col) {
                 if (!isGapFilling) return baseRecord.getLong256B(col);
-                int mode = fillMode(col);
-                if (mode == FILL_KEY) return keysMapRecord.getLong256B(outputColToKeyPos.getQuick(col));
-                if (mode >= 0 && outputColToKeyPos.getQuick(mode) >= 0)
-                    return keysMapRecord.getLong256B(outputColToKeyPos.getQuick(mode));
-                if ((mode == FILL_PREV_SELF || mode >= 0) && hasKeyPrev())
-                    return prevRecord.getLong256B(mode >= 0 ? mode : col);
-                if (mode == FILL_CONSTANT) return constantFills.getQuick(col).getLong256B(null);
+                int code = dispatchCode[col];
+                if (code == DISPATCH_KEY_SLOT) return keysMapRecord.getLong256B(dispatchSlot[col]);
+                if (code == DISPATCH_PREV_SLOT) {
+                    if (hasPrevForCurrentGap) return prevRecord.getLong256B(dispatchSlot[col]);
+                    return Long256Impl.NULL_LONG256;
+                }
+                if (code == DISPATCH_CONSTANT) return dispatchConstant[col].getLong256B(null);
                 return Long256Impl.NULL_LONG256;
             }
 
             @Override
             public short getShort(int col) {
                 if (!isGapFilling) return baseRecord.getShort(col);
-                int mode = fillMode(col);
-                if (mode == FILL_KEY) return keysMapRecord.getShort(outputColToKeyPos.getQuick(col));
-                if (mode >= 0 && outputColToKeyPos.getQuick(mode) >= 0)
-                    return keysMapRecord.getShort(outputColToKeyPos.getQuick(mode));
-                int prevSlot = prevValueSlot.getQuick(col);
-                if (prevSlot >= 0 && hasKeyPrev()) return currentMapValue.getShort(prevSlot);
-                if ((mode == FILL_PREV_SELF || mode >= 0) && hasKeyPrev())
-                    return prevRecord.getShort(mode >= 0 ? mode : col);
-                if (mode == FILL_CONSTANT) return (short) constantFills.getQuick(col).getInt(null);
+                int code = dispatchCode[col];
+                if (code == DISPATCH_KEY_SLOT) return keysMapRecord.getShort(dispatchSlot[col]);
+                if (code == DISPATCH_PREV_CACHE_SLOT) {
+                    if (hasPrevForCurrentGap) return currentMapValue.getShort(dispatchSlot[col]);
+                    return 0;
+                }
+                if (code == DISPATCH_PREV_SLOT) {
+                    if (hasPrevForCurrentGap) return prevRecord.getShort(dispatchSlot[col]);
+                    return 0;
+                }
+                // Constant short fills go through getInt() to match the
+                // narrow-integer convention used by Function implementations.
+                if (code == DISPATCH_CONSTANT) return (short) dispatchConstant[col].getInt(null);
                 return 0;
             }
 
             @Override
             public CharSequence getStrA(int col) {
                 if (!isGapFilling) return baseRecord.getStrA(col);
-                int mode = fillMode(col);
-                if (mode == FILL_KEY) return keysMapRecord.getStrA(outputColToKeyPos.getQuick(col));
-                if (mode >= 0 && outputColToKeyPos.getQuick(mode) >= 0)
-                    return keysMapRecord.getStrA(outputColToKeyPos.getQuick(mode));
-                if ((mode == FILL_PREV_SELF || mode >= 0) && hasKeyPrev())
-                    return prevRecord.getStrA(mode >= 0 ? mode : col);
-                if (mode == FILL_CONSTANT) return constantFills.getQuick(col).getStrA(null);
+                int code = dispatchCode[col];
+                if (code == DISPATCH_KEY_SLOT) return keysMapRecord.getStrA(dispatchSlot[col]);
+                if (code == DISPATCH_PREV_SLOT) {
+                    if (hasPrevForCurrentGap) return prevRecord.getStrA(dispatchSlot[col]);
+                    return null;
+                }
+                if (code == DISPATCH_CONSTANT) return dispatchConstant[col].getStrA(null);
                 return null;
             }
 
             @Override
             public CharSequence getStrB(int col) {
                 if (!isGapFilling) return baseRecord.getStrB(col);
-                int mode = fillMode(col);
-                if (mode == FILL_KEY) return keysMapRecord.getStrB(outputColToKeyPos.getQuick(col));
-                if (mode >= 0 && outputColToKeyPos.getQuick(mode) >= 0)
-                    return keysMapRecord.getStrB(outputColToKeyPos.getQuick(mode));
-                if ((mode == FILL_PREV_SELF || mode >= 0) && hasKeyPrev())
-                    return prevRecord.getStrB(mode >= 0 ? mode : col);
-                if (mode == FILL_CONSTANT) return constantFills.getQuick(col).getStrB(null);
+                int code = dispatchCode[col];
+                if (code == DISPATCH_KEY_SLOT) return keysMapRecord.getStrB(dispatchSlot[col]);
+                if (code == DISPATCH_PREV_SLOT) {
+                    if (hasPrevForCurrentGap) return prevRecord.getStrB(dispatchSlot[col]);
+                    return null;
+                }
+                if (code == DISPATCH_CONSTANT) return dispatchConstant[col].getStrB(null);
                 return null;
             }
 
             @Override
             public int getStrLen(int col) {
                 if (!isGapFilling) return baseRecord.getStrLen(col);
-                int mode = fillMode(col);
-                if (mode == FILL_KEY) return keysMapRecord.getStrLen(outputColToKeyPos.getQuick(col));
-                if (mode >= 0 && outputColToKeyPos.getQuick(mode) >= 0)
-                    return keysMapRecord.getStrLen(outputColToKeyPos.getQuick(mode));
-                if ((mode == FILL_PREV_SELF || mode >= 0) && hasKeyPrev())
-                    return prevRecord.getStrLen(mode >= 0 ? mode : col);
-                if (mode == FILL_CONSTANT) return constantFills.getQuick(col).getStrLen(null);
+                int code = dispatchCode[col];
+                if (code == DISPATCH_KEY_SLOT) return keysMapRecord.getStrLen(dispatchSlot[col]);
+                if (code == DISPATCH_PREV_SLOT) {
+                    if (hasPrevForCurrentGap) return prevRecord.getStrLen(dispatchSlot[col]);
+                    return -1;
+                }
+                if (code == DISPATCH_CONSTANT) return dispatchConstant[col].getStrLen(null);
                 return -1;
             }
 
             @Override
             public CharSequence getSymA(int col) {
                 if (!isGapFilling) return baseRecord.getSymA(col);
-                int mode = fillMode(col);
-                if (mode == FILL_KEY) return keysMapRecord.getSymA(outputColToKeyPos.getQuick(col));
-                if (mode >= 0 && outputColToKeyPos.getQuick(mode) >= 0)
-                    return keysMapRecord.getSymA(outputColToKeyPos.getQuick(mode));
-                int prevSlot = prevValueSlot.getQuick(col);
-                if (prevSlot >= 0 && hasKeyPrev()) {
-                    int symId = currentMapValue.getInt(prevSlot);
-                    SymbolTable st = prevSymbolTable[col];
-                    return st == null || symId < 0 ? null : st.valueOf(symId);
+                int code = dispatchCode[col];
+                if (code == DISPATCH_KEY_SLOT) return keysMapRecord.getSymA(dispatchSlot[col]);
+                if (code == DISPATCH_PREV_CACHE_SLOT) {
+                    // SYMBOL cache slots store the 4-byte symbol id; the
+                    // setSymbolTableResolver wiring set up in initialize()
+                    // routes keysMapRecord.getSymA(slot) through the source
+                    // column's SymbolTable to recover the CharSequence.
+                    if (hasPrevForCurrentGap) return keysMapRecord.getSymA(dispatchSlot[col]);
+                    return null;
                 }
-                if ((mode == FILL_PREV_SELF || mode >= 0) && hasKeyPrev())
-                    return prevRecord.getSymA(mode >= 0 ? mode : col);
-                if (mode == FILL_CONSTANT) return constantFills.getQuick(col).getSymbol(null);
+                if (code == DISPATCH_PREV_SLOT) {
+                    if (hasPrevForCurrentGap) return prevRecord.getSymA(dispatchSlot[col]);
+                    return null;
+                }
+                // Constant symbol fills dispatch through Function.getSymbol()
+                // rather than Function.getSymA() by historical convention.
+                if (code == DISPATCH_CONSTANT) return dispatchConstant[col].getSymbol(null);
                 return null;
             }
 
             @Override
             public CharSequence getSymB(int col) {
                 if (!isGapFilling) return baseRecord.getSymB(col);
-                int mode = fillMode(col);
-                if (mode == FILL_KEY) return keysMapRecord.getSymB(outputColToKeyPos.getQuick(col));
-                if (mode >= 0 && outputColToKeyPos.getQuick(mode) >= 0)
-                    return keysMapRecord.getSymB(outputColToKeyPos.getQuick(mode));
-                int prevSlot = prevValueSlot.getQuick(col);
-                if (prevSlot >= 0 && hasKeyPrev()) {
-                    int symId = currentMapValue.getInt(prevSlot);
-                    SymbolTable st = prevSymbolTable[col];
-                    return st == null || symId < 0 ? null : st.valueOf(symId);
+                int code = dispatchCode[col];
+                if (code == DISPATCH_KEY_SLOT) return keysMapRecord.getSymB(dispatchSlot[col]);
+                if (code == DISPATCH_PREV_CACHE_SLOT) {
+                    if (hasPrevForCurrentGap) return keysMapRecord.getSymB(dispatchSlot[col]);
+                    return null;
                 }
-                if ((mode == FILL_PREV_SELF || mode >= 0) && hasKeyPrev())
-                    return prevRecord.getSymB(mode >= 0 ? mode : col);
-                if (mode == FILL_CONSTANT) return constantFills.getQuick(col).getSymbolB(null);
+                if (code == DISPATCH_PREV_SLOT) {
+                    if (hasPrevForCurrentGap) return prevRecord.getSymB(dispatchSlot[col]);
+                    return null;
+                }
+                if (code == DISPATCH_CONSTANT) return dispatchConstant[col].getSymbolB(null);
                 return null;
             }
 
             @Override
             public long getTimestamp(int col) {
                 if (!isGapFilling) return baseRecord.getTimestamp(col);
-                if (col == timestampIndex) return fillTimestampFunc.value;
-                int mode = fillMode(col);
-                if (mode == FILL_KEY) return keysMapRecord.getTimestamp(outputColToKeyPos.getQuick(col));
-                if (mode >= 0 && outputColToKeyPos.getQuick(mode) >= 0)
-                    return keysMapRecord.getTimestamp(outputColToKeyPos.getQuick(mode));
-                int prevSlot = prevValueSlot.getQuick(col);
-                if (prevSlot >= 0 && hasKeyPrev()) return currentMapValue.getTimestamp(prevSlot);
-                if ((mode == FILL_PREV_SELF || mode >= 0) && hasKeyPrev())
-                    return prevRecord.getTimestamp(mode >= 0 ? mode : col);
-                if (mode == FILL_CONSTANT) return constantFills.getQuick(col).getTimestamp(null);
+                int code = dispatchCode[col];
+                if (code == DISPATCH_TIMESTAMP_FILL) return fillTimestampFunc.value;
+                if (code == DISPATCH_KEY_SLOT) return keysMapRecord.getTimestamp(dispatchSlot[col]);
+                if (code == DISPATCH_PREV_CACHE_SLOT) {
+                    if (hasPrevForCurrentGap) return currentMapValue.getTimestamp(dispatchSlot[col]);
+                    return Numbers.LONG_NULL;
+                }
+                if (code == DISPATCH_PREV_SLOT) {
+                    if (hasPrevForCurrentGap) return prevRecord.getTimestamp(dispatchSlot[col]);
+                    return Numbers.LONG_NULL;
+                }
+                if (code == DISPATCH_CONSTANT) return dispatchConstant[col].getTimestamp(null);
                 return Numbers.LONG_NULL;
             }
 
             @Override
             public Utf8Sequence getVarcharA(int col) {
                 if (!isGapFilling) return baseRecord.getVarcharA(col);
-                int mode = fillMode(col);
-                if (mode == FILL_KEY) return keysMapRecord.getVarcharA(outputColToKeyPos.getQuick(col));
-                if (mode >= 0 && outputColToKeyPos.getQuick(mode) >= 0)
-                    return keysMapRecord.getVarcharA(outputColToKeyPos.getQuick(mode));
-                if ((mode == FILL_PREV_SELF || mode >= 0) && hasKeyPrev())
-                    return prevRecord.getVarcharA(mode >= 0 ? mode : col);
-                if (mode == FILL_CONSTANT) return constantFills.getQuick(col).getVarcharA(null);
+                int code = dispatchCode[col];
+                if (code == DISPATCH_KEY_SLOT) return keysMapRecord.getVarcharA(dispatchSlot[col]);
+                if (code == DISPATCH_PREV_SLOT) {
+                    if (hasPrevForCurrentGap) return prevRecord.getVarcharA(dispatchSlot[col]);
+                    return null;
+                }
+                if (code == DISPATCH_CONSTANT) return dispatchConstant[col].getVarcharA(null);
                 return null;
             }
 
             @Override
             public Utf8Sequence getVarcharB(int col) {
                 if (!isGapFilling) return baseRecord.getVarcharB(col);
-                int mode = fillMode(col);
-                if (mode == FILL_KEY) return keysMapRecord.getVarcharB(outputColToKeyPos.getQuick(col));
-                if (mode >= 0 && outputColToKeyPos.getQuick(mode) >= 0)
-                    return keysMapRecord.getVarcharB(outputColToKeyPos.getQuick(mode));
-                if ((mode == FILL_PREV_SELF || mode >= 0) && hasKeyPrev())
-                    return prevRecord.getVarcharB(mode >= 0 ? mode : col);
-                if (mode == FILL_CONSTANT) return constantFills.getQuick(col).getVarcharB(null);
+                int code = dispatchCode[col];
+                if (code == DISPATCH_KEY_SLOT) return keysMapRecord.getVarcharB(dispatchSlot[col]);
+                if (code == DISPATCH_PREV_SLOT) {
+                    if (hasPrevForCurrentGap) return prevRecord.getVarcharB(dispatchSlot[col]);
+                    return null;
+                }
+                if (code == DISPATCH_CONSTANT) return dispatchConstant[col].getVarcharB(null);
                 return null;
             }
 
             @Override
             public int getVarcharSize(int col) {
                 if (!isGapFilling) return baseRecord.getVarcharSize(col);
-                int mode = fillMode(col);
-                if (mode == FILL_KEY) return keysMapRecord.getVarcharSize(outputColToKeyPos.getQuick(col));
-                if (mode >= 0 && outputColToKeyPos.getQuick(mode) >= 0)
-                    return keysMapRecord.getVarcharSize(outputColToKeyPos.getQuick(mode));
-                if ((mode == FILL_PREV_SELF || mode >= 0) && hasKeyPrev())
-                    return prevRecord.getVarcharSize(mode >= 0 ? mode : col);
-                if (mode == FILL_CONSTANT) return constantFills.getQuick(col).getVarcharSize(null);
+                int code = dispatchCode[col];
+                if (code == DISPATCH_KEY_SLOT) return keysMapRecord.getVarcharSize(dispatchSlot[col]);
+                if (code == DISPATCH_PREV_SLOT) {
+                    if (hasPrevForCurrentGap) return prevRecord.getVarcharSize(dispatchSlot[col]);
+                    return -1;
+                }
+                if (code == DISPATCH_CONSTANT) return dispatchConstant[col].getVarcharSize(null);
                 return -1;
             }
         }
