@@ -55,6 +55,7 @@ public final class PostingIndexNative {
      * @param destAddr   destination native address
      */
     public static void packValuesNative(long valuesAddr, int count, long minValue, int bitWidth, long destAddr) {
+        validateBitWidth(bitWidth);
         if (NATIVE_AVAILABLE) {
             packValues0(valuesAddr, count, minValue, bitWidth, destAddr);
         } else {
@@ -107,6 +108,7 @@ public final class PostingIndexNative {
      */
     public static void unpackAllValuesNative(long srcAddr, int valueCount, int bitWidth,
                                              long minValue, long destAddr) {
+        validateBitWidth(bitWidth);
         if (NATIVE_AVAILABLE) {
             unpackAllValues0(srcAddr, valueCount, bitWidth, minValue, destAddr);
         } else {
@@ -130,7 +132,15 @@ public final class PostingIndexNative {
                 srcOffset++;
             }
             Unsafe.getUnsafe().putLong(destAddr + (long) i * Long.BYTES, minValue + (buffer & mask));
-            buffer >>>= bitWidth;
+            // Java's >>> uses only the low 6 bits of the shift count, so
+            // buffer >>>= 64 is a no-op. Zero the buffer explicitly when
+            // the full 64 bits were consumed; otherwise leftover high bits
+            // would OR into the next value.
+            if (bitWidth == 64) {
+                buffer = 0;
+            } else {
+                buffer >>>= bitWidth;
+            }
             bufferBits -= bitWidth;
         }
     }
@@ -142,10 +152,17 @@ public final class PostingIndexNative {
      */
     public static void unpackValuesFrom(long srcAddr, int startIndex, int valueCount,
                                         int bitWidth, long minValue, long destAddr) {
+        validateBitWidth(bitWidth);
         if (NATIVE_AVAILABLE) {
             unpackValuesFrom0(srcAddr, startIndex, valueCount, bitWidth, minValue, destAddr);
         } else {
             throw new UnsupportedOperationException("native library not available for unpackValuesFrom");
+        }
+    }
+
+    private static void validateBitWidth(int bitWidth) {
+        if (bitWidth < 1 || bitWidth > 64) {
+            throw new IllegalArgumentException("bitWidth out of range [1, 64]: " + bitWidth);
         }
     }
 

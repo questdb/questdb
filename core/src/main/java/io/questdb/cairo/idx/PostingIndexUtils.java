@@ -198,6 +198,71 @@ public final class PostingIndexUtils {
     public static final int PAGE_SIZE = 4096;
     public static final int PC_HEADER_SIZE = MAX_GEN_COUNT * Long.BYTES; // 1144
     public static final long SEAL_TXN_TENTATIVE = -1L;
+    // v2 chain layout — append-only chain of immutable seal entries.
+    // The two header pages (A/B) at offsets 0 and 4096 are seqlock-protected
+    // and contain only the chain head pointer and counters. Each entry lives
+    // in the entry region starting at V2_ENTRY_REGION_BASE.
+    //
+    // Header page (per page, 4096 bytes):
+    //   [0..7]      V2_HEADER_OFFSET_SEQUENCE_START
+    //   [8..15]     V2_HEADER_OFFSET_FORMAT_VERSION  (= V2_FORMAT_VERSION)
+    //   [16..23]    V2_HEADER_OFFSET_HEAD_ENTRY_OFFSET
+    //                 byte offset of the most recently appended entry,
+    //                 or V2_NO_HEAD if the chain is empty.
+    //   [24..31]    V2_HEADER_OFFSET_ENTRY_COUNT
+    //   [32..39]    V2_HEADER_OFFSET_REGION_BASE
+    //                 byte offset of the oldest live entry; advances
+    //                 forward as the writer GCs older entries.
+    //   [40..47]    V2_HEADER_OFFSET_REGION_LIMIT
+    //                 high-water byte offset past the last written entry.
+    //   [48..55]    V2_HEADER_OFFSET_GEN_COUNTER
+    //                 monotonic per-.pk counter. Each new entry advances it
+    //                 by 1 and uses the new value as its sealTxn.
+    //   [56..4087]  reserved
+    //   [4088..4095] V2_HEADER_OFFSET_SEQUENCE_END
+    //
+    // Entry header (V2_ENTRY_HEADER_SIZE = 64 bytes; gen dir follows):
+    //   [0..7]      V2_ENTRY_OFFSET_LEN
+    //                 total entry size in bytes (header + gen dir).
+    //   [8..15]     V2_ENTRY_OFFSET_SEAL_TXN  (>= 1, monotonic per .pk).
+    //   [16..23]    V2_ENTRY_OFFSET_TXN_AT_SEAL
+    //                 the table _txn this entry takes effect at.
+    //                 Readers pick the entry where TXN_AT_SEAL <= pinned _txn
+    //                 (highest such). Entries with TXN_AT_SEAL > _txn are
+    //                 either uncommitted or abandoned.
+    //   [24..31]    V2_ENTRY_OFFSET_VALUE_MEM_SIZE  (.pv.{sealTxn} bytes).
+    //   [32..39]    V2_ENTRY_OFFSET_MAX_VALUE        (highest row id).
+    //   [40..43]    V2_ENTRY_OFFSET_KEY_COUNT
+    //   [44..47]    V2_ENTRY_OFFSET_GEN_COUNT
+    //   [48..51]    V2_ENTRY_OFFSET_BLOCK_CAPACITY
+    //   [52..55]    V2_ENTRY_OFFSET_COVERING_FORMAT (reserved; 0 for now).
+    //   [56..63]    V2_ENTRY_OFFSET_PREV_ENTRY_OFFSET
+    //                 byte offset of the previous entry, or V2_NO_HEAD if
+    //                 this is the oldest entry. Lets readers walk backwards
+    //                 from head without scanning the whole region.
+    //   [64..]      gen dir, GEN_COUNT * GEN_DIR_ENTRY_SIZE bytes.
+    public static final int V2_ENTRY_HEADER_SIZE = 64;
+    public static final int V2_ENTRY_OFFSET_BLOCK_CAPACITY = 48;
+    public static final int V2_ENTRY_OFFSET_COVERING_FORMAT = 52;
+    public static final int V2_ENTRY_OFFSET_GEN_COUNT = 44;
+    public static final int V2_ENTRY_OFFSET_KEY_COUNT = 40;
+    public static final int V2_ENTRY_OFFSET_LEN = 0;
+    public static final int V2_ENTRY_OFFSET_MAX_VALUE = 32;
+    public static final int V2_ENTRY_OFFSET_PREV_ENTRY_OFFSET = 56;
+    public static final int V2_ENTRY_OFFSET_SEAL_TXN = 8;
+    public static final int V2_ENTRY_OFFSET_TXN_AT_SEAL = 16;
+    public static final int V2_ENTRY_OFFSET_VALUE_MEM_SIZE = 24;
+    public static final long V2_ENTRY_REGION_BASE = 8192L;
+    public static final int V2_FORMAT_VERSION = 2;
+    public static final int V2_HEADER_OFFSET_ENTRY_COUNT = 24;
+    public static final int V2_HEADER_OFFSET_FORMAT_VERSION = 8;
+    public static final int V2_HEADER_OFFSET_GEN_COUNTER = 48;
+    public static final int V2_HEADER_OFFSET_HEAD_ENTRY_OFFSET = 16;
+    public static final int V2_HEADER_OFFSET_REGION_BASE = 32;
+    public static final int V2_HEADER_OFFSET_REGION_LIMIT = 40;
+    public static final int V2_HEADER_OFFSET_SEQUENCE_END = 4088;
+    public static final int V2_HEADER_OFFSET_SEQUENCE_START = 0;
+    public static final long V2_NO_HEAD = -1L;
     public static final byte SIGNATURE = (byte) 0xfb;
     public static final double SPARSE_SBBF_DEFAULT_FPP = 0.01;
     public static final int SPARSE_SBBF_NUM_BLOCKS_FOOTER_SIZE = Integer.BYTES;
