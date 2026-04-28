@@ -914,14 +914,20 @@ public class PostingIndexWriter implements IndexWriter {
                 pendingPurges.setQuick(writePos++, entry);
                 continue;
             }
-            // Chain-derived intervals make {@code entry.toTableTxn} always
-            // meaningful: it is the {@code txnAtSeal} of the new head that
-            // superseded this file. The earlier v1 fallback that rewrote
-            // {@code Long.MAX_VALUE} sentinels to {@code currentTableTxn}
-            // is no longer needed; if a residual saturated entry sneaks
-            // through (recordPostingSealPurge's empty-chain branch), the
-            // scoreboard min check just keeps the file longer and the
-            // next writer-open recovery sweep cleans it up.
+            // Chain-derived intervals are meaningful: {@code entry.toTableTxn}
+            // is the {@code txnAtSeal} of the new head that superseded this
+            // file. The empty-chain branch in recordPostingSealPurge and the
+            // orphan-recovery path in scheduleOrphanPurge can also publish
+            // saturated sentinels of {@code Long.MAX_VALUE}. Such sentinels
+            // must NOT reach the scoreboard: PostingSealPurgeOperator queries
+            // {@link TxnScoreboard#isRangeAvailable} which has the side effect
+            // of pushing the scoreboard's max to toTxn, so a single
+            // {@code Long.MAX_VALUE} call would block every future reader
+            // open until the next reset. Clamp to {@code currentTableTxn},
+            // which is a safe upper bound: no reader pinned right now can
+            // hold a txn beyond it, so dropping the file at this txn is
+            // already protected by the regular reader-pin check.
+            long toTableTxn = Math.min(entry.toTableTxn, currentTableTxn);
             try {
                 PostingSealPurgeTask task = queue.get(cursor);
                 task.of(
@@ -934,7 +940,7 @@ public class PostingIndexWriter implements IndexWriter {
                         partitionBy,
                         timestampType,
                         entry.fromTableTxn,
-                        entry.toTableTxn
+                        toTableTxn
                 );
             } finally {
                 pubSeq.done(cursor);
