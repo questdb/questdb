@@ -134,7 +134,11 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
             ArrayColumnTypes mapValueTypes,
             IntList keyColIndices,
             IntList symbolTableColIndices,
-            long calendarOffset
+            long calendarOffset,
+            IntList fixedPrevSrcCols,
+            IntList fixedPrevTypeTags,
+            IntList prevValueSlot,
+            boolean needsPrevPositioning
     ) {
         super(metadata);
         // hasPrevFill mirrors the "any PREV mode" signal consumed by toPlan and
@@ -159,7 +163,8 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
                     fromFunc, toFunc, fillModes, constantFills,
                     timestampIndex, timestampType, localHasPrevFill,
                     keySink, keysMapLocal, keyColIndices, symbolTableColIndices,
-                    calendarOffset
+                    calendarOffset,
+                    fixedPrevSrcCols, fixedPrevTypeTags, prevValueSlot, needsPrevPositioning
             );
         } catch (Throwable th) {
             // Free resources allocated inside the constructor. Inputs (base, fromFunc,
@@ -296,9 +301,18 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
         private final long calendarOffset;
         private SqlExecutionCircuitBreaker circuitBreaker;
         private final ObjList<Function> constantFills;
+        // Per-emit MapValue cached by emitNextFillRow so FillRecord getters
+        // can read fixed-size FILL_PREV cached values via prevValueSlot
+        // without re-fetching the MapValue per column read.
+        private MapValue currentMapValue;
         private final IntList fillModes;
         private final FillRecord fillRecord = new FillRecord();
         private final FillTimestampConstant fillTimestampFunc;
+        // Per-slot source col index; slot is implicitly PREV_ROWID_SLOT + 1 + i.
+        private final IntList fixedPrevSrcCols;
+        // Per-slot ColumnType.tagOf of the source col (SYMBOL kept as SYMBOL
+        // so updateKeyPrevRowId knows to read the int symbol id).
+        private final IntList fixedPrevTypeTags;
         private final Function fromFunc;
         private boolean hasDataForCurrentBucket;
         private boolean hasExplicitTo;
@@ -310,16 +324,31 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
         private boolean isEmittingFills;
         private boolean isInitialized;
         private int keyCount;
+        // Absolute MapRecord position where user key columns begin.
+        // KEY_POS_OFFSET (3) plus the number of cached prev-value slots
+        // appended by SqlCodeGenerator after populateMapValueTypes.
+        private final int keyPosOffset;
         private boolean[] keyPresent;
         private final RecordSink keySink;
         private final Map keysMap;
         private MapRecordCursor keysMapCursor;
         private MapRecord keysMapRecord;
         private long maxTimestamp;
+        // True if at least one FILL_PREV output column has a variable-width
+        // source col. When false, emitNextFillRow's recordAt is skipped:
+        // every FILL_PREV col is served by prevValueSlot/prevSymbolTable.
+        private final boolean needsPrevPositioning;
         private long nextBucketTimestamp;
         private final IntList outputColToKeyPos = new IntList();
         private long pendingTs;
         private Record prevRecord;
+        // Per-output-col cached SymbolTable for SYMBOL FILL_PREV reads.
+        // Populated in of() once the base cursor is captured. null entries
+        // for non-SYMBOL output columns or columns with prevValueSlot < 0.
+        private SymbolTable[] prevSymbolTable;
+        // Per-output-col MapValue slot index for slot-eligible FILL_PREV
+        // reads. -1 means "not slot-eligible, fall through to recordAt path".
+        private final IntList prevValueSlot;
         private long simplePrevRowId = -1L;
         private final IntList symbolTableColIndices;
         private final TimestampDriver timestampDriver;
@@ -341,7 +370,11 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
                 Map keysMap,
                 IntList keyColIndices,
                 IntList symbolTableColIndices,
-                long calendarOffset
+                long calendarOffset,
+                IntList fixedPrevSrcCols,
+                IntList fixedPrevTypeTags,
+                IntList prevValueSlot,
+                boolean needsPrevPositioning
         ) {
             this.calendarOffset = calendarOffset;
             this.timestampSampler = timestampSampler;
@@ -356,14 +389,20 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
             this.keySink = keySink;
             this.keysMap = keysMap;
             this.symbolTableColIndices = symbolTableColIndices;
+            this.fixedPrevSrcCols = fixedPrevSrcCols;
+            this.fixedPrevTypeTags = fixedPrevTypeTags;
+            this.prevValueSlot = prevValueSlot;
+            this.needsPrevPositioning = needsPrevPositioning;
+            this.keyPosOffset = KEY_POS_OFFSET + fixedPrevSrcCols.size();
 
-            // Key columns in the MapRecord follow the fixed-width value header;
-            // slots below KEY_POS_OFFSET are KEY_INDEX_SLOT, HAS_PREV_SLOT,
-            // PREV_ROWID_SLOT. See populateMapValueTypes for the authoritative
-            // header layout.
+            // Key columns in the MapRecord follow the fixed-width value header
+            // (KEY_INDEX_SLOT, HAS_PREV_SLOT, PREV_ROWID_SLOT) plus any
+            // appended fixed-size FILL_PREV cache slots. keyPosOffset bakes
+            // both contributions in so FillRecord getters can keep using
+            // outputColToKeyPos.getQuick(col) directly without an extra add.
             outputColToKeyPos.setAll(metadata.getColumnCount(), -1);
             for (int i = 0, n = keyColIndices.size(); i < n; i++) {
-                outputColToKeyPos.setQuick(keyColIndices.getQuick(i), KEY_POS_OFFSET + i);
+                outputColToKeyPos.setQuick(keyColIndices.getQuick(i), keyPosOffset + i);
             }
         }
 
@@ -476,8 +515,11 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
                     fillRecord.isGapFilling = true;
                     fillTimestampFunc.value = nextBucketTimestamp;
                     hasPrevForCurrentGap = hasSimplePrev;
-                    if (hasPrevForCurrentGap) {
-                        // Position prevRecord once; FillRecord getters read from it directly.
+                    if (hasPrevForCurrentGap && needsPrevPositioning) {
+                        // Position prevRecord once for variable-width FILL_PREV
+                        // columns; FillRecord getters read from it directly.
+                        // Skipped when every FILL_PREV col is slot-eligible
+                        // (no recordAt needed -- slot path covers everything).
                         baseCursor.recordAt(prevRecord, simplePrevRowId);
                     }
                     nextBucketTimestamp = timestampSampler.nextTimestamp(nextBucketTimestamp);
@@ -547,12 +589,19 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
                     if (!keyPresent[keyIdx]) {
                         fillRecord.isGapFilling = true;
                         fillTimestampFunc.value = nextBucketTimestamp;
-                        // Cache the HAS_PREV flag once per fill row so the 30+
-                        // FillRecord getters avoid re-materialising the MapValue
-                        // via keysMapRecord.getValue() on every per-column read.
+                        // Cache the MapValue and HAS_PREV flag once per fill
+                        // row so the 30+ FillRecord getters avoid
+                        // re-materialising the MapValue via
+                        // keysMapRecord.getValue() on every per-column read,
+                        // and the slot-eligible PREV branch can read
+                        // currentMapValue.getXxx(slot) directly.
+                        currentMapValue = value;
                         hasPrevForCurrentGap = value.getLong(HAS_PREV_SLOT) != 0;
-                        if (hasPrevForCurrentGap) {
-                            // Position prevRecord once; FillRecord getters read from it directly.
+                        if (hasPrevForCurrentGap && needsPrevPositioning) {
+                            // Position prevRecord once for variable-width
+                            // FILL_PREV columns; FillRecord getters read from
+                            // it directly. Skipped when every FILL_PREV col
+                            // is slot-eligible (slot path covers everything).
                             baseCursor.recordAt(prevRecord, value.getLong(PREV_ROWID_SLOT));
                         }
                         return true;
@@ -710,6 +759,26 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
             Function.init(constantFills, baseCursor, executionContext, null);
             fromFunc.init(baseCursor, executionContext);
             toFunc.init(baseCursor, executionContext);
+            // Cache SymbolTable per output column for SYMBOL FILL_PREV reads.
+            // Skip when no slot is allocated (prevValueSlot[col] < 0) or the
+            // source col is not SYMBOL (typeTag was already a fixed-size
+            // numeric/temporal/etc.). One pass over output columns is cheap
+            // and avoids repeating the lookup per emit row.
+            if (prevSymbolTable == null || prevSymbolTable.length < prevValueSlot.size()) {
+                prevSymbolTable = new SymbolTable[prevValueSlot.size()];
+            } else {
+                Arrays.fill(prevSymbolTable, null);
+            }
+            for (int col = 0, n = prevValueSlot.size(); col < n; col++) {
+                int slot = prevValueSlot.getQuick(col);
+                if (slot < 0) continue;
+                int slotIdx = slot - (PREV_ROWID_SLOT + 1);
+                int typeTag = fixedPrevTypeTags.getQuick(slotIdx);
+                if (typeTag == ColumnType.SYMBOL) {
+                    int srcCol = fixedPrevSrcCols.getQuick(slotIdx);
+                    prevSymbolTable[col] = baseCursor.getSymbolTable(srcCol);
+                }
+            }
             toTop();
         }
 
@@ -721,6 +790,87 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
         private void updateKeyPrevRowId(MapValue value, Record record) {
             value.putLong(HAS_PREV_SLOT, 1L);
             value.putLong(PREV_ROWID_SLOT, record.getRowId());
+            // Cache slot-eligible (fixed-size + SYMBOL) FILL_PREV source col
+            // values directly in the MapValue so the FillRecord getters do
+            // not have to recordAt() into the sort buffer at emit time.
+            // Skipping the loop entirely when no slots exist is the
+            // common-path early-out for queries with no slot-eligible
+            // FILL_PREV cols (e.g., FILL(NULL)/FILL(VALUE)/FILL_KEY only).
+            for (int i = 0, n = fixedPrevSrcCols.size(); i < n; i++) {
+                final int slot = PREV_ROWID_SLOT + 1 + i;
+                final int srcCol = fixedPrevSrcCols.getQuick(i);
+                // The set of cases here must mirror
+                // SqlCodeGenerator.isFixedSizePrevSlotEligible -- if a tag
+                // is added there it must also be added here, and vice
+                // versa. Wide types (LONG128/256, UUID, DECIMAL128/256)
+                // and variable-width types are excluded by the eligibility
+                // gate and never reach this switch.
+                switch (fixedPrevTypeTags.getQuick(i)) {
+                    case ColumnType.DOUBLE:
+                        value.putDouble(slot, record.getDouble(srcCol));
+                        break;
+                    case ColumnType.LONG:
+                        value.putLong(slot, record.getLong(srcCol));
+                        break;
+                    case ColumnType.DATE:
+                        value.putLong(slot, record.getDate(srcCol));
+                        break;
+                    case ColumnType.TIMESTAMP:
+                        value.putLong(slot, record.getTimestamp(srcCol));
+                        break;
+                    case ColumnType.GEOLONG:
+                        value.putLong(slot, record.getGeoLong(srcCol));
+                        break;
+                    case ColumnType.INT:
+                        value.putInt(slot, record.getInt(srcCol));
+                        break;
+                    case ColumnType.IPv4:
+                        value.putInt(slot, record.getIPv4(srcCol));
+                        break;
+                    case ColumnType.GEOINT:
+                        value.putInt(slot, record.getGeoInt(srcCol));
+                        break;
+                    case ColumnType.SYMBOL:
+                        value.putInt(slot, record.getInt(srcCol));
+                        break;
+                    case ColumnType.FLOAT:
+                        value.putFloat(slot, record.getFloat(srcCol));
+                        break;
+                    case ColumnType.SHORT:
+                        value.putShort(slot, record.getShort(srcCol));
+                        break;
+                    case ColumnType.GEOSHORT:
+                        value.putShort(slot, record.getGeoShort(srcCol));
+                        break;
+                    case ColumnType.BYTE:
+                        value.putByte(slot, record.getByte(srcCol));
+                        break;
+                    case ColumnType.GEOBYTE:
+                        value.putByte(slot, record.getGeoByte(srcCol));
+                        break;
+                    case ColumnType.CHAR:
+                        value.putChar(slot, record.getChar(srcCol));
+                        break;
+                    case ColumnType.BOOLEAN:
+                        value.putBool(slot, record.getBool(srcCol));
+                        break;
+                    case ColumnType.DECIMAL64:
+                        value.putLong(slot, record.getDecimal64(srcCol));
+                        break;
+                    case ColumnType.DECIMAL32:
+                        value.putInt(slot, record.getDecimal32(srcCol));
+                        break;
+                    case ColumnType.DECIMAL16:
+                        value.putShort(slot, record.getDecimal16(srcCol));
+                        break;
+                    case ColumnType.DECIMAL8:
+                        value.putByte(slot, record.getDecimal8(srcCol));
+                        break;
+                    default:
+                        throw new IllegalStateException(
+                                "unsupported prev-value slot type tag: " + fixedPrevTypeTags.getQuick(i));
+                }
+            }
         }
 
         /**
@@ -791,6 +941,8 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
                 if (mode == FILL_KEY) return keysMapRecord.getBool(outputColToKeyPos.getQuick(col));
                 if (mode >= 0 && outputColToKeyPos.getQuick(mode) >= 0)
                     return keysMapRecord.getBool(outputColToKeyPos.getQuick(mode));
+                int prevSlot = prevValueSlot.getQuick(col);
+                if (prevSlot >= 0 && hasKeyPrev()) return currentMapValue.getBool(prevSlot);
                 if ((mode == FILL_PREV_SELF || mode >= 0) && hasKeyPrev())
                     return prevRecord.getBool(mode >= 0 ? mode : col);
                 if (mode == FILL_CONSTANT) return constantFills.getQuick(col).getBool(null);
@@ -804,6 +956,8 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
                 if (mode == FILL_KEY) return keysMapRecord.getByte(outputColToKeyPos.getQuick(col));
                 if (mode >= 0 && outputColToKeyPos.getQuick(mode) >= 0)
                     return keysMapRecord.getByte(outputColToKeyPos.getQuick(mode));
+                int prevSlot = prevValueSlot.getQuick(col);
+                if (prevSlot >= 0 && hasKeyPrev()) return currentMapValue.getByte(prevSlot);
                 if ((mode == FILL_PREV_SELF || mode >= 0) && hasKeyPrev())
                     return prevRecord.getByte(mode >= 0 ? mode : col);
                 if (mode == FILL_CONSTANT) return (byte) constantFills.getQuick(col).getInt(null);
@@ -817,6 +971,8 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
                 if (mode == FILL_KEY) return keysMapRecord.getChar(outputColToKeyPos.getQuick(col));
                 if (mode >= 0 && outputColToKeyPos.getQuick(mode) >= 0)
                     return keysMapRecord.getChar(outputColToKeyPos.getQuick(mode));
+                int prevSlot = prevValueSlot.getQuick(col);
+                if (prevSlot >= 0 && hasKeyPrev()) return currentMapValue.getChar(prevSlot);
                 if ((mode == FILL_PREV_SELF || mode >= 0) && hasKeyPrev())
                     return prevRecord.getChar(mode >= 0 ? mode : col);
                 if (mode == FILL_CONSTANT) return constantFills.getQuick(col).getChar(null);
@@ -856,6 +1012,8 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
                 if (mode == FILL_KEY) return keysMapRecord.getDecimal16(outputColToKeyPos.getQuick(col));
                 if (mode >= 0 && outputColToKeyPos.getQuick(mode) >= 0)
                     return keysMapRecord.getDecimal16(outputColToKeyPos.getQuick(mode));
+                int prevSlot = prevValueSlot.getQuick(col);
+                if (prevSlot >= 0 && hasKeyPrev()) return currentMapValue.getShort(prevSlot);
                 if ((mode == FILL_PREV_SELF || mode >= 0) && hasKeyPrev())
                     return prevRecord.getDecimal16(mode >= 0 ? mode : col);
                 if (mode == FILL_CONSTANT) return constantFills.getQuick(col).getDecimal16(null);
@@ -895,6 +1053,8 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
                 if (mode == FILL_KEY) return keysMapRecord.getDecimal32(outputColToKeyPos.getQuick(col));
                 if (mode >= 0 && outputColToKeyPos.getQuick(mode) >= 0)
                     return keysMapRecord.getDecimal32(outputColToKeyPos.getQuick(mode));
+                int prevSlot = prevValueSlot.getQuick(col);
+                if (prevSlot >= 0 && hasKeyPrev()) return currentMapValue.getInt(prevSlot);
                 if ((mode == FILL_PREV_SELF || mode >= 0) && hasKeyPrev())
                     return prevRecord.getDecimal32(mode >= 0 ? mode : col);
                 if (mode == FILL_CONSTANT) return constantFills.getQuick(col).getDecimal32(null);
@@ -908,6 +1068,8 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
                 if (mode == FILL_KEY) return keysMapRecord.getDecimal64(outputColToKeyPos.getQuick(col));
                 if (mode >= 0 && outputColToKeyPos.getQuick(mode) >= 0)
                     return keysMapRecord.getDecimal64(outputColToKeyPos.getQuick(mode));
+                int prevSlot = prevValueSlot.getQuick(col);
+                if (prevSlot >= 0 && hasKeyPrev()) return currentMapValue.getLong(prevSlot);
                 if ((mode == FILL_PREV_SELF || mode >= 0) && hasKeyPrev())
                     return prevRecord.getDecimal64(mode >= 0 ? mode : col);
                 if (mode == FILL_CONSTANT) return constantFills.getQuick(col).getDecimal64(null);
@@ -921,6 +1083,8 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
                 if (mode == FILL_KEY) return keysMapRecord.getDecimal8(outputColToKeyPos.getQuick(col));
                 if (mode >= 0 && outputColToKeyPos.getQuick(mode) >= 0)
                     return keysMapRecord.getDecimal8(outputColToKeyPos.getQuick(mode));
+                int prevSlot = prevValueSlot.getQuick(col);
+                if (prevSlot >= 0 && hasKeyPrev()) return currentMapValue.getByte(prevSlot);
                 if ((mode == FILL_PREV_SELF || mode >= 0) && hasKeyPrev())
                     return prevRecord.getDecimal8(mode >= 0 ? mode : col);
                 if (mode == FILL_CONSTANT) return constantFills.getQuick(col).getDecimal8(null);
@@ -934,6 +1098,8 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
                 if (mode == FILL_KEY) return keysMapRecord.getDouble(outputColToKeyPos.getQuick(col));
                 if (mode >= 0 && outputColToKeyPos.getQuick(mode) >= 0)
                     return keysMapRecord.getDouble(outputColToKeyPos.getQuick(mode));
+                int prevSlot = prevValueSlot.getQuick(col);
+                if (prevSlot >= 0 && hasKeyPrev()) return currentMapValue.getDouble(prevSlot);
                 if ((mode == FILL_PREV_SELF || mode >= 0) && hasKeyPrev())
                     return prevRecord.getDouble(mode >= 0 ? mode : col);
                 if (mode == FILL_CONSTANT) return constantFills.getQuick(col).getDouble(null);
@@ -947,6 +1113,8 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
                 if (mode == FILL_KEY) return keysMapRecord.getFloat(outputColToKeyPos.getQuick(col));
                 if (mode >= 0 && outputColToKeyPos.getQuick(mode) >= 0)
                     return keysMapRecord.getFloat(outputColToKeyPos.getQuick(mode));
+                int prevSlot = prevValueSlot.getQuick(col);
+                if (prevSlot >= 0 && hasKeyPrev()) return currentMapValue.getFloat(prevSlot);
                 if ((mode == FILL_PREV_SELF || mode >= 0) && hasKeyPrev())
                     return prevRecord.getFloat(mode >= 0 ? mode : col);
                 if (mode == FILL_CONSTANT) return constantFills.getQuick(col).getFloat(null);
@@ -960,6 +1128,8 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
                 if (mode == FILL_KEY) return keysMapRecord.getGeoByte(outputColToKeyPos.getQuick(col));
                 if (mode >= 0 && outputColToKeyPos.getQuick(mode) >= 0)
                     return keysMapRecord.getGeoByte(outputColToKeyPos.getQuick(mode));
+                int prevSlot = prevValueSlot.getQuick(col);
+                if (prevSlot >= 0 && hasKeyPrev()) return currentMapValue.getByte(prevSlot);
                 if ((mode == FILL_PREV_SELF || mode >= 0) && hasKeyPrev())
                     return prevRecord.getGeoByte(mode >= 0 ? mode : col);
                 if (mode == FILL_CONSTANT) return constantFills.getQuick(col).getGeoByte(null);
@@ -973,6 +1143,8 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
                 if (mode == FILL_KEY) return keysMapRecord.getGeoInt(outputColToKeyPos.getQuick(col));
                 if (mode >= 0 && outputColToKeyPos.getQuick(mode) >= 0)
                     return keysMapRecord.getGeoInt(outputColToKeyPos.getQuick(mode));
+                int prevSlot = prevValueSlot.getQuick(col);
+                if (prevSlot >= 0 && hasKeyPrev()) return currentMapValue.getInt(prevSlot);
                 if ((mode == FILL_PREV_SELF || mode >= 0) && hasKeyPrev())
                     return prevRecord.getGeoInt(mode >= 0 ? mode : col);
                 if (mode == FILL_CONSTANT) return constantFills.getQuick(col).getGeoInt(null);
@@ -986,6 +1158,8 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
                 if (mode == FILL_KEY) return keysMapRecord.getGeoLong(outputColToKeyPos.getQuick(col));
                 if (mode >= 0 && outputColToKeyPos.getQuick(mode) >= 0)
                     return keysMapRecord.getGeoLong(outputColToKeyPos.getQuick(mode));
+                int prevSlot = prevValueSlot.getQuick(col);
+                if (prevSlot >= 0 && hasKeyPrev()) return currentMapValue.getLong(prevSlot);
                 if ((mode == FILL_PREV_SELF || mode >= 0) && hasKeyPrev())
                     return prevRecord.getGeoLong(mode >= 0 ? mode : col);
                 if (mode == FILL_CONSTANT) return constantFills.getQuick(col).getGeoLong(null);
@@ -999,6 +1173,8 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
                 if (mode == FILL_KEY) return keysMapRecord.getGeoShort(outputColToKeyPos.getQuick(col));
                 if (mode >= 0 && outputColToKeyPos.getQuick(mode) >= 0)
                     return keysMapRecord.getGeoShort(outputColToKeyPos.getQuick(mode));
+                int prevSlot = prevValueSlot.getQuick(col);
+                if (prevSlot >= 0 && hasKeyPrev()) return currentMapValue.getShort(prevSlot);
                 if ((mode == FILL_PREV_SELF || mode >= 0) && hasKeyPrev())
                     return prevRecord.getGeoShort(mode >= 0 ? mode : col);
                 if (mode == FILL_CONSTANT) return constantFills.getQuick(col).getGeoShort(null);
@@ -1012,6 +1188,8 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
                 if (mode == FILL_KEY) return keysMapRecord.getIPv4(outputColToKeyPos.getQuick(col));
                 if (mode >= 0 && outputColToKeyPos.getQuick(mode) >= 0)
                     return keysMapRecord.getIPv4(outputColToKeyPos.getQuick(mode));
+                int prevSlot = prevValueSlot.getQuick(col);
+                if (prevSlot >= 0 && hasKeyPrev()) return currentMapValue.getInt(prevSlot);
                 if ((mode == FILL_PREV_SELF || mode >= 0) && hasKeyPrev())
                     return prevRecord.getIPv4(mode >= 0 ? mode : col);
                 if (mode == FILL_CONSTANT) return constantFills.getQuick(col).getIPv4(null);
@@ -1025,6 +1203,8 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
                 if (mode == FILL_KEY) return keysMapRecord.getInt(outputColToKeyPos.getQuick(col));
                 if (mode >= 0 && outputColToKeyPos.getQuick(mode) >= 0)
                     return keysMapRecord.getInt(outputColToKeyPos.getQuick(mode));
+                int prevSlot = prevValueSlot.getQuick(col);
+                if (prevSlot >= 0 && hasKeyPrev()) return currentMapValue.getInt(prevSlot);
                 if ((mode == FILL_PREV_SELF || mode >= 0) && hasKeyPrev())
                     return prevRecord.getInt(mode >= 0 ? mode : col);
                 if (mode == FILL_CONSTANT) return constantFills.getQuick(col).getInt(null);
@@ -1051,6 +1231,8 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
                 if (mode == FILL_KEY) return keysMapRecord.getLong(outputColToKeyPos.getQuick(col));
                 if (mode >= 0 && outputColToKeyPos.getQuick(mode) >= 0)
                     return keysMapRecord.getLong(outputColToKeyPos.getQuick(mode));
+                int prevSlot = prevValueSlot.getQuick(col);
+                if (prevSlot >= 0 && hasKeyPrev()) return currentMapValue.getLong(prevSlot);
                 if ((mode == FILL_PREV_SELF || mode >= 0) && hasKeyPrev())
                     return prevRecord.getLong(mode >= 0 ? mode : col);
                 if (mode == FILL_CONSTANT) return constantFills.getQuick(col).getLong(null);
@@ -1145,6 +1327,8 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
                 if (mode == FILL_KEY) return keysMapRecord.getShort(outputColToKeyPos.getQuick(col));
                 if (mode >= 0 && outputColToKeyPos.getQuick(mode) >= 0)
                     return keysMapRecord.getShort(outputColToKeyPos.getQuick(mode));
+                int prevSlot = prevValueSlot.getQuick(col);
+                if (prevSlot >= 0 && hasKeyPrev()) return currentMapValue.getShort(prevSlot);
                 if ((mode == FILL_PREV_SELF || mode >= 0) && hasKeyPrev())
                     return prevRecord.getShort(mode >= 0 ? mode : col);
                 if (mode == FILL_CONSTANT) return (short) constantFills.getQuick(col).getInt(null);
@@ -1197,6 +1381,12 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
                 if (mode == FILL_KEY) return keysMapRecord.getSymA(outputColToKeyPos.getQuick(col));
                 if (mode >= 0 && outputColToKeyPos.getQuick(mode) >= 0)
                     return keysMapRecord.getSymA(outputColToKeyPos.getQuick(mode));
+                int prevSlot = prevValueSlot.getQuick(col);
+                if (prevSlot >= 0 && hasKeyPrev()) {
+                    int symId = currentMapValue.getInt(prevSlot);
+                    SymbolTable st = prevSymbolTable[col];
+                    return st == null || symId < 0 ? null : st.valueOf(symId);
+                }
                 if ((mode == FILL_PREV_SELF || mode >= 0) && hasKeyPrev())
                     return prevRecord.getSymA(mode >= 0 ? mode : col);
                 if (mode == FILL_CONSTANT) return constantFills.getQuick(col).getSymbol(null);
@@ -1210,6 +1400,12 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
                 if (mode == FILL_KEY) return keysMapRecord.getSymB(outputColToKeyPos.getQuick(col));
                 if (mode >= 0 && outputColToKeyPos.getQuick(mode) >= 0)
                     return keysMapRecord.getSymB(outputColToKeyPos.getQuick(mode));
+                int prevSlot = prevValueSlot.getQuick(col);
+                if (prevSlot >= 0 && hasKeyPrev()) {
+                    int symId = currentMapValue.getInt(prevSlot);
+                    SymbolTable st = prevSymbolTable[col];
+                    return st == null || symId < 0 ? null : st.valueOf(symId);
+                }
                 if ((mode == FILL_PREV_SELF || mode >= 0) && hasKeyPrev())
                     return prevRecord.getSymB(mode >= 0 ? mode : col);
                 if (mode == FILL_CONSTANT) return constantFills.getQuick(col).getSymbolB(null);
@@ -1224,6 +1420,8 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
                 if (mode == FILL_KEY) return keysMapRecord.getTimestamp(outputColToKeyPos.getQuick(col));
                 if (mode >= 0 && outputColToKeyPos.getQuick(mode) >= 0)
                     return keysMapRecord.getTimestamp(outputColToKeyPos.getQuick(mode));
+                int prevSlot = prevValueSlot.getQuick(col);
+                if (prevSlot >= 0 && hasKeyPrev()) return currentMapValue.getTimestamp(prevSlot);
                 if ((mode == FILL_PREV_SELF || mode >= 0) && hasKeyPrev())
                     return prevRecord.getTimestamp(mode >= 0 ? mode : col);
                 if (mode == FILL_CONSTANT) return constantFills.getQuick(col).getTimestamp(null);

@@ -3712,11 +3712,96 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 }
             }
 
-            // The cursor reads typed prev values via baseCursor.recordAt(prevRecord, prevRowId).
-            // populateMapValueTypes owns the fixed-width value header layout so the
-            // keys map's slot indices stay in sync with the cursor's constants.
+            // The cursor reads typed prev values either from per-source-col
+            // cached MapValue slots (slot-eligible: fixed-size scalar +
+            // SYMBOL) or, for the variable-width fall-back, via
+            // baseCursor.recordAt(prevRecord, prevRowId).
+            // populateMapValueTypes owns the fixed-width value header layout
+            // so the keys map's slot indices stay in sync with the cursor's
+            // constants.
             final ArrayColumnTypes mapValueTypes = new ArrayColumnTypes();
             SampleByFillRecordCursorFactory.populateMapValueTypes(mapValueTypes);
+
+            // Per-source-col cached prev value slots. Allocated for each
+            // unique non-key FILL_PREV source col whose type is fixed-size
+            // (or SYMBOL, stored as the int symbol id).
+            // - fixedPrevSrcCols[i] = source col index for slot i
+            // - fixedPrevTypeTags[i] = ColumnType.tagOf the source type
+            //   (SYMBOL kept as SYMBOL so the cursor knows to resolve the
+            //   id via baseCursor.getSymbolTable on read)
+            // - prevValueSlot[outputCol] = slot index, or -1 if not eligible
+            // - needsPrevPositioning = at least one FILL_PREV col is
+            //   variable-width and still needs prevRecord positioned via
+            //   recordAt (Decimal128/256, Long128/256, UUID, varchar, str,
+            //   bin, array, interval also count -- they fall through).
+            final IntList fixedPrevSrcCols = new IntList();
+            final IntList fixedPrevTypeTags = new IntList();
+            final IntList prevValueSlot = new IntList(columnCount);
+            for (int col = 0; col < columnCount; col++) {
+                prevValueSlot.add(-1);
+            }
+            boolean needsPrevPositioning = false;
+            // Slots live in the keysMap value section, so they only exist
+            // for keyed queries. Non-keyed queries take the simplePrevRowId
+            // path with prevRecord positioned by recordAt -- needsPrevPositioning
+            // stays true via the variable-width fall-through below or, for
+            // wholly fixed-size non-keyed queries, the cursor handles it
+            // through hasSimplePrev unaffected by this loop.
+            for (int col = 0; keyColIndices.size() > 0 && col < columnCount; col++) {
+                int mode = fillModes.getQuick(col);
+                if (mode != SampleByFillRecordCursorFactory.FILL_PREV_SELF && mode < 0) {
+                    continue; // not a FILL_PREV column
+                }
+                int srcCol = (mode == SampleByFillRecordCursorFactory.FILL_PREV_SELF) ? col : mode;
+                // Source col is itself a key column -> read goes through
+                // keysMapRecord at outputColToKeyPos[srcCol], no slot needed.
+                if (fillModes.getQuick(srcCol) == SampleByFillRecordCursorFactory.FILL_KEY) {
+                    continue;
+                }
+                int srcType = groupByMetadata.getColumnType(srcCol);
+                int srcTag = ColumnType.tagOf(srcType);
+                // Slot-eligible: scalar fixed-size types that map cleanly
+                // to a single MapValue.putXxx slot. SYMBOL is special-cased
+                // (4-byte int symbol id stored in an INT slot, resolved via
+                // SymbolTable on read). Multi-slot wide types (LONG128,
+                // LONG256, UUID, DECIMAL128, DECIMAL256) and variable-width
+                // types stay on the recordAt fall-back -- this iteration
+                // does not introduce slot reads for them.
+                if (!isFixedSizePrevSlotEligible(srcTag)) {
+                    needsPrevPositioning = true;
+                    continue;
+                }
+                // Find or assign a slot for this source col (deduplicated).
+                int slot = -1;
+                for (int j = 0, n = fixedPrevSrcCols.size(); j < n; j++) {
+                    if (fixedPrevSrcCols.getQuick(j) == srcCol) {
+                        slot = mapValueTypes.getColumnCount() - fixedPrevSrcCols.size() + j;
+                        break;
+                    }
+                }
+                if (slot < 0) {
+                    slot = mapValueTypes.getColumnCount();
+                    fixedPrevSrcCols.add(srcCol);
+                    fixedPrevTypeTags.add(srcTag);
+                    // Cache SYMBOL as INT (the symbol id); other slot-eligible
+                    // tags map to themselves (DOUBLE, LONG, etc.).
+                    mapValueTypes.add(srcTag == ColumnType.SYMBOL ? ColumnType.INT : srcType);
+                }
+                prevValueSlot.setQuick(col, slot);
+            }
+            // Non-keyed FILL_PREV always uses the simplePrevRowId + recordAt
+            // path because there is no MapValue to cache slots in. Force
+            // needsPrevPositioning on if this query has any FILL_PREV col
+            // and no keys.
+            if (keyColIndices.size() == 0) {
+                for (int col = 0; col < columnCount; col++) {
+                    int mode = fillModes.getQuick(col);
+                    if (mode == SampleByFillRecordCursorFactory.FILL_PREV_SELF || mode >= 0) {
+                        needsPrevPositioning = true;
+                        break;
+                    }
+                }
+            }
 
             RecordSink keySink = null;
             if (keyColIndices.size() > 0) {
@@ -3729,12 +3814,22 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 );
             }
 
-            // symbolTableColIndices covers ALL map columns (value columns first,
-            // then key columns). Value columns are never SYMBOLs and get -1;
-            // key columns get the base cursor column index if SYMBOL.
+            // symbolTableColIndices covers ALL map columns (value columns
+            // first, then key columns). The 3-slot value header is never
+            // SYMBOL (-1). Cached prev-value slots get the source col index
+            // for SYMBOL slots so the existing MapRecord symbol-table wiring
+            // resolves via the right base column. Key columns get the base
+            // col index if they are SYMBOL.
             final IntList symbolTableColIndices = new IntList();
-            for (int i = 0, n = mapValueTypes.getColumnCount(); i < n; i++) {
-                symbolTableColIndices.add(-1);
+            for (int i = 0, n = mapValueTypes.getColumnCount() - fixedPrevSrcCols.size(); i < n; i++) {
+                symbolTableColIndices.add(-1); // header slots (KEY_INDEX, HAS_PREV, PREV_ROWID)
+            }
+            for (int i = 0, n = fixedPrevSrcCols.size(); i < n; i++) {
+                if (fixedPrevTypeTags.getQuick(i) == ColumnType.SYMBOL) {
+                    symbolTableColIndices.add(fixedPrevSrcCols.getQuick(i));
+                } else {
+                    symbolTableColIndices.add(-1);
+                }
             }
             for (int i = 0, n = keyColIndices.size(); i < n; i++) {
                 int col = keyColIndices.getQuick(i);
@@ -3830,7 +3925,11 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     mapValueTypes,
                     keyColIndices,
                     symbolTableColIndices,
-                    calendarOffset
+                    calendarOffset,
+                    fixedPrevSrcCols,
+                    fixedPrevTypeTags,
+                    prevValueSlot,
+                    needsPrevPositioning
             );
         } catch (Throwable e) {
             Misc.freeObjList(fillValues);
@@ -3839,6 +3938,41 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             Misc.free(fillToFunc);
             Misc.free(groupByFactory);
             throw e;
+        }
+    }
+
+    // Slot-eligible types for the FILL_PREV value cache in
+    // SampleByFillRecordCursorFactory's keysMap value section. The
+    // cursor's update path writes via MapValue.put<Tag>() and the read
+    // path reads via MapValue.get<Tag>() -- both APIs only support
+    // these single-slot fixed-size scalars (plus SYMBOL, cached as int
+    // symbol id). Wide types (LONG128/256, UUID, DECIMAL128/256) and
+    // variable-width types stay on the existing recordAt path.
+    private static boolean isFixedSizePrevSlotEligible(int srcTag) {
+        switch (srcTag) {
+            case ColumnType.BOOLEAN:
+            case ColumnType.BYTE:
+            case ColumnType.CHAR:
+            case ColumnType.DATE:
+            case ColumnType.DECIMAL16:
+            case ColumnType.DECIMAL32:
+            case ColumnType.DECIMAL64:
+            case ColumnType.DECIMAL8:
+            case ColumnType.DOUBLE:
+            case ColumnType.FLOAT:
+            case ColumnType.GEOBYTE:
+            case ColumnType.GEOINT:
+            case ColumnType.GEOLONG:
+            case ColumnType.GEOSHORT:
+            case ColumnType.INT:
+            case ColumnType.IPv4:
+            case ColumnType.LONG:
+            case ColumnType.SHORT:
+            case ColumnType.SYMBOL:
+            case ColumnType.TIMESTAMP:
+                return true;
+            default:
+                return false;
         }
     }
 
