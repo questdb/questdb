@@ -28,7 +28,6 @@ extern crate core;
 pub extern crate jni;
 
 pub mod allocator;
-pub(crate) mod ffi_panic_guard;
 pub mod files;
 pub mod parquet;
 pub mod parquet_metadata;

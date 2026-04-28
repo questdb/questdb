@@ -1,7 +1,6 @@
 use std::slice;
 
 use crate::allocator::QdbAllocator;
-use crate::ffi_panic_guard::{ffi_guard, ffi_guard_void};
 use crate::parquet::error::{fmt_err, ParquetResult};
 use crate::parquet_metadata::jni::reader::JniParquetMetaReader;
 use crate::parquet_metadata::reader::ParquetMetaReader;
@@ -36,33 +35,27 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_ParquetMetaP
     row_group_lo: u32,
     row_group_hi: u32,
 ) -> u32 {
-    ffi_guard(
-        &mut env,
-        "ParquetMetaPartitionDecoder.decodeRowGroup",
-        0,
-        |env| {
-            let res = parquet_meta_decode_row_group_impl(
-                allocator,
-                ctx,
-                parquet_file_ptr,
-                parquet_file_size,
-                parquet_meta_reader_ptr,
-                row_group_bufs,
-                columns,
-                column_count,
-                row_group_index,
-                row_group_lo,
-                row_group_hi,
-            );
-            match res {
-                Ok(count) => count as u32,
-                Err(mut err) => {
-                    err.add_context("error in ParquetMetaPartitionDecoder.decodeRowGroup");
-                    err.into_cairo_exception().throw(env)
-                }
-            }
-        },
-    )
+    let env = &mut env;
+    let res = parquet_meta_decode_row_group_impl(
+        allocator,
+        ctx,
+        parquet_file_ptr,
+        parquet_file_size,
+        parquet_meta_reader_ptr,
+        row_group_bufs,
+        columns,
+        column_count,
+        row_group_index,
+        row_group_lo,
+        row_group_hi,
+    );
+    match res {
+        Ok(count) => count as u32,
+        Err(mut err) => {
+            err.add_context("error in ParquetMetaPartitionDecoder.decodeRowGroup");
+            err.into_cairo_exception().throw(env)
+        }
+    }
 }
 
 #[no_mangle]
@@ -84,37 +77,32 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_ParquetMetaP
     filtered_rows_ptr: *const i64,
     filtered_rows_size: i64,
 ) {
-    ffi_guard_void(
-        &mut env,
-        "ParquetMetaPartitionDecoder.decodeRowGroupWithRowFilter",
-        |env| {
-            let filtered_rows_count = if filtered_rows_size < 0 {
-                0usize
-            } else {
-                filtered_rows_size as usize
-            };
-            let res = parquet_meta_decode_row_group_filtered_impl::<false>(
-                allocator,
-                ctx,
-                parquet_file_ptr,
-                parquet_file_size,
-                parquet_meta_reader_ptr,
-                row_group_bufs,
-                column_offset as usize,
-                columns,
-                column_count,
-                row_group_index,
-                row_group_lo,
-                row_group_hi,
-                filtered_rows_ptr,
-                filtered_rows_count,
-            );
-            if let Err(mut err) = res {
-                err.add_context("error in ParquetMetaPartitionDecoder.decodeRowGroupWithRowFilter");
-                let _: () = err.into_cairo_exception().throw(env);
-            }
-        },
-    )
+    let env = &mut env;
+    let filtered_rows_count = if filtered_rows_size < 0 {
+        0usize
+    } else {
+        filtered_rows_size as usize
+    };
+    let res = parquet_meta_decode_row_group_filtered_impl::<false>(
+        allocator,
+        ctx,
+        parquet_file_ptr,
+        parquet_file_size,
+        parquet_meta_reader_ptr,
+        row_group_bufs,
+        column_offset as usize,
+        columns,
+        column_count,
+        row_group_index,
+        row_group_lo,
+        row_group_hi,
+        filtered_rows_ptr,
+        filtered_rows_count,
+    );
+    if let Err(mut err) = res {
+        err.add_context("error in ParquetMetaPartitionDecoder.decodeRowGroupWithRowFilter");
+        let _: () = err.into_cairo_exception().throw(env);
+    }
 }
 
 #[no_mangle]
@@ -136,39 +124,34 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_ParquetMetaP
     filtered_rows_ptr: *const i64,
     filtered_rows_size: i64,
 ) {
-    ffi_guard_void(
-        &mut env,
-        "ParquetMetaPartitionDecoder.decodeRowGroupWithRowFilterFillNulls",
-        |env| {
-            let filtered_rows_count = if filtered_rows_size < 0 {
-                0usize
-            } else {
-                filtered_rows_size as usize
-            };
-            let res = parquet_meta_decode_row_group_filtered_impl::<true>(
-                allocator,
-                ctx,
-                parquet_file_ptr,
-                parquet_file_size,
-                parquet_meta_reader_ptr,
-                row_group_bufs,
-                column_offset as usize,
-                columns,
-                column_count,
-                row_group_index,
-                row_group_lo,
-                row_group_hi,
-                filtered_rows_ptr,
-                filtered_rows_count,
-            );
-            if let Err(mut err) = res {
-                err.add_context(
-                    "error in ParquetMetaPartitionDecoder.decodeRowGroupWithRowFilterFillNulls",
-                );
-                let _: () = err.into_cairo_exception().throw(env);
-            }
-        },
-    )
+    let env = &mut env;
+    let filtered_rows_count = if filtered_rows_size < 0 {
+        0usize
+    } else {
+        filtered_rows_size as usize
+    };
+    let res = parquet_meta_decode_row_group_filtered_impl::<true>(
+        allocator,
+        ctx,
+        parquet_file_ptr,
+        parquet_file_size,
+        parquet_meta_reader_ptr,
+        row_group_bufs,
+        column_offset as usize,
+        columns,
+        column_count,
+        row_group_index,
+        row_group_lo,
+        row_group_hi,
+        filtered_rows_ptr,
+        filtered_rows_count,
+    );
+    if let Err(mut err) = res {
+        err.add_context(
+            "error in ParquetMetaPartitionDecoder.decodeRowGroupWithRowFilterFillNulls",
+        );
+        let _: () = err.into_cairo_exception().throw(env);
+    }
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -322,30 +305,24 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_ParquetMetaP
     row_hi: i64,
     timestamp_column_index: i32,
 ) -> i64 {
-    ffi_guard(
-        &mut env,
-        "ParquetMetaPartitionDecoder.findRowGroupByTimestamp",
-        -1,
-        |env| {
-            let res = parquet_meta_find_row_group_by_timestamp_impl(
-                allocator,
-                parquet_file_ptr,
-                parquet_file_size,
-                parquet_meta_reader_ptr,
-                timestamp,
-                row_lo as usize,
-                row_hi as usize,
-                timestamp_column_index as usize,
-            );
-            match res {
-                Ok(val) => val as i64,
-                Err(mut err) => {
-                    err.add_context("error in ParquetMetaPartitionDecoder.findRowGroupByTimestamp");
-                    err.into_cairo_exception().throw(env)
-                }
-            }
-        },
-    )
+    let env = &mut env;
+    let res = parquet_meta_find_row_group_by_timestamp_impl(
+        allocator,
+        parquet_file_ptr,
+        parquet_file_size,
+        parquet_meta_reader_ptr,
+        timestamp,
+        row_lo as usize,
+        row_hi as usize,
+        timestamp_column_index as usize,
+    );
+    match res {
+        Ok(val) => val as i64,
+        Err(mut err) => {
+            err.add_context("error in ParquetMetaPartitionDecoder.findRowGroupByTimestamp");
+            err.into_cairo_exception().throw(env)
+        }
+    }
 }
 
 #[allow(clippy::too_many_arguments)]

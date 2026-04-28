@@ -11,6 +11,9 @@ rust-version = "nightly"
 name = "questdbr"
 crate-type = ["cdylib", "rlib"]
 
+[profile.dev]
+panic = 'abort'
+
 [dependencies]
 qdb-core = { path = "../qdb-core" }
 qdb-parquet-meta = { path = "../qdb-parquet-meta" }
@@ -40,6 +43,7 @@ rand = "0.10.1"
 criterion = "0.4"
 
 [profile.release]
+panic = 'abort'
 lto = true
 codegen-units = 1
 strip = "debuginfo"

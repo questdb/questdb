@@ -32,7 +32,6 @@
 //! `close()`.
 #![allow(clippy::not_unsafe_ptr_arg_deref)]
 
-use crate::ffi_panic_guard::{ffi_guard, ffi_guard_void};
 use crate::parquet::error::{fmt_err, ParquetResult};
 use crate::parquet_metadata::reader::ParquetMetaReader;
 use crate::parquet_read::ColumnFilterPacked;
@@ -110,42 +109,30 @@ pub extern "system" fn Java_io_questdb_cairo_ParquetMetaFileReader_createNativeR
     addr: *const u8,
     file_size: u64,
 ) -> *mut JniParquetMetaReader {
-    ffi_guard(
-        &mut env,
-        "ParquetMetaFileReader.createNativeReader",
-        std::ptr::null_mut(),
-        |env| {
-            if addr.is_null() {
-                let err = fmt_err!(InvalidLayout, "_pm file pointer is null");
-                return err.into_cairo_exception().throw(env);
-            }
-            let res = unsafe { JniParquetMetaReader::new(addr, file_size) };
-            match res {
-                Ok(reader) => Box::into_raw(Box::new(reader)),
-                Err(mut err) => {
-                    err.add_context("error in ParquetMetaFileReader.createNativeReader");
-                    err.into_cairo_exception().throw(env)
-                }
-            }
-        },
-    )
+    let env = &mut env;
+    if addr.is_null() {
+        let err = fmt_err!(InvalidLayout, "_pm file pointer is null");
+        return err.into_cairo_exception().throw(env);
+    }
+    let res = unsafe { JniParquetMetaReader::new(addr, file_size) };
+    match res {
+        Ok(reader) => Box::into_raw(Box::new(reader)),
+        Err(mut err) => {
+            err.add_context("error in ParquetMetaFileReader.createNativeReader");
+            err.into_cairo_exception().throw(env)
+        }
+    }
 }
 
 #[no_mangle]
 pub extern "system" fn Java_io_questdb_cairo_ParquetMetaFileReader_destroyNativeReader(
-    mut env: JNIEnv,
+    _env: JNIEnv,
     _class: JClass,
     ptr: *mut JniParquetMetaReader,
 ) {
-    ffi_guard_void(
-        &mut env,
-        "ParquetMetaFileReader.destroyNativeReader",
-        |_env| {
-            if !ptr.is_null() {
-                drop(unsafe { Box::from_raw(ptr) });
-            }
-        },
-    )
+    if !ptr.is_null() {
+        drop(unsafe { Box::from_raw(ptr) });
+    }
 }
 
 /// Writes `(total_row_count: i64, squash_tracker: i64)` to `[dest_addr, dest_addr + 16)`.
@@ -163,31 +150,26 @@ pub extern "system" fn Java_io_questdb_cairo_ParquetMetaFileReader_readPartition
     parquet_meta_size: u64,
     dest_addr: i64,
 ) {
-    ffi_guard_void(
-        &mut env,
-        "ParquetMetaFileReader.readPartitionMeta0",
-        |env| {
-            let res = read_partition_meta_impl(parquet_meta_addr, parquet_meta_size);
-            match res {
-                Ok((row_count, squash_tracker)) => {
-                    if dest_addr == 0 {
-                        let err = fmt_err!(InvalidLayout, "dest_addr is null");
-                        let _: () = err.into_cairo_exception().throw(env);
-                        return;
-                    }
-                    unsafe {
-                        let dest = dest_addr as *mut i64;
-                        dest.write_unaligned(row_count);
-                        dest.add(1).write_unaligned(squash_tracker);
-                    }
-                }
-                Err(mut err) => {
-                    err.add_context("error in ParquetMetaFileReader.readPartitionMeta");
-                    let _: () = err.into_cairo_exception().throw(env);
-                }
+    let env = &mut env;
+    let res = read_partition_meta_impl(parquet_meta_addr, parquet_meta_size);
+    match res {
+        Ok((row_count, squash_tracker)) => {
+            if dest_addr == 0 {
+                let err = fmt_err!(InvalidLayout, "dest_addr is null");
+                let _: () = err.into_cairo_exception().throw(env);
+                return;
             }
-        },
-    )
+            unsafe {
+                let dest = dest_addr as *mut i64;
+                dest.write_unaligned(row_count);
+                dest.add(1).write_unaligned(squash_tracker);
+            }
+        }
+        Err(mut err) => {
+            err.add_context("error in ParquetMetaFileReader.readPartitionMeta");
+            let _: () = err.into_cairo_exception().throw(env);
+        }
+    }
 }
 
 /// Parses the `_pm` buffer and returns `(total_row_count, squash_tracker)`.
@@ -243,12 +225,11 @@ pub extern "system" fn Java_io_questdb_cairo_ParquetMetaFileReader_verifyChecksu
     addr: *const u8,
     file_size: u64,
 ) {
-    ffi_guard_void(&mut env, "ParquetMetaFileReader.verifyChecksum0", |env| {
-        if let Err(mut err) = verify_checksum_impl(addr, file_size) {
-            err.add_context("error in ParquetMetaFileReader.verifyChecksum");
-            let _: () = err.into_cairo_exception().throw(env);
-        }
-    })
+    let env = &mut env;
+    if let Err(mut err) = verify_checksum_impl(addr, file_size) {
+        err.add_context("error in ParquetMetaFileReader.verifyChecksum");
+        let _: () = err.into_cairo_exception().throw(env);
+    }
 }
 
 #[no_mangle]
@@ -261,51 +242,45 @@ pub extern "system" fn Java_io_questdb_cairo_ParquetMetaFileReader_canSkipRowGro
     filter_count: u32,
     filter_buf_end: u64,
 ) -> bool {
-    ffi_guard(
-        &mut env,
-        "ParquetMetaFileReader.canSkipRowGroup0",
-        false,
-        |env| {
-            let res = (|| -> ParquetResult<bool> {
-                if ptr.is_null() {
-                    return Err(fmt_err!(
-                        InvalidLayout,
-                        "JniParquetMetaReader pointer is null"
-                    ));
-                }
-                if filters_ptr.is_null() && filter_count > 0 {
-                    return Err(fmt_err!(
-                        InvalidLayout,
-                        "filters pointer is null with non-zero filter count"
-                    ));
-                }
-                debug_assert!(
-                    (filter_count as usize) <= 1 << 24,
-                    "implausible filter_count: {}",
-                    filter_count
-                );
-                let jni_reader = unsafe { &*ptr };
-                let filters: &[ColumnFilterPacked] = if filter_count == 0 {
-                    &[]
-                } else {
-                    unsafe { slice::from_raw_parts(filters_ptr, filter_count as usize) }
-                };
-                crate::parquet_metadata::skip::can_skip_row_group(
-                    jni_reader.reader(),
-                    row_group_index as usize,
-                    filters,
-                    filter_buf_end,
-                )
-            })();
-            match res {
-                Ok(skip) => skip,
-                Err(mut err) => {
-                    err.add_context("error in ParquetMetaFileReader.canSkipRowGroup");
-                    err.into_cairo_exception().throw(env)
-                }
-            }
-        },
-    )
+    let env = &mut env;
+    let res = (|| -> ParquetResult<bool> {
+        if ptr.is_null() {
+            return Err(fmt_err!(
+                InvalidLayout,
+                "JniParquetMetaReader pointer is null"
+            ));
+        }
+        if filters_ptr.is_null() && filter_count > 0 {
+            return Err(fmt_err!(
+                InvalidLayout,
+                "filters pointer is null with non-zero filter count"
+            ));
+        }
+        debug_assert!(
+            (filter_count as usize) <= 1 << 24,
+            "implausible filter_count: {}",
+            filter_count
+        );
+        let jni_reader = unsafe { &*ptr };
+        let filters: &[ColumnFilterPacked] = if filter_count == 0 {
+            &[]
+        } else {
+            unsafe { slice::from_raw_parts(filters_ptr, filter_count as usize) }
+        };
+        crate::parquet_metadata::skip::can_skip_row_group(
+            jni_reader.reader(),
+            row_group_index as usize,
+            filters,
+            filter_buf_end,
+        )
+    })();
+    match res {
+        Ok(skip) => skip,
+        Err(mut err) => {
+            err.add_context("error in ParquetMetaFileReader.canSkipRowGroup");
+            err.into_cairo_exception().throw(env)
+        }
+    }
 }
 
 #[cfg(test)]

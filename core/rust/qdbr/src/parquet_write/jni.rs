@@ -1,4 +1,3 @@
-use crate::ffi_panic_guard::{ffi_guard, ffi_guard_void};
 use crate::parquet::error::{fmt_err, ParquetError, ParquetErrorExt, ParquetResult};
 use crate::parquet_write::file::{
     ChunkedWriter, ParquetWriter, DEFAULT_BLOOM_FILTER_FPP, DEFAULT_ROW_GROUP_SIZE,
@@ -28,23 +27,22 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionUpd
     updater: *mut ParquetUpdater,
     rg_index: jint,
 ) {
-    ffi_guard_void(&mut env, "PartitionUpdater.copyRowGroup", |env| {
-        if updater.is_null() {
-            let mut err = fmt_err!(InvalidType, "ParquetUpdater pointer is null");
-            err.add_context("error in PartitionUpdater.copyRowGroup");
-            return err.into_cairo_exception().throw(env);
-        }
+    let env = &mut env;
+    if updater.is_null() {
+        let mut err = fmt_err!(InvalidType, "ParquetUpdater pointer is null");
+        err.add_context("error in PartitionUpdater.copyRowGroup");
+        return err.into_cairo_exception().throw(env);
+    }
 
-        let parquet_updater = unsafe { &mut *updater };
-        match parquet_updater.copy_row_group(rg_index) {
-            Ok(_) => (),
-            Err(mut err) => {
-                err.add_context(format!("could not copy row group {rg_index}"));
-                err.add_context("error in PartitionUpdater.copyRowGroup");
-                err.into_cairo_exception().throw(env)
-            }
+    let parquet_updater = unsafe { &mut *updater };
+    match parquet_updater.copy_row_group(rg_index) {
+        Ok(_) => (),
+        Err(mut err) => {
+            err.add_context(format!("could not copy row group {rg_index}"));
+            err.add_context("error in PartitionUpdater.copyRowGroup");
+            err.into_cairo_exception().throw(env)
         }
-    })
+    }
 }
 
 #[no_mangle]
@@ -61,43 +59,42 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionUpd
     col_data_len: jlong,
     timestamp_index: jint,
 ) {
-    ffi_guard_void(&mut env, "PartitionUpdater.setTargetSchema", |env| {
-        if updater.is_null() {
-            let mut err = fmt_err!(InvalidType, "ParquetUpdater pointer is null");
+    let env = &mut env;
+    if updater.is_null() {
+        let mut err = fmt_err!(InvalidType, "ParquetUpdater pointer is null");
+        err.add_context("error in PartitionUpdater.setTargetSchema");
+        return err.into_cairo_exception().throw(env);
+    }
+
+    let parquet_updater = unsafe { &mut *updater };
+
+    let mut set_schema = || -> ParquetResult<()> {
+        // Reuse the standard partition descriptor format (9 entries per column)
+        // but only the name length (offset 0) and packed id/type (offset 1) are
+        // read. Data pointers at offsets 3-8 are ignored for schema building
+        // because from_raw_data accepts null pointers with zero sizes.
+        let partition = create_partition_descriptor(
+            table_name_ptr,
+            table_name_len,
+            col_count,
+            col_names_ptr,
+            col_names_len,
+            col_data_ptr,
+            col_data_len,
+            0, // row_count = 0 for schema-only
+            timestamp_index,
+        )?;
+        parquet_updater.set_target_schema(&partition)
+    };
+
+    match set_schema() {
+        Ok(_) => (),
+        Err(mut err) => {
+            err.add_context("could not set target schema");
             err.add_context("error in PartitionUpdater.setTargetSchema");
-            return err.into_cairo_exception().throw(env);
+            err.into_cairo_exception().throw(env)
         }
-
-        let parquet_updater = unsafe { &mut *updater };
-
-        let mut set_schema = || -> ParquetResult<()> {
-            // Reuse the standard partition descriptor format (9 entries per column)
-            // but only the name length (offset 0) and packed id/type (offset 1) are
-            // read. Data pointers at offsets 3-8 are ignored for schema building
-            // because from_raw_data accepts null pointers with zero sizes.
-            let partition = create_partition_descriptor(
-                table_name_ptr,
-                table_name_len,
-                col_count,
-                col_names_ptr,
-                col_names_len,
-                col_data_ptr,
-                col_data_len,
-                0, // row_count = 0 for schema-only
-                timestamp_index,
-            )?;
-            parquet_updater.set_target_schema(&partition)
-        };
-
-        match set_schema() {
-            Ok(_) => (),
-            Err(mut err) => {
-                err.add_context("could not set target schema");
-                err.add_context("error in PartitionUpdater.setTargetSchema");
-                err.into_cairo_exception().throw(env)
-            }
-        }
-    })
+    }
 }
 
 #[no_mangle]
@@ -109,54 +106,48 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionUpd
     null_col_desc_ptr: *const i64,
     null_col_count: jint,
 ) {
-    ffi_guard_void(
-        &mut env,
-        "PartitionUpdater.copyRowGroupWithNullColumns",
-        |env| {
-            if updater.is_null() {
-                let mut err = fmt_err!(InvalidType, "ParquetUpdater pointer is null");
-                err.add_context("error in PartitionUpdater.copyRowGroupWithNullColumns");
-                return err.into_cairo_exception().throw(env);
-            }
+    let env = &mut env;
+    if updater.is_null() {
+        let mut err = fmt_err!(InvalidType, "ParquetUpdater pointer is null");
+        err.add_context("error in PartitionUpdater.copyRowGroupWithNullColumns");
+        return err.into_cairo_exception().throw(env);
+    }
 
-            let parquet_updater = unsafe { &mut *updater };
+    let parquet_updater = unsafe { &mut *updater };
 
-            let mut copy = || -> ParquetResult<()> {
-                let null_columns: Vec<(usize, ColumnType)> = if null_col_count > 0
-                    && !null_col_desc_ptr.is_null()
-                {
-                    let desc = unsafe {
-                        slice::from_raw_parts(null_col_desc_ptr, (null_col_count as usize) * 2)
-                    };
-                    (0..null_col_count as usize)
-                        .map(|i| {
-                            let target_pos = desc[i * 2] as usize;
-                            let col_type_raw = desc[i * 2 + 1] as i32;
-                            let col_type: ColumnType =
-                                (col_type_raw & 0x7FFFFFFF).try_into().map_err(|_| {
-                                    fmt_err!(InvalidType, "invalid column type {}", col_type_raw)
-                                })?;
-                            Ok((target_pos, col_type))
-                        })
-                        .collect::<ParquetResult<Vec<_>>>()?
-                } else {
-                    vec![]
-                };
-                parquet_updater.copy_row_group_with_null_columns(rg_index, &null_columns)
-            };
+    let mut copy = || -> ParquetResult<()> {
+        let null_columns: Vec<(usize, ColumnType)> = if null_col_count > 0
+            && !null_col_desc_ptr.is_null()
+        {
+            let desc =
+                unsafe { slice::from_raw_parts(null_col_desc_ptr, (null_col_count as usize) * 2) };
+            (0..null_col_count as usize)
+                .map(|i| {
+                    let target_pos = desc[i * 2] as usize;
+                    let col_type_raw = desc[i * 2 + 1] as i32;
+                    let col_type: ColumnType =
+                        (col_type_raw & 0x7FFFFFFF).try_into().map_err(|_| {
+                            fmt_err!(InvalidType, "invalid column type {}", col_type_raw)
+                        })?;
+                    Ok((target_pos, col_type))
+                })
+                .collect::<ParquetResult<Vec<_>>>()?
+        } else {
+            vec![]
+        };
+        parquet_updater.copy_row_group_with_null_columns(rg_index, &null_columns)
+    };
 
-            match copy() {
-                Ok(_) => (),
-                Err(mut err) => {
-                    err.add_context(format!(
-                        "could not copy row group {rg_index} with null columns"
-                    ));
-                    err.add_context("error in PartitionUpdater.copyRowGroupWithNullColumns");
-                    err.into_cairo_exception().throw(env)
-                }
-            }
-        },
-    )
+    match copy() {
+        Ok(_) => (),
+        Err(mut err) => {
+            err.add_context(format!(
+                "could not copy row group {rg_index} with null columns"
+            ));
+            err.add_context("error in PartitionUpdater.copyRowGroupWithNullColumns");
+            err.into_cairo_exception().throw(env)
+        }
+    }
 }
 
 #[no_mangle]
@@ -182,95 +173,86 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionUpd
     parquet_meta_file_size: jlong,
     existing_parquet_meta_file_size: jlong,
 ) -> *mut ParquetUpdater {
-    ffi_guard(
-        &mut env,
-        "PartitionUpdater.create",
-        std::ptr::null_mut(),
-        |env| {
-            let create = || -> ParquetResult<ParquetUpdater> {
-                let (reader_file, writer_file, parquet_meta_fd_handle) =
-                    take_partition_updater_fds(reader_fd, writer_fd, parquet_meta_fd)?;
+    let env = &mut env;
+    let create = || -> ParquetResult<ParquetUpdater> {
+        let (reader_file, writer_file, parquet_meta_fd_handle) =
+            take_partition_updater_fds(reader_fd, writer_fd, parquet_meta_fd)?;
 
-                let compression_options =
-                    compression_from_i64(compression_codec).context("CompressionCodec")?;
-                // SAFETY: Pointer was passed from Java and points to a valid allocator for the JNI call duration.
-                let allocator = unsafe { &*allocator }.clone();
+        let compression_options =
+            compression_from_i64(compression_codec).context("CompressionCodec")?;
+        // SAFETY: Pointer was passed from Java and points to a valid allocator for the JNI call duration.
+        let allocator = unsafe { &*allocator }.clone();
 
-                let statistics_enabled = statistics_enabled != 0;
-                let raw_array_encoding = raw_array_encoding != 0;
+        let statistics_enabled = statistics_enabled != 0;
+        let raw_array_encoding = raw_array_encoding != 0;
 
-                let row_group_size = if row_group_size > 0 {
-                    Some(row_group_size as usize)
-                } else {
-                    None
-                };
+        let row_group_size = if row_group_size > 0 {
+            Some(row_group_size as usize)
+        } else {
+            None
+        };
 
-                let data_page_size = if data_page_size > 0 {
-                    Some(data_page_size as usize)
-                } else {
-                    None
-                };
+        let data_page_size = if data_page_size > 0 {
+            Some(data_page_size as usize)
+        } else {
+            None
+        };
 
-                let sorting_columns = if timestamp_index != -1 {
-                    Some(vec![SortingColumn::new(timestamp_index, false, false)])
-                } else {
-                    None
-                };
+        let sorting_columns = if timestamp_index != -1 {
+            Some(vec![SortingColumn::new(timestamp_index, false, false)])
+        } else {
+            None
+        };
 
-                ParquetUpdater::new(
-                    allocator,
-                    reader_file,
-                    read_file_size,
-                    writer_file,
-                    write_file_size,
-                    sorting_columns,
-                    statistics_enabled,
-                    raw_array_encoding,
-                    compression_options,
-                    row_group_size,
-                    data_page_size,
-                    bloom_filter_fpp,
-                    min_compression_ratio,
-                    parquet_meta_fd_handle,
-                    parquet_meta_file_size as u64,
-                    existing_parquet_meta_file_size,
-                )
-            };
+        ParquetUpdater::new(
+            allocator,
+            reader_file,
+            read_file_size,
+            writer_file,
+            write_file_size,
+            sorting_columns,
+            statistics_enabled,
+            raw_array_encoding,
+            compression_options,
+            row_group_size,
+            data_page_size,
+            bloom_filter_fpp,
+            min_compression_ratio,
+            parquet_meta_fd_handle,
+            parquet_meta_file_size as u64,
+            existing_parquet_meta_file_size,
+        )
+    };
 
-            match create() {
-                Ok(updater) => Box::into_raw(Box::new(updater)),
-                Err(mut err) => {
-                    // SAFETY: JNI caller guarantees a valid pointer to `src_path_len` bytes of path data.
-                    // The memory remains valid for the JNI call duration.
-                    let src_path =
-                        unsafe { slice::from_raw_parts(src_path_ptr, src_path_len as usize) };
-                    let src_path = std::str::from_utf8(src_path).unwrap_or("!!invalid path utf8!!");
-                    err.add_context(format!(
-                        "could not open parquet file for update from path {src_path}"
-                    ));
-                    err.add_context("error in PartitionUpdater.create");
-                    err.into_cairo_exception().throw(env)
-                }
-            }
-        },
-    )
+    match create() {
+        Ok(updater) => Box::into_raw(Box::new(updater)),
+        Err(mut err) => {
+            // SAFETY: JNI caller guarantees a valid pointer to `src_path_len` bytes of path data.
+            // The memory remains valid for the JNI call duration.
+            let src_path = unsafe { slice::from_raw_parts(src_path_ptr, src_path_len as usize) };
+            let src_path = std::str::from_utf8(src_path).unwrap_or("!!invalid path utf8!!");
+            err.add_context(format!(
+                "could not open parquet file for update from path {src_path}"
+            ));
+            err.add_context("error in PartitionUpdater.create");
+            err.into_cairo_exception().throw(env)
+        }
+    }
 }
 
 #[no_mangle]
 pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionUpdater_destroy(
-    mut env: JNIEnv,
+    _env: JNIEnv,
     _class: JClass,
     updater: *mut ParquetUpdater,
 ) {
-    ffi_guard_void(&mut env, "PartitionUpdater.destroy", |_env| {
-        if updater.is_null() {
-            return;
-        }
+    if updater.is_null() {
+        return;
+    }
 
-        // SAFETY: Pointer was created by `Box::into_raw` in the corresponding create function.
-        // Java guarantees a single destroy call and no further use after destroy.
-        let _ = unsafe { Box::from_raw(updater) };
-    })
+    // SAFETY: Pointer was created by `Box::into_raw` in the corresponding create function.
+    // Java guarantees a single destroy call and no further use after destroy.
+    let _ = unsafe { Box::from_raw(updater) };
 }
 
 #[no_mangle]
@@ -279,25 +261,24 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionUpd
     _class: JClass,
     updater: *mut ParquetUpdater,
 ) -> jlong {
-    ffi_guard(&mut env, "PartitionUpdater.updateFileMetadata", -1, |env| {
-        if updater.is_null() {
-            let mut err = fmt_err!(InvalidType, "ParquetUpdater pointer is null");
-            err.add_context("error in PartitionUpdater.updateFileMetadata");
-            return err.into_cairo_exception().throw::<jlong>(env);
-        }
+    let env = &mut env;
+    if updater.is_null() {
+        let mut err = fmt_err!(InvalidType, "ParquetUpdater pointer is null");
+        err.add_context("error in PartitionUpdater.updateFileMetadata");
+        return err.into_cairo_exception().throw::<jlong>(env);
+    }
 
-        // SAFETY: Pointer was created by `Box::into_raw` in the create function.
-        // Single-threaded JNI access guarantees no aliasing.
-        let parquet_updater = unsafe { &mut *updater };
-        match parquet_updater.end(None) {
-            Ok(file_size) => file_size as jlong,
-            Err(mut err) => {
-                err.add_context("could not update partition metadata");
-                err.add_context("error in PartitionUpdater.updateFileMetadata");
-                err.into_cairo_exception().throw::<jlong>(env)
-            }
+    // SAFETY: Pointer was created by `Box::into_raw` in the create function.
+    // Single-threaded JNI access guarantees no aliasing.
+    let parquet_updater = unsafe { &mut *updater };
+    match parquet_updater.end(None) {
+        Ok(file_size) => file_size as jlong,
+        Err(mut err) => {
+            err.add_context("could not update partition metadata");
+            err.add_context("error in PartitionUpdater.updateFileMetadata");
+            err.into_cairo_exception().throw::<jlong>(env)
         }
-    })
+    }
 }
 
 #[no_mangle]
@@ -306,21 +287,15 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionUpd
     _class: JClass,
     updater: *const ParquetUpdater,
 ) -> jlong {
-    ffi_guard(
-        &mut env,
-        "PartitionUpdater.getResultUnusedBytes",
-        -1,
-        |env| {
-            if updater.is_null() {
-                let mut err = fmt_err!(InvalidType, "ParquetUpdater pointer is null");
-                err.add_context("error in PartitionUpdater.getResultUnusedBytes");
-                return err.into_cairo_exception().throw::<jlong>(env);
-            }
+    let env = &mut env;
+    if updater.is_null() {
+        let mut err = fmt_err!(InvalidType, "ParquetUpdater pointer is null");
+        err.add_context("error in PartitionUpdater.getResultUnusedBytes");
+        return err.into_cairo_exception().throw::<jlong>(env);
+    }
 
-            let parquet_updater = unsafe { &*updater };
-            parquet_updater.result_unused_bytes() as jlong
-        },
-    )
+    let parquet_updater = unsafe { &*updater };
+    parquet_updater.result_unused_bytes() as jlong
 }
 
 #[no_mangle]
@@ -329,21 +304,15 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionUpd
     _class: JClass,
     updater: *const ParquetUpdater,
 ) -> jlong {
-    ffi_guard(
-        &mut env,
-        "PartitionUpdater.getResultParquetMetaFileSize",
-        -1,
-        |env| {
-            if updater.is_null() {
-                let mut err = fmt_err!(InvalidType, "ParquetUpdater pointer is null");
-                err.add_context("error in PartitionUpdater.getResultParquetMetaFileSize");
-                return err.into_cairo_exception().throw::<jlong>(env);
-            }
+    let env = &mut env;
+    if updater.is_null() {
+        let mut err = fmt_err!(InvalidType, "ParquetUpdater pointer is null");
+        err.add_context("error in PartitionUpdater.getResultParquetMetaFileSize");
+        return err.into_cairo_exception().throw::<jlong>(env);
+    }
 
-            let parquet_updater = unsafe { &*updater };
-            parquet_updater.result_parquet_meta_size()
-        },
-    )
+    let parquet_updater = unsafe { &*updater };
+    parquet_updater.result_parquet_meta_size()
 }
 
 #[no_mangle]
@@ -352,20 +321,19 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionUpd
     _class: JClass,
     updater: *mut ParquetUpdater,
 ) {
-    ffi_guard_void(&mut env, "PartitionUpdater.syncParquetMeta", |env| {
-        if updater.is_null() {
-            let mut err = fmt_err!(InvalidType, "ParquetUpdater pointer is null");
-            err.add_context("error in PartitionUpdater.syncParquetMeta");
-            err.into_cairo_exception().throw::<()>(env);
-            return;
-        }
+    let env = &mut env;
+    if updater.is_null() {
+        let mut err = fmt_err!(InvalidType, "ParquetUpdater pointer is null");
+        err.add_context("error in PartitionUpdater.syncParquetMeta");
+        err.into_cairo_exception().throw::<()>(env);
+        return;
+    }
 
-        let parquet_updater = unsafe { &mut *updater };
-        if let Err(mut err) = parquet_updater.sync_parquet_meta() {
-            err.add_context("error in PartitionUpdater.syncParquetMeta");
-            err.into_cairo_exception().throw::<()>(env);
-        }
-    })
+    let parquet_updater = unsafe { &mut *updater };
+    if let Err(mut err) = parquet_updater.sync_parquet_meta() {
+        err.add_context("error in PartitionUpdater.syncParquetMeta");
+        err.into_cairo_exception().throw::<()>(env);
+    }
 }
 
 #[no_mangle]
@@ -384,49 +352,48 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionUpd
     timestamp_index: jint,
     row_count: jlong,
 ) {
-    ffi_guard_void(&mut env, "PartitionUpdater.updateRowGroup", |env| {
-        if parquet_updater.is_null() {
-            let mut err = fmt_err!(InvalidType, "ParquetUpdater pointer is null");
+    let env = &mut env;
+    if parquet_updater.is_null() {
+        let mut err = fmt_err!(InvalidType, "ParquetUpdater pointer is null");
+        err.add_context("error in PartitionUpdater.updateRowGroup");
+        return err.into_cairo_exception().throw(env);
+    }
+
+    // SAFETY: Pointer was created by `Box::into_raw` in the create function.
+    // Single-threaded JNI access guarantees no aliasing.
+    let parquet_updater = unsafe { &mut *parquet_updater };
+
+    let mut update = || -> ParquetResult<()> {
+        let partition = create_partition_descriptor(
+            table_name_ptr,
+            table_name_len as i32,
+            col_count,
+            col_names_ptr,
+            col_names_len,
+            col_data_ptr,
+            col_data_len,
+            row_count,
+            timestamp_index,
+        )?;
+        parquet_updater.replace_row_group(&partition, row_group_id)
+    };
+
+    match update() {
+        Ok(_) => (),
+        Err(mut err) => {
+            // SAFETY: JNI caller guarantees a valid pointer to `table_name_len` bytes of table name data.
+            // The memory remains valid for the JNI call duration.
+            let table_name =
+                unsafe { slice::from_raw_parts(table_name_ptr, table_name_len as usize) };
+            let table_name =
+                std::str::from_utf8(table_name).unwrap_or("!!invalid table_dir_name utf8!!");
+            err.add_context(format!(
+                "could not update row group {row_group_id} for table {table_name}"
+            ));
             err.add_context("error in PartitionUpdater.updateRowGroup");
-            return err.into_cairo_exception().throw(env);
+            err.into_cairo_exception().throw(env)
         }
-
-        // SAFETY: Pointer was created by `Box::into_raw` in the create function.
-        // Single-threaded JNI access guarantees no aliasing.
-        let parquet_updater = unsafe { &mut *parquet_updater };
-
-        let mut update = || -> ParquetResult<()> {
-            let partition = create_partition_descriptor(
-                table_name_ptr,
-                table_name_len as i32,
-                col_count,
-                col_names_ptr,
-                col_names_len,
-                col_data_ptr,
-                col_data_len,
-                row_count,
-                timestamp_index,
-            )?;
-            parquet_updater.replace_row_group(&partition, row_group_id)
-        };
-
-        match update() {
-            Ok(_) => (),
-            Err(mut err) => {
-                // SAFETY: JNI caller guarantees a valid pointer to `table_name_len` bytes of table name data.
-                // The memory remains valid for the JNI call duration.
-                let table_name =
-                    unsafe { slice::from_raw_parts(table_name_ptr, table_name_len as usize) };
-                let table_name =
-                    std::str::from_utf8(table_name).unwrap_or("!!invalid table_dir_name utf8!!");
-                err.add_context(format!(
-                    "could not update row group {row_group_id} for table {table_name}"
-                ));
-                err.add_context("error in PartitionUpdater.updateRowGroup");
-                err.into_cairo_exception().throw(env)
-            }
-        }
-    })
+    }
 }
 
 #[no_mangle]
@@ -445,44 +412,43 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionUpd
     timestamp_index: jint,
     row_count: jlong,
 ) {
-    ffi_guard_void(&mut env, "PartitionUpdater.insertRowGroup", |env| {
-        if parquet_updater.is_null() {
-            let mut err = fmt_err!(InvalidType, "ParquetUpdater pointer is null");
+    let env = &mut env;
+    if parquet_updater.is_null() {
+        let mut err = fmt_err!(InvalidType, "ParquetUpdater pointer is null");
+        err.add_context("error in PartitionUpdater.insertRowGroup");
+        return err.into_cairo_exception().throw(env);
+    }
+    let parquet_updater = unsafe { &mut *parquet_updater };
+
+    let mut insert = || -> ParquetResult<()> {
+        let partition = create_partition_descriptor(
+            table_name_ptr,
+            table_name_len as i32,
+            col_count,
+            col_names_ptr,
+            col_names_len,
+            col_data_ptr,
+            col_data_len,
+            row_count,
+            timestamp_index,
+        )?;
+        parquet_updater.insert_row_group(&partition, position)
+    };
+
+    match insert() {
+        Ok(_) => (),
+        Err(mut err) => {
+            let table_name =
+                unsafe { slice::from_raw_parts(table_name_ptr, table_name_len as usize) };
+            let table_name =
+                std::str::from_utf8(table_name).unwrap_or("!!invalid table_dir_name utf8!!");
+            err.add_context(format!(
+                "could not insert row group at position {position} for table {table_name}"
+            ));
             err.add_context("error in PartitionUpdater.insertRowGroup");
-            return err.into_cairo_exception().throw(env);
+            err.into_cairo_exception().throw(env)
         }
-        let parquet_updater = unsafe { &mut *parquet_updater };
-
-        let mut insert = || -> ParquetResult<()> {
-            let partition = create_partition_descriptor(
-                table_name_ptr,
-                table_name_len as i32,
-                col_count,
-                col_names_ptr,
-                col_names_len,
-                col_data_ptr,
-                col_data_len,
-                row_count,
-                timestamp_index,
-            )?;
-            parquet_updater.insert_row_group(&partition, position)
-        };
-
-        match insert() {
-            Ok(_) => (),
-            Err(mut err) => {
-                let table_name =
-                    unsafe { slice::from_raw_parts(table_name_ptr, table_name_len as usize) };
-                let table_name =
-                    std::str::from_utf8(table_name).unwrap_or("!!invalid table_dir_name utf8!!");
-                err.add_context(format!(
-                    "could not insert row group at position {position} for table {table_name}"
-                ));
-                err.add_context("error in PartitionUpdater.insertRowGroup");
-                err.into_cairo_exception().throw(env)
-            }
-        }
-    })
+    }
 }
 
 #[no_mangle]
@@ -513,181 +479,177 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionEnc
     parquet_meta_fd: jint,
     squash_tracker: jlong,
 ) -> jlong {
-    ffi_guard(&mut env, "PartitionEncoder.encodePartition", -1, |env| {
-        let encode = || -> ParquetResult<i64> {
-            let partition = create_partition_descriptor(
-                table_name_ptr,
-                table_name_size,
-                col_count,
-                col_names_ptr,
-                col_names_len,
-                col_data_ptr,
-                col_data_len,
-                row_count,
-                timestamp_index,
-            )?;
+    let env = &mut env;
+    let encode = || -> ParquetResult<i64> {
+        let partition = create_partition_descriptor(
+            table_name_ptr,
+            table_name_size,
+            col_count,
+            col_names_ptr,
+            col_names_len,
+            col_data_ptr,
+            col_data_len,
+            row_count,
+            timestamp_index,
+        )?;
 
-            // SAFETY: JNI caller guarantees a valid pointer to `dest_path_len` bytes of path data.
-            // The memory is backed by Java and remains valid for the JNI call duration.
-            // Java guarantees valid UTF-8 for file paths (validated on creation).
-            let dest_path = unsafe {
-                std::str::from_utf8_unchecked(slice::from_raw_parts(
-                    dest_path,
-                    dest_path_len as usize,
-                ))
-            };
-
-            let dest_path = Path::new(&dest_path);
-            let compression_options =
-                compression_from_i64(compression_codec).context("CompressionCodec")?;
-
-            let statistics_enabled = statistics_enabled != 0;
-            let raw_array_encoding = raw_array_encoding != 0;
-            let row_group_size = if row_group_size > 0 {
-                Some(row_group_size as usize)
-            } else {
-                None
-            };
-            let data_page_size = if data_page_size > 0 {
-                Some(data_page_size as usize)
-            } else {
-                None
-            };
-            let version = version_from_i32(version)?;
-
-            let bloom_filter_cols = build_bloom_filter_set(
-                bloom_filter_column_indexes,
-                bloom_filter_column_count,
-                partition.columns.len(),
-            )?;
-
-            let file: ParquetResult<_> = File::create(dest_path).map_err(|e| e.into());
-            let mut file = file.with_context(|_| {
-                format!("Could not create parquet file for {}", dest_path.display())
-            })?;
-
-            let local_timestamp_index = partition.columns.iter().enumerate().find_map(|(i, c)| {
-                if c.designated_timestamp {
-                    Some(i as i32)
-                } else {
-                    None
-                }
-            });
-            let sorting_columns =
-                local_timestamp_index.map(|i| vec![SortingColumn::new(i, false, false)]);
-
-            // Break apart ParquetWriter::finish() to access row groups after writing.
-            let writer = ParquetWriter::new(&mut file)
-                .with_version(version)
-                .with_compression(compression_options)
-                .with_statistics(statistics_enabled)
-                .with_raw_array_encoding(raw_array_encoding)
-                .with_row_group_size(row_group_size)
-                .with_data_page_size(data_page_size)
-                .with_sorting_columns(sorting_columns.clone())
-                .with_bloom_filter_columns(bloom_filter_cols)
-                .with_bloom_filter_fpp(bloom_filter_fpp)
-                .with_min_compression_ratio(min_compression_ratio)
-                .with_squash_tracker(squash_tracker);
-
-            let (schema, additional_meta) = crate::parquet_write::schema::to_parquet_schema(
-                &partition,
-                raw_array_encoding,
-                squash_tracker,
-            )?;
-            let encodings = crate::parquet_write::schema::to_encodings(&partition);
-            let compressions = crate::parquet_write::schema::to_compressions(&partition);
-            let mut chunked = writer.chunked_with_compressions(schema, encodings, compressions)?;
-            chunked.write_chunk(&partition)?;
-            let parquet_file_size = chunked
-                .finish(additional_meta)
-                .context("ParquetWriter::finish failed")?;
-
-            // Generate _pm from the in-memory thrift row groups.
-            if parquet_meta_fd < 0 {
-                return Ok(parquet_file_size as i64);
-            }
-
-            let footer_offset = chunked.parquet_footer_offset();
-            let footer_length = parquet_file_size
-                .checked_sub(footer_offset)
-                .and_then(|v| v.checked_sub(8))
-                .ok_or_else(|| {
-                    crate::parquet::error::fmt_err!(
-                        InvalidLayout,
-                        "parquet footer offset {} exceeds file size {}",
-                        footer_offset,
-                        parquet_file_size
-                    )
-                })? as u32;
-            let col_infos = build_column_infos_from_partition(
-                &partition,
-                chunked.schema().columns(),
-                sorting_columns.as_deref(),
-            );
-            let sorting_col_indices: Vec<u32> = sorting_columns
-                .as_deref()
-                .unwrap_or(&[])
-                .iter()
-                .map(|sc| sc.column_idx as u32)
-                .collect();
-
-            let designated_ts = partition
-                .columns
-                .iter()
-                .position(|c| c.designated_timestamp)
-                .map(|i| i as i32)
-                .unwrap_or(-1);
-
-            let (parquet_meta_bytes, _parquet_meta_footer_offset) =
-                crate::parquet_metadata::generate_parquet_metadata(
-                    &col_infos,
-                    chunked.schema().columns(),
-                    chunked.row_groups(),
-                    designated_ts,
-                    &sorting_col_indices,
-                    footer_offset,
-                    footer_length,
-                    chunked.bloom_bitsets(),
-                    0, // unused_bytes: new file, no dead space
-                    squash_tracker,
-                )
-                .context("generate_parquet_metadata failed")?;
-
-            // Write to the parquet metadata fd. ManuallyDrop ensures Rust never
-            // closes the fd — Java owns it.
-            let mut parquet_meta_file: std::mem::ManuallyDrop<File> =
-                std::mem::ManuallyDrop::new(unsafe {
-                    crate::parquet::io::FromRawFdI32Ext::from_raw_fd_i32(parquet_meta_fd)
-                });
-            parquet_meta_file
-                .write_all(&parquet_meta_bytes)
-                .map_err(crate::parquet::error::ParquetError::from)
-                .context("could not write _pm file")?;
-
-            Ok(parquet_file_size as i64)
+        // SAFETY: JNI caller guarantees a valid pointer to `dest_path_len` bytes of path data.
+        // The memory is backed by Java and remains valid for the JNI call duration.
+        // Java guarantees valid UTF-8 for file paths (validated on creation).
+        let dest_path = unsafe {
+            std::str::from_utf8_unchecked(slice::from_raw_parts(dest_path, dest_path_len as usize))
         };
 
-        match encode() {
-            Ok(size) => size,
-            Err(mut err) => {
-                // SAFETY: JNI caller guarantees a valid pointer to `table_name_size` bytes of table name data.
-                // The memory remains valid for the JNI call duration.
-                let table_name = unsafe {
-                    std::str::from_utf8(slice::from_raw_parts(
-                        table_name_ptr,
-                        table_name_size as usize,
-                    ))
-                    .unwrap_or("!!invalid table name utf8!!")
-                };
-                err.add_context(format!(
+        let dest_path = Path::new(&dest_path);
+        let compression_options =
+            compression_from_i64(compression_codec).context("CompressionCodec")?;
+
+        let statistics_enabled = statistics_enabled != 0;
+        let raw_array_encoding = raw_array_encoding != 0;
+        let row_group_size = if row_group_size > 0 {
+            Some(row_group_size as usize)
+        } else {
+            None
+        };
+        let data_page_size = if data_page_size > 0 {
+            Some(data_page_size as usize)
+        } else {
+            None
+        };
+        let version = version_from_i32(version)?;
+
+        let bloom_filter_cols = build_bloom_filter_set(
+            bloom_filter_column_indexes,
+            bloom_filter_column_count,
+            partition.columns.len(),
+        )?;
+
+        let file: ParquetResult<_> = File::create(dest_path).map_err(|e| e.into());
+        let mut file = file.with_context(|_| {
+            format!("Could not create parquet file for {}", dest_path.display())
+        })?;
+
+        let local_timestamp_index = partition.columns.iter().enumerate().find_map(|(i, c)| {
+            if c.designated_timestamp {
+                Some(i as i32)
+            } else {
+                None
+            }
+        });
+        let sorting_columns =
+            local_timestamp_index.map(|i| vec![SortingColumn::new(i, false, false)]);
+
+        // Break apart ParquetWriter::finish() to access row groups after writing.
+        let writer = ParquetWriter::new(&mut file)
+            .with_version(version)
+            .with_compression(compression_options)
+            .with_statistics(statistics_enabled)
+            .with_raw_array_encoding(raw_array_encoding)
+            .with_row_group_size(row_group_size)
+            .with_data_page_size(data_page_size)
+            .with_sorting_columns(sorting_columns.clone())
+            .with_bloom_filter_columns(bloom_filter_cols)
+            .with_bloom_filter_fpp(bloom_filter_fpp)
+            .with_min_compression_ratio(min_compression_ratio)
+            .with_squash_tracker(squash_tracker);
+
+        let (schema, additional_meta) = crate::parquet_write::schema::to_parquet_schema(
+            &partition,
+            raw_array_encoding,
+            squash_tracker,
+        )?;
+        let encodings = crate::parquet_write::schema::to_encodings(&partition);
+        let compressions = crate::parquet_write::schema::to_compressions(&partition);
+        let mut chunked = writer.chunked_with_compressions(schema, encodings, compressions)?;
+        chunked.write_chunk(&partition)?;
+        let parquet_file_size = chunked
+            .finish(additional_meta)
+            .context("ParquetWriter::finish failed")?;
+
+        // Generate _pm from the in-memory thrift row groups.
+        if parquet_meta_fd < 0 {
+            return Ok(parquet_file_size as i64);
+        }
+
+        let footer_offset = chunked.parquet_footer_offset();
+        let footer_length = parquet_file_size
+            .checked_sub(footer_offset)
+            .and_then(|v| v.checked_sub(8))
+            .ok_or_else(|| {
+                crate::parquet::error::fmt_err!(
+                    InvalidLayout,
+                    "parquet footer offset {} exceeds file size {}",
+                    footer_offset,
+                    parquet_file_size
+                )
+            })? as u32;
+        let col_infos = build_column_infos_from_partition(
+            &partition,
+            chunked.schema().columns(),
+            sorting_columns.as_deref(),
+        );
+        let sorting_col_indices: Vec<u32> = sorting_columns
+            .as_deref()
+            .unwrap_or(&[])
+            .iter()
+            .map(|sc| sc.column_idx as u32)
+            .collect();
+
+        let designated_ts = partition
+            .columns
+            .iter()
+            .position(|c| c.designated_timestamp)
+            .map(|i| i as i32)
+            .unwrap_or(-1);
+
+        let (parquet_meta_bytes, _parquet_meta_footer_offset) =
+            crate::parquet_metadata::generate_parquet_metadata(
+                &col_infos,
+                chunked.schema().columns(),
+                chunked.row_groups(),
+                designated_ts,
+                &sorting_col_indices,
+                footer_offset,
+                footer_length,
+                chunked.bloom_bitsets(),
+                0, // unused_bytes: new file, no dead space
+                squash_tracker,
+            )
+            .context("generate_parquet_metadata failed")?;
+
+        // Write to the parquet metadata fd. ManuallyDrop ensures Rust never
+        // closes the fd — Java owns it.
+        let mut parquet_meta_file: std::mem::ManuallyDrop<File> =
+            std::mem::ManuallyDrop::new(unsafe {
+                crate::parquet::io::FromRawFdI32Ext::from_raw_fd_i32(parquet_meta_fd)
+            });
+        parquet_meta_file
+            .write_all(&parquet_meta_bytes)
+            .map_err(crate::parquet::error::ParquetError::from)
+            .context("could not write _pm file")?;
+
+        Ok(parquet_file_size as i64)
+    };
+
+    match encode() {
+        Ok(size) => size,
+        Err(mut err) => {
+            // SAFETY: JNI caller guarantees a valid pointer to `table_name_size` bytes of table name data.
+            // The memory remains valid for the JNI call duration.
+            let table_name = unsafe {
+                std::str::from_utf8(slice::from_raw_parts(
+                    table_name_ptr,
+                    table_name_size as usize,
+                ))
+                .unwrap_or("!!invalid table name utf8!!")
+            };
+            err.add_context(format!(
                 "could not encode partition for table {table_name} and timestamp index {timestamp_index}"
             ));
-                err.add_context("error in PartitionEncoder.encodePartition");
-                err.into_cairo_exception().throw::<i64>(env)
-            }
+            err.add_context("error in PartitionEncoder.encodePartition");
+            err.into_cairo_exception().throw::<i64>(env)
         }
-    })
+    }
 }
 
 /// Takes ownership of the raw fds passed by Java, returning (reader, writer,
@@ -1047,122 +1009,112 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionEnc
     bloom_filter_fpp: jdouble,
     min_compression_ratio: jdouble,
 ) -> *mut StreamingParquetWriter {
-    ffi_guard(
-        &mut env,
-        "PartitionEncoder.createStreamingParquetWriter",
-        std::ptr::null_mut(),
-        |env| {
-            let create = || -> ParquetResult<StreamingParquetWriter> {
-                let partition_template = create_partition_template(
-                    col_count,
-                    col_names_ptr,
-                    col_names_len,
-                    col_meta_data,
-                    timestamp_index,
-                    timestamp_descending,
-                )?;
-                let compression_options =
-                    compression_from_i64(compression_codec).context("CompressionCodec")?;
-                let row_group_size_opt = if row_group_size > 0 {
-                    Some(row_group_size as usize)
-                } else {
-                    None
-                };
-                let data_page_size_opt = if data_page_size > 0 {
-                    Some(data_page_size as usize)
-                } else {
-                    None
-                };
-                let local_timestamp_index =
-                    partition_template
-                        .columns
-                        .iter()
-                        .enumerate()
-                        .find_map(|(i, c)| {
-                            if c.designated_timestamp {
-                                Some(i as i32)
-                            } else {
-                                None
-                            }
-                        });
-                let sorting_columns = local_timestamp_index
-                    .map(|i| vec![SortingColumn::new(i, timestamp_descending != 0, false)]);
+    let env = &mut env;
+    let create = || -> ParquetResult<StreamingParquetWriter> {
+        let partition_template = create_partition_template(
+            col_count,
+            col_names_ptr,
+            col_names_len,
+            col_meta_data,
+            timestamp_index,
+            timestamp_descending,
+        )?;
+        let compression_options =
+            compression_from_i64(compression_codec).context("CompressionCodec")?;
+        let row_group_size_opt = if row_group_size > 0 {
+            Some(row_group_size as usize)
+        } else {
+            None
+        };
+        let data_page_size_opt = if data_page_size > 0 {
+            Some(data_page_size as usize)
+        } else {
+            None
+        };
+        let local_timestamp_index =
+            partition_template
+                .columns
+                .iter()
+                .enumerate()
+                .find_map(|(i, c)| {
+                    if c.designated_timestamp {
+                        Some(i as i32)
+                    } else {
+                        None
+                    }
+                });
+        let sorting_columns = local_timestamp_index
+            .map(|i| vec![SortingColumn::new(i, timestamp_descending != 0, false)]);
 
-                let (parquet_schema, additional_data) =
-                    crate::parquet_write::schema::to_parquet_schema(
-                        &partition_template,
-                        raw_array_encoding != 0,
-                        -1,
-                    )?;
-                // SAFETY: Pointer was passed from Java and points to a valid allocator for the JNI call duration.
-                let allocator = unsafe { &*allocator_ptr };
-                let encodings = crate::parquet_write::schema::to_encodings(&partition_template);
-                let per_column_compressions =
-                    crate::parquet_write::schema::to_compressions(&partition_template);
-                let mut current_buffer = Box::new(Vec::with_capacity_in(8192, allocator.clone()));
-                // Reserve 16 bytes for header: [8 bytes data_len][8 bytes rows_written_to_row_groups]
-                // SAFETY: `current_buffer` is a Box, so `&mut *current_buffer` yields a valid reference.
-                // The raw pointer is stable because Box guarantees a fixed heap address.
-                let buffer_writer = unsafe {
-                    BufferWriter::new_with_offset(
-                        &mut *current_buffer as *mut Vec<u8, QdbAllocator>,
-                        16,
-                    )
-                };
-                let bloom_filter_cols = build_bloom_filter_set(
-                    bloom_filter_column_indexes,
-                    bloom_filter_column_count,
-                    partition_template.columns.len(),
-                )?;
-                let bloom_fpp = if bloom_filter_fpp > 0.0 && bloom_filter_fpp < 1.0 {
-                    bloom_filter_fpp
-                } else {
-                    DEFAULT_BLOOM_FILTER_FPP
-                };
+        let (parquet_schema, additional_data) = crate::parquet_write::schema::to_parquet_schema(
+            &partition_template,
+            raw_array_encoding != 0,
+            -1,
+        )?;
+        // SAFETY: Pointer was passed from Java and points to a valid allocator for the JNI call duration.
+        let allocator = unsafe { &*allocator_ptr };
+        let encodings = crate::parquet_write::schema::to_encodings(&partition_template);
+        let per_column_compressions =
+            crate::parquet_write::schema::to_compressions(&partition_template);
+        let mut current_buffer = Box::new(Vec::with_capacity_in(8192, allocator.clone()));
+        // Reserve 16 bytes for header: [8 bytes data_len][8 bytes rows_written_to_row_groups]
+        // SAFETY: `current_buffer` is a Box, so `&mut *current_buffer` yields a valid reference.
+        // The raw pointer is stable because Box guarantees a fixed heap address.
+        let buffer_writer = unsafe {
+            BufferWriter::new_with_offset(&mut *current_buffer as *mut Vec<u8, QdbAllocator>, 16)
+        };
+        let bloom_filter_cols = build_bloom_filter_set(
+            bloom_filter_column_indexes,
+            bloom_filter_column_count,
+            partition_template.columns.len(),
+        )?;
+        let bloom_fpp = if bloom_filter_fpp > 0.0 && bloom_filter_fpp < 1.0 {
+            bloom_filter_fpp
+        } else {
+            DEFAULT_BLOOM_FILTER_FPP
+        };
 
-                let parquet_writer = ParquetWriter::new(buffer_writer)
-                    .with_version(version_from_i32(version)?)
-                    .with_compression(compression_options)
-                    .with_statistics(statistics_enabled != 0)
-                    .with_raw_array_encoding(raw_array_encoding != 0)
-                    .with_row_group_size(row_group_size_opt)
-                    .with_data_page_size(data_page_size_opt)
-                    .with_sorting_columns(sorting_columns.clone())
-                    .with_bloom_filter_columns(bloom_filter_cols)
-                    .with_bloom_filter_fpp(bloom_fpp)
-                    .with_min_compression_ratio(min_compression_ratio);
-                let chunked_writer = parquet_writer.chunked_with_compressions(
-                    parquet_schema,
-                    encodings,
-                    per_column_compressions,
-                )?;
+        let parquet_writer = ParquetWriter::new(buffer_writer)
+            .with_version(version_from_i32(version)?)
+            .with_compression(compression_options)
+            .with_statistics(statistics_enabled != 0)
+            .with_raw_array_encoding(raw_array_encoding != 0)
+            .with_row_group_size(row_group_size_opt)
+            .with_data_page_size(data_page_size_opt)
+            .with_sorting_columns(sorting_columns.clone())
+            .with_bloom_filter_columns(bloom_filter_cols)
+            .with_bloom_filter_fpp(bloom_fpp)
+            .with_min_compression_ratio(min_compression_ratio);
+        let chunked_writer = parquet_writer.chunked_with_compressions(
+            parquet_schema,
+            encodings,
+            per_column_compressions,
+        )?;
 
-                let effective_row_group_size = row_group_size_opt.unwrap_or(DEFAULT_ROW_GROUP_SIZE);
+        let effective_row_group_size = row_group_size_opt.unwrap_or(DEFAULT_ROW_GROUP_SIZE);
 
-                Ok(StreamingParquetWriter {
-                    partition: partition_template,
-                    current_buffer,
-                    chunked_writer,
-                    additional_data,
-                    row_group_size: effective_row_group_size,
-                    pending_partitions: Vec::new(),
-                    first_partition_start: 0,
-                    accumulated_rows: 0,
-                    rows_written_to_row_groups: 0,
-                    pending_row_group_buffers: Vec::new(),
-                })
-            };
+        Ok(StreamingParquetWriter {
+            partition: partition_template,
+            current_buffer,
+            chunked_writer,
+            additional_data,
+            row_group_size: effective_row_group_size,
+            pending_partitions: Vec::new(),
+            first_partition_start: 0,
+            accumulated_rows: 0,
+            rows_written_to_row_groups: 0,
+            pending_row_group_buffers: Vec::new(),
+        })
+    };
 
-            match create() {
-                Ok(encoder) => Box::into_raw(Box::new(encoder)),
-                Err(mut err) => {
-                    err.add_context("error in createStreamingParquetWriter");
-                    err.into_cairo_exception()
-                        .throw::<*mut StreamingParquetWriter>(env)
-                }
-            }
-        },
-    )
+    match create() {
+        Ok(encoder) => Box::into_raw(Box::new(encoder)),
+        Err(mut err) => {
+            err.add_context("error in createStreamingParquetWriter");
+            err.into_cairo_exception()
+                .throw::<*mut StreamingParquetWriter>(env)
+        }
+    }
 }
 
 #[no_mangle]
@@ -1173,45 +1125,39 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionEnc
     col_data_ptr: *const i64,
     row_count: jlong,
 ) -> *const u8 {
-    ffi_guard(
-        &mut env,
-        "PartitionEncoder.writeStreamingParquetChunk",
-        std::ptr::null(),
-        |env| {
-            if encoder.is_null() {
-                let mut err = fmt_err!(InvalidType, "StreamingParquetEncoder pointer is null");
-                err.add_context("error in StreamingPartitionEncoder.writeChunk");
-                err.into_cairo_exception().throw::<*const u8>(env);
-                return std::ptr::null();
-            }
-            // SAFETY: Pointer was created by `Box::into_raw` in the create function.
-            // Single-threaded JNI access guarantees no aliasing.
-            let encoder = unsafe { &mut *encoder };
-            let mut write_chunk = || -> ParquetResult<*const u8> {
-                let row_count = row_count as usize;
-                if row_count > 0 {
-                    let mut new_partition = Partition {
-                        table: String::new(),
-                        columns: encoder.partition.columns.clone(),
-                    };
-                    update_partition_data(&mut new_partition, col_data_ptr, row_count)?;
-                    encoder.pending_partitions.push(new_partition);
-                    encoder.pending_row_group_buffers.push(None);
-                    encoder.accumulated_rows += row_count;
-                }
-                flush_pending_partitions(encoder)
+    let env = &mut env;
+    if encoder.is_null() {
+        let mut err = fmt_err!(InvalidType, "StreamingParquetEncoder pointer is null");
+        err.add_context("error in StreamingPartitionEncoder.writeChunk");
+        err.into_cairo_exception().throw::<*const u8>(env);
+        return std::ptr::null();
+    }
+    // SAFETY: Pointer was created by `Box::into_raw` in the create function.
+    // Single-threaded JNI access guarantees no aliasing.
+    let encoder = unsafe { &mut *encoder };
+    let mut write_chunk = || -> ParquetResult<*const u8> {
+        let row_count = row_count as usize;
+        if row_count > 0 {
+            let mut new_partition = Partition {
+                table: String::new(),
+                columns: encoder.partition.columns.clone(),
             };
+            update_partition_data(&mut new_partition, col_data_ptr, row_count)?;
+            encoder.pending_partitions.push(new_partition);
+            encoder.pending_row_group_buffers.push(None);
+            encoder.accumulated_rows += row_count;
+        }
+        flush_pending_partitions(encoder)
+    };
 
-            match write_chunk() {
-                Ok(ptr) => ptr,
-                Err(mut err) => {
-                    err.add_context("error in StreamingPartitionEncoder.writeChunk");
-                    err.into_cairo_exception().throw::<*const u8>(env);
-                    std::ptr::null()
-                }
-            }
-        },
-    )
+    match write_chunk() {
+        Ok(ptr) => ptr,
+        Err(mut err) => {
+            err.add_context("error in StreamingPartitionEncoder.writeChunk");
+            err.into_cairo_exception().throw::<*const u8>(env);
+            std::ptr::null()
+        }
+    }
 }
 
 fn flush_pending_partitions(encoder: &mut StreamingParquetWriter) -> ParquetResult<*const u8> {
@@ -1317,68 +1263,61 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionEnc
     _class: JClass,
     encoder: *mut StreamingParquetWriter,
 ) -> *const u8 {
-    ffi_guard(
-        &mut env,
-        "PartitionEncoder.finishStreamingParquetWrite",
-        std::ptr::null(),
-        |env| {
-            if encoder.is_null() {
-                let mut err = fmt_err!(InvalidType, "StreamingParquetEncoder pointer is null");
-                err.add_context("error in StreamingPartitionEncoder.finish");
-                err.into_cairo_exception().throw::<*const u8>(env);
-                return std::ptr::null();
-            }
+    let env = &mut env;
+    if encoder.is_null() {
+        let mut err = fmt_err!(InvalidType, "StreamingParquetEncoder pointer is null");
+        err.add_context("error in StreamingPartitionEncoder.finish");
+        err.into_cairo_exception().throw::<*const u8>(env);
+        return std::ptr::null();
+    }
 
-            // SAFETY: Pointer was created by `Box::into_raw` in the create function.
-            // Single-threaded JNI access guarantees no aliasing.
-            let encoder = unsafe { &mut *encoder };
-            let mut finish = || -> ParquetResult<*const u8> {
-                // SAFETY: Truncating to zero is always valid.
-                unsafe {
-                    encoder.current_buffer.set_len(0);
-                }
+    // SAFETY: Pointer was created by `Box::into_raw` in the create function.
+    // Single-threaded JNI access guarantees no aliasing.
+    let encoder = unsafe { &mut *encoder };
+    let mut finish = || -> ParquetResult<*const u8> {
+        // SAFETY: Truncating to zero is always valid.
+        unsafe {
+            encoder.current_buffer.set_len(0);
+        }
 
-                if !encoder.pending_partitions.is_empty() && encoder.accumulated_rows > 0 {
-                    let last_idx = encoder.pending_partitions.len() - 1;
-                    let last_partition_end =
-                        encoder.pending_partitions[last_idx].columns[0].row_count;
+        if !encoder.pending_partitions.is_empty() && encoder.accumulated_rows > 0 {
+            let last_idx = encoder.pending_partitions.len() - 1;
+            let last_partition_end = encoder.pending_partitions[last_idx].columns[0].row_count;
 
-                    let partitions: Vec<&Partition> = encoder.pending_partitions.iter().collect();
-                    encoder.chunked_writer.write_row_group_from_partitions(
-                        &partitions,
-                        encoder.first_partition_start,
-                        last_partition_end,
-                    )?;
+            let partitions: Vec<&Partition> = encoder.pending_partitions.iter().collect();
+            encoder.chunked_writer.write_row_group_from_partitions(
+                &partitions,
+                encoder.first_partition_start,
+                last_partition_end,
+            )?;
 
-                    // Track remaining rows written in the final row group
-                    encoder.rows_written_to_row_groups += encoder.accumulated_rows;
-                }
+            // Track remaining rows written in the final row group
+            encoder.rows_written_to_row_groups += encoder.accumulated_rows;
+        }
 
-                encoder
-                    .chunked_writer
-                    .finish(encoder.additional_data.clone())?;
-                // Buffer layout: [8 bytes data_len][8 bytes rows_written_to_row_groups][data...]
-                debug_assert!(
-                    encoder.current_buffer.len() >= 16,
-                    "streaming parquet writer must produce at least a 16-byte header",
-                );
-                let data_len = encoder.current_buffer.len().saturating_sub(16) as u64;
-                encoder.current_buffer[0..8].copy_from_slice(&data_len.to_le_bytes());
-                encoder.current_buffer[8..16]
-                    .copy_from_slice(&(encoder.rows_written_to_row_groups as u64).to_le_bytes());
-                Ok(encoder.current_buffer.as_ptr())
-            };
+        encoder
+            .chunked_writer
+            .finish(encoder.additional_data.clone())?;
+        // Buffer layout: [8 bytes data_len][8 bytes rows_written_to_row_groups][data...]
+        debug_assert!(
+            encoder.current_buffer.len() >= 16,
+            "streaming parquet writer must produce at least a 16-byte header",
+        );
+        let data_len = encoder.current_buffer.len().saturating_sub(16) as u64;
+        encoder.current_buffer[0..8].copy_from_slice(&data_len.to_le_bytes());
+        encoder.current_buffer[8..16]
+            .copy_from_slice(&(encoder.rows_written_to_row_groups as u64).to_le_bytes());
+        Ok(encoder.current_buffer.as_ptr())
+    };
 
-            match finish() {
-                Ok(ptr) => ptr,
-                Err(mut err) => {
-                    err.add_context("error in StreamingPartitionEncoder.finish");
-                    err.into_cairo_exception().throw::<*const u8>(env);
-                    std::ptr::null()
-                }
-            }
-        },
-    )
+    match finish() {
+        Ok(ptr) => ptr,
+        Err(mut err) => {
+            err.add_context("error in StreamingPartitionEncoder.finish");
+            err.into_cairo_exception().throw::<*const u8>(env);
+            std::ptr::null()
+        }
+    }
 }
 
 #[no_mangle]
@@ -1387,38 +1326,30 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionEnc
     _class: JClass,
     encoder: *mut StreamingParquetWriter,
 ) {
-    ffi_guard_void(
-        &mut env,
-        "PartitionEncoder.closeStreamingParquetWriter",
-        |env| {
-            if encoder.is_null() {
-                let mut err = fmt_err!(InvalidType, "StreamingParquetEncoder pointer is null");
-                err.add_context("error in StreamingPartitionEncoder.destroy");
-                return err.into_cairo_exception().throw::<()>(env);
-            }
+    let env = &mut env;
+    if encoder.is_null() {
+        let mut err = fmt_err!(InvalidType, "StreamingParquetEncoder pointer is null");
+        err.add_context("error in StreamingPartitionEncoder.destroy");
+        return err.into_cairo_exception().throw::<()>(env);
+    }
 
-            // SAFETY: Pointer was created by `Box::into_raw` in the corresponding create function.
-            // Java guarantees a single destroy call and no further use after destroy.
-            let _ = unsafe { Box::from_raw(encoder) };
-        },
-    )
+    // SAFETY: Pointer was created by `Box::into_raw` in the corresponding create function.
+    // Java guarantees a single destroy call and no further use after destroy.
+    let _ = unsafe { Box::from_raw(encoder) };
 }
 
 #[no_mangle]
 pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_ParquetEncoding_isEncodingValid0(
-    mut env: JNIEnv,
+    _env: JNIEnv,
     _class: JClass,
     encoding_id: jint,
     col_type_tag: jint,
 ) -> jboolean {
-    ffi_guard(&mut env, "ParquetEncoding.isEncodingValid0", 0, |_env| {
-        if crate::parquet_write::schema::is_encoding_valid_for_column_tag(encoding_id, col_type_tag)
-        {
-            1
-        } else {
-            0
-        }
-    })
+    if crate::parquet_write::schema::is_encoding_valid_for_column_tag(encoding_id, col_type_tag) {
+        1
+    } else {
+        0
+    }
 }
 
 fn create_partition_template(
@@ -1583,88 +1514,77 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionEnc
     row_group_lo: jint,
     row_group_hi: jint,
 ) -> *const u8 {
-    ffi_guard(
-        &mut env,
-        "PartitionEncoder.writeStreamingParquetChunkFromRowGroup",
-        std::ptr::null(),
-        |env| {
-            if encoder.is_null() {
-                let mut err = fmt_err!(InvalidType, "StreamingParquetWriter pointer is null");
-                err.add_context("error in writeStreamingParquetChunkFromParquet");
-                err.into_cairo_exception().throw::<*const u8>(env);
-                return std::ptr::null();
-            }
+    let env = &mut env;
+    if encoder.is_null() {
+        let mut err = fmt_err!(InvalidType, "StreamingParquetWriter pointer is null");
+        err.add_context("error in writeStreamingParquetChunkFromParquet");
+        err.into_cairo_exception().throw::<*const u8>(env);
+        return std::ptr::null();
+    }
 
-            // SAFETY: Pointer was created by `Box::into_raw` in the create function.
-            // Single-threaded JNI access guarantees no aliasing.
-            let encoder = unsafe { &mut *encoder };
-            let mut write_chunk = || -> ParquetResult<*const u8> {
-                let row_count = (row_group_hi - row_group_lo) as usize;
-                if row_count > 0 {
-                    use crate::parquet_read::{DecodeContext, ParquetDecoder, RowGroupBuffers};
-                    use std::io::Cursor;
-                    // SAFETY: JNI caller guarantees a valid pointer to `source_parquet_size` bytes
-                    // of source parquet data. The memory remains valid for the JNI call duration.
-                    let source_data = unsafe {
-                        slice::from_raw_parts(
-                            source_parquet_addr as *const u8,
-                            source_parquet_size as usize,
-                        )
-                    };
-                    let mut reader = Cursor::new(source_data);
-                    // SAFETY: Pointer was passed from Java and points to a valid allocator for the JNI call duration.
-                    let allocator = unsafe { &*allocator_ptr }.clone();
-                    let decoder = ParquetDecoder::read(
-                        allocator.clone(),
-                        &mut reader,
-                        source_parquet_size as u64,
-                    )?;
-                    let mut row_group_bufs = RowGroupBuffers::new(allocator);
-                    let mut ctx = DecodeContext::new(
-                        source_parquet_addr as *const u8,
-                        source_parquet_size as u64,
-                    );
-                    let columns: Vec<(i32, qdb_core::col_type::ColumnType)> = encoder
-                        .partition
-                        .columns
-                        .iter()
-                        .enumerate()
-                        .map(|(i, col)| (i as i32, col.data_type))
-                        .collect();
-
-                    decoder.decode_row_group(
-                        &mut ctx,
-                        &mut row_group_bufs,
-                        &columns,
-                        row_group_index as u32,
-                        row_group_lo as u32,
-                        row_group_hi as u32,
-                    )?;
-
-                    let partition = convert_row_group_buffers_to_partition(
-                        &encoder.partition,
-                        &row_group_bufs,
-                        row_count,
-                        symbol_data_ptr,
-                    )?;
-                    encoder.pending_partitions.push(partition);
-                    encoder.pending_row_group_buffers.push(Some(row_group_bufs));
-                    encoder.accumulated_rows += row_count;
-                }
-
-                flush_pending_partitions(encoder)
+    // SAFETY: Pointer was created by `Box::into_raw` in the create function.
+    // Single-threaded JNI access guarantees no aliasing.
+    let encoder = unsafe { &mut *encoder };
+    let mut write_chunk = || -> ParquetResult<*const u8> {
+        let row_count = (row_group_hi - row_group_lo) as usize;
+        if row_count > 0 {
+            use crate::parquet_read::{DecodeContext, ParquetDecoder, RowGroupBuffers};
+            use std::io::Cursor;
+            // SAFETY: JNI caller guarantees a valid pointer to `source_parquet_size` bytes
+            // of source parquet data. The memory remains valid for the JNI call duration.
+            let source_data = unsafe {
+                slice::from_raw_parts(
+                    source_parquet_addr as *const u8,
+                    source_parquet_size as usize,
+                )
             };
+            let mut reader = Cursor::new(source_data);
+            // SAFETY: Pointer was passed from Java and points to a valid allocator for the JNI call duration.
+            let allocator = unsafe { &*allocator_ptr }.clone();
+            let decoder =
+                ParquetDecoder::read(allocator.clone(), &mut reader, source_parquet_size as u64)?;
+            let mut row_group_bufs = RowGroupBuffers::new(allocator);
+            let mut ctx =
+                DecodeContext::new(source_parquet_addr as *const u8, source_parquet_size as u64);
+            let columns: Vec<(i32, qdb_core::col_type::ColumnType)> = encoder
+                .partition
+                .columns
+                .iter()
+                .enumerate()
+                .map(|(i, col)| (i as i32, col.data_type))
+                .collect();
 
-            match write_chunk() {
-                Ok(ptr) => ptr,
-                Err(mut err) => {
-                    err.add_context("error in writeStreamingParquetChunkFromRowGroup");
-                    err.into_cairo_exception().throw::<*const u8>(env);
-                    std::ptr::null()
-                }
-            }
-        },
-    )
+            decoder.decode_row_group(
+                &mut ctx,
+                &mut row_group_bufs,
+                &columns,
+                row_group_index as u32,
+                row_group_lo as u32,
+                row_group_hi as u32,
+            )?;
+
+            let partition = convert_row_group_buffers_to_partition(
+                &encoder.partition,
+                &row_group_bufs,
+                row_count,
+                symbol_data_ptr,
+            )?;
+            encoder.pending_partitions.push(partition);
+            encoder.pending_row_group_buffers.push(Some(row_group_bufs));
+            encoder.accumulated_rows += row_count;
+        }
+
+        flush_pending_partitions(encoder)
+    };
+
+    match write_chunk() {
+        Ok(ptr) => ptr,
+        Err(mut err) => {
+            err.add_context("error in writeStreamingParquetChunkFromRowGroup");
+            err.into_cairo_exception().throw::<*const u8>(env);
+            std::ptr::null()
+        }
+    }
 }
 
 fn convert_row_group_buffers_to_partition(

@@ -25,7 +25,6 @@
 //! JNI binding for generating a `_pm` metadata file from a parquet file.
 
 use crate::allocator::QdbAllocator;
-use crate::ffi_panic_guard::ffi_guard;
 use crate::parquet::error::parquet_meta_err;
 use crate::parquet::error::{fmt_err, ParquetError, ParquetErrorExt, ParquetResult};
 use crate::parquet::io::FromRawFdI32Ext;
@@ -58,28 +57,27 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_ParquetMetad
     parquet_file_size: i64,
     parquet_meta_fd: i32,
 ) -> i64 {
-    ffi_guard(&mut env, "ParquetMetadataWriter.generate", -1, |env| {
-        if parquet_file_size < 0 {
-            let err = parquet_meta_err!(
-                ParquetMetaErrorKind::InvalidValue,
-                "negative parquet file size: {}",
-                parquet_file_size
-            );
-            return err.into_cairo_exception().throw::<i64>(env);
+    let env = &mut env;
+    if parquet_file_size < 0 {
+        let err = parquet_meta_err!(
+            ParquetMetaErrorKind::InvalidValue,
+            "negative parquet file size: {}",
+            parquet_file_size
+        );
+        return err.into_cairo_exception().throw::<i64>(env);
+    }
+    match generate_parquet_meta(
+        allocator,
+        parquet_fd,
+        parquet_file_size as u64,
+        parquet_meta_fd,
+    ) {
+        Ok(parquet_meta_file_size) => parquet_meta_file_size as i64,
+        Err(mut err) => {
+            err.add_context("error in ParquetMetadataWriter.generate");
+            err.into_cairo_exception().throw::<i64>(env)
         }
-        match generate_parquet_meta(
-            allocator,
-            parquet_fd,
-            parquet_file_size as u64,
-            parquet_meta_fd,
-        ) {
-            Ok(parquet_meta_file_size) => parquet_meta_file_size as i64,
-            Err(mut err) => {
-                err.add_context("error in ParquetMetadataWriter.generate");
-                err.into_cairo_exception().throw::<i64>(env)
-            }
-        }
-    })
+    }
 }
 
 #[allow(clippy::explicit_auto_deref)]
