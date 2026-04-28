@@ -58,14 +58,14 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_ParquetMetad
     parquet_file_size: i64,
     parquet_meta_fd: i32,
 ) -> i64 {
-    ffi_guard("ParquetMetadataWriter.generate", -1, || {
+    ffi_guard(&mut env, "ParquetMetadataWriter.generate", -1, |env| {
         if parquet_file_size < 0 {
             let err = parquet_meta_err!(
                 ParquetMetaErrorKind::InvalidValue,
                 "negative parquet file size: {}",
                 parquet_file_size
             );
-            return err.into_cairo_exception().throw::<i64>(&mut env);
+            return err.into_cairo_exception().throw::<i64>(env);
         }
         match generate_parquet_meta(
             allocator,
@@ -76,7 +76,7 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_ParquetMetad
             Ok(parquet_meta_file_size) => parquet_meta_file_size as i64,
             Err(mut err) => {
                 err.add_context("error in ParquetMetadataWriter.generate");
-                err.into_cairo_exception().throw::<i64>(&mut env)
+                err.into_cairo_exception().throw::<i64>(env)
             }
         }
     })

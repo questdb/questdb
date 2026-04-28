@@ -54,32 +54,38 @@ pub struct ParquetMetaBuiltFile {
 }
 
 macro_rules! check_not_null {
-    ($env:ident, $ptr:expr, $name:expr) => {
+    ($env:expr, $ptr:expr, $name:expr) => {
         if $ptr.is_null() {
             let err = fmt_err!(InvalidType, concat!($name, " pointer is null"));
-            return err.into_cairo_exception().throw(&mut $env);
+            return err.into_cairo_exception().throw($env);
         }
     };
 }
 
 #[no_mangle]
 pub extern "system" fn Java_io_questdb_cairo_ParquetMetaFileWriter_create(
-    _env: JNIEnv,
+    mut env: JNIEnv,
     _class: JClass,
 ) -> *mut JniParquetMetaWriter {
-    ffi_guard("ParquetMetaFileWriter.create", std::ptr::null_mut(), || {
-        let wrapper = JniParquetMetaWriter { writer: ParquetMetaWriter::new(), column_count: 0 };
-        Box::into_raw(Box::new(wrapper))
-    })
+    ffi_guard(
+        &mut env,
+        "ParquetMetaFileWriter.create",
+        std::ptr::null_mut(),
+        |_env| {
+            let wrapper =
+                JniParquetMetaWriter { writer: ParquetMetaWriter::new(), column_count: 0 };
+            Box::into_raw(Box::new(wrapper))
+        },
+    )
 }
 
 #[no_mangle]
 pub extern "system" fn Java_io_questdb_cairo_ParquetMetaFileWriter_destroyWriter(
-    _env: JNIEnv,
+    mut env: JNIEnv,
     _class: JClass,
     ptr: *mut JniParquetMetaWriter,
 ) {
-    ffi_guard_void("ParquetMetaFileWriter.destroyWriter", || {
+    ffi_guard_void(&mut env, "ParquetMetaFileWriter.destroyWriter", |_env| {
         if !ptr.is_null() {
             drop(unsafe { Box::from_raw(ptr) });
         }
@@ -93,11 +99,15 @@ pub extern "system" fn Java_io_questdb_cairo_ParquetMetaFileWriter_setDesignated
     ptr: *mut JniParquetMetaWriter,
     index: jint,
 ) {
-    ffi_guard_void("ParquetMetaFileWriter.setDesignatedTimestamp", || {
-        check_not_null!(env, ptr, "ParquetMetaFileWriter");
-        let wrapper = unsafe { &mut *ptr };
-        wrapper.writer.designated_timestamp(index);
-    })
+    ffi_guard_void(
+        &mut env,
+        "ParquetMetaFileWriter.setDesignatedTimestamp",
+        |env| {
+            check_not_null!(env, ptr, "ParquetMetaFileWriter");
+            let wrapper = unsafe { &mut *ptr };
+            wrapper.writer.designated_timestamp(index);
+        },
+    )
 }
 
 #[no_mangle]
@@ -115,11 +125,11 @@ pub extern "system" fn Java_io_questdb_cairo_ParquetMetaFileWriter_addColumn(
     max_rep_level: jint,
     max_def_level: jint,
 ) {
-    ffi_guard_void("ParquetMetaFileWriter.addColumn", || {
+    ffi_guard_void(&mut env, "ParquetMetaFileWriter.addColumn", |env| {
         check_not_null!(env, ptr, "ParquetMetaFileWriter");
         if name_ptr.is_null() || name_len < 0 {
             let err = fmt_err!(InvalidType, "invalid column name pointer or length");
-            return err.into_cairo_exception().throw(&mut env);
+            return err.into_cairo_exception().throw(env);
         }
         debug_assert!(
             (name_len as usize) <= 1 << 16,
@@ -134,7 +144,7 @@ pub extern "system" fn Java_io_questdb_cairo_ParquetMetaFileWriter_addColumn(
                     "physical_type {} out of u8 range",
                     physical_type
                 );
-                return err.into_cairo_exception().throw(&mut env);
+                return err.into_cairo_exception().throw(env);
             }
         };
         let max_rep_level_u8 = match u8::try_from(max_rep_level) {
@@ -145,7 +155,7 @@ pub extern "system" fn Java_io_questdb_cairo_ParquetMetaFileWriter_addColumn(
                     "max_rep_level {} out of u8 range",
                     max_rep_level
                 );
-                return err.into_cairo_exception().throw(&mut env);
+                return err.into_cairo_exception().throw(env);
             }
         };
         let max_def_level_u8 = match u8::try_from(max_def_level) {
@@ -156,7 +166,7 @@ pub extern "system" fn Java_io_questdb_cairo_ParquetMetaFileWriter_addColumn(
                     "max_def_level {} out of u8 range",
                     max_def_level
                 );
-                return err.into_cairo_exception().throw(&mut env);
+                return err.into_cairo_exception().throw(env);
             }
         };
         let wrapper = unsafe { &mut *ptr };
@@ -169,7 +179,7 @@ pub extern "system" fn Java_io_questdb_cairo_ParquetMetaFileWriter_addColumn(
                     "invalid UTF-8 in column name: {}",
                     e
                 );
-                return err.into_cairo_exception().throw(&mut env);
+                return err.into_cairo_exception().throw(env);
             }
         };
         wrapper.writer.add_column(
@@ -195,14 +205,14 @@ pub extern "system" fn Java_io_questdb_cairo_ParquetMetaFileWriter_addBloomFilte
     bitset_ptr: *const u8,
     bitset_len: jint,
 ) {
-    ffi_guard_void("ParquetMetaFileWriter.addBloomFilter", || {
+    ffi_guard_void(&mut env, "ParquetMetaFileWriter.addBloomFilter", |env| {
         check_not_null!(env, ptr, "ParquetMetaFileWriter");
         if bitset_ptr.is_null() || bitset_len < 0 {
             let err = parquet_meta_err!(
                 ParquetMetaErrorKind::InvalidValue,
                 "invalid bloom filter bitset pointer or length"
             );
-            return err.into_cairo_exception().throw(&mut env);
+            return err.into_cairo_exception().throw(env);
         }
         debug_assert!(
             (bitset_len as usize) <= 1 << 30,
@@ -217,7 +227,7 @@ pub extern "system" fn Java_io_questdb_cairo_ParquetMetaFileWriter_addBloomFilte
         {
             let mut err: crate::parquet::error::ParquetError = err.into();
             err.add_context("error in ParquetMetaFileWriter.addBloomFilter");
-            err.into_cairo_exception().throw::<()>(&mut env);
+            err.into_cairo_exception().throw::<()>(env);
         }
     })
 }
@@ -229,7 +239,7 @@ pub extern "system" fn Java_io_questdb_cairo_ParquetMetaFileWriter_addSortingCol
     ptr: *mut JniParquetMetaWriter,
     index: jint,
 ) {
-    ffi_guard_void("ParquetMetaFileWriter.addSortingColumn", || {
+    ffi_guard_void(&mut env, "ParquetMetaFileWriter.addSortingColumn", |env| {
         check_not_null!(env, ptr, "ParquetMetaFileWriter");
         let index_u32 = match u32::try_from(index) {
             Ok(v) => v,
@@ -239,7 +249,7 @@ pub extern "system" fn Java_io_questdb_cairo_ParquetMetaFileWriter_addSortingCol
                     "sorting column index {} out of u32 range",
                     index
                 );
-                return err.into_cairo_exception().throw(&mut env);
+                return err.into_cairo_exception().throw(env);
             }
         };
         let wrapper = unsafe { &mut *ptr };
@@ -254,7 +264,7 @@ pub extern "system" fn Java_io_questdb_cairo_ParquetMetaFileWriter_addRowGroup(
     ptr: *mut JniParquetMetaWriter,
     num_rows: u64,
 ) {
-    ffi_guard_void("ParquetMetaFileWriter.addRowGroup", || {
+    ffi_guard_void(&mut env, "ParquetMetaFileWriter.addRowGroup", |env| {
         check_not_null!(env, ptr, "ParquetMetaFileWriter");
         let wrapper = unsafe { &mut *ptr };
         if wrapper.column_count == 0 {
@@ -262,7 +272,7 @@ pub extern "system" fn Java_io_questdb_cairo_ParquetMetaFileWriter_addRowGroup(
                 ParquetMetaErrorKind::InvalidValue,
                 "cannot add row group: no columns defined"
             );
-            return err.into_cairo_exception().throw(&mut env);
+            return err.into_cairo_exception().throw(env);
         }
         let mut builder = RowGroupBlockBuilder::new(wrapper.column_count);
         builder.set_num_rows(num_rows);
@@ -278,7 +288,7 @@ pub extern "system" fn Java_io_questdb_cairo_ParquetMetaFileWriter_setParquetFoo
     offset: u64,
     length: jint,
 ) {
-    ffi_guard_void("ParquetMetaFileWriter.setParquetFooter", || {
+    ffi_guard_void(&mut env, "ParquetMetaFileWriter.setParquetFooter", |env| {
         check_not_null!(env, ptr, "ParquetMetaFileWriter");
         let length_u32 = match u32::try_from(length) {
             Ok(v) => v,
@@ -288,7 +298,7 @@ pub extern "system" fn Java_io_questdb_cairo_ParquetMetaFileWriter_setParquetFoo
                     "parquet footer length {} out of u32 range",
                     length
                 );
-                return err.into_cairo_exception().throw(&mut env);
+                return err.into_cairo_exception().throw(env);
             }
         };
         let wrapper = unsafe { &mut *ptr };
@@ -304,21 +314,28 @@ pub extern "system" fn Java_io_questdb_cairo_ParquetMetaFileWriter_finish(
     _class: JClass,
     ptr: *mut JniParquetMetaWriter,
 ) -> *mut ParquetMetaBuiltFile {
-    ffi_guard("ParquetMetaFileWriter.finish", std::ptr::null_mut(), || {
-        check_not_null!(env, ptr, "ParquetMetaFileWriter");
-        let wrapper = unsafe { &mut *ptr };
-        match wrapper.writer.finish() {
-            Ok((data, parquet_meta_file_size)) => Box::into_raw(Box::new(ParquetMetaBuiltFile {
-                data,
-                parquet_meta_file_size,
-            })),
-            Err(err) => {
-                let mut err: crate::parquet::error::ParquetError = err.into();
-                err.add_context("error in ParquetMetaFileWriter.finish");
-                err.into_cairo_exception().throw(&mut env)
+    ffi_guard(
+        &mut env,
+        "ParquetMetaFileWriter.finish",
+        std::ptr::null_mut(),
+        |env| {
+            check_not_null!(env, ptr, "ParquetMetaFileWriter");
+            let wrapper = unsafe { &mut *ptr };
+            match wrapper.writer.finish() {
+                Ok((data, parquet_meta_file_size)) => {
+                    Box::into_raw(Box::new(ParquetMetaBuiltFile {
+                        data,
+                        parquet_meta_file_size,
+                    }))
+                }
+                Err(err) => {
+                    let mut err: crate::parquet::error::ParquetError = err.into();
+                    err.add_context("error in ParquetMetaFileWriter.finish");
+                    err.into_cairo_exception().throw(env)
+                }
             }
-        }
-    })
+        },
+    )
 }
 
 #[no_mangle]
@@ -328,9 +345,10 @@ pub extern "system" fn Java_io_questdb_cairo_ParquetMetaFileWriter_resultDataPtr
     ptr: *const ParquetMetaBuiltFile,
 ) -> *const u8 {
     ffi_guard(
+        &mut env,
         "ParquetMetaFileWriter.resultDataPtr",
         std::ptr::null(),
-        || {
+        |env| {
             check_not_null!(env, ptr, "ParquetMetaBuiltFile");
             let result = unsafe { &*ptr };
             result.data.as_ptr()
@@ -344,7 +362,7 @@ pub extern "system" fn Java_io_questdb_cairo_ParquetMetaFileWriter_resultDataLen
     _class: JClass,
     ptr: *const ParquetMetaBuiltFile,
 ) -> u64 {
-    ffi_guard("ParquetMetaFileWriter.resultDataLen", 0, || {
+    ffi_guard(&mut env, "ParquetMetaFileWriter.resultDataLen", 0, |env| {
         check_not_null!(env, ptr, "ParquetMetaBuiltFile");
         let result = unsafe { &*ptr };
         result.data.len() as u64
@@ -357,20 +375,25 @@ pub extern "system" fn Java_io_questdb_cairo_ParquetMetaFileWriter_resultParquet
     _class: JClass,
     ptr: *const ParquetMetaBuiltFile,
 ) -> u64 {
-    ffi_guard("ParquetMetaFileWriter.resultParquetMetaFileSize", 0, || {
-        check_not_null!(env, ptr, "ParquetMetaBuiltFile");
-        let result = unsafe { &*ptr };
-        result.parquet_meta_file_size
-    })
+    ffi_guard(
+        &mut env,
+        "ParquetMetaFileWriter.resultParquetMetaFileSize",
+        0,
+        |env| {
+            check_not_null!(env, ptr, "ParquetMetaBuiltFile");
+            let result = unsafe { &*ptr };
+            result.parquet_meta_file_size
+        },
+    )
 }
 
 #[no_mangle]
 pub extern "system" fn Java_io_questdb_cairo_ParquetMetaFileWriter_destroyResult(
-    _env: JNIEnv,
+    mut env: JNIEnv,
     _class: JClass,
     ptr: *mut ParquetMetaBuiltFile,
 ) {
-    ffi_guard_void("ParquetMetaFileWriter.destroyResult", || {
+    ffi_guard_void(&mut env, "ParquetMetaFileWriter.destroyResult", |_env| {
         if !ptr.is_null() {
             drop(unsafe { Box::from_raw(ptr) });
         }
