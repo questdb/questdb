@@ -370,7 +370,6 @@ import io.questdb.std.Transient;
 import io.questdb.std.datetime.CommonUtils;
 import io.questdb.std.datetime.DateLocaleFactory;
 import io.questdb.std.datetime.TimeZoneRules;
-import io.questdb.std.datetime.millitime.Dates;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 import org.jetbrains.annotations.TestOnly;
@@ -3262,6 +3261,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         ObjList<ExpressionNode> fillValuesExprs = curr.getFillValues();
         Function fillFromFunc = null;
         Function fillToFunc = null;
+        Function offsetFunc = null;
 
         try {
             if (fillValuesExprs == null) {
@@ -3369,21 +3369,20 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             char samplingIntervalUnit = fillStride.token.charAt(samplingIntervalEnd);
             TimestampSampler timestampSampler = TimestampSamplerFactory.getInstance(driver, samplingInterval, samplingIntervalUnit, fillStride.position);
 
-            long calendarOffset = 0;
+            int offsetFuncPos = 0;
             final ExpressionNode fillOffsetNode = curr.getFillOffset();
             if (fillOffsetNode != null) {
-                CharSequence offsetToken = fillOffsetNode.token;
-                if (offsetToken != null) {
-                    if (offsetToken.length() >= 2
-                            && offsetToken.charAt(0) == '\''
-                            && offsetToken.charAt(offsetToken.length() - 1) == '\'') {
-                        offsetToken = offsetToken.subSequence(1, offsetToken.length() - 1);
-                    }
-                    final long parsed = Dates.parseOffset(offsetToken);
-                    assert parsed != Numbers.LONG_NULL
-                            : "offset should have been validated in rewriteSampleBy: " + offsetToken;
-                    calendarOffset = driver.fromMinutes(Numbers.decodeLowInt(parsed));
-                }
+                offsetFunc = functionParser.parseFunction(fillOffsetNode, EmptyRecordMetadata.INSTANCE, executionContext);
+                offsetFuncPos = fillOffsetNode.position;
+                // STRING type matches the legacy SAMPLE BY offset path (line 7408 in this file).
+                // Constant or runtime-constant only -- per-row offset doesn't make sense for a
+                // bucket-grid anchor. The cursor evaluates getStrA(null) once per of() call and
+                // parses via Dates.parseOffset, identical to AbstractSampleByCursor.parseParams.
+                coerceRuntimeConstantType(offsetFunc, STRING, executionContext,
+                        "offset must be a constant expression of STRING or CHAR type",
+                        offsetFuncPos);
+            } else {
+                offsetFunc = StrConstant.NULL;
             }
 
             final RecordMetadata groupByMetadata = groupByFactory.getMetadata();
@@ -3934,7 +3933,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     mapValueTypes,
                     keyColIndices,
                     symbolTableColIndices,
-                    calendarOffset,
+                    offsetFunc,
+                    offsetFuncPos,
                     fixedPrevSrcCols,
                     fixedPrevTypeTags,
                     prevValueSlot,
@@ -3945,6 +3945,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             Misc.freeObjList(constantFills);
             Misc.free(fillFromFunc);
             Misc.free(fillToFunc);
+            Misc.free(offsetFunc);
             Misc.free(groupByFactory);
             throw e;
         }

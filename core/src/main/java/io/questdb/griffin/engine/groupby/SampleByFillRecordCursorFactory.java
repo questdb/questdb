@@ -65,6 +65,7 @@ import io.questdb.std.Long256Impl;
 import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
+import io.questdb.std.datetime.millitime.Dates;
 import io.questdb.std.str.CharSink;
 import io.questdb.std.str.Utf8Sequence;
 import org.jetbrains.annotations.NotNull;
@@ -98,6 +99,8 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
     private final Function fromFunc;
     private final boolean hasPrevFill;
     private final Map keysMap;
+    private final Function offsetFunc;
+    private final int offsetFuncPos;
     private final long samplingInterval;
     private final char samplingIntervalUnit;
     private final int timestampIndex;
@@ -135,7 +138,8 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
             ArrayColumnTypes mapValueTypes,
             IntList keyColIndices,
             IntList symbolTableColIndices,
-            long calendarOffset,
+            Function offsetFunc,
+            int offsetFuncPos,
             IntList fixedPrevSrcCols,
             IntList fixedPrevTypeTags,
             IntList prevValueSlot,
@@ -164,19 +168,21 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
                     fromFunc, toFunc, fillModes, constantFills,
                     timestampIndex, timestampType, localHasPrevFill,
                     keySink, keysMapLocal, keyColIndices, symbolTableColIndices,
-                    calendarOffset,
+                    offsetFunc, offsetFuncPos,
                     fixedPrevSrcCols, fixedPrevTypeTags, prevValueSlot, needsPrevPositioning
             );
         } catch (Throwable th) {
             // Free resources allocated inside the constructor. Inputs (base, fromFunc,
-            // toFunc, constantFills) remain owned by the caller's catch block, which
-            // frees them on its own — this avoids a double-free.
+            // toFunc, constantFills, offsetFunc) remain owned by the caller's catch
+            // block, which frees them on its own — this avoids a double-free.
             Misc.free(keysMapLocal);
             throw th;
         }
         this.base = base;
         this.fromFunc = fromFunc;
         this.toFunc = toFunc;
+        this.offsetFunc = offsetFunc;
+        this.offsetFuncPos = offsetFuncPos;
         this.samplingInterval = samplingInterval;
         this.samplingIntervalUnit = samplingIntervalUnit;
         this.timestampIndex = timestampIndex;
@@ -258,6 +264,7 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
         Misc.free(base);
         Misc.free(fromFunc);
         Misc.free(toFunc);
+        Misc.free(offsetFunc);
         Misc.freeObjList(constantFills);
         Misc.free(keysMap);
     }
@@ -319,7 +326,7 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
 
         private RecordCursor baseCursor;
         private Record baseRecord;
-        private final long calendarOffset;
+        private long calendarOffset;
         private SqlExecutionCircuitBreaker circuitBreaker;
         private final ObjList<Function> constantFills;
         private int[] currentDispatchCode;
@@ -359,6 +366,8 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
         // emitNextFillRow to skip baseCursor.recordAt entirely.
         private final boolean needsPrevPositioning;
         private long nextBucketTimestamp;
+        private final Function offsetFunc;
+        private final int offsetFuncPos;
         private final IntList outputColToKeyPos = new IntList();
         private long pendingTs;
         private Record prevRecord;
@@ -396,13 +405,15 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
                 Map keysMap,
                 IntList keyColIndices,
                 IntList symbolTableColIndices,
-                long calendarOffset,
+                Function offsetFunc,
+                int offsetFuncPos,
                 IntList fixedPrevSrcCols,
                 IntList fixedPrevTypeTags,
                 IntList prevValueSlot,
                 boolean needsPrevPositioning
         ) {
-            this.calendarOffset = calendarOffset;
+            this.offsetFunc = offsetFunc;
+            this.offsetFuncPos = offsetFuncPos;
             this.timestampSampler = timestampSampler;
             this.fromFunc = fromFunc;
             this.toFunc = toFunc;
@@ -893,6 +904,22 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
             Function.init(constantFills, baseCursor, executionContext, null);
             fromFunc.init(baseCursor, executionContext);
             toFunc.init(baseCursor, executionContext);
+            offsetFunc.init(baseCursor, executionContext);
+            // Evaluate the runtime-constant OFFSET into native units. Mirrors
+            // AbstractSampleByCursor.parseParams: STRING value -> Dates.parseOffset
+            // -> driver.fromMinutes(decodeLowInt). When OFFSET is absent or evaluates
+            // to null (StrConstant.NULL), calendarOffset stays 0 and the existing
+            // initialize() branches that key off `calendarOffset != 0` no-op.
+            final CharSequence offsetStr = offsetFunc.getStrA(null);
+            if (offsetStr != null) {
+                final long parsed = Dates.parseOffset(offsetStr);
+                if (parsed == Numbers.LONG_NULL) {
+                    throw SqlException.$(offsetFuncPos, "invalid offset: ").put(offsetStr);
+                }
+                calendarOffset = timestampDriver.fromMinutes(Numbers.decodeLowInt(parsed));
+            } else {
+                calendarOffset = 0;
+            }
             // Cache one SymbolTable per output column whose getSymA/getSymB
             // dispatch reads from a MapRecord/MapValue slot. JFR shows that on
             // sparse keyed fills the SYMBOL key column dominates per-cell cost

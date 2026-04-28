@@ -3446,6 +3446,104 @@ public class SampleByFillTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testFillNullOffsetBindVariable() throws Exception {
+        // Runtime-constant OFFSET via bind variable. The fill cursor parses the
+        // offset Function once per of() call (mirroring tsFloor's runtime
+        // evaluation), so bind-variable values land on the same calendarOffset
+        // as the equivalent literal '00:30'.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE test (ts TIMESTAMP, value DOUBLE) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("INSERT INTO test VALUES " +
+                    "('2024-01-01T12:00:00.000000Z', 1.0), " +
+                    "('2024-01-03T12:00:00.000000Z', 3.0)");
+            drainWalQueue();
+            bindVariableService.clear();
+            bindVariableService.setStr(0, "10:00");
+            assertQueryNoLeakCheck(
+                    """
+                            ts\tavg
+                            2024-01-01T10:00:00.000000Z\t1.0
+                            2024-01-02T10:00:00.000000Z\tnull
+                            2024-01-03T10:00:00.000000Z\t3.0
+                            """,
+                    "SELECT ts, avg(value) FROM test SAMPLE BY 1d FILL(NULL) ALIGN TO CALENDAR WITH OFFSET $1",
+                    "ts"
+            );
+        });
+    }
+
+    @Test
+    public void testFillNullOffsetCastExpression() throws Exception {
+        // Cast expression as offset (FUNCTION node). Same code path as the
+        // bind-variable case -- Function.init evaluates the cast, getStrA
+        // returns "10:00", parseOffset succeeds.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE test (ts TIMESTAMP, value DOUBLE) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("INSERT INTO test VALUES " +
+                    "('2024-01-01T12:00:00.000000Z', 1.0), " +
+                    "('2024-01-03T12:00:00.000000Z', 3.0)");
+            drainWalQueue();
+            assertQueryNoLeakCheck(
+                    """
+                            ts\tavg
+                            2024-01-01T10:00:00.000000Z\t1.0
+                            2024-01-02T10:00:00.000000Z\tnull
+                            2024-01-03T10:00:00.000000Z\t3.0
+                            """,
+                    "SELECT ts, avg(value) FROM test SAMPLE BY 1d FILL(NULL) ALIGN TO CALENDAR WITH OFFSET cast('10:00' AS STRING)",
+                    "ts"
+            );
+        });
+    }
+
+    @Test
+    public void testFillPrevOffsetBindVariable() throws Exception {
+        // Pre-PR FILL(PREV) + non-literal OFFSET worked through the legacy
+        // cursor path which evaluated offsetFunc at runtime. The fast-path
+        // widening accidentally regressed this; this test pins the parity.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE test (ts TIMESTAMP, value DOUBLE) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("INSERT INTO test VALUES " +
+                    "('2024-01-01T12:00:00.000000Z', 1.0), " +
+                    "('2024-01-03T12:00:00.000000Z', 3.0)");
+            drainWalQueue();
+            bindVariableService.clear();
+            bindVariableService.setStr(0, "10:00");
+            assertQueryNoLeakCheck(
+                    """
+                            ts\tavg
+                            2024-01-01T10:00:00.000000Z\t1.0
+                            2024-01-02T10:00:00.000000Z\t1.0
+                            2024-01-03T10:00:00.000000Z\t3.0
+                            """,
+                    "SELECT ts, avg(value) FROM test SAMPLE BY 1d FILL(PREV) ALIGN TO CALENDAR WITH OFFSET $1",
+                    "ts"
+            );
+        });
+    }
+
+    @Test
+    public void testFillOffsetInvalidString() throws Exception {
+        // Bind variable holding an unparseable offset value: SqlException at
+        // cursor.of() time (runtime), pointing at the offset's source position.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE test (ts TIMESTAMP, value DOUBLE) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("INSERT INTO test VALUES ('2024-01-01T12:00:00.000000Z', 1.0)");
+            drainWalQueue();
+            bindVariableService.clear();
+            bindVariableService.setStr(0, "not_an_offset");
+            try {
+                assertExceptionNoLeakCheck(
+                        "SELECT ts, avg(value) FROM test SAMPLE BY 1d FILL(NULL) ALIGN TO CALENDAR WITH OFFSET $1"
+                );
+                Assert.fail("expected SqlException for unparseable offset");
+            } catch (SqlException e) {
+                TestUtils.assertContains(e.getFlyweightMessage(), "invalid offset: not_an_offset");
+            }
+        });
+    }
+
+    @Test
     public void testFillReExecutionKeyed() throws Exception {
         // Re-execute the same keyed FILL factory twice and assert the second
         // cursor produces identical output. Exercises SampleByFillCursor.toTop()
