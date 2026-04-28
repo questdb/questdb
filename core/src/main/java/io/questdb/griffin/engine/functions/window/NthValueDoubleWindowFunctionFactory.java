@@ -932,7 +932,7 @@ public class NthValueDoubleWindowFunctionFactory extends AbstractWindowFunctionF
                 int n
         ) {
             super(map, partitionByRecord, partitionBySink, arg);
-            assert rowsHi < 0; // K preceding with K > 0
+            assert rowsHi < 0 && rowsHi != Long.MIN_VALUE; // K preceding with K > 0; (int) Math.abs would overflow at MIN_VALUE
             this.bufferSize = (int) Math.abs(rowsHi);
             this.n = n;
         }
@@ -1369,7 +1369,7 @@ public class NthValueDoubleWindowFunctionFactory extends AbstractWindowFunctionF
 
         public NthValueOverRowsFrameUnboundedFunction(Function arg, long rowsHi, int n) {
             super(arg);
-            assert rowsHi < 0; // K preceding with K > 0
+            assert rowsHi < 0 && rowsHi != Long.MIN_VALUE; // K preceding with K > 0; (int) Math.abs would overflow at MIN_VALUE
             this.bufferSize = (int) Math.abs(rowsHi);
             this.n = n;
         }

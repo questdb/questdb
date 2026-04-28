@@ -14215,6 +14215,76 @@ public class WindowFunctionTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testNthValueAcceptsExcludeNoOthers() throws Exception {
+        // EXCLUDE NO OTHERS is the no-op default; rejecting it would over-tighten
+        // windowContext.validate(). This pins the accept path explicitly.
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, val double) timestamp(ts)", timestampType.getTypeName());
+            execute("insert into tab values (1, 10.0), (2, 20.0), (3, 30.0)");
+
+            assertQueryNoLeakCheck(
+                    replaceTimestampSuffix1("""
+                            ts\tval\tnv
+                            1970-01-01T00:00:00.000001Z\t10.0\tnull
+                            1970-01-01T00:00:00.000002Z\t20.0\t20.0
+                            1970-01-01T00:00:00.000003Z\t30.0\t20.0
+                            """),
+                    "select ts, val, nth_value(val, 2) over (order by ts " +
+                            "rows between 3 preceding and current row exclude no others) nv from tab",
+                    "ts",
+                    false,
+                    true
+            );
+        });
+    }
+
+    @Test
+    public void testNthValueAcceptsConstantExpression() throws Exception {
+        // n must be constant but does not need to be a literal; constant-folded
+        // expressions like 1+1 must resolve to an integer at compile time.
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, val double) timestamp(ts)", timestampType.getTypeName());
+            execute("insert into tab values (1, 10.0), (2, 20.0), (3, 30.0)");
+
+            assertQueryNoLeakCheck(
+                    replaceTimestampSuffix1("""
+                            ts\tval\tnv
+                            1970-01-01T00:00:00.000001Z\t10.0\tnull
+                            1970-01-01T00:00:00.000002Z\t20.0\t20.0
+                            1970-01-01T00:00:00.000003Z\t30.0\t20.0
+                            """),
+                    "select ts, val, nth_value(val, 1+1) over (order by ts) nv from tab",
+                    "ts",
+                    false,
+                    true
+            );
+        });
+    }
+
+    @Test
+    public void testNtileAcceptsConstantExpression() throws Exception {
+        // bucket count must be constant but does not need to be a literal.
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, val double) timestamp(ts)", timestampType.getTypeName());
+            execute("insert into tab values (1, 10.0), (2, 20.0), (3, 30.0), (4, 40.0)");
+
+            assertQueryNoLeakCheck(
+                    replaceTimestampSuffix1("""
+                            ts\tval\tbucket
+                            1970-01-01T00:00:00.000001Z\t10.0\t1
+                            1970-01-01T00:00:00.000002Z\t20.0\t1
+                            1970-01-01T00:00:00.000003Z\t30.0\t2
+                            1970-01-01T00:00:00.000004Z\t40.0\t2
+                            """),
+                    "select ts, val, ntile(1+1) over (order by ts) bucket from tab",
+                    "ts",
+                    true,
+                    true
+            );
+        });
+    }
+
+    @Test
     public void testNthValueRejectsExcludeGroup() throws Exception {
         // nth_value goes through windowContext.validate(), which allows EXCLUDE_NO_OTHERS and
         // EXCLUDE_CURRENT_ROW but rejects EXCLUDE_GROUP / EXCLUDE_TIES. testNthValueRejects-

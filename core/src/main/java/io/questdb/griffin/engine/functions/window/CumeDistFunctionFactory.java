@@ -255,7 +255,9 @@ public class CumeDistFunctionFactory extends AbstractWindowFunctionFactory {
         public void reopen() {
             count = 1;
             totalRows = 0;
+            rank = 0;
             prevRank = 0;
+            lastRecordOffset = 0;
             deferredSize = 0;
         }
 
@@ -263,7 +265,9 @@ public class CumeDistFunctionFactory extends AbstractWindowFunctionFactory {
         public void reset() {
             count = 1;
             totalRows = 0;
+            rank = 0;
             prevRank = 0;
+            lastRecordOffset = 0;
             deferredSize = 0;
             Misc.freeObjListAndKeepObjects(rankMaps);
             // Releases native pages so cursor RSS budget after close stays within limits;
@@ -291,7 +295,9 @@ public class CumeDistFunctionFactory extends AbstractWindowFunctionFactory {
         public void toTop() {
             count = 1;
             totalRows = 0;
+            rank = 0;
             prevRank = 0;
+            lastRecordOffset = 0;
             deferredSize = 0;
             deferredOffsets.truncate();
             super.toTop();
@@ -496,6 +502,7 @@ public class CumeDistFunctionFactory extends AbstractWindowFunctionFactory {
             MapKey key = map.withKey();
             key.put(partitionByRecord, partitionBySink);
             MapValue mapValue = key.findValue();
+            assert mapValue != null;
 
             long storedRank = Unsafe.getUnsafe().getLong(spi.getAddress(recordOffset, columnIndex));
             long totalRows = mapValue.getLong(2) - 1;
@@ -538,7 +545,7 @@ public class CumeDistFunctionFactory extends AbstractWindowFunctionFactory {
             // deferred slice size to 0 (capacity and startOffset remain so that pass2 reuses the
             // already-allocated native slice).
             MapRecordCursor cursor = map.getCursor();
-            MapRecord record = cursor.getRecord();
+            MapRecord record = map.getRecord();
             while (cursor.hasNext()) {
                 MapValue value = record.getValue();
                 value.putLong(1, 0);
