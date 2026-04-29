@@ -25,28 +25,16 @@
 package io.questdb.test.cutlass.qwp.e2e;
 
 import io.questdb.client.Sender;
-import io.questdb.cutlass.http.DefaultHttpContextConfiguration;
-import io.questdb.cutlass.http.DefaultHttpServerConfiguration;
-import io.questdb.cutlass.http.HttpFullFatServerConfiguration;
-import io.questdb.cutlass.http.HttpRequestHandlerFactory;
-import io.questdb.cutlass.http.HttpServer;
-import io.questdb.cutlass.qwp.server.QwpWebSocketHttpProcessor;
-import io.questdb.griffin.SqlException;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
-import io.questdb.mp.WorkerPoolUtils;
-import io.questdb.network.PlainSocketFactory;
-import io.questdb.std.ObjHashSet;
 import io.questdb.std.Os;
 import io.questdb.std.Rnd;
 import io.questdb.std.str.Path;
 import io.questdb.test.AbstractCairoTest;
-import io.questdb.test.mp.TestWorkerPool;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Test;
 
 import java.io.File;
-import java.net.ServerSocket;
 import java.time.temporal.ChronoUnit;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
@@ -120,7 +108,7 @@ public class QwpIngressServerRestartFuzzTest extends AbstractCairoTest {
         // dedup the table would over-count those replays.
         assertMemoryLeak(() -> {
             createTargetTable();
-            int port = pickFreePort();
+            int port = RestartableQwpServer.pickFreePort();
             String sfDir = freshSfDir("continuous-bounces");
 
             Rnd rnd = TestUtils.generateRandom(LOG);
@@ -137,7 +125,7 @@ public class QwpIngressServerRestartFuzzTest extends AbstractCairoTest {
                     + ";reconnect_max_duration_millis=120000"
                     + ";close_flush_timeout_millis=120000;";
 
-            try (RestartableQwpServer server = new RestartableQwpServer(port)) {
+            try (RestartableQwpServer server = new RestartableQwpServer(engine, configuration, port)) {
                 server.start();
 
                 AtomicBoolean stopProducer = new AtomicBoolean();
@@ -258,8 +246,8 @@ public class QwpIngressServerRestartFuzzTest extends AbstractCairoTest {
         // happy-path SF send loop in isolation from any restart logic.
         assertMemoryLeak(() -> {
             createTargetTable();
-            int port = pickFreePort();
-            try (RestartableQwpServer server = new RestartableQwpServer(port)) {
+            int port = RestartableQwpServer.pickFreePort();
+            try (RestartableQwpServer server = new RestartableQwpServer(engine, configuration, port)) {
                 server.start();
                 int writers = 2;
                 int rowsPerWriter = 500;
@@ -310,14 +298,14 @@ public class QwpIngressServerRestartFuzzTest extends AbstractCairoTest {
         // server, leaving recovery with nothing to do.
         assertMemoryLeak(() -> {
             createTargetTable();
-            int port = pickFreePort();
+            int port = RestartableQwpServer.pickFreePort();
             String sfDir = freshSfDir("new-sender-recovery");
 
             int rowsPerEpoch = 5_000; // big enough that some won't be drained
 
             // Epoch 1: sender writes, then server is killed BEFORE sender
             // close so some frames sit unacked on disk.
-            RestartableQwpServer server1 = new RestartableQwpServer(port);
+            RestartableQwpServer server1 = new RestartableQwpServer(engine, configuration, port);
             server1.start();
             String connect1 = "ws::addr=localhost:" + port + ";sf_dir=" + sfDir
                     + ";close_flush_timeout_millis=0;";
@@ -337,7 +325,7 @@ public class QwpIngressServerRestartFuzzTest extends AbstractCairoTest {
             // Epoch 2: brand-new server on the same port; the new sender
             // pointed at the same sfDir locks the same slot and replays
             // any unacked frames before continuing with new ones.
-            try (RestartableQwpServer server2 = new RestartableQwpServer(port)) {
+            try (RestartableQwpServer server2 = new RestartableQwpServer(engine, configuration, port)) {
                 server2.start();
                 runOneSfSender(port, sfDir, /*idBase*/ rowsPerEpoch, rowsPerEpoch,
                         1_700_000_000_000_000_000L + (long) rowsPerEpoch * 1000L);
@@ -354,10 +342,10 @@ public class QwpIngressServerRestartFuzzTest extends AbstractCairoTest {
     public void testSameSenderSurvivesServerRestart() throws Exception {
         assertMemoryLeak(() -> {
             createTargetTable();
-            int port = pickFreePort();
+            int port = RestartableQwpServer.pickFreePort();
             String sfDir = freshSfDir("same-sender-survives");
 
-            try (RestartableQwpServer server = new RestartableQwpServer(port)) {
+            try (RestartableQwpServer server = new RestartableQwpServer(engine, configuration, port)) {
                 server.start();
 
                 int rowsPerPhase = 500;
@@ -395,7 +383,7 @@ public class QwpIngressServerRestartFuzzTest extends AbstractCairoTest {
         // matches the total ever written.
         assertMemoryLeak(() -> {
             createTargetTable();
-            int port = pickFreePort();
+            int port = RestartableQwpServer.pickFreePort();
             String sfDir = freshSfDir("fuzz-multi-restart");
 
             Rnd rnd = TestUtils.generateRandom(LOG);
@@ -411,7 +399,7 @@ public class QwpIngressServerRestartFuzzTest extends AbstractCairoTest {
                 LOG.info().$("fuzz epoch ").$(epoch).$('/').$(epochs)
                         .$(" rows=").$(rowsPerEpoch)
                         .$(" idBase=").$(idBase).$();
-                RestartableQwpServer server = new RestartableQwpServer(port);
+                RestartableQwpServer server = new RestartableQwpServer(engine, configuration, port);
                 server.start();
                 Sender sender = Sender.fromConfig(connect);
                 try {
@@ -433,7 +421,7 @@ public class QwpIngressServerRestartFuzzTest extends AbstractCairoTest {
             // Final epoch with no kill: a sender's startup recovery picks
             // up any leftover unacked frames from the previous epoch and
             // replays them; we wait long enough for the I/O loop to drain.
-            try (RestartableQwpServer server = new RestartableQwpServer(port)) {
+            try (RestartableQwpServer server = new RestartableQwpServer(engine, configuration, port)) {
                 server.start();
                 // Open one more sender against the same slot to trigger
                 // recovery and drain. close() with the default 5s flush
@@ -484,14 +472,6 @@ public class QwpIngressServerRestartFuzzTest extends AbstractCairoTest {
         return dir.getAbsolutePath();
     }
 
-    /** Pick a free TCP port by binding port 0 and reading what the OS gave us. */
-    private static int pickFreePort() throws Exception {
-        try (ServerSocket s = new ServerSocket(0)) {
-            s.setReuseAddress(true);
-            return s.getLocalPort();
-        }
-    }
-
     /**
      * Open one SF sender against {@code sfDir}, push {@code count} rows on
      * a deterministic (ts, id) grid, flush, and close. An sfDir is owned by
@@ -522,77 +502,4 @@ public class QwpIngressServerRestartFuzzTest extends AbstractCairoTest {
         }
     }
 
-    /**
-     * Wraps an {@link HttpServer} bound to a fixed {@code port}, with a
-     * worker pool and the QWP WebSocket processor, so the test can
-     * stop/start it across the same port without losing the underlying
-     * {@link io.questdb.cairo.CairoEngine} state. Single-threaded worker
-     * pool keeps test scheduling deterministic.
-     */
-    private static final class RestartableQwpServer implements AutoCloseable {
-        private final int port;
-        private final AtomicBoolean running = new AtomicBoolean();
-        private HttpServer server;
-        private TestWorkerPool workerPool;
-
-        RestartableQwpServer(int port) {
-            this.port = port;
-        }
-
-        @Override
-        public void close() {
-            if (running.get()) {
-                stop();
-            }
-        }
-
-        void start() throws SqlException {
-            if (!running.compareAndSet(false, true)) {
-                throw new IllegalStateException("already running");
-            }
-            HttpFullFatServerConfiguration httpConfig = new DefaultHttpServerConfiguration(
-                    configuration,
-                    new DefaultHttpContextConfiguration()
-            ) {
-                @Override
-                public int getBindPort() {
-                    return port;
-                }
-            };
-
-            workerPool = new TestWorkerPool(1);
-            server = new HttpServer(httpConfig, workerPool, PlainSocketFactory.INSTANCE);
-            server.bind(new HttpRequestHandlerFactory() {
-                @Override
-                public ObjHashSet<String> getUrls() {
-                    return httpConfig.getContextPathQWP();
-                }
-
-                @Override
-                public QwpWebSocketHttpProcessor newInstance() {
-                    return new QwpWebSocketHttpProcessor(engine, httpConfig);
-                }
-            });
-            WorkerPoolUtils.setupWriterJobs(workerPool, engine);
-            workerPool.start(LOG);
-        }
-
-        void stop() {
-            if (!running.compareAndSet(true, false)) {
-                return;
-            }
-            try {
-                workerPool.halt();
-            } catch (Throwable t) {
-                LOG.error().$("worker pool halt failed").$(t).$();
-            }
-            try {
-                server.close();
-            } catch (Throwable t) {
-                LOG.error().$("server close failed").$(t).$();
-            }
-            server = null;
-            workerPool = null;
-        }
-    }
 }
