@@ -655,6 +655,53 @@ public class ParquetTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testDecimalFilterMismatchedScaleOverParquet() throws Exception {
+        // Regression for two bugs the fuzzer surfaced together:
+        //   (1) PushdownFilterExtractor pushed the literal's raw value at the
+        //       literal's scale, so parquet row group statistics were compared
+        //       against a value at the wrong scale and pruned every group.
+        //   (2) CompareDecimal{64,128,256}Function did not short-circuit NULL,
+        //       so Decimal128/256.compareTo(NULL, x) = -1 made every NULL row
+        //       satisfy any "<", "<=" filter (and "!=" symmetrically).
+        // Either bug alone produced a primary-vs-shadow divergence in the fuzzer
+        // (native incorrectly matched NULLs while parquet correctly pruned the
+        // group). The test asserts that:
+        //   - `c1 <= literal` matches no NULL rows on either path,
+        //   - parquet matches the same non-null rows native does.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (c1 DECIMAL(18, 5), ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("INSERT INTO x VALUES " +
+                    "(NULL, '2024-01-01'), " +
+                    "(0.00001::DECIMAL(18,5), '2024-01-02'), " +
+                    "(0.00002::DECIMAL(18,5), '2024-01-03'), " +
+                    "(NULL, '2024-01-04'), " +
+                    "(99999999999.00000::DECIMAL(18,5), '2024-01-05')");
+            drainWalQueue();
+            execute("CREATE TABLE x_native (c1 DECIMAL(18, 5), ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("INSERT INTO x_native SELECT * FROM x");
+            drainWalQueue();
+            execute("ALTER TABLE x CONVERT PARTITION TO PARQUET WHERE ts >= 0");
+            drainWalQueue();
+            // Mismatched-scale literals across partitions split into many small row groups.
+            // Two non-null small rows match; NULLs must NOT match.
+            TestUtils.assertSqlCursors(engine, sqlExecutionContext,
+                    "SELECT count() FROM x_native WHERE c1 <= 26945.4149::DECIMAL(18, 4)",
+                    "SELECT count() FROM x WHERE c1 <= 26945.4149::DECIMAL(18, 4)",
+                    LOG);
+            // Single tight bound that includes only the two small values
+            assertSql("count\n2\n",
+                    "SELECT count() FROM x_native WHERE c1 <= 26945.4149::DECIMAL(18, 4)");
+            assertSql("count\n2\n",
+                    "SELECT count() FROM x WHERE c1 <= 26945.4149::DECIMAL(18, 4)");
+            // <= an even tighter bound — only the smallest matches
+            TestUtils.assertSqlCursors(engine, sqlExecutionContext,
+                    "SELECT count() FROM x_native WHERE c1 <= 0.000015::DECIMAL(18, 6)",
+                    "SELECT count() FROM x WHERE c1 <= 0.000015::DECIMAL(18, 6)",
+                    LOG);
+        });
+    }
+
+    @Test
     public void testDedupFixedKeys() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table x (x int, ts timestamp) timestamp(ts) partition by day wal DEDUP UPSERT KEYS(ts, x) ;");

@@ -108,6 +108,30 @@ public class LtDecimalFunctionFactoryTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testLtDecimal128SlowPathBothNull() {
+        // Different scales force the slow path (CompareDecimal128Function); both
+        // NULL must evaluate to false for `<` and for the negated `>=` (verified
+        // via the helper's swap path).
+        createFunctionAndAssert(
+                new Decimal128Constant(Decimals.DECIMAL128_HI_NULL, Decimals.DECIMAL128_LO_NULL, ColumnType.getDecimalType(20, 2)),
+                new Decimal128Constant(Decimals.DECIMAL128_HI_NULL, Decimals.DECIMAL128_LO_NULL, ColumnType.getDecimalType(20, 4)),
+                false
+        );
+    }
+
+    @Test
+    public void testLtDecimal128SlowPathNullVsValue() {
+        // Different scales force the slow path. Without the NULL guard
+        // Decimal128.compareTo(NULL, value) returns -1, which would make `c1 < value`
+        // evaluate to true on a NULL c1.
+        createFunctionAndAssert(
+                new Decimal128Constant(Decimals.DECIMAL128_HI_NULL, Decimals.DECIMAL128_LO_NULL, ColumnType.getDecimalType(20, 2)),
+                new Decimal128Constant(0, 100, ColumnType.getDecimalType(20, 4)),
+                false
+        );
+    }
+
+    @Test
     public void testLtDecimal128VsDecimal256() {
         createFunctionAndAssert(
                 new Decimal128Constant(0, 100, ColumnType.getDecimalType(20, 2)),
@@ -333,6 +357,38 @@ public class LtDecimalFunctionFactoryTest extends AbstractCairoTest {
                         ColumnType.getDecimalType(40, 0)
                 ),
                 new Decimal256Constant(0, 0, 0, 100, ColumnType.getDecimalType(40, 0)),
+                false
+        );
+    }
+
+    @Test
+    public void testLtDecimal256SlowPathBothNull() {
+        // Different scales force the slow path (CompareDecimal256Function).
+        createFunctionAndAssert(
+                new Decimal256Constant(
+                        Decimals.DECIMAL256_HH_NULL, Decimals.DECIMAL256_HL_NULL,
+                        Decimals.DECIMAL256_LH_NULL, Decimals.DECIMAL256_LL_NULL,
+                        ColumnType.getDecimalType(40, 2)
+                ),
+                new Decimal256Constant(
+                        Decimals.DECIMAL256_HH_NULL, Decimals.DECIMAL256_HL_NULL,
+                        Decimals.DECIMAL256_LH_NULL, Decimals.DECIMAL256_LL_NULL,
+                        ColumnType.getDecimalType(40, 4)
+                ),
+                false
+        );
+    }
+
+    @Test
+    public void testLtDecimal256SlowPathNullVsValue() {
+        // Different scales force the slow path. NULL on either side must produce false.
+        createFunctionAndAssert(
+                new Decimal256Constant(
+                        Decimals.DECIMAL256_HH_NULL, Decimals.DECIMAL256_HL_NULL,
+                        Decimals.DECIMAL256_LH_NULL, Decimals.DECIMAL256_LL_NULL,
+                        ColumnType.getDecimalType(40, 2)
+                ),
+                new Decimal256Constant(0, 0, 0, 100, ColumnType.getDecimalType(40, 4)),
                 false
         );
     }
@@ -564,6 +620,26 @@ public class LtDecimalFunctionFactoryTest extends AbstractCairoTest {
         createFunctionAndAssert(
                 new Decimal64Constant(Decimals.DECIMAL64_NULL, ColumnType.getDecimalType(10, 0)),
                 new Decimal64Constant(100, ColumnType.getDecimalType(10, 0)),
+                false
+        );
+    }
+
+    @Test
+    public void testLtDecimal64SlowPathBothNull() {
+        // Different scales force the slow path (CompareDecimal64Function).
+        createFunctionAndAssert(
+                new Decimal64Constant(Decimals.DECIMAL64_NULL, ColumnType.getDecimalType(10, 2)),
+                new Decimal64Constant(Decimals.DECIMAL64_NULL, ColumnType.getDecimalType(10, 4)),
+                false
+        );
+    }
+
+    @Test
+    public void testLtDecimal64SlowPathNullVsValue() {
+        // Different scales force the slow path. NULL on either side must produce false.
+        createFunctionAndAssert(
+                new Decimal64Constant(Decimals.DECIMAL64_NULL, ColumnType.getDecimalType(10, 2)),
+                new Decimal64Constant(100, ColumnType.getDecimalType(10, 4)),
                 false
         );
     }

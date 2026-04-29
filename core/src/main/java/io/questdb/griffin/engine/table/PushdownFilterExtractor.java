@@ -24,16 +24,22 @@
 
 package io.questdb.griffin.engine.table;
 
+import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.RecordMetadata;
+import io.questdb.griffin.DecimalUtil;
 import io.questdb.griffin.FunctionParser;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.SqlKeywords;
 import io.questdb.griffin.model.ExpressionNode;
 import io.questdb.std.Chars;
+import io.questdb.std.Decimal128;
+import io.questdb.std.Decimal256;
+import io.questdb.std.Decimals;
 import io.questdb.std.Misc;
 import io.questdb.std.Mutable;
+import io.questdb.std.NumericException;
 import io.questdb.std.ObjList;
 import io.questdb.std.QuietCloseable;
 
@@ -110,11 +116,29 @@ public class PushdownFilterExtractor implements Mutable {
                     }
 
                     Function f = functionParser.parseFunction(node, metadata, executionContext);
-                    condition.addValueFunction(f);
                     if (!f.isConstantOrRuntimeConstant()) {
+                        condition.addValueFunction(f);
                         allConstant = false;
                         break;
                     }
+                    // Pushdown reads the literal's raw value via getDecimal<N>(null)
+                    // dispatched on the column's storage tag, then compares the bytes
+                    // against parquet row group min/max statistics. For that to be
+                    // correct the literal must share the column's storage tag and
+                    // scale. Rescale the constant to match when possible; abandon
+                    // the condition only when rescale would lose precision or
+                    // overflow the column's storage range.
+                    final int colType = condition.getColumnType();
+                    if (ColumnType.isDecimal(colType) && ColumnType.isDecimal(f.getType())) {
+                        Function rescaled = rescaleDecimalForPushdown(f, colType, executionContext);
+                        if (rescaled == null) {
+                            condition.addValueFunction(f);
+                            allConstant = false;
+                            break;
+                        }
+                        f = rescaled;
+                    }
+                    condition.addValueFunction(f);
                 }
                 if (allConstant) {
                     if (result == null) {
@@ -170,6 +194,57 @@ public class PushdownFilterExtractor implements Mutable {
 
     private static boolean isNullConstant(ExpressionNode node) {
         return node.type == ExpressionNode.CONSTANT && SqlKeywords.isNullKeyword(node.token);
+    }
+
+    /**
+     * Rebuilds a constant DECIMAL function so its storage tag and scale match the
+     * column's, which is what {@link ParquetRowGroupFilter#prepareFilterList} relies
+     * on when it dispatches {@code getDecimal<N>} based on the column tag and pushes
+     * the raw bytes against parquet row group statistics. Returns {@code null} when
+     * the constant cannot be expressed at the column's scale (lossy scale-down) or
+     * does not fit in the column's storage size, signalling the caller to skip
+     * pushdown for the condition. Returns the input unchanged when scale and tag
+     * already match. On a successful rebuild the original function is closed and
+     * the new constant takes its place.
+     */
+    private static Function rescaleDecimalForPushdown(
+            Function f,
+            int colType,
+            SqlExecutionContext executionContext
+    ) {
+        final int colTag = ColumnType.tagOf(colType);
+        final int litTag = ColumnType.tagOf(f.getType());
+        final int colScale = ColumnType.getDecimalScale(colType);
+        final int litScale = ColumnType.getDecimalScale(f.getType());
+        if (colTag == litTag && colScale == litScale) {
+            return f;
+        }
+
+        final int colPrecision = ColumnType.getDecimalPrecision(colType);
+        final Decimal256 d256 = executionContext.getDecimal256();
+        final Decimal128 d128 = executionContext.getDecimal128();
+        DecimalUtil.load(d256, d128, f, null);
+
+        if (d256.isNull()) {
+            Function nullFunc = DecimalUtil.createNullDecimalConstant(colPrecision, colScale);
+            f.close();
+            return nullFunc;
+        }
+
+        try {
+            d256.rescale(colScale);
+        } catch (NumericException e) {
+            return null;
+        }
+
+        final int colStorageSizePow2 = Decimals.getStorageSizePow2(colPrecision);
+        if (!d256.fitsInStorageSizePow2(colStorageSizePow2)) {
+            return null;
+        }
+
+        Function newFunc = DecimalUtil.createDecimalConstant(d256, colPrecision, colScale);
+        f.close();
+        return newFunc;
     }
 
     private void traverse(ArrayDeque<ExpressionNode> stack, ArrayDeque<ExpressionNode> stack2, ExpressionNode node, RecordMetadata metadata) {

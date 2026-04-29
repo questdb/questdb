@@ -47,11 +47,20 @@ public abstract class CompareDecimal64Function extends NegatableBooleanFunction 
         this.rightScale = ColumnType.getDecimalScale(this.right.getType());
     }
 
+    /**
+     * Default implementation has SQL-standard NULL semantics: NULL never satisfies
+     * a comparison, so the predicate evaluates to false on either side being NULL.
+     * Equality factories that want NULL = NULL to be true (matching their
+     * {@code UnscaledDecimal*Func} fast paths) override this method.
+     */
     @Override
     public boolean getBool(Record rec) {
         decimalLeft.ofRaw(left.getDecimal64(rec));
-        decimalLeft.setScale(leftScale);
         decimalRight.ofRaw(right.getDecimal64(rec));
+        if (decimalLeft.isNull() || decimalRight.isNull()) {
+            return false;
+        }
+        decimalLeft.setScale(leftScale);
         decimalRight.setScale(rightScale);
         return negated != exec();
     }
