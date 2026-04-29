@@ -488,30 +488,49 @@ public class OhlcBarGroupByFunctionFactoryTest extends AbstractCairoTest {
         //
         // Determinism is the regression guard: non-determinism is the
         // symptom when merge fails to reconcile bounds.
-        execute("CREATE TABLE t (price DOUBLE, symbol SYMBOL, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-        execute("""
-                INSERT INTO t
-                SELECT
-                    x % 100 + rnd_double() * 10,
-                    rnd_symbol('A', 'B', 'C', 'D'),
-                    dateadd('s', x::INT, '2024-01-01T00:00:00.000000Z')
-                FROM long_sequence(100_000)
-                """);
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (price DOUBLE, symbol SYMBOL, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO t
+                    SELECT
+                        x % 100 + rnd_double() * 10,
+                        rnd_symbol('A', 'B', 'C', 'D'),
+                        dateadd('s', x::INT, '2024-01-01T00:00:00.000000Z')
+                    FROM long_sequence(100_000)
+                    """);
 
-        try (WorkerPool pool = new WorkerPool(() -> 4)) {
-            TestUtils.execute(pool, (engine, compiler, sqlExecutionContext) -> {
-                String sql = "SELECT symbol, ohlc_bar(price, price - 100, price + 100, 20) FROM t ORDER BY symbol";
+            try (WorkerPool pool = new WorkerPool(() -> 4)) {
+                TestUtils.execute(pool, (engine, compiler, sqlExecutionContext) -> {
+                    String sql = "SELECT symbol, ohlc_bar(price, price - 100, price + 100, 20) FROM t ORDER BY symbol";
 
-                // Verify 4-worker Async Group By path
-                sink.clear();
-                TestUtils.printSql(engine, sqlExecutionContext, "EXPLAIN " + sql, sink);
-                String plan = sink.toString();
-                Assert.assertTrue("Expected workers: 4", plan.contains("workers: 4"));
+                    // Verify 4-worker Async Group By path
+                    sink.clear();
+                    TestUtils.printSql(engine, sqlExecutionContext, "EXPLAIN " + sql, sink);
+                    String plan = sink.toString();
+                    Assert.assertTrue("Expected workers: 4", plan.contains("workers: 4"));
 
-                // Two runs must produce identical output
-                TestUtils.assertSqlCursors(engine, sqlExecutionContext, sql, sql, LOG);
-            }, configuration, LOG);
-        }
+                    // Two runs must produce identical output
+                    TestUtils.assertSqlCursors(engine, sqlExecutionContext, sql, sql, LOG);
+                }, configuration, LOG);
+            }
+        });
+    }
+
+    @Test
+    public void testAggregatePerRowInvertedBoundsThrows() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (price DOUBLE, lo DOUBLE, hi DOUBLE, ts TIMESTAMP) TIMESTAMP(ts)");
+            execute("""
+                    INSERT INTO t VALUES
+                    (50.0, 100.0, 0.0, '2024-01-01T00:00:00.000000Z'),
+                    (60.0, 0.0, 100.0, '2024-01-01T00:01:00.000000Z')
+                    """);
+            assertException(
+                    "SELECT ohlc_bar(price, lo, hi, 10) FROM t",
+                    23,
+                    "min must not exceed max"
+            );
+        });
     }
 
     @Test
@@ -569,6 +588,33 @@ public class OhlcBarGroupByFunctionFactoryTest extends AbstractCairoTest {
                                 SELECT ts, price FROM t
                             )
                             """
+            );
+        });
+    }
+
+    @Test
+    public void testAggregateWidthExceedsMaxThrows() throws Exception {
+        setProperty(PropertyKey.CAIRO_SQL_STR_FUNCTION_BUFFER_MAX_SIZE, 30);
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (price DOUBLE, ts TIMESTAMP) TIMESTAMP(ts)");
+            execute("INSERT INTO t VALUES (50.0, '2024-01-01T00:00:00.000000Z')");
+            assertException(
+                    "SELECT ohlc_bar(price, 0, 100, 100) FROM t",
+                    31,
+                    "breached memory limit"
+            );
+        });
+    }
+
+    @Test
+    public void testAggregateWidthZeroThrows() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (price DOUBLE, ts TIMESTAMP) TIMESTAMP(ts)");
+            execute("INSERT INTO t VALUES (50.0, '2024-01-01T00:00:00.000000Z')");
+            assertException(
+                    "SELECT ohlc_bar(price, 0, 100, 0) FROM t",
+                    31,
+                    "width must be a positive integer"
             );
         });
     }
@@ -689,6 +735,25 @@ public class OhlcBarGroupByFunctionFactoryTest extends AbstractCairoTest {
         assertMemoryLeak(() -> assertSql(
                 "ohlc_bar\n\n",
                 "SELECT ohlc_bar(NULL, 100, 0, 80, 0, 100, 10)"
+        ));
+    }
+
+    @Test
+    public void testScalarWidthExceedsMaxThrows() throws Exception {
+        setProperty(PropertyKey.CAIRO_SQL_STR_FUNCTION_BUFFER_MAX_SIZE, 30);
+        assertMemoryLeak(() -> assertException(
+                "SELECT ohlc_bar(50, 100, 0, 80, 0, 100, 100)",
+                40,
+                "breached memory limit"
+        ));
+    }
+
+    @Test
+    public void testScalarWidthZeroThrows() throws Exception {
+        assertMemoryLeak(() -> assertException(
+                "SELECT ohlc_bar(50, 100, 0, 80, 0, 100, 0)",
+                40,
+                "width must be a positive integer"
         ));
     }
 

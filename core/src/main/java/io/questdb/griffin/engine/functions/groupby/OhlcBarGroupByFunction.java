@@ -100,14 +100,6 @@ public class OhlcBarGroupByFunction extends VarcharFunction implements UnaryFunc
     private final @Nullable Function widthFunc;
     private final int widthPosition;
     private GroupByAllocator allocator;
-    private long cachedKeyA1;
-    private long cachedKeyA2;
-    private long cachedKeyB1;
-    private long cachedKeyB2;
-    private long cachedRenderLenA;
-    private long cachedRenderLenB;
-    private long cachedRenderPtrA;
-    private long cachedRenderPtrB;
     private long lastRenderPtr;
     private int valueIndex;
 
@@ -144,14 +136,6 @@ public class OhlcBarGroupByFunction extends VarcharFunction implements UnaryFunc
 
     @Override
     public void clear() {
-        cachedKeyA1 = 0;
-        cachedKeyA2 = 0;
-        cachedKeyB1 = 0;
-        cachedKeyB2 = 0;
-        cachedRenderLenA = 0;
-        cachedRenderLenB = 0;
-        cachedRenderPtrA = 0;
-        cachedRenderPtrB = 0;
         lastRenderPtr = 0;
     }
 
@@ -165,9 +149,10 @@ public class OhlcBarGroupByFunction extends VarcharFunction implements UnaryFunc
 
     @Override
     public void computeFirst(MapValue mapValue, Record record, long rowId) {
-        cachedKeyA1 = 0;
-        cachedKeyA2 = 0;
         final double value = arg.getDouble(record);
+        final double scaleMin = minFunc.getDouble(record);
+        final double scaleMax = maxFunc.getDouble(record);
+        validateBounds(scaleMin, scaleMax);
         if (Double.isNaN(value)) {
             mapValue.putLong(valueIndex, Numbers.LONG_NULL);
             mapValue.putDouble(valueIndex + 1, Double.NaN);
@@ -175,8 +160,8 @@ public class OhlcBarGroupByFunction extends VarcharFunction implements UnaryFunc
             mapValue.putDouble(valueIndex + 3, Double.NaN);
             mapValue.putDouble(valueIndex + 4, Double.NaN);
             mapValue.putDouble(valueIndex + 5, Double.NaN);
-            mapValue.putDouble(valueIndex + 6, minFunc.getDouble(record));
-            mapValue.putDouble(valueIndex + 7, maxFunc.getDouble(record));
+            mapValue.putDouble(valueIndex + 6, scaleMin);
+            mapValue.putDouble(valueIndex + 7, scaleMax);
             return;
         }
         mapValue.putLong(valueIndex, rowId);
@@ -185,8 +170,8 @@ public class OhlcBarGroupByFunction extends VarcharFunction implements UnaryFunc
         mapValue.putDouble(valueIndex + 3, value);
         mapValue.putDouble(valueIndex + 4, value);
         mapValue.putDouble(valueIndex + 5, value);
-        mapValue.putDouble(valueIndex + 6, minFunc.getDouble(record));
-        mapValue.putDouble(valueIndex + 7, maxFunc.getDouble(record));
+        mapValue.putDouble(valueIndex + 6, scaleMin);
+        mapValue.putDouble(valueIndex + 7, scaleMax);
     }
 
     @Override
@@ -248,53 +233,26 @@ public class OhlcBarGroupByFunction extends VarcharFunction implements UnaryFunc
 
     @Override
     public @Nullable Utf8Sequence getVarcharA(Record rec) {
-        long firstRowId = rec.getLong(valueIndex);
-        if (firstRowId == Numbers.LONG_NULL) {
+        if (rec.getLong(valueIndex) == Numbers.LONG_NULL) {
             return null;
-        }
-        long lastRowId = rec.getLong(valueIndex + 2);
-        if (firstRowId == cachedKeyA1 && lastRowId == cachedKeyA2 && cachedRenderPtrA != 0) {
-            return viewA.of(cachedRenderPtrA, cachedRenderPtrA + cachedRenderLenA);
         }
         final long outBytes = render(rec);
         if (outBytes < 0) {
             return null;
         }
-        final long out = lastRenderPtr;
-        cachedKeyA1 = firstRowId;
-        cachedKeyA2 = lastRowId;
-        cachedRenderPtrA = out;
-        cachedRenderLenA = outBytes;
-        return viewA.of(out, out + outBytes);
+        return viewA.of(lastRenderPtr, lastRenderPtr + outBytes);
     }
 
     @Override
     public @Nullable Utf8Sequence getVarcharB(Record rec) {
-        long firstRowId = rec.getLong(valueIndex);
-        if (firstRowId == Numbers.LONG_NULL) {
+        if (rec.getLong(valueIndex) == Numbers.LONG_NULL) {
             return null;
-        }
-        long lastRowId = rec.getLong(valueIndex + 2);
-        if (firstRowId == cachedKeyB1 && lastRowId == cachedKeyB2 && cachedRenderPtrB != 0) {
-            return viewB.of(cachedRenderPtrB, cachedRenderPtrB + cachedRenderLenB);
-        }
-        if (firstRowId == cachedKeyA1 && lastRowId == cachedKeyA2 && cachedRenderPtrA != 0) {
-            cachedKeyB1 = firstRowId;
-            cachedKeyB2 = lastRowId;
-            cachedRenderPtrB = cachedRenderPtrA;
-            cachedRenderLenB = cachedRenderLenA;
-            return viewB.of(cachedRenderPtrA, cachedRenderPtrA + cachedRenderLenA);
         }
         final long outBytes = render(rec);
         if (outBytes < 0) {
             return null;
         }
-        final long out = lastRenderPtr;
-        cachedKeyB1 = firstRowId;
-        cachedKeyB2 = lastRowId;
-        cachedRenderPtrB = out;
-        cachedRenderLenB = outBytes;
-        return viewB.of(out, out + outBytes);
+        return viewB.of(lastRenderPtr, lastRenderPtr + outBytes);
     }
 
     @Override
@@ -449,11 +407,12 @@ public class OhlcBarGroupByFunction extends VarcharFunction implements UnaryFunc
 
     private void reconcileBounds(MapValue mapValue, Record record) {
         double newMin = minFunc.getDouble(record);
+        double newMax = maxFunc.getDouble(record);
+        validateBounds(newMin, newMax);
         double storedMin = mapValue.getDouble(valueIndex + 6);
         if (!Double.isNaN(newMin) && (Double.isNaN(storedMin) || newMin < storedMin)) {
             mapValue.putDouble(valueIndex + 6, newMin);
         }
-        double newMax = maxFunc.getDouble(record);
         double storedMax = mapValue.getDouble(valueIndex + 7);
         if (!Double.isNaN(newMax) && (Double.isNaN(storedMax) || newMax > storedMax)) {
             mapValue.putDouble(valueIndex + 7, newMax);
@@ -470,6 +429,19 @@ public class OhlcBarGroupByFunction extends VarcharFunction implements UnaryFunc
         double destScaleMax = destValue.getDouble(valueIndex + 7);
         if (!Double.isNaN(srcScaleMax) && (Double.isNaN(destScaleMax) || srcScaleMax > destScaleMax)) {
             destValue.putDouble(valueIndex + 7, srcScaleMax);
+        }
+    }
+
+    private void validateBounds(double scaleMin, double scaleMax) {
+        if (Double.isNaN(scaleMin) || Double.isNaN(scaleMax)) {
+            throw CairoException.nonCritical().position(Double.isNaN(scaleMin) ? minPosition : maxPosition)
+                    .put(name).put("() bounds must not be NULL [min=")
+                    .put(scaleMin).put(", max=").put(scaleMax).put(']');
+        }
+        if (scaleMin > scaleMax) {
+            throw CairoException.nonCritical().position(minPosition)
+                    .put(name).put("() min must not exceed max [min=")
+                    .put(scaleMin).put(", max=").put(scaleMax).put(']');
         }
     }
 
@@ -499,17 +471,7 @@ public class OhlcBarGroupByFunction extends VarcharFunction implements UnaryFunc
 
         double scaleMin = rec.getDouble(valueIndex + 6);
         double scaleMax = rec.getDouble(valueIndex + 7);
-
-        if (Double.isNaN(scaleMin) || Double.isNaN(scaleMax)) {
-            throw CairoException.nonCritical().position(Double.isNaN(scaleMin) ? minPosition : maxPosition)
-                    .put(name).put("() bounds must not be NULL [min=")
-                    .put(scaleMin).put(", max=").put(scaleMax).put(']');
-        }
-        if (scaleMin > scaleMax) {
-            throw CairoException.nonCritical().position(minPosition)
-                    .put(name).put("() min must not exceed max [min=")
-                    .put(scaleMin).put(", max=").put(scaleMax).put(']');
-        }
+        validateBounds(scaleMin, scaleMax);
 
         double scaleRange = scaleMax - scaleMin;
 
