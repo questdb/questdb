@@ -381,6 +381,9 @@ public class QwpWebSocketUpgradeProcessor implements HttpRequestProcessor {
 
         } catch (ServerDisconnectException | PeerIsSlowToWriteException | PeerIsSlowToReadException e) {
             throw e;
+        } catch (PeerDisconnectedException e) {
+            LOG.info().$("WebSocket peer disconnected [fd=").$(context.getFd()).I$();
+            throw ServerDisconnectException.INSTANCE;
         } catch (Throwable e) {
             LOG.error().$("WebSocket error [fd=").$(context.getFd()).$(", error=").$(e).I$();
             throw ServerDisconnectException.INSTANCE;
