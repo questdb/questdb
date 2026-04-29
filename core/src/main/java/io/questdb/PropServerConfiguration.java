@@ -2392,10 +2392,18 @@ public class PropServerConfiguration implements ServerConfiguration {
         // must not be null because we provided non-null default value
         assert strategy != null;
 
-        // Empty/unset value falls back to the default. Mirrors how
-        // getSqlJitMode treats an empty string. Strict validation still
-        // applies to non-empty unknown values below.
-        if (strategy.isEmpty() || Chars.equalsLowerCaseAscii(strategy, "light_encoded")) {
+        // Empty/unset value falls back to the default. Normalize the stored
+        // value so the configuration export matches the runtime behavior.
+        // Strict validation still applies to non-empty unknown values below.
+        if (strategy.isEmpty()) {
+            properties.setProperty(key.getPropertyPath(), "light_encoded");
+            if (env != null && env.containsKey(key.getPropertyPath())) {
+                env.put(key.getPropertyPath(), "light_encoded");
+            }
+            return SampleBySortStrategy.LIGHT_ENCODED;
+        }
+
+        if (Chars.equalsLowerCaseAscii(strategy, "light_encoded")) {
             return SampleBySortStrategy.LIGHT_ENCODED;
         }
 
