@@ -137,7 +137,6 @@ public class PropServerConfiguration implements ServerConfiguration {
     public static final long COMMIT_INTERVAL_DEFAULT = 2000;
     public static final String CONFIG_DIRECTORY = "conf";
     public static final String DB_DIRECTORY = "db";
-    private static final long MAX_MEMORY_USAGE_LOG_INTERVAL_MILLIS = Long.MAX_VALUE / 1000L;
     public static final int MIN_TCP_ILP_BUF_SIZE = AuthUtils.CHALLENGE_LEN + 1;
     public static final String TMP_DIRECTORY = "tmp";
     static final String SECRET_FILE_ENV_VAR_SUFFIX = "_FILE";
@@ -145,6 +144,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private static final String ILP_PROTO_SUPPORT_VERSIONS = "[1,2,3]";
     private static final String ILP_PROTO_SUPPORT_VERSIONS_NAME = "line.proto.support.versions";
     private static final String ILP_PROTO_TRANSPORTS = "ilp.proto.transports";
+    private static final long MAX_MEMORY_USAGE_LOG_INTERVAL_MILLIS = Long.MAX_VALUE / 1000L;
     private static final String RELEASE_TYPE = "release.type";
     private static final String RELEASE_VERSION = "release.version";
     private static final int SECRET_FILE_MAX_SIZE = 65536; // 64KB max for secret files
