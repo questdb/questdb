@@ -137,6 +137,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     public static final long COMMIT_INTERVAL_DEFAULT = 2000;
     public static final String CONFIG_DIRECTORY = "conf";
     public static final String DB_DIRECTORY = "db";
+    private static final long MAX_MEMORY_USAGE_LOG_INTERVAL_MILLIS = Long.MAX_VALUE / 1000L;
     public static final int MIN_TCP_ILP_BUF_SIZE = AuthUtils.CHALLENGE_LEN + 1;
     public static final String TMP_DIRECTORY = "tmp";
     static final String SECRET_FILE_ENV_VAR_SUFFIX = "_FILE";
@@ -350,6 +351,8 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final int maxSwapFileCount;
     private final int maxUncommittedRows;
     private final MemoryConfiguration memoryConfiguration;
+    private final boolean memoryUsageLogEnabled;
+    private final long memoryUsageLogInterval;
     private final int metadataStringPoolCapacity;
     private final MetricsConfiguration metricsConfiguration = new PropMetricsConfiguration();
     private final boolean metricsEnabled;
@@ -822,6 +825,14 @@ public class PropServerConfiguration implements ServerConfiguration {
         this.log = log;
         this.metricsEnabled = getBoolean(properties, env, PropertyKey.METRICS_ENABLED, false);
         this.metrics = metricsEnabled ? new Metrics(true, new MetricsRegistryImpl()) : Metrics.DISABLED;
+        this.memoryUsageLogEnabled = getBoolean(properties, env, PropertyKey.MEMORY_USAGE_LOG_ENABLED, true);
+        this.memoryUsageLogInterval = getMillis(properties, env, PropertyKey.MEMORY_USAGE_LOG_INTERVAL, 60_000);
+        if (memoryUsageLogInterval <= 0 || memoryUsageLogInterval > MAX_MEMORY_USAGE_LOG_INTERVAL_MILLIS) {
+            throw ServerConfigurationException.forInvalidKey(
+                    PropertyKey.MEMORY_USAGE_LOG_INTERVAL.getPropertyPath(),
+                    Long.toString(memoryUsageLogInterval)
+            );
+        }
         this.logSqlQueryProgressExe = getBoolean(properties, env, PropertyKey.LOG_SQL_QUERY_PROGRESS_EXE, true);
         this.logLevelVerbose = getBoolean(properties, env, PropertyKey.LOG_LEVEL_VERBOSE, false);
         this.logTimestampTimezone = getString(properties, env, PropertyKey.LOG_TIMESTAMP_TIMEZONE, "Z");
@@ -2220,6 +2231,11 @@ public class PropServerConfiguration implements ServerConfiguration {
     }
 
     @Override
+    public long getMemoryUsageLogInterval() {
+        return memoryUsageLogInterval;
+    }
+
+    @Override
     public Metrics getMetrics() {
         return metrics;
     }
@@ -2242,6 +2258,11 @@ public class PropServerConfiguration implements ServerConfiguration {
     @Override
     public QwpUdpReceiverConfiguration getQwpUdpReceiverConfiguration() {
         return qwpUdpReceiverConfiguration;
+    }
+
+    @Override
+    public boolean isMemoryUsageLogEnabled() {
+        return memoryUsageLogEnabled;
     }
 
     @Override

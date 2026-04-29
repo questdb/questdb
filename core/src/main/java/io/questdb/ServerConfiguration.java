@@ -75,6 +75,10 @@ public interface ServerConfiguration {
 
     MemoryConfiguration getMemoryConfiguration();
 
+    default long getMemoryUsageLogInterval() {
+        return 60_000;
+    }
+
     Metrics getMetrics();
 
     MetricsConfiguration getMetricsConfiguration();
@@ -89,6 +93,10 @@ public interface ServerConfiguration {
 
     default String getReleaseType() {
         return OSS;
+    }
+
+    default boolean isMemoryUsageLogEnabled() {
+        return true;
     }
 
     WorkerPoolConfiguration getSharedWorkerPoolNetworkConfiguration();

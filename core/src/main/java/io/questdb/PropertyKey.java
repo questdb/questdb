@@ -430,6 +430,8 @@ public enum PropertyKey implements ConfigPropertyKey {
     LINE_TCP_IO_AGGRESSIVE_RECV("line.tcp.io.aggressive.recv"),
     LINE_HTTP_HEADER_MAX_SIZE("line.http.header.max.size"),
     LINE_LOG_MESSAGE_ON_ERROR("line.log.message.on.error"),
+    MEMORY_USAGE_LOG_ENABLED("memory.usage.log.enabled"),
+    MEMORY_USAGE_LOG_INTERVAL("memory.usage.log.interval"),
     METRICS_ENABLED("metrics.enabled"),
     NET_TEST_CONNECTION_BUFFER_SIZE("net.test.connection.buffer.size"),
     PG_ENABLED("pg.enabled"),

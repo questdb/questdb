@@ -367,6 +367,11 @@ public class DynamicPropServerConfiguration implements ServerConfiguration, Conf
     }
 
     @Override
+    public long getMemoryUsageLogInterval() {
+        return serverConfig.get().getMemoryUsageLogInterval();
+    }
+
+    @Override
     public Metrics getMetrics() {
         return metrics;
     }
@@ -419,6 +424,11 @@ public class DynamicPropServerConfiguration implements ServerConfiguration, Conf
     public WorkerPoolConfiguration getWalApplyPoolConfiguration() {
         // nested object is kept non-reloadable
         return serverConfig.get().getWalApplyPoolConfiguration();
+    }
+
+    @Override
+    public boolean isMemoryUsageLogEnabled() {
+        return serverConfig.get().isMemoryUsageLogEnabled();
     }
 
     @Override
