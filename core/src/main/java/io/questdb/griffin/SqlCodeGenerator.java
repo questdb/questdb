@@ -1193,6 +1193,23 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         return viewExpr != null ? viewExpr.position : 0;
     }
 
+    // Slot-eligible types for the FILL_PREV value cache in
+    // SampleByFillRecordCursorFactory's keysMap value section. The
+    // cursor's update path writes via MapValue.put<Tag>() and the read
+    // path reads via MapValue.get<Tag>() -- both APIs only support
+    // these single-slot fixed-size scalars (plus SYMBOL, cached as int
+    // symbol id). Wide types (LONG128/256, UUID, DECIMAL128/256) and
+    // variable-width types stay on the existing recordAt path.
+    private static boolean isFixedSizePrevSlotEligible(int srcTag) {
+        return switch (srcTag) {
+            case ColumnType.BOOLEAN, ColumnType.BYTE, ColumnType.CHAR, ColumnType.DATE, ColumnType.DECIMAL16,
+                 ColumnType.DECIMAL32, ColumnType.DECIMAL64, ColumnType.DECIMAL8, ColumnType.DOUBLE, ColumnType.FLOAT,
+                 ColumnType.GEOBYTE, ColumnType.GEOINT, ColumnType.GEOLONG, ColumnType.GEOSHORT, ColumnType.INT,
+                 ColumnType.IPv4, ColumnType.LONG, ColumnType.SHORT, ColumnType.SYMBOL, ColumnType.TIMESTAMP -> true;
+            default -> false;
+        };
+    }
+
     /**
      * Checks if the model is a synthetic horizon offset model.
      * This model is created by the parser for HORIZON JOIN and represents the virtual
@@ -4071,23 +4088,6 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             Misc.free(groupByFactory);
             throw e;
         }
-    }
-
-    // Slot-eligible types for the FILL_PREV value cache in
-    // SampleByFillRecordCursorFactory's keysMap value section. The
-    // cursor's update path writes via MapValue.put<Tag>() and the read
-    // path reads via MapValue.get<Tag>() -- both APIs only support
-    // these single-slot fixed-size scalars (plus SYMBOL, cached as int
-    // symbol id). Wide types (LONG128/256, UUID, DECIMAL128/256) and
-    // variable-width types stay on the existing recordAt path.
-    private static boolean isFixedSizePrevSlotEligible(int srcTag) {
-        return switch (srcTag) {
-            case ColumnType.BOOLEAN, ColumnType.BYTE, ColumnType.CHAR, ColumnType.DATE, ColumnType.DECIMAL16,
-                 ColumnType.DECIMAL32, ColumnType.DECIMAL64, ColumnType.DECIMAL8, ColumnType.DOUBLE, ColumnType.FLOAT,
-                 ColumnType.GEOBYTE, ColumnType.GEOINT, ColumnType.GEOLONG, ColumnType.GEOSHORT, ColumnType.INT,
-                 ColumnType.IPv4, ColumnType.LONG, ColumnType.SHORT, ColumnType.SYMBOL, ColumnType.TIMESTAMP -> true;
-            default -> false;
-        };
     }
 
     private RecordCursorFactory generateFilter(RecordCursorFactory factory, IQueryModel model, SqlExecutionContext executionContext) throws SqlException {
