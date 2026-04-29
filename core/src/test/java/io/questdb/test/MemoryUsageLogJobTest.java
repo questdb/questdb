@@ -34,28 +34,30 @@ import org.junit.Test;
 
 public class MemoryUsageLogJobTest {
     @Test
-    public void testAppendMemoryUsageIncludesCoreFieldsAndNonZeroTags() {
-        final int memoryTag = MemoryTag.NATIVE_ND_ARRAY_DBG2;
-        final long size = 64;
-        final long expectedTagValue = Unsafe.getMemUsedByTag(memoryTag) + size;
-        long ptr = Unsafe.malloc(size, memoryTag);
-        try {
-            final StringSink sink = new StringSink();
-            MemoryUsageLogJob.appendMemoryUsage(sink);
+    public void testAppendMemoryUsageIncludesCoreFieldsAndNonZeroTags() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            final int memoryTag = MemoryTag.NATIVE_ND_ARRAY_DBG2;
+            final long size = 64;
+            final long expectedTagValue = Unsafe.getMemUsedByTag(memoryTag) + size;
+            long ptr = Unsafe.malloc(size, memoryTag);
+            try {
+                final StringSink sink = new StringSink();
+                MemoryUsageLogJob.appendMemoryUsage(sink);
 
-            TestUtils.assertContains(sink, "mem.accounted=");
-            TestUtils.assertContains(sink, "mem.rss.accounted=");
-            TestUtils.assertContains(sink, "mem.non.rss.accounted=");
-            TestUtils.assertContains(sink, "mem.rss.limit=");
-            TestUtils.assertContains(sink, "rss.physical=");
-            TestUtils.assertContains(sink, "jvm.heap.used=");
-            TestUtils.assertContains(sink, "malloc.count=");
-            TestUtils.assertContains(sink, "realloc.count=");
-            TestUtils.assertContains(sink, "free.count=");
-            TestUtils.assertContains(sink, MemoryTag.nameOf(memoryTag) + "=" + expectedTagValue);
-        } finally {
-            Unsafe.free(ptr, size, memoryTag);
-        }
+                TestUtils.assertContains(sink, "mem.accounted=");
+                TestUtils.assertContains(sink, "mem.rss.accounted=");
+                TestUtils.assertContains(sink, "mem.non.rss.accounted=");
+                TestUtils.assertContains(sink, "mem.rss.limit=");
+                TestUtils.assertContains(sink, "rss.physical=");
+                TestUtils.assertContains(sink, "jvm.heap.used=");
+                TestUtils.assertContains(sink, "malloc.count=");
+                TestUtils.assertContains(sink, "realloc.count=");
+                TestUtils.assertContains(sink, "free.count=");
+                TestUtils.assertContains(sink, MemoryTag.nameOf(memoryTag) + "=" + expectedTagValue);
+            } finally {
+                Unsafe.free(ptr, size, memoryTag);
+            }
+        });
     }
 
     @Test
