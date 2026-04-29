@@ -31,7 +31,6 @@ import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.VarcharTypeDriver;
 import io.questdb.cairo.arr.ArrayView;
-import io.questdb.cairo.arr.BorrowedArray;
 import io.questdb.cairo.idx.CoveringRowCursor;
 import io.questdb.cairo.idx.IndexReader;
 import io.questdb.cairo.sql.ColumnMapping;
@@ -49,7 +48,6 @@ import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cairo.sql.RowCursor;
 import io.questdb.cairo.sql.StaticSymbolTable;
 import io.questdb.cairo.sql.SymbolTable;
-import io.questdb.cairo.vm.api.MemoryCR;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
@@ -58,7 +56,6 @@ import io.questdb.std.BinarySequence;
 import io.questdb.std.Decimal128;
 import io.questdb.std.Decimal256;
 import io.questdb.std.Decimals;
-import io.questdb.std.DirectBinarySequence;
 import io.questdb.std.IntList;
 import io.questdb.std.Long256;
 import io.questdb.std.Long256Impl;
@@ -400,14 +397,11 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
     private static abstract class CoveringCursor implements RecordCursor {
         protected final IntList columnIndexes;
         protected final CoveringRecord coveringRecord;
-        protected final FallbackRecord fallbackRecord;
         protected final int indexColumnIndex;
         protected final boolean latestBy;
         protected final int[] requiredIncludeIndices;
         protected final SymbolTable[] symTablesCache;
         protected final int[] symbolIncludeCols;
-        protected Record activeRecord;
-        protected boolean allCovered;
         protected CoveringRowCursor currentRowCursor;
         protected PartitionFrameCursor frameCursor;
         protected Function latestByFilter;
@@ -417,8 +411,7 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
                        int[] requiredIncludeIndices, int[] symbolIncludeCols, IntList columnIndexes,
                        boolean latestBy, RecordMetadata metadata) {
             this.indexColumnIndex = indexColumnIndex;
-            this.fallbackRecord = new FallbackRecord(queryColToIncludeIdx, symbolKey, columnIndexes, metadata);
-            this.coveringRecord = new CoveringRecord(queryColToIncludeIdx, symbolKey, metadata, fallbackRecord);
+            this.coveringRecord = new CoveringRecord(queryColToIncludeIdx, symbolKey, metadata);
             this.requiredIncludeIndices = requiredIncludeIndices;
             this.symbolIncludeCols = symbolIncludeCols;
             this.symTablesCache = symbolIncludeCols != null ? new SymbolTable[queryColToIncludeIdx.length] : null;
@@ -434,7 +427,7 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
 
         @Override
         public Record getRecord() {
-            return activeRecord;
+            return coveringRecord;
         }
 
         @Override
@@ -457,11 +450,7 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
             }
             while (true) {
                 if (currentRowCursor != null && currentRowCursor.hasNext()) {
-                    long rowId = currentRowCursor.next();
-                    coveringRecord.setRowId(rowId);
-                    if (!allCovered) {
-                        fallbackRecord.setRowId(rowId);
-                    }
+                    coveringRecord.setRowId(currentRowCursor.next());
                     return true;
                 }
                 if (!advanceKey()) {
@@ -496,15 +485,6 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
 
         abstract boolean advanceKey();
 
-        protected boolean allRequiredCovered(CoveringRowCursor crc) {
-            for (int requiredIncludeIndex : requiredIncludeIndices) {
-                if (!crc.isCoveredAvailable(requiredIncludeIndex)) {
-                    return false;
-                }
-            }
-            return true;
-        }
-
         boolean findLatestRow(int rawSymbolKey) {
             while (true) {
                 PartitionFrame frame = frameCursor.next();
@@ -521,42 +501,21 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
                             partitionIndex, indexColumnIndex, IndexReader.DIR_BACKWARD);
                     RowCursor bwdCursor = bwdReader.getCursor(indexKey, rowLo, rowHi, requiredIncludeIndices);
                     try {
+                        // Storage is transactional and writers seal sidecars
+                        // before commit, so a partition that holds rows for
+                        // this key always returns a CoveringRowCursor. The
+                        // index reader returns EmptyRowCursor (which is not
+                        // a CoveringRowCursor) when the key has no rows in
+                        // this partition; in that case skip and advance.
                         if (bwdCursor instanceof CoveringRowCursor crc) {
                             Misc.free(currentRowCursor);
                             currentRowCursor = crc;
                             bwdCursor = null;
                             coveringRecord.of(crc);
                             coveringRecord.setSymbolKey(rawSymbolKey);
-                            allCovered = allRequiredCovered(crc);
-                            coveringRecord.setAllCovered(allCovered);
-                            if (!allCovered) {
-                                // fallbackRecord serves per-column fallback only
-                                // when some include slot is missing for this partition.
-                                fallbackRecord.of(tableReader, partitionIndex);
-                                fallbackRecord.setSymbolKey(rawSymbolKey);
-                            }
                             while (crc.hasNext()) {
-                                long rowId = crc.next();
-                                coveringRecord.setRowId(rowId);
-                                if (!allCovered) {
-                                    fallbackRecord.setRowId(rowId);
-                                }
+                                coveringRecord.setRowId(crc.next());
                                 if (latestByFilter.getBool(coveringRecord)) {
-                                    activeRecord = coveringRecord;
-                                    return true;
-                                }
-                            }
-                        } else {
-                            // Stale crc from a prior covering partition is no longer the
-                            // source of the active record once we switch to fallbackRecord.
-                            currentRowCursor = Misc.free(currentRowCursor);
-                            fallbackRecord.of(tableReader, partitionIndex);
-                            fallbackRecord.setSymbolKey(rawSymbolKey);
-                            while (bwdCursor.hasNext()) {
-                                long rowId = bwdCursor.next();
-                                fallbackRecord.setRowId(rowId);
-                                if (latestByFilter.getBool(fallbackRecord)) {
-                                    activeRecord = fallbackRecord;
                                     return true;
                                 }
                             }
@@ -578,14 +537,6 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
                                 coveringRecord.of(crc);
                                 coveringRecord.setSymbolKey(rawSymbolKey);
                                 coveringRecord.setRowId(lastRowId);
-                                allCovered = allRequiredCovered(crc);
-                                coveringRecord.setAllCovered(allCovered);
-                                if (!allCovered) {
-                                    fallbackRecord.of(tableReader, partitionIndex);
-                                    fallbackRecord.setSymbolKey(rawSymbolKey);
-                                    fallbackRecord.setRowId(lastRowId);
-                                }
-                                activeRecord = coveringRecord;
                                 return true;
                             }
                             currentRowCursor = Misc.free(currentRowCursor);
@@ -604,17 +555,14 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
             this.tableReader = frameCursor.getTableReader();
             this.currentRowCursor = Misc.free(this.currentRowCursor);
             resetIterationState();
-            this.activeRecord = coveringRecord;
             this.coveringRecord.of(null);
             SymbolTable indexSymbolTable = tableReader.getSymbolMapReader(indexColumnIndex);
             this.coveringRecord.setSymbolTable(indexSymbolTable);
-            this.fallbackRecord.setSymbolTable(indexSymbolTable);
             if (symbolIncludeCols != null) {
                 for (int col : symbolIncludeCols) {
                     symTablesCache[col] = tableReader.getSymbolMapReader(columnIndexes.getQuick(col));
                 }
                 coveringRecord.setIncludeSymbolTables(symTablesCache);
-                fallbackRecord.setIncludeSymbolTables(symTablesCache);
             }
         }
 
@@ -622,7 +570,6 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
             this.frameCursor = null;
             this.tableReader = null;
             this.currentRowCursor = Misc.free(this.currentRowCursor);
-            this.activeRecord = coveringRecord;
             this.coveringRecord.of(null);
         }
 
@@ -641,19 +588,15 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
                     requiredIncludeIndices
             );
             try {
+                // EmptyRowCursor (returned when the key has no rows in this
+                // partition) is not a CoveringRowCursor; treat it as "no
+                // rows, try the next partition" rather than a failure.
                 if (rowCursor instanceof CoveringRowCursor crc) {
                     Misc.free(currentRowCursor);
                     currentRowCursor = crc;
                     rowCursor = null;
                     coveringRecord.of(crc);
                     coveringRecord.setSymbolKey(rawSymbolKey);
-                    allCovered = allRequiredCovered(crc);
-                    coveringRecord.setAllCovered(allCovered);
-                    if (!allCovered) {
-                        fallbackRecord.of(tableReader, partitionIndex);
-                        fallbackRecord.setSymbolKey(rawSymbolKey);
-                    }
-                    activeRecord = coveringRecord;
                     return true;
                 }
                 return false;
@@ -759,11 +702,9 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
         // PageFrameAddressCache can hold addresses from multiple frames
         // simultaneously (vectorized GROUP BY collects all frames before processing).
         protected final LongList allocatedBuffers = new LongList();
-        protected final DirectBinarySequence columnBin = new DirectBinarySequence();
         protected final IntList columnIndexes;
         protected final ColumnMapping columnMapping = new ColumnMapping();
         protected final int[] columnSizeBytes;
-        protected final io.questdb.std.str.DirectString columnStrA = new io.questdb.std.str.DirectString();
         protected final int[] columnTypeTags;
         protected final CoveringPageFrame frame;
         // Reusable per-frame arrays (avoid per-frame heap allocation)
@@ -955,118 +896,6 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
             }
         }
 
-        private void writeColumnRow(long[] addrs, long[] varDataAddrs, int[] varDataPos, int[] varDataCap,
-                                    int count, long rowId, int colBase) {
-            for (int q = 0; q < queryColCount; q++) {
-                if (queryColToIncludeIdx[q] < 0) continue;
-                long addr = addrs[q];
-                int readerCol = columnIndexes.getQuick(q);
-                // Columns added via ALTER TABLE ADD COLUMN have columnTop > 0
-                // in partitions that already had rows. The column file is
-                // indexed from 0 at the first row that exists (rowId == top);
-                // rows below top must yield the type-specific NULL.
-                long top = tableReader.getColumnTop(colBase, readerCol);
-                long r = rowId - top;
-                boolean isNull = r < 0;
-                MemoryCR mem = tableReader.getColumn(TableReader.getPrimaryColumnIndex(colBase, readerCol));
-                switch (columnTypeTags[q]) {
-                    case ColumnType.DOUBLE -> Unsafe.putDouble(
-                            addr + (long) count * Double.BYTES, isNull ? Double.NaN : mem.getDouble(r * Double.BYTES));
-                    case ColumnType.FLOAT -> Unsafe.putFloat(
-                            addr + (long) count * Float.BYTES, isNull ? Float.NaN : mem.getFloat(r * Float.BYTES));
-                    case ColumnType.LONG, ColumnType.TIMESTAMP, ColumnType.DATE, ColumnType.DECIMAL64 ->
-                            Unsafe.putLong(addr + (long) count * Long.BYTES,
-                                    isNull ? Long.MIN_VALUE : mem.getLong(r * Long.BYTES));
-                    case ColumnType.GEOLONG -> Unsafe.putLong(addr + (long) count * Long.BYTES,
-                            isNull ? GeoHashes.NULL : mem.getLong(r * Long.BYTES));
-                    case ColumnType.INT, ColumnType.SYMBOL, ColumnType.DECIMAL32 ->
-                            Unsafe.putInt(addr + (long) count * Integer.BYTES,
-                                    isNull ? Integer.MIN_VALUE : mem.getInt(r * Integer.BYTES));
-                    case ColumnType.GEOINT -> Unsafe.putInt(addr + (long) count * Integer.BYTES,
-                            isNull ? GeoHashes.INT_NULL : mem.getInt(r * Integer.BYTES));
-                    case ColumnType.IPv4 -> Unsafe.putInt(addr + (long) count * Integer.BYTES,
-                            isNull ? Numbers.IPv4_NULL : mem.getInt(r * Integer.BYTES));
-                    case ColumnType.SHORT, ColumnType.CHAR, ColumnType.DECIMAL16 ->
-                            Unsafe.putShort(addr + (long) count * Short.BYTES,
-                                    isNull ? (short) 0 : mem.getShort(r * Short.BYTES));
-                    case ColumnType.GEOSHORT -> Unsafe.putShort(addr + (long) count * Short.BYTES,
-                            isNull ? GeoHashes.SHORT_NULL : mem.getShort(r * Short.BYTES));
-                    case ColumnType.BYTE, ColumnType.BOOLEAN, ColumnType.DECIMAL8 ->
-                            Unsafe.putByte(addr + count, isNull ? (byte) 0 : mem.getByte(r));
-                    case ColumnType.GEOBYTE -> Unsafe.putByte(addr + count,
-                            isNull ? GeoHashes.BYTE_NULL : mem.getByte(r));
-                    case ColumnType.UUID, ColumnType.DECIMAL128 -> {
-                        long off128 = (long) count * 16;
-                        if (isNull) {
-                            Unsafe.putLong(addr + off128, Long.MIN_VALUE);
-                            Unsafe.putLong(addr + off128 + 8, Long.MIN_VALUE);
-                        } else {
-                            Unsafe.putLong(addr + off128, mem.getLong(r * 16));
-                            Unsafe.putLong(addr + off128 + 8, mem.getLong(r * 16 + 8));
-                        }
-                    }
-                    case ColumnType.LONG256, ColumnType.DECIMAL256 -> {
-                        long off256 = (long) count * 32;
-                        if (isNull) {
-                            Unsafe.putLong(addr + off256, Long.MIN_VALUE);
-                            Unsafe.putLong(addr + off256 + 8, Long.MIN_VALUE);
-                            Unsafe.putLong(addr + off256 + 16, Long.MIN_VALUE);
-                            Unsafe.putLong(addr + off256 + 24, Long.MIN_VALUE);
-                        } else {
-                            Unsafe.putLong(addr + off256, mem.getLong(r * 32));
-                            Unsafe.putLong(addr + off256 + 8, mem.getLong(r * 32 + 8));
-                            Unsafe.putLong(addr + off256 + 16, mem.getLong(r * 32 + 16));
-                            Unsafe.putLong(addr + off256 + 24, mem.getLong(r * 32 + 24));
-                        }
-                    }
-                    case ColumnType.VARCHAR -> {
-                        Utf8Sequence value;
-                        if (isNull) {
-                            value = null;
-                        } else {
-                            int primaryIdx = TableReader.getPrimaryColumnIndex(colBase, readerCol);
-                            MemoryCR dataMem = tableReader.getColumn(primaryIdx);
-                            MemoryCR auxMem = tableReader.getColumn(primaryIdx + 1);
-                            value = VarcharTypeDriver.getSplitValue(auxMem, dataMem, r, 0);
-                        }
-                        writeVarcharToFrame(addr, varDataAddrs, varDataPos, varDataCap, q, count, value);
-                    }
-                    case ColumnType.STRING -> {
-                        CharSequence strValue;
-                        if (isNull) {
-                            strValue = null;
-                        } else {
-                            int primaryIdx = TableReader.getPrimaryColumnIndex(colBase, readerCol);
-                            MemoryCR strDataMem = tableReader.getColumn(primaryIdx);
-                            MemoryCR strAuxMem = tableReader.getColumn(primaryIdx + 1);
-                            long dataOffset = strAuxMem.getLong(r * Long.BYTES);
-                            int len = strDataMem.getInt(dataOffset);
-                            strValue = (len == TableUtils.NULL_LEN)
-                                    ? null : columnStrA.of(strDataMem.addressOf(dataOffset + Integer.BYTES), len);
-                        }
-                        writeStringToFrame(addr, varDataAddrs, varDataPos, varDataCap, q, count, strValue);
-                    }
-                    case ColumnType.BINARY -> {
-                        BinarySequence binValue;
-                        if (isNull) {
-                            binValue = null;
-                        } else {
-                            int primaryIdx = TableReader.getPrimaryColumnIndex(colBase, readerCol);
-                            MemoryCR binDataMem = tableReader.getColumn(primaryIdx);
-                            MemoryCR binAuxMem = tableReader.getColumn(primaryIdx + 1);
-                            long dataOffset = binAuxMem.getLong(r * Long.BYTES);
-                            long binLen = binDataMem.getLong(dataOffset);
-                            binValue = (binLen < 0)
-                                    ? null : columnBin.of(binDataMem.addressOf(dataOffset + Long.BYTES), binLen);
-                        }
-                        writeBinaryToFrame(addr, varDataAddrs, varDataPos, varDataCap, q, count, binValue);
-                    }
-                    default -> {
-                    }
-                }
-            }
-        }
-
         private void writeCoveredRow(long[] addrs, long[] varDataAddrs, int[] varDataPos, int[] varDataCap,
                                      int count, CoveringRowCursor crc) {
             for (int q = 0; q < queryColCount; q++) {
@@ -1219,18 +1048,10 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
                     rowHi - 1,
                     requiredIncludeIndices
             )) {
-                CoveringRowCursor coveringCursor = null;
-                if (rowCursor instanceof CoveringRowCursor crc) {
-                    boolean allAvailable = true;
-                    for (int requiredIncludeIndex : requiredIncludeIndices) {
-                        if (!crc.isCoveredAvailable(requiredIncludeIndex)) {
-                            allAvailable = false;
-                            break;
-                        }
-                    }
-                    if (allAvailable) {
-                        coveringCursor = crc;
-                    }
+                // EmptyRowCursor (returned when the key has no rows in this
+                // partition) is not a CoveringRowCursor; emit no frame.
+                if (!(rowCursor instanceof CoveringRowCursor coveringCursor)) {
+                    return null;
                 }
 
                 int capacity = INITIAL_CAPACITY;
@@ -1258,25 +1079,13 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
                 addrs[queryColCount] = allocBuffer((long) capacity * Integer.BYTES);
 
                 count = 0;
-                if (coveringCursor != null) {
-                    while (coveringCursor.hasNext()) {
-                        coveringCursor.next();
-                        if (count >= capacity) {
-                            capacity = growFrameBuffers(addrs, count, capacity);
-                        }
-                        writeCoveredRow(addrs, varDataAddrs, varDataPos, varDataCap, count, coveringCursor);
-                        count++;
+                while (coveringCursor.hasNext()) {
+                    coveringCursor.next();
+                    if (count >= capacity) {
+                        capacity = growFrameBuffers(addrs, count, capacity);
                     }
-                } else {
-                    int colBase = tableReader.getColumnBase(partitionIndex);
-                    while (rowCursor.hasNext()) {
-                        long rowId = rowCursor.next();
-                        if (count >= capacity) {
-                            capacity = growFrameBuffers(addrs, count, capacity);
-                        }
-                        writeColumnRow(addrs, varDataAddrs, varDataPos, varDataCap, count, rowId, colBase);
-                        count++;
-                    }
+                    writeCoveredRow(addrs, varDataAddrs, varDataPos, varDataCap, count, coveringCursor);
+                    count++;
                 }
             }
             if (count == 0) {
@@ -1349,35 +1158,34 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
      * <p>
      * Mapping values: {@code >= 0} = sidecar include index,
      * {@code -1} = indexed symbol column.
+     * <p>
+     * Storage is transactional and writers seal sidecars before commit, so
+     * readers never observe a covered include column without its sidecar.
+     * The accessors therefore call {@link CoveringRowCursor} directly and
+     * assume the row cursor and column data are present.
      */
     private static class CoveringRecord implements Record {
-        private final FallbackRecord fallbackRecord;
         private final Long256Impl long256A = new Long256Impl();
         private final Long256Impl long256B = new Long256Impl();
         private final RecordMetadata metadata;
         private final int[] queryColToIncludeIdx;
-        private boolean allCovered;
         private CoveringRowCursor cursor;
         private SymbolTable[] includeSymbolTables;
         private long rowId;
         private int symbolKey;
         private SymbolTable symbolTable;
 
-        CoveringRecord(int[] queryColToIncludeIdx, int symbolKey, RecordMetadata metadata, FallbackRecord fallbackRecord) {
+        CoveringRecord(int[] queryColToIncludeIdx, int symbolKey, RecordMetadata metadata) {
             this.queryColToIncludeIdx = queryColToIncludeIdx;
             this.symbolKey = symbolKey;
             this.metadata = metadata;
-            this.fallbackRecord = fallbackRecord;
         }
 
         @Override
         public ArrayView getArray(int col, int columnType) {
             int includeIdx = getIncludeIdx(col);
             if (includeIdx >= 0 && cursor != null) {
-                if (allCovered || cursor.isCoveredAvailable(includeIdx)) {
-                    return cursor.getCoveredArray(includeIdx, columnType);
-                }
-                return fallbackRecord.getArray(col, columnType);
+                return cursor.getCoveredArray(includeIdx, columnType);
             }
             return null;
         }
@@ -1386,10 +1194,7 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
         public BinarySequence getBin(int col) {
             int includeIdx = getIncludeIdx(col);
             if (includeIdx >= 0 && cursor != null) {
-                if (allCovered || cursor.isCoveredAvailable(includeIdx)) {
-                    return cursor.getCoveredBin(includeIdx);
-                }
-                return fallbackRecord.getBin(col);
+                return cursor.getCoveredBin(includeIdx);
             }
             return null;
         }
@@ -1398,10 +1203,7 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
         public long getBinLen(int col) {
             int includeIdx = getIncludeIdx(col);
             if (includeIdx >= 0 && cursor != null) {
-                if (allCovered || cursor.isCoveredAvailable(includeIdx)) {
-                    return cursor.getCoveredBinLen(includeIdx);
-                }
-                return fallbackRecord.getBinLen(col);
+                return cursor.getCoveredBinLen(includeIdx);
             }
             return -1;
         }
@@ -1410,10 +1212,7 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
         public boolean getBool(int col) {
             int includeIdx = getIncludeIdx(col);
             if (includeIdx >= 0 && cursor != null) {
-                if (allCovered || cursor.isCoveredAvailable(includeIdx)) {
-                    return cursor.getCoveredByte(includeIdx) != 0;
-                }
-                return fallbackRecord.getBool(col);
+                return cursor.getCoveredByte(includeIdx) != 0;
             }
             return false;
         }
@@ -1422,10 +1221,7 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
         public byte getByte(int col) {
             int includeIdx = getIncludeIdx(col);
             if (includeIdx >= 0 && cursor != null) {
-                if (allCovered || cursor.isCoveredAvailable(includeIdx)) {
-                    return cursor.getCoveredByte(includeIdx);
-                }
-                return fallbackRecord.getByte(col);
+                return cursor.getCoveredByte(includeIdx);
             }
             return 0;
         }
@@ -1434,10 +1230,7 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
         public char getChar(int col) {
             int includeIdx = getIncludeIdx(col);
             if (includeIdx >= 0 && cursor != null) {
-                if (allCovered || cursor.isCoveredAvailable(includeIdx)) {
-                    return (char) cursor.getCoveredShort(includeIdx);
-                }
-                return fallbackRecord.getChar(col);
+                return (char) cursor.getCoveredShort(includeIdx);
             }
             return 0;
         }
@@ -1446,10 +1239,7 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
         public long getDate(int col) {
             int includeIdx = getIncludeIdx(col);
             if (includeIdx >= 0 && cursor != null) {
-                if (allCovered || cursor.isCoveredAvailable(includeIdx)) {
-                    return cursor.getCoveredLong(includeIdx);
-                }
-                return fallbackRecord.getDate(col);
+                return cursor.getCoveredLong(includeIdx);
             }
             return Long.MIN_VALUE;
         }
@@ -1458,14 +1248,10 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
         public void getDecimal128(int col, Decimal128 sink) {
             int includeIdx = getIncludeIdx(col);
             if (includeIdx >= 0 && cursor != null) {
-                if (allCovered || cursor.isCoveredAvailable(includeIdx)) {
-                    long high = cursor.getCoveredLong128Lo(includeIdx);
-                    long low = cursor.getCoveredLong128Hi(includeIdx);
-                    int scale = ColumnType.getDecimalScale(metadata.getColumnType(col));
-                    sink.of(high, low, scale);
-                } else {
-                    fallbackRecord.getDecimal128(col, sink);
-                }
+                long high = cursor.getCoveredLong128Lo(includeIdx);
+                long low = cursor.getCoveredLong128Hi(includeIdx);
+                int scale = ColumnType.getDecimalScale(metadata.getColumnType(col));
+                sink.of(high, low, scale);
             } else {
                 sink.of(Decimals.DECIMAL128_HI_NULL, Decimals.DECIMAL128_LO_NULL, 0);
             }
@@ -1480,18 +1266,14 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
         public void getDecimal256(int col, Decimal256 sink) {
             int includeIdx = getIncludeIdx(col);
             if (includeIdx >= 0 && cursor != null) {
-                if (allCovered || cursor.isCoveredAvailable(includeIdx)) {
-                    int scale = ColumnType.getDecimalScale(metadata.getColumnType(col));
-                    sink.of(
-                            cursor.getCoveredLong256_0(includeIdx),
-                            cursor.getCoveredLong256_1(includeIdx),
-                            cursor.getCoveredLong256_2(includeIdx),
-                            cursor.getCoveredLong256_3(includeIdx),
-                            scale
-                    );
-                } else {
-                    fallbackRecord.getDecimal256(col, sink);
-                }
+                int scale = ColumnType.getDecimalScale(metadata.getColumnType(col));
+                sink.of(
+                        cursor.getCoveredLong256_0(includeIdx),
+                        cursor.getCoveredLong256_1(includeIdx),
+                        cursor.getCoveredLong256_2(includeIdx),
+                        cursor.getCoveredLong256_3(includeIdx),
+                        scale
+                );
             } else {
                 sink.of(Long.MIN_VALUE, Long.MIN_VALUE, Long.MIN_VALUE, Long.MIN_VALUE, 0);
             }
@@ -1516,10 +1298,7 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
         public double getDouble(int col) {
             int includeIdx = getIncludeIdx(col);
             if (includeIdx >= 0 && cursor != null) {
-                if (allCovered || cursor.isCoveredAvailable(includeIdx)) {
-                    return cursor.getCoveredDouble(includeIdx);
-                }
-                return fallbackRecord.getDouble(col);
+                return cursor.getCoveredDouble(includeIdx);
             }
             return Double.NaN;
         }
@@ -1528,22 +1307,52 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
         public float getFloat(int col) {
             int includeIdx = getIncludeIdx(col);
             if (includeIdx >= 0 && cursor != null) {
-                if (allCovered || cursor.isCoveredAvailable(includeIdx)) {
-                    return cursor.getCoveredFloat(includeIdx);
-                }
-                return fallbackRecord.getFloat(col);
+                return cursor.getCoveredFloat(includeIdx);
             }
             return Float.NaN;
+        }
+
+        @Override
+        public byte getGeoByte(int col) {
+            int includeIdx = getIncludeIdx(col);
+            if (includeIdx >= 0 && cursor != null) {
+                return cursor.getCoveredByte(includeIdx);
+            }
+            return GeoHashes.BYTE_NULL;
+        }
+
+        @Override
+        public int getGeoInt(int col) {
+            int includeIdx = getIncludeIdx(col);
+            if (includeIdx >= 0 && cursor != null) {
+                return cursor.getCoveredInt(includeIdx);
+            }
+            return GeoHashes.INT_NULL;
+        }
+
+        @Override
+        public long getGeoLong(int col) {
+            int includeIdx = getIncludeIdx(col);
+            if (includeIdx >= 0 && cursor != null) {
+                return cursor.getCoveredLong(includeIdx);
+            }
+            return GeoHashes.NULL;
+        }
+
+        @Override
+        public short getGeoShort(int col) {
+            int includeIdx = getIncludeIdx(col);
+            if (includeIdx >= 0 && cursor != null) {
+                return cursor.getCoveredShort(includeIdx);
+            }
+            return GeoHashes.SHORT_NULL;
         }
 
         @Override
         public int getIPv4(int col) {
             int includeIdx = getIncludeIdx(col);
             if (includeIdx >= 0 && cursor != null) {
-                if (allCovered || cursor.isCoveredAvailable(includeIdx)) {
-                    return cursor.getCoveredInt(includeIdx);
-                }
-                return fallbackRecord.getIPv4(col);
+                return cursor.getCoveredInt(includeIdx);
             }
             return Numbers.IPv4_NULL;
         }
@@ -1551,11 +1360,16 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
         @Override
         public int getInt(int col) {
             int includeIdx = getIncludeIdx(col);
+            // queryColToIncludeIdx == -1 marks the indexed sym column. SYMBOL
+            // columns return their key int via getInt(); this preserves the
+            // contract relied on by testSymbolAPI's keyOf(getSymA)==getInt
+            // assertion and by any consumer that reads the symbol key
+            // directly.
+            if (includeIdx == -1) {
+                return symbolKey;
+            }
             if (includeIdx >= 0 && cursor != null) {
-                if (allCovered || cursor.isCoveredAvailable(includeIdx)) {
-                    return cursor.getCoveredInt(includeIdx);
-                }
-                return fallbackRecord.getInt(col);
+                return cursor.getCoveredInt(includeIdx);
             }
             return Integer.MIN_VALUE;
         }
@@ -1564,10 +1378,7 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
         public long getLong(int col) {
             int includeIdx = getIncludeIdx(col);
             if (includeIdx >= 0 && cursor != null) {
-                if (allCovered || cursor.isCoveredAvailable(includeIdx)) {
-                    return cursor.getCoveredLong(includeIdx);
-                }
-                return fallbackRecord.getLong(col);
+                return cursor.getCoveredLong(includeIdx);
             }
             return Long.MIN_VALUE;
         }
@@ -1576,10 +1387,7 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
         public long getLong128Hi(int col) {
             int includeIdx = getIncludeIdx(col);
             if (includeIdx >= 0 && cursor != null) {
-                if (allCovered || cursor.isCoveredAvailable(includeIdx)) {
-                    return cursor.getCoveredLong128Hi(includeIdx);
-                }
-                return fallbackRecord.getLong128Hi(col);
+                return cursor.getCoveredLong128Hi(includeIdx);
             }
             return Long.MIN_VALUE;
         }
@@ -1588,10 +1396,7 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
         public long getLong128Lo(int col) {
             int includeIdx = getIncludeIdx(col);
             if (includeIdx >= 0 && cursor != null) {
-                if (allCovered || cursor.isCoveredAvailable(includeIdx)) {
-                    return cursor.getCoveredLong128Lo(includeIdx);
-                }
-                return fallbackRecord.getLong128Lo(col);
+                return cursor.getCoveredLong128Lo(includeIdx);
             }
             return Long.MIN_VALUE;
         }
@@ -1606,439 +1411,11 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
         public Long256 getLong256A(int col) {
             int includeIdx = getIncludeIdx(col);
             if (includeIdx >= 0 && cursor != null) {
-                if (allCovered || cursor.isCoveredAvailable(includeIdx)) {
-                    long256A.setAll(
-                            cursor.getCoveredLong256_0(includeIdx),
-                            cursor.getCoveredLong256_1(includeIdx),
-                            cursor.getCoveredLong256_2(includeIdx),
-                            cursor.getCoveredLong256_3(includeIdx)
-                    );
-                    return long256A;
-                }
-                return fallbackRecord.getLong256A(col);
-            }
-            long256A.setAll(Long.MIN_VALUE, Long.MIN_VALUE, Long.MIN_VALUE, Long.MIN_VALUE);
-            return long256A;
-        }
-
-        @Override
-        public Long256 getLong256B(int col) {
-            int includeIdx = getIncludeIdx(col);
-            if (includeIdx >= 0 && cursor != null) {
-                if (allCovered || cursor.isCoveredAvailable(includeIdx)) {
-                    long256B.setAll(
-                            cursor.getCoveredLong256_0(includeIdx),
-                            cursor.getCoveredLong256_1(includeIdx),
-                            cursor.getCoveredLong256_2(includeIdx),
-                            cursor.getCoveredLong256_3(includeIdx)
-                    );
-                    return long256B;
-                }
-                return fallbackRecord.getLong256B(col);
-            }
-            long256B.setAll(Long.MIN_VALUE, Long.MIN_VALUE, Long.MIN_VALUE, Long.MIN_VALUE);
-            return long256B;
-        }
-
-        @Override
-        public long getRowId() {
-            return rowId;
-        }
-
-        @Override
-        public short getShort(int col) {
-            int includeIdx = getIncludeIdx(col);
-            if (includeIdx >= 0 && cursor != null) {
-                if (allCovered || cursor.isCoveredAvailable(includeIdx)) {
-                    return cursor.getCoveredShort(includeIdx);
-                }
-                return fallbackRecord.getShort(col);
-            }
-            return 0;
-        }
-
-        @Override
-        public CharSequence getStrA(int col) {
-            int includeIdx = getIncludeIdx(col);
-            if (includeIdx >= 0 && cursor != null) {
-                if (allCovered || cursor.isCoveredAvailable(includeIdx)) {
-                    return cursor.getCoveredStrA(includeIdx);
-                }
-                return fallbackRecord.getStrA(col);
-            }
-            return null;
-        }
-
-        @Override
-        public CharSequence getStrB(int col) {
-            int includeIdx = getIncludeIdx(col);
-            if (includeIdx >= 0 && cursor != null) {
-                if (allCovered || cursor.isCoveredAvailable(includeIdx)) {
-                    return cursor.getCoveredStrB(includeIdx);
-                }
-                return fallbackRecord.getStrB(col);
-            }
-            return null;
-        }
-
-        @Override
-        public CharSequence getSymA(int col) {
-            int includeIdx = getIncludeIdx(col);
-            if (includeIdx == -1 && symbolTable != null) {
-                return symbolTable.valueOf(symbolKey);
-            }
-            if (includeIdx >= 0 && cursor != null && includeSymbolTables != null) {
-                if (allCovered || cursor.isCoveredAvailable(includeIdx)) {
-                    SymbolTable st = includeSymbolTables[col];
-                    if (st != null) {
-                        return st.valueOf(cursor.getCoveredInt(includeIdx));
-                    }
-                } else {
-                    return fallbackRecord.getSymA(col);
-                }
-            }
-            return null;
-        }
-
-        @Override
-        public CharSequence getSymB(int col) {
-            int includeIdx = getIncludeIdx(col);
-            if (includeIdx == -1 && symbolTable != null) {
-                return symbolTable.valueBOf(symbolKey);
-            }
-            if (includeIdx >= 0 && cursor != null && includeSymbolTables != null) {
-                if (allCovered || cursor.isCoveredAvailable(includeIdx)) {
-                    SymbolTable st = includeSymbolTables[col];
-                    if (st != null) {
-                        return st.valueBOf(cursor.getCoveredInt(includeIdx));
-                    }
-                } else {
-                    return fallbackRecord.getSymB(col);
-                }
-            }
-            return null;
-        }
-
-        @Override
-        public long getTimestamp(int col) {
-            int includeIdx = getIncludeIdx(col);
-            if (includeIdx >= 0 && cursor != null) {
-                if (allCovered || cursor.isCoveredAvailable(includeIdx)) {
-                    return cursor.getCoveredLong(includeIdx);
-                }
-                return fallbackRecord.getTimestamp(col);
-            }
-            return Long.MIN_VALUE;
-        }
-
-        @Override
-        public Utf8Sequence getVarcharA(int col) {
-            int includeIdx = getIncludeIdx(col);
-            if (includeIdx >= 0 && cursor != null) {
-                if (allCovered || cursor.isCoveredAvailable(includeIdx)) {
-                    return cursor.getCoveredVarcharA(includeIdx);
-                }
-                return fallbackRecord.getVarcharA(col);
-            }
-            return null;
-        }
-
-        @Override
-        public Utf8Sequence getVarcharB(int col) {
-            int includeIdx = getIncludeIdx(col);
-            if (includeIdx >= 0 && cursor != null) {
-                if (allCovered || cursor.isCoveredAvailable(includeIdx)) {
-                    return cursor.getCoveredVarcharB(includeIdx);
-                }
-                return fallbackRecord.getVarcharB(col);
-            }
-            return null;
-        }
-
-        public void setAllCovered(boolean allCovered) {
-            this.allCovered = allCovered;
-        }
-
-        private int getIncludeIdx(int col) {
-            if (col < 0 || col >= queryColToIncludeIdx.length) {
-                return -2;
-            }
-            return queryColToIncludeIdx[col];
-        }
-
-        void of(CoveringRowCursor cursor) {
-            this.cursor = cursor;
-        }
-
-        void setIncludeSymbolTables(SymbolTable[] tables) {
-            this.includeSymbolTables = tables;
-        }
-
-        void setRowId(long rowId) {
-            this.rowId = rowId;
-        }
-
-        void setSymbolKey(int key) {
-            this.symbolKey = key;
-        }
-
-        void setSymbolTable(SymbolTable symbolTable) {
-            this.symbolTable = symbolTable;
-        }
-    }
-
-    /**
-     * Fallback record that reads covered column values from column files via
-     * TableReader when sidecar data is unavailable (unsealed partitions).
-     * Zero per-row branching — the cursor swaps between CoveringRecord and
-     * FallbackRecord at partition boundaries.
-     */
-    private static class FallbackRecord implements Record {
-        private final IntList columnIndexes;
-        private final BorrowedArray fallbackArray = new BorrowedArray();
-        private final DirectBinarySequence fallbackBin = new DirectBinarySequence();
-        private final io.questdb.std.str.DirectString fallbackStrA = new io.questdb.std.str.DirectString();
-        private final io.questdb.std.str.DirectString fallbackStrB = new io.questdb.std.str.DirectString();
-        private final Long256Impl long256A = new Long256Impl();
-        private final Long256Impl long256B = new Long256Impl();
-        private final RecordMetadata metadata;
-        private final int[] queryColToIncludeIdx;
-        private SymbolTable[] includeSymbolTables;
-        private int partitionIndex;
-        private long rowId;
-        private int symbolKey;
-        private SymbolTable symbolTable;
-        private TableReader tableReader;
-
-        FallbackRecord(int[] queryColToIncludeIdx, int symbolKey, IntList columnIndexes, RecordMetadata metadata) {
-            this.queryColToIncludeIdx = queryColToIncludeIdx;
-            this.symbolKey = symbolKey;
-            this.columnIndexes = columnIndexes;
-            this.metadata = metadata;
-        }
-
-        @Override
-        public ArrayView getArray(int col, int columnType) {
-            if (getIncludeIdx(col) >= 0 && tableReader != null) {
-                long r = fileRowOf(col);
-                if (r < 0) return null;
-                int readerCol = columnIndexes.getQuick(col);
-                int colBase = tableReader.getColumnBase(partitionIndex);
-                MemoryCR auxMem = tableReader.getColumn(TableReader.getPrimaryColumnIndex(colBase, readerCol) + 1);
-                MemoryCR dataMem = tableReader.getColumn(TableReader.getPrimaryColumnIndex(colBase, readerCol));
-                return fallbackArray.of(columnType, auxMem.addressOf(0), auxMem.addressOf(0) + auxMem.size(),
-                        dataMem.addressOf(0), dataMem.addressOf(0) + dataMem.size(), r);
-            }
-            return null;
-        }
-
-        @Override
-        public BinarySequence getBin(int col) {
-            if (getIncludeIdx(col) >= 0 && tableReader != null) {
-                long r = fileRowOf(col);
-                if (r < 0) return null;
-                int readerCol = columnIndexes.getQuick(col);
-                int colBase = tableReader.getColumnBase(partitionIndex);
-                MemoryCR dataMem = tableReader.getColumn(TableReader.getPrimaryColumnIndex(colBase, readerCol));
-                MemoryCR auxMem = tableReader.getColumn(TableReader.getPrimaryColumnIndex(colBase, readerCol) + 1);
-                long dataOffset = auxMem.getLong(r * Long.BYTES);
-                long len = dataMem.getLong(dataOffset);
-                if (len < 0) return null;
-                return fallbackBin.of(dataMem.addressOf(dataOffset + Long.BYTES), len);
-            }
-            return null;
-        }
-
-        @Override
-        public long getBinLen(int col) {
-            if (getIncludeIdx(col) >= 0 && tableReader != null) {
-                long r = fileRowOf(col);
-                if (r < 0) return -1;
-                int readerCol = columnIndexes.getQuick(col);
-                int colBase = tableReader.getColumnBase(partitionIndex);
-                MemoryCR dataMem = tableReader.getColumn(TableReader.getPrimaryColumnIndex(colBase, readerCol));
-                MemoryCR auxMem = tableReader.getColumn(TableReader.getPrimaryColumnIndex(colBase, readerCol) + 1);
-                long dataOffset = auxMem.getLong(r * Long.BYTES);
-                return dataMem.getLong(dataOffset);
-            }
-            return -1;
-        }
-
-        @Override
-        public boolean getBool(int col) {
-            return getByte(col) != 0;
-        }
-
-        @Override
-        public byte getByte(int col) {
-            if (getIncludeIdx(col) >= 0 && tableReader != null) {
-                long r = fileRowOf(col);
-                if (r < 0) return 0;
-                return columnMem(col).getByte(r);
-            }
-            return 0;
-        }
-
-        @Override
-        public char getChar(int col) {
-            if (getIncludeIdx(col) >= 0 && tableReader != null) {
-                long r = fileRowOf(col);
-                if (r < 0) return 0;
-                return columnMem(col).getChar(r * Character.BYTES);
-            }
-            return 0;
-        }
-
-        @Override
-        public long getDate(int col) {
-            return getLong(col);
-        }
-
-        @Override
-        public void getDecimal128(int col, Decimal128 sink) {
-            if (getIncludeIdx(col) >= 0 && tableReader != null) {
-                long r = fileRowOf(col);
-                if (r < 0) {
-                    sink.of(Decimals.DECIMAL128_HI_NULL, Decimals.DECIMAL128_LO_NULL, 0);
-                    return;
-                }
-                MemoryCR mem = columnMem(col);
-                int scale = ColumnType.getDecimalScale(metadata.getColumnType(col));
-                // DECIMAL128 stores high at offset 0, low at offset 8
-                sink.of(mem.getLong(r * 16), mem.getLong(r * 16 + Long.BYTES), scale);
-            } else {
-                sink.of(Decimals.DECIMAL128_HI_NULL, Decimals.DECIMAL128_LO_NULL, 0);
-            }
-        }
-
-        @Override
-        public short getDecimal16(int col) {
-            return getShort(col);
-        }
-
-        @Override
-        public void getDecimal256(int col, Decimal256 sink) {
-            if (getIncludeIdx(col) >= 0 && tableReader != null) {
-                long r = fileRowOf(col);
-                if (r < 0) {
-                    sink.of(Long.MIN_VALUE, Long.MIN_VALUE, Long.MIN_VALUE, Long.MIN_VALUE, 0);
-                    return;
-                }
-                MemoryCR mem = columnMem(col);
-                long off = r * 32;
-                int scale = ColumnType.getDecimalScale(metadata.getColumnType(col));
-                sink.of(mem.getLong(off), mem.getLong(off + 8), mem.getLong(off + 16), mem.getLong(off + 24), scale);
-            } else {
-                sink.of(Long.MIN_VALUE, Long.MIN_VALUE, Long.MIN_VALUE, Long.MIN_VALUE, 0);
-            }
-        }
-
-        @Override
-        public int getDecimal32(int col) {
-            return getInt(col);
-        }
-
-        @Override
-        public long getDecimal64(int col) {
-            return getLong(col);
-        }
-
-        @Override
-        public byte getDecimal8(int col) {
-            return getByte(col);
-        }
-
-        @Override
-        public double getDouble(int col) {
-            if (getIncludeIdx(col) >= 0 && tableReader != null) {
-                long r = fileRowOf(col);
-                if (r < 0) return Double.NaN;
-                return columnMem(col).getDouble(r * Double.BYTES);
-            }
-            return Double.NaN;
-        }
-
-        @Override
-        public float getFloat(int col) {
-            if (getIncludeIdx(col) >= 0 && tableReader != null) {
-                long r = fileRowOf(col);
-                if (r < 0) return Float.NaN;
-                return columnMem(col).getFloat(r * Float.BYTES);
-            }
-            return Float.NaN;
-        }
-
-        @Override
-        public int getIPv4(int col) {
-            if (getIncludeIdx(col) >= 0 && tableReader != null) {
-                long r = fileRowOf(col);
-                if (r < 0) return Numbers.IPv4_NULL;
-                return columnMem(col).getInt(r * Integer.BYTES);
-            }
-            return Numbers.IPv4_NULL;
-        }
-
-        @Override
-        public int getInt(int col) {
-            if (getIncludeIdx(col) >= 0 && tableReader != null) {
-                long r = fileRowOf(col);
-                if (r < 0) return Integer.MIN_VALUE;
-                return columnMem(col).getInt(r * Integer.BYTES);
-            }
-            return Integer.MIN_VALUE;
-        }
-
-        @Override
-        public long getLong(int col) {
-            if (getIncludeIdx(col) >= 0 && tableReader != null) {
-                long r = fileRowOf(col);
-                if (r < 0) return Long.MIN_VALUE;
-                return columnMem(col).getLong(r * Long.BYTES);
-            }
-            return Long.MIN_VALUE;
-        }
-
-        @Override
-        public long getLong128Hi(int col) {
-            if (getIncludeIdx(col) >= 0 && tableReader != null) {
-                long r = fileRowOf(col);
-                if (r < 0) return Long.MIN_VALUE;
-                return columnMem(col).getLong(r * 16 + Long.BYTES);
-            }
-            return Long.MIN_VALUE;
-        }
-
-        @Override
-        public long getLong128Lo(int col) {
-            if (getIncludeIdx(col) >= 0 && tableReader != null) {
-                long r = fileRowOf(col);
-                if (r < 0) return Long.MIN_VALUE;
-                return columnMem(col).getLong(r * 16);
-            }
-            return Long.MIN_VALUE;
-        }
-
-        @Override
-        public void getLong256(int col, CharSink<?> sink) {
-            Long256 val = getLong256A(col);
-            Numbers.appendLong256(val.getLong0(), val.getLong1(), val.getLong2(), val.getLong3(), sink);
-        }
-
-        @Override
-        public Long256 getLong256A(int col) {
-            if (getIncludeIdx(col) >= 0 && tableReader != null) {
-                long r = fileRowOf(col);
-                if (r < 0) {
-                    long256A.setAll(Long.MIN_VALUE, Long.MIN_VALUE, Long.MIN_VALUE, Long.MIN_VALUE);
-                    return long256A;
-                }
-                MemoryCR mem = columnMem(col);
-                long off = r * 32;
                 long256A.setAll(
-                        mem.getLong(off),
-                        mem.getLong(off + Long.BYTES),
-                        mem.getLong(off + 2 * Long.BYTES),
-                        mem.getLong(off + 3 * Long.BYTES)
+                        cursor.getCoveredLong256_0(includeIdx),
+                        cursor.getCoveredLong256_1(includeIdx),
+                        cursor.getCoveredLong256_2(includeIdx),
+                        cursor.getCoveredLong256_3(includeIdx)
                 );
             } else {
                 long256A.setAll(Long.MIN_VALUE, Long.MIN_VALUE, Long.MIN_VALUE, Long.MIN_VALUE);
@@ -2048,19 +1425,13 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
 
         @Override
         public Long256 getLong256B(int col) {
-            if (getIncludeIdx(col) >= 0 && tableReader != null) {
-                long r = fileRowOf(col);
-                if (r < 0) {
-                    long256B.setAll(Long.MIN_VALUE, Long.MIN_VALUE, Long.MIN_VALUE, Long.MIN_VALUE);
-                    return long256B;
-                }
-                MemoryCR mem = columnMem(col);
-                long off = r * 32;
+            int includeIdx = getIncludeIdx(col);
+            if (includeIdx >= 0 && cursor != null) {
                 long256B.setAll(
-                        mem.getLong(off),
-                        mem.getLong(off + Long.BYTES),
-                        mem.getLong(off + 2 * Long.BYTES),
-                        mem.getLong(off + 3 * Long.BYTES)
+                        cursor.getCoveredLong256_0(includeIdx),
+                        cursor.getCoveredLong256_1(includeIdx),
+                        cursor.getCoveredLong256_2(includeIdx),
+                        cursor.getCoveredLong256_3(includeIdx)
                 );
             } else {
                 long256B.setAll(Long.MIN_VALUE, Long.MIN_VALUE, Long.MIN_VALUE, Long.MIN_VALUE);
@@ -2075,48 +1446,39 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
 
         @Override
         public short getShort(int col) {
-            if (getIncludeIdx(col) >= 0 && tableReader != null) {
-                long r = fileRowOf(col);
-                if (r < 0) return 0;
-                return columnMem(col).getShort(r * Short.BYTES);
+            int includeIdx = getIncludeIdx(col);
+            if (includeIdx >= 0 && cursor != null) {
+                return cursor.getCoveredShort(includeIdx);
             }
             return 0;
         }
 
         @Override
         public CharSequence getStrA(int col) {
-            if (getIncludeIdx(col) >= 0 && tableReader != null) {
-                long r = fileRowOf(col);
-                if (r < 0) return null;
-                int readerCol = columnIndexes.getQuick(col);
-                int colBase = tableReader.getColumnBase(partitionIndex);
-                MemoryCR dataMem = tableReader.getColumn(TableReader.getPrimaryColumnIndex(colBase, readerCol));
-                MemoryCR auxMem = tableReader.getColumn(TableReader.getPrimaryColumnIndex(colBase, readerCol) + 1);
-                long dataOffset = auxMem.getLong(r * Long.BYTES);
-                int len = dataMem.getInt(dataOffset);
-                if (len == TableUtils.NULL_LEN) return null;
-                fallbackStrA.of(dataMem.addressOf(dataOffset + Integer.BYTES), len);
-                return fallbackStrA;
+            int includeIdx = getIncludeIdx(col);
+            if (includeIdx >= 0 && cursor != null) {
+                return cursor.getCoveredStrA(includeIdx);
             }
             return null;
         }
 
         @Override
         public CharSequence getStrB(int col) {
-            if (getIncludeIdx(col) >= 0 && tableReader != null) {
-                long r = fileRowOf(col);
-                if (r < 0) return null;
-                int readerCol = columnIndexes.getQuick(col);
-                int colBase = tableReader.getColumnBase(partitionIndex);
-                MemoryCR dataMem = tableReader.getColumn(TableReader.getPrimaryColumnIndex(colBase, readerCol));
-                MemoryCR auxMem = tableReader.getColumn(TableReader.getPrimaryColumnIndex(colBase, readerCol) + 1);
-                long dataOffset = auxMem.getLong(r * Long.BYTES);
-                int len = dataMem.getInt(dataOffset);
-                if (len == TableUtils.NULL_LEN) return null;
-                fallbackStrB.of(dataMem.addressOf(dataOffset + Integer.BYTES), len);
-                return fallbackStrB;
+            int includeIdx = getIncludeIdx(col);
+            if (includeIdx >= 0 && cursor != null) {
+                return cursor.getCoveredStrB(includeIdx);
             }
             return null;
+        }
+
+        @Override
+        public int getStrLen(int col) {
+            int includeIdx = getIncludeIdx(col);
+            if (includeIdx >= 0 && cursor != null) {
+                CharSequence s = cursor.getCoveredStrA(includeIdx);
+                return s == null ? TableUtils.NULL_LEN : s.length();
+            }
+            return TableUtils.NULL_LEN;
         }
 
         @Override
@@ -2125,10 +1487,10 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
             if (includeIdx == -1 && symbolTable != null) {
                 return symbolTable.valueOf(symbolKey);
             }
-            if (includeIdx >= 0 && includeSymbolTables != null) {
+            if (includeIdx >= 0 && cursor != null && includeSymbolTables != null) {
                 SymbolTable st = includeSymbolTables[col];
                 if (st != null) {
-                    return st.valueOf(getInt(col));
+                    return st.valueOf(cursor.getCoveredInt(includeIdx));
                 }
             }
             return null;
@@ -2140,10 +1502,10 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
             if (includeIdx == -1 && symbolTable != null) {
                 return symbolTable.valueBOf(symbolKey);
             }
-            if (includeIdx >= 0 && includeSymbolTables != null) {
+            if (includeIdx >= 0 && cursor != null && includeSymbolTables != null) {
                 SymbolTable st = includeSymbolTables[col];
                 if (st != null) {
-                    return st.valueBOf(getInt(col));
+                    return st.valueBOf(cursor.getCoveredInt(includeIdx));
                 }
             }
             return null;
@@ -2151,53 +1513,39 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
 
         @Override
         public long getTimestamp(int col) {
-            return getLong(col);
+            int includeIdx = getIncludeIdx(col);
+            if (includeIdx >= 0 && cursor != null) {
+                return cursor.getCoveredLong(includeIdx);
+            }
+            return Long.MIN_VALUE;
         }
 
         @Override
         public Utf8Sequence getVarcharA(int col) {
-            if (getIncludeIdx(col) >= 0 && tableReader != null) {
-                long r = fileRowOf(col);
-                if (r < 0) return null;
-                int readerCol = columnIndexes.getQuick(col);
-                int colBase = tableReader.getColumnBase(partitionIndex);
-                MemoryCR auxMem = tableReader.getColumn(TableReader.getPrimaryColumnIndex(colBase, readerCol) + 1);
-                MemoryCR dataMem = tableReader.getColumn(TableReader.getPrimaryColumnIndex(colBase, readerCol));
-                return io.questdb.cairo.VarcharTypeDriver.getSplitValue(auxMem, dataMem, r, 0);
+            int includeIdx = getIncludeIdx(col);
+            if (includeIdx >= 0 && cursor != null) {
+                return cursor.getCoveredVarcharA(includeIdx);
             }
             return null;
         }
 
         @Override
         public Utf8Sequence getVarcharB(int col) {
-            if (getIncludeIdx(col) >= 0 && tableReader != null) {
-                long r = fileRowOf(col);
-                if (r < 0) return null;
-                int readerCol = columnIndexes.getQuick(col);
-                int colBase = tableReader.getColumnBase(partitionIndex);
-                MemoryCR auxMem = tableReader.getColumn(TableReader.getPrimaryColumnIndex(colBase, readerCol) + 1);
-                MemoryCR dataMem = tableReader.getColumn(TableReader.getPrimaryColumnIndex(colBase, readerCol));
-                return io.questdb.cairo.VarcharTypeDriver.getSplitValue(auxMem, dataMem, r, 1);
+            int includeIdx = getIncludeIdx(col);
+            if (includeIdx >= 0 && cursor != null) {
+                return cursor.getCoveredVarcharB(includeIdx);
             }
             return null;
         }
 
-        private MemoryCR columnMem(int col) {
-            int readerCol = columnIndexes.getQuick(col);
-            int colBase = tableReader.getColumnBase(partitionIndex);
-            return tableReader.getColumn(TableReader.getPrimaryColumnIndex(colBase, readerCol));
-        }
-
-        // Returns the file-relative row index for {@code col}, or -1 when the
-        // logical row lives below the column's columnTop. Columns added after
-        // a partition's first row have columnTop > 0, and their column file is
-        // indexed from zero at the first row that actually exists; absolute
-        // rowIds below columnTop have no data and must yield NULL.
-        private long fileRowOf(int col) {
-            int readerCol = columnIndexes.getQuick(col);
-            int colBase = tableReader.getColumnBase(partitionIndex);
-            long top = tableReader.getColumnTop(colBase, readerCol);
-            return rowId < top ? -1 : rowId - top;
+        @Override
+        public int getVarcharSize(int col) {
+            int includeIdx = getIncludeIdx(col);
+            if (includeIdx >= 0 && cursor != null) {
+                Utf8Sequence v = cursor.getCoveredVarcharA(includeIdx);
+                return v == null ? TableUtils.NULL_LEN : v.size();
+            }
+            return TableUtils.NULL_LEN;
         }
 
         private int getIncludeIdx(int col) {
@@ -2207,9 +1555,8 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
             return queryColToIncludeIdx[col];
         }
 
-        void of(TableReader reader, int partitionIndex) {
-            this.tableReader = reader;
-            this.partitionIndex = partitionIndex;
+        void of(CoveringRowCursor cursor) {
+            this.cursor = cursor;
         }
 
         void setIncludeSymbolTables(SymbolTable[] tables) {
@@ -2432,7 +1779,6 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
         void resolveKey(int resolvedKey) {
             this.symbolKey = resolvedKey;
             this.coveringRecord.setSymbolKey(resolvedKey);
-            this.fallbackRecord.setSymbolKey(resolvedKey);
         }
     }
 

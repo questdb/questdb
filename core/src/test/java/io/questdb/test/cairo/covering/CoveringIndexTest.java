@@ -40,8 +40,15 @@ import io.questdb.cairo.idx.PostingIndexFwdReader;
 import io.questdb.cairo.idx.PostingIndexUtils;
 import io.questdb.cairo.idx.PostingIndexWriter;
 import io.questdb.cairo.security.AllowAllSecurityContext;
+import io.questdb.cairo.sql.PageFrame;
+import io.questdb.cairo.sql.PageFrameCursor;
+import io.questdb.cairo.sql.PartitionFrameCursorFactory;
+import io.questdb.cairo.sql.Record;
+import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cairo.sql.RowCursor;
+import io.questdb.cairo.sql.StaticSymbolTable;
+import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.SqlExecutionContextImpl;
@@ -8968,6 +8975,405 @@ public class CoveringIndexTest extends AbstractCairoTest {
                     val
                     1.0
                     """, "SELECT val FROM t_pf_support WHERE sym = 'A'");
+        });
+    }
+
+    @Test
+    public void testPageFrameCursor_LifecycleAndToTop() throws Exception {
+        // Drive the page frame cursor directly to exercise lifecycle methods
+        // that ordinary aggregation queries do not invoke: size(),
+        // supportsSizeCalculation(), calculateSize(), getRemainingRowsInInterval(),
+        // toTop(), and getSymbolTable()/newSymbolTable() on a populated cursor.
+        // The trailing assertQueryNoLeakCheck cross-checks the record cursor
+        // path (different cursor implementation, same factory) and exercises
+        // RecordCursor.toTop()/getSymbolTable()/newSymbolTable() through the
+        // standard test framework helpers.
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE t_pf_lifecycle (
+                        ts TIMESTAMP,
+                        sym SYMBOL INDEX TYPE POSTING INCLUDE (price),
+                        price DOUBLE
+                    ) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL
+                    """);
+            execute("""
+                    INSERT INTO t_pf_lifecycle VALUES
+                    ('2024-01-01T00:00:00', 'A', 10.0),
+                    ('2024-01-01T01:00:00', 'A', 11.0),
+                    ('2024-01-01T02:00:00', 'B', 20.0),
+                    ('2024-01-01T03:00:00', 'A', 12.0)
+                    """);
+            engine.releaseAllWriters();
+
+            // sym is queryColToIncludeIdx[0] == -1 (the indexed column itself);
+            // querying sym + price gives us a SYMBOL column at metadata index
+            // 0 for getSymbolTable/newSymbolTable assertions and exercises the
+            // symbol-buffer path of fillFrameForKey.
+            try (var factory = select("SELECT sym, price FROM t_pf_lifecycle WHERE sym = 'A'")) {
+                assertTrue(factory.supportsPageFrameCursor());
+                try (PageFrameCursor cursor = factory.getPageFrameCursor(sqlExecutionContext, PartitionFrameCursorFactory.ORDER_ASC)) {
+                    assertEquals(-1, cursor.size());
+                    assertFalse(cursor.supportsSizeCalculation());
+                    assertEquals(0, cursor.getRemainingRowsInInterval());
+
+                    RecordCursor.Counter counter = new RecordCursor.Counter();
+                    counter.add(123);
+                    cursor.calculateSize(counter);
+                    assertEquals("calculateSize is documented as no-op", 123, counter.get());
+
+                    StaticSymbolTable st0 = cursor.getSymbolTable(0);
+                    assertNotNull("populated cursor must surface symbol map for sym col", st0);
+                    SymbolTable st0New = cursor.newSymbolTable(0);
+                    assertNotNull("populated cursor must build a fresh symbol table", st0New);
+
+                    int frames = 0;
+                    long rows = 0;
+                    PageFrame f;
+                    while ((f = cursor.next(0)) != null) {
+                        frames++;
+                        rows += f.getPartitionHi() - f.getPartitionLo();
+                    }
+                    assertEquals("expected 3 rows for sym='A'", 3, rows);
+
+                    // toTop() must let us re-iterate and produce the same frame count
+                    cursor.toTop();
+                    int frames2 = 0;
+                    long rows2 = 0;
+                    while ((f = cursor.next(0)) != null) {
+                        frames2++;
+                        rows2 += f.getPartitionHi() - f.getPartitionLo();
+                    }
+                    assertEquals(frames, frames2);
+                    assertEquals(rows, rows2);
+                }
+            }
+
+            // Record cursor pass: assertQueryNoLeakCheck opens a fresh cursor
+            // twice and exercises toTop, the variable-column helper, and
+            // testSymbolAPI (which checks that getInt on the indexed sym
+            // column returns its resolved key).
+            assertQueryNoLeakCheck(
+                    "sym\tprice\n" +
+                            "A\t10.0\n" +
+                            "A\t11.0\n" +
+                            "A\t12.0\n",
+                    "SELECT sym, price FROM t_pf_lifecycle WHERE sym = 'A'",
+                    null,
+                    false,
+                    true
+            );
+        });
+    }
+
+    @Test
+    public void testPageFrameCursor_OfEmptyNullSymbolTables() throws Exception {
+        // When the WHERE key resolves to VALUE_NOT_FOUND, the page frame
+        // cursor's ofEmpty() path runs (tableReader = null, isExhausted = true).
+        // Calling getSymbolTable / newSymbolTable on that cursor must hit the
+        // null-tableReader branches and return null without throwing. The
+        // record cursor path is checked separately via assertQueryNoLeakCheck.
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE t_pf_ofempty (
+                        ts TIMESTAMP,
+                        sym SYMBOL INDEX TYPE POSTING INCLUDE (price),
+                        price DOUBLE
+                    ) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL
+                    """);
+            execute("INSERT INTO t_pf_ofempty VALUES ('2024-01-01T00:00:00', 'A', 10.0)");
+            engine.releaseAllWriters();
+
+            try (var factory = select("SELECT sym, price FROM t_pf_ofempty WHERE sym = 'NOPE'")) {
+                try (PageFrameCursor cursor = factory.getPageFrameCursor(sqlExecutionContext, PartitionFrameCursorFactory.ORDER_ASC)) {
+                    assertNull("getSymbolTable on empty cursor must be null", cursor.getSymbolTable(0));
+                    assertNull("newSymbolTable on empty cursor must be null", cursor.newSymbolTable(0));
+                    assertNull(cursor.next(0));
+                    cursor.toTop();
+                    assertNull(cursor.next(0));
+                }
+            }
+
+            // Record cursor pass over the empty result.
+            assertQueryNoLeakCheck(
+                    "sym\tprice\n",
+                    "SELECT sym, price FROM t_pf_ofempty WHERE sym = 'NOPE'",
+                    null,
+                    false
+            );
+        });
+    }
+
+    @Test
+    public void testPageFrameCursor_OfEmptyMultiKey() throws Exception {
+        // Multi-key page frame cursor: an IN-list with all values resolving to
+        // VALUE_NOT_FOUND drives multiKeyPageFrameCursor.ofEmpty() via the
+        // multiKeys.size() == 0 short-circuit in getPageFrameCursor().
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE t_pf_ofempty_mk (
+                        ts TIMESTAMP,
+                        sym SYMBOL INDEX TYPE POSTING INCLUDE (price),
+                        price DOUBLE
+                    ) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL
+                    """);
+            execute("INSERT INTO t_pf_ofempty_mk VALUES ('2024-01-01T00:00:00', 'A', 10.0)");
+            engine.releaseAllWriters();
+
+            try (var factory = select("SELECT sym, price FROM t_pf_ofempty_mk WHERE sym IN ('NOPE1', 'NOPE2')")) {
+                try (PageFrameCursor cursor = factory.getPageFrameCursor(sqlExecutionContext, PartitionFrameCursorFactory.ORDER_ASC)) {
+                    assertNull(cursor.next(0));
+                    cursor.toTop();
+                    assertNull(cursor.next(0));
+                }
+            }
+
+            assertQueryNoLeakCheck(
+                    "sym\tprice\n",
+                    "SELECT sym, price FROM t_pf_ofempty_mk WHERE sym IN ('NOPE1', 'NOPE2')",
+                    null,
+                    false
+            );
+        });
+    }
+
+    @Test
+    public void testGetPageFrameCursor_MultiKeyMixedKnownUnknown() throws Exception {
+        // Multi-key getPageFrameCursor: bind variable list with one known and
+        // one unknown value. Drives the keyValueFuncs != null branch where a
+        // pre-resolved VALUE_NOT_FOUND is re-resolved at exec time, plus the
+        // "skip unknown, keep known" path that leaves multiKeys non-empty.
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE t_pf_mk_bind (
+                        ts TIMESTAMP,
+                        sym SYMBOL INDEX TYPE POSTING INCLUDE (price),
+                        price DOUBLE
+                    ) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL
+                    """);
+            execute("""
+                    INSERT INTO t_pf_mk_bind VALUES
+                    ('2024-01-01T00:00:00', 'A', 10.0),
+                    ('2024-01-01T01:00:00', 'B', 20.0)
+                    """);
+            engine.releaseAllWriters();
+
+            bindVariableService.clear();
+            bindVariableService.setStr("k1", "A");
+            bindVariableService.setStr("k2", "MISSING");
+            assertQueryNoLeakCheck(
+                    "cnt\n1\n",
+                    "SELECT count() cnt FROM t_pf_mk_bind WHERE sym IN (:k1, :k2)",
+                    null,
+                    false,
+                    true
+            );
+        });
+    }
+
+    @Test
+    public void testCoveringRecord_AllColumnTypes() throws Exception {
+        // Exercise every column type the covering writer supports
+        // (writeCoveredRow's switch enumerates them). assertQueryNoLeakCheck
+        // drives the full RecordCursorFactory/RecordCursor API:
+        //   - CursorPrinter calls every type's primary accessor
+        //   - testStringsLong256AndBinary covers STRING getStrA+B+Len,
+        //     BINARY getBin+Len, LONG256 getLong256A+B
+        //   - assertVariableColumns covers VARCHAR getVarcharA+B+Size
+        //   - testSymbolAPI covers SYMBOL getInt+getSymA+symbol table API
+        //     including the indexed sym column whose getInt must return the
+        //     resolved key.
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE t_all_types (
+                        ts TIMESTAMP,
+                        sym SYMBOL INDEX TYPE POSTING INCLUDE (
+                            b, sh, i, l, ts_inc, dt, f, d, c, bo, ip,
+                            uuid_col, l256,
+                            d8, d16, d32, d64, d128, d256,
+                            gb, gs, gi, gl,
+                            label, name, payload, kind
+                        ),
+                        b BYTE,
+                        sh SHORT,
+                        i INT,
+                        l LONG,
+                        ts_inc TIMESTAMP,
+                        dt DATE,
+                        f FLOAT,
+                        d DOUBLE,
+                        c CHAR,
+                        bo BOOLEAN,
+                        ip IPv4,
+                        uuid_col UUID,
+                        l256 LONG256,
+                        d8 DECIMAL(2, 1),
+                        d16 DECIMAL(4, 2),
+                        d32 DECIMAL(9, 2),
+                        d64 DECIMAL(18, 4),
+                        d128 DECIMAL(38, 10),
+                        d256 DECIMAL(40, 5),
+                        gb GEOHASH(5b),
+                        gs GEOHASH(10b),
+                        gi GEOHASH(20b),
+                        gl GEOHASH(40b),
+                        label STRING,
+                        name VARCHAR,
+                        payload BINARY,
+                        kind SYMBOL
+                    ) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL
+                    """);
+            // Two rows: row 1 is fully populated, row 2 is all-null. Each
+            // accessor is exercised in both branches of its null-handling
+            // logic.
+            execute("""
+                    INSERT INTO t_all_types VALUES
+                    (
+                        '2024-01-01T00:00:00', 'A',
+                        7, 1234, 99, 1000000,
+                        '2024-06-15T10:30:00', '2024-06-15',
+                        1.5, 2.25, 'X', true,
+                        '10.0.0.1',
+                        '00000000-0000-0000-0000-000000000001',
+                        0x0a,
+                        '1.5'::DECIMAL(2, 1),
+                        '12.34'::DECIMAL(4, 2),
+                        '1234567.89'::DECIMAL(9, 2),
+                        '12345678901234.5678'::DECIMAL(18, 4),
+                        '1234567890123456789012345678.1234567890'::DECIMAL(38, 10),
+                        '12345678901234567890123456789012345.67890'::DECIMAL(40, 5),
+                        #y, #yz, #yzbc, #yzbc1234,
+                        'alice', 'va', null, 'k1'
+                    ),
+                    (
+                        '2024-01-01T01:00:00', 'A',
+                        null, null, null, null,
+                        null, null,
+                        null, null, null, null,
+                        null,
+                        null,
+                        null,
+                        null, null, null, null, null, null,
+                        null, null, null, null,
+                        null, null, null, null
+                    )
+                    """);
+            engine.releaseAllWriters();
+
+            // Selecting only the indexed sym column plus all INCLUDE'd
+            // columns keeps the optimizer on the CoveringIndex factory.
+            // Including ts (uncovered) here would fall back to a regular scan.
+            String allTypesSelect = "SELECT sym, b, sh, i, l, ts_inc, dt, f, d, c, bo, ip, uuid_col, l256, d8, d16, d32, d64, d128, d256, gb, gs, gi, gl, label, name, payload, kind FROM t_all_types WHERE sym = 'A'";
+            assertQueryNoLeakCheck(
+                    "sym\tb\tsh\ti\tl\tts_inc\tdt\tf\td\tc\tbo\tip\tuuid_col\tl256\td8\td16\td32\td64\td128\td256\tgb\tgs\tgi\tgl\tlabel\tname\tpayload\tkind\n" +
+                            "A\t7\t1234\t99\t1000000\t2024-06-15T10:30:00.000000Z\t2024-06-15T00:00:00.000Z\t1.5\t2.25\tX\ttrue\t10.0.0.1\t00000000-0000-0000-0000-000000000001\t0x0a\t1.5\t12.34\t1234567.89\t12345678901234.5678\t1234567890123456789012345678.1234567890\t12345678901234567890123456789012345.67890\ty\tyz\tyzbc\tyzbc1234\talice\tva\t\tk1\n" +
+                            "A\t0\t0\tnull\tnull\t\t\tnull\tnull\t\tfalse\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\n",
+                    allTypesSelect,
+                    null,
+                    false,
+                    true
+            );
+
+            // Manual pass for accessors not exercised by assertQueryNoLeakCheck:
+            //   - SYMBOL getSymB on the indexed col + INCLUDE'd col
+            //   - getRowId() (Record metadata, not column data)
+            try (var factory = select(allTypesSelect);
+                 RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                Record r = cursor.getRecord();
+                assertTrue(cursor.hasNext());
+                assertEquals("A", r.getSymA(0).toString());
+                assertEquals("A", r.getSymB(0).toString());
+                // kind is the last column (index 27)
+                assertEquals("k1", r.getSymA(27).toString());
+                assertEquals("k1", r.getSymB(27).toString());
+                // getRowId returns the file row id stored on the record
+                assertTrue(r.getRowId() >= 0);
+            }
+
+            // Page-frame cursor pass: exercises writeCoveredRow's full type
+            // switch including STRING/VARCHAR/BINARY/LONG256/DECIMAL128+256,
+            // plus writeStringToFrame and writeBinaryToFrame paths that the
+            // record cursor does not visit.
+            try (var factory = select(allTypesSelect);
+                 PageFrameCursor cursor = factory.getPageFrameCursor(sqlExecutionContext, PartitionFrameCursorFactory.ORDER_ASC)) {
+                long rows = 0;
+                PageFrame f;
+                while ((f = cursor.next(0)) != null) {
+                    rows += f.getPartitionHi() - f.getPartitionLo();
+                }
+                assertEquals(2, rows);
+            }
+        });
+    }
+
+    @Test
+    public void testPageFrameCursor_GrowFrameBuffers() throws Exception {
+        // Drives growFrameBuffers + ensureVarDataCapacity by inserting more
+        // than INITIAL_CAPACITY (4096) rows for one symbol with VARCHAR
+        // payload large enough to overflow the initial var-data buffer.
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE t_pf_grow (
+                        ts TIMESTAMP,
+                        sym SYMBOL INDEX TYPE POSTING INCLUDE (name, payload),
+                        name VARCHAR,
+                        payload STRING
+                    ) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL
+                    """);
+            // 5000 rows for 'A', each with a 64-byte varchar (320KB total var
+            // data, 5x the initial 64KB capacity) and a 32-char string.
+            execute("""
+                    INSERT INTO t_pf_grow
+                    SELECT
+                        '2024-01-01T00:00:00'::TIMESTAMP + x * 1_000_000L,
+                        'A',
+                        rpad('v', 64, 'x'),
+                        rpad('s', 32, 'y')
+                    FROM long_sequence(5000)
+                    """);
+            engine.releaseAllWriters();
+
+            try (var factory = select("SELECT sym, name, payload FROM t_pf_grow WHERE sym = 'A'");
+                 PageFrameCursor cursor = factory.getPageFrameCursor(sqlExecutionContext, PartitionFrameCursorFactory.ORDER_ASC)) {
+                long rows = 0;
+                PageFrame f;
+                while ((f = cursor.next(0)) != null) {
+                    rows += f.getPartitionHi() - f.getPartitionLo();
+                }
+                assertEquals(5000, rows);
+            }
+        });
+    }
+
+    @Test
+    public void testPageFrameCursor_BinaryWrite() throws Exception {
+        // Drives writeBinaryToFrame path of the page-frame cursor.
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE t_pf_bin (
+                        ts TIMESTAMP,
+                        sym SYMBOL INDEX TYPE POSTING INCLUDE (payload),
+                        payload BINARY
+                    ) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL
+                    """);
+            execute("""
+                    INSERT INTO t_pf_bin
+                    SELECT
+                        '2024-01-01T00:00:00'::TIMESTAMP + x * 1_000_000L,
+                        'A',
+                        rnd_bin(8, 16, 0)
+                    FROM long_sequence(10)
+                    """);
+            engine.releaseAllWriters();
+
+            try (var factory = select("SELECT sym, payload FROM t_pf_bin WHERE sym = 'A'");
+                 PageFrameCursor cursor = factory.getPageFrameCursor(sqlExecutionContext, PartitionFrameCursorFactory.ORDER_ASC)) {
+                long rows = 0;
+                PageFrame f;
+                while ((f = cursor.next(0)) != null) {
+                    rows += f.getPartitionHi() - f.getPartitionLo();
+                }
+                assertEquals(10, rows);
+            }
         });
     }
 
