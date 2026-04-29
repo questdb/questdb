@@ -88,6 +88,98 @@ import org.junit.Test;
 public class FillRecordDispatchTest extends AbstractCairoTest {
 
     @Test
+    public void testDispatchPrevCacheSlotFixedSizeKeyed() throws Exception {
+        // DISPATCH_PREV_CACHE_SLOT is the keyed fixed-size FILL_PREV path: the
+        // cursor caches the source value in a per-source-col MapValue slot at
+        // every data row, then gap rows read the slot directly via
+        // keysMapRecord.getXxx(slot) -- no recordAt hop, no prevRecord
+        // positioning. Distinct from DISPATCH_PREV_SLOT (variable-width or
+        // non-keyed PREV, which positions prevRecord via recordAt).
+        // DOUBLE is fixed-size and slot-eligible; a keyed FILL(PREV) on DOUBLE
+        // routes through DISPATCH_PREV_CACHE_SLOT.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (k SYMBOL, v DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO x VALUES " +
+                    "('A', 1.0, '2024-01-01T00:00:00.000000Z')," +
+                    "('B', 2.0, '2024-01-01T00:00:00.000000Z')," +
+                    "('A', 3.0, '2024-01-01T02:00:00.000000Z')," +
+                    "('B', 4.0, '2024-01-01T02:00:00.000000Z')");
+            // 01:00 is a gap bucket for both keys. Both keys have prev values
+            // observed at 00:00, so the cached slots return 1.0 / 2.0 directly.
+            assertQueryNoLeakCheck(
+                    "ts\tk\tfv\n" +
+                            "2024-01-01T00:00:00.000000Z\tA\t1.0\n" +
+                            "2024-01-01T00:00:00.000000Z\tB\t2.0\n" +
+                            "2024-01-01T01:00:00.000000Z\tA\t1.0\n" +
+                            "2024-01-01T01:00:00.000000Z\tB\t2.0\n" +
+                            "2024-01-01T02:00:00.000000Z\tA\t3.0\n" +
+                            "2024-01-01T02:00:00.000000Z\tB\t4.0\n",
+                    "SELECT * FROM (" +
+                            "SELECT ts, k, first(v) fv FROM x " +
+                            "SAMPLE BY 1h FILL(PREV) ALIGN TO CALENDAR" +
+                            ") ORDER BY ts, k",
+                    "ts", true, false
+            );
+        });
+    }
+
+    @Test
+    public void testDoubleCrossColumnPrevToAggregate() throws Exception {
+        // DOUBLE cross-col PREV-to-aggregate branch exercises the
+        // FillRecord.getDouble "(mode == FILL_PREV_SELF || mode >= 0) &&
+        // hasKeyPrev() -> prevRecord.getDouble(mode >= 0 ? mode : col)"
+        // branch when the source is an aggregate column (not a key).
+        // Mirrors testFillPrevCrossColumnKeyed in SampleByFillTest.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (val DOUBLE, ival INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO x VALUES " +
+                    "(1.0, 10, '2024-01-01T00:00:00.000000Z')," +
+                    "(3.0, 30, '2024-01-01T02:00:00.000000Z')");
+            // FILL(PREV, PREV(s)) -- a at 01:00 pulls s's prev value (1.0).
+            assertQueryNoLeakCheck(
+                    "ts\ts\ta\n" +
+                            "2024-01-01T00:00:00.000000Z\t1.0\t10.0\n" +
+                            "2024-01-01T01:00:00.000000Z\t1.0\t1.0\n" +
+                            "2024-01-01T02:00:00.000000Z\t3.0\t30.0\n",
+                    "SELECT ts, sum(val) AS s, sum(ival::DOUBLE) AS a FROM x " +
+                            "SAMPLE BY 1h FILL(PREV, PREV(s)) ALIGN TO CALENDAR",
+                    "ts", false, false
+            );
+        });
+    }
+
+    @Test
+    public void testDoubleFillConstantNullSentinelNoPrevYet() throws Exception {
+        // FILL(PREV) with no prior data for a key produces the getter's null
+        // sentinel. For DOUBLE, Double.NaN renders as "null" in output.
+        // Wrap in ORDER BY ts, k because SAMPLE BY FILL emits keys within a
+        // bucket in insertion / key-map order, not alphabetical order.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (k VARCHAR, v DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO x VALUES " +
+                    "('A', 1.0, '2024-01-01T00:00:00.000000Z')," +
+                    "('B', 3.0, '2024-01-01T02:00:00.000000Z')");
+            // Key B has no data in the 00:00 or 01:00 buckets -- its fill
+            // rows fall through to the null sentinel (no prev yet).
+            assertQueryNoLeakCheck(
+                    "ts\tk\tfv\n" +
+                            "2024-01-01T00:00:00.000000Z\tA\t1.0\n" +
+                            "2024-01-01T00:00:00.000000Z\tB\tnull\n" +
+                            "2024-01-01T01:00:00.000000Z\tA\t1.0\n" +
+                            "2024-01-01T01:00:00.000000Z\tB\tnull\n" +
+                            "2024-01-01T02:00:00.000000Z\tA\t1.0\n" +
+                            "2024-01-01T02:00:00.000000Z\tB\t3.0\n",
+                    "SELECT * FROM (" +
+                            "SELECT ts, k, first(v) fv FROM x " +
+                            "SAMPLE BY 1h FILL(PREV) ALIGN TO CALENDAR" +
+                            ") ORDER BY ts, k",
+                    // Outer ORDER BY wraps the FILL cursor in a sort factory that supports random access.
+                    "ts", true, false
+            );
+        });
+    }
+
+    @Test
     public void testGetBinAndBinLenDispatch() throws Exception {
         // BINARY has no first(bin) aggregate and cannot be a group-by key,
         // but BinarySequence values appear as intermediate sub-query row data
@@ -521,8 +613,8 @@ public class FillRecordDispatchTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE x (l LONG256, v DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
             execute("INSERT INTO x VALUES " +
-                    "(rnd_long256(), 1.0, '2024-01-01T00:00:00.000000Z')");
-            execute("INSERT INTO x SELECT l, 3.0, '2024-01-01T02:00:00.000000Z'::TIMESTAMP FROM x LIMIT 1");
+                    "(cast('0x01' AS LONG256), 1.0, '2024-01-01T00:00:00.000000Z')," +
+                    "(cast('0x01' AS LONG256), 3.0, '2024-01-01T02:00:00.000000Z')");
             assertQueryNoLeakCheck(
                     "c\n3\n",
                     "SELECT count(*) c FROM (" +
@@ -549,6 +641,55 @@ public class FillRecordDispatchTest extends AbstractCairoTest {
                     "SELECT ts, first(l) fl FROM x SAMPLE BY 1h FILL(PREV) ALIGN TO CALENDAR",
                     "ts", false, false
             );
+        });
+    }
+
+    @Test
+    public void testGetLongOnTimestampDuringGapReturnsBucketTs() throws Exception {
+        // The TIMESTAMP column is a 64-bit long internally, so Record.getLong(timestampIndex)
+        // is a valid call from any caller that doesn't route through getTimestamp(). Without
+        // a DISPATCH_TIMESTAMP_FILL arm in getLong(), gap-fill rows would silently return
+        // Numbers.LONG_NULL while getTimestamp() correctly returns the bucket boundary.
+        // This drives the cursor directly so the bug is observable rather than masked by
+        // upstream callers that happen to use getTimestamp(). getDate() defaults to
+        // getLong() (Record.java:159), so the same arm covers both.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (v DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO x VALUES " +
+                    "(1.0, '2024-01-01T00:00:00.000000Z')," +
+                    "(3.0, '2024-01-01T02:00:00.000000Z')");
+            try (RecordCursorFactory factory = select(
+                    "SELECT ts, first(v) fv FROM x SAMPLE BY 1h FILL(PREV) ALIGN TO CALENDAR")) {
+                try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                    final int tsIdx = factory.getMetadata().getColumnIndex("ts");
+                    final Record record = cursor.getRecord();
+                    final long[] expected = {
+                            1_704_067_200_000_000L,  // 2024-01-01T00:00:00 -- data row
+                            1_704_070_800_000_000L,  // 2024-01-01T01:00:00 -- GAP-FILL row
+                            1_704_074_400_000_000L   // 2024-01-01T02:00:00 -- data row
+                    };
+                    int row = 0;
+                    while (cursor.hasNext()) {
+                        Assert.assertEquals(
+                                "row " + row + " getTimestamp",
+                                expected[row],
+                                record.getTimestamp(tsIdx)
+                        );
+                        Assert.assertEquals(
+                                "row " + row + " getLong (DISPATCH_TIMESTAMP_FILL arm)",
+                                expected[row],
+                                record.getLong(tsIdx)
+                        );
+                        Assert.assertEquals(
+                                "row " + row + " getDate (defaults to getLong)",
+                                expected[row],
+                                record.getDate(tsIdx)
+                        );
+                        row++;
+                    }
+                    Assert.assertEquals("expected 3 rows", 3, row);
+                }
+            }
         });
     }
 
@@ -635,55 +776,6 @@ public class FillRecordDispatchTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testGetLongOnTimestampDuringGapReturnsBucketTs() throws Exception {
-        // The TIMESTAMP column is a 64-bit long internally, so Record.getLong(timestampIndex)
-        // is a valid call from any caller that doesn't route through getTimestamp(). Without
-        // a DISPATCH_TIMESTAMP_FILL arm in getLong(), gap-fill rows would silently return
-        // Numbers.LONG_NULL while getTimestamp() correctly returns the bucket boundary.
-        // This drives the cursor directly so the bug is observable rather than masked by
-        // upstream callers that happen to use getTimestamp(). getDate() defaults to
-        // getLong() (Record.java:159), so the same arm covers both.
-        assertMemoryLeak(() -> {
-            execute("CREATE TABLE x (v DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("INSERT INTO x VALUES " +
-                    "(1.0, '2024-01-01T00:00:00.000000Z')," +
-                    "(3.0, '2024-01-01T02:00:00.000000Z')");
-            try (RecordCursorFactory factory = select(
-                    "SELECT ts, first(v) fv FROM x SAMPLE BY 1h FILL(PREV) ALIGN TO CALENDAR")) {
-                try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
-                    final int tsIdx = factory.getMetadata().getColumnIndex("ts");
-                    final Record record = cursor.getRecord();
-                    final long[] expected = {
-                            1_704_067_200_000_000L,  // 2024-01-01T00:00:00 -- data row
-                            1_704_070_800_000_000L,  // 2024-01-01T01:00:00 -- GAP-FILL row
-                            1_704_074_400_000_000L   // 2024-01-01T02:00:00 -- data row
-                    };
-                    int row = 0;
-                    while (cursor.hasNext()) {
-                        Assert.assertEquals(
-                                "row " + row + " getTimestamp",
-                                expected[row],
-                                record.getTimestamp(tsIdx)
-                        );
-                        Assert.assertEquals(
-                                "row " + row + " getLong (DISPATCH_TIMESTAMP_FILL arm)",
-                                expected[row],
-                                record.getLong(tsIdx)
-                        );
-                        Assert.assertEquals(
-                                "row " + row + " getDate (defaults to getLong)",
-                                expected[row],
-                                record.getDate(tsIdx)
-                        );
-                        row++;
-                    }
-                    Assert.assertEquals("expected 3 rows", 3, row);
-                }
-            }
-        });
-    }
-
-    @Test
     public void testGetVarcharAAndBAndSizeDispatch() throws Exception {
         // VARCHAR first(vc) + FILL(PREV) exercises getVarcharA / getVarcharB /
         // getVarcharSize via FILL_PREV_SELF.
@@ -703,95 +795,4 @@ public class FillRecordDispatchTest extends AbstractCairoTest {
         });
     }
 
-    @Test
-    public void testDoubleCrossColumnPrevToAggregate() throws Exception {
-        // DOUBLE cross-col PREV-to-aggregate branch exercises the
-        // FillRecord.getDouble "(mode == FILL_PREV_SELF || mode >= 0) &&
-        // hasKeyPrev() -> prevRecord.getDouble(mode >= 0 ? mode : col)"
-        // branch when the source is an aggregate column (not a key).
-        // Mirrors testFillPrevCrossColumnKeyed in SampleByFillTest.
-        assertMemoryLeak(() -> {
-            execute("CREATE TABLE x (val DOUBLE, ival INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("INSERT INTO x VALUES " +
-                    "(1.0, 10, '2024-01-01T00:00:00.000000Z')," +
-                    "(3.0, 30, '2024-01-01T02:00:00.000000Z')");
-            // FILL(PREV, PREV(s)) -- a at 01:00 pulls s's prev value (1.0).
-            assertQueryNoLeakCheck(
-                    "ts\ts\ta\n" +
-                            "2024-01-01T00:00:00.000000Z\t1.0\t10.0\n" +
-                            "2024-01-01T01:00:00.000000Z\t1.0\t1.0\n" +
-                            "2024-01-01T02:00:00.000000Z\t3.0\t30.0\n",
-                    "SELECT ts, sum(val) AS s, sum(ival::DOUBLE) AS a FROM x " +
-                            "SAMPLE BY 1h FILL(PREV, PREV(s)) ALIGN TO CALENDAR",
-                    "ts", false, false
-            );
-        });
-    }
-
-    @Test
-    public void testDoubleFillConstantNullSentinelNoPrevYet() throws Exception {
-        // FILL(PREV) with no prior data for a key produces the getter's null
-        // sentinel. For DOUBLE, Double.NaN renders as "null" in output.
-        // Wrap in ORDER BY ts, k because SAMPLE BY FILL emits keys within a
-        // bucket in insertion / key-map order, not alphabetical order.
-        assertMemoryLeak(() -> {
-            execute("CREATE TABLE x (k VARCHAR, v DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("INSERT INTO x VALUES " +
-                    "('A', 1.0, '2024-01-01T00:00:00.000000Z')," +
-                    "('B', 3.0, '2024-01-01T02:00:00.000000Z')");
-            // Key B has no data in the 00:00 or 01:00 buckets -- its fill
-            // rows fall through to the null sentinel (no prev yet).
-            assertQueryNoLeakCheck(
-                    "ts\tk\tfv\n" +
-                            "2024-01-01T00:00:00.000000Z\tA\t1.0\n" +
-                            "2024-01-01T00:00:00.000000Z\tB\tnull\n" +
-                            "2024-01-01T01:00:00.000000Z\tA\t1.0\n" +
-                            "2024-01-01T01:00:00.000000Z\tB\tnull\n" +
-                            "2024-01-01T02:00:00.000000Z\tA\t1.0\n" +
-                            "2024-01-01T02:00:00.000000Z\tB\t3.0\n",
-                    "SELECT * FROM (" +
-                            "SELECT ts, k, first(v) fv FROM x " +
-                            "SAMPLE BY 1h FILL(PREV) ALIGN TO CALENDAR" +
-                            ") ORDER BY ts, k",
-                    // Outer ORDER BY wraps the FILL cursor in a sort factory that supports random access.
-                    "ts", true, false
-            );
-        });
-    }
-
-    @Test
-    public void testDispatchPrevCacheSlotFixedSizeKeyed() throws Exception {
-        // DISPATCH_PREV_CACHE_SLOT is the keyed fixed-size FILL_PREV path: the
-        // cursor caches the source value in a per-source-col MapValue slot at
-        // every data row, then gap rows read the slot directly via
-        // keysMapRecord.getXxx(slot) -- no recordAt hop, no prevRecord
-        // positioning. Distinct from DISPATCH_PREV_SLOT (variable-width or
-        // non-keyed PREV, which positions prevRecord via recordAt).
-        // DOUBLE is fixed-size and slot-eligible; a keyed FILL(PREV) on DOUBLE
-        // routes through DISPATCH_PREV_CACHE_SLOT.
-        assertMemoryLeak(() -> {
-            execute("CREATE TABLE x (k SYMBOL, v DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("INSERT INTO x VALUES " +
-                    "('A', 1.0, '2024-01-01T00:00:00.000000Z')," +
-                    "('B', 2.0, '2024-01-01T00:00:00.000000Z')," +
-                    "('A', 3.0, '2024-01-01T02:00:00.000000Z')," +
-                    "('B', 4.0, '2024-01-01T02:00:00.000000Z')");
-            // 01:00 is a gap bucket for both keys. Both keys have prev values
-            // observed at 00:00, so the cached slots return 1.0 / 2.0 directly.
-            assertQueryNoLeakCheck(
-                    "ts\tk\tfv\n" +
-                            "2024-01-01T00:00:00.000000Z\tA\t1.0\n" +
-                            "2024-01-01T00:00:00.000000Z\tB\t2.0\n" +
-                            "2024-01-01T01:00:00.000000Z\tA\t1.0\n" +
-                            "2024-01-01T01:00:00.000000Z\tB\t2.0\n" +
-                            "2024-01-01T02:00:00.000000Z\tA\t3.0\n" +
-                            "2024-01-01T02:00:00.000000Z\tB\t4.0\n",
-                    "SELECT * FROM (" +
-                            "SELECT ts, k, first(v) fv FROM x " +
-                            "SAMPLE BY 1h FILL(PREV) ALIGN TO CALENDAR" +
-                            ") ORDER BY ts, k",
-                    "ts", true, false
-            );
-        });
-    }
 }
