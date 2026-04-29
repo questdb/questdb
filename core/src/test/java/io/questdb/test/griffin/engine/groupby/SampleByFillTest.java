@@ -609,17 +609,14 @@ public class SampleByFillTest extends AbstractCairoTest {
 
     @Test
     public void testFillKeyedRespectsCircuitBreaker() throws Exception {
-        // C-3 regression: a keyed SAMPLE BY 1s FROM '1970' TO '2100' FILL(NULL)
-        // query iterates billions of buckets without a circuit-breaker check
-        // inside the fill-emission outer loop. Phase 15 Plan 02 added two CB
-        // check sites (hasNext head + emitNextFillRow outer-loop top) so the
-        // query now honors cancellation within bounded wall-clock. The
-        // tick-counting MillisecondClock returns 0 until tripWhenTicks ticks
-        // have accumulated, then flips to Long.MAX_VALUE so the CB's 1ms query
-        // timeout trips deterministically. Pre-fix, the cursor iterates until
-        // OOM or the JUnit wall-clock timeout. Post-fix, CairoException fires
-        // with the canonical "timeout, query aborted" message inside the fill
-        // emission loop.
+        // A keyed SAMPLE BY 1s FROM '1970' TO '2100' FILL(NULL) iterates
+        // billions of buckets, so the fill cursor must check the circuit
+        // breaker on every bucket boundary or the query cannot be cancelled
+        // before OOM / JUnit wall-clock timeout. The tick-counting
+        // MillisecondClock returns 0 until tripWhenTicks ticks have
+        // accumulated, then flips to Long.MAX_VALUE so the CB's 1ms query
+        // timeout trips deterministically inside the fill-emission loop with
+        // the canonical "timeout, query aborted" message.
         final long tripWhenTicks = 100;
         assertMemoryLeak(() -> {
             try {
@@ -694,9 +691,9 @@ public class SampleByFillTest extends AbstractCairoTest {
                         LOG
                 );
             } finally {
-                // D-29 finding 4.6: null the inherited AbstractCairoTest static
-                // field so the tick-counting mock clock does not bleed into any
-                // future test in this class that constructs a
+                // Null the inherited AbstractCairoTest static field so the
+                // tick-counting mock clock does not bleed into any future test
+                // in this class that constructs a
                 // NetworkSqlExecutionCircuitBreaker against circuitBreakerConfiguration.
                 circuitBreakerConfiguration = null;
             }
@@ -706,14 +703,12 @@ public class SampleByFillTest extends AbstractCairoTest {
     @Test
     public void testFillKeyedSingleRowFromTo() throws Exception {
         assertMemoryLeak(() -> {
-            // m8b single-row keyed + FROM/TO: one data row for one key, with FROM
-            // strictly before and TO strictly after the row's bucket. The fill
-            // cursor emits leading NULL fill rows (hasKeyPrev()==false for every
-            // bucket before the data row), then the real row, then trailing
-            // forward-fill rows (hasKeyPrev()==true after the data row lands).
-            // This exercises the hasKeyPrev() false->true transition exactly
-            // once per key: it flips from false to true at the bucket holding
-            // the real data and stays true for the rest of the emission.
+            // Single-row keyed + FROM/TO: one data row for one key, with FROM
+            // strictly before and TO strictly after the row's bucket. Exercises
+            // the hasKeyPrev() false->true transition exactly once per key:
+            // leading NULL fill rows (hasKeyPrev()==false), then the real row,
+            // then trailing forward-fill rows (hasKeyPrev()==true) for the rest
+            // of the emission.
             execute("CREATE TABLE t (key VARCHAR, val DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
             execute("INSERT INTO t VALUES ('A', 42.0, '2024-01-01T03:00:00.000000Z')");
             final String sql = "SELECT ts, key, first(val) val FROM t " +
@@ -769,8 +764,9 @@ public class SampleByFillTest extends AbstractCairoTest {
 
     @Test
     public void testFillNullCastMultiKey() throws Exception {
-        // FILL(NULL) variant of the multi-key inline-function classifier regression (D-04 representative).
-        // Captured via probe-and-freeze.
+        // FILL(NULL) variant of the multi-key inline-function classifier
+        // regression: an inline cast x::STRING is a FUNCTION-form key and must
+        // produce one row per key per bucket.
         assertMemoryLeak(() -> {
             execute("CREATE TABLE t (x INT, v DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
             execute("""
@@ -1674,7 +1670,7 @@ public class SampleByFillTest extends AbstractCairoTest {
     @Test
     public void testFillPrevCastMultiKey() throws Exception {
         // Two distinct x::STRING keys across three buckets produce
-        // 2 x 3 = 6 cartesian rows. Captured via probe-and-freeze.
+        // 2 x 3 = 6 cartesian rows.
         assertMemoryLeak(() -> {
             execute("CREATE TABLE t (x INT, v DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
             execute("""
@@ -1700,7 +1696,7 @@ public class SampleByFillTest extends AbstractCairoTest {
     @Test
     public void testFillPrevConcatMultiKey() throws Exception {
         // Two distinct concat(a, b) (FUNCTION form) keys across three buckets
-        // produce 2 x 3 = 6 cartesian rows. Captured via probe-and-freeze.
+        // produce 2 x 3 = 6 cartesian rows.
         assertMemoryLeak(() -> {
             execute("CREATE TABLE t (a STRING, b STRING, v DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
             execute("""
@@ -1726,8 +1722,8 @@ public class SampleByFillTest extends AbstractCairoTest {
     @Test
     public void testFillPrevConcatOperatorMultiKey() throws Exception {
         // Two distinct a || b (OPERATION form) keys across three buckets produce
-        // 2 x 3 = 6 cartesian rows. Captured via probe-and-freeze. Pins the
-        // OPERATION branch of the classifier predicate.
+        // 2 x 3 = 6 cartesian rows. Pins the OPERATION branch of the classifier
+        // predicate.
         assertMemoryLeak(() -> {
             execute("CREATE TABLE t (a STRING, b STRING, v DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
             execute("""
@@ -2276,10 +2272,9 @@ public class SampleByFillTest extends AbstractCairoTest {
     @Test
     public void testFillPrevIntervalMultiKey() throws Exception {
         // Two distinct interval(lo, hi) keys across three buckets should
-        // produce 2 x 3 = 6 cartesian rows. Pre-fix classifier treated the
-        // function-valued key as an aggregate, dropped it from keyColIndices,
-        // and collapsed output to 3 rows.
-        // Row order and Interval.NULL rendering captured from probe-and-freeze run.
+        // produce 2 x 3 = 6 cartesian rows. A bug had the classifier treat the
+        // function-valued key as an aggregate, drop it from keyColIndices, and
+        // collapse output to 3 rows.
         assertMemoryLeak(() -> {
             execute("""
                     CREATE TABLE t (
@@ -2552,8 +2547,8 @@ public class SampleByFillTest extends AbstractCairoTest {
 
     @Test
     public void testFillPrevLong256NoPrevYet() throws Exception {
-        // M-4 regression: FillRecord.getLong256(int, CharSink<?>) must render
-        // null on leading FILL(PREV) rows where hasKeyPrev() == false. Unlike
+        // FillRecord.getLong256(int, CharSink<?>) must render null on leading
+        // FILL(PREV) rows where hasKeyPrev() == false. Unlike
         // the Decimal128/Decimal256 siblings that call sink.ofRawNull() on the
         // terminal fall-through, CharSink<?> has no ofRawNull() method, so the
         // null-render contract here is "leave the caller-owned sink untouched"
@@ -3524,9 +3519,9 @@ public class SampleByFillTest extends AbstractCairoTest {
 
     @Test
     public void testFillPrevOffsetBindVariable() throws Exception {
-        // Pre-PR FILL(PREV) + non-literal OFFSET worked through the legacy
-        // cursor path which evaluated offsetFunc at runtime. The fast-path
-        // widening accidentally regressed this; this test pins the parity.
+        // FILL(PREV) with a non-literal OFFSET (bind variable) must evaluate
+        // offsetFunc at runtime, matching the legacy cursor path. Pins fast-path
+        // parity so the runtime-constant widening cannot regress silently.
         assertMemoryLeak(() -> {
             execute("CREATE TABLE test (ts TIMESTAMP, value DOUBLE) TIMESTAMP(ts) PARTITION BY DAY WAL");
             execute("INSERT INTO test VALUES " +
@@ -3750,15 +3745,14 @@ public class SampleByFillTest extends AbstractCairoTest {
             // fill cursor sees zero base rows. Critically, the fill cursor still
             // calls initialize() with toFunc != TimestampConstantNull (no
             // object-identity match) and toFunc.getTimestamp() == LONG_NULL.
-            // Without the hasExplicitTo LONG_NULL guard (plan 12-02 task 1),
-            // maxTimestamp would be promoted to Long.MAX_VALUE while
-            // hasExplicitTo stays true; the zero-base-row path at line 660-668
-            // would NOT take the short-circuit (maxTimestamp == LONG_NULL check
-            // at 661 would be false), leaving the cursor in an inconsistent state
-            // and risking Long.MAX_VALUE-bounded emission in worst cases. With
-            // the guard, maxTimestamp stays LONG_NULL, the short-circuit fires,
-            // and emission terminates cleanly with zero rows. The test asserts
-            // termination (no hang) and bounded empty result.
+            // Without the hasExplicitTo LONG_NULL guard, maxTimestamp would be
+            // promoted to Long.MAX_VALUE while hasExplicitTo stays true; the
+            // zero-base-row path would NOT take the maxTimestamp == LONG_NULL
+            // short-circuit, leaving the cursor in an inconsistent state and
+            // risking Long.MAX_VALUE-bounded emission in worst cases. With the
+            // guard, maxTimestamp stays LONG_NULL, the short-circuit fires, and
+            // emission terminates cleanly with zero rows. The test asserts
+            // termination (no hang) and a bounded empty result.
             execute("CREATE TABLE t (ts TIMESTAMP, v DOUBLE) TIMESTAMP(ts) PARTITION BY DAY");
             execute("INSERT INTO t VALUES " +
                     "('2024-01-01T00:00:00.000000Z', 1.0)," +
@@ -3917,15 +3911,14 @@ public class SampleByFillTest extends AbstractCairoTest {
                 assertQueryNoLeakCheck("", "SELECT ts, k, sum(x) FROM t SAMPLE BY 1h FILL(PREV) ALIGN TO CALENDAR");
                 fail("expected LimitOverflowException from pathological sqlSortKeyMaxPages");
             } catch (CairoException ex) {
-                // D-30 finding 4.7: catch the LimitOverflowException superclass
-                // (CairoException) directly so JVM-level Error subclasses
-                // propagate instead of being swallowed, and assert a single
-                // canonical substring. Both MemoryPARWImpl.java:1266 and
-                // MemoryCARWImpl.java:193 produce the same stable page-limit
-                // text for sqlSortKeyMaxPages=-1. If the exception is ever
-                // re-wrapped to SqlException on the construct path, the typed
-                // catch fails loudly instead of hiding the signal under a
-                // 6-way substring disjunction.
+                // Catching the LimitOverflowException superclass (CairoException)
+                // directly lets JVM-level Error subclasses propagate instead of
+                // being swallowed, and the assertion locks on a single canonical
+                // substring. Both MemoryPARWImpl and MemoryCARWImpl produce the
+                // same page-limit text for sqlSortKeyMaxPages=-1. If the
+                // exception is ever re-wrapped to SqlException on the construct
+                // path, the typed catch fails loudly instead of hiding the
+                // signal under a substring disjunction.
                 TestUtils.assertContains(ex.getFlyweightMessage(), "Maximum number of pages");
             }
         });
@@ -4106,7 +4099,7 @@ public class SampleByFillTest extends AbstractCairoTest {
     @Test
     public void testFillWithOffsetAndTimezoneAcrossDstSpringForward() throws Exception {
         assertMemoryLeak(() -> {
-            // m8a spring-forward companion to testFillWithOffsetAndTimezoneAcrossDst.
+            // Spring-forward companion to testFillWithOffsetAndTimezoneAcrossDst.
             // Europe/Riga spring-forward fires on 2021-03-28 at 03:00 local:
             // clocks jump from 03:00 EET to 04:00 EEST, so local times 03:00..03:59
             // do not exist on that date. The UTC grid is linear and continuous --

@@ -66,13 +66,13 @@ import org.junit.Test;
  * The default null-sentinel path (FILL_PREV_SELF without prior data for a
  * key) is exercised by gap buckets that precede the first real row.
  * <p>
- * Coverage target (per RESEARCH.md D-20): 30 typed getters across the four
- * dispatch branches. Getters are enumerated via SQL column types rather than
- * via reflection on {@code FillRecord}'s private inner class -- each named
- * test method drives one getter through SQL scenarios whose expected output
- * can only be produced if every exercised dispatch branch routes correctly.
+ * Coverage target: 30 typed getters across the four dispatch branches.
+ * Getters are enumerated via SQL column types rather than via reflection on
+ * {@code FillRecord}'s private inner class -- each named test method drives
+ * one getter through SQL scenarios whose expected output can only be produced
+ * if every exercised dispatch branch routes correctly.
  * <p>
- * Getter inventory mirrored from RESEARCH.md D-20 (35 named getters):
+ * Getter inventory (35 named getters):
  * getBin, getBinLen, getBool, getByte, getChar, getDecimal8, getDecimal16,
  * getDecimal32, getDecimal64, getDecimal128, getDecimal256, getDouble,
  * getFloat, getGeoByte, getGeoShort, getGeoInt, getGeoLong, getIPv4, getInt,
@@ -471,8 +471,7 @@ public class FillRecordDispatchTest extends AbstractCairoTest {
         // INTERVAL has no first(interval) aggregate, so the only route to an
         // INTERVAL output column is an inline interval(lo, hi) expression used
         // as a GROUP BY key. FillRecord.getInterval FILL_KEY branch is the
-        // only reachable branch. Mirrors testFillPrevInterval in
-        // SampleByFillTest (commit 82865efbc0, Phase 16).
+        // only reachable branch.
         assertMemoryLeak(() -> {
             execute("CREATE TABLE t (lo TIMESTAMP, hi TIMESTAMP, v DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
             execute("INSERT INTO t VALUES " +

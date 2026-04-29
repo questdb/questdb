@@ -4254,16 +4254,11 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
 
     @Test
     public void testSampleByFromToKeyedQuery() throws Exception {
-        // D-31 finding 4.1: upgraded from a bare smoke-test (compile-and-run
-        // without inspection) to a plan assertion so the test catches silent
-        // regressions (cursor-path fallback, lost LIMIT pushdown, Async Group
-        // By parallelism drop).
-        // Probe-and-freeze per Phase 15 D-02: the captured plan pins Long Top
-        // K as the LIMIT 6 implementation above an Async Group By with a
-        // keyFunctions entry for the timestamp_floor_utc fast-path rewrite.
-        // Correctness is already covered by
-        // SampleByTest#testSampleByFromToIsAllowedForKeyedQueries; this test
-        // specifically locks the optimizer rewrite shape.
+        // Pins the optimizer rewrite shape (Long Top K above Async Group By
+        // with a timestamp_floor_utc keyFunctions entry) so silent regressions
+        // such as a cursor-path fallback, lost LIMIT pushdown, or parallelism
+        // drop fail the test. Correctness is already covered by
+        // SampleByTest#testSampleByFromToIsAllowedForKeyedQueries.
         assertMemoryLeak(() -> {
             execute(SampleByTest.FROM_TO_DDL);
             final String query = """
@@ -4902,12 +4897,9 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
     public void testSampleByFromToParallelSampleByRewriteWithKeys() throws Exception {
         assertMemoryLeak(() -> {
             execute(SampleByTest.FROM_TO_DDL);
-            // Keyed FILL(NULL) on FROM-TO was originally compile-only here because the
-            // result was unbounded without a TO clause. Phase 6 landed keyed FROM-TO
-            // fast-path support; Phase 15 Plan 03 (M-7) adds a bounded TO and a
-            // cardinality cap (WHERE x <= 4) so we can assert the output instead of
-            // just the compile step. The two literal-key variants below cover the
-            // plain and with-offset shapes.
+            // Keyed FILL(NULL) on FROM-TO needs a bounded TO and a cardinality
+            // cap (WHERE x <= 4) so the output can be asserted directly. The two
+            // literal-key variants below cover the plain and with-offset shapes.
             final String shouldSucceedKeyedBounded = "select ts, avg(x), s from fromto\n" +
                     "where x <= 4\n" +
                     "sample by 5d from '2017-12-20' to '2018-01-31' fill(null) ";
@@ -5001,16 +4993,15 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
             assertQueryNoLeakCheck(shouldSucceedKeyedWithOffsetBoundedResult, shouldSucceedKeyedWithOffsetBounded,
                     "ts", false, false);
 
-            // Computed-key variants stay compile-only. Adding a TO clause (needed for
-            // assertQueryNoLeakCheck) surfaces a pre-existing defect in the keyed fast
-            // path for FUNCTION-typed projections like concat('1', s): the cursor trips
-            // the defensive "data row timestamp precedes next bucket" guard in
-            // SampleByFillCursor.hasNext() as soon as iteration starts. That guard
-            // fires because the fast path computes bucket boundaries for the
-            // computed-key shape differently from the sampler's view of the data.
-            // The defect is orthogonal to M-7 (test-only scope) and is tracked
-            // separately; for now the variants still pin that compilation succeeds
-            // on both paths.
+            // Computed-key variants stay compile-only. Adding a TO clause
+            // (needed for assertQueryNoLeakCheck) surfaces a pre-existing defect
+            // in the keyed fast path for FUNCTION-typed projections like
+            // concat('1', s): the cursor trips the defensive "data row timestamp
+            // precedes next bucket" guard in SampleByFillCursor.hasNext() as
+            // soon as iteration starts because the fast path computes bucket
+            // boundaries for the computed-key shape differently from the
+            // sampler's view of the data. Until that is fixed, the variants
+            // still pin that compilation succeeds on both paths.
             final String shouldSucceedKeyedExpr = "select ts, avg(x), sum(x), concat('1', s) from fromto\n" +
                     "sample by 5d from '2017-12-20' fill(null) ";
             final String shouldSucceedKeyedExprWithOffset = "select ts, avg(x), sum(x), concat('1', s) from fromto\n" +
