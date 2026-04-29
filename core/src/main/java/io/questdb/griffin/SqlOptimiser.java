@@ -454,6 +454,15 @@ public class SqlOptimiser implements Mutable {
         }
     }
 
+    private static boolean hasLinearFill(ObjList<ExpressionNode> fill) {
+        for (int i = 0, n = fill.size(); i < n; i++) {
+            if (isLinearKeyword(fill.getQuick(i).token)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
     // Returns true when every leaf in the expression tree is a literal constant
     // (no function calls, bind variables, or column references). Used to decide
     // whether a constWhereClause can be evaluated at compile time by the code
@@ -797,6 +806,20 @@ public class SqlOptimiser implements Mutable {
             }
         }
         return false;
+    }
+
+    private static boolean shouldPropagateFillOffset(
+            ExpressionNode sampleByTimezoneName,
+            boolean hasSubDayTimezoneWrap,
+            ExpressionNode sampleByFrom,
+            boolean hasFillFastPathTz,
+            ExpressionNode sampleByOffset
+    ) {
+        return (sampleByTimezoneName == null
+                || (hasSubDayTimezoneWrap && sampleByFrom != null)
+                || hasFillFastPathTz)
+                && sampleByOffset != null
+                && sampleByOffset != SqlParser.ZERO_OFFSET;
     }
 
     private static void unlinkDependencies(IQueryModel model, int parent, int child) {
@@ -4777,17 +4800,6 @@ public class SqlOptimiser implements Mutable {
         return false;
     }
 
-    @SuppressWarnings("BooleanMethodIsAlwaysInverted")
-    private boolean matchesWithOrWithoutTablePrefix(@NotNull CharSequence name, @NotNull CharSequence table, CharSequence target) {
-        if (target == null) {
-            return false;
-        }
-        final int dotIndex = Chars.indexOfLastUnquoted(name, '.');
-        return dotIndex > 0
-                ? Chars.equalsIgnoreCase(table, name, 0, dotIndex) && Chars.equalsIgnoreCase(target, name, dotIndex + 1, name.length())
-                : Chars.equalsIgnoreCase(name, target);
-    }
-
     private void mergeConstIntoPostJoinWhereClause(IQueryModel model) {
         ExpressionNode constWhere = model.getConstWhereClause();
         if (constWhere == null) {
@@ -8183,6 +8195,8 @@ public class SqlOptimiser implements Mutable {
      * Recursive. Replaces SAMPLE BY models with GROUP BY + ORDER BY. For now, the rewrite
      * avoids the following:
      * - linear and prev fills
+     * - ALIGN TO FIRST OBSERVATION
+     * - FROM as a bind variable / function / operation.
      * <p>
      * When "timestamp" column is not explicitly selected, this method has to do
      * a trick to add artificial timestamp to the original model and then wrap the original
@@ -8228,12 +8242,37 @@ public class SqlOptimiser implements Mutable {
                 throw SqlException.$(sampleBy.position, "SAMPLE BY cannot be used with HORIZON JOIN");
             }
 
+            // The SAMPLE BY rewrite into timestamp_floor_utc + GROUP BY pairs the
+            // group-by bucket grid with a TimestampSampler-driven fill cursor.
+            // For day-or-larger stride + non-UTC TIME ZONE the bucket UTC width
+            // varies with DST (Berlin "1d" spans 23 h on spring-forward, 25 h
+            // on fall-back), so the fast-path sampler must mirror the same
+            // local-calendar walk that timestamp_floor_utc performs per row.
+            // SqlCodeGenerator.generateFill consumes setFillTimezoneName below
+            // and wraps the UTC sampler in TimezoneFloorTimestampSampler when
+            // present. The fillOffset propagation gate further below extends
+            // to this case so the fill cursor's setLocalAnchor + setOffset
+            // pair anchors the local grid at (from + offset) mod bucket --
+            // the same modulus seed timestamp_floor_utc uses.
+            final boolean isSampleBySuperDay = sampleBy != null
+                    && !sampleBy.token.isEmpty()
+                    && !CommonUtils.isSubDayUnit(sampleBy.token.charAt(sampleBy.token.length() - 1));
+            boolean hasFillFastPathTz = false;
+            if (sampleByTimezoneName != null && isSampleBySuperDay) {
+                for (int i = 0, n = sampleByFill.size(); i < n; i++) {
+                    if (!isNoneKeyword(sampleByFill.getQuick(i).token)) {
+                        hasFillFastPathTz = true;
+                        break;
+                    }
+                }
+            }
+
             if (
                     sampleBy != null
                             && timestamp != null
                             // null offset means ALIGN TO FIRST OBSERVATION, and we only support ALIGN TO CALENDAR
                             && sampleByOffset != null
-                            && (sampleByFillSize == 0 || (sampleByFillSize == 1 && !isPrevKeyword(sampleByFill.getQuick(0).token) && !isLinearKeyword(sampleByFill.getQuick(0).token)))
+                            && !hasLinearFill(sampleByFill)
                             && sampleByUnit == null
                             && (sampleByFrom == null || ((sampleByFrom.type != BIND_VARIABLE) && (sampleByFrom.type != FUNCTION) && (sampleByFrom.type != OPERATION)))
             ) {
@@ -8325,52 +8364,13 @@ public class SqlOptimiser implements Mutable {
                     timestampColumn = e.toImmutable();
                 }
 
-                if (maybeKeyed.size() > 0 &&
-                        ((sampleByFrom != null || sampleByTo != null) || (sampleByFillSize > 0 && !isNoneKeyword(sampleByFill.getQuick(0).token)))) {
-                    boolean isKeyed = false;
-
-                    final CharSequence tableName = nested.getTableName();
-                    // down-sampling of sub-queries will yield a null table name
-                    if (tableName == null) {
-                        return replaceAndTransferDependents(originalSbModel, model);
-                    }
-                    for (int i = 0, n = maybeKeyed.size(); i < n; i++) {
-                        final ExpressionNode expr = maybeKeyed.getQuick(i);
-                        switch (expr.type) {
-                            case LITERAL:
-                                if (!matchesWithOrWithoutTablePrefix(expr.token, tableName, timestamp.token)
-                                        && !matchesWithOrWithoutTablePrefix(expr.token, tableName, timestampAlias)) {
-                                    isKeyed = true;
-                                }
-                                break;
-                            case OPERATION:
-                                isKeyed = true;
-                                break;
-                            case FUNCTION:
-                                if (!functionParser.getFunctionFactoryCache().isGroupBy(expr.token)) {
-                                    isKeyed = true;
-                                }
-                                break;
-                        }
-                    }
-
-                    if (isKeyed) {
-                        // drop out early, since we don't handle keyed
-                        IQueryModel oldSbNested = nested.getNestedModel();
-                        nested.setNestedModel(rewriteSampleBy(oldSbNested, sqlExecutionContext));
-
-                        // join models
-                        for (int j = 1, m = nested.getJoinModels().size(); j < m; j++) {
-                            IQueryModel joinModel = nested.getJoinModels().getQuick(j);
-                            IQueryModel oldSbJmNested = joinModel.getNestedModel();
-                            joinModel.setNestedModel(rewriteSampleBy(oldSbJmNested, sqlExecutionContext));
-                        }
-
-                        // unions
-                        IQueryModel oldSbUnion = model.getUnionModel();
-                        model.setUnionModel(rewriteSampleBy(oldSbUnion, sqlExecutionContext));
-                        return replaceAndTransferDependents(originalSbModel, model);
-                    }
+                if (maybeKeyed.size() > 0
+                        && nested.getTableName() == null
+                        && ((sampleByFrom != null || sampleByTo != null) || (sampleByFillSize > 0 && !isNoneKeyword(sampleByFill.getQuick(0).token)))) {
+                    // Down-sampling of sub-queries yields a null table name; the nested
+                    // rewrite happens through replaceAndTransferDependents and the outer
+                    // SAMPLE BY code path is not applicable here.
+                    return replaceAndTransferDependents(originalSbModel, model);
                 }
 
                 // These lists collect timestamp copies that we remove from the group-by model.
@@ -8521,10 +8521,58 @@ public class SqlOptimiser implements Mutable {
                     nested.addGroupBy(tsFloorFunc);
                 }
 
-                nested.setFillFrom(sampleByFrom);
-                nested.setFillTo(sampleByTo);
+                // Sub-day SAMPLE BY with a TIME ZONE shifts the GROUP BY tsFloor's
+                // FROM argument via to_utc(FROM, tz). The fill cursor's bucket grid
+                // must align with tsFloor's grid, so wrap setFillFrom/setFillTo with
+                // the same to_utc call. Day-or-larger stride + TZ uses a different
+                // strategy: timestamp_floor_utc walks local-calendar boundaries per
+                // row, and the fast path mirrors that walk inside
+                // TimezoneFloorTimestampSampler. setFillTimezoneName below propagates
+                // the TZ token down to generateFill, which builds TimeZoneRules and
+                // wraps the UTC sampler. Day-or-larger stride + TZ without FILL or
+                // with FILL(NONE) flows through with the wrap inactive; the fill
+                // cursor never builds, so the sampler grid is never consulted.
+                final boolean hasSubDayTimezoneWrap = isSubDay && sampleByTimezoneName != null;
+                nested.setFillFrom(hasSubDayTimezoneWrap && sampleByFrom != null
+                        ? createToUtcCall(sampleByFrom, sampleByTimezoneName) : sampleByFrom);
+                nested.setFillTo(hasSubDayTimezoneWrap && sampleByTo != null
+                        ? createToUtcCall(sampleByTo, sampleByTimezoneName) : sampleByTo);
                 nested.setFillStride(sampleBy);
+                nested.setFillTimezoneName(hasFillFastPathTz ? sampleByTimezoneName : null);
                 nested.setFillValues(sampleByFill);
+                // Propagate offset to the fill cursor whenever the sampler can
+                // reproduce timestamp_floor_utc's grid from (fromTs, offset):
+                //   - No timezone: effectiveOffset = from + offset, grid anchored
+                //     at fromTs + offset directly.
+                //   - Sub-day stride + timezone + FROM: timestamp_floor_utc is
+                //     invoked with tz=null and from=to_utc(FROM, tz) (see above),
+                //     so fillFrom is to_utc(FROM, tz) and the same
+                //     fromTs + offset shift matches the group-by grid.
+                //   - Day-or-larger stride + timezone + FILL: hasFillFastPathTz
+                //     wraps the sampler with TimezoneFloorTimestampSampler.
+                //     The fill cursor calls setLocalAnchor(fromTs + offset) +
+                //     setOffset(offset); the wrap forwards both untranslated to
+                //     the wrapped sampler so its local-grid mod-bucket position
+                //     matches timestamp_floor_utc's effectiveOffset mod bucket.
+                // When a timezone is present and no fast-path wrap is in place
+                // (e.g. sub-day stride + timezone without FROM), timestamp_floor_utc
+                // applies timezone rules per row and the fill sampler anchors on
+                // the already-floored firstTs instead, so the offset must not be
+                // applied again.
+                // Only propagate a non-trivial offset. ZERO_OFFSET ('00:00') is the
+                // identity and the code generator already defaults calendarOffset to 0
+                // when fillOffset is null, so emitting it would just pollute the model.
+                // parseWithOffset() normalises explicit '00:00' to the ZERO_OFFSET
+                // singleton, so a simple identity check covers all zero-offset cases.
+                if (shouldPropagateFillOffset(
+                        sampleByTimezoneName,
+                        hasSubDayTimezoneWrap,
+                        sampleByFrom,
+                        hasFillFastPathTz,
+                        sampleByOffset
+                )) {
+                    nested.setFillOffset(sampleByOffset);
+                }
 
                 // clear sample by (but keep FILL and FROM-TO)
                 nested.setSampleBy(null);
@@ -8689,15 +8737,18 @@ public class SqlOptimiser implements Mutable {
                 // this is to handle cases where we use system tables, which are prefixed
                 // downstream code cannot handle `"sys.telemetry.wal".created`
                 // it will break in `where` optimization and later metadata lookups
-                CharacterStoreEntry e = characterStore.newEntry();
-                if (Chars.indexOf(toAddWhereClause.getTableName(), '.') != -1) {
-                    // Table name has . in the name, quote it
-                    e.putAscii('\"').put(toAddWhereClause.getTableName()).putAscii("\".").put(timestamp.token);
-                } else {
-                    e.put(toAddWhereClause.getTableName()).put('.').put(timestamp.token);
+                final CharSequence tableName = toAddWhereClause.getTableName();
+                if (tableName != null) {
+                    CharacterStoreEntry e = characterStore.newEntry();
+                    if (Chars.indexOf(tableName, '.') != -1) {
+                        // Table name has . in the name, quote it
+                        e.putAscii('\"').put(tableName).putAscii("\".").put(timestamp.token);
+                    } else {
+                        e.put(tableName).put('.').put(timestamp.token);
+                    }
+                    CharSequence prefixedTimestamp = e.toImmutable();
+                    timestamp = expressionNodePool.next().of(LITERAL, prefixedTimestamp, timestamp.precedence, timestamp.position);
                 }
-                CharSequence prefixedTimestamp = e.toImmutable();
-                timestamp = expressionNodePool.next().of(LITERAL, prefixedTimestamp, timestamp.precedence, timestamp.position);
             }
 
             // construct an appropriate where clause

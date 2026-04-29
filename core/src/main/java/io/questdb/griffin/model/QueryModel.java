@@ -134,7 +134,9 @@ public class QueryModel implements IQueryModel {
     private boolean distinct = false;
     private boolean explicitTimestamp;
     private ExpressionNode fillFrom;
+    private ExpressionNode fillOffset;
     private ExpressionNode fillStride;
+    private ExpressionNode fillTimezoneName;
     private ExpressionNode fillTo;
     private ObjList<ExpressionNode> fillValues;
     private boolean forceBackwardScan;
@@ -467,8 +469,10 @@ public class QueryModel implements IQueryModel {
         sampleByTo = null;
         sampleByFrom = null;
         fillFrom = null;
+        fillOffset = null;
         fillTo = null;
         fillStride = null;
+        fillTimezoneName = null;
         fillValues = null;
         skipped = false;
         allowPropagationOfOrderByAdvice = true;
@@ -517,6 +521,9 @@ public class QueryModel implements IQueryModel {
         sampleByOffset = null;
         sampleByTo = null;
         sampleByFrom = null;
+        fillOffset = null;
+        fillStride = null;
+        fillTimezoneName = null;
     }
 
     @Override
@@ -746,8 +753,18 @@ public class QueryModel implements IQueryModel {
     }
 
     @Override
+    public ExpressionNode getFillOffset() {
+        return fillOffset;
+    }
+
+    @Override
     public ExpressionNode getFillStride() {
         return fillStride;
+    }
+
+    @Override
+    public ExpressionNode getFillTimezoneName() {
+        return fillTimezoneName;
     }
 
     @Override
@@ -1469,6 +1486,9 @@ public class QueryModel implements IQueryModel {
         this.sampleByOffset = model.getSampleByOffset();
         this.sampleByTo = model.getSampleByTo();
         this.sampleByFrom = model.getSampleByFrom();
+        this.fillOffset = model.getFillOffset();
+        this.fillStride = model.getFillStride();
+        this.fillTimezoneName = model.getFillTimezoneName();
 
         // clear the source
         model.clearSampleBy();
@@ -1636,8 +1656,18 @@ public class QueryModel implements IQueryModel {
     }
 
     @Override
+    public void setFillOffset(ExpressionNode fillOffset) {
+        this.fillOffset = fillOffset;
+    }
+
+    @Override
     public void setFillStride(ExpressionNode fillStride) {
         this.fillStride = fillStride;
+    }
+
+    @Override
+    public void setFillTimezoneName(ExpressionNode fillTimezoneName) {
+        this.fillTimezoneName = fillTimezoneName;
     }
 
     @Override
@@ -2311,9 +2341,19 @@ public class QueryModel implements IQueryModel {
             }
         }
 
+        if (fillOffset != null) {
+            sink.putAscii(" offset ");
+            sink.put(fillOffset);
+        }
+
         if (fillStride != null) {
             sink.putAscii(" stride ");
             sink.put(fillStride);
+        }
+
+        if (fillTimezoneName != null) {
+            sink.putAscii(" timezone ");
+            sink.put(fillTimezoneName);
         }
 
         if (showOrderBy && orderBy.size() > 0) {

@@ -788,8 +788,8 @@ public class SampleByTest extends AbstractCairoTest {
                         PSWH\t1970-01-03T00:00:00.000000Z\t\t\t\t
                         TJW\t1970-01-03T00:30:00.000000Z\t\t\t\t
                         PSWH\t1970-01-03T00:30:00.000000Z\t\t\t\t
-                        TJW\t1970-01-03T01:00:00.000000Z\t\t\t\t
                         PSWH\t1970-01-03T01:00:00.000000Z\t110\ttk5\txn8nmw\t0n2gm6r7
+                        TJW\t1970-01-03T01:00:00.000000Z\t\t\t\t
                         """,
                 "select s, k, " +
                         "first(g1), " +
@@ -826,8 +826,8 @@ public class SampleByTest extends AbstractCairoTest {
                         PSWH\t1970-01-03T00:00:00.000000Z\t\t\t\t
                         TJW\t1970-01-03T00:30:00.000000Z\t010\tc93\tfu3r7c\t5ewm40wx
                         PSWH\t1970-01-03T00:30:00.000000Z\t\t\t\t
-                        TJW\t1970-01-03T01:00:00.000000Z\t010\tc93\tfu3r7c\t5ewm40wx
                         PSWH\t1970-01-03T01:00:00.000000Z\t110\ttk5\txn8nmw\t0n2gm6r7
+                        TJW\t1970-01-03T01:00:00.000000Z\t010\tc93\tfu3r7c\t5ewm40wx
                         """,
                 "select s, k, " +
                         "first(g1), " +
@@ -4931,6 +4931,9 @@ public class SampleByTest extends AbstractCairoTest {
         );
     }
 
+    // Expected output differs from master's cursor path: predicate pushdown past SAMPLE BY FILL
+    // now eliminates filter-matched keys from the inner cartesian. See "Predicate pushdown past SAMPLE BY"
+    // Trade-off in PR #6946.
     @Test
     public void testSampleByAlignToCalendarFillNullWithKey1() throws Exception {
         Rnd rnd = TestUtils.generateRandom(LOG);
@@ -4939,7 +4942,6 @@ public class SampleByTest extends AbstractCairoTest {
         assertQuery(
                 """
                         ts\ts\tfirst\tavg\tlast\tmax
-                        2022-12-01T00:00:00.000000Z\ts2\tnull\tnull\tnull\tnull
                         2022-12-01T00:01:00.000000Z\ts2\t2\t2.0\t2\t2
                         2022-12-01T00:02:00.000000Z\ts2\t3\t3.0\t3\t3
                         """,
@@ -4960,6 +4962,9 @@ public class SampleByTest extends AbstractCairoTest {
         );
     }
 
+    // Expected output differs from master's cursor path: predicate pushdown past SAMPLE BY FILL
+    // now eliminates filter-matched keys from the inner cartesian. See "Predicate pushdown past SAMPLE BY"
+    // Trade-off in PR #6946.
     @Test
     public void testSampleByAlignToCalendarFillNullWithKey2() throws Exception {
         Rnd rnd = TestUtils.generateRandom(LOG);
@@ -4969,8 +4974,6 @@ public class SampleByTest extends AbstractCairoTest {
                 """
                         ts\ts\tfirst\tavg\tlast\tmax
                         2022-12-01T00:00:00.000000Z\ts1\t1\t1.5\t2\t2
-                        2022-12-01T00:01:00.000000Z\ts1\tnull\tnull\tnull\tnull
-                        2022-12-01T00:02:00.000000Z\ts1\tnull\tnull\tnull\tnull
                         """,
                 "select * from (" +
                         "select ts, s, first(val), avg(val), last(val), max(val)" +
@@ -5720,35 +5723,13 @@ public class SampleByTest extends AbstractCairoTest {
             if (isNone(fill)) {
                 continue;
             }
-
-            String plan = "Filter filter: (tstmp>=2022-12-01T00:00:00.000000Z and sym='B' and 0<length(sym)*tstmp::long)\n" +
-                    "    Sample By\n" +
-                    (isNone(fill) ? "" : "      fill: " + fill + "\n") +
-                    "      keys: [tstmp,sym]\n" +
-                    "      values: [first(val),avg(val),last(val),max(val)]\n" +
-                    "        SelectedRecord\n" +
-                    "            PageFrame\n" +
-                    "                Row forward scan\n" +
-                    "                Frame forward scan on: #TABLE#\n";
-
-            testSampleByPushdown(fill, align, plan);
+            testSampleByPushdown(fill, align, sampleByPushdownPlan(fill, align));
         }
 
         align = "align to first observation";
 
         for (String fill : Arrays.asList("", "none", "null", "linear", "prev")) {
-
-            String plan = "Filter filter: (tstmp>=2022-12-01T00:00:00.000000Z and sym='B' and 0<length(sym)*tstmp::long)\n" +
-                    "    Sample By\n" +
-                    (isNone(fill) ? "" : "      fill: " + fill + "\n") +
-                    "      keys: [tstmp,sym]\n" +
-                    "      values: [first(val),avg(val),last(val),max(val)]\n" +
-                    "        SelectedRecord\n" +
-                    "            PageFrame\n" +
-                    "                Row forward scan\n" +
-                    "                Frame forward scan on: #TABLE#\n";
-
-            testSampleByPushdown(fill, align, plan);
+            testSampleByPushdown(fill, align, sampleByPushdownPlan(fill, align));
         }
 
         align = "align to calendar";
@@ -5757,18 +5738,7 @@ public class SampleByTest extends AbstractCairoTest {
             if (isNone(fill)) {
                 continue;
             }
-
-            String plan = "Filter filter: (tstmp>=2022-12-01T00:00:00.000000Z and sym='B' and 0<length(sym)*tstmp::long)\n" +
-                    "    Sample By\n" +
-                    (isNone(fill) ? "" : "      fill: " + fill + "\n") +
-                    "      keys: [tstmp,sym]\n" +
-                    "      values: [first(val),avg(val),last(val),max(val)]\n" +
-                    "        SelectedRecord\n" +
-                    "            PageFrame\n" +
-                    "                Row forward scan\n" +
-                    "                Frame forward scan on: #TABLE#\n";
-
-            testSampleByPushdown(fill, align, plan);
+            testSampleByPushdown(fill, align, sampleByPushdownPlan(fill, align));
         }
 
     }
@@ -6129,6 +6099,9 @@ public class SampleByTest extends AbstractCairoTest {
                     true
             );
 
+            // When per-column fill values cover fewer slots than the user's
+            // aggregate count, the query must be rejected at the first fill
+            // expression with "not enough fill values".
             assertException("""
                             with sq as (
                               select
@@ -6164,8 +6137,8 @@ public class SampleByTest extends AbstractCairoTest {
                               candle_usd_volume,
                               cnt
                             from sq;""",
-                    554,
-                    "insufficient fill values for SAMPLE BY FILL");
+                    530,
+                    "not enough fill values");
         });
     }
 
@@ -6242,7 +6215,7 @@ public class SampleByTest extends AbstractCairoTest {
                             )
                             """,
                     "ts",
-                    true,
+                    false,
                     false
             );
         });
@@ -7043,21 +7016,40 @@ public class SampleByTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testSampleByFromToIsDisallowedForKeyedQueries() throws Exception {
-        Rnd rnd = TestUtils.generateRandom(LOG);
-        setProperty(PropertyKey.DEBUG_CAIRO_COPIER_TYPE, rnd.nextInt(4));
-
+    public void testSampleByFromToIsAllowedForKeyedQueries() throws Exception {
+        // Keyed SAMPLE BY FROM/TO with one fill value per aggregate must
+        // produce the full cartesian product — one row per (bucket, key).
+        //
+        // The cross-product produces 9 buckets x 479 keys = 4311 rows, so
+        // assert on an aggregated shape (one row per bucket with row and key
+        // counts) for readability; the wrapped outer aggregate proves every
+        // bucket emits the full key set.
         assertMemoryLeak(() -> {
             execute(FROM_TO_DDL);
-            assertException("""
-                            select ts, avg(x), first(x), last(x), x from fromto
-                            where s != '5'
-                            sample by 5d from '2017-12-20' to '2018-01-31' fill(42)""",
-                    0, "supported");
-            assertException("""
-                    select ts, avg(x), first(x), last(x), x from fromto
-                    where s != '5'
-                    sample by 5d from '2017-12-20' to '2018-01-31' fill(42)""", 0, "supported");
+            assertQueryNoLeakCheck(
+                    """
+                            ts\trows\tkeys
+                            2017-12-20T00:00:00.000000Z\t479\t479
+                            2017-12-25T00:00:00.000000Z\t479\t479
+                            2017-12-30T00:00:00.000000Z\t479\t479
+                            2018-01-04T00:00:00.000000Z\t479\t479
+                            2018-01-09T00:00:00.000000Z\t479\t479
+                            2018-01-14T00:00:00.000000Z\t479\t479
+                            2018-01-19T00:00:00.000000Z\t479\t479
+                            2018-01-24T00:00:00.000000Z\t479\t479
+                            2018-01-29T00:00:00.000000Z\t479\t479
+                            """,
+                    """
+                            SELECT ts, count(*) rows, count_distinct(x) keys FROM (
+                                SELECT ts, avg(x), first(x), last(x), x FROM fromto
+                                WHERE s != '5'
+                                SAMPLE BY 5d FROM '2017-12-20' TO '2018-01-31' FILL(42, 42, 42)
+                            )
+                            GROUP BY ts
+                            ORDER BY ts""",
+                    "ts",
+                    false
+            );
         });
     }
 
@@ -11136,31 +11128,31 @@ public class SampleByTest extends AbstractCairoTest {
                         PEHN\tnull\tnull\tnull\tnull\tnull\tnull\t1970-01-03T00:00:00.000000Z
                         RXGZ\tnull\tnull\tnull\tnull\tnull\tnull\t1970-01-03T00:00:00.000000Z
                         HYRX\tnull\tnull\tnull\tnull\tnull\tnull\t1970-01-03T00:00:00.000000Z
-                        \t76.64256753596138\t55.224937\t326010667\t-5741\t8\t7392877322819819290\t1970-01-03T03:00:00.000000Z
-                        CPSW\t13.450170570900255\t34.35685\t410717394\t18229\t10\t6820495939660535106\t1970-01-03T03:00:00.000000Z
                         PEHN\t15.786635599554755\t12.50304\t264240638\t-7976\t6\t-8480005421611953360\t1970-01-03T03:00:00.000000Z
+                        CPSW\t13.450170570900255\t34.35685\t410717394\t18229\t10\t6820495939660535106\t1970-01-03T03:00:00.000000Z
+                        \t76.64256753596138\t55.224937\t326010667\t-5741\t8\t7392877322819819290\t1970-01-03T03:00:00.000000Z
                         RXGZ\tnull\tnull\tnull\tnull\tnull\tnull\t1970-01-03T03:00:00.000000Z
                         HYRX\tnull\tnull\tnull\tnull\tnull\tnull\t1970-01-03T03:00:00.000000Z
                         \t85.05940141744613\t92.16078\t301655269\t-14676\t12\t-2937111954994403426\t1970-01-03T06:00:00.000000Z
-                        CPSW\tnull\tnull\tnull\tnull\tnull\tnull\t1970-01-03T06:00:00.000000Z
                         PEHN\t86.64158914718531\t88.374214\t1566901076\t-3017\t3\t-5028301966399563827\t1970-01-03T06:00:00.000000Z
+                        CPSW\tnull\tnull\tnull\tnull\tnull\tnull\t1970-01-03T06:00:00.000000Z
                         RXGZ\tnull\tnull\tnull\tnull\tnull\tnull\t1970-01-03T06:00:00.000000Z
                         HYRX\tnull\tnull\tnull\tnull\tnull\tnull\t1970-01-03T06:00:00.000000Z
                         \t106.78118249687527\t103.1198\t3029605432\t-2372\t12\t-1162868573414266742\t1970-01-03T09:00:00.000000Z
+                        RXGZ\t3.831785863680992\t42.02044\t1254404167\t1756\t5\t8702525427024484485\t1970-01-03T09:00:00.000000Z
                         CPSW\tnull\tnull\tnull\tnull\tnull\tnull\t1970-01-03T09:00:00.000000Z
                         PEHN\tnull\tnull\tnull\tnull\tnull\tnull\t1970-01-03T09:00:00.000000Z
-                        RXGZ\t3.831785863680992\t42.02044\t1254404167\t1756\t5\t8702525427024484485\t1970-01-03T09:00:00.000000Z
                         HYRX\tnull\tnull\tnull\tnull\tnull\tnull\t1970-01-03T09:00:00.000000Z
                         \t117.60937843256664\t189.81728\t3717804370\t-27064\t17\t2215137494070785317\t1970-01-03T12:00:00.000000Z
+                        HYRX\t24.008362859107102\t76.57837\t2111250190\t-13252\t8\t7973684666911773753\t1970-01-03T12:00:00.000000Z
                         CPSW\tnull\tnull\tnull\tnull\tnull\tnull\t1970-01-03T12:00:00.000000Z
                         PEHN\tnull\tnull\tnull\tnull\tnull\tnull\t1970-01-03T12:00:00.000000Z
                         RXGZ\tnull\tnull\tnull\tnull\tnull\tnull\t1970-01-03T12:00:00.000000Z
-                        HYRX\t24.008362859107102\t76.57837\t2111250190\t-13252\t8\t7973684666911773753\t1970-01-03T12:00:00.000000Z
+                        HYRX\t2.6836863013701473\t10.643042\t502711083\t-8221\t9\t-7709579215942154242\t1970-01-03T15:00:00.000000Z
                         \t28.087836621126815\t139.30695\t2587989045\t11751\t17\t-8594661640328306402\t1970-01-03T15:00:00.000000Z
                         CPSW\tnull\tnull\tnull\tnull\tnull\tnull\t1970-01-03T15:00:00.000000Z
                         PEHN\tnull\tnull\tnull\tnull\tnull\tnull\t1970-01-03T15:00:00.000000Z
                         RXGZ\tnull\tnull\tnull\tnull\tnull\tnull\t1970-01-03T15:00:00.000000Z
-                        HYRX\t2.6836863013701473\t10.643042\t502711083\t-8221\t9\t-7709579215942154242\t1970-01-03T15:00:00.000000Z
                         \t75.17160551750754\t120.51888\t2362241402\t514\t11\t-2863260545700031392\t1970-01-03T18:00:00.000000Z
                         CPSW\tnull\tnull\tnull\tnull\tnull\tnull\t1970-01-03T18:00:00.000000Z
                         PEHN\tnull\tnull\tnull\tnull\tnull\tnull\t1970-01-03T18:00:00.000000Z
@@ -11207,9 +11199,9 @@ public class SampleByTest extends AbstractCairoTest {
                         FLOP\tnull\tnull\tnull\tnull\tnull\tnull\t1970-01-03T00:00:00.000000Z
                         WVDK\tnull\tnull\tnull\tnull\tnull\tnull\t1970-01-03T00:00:00.000000Z
                         JOXP\tnull\tnull\tnull\tnull\tnull\tnull\t1970-01-03T00:00:00.000000Z
-                        \t76.64256753596138\t55.224937\t326010667\t-5741\t8\t7392877322819819290\t1970-01-03T03:00:00.000000Z
-                        CPSW\t13.450170570900255\t34.35685\t410717394\t18229\t10\t6820495939660535106\t1970-01-03T03:00:00.000000Z
                         PEHN\t15.786635599554755\t12.50304\t264240638\t-7976\t6\t-8480005421611953360\t1970-01-03T03:00:00.000000Z
+                        CPSW\t13.450170570900255\t34.35685\t410717394\t18229\t10\t6820495939660535106\t1970-01-03T03:00:00.000000Z
+                        \t76.64256753596138\t55.224937\t326010667\t-5741\t8\t7392877322819819290\t1970-01-03T03:00:00.000000Z
                         RXGZ\tnull\tnull\tnull\tnull\tnull\tnull\t1970-01-03T03:00:00.000000Z
                         HYRX\tnull\tnull\tnull\tnull\tnull\tnull\t1970-01-03T03:00:00.000000Z
                         EZGH\tnull\tnull\tnull\tnull\tnull\tnull\t1970-01-03T03:00:00.000000Z
@@ -11217,8 +11209,8 @@ public class SampleByTest extends AbstractCairoTest {
                         WVDK\tnull\tnull\tnull\tnull\tnull\tnull\t1970-01-03T03:00:00.000000Z
                         JOXP\tnull\tnull\tnull\tnull\tnull\tnull\t1970-01-03T03:00:00.000000Z
                         \t85.05940141744613\t92.16078\t301655269\t-14676\t12\t-2937111954994403426\t1970-01-03T06:00:00.000000Z
-                        CPSW\tnull\tnull\tnull\tnull\tnull\tnull\t1970-01-03T06:00:00.000000Z
                         PEHN\t86.64158914718531\t88.374214\t1566901076\t-3017\t3\t-5028301966399563827\t1970-01-03T06:00:00.000000Z
+                        CPSW\tnull\tnull\tnull\tnull\tnull\tnull\t1970-01-03T06:00:00.000000Z
                         RXGZ\tnull\tnull\tnull\tnull\tnull\tnull\t1970-01-03T06:00:00.000000Z
                         HYRX\tnull\tnull\tnull\tnull\tnull\tnull\t1970-01-03T06:00:00.000000Z
                         EZGH\tnull\tnull\tnull\tnull\tnull\tnull\t1970-01-03T06:00:00.000000Z
@@ -11226,28 +11218,28 @@ public class SampleByTest extends AbstractCairoTest {
                         WVDK\tnull\tnull\tnull\tnull\tnull\tnull\t1970-01-03T06:00:00.000000Z
                         JOXP\tnull\tnull\tnull\tnull\tnull\tnull\t1970-01-03T06:00:00.000000Z
                         \t106.78118249687527\t103.1198\t3029605432\t-2372\t12\t-1162868573414266742\t1970-01-03T09:00:00.000000Z
+                        RXGZ\t3.831785863680992\t42.02044\t1254404167\t1756\t5\t8702525427024484485\t1970-01-03T09:00:00.000000Z
                         CPSW\tnull\tnull\tnull\tnull\tnull\tnull\t1970-01-03T09:00:00.000000Z
                         PEHN\tnull\tnull\tnull\tnull\tnull\tnull\t1970-01-03T09:00:00.000000Z
-                        RXGZ\t3.831785863680992\t42.02044\t1254404167\t1756\t5\t8702525427024484485\t1970-01-03T09:00:00.000000Z
                         HYRX\tnull\tnull\tnull\tnull\tnull\tnull\t1970-01-03T09:00:00.000000Z
                         EZGH\tnull\tnull\tnull\tnull\tnull\tnull\t1970-01-03T09:00:00.000000Z
                         FLOP\tnull\tnull\tnull\tnull\tnull\tnull\t1970-01-03T09:00:00.000000Z
                         WVDK\tnull\tnull\tnull\tnull\tnull\tnull\t1970-01-03T09:00:00.000000Z
                         JOXP\tnull\tnull\tnull\tnull\tnull\tnull\t1970-01-03T09:00:00.000000Z
                         \t117.60937843256664\t189.81728\t3717804370\t-27064\t17\t2215137494070785317\t1970-01-03T12:00:00.000000Z
+                        HYRX\t24.008362859107102\t76.57837\t2111250190\t-13252\t8\t7973684666911773753\t1970-01-03T12:00:00.000000Z
                         CPSW\tnull\tnull\tnull\tnull\tnull\tnull\t1970-01-03T12:00:00.000000Z
                         PEHN\tnull\tnull\tnull\tnull\tnull\tnull\t1970-01-03T12:00:00.000000Z
                         RXGZ\tnull\tnull\tnull\tnull\tnull\tnull\t1970-01-03T12:00:00.000000Z
-                        HYRX\t24.008362859107102\t76.57837\t2111250190\t-13252\t8\t7973684666911773753\t1970-01-03T12:00:00.000000Z
                         EZGH\tnull\tnull\tnull\tnull\tnull\tnull\t1970-01-03T12:00:00.000000Z
                         FLOP\tnull\tnull\tnull\tnull\tnull\tnull\t1970-01-03T12:00:00.000000Z
                         WVDK\tnull\tnull\tnull\tnull\tnull\tnull\t1970-01-03T12:00:00.000000Z
                         JOXP\tnull\tnull\tnull\tnull\tnull\tnull\t1970-01-03T12:00:00.000000Z
+                        HYRX\t2.6836863013701473\t10.643042\t502711083\t-8221\t9\t-7709579215942154242\t1970-01-03T15:00:00.000000Z
                         \t28.087836621126815\t139.30695\t2587989045\t11751\t17\t-8594661640328306402\t1970-01-03T15:00:00.000000Z
                         CPSW\tnull\tnull\tnull\tnull\tnull\tnull\t1970-01-03T15:00:00.000000Z
                         PEHN\tnull\tnull\tnull\tnull\tnull\tnull\t1970-01-03T15:00:00.000000Z
                         RXGZ\tnull\tnull\tnull\tnull\tnull\tnull\t1970-01-03T15:00:00.000000Z
-                        HYRX\t2.6836863013701473\t10.643042\t502711083\t-8221\t9\t-7709579215942154242\t1970-01-03T15:00:00.000000Z
                         EZGH\tnull\tnull\tnull\tnull\tnull\tnull\t1970-01-03T15:00:00.000000Z
                         FLOP\tnull\tnull\tnull\tnull\tnull\tnull\t1970-01-03T15:00:00.000000Z
                         WVDK\tnull\tnull\tnull\tnull\tnull\tnull\t1970-01-03T15:00:00.000000Z
@@ -11288,15 +11280,16 @@ public class SampleByTest extends AbstractCairoTest {
                         FLOP\tnull\tnull\tnull\tnull\tnull\tnull\t1970-01-04T03:00:00.000000Z
                         WVDK\tnull\tnull\tnull\tnull\tnull\tnull\t1970-01-04T03:00:00.000000Z
                         JOXP\tnull\tnull\tnull\tnull\tnull\tnull\t1970-01-04T03:00:00.000000Z
+                        EZGH\t5.0246156790690115\t38.422543\t370796356\t5422\t3\t4959459375462458218\t1970-01-04T06:00:00.000000Z
+                        FLOP\t17.180291960857296\t5.158454\t532016913\t-3028\t7\t2282781332678491916\t1970-01-04T06:00:00.000000Z
+                        WVDK\t54.66900921405317\t35.681107\t874367915\t-23001\t10\t9089874911309539983\t1970-01-04T06:00:00.000000Z
                         \tnull\tnull\tnull\tnull\tnull\tnull\t1970-01-04T06:00:00.000000Z
                         CPSW\tnull\tnull\tnull\tnull\tnull\tnull\t1970-01-04T06:00:00.000000Z
                         PEHN\tnull\tnull\tnull\tnull\tnull\tnull\t1970-01-04T06:00:00.000000Z
                         RXGZ\tnull\tnull\tnull\tnull\tnull\tnull\t1970-01-04T06:00:00.000000Z
                         HYRX\tnull\tnull\tnull\tnull\tnull\tnull\t1970-01-04T06:00:00.000000Z
-                        EZGH\t5.0246156790690115\t38.422543\t370796356\t5422\t3\t4959459375462458218\t1970-01-04T06:00:00.000000Z
-                        FLOP\t17.180291960857296\t5.158454\t532016913\t-3028\t7\t2282781332678491916\t1970-01-04T06:00:00.000000Z
-                        WVDK\t54.66900921405317\t35.681107\t874367915\t-23001\t10\t9089874911309539983\t1970-01-04T06:00:00.000000Z
                         JOXP\tnull\tnull\tnull\tnull\tnull\tnull\t1970-01-04T06:00:00.000000Z
+                        JOXP\t67.29405590773638\t76.06252\t1165635863\t2316\t9\t-4547802916868961458\t1970-01-04T09:00:00.000000Z
                         \tnull\tnull\tnull\tnull\tnull\tnull\t1970-01-04T09:00:00.000000Z
                         CPSW\tnull\tnull\tnull\tnull\tnull\tnull\t1970-01-04T09:00:00.000000Z
                         PEHN\tnull\tnull\tnull\tnull\tnull\tnull\t1970-01-04T09:00:00.000000Z
@@ -11305,7 +11298,6 @@ public class SampleByTest extends AbstractCairoTest {
                         EZGH\tnull\tnull\tnull\tnull\tnull\tnull\t1970-01-04T09:00:00.000000Z
                         FLOP\tnull\tnull\tnull\tnull\tnull\tnull\t1970-01-04T09:00:00.000000Z
                         WVDK\tnull\tnull\tnull\tnull\tnull\tnull\t1970-01-04T09:00:00.000000Z
-                        JOXP\t67.29405590773638\t76.06252\t1165635863\t2316\t9\t-4547802916868961458\t1970-01-04T09:00:00.000000Z
                         """,
                 false
         );
@@ -11700,30 +11692,30 @@ public class SampleByTest extends AbstractCairoTest {
                         RXGZ\t23.90529010846525\t1970-01-03T00:00:00.000000Z
                         PEHN\tnull\t1970-01-03T00:00:00.000000Z
                         HYRX\tnull\t1970-01-03T00:00:00.000000Z
+                        PEHN\t70.94360487171201\t1970-01-03T03:00:00.000000Z
                         \t120.87811633071126\t1970-01-03T03:00:00.000000Z
                         VTJW\tnull\t1970-01-03T03:00:00.000000Z
                         RXGZ\tnull\t1970-01-03T03:00:00.000000Z
-                        PEHN\t70.94360487171201\t1970-01-03T03:00:00.000000Z
                         HYRX\tnull\t1970-01-03T03:00:00.000000Z
+                        HYRX\t97.71103146051203\t1970-01-03T06:00:00.000000Z
+                        PEHN\t81.46807944500559\t1970-01-03T06:00:00.000000Z
                         \t57.93466326862211\t1970-01-03T06:00:00.000000Z
                         VTJW\tnull\t1970-01-03T06:00:00.000000Z
                         RXGZ\tnull\t1970-01-03T06:00:00.000000Z
-                        PEHN\t81.46807944500559\t1970-01-03T06:00:00.000000Z
-                        HYRX\t97.71103146051203\t1970-01-03T06:00:00.000000Z
-                        \t26.922103479744898\t1970-01-03T09:00:00.000000Z
+                        HYRX\t12.026122412833129\t1970-01-03T09:00:00.000000Z
                         VTJW\t48.820511018586934\t1970-01-03T09:00:00.000000Z
+                        \t26.922103479744898\t1970-01-03T09:00:00.000000Z
                         RXGZ\tnull\t1970-01-03T09:00:00.000000Z
                         PEHN\tnull\t1970-01-03T09:00:00.000000Z
-                        HYRX\t12.026122412833129\t1970-01-03T09:00:00.000000Z
                         \t150.48604795487125\t1970-01-03T12:00:00.000000Z
+                        PEHN\t84.45258177211063\t1970-01-03T12:00:00.000000Z
                         VTJW\tnull\t1970-01-03T12:00:00.000000Z
                         RXGZ\tnull\t1970-01-03T12:00:00.000000Z
-                        PEHN\t84.45258177211063\t1970-01-03T12:00:00.000000Z
                         HYRX\tnull\t1970-01-03T12:00:00.000000Z
+                        PEHN\t49.00510449885239\t1970-01-03T15:00:00.000000Z
                         \t172.06125086724973\t1970-01-03T15:00:00.000000Z
                         VTJW\tnull\t1970-01-03T15:00:00.000000Z
                         RXGZ\tnull\t1970-01-03T15:00:00.000000Z
-                        PEHN\t49.00510449885239\t1970-01-03T15:00:00.000000Z
                         HYRX\tnull\t1970-01-03T15:00:00.000000Z
                         \t86.08992670884706\t1970-01-03T18:00:00.000000Z
                         VTJW\tnull\t1970-01-03T18:00:00.000000Z
@@ -11759,38 +11751,38 @@ public class SampleByTest extends AbstractCairoTest {
                         HYRX\tnull\t1970-01-03T00:00:00.000000Z
                         UVSD\tnull\t1970-01-03T00:00:00.000000Z
                         KGHV\tnull\t1970-01-03T00:00:00.000000Z
+                        PEHN\t70.94360487171201\t1970-01-03T03:00:00.000000Z
                         \t120.87811633071126\t1970-01-03T03:00:00.000000Z
                         VTJW\tnull\t1970-01-03T03:00:00.000000Z
                         RXGZ\tnull\t1970-01-03T03:00:00.000000Z
-                        PEHN\t70.94360487171201\t1970-01-03T03:00:00.000000Z
                         HYRX\tnull\t1970-01-03T03:00:00.000000Z
                         UVSD\tnull\t1970-01-03T03:00:00.000000Z
                         KGHV\tnull\t1970-01-03T03:00:00.000000Z
+                        HYRX\t97.71103146051203\t1970-01-03T06:00:00.000000Z
+                        PEHN\t81.46807944500559\t1970-01-03T06:00:00.000000Z
                         \t57.93466326862211\t1970-01-03T06:00:00.000000Z
                         VTJW\tnull\t1970-01-03T06:00:00.000000Z
                         RXGZ\tnull\t1970-01-03T06:00:00.000000Z
-                        PEHN\t81.46807944500559\t1970-01-03T06:00:00.000000Z
-                        HYRX\t97.71103146051203\t1970-01-03T06:00:00.000000Z
                         UVSD\tnull\t1970-01-03T06:00:00.000000Z
                         KGHV\tnull\t1970-01-03T06:00:00.000000Z
-                        \t26.922103479744898\t1970-01-03T09:00:00.000000Z
+                        HYRX\t12.026122412833129\t1970-01-03T09:00:00.000000Z
                         VTJW\t48.820511018586934\t1970-01-03T09:00:00.000000Z
+                        \t26.922103479744898\t1970-01-03T09:00:00.000000Z
                         RXGZ\tnull\t1970-01-03T09:00:00.000000Z
                         PEHN\tnull\t1970-01-03T09:00:00.000000Z
-                        HYRX\t12.026122412833129\t1970-01-03T09:00:00.000000Z
                         UVSD\tnull\t1970-01-03T09:00:00.000000Z
                         KGHV\tnull\t1970-01-03T09:00:00.000000Z
                         \t150.48604795487125\t1970-01-03T12:00:00.000000Z
+                        PEHN\t84.45258177211063\t1970-01-03T12:00:00.000000Z
                         VTJW\tnull\t1970-01-03T12:00:00.000000Z
                         RXGZ\tnull\t1970-01-03T12:00:00.000000Z
-                        PEHN\t84.45258177211063\t1970-01-03T12:00:00.000000Z
                         HYRX\tnull\t1970-01-03T12:00:00.000000Z
                         UVSD\tnull\t1970-01-03T12:00:00.000000Z
                         KGHV\tnull\t1970-01-03T12:00:00.000000Z
+                        PEHN\t49.00510449885239\t1970-01-03T15:00:00.000000Z
                         \t172.06125086724973\t1970-01-03T15:00:00.000000Z
                         VTJW\tnull\t1970-01-03T15:00:00.000000Z
                         RXGZ\tnull\t1970-01-03T15:00:00.000000Z
-                        PEHN\t49.00510449885239\t1970-01-03T15:00:00.000000Z
                         HYRX\tnull\t1970-01-03T15:00:00.000000Z
                         UVSD\tnull\t1970-01-03T15:00:00.000000Z
                         KGHV\tnull\t1970-01-03T15:00:00.000000Z
@@ -11823,19 +11815,19 @@ public class SampleByTest extends AbstractCairoTest {
                         UVSD\tnull\t1970-01-04T03:00:00.000000Z
                         KGHV\tnull\t1970-01-04T03:00:00.000000Z
                         \t135.835983782176\t1970-01-04T06:00:00.000000Z
+                        UVSD\t49.42890511958454\t1970-01-04T06:00:00.000000Z
                         VTJW\tnull\t1970-01-04T06:00:00.000000Z
                         RXGZ\tnull\t1970-01-04T06:00:00.000000Z
                         PEHN\tnull\t1970-01-04T06:00:00.000000Z
                         HYRX\tnull\t1970-01-04T06:00:00.000000Z
-                        UVSD\t49.42890511958454\t1970-01-04T06:00:00.000000Z
                         KGHV\tnull\t1970-01-04T06:00:00.000000Z
+                        KGHV\t67.52509547112409\t1970-01-04T09:00:00.000000Z
                         \tnull\t1970-01-04T09:00:00.000000Z
                         VTJW\tnull\t1970-01-04T09:00:00.000000Z
                         RXGZ\tnull\t1970-01-04T09:00:00.000000Z
                         PEHN\tnull\t1970-01-04T09:00:00.000000Z
                         HYRX\tnull\t1970-01-04T09:00:00.000000Z
                         UVSD\tnull\t1970-01-04T09:00:00.000000Z
-                        KGHV\t67.52509547112409\t1970-01-04T09:00:00.000000Z
                         """,
                 false
         );
@@ -11854,15 +11846,15 @@ public class SampleByTest extends AbstractCairoTest {
                         RXGZ\tnull\t2021-11-06T18:00:00.000000Z
                         PEHN\tnull\t2021-11-06T18:00:00.000000Z
                         HYRX\tnull\t2021-11-06T18:00:00.000000Z
-                        \tnull\t2021-11-06T19:00:00.000000Z
                         VTJW\t42.17768841969397\t2021-11-06T19:00:00.000000Z
                         RXGZ\t23.90529010846525\t2021-11-06T19:00:00.000000Z
+                        \tnull\t2021-11-06T19:00:00.000000Z
                         PEHN\tnull\t2021-11-06T19:00:00.000000Z
                         HYRX\tnull\t2021-11-06T19:00:00.000000Z
+                        PEHN\t70.94360487171201\t2021-11-06T20:00:00.000000Z
                         \tnull\t2021-11-06T20:00:00.000000Z
                         VTJW\tnull\t2021-11-06T20:00:00.000000Z
                         RXGZ\tnull\t2021-11-06T20:00:00.000000Z
-                        PEHN\t70.94360487171201\t2021-11-06T20:00:00.000000Z
                         HYRX\tnull\t2021-11-06T20:00:00.000000Z
                         \t87.99634725391621\t2021-11-06T21:00:00.000000Z
                         VTJW\tnull\t2021-11-06T21:00:00.000000Z
@@ -11874,23 +11866,28 @@ public class SampleByTest extends AbstractCairoTest {
                         RXGZ\tnull\t2021-11-06T22:00:00.000000Z
                         PEHN\tnull\t2021-11-06T22:00:00.000000Z
                         HYRX\tnull\t2021-11-06T22:00:00.000000Z
+                        HYRX\t97.71103146051203\t2021-11-06T23:00:00.000000Z
                         \tnull\t2021-11-06T23:00:00.000000Z
                         VTJW\tnull\t2021-11-06T23:00:00.000000Z
                         RXGZ\tnull\t2021-11-06T23:00:00.000000Z
                         PEHN\tnull\t2021-11-06T23:00:00.000000Z
-                        HYRX\t97.71103146051203\t2021-11-06T23:00:00.000000Z
+                        PEHN\t81.46807944500559\t2021-11-07T00:00:00.000000Z
                         \tnull\t2021-11-07T00:00:00.000000Z
                         VTJW\tnull\t2021-11-07T00:00:00.000000Z
                         RXGZ\tnull\t2021-11-07T00:00:00.000000Z
-                        PEHN\t81.46807944500559\t2021-11-07T00:00:00.000000Z
                         HYRX\tnull\t2021-11-07T00:00:00.000000Z
-                        \tnull\t2021-11-07T01:00:00.000000Z
+                        \t57.93466326862211\t2021-11-07T01:00:00.000000Z
+                        HYRX\t12.026122412833129\t2021-11-07T01:00:00.000000Z
                         VTJW\tnull\t2021-11-07T01:00:00.000000Z
                         RXGZ\tnull\t2021-11-07T01:00:00.000000Z
-                        PEHN\t81.46807944500559\t2021-11-07T01:00:00.000000Z
+                        PEHN\tnull\t2021-11-07T01:00:00.000000Z
+                        VTJW\t48.820511018586934\t2021-11-07T01:00:00.000000Z
+                        \tnull\t2021-11-07T01:00:00.000000Z
+                        RXGZ\tnull\t2021-11-07T01:00:00.000000Z
+                        PEHN\tnull\t2021-11-07T01:00:00.000000Z
                         HYRX\tnull\t2021-11-07T01:00:00.000000Z
                         \t26.922103479744898\t2021-11-07T02:00:00.000000Z
-                        VTJW\t48.820511018586934\t2021-11-07T02:00:00.000000Z
+                        VTJW\tnull\t2021-11-07T02:00:00.000000Z
                         RXGZ\tnull\t2021-11-07T02:00:00.000000Z
                         PEHN\tnull\t2021-11-07T02:00:00.000000Z
                         HYRX\tnull\t2021-11-07T02:00:00.000000Z
@@ -11899,20 +11896,20 @@ public class SampleByTest extends AbstractCairoTest {
                         RXGZ\tnull\t2021-11-07T03:00:00.000000Z
                         PEHN\tnull\t2021-11-07T03:00:00.000000Z
                         HYRX\tnull\t2021-11-07T03:00:00.000000Z
+                        PEHN\t84.45258177211063\t2021-11-07T04:00:00.000000Z
                         \tnull\t2021-11-07T04:00:00.000000Z
                         VTJW\tnull\t2021-11-07T04:00:00.000000Z
                         RXGZ\tnull\t2021-11-07T04:00:00.000000Z
-                        PEHN\t84.45258177211063\t2021-11-07T04:00:00.000000Z
                         HYRX\tnull\t2021-11-07T04:00:00.000000Z
                         \t97.5019885372507\t2021-11-07T05:00:00.000000Z
                         VTJW\tnull\t2021-11-07T05:00:00.000000Z
                         RXGZ\tnull\t2021-11-07T05:00:00.000000Z
                         PEHN\tnull\t2021-11-07T05:00:00.000000Z
                         HYRX\tnull\t2021-11-07T05:00:00.000000Z
+                        PEHN\t49.00510449885239\t2021-11-07T06:00:00.000000Z
                         \t80.01121139739173\t2021-11-07T06:00:00.000000Z
                         VTJW\tnull\t2021-11-07T06:00:00.000000Z
                         RXGZ\tnull\t2021-11-07T06:00:00.000000Z
-                        PEHN\t49.00510449885239\t2021-11-07T06:00:00.000000Z
                         HYRX\tnull\t2021-11-07T06:00:00.000000Z
                         \t92.050039469858\t2021-11-07T07:00:00.000000Z
                         VTJW\tnull\t2021-11-07T07:00:00.000000Z
@@ -11977,9 +11974,9 @@ public class SampleByTest extends AbstractCairoTest {
                         PEHN\t0\t2021-11-06T21:00:00.000000Z
                         CPSW\t0\t2021-11-06T21:00:00.000000Z
                         HYRX\t0\t2021-11-06T21:00:00.000000Z
+                        RXGZ\t93\t2021-11-06T22:00:00.000000Z
                         \t0\t2021-11-06T22:00:00.000000Z
                         VTJW\t0\t2021-11-06T22:00:00.000000Z
-                        RXGZ\t93\t2021-11-06T22:00:00.000000Z
                         PEHN\t0\t2021-11-06T22:00:00.000000Z
                         CPSW\t0\t2021-11-06T22:00:00.000000Z
                         HYRX\t0\t2021-11-06T22:00:00.000000Z
@@ -11989,32 +11986,38 @@ public class SampleByTest extends AbstractCairoTest {
                         PEHN\t0\t2021-11-06T23:00:00.000000Z
                         CPSW\t0\t2021-11-06T23:00:00.000000Z
                         HYRX\t0\t2021-11-06T23:00:00.000000Z
+                        PEHN\t117\t2021-11-07T00:00:00.000000Z
                         \t0\t2021-11-07T00:00:00.000000Z
                         VTJW\t0\t2021-11-07T00:00:00.000000Z
                         RXGZ\t0\t2021-11-07T00:00:00.000000Z
-                        PEHN\t117\t2021-11-07T00:00:00.000000Z
                         CPSW\t0\t2021-11-07T00:00:00.000000Z
                         HYRX\t0\t2021-11-07T00:00:00.000000Z
+                        PEHN\t120\t2021-11-07T01:00:00.000000Z
+                        CPSW\t31\t2021-11-07T01:00:00.000000Z
                         \t0\t2021-11-07T01:00:00.000000Z
+                        VTJW\t0\t2021-11-07T01:00:00.000000Z
+                        RXGZ\t0\t2021-11-07T01:00:00.000000Z
+                        HYRX\t0\t2021-11-07T01:00:00.000000Z
+                        \t26\t2021-11-07T01:00:00.000000Z
                         VTJW\t0\t2021-11-07T01:00:00.000000Z
                         RXGZ\t0\t2021-11-07T01:00:00.000000Z
                         PEHN\t0\t2021-11-07T01:00:00.000000Z
                         CPSW\t0\t2021-11-07T01:00:00.000000Z
                         HYRX\t0\t2021-11-07T01:00:00.000000Z
-                        \t26\t2021-11-07T02:00:00.000000Z
+                        \t24\t2021-11-07T02:00:00.000000Z
                         VTJW\t0\t2021-11-07T02:00:00.000000Z
                         RXGZ\t0\t2021-11-07T02:00:00.000000Z
                         PEHN\t0\t2021-11-07T02:00:00.000000Z
                         CPSW\t0\t2021-11-07T02:00:00.000000Z
                         HYRX\t0\t2021-11-07T02:00:00.000000Z
+                        HYRX\t26\t2021-11-07T03:00:00.000000Z
                         \t0\t2021-11-07T03:00:00.000000Z
                         VTJW\t0\t2021-11-07T03:00:00.000000Z
                         RXGZ\t0\t2021-11-07T03:00:00.000000Z
                         PEHN\t0\t2021-11-07T03:00:00.000000Z
                         CPSW\t0\t2021-11-07T03:00:00.000000Z
-                        HYRX\t26\t2021-11-07T03:00:00.000000Z
-                        \t0\t2021-11-07T04:00:00.000000Z
                         VTJW\t119\t2021-11-07T04:00:00.000000Z
+                        \t0\t2021-11-07T04:00:00.000000Z
                         RXGZ\t0\t2021-11-07T04:00:00.000000Z
                         PEHN\t0\t2021-11-07T04:00:00.000000Z
                         CPSW\t0\t2021-11-07T04:00:00.000000Z
@@ -12025,20 +12028,20 @@ public class SampleByTest extends AbstractCairoTest {
                         PEHN\t0\t2021-11-07T05:00:00.000000Z
                         CPSW\t0\t2021-11-07T05:00:00.000000Z
                         HYRX\t0\t2021-11-07T05:00:00.000000Z
+                        PEHN\t103\t2021-11-07T06:00:00.000000Z
+                        CPSW\t103\t2021-11-07T06:00:00.000000Z
                         \t0\t2021-11-07T06:00:00.000000Z
                         VTJW\t0\t2021-11-07T06:00:00.000000Z
                         RXGZ\t0\t2021-11-07T06:00:00.000000Z
-                        PEHN\t103\t2021-11-07T06:00:00.000000Z
-                        CPSW\t103\t2021-11-07T06:00:00.000000Z
                         HYRX\t0\t2021-11-07T06:00:00.000000Z
+                        HYRX\t70\t2021-11-07T07:00:00.000000Z
                         \t0\t2021-11-07T07:00:00.000000Z
                         VTJW\t0\t2021-11-07T07:00:00.000000Z
                         RXGZ\t0\t2021-11-07T07:00:00.000000Z
                         PEHN\t0\t2021-11-07T07:00:00.000000Z
                         CPSW\t0\t2021-11-07T07:00:00.000000Z
-                        HYRX\t70\t2021-11-07T07:00:00.000000Z
-                        \t0\t2021-11-07T08:00:00.000000Z
                         VTJW\t122\t2021-11-07T08:00:00.000000Z
+                        \t0\t2021-11-07T08:00:00.000000Z
                         RXGZ\t0\t2021-11-07T08:00:00.000000Z
                         PEHN\t0\t2021-11-07T08:00:00.000000Z
                         CPSW\t0\t2021-11-07T08:00:00.000000Z
@@ -12097,9 +12100,9 @@ public class SampleByTest extends AbstractCairoTest {
                         PEHN\tnull\t2021-11-06T21:00:00.000000Z
                         CPSW\tnull\t2021-11-06T21:00:00.000000Z
                         HYRX\tnull\t2021-11-06T21:00:00.000000Z
+                        RXGZ\t0.6276954\t2021-11-06T22:00:00.000000Z
                         \tnull\t2021-11-06T22:00:00.000000Z
                         VTJW\tnull\t2021-11-06T22:00:00.000000Z
-                        RXGZ\t0.6276954\t2021-11-06T22:00:00.000000Z
                         PEHN\tnull\t2021-11-06T22:00:00.000000Z
                         CPSW\tnull\t2021-11-06T22:00:00.000000Z
                         HYRX\tnull\t2021-11-06T22:00:00.000000Z
@@ -12109,32 +12112,38 @@ public class SampleByTest extends AbstractCairoTest {
                         PEHN\tnull\t2021-11-06T23:00:00.000000Z
                         CPSW\tnull\t2021-11-06T23:00:00.000000Z
                         HYRX\tnull\t2021-11-06T23:00:00.000000Z
+                        PEHN\t0.31005454\t2021-11-07T00:00:00.000000Z
                         \tnull\t2021-11-07T00:00:00.000000Z
                         VTJW\tnull\t2021-11-07T00:00:00.000000Z
                         RXGZ\tnull\t2021-11-07T00:00:00.000000Z
-                        PEHN\t0.31005454\t2021-11-07T00:00:00.000000Z
                         CPSW\tnull\t2021-11-07T00:00:00.000000Z
                         HYRX\tnull\t2021-11-07T00:00:00.000000Z
+                        PEHN\t0.19855815\t2021-11-07T01:00:00.000000Z
+                        CPSW\t0.33608252\t2021-11-07T01:00:00.000000Z
                         \tnull\t2021-11-07T01:00:00.000000Z
+                        VTJW\tnull\t2021-11-07T01:00:00.000000Z
+                        RXGZ\tnull\t2021-11-07T01:00:00.000000Z
+                        HYRX\tnull\t2021-11-07T01:00:00.000000Z
+                        \t0.69054043\t2021-11-07T01:00:00.000000Z
                         VTJW\tnull\t2021-11-07T01:00:00.000000Z
                         RXGZ\tnull\t2021-11-07T01:00:00.000000Z
                         PEHN\tnull\t2021-11-07T01:00:00.000000Z
                         CPSW\tnull\t2021-11-07T01:00:00.000000Z
                         HYRX\tnull\t2021-11-07T01:00:00.000000Z
-                        \t0.69054043\t2021-11-07T02:00:00.000000Z
+                        \t0.021651804\t2021-11-07T02:00:00.000000Z
                         VTJW\tnull\t2021-11-07T02:00:00.000000Z
                         RXGZ\tnull\t2021-11-07T02:00:00.000000Z
                         PEHN\tnull\t2021-11-07T02:00:00.000000Z
                         CPSW\tnull\t2021-11-07T02:00:00.000000Z
                         HYRX\tnull\t2021-11-07T02:00:00.000000Z
+                        HYRX\t0.21583223\t2021-11-07T03:00:00.000000Z
                         \tnull\t2021-11-07T03:00:00.000000Z
                         VTJW\tnull\t2021-11-07T03:00:00.000000Z
                         RXGZ\tnull\t2021-11-07T03:00:00.000000Z
                         PEHN\tnull\t2021-11-07T03:00:00.000000Z
                         CPSW\tnull\t2021-11-07T03:00:00.000000Z
-                        HYRX\t0.21583223\t2021-11-07T03:00:00.000000Z
-                        \tnull\t2021-11-07T04:00:00.000000Z
                         VTJW\t0.1578663\t2021-11-07T04:00:00.000000Z
+                        \tnull\t2021-11-07T04:00:00.000000Z
                         RXGZ\tnull\t2021-11-07T04:00:00.000000Z
                         PEHN\tnull\t2021-11-07T04:00:00.000000Z
                         CPSW\tnull\t2021-11-07T04:00:00.000000Z
@@ -12145,20 +12154,20 @@ public class SampleByTest extends AbstractCairoTest {
                         PEHN\tnull\t2021-11-07T05:00:00.000000Z
                         CPSW\tnull\t2021-11-07T05:00:00.000000Z
                         HYRX\tnull\t2021-11-07T05:00:00.000000Z
+                        PEHN\t0.1250304\t2021-11-07T06:00:00.000000Z
+                        CPSW\t0.90380687\t2021-11-07T06:00:00.000000Z
                         \tnull\t2021-11-07T06:00:00.000000Z
                         VTJW\tnull\t2021-11-07T06:00:00.000000Z
                         RXGZ\tnull\t2021-11-07T06:00:00.000000Z
-                        PEHN\t0.1250304\t2021-11-07T06:00:00.000000Z
-                        CPSW\t0.90380687\t2021-11-07T06:00:00.000000Z
                         HYRX\tnull\t2021-11-07T06:00:00.000000Z
+                        HYRX\t0.1345017\t2021-11-07T07:00:00.000000Z
                         \tnull\t2021-11-07T07:00:00.000000Z
                         VTJW\tnull\t2021-11-07T07:00:00.000000Z
                         RXGZ\tnull\t2021-11-07T07:00:00.000000Z
                         PEHN\tnull\t2021-11-07T07:00:00.000000Z
                         CPSW\tnull\t2021-11-07T07:00:00.000000Z
-                        HYRX\t0.1345017\t2021-11-07T07:00:00.000000Z
-                        \tnull\t2021-11-07T08:00:00.000000Z
                         VTJW\t0.8912587\t2021-11-07T08:00:00.000000Z
+                        \tnull\t2021-11-07T08:00:00.000000Z
                         RXGZ\tnull\t2021-11-07T08:00:00.000000Z
                         PEHN\tnull\t2021-11-07T08:00:00.000000Z
                         CPSW\tnull\t2021-11-07T08:00:00.000000Z
@@ -12217,9 +12226,9 @@ public class SampleByTest extends AbstractCairoTest {
                         PEHN\tnull\t2021-11-06T21:00:00.000000Z
                         CPSW\tnull\t2021-11-06T21:00:00.000000Z
                         HYRX\tnull\t2021-11-06T21:00:00.000000Z
+                        RXGZ\t-1520872171\t2021-11-06T22:00:00.000000Z
                         \tnull\t2021-11-06T22:00:00.000000Z
                         VTJW\tnull\t2021-11-06T22:00:00.000000Z
-                        RXGZ\t-1520872171\t2021-11-06T22:00:00.000000Z
                         PEHN\tnull\t2021-11-06T22:00:00.000000Z
                         CPSW\tnull\t2021-11-06T22:00:00.000000Z
                         HYRX\tnull\t2021-11-06T22:00:00.000000Z
@@ -12229,32 +12238,38 @@ public class SampleByTest extends AbstractCairoTest {
                         PEHN\tnull\t2021-11-06T23:00:00.000000Z
                         CPSW\tnull\t2021-11-06T23:00:00.000000Z
                         HYRX\tnull\t2021-11-06T23:00:00.000000Z
+                        PEHN\t-1125169127\t2021-11-07T00:00:00.000000Z
                         \tnull\t2021-11-07T00:00:00.000000Z
                         VTJW\tnull\t2021-11-07T00:00:00.000000Z
                         RXGZ\tnull\t2021-11-07T00:00:00.000000Z
-                        PEHN\t-1125169127\t2021-11-07T00:00:00.000000Z
                         CPSW\tnull\t2021-11-07T00:00:00.000000Z
                         HYRX\tnull\t2021-11-07T00:00:00.000000Z
+                        PEHN\t-1252906348\t2021-11-07T01:00:00.000000Z
+                        CPSW\t-2119387831\t2021-11-07T01:00:00.000000Z
                         \tnull\t2021-11-07T01:00:00.000000Z
+                        VTJW\tnull\t2021-11-07T01:00:00.000000Z
+                        RXGZ\tnull\t2021-11-07T01:00:00.000000Z
+                        HYRX\tnull\t2021-11-07T01:00:00.000000Z
+                        \t1110979454\t2021-11-07T01:00:00.000000Z
                         VTJW\tnull\t2021-11-07T01:00:00.000000Z
                         RXGZ\tnull\t2021-11-07T01:00:00.000000Z
                         PEHN\tnull\t2021-11-07T01:00:00.000000Z
                         CPSW\tnull\t2021-11-07T01:00:00.000000Z
                         HYRX\tnull\t2021-11-07T01:00:00.000000Z
-                        \t1110979454\t2021-11-07T02:00:00.000000Z
+                        \t-113506296\t2021-11-07T02:00:00.000000Z
                         VTJW\tnull\t2021-11-07T02:00:00.000000Z
                         RXGZ\tnull\t2021-11-07T02:00:00.000000Z
                         PEHN\tnull\t2021-11-07T02:00:00.000000Z
                         CPSW\tnull\t2021-11-07T02:00:00.000000Z
                         HYRX\tnull\t2021-11-07T02:00:00.000000Z
+                        HYRX\t-938514914\t2021-11-07T03:00:00.000000Z
                         \tnull\t2021-11-07T03:00:00.000000Z
                         VTJW\tnull\t2021-11-07T03:00:00.000000Z
                         RXGZ\tnull\t2021-11-07T03:00:00.000000Z
                         PEHN\tnull\t2021-11-07T03:00:00.000000Z
                         CPSW\tnull\t2021-11-07T03:00:00.000000Z
-                        HYRX\t-938514914\t2021-11-07T03:00:00.000000Z
-                        \tnull\t2021-11-07T04:00:00.000000Z
                         VTJW\t-303295973\t2021-11-07T04:00:00.000000Z
+                        \tnull\t2021-11-07T04:00:00.000000Z
                         RXGZ\tnull\t2021-11-07T04:00:00.000000Z
                         PEHN\tnull\t2021-11-07T04:00:00.000000Z
                         CPSW\tnull\t2021-11-07T04:00:00.000000Z
@@ -12265,20 +12280,20 @@ public class SampleByTest extends AbstractCairoTest {
                         PEHN\tnull\t2021-11-07T05:00:00.000000Z
                         CPSW\tnull\t2021-11-07T05:00:00.000000Z
                         HYRX\tnull\t2021-11-07T05:00:00.000000Z
+                        PEHN\t-27395319\t2021-11-07T06:00:00.000000Z
+                        CPSW\t-483853667\t2021-11-07T06:00:00.000000Z
                         \tnull\t2021-11-07T06:00:00.000000Z
                         VTJW\tnull\t2021-11-07T06:00:00.000000Z
                         RXGZ\tnull\t2021-11-07T06:00:00.000000Z
-                        PEHN\t-27395319\t2021-11-07T06:00:00.000000Z
-                        CPSW\t-483853667\t2021-11-07T06:00:00.000000Z
                         HYRX\tnull\t2021-11-07T06:00:00.000000Z
+                        HYRX\t-1272693194\t2021-11-07T07:00:00.000000Z
                         \tnull\t2021-11-07T07:00:00.000000Z
                         VTJW\tnull\t2021-11-07T07:00:00.000000Z
                         RXGZ\tnull\t2021-11-07T07:00:00.000000Z
                         PEHN\tnull\t2021-11-07T07:00:00.000000Z
                         CPSW\tnull\t2021-11-07T07:00:00.000000Z
-                        HYRX\t-1272693194\t2021-11-07T07:00:00.000000Z
-                        \tnull\t2021-11-07T08:00:00.000000Z
                         VTJW\t-2002373666\t2021-11-07T08:00:00.000000Z
+                        \tnull\t2021-11-07T08:00:00.000000Z
                         RXGZ\tnull\t2021-11-07T08:00:00.000000Z
                         PEHN\tnull\t2021-11-07T08:00:00.000000Z
                         CPSW\tnull\t2021-11-07T08:00:00.000000Z
@@ -12337,9 +12352,9 @@ public class SampleByTest extends AbstractCairoTest {
                         PEHN\t0\t2021-11-06T21:00:00.000000Z
                         CPSW\t0\t2021-11-06T21:00:00.000000Z
                         HYRX\t0\t2021-11-06T21:00:00.000000Z
+                        RXGZ\t21781\t2021-11-06T22:00:00.000000Z
                         \t0\t2021-11-06T22:00:00.000000Z
                         VTJW\t0\t2021-11-06T22:00:00.000000Z
-                        RXGZ\t21781\t2021-11-06T22:00:00.000000Z
                         PEHN\t0\t2021-11-06T22:00:00.000000Z
                         CPSW\t0\t2021-11-06T22:00:00.000000Z
                         HYRX\t0\t2021-11-06T22:00:00.000000Z
@@ -12349,32 +12364,38 @@ public class SampleByTest extends AbstractCairoTest {
                         PEHN\t0\t2021-11-06T23:00:00.000000Z
                         CPSW\t0\t2021-11-06T23:00:00.000000Z
                         HYRX\t0\t2021-11-06T23:00:00.000000Z
+                        PEHN\t18457\t2021-11-07T00:00:00.000000Z
                         \t0\t2021-11-07T00:00:00.000000Z
                         VTJW\t0\t2021-11-07T00:00:00.000000Z
                         RXGZ\t0\t2021-11-07T00:00:00.000000Z
-                        PEHN\t18457\t2021-11-07T00:00:00.000000Z
                         CPSW\t0\t2021-11-07T00:00:00.000000Z
                         HYRX\t0\t2021-11-07T00:00:00.000000Z
+                        PEHN\t10900\t2021-11-07T01:00:00.000000Z
+                        CPSW\t-19127\t2021-11-07T01:00:00.000000Z
                         \t0\t2021-11-07T01:00:00.000000Z
+                        VTJW\t0\t2021-11-07T01:00:00.000000Z
+                        RXGZ\t0\t2021-11-07T01:00:00.000000Z
+                        HYRX\t0\t2021-11-07T01:00:00.000000Z
+                        \t13182\t2021-11-07T01:00:00.000000Z
                         VTJW\t0\t2021-11-07T01:00:00.000000Z
                         RXGZ\t0\t2021-11-07T01:00:00.000000Z
                         PEHN\t0\t2021-11-07T01:00:00.000000Z
                         CPSW\t0\t2021-11-07T01:00:00.000000Z
                         HYRX\t0\t2021-11-07T01:00:00.000000Z
-                        \t13182\t2021-11-07T02:00:00.000000Z
+                        \t2056\t2021-11-07T02:00:00.000000Z
                         VTJW\t0\t2021-11-07T02:00:00.000000Z
                         RXGZ\t0\t2021-11-07T02:00:00.000000Z
                         PEHN\t0\t2021-11-07T02:00:00.000000Z
                         CPSW\t0\t2021-11-07T02:00:00.000000Z
                         HYRX\t0\t2021-11-07T02:00:00.000000Z
+                        HYRX\t26142\t2021-11-07T03:00:00.000000Z
                         \t0\t2021-11-07T03:00:00.000000Z
                         VTJW\t0\t2021-11-07T03:00:00.000000Z
                         RXGZ\t0\t2021-11-07T03:00:00.000000Z
                         PEHN\t0\t2021-11-07T03:00:00.000000Z
                         CPSW\t0\t2021-11-07T03:00:00.000000Z
-                        HYRX\t26142\t2021-11-07T03:00:00.000000Z
-                        \t0\t2021-11-07T04:00:00.000000Z
                         VTJW\t4635\t2021-11-07T04:00:00.000000Z
+                        \t0\t2021-11-07T04:00:00.000000Z
                         RXGZ\t0\t2021-11-07T04:00:00.000000Z
                         PEHN\t0\t2021-11-07T04:00:00.000000Z
                         CPSW\t0\t2021-11-07T04:00:00.000000Z
@@ -12385,20 +12406,20 @@ public class SampleByTest extends AbstractCairoTest {
                         PEHN\t0\t2021-11-07T05:00:00.000000Z
                         CPSW\t0\t2021-11-07T05:00:00.000000Z
                         HYRX\t0\t2021-11-07T05:00:00.000000Z
+                        PEHN\t-1271\t2021-11-07T06:00:00.000000Z
+                        CPSW\t-1379\t2021-11-07T06:00:00.000000Z
                         \t0\t2021-11-07T06:00:00.000000Z
                         VTJW\t0\t2021-11-07T06:00:00.000000Z
                         RXGZ\t0\t2021-11-07T06:00:00.000000Z
-                        PEHN\t-1271\t2021-11-07T06:00:00.000000Z
-                        CPSW\t-1379\t2021-11-07T06:00:00.000000Z
                         HYRX\t0\t2021-11-07T06:00:00.000000Z
+                        HYRX\t15926\t2021-11-07T07:00:00.000000Z
                         \t0\t2021-11-07T07:00:00.000000Z
                         VTJW\t0\t2021-11-07T07:00:00.000000Z
                         RXGZ\t0\t2021-11-07T07:00:00.000000Z
                         PEHN\t0\t2021-11-07T07:00:00.000000Z
                         CPSW\t0\t2021-11-07T07:00:00.000000Z
-                        HYRX\t15926\t2021-11-07T07:00:00.000000Z
-                        \t0\t2021-11-07T08:00:00.000000Z
                         VTJW\t13278\t2021-11-07T08:00:00.000000Z
+                        \t0\t2021-11-07T08:00:00.000000Z
                         RXGZ\t0\t2021-11-07T08:00:00.000000Z
                         PEHN\t0\t2021-11-07T08:00:00.000000Z
                         CPSW\t0\t2021-11-07T08:00:00.000000Z
@@ -12438,8 +12459,8 @@ public class SampleByTest extends AbstractCairoTest {
                         " from" +
                         " long_sequence(20)" +
                         ") timestamp(k) partition by NONE",
-                10,
-                "Unsupported type"
+                0,
+                "inconvertible value"
         );
     }
 
@@ -12456,8 +12477,8 @@ public class SampleByTest extends AbstractCairoTest {
                         " from" +
                         " long_sequence(20)" +
                         ") timestamp(k) partition by NONE",
-                10,
-                "Unsupported type"
+                0,
+                "inconvertible value"
         );
     }
 
@@ -12582,7 +12603,7 @@ public class SampleByTest extends AbstractCairoTest {
                         " long_sequence(20)" +
                         ") timestamp(k) partition by NONE",
                 "k",
-                true
+                false
         );
     }
 
@@ -12642,24 +12663,24 @@ public class SampleByTest extends AbstractCairoTest {
                         PEHN\t297.9750008612368\t2020-01-01T00:00:00.000000Z
                         HYRX\t159.16605899292972\t2020-01-01T00:00:00.000000Z
                         CPSW\t12.02416087573498\t2020-01-01T00:00:00.000000Z
+                        CPSW\t3857.95047972562\t2020-02-01T00:00:00.000000Z
                         \t20982.992943772188\t2020-02-01T00:00:00.000000Z
                         VTJW\t4052.7570641301963\t2020-02-01T00:00:00.000000Z
+                        HYRX\t4024.0173141255395\t2020-02-01T00:00:00.000000Z
                         RXGZ\t4063.6346983106814\t2020-02-01T00:00:00.000000Z
                         PEHN\t3822.787218703387\t2020-02-01T00:00:00.000000Z
-                        HYRX\t4024.0173141255395\t2020-02-01T00:00:00.000000Z
-                        CPSW\t3857.95047972562\t2020-02-01T00:00:00.000000Z
-                        \t22044.41664067389\t2020-03-01T00:00:00.000000Z
-                        VTJW\t4217.430402136565\t2020-03-01T00:00:00.000000Z
-                        RXGZ\t3810.211911971742\t2020-03-01T00:00:00.000000Z
                         PEHN\t4978.97740950064\t2020-03-01T00:00:00.000000Z
-                        HYRX\t4829.549935728278\t2020-03-01T00:00:00.000000Z
+                        \t22044.41664067389\t2020-03-01T00:00:00.000000Z
+                        RXGZ\t3810.211911971742\t2020-03-01T00:00:00.000000Z
                         CPSW\t3600.963491125638\t2020-03-01T00:00:00.000000Z
+                        VTJW\t4217.430402136565\t2020-03-01T00:00:00.000000Z
+                        HYRX\t4829.549935728278\t2020-03-01T00:00:00.000000Z
                         \t12362.897601301143\t2020-04-01T00:00:00.000000Z
-                        VTJW\t3442.2595700377174\t2020-04-01T00:00:00.000000Z
-                        RXGZ\t2519.8254806241976\t2020-04-01T00:00:00.000000Z
                         PEHN\t2303.0347534138255\t2020-04-01T00:00:00.000000Z
-                        HYRX\t2554.8026818426815\t2020-04-01T00:00:00.000000Z
+                        VTJW\t3442.2595700377174\t2020-04-01T00:00:00.000000Z
                         CPSW\t2284.4297223007393\t2020-04-01T00:00:00.000000Z
+                        HYRX\t2554.8026818426815\t2020-04-01T00:00:00.000000Z
+                        RXGZ\t2519.8254806241976\t2020-04-01T00:00:00.000000Z
                         """,
                 "select b, sum(a), k from x sample by 1M fill(null) align to calendar",
                 "create table x as " +
@@ -12763,7 +12784,7 @@ public class SampleByTest extends AbstractCairoTest {
                         " long_sequence(30)" +
                         ") timestamp(k) partition by NONE",
                 null,
-                true,
+                false,
                 false
         );
     }
@@ -12855,7 +12876,7 @@ public class SampleByTest extends AbstractCairoTest {
                         " long_sequence(30)" +
                         ") timestamp(k) partition by NONE",
                 "k",
-                true,
+                false,
                 false
         );
     }
@@ -12948,7 +12969,7 @@ public class SampleByTest extends AbstractCairoTest {
                         " long_sequence(30)" +
                         ") timestamp(k) partition by NONE",
                 "k",
-                true,
+                false,
                 false
         );
     }
@@ -13022,11 +13043,11 @@ public class SampleByTest extends AbstractCairoTest {
                     "select last(z) s from x sample by 30m fill(null)",
                     """
                             SelectedRecord
-                                Encode sort
-                                  keys: [k]
-                                    Fill Range
-                                      stride: '30m'
-                                      values: [null]
+                                Sample By Fill
+                                  stride: '30m'
+                                  fill: null
+                                    Encode sort light
+                                      keys: [k]
                                         Async Group By workers: 1
                                           keys: [k]
                                           keyFunctions: [timestamp_floor_utc('30m',k)]
@@ -13156,23 +13177,23 @@ public class SampleByTest extends AbstractCairoTest {
                         PEHN\t41154.26693020971\t2020-01-01T00:00:00.000000Z
                         HYRX\t38585.79005800996\t2020-01-01T00:00:00.000000Z
                         CPSW\t39995.23576507835\t2020-01-01T00:00:00.000000Z
-                        \t230201.98037264214\t2021-01-01T00:00:00.000000Z
                         VTJW\t46031.90714575466\t2021-01-01T00:00:00.000000Z
-                        RXGZ\t45630.841778811395\t2021-01-01T00:00:00.000000Z
-                        PEHN\t48339.24529983588\t2021-01-01T00:00:00.000000Z
+                        \t230201.98037264214\t2021-01-01T00:00:00.000000Z
                         HYRX\t45639.52581429897\t2021-01-01T00:00:00.000000Z
                         CPSW\t46157.93033664501\t2021-01-01T00:00:00.000000Z
-                        \t232716.0885252789\t2022-01-01T00:00:00.000000Z
+                        PEHN\t48339.24529983588\t2021-01-01T00:00:00.000000Z
+                        RXGZ\t45630.841778811395\t2021-01-01T00:00:00.000000Z
                         VTJW\t47672.22031275194\t2022-01-01T00:00:00.000000Z
                         RXGZ\t46381.871992904176\t2022-01-01T00:00:00.000000Z
-                        PEHN\t47004.12204168089\t2022-01-01T00:00:00.000000Z
+                        \t232716.0885252789\t2022-01-01T00:00:00.000000Z
                         HYRX\t47593.89994935438\t2022-01-01T00:00:00.000000Z
+                        PEHN\t47004.12204168089\t2022-01-01T00:00:00.000000Z
                         CPSW\t44254.55436645622\t2022-01-01T00:00:00.000000Z
                         \t92574.9318100312\t2023-01-01T00:00:00.000000Z
-                        VTJW\t15913.049745259726\t2023-01-01T00:00:00.000000Z
-                        RXGZ\t19292.04735492167\t2023-01-01T00:00:00.000000Z
-                        PEHN\t19107.977604407188\t2023-01-01T00:00:00.000000Z
                         HYRX\t19887.875742375127\t2023-01-01T00:00:00.000000Z
+                        VTJW\t15913.049745259726\t2023-01-01T00:00:00.000000Z
+                        PEHN\t19107.977604407188\t2023-01-01T00:00:00.000000Z
+                        RXGZ\t19292.04735492167\t2023-01-01T00:00:00.000000Z
                         CPSW\t18169.52371202805\t2023-01-01T00:00:00.000000Z
                         """,
                 "select b, sum(a), k from x sample by 1y fill(null) align to calendar",
@@ -13203,30 +13224,30 @@ public class SampleByTest extends AbstractCairoTest {
                         RXGZ\t23.90529010846525\t1970-01-03T00:00:00.000000Z
                         PEHN\tnull\t1970-01-03T00:00:00.000000Z
                         HYRX\tnull\t1970-01-03T00:00:00.000000Z
+                        PEHN\t70.94360487171201\t1970-01-03T03:00:00.000000Z
                         \t120.87811633071126\t1970-01-03T03:00:00.000000Z
                         VTJW\t42.17768841969397\t1970-01-03T03:00:00.000000Z
                         RXGZ\t23.90529010846525\t1970-01-03T03:00:00.000000Z
-                        PEHN\t70.94360487171201\t1970-01-03T03:00:00.000000Z
                         HYRX\tnull\t1970-01-03T03:00:00.000000Z
+                        HYRX\t97.71103146051203\t1970-01-03T06:00:00.000000Z
+                        PEHN\t81.46807944500559\t1970-01-03T06:00:00.000000Z
                         \t57.93466326862211\t1970-01-03T06:00:00.000000Z
                         VTJW\t42.17768841969397\t1970-01-03T06:00:00.000000Z
                         RXGZ\t23.90529010846525\t1970-01-03T06:00:00.000000Z
-                        PEHN\t81.46807944500559\t1970-01-03T06:00:00.000000Z
-                        HYRX\t97.71103146051203\t1970-01-03T06:00:00.000000Z
-                        \t26.922103479744898\t1970-01-03T09:00:00.000000Z
+                        HYRX\t12.026122412833129\t1970-01-03T09:00:00.000000Z
                         VTJW\t48.820511018586934\t1970-01-03T09:00:00.000000Z
+                        \t26.922103479744898\t1970-01-03T09:00:00.000000Z
                         RXGZ\t23.90529010846525\t1970-01-03T09:00:00.000000Z
                         PEHN\t81.46807944500559\t1970-01-03T09:00:00.000000Z
-                        HYRX\t12.026122412833129\t1970-01-03T09:00:00.000000Z
                         \t150.48604795487125\t1970-01-03T12:00:00.000000Z
+                        PEHN\t84.45258177211063\t1970-01-03T12:00:00.000000Z
                         VTJW\t48.820511018586934\t1970-01-03T12:00:00.000000Z
                         RXGZ\t23.90529010846525\t1970-01-03T12:00:00.000000Z
-                        PEHN\t84.45258177211063\t1970-01-03T12:00:00.000000Z
                         HYRX\t12.026122412833129\t1970-01-03T12:00:00.000000Z
+                        PEHN\t49.00510449885239\t1970-01-03T15:00:00.000000Z
                         \t172.06125086724973\t1970-01-03T15:00:00.000000Z
                         VTJW\t48.820511018586934\t1970-01-03T15:00:00.000000Z
                         RXGZ\t23.90529010846525\t1970-01-03T15:00:00.000000Z
-                        PEHN\t49.00510449885239\t1970-01-03T15:00:00.000000Z
                         HYRX\t12.026122412833129\t1970-01-03T15:00:00.000000Z
                         \t86.08992670884706\t1970-01-03T18:00:00.000000Z
                         VTJW\t48.820511018586934\t1970-01-03T18:00:00.000000Z
@@ -13262,38 +13283,38 @@ public class SampleByTest extends AbstractCairoTest {
                         HYRX\tnull\t1970-01-03T00:00:00.000000Z
                         UVSD\tnull\t1970-01-03T00:00:00.000000Z
                         KGHV\tnull\t1970-01-03T00:00:00.000000Z
+                        PEHN\t70.94360487171201\t1970-01-03T03:00:00.000000Z
                         \t120.87811633071126\t1970-01-03T03:00:00.000000Z
                         VTJW\t42.17768841969397\t1970-01-03T03:00:00.000000Z
                         RXGZ\t23.90529010846525\t1970-01-03T03:00:00.000000Z
-                        PEHN\t70.94360487171201\t1970-01-03T03:00:00.000000Z
                         HYRX\tnull\t1970-01-03T03:00:00.000000Z
                         UVSD\tnull\t1970-01-03T03:00:00.000000Z
                         KGHV\tnull\t1970-01-03T03:00:00.000000Z
+                        HYRX\t97.71103146051203\t1970-01-03T06:00:00.000000Z
+                        PEHN\t81.46807944500559\t1970-01-03T06:00:00.000000Z
                         \t57.93466326862211\t1970-01-03T06:00:00.000000Z
                         VTJW\t42.17768841969397\t1970-01-03T06:00:00.000000Z
                         RXGZ\t23.90529010846525\t1970-01-03T06:00:00.000000Z
-                        PEHN\t81.46807944500559\t1970-01-03T06:00:00.000000Z
-                        HYRX\t97.71103146051203\t1970-01-03T06:00:00.000000Z
                         UVSD\tnull\t1970-01-03T06:00:00.000000Z
                         KGHV\tnull\t1970-01-03T06:00:00.000000Z
-                        \t26.922103479744898\t1970-01-03T09:00:00.000000Z
+                        HYRX\t12.026122412833129\t1970-01-03T09:00:00.000000Z
                         VTJW\t48.820511018586934\t1970-01-03T09:00:00.000000Z
+                        \t26.922103479744898\t1970-01-03T09:00:00.000000Z
                         RXGZ\t23.90529010846525\t1970-01-03T09:00:00.000000Z
                         PEHN\t81.46807944500559\t1970-01-03T09:00:00.000000Z
-                        HYRX\t12.026122412833129\t1970-01-03T09:00:00.000000Z
                         UVSD\tnull\t1970-01-03T09:00:00.000000Z
                         KGHV\tnull\t1970-01-03T09:00:00.000000Z
                         \t150.48604795487125\t1970-01-03T12:00:00.000000Z
+                        PEHN\t84.45258177211063\t1970-01-03T12:00:00.000000Z
                         VTJW\t48.820511018586934\t1970-01-03T12:00:00.000000Z
                         RXGZ\t23.90529010846525\t1970-01-03T12:00:00.000000Z
-                        PEHN\t84.45258177211063\t1970-01-03T12:00:00.000000Z
                         HYRX\t12.026122412833129\t1970-01-03T12:00:00.000000Z
                         UVSD\tnull\t1970-01-03T12:00:00.000000Z
                         KGHV\tnull\t1970-01-03T12:00:00.000000Z
+                        PEHN\t49.00510449885239\t1970-01-03T15:00:00.000000Z
                         \t172.06125086724973\t1970-01-03T15:00:00.000000Z
                         VTJW\t48.820511018586934\t1970-01-03T15:00:00.000000Z
                         RXGZ\t23.90529010846525\t1970-01-03T15:00:00.000000Z
-                        PEHN\t49.00510449885239\t1970-01-03T15:00:00.000000Z
                         HYRX\t12.026122412833129\t1970-01-03T15:00:00.000000Z
                         UVSD\tnull\t1970-01-03T15:00:00.000000Z
                         KGHV\tnull\t1970-01-03T15:00:00.000000Z
@@ -13326,19 +13347,19 @@ public class SampleByTest extends AbstractCairoTest {
                         UVSD\tnull\t1970-01-04T03:00:00.000000Z
                         KGHV\tnull\t1970-01-04T03:00:00.000000Z
                         \t135.835983782176\t1970-01-04T06:00:00.000000Z
+                        UVSD\t49.42890511958454\t1970-01-04T06:00:00.000000Z
                         VTJW\t48.820511018586934\t1970-01-04T06:00:00.000000Z
                         RXGZ\t23.90529010846525\t1970-01-04T06:00:00.000000Z
                         PEHN\t49.00510449885239\t1970-01-04T06:00:00.000000Z
                         HYRX\t12.026122412833129\t1970-01-04T06:00:00.000000Z
-                        UVSD\t49.42890511958454\t1970-01-04T06:00:00.000000Z
                         KGHV\tnull\t1970-01-04T06:00:00.000000Z
+                        KGHV\t67.52509547112409\t1970-01-04T09:00:00.000000Z
                         \t135.835983782176\t1970-01-04T09:00:00.000000Z
                         VTJW\t48.820511018586934\t1970-01-04T09:00:00.000000Z
                         RXGZ\t23.90529010846525\t1970-01-04T09:00:00.000000Z
                         PEHN\t49.00510449885239\t1970-01-04T09:00:00.000000Z
                         HYRX\t12.026122412833129\t1970-01-04T09:00:00.000000Z
                         UVSD\t49.42890511958454\t1970-01-04T09:00:00.000000Z
-                        KGHV\t67.52509547112409\t1970-01-04T09:00:00.000000Z
                         """,
                 false
         );
@@ -13358,24 +13379,24 @@ public class SampleByTest extends AbstractCairoTest {
                         PEHN\t70.94360487171201\t1970-01-03T00:00:00.000000Z
                         HYRX\tnull\t1970-01-03T00:00:00.000000Z
                         \t120.87811633071126\t1970-01-03T03:00:00.000000Z
+                        HYRX\t97.71103146051203\t1970-01-03T03:00:00.000000Z
                         VTJW\t42.17768841969397\t1970-01-03T03:00:00.000000Z
                         RXGZ\t23.90529010846525\t1970-01-03T03:00:00.000000Z
                         PEHN\t70.94360487171201\t1970-01-03T03:00:00.000000Z
-                        HYRX\t97.71103146051203\t1970-01-03T03:00:00.000000Z
+                        PEHN\t81.46807944500559\t1970-01-03T06:00:00.000000Z
                         \t57.93466326862211\t1970-01-03T06:00:00.000000Z
+                        HYRX\t12.026122412833129\t1970-01-03T06:00:00.000000Z
                         VTJW\t48.820511018586934\t1970-01-03T06:00:00.000000Z
                         RXGZ\t23.90529010846525\t1970-01-03T06:00:00.000000Z
-                        PEHN\t81.46807944500559\t1970-01-03T06:00:00.000000Z
-                        HYRX\t12.026122412833129\t1970-01-03T06:00:00.000000Z
                         \t79.90616289736545\t1970-01-03T09:00:00.000000Z
+                        PEHN\t84.45258177211063\t1970-01-03T09:00:00.000000Z
                         VTJW\t48.820511018586934\t1970-01-03T09:00:00.000000Z
                         RXGZ\t23.90529010846525\t1970-01-03T09:00:00.000000Z
-                        PEHN\t84.45258177211063\t1970-01-03T09:00:00.000000Z
                         HYRX\t12.026122412833129\t1970-01-03T09:00:00.000000Z
                         \t269.56323940450045\t1970-01-03T12:00:00.000000Z
+                        PEHN\t49.00510449885239\t1970-01-03T12:00:00.000000Z
                         VTJW\t48.820511018586934\t1970-01-03T12:00:00.000000Z
                         RXGZ\t23.90529010846525\t1970-01-03T12:00:00.000000Z
-                        PEHN\t49.00510449885239\t1970-01-03T12:00:00.000000Z
                         HYRX\t12.026122412833129\t1970-01-03T12:00:00.000000Z
                         \t86.08992670884706\t1970-01-03T15:00:00.000000Z
                         VTJW\t48.820511018586934\t1970-01-03T15:00:00.000000Z
@@ -13412,30 +13433,30 @@ public class SampleByTest extends AbstractCairoTest {
                         UVSD\tnull\t1970-01-03T00:00:00.000000Z
                         KGHV\tnull\t1970-01-03T00:00:00.000000Z
                         \t120.87811633071126\t1970-01-03T03:00:00.000000Z
+                        HYRX\t97.71103146051203\t1970-01-03T03:00:00.000000Z
                         VTJW\t42.17768841969397\t1970-01-03T03:00:00.000000Z
                         RXGZ\t23.90529010846525\t1970-01-03T03:00:00.000000Z
                         PEHN\t70.94360487171201\t1970-01-03T03:00:00.000000Z
-                        HYRX\t97.71103146051203\t1970-01-03T03:00:00.000000Z
                         UVSD\tnull\t1970-01-03T03:00:00.000000Z
                         KGHV\tnull\t1970-01-03T03:00:00.000000Z
+                        PEHN\t81.46807944500559\t1970-01-03T06:00:00.000000Z
                         \t57.93466326862211\t1970-01-03T06:00:00.000000Z
+                        HYRX\t12.026122412833129\t1970-01-03T06:00:00.000000Z
                         VTJW\t48.820511018586934\t1970-01-03T06:00:00.000000Z
                         RXGZ\t23.90529010846525\t1970-01-03T06:00:00.000000Z
-                        PEHN\t81.46807944500559\t1970-01-03T06:00:00.000000Z
-                        HYRX\t12.026122412833129\t1970-01-03T06:00:00.000000Z
                         UVSD\tnull\t1970-01-03T06:00:00.000000Z
                         KGHV\tnull\t1970-01-03T06:00:00.000000Z
                         \t79.90616289736545\t1970-01-03T09:00:00.000000Z
+                        PEHN\t84.45258177211063\t1970-01-03T09:00:00.000000Z
                         VTJW\t48.820511018586934\t1970-01-03T09:00:00.000000Z
                         RXGZ\t23.90529010846525\t1970-01-03T09:00:00.000000Z
-                        PEHN\t84.45258177211063\t1970-01-03T09:00:00.000000Z
                         HYRX\t12.026122412833129\t1970-01-03T09:00:00.000000Z
                         UVSD\tnull\t1970-01-03T09:00:00.000000Z
                         KGHV\tnull\t1970-01-03T09:00:00.000000Z
                         \t269.56323940450045\t1970-01-03T12:00:00.000000Z
+                        PEHN\t49.00510449885239\t1970-01-03T12:00:00.000000Z
                         VTJW\t48.820511018586934\t1970-01-03T12:00:00.000000Z
                         RXGZ\t23.90529010846525\t1970-01-03T12:00:00.000000Z
-                        PEHN\t49.00510449885239\t1970-01-03T12:00:00.000000Z
                         HYRX\t12.026122412833129\t1970-01-03T12:00:00.000000Z
                         UVSD\tnull\t1970-01-03T12:00:00.000000Z
                         KGHV\tnull\t1970-01-03T12:00:00.000000Z
@@ -13474,13 +13495,13 @@ public class SampleByTest extends AbstractCairoTest {
                         HYRX\t12.026122412833129\t1970-01-04T03:00:00.000000Z
                         UVSD\tnull\t1970-01-04T03:00:00.000000Z
                         KGHV\tnull\t1970-01-04T03:00:00.000000Z
+                        UVSD\t49.42890511958454\t1970-01-04T06:00:00.000000Z
                         \t58.912164838797885\t1970-01-04T06:00:00.000000Z
+                        KGHV\t67.52509547112409\t1970-01-04T06:00:00.000000Z
                         VTJW\t48.820511018586934\t1970-01-04T06:00:00.000000Z
                         RXGZ\t23.90529010846525\t1970-01-04T06:00:00.000000Z
                         PEHN\t49.00510449885239\t1970-01-04T06:00:00.000000Z
                         HYRX\t12.026122412833129\t1970-01-04T06:00:00.000000Z
-                        UVSD\t49.42890511958454\t1970-01-04T06:00:00.000000Z
-                        KGHV\t67.52509547112409\t1970-01-04T06:00:00.000000Z
                         """,
                 false
         );
@@ -13499,15 +13520,15 @@ public class SampleByTest extends AbstractCairoTest {
                         RXGZ\tnull\t2021-11-06T18:00:00.000000Z
                         PEHN\tnull\t2021-11-06T18:00:00.000000Z
                         HYRX\tnull\t2021-11-06T18:00:00.000000Z
-                        \t11.427984775756228\t2021-11-06T19:00:00.000000Z
                         VTJW\t42.17768841969397\t2021-11-06T19:00:00.000000Z
                         RXGZ\t23.90529010846525\t2021-11-06T19:00:00.000000Z
+                        \t11.427984775756228\t2021-11-06T19:00:00.000000Z
                         PEHN\tnull\t2021-11-06T19:00:00.000000Z
                         HYRX\tnull\t2021-11-06T19:00:00.000000Z
+                        PEHN\t70.94360487171201\t2021-11-06T20:00:00.000000Z
                         \t11.427984775756228\t2021-11-06T20:00:00.000000Z
                         VTJW\t42.17768841969397\t2021-11-06T20:00:00.000000Z
                         RXGZ\t23.90529010846525\t2021-11-06T20:00:00.000000Z
-                        PEHN\t70.94360487171201\t2021-11-06T20:00:00.000000Z
                         HYRX\tnull\t2021-11-06T20:00:00.000000Z
                         \t87.99634725391621\t2021-11-06T21:00:00.000000Z
                         VTJW\t42.17768841969397\t2021-11-06T21:00:00.000000Z
@@ -13519,18 +13540,23 @@ public class SampleByTest extends AbstractCairoTest {
                         RXGZ\t23.90529010846525\t2021-11-06T22:00:00.000000Z
                         PEHN\t70.94360487171201\t2021-11-06T22:00:00.000000Z
                         HYRX\tnull\t2021-11-06T22:00:00.000000Z
+                        HYRX\t97.71103146051203\t2021-11-06T23:00:00.000000Z
                         \t32.881769076795045\t2021-11-06T23:00:00.000000Z
                         VTJW\t42.17768841969397\t2021-11-06T23:00:00.000000Z
                         RXGZ\t23.90529010846525\t2021-11-06T23:00:00.000000Z
                         PEHN\t70.94360487171201\t2021-11-06T23:00:00.000000Z
-                        HYRX\t97.71103146051203\t2021-11-06T23:00:00.000000Z
+                        PEHN\t81.46807944500559\t2021-11-07T00:00:00.000000Z
                         \t32.881769076795045\t2021-11-07T00:00:00.000000Z
                         VTJW\t42.17768841969397\t2021-11-07T00:00:00.000000Z
                         RXGZ\t23.90529010846525\t2021-11-07T00:00:00.000000Z
-                        PEHN\t81.46807944500559\t2021-11-07T00:00:00.000000Z
                         HYRX\t97.71103146051203\t2021-11-07T00:00:00.000000Z
                         \t57.93466326862211\t2021-11-07T01:00:00.000000Z
-                        VTJW\t90.9981994382809\t2021-11-07T01:00:00.000000Z
+                        HYRX\t12.026122412833129\t2021-11-07T01:00:00.000000Z
+                        VTJW\t42.17768841969397\t2021-11-07T01:00:00.000000Z
+                        RXGZ\t23.90529010846525\t2021-11-07T01:00:00.000000Z
+                        PEHN\t81.46807944500559\t2021-11-07T01:00:00.000000Z
+                        VTJW\t48.820511018586934\t2021-11-07T01:00:00.000000Z
+                        \t57.93466326862211\t2021-11-07T01:00:00.000000Z
                         RXGZ\t23.90529010846525\t2021-11-07T01:00:00.000000Z
                         PEHN\t81.46807944500559\t2021-11-07T01:00:00.000000Z
                         HYRX\t12.026122412833129\t2021-11-07T01:00:00.000000Z
@@ -13544,20 +13570,20 @@ public class SampleByTest extends AbstractCairoTest {
                         RXGZ\t23.90529010846525\t2021-11-07T03:00:00.000000Z
                         PEHN\t81.46807944500559\t2021-11-07T03:00:00.000000Z
                         HYRX\t12.026122412833129\t2021-11-07T03:00:00.000000Z
+                        PEHN\t84.45258177211063\t2021-11-07T04:00:00.000000Z
                         \t52.98405941762054\t2021-11-07T04:00:00.000000Z
                         VTJW\t48.820511018586934\t2021-11-07T04:00:00.000000Z
                         RXGZ\t23.90529010846525\t2021-11-07T04:00:00.000000Z
-                        PEHN\t84.45258177211063\t2021-11-07T04:00:00.000000Z
                         HYRX\t12.026122412833129\t2021-11-07T04:00:00.000000Z
                         \t97.5019885372507\t2021-11-07T05:00:00.000000Z
                         VTJW\t48.820511018586934\t2021-11-07T05:00:00.000000Z
                         RXGZ\t23.90529010846525\t2021-11-07T05:00:00.000000Z
                         PEHN\t84.45258177211063\t2021-11-07T05:00:00.000000Z
                         HYRX\t12.026122412833129\t2021-11-07T05:00:00.000000Z
+                        PEHN\t49.00510449885239\t2021-11-07T06:00:00.000000Z
                         \t80.01121139739173\t2021-11-07T06:00:00.000000Z
                         VTJW\t48.820511018586934\t2021-11-07T06:00:00.000000Z
                         RXGZ\t23.90529010846525\t2021-11-07T06:00:00.000000Z
-                        PEHN\t49.00510449885239\t2021-11-07T06:00:00.000000Z
                         HYRX\t12.026122412833129\t2021-11-07T06:00:00.000000Z
                         \t92.050039469858\t2021-11-07T07:00:00.000000Z
                         VTJW\t48.820511018586934\t2021-11-07T07:00:00.000000Z
@@ -13595,50 +13621,52 @@ public class SampleByTest extends AbstractCairoTest {
         Rnd rnd = TestUtils.generateRandom(LOG);
         setProperty(PropertyKey.DEBUG_CAIRO_COPIER_TYPE, rnd.nextInt(4));
 
-        assertQuery(
-                """
-                        a\tb\tc\td\te\tf\tg\ti\tj\tl\tm\tp\tvch\tsum\tk
-                        1569490116\tfalse\tZ\tnull\t0.7611029\t428\t2015-05-16T20:27:48.158Z\tVTJW\t-8671107786057422727\t26\t00000000 68 61 26 af 19 c4 95 94 36 53 49\t1970-01-01T00:00:00.000000Z\tjFxO]0L#Y\t0.15786635599554755\t1970-01-03T00:00:00.000000Z
-                        -2002373666\ttrue\tU\t0.7883065830055033\t0.76642567\t401\t2015-09-20T21:49:18.129Z\t\t5334238747895433003\t10\t00000000 8e 78 b5 b9 11 53 d0 fb 64 bb 1a d4 f0 2d 40 e2
-                        00000010 4b b1 3e\t1970-01-01T01:00:00.000000Z\tЃَᯤ\\篸{\uD9D7\uDFE5\uDAE9\uDF46OFг\uDBAE\uDD12ɜ|\\軦\t0.09750574414434399\t1970-01-03T00:00:00.000000Z
-                        -283321892\tfalse\t\t0.8438459563914771\t0.13006097\t736\t2015-01-13T04:07:44.289Z\tPEHN\t5398991075259361292\t4\t00000000 63 b7 c2 9f 29 8e 29 5e 69 c6 eb ea c3 c9 73 93
-                        00000010 46 fe\t1970-01-01T02:00:00.000000Z\tG -$}\t0.22631523434159562\t1970-01-03T00:00:00.000000Z
-                        -2108151088\ttrue\tK\t0.5185631921367574\t0.20585066\t598\t2015-02-06T22:58:50.333Z\t\t5552835357100545895\t4\t00000000 b0 ec 0b 92 58 7d 24 bc 2e 60 6a 1c\t1970-01-01T03:00:00.000000Z\tkiM,1Dzq\tnull\t1970-01-03T00:00:00.000000Z
-                        1826239903\ttrue\tO\t0.06578761277152223\t0.38402128\t291\t2015-08-08T02:35:56.961Z\tVTJW\t-8653777305694768077\t26\t00000000 a3 67 7a 1a 79 e4 35 e4 3a dc 5c 65 ff 27 67\t1970-01-01T04:00:00.000000Z\t5o\\S1l1S -(\tnull\t1970-01-03T00:00:00.000000Z
-                        1569490116\tfalse\tZ\tnull\t0.7611029\t428\t2015-05-16T20:27:48.158Z\tVTJW\t-8671107786057422727\t26\t00000000 68 61 26 af 19 c4 95 94 36 53 49\t1970-01-01T00:00:00.000000Z\tjFxO]0L#Y\t0.15786635599554755\t1970-01-03T03:00:00.000000Z
-                        -2002373666\ttrue\tU\t0.7883065830055033\t0.76642567\t401\t2015-09-20T21:49:18.129Z\t\t5334238747895433003\t10\t00000000 8e 78 b5 b9 11 53 d0 fb 64 bb 1a d4 f0 2d 40 e2
-                        00000010 4b b1 3e\t1970-01-01T01:00:00.000000Z\tЃَᯤ\\篸{\uD9D7\uDFE5\uDAE9\uDF46OFг\uDBAE\uDD12ɜ|\\軦\t0.09750574414434399\t1970-01-03T03:00:00.000000Z
-                        -283321892\tfalse\t\t0.8438459563914771\t0.13006097\t736\t2015-01-13T04:07:44.289Z\tPEHN\t5398991075259361292\t4\t00000000 63 b7 c2 9f 29 8e 29 5e 69 c6 eb ea c3 c9 73 93
-                        00000010 46 fe\t1970-01-01T02:00:00.000000Z\tG -$}\t0.22631523434159562\t1970-01-03T03:00:00.000000Z
-                        -2108151088\ttrue\tK\t0.5185631921367574\t0.20585066\t598\t2015-02-06T22:58:50.333Z\t\t5552835357100545895\t4\t00000000 b0 ec 0b 92 58 7d 24 bc 2e 60 6a 1c\t1970-01-01T03:00:00.000000Z\tkiM,1Dzq\t0.043606408996349044\t1970-01-03T03:00:00.000000Z
-                        1826239903\ttrue\tO\t0.06578761277152223\t0.38402128\t291\t2015-08-08T02:35:56.961Z\tVTJW\t-8653777305694768077\t26\t00000000 a3 67 7a 1a 79 e4 35 e4 3a dc 5c 65 ff 27 67\t1970-01-01T04:00:00.000000Z\t5o\\S1l1S -(\t0.6810852005509421\t1970-01-03T03:00:00.000000Z
-                        """,
-                "select a,b,c,d,e,f,g,i,j,l,m,p,vch,sum(o), k from x sample by 3h fill(prev)",
-                "create table x as " +
-                        "(" +
-                        "select" +
-                        " rnd_int() a," +
-                        " rnd_boolean() b," +
-                        " rnd_str(1,1,2) c," +
-                        " rnd_double(2) d," +
-                        " rnd_float(2) e," +
-                        " rnd_short(10,1024) f," +
-                        " rnd_date(to_date('2015', 'yyyy'), to_date('2016', 'yyyy'), 2) g," +
-                        " rnd_symbol(4,4,4,2) i," +
-                        " rnd_long() j," +
-                        " rnd_byte(2,50) l," +
-                        " rnd_bin(10, 20, 2) m," +
-                        " rnd_str(5,16,2) n," +
-                        " rnd_double(2) o," +
-                        " rnd_varchar(5,16,2) vch," +
-                        " timestamp_sequence(0, 3600000000) p," +
-                        " timestamp_sequence(172800000000, 3600000000) k" +
-                        " from" +
-                        " long_sequence(5)" +
-                        ") timestamp(k) partition by NONE",
-                "k",
-                false
-        );
+        assertMemoryLeak(() -> {
+            execute("create table x as " +
+                    "(" +
+                    "select" +
+                    " rnd_int() a," +
+                    " rnd_boolean() b," +
+                    " rnd_str(1,1,2) c," +
+                    " rnd_double(2) d," +
+                    " rnd_float(2) e," +
+                    " rnd_short(10,1024) f," +
+                    " rnd_date(to_date('2015', 'yyyy'), to_date('2016', 'yyyy'), 2) g," +
+                    " rnd_symbol(4,4,4,2) i," +
+                    " rnd_long() j," +
+                    " rnd_byte(2,50) l," +
+                    " rnd_bin(10, 20, 2) m," +
+                    " rnd_str(5,16,2) n," +
+                    " rnd_double(2) o," +
+                    " rnd_varchar(5,16,2) vch," +
+                    " timestamp_sequence(0, 3600000000) p," +
+                    " timestamp_sequence(172800000000, 3600000000) k" +
+                    " from" +
+                    " long_sequence(5)" +
+                    ") timestamp(k) partition by NONE");
+            assertQueryNoLeakCheck(
+                    """
+                            a\tb\tc\td\te\tf\tg\ti\tj\tl\tm\tp\tvch\tsum\tk
+                            1569490116\tfalse\tZ\tnull\t0.7611029\t428\t2015-05-16T20:27:48.158Z\tVTJW\t-8671107786057422727\t26\t00000000 68 61 26 af 19 c4 95 94 36 53 49\t1970-01-01T00:00:00.000000Z\tjFxO]0L#Y\t0.15786635599554755\t1970-01-03T00:00:00.000000Z
+                            -2002373666\ttrue\tU\t0.7883065830055033\t0.76642567\t401\t2015-09-20T21:49:18.129Z\t\t5334238747895433003\t10\t00000000 8e 78 b5 b9 11 53 d0 fb 64 bb 1a d4 f0 2d 40 e2
+                            00000010 4b b1 3e\t1970-01-01T01:00:00.000000Z\tЃَᯤ\\篸{\uD9D7\uDFE5\uDAE9\uDF46OFг\uDBAE\uDD12ɜ|\\軦\t0.09750574414434399\t1970-01-03T00:00:00.000000Z
+                            -283321892\tfalse\t\t0.8438459563914771\t0.13006097\t736\t2015-01-13T04:07:44.289Z\tPEHN\t5398991075259361292\t4\t00000000 63 b7 c2 9f 29 8e 29 5e 69 c6 eb ea c3 c9 73 93
+                            00000010 46 fe\t1970-01-01T02:00:00.000000Z\tG -$}\t0.22631523434159562\t1970-01-03T00:00:00.000000Z
+                            -2108151088\ttrue\tK\t0.5185631921367574\t0.20585066\t598\t2015-02-06T22:58:50.333Z\t\t5552835357100545895\t4\t00000000 b0 ec 0b 92 58 7d 24 bc 2e 60 6a 1c\t1970-01-01T03:00:00.000000Z\tkiM,1Dzq\tnull\t1970-01-03T00:00:00.000000Z
+                            1826239903\ttrue\tO\t0.06578761277152223\t0.38402128\t291\t2015-08-08T02:35:56.961Z\tVTJW\t-8653777305694768077\t26\t00000000 a3 67 7a 1a 79 e4 35 e4 3a dc 5c 65 ff 27 67\t1970-01-01T04:00:00.000000Z\t5o\\S1l1S -(\tnull\t1970-01-03T00:00:00.000000Z
+                            -2108151088\ttrue\tK\t0.5185631921367574\t0.20585066\t598\t2015-02-06T22:58:50.333Z\t\t5552835357100545895\t4\t00000000 b0 ec 0b 92 58 7d 24 bc 2e 60 6a 1c\t1970-01-01T03:00:00.000000Z\tkiM,1Dzq\t0.043606408996349044\t1970-01-03T03:00:00.000000Z
+                            1826239903\ttrue\tO\t0.06578761277152223\t0.38402128\t291\t2015-08-08T02:35:56.961Z\tVTJW\t-8653777305694768077\t26\t00000000 a3 67 7a 1a 79 e4 35 e4 3a dc 5c 65 ff 27 67\t1970-01-01T04:00:00.000000Z\t5o\\S1l1S -(\t0.6810852005509421\t1970-01-03T03:00:00.000000Z
+                            1569490116\tfalse\tZ\tnull\t0.7611029\t428\t2015-05-16T20:27:48.158Z\tVTJW\t-8671107786057422727\t26\t00000000 68 61 26 af 19 c4 95 94 36 53 49\t1970-01-01T00:00:00.000000Z\tjFxO]0L#Y\t0.15786635599554755\t1970-01-03T03:00:00.000000Z
+                            -2002373666\ttrue\tU\t0.7883065830055033\t0.76642567\t401\t2015-09-20T21:49:18.129Z\t\t5334238747895433003\t10\t00000000 8e 78 b5 b9 11 53 d0 fb 64 bb 1a d4 f0 2d 40 e2
+                            00000010 4b b1 3e\t1970-01-01T01:00:00.000000Z\tЃَᯤ\\篸{\uD9D7\uDFE5\uDAE9\uDF46OFг\uDBAE\uDD12ɜ|\\軦\t0.09750574414434399\t1970-01-03T03:00:00.000000Z
+                            -283321892\tfalse\t\t0.8438459563914771\t0.13006097\t736\t2015-01-13T04:07:44.289Z\tPEHN\t5398991075259361292\t4\t00000000 63 b7 c2 9f 29 8e 29 5e 69 c6 eb ea c3 c9 73 93
+                            00000010 46 fe\t1970-01-01T02:00:00.000000Z\tG -$}\t0.22631523434159562\t1970-01-03T03:00:00.000000Z
+                            """,
+                    "select a,b,c,d,e,f,g,i,j,l,m,p,vch,sum(o), k from x sample by 3h fill(prev)",
+                    "k",
+                    false
+            );
+        });
     }
 
     @Test
@@ -13654,30 +13682,30 @@ public class SampleByTest extends AbstractCairoTest {
                         RXGZ\tRXGZ\tRXGZ\t23.90529010846525\t1970-01-03T00:00:00.000000Z
                         PEHN\tPEHN\tPEHN\tnull\t1970-01-03T00:00:00.000000Z
                         HYRX\tHYRX\tHYRX\tnull\t1970-01-03T00:00:00.000000Z
+                        PEHN\tPEHN\tPEHN\t70.94360487171201\t1970-01-03T03:00:00.000000Z
                         \t\t\t120.87811633071126\t1970-01-03T03:00:00.000000Z
                         VTJW\tVTJW\tVTJW\t42.17768841969397\t1970-01-03T03:00:00.000000Z
                         RXGZ\tRXGZ\tRXGZ\t23.90529010846525\t1970-01-03T03:00:00.000000Z
-                        PEHN\tPEHN\tPEHN\t70.94360487171201\t1970-01-03T03:00:00.000000Z
                         HYRX\tHYRX\tHYRX\tnull\t1970-01-03T03:00:00.000000Z
+                        HYRX\tHYRX\tHYRX\t97.71103146051203\t1970-01-03T06:00:00.000000Z
+                        PEHN\tPEHN\tPEHN\t81.46807944500559\t1970-01-03T06:00:00.000000Z
                         \t\t\t57.93466326862211\t1970-01-03T06:00:00.000000Z
                         VTJW\tVTJW\tVTJW\t42.17768841969397\t1970-01-03T06:00:00.000000Z
                         RXGZ\tRXGZ\tRXGZ\t23.90529010846525\t1970-01-03T06:00:00.000000Z
-                        PEHN\tPEHN\tPEHN\t81.46807944500559\t1970-01-03T06:00:00.000000Z
-                        HYRX\tHYRX\tHYRX\t97.71103146051203\t1970-01-03T06:00:00.000000Z
-                        \t\t\t26.922103479744898\t1970-01-03T09:00:00.000000Z
+                        HYRX\tHYRX\tHYRX\t12.026122412833129\t1970-01-03T09:00:00.000000Z
                         VTJW\tVTJW\tVTJW\t48.820511018586934\t1970-01-03T09:00:00.000000Z
+                        \t\t\t26.922103479744898\t1970-01-03T09:00:00.000000Z
                         RXGZ\tRXGZ\tRXGZ\t23.90529010846525\t1970-01-03T09:00:00.000000Z
                         PEHN\tPEHN\tPEHN\t81.46807944500559\t1970-01-03T09:00:00.000000Z
-                        HYRX\tHYRX\tHYRX\t12.026122412833129\t1970-01-03T09:00:00.000000Z
                         \t\t\t150.48604795487125\t1970-01-03T12:00:00.000000Z
+                        PEHN\tPEHN\tPEHN\t84.45258177211063\t1970-01-03T12:00:00.000000Z
                         VTJW\tVTJW\tVTJW\t48.820511018586934\t1970-01-03T12:00:00.000000Z
                         RXGZ\tRXGZ\tRXGZ\t23.90529010846525\t1970-01-03T12:00:00.000000Z
-                        PEHN\tPEHN\tPEHN\t84.45258177211063\t1970-01-03T12:00:00.000000Z
                         HYRX\tHYRX\tHYRX\t12.026122412833129\t1970-01-03T12:00:00.000000Z
+                        PEHN\tPEHN\tPEHN\t49.00510449885239\t1970-01-03T15:00:00.000000Z
                         \t\t\t172.06125086724973\t1970-01-03T15:00:00.000000Z
                         VTJW\tVTJW\tVTJW\t48.820511018586934\t1970-01-03T15:00:00.000000Z
                         RXGZ\tRXGZ\tRXGZ\t23.90529010846525\t1970-01-03T15:00:00.000000Z
-                        PEHN\tPEHN\tPEHN\t49.00510449885239\t1970-01-03T15:00:00.000000Z
                         HYRX\tHYRX\tHYRX\t12.026122412833129\t1970-01-03T15:00:00.000000Z
                         \t\t\t86.08992670884706\t1970-01-03T18:00:00.000000Z
                         VTJW\tVTJW\tVTJW\t48.820511018586934\t1970-01-03T18:00:00.000000Z
@@ -13713,38 +13741,38 @@ public class SampleByTest extends AbstractCairoTest {
                         HYRX\tHYRX\tHYRX\tnull\t1970-01-03T00:00:00.000000Z
                         UVSD\tUVSD\tUVSD\tnull\t1970-01-03T00:00:00.000000Z
                         KGHV\tKGHV\tKGHV\tnull\t1970-01-03T00:00:00.000000Z
+                        PEHN\tPEHN\tPEHN\t70.94360487171201\t1970-01-03T03:00:00.000000Z
                         \t\t\t120.87811633071126\t1970-01-03T03:00:00.000000Z
                         VTJW\tVTJW\tVTJW\t42.17768841969397\t1970-01-03T03:00:00.000000Z
                         RXGZ\tRXGZ\tRXGZ\t23.90529010846525\t1970-01-03T03:00:00.000000Z
-                        PEHN\tPEHN\tPEHN\t70.94360487171201\t1970-01-03T03:00:00.000000Z
                         HYRX\tHYRX\tHYRX\tnull\t1970-01-03T03:00:00.000000Z
                         UVSD\tUVSD\tUVSD\tnull\t1970-01-03T03:00:00.000000Z
                         KGHV\tKGHV\tKGHV\tnull\t1970-01-03T03:00:00.000000Z
+                        HYRX\tHYRX\tHYRX\t97.71103146051203\t1970-01-03T06:00:00.000000Z
+                        PEHN\tPEHN\tPEHN\t81.46807944500559\t1970-01-03T06:00:00.000000Z
                         \t\t\t57.93466326862211\t1970-01-03T06:00:00.000000Z
                         VTJW\tVTJW\tVTJW\t42.17768841969397\t1970-01-03T06:00:00.000000Z
                         RXGZ\tRXGZ\tRXGZ\t23.90529010846525\t1970-01-03T06:00:00.000000Z
-                        PEHN\tPEHN\tPEHN\t81.46807944500559\t1970-01-03T06:00:00.000000Z
-                        HYRX\tHYRX\tHYRX\t97.71103146051203\t1970-01-03T06:00:00.000000Z
                         UVSD\tUVSD\tUVSD\tnull\t1970-01-03T06:00:00.000000Z
                         KGHV\tKGHV\tKGHV\tnull\t1970-01-03T06:00:00.000000Z
-                        \t\t\t26.922103479744898\t1970-01-03T09:00:00.000000Z
+                        HYRX\tHYRX\tHYRX\t12.026122412833129\t1970-01-03T09:00:00.000000Z
                         VTJW\tVTJW\tVTJW\t48.820511018586934\t1970-01-03T09:00:00.000000Z
+                        \t\t\t26.922103479744898\t1970-01-03T09:00:00.000000Z
                         RXGZ\tRXGZ\tRXGZ\t23.90529010846525\t1970-01-03T09:00:00.000000Z
                         PEHN\tPEHN\tPEHN\t81.46807944500559\t1970-01-03T09:00:00.000000Z
-                        HYRX\tHYRX\tHYRX\t12.026122412833129\t1970-01-03T09:00:00.000000Z
                         UVSD\tUVSD\tUVSD\tnull\t1970-01-03T09:00:00.000000Z
                         KGHV\tKGHV\tKGHV\tnull\t1970-01-03T09:00:00.000000Z
                         \t\t\t150.48604795487125\t1970-01-03T12:00:00.000000Z
+                        PEHN\tPEHN\tPEHN\t84.45258177211063\t1970-01-03T12:00:00.000000Z
                         VTJW\tVTJW\tVTJW\t48.820511018586934\t1970-01-03T12:00:00.000000Z
                         RXGZ\tRXGZ\tRXGZ\t23.90529010846525\t1970-01-03T12:00:00.000000Z
-                        PEHN\tPEHN\tPEHN\t84.45258177211063\t1970-01-03T12:00:00.000000Z
                         HYRX\tHYRX\tHYRX\t12.026122412833129\t1970-01-03T12:00:00.000000Z
                         UVSD\tUVSD\tUVSD\tnull\t1970-01-03T12:00:00.000000Z
                         KGHV\tKGHV\tKGHV\tnull\t1970-01-03T12:00:00.000000Z
+                        PEHN\tPEHN\tPEHN\t49.00510449885239\t1970-01-03T15:00:00.000000Z
                         \t\t\t172.06125086724973\t1970-01-03T15:00:00.000000Z
                         VTJW\tVTJW\tVTJW\t48.820511018586934\t1970-01-03T15:00:00.000000Z
                         RXGZ\tRXGZ\tRXGZ\t23.90529010846525\t1970-01-03T15:00:00.000000Z
-                        PEHN\tPEHN\tPEHN\t49.00510449885239\t1970-01-03T15:00:00.000000Z
                         HYRX\tHYRX\tHYRX\t12.026122412833129\t1970-01-03T15:00:00.000000Z
                         UVSD\tUVSD\tUVSD\tnull\t1970-01-03T15:00:00.000000Z
                         KGHV\tKGHV\tKGHV\tnull\t1970-01-03T15:00:00.000000Z
@@ -13777,19 +13805,19 @@ public class SampleByTest extends AbstractCairoTest {
                         UVSD\tUVSD\tUVSD\tnull\t1970-01-04T03:00:00.000000Z
                         KGHV\tKGHV\tKGHV\tnull\t1970-01-04T03:00:00.000000Z
                         \t\t\t135.835983782176\t1970-01-04T06:00:00.000000Z
+                        UVSD\tUVSD\tUVSD\t49.42890511958454\t1970-01-04T06:00:00.000000Z
                         VTJW\tVTJW\tVTJW\t48.820511018586934\t1970-01-04T06:00:00.000000Z
                         RXGZ\tRXGZ\tRXGZ\t23.90529010846525\t1970-01-04T06:00:00.000000Z
                         PEHN\tPEHN\tPEHN\t49.00510449885239\t1970-01-04T06:00:00.000000Z
                         HYRX\tHYRX\tHYRX\t12.026122412833129\t1970-01-04T06:00:00.000000Z
-                        UVSD\tUVSD\tUVSD\t49.42890511958454\t1970-01-04T06:00:00.000000Z
                         KGHV\tKGHV\tKGHV\tnull\t1970-01-04T06:00:00.000000Z
+                        KGHV\tKGHV\tKGHV\t67.52509547112409\t1970-01-04T09:00:00.000000Z
                         \t\t\t135.835983782176\t1970-01-04T09:00:00.000000Z
                         VTJW\tVTJW\tVTJW\t48.820511018586934\t1970-01-04T09:00:00.000000Z
                         RXGZ\tRXGZ\tRXGZ\t23.90529010846525\t1970-01-04T09:00:00.000000Z
                         PEHN\tPEHN\tPEHN\t49.00510449885239\t1970-01-04T09:00:00.000000Z
                         HYRX\tHYRX\tHYRX\t12.026122412833129\t1970-01-04T09:00:00.000000Z
                         UVSD\tUVSD\tUVSD\t49.42890511958454\t1970-01-04T09:00:00.000000Z
-                        KGHV\tKGHV\tKGHV\t67.52509547112409\t1970-01-04T09:00:00.000000Z
                         """,
                 false
         );
@@ -13800,153 +13828,166 @@ public class SampleByTest extends AbstractCairoTest {
         Rnd rnd = TestUtils.generateRandom(LOG);
         setProperty(PropertyKey.DEBUG_CAIRO_COPIER_TYPE, rnd.nextInt(4));
 
-        assertQuery(
-                """
-                        b\tsum\tk\tk1
-                        \t11.427984775756228\t1970-01-03T00:00:00.000000Z\t1970-01-03T00:00:00.000000Z
-                        VTJW\t42.17768841969397\t1970-01-03T00:00:00.000000Z\t1970-01-03T00:00:00.000000Z
-                        RXGZ\t23.90529010846525\t1970-01-03T00:00:00.000000Z\t1970-01-03T00:00:00.000000Z
-                        PEHN\tnull\t1970-01-03T00:00:00.000000Z\t1970-01-03T00:00:00.000000Z
-                        HYRX\tnull\t1970-01-03T00:00:00.000000Z\t1970-01-03T00:00:00.000000Z
-                        \t120.87811633071126\t1970-01-03T03:00:00.000000Z\t1970-01-03T03:00:00.000000Z
-                        VTJW\t42.17768841969397\t1970-01-03T03:00:00.000000Z\t1970-01-03T03:00:00.000000Z
-                        RXGZ\t23.90529010846525\t1970-01-03T03:00:00.000000Z\t1970-01-03T03:00:00.000000Z
-                        PEHN\t70.94360487171201\t1970-01-03T03:00:00.000000Z\t1970-01-03T03:00:00.000000Z
-                        HYRX\tnull\t1970-01-03T03:00:00.000000Z\t1970-01-03T03:00:00.000000Z
-                        \t57.93466326862211\t1970-01-03T06:00:00.000000Z\t1970-01-03T06:00:00.000000Z
-                        VTJW\t42.17768841969397\t1970-01-03T06:00:00.000000Z\t1970-01-03T06:00:00.000000Z
-                        RXGZ\t23.90529010846525\t1970-01-03T06:00:00.000000Z\t1970-01-03T06:00:00.000000Z
-                        PEHN\t81.46807944500559\t1970-01-03T06:00:00.000000Z\t1970-01-03T06:00:00.000000Z
-                        HYRX\t97.71103146051203\t1970-01-03T06:00:00.000000Z\t1970-01-03T06:00:00.000000Z
-                        \t26.922103479744898\t1970-01-03T09:00:00.000000Z\t1970-01-03T09:00:00.000000Z
-                        VTJW\t48.820511018586934\t1970-01-03T09:00:00.000000Z\t1970-01-03T09:00:00.000000Z
-                        RXGZ\t23.90529010846525\t1970-01-03T09:00:00.000000Z\t1970-01-03T09:00:00.000000Z
-                        PEHN\t81.46807944500559\t1970-01-03T09:00:00.000000Z\t1970-01-03T09:00:00.000000Z
-                        HYRX\t12.026122412833129\t1970-01-03T09:00:00.000000Z\t1970-01-03T09:00:00.000000Z
-                        \t150.48604795487125\t1970-01-03T12:00:00.000000Z\t1970-01-03T12:00:00.000000Z
-                        VTJW\t48.820511018586934\t1970-01-03T12:00:00.000000Z\t1970-01-03T12:00:00.000000Z
-                        RXGZ\t23.90529010846525\t1970-01-03T12:00:00.000000Z\t1970-01-03T12:00:00.000000Z
-                        PEHN\t84.45258177211063\t1970-01-03T12:00:00.000000Z\t1970-01-03T12:00:00.000000Z
-                        HYRX\t12.026122412833129\t1970-01-03T12:00:00.000000Z\t1970-01-03T12:00:00.000000Z
-                        \t172.06125086724973\t1970-01-03T15:00:00.000000Z\t1970-01-03T15:00:00.000000Z
-                        VTJW\t48.820511018586934\t1970-01-03T15:00:00.000000Z\t1970-01-03T15:00:00.000000Z
-                        RXGZ\t23.90529010846525\t1970-01-03T15:00:00.000000Z\t1970-01-03T15:00:00.000000Z
-                        PEHN\t49.00510449885239\t1970-01-03T15:00:00.000000Z\t1970-01-03T15:00:00.000000Z
-                        HYRX\t12.026122412833129\t1970-01-03T15:00:00.000000Z\t1970-01-03T15:00:00.000000Z
-                        \t86.08992670884706\t1970-01-03T18:00:00.000000Z\t1970-01-03T18:00:00.000000Z
-                        VTJW\t48.820511018586934\t1970-01-03T18:00:00.000000Z\t1970-01-03T18:00:00.000000Z
-                        RXGZ\t23.90529010846525\t1970-01-03T18:00:00.000000Z\t1970-01-03T18:00:00.000000Z
-                        PEHN\t49.00510449885239\t1970-01-03T18:00:00.000000Z\t1970-01-03T18:00:00.000000Z
-                        HYRX\t12.026122412833129\t1970-01-03T18:00:00.000000Z\t1970-01-03T18:00:00.000000Z
-                        """,
-                "select b, sum(a), k, k from x sample by 3h fill(prev)",
-                "create table x as " +
-                        "(" +
-                        "select" +
-                        " rnd_double(0)*100 a," +
-                        " rnd_symbol(5,4,4,1) b," +
-                        " timestamp_sequence(172800000000, 3600000000) k" +
-                        " from" +
-                        " long_sequence(20)" +
-                        ") timestamp(k) partition by NONE",
-                "k",
-                "insert into x select * from (" +
-                        "select" +
-                        " rnd_double(0)*100 a," +
-                        " rnd_symbol(5,4,4,1) b," +
-                        " timestamp_sequence(277200000000, 3600000000) k" +
-                        " from" +
-                        " long_sequence(5)" +
-                        ") timestamp(k)",
-                """
-                        b\tsum\tk\tk1
-                        \t11.427984775756228\t1970-01-03T00:00:00.000000Z\t1970-01-03T00:00:00.000000Z
-                        VTJW\t42.17768841969397\t1970-01-03T00:00:00.000000Z\t1970-01-03T00:00:00.000000Z
-                        RXGZ\t23.90529010846525\t1970-01-03T00:00:00.000000Z\t1970-01-03T00:00:00.000000Z
-                        PEHN\tnull\t1970-01-03T00:00:00.000000Z\t1970-01-03T00:00:00.000000Z
-                        HYRX\tnull\t1970-01-03T00:00:00.000000Z\t1970-01-03T00:00:00.000000Z
-                        UVSD\tnull\t1970-01-03T00:00:00.000000Z\t1970-01-03T00:00:00.000000Z
-                        KGHV\tnull\t1970-01-03T00:00:00.000000Z\t1970-01-03T00:00:00.000000Z
-                        \t120.87811633071126\t1970-01-03T03:00:00.000000Z\t1970-01-03T03:00:00.000000Z
-                        VTJW\t42.17768841969397\t1970-01-03T03:00:00.000000Z\t1970-01-03T03:00:00.000000Z
-                        RXGZ\t23.90529010846525\t1970-01-03T03:00:00.000000Z\t1970-01-03T03:00:00.000000Z
-                        PEHN\t70.94360487171201\t1970-01-03T03:00:00.000000Z\t1970-01-03T03:00:00.000000Z
-                        HYRX\tnull\t1970-01-03T03:00:00.000000Z\t1970-01-03T03:00:00.000000Z
-                        UVSD\tnull\t1970-01-03T03:00:00.000000Z\t1970-01-03T03:00:00.000000Z
-                        KGHV\tnull\t1970-01-03T03:00:00.000000Z\t1970-01-03T03:00:00.000000Z
-                        \t57.93466326862211\t1970-01-03T06:00:00.000000Z\t1970-01-03T06:00:00.000000Z
-                        VTJW\t42.17768841969397\t1970-01-03T06:00:00.000000Z\t1970-01-03T06:00:00.000000Z
-                        RXGZ\t23.90529010846525\t1970-01-03T06:00:00.000000Z\t1970-01-03T06:00:00.000000Z
-                        PEHN\t81.46807944500559\t1970-01-03T06:00:00.000000Z\t1970-01-03T06:00:00.000000Z
-                        HYRX\t97.71103146051203\t1970-01-03T06:00:00.000000Z\t1970-01-03T06:00:00.000000Z
-                        UVSD\tnull\t1970-01-03T06:00:00.000000Z\t1970-01-03T06:00:00.000000Z
-                        KGHV\tnull\t1970-01-03T06:00:00.000000Z\t1970-01-03T06:00:00.000000Z
-                        \t26.922103479744898\t1970-01-03T09:00:00.000000Z\t1970-01-03T09:00:00.000000Z
-                        VTJW\t48.820511018586934\t1970-01-03T09:00:00.000000Z\t1970-01-03T09:00:00.000000Z
-                        RXGZ\t23.90529010846525\t1970-01-03T09:00:00.000000Z\t1970-01-03T09:00:00.000000Z
-                        PEHN\t81.46807944500559\t1970-01-03T09:00:00.000000Z\t1970-01-03T09:00:00.000000Z
-                        HYRX\t12.026122412833129\t1970-01-03T09:00:00.000000Z\t1970-01-03T09:00:00.000000Z
-                        UVSD\tnull\t1970-01-03T09:00:00.000000Z\t1970-01-03T09:00:00.000000Z
-                        KGHV\tnull\t1970-01-03T09:00:00.000000Z\t1970-01-03T09:00:00.000000Z
-                        \t150.48604795487125\t1970-01-03T12:00:00.000000Z\t1970-01-03T12:00:00.000000Z
-                        VTJW\t48.820511018586934\t1970-01-03T12:00:00.000000Z\t1970-01-03T12:00:00.000000Z
-                        RXGZ\t23.90529010846525\t1970-01-03T12:00:00.000000Z\t1970-01-03T12:00:00.000000Z
-                        PEHN\t84.45258177211063\t1970-01-03T12:00:00.000000Z\t1970-01-03T12:00:00.000000Z
-                        HYRX\t12.026122412833129\t1970-01-03T12:00:00.000000Z\t1970-01-03T12:00:00.000000Z
-                        UVSD\tnull\t1970-01-03T12:00:00.000000Z\t1970-01-03T12:00:00.000000Z
-                        KGHV\tnull\t1970-01-03T12:00:00.000000Z\t1970-01-03T12:00:00.000000Z
-                        \t172.06125086724973\t1970-01-03T15:00:00.000000Z\t1970-01-03T15:00:00.000000Z
-                        VTJW\t48.820511018586934\t1970-01-03T15:00:00.000000Z\t1970-01-03T15:00:00.000000Z
-                        RXGZ\t23.90529010846525\t1970-01-03T15:00:00.000000Z\t1970-01-03T15:00:00.000000Z
-                        PEHN\t49.00510449885239\t1970-01-03T15:00:00.000000Z\t1970-01-03T15:00:00.000000Z
-                        HYRX\t12.026122412833129\t1970-01-03T15:00:00.000000Z\t1970-01-03T15:00:00.000000Z
-                        UVSD\tnull\t1970-01-03T15:00:00.000000Z\t1970-01-03T15:00:00.000000Z
-                        KGHV\tnull\t1970-01-03T15:00:00.000000Z\t1970-01-03T15:00:00.000000Z
-                        \t86.08992670884706\t1970-01-03T18:00:00.000000Z\t1970-01-03T18:00:00.000000Z
-                        VTJW\t48.820511018586934\t1970-01-03T18:00:00.000000Z\t1970-01-03T18:00:00.000000Z
-                        RXGZ\t23.90529010846525\t1970-01-03T18:00:00.000000Z\t1970-01-03T18:00:00.000000Z
-                        PEHN\t49.00510449885239\t1970-01-03T18:00:00.000000Z\t1970-01-03T18:00:00.000000Z
-                        HYRX\t12.026122412833129\t1970-01-03T18:00:00.000000Z\t1970-01-03T18:00:00.000000Z
-                        UVSD\tnull\t1970-01-03T18:00:00.000000Z\t1970-01-03T18:00:00.000000Z
-                        KGHV\tnull\t1970-01-03T18:00:00.000000Z\t1970-01-03T18:00:00.000000Z
-                        \t86.08992670884706\t1970-01-03T21:00:00.000000Z\t1970-01-03T21:00:00.000000Z
-                        VTJW\t48.820511018586934\t1970-01-03T21:00:00.000000Z\t1970-01-03T21:00:00.000000Z
-                        RXGZ\t23.90529010846525\t1970-01-03T21:00:00.000000Z\t1970-01-03T21:00:00.000000Z
-                        PEHN\t49.00510449885239\t1970-01-03T21:00:00.000000Z\t1970-01-03T21:00:00.000000Z
-                        HYRX\t12.026122412833129\t1970-01-03T21:00:00.000000Z\t1970-01-03T21:00:00.000000Z
-                        UVSD\tnull\t1970-01-03T21:00:00.000000Z\t1970-01-03T21:00:00.000000Z
-                        KGHV\tnull\t1970-01-03T21:00:00.000000Z\t1970-01-03T21:00:00.000000Z
-                        \t86.08992670884706\t1970-01-04T00:00:00.000000Z\t1970-01-04T00:00:00.000000Z
-                        VTJW\t48.820511018586934\t1970-01-04T00:00:00.000000Z\t1970-01-04T00:00:00.000000Z
-                        RXGZ\t23.90529010846525\t1970-01-04T00:00:00.000000Z\t1970-01-04T00:00:00.000000Z
-                        PEHN\t49.00510449885239\t1970-01-04T00:00:00.000000Z\t1970-01-04T00:00:00.000000Z
-                        HYRX\t12.026122412833129\t1970-01-04T00:00:00.000000Z\t1970-01-04T00:00:00.000000Z
-                        UVSD\tnull\t1970-01-04T00:00:00.000000Z\t1970-01-04T00:00:00.000000Z
-                        KGHV\tnull\t1970-01-04T00:00:00.000000Z\t1970-01-04T00:00:00.000000Z
-                        \t54.49155021518948\t1970-01-04T03:00:00.000000Z\t1970-01-04T03:00:00.000000Z
-                        VTJW\t48.820511018586934\t1970-01-04T03:00:00.000000Z\t1970-01-04T03:00:00.000000Z
-                        RXGZ\t23.90529010846525\t1970-01-04T03:00:00.000000Z\t1970-01-04T03:00:00.000000Z
-                        PEHN\t49.00510449885239\t1970-01-04T03:00:00.000000Z\t1970-01-04T03:00:00.000000Z
-                        HYRX\t12.026122412833129\t1970-01-04T03:00:00.000000Z\t1970-01-04T03:00:00.000000Z
-                        UVSD\tnull\t1970-01-04T03:00:00.000000Z\t1970-01-04T03:00:00.000000Z
-                        KGHV\tnull\t1970-01-04T03:00:00.000000Z\t1970-01-04T03:00:00.000000Z
-                        \t135.835983782176\t1970-01-04T06:00:00.000000Z\t1970-01-04T06:00:00.000000Z
-                        VTJW\t48.820511018586934\t1970-01-04T06:00:00.000000Z\t1970-01-04T06:00:00.000000Z
-                        RXGZ\t23.90529010846525\t1970-01-04T06:00:00.000000Z\t1970-01-04T06:00:00.000000Z
-                        PEHN\t49.00510449885239\t1970-01-04T06:00:00.000000Z\t1970-01-04T06:00:00.000000Z
-                        HYRX\t12.026122412833129\t1970-01-04T06:00:00.000000Z\t1970-01-04T06:00:00.000000Z
-                        UVSD\t49.42890511958454\t1970-01-04T06:00:00.000000Z\t1970-01-04T06:00:00.000000Z
-                        KGHV\tnull\t1970-01-04T06:00:00.000000Z\t1970-01-04T06:00:00.000000Z
-                        \t135.835983782176\t1970-01-04T09:00:00.000000Z\t1970-01-04T09:00:00.000000Z
-                        VTJW\t48.820511018586934\t1970-01-04T09:00:00.000000Z\t1970-01-04T09:00:00.000000Z
-                        RXGZ\t23.90529010846525\t1970-01-04T09:00:00.000000Z\t1970-01-04T09:00:00.000000Z
-                        PEHN\t49.00510449885239\t1970-01-04T09:00:00.000000Z\t1970-01-04T09:00:00.000000Z
-                        HYRX\t12.026122412833129\t1970-01-04T09:00:00.000000Z\t1970-01-04T09:00:00.000000Z
-                        UVSD\t49.42890511958454\t1970-01-04T09:00:00.000000Z\t1970-01-04T09:00:00.000000Z
-                        KGHV\t67.52509547112409\t1970-01-04T09:00:00.000000Z\t1970-01-04T09:00:00.000000Z
-                        """,
-                false
-        );
+        assertMemoryLeak(() -> {
+            execute("create table x as " +
+                    "(" +
+                    "select" +
+                    " rnd_double(0)*100 a," +
+                    " rnd_symbol(5,4,4,1) b," +
+                    " timestamp_sequence(172800000000, 3600000000) k" +
+                    " from" +
+                    " long_sequence(20)" +
+                    ") timestamp(k) partition by NONE");
+
+            String query = "SELECT * FROM (select b, sum(a), k, k from x sample by 3h fill(prev)) ORDER BY k, b";
+            // Designated timestamp of the outer sort is the first k (idx 2),
+            // not the auto-aliased k1 (idx 3).
+            assertQueryNoLeakCheck(
+                    """
+                            b\tsum\tk\tk1
+                            \t11.427984775756228\t1970-01-03T00:00:00.000000Z\t1970-01-03T00:00:00.000000Z
+                            HYRX\tnull\t1970-01-03T00:00:00.000000Z\t1970-01-03T00:00:00.000000Z
+                            PEHN\tnull\t1970-01-03T00:00:00.000000Z\t1970-01-03T00:00:00.000000Z
+                            RXGZ\t23.90529010846525\t1970-01-03T00:00:00.000000Z\t1970-01-03T00:00:00.000000Z
+                            VTJW\t42.17768841969397\t1970-01-03T00:00:00.000000Z\t1970-01-03T00:00:00.000000Z
+                            \t120.87811633071126\t1970-01-03T03:00:00.000000Z\t1970-01-03T03:00:00.000000Z
+                            HYRX\tnull\t1970-01-03T03:00:00.000000Z\t1970-01-03T03:00:00.000000Z
+                            PEHN\t70.94360487171201\t1970-01-03T03:00:00.000000Z\t1970-01-03T03:00:00.000000Z
+                            RXGZ\t23.90529010846525\t1970-01-03T03:00:00.000000Z\t1970-01-03T03:00:00.000000Z
+                            VTJW\t42.17768841969397\t1970-01-03T03:00:00.000000Z\t1970-01-03T03:00:00.000000Z
+                            \t57.93466326862211\t1970-01-03T06:00:00.000000Z\t1970-01-03T06:00:00.000000Z
+                            HYRX\t97.71103146051203\t1970-01-03T06:00:00.000000Z\t1970-01-03T06:00:00.000000Z
+                            PEHN\t81.46807944500559\t1970-01-03T06:00:00.000000Z\t1970-01-03T06:00:00.000000Z
+                            RXGZ\t23.90529010846525\t1970-01-03T06:00:00.000000Z\t1970-01-03T06:00:00.000000Z
+                            VTJW\t42.17768841969397\t1970-01-03T06:00:00.000000Z\t1970-01-03T06:00:00.000000Z
+                            \t26.922103479744898\t1970-01-03T09:00:00.000000Z\t1970-01-03T09:00:00.000000Z
+                            HYRX\t12.026122412833129\t1970-01-03T09:00:00.000000Z\t1970-01-03T09:00:00.000000Z
+                            PEHN\t81.46807944500559\t1970-01-03T09:00:00.000000Z\t1970-01-03T09:00:00.000000Z
+                            RXGZ\t23.90529010846525\t1970-01-03T09:00:00.000000Z\t1970-01-03T09:00:00.000000Z
+                            VTJW\t48.820511018586934\t1970-01-03T09:00:00.000000Z\t1970-01-03T09:00:00.000000Z
+                            \t150.48604795487125\t1970-01-03T12:00:00.000000Z\t1970-01-03T12:00:00.000000Z
+                            HYRX\t12.026122412833129\t1970-01-03T12:00:00.000000Z\t1970-01-03T12:00:00.000000Z
+                            PEHN\t84.45258177211063\t1970-01-03T12:00:00.000000Z\t1970-01-03T12:00:00.000000Z
+                            RXGZ\t23.90529010846525\t1970-01-03T12:00:00.000000Z\t1970-01-03T12:00:00.000000Z
+                            VTJW\t48.820511018586934\t1970-01-03T12:00:00.000000Z\t1970-01-03T12:00:00.000000Z
+                            \t172.06125086724973\t1970-01-03T15:00:00.000000Z\t1970-01-03T15:00:00.000000Z
+                            HYRX\t12.026122412833129\t1970-01-03T15:00:00.000000Z\t1970-01-03T15:00:00.000000Z
+                            PEHN\t49.00510449885239\t1970-01-03T15:00:00.000000Z\t1970-01-03T15:00:00.000000Z
+                            RXGZ\t23.90529010846525\t1970-01-03T15:00:00.000000Z\t1970-01-03T15:00:00.000000Z
+                            VTJW\t48.820511018586934\t1970-01-03T15:00:00.000000Z\t1970-01-03T15:00:00.000000Z
+                            \t86.08992670884706\t1970-01-03T18:00:00.000000Z\t1970-01-03T18:00:00.000000Z
+                            HYRX\t12.026122412833129\t1970-01-03T18:00:00.000000Z\t1970-01-03T18:00:00.000000Z
+                            PEHN\t49.00510449885239\t1970-01-03T18:00:00.000000Z\t1970-01-03T18:00:00.000000Z
+                            RXGZ\t23.90529010846525\t1970-01-03T18:00:00.000000Z\t1970-01-03T18:00:00.000000Z
+                            VTJW\t48.820511018586934\t1970-01-03T18:00:00.000000Z\t1970-01-03T18:00:00.000000Z
+                            """,
+                    query,
+                    "k",
+                    true
+            );
+
+            execute("insert into x select * from (" +
+                    "select" +
+                    " rnd_double(0)*100 a," +
+                    " rnd_symbol(5,4,4,1) b," +
+                    " timestamp_sequence(277200000000, 3600000000) k" +
+                    " from" +
+                    " long_sequence(5)" +
+                    ") timestamp(k)");
+
+            assertQueryNoLeakCheck(
+                    """
+                            b\tsum\tk\tk1
+                            \t11.427984775756228\t1970-01-03T00:00:00.000000Z\t1970-01-03T00:00:00.000000Z
+                            HYRX\tnull\t1970-01-03T00:00:00.000000Z\t1970-01-03T00:00:00.000000Z
+                            KGHV\tnull\t1970-01-03T00:00:00.000000Z\t1970-01-03T00:00:00.000000Z
+                            PEHN\tnull\t1970-01-03T00:00:00.000000Z\t1970-01-03T00:00:00.000000Z
+                            RXGZ\t23.90529010846525\t1970-01-03T00:00:00.000000Z\t1970-01-03T00:00:00.000000Z
+                            UVSD\tnull\t1970-01-03T00:00:00.000000Z\t1970-01-03T00:00:00.000000Z
+                            VTJW\t42.17768841969397\t1970-01-03T00:00:00.000000Z\t1970-01-03T00:00:00.000000Z
+                            \t120.87811633071126\t1970-01-03T03:00:00.000000Z\t1970-01-03T03:00:00.000000Z
+                            HYRX\tnull\t1970-01-03T03:00:00.000000Z\t1970-01-03T03:00:00.000000Z
+                            KGHV\tnull\t1970-01-03T03:00:00.000000Z\t1970-01-03T03:00:00.000000Z
+                            PEHN\t70.94360487171201\t1970-01-03T03:00:00.000000Z\t1970-01-03T03:00:00.000000Z
+                            RXGZ\t23.90529010846525\t1970-01-03T03:00:00.000000Z\t1970-01-03T03:00:00.000000Z
+                            UVSD\tnull\t1970-01-03T03:00:00.000000Z\t1970-01-03T03:00:00.000000Z
+                            VTJW\t42.17768841969397\t1970-01-03T03:00:00.000000Z\t1970-01-03T03:00:00.000000Z
+                            \t57.93466326862211\t1970-01-03T06:00:00.000000Z\t1970-01-03T06:00:00.000000Z
+                            HYRX\t97.71103146051203\t1970-01-03T06:00:00.000000Z\t1970-01-03T06:00:00.000000Z
+                            KGHV\tnull\t1970-01-03T06:00:00.000000Z\t1970-01-03T06:00:00.000000Z
+                            PEHN\t81.46807944500559\t1970-01-03T06:00:00.000000Z\t1970-01-03T06:00:00.000000Z
+                            RXGZ\t23.90529010846525\t1970-01-03T06:00:00.000000Z\t1970-01-03T06:00:00.000000Z
+                            UVSD\tnull\t1970-01-03T06:00:00.000000Z\t1970-01-03T06:00:00.000000Z
+                            VTJW\t42.17768841969397\t1970-01-03T06:00:00.000000Z\t1970-01-03T06:00:00.000000Z
+                            \t26.922103479744898\t1970-01-03T09:00:00.000000Z\t1970-01-03T09:00:00.000000Z
+                            HYRX\t12.026122412833129\t1970-01-03T09:00:00.000000Z\t1970-01-03T09:00:00.000000Z
+                            KGHV\tnull\t1970-01-03T09:00:00.000000Z\t1970-01-03T09:00:00.000000Z
+                            PEHN\t81.46807944500559\t1970-01-03T09:00:00.000000Z\t1970-01-03T09:00:00.000000Z
+                            RXGZ\t23.90529010846525\t1970-01-03T09:00:00.000000Z\t1970-01-03T09:00:00.000000Z
+                            UVSD\tnull\t1970-01-03T09:00:00.000000Z\t1970-01-03T09:00:00.000000Z
+                            VTJW\t48.820511018586934\t1970-01-03T09:00:00.000000Z\t1970-01-03T09:00:00.000000Z
+                            \t150.48604795487125\t1970-01-03T12:00:00.000000Z\t1970-01-03T12:00:00.000000Z
+                            HYRX\t12.026122412833129\t1970-01-03T12:00:00.000000Z\t1970-01-03T12:00:00.000000Z
+                            KGHV\tnull\t1970-01-03T12:00:00.000000Z\t1970-01-03T12:00:00.000000Z
+                            PEHN\t84.45258177211063\t1970-01-03T12:00:00.000000Z\t1970-01-03T12:00:00.000000Z
+                            RXGZ\t23.90529010846525\t1970-01-03T12:00:00.000000Z\t1970-01-03T12:00:00.000000Z
+                            UVSD\tnull\t1970-01-03T12:00:00.000000Z\t1970-01-03T12:00:00.000000Z
+                            VTJW\t48.820511018586934\t1970-01-03T12:00:00.000000Z\t1970-01-03T12:00:00.000000Z
+                            \t172.06125086724973\t1970-01-03T15:00:00.000000Z\t1970-01-03T15:00:00.000000Z
+                            HYRX\t12.026122412833129\t1970-01-03T15:00:00.000000Z\t1970-01-03T15:00:00.000000Z
+                            KGHV\tnull\t1970-01-03T15:00:00.000000Z\t1970-01-03T15:00:00.000000Z
+                            PEHN\t49.00510449885239\t1970-01-03T15:00:00.000000Z\t1970-01-03T15:00:00.000000Z
+                            RXGZ\t23.90529010846525\t1970-01-03T15:00:00.000000Z\t1970-01-03T15:00:00.000000Z
+                            UVSD\tnull\t1970-01-03T15:00:00.000000Z\t1970-01-03T15:00:00.000000Z
+                            VTJW\t48.820511018586934\t1970-01-03T15:00:00.000000Z\t1970-01-03T15:00:00.000000Z
+                            \t86.08992670884706\t1970-01-03T18:00:00.000000Z\t1970-01-03T18:00:00.000000Z
+                            HYRX\t12.026122412833129\t1970-01-03T18:00:00.000000Z\t1970-01-03T18:00:00.000000Z
+                            KGHV\tnull\t1970-01-03T18:00:00.000000Z\t1970-01-03T18:00:00.000000Z
+                            PEHN\t49.00510449885239\t1970-01-03T18:00:00.000000Z\t1970-01-03T18:00:00.000000Z
+                            RXGZ\t23.90529010846525\t1970-01-03T18:00:00.000000Z\t1970-01-03T18:00:00.000000Z
+                            UVSD\tnull\t1970-01-03T18:00:00.000000Z\t1970-01-03T18:00:00.000000Z
+                            VTJW\t48.820511018586934\t1970-01-03T18:00:00.000000Z\t1970-01-03T18:00:00.000000Z
+                            \t86.08992670884706\t1970-01-03T21:00:00.000000Z\t1970-01-03T21:00:00.000000Z
+                            HYRX\t12.026122412833129\t1970-01-03T21:00:00.000000Z\t1970-01-03T21:00:00.000000Z
+                            KGHV\tnull\t1970-01-03T21:00:00.000000Z\t1970-01-03T21:00:00.000000Z
+                            PEHN\t49.00510449885239\t1970-01-03T21:00:00.000000Z\t1970-01-03T21:00:00.000000Z
+                            RXGZ\t23.90529010846525\t1970-01-03T21:00:00.000000Z\t1970-01-03T21:00:00.000000Z
+                            UVSD\tnull\t1970-01-03T21:00:00.000000Z\t1970-01-03T21:00:00.000000Z
+                            VTJW\t48.820511018586934\t1970-01-03T21:00:00.000000Z\t1970-01-03T21:00:00.000000Z
+                            \t86.08992670884706\t1970-01-04T00:00:00.000000Z\t1970-01-04T00:00:00.000000Z
+                            HYRX\t12.026122412833129\t1970-01-04T00:00:00.000000Z\t1970-01-04T00:00:00.000000Z
+                            KGHV\tnull\t1970-01-04T00:00:00.000000Z\t1970-01-04T00:00:00.000000Z
+                            PEHN\t49.00510449885239\t1970-01-04T00:00:00.000000Z\t1970-01-04T00:00:00.000000Z
+                            RXGZ\t23.90529010846525\t1970-01-04T00:00:00.000000Z\t1970-01-04T00:00:00.000000Z
+                            UVSD\tnull\t1970-01-04T00:00:00.000000Z\t1970-01-04T00:00:00.000000Z
+                            VTJW\t48.820511018586934\t1970-01-04T00:00:00.000000Z\t1970-01-04T00:00:00.000000Z
+                            \t54.49155021518948\t1970-01-04T03:00:00.000000Z\t1970-01-04T03:00:00.000000Z
+                            HYRX\t12.026122412833129\t1970-01-04T03:00:00.000000Z\t1970-01-04T03:00:00.000000Z
+                            KGHV\tnull\t1970-01-04T03:00:00.000000Z\t1970-01-04T03:00:00.000000Z
+                            PEHN\t49.00510449885239\t1970-01-04T03:00:00.000000Z\t1970-01-04T03:00:00.000000Z
+                            RXGZ\t23.90529010846525\t1970-01-04T03:00:00.000000Z\t1970-01-04T03:00:00.000000Z
+                            UVSD\tnull\t1970-01-04T03:00:00.000000Z\t1970-01-04T03:00:00.000000Z
+                            VTJW\t48.820511018586934\t1970-01-04T03:00:00.000000Z\t1970-01-04T03:00:00.000000Z
+                            \t135.835983782176\t1970-01-04T06:00:00.000000Z\t1970-01-04T06:00:00.000000Z
+                            HYRX\t12.026122412833129\t1970-01-04T06:00:00.000000Z\t1970-01-04T06:00:00.000000Z
+                            KGHV\tnull\t1970-01-04T06:00:00.000000Z\t1970-01-04T06:00:00.000000Z
+                            PEHN\t49.00510449885239\t1970-01-04T06:00:00.000000Z\t1970-01-04T06:00:00.000000Z
+                            RXGZ\t23.90529010846525\t1970-01-04T06:00:00.000000Z\t1970-01-04T06:00:00.000000Z
+                            UVSD\t49.42890511958454\t1970-01-04T06:00:00.000000Z\t1970-01-04T06:00:00.000000Z
+                            VTJW\t48.820511018586934\t1970-01-04T06:00:00.000000Z\t1970-01-04T06:00:00.000000Z
+                            \t135.835983782176\t1970-01-04T09:00:00.000000Z\t1970-01-04T09:00:00.000000Z
+                            HYRX\t12.026122412833129\t1970-01-04T09:00:00.000000Z\t1970-01-04T09:00:00.000000Z
+                            KGHV\t67.52509547112409\t1970-01-04T09:00:00.000000Z\t1970-01-04T09:00:00.000000Z
+                            PEHN\t49.00510449885239\t1970-01-04T09:00:00.000000Z\t1970-01-04T09:00:00.000000Z
+                            RXGZ\t23.90529010846525\t1970-01-04T09:00:00.000000Z\t1970-01-04T09:00:00.000000Z
+                            UVSD\t49.42890511958454\t1970-01-04T09:00:00.000000Z\t1970-01-04T09:00:00.000000Z
+                            VTJW\t48.820511018586934\t1970-01-04T09:00:00.000000Z\t1970-01-04T09:00:00.000000Z
+                            """,
+                    query,
+                    "k",
+                    true
+            );
+        });
     }
 
     @Test
@@ -13954,153 +13995,164 @@ public class SampleByTest extends AbstractCairoTest {
         Rnd rnd = TestUtils.generateRandom(LOG);
         setProperty(PropertyKey.DEBUG_CAIRO_COPIER_TYPE, rnd.nextInt(4));
 
-        assertQuery(
-                """
-                        b\tsum\tk1\tk
-                        \t11.427984775756228\t1970-01-03T00:00:00.000000Z\t1970-01-03T00:00:00.000000Z
-                        VTJW\t42.17768841969397\t1970-01-03T00:00:00.000000Z\t1970-01-03T00:00:00.000000Z
-                        RXGZ\t23.90529010846525\t1970-01-03T00:00:00.000000Z\t1970-01-03T00:00:00.000000Z
-                        PEHN\tnull\t1970-01-03T00:00:00.000000Z\t1970-01-03T00:00:00.000000Z
-                        HYRX\tnull\t1970-01-03T00:00:00.000000Z\t1970-01-03T00:00:00.000000Z
-                        \t120.87811633071126\t1970-01-03T03:00:00.000000Z\t1970-01-03T03:00:00.000000Z
-                        VTJW\t42.17768841969397\t1970-01-03T03:00:00.000000Z\t1970-01-03T03:00:00.000000Z
-                        RXGZ\t23.90529010846525\t1970-01-03T03:00:00.000000Z\t1970-01-03T03:00:00.000000Z
-                        PEHN\t70.94360487171201\t1970-01-03T03:00:00.000000Z\t1970-01-03T03:00:00.000000Z
-                        HYRX\tnull\t1970-01-03T03:00:00.000000Z\t1970-01-03T03:00:00.000000Z
-                        \t57.93466326862211\t1970-01-03T06:00:00.000000Z\t1970-01-03T06:00:00.000000Z
-                        VTJW\t42.17768841969397\t1970-01-03T06:00:00.000000Z\t1970-01-03T06:00:00.000000Z
-                        RXGZ\t23.90529010846525\t1970-01-03T06:00:00.000000Z\t1970-01-03T06:00:00.000000Z
-                        PEHN\t81.46807944500559\t1970-01-03T06:00:00.000000Z\t1970-01-03T06:00:00.000000Z
-                        HYRX\t97.71103146051203\t1970-01-03T06:00:00.000000Z\t1970-01-03T06:00:00.000000Z
-                        \t26.922103479744898\t1970-01-03T09:00:00.000000Z\t1970-01-03T09:00:00.000000Z
-                        VTJW\t48.820511018586934\t1970-01-03T09:00:00.000000Z\t1970-01-03T09:00:00.000000Z
-                        RXGZ\t23.90529010846525\t1970-01-03T09:00:00.000000Z\t1970-01-03T09:00:00.000000Z
-                        PEHN\t81.46807944500559\t1970-01-03T09:00:00.000000Z\t1970-01-03T09:00:00.000000Z
-                        HYRX\t12.026122412833129\t1970-01-03T09:00:00.000000Z\t1970-01-03T09:00:00.000000Z
-                        \t150.48604795487125\t1970-01-03T12:00:00.000000Z\t1970-01-03T12:00:00.000000Z
-                        VTJW\t48.820511018586934\t1970-01-03T12:00:00.000000Z\t1970-01-03T12:00:00.000000Z
-                        RXGZ\t23.90529010846525\t1970-01-03T12:00:00.000000Z\t1970-01-03T12:00:00.000000Z
-                        PEHN\t84.45258177211063\t1970-01-03T12:00:00.000000Z\t1970-01-03T12:00:00.000000Z
-                        HYRX\t12.026122412833129\t1970-01-03T12:00:00.000000Z\t1970-01-03T12:00:00.000000Z
-                        \t172.06125086724973\t1970-01-03T15:00:00.000000Z\t1970-01-03T15:00:00.000000Z
-                        VTJW\t48.820511018586934\t1970-01-03T15:00:00.000000Z\t1970-01-03T15:00:00.000000Z
-                        RXGZ\t23.90529010846525\t1970-01-03T15:00:00.000000Z\t1970-01-03T15:00:00.000000Z
-                        PEHN\t49.00510449885239\t1970-01-03T15:00:00.000000Z\t1970-01-03T15:00:00.000000Z
-                        HYRX\t12.026122412833129\t1970-01-03T15:00:00.000000Z\t1970-01-03T15:00:00.000000Z
-                        \t86.08992670884706\t1970-01-03T18:00:00.000000Z\t1970-01-03T18:00:00.000000Z
-                        VTJW\t48.820511018586934\t1970-01-03T18:00:00.000000Z\t1970-01-03T18:00:00.000000Z
-                        RXGZ\t23.90529010846525\t1970-01-03T18:00:00.000000Z\t1970-01-03T18:00:00.000000Z
-                        PEHN\t49.00510449885239\t1970-01-03T18:00:00.000000Z\t1970-01-03T18:00:00.000000Z
-                        HYRX\t12.026122412833129\t1970-01-03T18:00:00.000000Z\t1970-01-03T18:00:00.000000Z
-                        """,
-                "select b, sum(a), k k1, k from x sample by 3h fill(prev)",
-                "create table x as " +
-                        "(" +
-                        "select" +
-                        " rnd_double(0)*100 a," +
-                        " rnd_symbol(5,4,4,1) b," +
-                        " timestamp_sequence(172800000000, 3600000000) k" +
-                        " from" +
-                        " long_sequence(20)" +
-                        ") timestamp(k) partition by NONE",
-                "k1",
-                "insert into x select * from (" +
-                        "select" +
-                        " rnd_double(0)*100 a," +
-                        " rnd_symbol(5,4,4,1) b," +
-                        " timestamp_sequence(277200000000, 3600000000) k" +
-                        " from" +
-                        " long_sequence(5)" +
-                        ") timestamp(k)",
-                """
-                        b\tsum\tk1\tk
-                        \t11.427984775756228\t1970-01-03T00:00:00.000000Z\t1970-01-03T00:00:00.000000Z
-                        VTJW\t42.17768841969397\t1970-01-03T00:00:00.000000Z\t1970-01-03T00:00:00.000000Z
-                        RXGZ\t23.90529010846525\t1970-01-03T00:00:00.000000Z\t1970-01-03T00:00:00.000000Z
-                        PEHN\tnull\t1970-01-03T00:00:00.000000Z\t1970-01-03T00:00:00.000000Z
-                        HYRX\tnull\t1970-01-03T00:00:00.000000Z\t1970-01-03T00:00:00.000000Z
-                        UVSD\tnull\t1970-01-03T00:00:00.000000Z\t1970-01-03T00:00:00.000000Z
-                        KGHV\tnull\t1970-01-03T00:00:00.000000Z\t1970-01-03T00:00:00.000000Z
-                        \t120.87811633071126\t1970-01-03T03:00:00.000000Z\t1970-01-03T03:00:00.000000Z
-                        VTJW\t42.17768841969397\t1970-01-03T03:00:00.000000Z\t1970-01-03T03:00:00.000000Z
-                        RXGZ\t23.90529010846525\t1970-01-03T03:00:00.000000Z\t1970-01-03T03:00:00.000000Z
-                        PEHN\t70.94360487171201\t1970-01-03T03:00:00.000000Z\t1970-01-03T03:00:00.000000Z
-                        HYRX\tnull\t1970-01-03T03:00:00.000000Z\t1970-01-03T03:00:00.000000Z
-                        UVSD\tnull\t1970-01-03T03:00:00.000000Z\t1970-01-03T03:00:00.000000Z
-                        KGHV\tnull\t1970-01-03T03:00:00.000000Z\t1970-01-03T03:00:00.000000Z
-                        \t57.93466326862211\t1970-01-03T06:00:00.000000Z\t1970-01-03T06:00:00.000000Z
-                        VTJW\t42.17768841969397\t1970-01-03T06:00:00.000000Z\t1970-01-03T06:00:00.000000Z
-                        RXGZ\t23.90529010846525\t1970-01-03T06:00:00.000000Z\t1970-01-03T06:00:00.000000Z
-                        PEHN\t81.46807944500559\t1970-01-03T06:00:00.000000Z\t1970-01-03T06:00:00.000000Z
-                        HYRX\t97.71103146051203\t1970-01-03T06:00:00.000000Z\t1970-01-03T06:00:00.000000Z
-                        UVSD\tnull\t1970-01-03T06:00:00.000000Z\t1970-01-03T06:00:00.000000Z
-                        KGHV\tnull\t1970-01-03T06:00:00.000000Z\t1970-01-03T06:00:00.000000Z
-                        \t26.922103479744898\t1970-01-03T09:00:00.000000Z\t1970-01-03T09:00:00.000000Z
-                        VTJW\t48.820511018586934\t1970-01-03T09:00:00.000000Z\t1970-01-03T09:00:00.000000Z
-                        RXGZ\t23.90529010846525\t1970-01-03T09:00:00.000000Z\t1970-01-03T09:00:00.000000Z
-                        PEHN\t81.46807944500559\t1970-01-03T09:00:00.000000Z\t1970-01-03T09:00:00.000000Z
-                        HYRX\t12.026122412833129\t1970-01-03T09:00:00.000000Z\t1970-01-03T09:00:00.000000Z
-                        UVSD\tnull\t1970-01-03T09:00:00.000000Z\t1970-01-03T09:00:00.000000Z
-                        KGHV\tnull\t1970-01-03T09:00:00.000000Z\t1970-01-03T09:00:00.000000Z
-                        \t150.48604795487125\t1970-01-03T12:00:00.000000Z\t1970-01-03T12:00:00.000000Z
-                        VTJW\t48.820511018586934\t1970-01-03T12:00:00.000000Z\t1970-01-03T12:00:00.000000Z
-                        RXGZ\t23.90529010846525\t1970-01-03T12:00:00.000000Z\t1970-01-03T12:00:00.000000Z
-                        PEHN\t84.45258177211063\t1970-01-03T12:00:00.000000Z\t1970-01-03T12:00:00.000000Z
-                        HYRX\t12.026122412833129\t1970-01-03T12:00:00.000000Z\t1970-01-03T12:00:00.000000Z
-                        UVSD\tnull\t1970-01-03T12:00:00.000000Z\t1970-01-03T12:00:00.000000Z
-                        KGHV\tnull\t1970-01-03T12:00:00.000000Z\t1970-01-03T12:00:00.000000Z
-                        \t172.06125086724973\t1970-01-03T15:00:00.000000Z\t1970-01-03T15:00:00.000000Z
-                        VTJW\t48.820511018586934\t1970-01-03T15:00:00.000000Z\t1970-01-03T15:00:00.000000Z
-                        RXGZ\t23.90529010846525\t1970-01-03T15:00:00.000000Z\t1970-01-03T15:00:00.000000Z
-                        PEHN\t49.00510449885239\t1970-01-03T15:00:00.000000Z\t1970-01-03T15:00:00.000000Z
-                        HYRX\t12.026122412833129\t1970-01-03T15:00:00.000000Z\t1970-01-03T15:00:00.000000Z
-                        UVSD\tnull\t1970-01-03T15:00:00.000000Z\t1970-01-03T15:00:00.000000Z
-                        KGHV\tnull\t1970-01-03T15:00:00.000000Z\t1970-01-03T15:00:00.000000Z
-                        \t86.08992670884706\t1970-01-03T18:00:00.000000Z\t1970-01-03T18:00:00.000000Z
-                        VTJW\t48.820511018586934\t1970-01-03T18:00:00.000000Z\t1970-01-03T18:00:00.000000Z
-                        RXGZ\t23.90529010846525\t1970-01-03T18:00:00.000000Z\t1970-01-03T18:00:00.000000Z
-                        PEHN\t49.00510449885239\t1970-01-03T18:00:00.000000Z\t1970-01-03T18:00:00.000000Z
-                        HYRX\t12.026122412833129\t1970-01-03T18:00:00.000000Z\t1970-01-03T18:00:00.000000Z
-                        UVSD\tnull\t1970-01-03T18:00:00.000000Z\t1970-01-03T18:00:00.000000Z
-                        KGHV\tnull\t1970-01-03T18:00:00.000000Z\t1970-01-03T18:00:00.000000Z
-                        \t86.08992670884706\t1970-01-03T21:00:00.000000Z\t1970-01-03T21:00:00.000000Z
-                        VTJW\t48.820511018586934\t1970-01-03T21:00:00.000000Z\t1970-01-03T21:00:00.000000Z
-                        RXGZ\t23.90529010846525\t1970-01-03T21:00:00.000000Z\t1970-01-03T21:00:00.000000Z
-                        PEHN\t49.00510449885239\t1970-01-03T21:00:00.000000Z\t1970-01-03T21:00:00.000000Z
-                        HYRX\t12.026122412833129\t1970-01-03T21:00:00.000000Z\t1970-01-03T21:00:00.000000Z
-                        UVSD\tnull\t1970-01-03T21:00:00.000000Z\t1970-01-03T21:00:00.000000Z
-                        KGHV\tnull\t1970-01-03T21:00:00.000000Z\t1970-01-03T21:00:00.000000Z
-                        \t86.08992670884706\t1970-01-04T00:00:00.000000Z\t1970-01-04T00:00:00.000000Z
-                        VTJW\t48.820511018586934\t1970-01-04T00:00:00.000000Z\t1970-01-04T00:00:00.000000Z
-                        RXGZ\t23.90529010846525\t1970-01-04T00:00:00.000000Z\t1970-01-04T00:00:00.000000Z
-                        PEHN\t49.00510449885239\t1970-01-04T00:00:00.000000Z\t1970-01-04T00:00:00.000000Z
-                        HYRX\t12.026122412833129\t1970-01-04T00:00:00.000000Z\t1970-01-04T00:00:00.000000Z
-                        UVSD\tnull\t1970-01-04T00:00:00.000000Z\t1970-01-04T00:00:00.000000Z
-                        KGHV\tnull\t1970-01-04T00:00:00.000000Z\t1970-01-04T00:00:00.000000Z
-                        \t54.49155021518948\t1970-01-04T03:00:00.000000Z\t1970-01-04T03:00:00.000000Z
-                        VTJW\t48.820511018586934\t1970-01-04T03:00:00.000000Z\t1970-01-04T03:00:00.000000Z
-                        RXGZ\t23.90529010846525\t1970-01-04T03:00:00.000000Z\t1970-01-04T03:00:00.000000Z
-                        PEHN\t49.00510449885239\t1970-01-04T03:00:00.000000Z\t1970-01-04T03:00:00.000000Z
-                        HYRX\t12.026122412833129\t1970-01-04T03:00:00.000000Z\t1970-01-04T03:00:00.000000Z
-                        UVSD\tnull\t1970-01-04T03:00:00.000000Z\t1970-01-04T03:00:00.000000Z
-                        KGHV\tnull\t1970-01-04T03:00:00.000000Z\t1970-01-04T03:00:00.000000Z
-                        \t135.835983782176\t1970-01-04T06:00:00.000000Z\t1970-01-04T06:00:00.000000Z
-                        VTJW\t48.820511018586934\t1970-01-04T06:00:00.000000Z\t1970-01-04T06:00:00.000000Z
-                        RXGZ\t23.90529010846525\t1970-01-04T06:00:00.000000Z\t1970-01-04T06:00:00.000000Z
-                        PEHN\t49.00510449885239\t1970-01-04T06:00:00.000000Z\t1970-01-04T06:00:00.000000Z
-                        HYRX\t12.026122412833129\t1970-01-04T06:00:00.000000Z\t1970-01-04T06:00:00.000000Z
-                        UVSD\t49.42890511958454\t1970-01-04T06:00:00.000000Z\t1970-01-04T06:00:00.000000Z
-                        KGHV\tnull\t1970-01-04T06:00:00.000000Z\t1970-01-04T06:00:00.000000Z
-                        \t135.835983782176\t1970-01-04T09:00:00.000000Z\t1970-01-04T09:00:00.000000Z
-                        VTJW\t48.820511018586934\t1970-01-04T09:00:00.000000Z\t1970-01-04T09:00:00.000000Z
-                        RXGZ\t23.90529010846525\t1970-01-04T09:00:00.000000Z\t1970-01-04T09:00:00.000000Z
-                        PEHN\t49.00510449885239\t1970-01-04T09:00:00.000000Z\t1970-01-04T09:00:00.000000Z
-                        HYRX\t12.026122412833129\t1970-01-04T09:00:00.000000Z\t1970-01-04T09:00:00.000000Z
-                        UVSD\t49.42890511958454\t1970-01-04T09:00:00.000000Z\t1970-01-04T09:00:00.000000Z
-                        KGHV\t67.52509547112409\t1970-01-04T09:00:00.000000Z\t1970-01-04T09:00:00.000000Z
-                        """,
-                false
-        );
+        assertMemoryLeak(() -> {
+            execute("create table x as " +
+                    "(" +
+                    "select" +
+                    " rnd_double(0)*100 a," +
+                    " rnd_symbol(5,4,4,1) b," +
+                    " timestamp_sequence(172800000000, 3600000000) k" +
+                    " from" +
+                    " long_sequence(20)" +
+                    ") timestamp(k) partition by NONE");
+
+            String query = "SELECT * FROM (select b, sum(a), k k1, k from x sample by 3h fill(prev)) ORDER BY k1, b";
+            assertQueryNoLeakCheck(
+                    """
+                            b\tsum\tk1\tk
+                            \t11.427984775756228\t1970-01-03T00:00:00.000000Z\t1970-01-03T00:00:00.000000Z
+                            HYRX\tnull\t1970-01-03T00:00:00.000000Z\t1970-01-03T00:00:00.000000Z
+                            PEHN\tnull\t1970-01-03T00:00:00.000000Z\t1970-01-03T00:00:00.000000Z
+                            RXGZ\t23.90529010846525\t1970-01-03T00:00:00.000000Z\t1970-01-03T00:00:00.000000Z
+                            VTJW\t42.17768841969397\t1970-01-03T00:00:00.000000Z\t1970-01-03T00:00:00.000000Z
+                            \t120.87811633071126\t1970-01-03T03:00:00.000000Z\t1970-01-03T03:00:00.000000Z
+                            HYRX\tnull\t1970-01-03T03:00:00.000000Z\t1970-01-03T03:00:00.000000Z
+                            PEHN\t70.94360487171201\t1970-01-03T03:00:00.000000Z\t1970-01-03T03:00:00.000000Z
+                            RXGZ\t23.90529010846525\t1970-01-03T03:00:00.000000Z\t1970-01-03T03:00:00.000000Z
+                            VTJW\t42.17768841969397\t1970-01-03T03:00:00.000000Z\t1970-01-03T03:00:00.000000Z
+                            \t57.93466326862211\t1970-01-03T06:00:00.000000Z\t1970-01-03T06:00:00.000000Z
+                            HYRX\t97.71103146051203\t1970-01-03T06:00:00.000000Z\t1970-01-03T06:00:00.000000Z
+                            PEHN\t81.46807944500559\t1970-01-03T06:00:00.000000Z\t1970-01-03T06:00:00.000000Z
+                            RXGZ\t23.90529010846525\t1970-01-03T06:00:00.000000Z\t1970-01-03T06:00:00.000000Z
+                            VTJW\t42.17768841969397\t1970-01-03T06:00:00.000000Z\t1970-01-03T06:00:00.000000Z
+                            \t26.922103479744898\t1970-01-03T09:00:00.000000Z\t1970-01-03T09:00:00.000000Z
+                            HYRX\t12.026122412833129\t1970-01-03T09:00:00.000000Z\t1970-01-03T09:00:00.000000Z
+                            PEHN\t81.46807944500559\t1970-01-03T09:00:00.000000Z\t1970-01-03T09:00:00.000000Z
+                            RXGZ\t23.90529010846525\t1970-01-03T09:00:00.000000Z\t1970-01-03T09:00:00.000000Z
+                            VTJW\t48.820511018586934\t1970-01-03T09:00:00.000000Z\t1970-01-03T09:00:00.000000Z
+                            \t150.48604795487125\t1970-01-03T12:00:00.000000Z\t1970-01-03T12:00:00.000000Z
+                            HYRX\t12.026122412833129\t1970-01-03T12:00:00.000000Z\t1970-01-03T12:00:00.000000Z
+                            PEHN\t84.45258177211063\t1970-01-03T12:00:00.000000Z\t1970-01-03T12:00:00.000000Z
+                            RXGZ\t23.90529010846525\t1970-01-03T12:00:00.000000Z\t1970-01-03T12:00:00.000000Z
+                            VTJW\t48.820511018586934\t1970-01-03T12:00:00.000000Z\t1970-01-03T12:00:00.000000Z
+                            \t172.06125086724973\t1970-01-03T15:00:00.000000Z\t1970-01-03T15:00:00.000000Z
+                            HYRX\t12.026122412833129\t1970-01-03T15:00:00.000000Z\t1970-01-03T15:00:00.000000Z
+                            PEHN\t49.00510449885239\t1970-01-03T15:00:00.000000Z\t1970-01-03T15:00:00.000000Z
+                            RXGZ\t23.90529010846525\t1970-01-03T15:00:00.000000Z\t1970-01-03T15:00:00.000000Z
+                            VTJW\t48.820511018586934\t1970-01-03T15:00:00.000000Z\t1970-01-03T15:00:00.000000Z
+                            \t86.08992670884706\t1970-01-03T18:00:00.000000Z\t1970-01-03T18:00:00.000000Z
+                            HYRX\t12.026122412833129\t1970-01-03T18:00:00.000000Z\t1970-01-03T18:00:00.000000Z
+                            PEHN\t49.00510449885239\t1970-01-03T18:00:00.000000Z\t1970-01-03T18:00:00.000000Z
+                            RXGZ\t23.90529010846525\t1970-01-03T18:00:00.000000Z\t1970-01-03T18:00:00.000000Z
+                            VTJW\t48.820511018586934\t1970-01-03T18:00:00.000000Z\t1970-01-03T18:00:00.000000Z
+                            """,
+                    query,
+                    "k1",
+                    true
+            );
+
+            execute("insert into x select * from (" +
+                    "select" +
+                    " rnd_double(0)*100 a," +
+                    " rnd_symbol(5,4,4,1) b," +
+                    " timestamp_sequence(277200000000, 3600000000) k" +
+                    " from" +
+                    " long_sequence(5)" +
+                    ") timestamp(k)");
+
+            assertQueryNoLeakCheck(
+                    """
+                            b\tsum\tk1\tk
+                            \t11.427984775756228\t1970-01-03T00:00:00.000000Z\t1970-01-03T00:00:00.000000Z
+                            HYRX\tnull\t1970-01-03T00:00:00.000000Z\t1970-01-03T00:00:00.000000Z
+                            KGHV\tnull\t1970-01-03T00:00:00.000000Z\t1970-01-03T00:00:00.000000Z
+                            PEHN\tnull\t1970-01-03T00:00:00.000000Z\t1970-01-03T00:00:00.000000Z
+                            RXGZ\t23.90529010846525\t1970-01-03T00:00:00.000000Z\t1970-01-03T00:00:00.000000Z
+                            UVSD\tnull\t1970-01-03T00:00:00.000000Z\t1970-01-03T00:00:00.000000Z
+                            VTJW\t42.17768841969397\t1970-01-03T00:00:00.000000Z\t1970-01-03T00:00:00.000000Z
+                            \t120.87811633071126\t1970-01-03T03:00:00.000000Z\t1970-01-03T03:00:00.000000Z
+                            HYRX\tnull\t1970-01-03T03:00:00.000000Z\t1970-01-03T03:00:00.000000Z
+                            KGHV\tnull\t1970-01-03T03:00:00.000000Z\t1970-01-03T03:00:00.000000Z
+                            PEHN\t70.94360487171201\t1970-01-03T03:00:00.000000Z\t1970-01-03T03:00:00.000000Z
+                            RXGZ\t23.90529010846525\t1970-01-03T03:00:00.000000Z\t1970-01-03T03:00:00.000000Z
+                            UVSD\tnull\t1970-01-03T03:00:00.000000Z\t1970-01-03T03:00:00.000000Z
+                            VTJW\t42.17768841969397\t1970-01-03T03:00:00.000000Z\t1970-01-03T03:00:00.000000Z
+                            \t57.93466326862211\t1970-01-03T06:00:00.000000Z\t1970-01-03T06:00:00.000000Z
+                            HYRX\t97.71103146051203\t1970-01-03T06:00:00.000000Z\t1970-01-03T06:00:00.000000Z
+                            KGHV\tnull\t1970-01-03T06:00:00.000000Z\t1970-01-03T06:00:00.000000Z
+                            PEHN\t81.46807944500559\t1970-01-03T06:00:00.000000Z\t1970-01-03T06:00:00.000000Z
+                            RXGZ\t23.90529010846525\t1970-01-03T06:00:00.000000Z\t1970-01-03T06:00:00.000000Z
+                            UVSD\tnull\t1970-01-03T06:00:00.000000Z\t1970-01-03T06:00:00.000000Z
+                            VTJW\t42.17768841969397\t1970-01-03T06:00:00.000000Z\t1970-01-03T06:00:00.000000Z
+                            \t26.922103479744898\t1970-01-03T09:00:00.000000Z\t1970-01-03T09:00:00.000000Z
+                            HYRX\t12.026122412833129\t1970-01-03T09:00:00.000000Z\t1970-01-03T09:00:00.000000Z
+                            KGHV\tnull\t1970-01-03T09:00:00.000000Z\t1970-01-03T09:00:00.000000Z
+                            PEHN\t81.46807944500559\t1970-01-03T09:00:00.000000Z\t1970-01-03T09:00:00.000000Z
+                            RXGZ\t23.90529010846525\t1970-01-03T09:00:00.000000Z\t1970-01-03T09:00:00.000000Z
+                            UVSD\tnull\t1970-01-03T09:00:00.000000Z\t1970-01-03T09:00:00.000000Z
+                            VTJW\t48.820511018586934\t1970-01-03T09:00:00.000000Z\t1970-01-03T09:00:00.000000Z
+                            \t150.48604795487125\t1970-01-03T12:00:00.000000Z\t1970-01-03T12:00:00.000000Z
+                            HYRX\t12.026122412833129\t1970-01-03T12:00:00.000000Z\t1970-01-03T12:00:00.000000Z
+                            KGHV\tnull\t1970-01-03T12:00:00.000000Z\t1970-01-03T12:00:00.000000Z
+                            PEHN\t84.45258177211063\t1970-01-03T12:00:00.000000Z\t1970-01-03T12:00:00.000000Z
+                            RXGZ\t23.90529010846525\t1970-01-03T12:00:00.000000Z\t1970-01-03T12:00:00.000000Z
+                            UVSD\tnull\t1970-01-03T12:00:00.000000Z\t1970-01-03T12:00:00.000000Z
+                            VTJW\t48.820511018586934\t1970-01-03T12:00:00.000000Z\t1970-01-03T12:00:00.000000Z
+                            \t172.06125086724973\t1970-01-03T15:00:00.000000Z\t1970-01-03T15:00:00.000000Z
+                            HYRX\t12.026122412833129\t1970-01-03T15:00:00.000000Z\t1970-01-03T15:00:00.000000Z
+                            KGHV\tnull\t1970-01-03T15:00:00.000000Z\t1970-01-03T15:00:00.000000Z
+                            PEHN\t49.00510449885239\t1970-01-03T15:00:00.000000Z\t1970-01-03T15:00:00.000000Z
+                            RXGZ\t23.90529010846525\t1970-01-03T15:00:00.000000Z\t1970-01-03T15:00:00.000000Z
+                            UVSD\tnull\t1970-01-03T15:00:00.000000Z\t1970-01-03T15:00:00.000000Z
+                            VTJW\t48.820511018586934\t1970-01-03T15:00:00.000000Z\t1970-01-03T15:00:00.000000Z
+                            \t86.08992670884706\t1970-01-03T18:00:00.000000Z\t1970-01-03T18:00:00.000000Z
+                            HYRX\t12.026122412833129\t1970-01-03T18:00:00.000000Z\t1970-01-03T18:00:00.000000Z
+                            KGHV\tnull\t1970-01-03T18:00:00.000000Z\t1970-01-03T18:00:00.000000Z
+                            PEHN\t49.00510449885239\t1970-01-03T18:00:00.000000Z\t1970-01-03T18:00:00.000000Z
+                            RXGZ\t23.90529010846525\t1970-01-03T18:00:00.000000Z\t1970-01-03T18:00:00.000000Z
+                            UVSD\tnull\t1970-01-03T18:00:00.000000Z\t1970-01-03T18:00:00.000000Z
+                            VTJW\t48.820511018586934\t1970-01-03T18:00:00.000000Z\t1970-01-03T18:00:00.000000Z
+                            \t86.08992670884706\t1970-01-03T21:00:00.000000Z\t1970-01-03T21:00:00.000000Z
+                            HYRX\t12.026122412833129\t1970-01-03T21:00:00.000000Z\t1970-01-03T21:00:00.000000Z
+                            KGHV\tnull\t1970-01-03T21:00:00.000000Z\t1970-01-03T21:00:00.000000Z
+                            PEHN\t49.00510449885239\t1970-01-03T21:00:00.000000Z\t1970-01-03T21:00:00.000000Z
+                            RXGZ\t23.90529010846525\t1970-01-03T21:00:00.000000Z\t1970-01-03T21:00:00.000000Z
+                            UVSD\tnull\t1970-01-03T21:00:00.000000Z\t1970-01-03T21:00:00.000000Z
+                            VTJW\t48.820511018586934\t1970-01-03T21:00:00.000000Z\t1970-01-03T21:00:00.000000Z
+                            \t86.08992670884706\t1970-01-04T00:00:00.000000Z\t1970-01-04T00:00:00.000000Z
+                            HYRX\t12.026122412833129\t1970-01-04T00:00:00.000000Z\t1970-01-04T00:00:00.000000Z
+                            KGHV\tnull\t1970-01-04T00:00:00.000000Z\t1970-01-04T00:00:00.000000Z
+                            PEHN\t49.00510449885239\t1970-01-04T00:00:00.000000Z\t1970-01-04T00:00:00.000000Z
+                            RXGZ\t23.90529010846525\t1970-01-04T00:00:00.000000Z\t1970-01-04T00:00:00.000000Z
+                            UVSD\tnull\t1970-01-04T00:00:00.000000Z\t1970-01-04T00:00:00.000000Z
+                            VTJW\t48.820511018586934\t1970-01-04T00:00:00.000000Z\t1970-01-04T00:00:00.000000Z
+                            \t54.49155021518948\t1970-01-04T03:00:00.000000Z\t1970-01-04T03:00:00.000000Z
+                            HYRX\t12.026122412833129\t1970-01-04T03:00:00.000000Z\t1970-01-04T03:00:00.000000Z
+                            KGHV\tnull\t1970-01-04T03:00:00.000000Z\t1970-01-04T03:00:00.000000Z
+                            PEHN\t49.00510449885239\t1970-01-04T03:00:00.000000Z\t1970-01-04T03:00:00.000000Z
+                            RXGZ\t23.90529010846525\t1970-01-04T03:00:00.000000Z\t1970-01-04T03:00:00.000000Z
+                            UVSD\tnull\t1970-01-04T03:00:00.000000Z\t1970-01-04T03:00:00.000000Z
+                            VTJW\t48.820511018586934\t1970-01-04T03:00:00.000000Z\t1970-01-04T03:00:00.000000Z
+                            \t135.835983782176\t1970-01-04T06:00:00.000000Z\t1970-01-04T06:00:00.000000Z
+                            HYRX\t12.026122412833129\t1970-01-04T06:00:00.000000Z\t1970-01-04T06:00:00.000000Z
+                            KGHV\tnull\t1970-01-04T06:00:00.000000Z\t1970-01-04T06:00:00.000000Z
+                            PEHN\t49.00510449885239\t1970-01-04T06:00:00.000000Z\t1970-01-04T06:00:00.000000Z
+                            RXGZ\t23.90529010846525\t1970-01-04T06:00:00.000000Z\t1970-01-04T06:00:00.000000Z
+                            UVSD\t49.42890511958454\t1970-01-04T06:00:00.000000Z\t1970-01-04T06:00:00.000000Z
+                            VTJW\t48.820511018586934\t1970-01-04T06:00:00.000000Z\t1970-01-04T06:00:00.000000Z
+                            \t135.835983782176\t1970-01-04T09:00:00.000000Z\t1970-01-04T09:00:00.000000Z
+                            HYRX\t12.026122412833129\t1970-01-04T09:00:00.000000Z\t1970-01-04T09:00:00.000000Z
+                            KGHV\t67.52509547112409\t1970-01-04T09:00:00.000000Z\t1970-01-04T09:00:00.000000Z
+                            PEHN\t49.00510449885239\t1970-01-04T09:00:00.000000Z\t1970-01-04T09:00:00.000000Z
+                            RXGZ\t23.90529010846525\t1970-01-04T09:00:00.000000Z\t1970-01-04T09:00:00.000000Z
+                            UVSD\t49.42890511958454\t1970-01-04T09:00:00.000000Z\t1970-01-04T09:00:00.000000Z
+                            VTJW\t48.820511018586934\t1970-01-04T09:00:00.000000Z\t1970-01-04T09:00:00.000000Z
+                            """,
+                    query,
+                    "k1",
+                    true
+            );
+        });
     }
 
     @Test
@@ -14150,30 +14202,30 @@ public class SampleByTest extends AbstractCairoTest {
                         RXGZ\t23.90529010846525
                         PEHN\tnull
                         HYRX\tnull
+                        PEHN\t70.94360487171201
                         \t120.87811633071126
                         VTJW\t42.17768841969397
                         RXGZ\t23.90529010846525
-                        PEHN\t70.94360487171201
                         HYRX\tnull
+                        HYRX\t97.71103146051203
+                        PEHN\t81.46807944500559
                         \t57.93466326862211
                         VTJW\t42.17768841969397
                         RXGZ\t23.90529010846525
-                        PEHN\t81.46807944500559
-                        HYRX\t97.71103146051203
+                        HYRX\t12.026122412833129
+                        VTJW\t48.820511018586934
                         \t26.922103479744898
-                        VTJW\t48.820511018586934
                         RXGZ\t23.90529010846525
                         PEHN\t81.46807944500559
-                        HYRX\t12.026122412833129
                         \t150.48604795487125
+                        PEHN\t84.45258177211063
                         VTJW\t48.820511018586934
                         RXGZ\t23.90529010846525
-                        PEHN\t84.45258177211063
                         HYRX\t12.026122412833129
+                        PEHN\t49.00510449885239
                         \t172.06125086724973
                         VTJW\t48.820511018586934
                         RXGZ\t23.90529010846525
-                        PEHN\t49.00510449885239
                         HYRX\t12.026122412833129
                         \t86.08992670884706
                         VTJW\t48.820511018586934
@@ -14209,38 +14261,38 @@ public class SampleByTest extends AbstractCairoTest {
                         HYRX\tnull
                         UVSD\tnull
                         KGHV\tnull
+                        PEHN\t70.94360487171201
                         \t120.87811633071126
                         VTJW\t42.17768841969397
                         RXGZ\t23.90529010846525
-                        PEHN\t70.94360487171201
                         HYRX\tnull
                         UVSD\tnull
                         KGHV\tnull
+                        HYRX\t97.71103146051203
+                        PEHN\t81.46807944500559
                         \t57.93466326862211
                         VTJW\t42.17768841969397
                         RXGZ\t23.90529010846525
-                        PEHN\t81.46807944500559
-                        HYRX\t97.71103146051203
                         UVSD\tnull
                         KGHV\tnull
-                        \t26.922103479744898
+                        HYRX\t12.026122412833129
                         VTJW\t48.820511018586934
+                        \t26.922103479744898
                         RXGZ\t23.90529010846525
                         PEHN\t81.46807944500559
-                        HYRX\t12.026122412833129
                         UVSD\tnull
                         KGHV\tnull
                         \t150.48604795487125
+                        PEHN\t84.45258177211063
                         VTJW\t48.820511018586934
                         RXGZ\t23.90529010846525
-                        PEHN\t84.45258177211063
                         HYRX\t12.026122412833129
                         UVSD\tnull
                         KGHV\tnull
+                        PEHN\t49.00510449885239
                         \t172.06125086724973
                         VTJW\t48.820511018586934
                         RXGZ\t23.90529010846525
-                        PEHN\t49.00510449885239
                         HYRX\t12.026122412833129
                         UVSD\tnull
                         KGHV\tnull
@@ -14273,19 +14325,19 @@ public class SampleByTest extends AbstractCairoTest {
                         UVSD\tnull
                         KGHV\tnull
                         \t135.835983782176
+                        UVSD\t49.42890511958454
                         VTJW\t48.820511018586934
                         RXGZ\t23.90529010846525
                         PEHN\t49.00510449885239
                         HYRX\t12.026122412833129
-                        UVSD\t49.42890511958454
                         KGHV\tnull
+                        KGHV\t67.52509547112409
                         \t135.835983782176
                         VTJW\t48.820511018586934
                         RXGZ\t23.90529010846525
                         PEHN\t49.00510449885239
                         HYRX\t12.026122412833129
                         UVSD\t49.42890511958454
-                        KGHV\t67.52509547112409
                         """,
                 false
         );
@@ -14319,12 +14371,12 @@ public class SampleByTest extends AbstractCairoTest {
                         0x7d4f1da8fd48b2c3d364c241dde2cf90a7a8f4e549997e46516e1efd8bbcecf6\tS\tnull
                         0xbbdfe8ff0cd60c64712fde5706d6ea2f545ded49c47eea6162d6d100c964eee5\tG\tnull
                         0x7ebaf6ca993f8fc98b1309cf32d68bb8aa7dc4eccb68146fb37f1ec82752c7d7\tC\tnull
-                        0x9f9b2131d49fcd1d6b8139815c50d3410010cde812ce60ee0010a928bb8b9650\tC\t0.2845577791213847
-                        0x797fa69eb8fec6cce8beef38cd7bb3d8db2d34586f6275fab5b2159a23565217\tX\t0.8423410920883345
-                        0x716de3d25dcc2d919fa2397a5d8c84c4c1e631285c1ab288c72bfc5230158059\tG\t0.3491070363730514
                         0xc8b1863d4316f9c773b27651a916ab1b568bc2d7a4aa860483881d4171847cf3\tB\t0.5599161804800813
                         0x61b1a0b0a559551538b73d329210d2774cdfb9e29522133c87aa0968faec6879\tF\t0.6693837147631712
                         0x74ce62a98a4516952705e02c613acfc405374f5fbcef4819523eb59d99c647af\tY\t0.8799634725391621
+                        0x9f9b2131d49fcd1d6b8139815c50d3410010cde812ce60ee0010a928bb8b9650\tC\t0.2845577791213847
+                        0x797fa69eb8fec6cce8beef38cd7bb3d8db2d34586f6275fab5b2159a23565217\tX\t0.8423410920883345
+                        0x716de3d25dcc2d919fa2397a5d8c84c4c1e631285c1ab288c72bfc5230158059\tG\t0.3491070363730514
                         0x7f98b0c74238337e36ee542d654d22598a538661f350d0b46f06560981acb549\tO\tnull
                         0xcec82869edec121bc2593f82b430328d84a09f29df637e3863eb3740c80f661e\tS\tnull
                         0x6afe61bd7c4ae0d84c0094500fbffdfe76fb2001fe5dfb09acea66fbe47c5e39\tS\tnull
@@ -14339,15 +14391,15 @@ public class SampleByTest extends AbstractCairoTest {
                         0x7d4f1da8fd48b2c3d364c241dde2cf90a7a8f4e549997e46516e1efd8bbcecf6\tS\tnull
                         0xbbdfe8ff0cd60c64712fde5706d6ea2f545ded49c47eea6162d6d100c964eee5\tG\tnull
                         0x7ebaf6ca993f8fc98b1309cf32d68bb8aa7dc4eccb68146fb37f1ec82752c7d7\tC\tnull
+                        0x7f98b0c74238337e36ee542d654d22598a538661f350d0b46f06560981acb549\tO\t0.021651819007252326
+                        0xcec82869edec121bc2593f82b430328d84a09f29df637e3863eb3740c80f661e\tS\t0.6381607531178513
+                        0x6afe61bd7c4ae0d84c0094500fbffdfe76fb2001fe5dfb09acea66fbe47c5e39\tS\t0.9687423276940171
                         0x9f9b2131d49fcd1d6b8139815c50d3410010cde812ce60ee0010a928bb8b9650\tC\t0.2845577791213847
                         0x797fa69eb8fec6cce8beef38cd7bb3d8db2d34586f6275fab5b2159a23565217\tX\t0.8423410920883345
                         0x716de3d25dcc2d919fa2397a5d8c84c4c1e631285c1ab288c72bfc5230158059\tG\t0.3491070363730514
                         0xc8b1863d4316f9c773b27651a916ab1b568bc2d7a4aa860483881d4171847cf3\tB\t0.5599161804800813
                         0x61b1a0b0a559551538b73d329210d2774cdfb9e29522133c87aa0968faec6879\tF\t0.6693837147631712
                         0x74ce62a98a4516952705e02c613acfc405374f5fbcef4819523eb59d99c647af\tY\t0.8799634725391621
-                        0x7f98b0c74238337e36ee542d654d22598a538661f350d0b46f06560981acb549\tO\t0.021651819007252326
-                        0xcec82869edec121bc2593f82b430328d84a09f29df637e3863eb3740c80f661e\tS\t0.6381607531178513
-                        0x6afe61bd7c4ae0d84c0094500fbffdfe76fb2001fe5dfb09acea66fbe47c5e39\tS\t0.9687423276940171
                         0x94cfe42988a633de738bab883dc7e3323239ad1b0411a66a10bb226eb4243e36\tQ\tnull
                         0x2bbfcf66bab932fc5ea744ebab75d542a937c9ce75e81607a1b56c3d802c4735\tG\tnull
                         0x98c2d832d83de9934a0705e1136e872b3ad08d6037d3ce8155c06051ee52138b\tS\tnull
@@ -14359,6 +14411,9 @@ public class SampleByTest extends AbstractCairoTest {
                         0x7d4f1da8fd48b2c3d364c241dde2cf90a7a8f4e549997e46516e1efd8bbcecf6\tS\tnull
                         0xbbdfe8ff0cd60c64712fde5706d6ea2f545ded49c47eea6162d6d100c964eee5\tG\tnull
                         0x7ebaf6ca993f8fc98b1309cf32d68bb8aa7dc4eccb68146fb37f1ec82752c7d7\tC\tnull
+                        0x94cfe42988a633de738bab883dc7e3323239ad1b0411a66a10bb226eb4243e36\tQ\t0.3435685332942956
+                        0x2bbfcf66bab932fc5ea744ebab75d542a937c9ce75e81607a1b56c3d802c4735\tG\t0.4138164748227684
+                        0x98c2d832d83de9934a0705e1136e872b3ad08d6037d3ce8155c06051ee52138b\tS\t0.7763904674818695
                         0x9f9b2131d49fcd1d6b8139815c50d3410010cde812ce60ee0010a928bb8b9650\tC\t0.2845577791213847
                         0x797fa69eb8fec6cce8beef38cd7bb3d8db2d34586f6275fab5b2159a23565217\tX\t0.8423410920883345
                         0x716de3d25dcc2d919fa2397a5d8c84c4c1e631285c1ab288c72bfc5230158059\tG\t0.3491070363730514
@@ -14368,9 +14423,6 @@ public class SampleByTest extends AbstractCairoTest {
                         0x7f98b0c74238337e36ee542d654d22598a538661f350d0b46f06560981acb549\tO\t0.021651819007252326
                         0xcec82869edec121bc2593f82b430328d84a09f29df637e3863eb3740c80f661e\tS\t0.6381607531178513
                         0x6afe61bd7c4ae0d84c0094500fbffdfe76fb2001fe5dfb09acea66fbe47c5e39\tS\t0.9687423276940171
-                        0x94cfe42988a633de738bab883dc7e3323239ad1b0411a66a10bb226eb4243e36\tQ\t0.3435685332942956
-                        0x2bbfcf66bab932fc5ea744ebab75d542a937c9ce75e81607a1b56c3d802c4735\tG\t0.4138164748227684
-                        0x98c2d832d83de9934a0705e1136e872b3ad08d6037d3ce8155c06051ee52138b\tS\t0.7763904674818695
                         0x60802a2ca499f211b771e27f939096b9c356f99ae70523b585b80cec619f9178\tT\tnull
                         0x6a0accd425e948d49a77e857727e751a7d67d36a09a1b5bb2932c3ad61000d64\tZ\tnull
                         0x687a84abb7bfac3ebedf29efb28cdcb1b75dccbdf1f8b84b9b27eba5e9cfa1e2\tI\tnull
@@ -14379,6 +14431,9 @@ public class SampleByTest extends AbstractCairoTest {
                         0x7d4f1da8fd48b2c3d364c241dde2cf90a7a8f4e549997e46516e1efd8bbcecf6\tS\tnull
                         0xbbdfe8ff0cd60c64712fde5706d6ea2f545ded49c47eea6162d6d100c964eee5\tG\tnull
                         0x7ebaf6ca993f8fc98b1309cf32d68bb8aa7dc4eccb68146fb37f1ec82752c7d7\tC\tnull
+                        0x60802a2ca499f211b771e27f939096b9c356f99ae70523b585b80cec619f9178\tT\t0.4900510449885239
+                        0x6a0accd425e948d49a77e857727e751a7d67d36a09a1b5bb2932c3ad61000d64\tZ\t0.38642336707855873
+                        0x687a84abb7bfac3ebedf29efb28cdcb1b75dccbdf1f8b84b9b27eba5e9cfa1e2\tI\t0.6590341607692226
                         0x9f9b2131d49fcd1d6b8139815c50d3410010cde812ce60ee0010a928bb8b9650\tC\t0.2845577791213847
                         0x797fa69eb8fec6cce8beef38cd7bb3d8db2d34586f6275fab5b2159a23565217\tX\t0.8423410920883345
                         0x716de3d25dcc2d919fa2397a5d8c84c4c1e631285c1ab288c72bfc5230158059\tG\t0.3491070363730514
@@ -14391,14 +14446,14 @@ public class SampleByTest extends AbstractCairoTest {
                         0x94cfe42988a633de738bab883dc7e3323239ad1b0411a66a10bb226eb4243e36\tQ\t0.3435685332942956
                         0x2bbfcf66bab932fc5ea744ebab75d542a937c9ce75e81607a1b56c3d802c4735\tG\t0.4138164748227684
                         0x98c2d832d83de9934a0705e1136e872b3ad08d6037d3ce8155c06051ee52138b\tS\t0.7763904674818695
-                        0x60802a2ca499f211b771e27f939096b9c356f99ae70523b585b80cec619f9178\tT\t0.4900510449885239
-                        0x6a0accd425e948d49a77e857727e751a7d67d36a09a1b5bb2932c3ad61000d64\tZ\t0.38642336707855873
-                        0x687a84abb7bfac3ebedf29efb28cdcb1b75dccbdf1f8b84b9b27eba5e9cfa1e2\tI\t0.6590341607692226
                         0x30d46a3a4749c41d7a902c77fa1a889c51686790e59377ca68653a6cd896f81e\tI\tnull
                         0x997918f622d62989c009aea26fdde482ba37e200ad5b17cdada00dc8b85c1bc8\tV\tnull
                         0x7d4f1da8fd48b2c3d364c241dde2cf90a7a8f4e549997e46516e1efd8bbcecf6\tS\tnull
                         0xbbdfe8ff0cd60c64712fde5706d6ea2f545ded49c47eea6162d6d100c964eee5\tG\tnull
                         0x7ebaf6ca993f8fc98b1309cf32d68bb8aa7dc4eccb68146fb37f1ec82752c7d7\tC\tnull
+                        0x30d46a3a4749c41d7a902c77fa1a889c51686790e59377ca68653a6cd896f81e\tI\t0.5659429139861241
+                        0x997918f622d62989c009aea26fdde482ba37e200ad5b17cdada00dc8b85c1bc8\tV\t0.45659895188239796
+                        0x7d4f1da8fd48b2c3d364c241dde2cf90a7a8f4e549997e46516e1efd8bbcecf6\tS\t0.5778947915182423
                         0x9f9b2131d49fcd1d6b8139815c50d3410010cde812ce60ee0010a928bb8b9650\tC\t0.2845577791213847
                         0x797fa69eb8fec6cce8beef38cd7bb3d8db2d34586f6275fab5b2159a23565217\tX\t0.8423410920883345
                         0x716de3d25dcc2d919fa2397a5d8c84c4c1e631285c1ab288c72bfc5230158059\tG\t0.3491070363730514
@@ -14414,11 +14469,10 @@ public class SampleByTest extends AbstractCairoTest {
                         0x60802a2ca499f211b771e27f939096b9c356f99ae70523b585b80cec619f9178\tT\t0.4900510449885239
                         0x6a0accd425e948d49a77e857727e751a7d67d36a09a1b5bb2932c3ad61000d64\tZ\t0.38642336707855873
                         0x687a84abb7bfac3ebedf29efb28cdcb1b75dccbdf1f8b84b9b27eba5e9cfa1e2\tI\t0.6590341607692226
-                        0x30d46a3a4749c41d7a902c77fa1a889c51686790e59377ca68653a6cd896f81e\tI\t0.5659429139861241
-                        0x997918f622d62989c009aea26fdde482ba37e200ad5b17cdada00dc8b85c1bc8\tV\t0.45659895188239796
-                        0x7d4f1da8fd48b2c3d364c241dde2cf90a7a8f4e549997e46516e1efd8bbcecf6\tS\t0.5778947915182423
                         0xbbdfe8ff0cd60c64712fde5706d6ea2f545ded49c47eea6162d6d100c964eee5\tG\tnull
                         0x7ebaf6ca993f8fc98b1309cf32d68bb8aa7dc4eccb68146fb37f1ec82752c7d7\tC\tnull
+                        0xbbdfe8ff0cd60c64712fde5706d6ea2f545ded49c47eea6162d6d100c964eee5\tG\t0.325403220015421
+                        0x7ebaf6ca993f8fc98b1309cf32d68bb8aa7dc4eccb68146fb37f1ec82752c7d7\tC\t0.49428905119584543
                         0x9f9b2131d49fcd1d6b8139815c50d3410010cde812ce60ee0010a928bb8b9650\tC\t0.2845577791213847
                         0x797fa69eb8fec6cce8beef38cd7bb3d8db2d34586f6275fab5b2159a23565217\tX\t0.8423410920883345
                         0x716de3d25dcc2d919fa2397a5d8c84c4c1e631285c1ab288c72bfc5230158059\tG\t0.3491070363730514
@@ -14437,8 +14491,6 @@ public class SampleByTest extends AbstractCairoTest {
                         0x30d46a3a4749c41d7a902c77fa1a889c51686790e59377ca68653a6cd896f81e\tI\t0.5659429139861241
                         0x997918f622d62989c009aea26fdde482ba37e200ad5b17cdada00dc8b85c1bc8\tV\t0.45659895188239796
                         0x7d4f1da8fd48b2c3d364c241dde2cf90a7a8f4e549997e46516e1efd8bbcecf6\tS\t0.5778947915182423
-                        0xbbdfe8ff0cd60c64712fde5706d6ea2f545ded49c47eea6162d6d100c964eee5\tG\t0.325403220015421
-                        0x7ebaf6ca993f8fc98b1309cf32d68bb8aa7dc4eccb68146fb37f1ec82752c7d7\tC\t0.49428905119584543
                         """,
                 "select a, b, sum(c) from x sample by 3h fill(prev)",
                 "create table x as " +
@@ -14488,12 +14540,12 @@ public class SampleByTest extends AbstractCairoTest {
                         0xacb025f759cffbd0de9be4e331fe36e67dc859770af204938151081b8acafadd\tB\tnull
                         0x9d6cb7b4fbf1fa48dbd7587f207765769b4bae41862e09ccb482cff57e9c5398\tK\tnull
                         0xaf44c40a67ef5e1c5b3ef21223ee884965009e89eacf0aadd25adf928386cdd2\tQ\tnull
-                        0x9f9b2131d49fcd1d6b8139815c50d3410010cde812ce60ee0010a928bb8b9650\tC\t0.2845577791213847
-                        0x797fa69eb8fec6cce8beef38cd7bb3d8db2d34586f6275fab5b2159a23565217\tX\t0.8423410920883345
-                        0x716de3d25dcc2d919fa2397a5d8c84c4c1e631285c1ab288c72bfc5230158059\tG\t0.3491070363730514
                         0xc8b1863d4316f9c773b27651a916ab1b568bc2d7a4aa860483881d4171847cf3\tB\t0.5599161804800813
                         0x61b1a0b0a559551538b73d329210d2774cdfb9e29522133c87aa0968faec6879\tF\t0.6693837147631712
                         0x74ce62a98a4516952705e02c613acfc405374f5fbcef4819523eb59d99c647af\tY\t0.8799634725391621
+                        0x9f9b2131d49fcd1d6b8139815c50d3410010cde812ce60ee0010a928bb8b9650\tC\t0.2845577791213847
+                        0x797fa69eb8fec6cce8beef38cd7bb3d8db2d34586f6275fab5b2159a23565217\tX\t0.8423410920883345
+                        0x716de3d25dcc2d919fa2397a5d8c84c4c1e631285c1ab288c72bfc5230158059\tG\t0.3491070363730514
                         0x7f98b0c74238337e36ee542d654d22598a538661f350d0b46f06560981acb549\tO\tnull
                         0xcec82869edec121bc2593f82b430328d84a09f29df637e3863eb3740c80f661e\tS\tnull
                         0x6afe61bd7c4ae0d84c0094500fbffdfe76fb2001fe5dfb09acea66fbe47c5e39\tS\tnull
@@ -14513,15 +14565,15 @@ public class SampleByTest extends AbstractCairoTest {
                         0xacb025f759cffbd0de9be4e331fe36e67dc859770af204938151081b8acafadd\tB\tnull
                         0x9d6cb7b4fbf1fa48dbd7587f207765769b4bae41862e09ccb482cff57e9c5398\tK\tnull
                         0xaf44c40a67ef5e1c5b3ef21223ee884965009e89eacf0aadd25adf928386cdd2\tQ\tnull
+                        0x7f98b0c74238337e36ee542d654d22598a538661f350d0b46f06560981acb549\tO\t0.021651819007252326
+                        0xcec82869edec121bc2593f82b430328d84a09f29df637e3863eb3740c80f661e\tS\t0.6381607531178513
+                        0x6afe61bd7c4ae0d84c0094500fbffdfe76fb2001fe5dfb09acea66fbe47c5e39\tS\t0.9687423276940171
                         0x9f9b2131d49fcd1d6b8139815c50d3410010cde812ce60ee0010a928bb8b9650\tC\t0.2845577791213847
                         0x797fa69eb8fec6cce8beef38cd7bb3d8db2d34586f6275fab5b2159a23565217\tX\t0.8423410920883345
                         0x716de3d25dcc2d919fa2397a5d8c84c4c1e631285c1ab288c72bfc5230158059\tG\t0.3491070363730514
                         0xc8b1863d4316f9c773b27651a916ab1b568bc2d7a4aa860483881d4171847cf3\tB\t0.5599161804800813
                         0x61b1a0b0a559551538b73d329210d2774cdfb9e29522133c87aa0968faec6879\tF\t0.6693837147631712
                         0x74ce62a98a4516952705e02c613acfc405374f5fbcef4819523eb59d99c647af\tY\t0.8799634725391621
-                        0x7f98b0c74238337e36ee542d654d22598a538661f350d0b46f06560981acb549\tO\t0.021651819007252326
-                        0xcec82869edec121bc2593f82b430328d84a09f29df637e3863eb3740c80f661e\tS\t0.6381607531178513
-                        0x6afe61bd7c4ae0d84c0094500fbffdfe76fb2001fe5dfb09acea66fbe47c5e39\tS\t0.9687423276940171
                         0x94cfe42988a633de738bab883dc7e3323239ad1b0411a66a10bb226eb4243e36\tQ\tnull
                         0x2bbfcf66bab932fc5ea744ebab75d542a937c9ce75e81607a1b56c3d802c4735\tG\tnull
                         0x98c2d832d83de9934a0705e1136e872b3ad08d6037d3ce8155c06051ee52138b\tS\tnull
@@ -14538,6 +14590,9 @@ public class SampleByTest extends AbstractCairoTest {
                         0xacb025f759cffbd0de9be4e331fe36e67dc859770af204938151081b8acafadd\tB\tnull
                         0x9d6cb7b4fbf1fa48dbd7587f207765769b4bae41862e09ccb482cff57e9c5398\tK\tnull
                         0xaf44c40a67ef5e1c5b3ef21223ee884965009e89eacf0aadd25adf928386cdd2\tQ\tnull
+                        0x94cfe42988a633de738bab883dc7e3323239ad1b0411a66a10bb226eb4243e36\tQ\t0.3435685332942956
+                        0x2bbfcf66bab932fc5ea744ebab75d542a937c9ce75e81607a1b56c3d802c4735\tG\t0.4138164748227684
+                        0x98c2d832d83de9934a0705e1136e872b3ad08d6037d3ce8155c06051ee52138b\tS\t0.7763904674818695
                         0x9f9b2131d49fcd1d6b8139815c50d3410010cde812ce60ee0010a928bb8b9650\tC\t0.2845577791213847
                         0x797fa69eb8fec6cce8beef38cd7bb3d8db2d34586f6275fab5b2159a23565217\tX\t0.8423410920883345
                         0x716de3d25dcc2d919fa2397a5d8c84c4c1e631285c1ab288c72bfc5230158059\tG\t0.3491070363730514
@@ -14547,9 +14602,6 @@ public class SampleByTest extends AbstractCairoTest {
                         0x7f98b0c74238337e36ee542d654d22598a538661f350d0b46f06560981acb549\tO\t0.021651819007252326
                         0xcec82869edec121bc2593f82b430328d84a09f29df637e3863eb3740c80f661e\tS\t0.6381607531178513
                         0x6afe61bd7c4ae0d84c0094500fbffdfe76fb2001fe5dfb09acea66fbe47c5e39\tS\t0.9687423276940171
-                        0x94cfe42988a633de738bab883dc7e3323239ad1b0411a66a10bb226eb4243e36\tQ\t0.3435685332942956
-                        0x2bbfcf66bab932fc5ea744ebab75d542a937c9ce75e81607a1b56c3d802c4735\tG\t0.4138164748227684
-                        0x98c2d832d83de9934a0705e1136e872b3ad08d6037d3ce8155c06051ee52138b\tS\t0.7763904674818695
                         0x60802a2ca499f211b771e27f939096b9c356f99ae70523b585b80cec619f9178\tT\tnull
                         0x6a0accd425e948d49a77e857727e751a7d67d36a09a1b5bb2932c3ad61000d64\tZ\tnull
                         0x687a84abb7bfac3ebedf29efb28cdcb1b75dccbdf1f8b84b9b27eba5e9cfa1e2\tI\tnull
@@ -14563,6 +14615,9 @@ public class SampleByTest extends AbstractCairoTest {
                         0xacb025f759cffbd0de9be4e331fe36e67dc859770af204938151081b8acafadd\tB\tnull
                         0x9d6cb7b4fbf1fa48dbd7587f207765769b4bae41862e09ccb482cff57e9c5398\tK\tnull
                         0xaf44c40a67ef5e1c5b3ef21223ee884965009e89eacf0aadd25adf928386cdd2\tQ\tnull
+                        0x60802a2ca499f211b771e27f939096b9c356f99ae70523b585b80cec619f9178\tT\t0.4900510449885239
+                        0x6a0accd425e948d49a77e857727e751a7d67d36a09a1b5bb2932c3ad61000d64\tZ\t0.38642336707855873
+                        0x687a84abb7bfac3ebedf29efb28cdcb1b75dccbdf1f8b84b9b27eba5e9cfa1e2\tI\t0.6590341607692226
                         0x9f9b2131d49fcd1d6b8139815c50d3410010cde812ce60ee0010a928bb8b9650\tC\t0.2845577791213847
                         0x797fa69eb8fec6cce8beef38cd7bb3d8db2d34586f6275fab5b2159a23565217\tX\t0.8423410920883345
                         0x716de3d25dcc2d919fa2397a5d8c84c4c1e631285c1ab288c72bfc5230158059\tG\t0.3491070363730514
@@ -14575,9 +14630,6 @@ public class SampleByTest extends AbstractCairoTest {
                         0x94cfe42988a633de738bab883dc7e3323239ad1b0411a66a10bb226eb4243e36\tQ\t0.3435685332942956
                         0x2bbfcf66bab932fc5ea744ebab75d542a937c9ce75e81607a1b56c3d802c4735\tG\t0.4138164748227684
                         0x98c2d832d83de9934a0705e1136e872b3ad08d6037d3ce8155c06051ee52138b\tS\t0.7763904674818695
-                        0x60802a2ca499f211b771e27f939096b9c356f99ae70523b585b80cec619f9178\tT\t0.4900510449885239
-                        0x6a0accd425e948d49a77e857727e751a7d67d36a09a1b5bb2932c3ad61000d64\tZ\t0.38642336707855873
-                        0x687a84abb7bfac3ebedf29efb28cdcb1b75dccbdf1f8b84b9b27eba5e9cfa1e2\tI\t0.6590341607692226
                         0x30d46a3a4749c41d7a902c77fa1a889c51686790e59377ca68653a6cd896f81e\tI\tnull
                         0x997918f622d62989c009aea26fdde482ba37e200ad5b17cdada00dc8b85c1bc8\tV\tnull
                         0x7d4f1da8fd48b2c3d364c241dde2cf90a7a8f4e549997e46516e1efd8bbcecf6\tS\tnull
@@ -14588,6 +14640,9 @@ public class SampleByTest extends AbstractCairoTest {
                         0xacb025f759cffbd0de9be4e331fe36e67dc859770af204938151081b8acafadd\tB\tnull
                         0x9d6cb7b4fbf1fa48dbd7587f207765769b4bae41862e09ccb482cff57e9c5398\tK\tnull
                         0xaf44c40a67ef5e1c5b3ef21223ee884965009e89eacf0aadd25adf928386cdd2\tQ\tnull
+                        0x30d46a3a4749c41d7a902c77fa1a889c51686790e59377ca68653a6cd896f81e\tI\t0.5659429139861241
+                        0x997918f622d62989c009aea26fdde482ba37e200ad5b17cdada00dc8b85c1bc8\tV\t0.45659895188239796
+                        0x7d4f1da8fd48b2c3d364c241dde2cf90a7a8f4e549997e46516e1efd8bbcecf6\tS\t0.5778947915182423
                         0x9f9b2131d49fcd1d6b8139815c50d3410010cde812ce60ee0010a928bb8b9650\tC\t0.2845577791213847
                         0x797fa69eb8fec6cce8beef38cd7bb3d8db2d34586f6275fab5b2159a23565217\tX\t0.8423410920883345
                         0x716de3d25dcc2d919fa2397a5d8c84c4c1e631285c1ab288c72bfc5230158059\tG\t0.3491070363730514
@@ -14603,9 +14658,6 @@ public class SampleByTest extends AbstractCairoTest {
                         0x60802a2ca499f211b771e27f939096b9c356f99ae70523b585b80cec619f9178\tT\t0.4900510449885239
                         0x6a0accd425e948d49a77e857727e751a7d67d36a09a1b5bb2932c3ad61000d64\tZ\t0.38642336707855873
                         0x687a84abb7bfac3ebedf29efb28cdcb1b75dccbdf1f8b84b9b27eba5e9cfa1e2\tI\t0.6590341607692226
-                        0x30d46a3a4749c41d7a902c77fa1a889c51686790e59377ca68653a6cd896f81e\tI\t0.5659429139861241
-                        0x997918f622d62989c009aea26fdde482ba37e200ad5b17cdada00dc8b85c1bc8\tV\t0.45659895188239796
-                        0x7d4f1da8fd48b2c3d364c241dde2cf90a7a8f4e549997e46516e1efd8bbcecf6\tS\t0.5778947915182423
                         0xbbdfe8ff0cd60c64712fde5706d6ea2f545ded49c47eea6162d6d100c964eee5\tG\tnull
                         0x7ebaf6ca993f8fc98b1309cf32d68bb8aa7dc4eccb68146fb37f1ec82752c7d7\tC\tnull
                         0xaa1896d0ad3419d2910aa7b6d58506dc7c97a2cb4ac4b04722556b928447b584\tD\tnull
@@ -14613,6 +14665,8 @@ public class SampleByTest extends AbstractCairoTest {
                         0xacb025f759cffbd0de9be4e331fe36e67dc859770af204938151081b8acafadd\tB\tnull
                         0x9d6cb7b4fbf1fa48dbd7587f207765769b4bae41862e09ccb482cff57e9c5398\tK\tnull
                         0xaf44c40a67ef5e1c5b3ef21223ee884965009e89eacf0aadd25adf928386cdd2\tQ\tnull
+                        0xbbdfe8ff0cd60c64712fde5706d6ea2f545ded49c47eea6162d6d100c964eee5\tG\t0.325403220015421
+                        0x7ebaf6ca993f8fc98b1309cf32d68bb8aa7dc4eccb68146fb37f1ec82752c7d7\tC\t0.49428905119584543
                         0x9f9b2131d49fcd1d6b8139815c50d3410010cde812ce60ee0010a928bb8b9650\tC\t0.2845577791213847
                         0x797fa69eb8fec6cce8beef38cd7bb3d8db2d34586f6275fab5b2159a23565217\tX\t0.8423410920883345
                         0x716de3d25dcc2d919fa2397a5d8c84c4c1e631285c1ab288c72bfc5230158059\tG\t0.3491070363730514
@@ -14631,8 +14685,6 @@ public class SampleByTest extends AbstractCairoTest {
                         0x30d46a3a4749c41d7a902c77fa1a889c51686790e59377ca68653a6cd896f81e\tI\t0.5659429139861241
                         0x997918f622d62989c009aea26fdde482ba37e200ad5b17cdada00dc8b85c1bc8\tV\t0.45659895188239796
                         0x7d4f1da8fd48b2c3d364c241dde2cf90a7a8f4e549997e46516e1efd8bbcecf6\tS\t0.5778947915182423
-                        0xbbdfe8ff0cd60c64712fde5706d6ea2f545ded49c47eea6162d6d100c964eee5\tG\t0.325403220015421
-                        0x7ebaf6ca993f8fc98b1309cf32d68bb8aa7dc4eccb68146fb37f1ec82752c7d7\tC\t0.49428905119584543
                         0xaa1896d0ad3419d2910aa7b6d58506dc7c97a2cb4ac4b04722556b928447b584\tD\tnull
                         0x0cb5f439cbc22e9d1f0481ab7acd1f4a77827c4f6b03027bc6dfacdd3f3c52b8\tO\tnull
                         0xacb025f759cffbd0de9be4e331fe36e67dc859770af204938151081b8acafadd\tB\tnull
@@ -14688,31 +14740,7 @@ public class SampleByTest extends AbstractCairoTest {
                         0xacb025f759cffbd0de9be4e331fe36e67dc859770af204938151081b8acafadd\tB\tnull
                         0x9d6cb7b4fbf1fa48dbd7587f207765769b4bae41862e09ccb482cff57e9c5398\tK\tnull
                         0xaf44c40a67ef5e1c5b3ef21223ee884965009e89eacf0aadd25adf928386cdd2\tQ\tnull
-                        0x9f9b2131d49fcd1d6b8139815c50d3410010cde812ce60ee0010a928bb8b9650\tC\t0.2845577791213847
-                        0x797fa69eb8fec6cce8beef38cd7bb3d8db2d34586f6275fab5b2159a23565217\tX\t0.8423410920883345
-                        0x716de3d25dcc2d919fa2397a5d8c84c4c1e631285c1ab288c72bfc5230158059\tG\t0.3491070363730514
-                        0xc8b1863d4316f9c773b27651a916ab1b568bc2d7a4aa860483881d4171847cf3\tB\t0.5599161804800813
-                        0x61b1a0b0a559551538b73d329210d2774cdfb9e29522133c87aa0968faec6879\tF\t0.6693837147631712
-                        0x74ce62a98a4516952705e02c613acfc405374f5fbcef4819523eb59d99c647af\tY\t0.8799634725391621
-                        0x7f98b0c74238337e36ee542d654d22598a538661f350d0b46f06560981acb549\tO\t0.021651819007252326
-                        0xcec82869edec121bc2593f82b430328d84a09f29df637e3863eb3740c80f661e\tS\t0.6381607531178513
-                        0x6afe61bd7c4ae0d84c0094500fbffdfe76fb2001fe5dfb09acea66fbe47c5e39\tS\t0.9687423276940171
-                        0x94cfe42988a633de738bab883dc7e3323239ad1b0411a66a10bb226eb4243e36\tQ\t0.3435685332942956
-                        0x2bbfcf66bab932fc5ea744ebab75d542a937c9ce75e81607a1b56c3d802c4735\tG\t0.4138164748227684
-                        0x98c2d832d83de9934a0705e1136e872b3ad08d6037d3ce8155c06051ee52138b\tS\t0.7763904674818695
-                        0x60802a2ca499f211b771e27f939096b9c356f99ae70523b585b80cec619f9178\tT\t0.4900510449885239
-                        0x6a0accd425e948d49a77e857727e751a7d67d36a09a1b5bb2932c3ad61000d64\tZ\t0.38642336707855873
-                        0x687a84abb7bfac3ebedf29efb28cdcb1b75dccbdf1f8b84b9b27eba5e9cfa1e2\tI\t0.6590341607692226
-                        0x30d46a3a4749c41d7a902c77fa1a889c51686790e59377ca68653a6cd896f81e\tI\t0.5659429139861241
-                        0x997918f622d62989c009aea26fdde482ba37e200ad5b17cdada00dc8b85c1bc8\tV\t0.45659895188239796
-                        0x7d4f1da8fd48b2c3d364c241dde2cf90a7a8f4e549997e46516e1efd8bbcecf6\tS\t0.5778947915182423
-                        0xbbdfe8ff0cd60c64712fde5706d6ea2f545ded49c47eea6162d6d100c964eee5\tG\t0.325403220015421
-                        0x7ebaf6ca993f8fc98b1309cf32d68bb8aa7dc4eccb68146fb37f1ec82752c7d7\tC\t0.49428905119584543
                         0xaa1896d0ad3419d2910aa7b6d58506dc7c97a2cb4ac4b04722556b928447b584\tD\t0.4971342426836798
-                        0x0cb5f439cbc22e9d1f0481ab7acd1f4a77827c4f6b03027bc6dfacdd3f3c52b8\tO\tnull
-                        0xacb025f759cffbd0de9be4e331fe36e67dc859770af204938151081b8acafadd\tB\tnull
-                        0x9d6cb7b4fbf1fa48dbd7587f207765769b4bae41862e09ccb482cff57e9c5398\tK\tnull
-                        0xaf44c40a67ef5e1c5b3ef21223ee884965009e89eacf0aadd25adf928386cdd2\tQ\tnull
                         0x9f9b2131d49fcd1d6b8139815c50d3410010cde812ce60ee0010a928bb8b9650\tC\t0.2845577791213847
                         0x797fa69eb8fec6cce8beef38cd7bb3d8db2d34586f6275fab5b2159a23565217\tX\t0.8423410920883345
                         0x716de3d25dcc2d919fa2397a5d8c84c4c1e631285c1ab288c72bfc5230158059\tG\t0.3491070363730514
@@ -14733,11 +14761,13 @@ public class SampleByTest extends AbstractCairoTest {
                         0x7d4f1da8fd48b2c3d364c241dde2cf90a7a8f4e549997e46516e1efd8bbcecf6\tS\t0.5778947915182423
                         0xbbdfe8ff0cd60c64712fde5706d6ea2f545ded49c47eea6162d6d100c964eee5\tG\t0.325403220015421
                         0x7ebaf6ca993f8fc98b1309cf32d68bb8aa7dc4eccb68146fb37f1ec82752c7d7\tC\t0.49428905119584543
-                        0xaa1896d0ad3419d2910aa7b6d58506dc7c97a2cb4ac4b04722556b928447b584\tD\t0.4971342426836798
+                        0x0cb5f439cbc22e9d1f0481ab7acd1f4a77827c4f6b03027bc6dfacdd3f3c52b8\tO\tnull
+                        0xacb025f759cffbd0de9be4e331fe36e67dc859770af204938151081b8acafadd\tB\tnull
+                        0x9d6cb7b4fbf1fa48dbd7587f207765769b4bae41862e09ccb482cff57e9c5398\tK\tnull
+                        0xaf44c40a67ef5e1c5b3ef21223ee884965009e89eacf0aadd25adf928386cdd2\tQ\tnull
                         0x0cb5f439cbc22e9d1f0481ab7acd1f4a77827c4f6b03027bc6dfacdd3f3c52b8\tO\t0.44804689668613573
                         0xacb025f759cffbd0de9be4e331fe36e67dc859770af204938151081b8acafadd\tB\t0.2879973939681931
                         0x9d6cb7b4fbf1fa48dbd7587f207765769b4bae41862e09ccb482cff57e9c5398\tK\t0.24008362859107102
-                        0xaf44c40a67ef5e1c5b3ef21223ee884965009e89eacf0aadd25adf928386cdd2\tQ\tnull
                         0x9f9b2131d49fcd1d6b8139815c50d3410010cde812ce60ee0010a928bb8b9650\tC\t0.2845577791213847
                         0x797fa69eb8fec6cce8beef38cd7bb3d8db2d34586f6275fab5b2159a23565217\tX\t0.8423410920883345
                         0x716de3d25dcc2d919fa2397a5d8c84c4c1e631285c1ab288c72bfc5230158059\tG\t0.3491070363730514
@@ -14759,10 +14789,32 @@ public class SampleByTest extends AbstractCairoTest {
                         0xbbdfe8ff0cd60c64712fde5706d6ea2f545ded49c47eea6162d6d100c964eee5\tG\t0.325403220015421
                         0x7ebaf6ca993f8fc98b1309cf32d68bb8aa7dc4eccb68146fb37f1ec82752c7d7\tC\t0.49428905119584543
                         0xaa1896d0ad3419d2910aa7b6d58506dc7c97a2cb4ac4b04722556b928447b584\tD\t0.4971342426836798
-                        0x0cb5f439cbc22e9d1f0481ab7acd1f4a77827c4f6b03027bc6dfacdd3f3c52b8\tO\t0.44804689668613573
-                        0xacb025f759cffbd0de9be4e331fe36e67dc859770af204938151081b8acafadd\tB\t0.2879973939681931
-                        0x9d6cb7b4fbf1fa48dbd7587f207765769b4bae41862e09ccb482cff57e9c5398\tK\t0.24008362859107102
+                        0xaf44c40a67ef5e1c5b3ef21223ee884965009e89eacf0aadd25adf928386cdd2\tQ\tnull
                         0xaf44c40a67ef5e1c5b3ef21223ee884965009e89eacf0aadd25adf928386cdd2\tQ\t0.7446000371089992
+                        0x9f9b2131d49fcd1d6b8139815c50d3410010cde812ce60ee0010a928bb8b9650\tC\t0.2845577791213847
+                        0x797fa69eb8fec6cce8beef38cd7bb3d8db2d34586f6275fab5b2159a23565217\tX\t0.8423410920883345
+                        0x716de3d25dcc2d919fa2397a5d8c84c4c1e631285c1ab288c72bfc5230158059\tG\t0.3491070363730514
+                        0xc8b1863d4316f9c773b27651a916ab1b568bc2d7a4aa860483881d4171847cf3\tB\t0.5599161804800813
+                        0x61b1a0b0a559551538b73d329210d2774cdfb9e29522133c87aa0968faec6879\tF\t0.6693837147631712
+                        0x74ce62a98a4516952705e02c613acfc405374f5fbcef4819523eb59d99c647af\tY\t0.8799634725391621
+                        0x7f98b0c74238337e36ee542d654d22598a538661f350d0b46f06560981acb549\tO\t0.021651819007252326
+                        0xcec82869edec121bc2593f82b430328d84a09f29df637e3863eb3740c80f661e\tS\t0.6381607531178513
+                        0x6afe61bd7c4ae0d84c0094500fbffdfe76fb2001fe5dfb09acea66fbe47c5e39\tS\t0.9687423276940171
+                        0x94cfe42988a633de738bab883dc7e3323239ad1b0411a66a10bb226eb4243e36\tQ\t0.3435685332942956
+                        0x2bbfcf66bab932fc5ea744ebab75d542a937c9ce75e81607a1b56c3d802c4735\tG\t0.4138164748227684
+                        0x98c2d832d83de9934a0705e1136e872b3ad08d6037d3ce8155c06051ee52138b\tS\t0.7763904674818695
+                        0x60802a2ca499f211b771e27f939096b9c356f99ae70523b585b80cec619f9178\tT\t0.4900510449885239
+                        0x6a0accd425e948d49a77e857727e751a7d67d36a09a1b5bb2932c3ad61000d64\tZ\t0.38642336707855873
+                        0x687a84abb7bfac3ebedf29efb28cdcb1b75dccbdf1f8b84b9b27eba5e9cfa1e2\tI\t0.6590341607692226
+                        0x30d46a3a4749c41d7a902c77fa1a889c51686790e59377ca68653a6cd896f81e\tI\t0.5659429139861241
+                        0x997918f622d62989c009aea26fdde482ba37e200ad5b17cdada00dc8b85c1bc8\tV\t0.45659895188239796
+                        0x7d4f1da8fd48b2c3d364c241dde2cf90a7a8f4e549997e46516e1efd8bbcecf6\tS\t0.5778947915182423
+                        0xbbdfe8ff0cd60c64712fde5706d6ea2f545ded49c47eea6162d6d100c964eee5\tG\t0.325403220015421
+                        0x7ebaf6ca993f8fc98b1309cf32d68bb8aa7dc4eccb68146fb37f1ec82752c7d7\tC\t0.49428905119584543
+                        0xaa1896d0ad3419d2910aa7b6d58506dc7c97a2cb4ac4b04722556b928447b584\tD\t0.4971342426836798
+                        0x0cb5f439cbc22e9d1f0481ab7acd1f4a77827c4f6b03027bc6dfacdd3f3c52b8\tO\t0.44804689668613573
+                        0xacb025f759cffbd0de9be4e331fe36e67dc859770af204938151081b8acafadd\tB\t0.2879973939681931
+                        0x9d6cb7b4fbf1fa48dbd7587f207765769b4bae41862e09ccb482cff57e9c5398\tK\t0.24008362859107102
                         """,
                 false
         );
@@ -14938,7 +14990,10 @@ public class SampleByTest extends AbstractCairoTest {
                 """
                         s\tto_timezone
                         11.427984775756228\t2021-10-31T03:00:00.000000Z
-                        66.08297852815922\t2021-10-31T03:30:00.000000Z
+                        42.17768841969397\t2021-10-31T03:30:00.000000Z
+                        42.17768841969397\t2021-10-31T03:00:00.000000Z
+                        23.90529010846525\t2021-10-31T03:30:00.000000Z
+                        23.90529010846525\t2021-10-31T04:00:00.000000Z
                         70.94360487171201\t2021-10-31T04:30:00.000000Z
                         70.94360487171201\t2021-10-31T05:00:00.000000Z
                         87.99634725391621\t2021-10-31T05:30:00.000000Z
@@ -15132,7 +15187,10 @@ public class SampleByTest extends AbstractCairoTest {
                         sum\tk
                         11.427984775756228\t2021-10-30T23:40:00.000000Z
                         11.427984775756228\t2021-10-31T00:10:00.000000Z
-                        66.08297852815922\t2021-10-31T00:40:00.000000Z
+                        42.17768841969397\t2021-10-31T00:40:00.000000Z
+                        42.17768841969397\t2021-10-31T01:10:00.000000Z
+                        23.90529010846525\t2021-10-31T01:40:00.000000Z
+                        23.90529010846525\t2021-10-31T02:10:00.000000Z
                         70.94360487171201\t2021-10-31T02:40:00.000000Z
                         70.94360487171201\t2021-10-31T03:10:00.000000Z
                         87.99634725391621\t2021-10-31T03:40:00.000000Z
@@ -15291,30 +15349,30 @@ public class SampleByTest extends AbstractCairoTest {
                         RXGZ\t23.90529010846525\t1970-01-03T00:00:00.000000Z
                         PEHN\t20.56\t1970-01-03T00:00:00.000000Z
                         HYRX\t20.56\t1970-01-03T00:00:00.000000Z
+                        PEHN\t70.94360487171201\t1970-01-03T03:00:00.000000Z
                         \t120.87811633071126\t1970-01-03T03:00:00.000000Z
                         VTJW\t20.56\t1970-01-03T03:00:00.000000Z
                         RXGZ\t20.56\t1970-01-03T03:00:00.000000Z
-                        PEHN\t70.94360487171201\t1970-01-03T03:00:00.000000Z
                         HYRX\t20.56\t1970-01-03T03:00:00.000000Z
+                        HYRX\t97.71103146051203\t1970-01-03T06:00:00.000000Z
+                        PEHN\t81.46807944500559\t1970-01-03T06:00:00.000000Z
                         \t57.93466326862211\t1970-01-03T06:00:00.000000Z
                         VTJW\t20.56\t1970-01-03T06:00:00.000000Z
                         RXGZ\t20.56\t1970-01-03T06:00:00.000000Z
-                        PEHN\t81.46807944500559\t1970-01-03T06:00:00.000000Z
-                        HYRX\t97.71103146051203\t1970-01-03T06:00:00.000000Z
-                        \t26.922103479744898\t1970-01-03T09:00:00.000000Z
+                        HYRX\t12.026122412833129\t1970-01-03T09:00:00.000000Z
                         VTJW\t48.820511018586934\t1970-01-03T09:00:00.000000Z
+                        \t26.922103479744898\t1970-01-03T09:00:00.000000Z
                         RXGZ\t20.56\t1970-01-03T09:00:00.000000Z
                         PEHN\t20.56\t1970-01-03T09:00:00.000000Z
-                        HYRX\t12.026122412833129\t1970-01-03T09:00:00.000000Z
                         \t150.48604795487125\t1970-01-03T12:00:00.000000Z
+                        PEHN\t84.45258177211063\t1970-01-03T12:00:00.000000Z
                         VTJW\t20.56\t1970-01-03T12:00:00.000000Z
                         RXGZ\t20.56\t1970-01-03T12:00:00.000000Z
-                        PEHN\t84.45258177211063\t1970-01-03T12:00:00.000000Z
                         HYRX\t20.56\t1970-01-03T12:00:00.000000Z
+                        PEHN\t49.00510449885239\t1970-01-03T15:00:00.000000Z
                         \t172.06125086724973\t1970-01-03T15:00:00.000000Z
                         VTJW\t20.56\t1970-01-03T15:00:00.000000Z
                         RXGZ\t20.56\t1970-01-03T15:00:00.000000Z
-                        PEHN\t49.00510449885239\t1970-01-03T15:00:00.000000Z
                         HYRX\t20.56\t1970-01-03T15:00:00.000000Z
                         \t86.08992670884706\t1970-01-03T18:00:00.000000Z
                         VTJW\t20.56\t1970-01-03T18:00:00.000000Z
@@ -15350,38 +15408,38 @@ public class SampleByTest extends AbstractCairoTest {
                         HYRX\t20.56\t1970-01-03T00:00:00.000000Z
                         UVSD\t20.56\t1970-01-03T00:00:00.000000Z
                         KGHV\t20.56\t1970-01-03T00:00:00.000000Z
+                        PEHN\t70.94360487171201\t1970-01-03T03:00:00.000000Z
                         \t120.87811633071126\t1970-01-03T03:00:00.000000Z
                         VTJW\t20.56\t1970-01-03T03:00:00.000000Z
                         RXGZ\t20.56\t1970-01-03T03:00:00.000000Z
-                        PEHN\t70.94360487171201\t1970-01-03T03:00:00.000000Z
                         HYRX\t20.56\t1970-01-03T03:00:00.000000Z
                         UVSD\t20.56\t1970-01-03T03:00:00.000000Z
                         KGHV\t20.56\t1970-01-03T03:00:00.000000Z
+                        HYRX\t97.71103146051203\t1970-01-03T06:00:00.000000Z
+                        PEHN\t81.46807944500559\t1970-01-03T06:00:00.000000Z
                         \t57.93466326862211\t1970-01-03T06:00:00.000000Z
                         VTJW\t20.56\t1970-01-03T06:00:00.000000Z
                         RXGZ\t20.56\t1970-01-03T06:00:00.000000Z
-                        PEHN\t81.46807944500559\t1970-01-03T06:00:00.000000Z
-                        HYRX\t97.71103146051203\t1970-01-03T06:00:00.000000Z
                         UVSD\t20.56\t1970-01-03T06:00:00.000000Z
                         KGHV\t20.56\t1970-01-03T06:00:00.000000Z
-                        \t26.922103479744898\t1970-01-03T09:00:00.000000Z
+                        HYRX\t12.026122412833129\t1970-01-03T09:00:00.000000Z
                         VTJW\t48.820511018586934\t1970-01-03T09:00:00.000000Z
+                        \t26.922103479744898\t1970-01-03T09:00:00.000000Z
                         RXGZ\t20.56\t1970-01-03T09:00:00.000000Z
                         PEHN\t20.56\t1970-01-03T09:00:00.000000Z
-                        HYRX\t12.026122412833129\t1970-01-03T09:00:00.000000Z
                         UVSD\t20.56\t1970-01-03T09:00:00.000000Z
                         KGHV\t20.56\t1970-01-03T09:00:00.000000Z
                         \t150.48604795487125\t1970-01-03T12:00:00.000000Z
+                        PEHN\t84.45258177211063\t1970-01-03T12:00:00.000000Z
                         VTJW\t20.56\t1970-01-03T12:00:00.000000Z
                         RXGZ\t20.56\t1970-01-03T12:00:00.000000Z
-                        PEHN\t84.45258177211063\t1970-01-03T12:00:00.000000Z
                         HYRX\t20.56\t1970-01-03T12:00:00.000000Z
                         UVSD\t20.56\t1970-01-03T12:00:00.000000Z
                         KGHV\t20.56\t1970-01-03T12:00:00.000000Z
+                        PEHN\t49.00510449885239\t1970-01-03T15:00:00.000000Z
                         \t172.06125086724973\t1970-01-03T15:00:00.000000Z
                         VTJW\t20.56\t1970-01-03T15:00:00.000000Z
                         RXGZ\t20.56\t1970-01-03T15:00:00.000000Z
-                        PEHN\t49.00510449885239\t1970-01-03T15:00:00.000000Z
                         HYRX\t20.56\t1970-01-03T15:00:00.000000Z
                         UVSD\t20.56\t1970-01-03T15:00:00.000000Z
                         KGHV\t20.56\t1970-01-03T15:00:00.000000Z
@@ -15414,19 +15472,19 @@ public class SampleByTest extends AbstractCairoTest {
                         UVSD\t20.56\t1970-01-04T03:00:00.000000Z
                         KGHV\t20.56\t1970-01-04T03:00:00.000000Z
                         \t135.835983782176\t1970-01-04T06:00:00.000000Z
+                        UVSD\t49.42890511958454\t1970-01-04T06:00:00.000000Z
                         VTJW\t20.56\t1970-01-04T06:00:00.000000Z
                         RXGZ\t20.56\t1970-01-04T06:00:00.000000Z
                         PEHN\t20.56\t1970-01-04T06:00:00.000000Z
                         HYRX\t20.56\t1970-01-04T06:00:00.000000Z
-                        UVSD\t49.42890511958454\t1970-01-04T06:00:00.000000Z
                         KGHV\t20.56\t1970-01-04T06:00:00.000000Z
+                        KGHV\t67.52509547112409\t1970-01-04T09:00:00.000000Z
                         \t20.56\t1970-01-04T09:00:00.000000Z
                         VTJW\t20.56\t1970-01-04T09:00:00.000000Z
                         RXGZ\t20.56\t1970-01-04T09:00:00.000000Z
                         PEHN\t20.56\t1970-01-04T09:00:00.000000Z
                         HYRX\t20.56\t1970-01-04T09:00:00.000000Z
                         UVSD\t20.56\t1970-01-04T09:00:00.000000Z
-                        KGHV\t67.52509547112409\t1970-01-04T09:00:00.000000Z
                         """,
                 false
         );
@@ -15445,15 +15503,15 @@ public class SampleByTest extends AbstractCairoTest {
                         RXGZ\t101.2\t2021-11-06T22:00:00.000000Z
                         PEHN\t101.2\t2021-11-06T22:00:00.000000Z
                         HYRX\t101.2\t2021-11-06T22:00:00.000000Z
-                        \t101.2\t2021-11-06T23:00:00.000000Z
                         VTJW\t42.17768841969397\t2021-11-06T23:00:00.000000Z
                         RXGZ\t23.90529010846525\t2021-11-06T23:00:00.000000Z
+                        \t101.2\t2021-11-06T23:00:00.000000Z
                         PEHN\t101.2\t2021-11-06T23:00:00.000000Z
                         HYRX\t101.2\t2021-11-06T23:00:00.000000Z
+                        PEHN\t70.94360487171201\t2021-11-07T00:00:00.000000Z
                         \t101.2\t2021-11-07T00:00:00.000000Z
                         VTJW\t101.2\t2021-11-07T00:00:00.000000Z
                         RXGZ\t101.2\t2021-11-07T00:00:00.000000Z
-                        PEHN\t70.94360487171201\t2021-11-07T00:00:00.000000Z
                         HYRX\t101.2\t2021-11-07T00:00:00.000000Z
                         \t87.99634725391621\t2021-11-07T01:00:00.000000Z
                         VTJW\t101.2\t2021-11-07T01:00:00.000000Z
@@ -15465,23 +15523,28 @@ public class SampleByTest extends AbstractCairoTest {
                         RXGZ\t101.2\t2021-11-07T02:00:00.000000Z
                         PEHN\t101.2\t2021-11-07T02:00:00.000000Z
                         HYRX\t101.2\t2021-11-07T02:00:00.000000Z
+                        HYRX\t97.71103146051203\t2021-11-07T03:00:00.000000Z
                         \t101.2\t2021-11-07T03:00:00.000000Z
                         VTJW\t101.2\t2021-11-07T03:00:00.000000Z
                         RXGZ\t101.2\t2021-11-07T03:00:00.000000Z
                         PEHN\t101.2\t2021-11-07T03:00:00.000000Z
-                        HYRX\t97.71103146051203\t2021-11-07T03:00:00.000000Z
+                        PEHN\t81.46807944500559\t2021-11-07T04:00:00.000000Z
                         \t101.2\t2021-11-07T04:00:00.000000Z
                         VTJW\t101.2\t2021-11-07T04:00:00.000000Z
                         RXGZ\t101.2\t2021-11-07T04:00:00.000000Z
-                        PEHN\t81.46807944500559\t2021-11-07T04:00:00.000000Z
                         HYRX\t101.2\t2021-11-07T04:00:00.000000Z
-                        \t101.2\t2021-11-07T05:00:00.000000Z
+                        \t57.93466326862211\t2021-11-07T05:00:00.000000Z
+                        HYRX\t12.026122412833129\t2021-11-07T05:00:00.000000Z
                         VTJW\t101.2\t2021-11-07T05:00:00.000000Z
                         RXGZ\t101.2\t2021-11-07T05:00:00.000000Z
-                        PEHN\t81.46807944500559\t2021-11-07T05:00:00.000000Z
-                        HYRX\t101.2\t2021-11-07T05:00:00.000000Z
+                        PEHN\t101.2\t2021-11-07T05:00:00.000000Z
+                        VTJW\t48.820511018586934\t2021-11-07T06:00:00.000000Z
+                        \t101.2\t2021-11-07T06:00:00.000000Z
+                        RXGZ\t101.2\t2021-11-07T06:00:00.000000Z
+                        PEHN\t101.2\t2021-11-07T06:00:00.000000Z
+                        HYRX\t101.2\t2021-11-07T06:00:00.000000Z
                         \t26.922103479744898\t2021-11-07T07:00:00.000000Z
-                        VTJW\t48.820511018586934\t2021-11-07T07:00:00.000000Z
+                        VTJW\t101.2\t2021-11-07T07:00:00.000000Z
                         RXGZ\t101.2\t2021-11-07T07:00:00.000000Z
                         PEHN\t101.2\t2021-11-07T07:00:00.000000Z
                         HYRX\t101.2\t2021-11-07T07:00:00.000000Z
@@ -15490,20 +15553,20 @@ public class SampleByTest extends AbstractCairoTest {
                         RXGZ\t101.2\t2021-11-07T08:00:00.000000Z
                         PEHN\t101.2\t2021-11-07T08:00:00.000000Z
                         HYRX\t101.2\t2021-11-07T08:00:00.000000Z
+                        PEHN\t84.45258177211063\t2021-11-07T09:00:00.000000Z
                         \t101.2\t2021-11-07T09:00:00.000000Z
                         VTJW\t101.2\t2021-11-07T09:00:00.000000Z
                         RXGZ\t101.2\t2021-11-07T09:00:00.000000Z
-                        PEHN\t84.45258177211063\t2021-11-07T09:00:00.000000Z
                         HYRX\t101.2\t2021-11-07T09:00:00.000000Z
                         \t97.5019885372507\t2021-11-07T10:00:00.000000Z
                         VTJW\t101.2\t2021-11-07T10:00:00.000000Z
                         RXGZ\t101.2\t2021-11-07T10:00:00.000000Z
                         PEHN\t101.2\t2021-11-07T10:00:00.000000Z
                         HYRX\t101.2\t2021-11-07T10:00:00.000000Z
+                        PEHN\t49.00510449885239\t2021-11-07T11:00:00.000000Z
                         \t80.01121139739173\t2021-11-07T11:00:00.000000Z
                         VTJW\t101.2\t2021-11-07T11:00:00.000000Z
                         RXGZ\t101.2\t2021-11-07T11:00:00.000000Z
-                        PEHN\t49.00510449885239\t2021-11-07T11:00:00.000000Z
                         HYRX\t101.2\t2021-11-07T11:00:00.000000Z
                         \t92.050039469858\t2021-11-07T12:00:00.000000Z
                         VTJW\t101.2\t2021-11-07T12:00:00.000000Z
@@ -15541,6 +15604,10 @@ public class SampleByTest extends AbstractCairoTest {
         Rnd rnd = TestUtils.generateRandom(LOG);
         setProperty(PropertyKey.DEBUG_CAIRO_COPIER_TYPE, rnd.nextInt(4));
 
+        // BINARY column `i` on fill rows below shows the hex value from the
+        // data row where the same key first appeared — the FILL_KEY branch of
+        // FillRecord.getBin / getBinLen carries the key bytes through from
+        // keysMapRecord.
         assertQuery(
                 """
                         b\th\ti\tj\tl\tsum\tsum1\tsum2\tsum3\tsum4\tsum5\tk
@@ -15554,26 +15621,27 @@ public class SampleByTest extends AbstractCairoTest {
                         HYRX\tNZHZS\t\t2015-10-11T07:06:57.173Z\ttrue\t20.56\t0.0\t0\t0\t0\t0\t1970-01-03T00:00:00.000000Z
                         RXGZ\tEBNDCQCE\t00000000 e9 0c ea 4e ea 8b f5 0f 2d b3\t2015-03-25T11:25:58.599Z\tfalse\t20.56\t0.0\t0\t0\t0\t0\t1970-01-03T00:00:00.000000Z
                         \tUIZUL\t00000000 54 52 d0 29 26 c5 aa da 18 ce 5f b2 8b 5c 54 90\t\ttrue\t20.56\t0.0\t0\t0\t0\t0\t1970-01-03T00:00:00.000000Z
-                        \tFFYUDEYY\t00000000 49 b4 59 7e 3b 08 a1 1e 38 8d 1b 9e f4 c8 39 09\t2015-09-16T21:59:49.857Z\tfalse\t20.56\t0.0\t0\t0\t0\t0\t1970-01-03T03:00:00.000000Z
-                        HYRX\tGETJR\t\t2015-04-09T11:42:28.332Z\tfalse\t20.56\t0.0\t0\t0\t0\t0\t1970-01-03T03:00:00.000000Z
-                        \tZVDZJ\t00000000 e3 f1 f1 1e ca 9c 1d 06 ac 37 c8 cd 82 89 2b 4d\t2015-08-26T10:57:26.275Z\ttrue\t20.56\t0.0\t0\t0\t0\t0\t1970-01-03T03:00:00.000000Z
                         \tLYXWCK\t00000000 47 dc d2 85 7f a5 b8 7b 4a 9d 46 7c 8d\t2015-07-13T12:15:31.895Z\ttrue\t11.585982949541474\t81.64182\t998315423\t-5585\t7\t8587391969565958670\t1970-01-03T03:00:00.000000Z
                         \t\t00000000 49 1c f2 3c ed 39 ac a8 3b a6\t2015-01-08T06:16:03.023Z\tfalse\t19.751370382305055\t68.06873\t544695670\t-1464\t6\t-5024542231726589509\t1970-01-03T03:00:00.000000Z
                         RXGZ\tVLJUM\t00000000 29 5e 69 c6 eb ea c3 c9 73 93 46 fe\t2015-06-28T03:15:43.251Z\tfalse\t84.3845956391477\t48.927433\t1100812407\t-32358\t10\t5398991075259361292\t1970-01-03T03:00:00.000000Z
+                        \tFFYUDEYY\t00000000 49 b4 59 7e 3b 08 a1 1e 38 8d 1b 9e f4 c8 39 09\t2015-09-16T21:59:49.857Z\tfalse\t20.56\t0.0\t0\t0\t0\t0\t1970-01-03T03:00:00.000000Z
+                        HYRX\tGETJR\t\t2015-04-09T11:42:28.332Z\tfalse\t20.56\t0.0\t0\t0\t0\t0\t1970-01-03T03:00:00.000000Z
+                        \tZVDZJ\t00000000 e3 f1 f1 1e ca 9c 1d 06 ac 37 c8 cd 82 89 2b 4d\t2015-08-26T10:57:26.275Z\ttrue\t20.56\t0.0\t0\t0\t0\t0\t1970-01-03T03:00:00.000000Z
                         \tHWVDKF\t00000000 f5 5d d0 eb 67 44 a7 6a 71 34 e0\t2015-12-05T03:07:39.553Z\ttrue\t20.56\t0.0\t0\t0\t0\t0\t1970-01-03T03:00:00.000000Z
                         HYRX\tNZHZS\t\t2015-10-11T07:06:57.173Z\ttrue\t20.56\t0.0\t0\t0\t0\t0\t1970-01-03T03:00:00.000000Z
                         RXGZ\tEBNDCQCE\t00000000 e9 0c ea 4e ea 8b f5 0f 2d b3\t2015-03-25T11:25:58.599Z\tfalse\t20.56\t0.0\t0\t0\t0\t0\t1970-01-03T03:00:00.000000Z
                         \tUIZUL\t00000000 54 52 d0 29 26 c5 aa da 18 ce 5f b2 8b 5c 54 90\t\ttrue\t20.56\t0.0\t0\t0\t0\t0\t1970-01-03T03:00:00.000000Z
+                        \tHWVDKF\t00000000 f5 5d d0 eb 67 44 a7 6a 71 34 e0\t2015-12-05T03:07:39.553Z\ttrue\t85.93131480724348\t10.527277\t2105201404\t5667\t8\t-8994301462266164776\t1970-01-03T06:00:00.000000Z
+                        HYRX\tNZHZS\t\t2015-10-11T07:06:57.173Z\ttrue\t63.412928948436154\t5.024612\t1377625589\t-25710\t3\t2151565237758036093\t1970-01-03T06:00:00.000000Z
+                        RXGZ\tEBNDCQCE\t00000000 e9 0c ea 4e ea 8b f5 0f 2d b3\t2015-03-25T11:25:58.599Z\tfalse\t85.84308438045007\t54.669006\t903066492\t-2990\t4\t-1134031357796740497\t1970-01-03T06:00:00.000000Z
                         \tFFYUDEYY\t00000000 49 b4 59 7e 3b 08 a1 1e 38 8d 1b 9e f4 c8 39 09\t2015-09-16T21:59:49.857Z\tfalse\t20.56\t0.0\t0\t0\t0\t0\t1970-01-03T06:00:00.000000Z
                         HYRX\tGETJR\t\t2015-04-09T11:42:28.332Z\tfalse\t20.56\t0.0\t0\t0\t0\t0\t1970-01-03T06:00:00.000000Z
                         \tZVDZJ\t00000000 e3 f1 f1 1e ca 9c 1d 06 ac 37 c8 cd 82 89 2b 4d\t2015-08-26T10:57:26.275Z\ttrue\t20.56\t0.0\t0\t0\t0\t0\t1970-01-03T06:00:00.000000Z
                         \tLYXWCK\t00000000 47 dc d2 85 7f a5 b8 7b 4a 9d 46 7c 8d\t2015-07-13T12:15:31.895Z\ttrue\t20.56\t0.0\t0\t0\t0\t0\t1970-01-03T06:00:00.000000Z
                         \t\t00000000 49 1c f2 3c ed 39 ac a8 3b a6\t2015-01-08T06:16:03.023Z\tfalse\t20.56\t0.0\t0\t0\t0\t0\t1970-01-03T06:00:00.000000Z
                         RXGZ\tVLJUM\t00000000 29 5e 69 c6 eb ea c3 c9 73 93 46 fe\t2015-06-28T03:15:43.251Z\tfalse\t20.56\t0.0\t0\t0\t0\t0\t1970-01-03T06:00:00.000000Z
-                        \tHWVDKF\t00000000 f5 5d d0 eb 67 44 a7 6a 71 34 e0\t2015-12-05T03:07:39.553Z\ttrue\t85.93131480724348\t10.527277\t2105201404\t5667\t8\t-8994301462266164776\t1970-01-03T06:00:00.000000Z
-                        HYRX\tNZHZS\t\t2015-10-11T07:06:57.173Z\ttrue\t63.412928948436154\t5.024612\t1377625589\t-25710\t3\t2151565237758036093\t1970-01-03T06:00:00.000000Z
-                        RXGZ\tEBNDCQCE\t00000000 e9 0c ea 4e ea 8b f5 0f 2d b3\t2015-03-25T11:25:58.599Z\tfalse\t85.84308438045007\t54.669006\t903066492\t-2990\t4\t-1134031357796740497\t1970-01-03T06:00:00.000000Z
                         \tUIZUL\t00000000 54 52 d0 29 26 c5 aa da 18 ce 5f b2 8b 5c 54 90\t\ttrue\t20.56\t0.0\t0\t0\t0\t0\t1970-01-03T06:00:00.000000Z
+                        \tUIZUL\t00000000 54 52 d0 29 26 c5 aa da 18 ce 5f b2 8b 5c 54 90\t\ttrue\t21.485589614090927\t6.2027454\t358259591\t-29980\t8\t-8841102831894340636\t1970-01-03T09:00:00.000000Z
                         \tFFYUDEYY\t00000000 49 b4 59 7e 3b 08 a1 1e 38 8d 1b 9e f4 c8 39 09\t2015-09-16T21:59:49.857Z\tfalse\t20.56\t0.0\t0\t0\t0\t0\t1970-01-03T09:00:00.000000Z
                         HYRX\tGETJR\t\t2015-04-09T11:42:28.332Z\tfalse\t20.56\t0.0\t0\t0\t0\t0\t1970-01-03T09:00:00.000000Z
                         \tZVDZJ\t00000000 e3 f1 f1 1e ca 9c 1d 06 ac 37 c8 cd 82 89 2b 4d\t2015-08-26T10:57:26.275Z\ttrue\t20.56\t0.0\t0\t0\t0\t0\t1970-01-03T09:00:00.000000Z
@@ -15583,7 +15651,6 @@ public class SampleByTest extends AbstractCairoTest {
                         \tHWVDKF\t00000000 f5 5d d0 eb 67 44 a7 6a 71 34 e0\t2015-12-05T03:07:39.553Z\ttrue\t20.56\t0.0\t0\t0\t0\t0\t1970-01-03T09:00:00.000000Z
                         HYRX\tNZHZS\t\t2015-10-11T07:06:57.173Z\ttrue\t20.56\t0.0\t0\t0\t0\t0\t1970-01-03T09:00:00.000000Z
                         RXGZ\tEBNDCQCE\t00000000 e9 0c ea 4e ea 8b f5 0f 2d b3\t2015-03-25T11:25:58.599Z\tfalse\t20.56\t0.0\t0\t0\t0\t0\t1970-01-03T09:00:00.000000Z
-                        \tUIZUL\t00000000 54 52 d0 29 26 c5 aa da 18 ce 5f b2 8b 5c 54 90\t\ttrue\t21.485589614090927\t6.2027454\t358259591\t-29980\t8\t-8841102831894340636\t1970-01-03T09:00:00.000000Z
                         """,
                 "select b, h, i, j, l, sum(a), sum(c), sum(d), sum(e), sum(f), sum(g), k from x sample by 3h fill(20.56, 0, 0, 0, 0, 0)",
                 "create table x as " +
@@ -15622,31 +15689,31 @@ public class SampleByTest extends AbstractCairoTest {
                         PEHN\t20.56\t0.0\t0\t0\t0\t0\t1970-01-03T00:00:00.000000Z
                         RXGZ\t20.56\t0.0\t0\t0\t0\t0\t1970-01-03T00:00:00.000000Z
                         HYRX\t20.56\t0.0\t0\t0\t0\t0\t1970-01-03T00:00:00.000000Z
-                        \t76.64256753596138\t55.224937\t326010667\t-5741\t8\t7392877322819819290\t1970-01-03T03:00:00.000000Z
-                        CPSW\t13.450170570900255\t34.35685\t410717394\t18229\t10\t6820495939660535106\t1970-01-03T03:00:00.000000Z
                         PEHN\t15.786635599554755\t12.50304\t264240638\t-7976\t6\t-8480005421611953360\t1970-01-03T03:00:00.000000Z
+                        CPSW\t13.450170570900255\t34.35685\t410717394\t18229\t10\t6820495939660535106\t1970-01-03T03:00:00.000000Z
+                        \t76.64256753596138\t55.224937\t326010667\t-5741\t8\t7392877322819819290\t1970-01-03T03:00:00.000000Z
                         RXGZ\t20.56\t0.0\t0\t0\t0\t0\t1970-01-03T03:00:00.000000Z
                         HYRX\t20.56\t0.0\t0\t0\t0\t0\t1970-01-03T03:00:00.000000Z
                         \t80.01121139739173\t92.05003\t235358133\t-9039\t5\t6473208488991371747\t1970-01-03T06:00:00.000000Z
-                        CPSW\t20.56\t0.0\t0\t0\t0\t0\t1970-01-03T06:00:00.000000Z
                         PEHN\t86.64158914718531\t88.374214\t1566901076\t-3017\t3\t-5028301966399563827\t1970-01-03T06:00:00.000000Z
+                        CPSW\t20.56\t0.0\t0\t0\t0\t0\t1970-01-03T06:00:00.000000Z
                         RXGZ\t20.56\t0.0\t0\t0\t0\t0\t1970-01-03T06:00:00.000000Z
                         HYRX\t20.56\t0.0\t0\t0\t0\t0\t1970-01-03T06:00:00.000000Z
                         \t97.03060808244088\t91.01417\t1794809330\t10028\t4\t-5512653573876168745\t1970-01-03T09:00:00.000000Z
+                        RXGZ\t3.831785863680992\t42.02044\t1254404167\t1756\t5\t8702525427024484485\t1970-01-03T09:00:00.000000Z
                         CPSW\t20.56\t0.0\t0\t0\t0\t0\t1970-01-03T09:00:00.000000Z
                         PEHN\t20.56\t0.0\t0\t0\t0\t0\t1970-01-03T09:00:00.000000Z
-                        RXGZ\t3.831785863680992\t42.02044\t1254404167\t1756\t5\t8702525427024484485\t1970-01-03T09:00:00.000000Z
                         HYRX\t20.56\t0.0\t0\t0\t0\t0\t1970-01-03T09:00:00.000000Z
                         \t89.40917126581896\t94.41659\t2124174232\t2508\t9\t-7103100524321179064\t1970-01-03T12:00:00.000000Z
+                        HYRX\t24.008362859107102\t76.57837\t2111250190\t-13252\t8\t7973684666911773753\t1970-01-03T12:00:00.000000Z
                         CPSW\t20.56\t0.0\t0\t0\t0\t0\t1970-01-03T12:00:00.000000Z
                         PEHN\t20.56\t0.0\t0\t0\t0\t0\t1970-01-03T12:00:00.000000Z
                         RXGZ\t20.56\t0.0\t0\t0\t0\t0\t1970-01-03T12:00:00.000000Z
-                        HYRX\t24.008362859107102\t76.57837\t2111250190\t-13252\t8\t7973684666911773753\t1970-01-03T12:00:00.000000Z
+                        HYRX\t2.6836863013701473\t10.643042\t502711083\t-8221\t9\t-7709579215942154242\t1970-01-03T15:00:00.000000Z
                         \t26.369335635512837\t56.994446\t2011884585\t9054\t10\t-5315599072928175674\t1970-01-03T15:00:00.000000Z
                         CPSW\t20.56\t0.0\t0\t0\t0\t0\t1970-01-03T15:00:00.000000Z
                         PEHN\t20.56\t0.0\t0\t0\t0\t0\t1970-01-03T15:00:00.000000Z
                         RXGZ\t20.56\t0.0\t0\t0\t0\t0\t1970-01-03T15:00:00.000000Z
-                        HYRX\t2.6836863013701473\t10.643042\t502711083\t-8221\t9\t-7709579215942154242\t1970-01-03T15:00:00.000000Z
                         \t42.74704286353759\t33.74707\t684778036\t11524\t6\t7574443524652611981\t1970-01-03T18:00:00.000000Z
                         CPSW\t20.56\t0.0\t0\t0\t0\t0\t1970-01-03T18:00:00.000000Z
                         PEHN\t20.56\t0.0\t0\t0\t0\t0\t1970-01-03T18:00:00.000000Z
@@ -15693,9 +15760,9 @@ public class SampleByTest extends AbstractCairoTest {
                         FLOP\t20.56\t0.0\t0\t0\t0\t0\t1970-01-03T00:00:00.000000Z
                         WVDK\t20.56\t0.0\t0\t0\t0\t0\t1970-01-03T00:00:00.000000Z
                         JOXP\t20.56\t0.0\t0\t0\t0\t0\t1970-01-03T00:00:00.000000Z
-                        \t76.64256753596138\t55.224937\t326010667\t-5741\t8\t7392877322819819290\t1970-01-03T03:00:00.000000Z
-                        CPSW\t13.450170570900255\t34.35685\t410717394\t18229\t10\t6820495939660535106\t1970-01-03T03:00:00.000000Z
                         PEHN\t15.786635599554755\t12.50304\t264240638\t-7976\t6\t-8480005421611953360\t1970-01-03T03:00:00.000000Z
+                        CPSW\t13.450170570900255\t34.35685\t410717394\t18229\t10\t6820495939660535106\t1970-01-03T03:00:00.000000Z
+                        \t76.64256753596138\t55.224937\t326010667\t-5741\t8\t7392877322819819290\t1970-01-03T03:00:00.000000Z
                         RXGZ\t20.56\t0.0\t0\t0\t0\t0\t1970-01-03T03:00:00.000000Z
                         HYRX\t20.56\t0.0\t0\t0\t0\t0\t1970-01-03T03:00:00.000000Z
                         EZGH\t20.56\t0.0\t0\t0\t0\t0\t1970-01-03T03:00:00.000000Z
@@ -15703,8 +15770,8 @@ public class SampleByTest extends AbstractCairoTest {
                         WVDK\t20.56\t0.0\t0\t0\t0\t0\t1970-01-03T03:00:00.000000Z
                         JOXP\t20.56\t0.0\t0\t0\t0\t0\t1970-01-03T03:00:00.000000Z
                         \t80.01121139739173\t92.05003\t235358133\t-9039\t5\t6473208488991371747\t1970-01-03T06:00:00.000000Z
-                        CPSW\t20.56\t0.0\t0\t0\t0\t0\t1970-01-03T06:00:00.000000Z
                         PEHN\t86.64158914718531\t88.374214\t1566901076\t-3017\t3\t-5028301966399563827\t1970-01-03T06:00:00.000000Z
+                        CPSW\t20.56\t0.0\t0\t0\t0\t0\t1970-01-03T06:00:00.000000Z
                         RXGZ\t20.56\t0.0\t0\t0\t0\t0\t1970-01-03T06:00:00.000000Z
                         HYRX\t20.56\t0.0\t0\t0\t0\t0\t1970-01-03T06:00:00.000000Z
                         EZGH\t20.56\t0.0\t0\t0\t0\t0\t1970-01-03T06:00:00.000000Z
@@ -15712,28 +15779,28 @@ public class SampleByTest extends AbstractCairoTest {
                         WVDK\t20.56\t0.0\t0\t0\t0\t0\t1970-01-03T06:00:00.000000Z
                         JOXP\t20.56\t0.0\t0\t0\t0\t0\t1970-01-03T06:00:00.000000Z
                         \t97.03060808244088\t91.01417\t1794809330\t10028\t4\t-5512653573876168745\t1970-01-03T09:00:00.000000Z
+                        RXGZ\t3.831785863680992\t42.02044\t1254404167\t1756\t5\t8702525427024484485\t1970-01-03T09:00:00.000000Z
                         CPSW\t20.56\t0.0\t0\t0\t0\t0\t1970-01-03T09:00:00.000000Z
                         PEHN\t20.56\t0.0\t0\t0\t0\t0\t1970-01-03T09:00:00.000000Z
-                        RXGZ\t3.831785863680992\t42.02044\t1254404167\t1756\t5\t8702525427024484485\t1970-01-03T09:00:00.000000Z
                         HYRX\t20.56\t0.0\t0\t0\t0\t0\t1970-01-03T09:00:00.000000Z
                         EZGH\t20.56\t0.0\t0\t0\t0\t0\t1970-01-03T09:00:00.000000Z
                         FLOP\t20.56\t0.0\t0\t0\t0\t0\t1970-01-03T09:00:00.000000Z
                         WVDK\t20.56\t0.0\t0\t0\t0\t0\t1970-01-03T09:00:00.000000Z
                         JOXP\t20.56\t0.0\t0\t0\t0\t0\t1970-01-03T09:00:00.000000Z
                         \t89.40917126581896\t94.41659\t2124174232\t2508\t9\t-7103100524321179064\t1970-01-03T12:00:00.000000Z
+                        HYRX\t24.008362859107102\t76.57837\t2111250190\t-13252\t8\t7973684666911773753\t1970-01-03T12:00:00.000000Z
                         CPSW\t20.56\t0.0\t0\t0\t0\t0\t1970-01-03T12:00:00.000000Z
                         PEHN\t20.56\t0.0\t0\t0\t0\t0\t1970-01-03T12:00:00.000000Z
                         RXGZ\t20.56\t0.0\t0\t0\t0\t0\t1970-01-03T12:00:00.000000Z
-                        HYRX\t24.008362859107102\t76.57837\t2111250190\t-13252\t8\t7973684666911773753\t1970-01-03T12:00:00.000000Z
                         EZGH\t20.56\t0.0\t0\t0\t0\t0\t1970-01-03T12:00:00.000000Z
                         FLOP\t20.56\t0.0\t0\t0\t0\t0\t1970-01-03T12:00:00.000000Z
                         WVDK\t20.56\t0.0\t0\t0\t0\t0\t1970-01-03T12:00:00.000000Z
                         JOXP\t20.56\t0.0\t0\t0\t0\t0\t1970-01-03T12:00:00.000000Z
+                        HYRX\t2.6836863013701473\t10.643042\t502711083\t-8221\t9\t-7709579215942154242\t1970-01-03T15:00:00.000000Z
                         \t26.369335635512837\t56.994446\t2011884585\t9054\t10\t-5315599072928175674\t1970-01-03T15:00:00.000000Z
                         CPSW\t20.56\t0.0\t0\t0\t0\t0\t1970-01-03T15:00:00.000000Z
                         PEHN\t20.56\t0.0\t0\t0\t0\t0\t1970-01-03T15:00:00.000000Z
                         RXGZ\t20.56\t0.0\t0\t0\t0\t0\t1970-01-03T15:00:00.000000Z
-                        HYRX\t2.6836863013701473\t10.643042\t502711083\t-8221\t9\t-7709579215942154242\t1970-01-03T15:00:00.000000Z
                         EZGH\t20.56\t0.0\t0\t0\t0\t0\t1970-01-03T15:00:00.000000Z
                         FLOP\t20.56\t0.0\t0\t0\t0\t0\t1970-01-03T15:00:00.000000Z
                         WVDK\t20.56\t0.0\t0\t0\t0\t0\t1970-01-03T15:00:00.000000Z
@@ -15774,15 +15841,16 @@ public class SampleByTest extends AbstractCairoTest {
                         FLOP\t20.56\t0.0\t0\t0\t0\t0\t1970-01-04T03:00:00.000000Z
                         WVDK\t20.56\t0.0\t0\t0\t0\t0\t1970-01-04T03:00:00.000000Z
                         JOXP\t20.56\t0.0\t0\t0\t0\t0\t1970-01-04T03:00:00.000000Z
+                        EZGH\t5.0246156790690115\t38.422543\t370796356\t5422\t3\t4959459375462458218\t1970-01-04T06:00:00.000000Z
+                        FLOP\t17.180291960857296\t5.158454\t532016913\t-3028\t7\t2282781332678491916\t1970-01-04T06:00:00.000000Z
+                        WVDK\t54.66900921405317\t35.681107\t874367915\t-23001\t10\t9089874911309539983\t1970-01-04T06:00:00.000000Z
                         \t20.56\t0.0\t0\t0\t0\t0\t1970-01-04T06:00:00.000000Z
                         CPSW\t20.56\t0.0\t0\t0\t0\t0\t1970-01-04T06:00:00.000000Z
                         PEHN\t20.56\t0.0\t0\t0\t0\t0\t1970-01-04T06:00:00.000000Z
                         RXGZ\t20.56\t0.0\t0\t0\t0\t0\t1970-01-04T06:00:00.000000Z
                         HYRX\t20.56\t0.0\t0\t0\t0\t0\t1970-01-04T06:00:00.000000Z
-                        EZGH\t5.0246156790690115\t38.422543\t370796356\t5422\t3\t4959459375462458218\t1970-01-04T06:00:00.000000Z
-                        FLOP\t17.180291960857296\t5.158454\t532016913\t-3028\t7\t2282781332678491916\t1970-01-04T06:00:00.000000Z
-                        WVDK\t54.66900921405317\t35.681107\t874367915\t-23001\t10\t9089874911309539983\t1970-01-04T06:00:00.000000Z
                         JOXP\t20.56\t0.0\t0\t0\t0\t0\t1970-01-04T06:00:00.000000Z
+                        JOXP\t67.29405590773638\t76.06252\t1165635863\t2316\t9\t-4547802916868961458\t1970-01-04T09:00:00.000000Z
                         \t20.56\t0.0\t0\t0\t0\t0\t1970-01-04T09:00:00.000000Z
                         CPSW\t20.56\t0.0\t0\t0\t0\t0\t1970-01-04T09:00:00.000000Z
                         PEHN\t20.56\t0.0\t0\t0\t0\t0\t1970-01-04T09:00:00.000000Z
@@ -15791,7 +15859,6 @@ public class SampleByTest extends AbstractCairoTest {
                         EZGH\t20.56\t0.0\t0\t0\t0\t0\t1970-01-04T09:00:00.000000Z
                         FLOP\t20.56\t0.0\t0\t0\t0\t0\t1970-01-04T09:00:00.000000Z
                         WVDK\t20.56\t0.0\t0\t0\t0\t0\t1970-01-04T09:00:00.000000Z
-                        JOXP\t67.29405590773638\t76.06252\t1165635863\t2316\t9\t-4547802916868961458\t1970-01-04T09:00:00.000000Z
                         """,
                 false
         );
@@ -15831,31 +15898,31 @@ public class SampleByTest extends AbstractCairoTest {
                         PEHN\t20.56\t0.0\t0\t0\t0\t0\t1970-01-03T00:00:00.000000Z
                         RXGZ\t20.56\t0.0\t0\t0\t0\t0\t1970-01-03T00:00:00.000000Z
                         HYRX\t20.56\t0.0\t0\t0\t0\t0\t1970-01-03T00:00:00.000000Z
-                        \t76.64256753596138\t55.224937\t326010667\t-5741\t8\t7392877322819819290\t1970-01-03T03:00:00.000000Z
-                        CPSW\t13.450170570900255\t34.35685\t410717394\t18229\t10\t6820495939660535106\t1970-01-03T03:00:00.000000Z
                         PEHN\t15.786635599554755\t12.50304\t264240638\t-7976\t6\t-8480005421611953360\t1970-01-03T03:00:00.000000Z
+                        CPSW\t13.450170570900255\t34.35685\t410717394\t18229\t10\t6820495939660535106\t1970-01-03T03:00:00.000000Z
+                        \t76.64256753596138\t55.224937\t326010667\t-5741\t8\t7392877322819819290\t1970-01-03T03:00:00.000000Z
                         RXGZ\t20.56\t0.0\t0\t0\t0\t0\t1970-01-03T03:00:00.000000Z
                         HYRX\t20.56\t0.0\t0\t0\t0\t0\t1970-01-03T03:00:00.000000Z
                         \t85.05940141744613\t92.16078\t301655269\t-14676\t12\t-2937111954994403426\t1970-01-03T06:00:00.000000Z
-                        CPSW\t20.56\t0.0\t0\t0\t0\t0\t1970-01-03T06:00:00.000000Z
                         PEHN\t86.64158914718531\t88.374214\t1566901076\t-3017\t3\t-5028301966399563827\t1970-01-03T06:00:00.000000Z
+                        CPSW\t20.56\t0.0\t0\t0\t0\t0\t1970-01-03T06:00:00.000000Z
                         RXGZ\t20.56\t0.0\t0\t0\t0\t0\t1970-01-03T06:00:00.000000Z
                         HYRX\t20.56\t0.0\t0\t0\t0\t0\t1970-01-03T06:00:00.000000Z
                         \t106.78118249687527\t103.1198\t3029605432\t-2372\t12\t-1162868573414266742\t1970-01-03T09:00:00.000000Z
+                        RXGZ\t3.831785863680992\t42.02044\t1254404167\t1756\t5\t8702525427024484485\t1970-01-03T09:00:00.000000Z
                         CPSW\t20.56\t0.0\t0\t0\t0\t0\t1970-01-03T09:00:00.000000Z
                         PEHN\t20.56\t0.0\t0\t0\t0\t0\t1970-01-03T09:00:00.000000Z
-                        RXGZ\t3.831785863680992\t42.02044\t1254404167\t1756\t5\t8702525427024484485\t1970-01-03T09:00:00.000000Z
                         HYRX\t20.56\t0.0\t0\t0\t0\t0\t1970-01-03T09:00:00.000000Z
                         \t117.60937843256664\t189.81728\t3717804370\t-27064\t17\t2215137494070785317\t1970-01-03T12:00:00.000000Z
+                        HYRX\t24.008362859107102\t76.57837\t2111250190\t-13252\t8\t7973684666911773753\t1970-01-03T12:00:00.000000Z
                         CPSW\t20.56\t0.0\t0\t0\t0\t0\t1970-01-03T12:00:00.000000Z
                         PEHN\t20.56\t0.0\t0\t0\t0\t0\t1970-01-03T12:00:00.000000Z
                         RXGZ\t20.56\t0.0\t0\t0\t0\t0\t1970-01-03T12:00:00.000000Z
-                        HYRX\t24.008362859107102\t76.57837\t2111250190\t-13252\t8\t7973684666911773753\t1970-01-03T12:00:00.000000Z
+                        HYRX\t2.6836863013701473\t10.643042\t502711083\t-8221\t9\t-7709579215942154242\t1970-01-03T15:00:00.000000Z
                         \t28.087836621126815\t139.30695\t2587989045\t11751\t17\t-8594661640328306402\t1970-01-03T15:00:00.000000Z
                         CPSW\t20.56\t0.0\t0\t0\t0\t0\t1970-01-03T15:00:00.000000Z
                         PEHN\t20.56\t0.0\t0\t0\t0\t0\t1970-01-03T15:00:00.000000Z
                         RXGZ\t20.56\t0.0\t0\t0\t0\t0\t1970-01-03T15:00:00.000000Z
-                        HYRX\t2.6836863013701473\t10.643042\t502711083\t-8221\t9\t-7709579215942154242\t1970-01-03T15:00:00.000000Z
                         \t75.17160551750754\t120.51888\t2362241402\t514\t11\t-2863260545700031392\t1970-01-03T18:00:00.000000Z
                         CPSW\t20.56\t0.0\t0\t0\t0\t0\t1970-01-03T18:00:00.000000Z
                         PEHN\t20.56\t0.0\t0\t0\t0\t0\t1970-01-03T18:00:00.000000Z
@@ -15880,6 +15947,10 @@ public class SampleByTest extends AbstractCairoTest {
 
     @Test
     public void testSampleFillValueBadType() throws Exception {
+        // sum_t(b) is sum_t(STRING) returning STRING. FILL(20.56) parses to a
+        // DOUBLE constant, which is not convertible to STRING. The fast path
+        // upfront type check rejects this with a clean targeted error rather
+        // than allowing the runtime Function.getStrA dispatch to fail.
         assertException(
                 "select b, sum_t(b), k from x sample by 3h fill(20.56)",
                 "create table x as " +
@@ -15891,8 +15962,8 @@ public class SampleByTest extends AbstractCairoTest {
                         " from" +
                         " long_sequence(20)" +
                         ") timestamp(k) partition by NONE",
-                10,
-                "Unsupported type"
+                47,
+                "fill value of type DOUBLE cannot fill column of type STRING"
         );
     }
 
@@ -16062,25 +16133,27 @@ public class SampleByTest extends AbstractCairoTest {
 
     @Test
     public void testSampleFillValueInvalid() throws Exception {
-        assertException(
-                "select b, sum_t(a), sum(c), sum(d), sum(e), sum(f), sum(g), k from x sample by 3h fill(20.56, none, 0, 0, 0)",
-                "create table x as " +
-                        "(" +
-                        "select" +
-                        " rnd_double(0)*100 a," +
-                        " rnd_symbol(5,4,4,1) b," +
-                        " rnd_float(0)*100 c," +
-                        " abs(rnd_int()) d," +
-                        " rnd_short() e," +
-                        " rnd_byte(3,10) f," +
-                        " rnd_long() g," +
-                        " timestamp_sequence(172800000000, 3600000000) k" +
-                        " from" +
-                        " long_sequence(20)" +
-                        ") timestamp(k) partition by NONE",
-                94,
-                "invalid fill value"
-        );
+        assertMemoryLeak(() -> {
+            execute("create table x as " +
+                    "(" +
+                    "select" +
+                    " rnd_double(0)*100 a," +
+                    " rnd_symbol(5,4,4,1) b," +
+                    " rnd_float(0)*100 c," +
+                    " abs(rnd_int()) d," +
+                    " rnd_short() e," +
+                    " rnd_byte(3,10) f," +
+                    " rnd_long() g," +
+                    " timestamp_sequence(172800000000, 3600000000) k" +
+                    " from" +
+                    " long_sequence(20)" +
+                    ") timestamp(k) partition by NONE");
+            assertExceptionNoLeakCheck(
+                    "select b, sum_t(a), sum(c), sum(d), sum(e), sum(f), sum(g), k from x sample by 3h fill(20.56, none, 0, 0, 0)",
+                    94,
+                    "FILL(NONE) cannot be combined with other fill values"
+            );
+        });
     }
 
     @Test
@@ -16157,8 +16230,8 @@ public class SampleByTest extends AbstractCairoTest {
                         ABC\t20.56\tnull\tnull\tnull\tnull\t1970-01-03T02:00:00.000000Z
                         XYZ\t20.56\tnull\t28.45577791213847\t28.45577791213847\t28.45577791213847\t1970-01-03T02:30:00.000000Z
                         ABC\t20.56\tnull\tnull\tnull\tnull\t1970-01-03T02:30:00.000000Z
-                        XYZ\t20.56\tnull\t28.45577791213847\t28.45577791213847\t28.45577791213847\t1970-01-03T03:00:00.000000Z
                         ABC\t79.05675319675964\t1\t79.05675319675964\t79.05675319675964\t79.05675319675964\t1970-01-03T03:00:00.000000Z
+                        XYZ\t20.56\tnull\t28.45577791213847\t28.45577791213847\t28.45577791213847\t1970-01-03T03:00:00.000000Z
                         XYZ\t20.56\tnull\t28.45577791213847\t28.45577791213847\t28.45577791213847\t1970-01-03T03:30:00.000000Z
                         ABC\t20.56\tnull\t79.05675319675964\t79.05675319675964\t79.05675319675964\t1970-01-03T03:30:00.000000Z
                         XYZ\t20.56\tnull\t28.45577791213847\t28.45577791213847\t28.45577791213847\t1970-01-03T04:00:00.000000Z
@@ -16181,28 +16254,28 @@ public class SampleByTest extends AbstractCairoTest {
                         ABC\t20.56\tnull\t79.05675319675964\t79.05675319675964\t79.05675319675964\t1970-01-03T08:00:00.000000Z
                         XYZ\t20.56\tnull\t72.61136209823621\t72.61136209823621\t72.61136209823621\t1970-01-03T08:30:00.000000Z
                         ABC\t20.56\tnull\t79.05675319675964\t79.05675319675964\t79.05675319675964\t1970-01-03T08:30:00.000000Z
-                        XYZ\t20.56\tnull\t72.61136209823621\t72.61136209823621\t72.61136209823621\t1970-01-03T09:00:00.000000Z
                         ABC\t87.56771741121929\t1\t87.56771741121929\t87.56771741121929\t87.56771741121929\t1970-01-03T09:00:00.000000Z
+                        XYZ\t20.56\tnull\t72.61136209823621\t72.61136209823621\t72.61136209823621\t1970-01-03T09:00:00.000000Z
                         XYZ\t20.56\tnull\t72.61136209823621\t72.61136209823621\t72.61136209823621\t1970-01-03T09:30:00.000000Z
                         ABC\t20.56\tnull\t87.56771741121929\t87.56771741121929\t87.56771741121929\t1970-01-03T09:30:00.000000Z
                         XYZ\t20.56\tnull\t72.61136209823621\t72.61136209823621\t72.61136209823621\t1970-01-03T10:00:00.000000Z
                         ABC\t20.56\tnull\t87.56771741121929\t87.56771741121929\t87.56771741121929\t1970-01-03T10:00:00.000000Z
                         XYZ\t20.56\tnull\t72.61136209823621\t72.61136209823621\t72.61136209823621\t1970-01-03T10:30:00.000000Z
                         ABC\t20.56\tnull\t87.56771741121929\t87.56771741121929\t87.56771741121929\t1970-01-03T10:30:00.000000Z
-                        XYZ\t20.56\tnull\t72.61136209823621\t72.61136209823621\t72.61136209823621\t1970-01-03T11:00:00.000000Z
                         ABC\t69.05404443676369\t1\t69.05404443676369\t69.05404443676369\t69.05404443676369\t1970-01-03T11:00:00.000000Z
-                        XYZ\t20.56\tnull\t72.61136209823621\t72.61136209823621\t72.61136209823621\t1970-01-03T11:30:00.000000Z
+                        XYZ\t20.56\tnull\t72.61136209823621\t72.61136209823621\t72.61136209823621\t1970-01-03T11:00:00.000000Z
                         ABC\t178.3423122144073\t2\t81.46807944500559\t96.87423276940171\t89.17115610720364\t1970-01-03T11:30:00.000000Z
+                        XYZ\t20.56\tnull\t72.61136209823621\t72.61136209823621\t72.61136209823621\t1970-01-03T11:30:00.000000Z
                         XYZ\t97.55263540567968\t1\t97.55263540567968\t97.55263540567968\t97.55263540567968\t1970-01-03T12:00:00.000000Z
                         ABC\t20.56\tnull\t81.46807944500559\t96.87423276940171\t89.17115610720364\t1970-01-03T12:00:00.000000Z
                         XYZ\t135.12700563223447\t2\t37.62501709498378\t97.5019885372507\t67.56350281611724\t1970-01-03T12:30:00.000000Z
                         ABC\t20.56\tnull\t81.46807944500559\t96.87423276940171\t89.17115610720364\t1970-01-03T12:30:00.000000Z
-                        XYZ\t20.56\tnull\t37.62501709498378\t97.5019885372507\t67.56350281611724\t1970-01-03T13:00:00.000000Z
                         ABC\t90.75843364017028\t1\t90.75843364017028\t90.75843364017028\t90.75843364017028\t1970-01-03T13:00:00.000000Z
+                        XYZ\t20.56\tnull\t37.62501709498378\t97.5019885372507\t67.56350281611724\t1970-01-03T13:00:00.000000Z
                         XYZ\t140.19873890621585\t2\t51.824519718206766\t88.37421918800908\t70.09936945310793\t1970-01-03T13:30:00.000000Z
                         ABC\t20.56\tnull\t90.75843364017028\t90.75843364017028\t90.75843364017028\t1970-01-03T13:30:00.000000Z
-                        XYZ\t20.56\tnull\t51.824519718206766\t88.37421918800908\t70.09936945310793\t1970-01-03T14:00:00.000000Z
                         ABC\t45.659895188239794\t1\t45.659895188239794\t45.659895188239794\t45.659895188239794\t1970-01-03T14:00:00.000000Z
+                        XYZ\t20.56\tnull\t51.824519718206766\t88.37421918800908\t70.09936945310793\t1970-01-03T14:00:00.000000Z
                         """,
                 "select b, sum(a), count(), min(a), max(a), avg(a), k from x sample by 30m fill(20.56, null, prev, prev, prev)",
                 "create table x as " +
@@ -16358,6 +16431,9 @@ public class SampleByTest extends AbstractCairoTest {
 
     @Test
     public void testSampleFillValueNotEnough() throws Exception {
+        // Per-column fill values must cover every non-key aggregate; 5 fill
+        // values for 6 aggregates (b is a symbol key, not an aggregate) must
+        // raise "not enough fill values" at the first fill expression.
         assertException(
                 "select b, sum(a), sum(c), sum(d), sum(e), sum(f), sum(g), k from x sample by 3h fill(20.56, 0, 0, 0, 0)",
                 "create table x as " +
@@ -16374,8 +16450,8 @@ public class SampleByTest extends AbstractCairoTest {
                         " from" +
                         " long_sequence(20)" +
                         ") timestamp(k) partition by NONE",
-                101,
-                "insufficient fill values for SAMPLE BY FILL"
+                85,
+                "not enough fill values"
         );
     }
 
@@ -16418,7 +16494,7 @@ public class SampleByTest extends AbstractCairoTest {
                         " long_sequence(10)" +
                         ") timestamp(k) partition by NONE",
                 "k",
-                true
+                false
         );
     }
 
@@ -16516,7 +16592,7 @@ public class SampleByTest extends AbstractCairoTest {
                         " long_sequence(40)" +
                         ") timestamp(k) partition by NONE",
                 "k",
-                true
+                false
         );
     }
 
@@ -16615,7 +16691,7 @@ public class SampleByTest extends AbstractCairoTest {
                         " long_sequence(40)" +
                         ") timestamp(k) partition by NONE",
                 "k",
-                true,
+                false,
                 false
         );
     }
@@ -16714,7 +16790,7 @@ public class SampleByTest extends AbstractCairoTest {
                         " long_sequence(40)" +
                         ") timestamp(k) partition by NONE",
                 "k",
-                true,
+                false,
                 false
         );
     }
@@ -16815,7 +16891,7 @@ public class SampleByTest extends AbstractCairoTest {
                 query,
                 ddl,
                 "k",
-                true,
+                false,
                 false
         );
 
@@ -16824,11 +16900,11 @@ public class SampleByTest extends AbstractCairoTest {
             execute(ddl);
             assertPlanNoLeakCheck(query,
                     """
-                            Encode sort
-                              keys: [k]
-                                Fill Range
-                                  stride: '30m'
-                                  values: [20.56]
+                            Sample By Fill
+                              stride: '30m'
+                              fill: value
+                                Encode sort light
+                                  keys: [k]
                                     Async Group By workers: 1
                                       keys: [k]
                                       keyFunctions: [timestamp_floor_utc('30m',k,null,'00:00','Europe/Berlin')]
@@ -16938,7 +17014,7 @@ public class SampleByTest extends AbstractCairoTest {
                 query,
                 ddl,
                 "k",
-                true
+                false
         );
 
         assertMemoryLeak(() -> {
@@ -16948,11 +17024,11 @@ public class SampleByTest extends AbstractCairoTest {
                     """
                             VirtualRecord
                               functions: [s,k,to_timezone(k)]
-                                Encode sort
-                                  keys: [k]
-                                    Fill Range
-                                      stride: '30m'
-                                      values: [9999]
+                                Sample By Fill
+                                  stride: '30m'
+                                  fill: value
+                                    Encode sort light
+                                      keys: [k]
                                         Async Group By workers: 1
                                           keys: [k]
                                           keyFunctions: [timestamp_floor_utc('30m',k,null,'00:40','Europe/Riga')]
@@ -16985,11 +17061,11 @@ public class SampleByTest extends AbstractCairoTest {
                     """
                             VirtualRecord
                               functions: [s,k,to_timezone(k)]
-                                Encode sort
-                                  keys: [k]
-                                    Fill Range
-                                      stride: '30m'
-                                      values: [9999]
+                                Sample By Fill
+                                  stride: '30m'
+                                  fill: value
+                                    Encode sort light
+                                      keys: [k]
                                         Async Group By workers: 1
                                           keys: [k]
                                           keyFunctions: [timestamp_floor_utc('30m',k,null,'00:40','Asia/Kathmandu')]
@@ -17080,7 +17156,7 @@ public class SampleByTest extends AbstractCairoTest {
                             """,
                     query,
                     "k",
-                    true
+                    false
             );
         });
     }
@@ -17204,7 +17280,7 @@ public class SampleByTest extends AbstractCairoTest {
                             """,
                     query2,
                     "ts",
-                    true
+                    false
             );
 
             String query3 = query1.replace("1w", "2w");
@@ -17217,7 +17293,7 @@ public class SampleByTest extends AbstractCairoTest {
                             """,
                     query3,
                     "ts",
-                    true
+                    false
             );
         });
     }
@@ -17655,16 +17731,16 @@ public class SampleByTest extends AbstractCairoTest {
 
     @Test
     public void testTimestampFillValueUnquoted() throws Exception {
-        assertException(
-                "select ts, first(ts), last(ts) " +
-                        "from trade " +
-                        "sample by 1d fill(null, 1236) align to CALENDAR;",
-                "create table trade as (" +
-                        "select timestamp_sequence('2021-03-28T01:59:00.00000Z', 3*24*3600*1000000L) ts from long_sequence(6)" +
-                        ") timestamp(ts)",
-                66,
-                "Invalid fill value: '1236'. Timestamp fill value must be in quotes."
-        );
+        assertMemoryLeak(() -> {
+            execute("create table trade as (" +
+                    "select timestamp_sequence('2021-03-28T01:59:00.00000Z', 3*24*3600*1000000L) ts from long_sequence(6)" +
+                    ") timestamp(ts)");
+            assertException(
+                    "select ts, first(ts), last(ts) from trade sample by 1d fill(null, 1236) align to CALENDAR;",
+                    66,
+                    "Invalid fill value: '1236'. Timestamp fill value must be in quotes."
+            );
+        });
     }
 
     @Test
@@ -18204,5 +18280,39 @@ public class SampleByTest extends AbstractCairoTest {
             String actualPlan = plan.replace("#TABLE#", "y");
             assertPlanNoLeakCheck(query, actualPlan);
         });
+    }
+
+    private static String sampleByPushdownPlan(String fill, String align) {
+        // The unified fill cursor (SampleByFillRecordCursorFactory) handles null/prev fills
+        // on the GROUP BY fast path, except when using "align to first observation" which
+        // takes a different code path through the old Sample By node.
+        boolean isFastPath = (fill.equals("null") || fill.equals("prev"))
+                && !"align to first observation".equals(align);
+        boolean isNoneFill = "".equals(fill) || "none".equals(fill);
+        if (isFastPath) {
+            return "Filter filter: (tstmp>=2022-12-01T00:00:00.000000Z and 0<length(sym)*tstmp::long)\n" +
+                    "    Sample By Fill\n" +
+                    "      stride: '1m'\n" +
+                    "      fill: " + fill + "\n" +
+                    "        Encode sort light\n" +
+                    "          keys: [tstmp]\n" +
+                    "            Async JIT Group By workers: 1\n" +
+                    "              keys: [tstmp,sym]\n" +
+                    "              keyFunctions: [timestamp_floor_utc('1m',ts)]\n" +
+                    "              values: [first(val),avg(val),last(val),max(val)]\n" +
+                    "              filter: sym='B'\n" +
+                    "                PageFrame\n" +
+                    "                    Row forward scan\n" +
+                    "                    Frame forward scan on: #TABLE#\n";
+        }
+        return "Filter filter: (tstmp>=2022-12-01T00:00:00.000000Z and sym='B' and 0<length(sym)*tstmp::long)\n" +
+                "    Sample By\n" +
+                (isNoneFill ? "" : "      fill: " + fill + "\n") +
+                "      keys: [tstmp,sym]\n" +
+                "      values: [first(val),avg(val),last(val),max(val)]\n" +
+                "        SelectedRecord\n" +
+                "            PageFrame\n" +
+                "                Row forward scan\n" +
+                "                Frame forward scan on: #TABLE#\n";
     }
 }

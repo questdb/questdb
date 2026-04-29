@@ -35,13 +35,14 @@ import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.RecordComparator;
+import io.questdb.std.DirectIntList;
 import io.questdb.std.Misc;
+import io.questdb.std.ObjList;
 import org.jetbrains.annotations.NotNull;
 
 public class SortedRecordCursorFactory extends AbstractRecordCursorFactory {
     private final RecordCursorFactory base;
     private final SortedRecordCursor cursor;
-
     private final ListColumnFilter sortColumnFilter;
 
     public SortedRecordCursorFactory(
@@ -56,6 +57,7 @@ public class SortedRecordCursorFactory extends AbstractRecordCursorFactory {
         this.base = base;
         this.sortColumnFilter = sortColumnFilter;
         RecordTreeChain chain = null;
+        ObjList<DirectIntList> rankMaps = null;
         try {
             chain = new RecordTreeChain(
                     metadata,
@@ -66,9 +68,21 @@ public class SortedRecordCursorFactory extends AbstractRecordCursorFactory {
                     configuration.getSqlSortValuePageSize(),
                     configuration.getSqlSortValueMaxPages()
             );
-            this.cursor = new SortedRecordCursor(chain, comparator, SortKeyEncoder.createRankMaps(metadata, sortColumnFilter));
+            // Hoist rankMaps into a named local so the catch can free the
+            // (native-memory-owning) list if the cursor ctor below throws after
+            // createRankMaps succeeds. On success, ownership passes to the cursor.
+            rankMaps = SortKeyEncoder.createRankMaps(metadata, sortColumnFilter);
+            this.cursor = new SortedRecordCursor(chain, comparator, rankMaps);
+            // Ownership of chain and rankMaps has transferred to the cursor.
+            // Null the locals so the catch block does not double-free them if
+            // any future statement between here and the closing brace throws;
+            // the cursor's close() (reached via close() -> _close() -> Misc.free(cursor))
+            // will handle their release.
+            chain = null;
+            rankMaps = null;
         } catch (Throwable th) {
             Misc.free(chain);
+            Misc.freeObjList(rankMaps);
             close();
             throw th;
         }

@@ -4571,7 +4571,10 @@ public class SqlParser {
     private CharSequence parseWithOffset(GenericLexer lexer, IQueryModel model, SqlParserCallback sqlParserCallback) throws SqlException {
         CharSequence tok;
         expectOffset(lexer);
-        model.setSampleByOffset(expectExpr(lexer, sqlParserCallback, model.getDecls()));
+        ExpressionNode offsetExpr = expectExpr(lexer, sqlParserCallback, model.getDecls());
+        // Normalise explicit '00:00' to the canonical ZERO_OFFSET singleton so that
+        // identity checks against ZERO_OFFSET work consistently in the optimizer.
+        model.setSampleByOffset(Chars.equals(offsetExpr.token, ZERO_OFFSET.token) ? ZERO_OFFSET : offsetExpr);
         tok = optTok(lexer);
         return tok;
     }

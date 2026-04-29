@@ -106,6 +106,13 @@ class SortedLightRecordCursor implements DelegatingRecordCursor {
         if (!isOpen) {
             isOpen = true;
             chain.reopen();
+        } else {
+            // Mirror SortedRecordCursor.of(): on reuse without an intervening
+            // close(), the LongTreeChain still holds the prior run's data.
+            // Subsequent buildChain() would append on top, producing duplicate
+            // or misordered output. LimitedSizeSortedLightRecordCursor already
+            // does this unconditionally; keep the two cursors aligned.
+            chain.clear();
         }
         SortKeyEncoder.buildRankMaps(baseCursor, rankMaps, comparator);
         circuitBreaker = executionContext.getCircuitBreaker();

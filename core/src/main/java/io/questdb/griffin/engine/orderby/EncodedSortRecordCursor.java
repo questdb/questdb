@@ -143,6 +143,8 @@ class EncodedSortRecordCursor implements DelegatingRecordCursor {
         if (!isOpen) {
             isOpen = true;
             entryMem.reopen();
+        } else {
+            recordChain.clear();
         }
         recordChain.setSymbolTableResolver(baseCursor);
         keyType = encoder.init(baseCursor);
