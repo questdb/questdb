@@ -26,11 +26,14 @@ package io.questdb.test.cairo.wal.seq;
 
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.DefaultCairoConfiguration;
+import io.questdb.cairo.ErrorTag;
 import io.questdb.cairo.wal.seq.TableWriterPressureControlImpl;
 import io.questdb.cairo.wal.seq.SeqTxnTracker;
+import io.questdb.cairo.wal.seq.TxnWaiter;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.mp.SOCountDownLatch;
+import io.questdb.mp.WorkerContinuation;
 import io.questdb.std.datetime.millitime.MillisecondClock;
 import io.questdb.std.datetime.millitime.MillisecondClockImpl;
 import io.questdb.test.tools.TestUtils;
@@ -257,6 +260,95 @@ public class SeqTxnTrackerTest {
             tracker.updateInflightPartitions(expectedParallelism);
             assertEquals(expectedParallelism, tracker.getMemoryPressureRegulationValue());
         }
+    }
+
+    @Test
+    public void testWaiterCancelledIsSkippedByFire() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            SeqTxnTracker tracker = createSeqTracker();
+            tracker.initTxns(1, 5, false);
+            TxnWaiter w = new TxnWaiter(10, dummyContinuation());
+            tracker.registerWaiter(w);
+            assertTrue(w.tryCancel());
+            assertTrue(w.isCancelled());
+            // Advancing past target must not fire a cancelled waiter.
+            tracker.updateWriterTxns(10, 10);
+            assertTrue(w.isCancelled());
+            assertFalse(w.isFired());
+        });
+    }
+
+    @Test
+    public void testWaiterFiresImmediatelyIfAlreadyMet() throws Exception {
+        // If writerTxn already meets the waiter's target at registration time,
+        // registerWaiter eagerly fires the waiter so the caller does not have to
+        // wait for the next external event.
+        TestUtils.assertMemoryLeak(() -> {
+            SeqTxnTracker tracker = createSeqTracker();
+            tracker.initTxns(10, 10, false);
+            TxnWaiter w = new TxnWaiter(5, dummyContinuation());
+            tracker.registerWaiter(w);
+            assertTrue(w.isFired());
+            assertFalse(w.isCancelled());
+        });
+    }
+
+    @Test
+    public void testWaiterFiresOnDrop() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            SeqTxnTracker tracker = createSeqTracker();
+            tracker.initTxns(1, 5, false);
+            TxnWaiter w = new TxnWaiter(100, dummyContinuation());
+            tracker.registerWaiter(w);
+            assertFalse(w.isFired());
+            tracker.notifyOnDrop();
+            assertTrue(w.isFired());
+        });
+    }
+
+    @Test
+    public void testWaiterFiresOnSuspend() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            SeqTxnTracker tracker = createSeqTracker();
+            tracker.initTxns(1, 5, false);
+            TxnWaiter w = new TxnWaiter(100, dummyContinuation());
+            tracker.registerWaiter(w);
+            assertFalse(w.isFired());
+            tracker.setSuspended(ErrorTag.NONE, "test");
+            assertTrue(w.isFired());
+        });
+    }
+
+    @Test
+    public void testWaiterFiresOnWriterTxnAdvance() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            SeqTxnTracker tracker = createSeqTracker();
+            tracker.initTxns(1, 5, false);
+            TxnWaiter w1 = new TxnWaiter(3, dummyContinuation());
+            TxnWaiter w2 = new TxnWaiter(7, dummyContinuation());
+            tracker.registerWaiter(w1);
+            tracker.registerWaiter(w2);
+            // initTxns sets writerTxn=1; neither waiter's target is met yet.
+            assertFalse(w1.isFired());
+            assertFalse(w2.isFired());
+
+            tracker.updateWriterTxns(3, 3);
+            // w1 fires (target 3 met), w2 stays (target 7 not met yet).
+            assertTrue(w1.isFired());
+            assertFalse(w2.isFired());
+
+            tracker.updateWriterTxns(7, 7);
+            assertTrue(w2.isFired());
+        });
+    }
+
+    private static WorkerContinuation dummyContinuation() {
+        // A continuation whose body never runs in these tests; we only need a reference
+        // that the waiter can stash. The sink is a no-op because tests verify state
+        // transitions, not the resume side.
+        return new WorkerContinuation(() -> {
+        }, c -> {
+        });
     }
 
     @NotNull

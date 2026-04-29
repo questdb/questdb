@@ -28,6 +28,9 @@ import io.questdb.Metrics;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.ErrorTag;
 import io.questdb.cairo.wal.TableWriterPressureControl;
+import io.questdb.mp.ConcurrentQueue;
+import io.questdb.mp.Queue;
+import io.questdb.mp.ValueHolder;
 import io.questdb.std.Unsafe;
 import org.jetbrains.annotations.TestOnly;
 
@@ -36,10 +39,15 @@ public class SeqTxnTracker {
     private static final long SEQ_TXN_OFFSET = Unsafe.getFieldOffset(SeqTxnTracker.class, "seqTxn");
     private static final long SUSPENDED_STATE_OFFSET = Unsafe.getFieldOffset(SeqTxnTracker.class, "suspendedState");
     private static final long WRITER_TXN_OFFSET = Unsafe.getFieldOffset(SeqTxnTracker.class, "writerTxn");
+    private static final ThreadLocal<WaiterHolder> HOLDER = ThreadLocal.withInitial(WaiterHolder::new);
     private final Metrics metrics;
     private final TableWriterPressureControlImpl pressureControl;
+    private final Queue<WaiterHolder> waiters = ConcurrentQueue.createConcurrentQueue(WaiterHolder::new);
     private volatile long dirtyWriterTxn;
-    private boolean dropped;
+    // Volatile because fireWaiters() and registerWaiter() read this outside the
+    // tracker monitor; without volatile they could observe a stale false after
+    // notifyOnDrop has flipped it to true.
+    private volatile boolean dropped;
     private volatile String errorMessage = "";
     private volatile ErrorTag errorTag = ErrorTag.NONE;
     @SuppressWarnings("FieldMayBeFinal")
@@ -53,6 +61,41 @@ public class SeqTxnTracker {
     public SeqTxnTracker(CairoConfiguration configuration) {
         this.pressureControl = new TableWriterPressureControlImpl(configuration);
         this.metrics = configuration.getMetrics();
+    }
+
+    /**
+     * Drains the waiter queue and cancels any waiter whose deadline has passed.
+     * Cancelled waiters are enqueued on their resume job so the parked body can observe
+     * the cancellation and throw. Non-expired waiters are re-enqueued. Called periodically
+     * by {@link io.questdb.cairo.wal.seq.WaiterTimeoutJob}.
+     *
+     * @param nowMillis current time in milliseconds, same clock domain as waiter deadlines
+     */
+    public void cancelExpiredWaiters(long nowMillis) {
+        WaiterHolder holder = HOLDER.get();
+        TxnWaiter sentinel = null;
+        while (waiters.tryDequeue(holder)) {
+            TxnWaiter w = holder.waiter;
+            holder.waiter = null;
+            if (w == null) {
+                continue;
+            }
+            if (w == sentinel) {
+                // Completed one full pass with no further expirations; put w back and stop.
+                enqueueHolder(holder, w);
+                return;
+            }
+            if (w.isExpired(nowMillis)) {
+                if (w.tryCancel()) {
+                    w.getContinuation().scheduleResume();
+                }
+            } else {
+                if (sentinel == null) {
+                    sentinel = w;
+                }
+                enqueueHolder(holder, w);
+            }
+        }
     }
 
     public String getErrorMessage() {
@@ -142,6 +185,31 @@ public class SeqTxnTracker {
         dropped = true;
         metrics.walMetrics().addSeqTxn(-seqTxn);
         metrics.walMetrics().addWriterTxn(-writerTxn);
+        fireWaiters();
+    }
+
+    /**
+     * Registers a parked SQL continuation that will be resumed when the tracker's
+     * {@code writerTxn} advances to at least {@code waiter.targetWriterTxn}, or when
+     * the table becomes suspended/dropped, or when the waiter's deadline elapses
+     * (via {@link WaiterTimeoutJob}).
+     *
+     * <p>If the target is already met (or the table is already suspended/dropped) at
+     * registration time, fires the waiter immediately so the caller does not have to
+     * wait until the next external event or deadline expiry. This eager fire races
+     * the body before it reaches {@code WorkerContinuation.suspend()} -- the cont is
+     * still mounted on the registering carrier when {@code cont.scheduleResume()}
+     * pushes it onto the resume queue. {@link io.questdb.mp.ContinuationQueue#run}
+     * spin-waits on the resulting IllegalStateException until the carrier unmounts;
+     * the same spin-wait already covers concurrent fires from other threads (e.g.
+     * a WAL apply firing while the body is between {@code registerWaiter} and
+     * {@code suspend}), so this eager path adds no new race source.
+     */
+    public void registerWaiter(TxnWaiter waiter) {
+        enqueueHolder(HOLDER.get(), waiter);
+        if (writerTxn >= waiter.targetWriterTxn || isSuspended() || dropped) {
+            fireWaiters();
+        }
     }
 
     public void setSuspended(ErrorTag errorTag, String errorMessage) {
@@ -153,6 +221,7 @@ public class SeqTxnTracker {
         this.suspendedState = -1;
 
         metrics.tableWriterMetrics().incSuspendedTables();
+        fireWaiters();
     }
 
     public void setUnsuspended() {
@@ -185,9 +254,72 @@ public class SeqTxnTracker {
         if (writerTxn > prevWriterTxn) {
             suspendedState = 1;
             metrics.walMetrics().addWriterTxn(writerTxn - prevWriterTxn);
+            fireWaiters();
         } else if (dirtyWriterTxn > prevDirtyWriterTxn) {
             suspendedState = 1;
         }
         return writerTxn < seqTxn;
+    }
+
+    private void enqueueHolder(WaiterHolder holder, TxnWaiter waiter) {
+        holder.waiter = waiter;
+        waiters.enqueue(holder);
+        holder.waiter = null;
+    }
+
+    /**
+     * Drains the waiter queue, firing any waiter whose target writerTxn has been met or
+     * whose table has become suspended/dropped. Non-ready waiters are re-enqueued. Fired
+     * waiters are CAS'd PENDING -> FIRED and the winning thread enqueues the continuation
+     * on the waiter's resume job.
+     *
+     * <p>Streaming algorithm: dequeue one waiter at a time, fire-or-reenqueue, and remember
+     * the first waiter we put back. When we encounter that sentinel a second time, we have
+     * made one full pass without firing anything more in the tail — put the sentinel back
+     * and stop. Zero allocation; tolerates concurrent drains because each thread carries
+     * its own sentinel and the {@code TxnWaiter.state} CAS makes double-firing impossible.
+     */
+    private void fireWaiters() {
+        WaiterHolder holder = HOLDER.get();
+        long wtxn = this.writerTxn;
+        boolean terminal = isSuspended() || dropped;
+        TxnWaiter sentinel = null;
+        while (waiters.tryDequeue(holder)) {
+            TxnWaiter w = holder.waiter;
+            holder.waiter = null;
+            if (w == null) {
+                continue;
+            }
+            if (w == sentinel) {
+                // Completed one full pass with no further fireable waiters; put w back and stop.
+                enqueueHolder(holder, w);
+                return;
+            }
+            if (terminal || wtxn >= w.targetWriterTxn) {
+                if (w.tryFire()) {
+                    w.getContinuation().scheduleResume();
+                }
+                // cancelled waiters were already enqueued by the canceller; drop on the floor
+            } else {
+                if (sentinel == null) {
+                    sentinel = w;
+                }
+                enqueueHolder(holder, w);
+            }
+        }
+    }
+
+    private static final class WaiterHolder implements ValueHolder<WaiterHolder> {
+        TxnWaiter waiter;
+
+        @Override
+        public void clear() {
+            waiter = null;
+        }
+
+        @Override
+        public void copyTo(WaiterHolder dest) {
+            dest.waiter = waiter;
+        }
     }
 }

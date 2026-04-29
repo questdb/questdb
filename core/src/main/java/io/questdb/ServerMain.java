@@ -423,6 +423,11 @@ public class ServerMain implements Closeable {
                 pgServer
         ));
 
+        // Sweep parked TxnWaiters whose deadlines have elapsed. Without this job the
+        // resources of a parked wait_wal_table call are never reclaimed when the client
+        // disconnects or the wait runs past its SQL timeout on an idle table.
+        workerPoolManager.getSharedPoolNetwork().assign(engine.getWaiterTimeoutJob());
+
         if (!isReadOnly && config.getLineTcpReceiverConfiguration().isEnabled()) {
             // ilp/tcp
             freeOnExit(services().createLineTcpReceiver(

@@ -47,6 +47,7 @@ import org.jetbrains.annotations.TestOnly;
 
 import java.util.Iterator;
 import java.util.function.BiFunction;
+import java.util.function.Consumer;
 import java.util.function.Function;
 
 import static io.questdb.cairo.TableUtils.WAL_2_TABLE_RESUME_REASON;
@@ -114,6 +115,19 @@ public class TableSequencerAPI implements QuietCloseable {
             if (!failedCreate) {
                 throw e;
             }
+        }
+    }
+
+    /**
+     * Visits every live {@link SeqTxnTracker} in the registry. Used by
+     * {@link io.questdb.cairo.wal.seq.WaiterTimeoutJob} to scan parked SQL waiters for
+     * deadline expiration. The action runs on the calling thread; trackers may appear
+     * concurrently with iteration but the visit set is consistent with the registry's
+     * weakly-consistent semantics.
+     */
+    public void forEachTxnTracker(Consumer<SeqTxnTracker> action) {
+        for (SeqTxnTracker tracker : seqTxnTrackers.values()) {
+            action.accept(tracker);
         }
     }
 
