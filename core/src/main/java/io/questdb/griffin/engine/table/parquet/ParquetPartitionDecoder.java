@@ -33,8 +33,8 @@ import io.questdb.std.QuietCloseable;
 import io.questdb.std.Unsafe;
 
 /**
- * Parquet partition decoder that reads metadata from the {@code _pm} sidecar file
- * instead of parsing the parquet footer via thrift.
+ * Parquet partition decoder that decode row-groups from `data.parquet`
+ * but relies on the {@code _pm} sidecar file for metadata.
  * <p>
  * Java owns all metadata via {@link ParquetMetaFileReader}. Rust is a stateless
  * decode engine that receives explicit parameters per decode call. This is the

@@ -36,8 +36,7 @@ import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Utf8s;
 
 /**
- * Zero-allocation flyweight reader for _pm parquet metadata files.
- * Reads directly from caller-owned mmaped memory via Unsafe offset arithmetic.
+ * File reader for the _pm files, which are sidecar files for the `.parquet` format.
  * <p>
  * Implements {@link ParquetRowGroupSkipper} for filter-pushdown row group
  * pruning. The first call to {@link #canSkipRowGroup} lazily allocates a
