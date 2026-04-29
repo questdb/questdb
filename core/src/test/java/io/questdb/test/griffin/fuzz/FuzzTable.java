@@ -26,7 +26,6 @@ package io.questdb.test.griffin.fuzz;
 
 import io.questdb.std.ObjList;
 import io.questdb.test.griffin.fuzz.FuzzTableFactory.ParquetMode;
-import io.questdb.test.griffin.fuzz.types.FuzzColumnType;
 
 /**
  * Generated table description: name, column list, and the designated
@@ -67,25 +66,6 @@ public final class FuzzTable {
         return columns.size();
     }
 
-    /**
-     * Returns a list of non-timestamp columns whose type kind satisfies the
-     * given predicate. Useful for picking group-by keys, aggregate targets,
-     * join keys, etc.
-     */
-    public ObjList<FuzzColumn> getColumnsByKind(KindPredicate pred) {
-        ObjList<FuzzColumn> out = new ObjList<>();
-        for (int i = 0, n = columns.size(); i < n; i++) {
-            FuzzColumn c = columns.getQuick(i);
-            if (c.getName().equals(tsColumnName)) {
-                continue;
-            }
-            if (pred.test(c.getType())) {
-                out.add(c);
-            }
-        }
-        return out;
-    }
-
     public ObjList<FuzzColumn> getColumns() {
         return columns;
     }
@@ -104,10 +84,5 @@ public final class FuzzTable {
 
     public String getTsColumnName() {
         return tsColumnName;
-    }
-
-    @FunctionalInterface
-    public interface KindPredicate {
-        boolean test(FuzzColumnType type);
     }
 }

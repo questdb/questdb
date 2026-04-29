@@ -56,22 +56,23 @@ import io.questdb.test.griffin.fuzz.types.LongType;
  */
 public final class FuzzSource {
     private final String fromSql;
-    private final boolean garblable;
+    private final boolean isBareIdentifier;
     private final boolean orderStable;
     private final String prefixSql;
     private final FuzzTable table;
 
-    private FuzzSource(String prefixSql, String fromSql, FuzzTable table, boolean garblable, boolean orderStable) {
+    private FuzzSource(String prefixSql, String fromSql, FuzzTable table, boolean isBareIdentifier, boolean orderStable) {
         this.prefixSql = prefixSql;
         this.fromSql = fromSql;
         this.table = table;
-        this.garblable = garblable;
+        this.isBareIdentifier = isBareIdentifier;
         this.orderStable = orderStable;
     }
 
     /**
-     * CTE that wraps the given base source. The CTE name is garblable
-     * so occasionally the outer query references a non-existent CTE.
+     * CTE that wraps the given base source. The CTE name is a bare
+     * identifier and may be garbled, so occasionally the outer query
+     * references a non-existent CTE.
      */
     public static FuzzSource cte(Rnd rnd, FuzzSource base, int cteIndex) {
         InnerQuery inner = buildInnerQuery(rnd, base);
@@ -119,12 +120,13 @@ public final class FuzzSource {
 
     /**
      * Same as {@link #getFromSql} but garbles the table/CTE name with
-     * the usual {@link FuzzNames#table} probability when this source
-     * allows it. Raw expression sources (long_sequence, subquery) aren't
-     * garbled because substituting their body would be meaningless.
+     * the usual {@link FuzzNames#table} probability when {@code fromSql}
+     * is a bare identifier. Expression-bodied sources (long_sequence,
+     * subquery) are returned unchanged because substituting their body
+     * would be meaningless.
      */
     public String getFromSqlWithGarble(Rnd rnd) {
-        if (!garblable) {
+        if (!isBareIdentifier) {
             return fromSql;
         }
         return FuzzNames.table(rnd, fromSql);

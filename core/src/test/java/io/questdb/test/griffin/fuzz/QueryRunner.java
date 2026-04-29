@@ -75,10 +75,9 @@ import java.util.regex.Pattern;
  *       across indexed/non-indexed symbol columns.</li>
  * </ul>
  * The two modes share a pivot: {@code primary @ JIT-off}. With both
- * enabled, three runs per query are required (primary @ JIT-on, primary
- *
- * @ JIT-off, shadow @ JIT-off); the JIT diff compares the first two,
- * the storage diff compares the second and third. Either divergence
+ * enabled, three runs per query are required (primary @ JIT-on,
+ * primary @ JIT-off, shadow @ JIT-off); the JIT diff compares the first
+ * two, the storage diff compares the second and third. Either divergence
  * fails the query, and the failure message names the axis.
  * <p>
  * Row-set comparison is a multiset (line-sorted) so parallel iteration
@@ -248,7 +247,7 @@ public final class QueryRunner {
 
     private static Result toResult(String sql, Outcome outcome) {
         if (outcome.failure == null) {
-            return Result.ok(outcome.rowsRead);
+            return Result.ok();
         }
         if (isAcceptedSkip(outcome.failure)) {
             return Result.skipped(outcome.exceptionClass + ": " + outcome.exceptionMessage);
@@ -281,7 +280,7 @@ public final class QueryRunner {
         // Both succeeded.
         if (a.failure == null && b.failure == null) {
             if (rowsetEquals(rowsA, rowsB)) {
-                return Result.ok(a.rowsRead);
+                return Result.ok();
             }
             // Non-deterministic queries (LIMIT without fully-disambiguating
             // ORDER BY over parallel GROUP BY / hash join, etc.) can return a
@@ -290,7 +289,7 @@ public final class QueryRunner {
             // the two paths must agree on how many rows survive the LIMIT,
             // regardless of which rows they are.
             if (!deterministic && a.rowsRead == b.rowsRead) {
-                return Result.ok(a.rowsRead);
+                return Result.ok();
             }
             return Result.failed(sql, divergence(diffName, a, b, rowsA, rowsB, labelA, labelB));
         }
@@ -385,37 +384,31 @@ public final class QueryRunner {
 
     public static final class Result {
         private final Throwable failure;
-        private final int rowsRead;
         private final String skipReason;
         private final String sql;
         private final State state;
 
-        private Result(State state, int rowsRead, String skipReason, String sql, Throwable failure) {
+        private Result(State state, String skipReason, String sql, Throwable failure) {
             this.state = state;
-            this.rowsRead = rowsRead;
             this.skipReason = skipReason;
             this.sql = sql;
             this.failure = failure;
         }
 
         public static Result failed(String sql, Throwable t) {
-            return new Result(State.FAILED, 0, null, sql, t);
+            return new Result(State.FAILED, null, sql, t);
         }
 
-        public static Result ok(int rowsRead) {
-            return new Result(State.OK, rowsRead, null, null, null);
+        public static Result ok() {
+            return new Result(State.OK, null, null, null);
         }
 
         public static Result skipped(String reason) {
-            return new Result(State.SKIPPED, 0, reason, null, null);
+            return new Result(State.SKIPPED, reason, null, null);
         }
 
         public Throwable getFailure() {
             return failure;
-        }
-
-        public int getRowsRead() {
-            return rowsRead;
         }
 
         public String getSkipReason() {

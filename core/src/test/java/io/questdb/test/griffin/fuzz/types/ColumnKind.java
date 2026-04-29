@@ -56,8 +56,4 @@ public enum ColumnKind {
         return this == NUMERIC || this == DECIMAL || this == TEMPORAL
                 || this == CHAR || this == STRING_LIKE;
     }
-
-    public boolean isSummable() {
-        return this == NUMERIC || this == DECIMAL;
-    }
 }

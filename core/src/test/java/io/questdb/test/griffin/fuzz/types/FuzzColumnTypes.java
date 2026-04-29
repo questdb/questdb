@@ -75,19 +75,6 @@ public final class FuzzColumnTypes {
     }
 
     /**
-     * Pick a random column type usable as a GROUP BY / JOIN key. Excludes
-     * ARRAY and avoids DECIMAL (cross-precision joins are noisy).
-     */
-    public static FuzzColumnType pickRandomKeyable(Rnd rnd) {
-        while (true) {
-            FuzzColumnType t = pickRandom(rnd);
-            if (t.getKind().isJoinKey()) {
-                return t;
-            }
-        }
-    }
-
-    /**
      * Pick a random column type whose {@link ColumnKind} matches. Used by
      * cast generation to land on a specific kind regardless of the inner
      * expression's type. Returns {@code null} if no registered singleton
