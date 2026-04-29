@@ -706,7 +706,6 @@ public class TableSnapshotRestore implements QuietCloseable {
 
         try (
                 Path path = new Path().put(tablePathStr);
-                ParquetMetaPartitionDecoder partitionDecoder = ParquetMetaPartitionDecoder.newInstance();
                 RowGroupBuffers rowGroupBuffers = new RowGroupBuffers(MemoryTag.NATIVE_PARQUET_PARTITION_DECODER);
                 DirectIntList parquetColumns = new DirectIntList(32, MemoryTag.NATIVE_DEFAULT)
         ) {
