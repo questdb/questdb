@@ -642,6 +642,13 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
             // When needsPrevPositioning is false, no getter consults this
             // field, but a clean default keeps the state predictable.
             hasPrevForCurrentGap = false;
+            // Drop the reference to the previous baseCursor's recordB so a
+            // future getter that forgets the hasPrevForCurrentGap /
+            // hasSimplePrev gate cannot dereference a record that belongs to
+            // a closed cursor. initialize() reassigns prevRecord on the next
+            // run when the new base has rows; the empty-base early-return
+            // branch leaves it null and prevents stale-pointer access.
+            prevRecord = null;
         }
 
         private void compileDispatchPlan(int columnCount) {

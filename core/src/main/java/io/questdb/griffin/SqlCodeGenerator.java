@@ -3696,10 +3696,30 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                 throw SqlException.position(fillExpr.position)
                                         .put("invalid fill value: ").put(fillExpr.token);
                             }
+                        } else {
+                            // Mirror the sibling slots (fillFromFunc/fillToFunc/offsetFunc):
+                            // a fill value must be a constant or runtime-constant convertible
+                            // to the target column type. Rejects non-constant expressions like
+                            // FILL(rnd_double()), which would otherwise be stored verbatim and
+                            // produce a different value per cursor read; also assigns the type
+                            // for an UNDEFINED bind variable so downstream getXxx() calls work.
+                            coerceRuntimeConstantType(
+                                    fillValues.getQuick(fillIdx), targetColType, executionContext,
+                                    "fill value must be a constant expression convertible to the target column type",
+                                    fillExpr.position
+                            );
                         }
                         fillModes.add(SampleByFillRecordCursorFactory.FILL_CONSTANT);
-                        constantFills.add(fillValues.getQuick(fillIdx));
-                        fillValues.setQuick(fillIdx, null); // transfer ownership
+                        // Atomic transfer: take a local reference, null the
+                        // source slot, then add to the destination list. If
+                        // ObjList.add throws (e.g. OOM during a backing-array
+                        // grow), the outer catch's freeObjList(fillValues) +
+                        // freeObjList(constantFills) cannot reach the same
+                        // Function from both lists. Mirrors the null-then-free
+                        // idiom used in the TIMESTAMP coercion branch above.
+                        final Function constFn = fillValues.getQuick(fillIdx);
+                        fillValues.setQuick(fillIdx, null);
+                        constantFills.add(constFn);
                     }
                 }
                 // Reject cross-column PREV whose source column is itself filled
@@ -3909,6 +3929,17 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             // abandons the half-constructed factory without freeing `base`,
             // so the caller-side `Misc.free(groupByFactory)` is the single
             // owner of cleanup on those branches; do NOT null in advance.
+            //
+            // The risky-arg calls (recordComparatorCompiler.newInstance,
+            // RecordSinkFactory.getInstance, listColumnFilterA.copy) run
+            // BEFORE `groupByFactory = null` so the outer catch's
+            // Misc.free(groupByFactory) still owns `base` when those throw.
+            // The wrapping ctor body runs only after every arg is in hand;
+            // its catch is then responsible for freeing `base` and the
+            // caller-side null defangs the resulting double-free.
+            // RecordComparator, RecordSink, and ListColumnFilter are not
+            // Closeable, so a wrapper-body throw past these locals leaves
+            // them as GC garbage rather than leaked native memory.
             switch (sortStrategy) {
                 case SampleBySortStrategy.LIGHT_ENCODED -> {
                     assert SortKeyEncoder.isSupported(sortMetadata, listColumnFilterA)
@@ -3932,26 +3963,31 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 }
                 case SampleBySortStrategy.LIGHT_RECORDCHAIN -> {
                     assert groupByFactory.recordCursorSupportsRandomAccess();
+                    final RecordComparator comparator = recordComparatorCompiler.newInstance(sortMetadata, listColumnFilterA);
+                    final ListColumnFilter filterCopy = listColumnFilterA.copy();
                     final RecordCursorFactory base = groupByFactory;
                     groupByFactory = null;
                     groupByFactory = new SortedLightRecordCursorFactory(
                             configuration,
                             sortMetadata,
                             base,
-                            recordComparatorCompiler.newInstance(sortMetadata, listColumnFilterA),
-                            listColumnFilterA.copy()
+                            comparator,
+                            filterCopy
                     );
                 }
                 case SampleBySortStrategy.FULL_RECORDCHAIN -> {
+                    final RecordSink recordSink = RecordSinkFactory.getInstance(configuration, asm, sortMetadata, entityColumnFilter);
+                    final RecordComparator comparator = recordComparatorCompiler.newInstance(sortMetadata, listColumnFilterA);
+                    final ListColumnFilter filterCopy = listColumnFilterA.copy();
                     final RecordCursorFactory base = groupByFactory;
                     groupByFactory = null;
                     groupByFactory = new SortedRecordCursorFactory(
                             configuration,
                             sortMetadata,
                             base,
-                            RecordSinkFactory.getInstance(configuration, asm, sortMetadata, entityColumnFilter),
-                            recordComparatorCompiler.newInstance(sortMetadata, listColumnFilterA),
-                            listColumnFilterA.copy()
+                            recordSink,
+                            comparator,
+                            filterCopy
                     );
                 }
                 default -> throw new IllegalStateException("unknown sample-by fill sort strategy: "
@@ -7313,14 +7349,21 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                         // SortKeyMaterializingRecordCursorFactory wrapping it).
                         // Without nulling, the surrounding catch's free of
                         // recordCursorFactory becomes a JVM-fatal double-free.
+                        // Risky-arg calls run BEFORE `recordCursorFactory = null`
+                        // so the outer catch still owns `sortBase` when those
+                        // throw. RecordComparator and ListColumnFilter are not
+                        // Closeable, so a wrapper-body throw past these locals
+                        // leaves them as GC garbage.
+                        final RecordComparator sortLightComparator = recordComparatorCompiler.newInstance(metadata, listColumnFilterA);
+                        final ListColumnFilter sortLightFilterCopy = listColumnFilterA.copy();
                         final RecordCursorFactory sortBaseForSort = sortBase;
                         recordCursorFactory = null;
                         return new SortedLightRecordCursorFactory(
                                 configuration,
                                 orderedMetadata,
                                 sortBaseForSort,
-                                recordComparatorCompiler.newInstance(metadata, listColumnFilterA),
-                                listColumnFilterA.copy()
+                                sortLightComparator,
+                                sortLightFilterCopy
                         );
                     }
                 }
@@ -7340,15 +7383,23 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 // Null-before-risky for the SortedRecordCursorFactory ctor --
                 // its catch cascades close() and frees `base`, so retaining
                 // recordCursorFactory across this call would double-free.
+                // Risky-arg calls run BEFORE `recordCursorFactory = null` so
+                // the outer catch still owns `base` when those throw.
+                // RecordSink, RecordComparator, and ListColumnFilter are not
+                // Closeable, so a wrapper-body throw past these locals leaves
+                // them as GC garbage.
+                final RecordSink fullSortSink = RecordSinkFactory.getInstance(configuration, asm, orderedMetadata, entityColumnFilter);
+                final RecordComparator fullSortComparator = recordComparatorCompiler.newInstance(metadata, listColumnFilterA);
+                final ListColumnFilter fullSortFilterCopy = listColumnFilterA.copy();
                 final RecordCursorFactory baseForFullSort = recordCursorFactory;
                 recordCursorFactory = null;
                 return new SortedRecordCursorFactory(
                         configuration,
                         orderedMetadata,
                         baseForFullSort,
-                        RecordSinkFactory.getInstance(configuration, asm, orderedMetadata, entityColumnFilter),
-                        recordComparatorCompiler.newInstance(metadata, listColumnFilterA),
-                        listColumnFilterA.copy()
+                        fullSortSink,
+                        fullSortComparator,
+                        fullSortFilterCopy
                 );
             }
 
