@@ -1326,7 +1326,7 @@ public class FullFwdPartitionFrameCursorTest extends AbstractCairoTest {
 
                 @Override
                 public long getDataIndexValueAppendPageSize() {
-                    return AbstractCairoTest.configuration.getDefaultSymbolIndexType() == IndexType.POSTING ? 4096 : 65535;
+                    return IndexType.isPosting(AbstractCairoTest.configuration.getDefaultSymbolIndexType()) ? 4096 : 65535;
                 }
 
                 @Override
@@ -1661,7 +1661,7 @@ public class FullFwdPartitionFrameCursorTest extends AbstractCairoTest {
 
                 @Override
                 public long getDataIndexValueAppendPageSize() {
-                    return AbstractCairoTest.configuration.getDefaultSymbolIndexType() == IndexType.POSTING ? 4096 : 65535;
+                    return IndexType.isPosting(AbstractCairoTest.configuration.getDefaultSymbolIndexType()) ? 4096 : 65535;
                 }
 
                 @Override
