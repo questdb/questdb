@@ -59,6 +59,8 @@ public interface ServerConfiguration {
 
     CairoConfiguration getCairoConfiguration();
 
+    WorkerPoolConfiguration getExportPoolConfiguration();
+
     FactoryProvider getFactoryProvider();
 
     HttpServerConfiguration getHttpMinServerConfiguration();
@@ -70,8 +72,6 @@ public interface ServerConfiguration {
     LineUdpReceiverConfiguration getLineUdpReceiverConfiguration();
 
     WorkerPoolConfiguration getMatViewRefreshPoolConfiguration();
-
-    WorkerPoolConfiguration getExportPoolConfiguration();
 
     MemoryConfiguration getMemoryConfiguration();
 
@@ -95,10 +95,6 @@ public interface ServerConfiguration {
         return OSS;
     }
 
-    default boolean isMemoryUsageLogEnabled() {
-        return true;
-    }
-
     WorkerPoolConfiguration getSharedWorkerPoolNetworkConfiguration();
 
     WorkerPoolConfiguration getSharedWorkerPoolQueryConfiguration();
@@ -115,5 +111,9 @@ public interface ServerConfiguration {
     WorkerPoolConfiguration getWalApplyPoolConfiguration();
 
     default void init(CairoEngine engine, FreeOnExit freeOnExit) {
+    }
+
+    default boolean isMemoryUsageLogEnabled() {
+        return true;
     }
 }

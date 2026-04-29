@@ -356,12 +356,6 @@ public class DynamicPropServerConfiguration implements ServerConfiguration, Conf
     }
 
     @Override
-    public QwpUdpReceiverConfiguration getQwpUdpReceiverConfiguration() {
-        // nested object is kept non-reloadable
-        return serverConfig.get().getQwpUdpReceiverConfiguration();
-    }
-
-    @Override
     public MemoryConfiguration getMemoryConfiguration() {
         return memoryConfig;
     }
@@ -391,6 +385,12 @@ public class DynamicPropServerConfiguration implements ServerConfiguration, Conf
     public PublicPassthroughConfiguration getPublicPassthroughConfiguration() {
         // nested object is kept non-reloadable
         return serverConfig.get().getPublicPassthroughConfiguration();
+    }
+
+    @Override
+    public QwpUdpReceiverConfiguration getQwpUdpReceiverConfiguration() {
+        // nested object is kept non-reloadable
+        return serverConfig.get().getQwpUdpReceiverConfiguration();
     }
 
     @Override
@@ -427,16 +427,16 @@ public class DynamicPropServerConfiguration implements ServerConfiguration, Conf
     }
 
     @Override
-    public boolean isMemoryUsageLogEnabled() {
-        return serverConfig.get().isMemoryUsageLogEnabled();
-    }
-
-    @Override
     public void init(CairoEngine engine, FreeOnExit freeOnExit) {
         serverConfig.get().init(this, engine, freeOnExit);
         if (configReloadEnabled) {
             engine.setConfigReloader(this);
         }
+    }
+
+    @Override
+    public boolean isMemoryUsageLogEnabled() {
+        return serverConfig.get().isMemoryUsageLogEnabled();
     }
 
     @Override
