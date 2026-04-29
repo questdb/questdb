@@ -679,6 +679,7 @@ public class ServerMainTest extends AbstractBootstrapTest {
                                     "cairo.sql.sort.value.max.pages\tQDB_CAIRO_SQL_SORT_VALUE_MAX_PAGES\t2147483647\tdefault\tfalse\tfalse\n" +
                                     "cairo.sql.sort.value.page.size\tQDB_CAIRO_SQL_SORT_VALUE_PAGE_SIZE\t16777216\tdefault\tfalse\tfalse\n" +
                                     "cairo.sql.string.function.buffer.max.size\tQDB_CAIRO_SQL_STRING_FUNCTION_BUFFER_MAX_SIZE\t1048576\tdefault\tfalse\tfalse\n" +
+                                    "cairo.sql.subsample.max.rows\tQDB_CAIRO_SQL_SUBSAMPLE_MAX_ROWS\t100000000\tdefault\tfalse\tfalse\n" +
                                     "cairo.sql.window.column.pool.capacity\tQDB_CAIRO_SQL_WINDOW_COLUMN_POOL_CAPACITY\t64\tdefault\tfalse\tfalse\n" +
                                     "cairo.sql.pivot.column.pool.capacity\tQDB_CAIRO_SQL_PIVOT_COLUMN_POOL_CAPACITY\t8\tdefault\tfalse\tfalse\n" +
                                     "cairo.sql.pivot.max.produced.columns\tQDB_CAIRO_SQL_PIVOT_MAX_PRODUCED_COLUMNS\t5000\tdefault\tfalse\tfalse\n" +

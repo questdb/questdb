@@ -1267,6 +1267,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
+    public long getSubsampleMaxRows() {
+        return 100_000_000L;
+    }
+
+    @Override
     public long getSymbolTableMaxAllocationPageSize() {
         return 8 * 1024 * 1024;
     }

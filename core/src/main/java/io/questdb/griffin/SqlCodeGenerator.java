@@ -184,6 +184,7 @@ import io.questdb.griffin.engine.groupby.SampleByFirstLastRecordCursorFactory;
 import io.questdb.griffin.engine.groupby.SampleByInterpolateRecordCursorFactory;
 import io.questdb.griffin.engine.groupby.TimestampSampler;
 import io.questdb.griffin.engine.groupby.TimestampSamplerFactory;
+import io.questdb.std.datetime.microtime.Micros;
 import io.questdb.griffin.engine.groupby.vect.AvgDoubleVectorAggregateFunction;
 import io.questdb.griffin.engine.groupby.vect.AvgIntVectorAggregateFunction;
 import io.questdb.griffin.engine.groupby.vect.AvgLongVectorAggregateFunction;
@@ -314,6 +315,7 @@ import io.questdb.griffin.engine.table.PageFrameRowCursorFactory;
 import io.questdb.griffin.engine.table.PushdownFilterExtractor;
 import io.questdb.griffin.engine.table.SelectedRecordCursorFactory;
 import io.questdb.griffin.engine.table.SortedSymbolIndexRecordCursorFactory;
+import io.questdb.griffin.engine.table.SubsampleRecordCursorFactory;
 import io.questdb.griffin.engine.table.SymbolIndexFilteredRowCursorFactory;
 import io.questdb.griffin.engine.table.SymbolIndexRowCursorFactory;
 import io.questdb.griffin.engine.table.VirtualRecordCursorFactory;
@@ -5867,6 +5869,461 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         }
     }
 
+    private RecordCursorFactory generateSubsampleFromModelChain(
+            RecordCursorFactory factory,
+            IQueryModel model,
+            SqlExecutionContext executionContext
+    ) throws SqlException {
+        // Find SUBSAMPLE on the current model or its nested model chain.
+        // The optimizer may place SUBSAMPLE on different model levels during
+        // restructuring (CTE expansion, GROUP BY/WINDOW wrapping, etc.).
+        // We search the chain and apply SUBSAMPLE at the first level where
+        // the factory has a timestamp column and the value column can be resolved.
+        ExpressionNode subsample = model.getSubsample();
+        int subsamplePos = model.getSubsamplePosition();
+
+        if (subsample != null) {
+            validateSubsampleArity(subsample);
+            if (isValueInspectingMethodByName(subsample.token)) {
+                // Value-inspecting: verify the SUBSAMPLE column can be resolved
+                // at this factory level. If not, push to nested model.
+                ExpressionNode columnNode = subsample.args.get(0);
+                int colIdx = factory.getMetadata().getColumnIndexQuiet(columnNode.token);
+                if (colIdx == -1) {
+                    final ObjList<QueryColumn> selectColumns = model.getColumns();
+                    for (int i = 0, n = selectColumns.size(); i < n; i++) {
+                        final QueryColumn qc = selectColumns.getQuick(i);
+                        if (Chars.equalsIgnoreCase(qc.getAlias(), columnNode.token)
+                                || Chars.equalsIgnoreCase(qc.getName(), columnNode.token)) {
+                            colIdx = i;
+                            break;
+                        }
+                    }
+                }
+                if (colIdx == -1) {
+                    model.setSubsample(null, 0);
+                    throw SqlException.$(columnNode.position, "column not found: ").put(columnNode.token);
+                }
+            }
+            if (factory.getMetadata().getTimestampIndex() == -1) {
+                // No designated timestamp. Allow if nested model has designated
+                // timestamp (SAMPLE BY/GROUP BY results lose designation).
+                boolean nestedHasTimestamp = false;
+                IQueryModel nested = model.getNestedModel();
+                while (nested != null) {
+                    if (nested.getTimestamp() != null) {
+                        nestedHasTimestamp = true;
+                        break;
+                    }
+                    nested = nested.getNestedModel();
+                }
+                if (!nestedHasTimestamp && !hasTimestampColumn(factory)) {
+                    model.setSubsample(null, 0);
+                    throw SqlException.$(subsamplePos, "SUBSAMPLE requires a designated timestamp column");
+                }
+                if (!nestedHasTimestamp) {
+                    // Has TIMESTAMP column by type but not designated, and no
+                    // nested model has designated timestamp either. Error.
+                    model.setSubsample(null, 0);
+                    throw SqlException.$(subsamplePos, "SUBSAMPLE requires a designated timestamp column");
+                }
+            }
+            // allowTypeScanFallback: only scan by TIMESTAMP type when a nested model
+            // confirms the chain originally had a designated timestamp (SAMPLE BY/GROUP BY
+            // results lose designation but the column is still the time axis).
+            boolean nestedHasDesignatedTs = factory.getMetadata().getTimestampIndex() != -1;
+            if (!nestedHasDesignatedTs) {
+                IQueryModel n = model.getNestedModel();
+                while (n != null) {
+                    if (n.getTimestamp() != null) {
+                        nestedHasDesignatedTs = true;
+                        break;
+                    }
+                    n = n.getNestedModel();
+                }
+            }
+            model.setSubsample(null, 0);
+            return generateSubsample(factory, subsample, subsamplePos, model, executionContext, nestedHasDesignatedTs);
+        }
+
+        // If not on current model, search nested models for SUBSAMPLE.
+        // The optimizer may place SUBSAMPLE on a nested model during restructuring.
+        // Do not pull across user-authored subquery boundaries because the
+        // optimizer may have pushed outer WHERE into the inner model, changing
+        // the input set that SUBSAMPLE operates on.
+        IQueryModel nested = model.getNestedModel();
+        boolean crossedSubquery = model.isNestedModelIsSubQuery();
+        while (nested != null) {
+            if (nested.getSubsample() != null) {
+                if (crossedSubquery) {
+                    break;
+                }
+                validateSubsampleArity(nested.getSubsample());
+                boolean isValueMethod = isValueInspectingMethodByName(nested.getSubsample().token);
+                // Check: factory has designated timestamp (or nested chain confirms)
+                boolean hasDesignatedTs = factory.getMetadata().getTimestampIndex() != -1;
+                if (!hasDesignatedTs) {
+                    IQueryModel n = model.getNestedModel();
+                    while (n != null) {
+                        if (n.getTimestamp() != null) {
+                            hasDesignatedTs = true;
+                            break;
+                        }
+                        n = n.getNestedModel();
+                    }
+                }
+                // For value-inspecting methods, also check column resolvable
+                boolean columnOk = !isValueMethod
+                        || factory.getMetadata().getColumnIndexQuiet(nested.getSubsample().args.get(0).token) != -1;
+                if (columnOk && hasDesignatedTs) {
+                    subsample = nested.getSubsample();
+                    subsamplePos = nested.getSubsamplePosition();
+                    nested.setSubsample(null, 0);
+                    return generateSubsample(factory, subsample, subsamplePos, model, executionContext, true);
+                }
+                break; // Column not resolvable or no timestamp - leave for inner level
+            }
+            if (nested.isNestedModelIsSubQuery()) {
+                crossedSubquery = true;
+            }
+            nested = nested.getNestedModel();
+        }
+
+        return factory;
+    }
+
+    private RecordCursorFactory generateSubsample(
+            RecordCursorFactory factory,
+            ExpressionNode subsample,
+            int subsamplePos,
+            IQueryModel model,
+            SqlExecutionContext executionContext,
+            boolean allowTypeScanFallback
+    ) throws SqlException {
+        final CharSequence methodName = subsample.token;
+
+        // Determine algorithm
+        int method;
+        if (Chars.equalsIgnoreCase(methodName, "lttb")) {
+            method = SubsampleRecordCursorFactory.METHOD_LTTB;
+        } else if (Chars.equalsIgnoreCase(methodName, "m4")) {
+            method = SubsampleRecordCursorFactory.METHOD_M4;
+        } else if (Chars.equalsIgnoreCase(methodName, "minmax")) {
+            method = SubsampleRecordCursorFactory.METHOD_MINMAX;
+        } else if (Chars.equalsIgnoreCase(methodName, "uniform")) {
+            method = SubsampleRecordCursorFactory.METHOD_UNIFORM;
+        } else if (Chars.equalsIgnoreCase(methodName, "cadence")) {
+            method = SubsampleRecordCursorFactory.METHOD_CADENCE;
+        } else {
+            throw SqlException.$(subsample.position, "unknown subsample method: ").put(methodName)
+                    .put(". Supported methods: lttb, m4, minmax, uniform, cadence");
+        }
+
+        boolean isValueInspecting = isValueInspectingMethod(method);
+
+        // Validate argument count per method
+        if (isValueInspecting) {
+            if (subsample.paramCount < 2) {
+                throw SqlException.$(subsample.position, "SUBSAMPLE ")
+                        .put(methodName).put("() requires at least 2 arguments: column and target points");
+            }
+            if (method == SubsampleRecordCursorFactory.METHOD_M4 || method == SubsampleRecordCursorFactory.METHOD_MINMAX) {
+                if (subsample.paramCount > 2) {
+                    throw SqlException.$(subsample.args.get(2).position, methodName)
+                            .put("() accepts exactly 2 arguments: column and target points");
+                }
+            } else if (method == SubsampleRecordCursorFactory.METHOD_LTTB) {
+                if (subsample.paramCount > 3) {
+                    throw SqlException.$(subsample.args.get(3).position, "lttb() accepts at most 3 arguments: column, target points, and optional gap threshold");
+                }
+            }
+        } else if (method == SubsampleRecordCursorFactory.METHOD_UNIFORM) {
+            if (subsample.paramCount != 1) {
+                throw SqlException.$(subsample.position, "uniform() requires exactly 1 argument: target points");
+            }
+        } else { // cadence
+            if (subsample.paramCount < 1 || subsample.paramCount > 2) {
+                throw SqlException.$(subsample.position, "cadence() requires 1 or 2 arguments: stride and optional seed");
+            }
+        }
+
+        int valueColumnIndex = -1;
+        int columnType = ColumnType.UNDEFINED;
+        ExpressionNode targetNode;
+
+        if (isValueInspecting) {
+            // Args: args[0]=column, args[1]=target, args[2]=gap (LTTB only)
+            final ExpressionNode columnNode = subsample.args.get(0);
+            targetNode = subsample.args.get(1);
+
+            // Resolve value column index
+            final CharSequence columnName = columnNode.token;
+            valueColumnIndex = factory.getMetadata().getColumnIndexQuiet(columnName);
+            if (valueColumnIndex == -1) {
+                final ObjList<QueryColumn> selectColumns = model.getColumns();
+                for (int i = 0, n = selectColumns.size(); i < n; i++) {
+                    final QueryColumn qc = selectColumns.getQuick(i);
+                    if (Chars.equalsIgnoreCase(qc.getAlias(), columnName)
+                            || Chars.equalsIgnoreCase(qc.getName(), columnName)) {
+                        valueColumnIndex = i;
+                        break;
+                    }
+                }
+            }
+            if (valueColumnIndex == -1) {
+                throw SqlException.$(columnNode.position, "column not found: ").put(columnName);
+            }
+            columnType = ColumnType.tagOf(factory.getMetadata().getColumnType(valueColumnIndex));
+            if (columnType != ColumnType.DOUBLE && columnType != ColumnType.FLOAT
+                    && columnType != ColumnType.INT && columnType != ColumnType.LONG
+                    && columnType != ColumnType.SHORT && columnType != ColumnType.BYTE) {
+                throw SqlException.$(columnNode.position, "numeric column expected, got: ")
+                        .put(ColumnType.nameOf(factory.getMetadata().getColumnType(valueColumnIndex)));
+            }
+        } else {
+            // Position-only: args[0]=targetPoints/stride
+            targetNode = subsample.args.get(0);
+        }
+
+        // Compile target/stride as a Function to support bind variables.
+        final Function targetFunc = functionParser.parseFunction(targetNode, EmptyRecordMetadata.INSTANCE, executionContext);
+        Function seedFunc = null;
+        try {
+            if (!targetFunc.isConstant() && !targetFunc.isRuntimeConstant()) {
+                CharSequence paramName = method == SubsampleRecordCursorFactory.METHOD_CADENCE ? "stride" : "target point count";
+                throw SqlException.$(targetNode.position, paramName).put(" must be a constant or bind variable");
+            }
+            coerceRuntimeConstantType(targetFunc, ColumnType.LONG, executionContext,
+                    method == SubsampleRecordCursorFactory.METHOD_CADENCE
+                            ? "stride must be an integer" : "target point count must be an integer",
+                    targetNode.position);
+            final int targetType = ColumnType.tagOf(targetFunc.getType());
+            if (targetType != ColumnType.INT && targetType != ColumnType.LONG
+                    && targetType != ColumnType.SHORT && targetType != ColumnType.BYTE) {
+                throw SqlException.$(targetNode.position, method == SubsampleRecordCursorFactory.METHOD_CADENCE
+                        ? "integer expected for stride" : "integer expected for target point count");
+            }
+            if (targetFunc.isConstant()) {
+                if (method == SubsampleRecordCursorFactory.METHOD_CADENCE) {
+                    getStride(targetFunc, targetType, targetNode.position);
+                } else {
+                    getTargetPoints(targetFunc, targetType, targetNode.position);
+                }
+            }
+
+            // Parse optional gap threshold (LTTB only)
+            long gapThresholdMicros = 0;
+            if (subsample.paramCount >= 3 && method == SubsampleRecordCursorFactory.METHOD_LTTB) {
+                final ExpressionNode gapNode = subsample.args.get(2);
+                final CharSequence gapStr = gapNode.token;
+                CharSequence interval = Chars.isQuoted(gapStr)
+                        ? Chars.toString(gapStr, 1, gapStr.length() - 1) : gapStr;
+                int k = TimestampSamplerFactory.findPositiveIntervalEndIndex(interval, gapNode.position, "gap threshold");
+                long n = TimestampSamplerFactory.parsePositiveInterval(
+                        interval, k, gapNode.position, "gap threshold", Numbers.INT_NULL, '?'
+                );
+                gapThresholdMicros = switch (interval.charAt(k)) {
+                    case 's' -> safeMultiplyMicros(n, Micros.SECOND_MICROS, gapNode.position);
+                    case 'm' -> safeMultiplyMicros(n, Micros.MINUTE_MICROS, gapNode.position);
+                    case 'h' -> safeMultiplyMicros(n, Micros.HOUR_MICROS, gapNode.position);
+                    case 'd' -> safeMultiplyMicros(n, Micros.DAY_MICROS, gapNode.position);
+                    default ->
+                            throw SqlException.$(gapNode.position + k, "unsupported interval unit: ").put(interval.charAt(k))
+                                    .put(". Supported: s, m, h, d");
+                };
+            }
+
+            // Parse optional seed (cadence only)
+            int seedMode = SubsampleRecordCursorFactory.SEED_MODE_NONE;
+            int seedPosition = 0;
+            if (method == SubsampleRecordCursorFactory.METHOD_CADENCE && subsample.paramCount == 2) {
+                final ExpressionNode seedNode = subsample.args.get(1);
+                seedPosition = seedNode.position;
+                seedFunc = functionParser.parseFunction(seedNode, EmptyRecordMetadata.INSTANCE, executionContext);
+                if (ColumnType.isNull(seedFunc.getType())) {
+                    // Literal NULL -> random mode. seedFunc is not needed at runtime.
+                    Misc.free(seedFunc);
+                    seedFunc = null;
+                    seedMode = SubsampleRecordCursorFactory.SEED_MODE_RANDOM;
+                } else {
+                    if (!seedFunc.isConstant() && !seedFunc.isRuntimeConstant()) {
+                        throw SqlException.$(seedNode.position, "seed must be a constant, bind variable, or NULL");
+                    }
+                    coerceRuntimeConstantType(seedFunc, ColumnType.LONG, executionContext,
+                            "seed must be an integer or NULL", seedNode.position);
+                    int seedType = ColumnType.tagOf(seedFunc.getType());
+                    if (seedType != ColumnType.INT && seedType != ColumnType.LONG
+                            && seedType != ColumnType.SHORT && seedType != ColumnType.BYTE) {
+                        throw SqlException.$(seedNode.position, "integer or NULL expected for seed");
+                    }
+                    seedMode = SubsampleRecordCursorFactory.SEED_MODE_DETERMINISTIC;
+                }
+            }
+
+            int timestampIndex = factory.getMetadata().getTimestampIndex();
+            if (timestampIndex == -1 && allowTypeScanFallback) {
+                int candidateCount = 0;
+                int candidateIndex = -1;
+                for (int i = 0, nc = factory.getMetadata().getColumnCount(); i < nc; i++) {
+                    if (ColumnType.tagOf(factory.getMetadata().getColumnType(i)) == ColumnType.TIMESTAMP) {
+                        if (candidateCount == 0) {
+                            candidateIndex = i;
+                        }
+                        candidateCount++;
+                    }
+                }
+                if (candidateCount > 1) {
+                    throw SqlException.$(subsamplePos, "ambiguous timestamp: multiple TIMESTAMP columns found");
+                }
+                timestampIndex = candidateIndex;
+            }
+            if (timestampIndex == -1) {
+                throw SqlException.$(subsamplePos, "SUBSAMPLE requires a designated timestamp column");
+            }
+
+            final boolean useDirectAccess = factory.recordCursorSupportsRandomAccess()
+                    && factory.getMetadata().getTimestampIndex() != -1
+                    && factory.getScanDirection() == RecordCursorFactory.SCAN_DIRECTION_FORWARD;
+
+            RecordSink recordSink = null;
+            if (!useDirectAccess) {
+                entityColumnFilter.of(factory.getMetadata().getColumnCount());
+                recordSink = RecordSinkFactory.getInstance(
+                        configuration, asm, factory.getMetadata(), entityColumnFilter
+                );
+            }
+            return new SubsampleRecordCursorFactory(
+                    useDirectAccess ? null : configuration,
+                    factory, method, targetFunc,
+                    valueColumnIndex, timestampIndex, subsamplePos,
+                    targetNode.position, gapThresholdMicros,
+                    configuration.getSubsampleMaxRows(),
+                    columnType,
+                    recordSink,
+                    useDirectAccess,
+                    seedFunc,
+                    seedMode,
+                    seedPosition
+            );
+        } catch (Throwable e) {
+            Misc.free(seedFunc);
+            Misc.free(targetFunc);
+            Misc.free(factory);
+            throw e;
+        }
+    }
+
+    /**
+     * Read the target point count from a Function, handling both INT and LONG types.
+     * LONG support is needed for PG wire / Grafana bind variables.
+     *
+     * @return the target point count as int, or throws if out of valid range
+     */
+    static int getTargetPoints(Function targetFunc, int targetType, int position) throws SqlException {
+        long value;
+        if (targetType == ColumnType.LONG) {
+            value = targetFunc.getLong(null);
+            if (value == Numbers.LONG_NULL) {
+                throw SqlException.$(position, "target point count must be set");
+            }
+        } else {
+            int intVal = targetFunc.getInt(null);
+            if (intVal == Numbers.INT_NULL) {
+                throw SqlException.$(position, "target point count must be set");
+            }
+            value = intVal;
+        }
+        if (value < 2) {
+            throw SqlException.$(position, "target points must be at least 2");
+        }
+        if (value > Integer.MAX_VALUE) {
+            throw SqlException.$(position, "target points exceeds maximum of ").put(Integer.MAX_VALUE);
+        }
+        return (int) value;
+    }
+
+    static int getStride(Function targetFunc, int targetType, int position) throws SqlException {
+        long value;
+        if (targetType == ColumnType.LONG) {
+            value = targetFunc.getLong(null);
+            if (value == Numbers.LONG_NULL) {
+                throw SqlException.$(position, "stride must be set");
+            }
+        } else {
+            int intVal = targetFunc.getInt(null);
+            if (intVal == Numbers.INT_NULL) {
+                throw SqlException.$(position, "stride must be set");
+            }
+            value = intVal;
+        }
+        if (value < 1) {
+            throw SqlException.$(position, "stride must be at least 1");
+        }
+        if (value > Integer.MAX_VALUE) {
+            throw SqlException.$(position, "stride exceeds maximum of ").put(Integer.MAX_VALUE);
+        }
+        return (int) value;
+    }
+
+    // parsePositiveInterval uses Numbers.parseInt (max Integer.MAX_VALUE).
+    // parseInt throws NumericException on overflow, so n is always in int range.
+    // However, n * DAY_MICROS (86_400_000_000) can overflow long for large n.
+    private static long safeMultiplyMicros(long n, long unitMicros, int pos) throws SqlException {
+        if (n > Long.MAX_VALUE / unitMicros) {
+            throw SqlException.$(pos, "gap threshold overflow");
+        }
+        return n * unitMicros;
+    }
+
+    private static boolean isValueInspectingMethod(int method) {
+        return method == SubsampleRecordCursorFactory.METHOD_LTTB
+                || method == SubsampleRecordCursorFactory.METHOD_M4
+                || method == SubsampleRecordCursorFactory.METHOD_MINMAX;
+    }
+
+    private static boolean isValueInspectingMethodByName(CharSequence name) {
+        return Chars.equalsIgnoreCase(name, "lttb")
+                || Chars.equalsIgnoreCase(name, "m4")
+                || Chars.equalsIgnoreCase(name, "minmax");
+    }
+
+    private static boolean isKnownSubsampleMethod(CharSequence name) {
+        return isValueInspectingMethodByName(name)
+                || Chars.equalsIgnoreCase(name, "uniform")
+                || Chars.equalsIgnoreCase(name, "cadence");
+    }
+
+    private static void validateSubsampleArity(ExpressionNode subsample) throws SqlException {
+        if (!isKnownSubsampleMethod(subsample.token)) {
+            // Unknown method: skip arity check. generateSubsample() will
+            // report the proper "unknown subsample method" error.
+            return;
+        }
+        boolean isValueInspecting = isValueInspectingMethodByName(subsample.token);
+        int minArgs = isValueInspecting ? 2 : 1;
+        if (subsample.paramCount < minArgs) {
+            if (isValueInspecting) {
+                throw SqlException.$(subsample.position, "SUBSAMPLE ")
+                        .put(subsample.token)
+                        .put("() requires at least 2 arguments: column and target points");
+            }
+            throw SqlException.$(subsample.position, "SUBSAMPLE ")
+                    .put(subsample.token).put("() requires at least 1 argument");
+        }
+    }
+
+    private static boolean hasTimestampColumn(RecordCursorFactory factory) {
+        if (factory.getMetadata().getTimestampIndex() != -1) {
+            return true;
+        }
+        for (int i = 0, n = factory.getMetadata().getColumnCount(); i < n; i++) {
+            if (ColumnType.tagOf(factory.getMetadata().getColumnType(i)) == ColumnType.TIMESTAMP) {
+                return true;
+            }
+        }
+        return false;
+    }
+
     private RecordCursorFactory generateLimit(
             RecordCursorFactory factory,
             IQueryModel model,
@@ -6720,6 +7177,56 @@ public class SqlCodeGenerator implements Mutable, Closeable {
     }
 
     private RecordCursorFactory generateQuery0Inner(IQueryModel model, SqlExecutionContext executionContext, boolean processJoins) throws SqlException {
+        // Pull SUBSAMPLE from nested models to this level before generateSelect
+        // consumes them. generateSelect processes GROUP BY/SAMPLE BY models
+        // internally without calling generateQuery0Inner, so SUBSAMPLE placed
+        // on those flat nested models by the optimizer would be lost otherwise.
+        // Pull-up is allowed only across optimizer-generated nested models.
+        // Do not pull across user-authored subquery boundaries
+        // (isNestedModelIsSubQuery) because the optimizer may have pushed
+        // outer WHERE/LIMIT into the inner model chain, and hoisting
+        // SUBSAMPLE would place it after those filters, changing semantics.
+        if (model.getSubsample() == null) {
+            IQueryModel nested = model.getNestedModel();
+            boolean crossedSubqueryBoundary = model.isNestedModelIsSubQuery();
+            while (nested != null) {
+                if (nested.getSubsample() != null) {
+                    if (crossedSubqueryBoundary) {
+                        break;
+                    }
+                    validateSubsampleArity(nested.getSubsample());
+                    boolean isValueMethod = isValueInspectingMethodByName(nested.getSubsample().token);
+                    boolean canPullUp;
+                    if (isValueMethod) {
+                        // Check if the SUBSAMPLE column exists in the current model's columns
+                        CharSequence colName = nested.getSubsample().args.get(0).token;
+                        canPullUp = false;
+                        ObjList<QueryColumn> cols = model.getColumns();
+                        for (int i = 0, n = cols.size(); i < n; i++) {
+                            QueryColumn qc = cols.getQuick(i);
+                            if (Chars.equalsIgnoreCase(qc.getAlias(), colName)
+                                    || Chars.equalsIgnoreCase(qc.getName(), colName)) {
+                                canPullUp = true;
+                                break;
+                            }
+                        }
+                    } else {
+                        // Position-only methods don't need column resolution
+                        canPullUp = true;
+                    }
+                    if (canPullUp) {
+                        model.setSubsample(nested.getSubsample(), nested.getSubsamplePosition());
+                        nested.setSubsample(null, 0);
+                    }
+                    break;
+                }
+                if (nested.isNestedModelIsSubQuery()) {
+                    crossedSubqueryBoundary = true;
+                }
+                nested = nested.getNestedModel();
+            }
+        }
+
         // Remember the last model with non-empty ORDER BY as we descend through nested models.
         // We need the ORDER BY clause in the Markout Horizon Join optimization, but it's stored
         // several levels up from the model that holds the join clause.
@@ -6740,6 +7247,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             factory = generateSelect(model, executionContext, processJoins);
             factory = generateFilter(factory, model, executionContext);
             factory = generateLatestBy(factory, model);
+            factory = generateSubsampleFromModelChain(factory, model, executionContext);
             factory = generateOrderBy(factory, model, executionContext);
             factory = generateLimit(factory, model, executionContext);
 
