@@ -994,17 +994,24 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
                     // is non-zero -- the no-offset path relies on
                     // TimezoneFloorTimestampSampler.setStart applying the UTC->local
                     // conversion so the local sampler's grid mod-bucket = 0.
-                    // localAnchorAsUtc lifts the local-grid value into UTC space when
-                    // the sampler is wrapped, so Math.max compares values in the
-                    // same space; for non-wrapped samplers it is identity.
+                    // Math.max needs both operands in UTC space. effectiveOffset is
+                    // local-grid only when calendarOffset != 0 (the setLocalAnchor
+                    // branch), so localAnchorAsUtc lifts it to UTC; when
+                    // calendarOffset == 0 the value is already a UTC instant
+                    // (firstTs is a GROUP BY bucket label) and feeding it to
+                    // localAnchorAsUtc would mistreat it as local-grid -- e.g. for
+                    // America/New_York EDT the result would land 4h ahead of
+                    // firstTs and trip the cursor's grid-drift guard.
                     final long effectiveOffset = nextBucketTimestamp + calendarOffset;
+                    final long anchorUtc;
                     if (calendarOffset == 0) {
                         timestampSampler.setStart(effectiveOffset);
+                        anchorUtc = effectiveOffset;
                     } else {
                         timestampSampler.setLocalAnchor(effectiveOffset);
+                        anchorUtc = timestampSampler.localAnchorAsUtc(effectiveOffset);
                     }
-                    nextBucketTimestamp = Math.max(timestampSampler.localAnchorAsUtc(effectiveOffset),
-                            timestampSampler.round(nextBucketTimestamp));
+                    nextBucketTimestamp = Math.max(anchorUtc, timestampSampler.round(nextBucketTimestamp));
                 }
                 hasPendingRow = true;
                 pendingTs = firstTs;
@@ -1019,14 +1026,18 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
                     // positive-offset case. FILL must emit one row per grid
                     // label whose bucket overlaps [FROM, TO), independent of
                     // whether the base cursor produced any rows.
+                    // See the calendarOffset == 0 note in the upper branch:
+                    // localAnchorAsUtc only applies on the setLocalAnchor path.
                     final long effectiveOffset = fromTs + calendarOffset;
+                    final long anchorUtc;
                     if (calendarOffset == 0) {
                         timestampSampler.setStart(effectiveOffset);
+                        anchorUtc = effectiveOffset;
                     } else {
                         timestampSampler.setLocalAnchor(effectiveOffset);
+                        anchorUtc = timestampSampler.localAnchorAsUtc(effectiveOffset);
                     }
-                    nextBucketTimestamp = Math.max(timestampSampler.localAnchorAsUtc(effectiveOffset),
-                            timestampSampler.round(fromTs));
+                    nextBucketTimestamp = Math.max(anchorUtc, timestampSampler.round(fromTs));
                 } else {
                     maxTimestamp = Long.MIN_VALUE;
                     nextBucketTimestamp = Long.MAX_VALUE;

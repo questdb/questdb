@@ -3973,12 +3973,9 @@ public class SampleByFillTest extends AbstractCairoTest {
         // into a final field, silently reusing the first-execute rules on
         // every subsequent execution. This test pins the contract: each
         // execute lands its own buckets.
-        //
-        // Both zones used here have positive offsets in June (Berlin = CEST
-        // UTC+2, Helsinki = EEST UTC+3), avoiding a separate latent bug in
-        // {@code TimezoneFloorTimestampSampler.localAnchorAsUtc} that
-        // misbehaves for negative-offset zones (a pre-existing issue
-        // independent of the bind-variable refactor and out of scope here).
+        // testFillNullTimezoneNegativeOffset covers negative-offset zones
+        // separately; this one stays on positive offsets to keep the bind
+        // re-evaluation contract isolated.
         assertMemoryLeak(() -> {
             execute("CREATE TABLE x (val DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
             execute("INSERT INTO x VALUES " +
@@ -4082,6 +4079,48 @@ public class SampleByFillTest extends AbstractCairoTest {
                                 "2.0\t2024-06-16T21:00:00.000000Z\n",
                         factory, false, false, false, sqlExecutionContext);
             }
+        });
+    }
+
+    @Test
+    public void testFillNullTimezoneNegativeOffset() throws Exception {
+        // Regression for TimezoneFloorTimestampSampler.localAnchorAsUtc
+        // misbehaving on negative-offset zones. Pre-fix:
+        // SampleByFillCursor.initialize() called localAnchorAsUtc(effectiveOffset)
+        // even when calendarOffset == 0 -- where effectiveOffset is a UTC instant
+        // (firstTs from the GROUP BY base, already a bucket label) rather than a
+        // local-grid value. The function then applied a UTC<-local subtraction
+        // and returned firstTs - tzOff. For UTC+N zones (Berlin = +2h) the result
+        // landed below firstTs and Math.max(localAnchorAsUtc, round(firstTs))
+        // picked round(firstTs) = firstTs by accident. For UTC-N zones
+        // (America/New_York EDT = -4h) the result landed 4h ahead of firstTs and
+        // Math.max picked the wrong value, tripping the cursor's grid-drift
+        // guard with "data row timestamp ... precedes next bucket".
+        //
+        // The fix only invokes localAnchorAsUtc on the setLocalAnchor branch
+        // (calendarOffset != 0). When calendarOffset == 0 effectiveOffset is
+        // already UTC and is used directly. America/New_York in June (EDT,
+        // UTC-4) makes the regression observable.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (val DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO x VALUES " +
+                    "(1.0, '2024-06-15T12:00:00.000000Z')," +
+                    "(2.0, '2024-06-17T12:00:00.000000Z')");
+            // New York EDT: local midnight = 04:00 UTC. The middle bucket has
+            // no source row and FILL(NULL) emits the explicit null, proving
+            // the wrap's grid stride is correct (24h spans in EDT, no DST
+            // boundary in this window).
+            assertQueryNoLeakCheck(
+                    "s\tts\n" +
+                            "1.0\t2024-06-15T04:00:00.000000Z\n" +
+                            "null\t2024-06-16T04:00:00.000000Z\n" +
+                            "2.0\t2024-06-17T04:00:00.000000Z\n",
+                    "SELECT sum(val) s, ts FROM x " +
+                            "SAMPLE BY 1d FILL(NULL) ALIGN TO CALENDAR TIME ZONE 'America/New_York'",
+                    "ts",
+                    false,
+                    false
+            );
         });
     }
 
