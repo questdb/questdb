@@ -1322,6 +1322,25 @@ public class SampleByFillTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testFillNullSubDayTimezoneOffsetWithoutFrom() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (val DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO x VALUES " +
+                    "(1.0, '2024-01-15T09:35:00.000000Z')," +
+                    "(3.0, '2024-01-15T11:35:00.000000Z')");
+            assertQueryNoLeakCheck(
+                    "s\tts\n"
+                            + "1.0\t2024-01-15T09:30:00.000000Z\n"
+                            + "null\t2024-01-15T10:30:00.000000Z\n"
+                            + "3.0\t2024-01-15T11:30:00.000000Z\n",
+                    "SELECT sum(val) s, ts FROM x "
+                            + "SAMPLE BY 1h FILL(NULL) ALIGN TO CALENDAR TIME ZONE 'Europe/Berlin' WITH OFFSET '00:30'",
+                    "ts", false, false
+            );
+        });
+    }
+
+    @Test
     public void testFillNullEmptyTable() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE x (val DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");

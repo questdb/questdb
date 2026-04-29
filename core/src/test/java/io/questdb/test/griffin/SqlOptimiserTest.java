@@ -5405,6 +5405,27 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
     }
 
     @Test
+    public void testSampleByOnSubqueryWithFill() throws Exception {
+        assertMemoryLeak(() -> {
+            execute(SampleByTest.FROM_TO_DDL);
+            final String query = """
+                    SELECT ts, avg(x) FROM (
+                      SELECT ts, x FROM fromto WHERE x <= 4
+                    ) timestamp(ts) SAMPLE BY 1d FILL(NULL)""";
+            assertPlanNoLeakCheck(query, """
+                    Sample By
+                      fill: null
+                      values: [avg(x)]
+                        Async JIT Filter workers: 1
+                          filter: 4>=x
+                            PageFrame
+                                Row forward scan
+                                Frame forward scan on: fromto
+                    """);
+        });
+    }
+
+    @Test
     public void testSampleByTimezone() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table y (x int, ts timestamp) timestamp(ts);");
