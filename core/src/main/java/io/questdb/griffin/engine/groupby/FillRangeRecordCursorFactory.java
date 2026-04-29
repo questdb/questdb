@@ -25,10 +25,15 @@
 package io.questdb.griffin.engine.groupby;
 
 import io.questdb.cairo.AbstractRecordCursorFactory;
+import io.questdb.cairo.ArrayColumnTypes;
+import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.TimestampDriver;
 import io.questdb.cairo.arr.ArrayView;
+import io.questdb.cairo.map.Map;
+import io.questdb.cairo.map.MapFactory;
+import io.questdb.cairo.map.MapKey;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.NoRandomAccessRecordCursor;
 import io.questdb.cairo.sql.Record;
@@ -46,6 +51,7 @@ import io.questdb.std.BinarySequence;
 import io.questdb.std.Decimal128;
 import io.questdb.std.Decimal256;
 import io.questdb.std.DirectLongList;
+import io.questdb.std.IntList;
 import io.questdb.std.Long256;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
@@ -62,6 +68,11 @@ import org.jetbrains.annotations.Nullable;
  * Intended to support FILL(VALUE), FILL(NULL).
  * Cannot be generated standalone (there's no syntax just to generate this, it is only generated
  * via the above optimisation).
+ *
+ * <p>When key columns are present (GROUPING SETS), the factory tracks all distinct
+ * key combinations seen during the base scan. For each missing timestamp bucket,
+ * it emits one fill row per key combination, with key columns set to their stored
+ * values and aggregate columns set to the fill value.</p>
  */
 public class FillRangeRecordCursorFactory extends AbstractRecordCursorFactory {
     private final RecordCursorFactory base;
@@ -85,7 +96,26 @@ public class FillRangeRecordCursorFactory extends AbstractRecordCursorFactory {
             ObjList<Function> fillValues,
             int timestampIndex,
             int timestampType
-    ) {
+    ) throws SqlException {
+        this(metadata, base, fromFunc, toFunc, samplingInterval, samplingIntervalUnit,
+                timestampSampler, fillValues, timestampIndex, timestampType, null, null, 0);
+    }
+
+    public FillRangeRecordCursorFactory(
+            RecordMetadata metadata,
+            RecordCursorFactory base,
+            Function fromFunc,
+            Function toFunc,
+            long samplingInterval,
+            char samplingIntervalUnit,
+            TimestampSampler timestampSampler,
+            ObjList<Function> fillValues,
+            int timestampIndex,
+            int timestampType,
+            @Nullable CairoConfiguration configuration,
+            @Nullable IntList keyColumnPositions,
+            int position
+    ) throws SqlException {
         super(metadata);
         this.base = base;
         this.fromFunc = fromFunc;
@@ -97,7 +127,10 @@ public class FillRangeRecordCursorFactory extends AbstractRecordCursorFactory {
         this.timestampIndex = timestampIndex;
         this.fillValues = fillValues;
         this.timestampType = timestampType;
-        this.cursor = new FillRangeRecordCursor(timestampSampler, fromFunc, toFunc, fillValues, timestampIndex, timestampType, metadata.getColumnCount());
+        this.cursor = new FillRangeRecordCursor(
+                timestampSampler, fromFunc, toFunc, fillValues, timestampIndex, timestampType,
+                configuration, metadata, keyColumnPositions, position
+        );
     }
 
     @Override
@@ -108,9 +141,34 @@ public class FillRangeRecordCursorFactory extends AbstractRecordCursorFactory {
     @Override
     public RecordCursor getCursor(SqlExecutionContext executionContext) throws SqlException {
         if (getMetadata().getColumnCount() > fillValues.size() + 1) {
-            if (fillValues.size() == 1 && fillValues.getQuick(0).isNullConstant()) {
-                final int diff = (getMetadata().getColumnCount() - 1);
-                // skip one entry as it should be the designated timestamp
+            if (fillValues.size() == 1 && cursor.hasKeyColumns) {
+                // Grouping sets path: auto-expand a single fill value to cover
+                // all non-timestamp columns. SYMBOL columns are GROUP BY keys
+                // (never aggregates), so they get NULL in fill rows. Other
+                // columns get the user-specified fill value.
+                //
+                // Note: fill values assigned to key columns (including GROUPING()
+                // / GROUPING_ID() columns) are never read at runtime because
+                // isKeyColumn() intercepts all reads and returns the actual key
+                // value from the key map instead.
+                final Function singleFill = fillValues.getQuick(0);
+                final Function fillFunc = singleFill.isNullConstant() ? NullConstant.NULL : singleFill;
+                final RecordMetadata metadata = getMetadata();
+                final int columnCount = metadata.getColumnCount();
+                fillValues.clear();
+                for (int col = 0; col < columnCount; col++) {
+                    if (col == timestampIndex) {
+                        continue;
+                    }
+                    if (ColumnType.isSymbol(metadata.getColumnType(col))) {
+                        fillValues.add(NullConstant.NULL);
+                    } else {
+                        fillValues.add(fillFunc);
+                    }
+                }
+            } else if (fillValues.size() == 1 && fillValues.getQuick(0).isNullConstant()) {
+                // Non-grouping-sets path: only auto-expand FILL(NULL)
+                final int diff = getMetadata().getColumnCount() - 1;
                 for (int i = 1; i < diff; i++) {
                     fillValues.add(NullConstant.NULL);
                 }
@@ -183,6 +241,14 @@ public class FillRangeRecordCursorFactory extends AbstractRecordCursorFactory {
         private final FillRangeRecord fillingRecord = new FillRangeRecord();
         private final FillRangeTimestampConstant fillingTimestampFunc;
         private final Function fromFunc;
+        private final boolean hasKeyColumns;
+        // Maps output column position to key map column index (-1 = not a key column).
+        // Only allocated when hasKeyColumns is true.
+        private final int[] outputColToKeyMapCol;
+        // Column types for each key column in the key map (indexed by map column index).
+        // SYMBOL columns are stored as INT (symbol table index). Only allocated
+        // when hasKeyColumns is true.
+        private final int[] keyMapColTypes;
         private final TimestampDriver timestampDriver;
         private final int timestampIndex;
         private final TimestampSampler timestampSampler;
@@ -191,6 +257,14 @@ public class FillRangeRecordCursorFactory extends AbstractRecordCursorFactory {
         private Record baseRecord;
         private boolean gapFilling;
         private boolean hasNegative;
+        // Map storing distinct key combinations seen during the base scan.
+        // Key columns are stored with their actual types (SYMBOL columns
+        // are stored as INT via their symbol table index).
+        // Only allocated when hasKeyColumns is true.
+        private Map keyMap;
+        private RecordCursor keyMapCursor;
+        private Record keyMapRecord;
+        private boolean isValueFuncsInitialized;
         private long lastTimestamp = Long.MIN_VALUE;
         private long maxTimestamp;
         private long minTimestamp;
@@ -201,7 +275,6 @@ public class FillRangeRecordCursorFactory extends AbstractRecordCursorFactory {
         private long presentTimestampsSize;
 
         private final int columnCount;
-        private boolean isValueFuncsInitialized;
 
         private FillRangeRecordCursor(
                 TimestampSampler timestampSampler,
@@ -210,8 +283,11 @@ public class FillRangeRecordCursorFactory extends AbstractRecordCursorFactory {
                 ObjList<Function> fillValues,
                 int timestampIndex,
                 int timestampType,
-                int columnCount
-        ) {
+                @Nullable CairoConfiguration configuration,
+                RecordMetadata metadata,
+                @Nullable IntList keyColumnPositions,
+                int position
+        ) throws SqlException {
             this.timestampSampler = timestampSampler;
             this.fromFunc = fromFunc;
             this.toFunc = toFunc;
@@ -219,13 +295,39 @@ public class FillRangeRecordCursorFactory extends AbstractRecordCursorFactory {
             this.timestampIndex = timestampIndex;
             this.fillingTimestampFunc = new FillRangeTimestampConstant(timestampType);
             this.timestampDriver = ColumnType.getTimestampDriver(timestampType);
-            this.columnCount = columnCount;
+            this.columnCount = metadata.getColumnCount();
+            this.hasKeyColumns = keyColumnPositions != null && keyColumnPositions.size() > 0;
+
+            if (hasKeyColumns) {
+                this.outputColToKeyMapCol = new int[metadata.getColumnCount()];
+                for (int j = 0, m = outputColToKeyMapCol.length; j < m; j++) {
+                    outputColToKeyMapCol[j] = -1;
+                }
+                this.keyMapColTypes = new int[keyColumnPositions.size()];
+                ArrayColumnTypes keyMapTypes = new ArrayColumnTypes();
+                for (int i = 0, n = keyColumnPositions.size(); i < n; i++) {
+                    int colPos = keyColumnPositions.getQuick(i);
+                    outputColToKeyMapCol[colPos] = i;
+                    int colType = metadata.getColumnType(colPos);
+                    // SYMBOL columns are stored as INT (symbol table index)
+                    int mapType = ColumnType.isSymbol(colType) ? ColumnType.INT : colType;
+                    validateKeyColumnType(mapType, position);
+                    keyMapColTypes[i] = mapType;
+                    keyMapTypes.add(mapType);
+                }
+                ArrayColumnTypes emptyValueTypes = new ArrayColumnTypes();
+                this.keyMap = MapFactory.createUnorderedMap(configuration, keyMapTypes, emptyValueTypes);
+            } else {
+                this.outputColToKeyMapCol = null;
+                this.keyMapColTypes = null;
+            }
         }
 
         @Override
         public void close() {
             baseCursor = Misc.free(baseCursor);
             presentTimestamps = Misc.free(presentTimestamps);
+            keyMap = Misc.free(keyMap);
         }
 
         @Override
@@ -240,13 +342,25 @@ public class FillRangeRecordCursorFactory extends AbstractRecordCursorFactory {
 
         @Override
         public boolean hasNext() {
-            // We rely on the fact this cursor is allowed to return result set
-            // that is not ordered on time. For that reason all the filling is done at the end
             if (gapFilling) {
+                if (hasKeyColumns) {
+                    // Try next key combination for the current gap timestamp.
+                    if (keyMapCursor.hasNext()) {
+                        return true;
+                    }
+                    // All key combinations emitted. Advance to next gap.
+                    nextBucketTimestamp = timestampSampler.nextTimestamp(nextBucketTimestamp);
+                    if (foundGapToFill()) {
+                        keyMapCursor.toTop();
+                        return keyMapCursor.hasNext();
+                    }
+                    return false;
+                }
+                // Non-keyed: one fill row per gap.
                 nextBucketTimestamp = timestampSampler.nextTimestamp(nextBucketTimestamp);
                 return foundGapToFill();
             } else if (baseCursor.hasNext()) {
-                // Scan base cursor and return all the records
+                // Scan base cursor and return all the records.
                 // Also save all the timestamps already returned by the base cursor
                 // to determine the gaps later.
                 long timestamp = baseRecord.getTimestamp(timestampIndex);
@@ -257,11 +371,23 @@ public class FillRangeRecordCursorFactory extends AbstractRecordCursorFactory {
                 }
                 // Start saving timestamps to determine the gaps
                 presentTimestamps.add(lastTimestamp = timestamp);
+                // Record key combination for per-key gap filling
+                if (hasKeyColumns) {
+                    recordKeyValues();
+                }
                 return true;
             }
             gapFilling = true;
             prepareGapFilling();
-            return foundGapToFill();
+            if (foundGapToFill()) {
+                if (hasKeyColumns) {
+                    keyMapCursor = keyMap.getCursor();
+                    keyMapRecord = keyMapCursor.getRecord();
+                    return keyMapCursor.hasNext();
+                }
+                return true;
+            }
+            return false;
         }
 
         @Override
@@ -279,9 +405,27 @@ public class FillRangeRecordCursorFactory extends AbstractRecordCursorFactory {
         public void toTop() {
             baseCursor.toTop();
             presentTimestamps.clear();
+            if (hasKeyColumns) {
+                keyMap.clear();
+            }
             gapFilling = false;
             needsSorting = false;
             lastTimestamp = Long.MIN_VALUE;
+        }
+
+        private void deduplicateTimestamps() {
+            // GROUPING SETS produces multiple rows per timestamp (one per
+            // grouping set × key combination). The gap-finding logic expects
+            // unique timestamps, so we deduplicate after sorting.
+            if (presentTimestampsSize > 1) {
+                long writeIdx = 1;
+                for (long readIdx = 1; readIdx < presentTimestampsSize; readIdx++) {
+                    if (presentTimestamps.get(readIdx) != presentTimestamps.get(readIdx - 1)) {
+                        presentTimestamps.set(writeIdx++, presentTimestamps.get(readIdx));
+                    }
+                }
+                presentTimestampsSize = writeIdx;
+            }
         }
 
         private boolean foundGapToFill() {
@@ -317,6 +461,11 @@ public class FillRangeRecordCursorFactory extends AbstractRecordCursorFactory {
         }
 
         private void initValueFuncs(ObjList<Function> valueFuncs) {
+            if (isValueFuncsInitialized) {
+                return;
+            }
+            isValueFuncsInitialized = true;
+
             // can't just check null, as we use this as the placeholder value
             if (valueFuncs.size() - 1 < timestampIndex) {
                 // timestamp is the last column, so we add it
@@ -332,6 +481,10 @@ public class FillRangeRecordCursorFactory extends AbstractRecordCursorFactory {
                 // then we insert at this position
                 valueFuncs.insert(timestampIndex, 1, NullConstant.NULL);
             }
+        }
+
+        private boolean isKeyColumn(int col) {
+            return hasKeyColumns && outputColToKeyMapCol[col] >= 0;
         }
 
         private void of(
@@ -351,11 +504,11 @@ public class FillRangeRecordCursorFactory extends AbstractRecordCursorFactory {
                 }
                 presentTimestamps = new DirectLongList(capacity, MemoryTag.NATIVE_GROUP_BY_FUNCTION);
             }
-            if (!isValueFuncsInitialized) {
-                initValueFuncs(fillValues);
-                isValueFuncsInitialized = true;
-            }
+            initValueFuncs(fillValues);
             assert fillValues.size() <= columnCount : "fillValues.size()=" + fillValues.size() + " exceeds columnCount=" + columnCount;
+            if (hasKeyColumns) {
+                keyMap.reopen();
+            }
             baseRecord = baseCursor.getRecord();
             toTop();
         }
@@ -368,6 +521,10 @@ public class FillRangeRecordCursorFactory extends AbstractRecordCursorFactory {
                 presentTimestamps.sortAsUnsigned();
             }
 
+            if (hasKeyColumns) {
+                deduplicateTimestamps();
+            }
+
             if (presentTimestampsSize > 0) {
                 minTimestamp = Math.min(minTimestamp, presentTimestamps.get(0));
                 maxTimestamp = Math.max(maxTimestamp, presentTimestamps.get(presentTimestampsSize - 1));
@@ -375,6 +532,47 @@ public class FillRangeRecordCursorFactory extends AbstractRecordCursorFactory {
             timestampSampler.setStart(minTimestamp);
             nextBucketTimestamp = minTimestamp;
             presentTimestampsIndex = 0;
+        }
+
+        private void recordKeyValues() {
+            MapKey key = keyMap.withKey();
+            for (int i = 0, n = outputColToKeyMapCol.length; i < n; i++) {
+                int mapCol = outputColToKeyMapCol[i];
+                if (mapCol >= 0) {
+                    switch (ColumnType.tagOf(keyMapColTypes[mapCol])) {
+                        case ColumnType.BOOLEAN -> key.putBool(baseRecord.getBool(i));
+                        case ColumnType.BYTE -> key.putByte(baseRecord.getByte(i));
+                        case ColumnType.CHAR -> key.putChar(baseRecord.getChar(i));
+                        case ColumnType.DATE -> key.putDate(baseRecord.getDate(i));
+                        case ColumnType.DOUBLE -> key.putDouble(baseRecord.getDouble(i));
+                        case ColumnType.FLOAT -> key.putFloat(baseRecord.getFloat(i));
+                        case ColumnType.INT -> key.putInt(baseRecord.getInt(i));
+                        case ColumnType.IPv4 -> key.putIPv4(baseRecord.getIPv4(i));
+                        case ColumnType.LONG -> key.putLong(baseRecord.getLong(i));
+                        case ColumnType.SHORT -> key.putShort(baseRecord.getShort(i));
+                        case ColumnType.STRING -> key.putStr(baseRecord.getStrA(i));
+                        case ColumnType.TIMESTAMP -> key.putTimestamp(baseRecord.getTimestamp(i));
+                        case ColumnType.VARCHAR -> key.putVarchar(baseRecord.getVarcharA(i));
+                        default -> throw CairoException.nonCritical()
+                                .put("unsupported key column type for FILL: ")
+                                .put(ColumnType.nameOf(keyMapColTypes[mapCol]));
+                    }
+                }
+            }
+            key.createValue();
+        }
+
+        private static void validateKeyColumnType(int mapType, int position) throws SqlException {
+            switch (ColumnType.tagOf(mapType)) {
+                case ColumnType.BOOLEAN, ColumnType.BYTE, ColumnType.CHAR,
+                     ColumnType.DATE, ColumnType.DOUBLE, ColumnType.FLOAT,
+                     ColumnType.INT, ColumnType.IPv4, ColumnType.LONG,
+                     ColumnType.SHORT, ColumnType.STRING, ColumnType.TIMESTAMP,
+                     ColumnType.VARCHAR -> {
+                }
+                default -> throw SqlException.$(position, "unsupported key column type for FILL: ")
+                        .put(ColumnType.nameOf(mapType));
+            }
         }
 
         private class FillRangeRecord implements Record {
@@ -409,6 +607,9 @@ public class FillRangeRecordCursorFactory extends AbstractRecordCursorFactory {
             @Override
             public boolean getBool(int col) {
                 if (gapFilling) {
+                    if (isKeyColumn(col)) {
+                        return keyMapRecord.getBool(outputColToKeyMapCol[col]);
+                    }
                     return getFillFunction(col).getBool(null);
                 } else {
                     return baseRecord.getBool(col);
@@ -418,6 +619,9 @@ public class FillRangeRecordCursorFactory extends AbstractRecordCursorFactory {
             @Override
             public byte getByte(int col) {
                 if (gapFilling) {
+                    if (isKeyColumn(col)) {
+                        return keyMapRecord.getByte(outputColToKeyMapCol[col]);
+                    }
                     return getFillFunction(col).getByte(null);
                 } else {
                     return baseRecord.getByte(col);
@@ -427,9 +631,24 @@ public class FillRangeRecordCursorFactory extends AbstractRecordCursorFactory {
             @Override
             public char getChar(int col) {
                 if (gapFilling) {
+                    if (isKeyColumn(col)) {
+                        return keyMapRecord.getChar(outputColToKeyMapCol[col]);
+                    }
                     return getFillFunction(col).getChar(null);
                 } else {
                     return baseRecord.getChar(col);
+                }
+            }
+
+            @Override
+            public long getDate(int col) {
+                if (gapFilling) {
+                    if (isKeyColumn(col)) {
+                        return keyMapRecord.getDate(outputColToKeyMapCol[col]);
+                    }
+                    return getFillFunction(col).getDate(null);
+                } else {
+                    return baseRecord.getDate(col);
                 }
             }
 
@@ -490,6 +709,9 @@ public class FillRangeRecordCursorFactory extends AbstractRecordCursorFactory {
             @Override
             public double getDouble(int col) {
                 if (gapFilling) {
+                    if (isKeyColumn(col)) {
+                        return keyMapRecord.getDouble(outputColToKeyMapCol[col]);
+                    }
                     return getFillFunction(col).getDouble(null);
                 } else {
                     return baseRecord.getDouble(col);
@@ -499,6 +721,9 @@ public class FillRangeRecordCursorFactory extends AbstractRecordCursorFactory {
             @Override
             public float getFloat(int col) {
                 if (gapFilling) {
+                    if (isKeyColumn(col)) {
+                        return keyMapRecord.getFloat(outputColToKeyMapCol[col]);
+                    }
                     return getFillFunction(col).getFloat(null);
                 } else {
                     return baseRecord.getFloat(col);
@@ -544,6 +769,9 @@ public class FillRangeRecordCursorFactory extends AbstractRecordCursorFactory {
             @Override
             public int getIPv4(int col) {
                 if (gapFilling) {
+                    if (isKeyColumn(col)) {
+                        return keyMapRecord.getIPv4(outputColToKeyMapCol[col]);
+                    }
                     return getFillFunction(col).getIPv4(null);
                 } else {
                     return baseRecord.getIPv4(col);
@@ -553,6 +781,9 @@ public class FillRangeRecordCursorFactory extends AbstractRecordCursorFactory {
             @Override
             public int getInt(int col) {
                 if (gapFilling) {
+                    if (isKeyColumn(col)) {
+                        return keyMapRecord.getInt(outputColToKeyMapCol[col]);
+                    }
                     return getFillFunction(col).getInt(null);
                 } else {
                     return baseRecord.getInt(col);
@@ -562,6 +793,9 @@ public class FillRangeRecordCursorFactory extends AbstractRecordCursorFactory {
             @Override
             public long getLong(int col) {
                 if (gapFilling) {
+                    if (isKeyColumn(col)) {
+                        return keyMapRecord.getLong(outputColToKeyMapCol[col]);
+                    }
                     return getFillFunction(col).getLong(null);
                 } else {
                     return baseRecord.getLong(col);
@@ -616,6 +850,9 @@ public class FillRangeRecordCursorFactory extends AbstractRecordCursorFactory {
             @Override
             public short getShort(int col) {
                 if (gapFilling) {
+                    if (isKeyColumn(col)) {
+                        return keyMapRecord.getShort(outputColToKeyMapCol[col]);
+                    }
                     return getFillFunction(col).getShort(null);
                 } else {
                     return baseRecord.getShort(col);
@@ -626,6 +863,9 @@ public class FillRangeRecordCursorFactory extends AbstractRecordCursorFactory {
             @Override
             public @Nullable CharSequence getStrA(int col) {
                 if (gapFilling) {
+                    if (isKeyColumn(col)) {
+                        return keyMapRecord.getStrA(outputColToKeyMapCol[col]);
+                    }
                     return getFillFunction(col).getStrA(null);
                 } else {
                     return baseRecord.getStrA(col);
@@ -635,6 +875,9 @@ public class FillRangeRecordCursorFactory extends AbstractRecordCursorFactory {
             @Override
             public CharSequence getStrB(int col) {
                 if (gapFilling) {
+                    if (isKeyColumn(col)) {
+                        return keyMapRecord.getStrB(outputColToKeyMapCol[col]);
+                    }
                     return getFillFunction(col).getStrB(null);
                 } else {
                     return baseRecord.getStrB(col);
@@ -644,6 +887,9 @@ public class FillRangeRecordCursorFactory extends AbstractRecordCursorFactory {
             @Override
             public int getStrLen(int col) {
                 if (gapFilling) {
+                    if (isKeyColumn(col)) {
+                        return keyMapRecord.getStrLen(outputColToKeyMapCol[col]);
+                    }
                     return getFillFunction(col).getStrLen(null);
                 } else {
                     return baseRecord.getStrLen(col);
@@ -653,6 +899,13 @@ public class FillRangeRecordCursorFactory extends AbstractRecordCursorFactory {
             @Override
             public CharSequence getSymA(int col) {
                 if (gapFilling) {
+                    if (isKeyColumn(col)) {
+                        int symIdx = keyMapRecord.getInt(outputColToKeyMapCol[col]);
+                        if (symIdx == SymbolTable.VALUE_IS_NULL) {
+                            return null;
+                        }
+                        return baseCursor.getSymbolTable(col).valueOf(symIdx);
+                    }
                     return getFillFunction(col).getSymbol(null);
                 } else {
                     return baseRecord.getSymA(col);
@@ -662,6 +915,13 @@ public class FillRangeRecordCursorFactory extends AbstractRecordCursorFactory {
             @Override
             public CharSequence getSymB(int col) {
                 if (gapFilling) {
+                    if (isKeyColumn(col)) {
+                        int symIdx = keyMapRecord.getInt(outputColToKeyMapCol[col]);
+                        if (symIdx == SymbolTable.VALUE_IS_NULL) {
+                            return null;
+                        }
+                        return baseCursor.getSymbolTable(col).valueBOf(symIdx);
+                    }
                     return getFillFunction(col).getSymbolB(null);
                 } else {
                     return baseRecord.getSymB(col);
@@ -673,9 +933,11 @@ public class FillRangeRecordCursorFactory extends AbstractRecordCursorFactory {
                 if (gapFilling) {
                     if (col == timestampIndex) {
                         return nextBucketTimestamp;
-                    } else {
-                        return getFillFunction(col).getLong(null);
                     }
+                    if (isKeyColumn(col)) {
+                        return keyMapRecord.getTimestamp(outputColToKeyMapCol[col]);
+                    }
+                    return getFillFunction(col).getLong(null);
                 } else {
                     return baseRecord.getTimestamp(col);
                 }
@@ -684,6 +946,9 @@ public class FillRangeRecordCursorFactory extends AbstractRecordCursorFactory {
             @Override
             public @Nullable Utf8Sequence getVarcharA(int col) {
                 if (gapFilling) {
+                    if (isKeyColumn(col)) {
+                        return keyMapRecord.getVarcharA(outputColToKeyMapCol[col]);
+                    }
                     return getFillFunction(col).getVarcharA(null);
                 } else {
                     return baseRecord.getVarcharA(col);
@@ -693,6 +958,9 @@ public class FillRangeRecordCursorFactory extends AbstractRecordCursorFactory {
             @Override
             public @Nullable Utf8Sequence getVarcharB(int col) {
                 if (gapFilling) {
+                    if (isKeyColumn(col)) {
+                        return keyMapRecord.getVarcharB(outputColToKeyMapCol[col]);
+                    }
                     return getFillFunction(col).getVarcharB(null);
                 } else {
                     return baseRecord.getVarcharB(col);
@@ -702,6 +970,9 @@ public class FillRangeRecordCursorFactory extends AbstractRecordCursorFactory {
             @Override
             public int getVarcharSize(int col) {
                 if (gapFilling) {
+                    if (isKeyColumn(col)) {
+                        return keyMapRecord.getVarcharSize(outputColToKeyMapCol[col]);
+                    }
                     return getFillFunction(col).getVarcharSize(null);
                 } else {
                     return baseRecord.getVarcharSize(col);
