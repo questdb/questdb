@@ -3270,6 +3270,21 @@ public class SqlCodeGenerator implements Mutable, Closeable {
 
             fillValues = new ObjList<>(fillValuesExprs.size());
 
+            // FILL(NONE) means "do not synthesize fill rows" and is incompatible with
+            // per-aggregate fill values: a query either fills gaps or it does not.
+            // Pre-PR the optimizer gate rejected any sampleByFillSize > 1, so a list
+            // like FILL(NONE, 1) never reached this loop. The new gate accepts
+            // multi-element lists, so reject the mixed form explicitly here rather
+            // than silently dropping the trailing values via the early-return path.
+            if (fillValuesExprs.size() > 1) {
+                for (int i = 0, n = fillValuesExprs.size(); i < n; i++) {
+                    final ExpressionNode e = fillValuesExprs.getQuick(i);
+                    if (isNoneKeyword(e.token)) {
+                        throw SqlException.$(e.position, "FILL(NONE) cannot be combined with other fill values");
+                    }
+                }
+            }
+
             ExpressionNode expr;
             for (int i = 0, n = fillValuesExprs.size(); i < n; i++) {
                 expr = fillValuesExprs.getQuick(i);
