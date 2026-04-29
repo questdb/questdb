@@ -590,6 +590,11 @@ public class TableSnapshotRestore implements QuietCloseable {
                     // seal() can build covering sidecars. BITMAP has no covering
                     // and configureCoveringForPosting is a no-op for it.
                     configureCoveringForPosting(indexer.getWriter(), columnName, tableMetadata, columnVersionReader, partitionTimestamp);
+                    // The restored data is at the snapshot's committed _txn;
+                    // tag the seal's chain entry with that so a subsequent
+                    // recovery walk does not mis-classify the rebuilt index
+                    // as abandoned.
+                    indexer.getWriter().setNextTxnAtSeal(txWriter.getTxn());
                 }
                 indexer.index(ff, columnDataFd, columnTop, partitionRowCount);
                 if (IndexType.isPosting(indexType)) {
@@ -755,7 +760,8 @@ public class TableSnapshotRestore implements QuietCloseable {
                         columnVersionReader,
                         partitionTimestamp,
                         partitionNameTxn,
-                        partitionRowCount
+                        partitionRowCount,
+                        txWriter.getTxn()
                 );
             } catch (CairoException e) {
                 LOG.error().$("could not rebuild bitmap indexes for parquet partition [path=").$(path)
@@ -957,7 +963,8 @@ public class TableSnapshotRestore implements QuietCloseable {
             ColumnVersionReader columnVersionReader,
             long partitionTimestamp,
             long partitionNameTxn,
-            long partitionRowCount
+            long partitionRowCount,
+            long currentTableTxn
     ) {
         final PartitionDecoder.Metadata parquetMetadata = partitionDecoder.metadata();
         final int columnCount = metadata.getColumnCount();
@@ -1110,6 +1117,11 @@ public class TableSnapshotRestore implements QuietCloseable {
             for (int i = 0; i < indexedColumnCount; i++) {
                 final IndexWriter w = indexWriters.get(i);
                 if (IndexType.isPosting(w.getIndexType())) {
+                    // The restored data is at the snapshot's committed _txn;
+                    // tag the seal's chain entry with that so a subsequent
+                    // recovery walk does not mis-classify the rebuilt index
+                    // as abandoned.
+                    w.setNextTxnAtSeal(currentTableTxn);
                     w.seal();
                 } else {
                     w.setMaxValue(partitionRowCount - 1);

@@ -184,6 +184,21 @@ public class IndexBuilder extends RebuildColumnBase {
                         long columnDataFd = TableUtils.openRO(ff, TableUtils.dFile(path.trimTo(plen), columnName, columnNameTxn), LOG);
                         try {
                             indexer.configureWriter(path.trimTo(plen), columnName, columnNameTxn, columnTop, partitionTimestamp, partitionNameTxn);
+                            // REINDEX rebuilds an index for already-committed
+                            // data; tag the seal's chain entry with the current
+                            // _txn (no +1) so a subsequent recovery walk does
+                            // not mis-classify the rebuilt index as abandoned.
+                            // The currentTableTxn field is populated by
+                            // RebuildColumnBase before doReindex runs; if it
+                            // was not set the entry stays at txnAtSeal=-1 and
+                            // publishToChain's assert fires loudly rather than
+                            // silently using the buggy 0L fallback. Must come
+                            // AFTER configureWriter (its inner of(...) close()s
+                            // any prior writer state and the close path resets
+                            // pendingTxnAtSeal).
+                            if (IndexType.isPosting(this.indexType) && currentTableTxn >= 0) {
+                                indexer.getWriter().setNextTxnAtSeal(currentTableTxn);
+                            }
                             // Configure covering BEFORE seal: if the index has
                             // INCLUDE columns, the seal path emits the .pci and
                             // .pc<N>.*.* sidecar files. Without this configure
