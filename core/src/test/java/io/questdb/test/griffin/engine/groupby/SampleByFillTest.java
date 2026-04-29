@@ -1560,13 +1560,8 @@ public class SampleByFillTest extends AbstractCairoTest {
                                         "('Berlin', 6.0, '2024-01-01T02:00:00.000000Z')",
                                 sqlExecutionContext
                         );
-                        TestUtils.assertSql(
+                        assertQueryNoLeakCheck(
                                 compiler,
-                                sqlExecutionContext,
-                                "SELECT ts, city, avg(temp) FROM weather " +
-                                        "SAMPLE BY 1h FILL(NULL) ALIGN TO CALENDAR " +
-                                        "ORDER BY ts, city",
-                                sink,
                                 """
                                         ts\tcity\tavg
                                         2024-01-01T00:00:00.000000Z\tBerlin\t5.0
@@ -1578,15 +1573,17 @@ public class SampleByFillTest extends AbstractCairoTest {
                                         2024-01-01T02:00:00.000000Z\tBerlin\t6.0
                                         2024-01-01T02:00:00.000000Z\tLondon\t11.0
                                         2024-01-01T02:00:00.000000Z\tParis\tnull
-                                        """
-                        );
-                        TestUtils.assertSql(
-                                compiler,
-                                sqlExecutionContext,
-                                "SELECT ts, city, last(temp) AS last FROM weather " +
-                                        "SAMPLE BY 1h FILL(PREV) ALIGN TO CALENDAR " +
+                                        """,
+                                "SELECT ts, city, avg(temp) FROM weather " +
+                                        "SAMPLE BY 1h FILL(NULL) ALIGN TO CALENDAR " +
                                         "ORDER BY ts, city",
-                                sink,
+                                "ts",
+                                true,
+                                sqlExecutionContext,
+                                false
+                        );
+                        assertQueryNoLeakCheck(
+                                compiler,
                                 """
                                         ts\tcity\tlast
                                         2024-01-01T00:00:00.000000Z\tBerlin\t5.0
@@ -1598,7 +1595,14 @@ public class SampleByFillTest extends AbstractCairoTest {
                                         2024-01-01T02:00:00.000000Z\tBerlin\t6.0
                                         2024-01-01T02:00:00.000000Z\tLondon\t11.0
                                         2024-01-01T02:00:00.000000Z\tParis\t21.0
-                                        """
+                                        """,
+                                "SELECT ts, city, last(temp) AS last FROM weather " +
+                                        "SAMPLE BY 1h FILL(PREV) ALIGN TO CALENDAR " +
+                                        "ORDER BY ts, city",
+                                "ts",
+                                true,
+                                sqlExecutionContext,
+                                false
                         );
                     },
                     configuration,
