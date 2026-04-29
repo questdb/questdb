@@ -940,17 +940,14 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
             if (baseCursor.hasNext()) {
                 prevRecord = baseCursor.getRecordB();
                 long firstTs = baseRecord.getTimestamp(timestampIndex);
-                if (fromTs == Numbers.LONG_NULL || firstTs < fromTs) {
-                    nextBucketTimestamp = firstTs;
-                } else {
-                    nextBucketTimestamp = fromTs;
-                }
+                final boolean nextBucketIsFirstTs = (fromTs == Numbers.LONG_NULL || firstTs < fromTs);
+                nextBucketTimestamp = nextBucketIsFirstTs ? firstTs : fromTs;
                 if (calendarOffset != 0 && fromTs == Numbers.LONG_NULL) {
                     // No explicit FROM but offset exists: align sampler grid
                     // to the offset so round() matches timestamp_floor_utc buckets.
                     timestampSampler.setOffset(calendarOffset);
                     nextBucketTimestamp = timestampSampler.round(nextBucketTimestamp);
-                } else if (calendarOffset != 0 && firstTs < fromTs) {
+                } else if (calendarOffset != 0 && nextBucketIsFirstTs) {
                     // firstTs is already a bucket on the floor grid (grid is
                     // anchored at effectiveOffset = fromTs + calendarOffset).
                     // With a non-zero offset the grid can place buckets strictly
@@ -965,38 +962,49 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
                     timestampSampler.setLocalAnchor(fromTs + calendarOffset);
                     // nextBucketTimestamp intentionally unchanged (== firstTs).
                 } else {
-                    // FROM exists or no offset: anchor sampler at
-                    // effectiveOffset = fromTs + calendarOffset to match
-                    // timestamp_floor_utc's grid. Emit the first bucket at the
-                    // smallest grid label whose bucket overlaps [FROM, TO)
-                    // after the WHERE filter rewriteSampleByFromTo injects:
-                    //  - negative offset: round(fromTs) is the bucket
-                    //    containing fromTs; always overlaps FROM via
-                    //    [fromTs, round(fromTs) + stride).
-                    //  - positive offset where effectiveOffset > fromTs: the
+                    // Branch reached when:
+                    //  - firstTs path with calendarOffset == 0 (no FROM
+                    //    or firstTs < fromTs), OR
+                    //  - fromTs path with any calendarOffset (firstTs >=
+                    //    fromTs and fromTs != LONG_NULL).
+                    // Anchor sampler at effectiveOffset = nextBucketTimestamp
+                    // + calendarOffset to match timestamp_floor_utc's grid.
+                    // Emit the first bucket at the smallest grid label
+                    // whose bucket overlaps [FROM, TO) after the WHERE
+                    // filter rewriteSampleByFromTo injects:
+                    //  - negative offset: round(seed) is the bucket
+                    //    containing the seed; always overlaps FROM via
+                    //    [seed, round(seed) + stride).
+                    //  - positive offset where effectiveOffset > seed: the
                     //    GROUP BY's Micros.floor* clamps data <
                     //    effectiveOffset up to effectiveOffset.
                     //    SimpleTimestampSampler.round does not clamp, so
                     //    Math.max reproduces the clamp here.
-                    // The shortcut nextBucketTimestamp = fromTs + offset
-                    // diverges from round(fromTs) when |offset| >= stride and
-                    // produces a leading bucket whose right edge is <= FROM,
-                    // breaking parity with non-FILL fast path.
-                    // setLocalAnchor (rather than setStart) only when calendarOffset
-                    // is non-zero -- the no-offset path relies on
-                    // TimezoneFloorTimestampSampler.setStart applying the UTC->local
-                    // conversion so the local sampler's grid mod-bucket = 0.
-                    // Math.max needs both operands in UTC space. effectiveOffset is
-                    // local-grid only when calendarOffset != 0 (the setLocalAnchor
-                    // branch), so localAnchorAsUtc lifts it to UTC; when
-                    // calendarOffset == 0 the value is already a UTC instant
-                    // (firstTs is a GROUP BY bucket label) and feeding it to
-                    // localAnchorAsUtc would mistreat it as local-grid -- e.g. for
-                    // America/New_York EDT the result would land 4h ahead of
-                    // firstTs and trip the cursor's grid-drift guard.
+                    //
+                    // The setStart-vs-setLocalAnchor split tracks the
+                    // semantic origin of nextBucketTimestamp:
+                    //  - firstTs path: nextBucketTimestamp is a GROUP BY
+                    //    bucket label (a UTC instant on the local grid).
+                    //    TimezoneFloorTimestampSampler.setStart applies
+                    //    the UTC->local conversion so the wrapped sampler
+                    //    anchors at the matching local position. Branch
+                    //    1/2 catch the calendarOffset != 0 sub-cases, so
+                    //    here calendarOffset == 0 and effectiveOffset ==
+                    //    firstTs.
+                    //  - fromTs path: nextBucketTimestamp is the raw user
+                    //    FROM (or fromTs+calendarOffset), which
+                    //    timestamp_floor_utc treats as a local-grid
+                    //    modulus seed without UTC->local conversion.
+                    //    setLocalAnchor forwards untranslated;
+                    //    localAnchorAsUtc lifts the local-grid value back
+                    //    to UTC so Math.max compares operands in the same
+                    //    space.
+                    // Picking setStart on the fromTs path would land the
+                    // local grid at fromTs+tzOff and trip the grid-drift
+                    // guard for westward-TZ data on super-day strides.
                     final long effectiveOffset = nextBucketTimestamp + calendarOffset;
                     final long anchorUtc;
-                    if (calendarOffset == 0) {
+                    if (nextBucketIsFirstTs) {
                         timestampSampler.setStart(effectiveOffset);
                         anchorUtc = effectiveOffset;
                     } else {
@@ -1018,17 +1026,17 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
                     // positive-offset case. FILL must emit one row per grid
                     // label whose bucket overlaps [FROM, TO), independent of
                     // whether the base cursor produced any rows.
-                    // See the calendarOffset == 0 note in the upper branch:
-                    // localAnchorAsUtc only applies on the setLocalAnchor path.
+                    //
+                    // Empty base is always the fromTs path (no firstTs
+                    // exists), so effectiveOffset is in local-grid space
+                    // for any calendarOffset value -- timestamp_floor_utc
+                    // treats from+offset as a raw modulus seed without
+                    // UTC->local conversion. setLocalAnchor forwards
+                    // untranslated; localAnchorAsUtc lifts the seed back
+                    // to UTC so Math.max can clamp in UTC space.
                     final long effectiveOffset = fromTs + calendarOffset;
-                    final long anchorUtc;
-                    if (calendarOffset == 0) {
-                        timestampSampler.setStart(effectiveOffset);
-                        anchorUtc = effectiveOffset;
-                    } else {
-                        timestampSampler.setLocalAnchor(effectiveOffset);
-                        anchorUtc = timestampSampler.localAnchorAsUtc(effectiveOffset);
-                    }
+                    timestampSampler.setLocalAnchor(effectiveOffset);
+                    final long anchorUtc = timestampSampler.localAnchorAsUtc(effectiveOffset);
                     nextBucketTimestamp = Math.max(anchorUtc, timestampSampler.round(fromTs));
                 } else {
                     maxTimestamp = Long.MIN_VALUE;
