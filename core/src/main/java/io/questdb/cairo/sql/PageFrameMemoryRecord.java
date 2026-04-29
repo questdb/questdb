@@ -599,15 +599,6 @@ public class PageFrameMemoryRecord implements Record, StableStringSource, QuietC
         return view;
     }
 
-    private void getLong256(int columnIndex, Long256Acceptor sink) {
-        final long columnAddress = pageAddresses.get(columnOffset + columnIndex);
-        if (columnAddress != 0) {
-            sink.fromAddress(columnAddress + (rowIndex << 5));
-            return;
-        }
-        NullMemoryCMR.INSTANCE.getLong256(0, sink);
-    }
-
     private @NotNull Long256Impl long256A(int columnIndex) {
         Long256Impl long256 = longs256A.getQuiet(columnIndex);
         if (long256 != null) {
@@ -710,6 +701,17 @@ public class PageFrameMemoryRecord implements Record, StableStringSource, QuietC
             return view.of(address + Long.BYTES, len);
         }
         return null;
+    }
+
+    // Subclasses may override (e.g. PageFrameFilteredMemoryRecord routes the index through
+    // getRowIndex(columnIndex) so a late-materialized LONG256 reads at the compacted index).
+    protected void getLong256(int columnIndex, Long256Acceptor sink) {
+        final long columnAddress = pageAddresses.get(columnOffset + columnIndex);
+        if (columnAddress != 0) {
+            sink.fromAddress(columnAddress + (rowIndex << 5));
+            return;
+        }
+        NullMemoryCMR.INSTANCE.getLong256(0, sink);
     }
 
     protected void getLong256(long addr, CharSink<?> sink) {
