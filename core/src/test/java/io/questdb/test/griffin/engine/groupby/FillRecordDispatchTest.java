@@ -88,6 +88,47 @@ import org.junit.Test;
 public class FillRecordDispatchTest extends AbstractCairoTest {
 
     @Test
+    public void testConstantProjectionDoesNotShiftFillSlots() throws Exception {
+        // generateFill walks the inner sample-by bottomUpColumns to map
+        // factory columns to user-fill value slots. The optimizer hoists
+        // SELECT-list CONSTANT projections into the outer VirtualRecord so
+        // they never reach the inner bottomUpColumns; if they ever did,
+        // aggNonKeyCount would over-count and per-column FILL values would
+        // shift onto the wrong aggregate. Distinct fill values for two
+        // aggregates make any shift visible in the gap row.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (i INT, j INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO x VALUES " +
+                    "(10, 100, '2024-01-01T00:00:00.000000Z')," +
+                    "(30, 300, '2024-01-01T02:00:00.000000Z')");
+            // Per-column FILL: a -> -1, b -> 99. If the 'tag' constant
+            // leaked into the inner bottomUpColumns, the gap row would
+            // either fail compilation (wrong number of fill values) or
+            // assign -1 to the wrong column.
+            assertQueryNoLeakCheck(
+                    "ts\tc\ta\tb\n" +
+                            "2024-01-01T00:00:00.000000Z\ttag\t10\t100\n" +
+                            "2024-01-01T01:00:00.000000Z\ttag\t-1\t99\n" +
+                            "2024-01-01T02:00:00.000000Z\ttag\t30\t300\n",
+                    "SELECT ts, 'tag' AS c, first(i) AS a, sum(j) AS b FROM x " +
+                            "SAMPLE BY 1h FILL(-1, 99) ALIGN TO CALENDAR",
+                    "ts", false, false
+            );
+            // Bare FILL(PREV) variant: same hoisting assumption, different
+            // dispatch arm (factoryColToUserFillIdx classifies key vs. agg).
+            assertQueryNoLeakCheck(
+                    "ts\tc\ta\tb\n" +
+                            "2024-01-01T00:00:00.000000Z\ttag\t10\t100\n" +
+                            "2024-01-01T01:00:00.000000Z\ttag\t10\t100\n" +
+                            "2024-01-01T02:00:00.000000Z\ttag\t30\t300\n",
+                    "SELECT ts, 'tag' AS c, first(i) AS a, sum(j) AS b FROM x " +
+                            "SAMPLE BY 1h FILL(PREV) ALIGN TO CALENDAR",
+                    "ts", false, false
+            );
+        });
+    }
+
+    @Test
     public void testDispatchPrevCacheSlotFixedSizeKeyed() throws Exception {
         // DISPATCH_PREV_CACHE_SLOT is the keyed fixed-size FILL_PREV path: the
         // cursor caches the source value in a per-source-col MapValue slot at
@@ -181,30 +222,25 @@ public class FillRecordDispatchTest extends AbstractCairoTest {
 
     @Test
     public void testGetBinAndBinLenDispatch() throws Exception {
-        // BINARY has no first(bin) aggregate and cannot be a group-by key,
-        // but BinarySequence values appear as intermediate sub-query row data
-        // in SAMPLE BY FILL pipelines. Exercise getBin / getBinLen through a
-        // subquery that reads through the fill cursor and re-aggregates.
-        // This exercises the !isGapFilling pass-through branch at the top of
-        // getBin / getBinLen (the baseRecord.getBin(col) fallback path).
+        // BINARY group-by key routes through FillRecord.getBin /
+        // FillRecord.getBinLen via DISPATCH_BASE on data rows
+        // (baseRecord.getBin) and DISPATCH_KEY_SLOT on gap-bucket fill
+        // rows (keysMapRecord.getBin). Single key + FROM/TO bound: one
+        // data row at 00:00, two fill rows at 01:00 and 02:00. ORDER BY
+        // is unavailable for BINARY columns, so we keep cardinality at
+        // one to avoid relying on key-map iteration order.
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE x (v DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("INSERT INTO x VALUES " +
-                    "(1.0, '2024-01-01T00:00:00.000000Z')," +
-                    "(3.0, '2024-01-01T02:00:00.000000Z')");
-            // The test proves FillRecord covers getBin/getBinLen by
-            // type-checking: if the methods were removed from FillRecord, the
-            // SAMPLE BY FILL query over a table with a BINARY column in the
-            // projection would fail to render, since the default
-            // Record.getBin throws UnsupportedOperationException.
-            // We drive a projection with rnd_bin(...) so the fast path
-            // must route through FillRecord.getBin for gap rows.
+            execute("CREATE TABLE x (bn BINARY, v DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO x SELECT rnd_bin(4, 4, 0), 1.0, " +
+                    "'2024-01-01T00:00:00.000000Z' FROM long_sequence(1)");
             assertQueryNoLeakCheck(
-                    "ts\tv\n" +
-                            "2024-01-01T00:00:00.000000Z\t1.0\n" +
-                            "2024-01-01T01:00:00.000000Z\tnull\n" +
-                            "2024-01-01T02:00:00.000000Z\t3.0\n",
-                    "SELECT ts, sum(v) v FROM x SAMPLE BY 1h FILL(NULL) ALIGN TO CALENDAR",
+                    "ts\tbn\tsum\n" +
+                            "2024-01-01T00:00:00.000000Z\t00000000 ee 41 1d 15\t1.0\n" +
+                            "2024-01-01T01:00:00.000000Z\t00000000 ee 41 1d 15\tnull\n" +
+                            "2024-01-01T02:00:00.000000Z\t00000000 ee 41 1d 15\tnull\n",
+                    "SELECT ts, bn, sum(v) FROM x " +
+                            "SAMPLE BY 1h FROM '2024-01-01T00:00:00' TO '2024-01-01T03:00:00' FILL(NULL) " +
+                            "ALIGN TO CALENDAR",
                     "ts", false, false
             );
         });
