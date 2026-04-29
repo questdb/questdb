@@ -71,6 +71,14 @@ public final class PostingIndexChainWriter {
     private long entryCount;
     private long genCounter;
     private long headEntryOffset;
+    // Cached sealTxn of the current head entry. Distinct from genCounter:
+    // recoveryDropAbandoned can rewind headEntryOffset to a surviving
+    // entry whose sealTxn is below the high-water genCounter (it cannot
+    // safely rewind genCounter itself because dropped sealTxn .pv files
+    // are still on disk awaiting purge). publishToChain consults this
+    // instead of genCounter so post-recovery writes extend the survivor
+    // rather than tripping the appendNewEntry monotonicity assertion.
+    private long headSealTxn;
     private long regionBase;
     private long regionLimit;
 
@@ -146,6 +154,7 @@ public final class PostingIndexChainWriter {
         regionLimit = newRegionLimit;
         entryCount++;
         genCounter = sealTxn;
+        headSealTxn = sealTxn;
         currentTxnAtSeal = txnAtSeal;
         activePageOffset = PostingIndexChainHeader.publish(
                 keyMem,
@@ -235,6 +244,17 @@ public final class PostingIndexChainWriter {
 
     public long getHeadEntryOffset() {
         return headEntryOffset;
+    }
+
+    /**
+     * Returns the sealTxn of the current head entry, or -1 if the chain
+     * is empty. This may be lower than {@link #getGenCounter()} after
+     * {@link #recoveryDropAbandoned} rewinds the head past abandoned
+     * entries; the high-water genCounter is preserved so dropped
+     * sealTxns are not reused while their .pv files await purge.
+     */
+    public long getHeadSealTxn() {
+        return headSealTxn;
     }
 
     public long getRegionBase() {
@@ -333,8 +353,10 @@ public final class PostingIndexChainWriter {
         if (headEntryOffset != PostingIndexUtils.V2_NO_HEAD) {
             PostingIndexChainEntry.read(keyMem, headEntryOffset, entryScratch);
             currentTxnAtSeal = entryScratch.txnAtSeal;
+            headSealTxn = entryScratch.sealTxn;
         } else {
             currentTxnAtSeal = -1L;
+            headSealTxn = -1L;
         }
     }
 
@@ -421,8 +443,10 @@ public final class PostingIndexChainWriter {
         if (newHead != PostingIndexUtils.V2_NO_HEAD) {
             PostingIndexChainEntry.read(keyMem, newHead, entryScratch);
             currentTxnAtSeal = entryScratch.txnAtSeal;
+            headSealTxn = entryScratch.sealTxn;
         } else {
             currentTxnAtSeal = -1L;
+            headSealTxn = -1L;
         }
         Unsafe.storeFence();
         activePageOffset = PostingIndexChainHeader.publish(
@@ -454,6 +478,7 @@ public final class PostingIndexChainWriter {
         // convention. Callers wanting a different starting sealTxn must use
         // initialiseEmpty(MemoryW, long) which overrides this.
         genCounter = -1L;
+        headSealTxn = -1L;
         currentTxnAtSeal = -1L;
     }
 

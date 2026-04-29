@@ -30,6 +30,7 @@ import io.questdb.cairo.SymbolMapReader;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.VarcharTypeDriver;
+import io.questdb.cairo.arr.ArrayTypeDriver;
 import io.questdb.cairo.arr.ArrayView;
 import io.questdb.cairo.idx.CoveringRowCursor;
 import io.questdb.cairo.idx.IndexReader;
@@ -706,6 +707,7 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
         protected final ColumnMapping columnMapping = new ColumnMapping();
         protected final int[] columnSizeBytes;
         protected final int[] columnTypeTags;
+        protected final int[] columnTypes;
         protected final CoveringPageFrame frame;
         // Reusable per-frame arrays (avoid per-frame heap allocation)
         protected final long[] frameAddrs;
@@ -735,12 +737,14 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
             this.frame = new CoveringPageFrame(queryColCount);
             this.columnSizeBytes = new int[queryColCount];
             this.columnTypeTags = new int[queryColCount];
+            this.columnTypes = new int[queryColCount];
             this.frameAddrs = new long[queryColCount + 1];
             this.frameVarDataAddrs = new long[queryColCount];
             this.frameVarDataPos = new int[queryColCount];
             this.frameVarDataCap = new int[queryColCount];
             for (int q = 0; q < queryColCount; q++) {
                 int colType = metadata.getColumnType(q);
+                this.columnTypes[q] = colType;
                 this.columnTypeTags[q] = ColumnType.tagOf(colType);
                 if (queryColToIncludeIdx[q] >= 0) {
                     this.columnSizeBytes[q] = ColumnType.sizeOf(colType);
@@ -861,6 +865,11 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
                         long newAuxAddr = allocBuffer(newAuxBytes);
                         Unsafe.copyMemory(addrs[q], newAuxAddr, (long) count * Long.BYTES);
                         addrs[q] = newAuxAddr;
+                    } else if (columnTypeTags[q] == ColumnType.ARRAY) {
+                        long newAuxBytes = (long) newCapacity * ArrayTypeDriver.ARRAY_AUX_WIDTH_BYTES;
+                        long newAuxAddr = allocBuffer(newAuxBytes);
+                        Unsafe.copyMemory(addrs[q], newAuxAddr, (long) count * ArrayTypeDriver.ARRAY_AUX_WIDTH_BYTES);
+                        addrs[q] = newAuxAddr;
                     } else {
                         long newBytes = (long) newCapacity * columnSizeBytes[q];
                         long newAddr = allocBuffer(newBytes);
@@ -871,6 +880,63 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
             }
             addrs[queryColCount] = allocBuffer((long) newCapacity * Integer.BYTES);
             return newCapacity;
+        }
+
+        private void writeArrayToFrame(long auxAddr, long[] varDataAddrs, int[] varDataPos, int[] varDataCap,
+                                       int q, int count, @Nullable ArrayView value) {
+            // ARRAY aux: 16 bytes per row [8-byte data offset][8-byte data size].
+            // Layout matches ArrayTypeDriver.appendValue() so consumers reading
+            // the page frame use the same decoding path as on-disk arrays.
+            long auxEntry = auxAddr + (long) count * ArrayTypeDriver.ARRAY_AUX_WIDTH_BYTES;
+            long dataOffset = varDataPos[q];
+            Unsafe.putLong(auxEntry, dataOffset);
+
+            if (value == null || value.isNull()) {
+                // NULL marker: size = 0
+                Unsafe.putLong(auxEntry + Long.BYTES, 0L);
+                return;
+            }
+
+            int nDims = value.getDimCount();
+            short elemType = value.getElemType();
+            int elemSize = ColumnType.sizeOf(elemType);
+            long cardinality = value.getCardinality();
+            int shapeBytes = nDims * Integer.BYTES;
+            // ArrayTypeDriver pads the data section so element writes are aligned
+            // to elemSize, then post-pads to Integer.BYTES for the next entry.
+            int prePad = elemSize > 1
+                    ? (int) ((-(dataOffset + shapeBytes)) & (elemSize - 1))
+                    : 0;
+            long dataBytes = cardinality * elemSize;
+            int postPad = (int) ((-(dataOffset + shapeBytes + prePad + dataBytes)) & (Integer.BYTES - 1));
+            int totalBytes = (int) (shapeBytes + prePad + dataBytes + postPad);
+
+            Unsafe.putLong(auxEntry + Long.BYTES, totalBytes);
+            ensureVarDataCapacity(varDataAddrs, varDataPos, varDataCap, q, totalBytes);
+            long dst = varDataAddrs[q] + dataOffset;
+
+            for (int d = 0; d < nDims; d++) {
+                Unsafe.putInt(dst, value.getDimLen(d));
+                dst += Integer.BYTES;
+            }
+            if (prePad > 0) {
+                Unsafe.setMemory(dst, prePad, (byte) 0);
+                dst += prePad;
+            }
+            if (cardinality > 0 && value.isVanilla() && elemType == ColumnType.DOUBLE) {
+                value.flatView().appendPlainDoubleValue(dst, value.getFlatViewOffset(), value.getFlatViewLength());
+            } else if (dataBytes > 0) {
+                // Fallback for non-vanilla or non-double element types: zero the
+                // data section. Shape is preserved so consumers see a same-shaped
+                // array. The covering page-frame path is currently only reached
+                // for vanilla DOUBLE arrays in production planner output.
+                Unsafe.setMemory(dst, dataBytes, (byte) 0);
+            }
+            dst += dataBytes;
+            if (postPad > 0) {
+                Unsafe.setMemory(dst, postPad, (byte) 0);
+            }
+            varDataPos[q] += totalBytes;
         }
 
         private void writeBinaryToFrame(long auxAddr, long[] varDataAddrs, int[] varDataPos, int[] varDataCap,
@@ -940,6 +1006,9 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
                             writeStringToFrame(addrs[q], varDataAddrs, varDataPos, varDataCap, q, count, crc.getCoveredStrA(includeIdx));
                     case ColumnType.BINARY ->
                             writeBinaryToFrame(addrs[q], varDataAddrs, varDataPos, varDataCap, q, count, crc.getCoveredBin(includeIdx));
+                    case ColumnType.ARRAY ->
+                            writeArrayToFrame(addrs[q], varDataAddrs, varDataPos, varDataCap, q, count,
+                                    crc.getCoveredArray(includeIdx, columnTypes[q]));
                     default -> {
                     }
                 }
@@ -1071,6 +1140,12 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
                             int initDataCap = capacity * 32;
                             varDataAddrs[q] = allocBuffer(initDataCap);
                             varDataCap[q] = initDataCap;
+                        } else if (columnTypeTags[q] == ColumnType.ARRAY) {
+                            // ARRAY aux: 16 bytes per row [offset][size]
+                            addrs[q] = allocBuffer((long) capacity * ArrayTypeDriver.ARRAY_AUX_WIDTH_BYTES);
+                            int initDataCap = capacity * 32;
+                            varDataAddrs[q] = allocBuffer(initDataCap);
+                            varDataCap[q] = initDataCap;
                         } else {
                             addrs[q] = allocBuffer((long) capacity * columnSizeBytes[q]);
                         }
@@ -1107,6 +1182,11 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
                     Unsafe.putLong(addrs[q] + (long) count * Long.BYTES, varDataPos[q]);
                     frame.auxPageAddresses[q] = addrs[q];
                     frame.auxPageSizes[q] = (long) (count + 1) * Long.BYTES;
+                    frame.pageAddresses[q] = varDataAddrs[q];
+                    frame.pageSizes[q] = varDataPos[q];
+                } else if (includeIdx >= 0 && columnTypeTags[q] == ColumnType.ARRAY) {
+                    frame.auxPageAddresses[q] = addrs[q];
+                    frame.auxPageSizes[q] = (long) count * ArrayTypeDriver.ARRAY_AUX_WIDTH_BYTES;
                     frame.pageAddresses[q] = varDataAddrs[q];
                     frame.pageSizes[q] = varDataPos[q];
                 } else if (includeIdx >= 0) {

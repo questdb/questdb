@@ -60,11 +60,13 @@ import io.questdb.std.ObjList;
 import io.questdb.std.Unsafe;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
+import io.questdb.std.str.Utf8Sequence;
 import io.questdb.std.str.Utf8s;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.std.TestFilesFacadeImpl;
 import io.questdb.test.tools.TestUtils;
 import org.jetbrains.annotations.NotNull;
+import org.junit.Assert;
 import org.junit.Test;
 
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -7248,16 +7250,20 @@ public class CoveringIndexTest extends AbstractCairoTest {
             );
 
             assertQueryNoLeakCheck(
-                    "label\tpayload\n" +
-                            "label_text_with_some_repeating_words_lorem_ipsum_dolor_sit_amet_499\t" +
-                            "string_payload_with_repeating_text_lorem_ipsum_dolor_sit_amet_consectetur_499\n",
+                    """
+                            label\tpayload
+                            label_text_with_some_repeating_words_lorem_ipsum_dolor_sit_amet_499\t\
+                            string_payload_with_repeating_text_lorem_ipsum_dolor_sit_amet_consectetur_499
+                            """,
                     "SELECT label, payload FROM t_fsst WHERE sym = 'A' LATEST ON ts PARTITION BY sym",
                     null, false, false
             );
             assertQueryNoLeakCheck(
-                    "label\tpayload\n" +
-                            "label_text_with_some_repeating_words_lorem_ipsum_dolor_sit_amet_500\t" +
-                            "string_payload_with_repeating_text_lorem_ipsum_dolor_sit_amet_consectetur_500\n",
+                    """
+                            label\tpayload
+                            label_text_with_some_repeating_words_lorem_ipsum_dolor_sit_amet_500\t\
+                            string_payload_with_repeating_text_lorem_ipsum_dolor_sit_amet_consectetur_500
+                            """,
                     "SELECT label, payload FROM t_fsst WHERE sym = 'B' LATEST ON ts PARTITION BY sym",
                     null, false, false
             );
@@ -9088,7 +9094,7 @@ public class CoveringIndexTest extends AbstractCairoTest {
                 try {
                     long base = 1_700_000_000_000_000L;
                     for (int i = 0; i < rowCount; i++) {
-                        Unsafe.getUnsafe().putLong(tsAddr + (long) i * Long.BYTES, base + i * 1_000_000L);
+                        Unsafe.putLong(tsAddr + (long) i * Long.BYTES, base + i * 1_000_000L);
                     }
 
                     try (PostingIndexWriter writer = new PostingIndexWriter(
@@ -9282,6 +9288,59 @@ public class CoveringIndexTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testPageFrameCursor_ArrayWrite() throws Exception {
+        // Drives ARRAY column path of the page-frame cursor through a SELECT
+        // that resolves to CoveringIndexRecordCursorFactory and then asks for
+        // its PageFrameCursor directly. writeCoveredRow's switch lacks an arm
+        // for ColumnType.ARRAY, so the row loop falls into default -> {} and
+        // never writes aux/data. fillFrameForKey then takes the generic
+        // includeIdx >= 0 branch and pins auxPageAddresses[q] = 0,
+        // auxPageSizes[q] = 0, pageSizes[q] = 0 (TYPE_SIZE[ARRAY] is 0).
+        // A consumer reading the frame sees an aux address of 0 and decodes
+        // empty arrays for every row.
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE t_pf_arr (
+                        ts TIMESTAMP,
+                        sym SYMBOL INDEX TYPE POSTING INCLUDE (vals),
+                        vals DOUBLE[]
+                    ) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL
+                    """);
+            execute("""
+                    INSERT INTO t_pf_arr
+                    SELECT
+                        '2024-01-01T00:00:00'::TIMESTAMP + x * 1_000_000L,
+                        'A',
+                        ARRAY[x::DOUBLE, (x + 1)::DOUBLE, (x + 2)::DOUBLE]
+                    FROM long_sequence(10)
+                    """);
+            engine.releaseAllWriters();
+
+            try (var factory = select("SELECT sym, vals FROM t_pf_arr WHERE sym = 'A'");
+                 PageFrameCursor cursor = factory.getPageFrameCursor(sqlExecutionContext, PartitionFrameCursorFactory.ORDER_ASC)) {
+                long rows = 0;
+                PageFrame f;
+                while ((f = cursor.next(0)) != null) {
+                    long count = f.getPartitionHi() - f.getPartitionLo();
+                    rows += count;
+                    // 'vals' is column index 1 in the projection (sym is 0).
+                    // Each row inserts a 3-element double array, so the frame
+                    // must carry an aux entry per row (16 bytes per row,
+                    // matching ArrayTypeDriver.ARRAY_AUX_WIDTH_BYTES) and a
+                    // non-empty data page holding the array bytes.
+                    assertNotEquals("ARRAY aux page address should be populated",
+                            0L, f.getAuxPageAddress(1));
+                    assertEquals("ARRAY aux page size should be 16 bytes per row",
+                            16L * count, f.getAuxPageSize(1));
+                    assertTrue("ARRAY data page size should be non-zero",
+                            f.getPageSize(1) > 0);
+                }
+                assertEquals(10, rows);
+            }
+        });
+    }
+
+    @Test
     public void testPageFrameCursor_MultiPartition() throws Exception {
         assertMemoryLeak(() -> {
             execute("""
@@ -9410,10 +9469,12 @@ public class CoveringIndexTest extends AbstractCairoTest {
             // testSymbolAPI (which checks that getInt on the indexed sym
             // column returns its resolved key).
             assertQueryNoLeakCheck(
-                    "sym\tprice\n" +
-                            "A\t10.0\n" +
-                            "A\t11.0\n" +
-                            "A\t12.0\n",
+                    """
+                            sym\tprice
+                            A\t10.0
+                            A\t11.0
+                            A\t12.0
+                            """,
                     "SELECT sym, price FROM t_pf_lifecycle WHERE sym = 'A'",
                     null,
                     false,
@@ -9621,9 +9682,11 @@ public class CoveringIndexTest extends AbstractCairoTest {
             // Including ts (uncovered) here would fall back to a regular scan.
             String allTypesSelect = "SELECT sym, b, sh, i, l, ts_inc, dt, f, d, c, bo, ip, uuid_col, l256, d8, d16, d32, d64, d128, d256, gb, gs, gi, gl, label, name, payload, kind FROM t_all_types WHERE sym = 'A'";
             assertQueryNoLeakCheck(
-                    "sym\tb\tsh\ti\tl\tts_inc\tdt\tf\td\tc\tbo\tip\tuuid_col\tl256\td8\td16\td32\td64\td128\td256\tgb\tgs\tgi\tgl\tlabel\tname\tpayload\tkind\n" +
-                            "A\t7\t1234\t99\t1000000\t2024-06-15T10:30:00.000000Z\t2024-06-15T00:00:00.000Z\t1.5\t2.25\tX\ttrue\t10.0.0.1\t00000000-0000-0000-0000-000000000001\t0x0a\t1.5\t12.34\t1234567.89\t12345678901234.5678\t1234567890123456789012345678.1234567890\t12345678901234567890123456789012345.67890\ty\tyz\tyzbc\tyzbc1234\talice\tva\t\tk1\n" +
-                            "A\t0\t0\tnull\tnull\t\t\tnull\tnull\t\tfalse\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\n",
+                    """
+                            sym\tb\tsh\ti\tl\tts_inc\tdt\tf\td\tc\tbo\tip\tuuid_col\tl256\td8\td16\td32\td64\td128\td256\tgb\tgs\tgi\tgl\tlabel\tname\tpayload\tkind
+                            A\t7\t1234\t99\t1000000\t2024-06-15T10:30:00.000000Z\t2024-06-15T00:00:00.000Z\t1.5\t2.25\tX\ttrue\t10.0.0.1\t00000000-0000-0000-0000-000000000001\t0x0a\t1.5\t12.34\t1234567.89\t12345678901234.5678\t1234567890123456789012345678.1234567890\t12345678901234567890123456789012345.67890\ty\tyz\tyzbc\tyzbc1234\talice\tva\t\tk1
+                            A\t0\t0\tnull\tnull\t\t\tnull\tnull\t\tfalse\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t
+                            """,
                     allTypesSelect,
                     null,
                     false,
@@ -10711,7 +10774,9 @@ public class CoveringIndexTest extends AbstractCairoTest {
             try (var factory = select("SHOW CREATE TABLE t_drop_all");
                  var cursor = factory.getCursor(sqlExecutionContext)) {
                 assertTrue(cursor.hasNext());
-                ddl = cursor.getRecord().getVarcharA(0).toString();
+                Utf8Sequence varchar = cursor.getRecord().getVarcharA(0);
+                Assert.assertNotNull(varchar);
+                ddl = varchar.toString();
             }
             assertFalse("SHOW CREATE TABLE produced invalid INCLUDE () in: " + ddl,
                     ddl.contains("INCLUDE ()"));

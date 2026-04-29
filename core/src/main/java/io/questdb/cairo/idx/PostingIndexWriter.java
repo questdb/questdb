@@ -982,8 +982,11 @@ public class PostingIndexWriter implements IndexWriter {
         int gen0KeyCount = keyMem.getInt(gen0DirOffset + PostingIndexUtils.GEN_DIR_OFFSET_KEY_COUNT);
         if (gen0KeyCount >= 0) {
             // Already dense — just rewrite sidecars at a new sealTxn.
+            // peekNextSealTxn(), not sealTxn+1: after a recovery drop the
+            // writer's sealTxn lags genCounter, and reusing a dropped
+            // sealTxn would race the still-pending .pv purge.
             final long oldSealTxn = sealTxn;
-            final long newSealTxn = Math.max(1, sealTxn + 1);
+            final long newSealTxn = Math.max(1, chain.peekNextSealTxn());
             if (partitionPath.size() > 0) {
                 openSidecarFiles(Path.getThreadLocal(partitionPath), indexName, postingColumnNameTxn, newSealTxn);
             }
@@ -1068,8 +1071,11 @@ public class PostingIndexWriter implements IndexWriter {
             return;
         }
 
+        // peekNextSealTxn(), not sealTxn+1: after a recovery drop the
+        // writer's sealTxn lags genCounter, and reusing a dropped
+        // sealTxn would race the still-pending .pv purge.
         final long oldSealTxn = sealTxn;
-        final long newSealTxn = Math.max(1, sealTxn + 1);
+        final long newSealTxn = Math.max(1, chain.peekNextSealTxn());
 
         // Incremental seal: gen 0 dense covering every current key, all later
         // gens sparse, and path-based (sealIncremental writes a fresh .pv via
@@ -1258,8 +1264,11 @@ public class PostingIndexWriter implements IndexWriter {
             // concurrent readers with active mmaps don't SIGBUS.
             // If the new file open fails, valueMem is left closed — the writer
             // is degraded but safe to close() without further I/O errors.
+            // peekNextSealTxn(), not sealTxn+1: after a recovery drop the
+            // writer's sealTxn lags genCounter, and reusing a dropped
+            // sealTxn would race the still-pending .pv purge.
             final long oldSealTxn = sealTxn;
-            final long newTxn = Math.max(1, sealTxn + 1);
+            final long newTxn = Math.max(1, chain.peekNextSealTxn());
             // Drop sidecar mappings tied to oldSealTxn — the next seal will
             // re-open them at the new sealTxn.
             closeSidecarMems();
@@ -2956,7 +2965,10 @@ public class PostingIndexWriter implements IndexWriter {
 
                 // Re-encode into stride-indexed format in a new .pv file.
                 // The old .pv stays on disk for concurrent readers.
-                long newTxn = Math.max(1, sealTxn + 1);
+                // peekNextSealTxn(), not sealTxn+1: after a recovery drop
+                // the writer's sealTxn lags genCounter, and reusing a
+                // dropped sealTxn would race the still-pending .pv purge.
+                long newTxn = Math.max(1, chain.peekNextSealTxn());
                 if (partitionPath.size() > 0) {
                     openSealValueFile(newTxn);
                 } else {
@@ -3478,8 +3490,11 @@ public class PostingIndexWriter implements IndexWriter {
         // with active mmaps on the old .pv don't SIGSEGV. Allocate the rollback
         // sealTxn the same way seal() does so the new .pv stays distinct from
         // any prior sealed generation on disk.
+        // peekNextSealTxn(), not sealTxn+1: after a recovery drop the
+        // writer's sealTxn lags genCounter, and reusing a dropped
+        // sealTxn would race the still-pending .pv purge.
         final long oldSealTxn = sealTxn;
-        final long newSealTxn = Math.max(1, sealTxn + 1);
+        final long newSealTxn = Math.max(1, chain.peekNextSealTxn());
         reencodeAllGenerations(newSealTxn, maxValue, maxValue);
         // Skip when reencode bypassed via truncate() — that path already
         // recorded its own purge entry.
@@ -4043,12 +4058,19 @@ public class PostingIndexWriter implements IndexWriter {
                                 long overrideFileOffset, long overrideSize,
                                 int overrideKeyCount, int overrideMinKey, int overrideMaxKey) {
         // The writer's sealTxn always points at the .pv file currently
-        // mapped through valueMem. When chain.getGenCounter() == sealTxn
+        // mapped through valueMem. When chain.getHeadSealTxn() == sealTxn
         // (head matches the same .pv file) we extend the head entry. When
-        // sealTxn advances past genCounter (path-based seal switched .pv),
+        // sealTxn advances past the head's sealTxn (a seal switched .pv),
         // we append a fresh entry. The same applies to the empty-chain
-        // case (genCounter < sealTxn) — first flush after init/truncate.
-        boolean newEntry = !chain.hasHead() || this.sealTxn != chain.getGenCounter();
+        // case (headSealTxn = -1 < sealTxn) — first flush after init/
+        // truncate. The comparison is against the head's sealTxn rather
+        // than chain.getGenCounter() because recoveryDropAbandoned can
+        // leave the chain with headSealTxn < genCounter (the dropped
+        // sealTxn .pv files are still on disk awaiting purge, so
+        // genCounter cannot be safely rewound). Using genCounter here
+        // would force a newEntry append at this.sealTxn = head.sealTxn,
+        // tripping the appendNewEntry monotonicity assertion.
+        boolean newEntry = !chain.hasHead() || this.sealTxn != chain.getHeadSealTxn();
         long entryBase = newEntry ? chain.getRegionLimit() : chain.getHeadEntryOffset();
 
         long dirOffset = PostingIndexChainEntry.resolveGenDirOffset(entryBase, overrideGenIndex);
