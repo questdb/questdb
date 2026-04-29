@@ -446,7 +446,7 @@ public class LongGroupByFunctionBatchTest {
         lastSize = (long) values.length * Long.BYTES;
         lastAllocated = Unsafe.malloc(lastSize, MemoryTag.NATIVE_DEFAULT);
         for (int i = 0; i < values.length; i++) {
-            Unsafe.getUnsafe().putLong(lastAllocated + (long) i * Long.BYTES, values[i]);
+            Unsafe.putLong(lastAllocated + (long) i * Long.BYTES, values[i]);
         }
         return lastAllocated;
     }
