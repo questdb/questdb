@@ -26,6 +26,7 @@ package io.questdb.test.cutlass.qwp.e2e;
 
 import io.questdb.cairo.GeoHashes;
 import io.questdb.client.Sender;
+import io.questdb.client.SenderError;
 import io.questdb.client.cutlass.line.LineSenderException;
 import io.questdb.client.cutlass.qwp.client.QwpWebSocketSender;
 import io.questdb.client.cutlass.qwp.protocol.QwpTableBuffer;
@@ -40,6 +41,7 @@ import org.junit.runners.Parameterized;
 import java.time.temporal.ChronoUnit;
 import java.util.Arrays;
 import java.util.Collection;
+import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.TimeUnit;
 
 import static io.questdb.client.cutlass.qwp.protocol.QwpConstants.TYPE_DATE;
@@ -55,9 +57,10 @@ import static io.questdb.client.cutlass.qwp.protocol.QwpConstants.TYPE_GEOHASH;
  * Tests verify that data sent via QwpWebSocketSender over WebSocket is correctly
  * written to QuestDB tables and can be queried.
  * <p>
- * Tests are parametrized to run with different window sizes:
- * - windowSize=1 for sync behavior (no I/O thread, direct send + waitForAck)
- * - windowSize=8 for async behavior (I/O thread, sendQueue, double buffers)
+ * Tests are parametrized over in-flight window sizes. Sync mode (window=1)
+ * is no longer offered by the client's public {@code Sender.fromConfig} API
+ * (WebSocket transport requires async mode), so only async window sizes
+ * are exercised here.
  */
 @RunWith(Parameterized.class)
 public class QwpWebSocketSenderReceiverTest extends AbstractQwpWebSocketTest {
@@ -72,7 +75,6 @@ public class QwpWebSocketSenderReceiverTest extends AbstractQwpWebSocketTest {
     @Parameterized.Parameters(name = "windowSize={0}")
     public static Collection<Object[]> data() {
         return Arrays.asList(new Object[][]{
-                {1},   // window=1 (sync behavior)
                 {8}    // window=8 (async behavior)
         });
     }
@@ -586,14 +588,11 @@ public class QwpWebSocketSenderReceiverTest extends AbstractQwpWebSocketTest {
 
         runInContext((port) -> {
             // 1024 byte threshold; row-count and interval triggers disabled
-            try (QwpWebSocketSender sender = QwpWebSocketSender.connect(
-                    "localhost", port, null,
-                    Integer.MAX_VALUE,                      // autoFlushRows: disabled
-                    1024,                                   // autoFlushBytes: 1 KB
-                    TimeUnit.HOURS.toNanos(1),      // autoFlushInterval: disabled
-                    windowSize,
-                    null
-            )) {
+            try (QwpWebSocketSender sender = connectWs(port,
+                    Integer.MAX_VALUE,
+                    1024,
+                    TimeUnit.HOURS.toNanos(1),
+                    windowSize)) {
                 // ~200 bytes per row; 20 rows = ~4 KB >> 1 KB threshold
                 String largePayload = "A".repeat(180);
                 for (int i = 0; i < 20; i++) {
@@ -632,14 +631,11 @@ public class QwpWebSocketSenderReceiverTest extends AbstractQwpWebSocketTest {
 
         runInContext((port) -> {
             // 50 ms interval; row-count and byte triggers disabled
-            try (QwpWebSocketSender sender = QwpWebSocketSender.connect(
-                    "localhost", port, null,
-                    Integer.MAX_VALUE,                      // autoFlushRows: disabled
-                    Integer.MAX_VALUE,                      // autoFlushBytes: disabled
-                    TimeUnit.MILLISECONDS.toNanos(50),      // autoFlushInterval: 50 ms
-                    windowSize,
-                    null
-            )) {
+            try (QwpWebSocketSender sender = connectWs(port,
+                    Integer.MAX_VALUE,
+                    Integer.MAX_VALUE,
+                    TimeUnit.MILLISECONDS.toNanos(50),
+                    windowSize)) {
                 // Send first row — stays buffered (interval hasn't elapsed yet)
                 sender.table("ws_autoflush_interval")
                         .longColumn("value", 1)
@@ -1101,14 +1097,11 @@ public class QwpWebSocketSenderReceiverTest extends AbstractQwpWebSocketTest {
         Assume.assumeTrue("Async mode only (window > 1)", windowSize > 1);
 
         runInContext((port) -> {
-            try (QwpWebSocketSender sender = QwpWebSocketSender.connect(
-                    "localhost", port, null,
-                    5,                              // autoFlushRows = 5: small batches
-                    Integer.MAX_VALUE,              // autoFlushBytes: disabled
-                    TimeUnit.HOURS.toNanos(1),      // autoFlushInterval: disabled
-                    10,                             // inFlightWindow
-                    null
-            )) {
+            try (QwpWebSocketSender sender = connectWs(port,
+                    5,
+                    Integer.MAX_VALUE,
+                    TimeUnit.HOURS.toNanos(1),
+                    10)) {
                 // Send multiple small batches
                 for (int batch = 0; batch < 10; batch++) {
                     for (int i = 0; i < 5; i++) {
@@ -1717,7 +1710,7 @@ public class QwpWebSocketSenderReceiverTest extends AbstractQwpWebSocketTest {
 
         runInContext((port) -> {
             // Pre-create a table with a LONG column
-            try (QwpWebSocketSender setupSender = QwpWebSocketSender.connect("localhost", port)) {
+            try (QwpWebSocketSender setupSender = connectWs(port)) {
                 setupSender.table("ws_async_multi_err")
                         .longColumn("value", 0)
                         .at(1_000_000_000_000L, ChronoUnit.MICROS);
@@ -1728,14 +1721,16 @@ public class QwpWebSocketSenderReceiverTest extends AbstractQwpWebSocketTest {
             // Fresh async sender: autoFlushRows=1 so each row is enqueued
             // immediately, window=8. The sender doesn't know the server-side
             // schema of "ws_async_multi_err", so it cannot detect the type mismatch.
-            try (QwpWebSocketSender sender = QwpWebSocketSender.connect(
-                    "localhost", port, null,
-                    1,                              // autoFlushRows: every row
-                    Integer.MAX_VALUE,              // autoFlushBytes: disabled
-                    TimeUnit.HOURS.toNanos(1),      // autoFlushInterval: disabled
+            // Server type-mismatch is WRITE_ERROR / DROP_AND_CONTINUE so flush()
+            // does not throw — the rejection arrives asynchronously through the
+            // error handler.
+            CompletableFuture<SenderError> errorFut = new CompletableFuture<>();
+            try (QwpWebSocketSender sender = connectWs(port,
+                    1,
+                    Integer.MAX_VALUE,
+                    TimeUnit.HOURS.toNanos(1),
                     windowSize,
-                    null
-            )) {
+                    errorFut::complete)) {
                 // Good rows to a separate table — auto-flushed, no ACK wait
                 for (int i = 1; i <= 3; i++) {
                     sender.table("ws_async_multi_ok")
@@ -1757,17 +1752,10 @@ public class QwpWebSocketSenderReceiverTest extends AbstractQwpWebSocketTest {
                             .at(1_000_000_000_000L + i, ChronoUnit.MICROS);
                 }
 
-                // flush() drains the window via awaitEmpty() — error surfaces here
                 sender.flush();
-                Assert.fail("Expected LineSenderException from bad batch");
-            } catch (LineSenderException e) {
-                Assert.assertTrue(
-                        "Error message should indicate server error: " + e.getMessage(),
-                        e.getMessage().contains("WRITE_ERROR")
-                                || e.getMessage().contains("Processing failed")
-                                || e.getMessage().contains("Server error")
-                                || e.getMessage().contains("failed")
-                );
+
+                SenderError err = errorFut.get(10, TimeUnit.SECONDS);
+                Assert.assertEquals(SenderError.Category.WRITE_ERROR, err.getCategory());
             }
             // The initial setup row (value=0) must be present
             assertSql(
@@ -2321,14 +2309,11 @@ public class QwpWebSocketSenderReceiverTest extends AbstractQwpWebSocketTest {
             int totalRows = 10_000;
 
             // Create sender with high in-flight window
-            try (QwpWebSocketSender sender = QwpWebSocketSender.connect(
-                    "localhost", port, null,
-                    10,                             // autoFlushRows = 10: batch every 10 rows
-                    Integer.MAX_VALUE,              // autoFlushBytes: disabled
-                    TimeUnit.HOURS.toNanos(1),      // autoFlushInterval: disabled
-                    inFlightWindowSize,
-                    null
-            )) {
+            try (QwpWebSocketSender sender = connectWs(port,
+                    10,
+                    Integer.MAX_VALUE,
+                    TimeUnit.HOURS.toNanos(1),
+                    inFlightWindowSize)) {
                 for (int i = 0; i < totalRows; i++) {
                     sender.table("ws_ack_test")
                             .longColumn("value", i)
@@ -2364,18 +2349,33 @@ public class QwpWebSocketSenderReceiverTest extends AbstractQwpWebSocketTest {
 
             drainWalQueue();
 
-            // Second sender: fresh connection, no client-side column cache
-            try (QwpWebSocketSender sender = createSender(port)) {
+            // Second sender: fresh connection, no client-side column cache.
+            // Server-side type mismatch is classified as WRITE_ERROR which
+            // defaults to DROP_AND_CONTINUE, so flush() does not throw —
+            // the rejection arrives asynchronously through the error
+            // handler. Block on a CompletableFuture for deterministic
+            // delivery.
+            CompletableFuture<SenderError> errorFut = new CompletableFuture<>();
+            try (QwpWebSocketSender sender = connectWs(port,
+                    QwpWebSocketSender.DEFAULT_AUTO_FLUSH_ROWS,
+                    QwpWebSocketSender.DEFAULT_AUTO_FLUSH_BYTES,
+                    QwpWebSocketSender.DEFAULT_AUTO_FLUSH_INTERVAL_NANOS,
+                    windowSize,
+                    errorFut::complete)) {
                 sender.table("ws_error_propagation_test")
                         .stringColumn("value", "not a number")
                         .at(1_000_000_000_001L, ChronoUnit.MICROS);
                 sender.flush();
-                Assert.fail("Expected LineSenderException");
-            } catch (LineSenderException e) {
-                Assert.assertTrue("Error message should indicate server error: " + e.getMessage(),
-                        e.getMessage().contains("WRITE_ERROR") ||
-                                e.getMessage().contains("Processing failed") ||
-                                e.getMessage().contains("Server error"));
+
+                SenderError err = errorFut.get(10, TimeUnit.SECONDS);
+                String msg = err.getServerMessage();
+                Assert.assertTrue("Error message should indicate server error: " + msg,
+                        msg != null && (msg.contains("WRITE_ERROR")
+                                || msg.contains("Processing failed")
+                                || msg.contains("Server error")
+                                || msg.contains("inconvertible")
+                                || msg.contains("not a number")
+                                || msg.contains("cannot")));
             }
         });
     }
@@ -3126,18 +3126,25 @@ public class QwpWebSocketSenderReceiverTest extends AbstractQwpWebSocketTest {
                     "walEnabled\nfalse\n"
             );
 
-            // Try to write to the non-WAL table via ILP - should fail
-            try (QwpWebSocketSender sender = createSender(port)) {
+            // Try to write to the non-WAL table via QWP - server rejects with
+            // WRITE_ERROR which defaults to DROP_AND_CONTINUE, so flush() does
+            // not throw. Block on the async error handler for deterministic
+            // delivery of the rejection.
+            CompletableFuture<SenderError> errorFut = new CompletableFuture<>();
+            try (QwpWebSocketSender sender = connectWs(port,
+                    QwpWebSocketSender.DEFAULT_AUTO_FLUSH_ROWS,
+                    QwpWebSocketSender.DEFAULT_AUTO_FLUSH_BYTES,
+                    QwpWebSocketSender.DEFAULT_AUTO_FLUSH_INTERVAL_NANOS,
+                    windowSize,
+                    errorFut::complete)) {
                 sender.table("non_wal_table")
                         .symbol("tag", "test")
                         .longColumn("value", 42)
                         .at(1_000_000_000_000L, ChronoUnit.MICROS);
                 sender.flush();
-                Assert.fail("Expected LineSenderException when writing to non-WAL table");
-            } catch (LineSenderException e) {
-                // Expected: server rejects writes to non-WAL tables
-                Assert.assertTrue("Error message should indicate table issue: " + e.getMessage(),
-                        e.getMessage().contains("WRITE_ERROR"));
+
+                SenderError err = errorFut.get(10, TimeUnit.SECONDS);
+                Assert.assertEquals(SenderError.Category.WRITE_ERROR, err.getCategory());
             }
         });
     }
@@ -4881,11 +4888,10 @@ public class QwpWebSocketSenderReceiverTest extends AbstractQwpWebSocketTest {
      * Window=1 gives sync behavior, window>1 gives async behavior.
      */
     private QwpWebSocketSender createSender(int port) {
-        return QwpWebSocketSender.connect("localhost", port, null,
+        return connectWs(port,
                 QwpWebSocketSender.DEFAULT_AUTO_FLUSH_ROWS,
                 QwpWebSocketSender.DEFAULT_AUTO_FLUSH_BYTES,
                 QwpWebSocketSender.DEFAULT_AUTO_FLUSH_INTERVAL_NANOS,
-                windowSize,
-                null);
+                windowSize);
     }
 }

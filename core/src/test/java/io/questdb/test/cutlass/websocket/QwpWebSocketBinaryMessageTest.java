@@ -25,6 +25,7 @@
 package io.questdb.test.cutlass.websocket;
 
 import io.questdb.PropertyKey;
+import io.questdb.client.Sender;
 import io.questdb.client.cutlass.line.LineSenderException;
 import io.questdb.client.cutlass.qwp.client.QwpWebSocketSender;
 import io.questdb.test.AbstractBootstrapTest;
@@ -131,7 +132,7 @@ public class QwpWebSocketBinaryMessageTest extends AbstractBootstrapTest {
                         .get(5, TimeUnit.SECONDS);
 
                 // Step 2: send real rows on a fresh connection
-                try (QwpWebSocketSender sender = QwpWebSocketSender.connect("localhost", httpPort)) {
+                try (QwpWebSocketSender sender = (QwpWebSocketSender) Sender.fromConfig("ws::addr=localhost:" + httpPort + ";")) {
                     for (int i = 0; i < 5; i++) {
                         sender.table("zero_row_test")
                                 .longColumn("value", i)
@@ -283,7 +284,7 @@ public class QwpWebSocketBinaryMessageTest extends AbstractBootstrapTest {
             )) {
                 int httpPort = serverMain.getHttpServerPort();
 
-                try (QwpWebSocketSender sender = QwpWebSocketSender.connect("localhost", httpPort)) {
+                try (QwpWebSocketSender sender = (QwpWebSocketSender) Sender.fromConfig("ws::addr=localhost:" + httpPort + ";")) {
                     sender.table("nonexistent_table_xyz")
                             .longColumn("value", 42)
                             .at(1_000_000_000_000L, ChronoUnit.MICROS);
@@ -564,7 +565,7 @@ public class QwpWebSocketBinaryMessageTest extends AbstractBootstrapTest {
             )) {
                 int httpPort = serverMain.getHttpServerPort();
 
-                try (QwpWebSocketSender sender = QwpWebSocketSender.connect("localhost", httpPort)) {
+                try (QwpWebSocketSender sender = (QwpWebSocketSender) Sender.fromConfig("ws::addr=localhost:" + httpPort + ";")) {
                     sender.table("readonly_test_table")
                             .longColumn("value", 42)
                             .at(1_000_000_000_000L, ChronoUnit.MICROS);
