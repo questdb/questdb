@@ -4515,4 +4515,26 @@ public class SampleByFillTest extends AbstractCairoTest {
             assertExceptionNoLeakCheck(sql, badLiteralPos, "invalid fill value: 'not-a-timestamp'");
         });
     }
+
+    @Test
+    public void testFillRejectNonDeterministicFunction() throws Exception {
+        // rnd_double() reports isNonDeterministic=true. Without the gate in
+        // generateFill, the function would be stored verbatim into constantFills
+        // and produce a different value on every cursor read for synthesized
+        // fill rows -- not a fill value. The check rejects only non-deterministic
+        // functions so deterministic non-folded wrappers like cast(literal) keep
+        // working as fill values.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (val DOUBLE, ts TIMESTAMP) " +
+                    "TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO t VALUES " +
+                    "(1.0, '2024-01-01T00:00:00.000000Z')," +
+                    "(2.0, '2024-01-01T02:00:00.000000Z')");
+            String sql = "SELECT ts, first(val) FROM t " +
+                    "SAMPLE BY 1h FILL(rnd_double()) ALIGN TO CALENDAR";
+            int badPos = sql.indexOf("rnd_double()");
+            assertExceptionNoLeakCheck(sql, badPos,
+                    "fill value must be a constant expression");
+        });
+    }
 }

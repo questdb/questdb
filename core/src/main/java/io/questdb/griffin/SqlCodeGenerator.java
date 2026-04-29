@@ -3697,17 +3697,23 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                         .put("invalid fill value: ").put(fillExpr.token);
                             }
                         } else {
-                            // Mirror the sibling slots (fillFromFunc/fillToFunc/offsetFunc):
-                            // a fill value must be a constant or runtime-constant convertible
-                            // to the target column type. Rejects non-constant expressions like
-                            // FILL(rnd_double()), which would otherwise be stored verbatim and
-                            // produce a different value per cursor read; also assigns the type
-                            // for an UNDEFINED bind variable so downstream getXxx() calls work.
-                            coerceRuntimeConstantType(
-                                    fillValues.getQuick(fillIdx), targetColType, executionContext,
-                                    "fill value must be a constant expression convertible to the target column type",
-                                    fillExpr.position
-                            );
+                            // A FILL_CONSTANT slot stores a single Function instance whose
+                            // typed accessor (getDouble/getLong/getLong256A/...) is invoked
+                            // on every synthesized fill row. Deterministic non-folded
+                            // expressions like cast('0x42' as LONG256) compute the same
+                            // value on every read and are intentionally accepted here, but
+                            // a non-deterministic function such as rnd_double() would
+                            // produce a different value per cursor read -- not a "fill
+                            // value" by any reasonable interpretation. Reject it. The
+                            // narrower isNonDeterministic gate is preferred over the
+                            // sibling slots' coerceRuntimeConstantType because that helper
+                            // also requires isConstant || isRuntimeConstant, which fails
+                            // for valid cast(literal) wrappers whose isConstant default
+                            // does not propagate through the abstract base classes.
+                            if (fillValues.getQuick(fillIdx).isNonDeterministic()) {
+                                throw SqlException.$(fillExpr.position,
+                                        "fill value must be a constant expression");
+                            }
                         }
                         fillModes.add(SampleByFillRecordCursorFactory.FILL_CONSTANT);
                         // Atomic transfer: take a local reference, null the
