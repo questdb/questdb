@@ -521,6 +521,9 @@ public class QueryModel implements IQueryModel {
         sampleByOffset = null;
         sampleByTo = null;
         sampleByFrom = null;
+        fillOffset = null;
+        fillStride = null;
+        fillTimezoneName = null;
     }
 
     @Override
@@ -1483,6 +1486,9 @@ public class QueryModel implements IQueryModel {
         this.sampleByOffset = model.getSampleByOffset();
         this.sampleByTo = model.getSampleByTo();
         this.sampleByFrom = model.getSampleByFrom();
+        this.fillOffset = model.getFillOffset();
+        this.fillStride = model.getFillStride();
+        this.fillTimezoneName = model.getFillTimezoneName();
 
         // clear the source
         model.clearSampleBy();
@@ -2343,6 +2349,11 @@ public class QueryModel implements IQueryModel {
         if (fillStride != null) {
             sink.putAscii(" stride ");
             sink.put(fillStride);
+        }
+
+        if (fillTimezoneName != null) {
+            sink.putAscii(" timezone ");
+            sink.put(fillTimezoneName);
         }
 
         if (showOrderBy && orderBy.size() > 0) {
