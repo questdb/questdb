@@ -1063,7 +1063,7 @@ public class ExpressionParser {
             int betweenAndCount = 0;
             int caseCount = 0;
             int argStackDepth = 0;
-            int betweenStartCaseCount = 0;
+            int betweenStartScopeDepth = 0;
             savedScopeStackBottom = scopeStack.getBottom();
             scopeStack.setBottom(scopeStack.sizeRaw());
             boolean parsedDeclaration = false;
@@ -1528,7 +1528,8 @@ public class ExpressionParser {
                                 processDefaultBranch = true;
                             }
                         } else if (SqlKeywords.isAndKeyword(tok)) {
-                            if (caseCount == betweenStartCaseCount && betweenCount > betweenAndCount) {
+                            if (scopeStack.size() == betweenStartScopeDepth
+                                    && betweenCount > betweenAndCount) {
                                 betweenAndCount++;
                                 thisBranch = BRANCH_BETWEEN_END;
                                 argStackDepth = popAndOpStack(listener, argStackDepth, prevBranch);
@@ -1603,7 +1604,7 @@ public class ExpressionParser {
                                 throw SqlException.$(lastPos, "between statements cannot be nested");
                             }
                             betweenCount++;
-                            betweenStartCaseCount = caseCount;
+                            betweenStartScopeDepth = scopeStack.size();
                         }
                         processDefaultBranch = true;
                         break;
