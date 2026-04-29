@@ -8737,15 +8737,18 @@ public class SqlOptimiser implements Mutable {
                 // this is to handle cases where we use system tables, which are prefixed
                 // downstream code cannot handle `"sys.telemetry.wal".created`
                 // it will break in `where` optimization and later metadata lookups
-                CharacterStoreEntry e = characterStore.newEntry();
-                if (Chars.indexOf(toAddWhereClause.getTableName(), '.') != -1) {
-                    // Table name has . in the name, quote it
-                    e.putAscii('\"').put(toAddWhereClause.getTableName()).putAscii("\".").put(timestamp.token);
-                } else {
-                    e.put(toAddWhereClause.getTableName()).put('.').put(timestamp.token);
+                final CharSequence tableName = toAddWhereClause.getTableName();
+                if (tableName != null) {
+                    CharacterStoreEntry e = characterStore.newEntry();
+                    if (Chars.indexOf(tableName, '.') != -1) {
+                        // Table name has . in the name, quote it
+                        e.putAscii('\"').put(tableName).putAscii("\".").put(timestamp.token);
+                    } else {
+                        e.put(tableName).put('.').put(timestamp.token);
+                    }
+                    CharSequence prefixedTimestamp = e.toImmutable();
+                    timestamp = expressionNodePool.next().of(LITERAL, prefixedTimestamp, timestamp.precedence, timestamp.position);
                 }
-                CharSequence prefixedTimestamp = e.toImmutable();
-                timestamp = expressionNodePool.next().of(LITERAL, prefixedTimestamp, timestamp.precedence, timestamp.position);
             }
 
             // construct an appropriate where clause

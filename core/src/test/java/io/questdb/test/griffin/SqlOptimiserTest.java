@@ -5426,6 +5426,44 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
     }
 
     @Test
+    public void testSampleByOnSubqueryWithFillFromTo() throws Exception {
+        // Pins two related fixes for the subquery + SAMPLE BY + FROM/TO + FILL combination:
+        //
+        // 1. SqlOptimiser.rewriteSampleByFromTo previously NPE'd on subquery
+        //    models because QueryModel.getTableName() returns null and the
+        //    timestamp prefixing path called Chars.indexOf(null, '.'). The
+        //    null-guard skips prefixing for subquery models (the timestamp
+        //    is already locally scoped through the nested model).
+        //
+        // 2. SampleByFillValueNotKeyedRecordCursor toggles record.current
+        //    between functionsA (data) and functionsB (placeholder/NULL)
+        //    during iteration. Without resetting back to functionsA in
+        //    toTop()/of(), a second cursor open after a run that emitted
+        //    at least one fill row reads through the placeholder side and
+        //    returns all NULLs. This combination only used the legacy
+        //    factory (the new SampleByFillRecordCursorFactory fast-path
+        //    handles direct-table FROM/TO + FILL), so subquery + FROM/TO +
+        //    FILL was the only path that surfaced the cursor-reuse bug.
+        //
+        // assertQueryNoLeakCheck drives factory.getCursor() twice via
+        // assertFactoryCursor, which is what surfaces fix 2.
+        assertMemoryLeak(() -> {
+            execute(SampleByTest.FROM_TO_DDL);
+            assertQueryNoLeakCheck(
+                    "ts\tavg\n" +
+                            "2018-01-01T00:00:00.000000Z\t1.5\n" +
+                            "2018-01-01T01:00:00.000000Z\t3.5\n" +
+                            "2018-01-01T02:00:00.000000Z\tnull\n",
+                    """
+                            SELECT ts, avg(x) FROM (
+                              SELECT ts, x FROM fromto WHERE x <= 4
+                            ) timestamp(ts) SAMPLE BY 1h FROM '2018-01-01T00:00:00' TO '2018-01-01T03:00:00' FILL(NULL)""",
+                    "ts", false, false
+            );
+        });
+    }
+
+    @Test
     public void testSampleByTimezone() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table y (x int, ts timestamp) timestamp(ts);");
