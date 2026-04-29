@@ -35,7 +35,7 @@ import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.CursorFunction;
-import io.questdb.griffin.engine.table.parquet.PartitionDecoder;
+import io.questdb.griffin.engine.table.parquet.ParquetFileDecoder;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.Chars;
@@ -81,7 +81,7 @@ public class ReadParquetFunctionFactory implements FunctionFactory {
             final long fd = TableUtils.openRO(ff, path.$(), LOG);
             long addr = 0;
             long fileSize = 0;
-            try (PartitionDecoder decoder = new PartitionDecoder()) {
+            try (ParquetFileDecoder decoder = new ParquetFileDecoder()) {
                 fileSize = ff.length(fd);
                 addr = TableUtils.mapRO(ff, fd, fileSize, MemoryTag.MMAP_PARQUET_PARTITION_DECODER);
                 decoder.of(addr, fileSize, MemoryTag.NATIVE_PARQUET_PARTITION_DECODER);

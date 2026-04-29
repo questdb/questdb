@@ -28,6 +28,7 @@ import io.questdb.cairo.BitmapIndexReader;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.ColumnTypeDriver;
+import io.questdb.cairo.ParquetMetaFileReader;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.sql.ColumnMapping;
 import io.questdb.cairo.sql.PageFrame;
@@ -42,7 +43,7 @@ import io.questdb.cairo.vm.NullMemoryCMR;
 import io.questdb.cairo.vm.api.MemoryR;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.griffin.engine.table.parquet.PartitionDecoder;
+import io.questdb.griffin.engine.table.parquet.ParquetPartitionDecoder;
 import io.questdb.std.DirectLongList;
 import io.questdb.std.IntList;
 import io.questdb.std.LongList;
@@ -75,7 +76,7 @@ public class BwdTableReaderPageFrameCursor implements TablePageFrameCursor {
     private PartitionFrameCursor partitionFrameCursor;
     private TableReader reader;
     private long reenterPageFrameRowLimit;
-    private PartitionDecoder reenterParquetDecoder;
+    private ParquetPartitionDecoder reenterParquetDecoder;
     private boolean reenterPartitionFrame = false;
     private long reenterPartitionHi;
     private int reenterPartitionIndex;
@@ -182,7 +183,7 @@ public class BwdTableReaderPageFrameCursor implements TablePageFrameCursor {
                     frame.rowGroupLo = -1;
                     frame.rowGroupHi = -1;
                     if (frame.format == PartitionFormat.PARQUET) {
-                        reenterParquetDecoder = partitionFrame.getParquetDecoder();
+                        reenterParquetDecoder = partitionFrame.getParquetMetaDecoder();
                     } else {
                         reenterParquetDecoder = null;
                     }
@@ -343,13 +344,13 @@ public class BwdTableReaderPageFrameCursor implements TablePageFrameCursor {
     }
 
     private @Nullable TableReaderPageFrame computeParquetFrame(long partitionLo, long partitionHi) {
-        final PartitionDecoder.Metadata metadata = reenterParquetDecoder.metadata();
+        final ParquetMetaFileReader metadata = reenterParquetDecoder.metadata();
         final int rowGroupCount = metadata.getRowGroupCount();
 
-        if (partitionHi > metadata.getRowCount()) {
+        if (partitionHi > metadata.getPartitionRowCount()) {
             throw CairoException.critical(0)
                     .put("parquet partition row count mismatch [partitionHi=").put(partitionHi)
-                    .put(", parquetRowCount=").put(metadata.getRowCount())
+                    .put(", parquetRowCount=").put(metadata.getPartitionRowCount())
                     .put(", partitionIndex=").put(reenterPartitionIndex)
                     .put(']');
         }
@@ -408,7 +409,7 @@ public class BwdTableReaderPageFrameCursor implements TablePageFrameCursor {
         while (targetGroup >= 0) {
             if (filterBufEnd != -1 && ParquetRowGroupFilter.canSkipRowGroup(
                     targetGroup,
-                    reenterParquetDecoder,
+                    metadata,
                     filterList,
                     filterBufEnd
             )) {
@@ -457,7 +458,7 @@ public class BwdTableReaderPageFrameCursor implements TablePageFrameCursor {
         final byte format = partitionFrame.getPartitionFormat();
         if (format == PartitionFormat.PARQUET) {
             clearAddresses();
-            reenterParquetDecoder = partitionFrame.getParquetDecoder();
+            reenterParquetDecoder = partitionFrame.getParquetMetaDecoder();
             reenterPageFrameRowLimit = 0;
             cachedRowGroupIndex = -1;
             cachedRowGroupStartRow = 0;
@@ -525,7 +526,7 @@ public class BwdTableReaderPageFrameCursor implements TablePageFrameCursor {
         }
 
         @Override
-        public PartitionDecoder getParquetPartitionDecoder() {
+        public ParquetPartitionDecoder getParquetDecoder() {
             assert reenterParquetDecoder != null || format != PartitionFormat.PARQUET;
             return reenterParquetDecoder;
         }

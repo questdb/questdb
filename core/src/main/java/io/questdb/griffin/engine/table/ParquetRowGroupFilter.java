@@ -26,10 +26,12 @@ package io.questdb.griffin.engine.table;
 
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.ParquetMetaFileReader;
 import io.questdb.cairo.TimestampDriver;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.vm.MemoryCARWImpl;
-import io.questdb.griffin.engine.table.parquet.PartitionDecoder;
+import io.questdb.griffin.engine.table.parquet.ParquetRowGroupSkipper;
+import io.questdb.griffin.engine.table.parquet.ParquetFileDecoder;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.Decimal128;
@@ -63,18 +65,18 @@ public final class ParquetRowGroupFilter {
      * Call {@link #prepareFilterList} once per partition before using this method.
      *
      * @param rowGroupIndex the row group index to check
-     * @param decoder       the Parquet partition decoder
+     * @param skipper       the row group skipper (typically backed by {@link ParquetMetaFileReader} or {@link ParquetFileDecoder})
      * @param filterList    filter descriptors prepared by {@link #prepareFilterList}
      * @return true if the row group can be safely skipped, false otherwise
      */
     public static boolean canSkipRowGroup(
             int rowGroupIndex,
-            PartitionDecoder decoder,
+            ParquetRowGroupSkipper skipper,
             DirectLongList filterList,
             long filterBufEnd
     ) {
         try {
-            boolean skip = decoder.canSkipRowGroup(rowGroupIndex, filterList, filterBufEnd);
+            boolean skip = skipper.canSkipRowGroup(rowGroupIndex, filterList, filterBufEnd);
             if (skip) {
                 rowGroupsSkipped.incrementAndGet();
             }
@@ -105,7 +107,29 @@ public final class ParquetRowGroupFilter {
      * @return true if filters were prepared successfully and row group pruning should be attempted
      */
     public static boolean prepareFilterList(
-            PartitionDecoder.Metadata metadata,
+            ParquetFileDecoder.Metadata metadata,
+            ObjList<PushdownFilterExtractor.PushdownFilterCondition> pushdownFilterConditions,
+            DirectLongList filterList,
+            MemoryCARWImpl filterValues
+    ) {
+        return prepareFilterListImpl(metadata, null, pushdownFilterConditions, filterList, filterValues);
+    }
+
+    /**
+     * Overload for ParquetMetaFileReader -- resolves columns from the _pm sidecar metadata.
+     */
+    public static boolean prepareFilterList(
+            ParquetMetaFileReader parquetMetaReader,
+            ObjList<PushdownFilterExtractor.PushdownFilterCondition> pushdownFilterConditions,
+            DirectLongList filterList,
+            MemoryCARWImpl filterValues
+    ) {
+        return prepareFilterListImpl(null, parquetMetaReader, pushdownFilterConditions, filterList, filterValues);
+    }
+
+    private static boolean prepareFilterListImpl(
+            ParquetFileDecoder.Metadata legacyMetadata,
+            ParquetMetaFileReader parquetMetaReader,
             ObjList<PushdownFilterExtractor.PushdownFilterCondition> pushdownFilterConditions,
             DirectLongList filterList,
             MemoryCARWImpl filterValues
@@ -124,7 +148,9 @@ public final class ParquetRowGroupFilter {
                 final ObjList<Function> valueFunctions = condition.getValueFunctions();
                 final int valueCount = valueFunctions.size();
 
-                int columnIndex = metadata.getColumnIndex(condition.getColumnName());
+                int columnIndex = legacyMetadata != null
+                        ? legacyMetadata.getColumnIndex(condition.getColumnName())
+                        : parquetMetaReader.getColumnIndex(condition.getColumnName());
                 if (columnIndex < 0) {
                     continue;
                 }

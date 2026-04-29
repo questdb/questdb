@@ -38,7 +38,7 @@ import io.questdb.cutlass.parquet.ParquetExportMode;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.table.VirtualRecordCursorFactory;
-import io.questdb.griffin.engine.table.parquet.PartitionDecoder;
+import io.questdb.griffin.engine.table.parquet.ParquetFileDecoder;
 import io.questdb.griffin.engine.table.parquet.PartitionDescriptor;
 import io.questdb.griffin.engine.table.parquet.PartitionEncoder;
 import io.questdb.log.Log;
@@ -3755,7 +3755,7 @@ public class CopyExportTest extends AbstractCairoTest {
                         long fd = -1;
                         long addr = 0;
                         long fileSize = 0;
-                        try (Path path = new Path(); PartitionDecoder decoder = new PartitionDecoder()) {
+                        try (Path path = new Path(); ParquetFileDecoder decoder = new ParquetFileDecoder()) {
                             path.of(parquetPath).$();
                             fd = TableUtils.openRO(ff, path.$(), log);
                             fileSize = ff.length(fd);

@@ -61,24 +61,6 @@ pub mod int32 {
 
     use super::*;
 
-    /// Converts integer values with a fixed decimal scale into `f64`.
-    pub struct Int32ToDoubleConverter {
-        ratio: f64,
-    }
-
-    impl Int32ToDoubleConverter {
-        pub fn new(ratio: usize) -> Self {
-            Self { ratio: 10f64.powi(ratio as i32) }
-        }
-    }
-
-    impl Converter<i32, f64> for Int32ToDoubleConverter {
-        #[inline]
-        fn convert(&self, input: i32) -> f64 {
-            (input as f64) / self.ratio
-        }
-    }
-
     /// Converts "days since epoch" values into milliseconds.
     #[derive(Default)]
     pub struct DayToMillisConverter;
@@ -86,13 +68,18 @@ pub mod int32 {
     impl Converter<i32, i64> for DayToMillisConverter {
         #[inline]
         fn convert(&self, input: i32) -> i64 {
-            (input as i64) * 24 * 60 * 60 * 1000
+            DayToMillisConverter::convert(input)
         }
     }
 
     impl DayToMillisConverter {
         pub fn new() -> Self {
             Self
+        }
+
+        #[inline]
+        pub fn convert(input: i32) -> i64 {
+            (input as i64) * 24 * 60 * 60 * 1000
         }
     }
 }
@@ -109,6 +96,12 @@ pub mod int96 {
         julian_date: u32,
     }
 
+    impl From<[u8; 12]> for Int96Timestamp {
+        fn from(bytes: [u8; 12]) -> Self {
+            unsafe { std::mem::transmute(bytes) }
+        }
+    }
+
     /// Converts Parquet `INT96` (Julian day + nanos) into epoch nanoseconds.
     #[derive(Default)]
     pub struct Int96ToTimestampConverter;
@@ -116,6 +109,17 @@ pub mod int96 {
     impl Converter<Int96Timestamp, i64> for Int96ToTimestampConverter {
         #[inline]
         fn convert(&self, input: Int96Timestamp) -> i64 {
+            Self::convert(input)
+        }
+    }
+
+    impl Int96ToTimestampConverter {
+        pub fn new() -> Self {
+            Self
+        }
+
+        #[inline]
+        pub fn convert(input: Int96Timestamp) -> i64 {
             const NANOS_PER_DAY: i64 = 86400 * 1_000_000_000;
             const JULIAN_UNIX_EPOCH_OFFSET: i64 = 2440588;
 
@@ -124,12 +128,6 @@ pub mod int96 {
 
             // Calculate total nanoseconds since Unix epoch
             days_since_epoch * NANOS_PER_DAY + input.nanos as i64
-        }
-    }
-
-    impl Int96ToTimestampConverter {
-        pub fn new() -> Self {
-            Self
         }
     }
 }

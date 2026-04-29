@@ -40,7 +40,7 @@ import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.table.ParquetRowGroupFilter;
 import io.questdb.griffin.engine.table.PushdownFilterExtractor;
-import io.questdb.griffin.engine.table.parquet.PartitionDecoder;
+import io.questdb.griffin.engine.table.parquet.ParquetFileDecoder;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.DirectLongList;
@@ -60,7 +60,7 @@ import static io.questdb.griffin.engine.functions.table.ReadParquetRecordCursor.
 public class ReadParquetPageFrameCursor implements PageFrameCursor {
     private static final Log LOG = LogFactory.getLog(ReadParquetPageFrameCursor.class);
     private final ColumnMapping columnMapping = new ColumnMapping();
-    private final PartitionDecoder decoder;
+    private final ParquetFileDecoder decoder;
     private final FilesFacade ff;
     private final DirectLongList filterList;
     private final MemoryCARWImpl filterValues;
@@ -78,7 +78,7 @@ public class ReadParquetPageFrameCursor implements PageFrameCursor {
     public ReadParquetPageFrameCursor(FilesFacade ff, RecordMetadata metadata, @Nullable ObjList<PushdownFilterExtractor.PushdownFilterCondition> pushdownFilterConditions) {
         this.ff = ff;
         this.metadata = metadata;
-        this.decoder = new PartitionDecoder();
+        this.decoder = new ParquetFileDecoder();
         this.pushdownFilterConditions = pushdownFilterConditions;
         if (pushdownFilterConditions != null && pushdownFilterConditions.size() > 0) {
             this.filterList = new DirectLongList(
@@ -266,7 +266,7 @@ public class ReadParquetPageFrameCursor implements PageFrameCursor {
         }
 
         @Override
-        public PartitionDecoder getParquetPartitionDecoder() {
+        public ParquetFileDecoder getParquetDecoder() {
             return decoder;
         }
 

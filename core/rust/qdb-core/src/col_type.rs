@@ -287,6 +287,15 @@ impl ColumnType {
         })
     }
 
+    /// Constructs a `ColumnType` from its raw `i32` code.
+    /// Returns `None` if the code is zero (undefined type).
+    pub const fn new_raw(code: i32) -> Option<Self> {
+        match NonZeroI32::new(code) {
+            Some(code) => Some(Self { code }),
+            None => None,
+        }
+    }
+
     pub fn code(&self) -> i32 {
         self.code.get()
     }

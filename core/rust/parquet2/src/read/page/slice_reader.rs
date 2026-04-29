@@ -1,0 +1,272 @@
+use std::convert::TryInto;
+use std::io::Cursor;
+
+use crate::compression::Compression;
+use crate::error::{Error, Result};
+use crate::metadata::{ColumnChunkMetaData, Descriptor};
+use crate::page::{DataPageHeader, PageType, ParquetPageHeader};
+use crate::parquet_bridge::DataPageHeaderExt;
+use crate::parquet_bridge::Encoding;
+use parquet_format_safe::thrift::protocol::TCompactInputProtocol;
+
+use super::reader::get_page_header;
+
+#[derive(Debug)]
+pub struct SlicedDictPage<'a> {
+    pub buffer: &'a [u8],
+    pub compression: Compression,
+    pub uncompressed_size: usize,
+    pub num_values: usize,
+    pub is_sorted: bool,
+}
+
+#[derive(Debug)]
+pub struct SlicedDataPage<'a> {
+    pub header: DataPageHeader,
+    pub buffer: &'a [u8],
+    pub compression: Compression,
+    pub uncompressed_size: usize,
+    pub descriptor: Descriptor,
+}
+
+impl SlicedDataPage<'_> {
+    pub fn num_values(&self) -> usize {
+        self.header.num_values()
+    }
+
+    pub fn encoding(&self) -> Encoding {
+        match &self.header {
+            DataPageHeader::V1(d) => d.encoding(),
+            DataPageHeader::V2(d) => d.encoding(),
+        }
+    }
+}
+
+#[derive(Debug)]
+#[allow(clippy::large_enum_variant)]
+pub enum SlicedPage<'a> {
+    Dict(SlicedDictPage<'a>),
+    Data(SlicedDataPage<'a>),
+}
+
+pub struct SlicePageReader<'a> {
+    data: &'a [u8],
+    offset: usize,
+    end: usize,
+    compression: Compression,
+    descriptor: Descriptor,
+    seen_num_values: i64,
+    total_num_values: i64,
+    max_page_size: usize,
+}
+
+impl<'a> SlicePageReader<'a> {
+    pub fn new(data: &'a [u8], column: &ColumnChunkMetaData, max_page_size: usize) -> Result<Self> {
+        let (col_start, col_len) = column.byte_range();
+        Self::from_parts(
+            data,
+            col_start as usize,
+            col_len as usize,
+            column.compression(),
+            column.descriptor().descriptor.clone(),
+            column.num_values(),
+            max_page_size,
+        )
+    }
+
+    pub fn from_parts(
+        data: &'a [u8],
+        col_start: usize,
+        col_len: usize,
+        compression: Compression,
+        descriptor: Descriptor,
+        num_values: i64,
+        max_page_size: usize,
+    ) -> Result<Self> {
+        let col_end = col_start + col_len;
+        if col_end > data.len() {
+            return Err(Error::oos(format!(
+                "Column chunk range {}..{} exceeds data length {}",
+                col_start,
+                col_end,
+                data.len()
+            )));
+        }
+        Ok(Self {
+            data,
+            offset: col_start,
+            end: col_end,
+            compression,
+            descriptor,
+            seen_num_values: 0,
+            total_num_values: num_values,
+            max_page_size,
+        })
+    }
+
+    fn read_next(&mut self) -> Result<Option<SlicedPage<'a>>> {
+        if self.seen_num_values >= self.total_num_values {
+            return Ok(None);
+        }
+
+        let remaining = &self.data[self.offset..self.end];
+        let mut cursor = Cursor::new(remaining);
+        let page_header = {
+            let mut prot = TCompactInputProtocol::new(&mut cursor, self.max_page_size);
+            ParquetPageHeader::read_from_in_protocol(&mut prot)?
+        };
+        let header_size = cursor.position() as usize;
+        self.offset += header_size;
+
+        self.seen_num_values += get_page_header(&page_header)?
+            .map(|x| x.num_values() as i64)
+            .unwrap_or_default();
+
+        let read_size: usize = page_header.compressed_page_size.try_into()?;
+        if read_size > self.max_page_size {
+            return Err(Error::WouldOverAllocate);
+        }
+
+        if self.offset + read_size > self.end {
+            return Err(Error::oos(
+                "The page header reported the wrong page size".to_string(),
+            ));
+        }
+
+        let page_data = &self.data[self.offset..self.offset + read_size];
+        self.offset += read_size;
+
+        let type_: PageType = page_header.type_.try_into()?;
+        let uncompressed_page_size: usize = page_header.uncompressed_page_size.try_into()?;
+
+        match type_ {
+            PageType::DictionaryPage => {
+                let dict_header =
+                    page_header.dictionary_page_header.as_ref().ok_or_else(|| {
+                        Error::oos(
+                            "The page header type is a dictionary page but the dictionary header is empty",
+                        )
+                    })?;
+                let is_sorted = dict_header.is_sorted.unwrap_or(false);
+
+                Ok(Some(SlicedPage::Dict(SlicedDictPage {
+                    buffer: page_data,
+                    compression: self.compression,
+                    uncompressed_size: uncompressed_page_size,
+                    num_values: dict_header.num_values.try_into()?,
+                    is_sorted,
+                })))
+            }
+            PageType::DataPage => {
+                let header = page_header.data_page_header.ok_or_else(|| {
+                    Error::oos(
+                        "The page header type is a v1 data page but the v1 data header is empty",
+                    )
+                })?;
+                let _: Encoding = header.encoding.try_into()?;
+                let _: Encoding = header.repetition_level_encoding.try_into()?;
+                let _: Encoding = header.definition_level_encoding.try_into()?;
+
+                Ok(Some(SlicedPage::Data(SlicedDataPage {
+                    header: DataPageHeader::V1(header),
+                    buffer: page_data,
+                    compression: self.compression,
+                    uncompressed_size: uncompressed_page_size,
+                    descriptor: self.descriptor.clone(),
+                })))
+            }
+            PageType::DataPageV2 => {
+                let header = page_header.data_page_header_v2.ok_or_else(|| {
+                    Error::oos(
+                        "The page header type is a v2 data page but the v2 data header is empty",
+                    )
+                })?;
+                let _: Encoding = header.encoding.try_into()?;
+
+                Ok(Some(SlicedPage::Data(SlicedDataPage {
+                    header: DataPageHeader::V2(header),
+                    buffer: page_data,
+                    compression: self.compression,
+                    uncompressed_size: uncompressed_page_size,
+                    descriptor: self.descriptor.clone(),
+                })))
+            }
+        }
+    }
+}
+
+impl<'a> Iterator for SlicePageReader<'a> {
+    type Item = Result<SlicedPage<'a>>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        self.read_next().transpose()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::compression::Compression;
+    use crate::metadata::Descriptor;
+    use crate::schema::types::{FieldInfo, PhysicalType, PrimitiveType};
+    use crate::schema::Repetition;
+
+    fn test_descriptor() -> Descriptor {
+        Descriptor {
+            primitive_type: PrimitiveType {
+                field_info: FieldInfo {
+                    name: "test".to_string(),
+                    repetition: Repetition::Required,
+                    id: None,
+                },
+                logical_type: None,
+                converted_type: None,
+                physical_type: PhysicalType::Int64,
+            },
+            max_def_level: 0,
+            max_rep_level: 0,
+        }
+    }
+
+    #[test]
+    fn from_parts_range_out_of_bounds() {
+        let data = vec![0u8; 100];
+        let result = SlicePageReader::from_parts(
+            &data,
+            50, // col_start
+            60, // col_len: 50 + 60 = 110 > 100
+            Compression::Uncompressed,
+            test_descriptor(),
+            1,
+            1024,
+        );
+        let err = match result {
+            Err(e) => e,
+            Ok(_) => panic!("expected an error for out-of-bounds range"),
+        };
+        let msg = err.to_string();
+        assert!(
+            msg.contains("exceeds data length"),
+            "expected 'exceeds data length' in error, got: {msg}",
+        );
+    }
+
+    #[test]
+    fn from_parts_zero_length_no_values() {
+        let data = vec![0u8; 100];
+        let mut reader = SlicePageReader::from_parts(
+            &data,
+            0,
+            0, // col_len = 0
+            Compression::Uncompressed,
+            test_descriptor(),
+            0, // num_values = 0
+            1024,
+        )
+        .unwrap();
+        assert!(
+            reader.next().is_none(),
+            "expected no pages from a zero-length, zero-values reader",
+        );
+    }
+}

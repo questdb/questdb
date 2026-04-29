@@ -1023,6 +1023,339 @@ public class CheckpointTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testCheckpointRestoreFailsOnMissingParquetFile() throws Exception {
+        // When both _pm and data.parquet are missing, rebuildTableFiles()
+        // should throw CairoException from generateMissingParquetMetaFiles().
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE t (
+                        val DOUBLE,
+                        sym SYMBOL INDEX,
+                        ts TIMESTAMP
+                    ) TIMESTAMP(ts) PARTITION BY DAY
+                    """);
+            execute("""
+                    INSERT INTO t VALUES
+                    (1.0, 'A', '2024-01-01T00:00:00.000000Z'),
+                    (2.0, 'B', '2024-01-01T12:00:00.000000Z'),
+                    (3.0, 'A', '2024-01-02T00:00:00.000000Z')
+                    """);
+            execute("ALTER TABLE t CONVERT PARTITION TO PARQUET LIST '2024-01-01'");
+
+            TableToken tableToken = engine.verifyTableName("t");
+            String dbRoot = engine.getConfiguration().getDbRoot().toString();
+            File tableDir = new File(dbRoot, tableToken.getDirName());
+            File partDir = findParquetPartitionDir(tableDir, "2024-01-01");
+
+            engine.clear();
+
+            // Ensure both sidecar and data files are absent.
+            new File(partDir, "_pm").delete();
+            Assert.assertTrue("failed to delete data.parquet", new File(partDir, "data.parquet").delete());
+
+            try (
+                    Path tablePath = new Path().of(dbRoot).concat(tableToken).slash();
+                    TableSnapshotRestore restoreAgent = new TableSnapshotRestore(configuration)
+            ) {
+                try {
+                    restoreAgent.rebuildTableFiles(tablePath, new AtomicInteger(), true);
+                    Assert.fail("should have thrown CairoException");
+                } catch (CairoException e) {
+                    TestUtils.assertContains(e.getFlyweightMessage(), "cannot open parquet file for _pm generation");
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testCheckpointRestoreFailsWhenCannotCreatePmFile() throws Exception {
+        // When data.parquet opens fine but _pm cannot be created,
+        // rebuildTableFiles() should throw and properly close the parquet fd.
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE t (
+                        val DOUBLE,
+                        sym SYMBOL INDEX,
+                        ts TIMESTAMP
+                    ) TIMESTAMP(ts) PARTITION BY DAY
+                    """);
+            execute("""
+                    INSERT INTO t VALUES
+                    (1.0, 'A', '2024-01-01T00:00:00.000000Z'),
+                    (2.0, 'B', '2024-01-01T12:00:00.000000Z'),
+                    (3.0, 'A', '2024-01-02T00:00:00.000000Z')
+                    """);
+            execute("ALTER TABLE t CONVERT PARTITION TO PARQUET LIST '2024-01-01'");
+
+            TableToken tableToken = engine.verifyTableName("t");
+            String dbRoot = engine.getConfiguration().getDbRoot().toString();
+            File tableDir = new File(dbRoot, tableToken.getDirName());
+            File partDir = findParquetPartitionDir(tableDir, "2024-01-01");
+
+            engine.clear();
+
+            // Ensure _pm is absent but data.parquet remains.
+            new File(partDir, "_pm").delete();
+            Assert.assertFalse("_pm still exists", new File(partDir, "_pm").exists());
+            Assert.assertTrue("data.parquet must exist", new File(partDir, "data.parquet").exists());
+
+            CairoConfiguration wrappedConfig = new CairoConfigurationWrapper(configuration) {
+                @Override
+                public @NotNull FilesFacade getFilesFacade() {
+                    return new TestFilesFacadeImpl() {
+                        @Override
+                        public long openRW(LPSZ name, int opts) {
+                            if (Utf8s.endsWithAscii(name, "_pm")) {
+                                return -1;
+                            }
+                            return super.openRW(name, opts);
+                        }
+                    };
+                }
+            };
+
+            try (
+                    Path tablePath = new Path().of(dbRoot).concat(tableToken).slash();
+                    TableSnapshotRestore restoreAgent = new TableSnapshotRestore(wrappedConfig)
+            ) {
+                try {
+                    restoreAgent.rebuildTableFiles(tablePath, new AtomicInteger(), true);
+                    Assert.fail("should have thrown CairoException");
+                } catch (CairoException e) {
+                    TestUtils.assertContains(e.getFlyweightMessage(), "cannot create _pm file");
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testCheckpointRestoreGeneratesMissingParquetMetaFile() throws Exception {
+        // Exercises the _pm regeneration path in generateMissingParquetMetaFiles():
+        // convert a partition to parquet, delete _pm, call rebuildTableFiles(),
+        // verify _pm was regenerated and the table remains readable.
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE t (
+                        val DOUBLE,
+                        sym SYMBOL INDEX,
+                        ts TIMESTAMP
+                    ) TIMESTAMP(ts) PARTITION BY DAY
+                    """);
+            execute("""
+                    INSERT INTO t VALUES
+                    (1.0, 'A', '2024-01-01T00:00:00.000000Z'),
+                    (2.0, 'B', '2024-01-01T06:00:00.000000Z'),
+                    (3.0, 'A', '2024-01-01T12:00:00.000000Z'),
+                    (4.0, 'B', '2024-01-01T18:00:00.000000Z'),
+                    (5.0, 'A', '2024-01-02T00:00:00.000000Z')
+                    """);
+
+            sink.clear();
+            printSql("SELECT count() FROM t WHERE sym = 'A'");
+            final String expectedCount = sink.toString();
+
+            execute("ALTER TABLE t CONVERT PARTITION TO PARQUET LIST '2024-01-01'");
+
+            TableToken tableToken = engine.verifyTableName("t");
+            String dbRoot = engine.getConfiguration().getDbRoot().toString();
+            File tableDir = new File(dbRoot, tableToken.getDirName());
+            File partDir = findParquetPartitionDir(tableDir, "2024-01-01");
+
+            engine.clear();
+
+            File parquetMetaFile = new File(partDir, "_pm");
+            Assert.assertTrue("failed to delete _pm", parquetMetaFile.delete());
+            Assert.assertFalse("_pm still exists after delete", parquetMetaFile.exists());
+            Assert.assertTrue("data.parquet missing", new File(partDir, "data.parquet").exists());
+
+            try (
+                    Path tablePath = new Path().of(dbRoot).concat(tableToken).slash();
+                    TableSnapshotRestore restoreAgent = new TableSnapshotRestore(configuration)
+            ) {
+                restoreAgent.rebuildTableFiles(tablePath, new AtomicInteger(), true);
+            }
+
+            Assert.assertTrue("_pm not regenerated", parquetMetaFile.exists());
+            Assert.assertTrue("_pm is empty", parquetMetaFile.length() > 0);
+            assertSql(expectedCount, "SELECT count() FROM t WHERE sym = 'A'");
+        });
+    }
+
+    @Test
+    public void testCheckpointRestoreGeneratesMissingParquetMetaFileMultiPartition() throws Exception {
+        // Two parquet partitions: delete _pm from only one. Verify the
+        // missing one is regenerated and the existing one is untouched.
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE t (
+                        val DOUBLE,
+                        sym SYMBOL INDEX,
+                        ts TIMESTAMP
+                    ) TIMESTAMP(ts) PARTITION BY DAY
+                    """);
+            execute("""
+                    INSERT INTO t VALUES
+                    (1.0, 'A', '2024-01-01T00:00:00.000000Z'),
+                    (2.0, 'B', '2024-01-01T12:00:00.000000Z'),
+                    (3.0, 'A', '2024-01-02T00:00:00.000000Z'),
+                    (4.0, 'B', '2024-01-02T12:00:00.000000Z'),
+                    (5.0, 'A', '2024-01-03T00:00:00.000000Z')
+                    """);
+
+            sink.clear();
+            printSql("SELECT count() FROM t");
+            final String expectedTotal = sink.toString();
+
+            execute("ALTER TABLE t CONVERT PARTITION TO PARQUET LIST '2024-01-01', '2024-01-02'");
+
+            TableToken tableToken = engine.verifyTableName("t");
+            String dbRoot = engine.getConfiguration().getDbRoot().toString();
+            File tableDir = new File(dbRoot, tableToken.getDirName());
+
+            File part1Dir = findParquetPartitionDir(tableDir, "2024-01-01");
+            File part2Dir = findParquetPartitionDir(tableDir, "2024-01-02");
+
+            engine.clear();
+
+            // Delete _pm from partition 1 only.
+            File pm1 = new File(part1Dir, "_pm");
+            Assert.assertTrue("failed to delete _pm from part1", pm1.delete());
+
+            // Record partition 2's _pm size to verify it is untouched.
+            File pm2 = new File(part2Dir, "_pm");
+            long pm2SizeBefore = pm2.length();
+            Assert.assertTrue("part2 _pm should exist", pm2.exists());
+
+            try (
+                    Path tablePath = new Path().of(dbRoot).concat(tableToken).slash();
+                    TableSnapshotRestore restoreAgent = new TableSnapshotRestore(configuration)
+            ) {
+                restoreAgent.rebuildTableFiles(tablePath, new AtomicInteger(), true);
+            }
+
+            Assert.assertTrue("part1 _pm not regenerated", pm1.exists());
+            Assert.assertTrue("part1 _pm is empty", pm1.length() > 0);
+            Assert.assertEquals("part2 _pm was modified", pm2SizeBefore, pm2.length());
+            assertSql(expectedTotal, "SELECT count() FROM t");
+        });
+    }
+
+    @Test
+    public void testCheckpointRestoreRegeneratesPmFromCommittedParquetSize() throws Exception {
+        // A snapshot may capture data.parquet mid-append: bytes past the
+        // committed size exist on disk but are not part of the MVCC-visible
+        // state. generateMissingParquetMetaFiles must rebuild _pm from the
+        // committed size stored in _txn, not from ff.length(), and must not
+        // clobber _txn's recorded size with the on-disk size.
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE t (
+                        val DOUBLE,
+                        sym SYMBOL INDEX,
+                        ts TIMESTAMP
+                    ) TIMESTAMP(ts) PARTITION BY DAY
+                    """);
+            execute("""
+                    INSERT INTO t VALUES
+                    (1.0, 'A', '2024-01-01T00:00:00.000000Z'),
+                    (2.0, 'B', '2024-01-01T06:00:00.000000Z'),
+                    (3.0, 'A', '2024-01-01T12:00:00.000000Z'),
+                    (4.0, 'B', '2024-01-01T18:00:00.000000Z'),
+                    (5.0, 'A', '2024-01-02T00:00:00.000000Z')
+                    """);
+            execute("ALTER TABLE t CONVERT PARTITION TO PARQUET LIST '2024-01-01'");
+
+            TableToken tableToken = engine.verifyTableName("t");
+            String dbRoot = engine.getConfiguration().getDbRoot().toString();
+            File tableDir = new File(dbRoot, tableToken.getDirName());
+            File partDir = findParquetPartitionDir(tableDir, "2024-01-01");
+
+            engine.clear();
+
+            File dataParquet = new File(partDir, "data.parquet");
+            long committedSize = dataParquet.length();
+
+            // Simulate an uncommitted append captured by the snapshot: pad
+            // data.parquet with garbage past the committed boundary.
+            try (java.io.FileOutputStream fos = new java.io.FileOutputStream(dataParquet, true)) {
+                byte[] garbage = new byte[4096];
+                java.util.Arrays.fill(garbage, (byte) 0xAB);
+                fos.write(garbage);
+            }
+            Assert.assertEquals(committedSize + 4096, dataParquet.length());
+
+            File parquetMetaFile = new File(partDir, "_pm");
+            Assert.assertTrue("failed to delete _pm", parquetMetaFile.delete());
+
+            try (
+                    Path tablePath = new Path().of(dbRoot).concat(tableToken).slash();
+                    TableSnapshotRestore restoreAgent = new TableSnapshotRestore(configuration)
+            ) {
+                restoreAgent.rebuildTableFiles(tablePath, new AtomicInteger(), true);
+            }
+
+            Assert.assertTrue("_pm not regenerated", parquetMetaFile.exists());
+            // The row count survives round-trip, which it only does if _pm
+            // was built over the committed prefix. If the fix regressed and
+            // _pm included the garbage tail, decode would fail or return
+            // wrong rows.
+            assertSql("count\n5\n", "SELECT count() FROM t");
+        });
+    }
+
+    @Test
+    public void testCheckpointRestoreRejectsTruncatedParquetFile() throws Exception {
+        // If data.parquet on disk is SHORTER than _txn's recorded committed
+        // size, the snapshot is truncated and the restore must fail with a
+        // clear diagnostic rather than silently generating a malformed _pm.
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE t (
+                        val DOUBLE,
+                        sym SYMBOL INDEX,
+                        ts TIMESTAMP
+                    ) TIMESTAMP(ts) PARTITION BY DAY
+                    """);
+            execute("""
+                    INSERT INTO t VALUES
+                    (1.0, 'A', '2024-01-01T00:00:00.000000Z'),
+                    (2.0, 'B', '2024-01-01T12:00:00.000000Z'),
+                    (3.0, 'A', '2024-01-02T00:00:00.000000Z')
+                    """);
+            execute("ALTER TABLE t CONVERT PARTITION TO PARQUET LIST '2024-01-01'");
+
+            TableToken tableToken = engine.verifyTableName("t");
+            String dbRoot = engine.getConfiguration().getDbRoot().toString();
+            File tableDir = new File(dbRoot, tableToken.getDirName());
+            File partDir = findParquetPartitionDir(tableDir, "2024-01-01");
+
+            engine.clear();
+
+            File dataParquet = new File(partDir, "data.parquet");
+            // Truncate 32 bytes off to simulate a snapshot captured before the
+            // parquet append completed.
+            try (java.io.RandomAccessFile raf = new java.io.RandomAccessFile(dataParquet, "rw")) {
+                raf.setLength(Math.max(0, dataParquet.length() - 32));
+            }
+
+            File parquetMetaFile = new File(partDir, "_pm");
+            Assert.assertTrue("failed to delete _pm", parquetMetaFile.delete());
+
+            try (
+                    Path tablePath = new Path().of(dbRoot).concat(tableToken).slash();
+                    TableSnapshotRestore restoreAgent = new TableSnapshotRestore(configuration)
+            ) {
+                try {
+                    restoreAgent.rebuildTableFiles(tablePath, new AtomicInteger(), true);
+                    Assert.fail("should have thrown CairoException");
+                } catch (CairoException e) {
+                    TestUtils.assertContains(e.getFlyweightMessage(), "restored parquet file is shorter than committed size");
+                }
+            }
+        });
+    }
+
+    @Test
     public void testCheckpointRestoreRebuildsBitmapIndexesOnParquetAfterDropColumn() throws Exception {
         // Exercises two bugs in the parquet bitmap index rebuild during
         // checkpoint/backup recovery: (a) getIndexedParquetColumnIndex
@@ -2666,6 +2999,18 @@ public class CheckpointTest extends AbstractCairoTest {
             // countCheck at offset +24 remains unchanged
             // This creates: valueCount=11, countCheck=10 (torn write simulation)
         }
+    }
+
+    private static File findParquetPartitionDir(File tableDir, String partitionPrefix) {
+        File[] dirs = tableDir.listFiles((dir, name) -> name.startsWith(partitionPrefix));
+        Assert.assertNotNull("no directories matching " + partitionPrefix, dirs);
+        for (File dir : dirs) {
+            if (new File(dir, "data.parquet").exists()) {
+                return dir;
+            }
+        }
+        Assert.fail("no partition directory with data.parquet for " + partitionPrefix);
+        return null; // unreachable
     }
 
     private static void createTriggerFile() {

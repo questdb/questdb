@@ -29,6 +29,7 @@ import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.ColumnTypeDriver;
 import io.questdb.cairo.ColumnVersionReader;
+import io.questdb.cairo.ParquetMetaFileReader;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.sql.ColumnMapping;
 import io.questdb.cairo.sql.PageFrame;
@@ -44,7 +45,7 @@ import io.questdb.cairo.vm.NullMemoryCMR;
 import io.questdb.cairo.vm.api.MemoryR;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.griffin.engine.table.parquet.PartitionDecoder;
+import io.questdb.griffin.engine.table.parquet.ParquetPartitionDecoder;
 import io.questdb.std.DirectLongList;
 import io.questdb.std.IntList;
 import io.questdb.std.LongList;
@@ -76,7 +77,7 @@ public class FwdTableReaderPageFrameCursor implements TablePageFrameCursor {
     private TableReader reader;
     // only native partition frames are reentered
     private long reenterPageFrameRowLimit;
-    private PartitionDecoder reenterParquetDecoder;
+    private ParquetPartitionDecoder reenterParquetDecoder;
     private boolean reenterPartitionFrame = false; // true when the current Partition Frame is not entirely exhausted
     private long reenterPartitionHi;
     private int reenterPartitionIndex;
@@ -183,7 +184,9 @@ public class FwdTableReaderPageFrameCursor implements TablePageFrameCursor {
                     frame.rowGroupLo = -1;
                     frame.rowGroupHi = -1;
                     if (frame.format == PartitionFormat.PARQUET) {
-                        frame.partitionDecoder = partitionFrame.getParquetDecoder();
+                        frame.parquetMetaDecoder = partitionFrame.getParquetMetaDecoder();
+                    } else {
+                        frame.parquetMetaDecoder = null;
                     }
 
                     return frame;
@@ -348,13 +351,13 @@ public class FwdTableReaderPageFrameCursor implements TablePageFrameCursor {
     }
 
     private @Nullable TableReaderPageFrame computeParquetFrame(long partitionLo, long partitionHi) {
-        final PartitionDecoder.Metadata metadata = reenterParquetDecoder.metadata();
+        final ParquetMetaFileReader metadata = reenterParquetDecoder.metadata();
         final int rowGroupCount = metadata.getRowGroupCount();
 
-        if (partitionHi > metadata.getRowCount()) {
+        if (partitionHi > metadata.getPartitionRowCount()) {
             throw CairoException.critical(0)
                     .put("parquet partition row count mismatch [partitionHi=").put(partitionHi)
-                    .put(", parquetRowCount=").put(metadata.getRowCount())
+                    .put(", parquetRowCount=").put(metadata.getPartitionRowCount())
                     .put(", partitionIndex=").put(reenterPartitionIndex)
                     .put(']');
         }
@@ -367,7 +370,7 @@ public class FwdTableReaderPageFrameCursor implements TablePageFrameCursor {
             if (partitionLo < rowGroupEndRow) {
                 if (filterBufEnd != -1 && ParquetRowGroupFilter.canSkipRowGroup(
                         i,
-                        reenterParquetDecoder,
+                        metadata,
                         filterList,
                         filterBufEnd
                 )) {
@@ -395,7 +398,7 @@ public class FwdTableReaderPageFrameCursor implements TablePageFrameCursor {
 
                 remainingRowsInInterval = partitionHi - adjustedHi;
 
-                frame.partitionDecoder = reenterParquetDecoder;
+                frame.parquetMetaDecoder = reenterParquetDecoder;
                 frame.partitionLo = partitionLo;
                 frame.partitionHi = adjustedHi;
                 frame.format = PartitionFormat.PARQUET;
@@ -417,7 +420,7 @@ public class FwdTableReaderPageFrameCursor implements TablePageFrameCursor {
         final byte format = partitionFrame.getPartitionFormat();
         if (format == PartitionFormat.PARQUET) {
             clearAddresses();
-            reenterParquetDecoder = partitionFrame.getParquetDecoder();
+            reenterParquetDecoder = partitionFrame.getParquetMetaDecoder();
             reenterPageFrameRowLimit = 0;
             cachedRowGroupIndex = 0;
             cachedRowGroupStartRow = 0;
@@ -502,7 +505,7 @@ public class FwdTableReaderPageFrameCursor implements TablePageFrameCursor {
 
     private class TableReaderPageFrame implements PageFrame {
         private byte format;
-        private PartitionDecoder partitionDecoder;
+        private ParquetPartitionDecoder parquetMetaDecoder;
         private long partitionHi;
         private int partitionIndex;
         private long partitionLo;
@@ -546,9 +549,9 @@ public class FwdTableReaderPageFrameCursor implements TablePageFrameCursor {
         }
 
         @Override
-        public PartitionDecoder getParquetPartitionDecoder() {
-            assert partitionDecoder != null || format != PartitionFormat.PARQUET;
-            return partitionDecoder;
+        public ParquetPartitionDecoder getParquetDecoder() {
+            assert parquetMetaDecoder != null || format != PartitionFormat.PARQUET;
+            return parquetMetaDecoder;
         }
 
         @Override

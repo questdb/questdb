@@ -27,7 +27,7 @@ package io.questdb.cairo;
 import io.questdb.cairo.sql.PartitionFrame;
 import io.questdb.cairo.sql.PartitionFrameCursor;
 import io.questdb.cairo.sql.StaticSymbolTable;
-import io.questdb.griffin.engine.table.parquet.PartitionDecoder;
+import io.questdb.griffin.engine.table.parquet.ParquetPartitionDecoder;
 import io.questdb.std.Misc;
 import org.jetbrains.annotations.TestOnly;
 
@@ -112,9 +112,9 @@ public abstract class AbstractFullPartitionFrameCursor implements PartitionFrame
          */
         protected byte format;
         /**
-         * The Parquet decoder if applicable.
+         * The parquet-meta-backed Parquet decoder for table partitions.
          */
-        protected PartitionDecoder parquetDecoder;
+        protected ParquetPartitionDecoder parquetMetaDecoder;
         /**
          * The partition index.
          */
@@ -129,8 +129,8 @@ public abstract class AbstractFullPartitionFrameCursor implements PartitionFrame
         protected long rowLo;
 
         @Override
-        public PartitionDecoder getParquetDecoder() {
-            return parquetDecoder;
+        public ParquetPartitionDecoder getParquetMetaDecoder() {
+            return parquetMetaDecoder;
         }
 
         @Override

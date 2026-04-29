@@ -29,6 +29,18 @@ import io.questdb.std.Os;
 import io.questdb.std.QuietCloseable;
 import io.questdb.std.Unsafe;
 
+/**
+ * Native output buffers for a decoded parquet row group.
+ * <p>
+ * For `_pm`-backed decode, a column chunk that is known to be all-null may be
+ * represented without materialized data by setting both data and aux pointers
+ * and sizes to {@code 0}. Consumers must treat that as a logical all-null chunk,
+ * not as an invalid buffer.
+ * <p>
+ * The current {@code read_parquet()} direct cursor still uses {@link ParquetFileDecoder},
+ * which materializes all requested chunks. If it ever switches to `_pm`, it must
+ * honor the same zero-pointer convention before dereferencing these buffers.
+ */
 public class RowGroupBuffers implements QuietCloseable, Reopenable {
     private static final long CHUNKS_PTR_OFFSET;
     private static final long CHUNK_AUX_PTR_OFFSET;
