@@ -444,12 +444,12 @@ public class TableReader implements Closeable, SymbolTableSource {
 
     public long getParquetMetadataAddr(int partitionIndex) {
         MemoryCMR mem = parquetMetadataPartitions.getQuick(partitionIndex);
-        return mem != null && mem != NullMemoryCMR.INSTANCE ? mem.addressOf(0) : 0;
+        return mem != null && mem.isOpen() ? mem.addressOf(0) : 0;
     }
 
     public long getParquetMetadataSize(int partitionIndex) {
         MemoryCMR mem = parquetMetadataPartitions.getQuick(partitionIndex);
-        return mem != null && mem != NullMemoryCMR.INSTANCE ? mem.size() : 0;
+        return mem != null && mem.isOpen() ? mem.size() : 0;
     }
 
     public int getPartitionCount() {
