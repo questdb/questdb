@@ -49,6 +49,6 @@ public final class BooleanType implements FuzzColumnType {
 
     @Override
     public String randomLiteral(Rnd rnd) {
-        return rnd.nextBoolean() ? "true" : "false";
+        return Boolean.toString(rnd.nextBoolean());
     }
 }

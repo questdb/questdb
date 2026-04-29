@@ -30,7 +30,7 @@ import io.questdb.std.Rnd;
  * Describes one column type the fuzzer can generate. Each implementation
  * lives in its own file so a new type can be added without touching the
  * rest of the fuzzer. Implementations are typically singletons; the two
- * parameterised families (DECIMAL, DOUBLE[]) use fresh instances per column
+ * parameterized families (DECIMAL, DOUBLE[]) use fresh instances per column
  * so precision/scale/dimensionality varies between columns.
  */
 public interface FuzzColumnType {

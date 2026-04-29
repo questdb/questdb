@@ -49,6 +49,6 @@ public final class ByteType implements FuzzColumnType {
 
     @Override
     public String randomLiteral(Rnd rnd) {
-        return Integer.toString((int) rnd.nextByte()) + "::BYTE";
+        return (int) rnd.nextByte() + "::BYTE";
     }
 }

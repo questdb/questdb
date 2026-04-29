@@ -44,7 +44,7 @@ public final class DateType implements FuzzColumnType {
 
     @Override
     public String getRndCall() {
-        // epoch 2020-01-01 .. 2026-01-01 (millis)
+        // epoch 2020-01-01 ... 2026-01-01 (millis)
         return "rnd_date(1577836800000L, 1767225600000L, 8)";
     }
 

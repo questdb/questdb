@@ -148,6 +148,31 @@ public final class FuzzSource {
         return orderStable;
     }
 
+    private static InnerQuery aggregated(Rnd rnd, FuzzSource base) {
+        ObjList<FuzzColumn> baseCols = base.getTable().getColumns();
+        // Search for a groupable (non-array) column; retry a few times so
+        // we don't miss one behind an unlucky first draw.
+        FuzzColumn key = null;
+        for (int i = 0; i < baseCols.size() * 2 && key == null; i++) {
+            FuzzColumn c = baseCols.getQuick(rnd.nextInt(baseCols.size()));
+            ColumnKind kind = c.getType().getKind();
+            if (kind.isGroupable() && kind != ColumnKind.ARRAY) {
+                key = c;
+            }
+        }
+        if (key == null) {
+            return star(base);
+        }
+        String sql = "SELECT " + key.getName() + " AS k, count() AS cnt FROM " + base.getFromSql();
+        ObjList<FuzzColumn> cols = new ObjList<>();
+        cols.add(new FuzzColumn("k", key.getType()));
+        cols.add(new FuzzColumn("cnt", LongType.INSTANCE));
+        // No ts: aggregated output doesn't carry the bucket timestamp.
+        FuzzTable newTable = new FuzzTable(base.getTable().getName(), cols, null);
+        // GROUP BY iterates a hash map, so the row order is implementation-defined.
+        return new InnerQuery(sql, newTable, false);
+    }
+
     // Draw an inner-query shape. Distribution is tuned so the simple
     // star shape still dominates but filtered, renaming and aggregated
     // inner queries each appear a measurable fraction of the time.
@@ -163,10 +188,6 @@ public final class FuzzSource {
             return filtered(rnd, base);
         }
         return star(base);
-    }
-
-    private static InnerQuery star(FuzzSource base) {
-        return new InnerQuery("SELECT * FROM " + base.getFromSql(), base.getTable(), base.isOrderStable());
     }
 
     private static InnerQuery filtered(Rnd rnd, FuzzSource base) {
@@ -221,40 +242,10 @@ public final class FuzzSource {
         return new InnerQuery(sb.toString(), newTable, base.isOrderStable());
     }
 
-    private static InnerQuery aggregated(Rnd rnd, FuzzSource base) {
-        ObjList<FuzzColumn> baseCols = base.getTable().getColumns();
-        // Search for a groupable (non-array) column; retry a few times so
-        // we don't miss one behind an unlucky first draw.
-        FuzzColumn key = null;
-        for (int i = 0; i < baseCols.size() * 2 && key == null; i++) {
-            FuzzColumn c = baseCols.getQuick(rnd.nextInt(baseCols.size()));
-            ColumnKind kind = c.getType().getKind();
-            if (kind.isGroupable() && kind != ColumnKind.ARRAY) {
-                key = c;
-            }
-        }
-        if (key == null) {
-            return star(base);
-        }
-        String sql = "SELECT " + key.getName() + " AS k, count() AS cnt FROM " + base.getFromSql();
-        ObjList<FuzzColumn> cols = new ObjList<>();
-        cols.add(new FuzzColumn("k", key.getType()));
-        cols.add(new FuzzColumn("cnt", LongType.INSTANCE));
-        // No ts: aggregated output doesn't carry the bucket timestamp.
-        FuzzTable newTable = new FuzzTable(base.getTable().getName(), cols, null);
-        // GROUP BY iterates a hash map, so the row order is implementation-defined.
-        return new InnerQuery(sql, newTable, false);
+    private static InnerQuery star(FuzzSource base) {
+        return new InnerQuery("SELECT * FROM " + base.getFromSql(), base.getTable(), base.isOrderStable());
     }
 
-    private static final class InnerQuery {
-        final boolean orderStable;
-        final String sql;
-        final FuzzTable table;
-
-        InnerQuery(String sql, FuzzTable table, boolean orderStable) {
-            this.sql = sql;
-            this.table = table;
-            this.orderStable = orderStable;
-        }
+    private record InnerQuery(String sql, FuzzTable table, boolean orderStable) {
     }
 }

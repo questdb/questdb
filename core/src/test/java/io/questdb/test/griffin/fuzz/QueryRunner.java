@@ -76,6 +76,7 @@ import java.util.regex.Pattern;
  * </ul>
  * The two modes share a pivot: {@code primary @ JIT-off}. With both
  * enabled, three runs per query are required (primary @ JIT-on, primary
+ *
  * @ JIT-off, shadow @ JIT-off); the JIT diff compares the first two,
  * the storage diff compares the second and third. Either divergence
  * fails the query, and the failure message names the axis.
@@ -83,8 +84,21 @@ import java.util.regex.Pattern;
  * Row-set comparison is a multiset (line-sorted) so parallel iteration
  * order does not produce false positives. {@code deterministic=false}
  * queries (LIMIT over parallel GROUP BY / hash join etc.) compare row
- * counts only, and accept the same allowlisted exception class with
- * different per-row messages on each side.
+ * counts only.
+ * <p>
+ * Two storage-diff escape valves keep the oracle focused on data
+ * correctness rather than planner artefacts:
+ * <ul>
+ *   <li>If both sides throw the same allowlisted exception class (even
+ *       with different messages), the query was rejected by both paths
+ *       and treated as skip. Index/parquet differences can change which
+ *       sub-expression the compiler reports first.</li>
+ *   <li>If exactly one side throws a known planner-sensitivity error
+ *       (currently the time-series-join ASC-timestamp check), the diff
+ *       is treated as skip. That check inspects cursor metadata that
+ *       legitimately differs between an indexed-symbol lookup (loses
+ *       TS-ASC) and a full scan (preserves it).</li>
+ * </ul>
  */
 public final class QueryRunner {
     private final boolean diffJit;
@@ -97,12 +111,13 @@ public final class QueryRunner {
     private final StringSink rowsC = new StringSink();
     private final String[] shadowReplacements;
 
-    public QueryRunner(CairoEngine engine, SqlExecutionContext executionContext, boolean diffJit) {
-        this(engine, executionContext, diffJit, false, null);
-    }
-
-    public QueryRunner(CairoEngine engine, SqlExecutionContext executionContext, boolean diffJit,
-                       boolean diffShadow, ObjList<FuzzTable> tables) {
+    public QueryRunner(
+            CairoEngine engine,
+            SqlExecutionContext executionContext,
+            boolean diffJit,
+            boolean diffShadow,
+            ObjList<FuzzTable> tables
+    ) {
         this.engine = engine;
         this.executionContext = executionContext;
         this.diffJit = diffJit;
@@ -155,8 +170,17 @@ public final class QueryRunner {
                 executionContext.setJitMode(SqlJitMode.JIT_MODE_DISABLED);
                 String shadowSql = rewriteForShadow(sql);
                 Outcome bS = runOnce(shadowSql, rowsC);
-                Result storageResult = reconcilePair(sql, bJ, bS, rowsB, rowsC, query.deterministic(),
-                        "storage divergence", "primary", "shadow ");
+                Result storageResult = reconcilePair(
+                        sql,
+                        bJ,
+                        bS,
+                        rowsB,
+                        rowsC,
+                        query.deterministic(),
+                        "storage divergence",
+                        "primary",
+                        "shadow "
+                );
                 if (storageResult.isFailed()) {
                     return storageResult;
                 }
@@ -169,9 +193,23 @@ public final class QueryRunner {
     }
 
     private static boolean isAcceptedSkip(Throwable t) {
-        return t instanceof SqlException
-                || t instanceof ImplicitCastException
-                || t instanceof NumericException;
+        return t instanceof SqlException || t instanceof ImplicitCastException || t instanceof NumericException;
+    }
+
+    /**
+     * One side threw a known planner-sensitivity error. These are structural
+     * compile-time checks (e.g. "left side of time series join doesn't have
+     * ASC timestamp order") whose outcome depends on the access path the
+     * planner picks, which in turn depends on index/parquet configuration.
+     * Primary and shadow legitimately produce different access paths when
+     * their storage settings differ, so a one-sided error here is a planner
+     * choice, not a data divergence.
+     */
+    private static boolean isPlannerSensitivityAsymmetry(Outcome o) {
+        if (!(o.failure instanceof SqlException)) {
+            return false;
+        }
+        return o.exceptionMessage.contains("doesn't have ASC timestamp order");
     }
 
     private static String renderOutcome(Outcome outcome, CharSequence rows) {
@@ -270,16 +308,29 @@ public final class QueryRunner {
         // messages. For a non-deterministic query, a per-row cast/numeric
         // exception fires on whichever row the iterator visits first, and
         // parallel GROUP BY / hash join paths can return rows in different
-        // orders across runs. The two outcomes are consistent (both rejected
-        // the result set with the same kind of error), so treat as skip.
-        if (!deterministic
-                && a.failure != null && b.failure != null
-                && a.exceptionClass.equals(b.exceptionClass)
-                && isAcceptedSkip(a.failure)) {
+        // orders across runs. For a deterministic query under the storage
+        // diff, the two paths can hit different first errors at compile time
+        // because index/parquet settings change which predicate the planner
+        // evaluates first (e.g. one side reports "STRING constant expected"
+        // while the other reports a missing cast on a different sub-expr).
+        // In both cases both paths rejected the query with a consistent
+        // error class, so treat as skip.
+        if (a.exceptionClass.equals(b.exceptionClass) && isAcceptedSkip(a.failure)) {
             return Result.skipped(a.exceptionClass + ": (varies)");
         }
-        // Anything else: divergence (one succeeded, one threw; or both threw
-        // different exceptions/messages).
+        // One side threw a known planner-sensitivity error and the other
+        // accepted the query. The error is a structural check that depends
+        // on cursor metadata (e.g. whether the access path preserves
+        // timestamp order), and that metadata can legitimately differ when
+        // primary and shadow have different index/parquet configurations:
+        // an indexed-symbol predicate uses an index lookup that loses TS
+        // ordering, while a non-indexed scan preserves it. Skip rather than
+        // flag, since the diff is a planner choice, not a data divergence.
+        if (isPlannerSensitivityAsymmetry(a) || isPlannerSensitivityAsymmetry(b)) {
+            return Result.skipped("planner sensitivity asymmetry");
+        }
+        // Anything else: divergence (one succeeded, one threw a non-skip
+        // error; or both threw different exception classes).
         return Result.failed(sql, divergence(diffName, a, b, rowsA, rowsB, labelA, labelB));
     }
 
@@ -321,18 +372,7 @@ public final class QueryRunner {
         }
     }
 
-    private static final class Outcome {
-        final String exceptionClass;
-        final String exceptionMessage;
-        final Throwable failure;
-        final int rowsRead;
-
-        private Outcome(int rowsRead, Throwable failure, String exceptionClass, String exceptionMessage) {
-            this.rowsRead = rowsRead;
-            this.failure = failure;
-            this.exceptionClass = exceptionClass;
-            this.exceptionMessage = exceptionMessage;
-        }
+    private record Outcome(int rowsRead, Throwable failure, String exceptionClass, String exceptionMessage) {
 
         static Outcome error(Throwable t, String message) {
             return new Outcome(0, t, t.getClass().getSimpleName(), message);

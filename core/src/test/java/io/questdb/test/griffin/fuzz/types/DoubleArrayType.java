@@ -45,9 +45,7 @@ public final class DoubleArrayType implements FuzzColumnType {
     @Override
     public String getDdl() {
         StringBuilder sb = new StringBuilder("DOUBLE");
-        for (int i = 0; i < dims; i++) {
-            sb.append("[]");
-        }
+        sb.repeat("[]", Math.max(0, dims));
         return sb.toString();
     }
 

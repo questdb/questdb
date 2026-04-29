@@ -42,7 +42,6 @@ import io.questdb.test.griffin.fuzz.types.ColumnKind;
  * X with Y" noise down without going all the way to static typing.
  */
 public final class PredicateGenerator {
-
     private static final String[] COMPARISON_OPS = {"=", "!=", "<", "<=", ">", ">="};
     private static final String[] EQUALITY_OPS = {"=", "!="};
 

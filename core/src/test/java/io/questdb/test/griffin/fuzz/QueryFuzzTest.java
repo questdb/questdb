@@ -90,7 +90,8 @@ public class QueryFuzzTest extends AbstractCairoTest {
                     .$(", rows=").$(config.getRowsPerTable())
                     .$(", queries=").$(config.getNumQueries())
                     .$(", diffJit=").$(config.isDiffJitEnabled())
-                    .$(", diffShadow=").$(config.isDiffShadowEnabled()).$();
+                    .$(", diffShadow=").$(config.isDiffShadowEnabled())
+                    .$();
 
             FuzzTableFactory factory = new FuzzTableFactory(config);
             ObjList<FuzzTable> tables = new ObjList<>();
@@ -103,8 +104,7 @@ public class QueryFuzzTest extends AbstractCairoTest {
                 }
             }
 
-            QueryRunner runner = new QueryRunner(engine, sqlExecutionContext,
-                    config.isDiffJitEnabled(), config.isDiffShadowEnabled(), tables);
+            QueryRunner runner = new QueryRunner(engine, sqlExecutionContext, config.isDiffJitEnabled(), config.isDiffShadowEnabled(), tables);
             int skipped = 0;
             List<QueryRunner.Result> failures = new ArrayList<>();
             try (BufferedWriter dump = openDump(config.getDumpPath())) {
@@ -157,8 +157,7 @@ public class QueryFuzzTest extends AbstractCairoTest {
                 .append(" (parquet=").append(t.getParquetMode()).append("):");
         for (int j = 0, n = t.getColumnCount(); j < n; j++) {
             FuzzColumn c = t.getColumn(j);
-            sb.append(' ').append(c.getName())
-                    .append('=').append(c.getType().getDdl());
+            sb.append(' ').append(c.getName()).append('=').append(c.getType().getDdl());
             if (c.isIndexed()) {
                 sb.append(" INDEX");
             }
