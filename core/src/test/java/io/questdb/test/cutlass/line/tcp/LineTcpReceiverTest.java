@@ -137,7 +137,7 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
     @Override
     public void setUp() {
         Rnd rnd = TestUtils.generateRandom(LOG);
-        setProperty(PropertyKey.CAIRO_DEFAULT_SYMBOL_INDEX_TYPE, rnd.nextBoolean() ? "BITMAP" : "POSTING");
+        setProperty(PropertyKey.CAIRO_DEFAULT_SYMBOL_INDEX_TYPE, TestUtils.randomSymbolIndexTypeName(rnd));
         super.setUp();
         node1.setProperty(PropertyKey.CAIRO_WAL_ENABLED_DEFAULT, walEnabled);
         path = new Path();

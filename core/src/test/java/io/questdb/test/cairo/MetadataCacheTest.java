@@ -370,7 +370,7 @@ public class MetadataCacheTest extends AbstractCairoTest {
     @Override
     public void setUp() {
         Rnd rnd = TestUtils.generateRandom(LOG);
-        setProperty(PropertyKey.CAIRO_DEFAULT_SYMBOL_INDEX_TYPE, rnd.nextBoolean() ? "BITMAP" : "POSTING");
+        setProperty(PropertyKey.CAIRO_DEFAULT_SYMBOL_INDEX_TYPE, TestUtils.randomSymbolIndexTypeName(rnd));
         super.setUp();
     }
 
@@ -484,7 +484,7 @@ public class MetadataCacheTest extends AbstractCairoTest {
     public void testAlterTableColumnDropIndex() throws Exception {
         assertMemoryLeak(() -> {
             Rnd rnd = TestUtils.generateRandom(LOG);
-            String indexType = rnd.nextBoolean() ? "BITMAP" : "POSTING";
+            String indexType = TestUtils.randomSymbolIndexTypeName(rnd);
             node1.setProperty(PropertyKey.CAIRO_DEFAULT_SYMBOL_INDEX_TYPE, indexType);
 
             execute("CREATE TABLE y (ts TIMESTAMP, foo SYMBOL INDEX) TIMESTAMP(ts) PARTITION BY DAY WAL;");

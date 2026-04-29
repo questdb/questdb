@@ -1980,6 +1980,16 @@ public final class TestUtils {
         return seq;
     }
 
+    public static String randomSymbolIndexTypeName(Rnd rnd) {
+        return switch (rnd.nextInt(4)) {
+            case 0 -> "BITMAP";
+            case 1 -> "POSTING";
+            case 2 -> "POSTING DELTA";
+            case 3 -> "POSTING EF";
+            default -> throw new AssertionError();
+        };
+    }
+
     public static String randomiseCase(Rnd rnd, String columName) {
         int changeCase = rnd.nextInt(3);
         if (changeCase == 0) {

@@ -267,7 +267,7 @@ public class DedupInsertFuzzTest extends AbstractFuzzTest {
             Rnd rnd = generateRandomAndProps();
             long initialDelta = Micros.MINUTE_MICROS * 15;
             int initialCount = 2 * 24 * 5;
-            node1.setProperty(PropertyKey.CAIRO_DEFAULT_SYMBOL_INDEX_TYPE, rnd.nextBoolean() ? "BITMAP" : "POSTING");
+            node1.setProperty(PropertyKey.CAIRO_DEFAULT_SYMBOL_INDEX_TYPE, TestUtils.randomSymbolIndexTypeName(rnd));
             generateInsertsTransactions(
                     transactions,
                     1,

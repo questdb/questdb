@@ -96,7 +96,7 @@ public class UpdateTest extends AbstractCairoTest {
         };
         circuitBreaker.setTimeout(DEFAULT_CIRCUIT_BREAKER_TIMEOUT);
         Rnd rnd = TestUtils.generateRandom(LOG);
-        setProperty(PropertyKey.CAIRO_DEFAULT_SYMBOL_INDEX_TYPE, rnd.nextBoolean() ? "BITMAP" : "POSTING");
+        setProperty(PropertyKey.CAIRO_DEFAULT_SYMBOL_INDEX_TYPE, TestUtils.randomSymbolIndexTypeName(rnd));
         super.setUp();
     }
 

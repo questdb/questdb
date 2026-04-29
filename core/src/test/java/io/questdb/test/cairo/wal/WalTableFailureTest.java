@@ -1456,7 +1456,7 @@ public class WalTableFailureTest extends AbstractCairoTest {
     public void testWalMultipleColumnConversions() throws Exception {
         assertMemoryLeak(() -> {
             Rnd rnd = TestUtils.generateRandom(LOG);
-            node1.setProperty(PropertyKey.CAIRO_DEFAULT_SYMBOL_INDEX_TYPE, rnd.nextBoolean() ? "BITMAP" : "POSTING");
+            node1.setProperty(PropertyKey.CAIRO_DEFAULT_SYMBOL_INDEX_TYPE, TestUtils.randomSymbolIndexTypeName(rnd));
             execute("create table abc (x0 symbol, x string, y string, y1 symbol, ts timestamp) timestamp(ts) partition by DAY WAL");
             execute("insert into abc values('aa', 'a', 'b', 'bb', '2022-02-24T01')");
             drainWalQueue();

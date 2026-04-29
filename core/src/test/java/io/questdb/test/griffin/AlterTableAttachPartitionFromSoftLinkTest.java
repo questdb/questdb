@@ -78,7 +78,7 @@ public class AlterTableAttachPartitionFromSoftLinkTest extends AbstractAlterTabl
     @Override
     @Before
     public void setUp() {
-        setProperty(PropertyKey.CAIRO_DEFAULT_SYMBOL_INDEX_TYPE, rnd.nextBoolean() ? "BITMAP" : "POSTING");
+        setProperty(PropertyKey.CAIRO_DEFAULT_SYMBOL_INDEX_TYPE, TestUtils.randomSymbolIndexTypeName(rnd));
         super.setUp();
         Assert.assertEquals(TableUtils.ATTACHABLE_DIR_MARKER, configuration.getAttachPartitionSuffix());
         Assert.assertFalse(configuration.attachPartitionCopy());

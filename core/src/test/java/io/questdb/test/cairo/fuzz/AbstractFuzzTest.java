@@ -95,7 +95,7 @@ public class AbstractFuzzTest extends AbstractCairoTest {
 
     @Before
     public void setUp() {
-        setProperty(PropertyKey.CAIRO_DEFAULT_SYMBOL_INDEX_TYPE, setUpRnd.nextBoolean() ? "POSTING" : "POSTING");
+        setProperty(PropertyKey.CAIRO_DEFAULT_SYMBOL_INDEX_TYPE, TestUtils.randomSymbolIndexTypeName(setUpRnd));
         super.setUp();
         fuzzer.withDb(engine, sqlExecutionContext);
         fuzzer.clearSeeds();

@@ -51,7 +51,7 @@ public class AsOfJoinTest extends AbstractCairoTest {
         Rnd rnd = TestUtils.generateRandom(LOG);
         this.leftTableTimestampType = TestUtils.getTimestampType(rnd);
         this.rightTableTimestampType = TestUtils.getTimestampType(rnd);
-        this.defaultIndexTypeName = rnd.nextBoolean() ? "BITMAP" : "POSTING";
+        this.defaultIndexTypeName = TestUtils.randomSymbolIndexTypeName(rnd);
     }
 
     @Override
