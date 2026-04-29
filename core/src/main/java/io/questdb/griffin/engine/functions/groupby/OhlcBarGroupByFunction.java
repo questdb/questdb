@@ -73,8 +73,8 @@ import org.jetbrains.annotations.Nullable;
  *   U+2800  Braille Blank               (padding beyond wick)
  *   U+2500  Box Drawings Light Horiz     (wick: low-to-body, body-to-high)
  *   U+2588  Full Block                   (bullish body: close >= open)
- *   U+2591  Light Shade                  (bearish body: close < open)
- *   U+2502  Box Drawings Light Vertical  (doji: close == open)
+ *   U+2591  Light Shade                  (bearish body: close &lt; open)
+ *   U+2502  Box Drawings Light Vertical  (doji: open and close map to same position)
  * </pre>
  */
 public class OhlcBarGroupByFunction extends VarcharFunction implements UnaryFunction, GroupByFunction {
@@ -90,6 +90,7 @@ public class OhlcBarGroupByFunction extends VarcharFunction implements UnaryFunc
     private final @Nullable Utf8StringSink labelSink;
     private final Function maxFunc;
     private final int maxBufferLength;
+    private final int maxPosition;
     private final int maxWidth;
     private final Function minFunc;
     private final int minPosition;
@@ -119,6 +120,7 @@ public class OhlcBarGroupByFunction extends VarcharFunction implements UnaryFunc
             boolean hasLabels,
             int functionPosition,
             int minPosition,
+            int maxPosition,
             int widthPosition,
             int maxBufferLength
     ) {
@@ -128,6 +130,7 @@ public class OhlcBarGroupByFunction extends VarcharFunction implements UnaryFunc
         this.maxFunc = maxFunc;
         this.widthFunc = widthFunc;
         this.functionPosition = functionPosition;
+        this.maxPosition = maxPosition;
         this.minPosition = minPosition;
         this.widthPosition = widthPosition;
         this.maxBufferLength = maxBufferLength;
@@ -188,13 +191,26 @@ public class OhlcBarGroupByFunction extends VarcharFunction implements UnaryFunc
 
     @Override
     public void computeNext(MapValue mapValue, Record record, long rowId) {
+        // Reconcile bounds even when price is NaN - the bounds come from
+        // a separate expression (e.g., lateral join) and are valid even
+        // when the price column is NULL for this row.
+        reconcileBounds(mapValue, record);
         final double value = arg.getDouble(record);
         if (Double.isNaN(value)) {
             return;
         }
         long firstRowId = mapValue.getLong(valueIndex);
         if (firstRowId == Numbers.LONG_NULL) {
-            computeFirst(mapValue, record, rowId);
+            // First non-NaN value for this group. Initialize OHLC slots
+            // but do NOT overwrite bounds slots +6/+7 - they were already
+            // reconciled above and may contain widened values from prior
+            // NaN-price rows.
+            mapValue.putLong(valueIndex, rowId);
+            mapValue.putDouble(valueIndex + 1, value);
+            mapValue.putLong(valueIndex + 2, rowId);
+            mapValue.putDouble(valueIndex + 3, value);
+            mapValue.putDouble(valueIndex + 4, value);
+            mapValue.putDouble(valueIndex + 5, value);
             return;
         }
         if (rowId < firstRowId) {
@@ -212,17 +228,6 @@ public class OhlcBarGroupByFunction extends VarcharFunction implements UnaryFunc
         double currentMax = mapValue.getDouble(valueIndex + 5);
         if (value > currentMax) {
             mapValue.putDouble(valueIndex + 5, value);
-        }
-        // Reconcile bounds: take widest range across all rows in group
-        double newMin = minFunc.getDouble(record);
-        double storedMin = mapValue.getDouble(valueIndex + 6);
-        if (!Double.isNaN(newMin) && (Double.isNaN(storedMin) || newMin < storedMin)) {
-            mapValue.putDouble(valueIndex + 6, newMin);
-        }
-        double newMax = maxFunc.getDouble(record);
-        double storedMax = mapValue.getDouble(valueIndex + 7);
-        if (!Double.isNaN(newMax) && (Double.isNaN(storedMax) || newMax > storedMax)) {
-            mapValue.putDouble(valueIndex + 7, newMax);
         }
     }
 
@@ -339,6 +344,9 @@ public class OhlcBarGroupByFunction extends VarcharFunction implements UnaryFunc
     public void merge(MapValue destValue, MapValue srcValue) {
         long srcFirstRowId = srcValue.getLong(valueIndex);
         if (srcFirstRowId == Numbers.LONG_NULL) {
+            // src has no OHLC data (all NaN prices) but may have valid
+            // bounds from the lateral join. Reconcile bounds and return.
+            reconcileBoundsFromMap(destValue, srcValue);
             return;
         }
         double srcMin = srcValue.getDouble(valueIndex + 4);
@@ -351,40 +359,29 @@ public class OhlcBarGroupByFunction extends VarcharFunction implements UnaryFunc
             destValue.putDouble(valueIndex + 3, srcValue.getDouble(valueIndex + 3));
             destValue.putDouble(valueIndex + 4, srcMin);
             destValue.putDouble(valueIndex + 5, srcMax);
-            destValue.putDouble(valueIndex + 6, srcValue.getDouble(valueIndex + 6));
-            destValue.putDouble(valueIndex + 7, srcValue.getDouble(valueIndex + 7));
-            return;
+        } else {
+            if (srcFirstRowId < destFirstRowId) {
+                destValue.putLong(valueIndex, srcFirstRowId);
+                destValue.putDouble(valueIndex + 1, srcValue.getDouble(valueIndex + 1));
+            }
+            long srcLastRowId = srcValue.getLong(valueIndex + 2);
+            long destLastRowId = destValue.getLong(valueIndex + 2);
+            if (srcLastRowId > destLastRowId) {
+                destValue.putLong(valueIndex + 2, srcLastRowId);
+                destValue.putDouble(valueIndex + 3, srcValue.getDouble(valueIndex + 3));
+            }
+            double destMin = destValue.getDouble(valueIndex + 4);
+            if (srcMin < destMin) {
+                destValue.putDouble(valueIndex + 4, srcMin);
+            }
+            double destMax = destValue.getDouble(valueIndex + 5);
+            if (srcMax > destMax) {
+                destValue.putDouble(valueIndex + 5, srcMax);
+            }
         }
-        if (srcFirstRowId < destFirstRowId) {
-            destValue.putLong(valueIndex, srcFirstRowId);
-            destValue.putDouble(valueIndex + 1, srcValue.getDouble(valueIndex + 1));
-        }
-        long srcLastRowId = srcValue.getLong(valueIndex + 2);
-        long destLastRowId = destValue.getLong(valueIndex + 2);
-        if (srcLastRowId > destLastRowId) {
-            destValue.putLong(valueIndex + 2, srcLastRowId);
-            destValue.putDouble(valueIndex + 3, srcValue.getDouble(valueIndex + 3));
-        }
-        double destMin = destValue.getDouble(valueIndex + 4);
-        if (srcMin < destMin) {
-            destValue.putDouble(valueIndex + 4, srcMin);
-        }
-        double destMax = destValue.getDouble(valueIndex + 5);
-        if (srcMax > destMax) {
-            destValue.putDouble(valueIndex + 5, srcMax);
-        }
-        // Reconcile user-supplied bounds (slots +6/+7): widen to the
-        // widest range seen across shards, same logic as computeNext.
-        double srcScaleMin = srcValue.getDouble(valueIndex + 6);
-        double destScaleMin = destValue.getDouble(valueIndex + 6);
-        if (!Double.isNaN(srcScaleMin) && (Double.isNaN(destScaleMin) || srcScaleMin < destScaleMin)) {
-            destValue.putDouble(valueIndex + 6, srcScaleMin);
-        }
-        double srcScaleMax = srcValue.getDouble(valueIndex + 7);
-        double destScaleMax = destValue.getDouble(valueIndex + 7);
-        if (!Double.isNaN(srcScaleMax) && (Double.isNaN(destScaleMax) || srcScaleMax > destScaleMax)) {
-            destValue.putDouble(valueIndex + 7, srcScaleMax);
-        }
+        // Reconcile user-supplied bounds AFTER all copy paths so the
+        // empty-dest adoption doesn't overwrite widened bounds.
+        reconcileBoundsFromMap(destValue, srcValue);
     }
 
     @Override
@@ -450,6 +447,32 @@ public class OhlcBarGroupByFunction extends VarcharFunction implements UnaryFunc
         return w;
     }
 
+    private void reconcileBounds(MapValue mapValue, Record record) {
+        double newMin = minFunc.getDouble(record);
+        double storedMin = mapValue.getDouble(valueIndex + 6);
+        if (!Double.isNaN(newMin) && (Double.isNaN(storedMin) || newMin < storedMin)) {
+            mapValue.putDouble(valueIndex + 6, newMin);
+        }
+        double newMax = maxFunc.getDouble(record);
+        double storedMax = mapValue.getDouble(valueIndex + 7);
+        if (!Double.isNaN(newMax) && (Double.isNaN(storedMax) || newMax > storedMax)) {
+            mapValue.putDouble(valueIndex + 7, newMax);
+        }
+    }
+
+    private void reconcileBoundsFromMap(MapValue destValue, MapValue srcValue) {
+        double srcScaleMin = srcValue.getDouble(valueIndex + 6);
+        double destScaleMin = destValue.getDouble(valueIndex + 6);
+        if (!Double.isNaN(srcScaleMin) && (Double.isNaN(destScaleMin) || srcScaleMin < destScaleMin)) {
+            destValue.putDouble(valueIndex + 6, srcScaleMin);
+        }
+        double srcScaleMax = srcValue.getDouble(valueIndex + 7);
+        double destScaleMax = destValue.getDouble(valueIndex + 7);
+        if (!Double.isNaN(srcScaleMax) && (Double.isNaN(destScaleMax) || srcScaleMax > destScaleMax)) {
+            destValue.putDouble(valueIndex + 7, srcScaleMax);
+        }
+    }
+
     private int mapPosition(double value, double low, double range, int width) {
         if (range == 0.0) {
             return width / 2;
@@ -478,7 +501,9 @@ public class OhlcBarGroupByFunction extends VarcharFunction implements UnaryFunc
         double scaleMax = rec.getDouble(valueIndex + 7);
 
         if (Double.isNaN(scaleMin) || Double.isNaN(scaleMax)) {
-            return -1;
+            throw CairoException.nonCritical().position(Double.isNaN(scaleMin) ? minPosition : maxPosition)
+                    .put(name).put("() bounds must not be NULL [min=")
+                    .put(scaleMin).put(", max=").put(scaleMax).put(']');
         }
         if (scaleMin > scaleMax) {
             throw CairoException.nonCritical().position(minPosition)
@@ -495,9 +520,8 @@ public class OhlcBarGroupByFunction extends VarcharFunction implements UnaryFunc
 
         int bodyStart = Math.min(openPos, closePos);
         int bodyEnd = Math.max(openPos, closePos);
-        // True doji only when open actually equals close, not just when
-        // they map to the same character position due to rounding.
-        boolean isDoji = open == close;
+        // Doji when open and close map to the same character position.
+        boolean isDoji = openPos == closePos;
         boolean isBullish = close >= open;
 
         long barBytes = (long) width * 3;

@@ -79,6 +79,7 @@ public class OhlcBarFunctionFactory implements FunctionFactory {
                 new ObjList<>(args),
                 new IntList(argPositions),
                 false,
+                position,
                 maxWidth
         );
     }
@@ -90,6 +91,8 @@ public class OhlcBarFunctionFactory implements FunctionFactory {
         private static final char DOJI = '\u2502';
         private static final char WICK = '\u2500';
         private final ObjList<Function> args;
+        private final int lowArgPosition;
+        private final int maxArgPosition;
         private final int maxBufferLength;
         private final int maxWidth;
         private final String name;
@@ -105,6 +108,7 @@ public class OhlcBarFunctionFactory implements FunctionFactory {
                 ObjList<Function> args,
                 IntList argPositions,
                 boolean hasLabels,
+                int functionPosition,
                 int maxWidth
         ) {
             this.name = name;
@@ -112,9 +116,11 @@ public class OhlcBarFunctionFactory implements FunctionFactory {
             this.hasLabels = hasLabels;
             this.maxBufferLength = maxWidth * 3;
             this.maxWidth = hasLabels ? Math.max(1, (maxWidth * 3 - 120) / 3) : maxWidth;
+            this.lowArgPosition = argPositions.getQuick(2);
+            this.maxArgPosition = argPositions.getQuick(5);
             this.minArgPosition = argPositions.getQuick(4);
             this.widthArgIndex = args.size() > 6 ? 6 : -1;
-            this.widthPosition = widthArgIndex >= 0 ? argPositions.getQuick(6) : 0;
+            this.widthPosition = widthArgIndex >= 0 ? argPositions.getQuick(6) : functionPosition;
         }
 
         @Override
@@ -179,9 +185,20 @@ public class OhlcBarFunctionFactory implements FunctionFactory {
             double scaleMin = args.getQuick(4).getDouble(rec);
             double scaleMax = args.getQuick(5).getDouble(rec);
 
-            if (Double.isNaN(open) || Double.isNaN(high) || Double.isNaN(low) || Double.isNaN(close)
-                    || Double.isNaN(scaleMin) || Double.isNaN(scaleMax)) {
+            if (Double.isNaN(open) || Double.isNaN(high) || Double.isNaN(low) || Double.isNaN(close)) {
                 return null;
+            }
+
+            if (Double.isNaN(scaleMin) || Double.isNaN(scaleMax)) {
+                throw CairoException.nonCritical().position(Double.isNaN(scaleMin) ? minArgPosition : maxArgPosition)
+                        .put(name).put("() bounds must not be NULL [min=")
+                        .put(scaleMin).put(", max=").put(scaleMax).put(']');
+            }
+
+            if (low > high) {
+                throw CairoException.nonCritical().position(lowArgPosition)
+                        .put(name).put("() low must not exceed high [low=")
+                        .put(low).put(", high=").put(high).put(']');
             }
 
             if (scaleMin > scaleMax) {
@@ -200,7 +217,7 @@ public class OhlcBarFunctionFactory implements FunctionFactory {
 
             int bodyStart = Math.min(openPos, closePos);
             int bodyEnd = Math.max(openPos, closePos);
-            boolean isDoji = open == close;
+            boolean isDoji = openPos == closePos;
             boolean isBullish = close >= open;
 
             sink.clear();

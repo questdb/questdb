@@ -52,6 +52,7 @@ public class OhlcBarNoWidthFunctionFactory implements FunctionFactory {
                 new ObjList<>(args),
                 new IntList(argPositions),
                 false,
+                position,
                 maxWidth
         );
     }

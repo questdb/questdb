@@ -52,6 +52,7 @@ public class OhlcBarLabelsFunctionFactory implements FunctionFactory {
                 new ObjList<>(args),
                 new IntList(argPositions),
                 true,
+                position,
                 maxWidth
         );
     }
