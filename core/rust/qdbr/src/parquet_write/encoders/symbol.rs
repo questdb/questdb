@@ -23,6 +23,7 @@
 //! across input partitions and emits one or more DataPages for the logical
 //! column chunk, re-using those local-is-global keys.
 
+use std::cell::{Cell, RefCell};
 use std::collections::HashSet;
 use std::ops::Range;
 use std::sync::{Arc, Mutex};
@@ -32,7 +33,6 @@ use parquet2::encoding::hybrid_rle::encode_u32;
 use parquet2::encoding::Encoding;
 use parquet2::page::{DictPage, Page};
 use parquet2::schema::types::PrimitiveType;
-use parquet2::statistics::ParquetStatistics;
 use parquet2::write::DynIter;
 
 use qdb_core::col_type::{ColumnType, ColumnTypeTag};
@@ -82,6 +82,15 @@ pub fn encode(
     let offsets = first_column.symbol_offsets;
     let chars = first_column.secondary_data;
 
+    // The Java caller sets `not_null_hint` (bit 31 of the column type) when
+    // it believes no -1 keys exist in column data. We treat this strictly
+    // as a perf hint: when set, the per-page encoder speculatively writes
+    // an all-ones def-level run and validates while encoding keys, falling
+    // back to per-row def levels if any -1 is observed. A stale hint is
+    // therefore safe (issue #7007 was caused by trusting the hint without
+    // validation).
+    let not_null_hint = columns.iter().all(|c| c.not_null_hint);
+
     let mut merged_keys = Vec::with_capacity(total_rows);
     let mut used_keys = HashSet::new();
     let mut max_key = 0u32;
@@ -120,25 +129,15 @@ pub fn encode(
     let mut data_pages = Vec::with_capacity(total_rows.div_ceil(rows_per_page));
     for window in page_row_windows(total_rows, rows_per_page) {
         let page_values = &merged_keys[window.row_offset..window.row_offset + window.row_count];
-        let validity = build_symbol_validity(page_values, 0);
-        let null_count = page_values.iter().filter(|&&key| key < 0).count();
-        let page_stats = options.write_statistics.then(|| {
-            build_symbol_page_stats(
-                page_values,
-                &dict_buffer,
-                &value_ranges,
-                primitive_type,
-                null_count,
-            )
-        });
-        let data_page = symbol_to_data_page_with_validity(
+        let data_page = encode_symbol_data_page(
             page_values,
             window.row_count,
             global_info.max_key,
             options,
             primitive_type.clone(),
-            &validity,
-            page_stats,
+            &dict_buffer,
+            &value_ranges,
+            not_null_hint,
         )?;
         data_pages.push(data_page);
     }
@@ -174,40 +173,132 @@ pub(crate) fn prepare_symbol_dictionary(
     Ok((dict_buffer, dict_entry_count, value_ranges))
 }
 
-fn symbol_to_data_page_with_validity(
-    column_values: &[i32],
+/// Encodes a single Symbol data page.
+///
+/// When `not_null_hint` is true, the encoder speculatively writes an
+/// all-ones def-level RLE run (~3 bytes regardless of row count) and
+/// streams keys through `encode_u32` with a validating iterator that
+/// flags any `-1`. `encode_u32` collects the iterator into a `Vec<u32>`
+/// before writing any output bytes (parquet2 hybrid_rle/encoder.rs:37),
+/// so the side effect runs to completion before commit; on `saw_null`
+/// the speculative output is truncated and the page is re-encoded with a
+/// proper validity bitmap and filtered keys.
+///
+/// Stats are accumulated during the same iteration over `page_values`
+/// (speculative or slow path). They observe exactly the `v >= 0` entries
+/// that the slow path would visit, so a speculation-then-restart leaves
+/// stats correct without recomputation. Bloom hashes are populated once
+/// per column chunk in `prepare_symbol_dictionary` and are not touched
+/// here.
+///
+/// A stale hint is safe: at worst we pay the speculative pass + a
+/// restart. The encoder's correctness no longer depends on the Java side
+/// supplying a truthful hint.
+#[allow(clippy::too_many_arguments)]
+fn encode_symbol_data_page(
+    page_values: &[i32],
     num_rows: usize,
     max_key: u32,
     options: WriteOptions,
     primitive_type: PrimitiveType,
-    validity: &FlatValidity,
-    page_stats: Option<ParquetStatistics>,
+    dict_buffer: &[u8],
+    value_ranges: &[Range<usize>],
+    not_null_hint: bool,
 ) -> ParquetResult<Page> {
-    let mut data_buffer = vec![];
     debug_assert!(
-        column_values
+        page_values
             .iter()
             .filter(|&&k| k >= 0)
             .all(|&k| (k as u32) <= max_key),
         "local key exceeds max_key, encoding would be invalid"
     );
 
-    // Always encode def levels so the file-level schema stays OPTIONAL
-    // across O3 merges. All-present chunks collapse to a single RLE run of
-    // 1s; otherwise we fall back to per-row def levels.
-    let def_levels = validity.encode_def_levels(&mut data_buffer, options.version)?;
-    let definition_levels_byte_length = def_levels.definition_levels_byte_length;
-    let total_null_count = def_levels.null_count;
-
     let bits_per_key = util::bit_width(max_key as u64);
-    let non_null_len = column_values.iter().filter(|&&value| value >= 0).count();
-    let local_keys =
-        column_values
+    let mut data_buffer = vec![];
+
+    // Stats live across speculative/slow attempts. They are updated
+    // exactly once per `v >= 0` entry, regardless of which path commits.
+    let stats = options
+        .write_statistics
+        .then(|| RefCell::new(BinaryMaxMinStats::new(&primitive_type)));
+
+    let (definition_levels_byte_length, total_null_count) = if not_null_hint {
+        // Speculative fast path.
+        let dl_start = data_buffer.len();
+        util::encode_all_ones_def_levels(&mut data_buffer, num_rows, options.version);
+        let dl_speculative_byte_len = data_buffer.len() - dl_start;
+        data_buffer.push(bits_per_key);
+
+        let saw_null = Cell::new(false);
+        let validating_keys = page_values.iter().map(|&v| {
+            if v < 0 {
+                saw_null.set(true);
+                0u32
+            } else {
+                let k = v as u32;
+                if let Some(s) = stats.as_ref() {
+                    let range = &value_ranges[k as usize];
+                    s.borrow_mut().update(&dict_buffer[range.clone()]);
+                }
+                k
+            }
+        });
+        encode_u32(
+            &mut data_buffer,
+            validating_keys,
+            num_rows,
+            bits_per_key as u32,
+        )?;
+
+        if !saw_null.get() {
+            (dl_speculative_byte_len, 0usize)
+        } else {
+            // Speculation invalidated. Discard everything we wrote for
+            // this page and re-encode the slow path. Stats accumulated
+            // during the speculative iterator already saw every v >= 0
+            // entry, so we do NOT re-update them here.
+            data_buffer.truncate(dl_start);
+            let validity = build_symbol_validity(page_values, 0);
+            let dl_meta = validity.encode_def_levels(&mut data_buffer, options.version)?;
+            data_buffer.push(bits_per_key);
+            let non_null_len = num_rows - dl_meta.null_count;
+            let local_keys = page_values
+                .iter()
+                .filter_map(|&v| if v >= 0 { Some(v as u32) } else { None });
+            let keys = ExactSizedIter::new(local_keys, non_null_len);
+            encode_u32(&mut data_buffer, keys, non_null_len, bits_per_key as u32)?;
+            (dl_meta.definition_levels_byte_length, dl_meta.null_count)
+        }
+    } else {
+        // Slow path (caller already declared nulls present, no point
+        // speculating). Build validity and accumulate stats in a single
+        // pass over page_values.
+        let mut validity = FlatValidity::new();
+        validity.reset(num_rows);
+        let mut non_null_len: usize = 0;
+        for &v in page_values {
+            if v < 0 {
+                validity.push_null();
+            } else {
+                validity.push_present();
+                non_null_len += 1;
+                if let Some(s) = stats.as_ref() {
+                    let range = &value_ranges[v as usize];
+                    s.borrow_mut().update(&dict_buffer[range.clone()]);
+                }
+            }
+        }
+        let dl_meta = validity.encode_def_levels(&mut data_buffer, options.version)?;
+        data_buffer.push(bits_per_key);
+        let local_keys = page_values
             .iter()
-            .filter_map(|&value| if value >= 0 { Some(value as u32) } else { None });
-    let keys = ExactSizedIter::new(local_keys, non_null_len);
-    data_buffer.push(bits_per_key);
-    encode_u32(&mut data_buffer, keys, non_null_len, bits_per_key as u32)?;
+            .filter_map(|&v| if v >= 0 { Some(v as u32) } else { None });
+        let keys = ExactSizedIter::new(local_keys, non_null_len);
+        encode_u32(&mut data_buffer, keys, non_null_len, bits_per_key as u32)?;
+        (dl_meta.definition_levels_byte_length, dl_meta.null_count)
+    };
+
+    let page_stats = stats.map(|s| s.into_inner().into_parquet_stats(total_null_count));
 
     let data_page = build_plain_page(
         data_buffer,
@@ -326,23 +417,6 @@ fn build_dict_buffer(
     Ok((dict_buffer, value_ranges))
 }
 
-fn build_symbol_page_stats(
-    page_values: &[i32],
-    dict_buffer: &[u8],
-    value_ranges: &[Range<usize>],
-    primitive_type: &PrimitiveType,
-    null_count: usize,
-) -> ParquetStatistics {
-    let mut stats = BinaryMaxMinStats::new(primitive_type);
-    for &key in page_values {
-        if key >= 0 {
-            let range = &value_ranges[key as usize];
-            stats.update(&dict_buffer[range.clone()]);
-        }
-    }
-    stats.into_parquet_stats(null_count)
-}
-
 /// Legacy single-partition API kept for benchmarks.  Delegates to [`encode`].
 #[allow(clippy::too_many_arguments)]
 pub fn symbol_to_pages(
@@ -352,7 +426,7 @@ pub fn symbol_to_pages(
     column_top: usize,
     options: WriteOptions,
     primitive_type: PrimitiveType,
-    _not_null_hint: bool,
+    not_null_hint: bool,
     bloom_set: Option<Arc<Mutex<HashSet<u64>>>>,
 ) -> ParquetResult<DynIter<'static, ParquetResult<Page>>> {
     let primary_data = unsafe {
@@ -361,10 +435,16 @@ pub fn symbol_to_pages(
             std::mem::size_of_val(column_values),
         )
     };
+    // Forward the hint via bit 31 of the column type, matching the JNI
+    // entry point's encoding (see Column::from_raw_data in schema.rs).
+    let mut column_type_code = ColumnType::new(ColumnTypeTag::Symbol, 0).code();
+    if not_null_hint {
+        column_type_code |= i32::MIN;
+    }
     let column = Column::from_raw_data(
         0,
         "symbol",
-        ColumnType::new(ColumnTypeTag::Symbol, 0).code(),
+        column_type_code,
         column_top as i64,
         column_top + column_values.len(),
         primary_data.as_ptr(),
@@ -427,10 +507,27 @@ mod tests {
         offsets: &[u64],
         column_top: usize,
     ) -> Column {
+        make_symbol_column_with_hint(keys, chars, offsets, column_top, false)
+    }
+
+    /// Like `make_symbol_column` but lets the test pass `not_null_hint`
+    /// directly (encoded as bit 31 of the column type, matching the JNI
+    /// boundary).
+    fn make_symbol_column_with_hint(
+        keys: &[i32],
+        chars: &[u8],
+        offsets: &[u64],
+        column_top: usize,
+        not_null_hint: bool,
+    ) -> Column {
+        let mut column_type_code = ColumnTypeTag::Symbol.into_type().code();
+        if not_null_hint {
+            column_type_code |= i32::MIN;
+        }
         Column::from_raw_data(
             0,
             "sym",
-            ColumnTypeTag::Symbol.into_type().code(),
+            column_type_code,
             column_top as i64,
             keys.len(),
             keys.as_ptr() as *const u8,
@@ -444,6 +541,22 @@ mod tests {
             0,
         )
         .unwrap()
+    }
+
+    /// Extract V2 (num_values, num_nulls, definition_levels_byte_length)
+    /// from a data page. Panics on V1.
+    fn page_v2_metrics(page: &Page) -> (i32, i32, usize) {
+        match page {
+            Page::Data(data) => match &data.header {
+                DataPageHeader::V2(h) => (
+                    h.num_values,
+                    h.num_nulls,
+                    h.definition_levels_byte_length as usize,
+                ),
+                DataPageHeader::V1(_) => panic!("expected V2 header"),
+            },
+            _ => panic!("expected data page"),
+        }
     }
 
     #[test]
@@ -576,6 +689,107 @@ mod tests {
         let opts = WriteOptions { write_statistics: false, ..write_options() };
         let pages = encode(&[col], 0, keys.len(), &primitive_type(), opts, None).expect("encode");
         assert_eq!(pages.len(), 2);
+    }
+
+    #[test]
+    fn symbol_speculative_fast_path_commits_when_no_nulls() {
+        // Hint asserts no nulls, and the data really has none. The encoder
+        // must commit the speculative all-ones def-level run.
+        let (chars, offsets) = serialize_as_symbols(vec!["foo", "bar"]);
+        let keys: Vec<i32> = vec![0, 1, 0, 1, 0, 1, 0, 1, 0, 1];
+        let col = make_symbol_column_with_hint(&keys, &chars, &offsets, 0, true);
+
+        let pages = encode(
+            &[col],
+            0,
+            keys.len(),
+            &primitive_type(),
+            write_options(),
+            None,
+        )
+            .expect("encode");
+        assert_eq!(pages.len(), 2);
+
+        let (num_values, num_nulls, dl_byte_len) = page_v2_metrics(&pages[1]);
+        assert_eq!(num_values, keys.len() as i32);
+        assert_eq!(num_nulls, 0);
+
+        // The all-ones fast path emits a tiny RLE run. Sanity-check by
+        // re-deriving the expected length via the same util the encoder
+        // uses on the fast path.
+        let mut expected_dl = vec![];
+        crate::parquet_write::util::encode_all_ones_def_levels(
+            &mut expected_dl,
+            keys.len(),
+            write_options().version,
+        );
+        assert_eq!(dl_byte_len, expected_dl.len());
+    }
+
+    #[test]
+    fn symbol_speculative_restart_on_stale_hint() {
+        // Hint asserts no nulls but the data contains -1. Pre-#6949 this
+        // crashed the encoder. Variant B's restart path must produce a
+        // valid page with the correct null_count.
+        let (chars, offsets) = serialize_as_symbols(vec!["foo", "bar"]);
+        let keys: Vec<i32> = vec![0, 1, -1, 0, -1, 1, 0, -1];
+        let expected_nulls = keys.iter().filter(|&&k| k < 0).count() as i32;
+        let col = make_symbol_column_with_hint(&keys, &chars, &offsets, 0, true);
+
+        let pages = encode(
+            &[col],
+            0,
+            keys.len(),
+            &primitive_type(),
+            write_options(),
+            None,
+        )
+            .expect("encode");
+        assert_eq!(pages.len(), 2);
+
+        let (num_values, num_nulls, _) = page_v2_metrics(&pages[1]);
+        assert_eq!(num_values, keys.len() as i32);
+        assert_eq!(num_nulls, expected_nulls);
+    }
+
+    #[test]
+    fn symbol_speculative_matches_slow_path_for_same_data() {
+        // Same input, both with and without the hint. The page-level
+        // null counts must agree — speculation must not corrupt counts
+        // even when it ends up restarting.
+        let (chars, offsets) = serialize_as_symbols(vec!["foo", "bar", "baz"]);
+        let keys: Vec<i32> = vec![0, -1, 1, -1, 2, 0, -1, 1, 2, -1];
+
+        let col_hint = make_symbol_column_with_hint(&keys, &chars, &offsets, 0, true);
+        let col_no_hint = make_symbol_column_with_hint(&keys, &chars, &offsets, 0, false);
+
+        let pages_hint = encode(
+            &[col_hint],
+            0,
+            keys.len(),
+            &primitive_type(),
+            write_options(),
+            None,
+        )
+            .expect("encode hint");
+        let pages_no_hint = encode(
+            &[col_no_hint],
+            0,
+            keys.len(),
+            &primitive_type(),
+            write_options(),
+            None,
+        )
+            .expect("encode no_hint");
+
+        let m_hint = page_v2_metrics(&pages_hint[1]);
+        let m_no_hint = page_v2_metrics(&pages_no_hint[1]);
+        assert_eq!(m_hint.0, m_no_hint.0, "num_values disagree");
+        assert_eq!(m_hint.1, m_no_hint.1, "num_nulls disagree");
+        assert_eq!(
+            m_hint.2, m_no_hint.2,
+            "definition_levels_byte_length disagree"
+        );
     }
 
     #[test]

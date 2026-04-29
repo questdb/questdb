@@ -25,14 +25,18 @@
 package io.questdb.test.griffin;
 
 import io.questdb.PropertyKey;
+import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.MicrosTimestampDriver;
+import io.questdb.cairo.SymbolMapWriter;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.TableWriterMetrics;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
+import io.questdb.cairo.vm.Vm;
+import io.questdb.cairo.vm.api.MemoryMARW;
 import io.questdb.cutlass.parquet.CopyExportRequestJob;
 import io.questdb.cutlass.parquet.ParquetExportMode;
 import io.questdb.griffin.SqlException;
@@ -1570,6 +1574,120 @@ public class CopyExportTest extends AbstractCairoTest {
                         // Col 1 (outer_expr) is a computed expression; must not inherit.
                         ParquetTestUtils.assertColumnsDoNotUseDictionaryEncoding(
                                 parquetPath, configuration.getFilesFacade(), 1
+                        );
+                    });
+
+            testCopyExport(stmt, test);
+        });
+    }
+
+    @Test
+    public void testCopyQueryStaleSymbolNullFlagDirectPageFrame() throws Exception {
+        // Defense-in-depth regression for the streaming variant of #7007.
+        // The COPY (SELECT * FROM table) path uses ParquetExportMode.DIRECT_PAGE_FRAME,
+        // which lands in CopyExportRequestTask.StreamPartitionParquetExporter.setUp.
+        // That method sets the "no nulls" hint based on SymbolMapWriter.HEADER_NULL_FLAG
+        // without checking TableMetadata.isSymbolNullFlagReliable(). Pre-#6645 ingest
+        // left some legacy tables with the flag stale (false despite -1 keys in column
+        // data). The current Rust symbol encoder always scans column data and ignores
+        // the hint, so this no longer crashes; this test guards that property and
+        // catches any future regression where the Rust side regains a fast path
+        // trusting the Java-supplied hint.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (s SYMBOL, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO x(s, ts) VALUES
+                    ('a', '2020-01-01T00:00:00.000Z'),
+                    ('b', '2020-01-01T01:00:00.000Z')
+                    """);
+            execute("""
+                    INSERT INTO x(ts) VALUES
+                    ('2020-01-01T02:00:00.000Z'),
+                    ('2020-01-01T03:00:00.000Z')
+                    """);
+
+            TableToken tt = engine.verifyTableName("x");
+            engine.releaseInactive();
+
+            forceStaleSymbolNullFlag(tt, "s");
+            stripDataInvariantFlags(tt);
+            engine.releaseInactive();
+
+            CopyExportRunnable stmt = () ->
+                    runAndFetchCopyExportID(
+                            "COPY (SELECT * FROM x) TO 'stale_streaming' WITH FORMAT parquet",
+                            sqlExecutionContext
+                    );
+
+            CopyExportRunnable test = () ->
+                    assertEventually(() -> {
+                        assertSql(
+                                "export_path\tnum_exported_files\tstatus\n" +
+                                        exportRoot + File.separator + "stale_streaming.parquet" + "\t1\tfinished\n",
+                                "SELECT export_path, num_exported_files, status FROM \"sys.copy_export_log\" LIMIT -1"
+                        );
+                        assertSql("""
+                                        s\tts
+                                        a\t2020-01-01T00:00:00.000000Z
+                                        b\t2020-01-01T01:00:00.000000Z
+                                        \t2020-01-01T02:00:00.000000Z
+                                        \t2020-01-01T03:00:00.000000Z
+                                        """,
+                                "SELECT s, ts FROM read_parquet('" + exportRoot + File.separator + "stale_streaming.parquet') ORDER BY ts"
+                        );
+                    });
+
+            testCopyExport(stmt, test);
+        });
+    }
+
+    @Test
+    public void testCopyQueryStaleSymbolNullFlagPageFrameBacked() throws Exception {
+        // Same defense-in-depth regression as testCopyQueryStaleSymbolNullFlagDirectPageFrame
+        // but for PAGE_FRAME_BACKED export mode (a SELECT mixing pass-through and
+        // computed columns). The hybrid path also feeds StreamPartitionParquetExporter.setUp
+        // and currently depends on the Rust encoder ignoring the stale "no nulls" hint.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (s SYMBOL, n INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO x(s, n, ts) VALUES
+                    ('a', 1, '2020-01-01T00:00:00.000Z'),
+                    ('b', 2, '2020-01-01T01:00:00.000Z')
+                    """);
+            execute("""
+                    INSERT INTO x(n, ts) VALUES
+                    (3, '2020-01-01T02:00:00.000Z'),
+                    (4, '2020-01-01T03:00:00.000Z')
+                    """);
+
+            TableToken tt = engine.verifyTableName("x");
+            engine.releaseInactive();
+
+            forceStaleSymbolNullFlag(tt, "s");
+            stripDataInvariantFlags(tt);
+            engine.releaseInactive();
+
+            CopyExportRunnable stmt = () ->
+                    runAndFetchCopyExportID(
+                            "COPY (SELECT s, ts, n * 2 AS n2 FROM x) TO 'stale_hybrid' WITH FORMAT parquet",
+                            sqlExecutionContext
+                    );
+
+            CopyExportRunnable test = () ->
+                    assertEventually(() -> {
+                        assertSql(
+                                "export_path\tnum_exported_files\tstatus\n" +
+                                        exportRoot + File.separator + "stale_hybrid.parquet" + "\t1\tfinished\n",
+                                "SELECT export_path, num_exported_files, status FROM \"sys.copy_export_log\" LIMIT -1"
+                        );
+                        assertSql("""
+                                        s\tts\tn2
+                                        a\t2020-01-01T00:00:00.000000Z\t2
+                                        b\t2020-01-01T01:00:00.000000Z\t4
+                                        \t2020-01-01T02:00:00.000000Z\t6
+                                        \t2020-01-01T03:00:00.000000Z\t8
+                                        """,
+                                "SELECT s, ts, n2 FROM read_parquet('" + exportRoot + File.separator + "stale_hybrid.parquet') ORDER BY ts"
                         );
                     });
 
@@ -3880,6 +3998,26 @@ public class CopyExportTest extends AbstractCairoTest {
         try (Path path = new Path()) {
             path.of(exportRoot).concat(fileName).put(".parquet").$();
             return ff.exists(path.$());
+        }
+    }
+
+    private void forceStaleSymbolNullFlag(TableToken tt, String columnName) {
+        FilesFacade ff = configuration.getFilesFacade();
+        try (Path path = new Path(); MemoryMARW mem = Vm.getCMARWInstance()) {
+            path.of(configuration.getDbRoot()).concat(tt.getDirName());
+            LPSZ name = TableUtils.offsetFileName(path, columnName, -1L);
+            mem.of(ff, name, ff.getMapPageSize(), ff.length(name), MemoryTag.MMAP_DEFAULT, CairoConfiguration.O_NONE, -1);
+            mem.putBool(SymbolMapWriter.HEADER_NULL_FLAG, false);
+        }
+    }
+
+    private void stripDataInvariantFlags(TableToken tt) {
+        FilesFacade ff = configuration.getFilesFacade();
+        try (Path path = new Path(); MemoryMARW mem = Vm.getCMARWInstance()) {
+            path.of(configuration.getDbRoot()).concat(tt.getDirName()).concat(TableUtils.META_FILE_NAME);
+            LPSZ name = path.$();
+            mem.of(ff, name, ff.getMapPageSize(), ff.length(name), MemoryTag.MMAP_DEFAULT, CairoConfiguration.O_NONE, -1);
+            mem.putInt(TableUtils.META_OFFSET_DATA_INVARIANT_FLAGS, 0);
         }
     }
 

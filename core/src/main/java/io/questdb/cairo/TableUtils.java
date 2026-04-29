@@ -103,6 +103,11 @@ public final class TableUtils {
     public static final String CHECKPOINT_SEQ_TXN_FILE_NAME = "_txn";
     public static final long COLUMN_NAME_TXN_NONE = -1L;
     public static final String COLUMN_VERSION_FILE_NAME = "_cv";
+    // Bit 0 of META_OFFSET_DATA_INVARIANT_FLAGS: SymbolMapWriter.HEADER_NULL_FLAG accurately
+    // reflects whether any -1 keys exist in the symbol column data. Set on tables created by
+    // code that maintains this invariant (post pre-#6645 ingest fix). When false, the parquet
+    // encoder must not trust the flag and must scan column data instead.
+    public static final int DATA_INVARIANT_FLAG_SYMBOL_NULL_FLAG_RELIABLE = 1;
     public static final String DEFAULT_PARTITION_NAME = "default";
     public static final String DETACHED_DIR_MARKER = ".detached";
     public static final long ESTIMATED_VAR_COL_SIZE = 28;
@@ -114,7 +119,11 @@ public final class TableUtils {
     public static final int LONGS_PER_TX_ATTACHED_PARTITION_MSB = Numbers.msb(LONGS_PER_TX_ATTACHED_PARTITION);
     public static final long META_COLUMN_DATA_SIZE = 32;
     public static final String META_FILE_NAME = "_meta";
-    public static final short META_FORMAT_MINOR_VERSION_LATEST = 1;
+    // Marks _meta files that carry META_OFFSET_DATA_INVARIANT_FLAGS. Used by
+    // isMetaFormatVersionAtLeast() to gate isSymbolNullFlagReliable() reads.
+    public static final short META_FORMAT_MINOR_VERSION_DATA_INVARIANT_FLAGS = 2;
+    public static final short META_FORMAT_MINOR_VERSION_INLINE_SYMBOL_CAPACITY = 1;
+    public static final short META_FORMAT_MINOR_VERSION_LATEST = META_FORMAT_MINOR_VERSION_DATA_INVARIANT_FLAGS;
     public static final long META_OFFSET_COLUMN_TYPES = 128;
     public static final long META_OFFSET_COUNT = 0;
     public static final long META_OFFSET_MAX_UNCOMMITTED_ROWS = 20; // INT
@@ -129,6 +138,10 @@ public final class TableUtils {
     public static final long META_OFFSET_WAL_ENABLED = 40; // BOOLEAN
     public static final long META_OFFSET_META_FORMAT_MINOR_VERSION = META_OFFSET_WAL_ENABLED + 1; // INT
     public static final long META_OFFSET_TTL_HOURS_OR_MONTHS = META_OFFSET_META_FORMAT_MINOR_VERSION + 4; // INT
+    // Per-table data-invariant flags. Only meaningful when the file's minor version is at
+    // least META_FORMAT_MINOR_VERSION_DATA_INVARIANT_FLAGS; otherwise the bytes are padding
+    // left by older code and must be ignored.
+    public static final long META_OFFSET_DATA_INVARIANT_FLAGS = META_OFFSET_TTL_HOURS_OR_MONTHS + 4; // INT
     public static final String META_PREV_FILE_NAME = "_meta.prev";
     public static final String META_SWAP_FILE_NAME = "_meta.swp";
     public static final int MIN_INDEX_VALUE_BLOCK_SIZE = Numbers.ceilPow2(2);
@@ -1072,13 +1085,21 @@ public final class TableUtils {
         return ff.exists(path.$());
     }
 
+    /**
+     * Returns true when the file's minor version covers the original inline symbol-capacity /
+     * cache-flag / TTL fields. This is the legacy "is the field there?" gate; it does NOT imply
+     * the file knows about any later additions (e.g., META_OFFSET_DATA_INVARIANT_FLAGS).
+     */
+    public static boolean isMetaFormatUpToDate(MemoryR metaMem) {
+        return isMetaFormatVersionAtLeast(metaMem, META_FORMAT_MINOR_VERSION_INLINE_SYMBOL_CAPACITY);
+    }
+
     /*
-     * Checks that the minor version of the metadata format is up to date, i.e., at least the value
-     * of the TableUtils.META_FORMAT_MINOR_VERSION_LATEST constant.
+     * Checks that the minor version of the metadata format is at least the supplied value.
      *
      * Metadata Format Minor Version field encodes 2 shorts:
      * - Low short is a checksum that changes with every update to the metadata record
-     * - High short is set to TableUtils.META_FORMAT_MINOR_VERSION_LATEST
+     * - High short is set to TableUtils.META_FORMAT_MINOR_VERSION_LATEST at write time
      *
      * The Metadata Format Minor Version field was not present in the initial version of the metadata format. This is
      * why we need the checksum: when it doesn't match, we can't trust the version stored in it, and should assume
@@ -1086,7 +1107,7 @@ public final class TableUtils {
      *
      * Table storage itself is forward- and backward-compatible, so it's safe to read regardless of this version.
      */
-    public static boolean isMetaFormatUpToDate(MemoryR metaMem) {
+    public static boolean isMetaFormatVersionAtLeast(MemoryR metaMem, short minVersion) {
         int metaFormatMinorVersionField = metaMem.getInt(META_OFFSET_META_FORMAT_MINOR_VERSION);
         short savedChecksum = Numbers.decodeLowShort(metaFormatMinorVersionField);
         short actualChecksum = checksumForMetaFormatMinorVersionField(
@@ -1094,7 +1115,7 @@ public final class TableUtils {
                 metaMem.getInt(TableUtils.META_OFFSET_COUNT)
         );
         short savedMetaFormatMinorVersion = Numbers.decodeHighShort(metaFormatMinorVersionField);
-        return savedChecksum == actualChecksum && savedMetaFormatMinorVersion >= META_FORMAT_MINOR_VERSION_LATEST;
+        return savedChecksum == actualChecksum && savedMetaFormatMinorVersion >= minVersion;
     }
 
     /**
@@ -1115,6 +1136,14 @@ public final class TableUtils {
 
     public static boolean isSymbolCached(MemoryR metaMem, int columnIndex) {
         return (getColumnFlags(metaMem, columnIndex) & META_FLAG_BIT_SYMBOL_CACHE) != 0;
+    }
+
+    public static boolean isSymbolNullFlagReliable(MemoryR metaMem) {
+        if (!isMetaFormatVersionAtLeast(metaMem, META_FORMAT_MINOR_VERSION_DATA_INVARIANT_FLAGS)) {
+            return false;
+        }
+        int raw = metaMem.getInt(META_OFFSET_DATA_INVARIANT_FLAGS);
+        return (raw & DATA_INVARIANT_FLAG_SYMBOL_NULL_FLAG_RELIABLE) != 0;
     }
 
     public static boolean isUnsolicitedTableLock(String lockReason) {
@@ -1759,7 +1788,9 @@ public final class TableUtils {
                     if (columnRowCount > 0) {
                         if (ColumnType.isSymbol(columnType)) {
                             int encodeColumnType = columnType;
-                            if (!symbolTableProvider.containsNullValue(columnIndex)) {
+                            // See PartitionEncoder.populateFromTableReader for why the hint is
+                            // gated by isSymbolNullFlagReliable().
+                            if (metadata.isSymbolNullFlagReliable() && !symbolTableProvider.containsNullValue(columnIndex)) {
                                 encodeColumnType |= Integer.MIN_VALUE;
                             }
 
@@ -2471,6 +2502,7 @@ public final class TableUtils {
         mem.putBool(tableStruct.isWalEnabled());
         mem.putInt(TableUtils.calculateMetaFormatMinorVersionField(0, count));
         mem.putInt(tableStruct.getTtlHoursOrMonths());
+        mem.putInt(DATA_INVARIANT_FLAG_SYMBOL_NULL_FLAG_RELIABLE);
 
         mem.jumpTo(TableUtils.META_OFFSET_COLUMN_TYPES);
         assert count > 0;
@@ -2613,6 +2645,16 @@ public final class TableUtils {
 
     static int getTtlHoursOrMonths(MemoryR metaMem) {
         return isMetaFormatUpToDate(metaMem) ? metaMem.getInt(TableUtils.META_OFFSET_TTL_HOURS_OR_MONTHS) : 0;
+    }
+
+    /**
+     * Reads META_OFFSET_DATA_INVARIANT_FLAGS only if the file is known to carry that field;
+     * otherwise returns 0 so callers cannot accidentally trust uninitialized padding bytes.
+     */
+    static int readDataInvariantFlagsRaw(MemoryR metaMem) {
+        return isMetaFormatVersionAtLeast(metaMem, META_FORMAT_MINOR_VERSION_DATA_INVARIANT_FLAGS)
+                ? metaMem.getInt(META_OFFSET_DATA_INVARIANT_FLAGS)
+                : 0;
     }
 
     static boolean isColumnDedupKey(MemoryR metaMem, int columnIndex) {

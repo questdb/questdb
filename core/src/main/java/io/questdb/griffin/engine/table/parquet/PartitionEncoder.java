@@ -222,7 +222,11 @@ public class PartitionEncoder {
                     final MemoryR symbolValuesMem = symbolMapReader.getSymbolValuesColumn();
                     final MemoryR symbolOffsetsMem = symbolMapReader.getSymbolOffsetsColumn();
                     int encodeColumnType = columnType;
-                    if (!symbolMapReader.containsNullValue()) {
+                    // Only hand the encoder a "no nulls" hint when the table guarantees
+                    // SymbolMapWriter.HEADER_NULL_FLAG matches the actual column data.
+                    // Legacy tables (#7007) can have stale flag=false while data contains
+                    // -1 keys; the hint would then drive the encoder into corrupt output.
+                    if (metadata.isSymbolNullFlagReliable() && !symbolMapReader.containsNullValue()) {
                         encodeColumnType |= Integer.MIN_VALUE;
                     }
                     descriptor.addColumn(

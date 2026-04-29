@@ -48,6 +48,7 @@ public class TableReaderMetadata extends AbstractRecordMetadata implements Table
     private final IntList columnOrderList = new IntList();
     private final FilesFacade ff;
     private final LowerCaseCharSequenceIntHashMap tmpValidationMap = new LowerCaseCharSequenceIntHashMap();
+    private int dataInvariantFlagsRaw;
     private boolean isCopy;
     private boolean isSoftLink;
     private int maxUncommittedRows;
@@ -127,6 +128,7 @@ public class TableReaderMetadata extends AbstractRecordMetadata implements Table
         maxUncommittedRows = 0;
         o3MaxLag = 0;
         ttlHoursOrMonths = 0;
+        dataInvariantFlagsRaw = 0;
         writerColumnCount = 0;
     }
 
@@ -150,6 +152,17 @@ public class TableReaderMetadata extends AbstractRecordMetadata implements Table
         for (long p = 0; p < len; p++) {
             mem.putByte(metaMem.getByte(p));
         }
+    }
+
+    /**
+     * Returns the raw META_OFFSET_DATA_INVARIANT_FLAGS bitmap. The value has already
+     * been sanitised at read time by {@link TableUtils#readDataInvariantFlagsRaw}: any
+     * _meta whose minor version predates META_FORMAT_MINOR_VERSION_DATA_INVARIANT_FLAGS
+     * yields 0 here, so callers cannot accidentally trust uninitialised padding bytes
+     * left by older code.
+     */
+    public int getDataInvariantFlagsRaw() {
+        return dataInvariantFlagsRaw;
     }
 
     public int getDenseSymbolIndex(int columnIndex) {
@@ -222,6 +235,11 @@ public class TableReaderMetadata extends AbstractRecordMetadata implements Table
 
     public boolean isSoftLink() {
         return isSoftLink;
+    }
+
+    @Override
+    public boolean isSymbolNullFlagReliable() {
+        return (dataInvariantFlagsRaw & TableUtils.DATA_INVARIANT_FLAG_SYMBOL_NULL_FLAG_RELIABLE) != 0;
     }
 
     @Override
@@ -310,6 +328,7 @@ public class TableReaderMetadata extends AbstractRecordMetadata implements Table
         this.metadataVersion = mem.getLong(TableUtils.META_OFFSET_METADATA_VERSION);
         this.walEnabled = mem.getBool(TableUtils.META_OFFSET_WAL_ENABLED);
         this.ttlHoursOrMonths = TableUtils.getTtlHoursOrMonths(mem);
+        this.dataInvariantFlagsRaw = TableUtils.readDataInvariantFlagsRaw(mem);
         this.columnMetadata.clear();
         this.timestampIndex = -1;
 
@@ -376,6 +395,7 @@ public class TableReaderMetadata extends AbstractRecordMetadata implements Table
         this.o3MaxLag = newMetaMem.getLong(TableUtils.META_OFFSET_O3_MAX_LAG);
         this.walEnabled = newMetaMem.getBool(TableUtils.META_OFFSET_WAL_ENABLED);
         this.ttlHoursOrMonths = TableUtils.getTtlHoursOrMonths(newMetaMem);
+        this.dataInvariantFlagsRaw = TableUtils.readDataInvariantFlagsRaw(newMetaMem);
 
         int shiftLeft = 0, existingIndex = 0;
         TableUtils.buildColumnListFromMetadataFile(newMetaMem, columnCount, columnOrderList);
