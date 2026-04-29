@@ -33,6 +33,29 @@ import org.junit.Test;
 public class VwemaWindowFunctionTest extends AbstractCairoTest {
 
     @Test
+    public void testVwemaAlphaEqualsOne() throws Exception {
+        // alpha=1.0 should be valid (inclusive upper bound) - each new value fully replaces the previous
+        assertQuery(
+                """
+                        ts\tprice\tvolume\tvwema
+                        2024-01-01T00:00:00.000000Z\t10.0\t100.0\t10.0
+                        2024-01-01T00:00:01.000000Z\t20.0\t200.0\t20.0
+                        2024-01-01T00:00:02.000000Z\t30.0\t300.0\t30.0
+                        """,
+                "select ts, price, volume, avg(price, 'alpha', 1.0, volume) over (order by ts) as vwema from tab",
+                "create table tab as (" +
+                        "select timestamp_sequence('2024-01-01', 1000000) as ts, " +
+                        "(x * 10.0) as price, " +
+                        "(x * 100.0) as volume " +
+                        "from long_sequence(3)" +
+                        ") timestamp(ts) partition by day",
+                "ts",
+                false,
+                true
+        );
+    }
+
+    @Test
     public void testVwemaAlphaMode() throws Exception {
         // Test avg() VWEMA with alpha mode
         assertQuery(
@@ -118,29 +141,6 @@ public class VwemaWindowFunctionTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testVwemaAlphaEqualsOne() throws Exception {
-        // alpha=1.0 should be valid (inclusive upper bound) - each new value fully replaces the previous
-        assertQuery(
-                """
-                        ts\tprice\tvolume\tvwema
-                        2024-01-01T00:00:00.000000Z\t10.0\t100.0\t10.0
-                        2024-01-01T00:00:01.000000Z\t20.0\t200.0\t20.0
-                        2024-01-01T00:00:02.000000Z\t30.0\t300.0\t30.0
-                        """,
-                "select ts, price, volume, avg(price, 'alpha', 1.0, volume) over (order by ts) as vwema from tab",
-                "create table tab as (" +
-                        "select timestamp_sequence('2024-01-01', 1000000) as ts, " +
-                        "(x * 10.0) as price, " +
-                        "(x * 100.0) as volume " +
-                        "from long_sequence(3)" +
-                        ") timestamp(ts) partition by day",
-                "ts",
-                false,
-                true
-        );
-    }
-
-    @Test
     public void testVwemaAlphaModeNegativeVolume() throws Exception {
         // Negative volume should be treated as invalid like zero volume
         assertQuery(
@@ -155,6 +155,29 @@ public class VwemaWindowFunctionTest extends AbstractCairoTest {
                         "select timestamp_sequence('2024-01-01', 1000000) as ts, " +
                         "(x * 10.0) as price, " +
                         "case when x = 1 then -100.0 else (x * 100.0) end as volume " +
+                        "from long_sequence(3)" +
+                        ") timestamp(ts) partition by day",
+                "ts",
+                false,
+                true
+        );
+    }
+
+    @Test
+    public void testVwemaAlphaModeZeroVolume() throws Exception {
+        // L558 false via volume <= 0 in VwemaOverUnboundedRowsFrameFunction
+        assertQuery(
+                """
+                        ts\tprice\tvolume\tvwema
+                        2024-01-01T00:00:00.000000Z\t10.0\t0.0\tnull
+                        2024-01-01T00:00:01.000000Z\t20.0\t200.0\t20.0
+                        2024-01-01T00:00:02.000000Z\t30.0\t300.0\t26.0
+                        """,
+                "select ts, price, volume, avg(price, 'alpha', 0.5, volume) over (order by ts) as vwema from tab",
+                "create table tab as (" +
+                        "select timestamp_sequence('2024-01-01', 1000000) as ts, " +
+                        "(x * 10.0) as price, " +
+                        "case when x = 1 then 0.0 else (x * 100.0) end as volume " +
                         "from long_sequence(3)" +
                         ") timestamp(ts) partition by day",
                 "ts",
@@ -321,6 +344,93 @@ public class VwemaWindowFunctionTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testVwemaCachedWindowAllPass1Variants() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table tab (ts timestamp, sort_key long, sym symbol, price double, volume double) timestamp(ts)");
+            execute("insert into tab values " +
+                    "('2024-01-01T00:00:01.000000Z'::timestamp, 1, 'A', 10.0, 1.0), " +
+                    "('2024-01-01T00:00:02.000000Z'::timestamp, 2, 'B', 100.0, 1.0), " +
+                    "('2024-01-01T00:00:03.000000Z'::timestamp, 3, 'A', 20.0, 1.0), " +
+                    "('2024-01-01T00:00:04.000000Z'::timestamp, 4, 'B', 200.0, 1.0)");
+
+            assertQueryNoLeakCheck(
+                    """
+                            ts\tsort_key\tsym\tprice\tvolume\tvwema_period\tvwema_period_part\tvwema_second\tvwema_second_part
+                            2024-01-01T00:00:01.000000Z\t1\tA\t10.0\t1.0\t10.0\t10.0\t10.0\t10.0
+                            2024-01-01T00:00:02.000000Z\t2\tB\t100.0\t1.0\t55.0\t100.0\t66.89085029457019\t100.0
+                            2024-01-01T00:00:03.000000Z\t3\tA\t20.0\t1.0\t37.5\t15.0\t37.25017980242024\t18.646647167633873
+                            2024-01-01T00:00:04.000000Z\t4\tB\t200.0\t1.0\t118.75\t150.0\t140.12768709496163\t186.46647167633873
+                            """,
+                    "select ts, sort_key, sym, price, volume, " +
+                            "avg(price, 'period', 3, volume) over (order by sort_key) vwema_period, " +
+                            "avg(price, 'period', 3, volume) over (partition by sym order by sort_key) vwema_period_part, " +
+                            "avg(price, 'second', 1, volume) over (order by sort_key) vwema_second, " +
+                            "avg(price, 'second', 1, volume) over (partition by sym order by sort_key) vwema_second_part " +
+                            "from tab",
+                    "ts",
+                    true,
+                    true
+            );
+        });
+    }
+
+    @Test
+    public void testVwemaCachedWindowWithNullVolume() throws Exception {
+        // Forces cached execution via order-by-non-timestamp column and exercises invalid-input
+        // handling (NULL volume, zero volume) through pass1() for both VwemaOverPartitionFunction
+        // and VwemaOverUnboundedRowsFrameFunction. Invalid rows must keep the previous VWEMA;
+        // a partition that starts with an invalid row (lowest sort_key in the partition has NULL
+        // volume) must produce NULL until the first valid one.
+        assertMemoryLeak(() -> {
+            execute("create table tab (ts timestamp, sort_key long, sym symbol, price double, volume double) timestamp(ts)");
+            execute("insert into tab values " +
+                    "('2024-01-01T00:00:01.000000Z'::timestamp, 3, 'A', 30.0, 1.0), " +
+                    "('2024-01-01T00:00:02.000000Z'::timestamp, 2, 'B', 100.0, 1.0), " +
+                    "('2024-01-01T00:00:03.000000Z'::timestamp, 5, 'A', 50.0, 0.0), " +
+                    "('2024-01-01T00:00:04.000000Z'::timestamp, 1, 'B', 10.0, NULL), " +
+                    "('2024-01-01T00:00:05.000000Z'::timestamp, 4, 'A', 100.0, 1.0)");
+
+            // sort_key order, alpha = 2/(period+1) = 0.5:
+            //   no-partition stream:
+            //     sk=1 (B, p=10, v=NULL) invalid; never seen a valid row -> vwema=NULL
+            //     sk=2 (B, p=100, v=1)   first valid                    -> num=100, den=1, vwema=100
+            //     sk=3 (A, p=30, v=1)    valid                          -> num=65,  den=1, vwema=65
+            //     sk=4 (A, p=100, v=1)   valid                          -> num=82.5,den=1, vwema=82.5
+            //     sk=5 (A, p=50, v=0)    invalid (vol<=0)               -> keep            vwema=82.5
+            //   partition A: (sk=3,30,1) (sk=4,100,1) (sk=5,50,0)          -> 30, 65, 65
+            //   partition B: (sk=1,10,NULL) (sk=2,100,1)                   -> NULL (first row invalid), 100 (first valid)
+            assertQueryNoLeakCheck(
+                    """
+                            ts\tsort_key\tsym\tprice\tvolume\tvwema_no_part\tvwema_part
+                            2024-01-01T00:00:01.000000Z\t3\tA\t30.0\t1.0\t65.0\t30.0
+                            2024-01-01T00:00:02.000000Z\t2\tB\t100.0\t1.0\t100.0\t100.0
+                            2024-01-01T00:00:03.000000Z\t5\tA\t50.0\t0.0\t82.5\t65.0
+                            2024-01-01T00:00:04.000000Z\t1\tB\t10.0\tnull\tnull\tnull
+                            2024-01-01T00:00:05.000000Z\t4\tA\t100.0\t1.0\t82.5\t65.0
+                            """,
+                    "select ts, sort_key, sym, price, volume, " +
+                            "avg(price, 'period', 3, volume) over (order by sort_key) vwema_no_part, " +
+                            "avg(price, 'period', 3, volume) over (partition by sym order by sort_key) vwema_part " +
+                            "from tab",
+                    "ts",
+                    true,
+                    true
+            );
+        });
+    }
+
+    @Test
+    public void testVwemaExceptionAlphaEqualsZero() throws Exception {
+        // alpha=0.0 should be invalid (exclusive lower bound) - caught by general positive check
+        assertException(
+                "select ts, price, volume, avg(price, 'alpha', 0.0, volume) over (order by ts) from tab",
+                "create table tab (ts timestamp, price double, volume double) timestamp(ts)",
+                46,
+                "parameter value must be a positive number"
+        );
+    }
+
+    @Test
     public void testVwemaExceptionAlphaMustBeBetween0And1() throws Exception {
         assertException(
                 "select ts, price, volume, avg(price, 'alpha', 1.5, volume) over (order by ts) from tab",
@@ -400,6 +510,8 @@ public class VwemaWindowFunctionTest extends AbstractCairoTest {
         );
     }
 
+    // ========================= Period and Time-Weighted Mode Tests =========================
+
     @Test
     public void testVwemaExceptionZeroParameterValue() throws Exception {
         assertException(
@@ -411,40 +523,34 @@ public class VwemaWindowFunctionTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testVwemaAlphaModeZeroVolume() throws Exception {
-        // L558 false via volume <= 0 in VwemaOverUnboundedRowsFrameFunction
-        assertQuery(
-                """
-                        ts\tprice\tvolume\tvwema
-                        2024-01-01T00:00:00.000000Z\t10.0\t0.0\tnull
-                        2024-01-01T00:00:01.000000Z\t20.0\t200.0\t20.0
-                        2024-01-01T00:00:02.000000Z\t30.0\t300.0\t26.0
-                        """,
-                "select ts, price, volume, avg(price, 'alpha', 0.5, volume) over (order by ts) as vwema from tab",
-                "create table tab as (" +
-                        "select timestamp_sequence('2024-01-01', 1000000) as ts, " +
-                        "(x * 10.0) as price, " +
-                        "case when x = 1 then 0.0 else (x * 100.0) end as volume " +
-                        "from long_sequence(3)" +
-                        ") timestamp(ts) partition by day",
-                "ts",
-                false,
-                true
-        );
-    }
+    public void testVwemaPeriodCachedWindowPartitionedReorderedReplay() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table tab (ts timestamp, sort_key long, sym symbol, price double, volume double) timestamp(ts)");
+            execute("insert into tab values " +
+                    "('2024-01-01T00:00:00.000000Z'::timestamp, 2, 'A', 10.0, 3.0), " +
+                    "('2024-01-01T00:00:01.000000Z'::timestamp, 2, 'B', 100.0, 1.0), " +
+                    "('2024-01-01T00:00:02.000000Z'::timestamp, 1, 'A', 20.0, 1.0), " +
+                    "('2024-01-01T00:00:03.000000Z'::timestamp, 3, 'B', 300.0, 4.0), " +
+                    "('2024-01-01T00:00:04.000000Z'::timestamp, 3, 'A', 30.0, 1.0), " +
+                    "('2024-01-01T00:00:05.000000Z'::timestamp, 1, 'B', 200.0, 2.0)");
 
-    @Test
-    public void testVwemaExceptionAlphaEqualsZero() throws Exception {
-        // alpha=0.0 should be invalid (exclusive lower bound) - caught by general positive check
-        assertException(
-                "select ts, price, volume, avg(price, 'alpha', 0.0, volume) over (order by ts) from tab",
-                "create table tab (ts timestamp, price double, volume double) timestamp(ts)",
-                46,
-                "parameter value must be a positive number"
-        );
+            assertQueryNoLeakCheck(
+                    """
+                            ts\tsort_key\tsym\tprice\tvolume\tvwema
+                            2024-01-01T00:00:00.000000Z\t2\tA\t10.0\t3.0\t12.5
+                            2024-01-01T00:00:01.000000Z\t2\tB\t100.0\t1.0\t166.66666666666666
+                            2024-01-01T00:00:02.000000Z\t1\tA\t20.0\t1.0\t20.0
+                            2024-01-01T00:00:03.000000Z\t3\tB\t300.0\t4.0\t263.6363636363636
+                            2024-01-01T00:00:04.000000Z\t3\tA\t30.0\t1.0\t18.333333333333332
+                            2024-01-01T00:00:05.000000Z\t1\tB\t200.0\t2.0\t200.0
+                            """,
+                    "select ts, sort_key, sym, price, volume, avg(price, 'period', 3, volume) over (partition by sym order by sort_key) as vwema from tab",
+                    "ts",
+                    true,
+                    true
+            );
+        });
     }
-
-    // ========================= Period and Time-Weighted Mode Tests =========================
 
     @Test
     public void testVwemaPeriodMode() throws Exception {

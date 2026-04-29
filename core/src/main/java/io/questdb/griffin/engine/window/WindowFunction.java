@@ -203,8 +203,20 @@ public interface WindowFunction extends Function {
     }
 
     /**
-     * @return number of additional passes over base data set required to calculate this function.
-     * {@link  #ZERO_PASS} means window function can be calculated on the fly and doesn't require additional passes .
+     * Returns a pass-count-oriented optimization hint for window execution.
+     * <p>
+     * This value is also used by the planner as a streaming fast-path hint when the input cursor
+     * already satisfies the window order. In that case, {@link #ZERO_PASS} functions are evaluated
+     * row-by-row through {@link #computeNext(Record)}.
+     * <p>
+     * {@link #ZERO_PASS} is the strongest optimization hint, not a promise that cached execution
+     * will skip this function. If the query is routed through the cached executor, every window
+     * function, including {@link #ZERO_PASS}, must still implement
+     * {@link #pass1(Record, long, WindowSPI)}. For a {@link #ZERO_PASS} function, {@code pass1()}
+     * normally performs the cached equivalent of {@code computeNext(record)} and materializes the
+     * current result into the output slot identified by {@link #setColumnIndex(int)}.
+     *
+     * @return cached execution pass count: {@link #ZERO_PASS}, {@link #ONE_PASS}, or {@link #TWO_PASS}
      */
     default int getPassCount() {
         return ONE_PASS;
@@ -279,11 +291,27 @@ public interface WindowFunction extends Function {
         return false;
     }
 
+    /**
+     * Performs the primary cached traversal for this function.
+     * <p>
+     * The cached executor calls this method for every window function, including functions whose
+     * {@link #getPassCount()} returns {@link #ZERO_PASS}. Implementations must therefore not rely
+     * on {@link #ZERO_PASS} to avoid cached execution. One-pass and zero-pass functions should
+     * materialize their final result for {@code recordOffset}; two-pass functions may instead
+     * build state or store scratch values for {@link #pass2(Record, long, WindowSPI)}.
+     */
     void pass1(Record record, long recordOffset, WindowSPI spi);
 
+    /**
+     * Performs the optional secondary cached traversal. The cached executor calls this only when
+     * {@link #getPassCount()} is greater than {@link #ONE_PASS}.
+     */
     default void pass2(Record record, long recordOffset, WindowSPI spi) {
     }
 
+    /**
+     * Prepares state before the optional secondary cached traversal.
+     */
     default void preparePass2() {
     }
 
