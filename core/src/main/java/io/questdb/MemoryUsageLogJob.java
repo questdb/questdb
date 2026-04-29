@@ -52,12 +52,13 @@ public class MemoryUsageLogJob extends SynchronizedJob {
         final Runtime runtime = Runtime.getRuntime();
         final long heapCommitted = runtime.totalMemory();
         final long heapUsed = heapCommitted - runtime.freeMemory();
-        final long memAccounted = Unsafe.getMemUsed();
         final long memRssAccounted = Unsafe.getRssMemUsed();
+        final long memNonRssAccounted = Unsafe.getNonRssMemUsed();
+        final long memAccounted = memRssAccounted + memNonRssAccounted;
 
         sink.putAscii("mem.accounted=").put(memAccounted)
                 .putAscii(", mem.rss.accounted=").put(memRssAccounted)
-                .putAscii(", mem.non.rss.accounted=").put(memAccounted - memRssAccounted)
+                .putAscii(", mem.non.rss.accounted=").put(memNonRssAccounted)
                 .putAscii(", mem.rss.limit=").put(Unsafe.getRssMemLimit())
                 .putAscii(", rss.physical=").put(Os.getRss())
                 .putAscii(", jvm.heap.used=").put(heapUsed)

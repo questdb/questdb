@@ -36,26 +36,33 @@ public class MemoryUsageLogJobTest {
     @Test
     public void testAppendMemoryUsageIncludesCoreFieldsAndNonZeroTags() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
-            final int memoryTag = MemoryTag.NATIVE_ND_ARRAY_DBG2;
-            final long size = 64;
-            final long expectedTagValue = Unsafe.getMemUsedByTag(memoryTag) + size;
-            long ptr = Unsafe.malloc(size, memoryTag);
+            final int rssMemoryTag = MemoryTag.NATIVE_ND_ARRAY_DBG2;
+            final long rssSize = 64;
+            final int nonRssMemoryTag = MemoryTag.NATIVE_PATH;
+            final long nonRssSize = 32;
+            final long expectedTagValue = Unsafe.getMemUsedByTag(rssMemoryTag) + rssSize;
+            final long expectedNonRssAccounted = Unsafe.getNonRssMemUsed() + nonRssSize;
+            long rssPtr = 0;
+            long nonRssPtr = 0;
             try {
+                rssPtr = Unsafe.malloc(rssSize, rssMemoryTag);
+                nonRssPtr = Unsafe.malloc(nonRssSize, nonRssMemoryTag);
                 final StringSink sink = new StringSink();
                 MemoryUsageLogJob.appendMemoryUsage(sink);
 
                 TestUtils.assertContains(sink, "mem.accounted=");
                 TestUtils.assertContains(sink, "mem.rss.accounted=");
-                TestUtils.assertContains(sink, "mem.non.rss.accounted=");
+                TestUtils.assertContains(sink, "mem.non.rss.accounted=" + expectedNonRssAccounted);
                 TestUtils.assertContains(sink, "mem.rss.limit=");
                 TestUtils.assertContains(sink, "rss.physical=");
                 TestUtils.assertContains(sink, "jvm.heap.used=");
                 TestUtils.assertContains(sink, "malloc.count=");
                 TestUtils.assertContains(sink, "realloc.count=");
                 TestUtils.assertContains(sink, "free.count=");
-                TestUtils.assertContains(sink, MemoryTag.nameOf(memoryTag) + "=" + expectedTagValue);
+                TestUtils.assertContains(sink, MemoryTag.nameOf(rssMemoryTag) + "=" + expectedTagValue);
             } finally {
-                Unsafe.free(ptr, size, memoryTag);
+                Unsafe.free(rssPtr, rssSize, rssMemoryTag);
+                Unsafe.free(nonRssPtr, nonRssSize, nonRssMemoryTag);
             }
         });
     }
