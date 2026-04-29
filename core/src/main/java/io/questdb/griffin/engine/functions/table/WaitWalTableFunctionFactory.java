@@ -37,7 +37,6 @@ import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.BooleanFunction;
-import io.questdb.mp.ContinuationResumeJob;
 import io.questdb.mp.SqlContinuation;
 import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
@@ -94,7 +93,6 @@ public class WaitWalTableFunctionFactory implements FunctionFactory {
             // unbounded: a dead client, an explicit cancel, or a timeout always wins.
             SqlContinuation cont = executionContext.getCurrentContinuation();
             if (cont != null && SqlContinuation.isMounted()) {
-                ContinuationResumeJob resumeJob = executionContext.getCairoEngine().getContinuationResumeJob();
                 MillisecondClock clock = executionContext.getCairoEngine().getConfiguration().getMillisecondClock();
                 while (seqTxnTracker.getWriterTxn() < seqTxn) {
                     // Owning context is closing: do not re-park. Throwing unwinds the
@@ -108,7 +106,7 @@ public class WaitWalTableFunctionFactory implements FunctionFactory {
                     executionContext.getCircuitBreaker().statefulThrowExceptionIfTripped();
                     throwIfSuspended();
                     long deadline = clock.getTicks() + WAKE_INTERVAL_MILLIS;
-                    TxnWaiter waiter = executionContext.borrowTxnWaiter(seqTxn, cont, resumeJob, deadline);
+                    TxnWaiter waiter = executionContext.borrowTxnWaiter(seqTxn, cont, deadline);
                     seqTxnTracker.registerWaiter(waiter);
                     if (!SqlContinuation.suspend()) {
                         // The JDK refused to yield because the carrier is pinned (a

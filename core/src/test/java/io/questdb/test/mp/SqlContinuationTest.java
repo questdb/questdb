@@ -43,7 +43,11 @@ public class SqlContinuationTest {
     @Test
     public void testIsMountedTrueInsideRun() {
         AtomicReference<Boolean> mountedInsideBody = new AtomicReference<>();
-        SqlContinuation cont = new SqlContinuation(() -> mountedInsideBody.set(SqlContinuation.isMounted()));
+        SqlContinuation cont = new SqlContinuation(
+                () -> mountedInsideBody.set(SqlContinuation.isMounted()),
+                c -> {
+                }
+        );
         cont.run();
         Assert.assertTrue(cont.isDone());
         Assert.assertEquals(Boolean.TRUE, mountedInsideBody.get());
@@ -51,7 +55,7 @@ public class SqlContinuationTest {
     }
 
     @Test
-    public void testMultipleYieldsInOneContinuation() throws InterruptedException {
+    public void testMultipleYieldsInOneContinuation() {
         AtomicReference<Integer> step = new AtomicReference<>(0);
         SqlContinuation cont = new SqlContinuation(() -> {
             step.set(1);
@@ -59,6 +63,7 @@ public class SqlContinuationTest {
             step.set(2);
             SqlContinuation.suspend();
             step.set(3);
+        }, c -> {
         });
         cont.run();
         Assert.assertFalse(cont.isDone());
@@ -79,16 +84,16 @@ public class SqlContinuationTest {
         AtomicReference<Thread> threadAfterResume = new AtomicReference<>();
         CountDownLatch doneLatch = new CountDownLatch(1);
 
+        ContinuationResumeJob resumeJob = new ContinuationResumeJob();
+        TestWorkerPool pool = new TestWorkerPool("sql-continuation-test", 1);
+        pool.assign(resumeJob);
+
         SqlContinuation cont = new SqlContinuation(() -> {
             threadAtStart.set(Thread.currentThread());
             SqlContinuation.suspend();
             threadAfterResume.set(Thread.currentThread());
             doneLatch.countDown();
-        });
-
-        ContinuationResumeJob resumeJob = new ContinuationResumeJob();
-        TestWorkerPool pool = new TestWorkerPool("sql-continuation-test", 1);
-        pool.assign(resumeJob);
+        }, resumeJob);
 
         try {
             Thread runner = Thread.currentThread();
@@ -98,7 +103,7 @@ public class SqlContinuationTest {
             Assert.assertNull("body has not yet passed suspend()", threadAfterResume.get());
 
             pool.start();
-            resumeJob.enqueue(cont);
+            cont.scheduleResume();
 
             Assert.assertTrue("continuation resume timed out", doneLatch.await(5, TimeUnit.SECONDS));
             Assert.assertTrue(cont.isDone());

@@ -168,7 +168,6 @@ public class CairoEngine implements Closeable, WriterSource {
     private final DatabaseCheckpointAgent checkpointAgent;
     private final CopyExportContext copyExportContext;
     private final CopyImportContext copyImportContext;
-    private final io.questdb.mp.ContinuationResumeJob continuationResumeJob = new io.questdb.mp.ContinuationResumeJob();
     private final ConcurrentHashMap<TableToken> createTableLock = new ConcurrentHashMap<>();
     private final DataID dataID;
     private final FunctionFactoryCache ffCache;
@@ -744,7 +743,7 @@ public class CairoEngine implements Closeable, WriterSource {
                     path.of(configuration.getDbRoot()).concat(tableToken).$();
                     if (!configuration.getFilesFacade().unlinkOrRemove(path, LOG)) {
                         throw CairoException.critical(configuration.getFilesFacade().errno())
-                                .put("could not remove table [table=").put(tableToken).put(", thread=").put(Thread.currentThread().getId()).put(']');
+                                .put("could not remove table [table=").put(tableToken).put(", thread=").put(Thread.currentThread().threadId()).put(']');
                     }
 
                     tableNameRegistry.dropTable(tableToken);
@@ -825,16 +824,6 @@ public class CairoEngine implements Closeable, WriterSource {
 
     public CairoConfiguration getConfiguration() {
         return configuration;
-    }
-
-    /**
-     * Returns the shared job that drains continuations parked by suspending SQL
-     * functions (e.g. {@code wait_wal_table}). Assign this to every worker of the
-     * SQL-executing pool before that pool is started, so any worker is eligible to
-     * resume a parked continuation.
-     */
-    public io.questdb.mp.ContinuationResumeJob getContinuationResumeJob() {
-        return continuationResumeJob;
     }
 
     /**
@@ -1429,7 +1418,7 @@ public class CairoEngine implements Closeable, WriterSource {
                     // not locked
                     if (readerPool.lock(tableToken)) {
                         LOG.info().$("locked [table=").$(tableToken)
-                                .$(", thread=").$(Thread.currentThread().getId())
+                                .$(", thread=").$(Thread.currentThread().threadId())
                                 .I$();
                         return null;
                     }
@@ -1644,7 +1633,7 @@ public class CairoEngine implements Closeable, WriterSource {
         if (listener != null) {
             listener.onEvent(
                     PoolListener.SRC_TABLE_REGISTRY,
-                    Thread.currentThread().getId(),
+                    Thread.currentThread().threadId(),
                     tableToken,
                     PoolListener.EV_REMOVE_TOKEN,
                     (short) 0,

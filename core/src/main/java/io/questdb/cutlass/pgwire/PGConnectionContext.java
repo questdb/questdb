@@ -48,6 +48,7 @@ import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.griffin.engine.functions.bind.BindVariableServiceImpl;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
+import io.questdb.mp.ContinuationSink;
 import io.questdb.mp.SCSequence;
 import io.questdb.mp.SqlContinuation;
 import io.questdb.network.IOContext;
@@ -161,8 +162,10 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
     // Pooled continuation: one per connection, lifetime of the connection. Every
     // handleClientOperation call re-enters this continuation; its body is a persistent
     // loop that yields between tasks. Eliminates per-call allocation of both the
-    // SqlContinuation wrapper and the underlying jdk.internal.vm.Continuation.
-    private final SqlContinuation cont = new SqlContinuation(this::continuationLoop);
+    // SqlContinuation wrapper and the underlying jdk.internal.vm.Continuation. The
+    // sink is the network pool's ContinuationResumeJob, so a body parked here resumes
+    // on the same pool that owns this connection.
+    private final SqlContinuation cont;
     private final DirectUtf8String directUtf8NamedPortal = new DirectUtf8String();
     private final DirectUtf8String directUtf8NamedStatement = new DirectUtf8String();
     private final boolean dumpNetworkTraffic;
@@ -233,7 +236,8 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
             PGConfiguration configuration,
             SqlExecutionContextImpl sqlExecutionContext,
             NetworkSqlExecutionCircuitBreaker circuitBreaker,
-            AssociativeCache<TypesAndSelect> tasCache
+            AssociativeCache<TypesAndSelect> tasCache,
+            ContinuationSink resumeSink
     ) {
         super(
                 configuration.getFactoryProvider().getPGWireSocketFactory(),
@@ -244,6 +248,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
         try {
             this.engine = engine;
             this.configuration = configuration;
+            this.cont = new SqlContinuation(this::continuationLoop, resumeSink);
             this.bindVariableService = new BindVariableServiceImpl(engine.getConfiguration());
             this.recvBufferSize = configuration.getRecvBufferSize();
             this.sendBufferSize = configuration.getSendBufferSize();
@@ -498,28 +503,27 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
         // ever suspended. Mirrors the processor's catch chain: normal completion re-arms
         // for the next client message; flow-control exceptions route to their respective
         // re-registration; anything else disconnects.
-        if (err == null) {
-            dispatcher.registerChannel(this, IOOperation.READ);
-            return;
-        }
-        if (err instanceof PeerIsSlowToWriteException) {
-            dispatcher.registerChannel(this, IOOperation.READ);
-        } else if (err instanceof PeerIsSlowToReadException) {
-            dispatcher.registerChannel(this, IOOperation.WRITE);
-        } else if (err instanceof PeerDisconnectedException) {
-            dispatcher.disconnect(
+        switch (err) {
+            case null -> dispatcher.registerChannel(this, IOOperation.READ);
+            case PeerIsSlowToWriteException _ ->
+                    dispatcher.registerChannel(this, IOOperation.READ);
+            case PeerIsSlowToReadException _ ->
+                    dispatcher.registerChannel(this, IOOperation.WRITE);
+            case PeerDisconnectedException _ -> dispatcher.disconnect(
                     this,
                     operation == IOOperation.READ
                             ? DISCONNECT_REASON_PEER_DISCONNECT_AT_RECV
                             : DISCONNECT_REASON_PEER_DISCONNECT_AT_SEND
             );
-        } else if (err instanceof PGMessageProcessingException) {
-            LOG.error().$("protocol issue after resume [err=").$safe(((PGMessageProcessingException) err).getFlyweightMessage()).I$();
-            dispatcher.disconnect(this, DISCONNECT_REASON_PROTOCOL_VIOLATION);
-        } else {
-            LOG.critical().$("internal error after resume [ex=").$(err).I$();
-            metrics.healthMetrics().incrementUnhandledErrors();
-            dispatcher.disconnect(this, DISCONNECT_REASON_SERVER_ERROR);
+            case PGMessageProcessingException pgMessageProcessingException -> {
+                LOG.error().$("protocol issue after resume [err=").$safe(pgMessageProcessingException.getFlyweightMessage()).I$();
+                dispatcher.disconnect(this, DISCONNECT_REASON_PROTOCOL_VIOLATION);
+            }
+            default -> {
+                LOG.critical().$("internal error after resume [ex=").$(err).I$();
+                metrics.healthMetrics().incrementUnhandledErrors();
+                dispatcher.disconnect(this, DISCONNECT_REASON_SERVER_ERROR);
+            }
         }
     }
 

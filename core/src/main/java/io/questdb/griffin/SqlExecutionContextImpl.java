@@ -43,7 +43,6 @@ import io.questdb.griffin.engine.window.WindowContext;
 import io.questdb.griffin.engine.window.WindowContextImpl;
 import io.questdb.griffin.model.IntervalUtils;
 import io.questdb.griffin.model.RuntimeIntrinsicIntervalModel;
-import io.questdb.mp.ContinuationResumeJob;
 import io.questdb.mp.SqlContinuation;
 import io.questdb.std.Decimal128;
 import io.questdb.std.Decimal256;
@@ -150,13 +149,8 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
     }
 
     @Override
-    public TxnWaiter borrowTxnWaiter(
-            long targetWriterTxn,
-            SqlContinuation cont,
-            ContinuationResumeJob resumeJob,
-            long deadlineMillis
-    ) {
-        pooledTxnWaiter.reset(targetWriterTxn, cont, resumeJob, deadlineMillis);
+    public TxnWaiter borrowTxnWaiter(long targetWriterTxn, SqlContinuation cont, long deadlineMillis) {
+        pooledTxnWaiter.reset(targetWriterTxn, cont, deadlineMillis);
         return pooledTxnWaiter;
     }
 

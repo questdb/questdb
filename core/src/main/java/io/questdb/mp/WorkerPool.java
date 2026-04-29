@@ -58,6 +58,12 @@ public class WorkerPool implements Closeable {
     private final ObjList<ObjHashSet<Job>> workerJobs;
     private final ObjList<Worker> workers = new ObjList<>();
     private final long yieldThreshold;
+    // Every pool gets a ContinuationResumeJob assigned to all its workers. A pool
+    // that never hosts SQL evaluation pays only the cost of one extra empty-queue
+    // poll per worker tick (nanoseconds). Construction in the pool's constructor
+    // means callers can rely on getContinuationSink() returning a valid sink at
+    // any time without lazy-init races or "did anyone materialize it yet" worries.
+    private final ContinuationResumeJob continuationResumeJob;
 
     public WorkerPool(WorkerPoolConfiguration configuration) {
         this.workerCount = configuration.getWorkerCount();
@@ -86,6 +92,9 @@ public class WorkerPool implements Closeable {
             workerJobs.add(new ObjHashSet<>());
             threadLocalCleaners.add(new ObjList<>());
         }
+
+        this.continuationResumeJob = new ContinuationResumeJob();
+        assign(continuationResumeJob);
     }
 
     /**
@@ -106,6 +115,15 @@ public class WorkerPool implements Closeable {
     public void assign(int worker, Job job) {
         assert worker > -1 && worker < workerCount && !running.get() && !closed.get();
         workerJobs.getQuick(worker).add(job);
+    }
+
+    /**
+     * Returns the {@link ContinuationSink} for this pool. Continuations constructed
+     * with this sink will resume on workers of this pool. Always non-null; the sink
+     * is wired during pool construction.
+     */
+    public ContinuationSink getContinuationSink() {
+        return continuationResumeJob;
     }
 
     public void assignThreadLocalCleaner(int worker, Closeable cleaner) {
@@ -178,7 +196,7 @@ public class WorkerPool implements Closeable {
                         workerAffinity[i],
                         workerJobs.getQuick(i),
                         halted,
-                        ex -> Misc.freeObjListAndClear(threadLocalCleaners.getQuick(index)),
+                        _ -> Misc.freeObjListAndClear(threadLocalCleaners.getQuick(index)),
                         haltOnError,
                         yieldThreshold,
                         napThreshold,

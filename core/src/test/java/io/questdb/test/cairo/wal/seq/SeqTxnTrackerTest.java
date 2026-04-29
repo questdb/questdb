@@ -32,7 +32,6 @@ import io.questdb.cairo.wal.seq.SeqTxnTracker;
 import io.questdb.cairo.wal.seq.TxnWaiter;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
-import io.questdb.mp.ContinuationResumeJob;
 import io.questdb.mp.SOCountDownLatch;
 import io.questdb.mp.SqlContinuation;
 import io.questdb.std.datetime.millitime.MillisecondClock;
@@ -268,8 +267,7 @@ public class SeqTxnTrackerTest {
         TestUtils.assertMemoryLeak(() -> {
             SeqTxnTracker tracker = createSeqTracker();
             tracker.initTxns(1, 5, false);
-            ContinuationResumeJob resumeJob = new ContinuationResumeJob();
-            TxnWaiter w = new TxnWaiter(10, dummyContinuation(), resumeJob);
+            TxnWaiter w = new TxnWaiter(10, dummyContinuation());
             tracker.registerWaiter(w);
             assertTrue(w.tryCancel());
             assertTrue(w.isCancelled());
@@ -282,11 +280,13 @@ public class SeqTxnTrackerTest {
 
     @Test
     public void testWaiterFiresImmediatelyIfAlreadyMet() throws Exception {
+        // If writerTxn already meets the waiter's target at registration time,
+        // registerWaiter eagerly fires the waiter so the caller does not have to
+        // wait for the next external event.
         TestUtils.assertMemoryLeak(() -> {
             SeqTxnTracker tracker = createSeqTracker();
             tracker.initTxns(10, 10, false);
-            ContinuationResumeJob resumeJob = new ContinuationResumeJob();
-            TxnWaiter w = new TxnWaiter(5, dummyContinuation(), resumeJob);
+            TxnWaiter w = new TxnWaiter(5, dummyContinuation());
             tracker.registerWaiter(w);
             assertTrue(w.isFired());
             assertFalse(w.isCancelled());
@@ -298,8 +298,7 @@ public class SeqTxnTrackerTest {
         TestUtils.assertMemoryLeak(() -> {
             SeqTxnTracker tracker = createSeqTracker();
             tracker.initTxns(1, 5, false);
-            ContinuationResumeJob resumeJob = new ContinuationResumeJob();
-            TxnWaiter w = new TxnWaiter(100, dummyContinuation(), resumeJob);
+            TxnWaiter w = new TxnWaiter(100, dummyContinuation());
             tracker.registerWaiter(w);
             assertFalse(w.isFired());
             tracker.notifyOnDrop();
@@ -312,8 +311,7 @@ public class SeqTxnTrackerTest {
         TestUtils.assertMemoryLeak(() -> {
             SeqTxnTracker tracker = createSeqTracker();
             tracker.initTxns(1, 5, false);
-            ContinuationResumeJob resumeJob = new ContinuationResumeJob();
-            TxnWaiter w = new TxnWaiter(100, dummyContinuation(), resumeJob);
+            TxnWaiter w = new TxnWaiter(100, dummyContinuation());
             tracker.registerWaiter(w);
             assertFalse(w.isFired());
             tracker.setSuspended(ErrorTag.NONE, "test");
@@ -326,13 +324,11 @@ public class SeqTxnTrackerTest {
         TestUtils.assertMemoryLeak(() -> {
             SeqTxnTracker tracker = createSeqTracker();
             tracker.initTxns(1, 5, false);
-            ContinuationResumeJob resumeJob = new ContinuationResumeJob();
-            TxnWaiter w1 = new TxnWaiter(3, dummyContinuation(), resumeJob);
-            TxnWaiter w2 = new TxnWaiter(7, dummyContinuation(), resumeJob);
+            TxnWaiter w1 = new TxnWaiter(3, dummyContinuation());
+            TxnWaiter w2 = new TxnWaiter(7, dummyContinuation());
             tracker.registerWaiter(w1);
             tracker.registerWaiter(w2);
-            // w1.target(3) is already met by initTxns writerTxn=1... wait, initTxns sets
-            // writerTxn=1, so w1.target(3) is NOT met yet. w2.target(7) also not met.
+            // initTxns sets writerTxn=1; neither waiter's target is met yet.
             assertFalse(w1.isFired());
             assertFalse(w2.isFired());
 
@@ -348,9 +344,10 @@ public class SeqTxnTrackerTest {
 
     private static SqlContinuation dummyContinuation() {
         // A continuation whose body never runs in these tests; we only need a reference
-        // that ContinuationResumeJob.enqueue() can stash. Tests verify the waiter state,
-        // not the resume side.
+        // that the waiter can stash. The sink is a no-op because tests verify state
+        // transitions, not the resume side.
         return new SqlContinuation(() -> {
+        }, c -> {
         });
     }
 

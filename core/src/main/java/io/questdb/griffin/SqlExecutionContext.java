@@ -41,7 +41,6 @@ import io.questdb.griffin.engine.functions.rnd.SharedRandom;
 import io.questdb.griffin.engine.window.WindowContext;
 import io.questdb.griffin.model.IntrinsicModel;
 import io.questdb.griffin.model.RuntimeIntrinsicIntervalModel;
-import io.questdb.mp.ContinuationResumeJob;
 import io.questdb.mp.SqlContinuation;
 import io.questdb.std.Decimal128;
 import io.questdb.std.Decimal256;
@@ -106,14 +105,12 @@ public interface SqlExecutionContext extends Sinkable, Closeable {
      * free to pool a single instance and reuse it across suspending-function invocations
      * (PGWire serializes queries per connection, so at most one wait is in flight per
      * context at a time). The default implementation allocates a fresh waiter.
+     *
+     * <p>The continuation already carries its origin pool's resume sink, so the waiter
+     * does not need a separate resume-job reference.
      */
-    default TxnWaiter borrowTxnWaiter(
-            long targetWriterTxn,
-            SqlContinuation cont,
-            ContinuationResumeJob resumeJob,
-            long deadlineMillis
-    ) {
-        return new TxnWaiter(targetWriterTxn, cont, resumeJob, deadlineMillis);
+    default TxnWaiter borrowTxnWaiter(long targetWriterTxn, SqlContinuation cont, long deadlineMillis) {
+        return new TxnWaiter(targetWriterTxn, cont, deadlineMillis);
     }
 
     default Rnd getAsyncRandom() {

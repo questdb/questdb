@@ -32,6 +32,7 @@ import io.questdb.cutlass.auth.SocketAuthenticator;
 import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
+import io.questdb.mp.ContinuationSink;
 import io.questdb.mp.Job;
 import io.questdb.mp.WorkerPool;
 import io.questdb.network.IOContextFactoryImpl;
@@ -83,7 +84,8 @@ public class PGServer implements Closeable {
                 configuration,
                 registry,
                 executionContextObjectFactory,
-                typesAndSelectCache
+                typesAndSelectCache,
+                sharedPoolNetwork.getContinuationSink()
         );
         this.dispatcher = IODispatchers.create(configuration, contextFactory);
         this.sharedPoolNetwork = sharedPoolNetwork;
@@ -180,7 +182,8 @@ public class PGServer implements Closeable {
                 PGConfiguration configuration,
                 PGCircuitBreakerRegistry registry,
                 ObjectFactory<SqlExecutionContextImpl> executionContextObjectFactory,
-                AssociativeCache<TypesAndSelect> typesAndSelectCache
+                AssociativeCache<TypesAndSelect> typesAndSelectCache,
+                ContinuationSink resumeSink
         ) {
             super(
                     () -> {
@@ -194,7 +197,8 @@ public class PGServer implements Closeable {
                                 configuration,
                                 executionContextObjectFactory.newInstance(),
                                 circuitBreaker,
-                                typesAndSelectCache
+                                typesAndSelectCache,
+                                resumeSink
                         );
                         FactoryProvider factoryProvider = configuration.getFactoryProvider();
                         SocketAuthenticator authenticator = factoryProvider.getPgWireAuthenticatorFactory().getPgWireAuthenticator(

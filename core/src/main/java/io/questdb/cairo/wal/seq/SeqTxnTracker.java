@@ -87,7 +87,7 @@ public class SeqTxnTracker {
             }
             if (w.isExpired(nowMillis)) {
                 if (w.tryCancel()) {
-                    w.resumeJob.enqueue(w.cont);
+                    w.cont.scheduleResume();
                 }
             } else {
                 if (sentinel == null) {
@@ -191,10 +191,19 @@ public class SeqTxnTracker {
     /**
      * Registers a parked SQL continuation that will be resumed when the tracker's
      * {@code writerTxn} advances to at least {@code waiter.targetWriterTxn}, or when
-     * the table becomes suspended or dropped. A waiter whose target is already met
-     * at registration time is fired before this method returns, covering the obvious
-     * race where {@code updateWriterTxns} ran between the caller's pre-check and the
-     * register call.
+     * the table becomes suspended/dropped, or when the waiter's deadline elapses
+     * (via {@link WaiterTimeoutJob}).
+     *
+     * <p>If the target is already met (or the table is already suspended/dropped) at
+     * registration time, fires the waiter immediately so the caller does not have to
+     * wait until the next external event or deadline expiry. This eager fire races
+     * the body before it reaches {@code SqlContinuation.suspend()} -- the cont is
+     * still mounted on the registering carrier when {@code cont.scheduleResume()}
+     * pushes it onto the resume queue. {@link io.questdb.mp.ContinuationResumeJob#run}
+     * spin-waits on the resulting IllegalStateException until the carrier unmounts;
+     * the same spin-wait already covers concurrent fires from other threads (e.g.
+     * a WAL apply firing while the body is between {@code registerWaiter} and
+     * {@code suspend}), so this eager path adds no new race source.
      */
     public void registerWaiter(TxnWaiter waiter) {
         enqueueHolder(HOLDER.get(), waiter);
@@ -288,7 +297,7 @@ public class SeqTxnTracker {
             }
             if (terminal || wtxn >= w.targetWriterTxn) {
                 if (w.tryFire()) {
-                    w.resumeJob.enqueue(w.cont);
+                    w.cont.scheduleResume();
                 }
                 // cancelled waiters were already enqueued by the canceller; drop on the floor
             } else {

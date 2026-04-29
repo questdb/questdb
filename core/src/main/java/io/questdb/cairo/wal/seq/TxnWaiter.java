@@ -24,7 +24,6 @@
 
 package io.questdb.cairo.wal.seq;
 
-import io.questdb.mp.ContinuationResumeJob;
 import io.questdb.mp.SqlContinuation;
 import io.questdb.std.Unsafe;
 
@@ -34,20 +33,16 @@ import io.questdb.std.Unsafe;
  *
  * <p>Instances are pooled: typically one per {@link io.questdb.griffin.SqlExecutionContext}.
  * {@link #reset} clears the state back to PENDING and publishes fresh target / continuation
- * / resume-job / deadline fields. Since PGWire serializes queries per connection and a
- * single {@code wait_wal_table} invocation is sequential within a query, only one wait is
- * in flight per context at a time — the pooled instance is safe to reuse across waits.
+ * / deadline fields. Since PGWire serializes queries per connection and a single
+ * {@code wait_wal_table} invocation is sequential within a query, only one wait is in
+ * flight per context at a time -- the pooled instance is safe to reuse across waits.
  *
- * <p>The {@link #state} field is a CAS'd 3-way marker:
- * <ul>
- *     <li>{@link #STATE_PENDING} — waiter is registered and has not been handed off</li>
- *     <li>{@link #STATE_FIRED} — a fireWaiters pass transitioned this waiter to ready
- *     and has enqueued the continuation for resume</li>
- *     <li>{@link #STATE_CANCELLED} — the waiter was cancelled (timeout, client
- *     disconnect); on resume the body reads this and throws</li>
- * </ul>
- * Only one concurrent thread wins the CAS from PENDING to FIRED or CANCELLED, so the
- * continuation is enqueued at most once.
+ * <p>The {@link #state} field is a CAS'd 3-way marker. Only one concurrent thread wins
+ * the CAS from PENDING to FIRED or CANCELLED, so {@code cont.scheduleResume()} is invoked
+ * at most once per wait.
+ *
+ * <p>The continuation knows its origin pool's resume sink at construction; firing/cancelling
+ * therefore does not need to thread a resume job through the waiter.
  */
 public final class TxnWaiter {
     public static final long NO_DEADLINE = Long.MAX_VALUE;
@@ -57,21 +52,19 @@ public final class TxnWaiter {
     static final long STATE_OFFSET = Unsafe.getFieldOffset(TxnWaiter.class, "state");
     SqlContinuation cont;
     long deadlineMillis = NO_DEADLINE;
-    ContinuationResumeJob resumeJob;
     volatile int state = STATE_PENDING;
     long targetWriterTxn;
 
     public TxnWaiter() {
     }
 
-    public TxnWaiter(long targetWriterTxn, SqlContinuation cont, ContinuationResumeJob resumeJob) {
-        this(targetWriterTxn, cont, resumeJob, NO_DEADLINE);
+    public TxnWaiter(long targetWriterTxn, SqlContinuation cont) {
+        this(targetWriterTxn, cont, NO_DEADLINE);
     }
 
-    public TxnWaiter(long targetWriterTxn, SqlContinuation cont, ContinuationResumeJob resumeJob, long deadlineMillis) {
+    public TxnWaiter(long targetWriterTxn, SqlContinuation cont, long deadlineMillis) {
         this.targetWriterTxn = targetWriterTxn;
         this.cont = cont;
-        this.resumeJob = resumeJob;
         this.deadlineMillis = deadlineMillis;
     }
 
@@ -92,19 +85,17 @@ public final class TxnWaiter {
      * {@link #state} back to PENDING; the volatile write on {@code state} synchronizes
      * the reset so any observer that reads state == PENDING sees the refreshed fields.
      */
-    public void reset(long targetWriterTxn, SqlContinuation cont, ContinuationResumeJob resumeJob, long deadlineMillis) {
+    public void reset(long targetWriterTxn, SqlContinuation cont, long deadlineMillis) {
         this.targetWriterTxn = targetWriterTxn;
         this.cont = cont;
-        this.resumeJob = resumeJob;
         this.deadlineMillis = deadlineMillis;
         this.state = STATE_PENDING;
     }
 
     /**
      * Attempts to transition this waiter from PENDING to CANCELLED. Returns {@code true}
-     * if the CAS won, in which case the caller is responsible for enqueueing this
-     * waiter's continuation on the resume job so the parked body can observe the
-     * cancellation and throw.
+     * if the CAS won, in which case the caller is responsible for calling
+     * {@code cont.scheduleResume()} so the parked body can observe the cancellation.
      */
     public boolean tryCancel() {
         return Unsafe.cas(this, STATE_OFFSET, STATE_PENDING, STATE_CANCELLED);

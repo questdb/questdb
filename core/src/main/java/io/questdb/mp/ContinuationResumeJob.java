@@ -28,21 +28,21 @@ import org.jetbrains.annotations.NotNull;
 
 /**
  * Job that drains an unbounded MPMC queue of {@link SqlContinuation} objects and
- * remounts each one on the calling worker thread. Any thread may call
- * {@link #enqueue(SqlContinuation)} to hand off a parked continuation to the worker
- * pool. The first worker to dequeue an item calls {@code cont.run()}, which copies
- * the parked SQL frames onto that worker's native stack and resumes execution past
- * the {@link SqlContinuation#suspend()} call.
+ * remounts each one on the calling worker thread. Implements {@link ContinuationSink}
+ * so a continuation captures the queue at construction via {@code resumeSink::put}
+ * and pushes itself in via {@link SqlContinuation#scheduleResume()} when fired or
+ * cancelled.
  *
- * <p>The queue is MPMC, but a given continuation should be enqueued only once per
- * suspension (enforce this externally with a CAS on the waiter state). The queue
- * itself does not guard against double-enqueue of the same continuation reference.
+ * <p>Owned by a {@link io.questdb.mp.WorkerPool} and assigned to all workers of
+ * that pool. A given continuation should be put exactly once per suspension --
+ * the queue does not deduplicate; the producer must gate via TxnWaiter state CAS.
  */
-public final class ContinuationResumeJob implements Job {
+public final class ContinuationResumeJob implements Job, ContinuationSink {
     private final Queue<ResumeTask> queue = ConcurrentQueue.createConcurrentQueue(ResumeTask::new);
     private final ThreadLocal<ResumeTask> scratch = ThreadLocal.withInitial(ResumeTask::new);
 
-    public void enqueue(SqlContinuation cont) {
+    @Override
+    public void put(SqlContinuation cont) {
         ResumeTask t = scratch.get();
         t.cont = cont;
         queue.enqueue(t);
@@ -57,21 +57,24 @@ public final class ContinuationResumeJob implements Job {
         }
         SqlContinuation cont = t.cont;
         t.cont = null;
-        // A continuation can be enqueued by the producer (e.g. fireWaiters from within
-        // registerWaiter) while its caller is still mounted and hasn't yet reached
-        // SqlContinuation.suspend(). Continuation.run() rejects remounting with an
-        // IllegalStateException ("Mounted!!!!") in that narrow window. Spin-wait for
-        // the caller to yield; the window is typically nanoseconds. Yield the OS
-        // scheduler after a short busy-spin to avoid pinning a core if the caller was
-        // preempted right after enqueue.
+        // A waiter can be fired by a concurrent thread (e.g. updateWriterTxns from
+        // the WAL apply pool) in the narrow window between registerWaiter enqueueing
+        // the waiter and the body actually reaching SqlContinuation.suspend(). In
+        // that window the cont is still mounted on its registering carrier, and
+        // Continuation.run() rejects the remount with IllegalStateException. Spin
+        // until the carrier unmounts -- typically nanoseconds. We use cont.isDone()
+        // as the structural test (not message-text matching against an internal
+        // JDK string): a not-done cont that refused to run can only be in the
+        // mounted-elsewhere state, since it was sitting in our queue with no
+        // contender besides the original carrier. If isDone() is true, this is a
+        // real bug (cont was put after completing) -- propagate.
         int spins = 0;
         while (true) {
             try {
                 cont.run();
                 return true;
             } catch (IllegalStateException e) {
-                String msg = e.getMessage();
-                if (msg == null || !msg.startsWith("Mounted")) {
+                if (cont.isDone()) {
                     throw e;
                 }
                 if (++spins < 64) {

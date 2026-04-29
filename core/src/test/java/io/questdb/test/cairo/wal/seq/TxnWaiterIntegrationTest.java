@@ -40,17 +40,16 @@ import org.jetbrains.annotations.NotNull;
 import org.junit.Assert;
 import org.junit.Test;
 
-import java.util.concurrent.atomic.AtomicLong;
-
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.atomic.AtomicReference;
 
 /**
  * Integration test that wires SqlContinuation + SeqTxnTracker + ContinuationResumeJob
  * end-to-end, exercising the same sequence a SQL-layer gateway would drive:
  *   caller runs cont.run() -> body registers TxnWaiter + suspends -> tracker advances
- *   -> fireWaiters enqueues on resume job -> pool worker dequeues and calls cont.run()
+ *   -> fireWaiters calls cont.scheduleResume() -> pool worker dequeues and calls cont.run()
  *   -> body resumes on worker thread and completes.
  */
 public class TxnWaiterIntegrationTest {
@@ -71,13 +70,13 @@ public class TxnWaiterIntegrationTest {
             CountDownLatch doneLatch = new CountDownLatch(1);
 
             SqlContinuation cont = new SqlContinuation(() -> {
-                TxnWaiter w = new TxnWaiter(100, self.get(), resumeJob);
+                TxnWaiter w = new TxnWaiter(100, self.get());
                 waiterRef.set(w);
                 tracker.registerWaiter(w);
                 SqlContinuation.suspend();
                 observedCancelled.set(w.isCancelled());
                 doneLatch.countDown();
-            });
+            }, resumeJob);
             self.set(cont);
 
             try {
@@ -85,10 +84,10 @@ public class TxnWaiterIntegrationTest {
                 Assert.assertFalse(cont.isDone());
                 pool.start();
 
-                // Cancel the waiter; the canceller is responsible for enqueueing on the resume job.
+                // Cancel the waiter; the canceller is responsible for scheduling resume.
                 TxnWaiter w = waiterRef.get();
                 Assert.assertTrue(w.tryCancel());
-                resumeJob.enqueue(cont);
+                cont.scheduleResume();
 
                 Assert.assertTrue(doneLatch.await(5, TimeUnit.SECONDS));
                 Assert.assertEquals(Boolean.TRUE, observedCancelled.get());
@@ -118,13 +117,13 @@ public class TxnWaiterIntegrationTest {
 
             SqlContinuation cont = new SqlContinuation(() -> {
                 threadAtStart.set(Thread.currentThread());
-                TxnWaiter w = new TxnWaiter(5, self.get(), resumeJob);
+                TxnWaiter w = new TxnWaiter(5, self.get());
                 tracker.registerWaiter(w);
                 SqlContinuation.suspend();
                 threadAfterResume.set(Thread.currentThread());
                 writerTxnAtResume.set(tracker.getWriterTxn());
                 doneLatch.countDown();
-            });
+            }, resumeJob);
             self.set(cont);
 
             try {
@@ -135,7 +134,7 @@ public class TxnWaiterIntegrationTest {
 
                 pool.start();
                 // Advance writerTxn past the target. updateWriterTxns fires the waiter,
-                // which enqueues the continuation on resumeJob.
+                // which calls cont.scheduleResume() on the resume job.
                 tracker.updateWriterTxns(5, 5);
 
                 Assert.assertTrue("continuation did not resume", doneLatch.await(5, TimeUnit.SECONDS));
@@ -160,11 +159,11 @@ public class TxnWaiterIntegrationTest {
             // allocation-free after the pool is warm.
             ContinuationResumeJob resumeJob = new ContinuationResumeJob();
             SqlContinuation c1 = new SqlContinuation(() -> {
-            });
+            }, resumeJob);
             SqlContinuation c2 = new SqlContinuation(() -> {
-            });
+            }, resumeJob);
             TxnWaiter w = new TxnWaiter();
-            w.reset(10, c1, resumeJob, 42L);
+            w.reset(10, c1, 42L);
             Assert.assertFalse(w.isFired());
             Assert.assertFalse(w.isCancelled());
             Assert.assertTrue(w.tryFire());
@@ -173,14 +172,14 @@ public class TxnWaiterIntegrationTest {
             Assert.assertFalse(w.tryFire());
 
             // Reset to a different task; FIRED -> PENDING.
-            w.reset(20, c2, resumeJob, TxnWaiter.NO_DEADLINE);
+            w.reset(20, c2, TxnWaiter.NO_DEADLINE);
             Assert.assertFalse(w.isFired());
             Assert.assertFalse(w.isCancelled());
             // Fire again -- proves state was reset.
             Assert.assertTrue(w.tryFire());
 
             // Reset once more and try the cancel path.
-            w.reset(30, c1, resumeJob, TxnWaiter.NO_DEADLINE);
+            w.reset(30, c1, TxnWaiter.NO_DEADLINE);
             Assert.assertTrue(w.tryCancel());
             Assert.assertTrue(w.isCancelled());
         });
@@ -201,6 +200,7 @@ public class TxnWaiterIntegrationTest {
                     taskOutput[0] = taskInput[0] * 2;
                     SqlContinuation.suspend();
                 }
+            }, c -> {
             });
 
             taskInput[0] = 3;
@@ -251,12 +251,12 @@ public class TxnWaiterIntegrationTest {
             long deadline = fakeNowMillis.get() + 50L; // 50ms in future
 
             SqlContinuation cont = new SqlContinuation(() -> {
-                TxnWaiter w = new TxnWaiter(100, self.get(), resumeJob, deadline);
+                TxnWaiter w = new TxnWaiter(100, self.get(), deadline);
                 tracker.registerWaiter(w);
                 SqlContinuation.suspend();
                 observedCancelled.set(w.isCancelled());
                 doneLatch.countDown();
-            });
+            }, resumeJob);
             self.set(cont);
 
             try {
@@ -290,12 +290,12 @@ public class TxnWaiterIntegrationTest {
             CountDownLatch doneLatch = new CountDownLatch(1);
 
             SqlContinuation cont = new SqlContinuation(() -> {
-                TxnWaiter w = new TxnWaiter(999, self.get(), resumeJob);
+                TxnWaiter w = new TxnWaiter(999, self.get());
                 tracker.registerWaiter(w);
                 SqlContinuation.suspend();
                 suspendedAtResume.set(tracker.isSuspended());
                 doneLatch.countDown();
-            });
+            }, resumeJob);
             self.set(cont);
 
             try {
@@ -314,11 +314,6 @@ public class TxnWaiterIntegrationTest {
     }
 
     private static CairoConfiguration configuration() {
-        return new DefaultCairoConfiguration(null) {
-            @Override
-            public @NotNull MillisecondClock getMillisecondClock() {
-                return MillisecondClockImpl.INSTANCE;
-            }
-        };
+        return new DefaultCairoConfiguration(null);
     }
 }

@@ -39,10 +39,12 @@ import jdk.internal.vm.ContinuationScope;
 public final class SqlContinuation {
     public static final ContinuationScope SCOPE = new ContinuationScope("questdb-sql");
     private final Continuation cont;
+    private final ContinuationSink resumeSink;
     private volatile boolean shutdown;
 
-    public SqlContinuation(Runnable body) {
+    public SqlContinuation(Runnable body, ContinuationSink resumeSink) {
         this.cont = new Continuation(SCOPE, body);
+        this.resumeSink = resumeSink;
     }
 
     /**
@@ -90,6 +92,17 @@ public final class SqlContinuation {
      */
     public void run() {
         cont.run();
+    }
+
+    /**
+     * Pushes this continuation onto its origin pool's resume sink so a worker on
+     * that pool will pick it up and call {@link #run()}. Safe to call from any
+     * thread; safe against concurrent puts of the same continuation reference if
+     * the caller has gated via the appropriate CAS (typically
+     * {@code TxnWaiter.tryFire} / {@code tryCancel}).
+     */
+    public void scheduleResume() {
+        resumeSink.put(this);
     }
 
     /**

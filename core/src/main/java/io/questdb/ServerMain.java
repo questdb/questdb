@@ -423,10 +423,6 @@ public class ServerMain implements Closeable {
                 pgServer
         ));
 
-        // Drive SqlContinuation resumes on the network shared pool. Any worker is a valid
-        // carrier for a parked SQL stack, so assigning to every worker spreads the load.
-        workerPoolManager.getSharedPoolNetwork().assign(engine.getContinuationResumeJob());
-
         // Sweep parked TxnWaiters whose deadlines have elapsed. Without this job the
         // resources of a parked wait_wal_table call are never reclaimed when the client
         // disconnects or the wait runs past its SQL timeout on an idle table.
