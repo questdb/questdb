@@ -8668,7 +8668,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
 
                         IntList order = toOrderIndices(chainMetadata, ac.getOrderBy(), ac.getOrderByDirection());
                         // init comparator if we need
-                        windowFunction.initRecordComparator(this, chainMetadata, chainTypes, order, null, null);
+                        windowFunction.initRecordComparator(this, chainMetadata, chainTypes, order, ac.getOrderBy(), null);
                         ObjList<WindowFunction> funcs = groupedWindow.get(order);
                         if (funcs == null) {
                             groupedWindow.put(order, funcs = new ObjList<>());

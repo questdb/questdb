@@ -50,6 +50,9 @@ import io.questdb.griffin.engine.functions.window.LeadLongFunctionFactory;
 import io.questdb.griffin.engine.functions.window.LeadTimestampFunctionFactory;
 import io.questdb.griffin.engine.functions.window.MaxDoubleWindowFunctionFactory;
 import io.questdb.griffin.engine.functions.window.MinDoubleWindowFunctionFactory;
+import io.questdb.griffin.engine.functions.window.CumeDistFunctionFactory;
+import io.questdb.griffin.engine.functions.window.NthValueDoubleWindowFunctionFactory;
+import io.questdb.griffin.engine.functions.window.NtileFunctionFactory;
 import io.questdb.griffin.engine.functions.window.RankFunctionFactory;
 import io.questdb.griffin.engine.functions.window.RowNumberFunctionFactory;
 import io.questdb.griffin.engine.functions.window.StdDevDoubleWindowFunctionFactory;
@@ -11316,6 +11319,3826 @@ public class WindowFunctionTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testNtileBasic() throws Exception {
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, i long, val double) timestamp(ts)", timestampType.getTypeName());
+            execute("insert into tab values (1, 1, 10.0), (2, 1, 20.0), (3, 1, 30.0), (4, 1, 40.0), (5, 1, 50.0)");
+
+            assertQueryNoLeakCheck(
+                    replaceTimestampSuffix1("""
+                            ts\tval\tbucket
+                            1970-01-01T00:00:00.000001Z\t10.0\t1
+                            1970-01-01T00:00:00.000002Z\t20.0\t1
+                            1970-01-01T00:00:00.000003Z\t30.0\t2
+                            1970-01-01T00:00:00.000004Z\t40.0\t2
+                            1970-01-01T00:00:00.000005Z\t50.0\t3
+                            """),
+                    "select ts, val, ntile(3) over (order by ts) bucket from tab",
+                    "ts",
+                    true,
+                    true
+            );
+        });
+    }
+
+    @Test
+    public void testNtilePartitioned() throws Exception {
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, i long, val double) timestamp(ts)", timestampType.getTypeName());
+            execute("insert into tab values (1, 1, 10.0), (2, 1, 20.0), (3, 1, 30.0), (4, 2, 40.0), (5, 2, 50.0)");
+
+            assertQueryNoLeakCheck(
+                    replaceTimestampSuffix1("""
+                            ts\ti\tbucket
+                            1970-01-01T00:00:00.000001Z\t1\t1
+                            1970-01-01T00:00:00.000002Z\t1\t1
+                            1970-01-01T00:00:00.000003Z\t1\t2
+                            1970-01-01T00:00:00.000004Z\t2\t1
+                            1970-01-01T00:00:00.000005Z\t2\t2
+                            """),
+                    "select ts, i, ntile(2) over (partition by i order by ts) bucket from tab",
+                    "ts",
+                    true,
+                    true
+            );
+        });
+    }
+
+    @Test
+    public void testNtileSingleBucket() throws Exception {
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, val double) timestamp(ts)", timestampType.getTypeName());
+            execute("insert into tab values (1, 10.0), (2, 20.0), (3, 30.0)");
+
+            assertQueryNoLeakCheck(
+                    replaceTimestampSuffix1("""
+                            ts\tbucket
+                            1970-01-01T00:00:00.000001Z\t1
+                            1970-01-01T00:00:00.000002Z\t1
+                            1970-01-01T00:00:00.000003Z\t1
+                            """),
+                    "select ts, ntile(1) over (order by ts) bucket from tab",
+                    "ts",
+                    true,
+                    true
+            );
+        });
+    }
+
+    @Test
+    public void testNtileMoreBucketsThanRows() throws Exception {
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, val double) timestamp(ts)", timestampType.getTypeName());
+            execute("insert into tab values (1, 10.0), (2, 20.0)");
+
+            assertQueryNoLeakCheck(
+                    replaceTimestampSuffix1("""
+                            ts\tbucket
+                            1970-01-01T00:00:00.000001Z\t1
+                            1970-01-01T00:00:00.000002Z\t2
+                            """),
+                    "select ts, ntile(5) over (order by ts) bucket from tab",
+                    "ts",
+                    true,
+                    true
+            );
+        });
+    }
+
+    @Test
+    public void testNtileBucketDistribution() throws Exception {
+        // Canonical ntile distribution (PostgreSQL semantics): when totalRows does not
+        // divide evenly by bucketCount, the first (totalRows % bucketCount) buckets each
+        // receive one extra row. For 10 rows / 3 buckets the remainder is 1, so bucket 1
+        // holds 4 rows and buckets 2 and 3 hold 3 rows each.
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, val double) timestamp(ts)", timestampType.getTypeName());
+            execute("""
+                    insert into tab values
+                    (1, 10.0), (2, 20.0), (3, 30.0), (4, 40.0), (5, 50.0),
+                    (6, 60.0), (7, 70.0), (8, 80.0), (9, 90.0), (10, 100.0)
+                    """);
+
+            assertQueryNoLeakCheck(
+                    replaceTimestampSuffix1("""
+                            ts\tbucket
+                            1970-01-01T00:00:00.000001Z\t1
+                            1970-01-01T00:00:00.000002Z\t1
+                            1970-01-01T00:00:00.000003Z\t1
+                            1970-01-01T00:00:00.000004Z\t1
+                            1970-01-01T00:00:00.000005Z\t2
+                            1970-01-01T00:00:00.000006Z\t2
+                            1970-01-01T00:00:00.000007Z\t2
+                            1970-01-01T00:00:00.000008Z\t3
+                            1970-01-01T00:00:00.000009Z\t3
+                            1970-01-01T00:00:00.000010Z\t3
+                            """),
+                    "select ts, ntile(3) over (order by ts) bucket from tab",
+                    "ts",
+                    true,
+                    true
+            );
+        });
+    }
+
+    @Test
+    public void testNtileExactMultiple() throws Exception {
+        // When totalRows is an exact multiple of bucketCount, every bucket has the same size.
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, val double) timestamp(ts)", timestampType.getTypeName());
+            execute("""
+                    insert into tab values
+                    (1, 10.0), (2, 20.0), (3, 30.0), (4, 40.0), (5, 50.0),
+                    (6, 60.0), (7, 70.0), (8, 80.0), (9, 90.0), (10, 100.0)
+                    """);
+
+            assertQueryNoLeakCheck(
+                    replaceTimestampSuffix1("""
+                            ts\tbucket
+                            1970-01-01T00:00:00.000001Z\t1
+                            1970-01-01T00:00:00.000002Z\t1
+                            1970-01-01T00:00:00.000003Z\t2
+                            1970-01-01T00:00:00.000004Z\t2
+                            1970-01-01T00:00:00.000005Z\t3
+                            1970-01-01T00:00:00.000006Z\t3
+                            1970-01-01T00:00:00.000007Z\t4
+                            1970-01-01T00:00:00.000008Z\t4
+                            1970-01-01T00:00:00.000009Z\t5
+                            1970-01-01T00:00:00.000010Z\t5
+                            """),
+                    "select ts, ntile(5) over (order by ts) bucket from tab",
+                    "ts",
+                    true,
+                    true
+            );
+        });
+    }
+
+    @Test
+    public void testNtileEachRowOwnBucket() throws Exception {
+        // n == totalRows: bucketSize=1, remainder=0, threshold=0. Every row falls into the
+        // else branch of computeNtile with bucketSize=1, producing a distinct bucket per row.
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, val double) timestamp(ts)", timestampType.getTypeName());
+            execute("""
+                    insert into tab values
+                    (1, 10.0), (2, 20.0), (3, 30.0), (4, 40.0), (5, 50.0)
+                    """);
+
+            assertQueryNoLeakCheck(
+                    replaceTimestampSuffix1("""
+                            ts\tbucket
+                            1970-01-01T00:00:00.000001Z\t1
+                            1970-01-01T00:00:00.000002Z\t2
+                            1970-01-01T00:00:00.000003Z\t3
+                            1970-01-01T00:00:00.000004Z\t4
+                            1970-01-01T00:00:00.000005Z\t5
+                            """),
+                    "select ts, ntile(5) over (order by ts) bucket from tab",
+                    "ts",
+                    true,
+                    true
+            );
+        });
+    }
+
+    @Test
+    public void testNtileRejectsZero() throws Exception {
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, val double) timestamp(ts)", timestampType.getTypeName());
+
+            assertExceptionNoLeakCheck(
+                    "select ntile(0) over (order by ts) from tab",
+                    13,
+                    "bucket count must be a positive integer",
+                    sqlExecutionContext
+            );
+        });
+    }
+
+    @Test
+    public void testNtileRejectsFraming() throws Exception {
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, val double) timestamp(ts)", timestampType.getTypeName());
+
+            assertExceptionNoLeakCheck(
+                    "select ntile(4) over (order by ts rows between 1 preceding and current row) from tab",
+                    49,
+                    "ntile() does not support framing; remove the frame clause",
+                    sqlExecutionContext
+            );
+
+            assertExceptionNoLeakCheck(
+                    "select ntile(4) over (order by ts range between 10 microseconds preceding and current row) from tab",
+                    64,
+                    "ntile() does not support framing; remove the frame clause",
+                    sqlExecutionContext
+            );
+
+            // GROUPS framing: the error must not mention ROWS/RANGE specifically --
+            // the message should cover every frame clause variant.
+            assertExceptionNoLeakCheck(
+                    "select ntile(4) over (order by ts groups between 1 preceding and current row) from tab",
+                    51,
+                    "ntile() does not support framing; remove the frame clause",
+                    sqlExecutionContext
+            );
+        });
+    }
+
+    @Test
+    public void testCumeDistBasic() throws Exception {
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, val double) timestamp(ts)", timestampType.getTypeName());
+            execute("insert into tab values (1, 10.0), (2, 20.0), (3, 30.0)");
+
+            assertQueryNoLeakCheck(
+                    replaceTimestampSuffix1("""
+                            ts\tval\tcd
+                            1970-01-01T00:00:00.000001Z\t10.0\t0.3333333333333333
+                            1970-01-01T00:00:00.000002Z\t20.0\t0.6666666666666666
+                            1970-01-01T00:00:00.000003Z\t30.0\t1.0
+                            """),
+                    "select ts, val, cume_dist() over (order by ts) cd from tab",
+                    "ts",
+                    true,
+                    true
+            );
+        });
+    }
+
+    @Test
+    public void testCumeDistWithPeers() throws Exception {
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, val long) timestamp(ts)", timestampType.getTypeName());
+            execute("insert into tab values (1, 1), (2, 1), (3, 2), (4, 2), (5, 3)");
+
+            assertQueryNoLeakCheck(
+                    replaceTimestampSuffix1("""
+                            ts\tval\tcd
+                            1970-01-01T00:00:00.000001Z\t1\t0.4
+                            1970-01-01T00:00:00.000002Z\t1\t0.4
+                            1970-01-01T00:00:00.000003Z\t2\t0.8
+                            1970-01-01T00:00:00.000004Z\t2\t0.8
+                            1970-01-01T00:00:00.000005Z\t3\t1.0
+                            """),
+                    "select ts, val, cume_dist() over (order by val) cd from tab",
+                    "ts",
+                    true,
+                    true
+            );
+        });
+    }
+
+    @Test
+    public void testCumeDistPartitioned() throws Exception {
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, i long, val double) timestamp(ts)", timestampType.getTypeName());
+            execute("insert into tab values (1, 1, 10.0), (2, 1, 20.0), (3, 1, 30.0), (4, 2, 40.0), (5, 2, 50.0)");
+
+            assertQueryNoLeakCheck(
+                    replaceTimestampSuffix1("""
+                            ts\ti\tcd
+                            1970-01-01T00:00:00.000001Z\t1\t0.3333333333333333
+                            1970-01-01T00:00:00.000002Z\t1\t0.6666666666666666
+                            1970-01-01T00:00:00.000003Z\t1\t1.0
+                            1970-01-01T00:00:00.000004Z\t2\t0.5
+                            1970-01-01T00:00:00.000005Z\t2\t1.0
+                            """),
+                    "select ts, i, cume_dist() over (partition by i order by ts) cd from tab",
+                    "ts",
+                    true,
+                    true
+            );
+        });
+    }
+
+    @Test
+    public void testCumeDistNoOrder() throws Exception {
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, val double) timestamp(ts)", timestampType.getTypeName());
+            execute("insert into tab values (1, 10.0), (2, 20.0), (3, 30.0)");
+
+            assertQueryNoLeakCheck(
+                    replaceTimestampSuffix1("""
+                            ts\tcd
+                            1970-01-01T00:00:00.000001Z\t1.0
+                            1970-01-01T00:00:00.000002Z\t1.0
+                            1970-01-01T00:00:00.000003Z\t1.0
+                            """),
+                    "select ts, cume_dist() over () cd from tab",
+                    "ts",
+                    false,
+                    true
+            );
+        });
+    }
+
+    @Test
+    public void testCumeDistTwoRows() throws Exception {
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, val double) timestamp(ts)", timestampType.getTypeName());
+            execute("insert into tab values (1, 10.0), (2, 20.0)");
+
+            assertQueryNoLeakCheck(
+                    replaceTimestampSuffix1("""
+                            ts\tcd
+                            1970-01-01T00:00:00.000001Z\t0.5
+                            1970-01-01T00:00:00.000002Z\t1.0
+                            """),
+                    "select ts, cume_dist() over (order by ts) cd from tab",
+                    "ts",
+                    true,
+                    true
+            );
+        });
+    }
+
+    @Test
+    public void testCumeDistLargeSinglePeerGroup() throws Exception {
+        // Regression for CumeDistFunction when the ORDER BY key produces a single peer
+        // group that spans every row. The deferred-offsets buffer is native-backed, so
+        // this large run must not leak or overflow on-heap storage.
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, val double) timestamp(ts)", timestampType.getTypeName());
+            execute("insert into tab select x::timestamp, 1.0 from long_sequence(50_000)");
+
+            // Every row shares the same ORDER BY key, so cume_dist = 1.0 for all rows.
+            // Aggregation factory: no timestamp, no random access, size known.
+            assertQueryNoLeakCheck(
+                    """
+                            min\tmax\tcount
+                            1.0\t1.0\t50000
+                            """,
+                    "select min(cd) min, max(cd) max, count(*) count from (" +
+                            "select cume_dist() over (order by val) cd from tab)",
+                    null,
+                    false,
+                    true
+            );
+
+            // Partitioned variant: many partitions, each with a single giant peer group.
+            // Exercises CumeDistOverPartitionFunction's per-partition deferred slice growth.
+            assertQueryNoLeakCheck(
+                    """
+                            min\tmax\tcount
+                            1.0\t1.0\t50000
+                            """,
+                    "select min(cd) min, max(cd) max, count(*) count from (" +
+                            "select cume_dist() over (partition by (x % 20) order by val) cd " +
+                            "from (select x, 1.0 val from long_sequence(50_000)))",
+                    null,
+                    false,
+                    true
+            );
+        });
+    }
+
+    @Test
+    public void testCumeDistPartitionedManyPartitionsNoLeak() throws Exception {
+        // Partitioned cume_dist with many partitions goes through
+        // CumeDistOverPartitionFunction.initRecordComparator (which allocates a Map and
+        // rankMaps inside a try/catch). Running under assertMemoryLeak verifies the
+        // full lifecycle (init -> pass1 -> pass2 -> close) releases native resources.
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, i long, val double) timestamp(ts)", timestampType.getTypeName());
+            execute("insert into tab select x::timestamp, x % 1_000, rnd_double() from long_sequence(10_000)");
+
+            assertQueryNoLeakCheck(
+                    """
+                            min_cd\tmax_cd\tcount
+                            true\t1.0\t10000
+                            """,
+                    "select min(cd) > 0.0 min_cd, max(cd) max_cd, count(*) count from (" +
+                            "select cume_dist() over (partition by i order by val) cd from tab)",
+                    null,
+                    false,
+                    true
+            );
+        });
+    }
+
+    @Test
+    public void testNthValueBasic() throws Exception {
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, val double) timestamp(ts)", timestampType.getTypeName());
+            execute("insert into tab values (1, 10.0), (2, 20.0), (3, 30.0), (4, 40.0), (5, 50.0)");
+
+            assertQueryNoLeakCheck(
+                    replaceTimestampSuffix1("""
+                            ts\tnv
+                            1970-01-01T00:00:00.000001Z\tnull
+                            1970-01-01T00:00:00.000002Z\tnull
+                            1970-01-01T00:00:00.000003Z\t30.0
+                            1970-01-01T00:00:00.000004Z\t30.0
+                            1970-01-01T00:00:00.000005Z\t30.0
+                            """),
+                    "select ts, nth_value(val, 3) over (order by ts) nv from tab",
+                    "ts",
+                    false,
+                    true
+            );
+        });
+    }
+
+    @Test
+    public void testNthValueFirst() throws Exception {
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, val double) timestamp(ts)", timestampType.getTypeName());
+            execute("insert into tab values (1, 10.0), (2, 20.0), (3, 30.0)");
+
+            assertQueryNoLeakCheck(
+                    replaceTimestampSuffix1("""
+                            ts\tnv
+                            1970-01-01T00:00:00.000001Z\t10.0
+                            1970-01-01T00:00:00.000002Z\t10.0
+                            1970-01-01T00:00:00.000003Z\t10.0
+                            """),
+                    "select ts, nth_value(val, 1) over (order by ts) nv from tab",
+                    "ts",
+                    false,
+                    true
+            );
+        });
+    }
+
+    @Test
+    public void testNthValuePartitioned() throws Exception {
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, i long, val double) timestamp(ts)", timestampType.getTypeName());
+            execute("insert into tab values (1, 1, 10.0), (2, 1, 20.0), (3, 1, 30.0), (4, 2, 40.0), (5, 2, 50.0)");
+
+            assertQueryNoLeakCheck(
+                    replaceTimestampSuffix1("""
+                            ts\ti\tnv
+                            1970-01-01T00:00:00.000001Z\t1\tnull
+                            1970-01-01T00:00:00.000002Z\t1\t20.0
+                            1970-01-01T00:00:00.000003Z\t1\t20.0
+                            1970-01-01T00:00:00.000004Z\t2\tnull
+                            1970-01-01T00:00:00.000005Z\t2\t50.0
+                            """),
+                    "select ts, i, nth_value(val, 2) over (partition by i order by ts) nv from tab",
+                    "ts",
+                    false,
+                    true
+            );
+        });
+    }
+
+    @Test
+    public void testNthValueCurrentRow() throws Exception {
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, val double) timestamp(ts)", timestampType.getTypeName());
+            execute("insert into tab values (1, 10.0), (2, 20.0)");
+
+            assertQueryNoLeakCheck(
+                    replaceTimestampSuffix1("""
+                            ts\tnv1\tnv2
+                            1970-01-01T00:00:00.000001Z\t10.0\tnull
+                            1970-01-01T00:00:00.000002Z\t20.0\tnull
+                            """),
+                    "select ts, " +
+                            "nth_value(val, 1) over (order by ts rows between current row and current row) nv1, " +
+                            "nth_value(val, 2) over (order by ts rows between current row and current row) nv2 " +
+                            "from tab",
+                    "ts",
+                    false,
+                    true
+            );
+        });
+    }
+
+    @Test
+    public void testNthValueRowsFrame() throws Exception {
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, val double) timestamp(ts)", timestampType.getTypeName());
+            execute("insert into tab values (1, 10.0), (2, 20.0), (3, 30.0), (4, 40.0), (5, 50.0)");
+
+            assertQueryNoLeakCheck(
+                    replaceTimestampSuffix1("""
+                            ts\tnv
+                            1970-01-01T00:00:00.000001Z\t10.0
+                            1970-01-01T00:00:00.000002Z\t10.0
+                            1970-01-01T00:00:00.000003Z\t10.0
+                            1970-01-01T00:00:00.000004Z\t20.0
+                            1970-01-01T00:00:00.000005Z\t30.0
+                            """),
+                    "select ts, nth_value(val, 1) over (order by ts rows between 2 preceding and current row) nv from tab",
+                    "ts",
+                    false,
+                    true
+            );
+        });
+    }
+
+    @Test
+    public void testNthValueWholePartition() throws Exception {
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, i long, val double) timestamp(ts)", timestampType.getTypeName());
+            execute("insert into tab values (1, 1, 10.0), (2, 1, 20.0), (3, 1, 30.0), (4, 2, 40.0), (5, 2, 50.0)");
+
+            assertQueryNoLeakCheck(
+                    replaceTimestampSuffix1("""
+                            ts\ti\tnv
+                            1970-01-01T00:00:00.000001Z\t1\t20.0
+                            1970-01-01T00:00:00.000002Z\t1\t20.0
+                            1970-01-01T00:00:00.000003Z\t1\t20.0
+                            1970-01-01T00:00:00.000004Z\t2\t50.0
+                            1970-01-01T00:00:00.000005Z\t2\t50.0
+                            """),
+                    "select ts, i, nth_value(val, 2) over (partition by i) nv from tab",
+                    "ts",
+                    true,
+                    true
+            );
+        });
+    }
+
+    @Test
+    public void testNthValueWholeResultSetRangeUnboundedFollowing() throws Exception {
+        // Regression: RANGE BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING with ORDER BY
+        // must return the n-th value for every row. Previously routed to
+        // NthValueOverRangeFrameFunction, which left nthValue = NaN everywhere because
+        // Math.abs(ts - ts') >= Long.MAX_VALUE is never true.
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, val double) timestamp(ts)", timestampType.getTypeName());
+            execute("insert into tab values (1, 10.0), (2, 20.0), (3, 30.0), (4, 40.0), (5, 50.0)");
+
+            assertQueryNoLeakCheck(
+                    replaceTimestampSuffix1("""
+                            ts\tnv
+                            1970-01-01T00:00:00.000001Z\t30.0
+                            1970-01-01T00:00:00.000002Z\t30.0
+                            1970-01-01T00:00:00.000003Z\t30.0
+                            1970-01-01T00:00:00.000004Z\t30.0
+                            1970-01-01T00:00:00.000005Z\t30.0
+                            """),
+                    "select ts, nth_value(val, 3) over (order by ts range between unbounded preceding and unbounded following) nv from tab",
+                    "ts",
+                    true,
+                    true
+            );
+        });
+    }
+
+    @Test
+    public void testNthValueWholeResultSetRowsUnboundedFollowing() throws Exception {
+        // Regression: ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING must return
+        // the n-th value for every row. Previously routed to
+        // NthValueOverUnboundedRowsFrameFunction (ZERO_PASS) which emitted NULL for
+        // rows 1..n-1 because the value is not found until row n.
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, val double) timestamp(ts)", timestampType.getTypeName());
+            execute("insert into tab values (1, 10.0), (2, 20.0), (3, 30.0), (4, 40.0), (5, 50.0)");
+
+            assertQueryNoLeakCheck(
+                    replaceTimestampSuffix1("""
+                            ts\tnv
+                            1970-01-01T00:00:00.000001Z\t30.0
+                            1970-01-01T00:00:00.000002Z\t30.0
+                            1970-01-01T00:00:00.000003Z\t30.0
+                            1970-01-01T00:00:00.000004Z\t30.0
+                            1970-01-01T00:00:00.000005Z\t30.0
+                            """),
+                    "select ts, nth_value(val, 3) over (order by ts rows between unbounded preceding and unbounded following) nv from tab",
+                    "ts",
+                    true,
+                    true
+            );
+        });
+    }
+
+    @Test
+    public void testNthValueBeyondFrameSize() throws Exception {
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, val double) timestamp(ts)", timestampType.getTypeName());
+            execute("insert into tab values (1, 10.0), (2, 20.0)");
+
+            // n=2 resolves on row 2 (20.0); n=3 and n=10 never resolve (NULL everywhere) —
+            // confirms the n>totalRows boundary lies exactly at n<=totalRows.
+            assertQueryNoLeakCheck(
+                    replaceTimestampSuffix1("""
+                            ts\tnv2\tnv3\tnv10
+                            1970-01-01T00:00:00.000001Z\tnull\tnull\tnull
+                            1970-01-01T00:00:00.000002Z\t20.0\tnull\tnull
+                            """),
+                    "select ts, " +
+                            "nth_value(val, 2) over (order by ts) nv2, " +
+                            "nth_value(val, 3) over (order by ts) nv3, " +
+                            "nth_value(val, 10) over (order by ts) nv10 " +
+                            "from tab",
+                    "ts",
+                    false,
+                    true
+            );
+        });
+    }
+
+    @Test
+    public void testNthValueRejectsZero() throws Exception {
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, val double) timestamp(ts)", timestampType.getTypeName());
+
+            assertExceptionNoLeakCheck(
+                    "select nth_value(val, 0) over (order by ts) from tab",
+                    22,
+                    "n must be a positive integer",
+                    sqlExecutionContext
+            );
+        });
+    }
+
+    @Test
+    public void testNthValueWithNulls() throws Exception {
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, val double) timestamp(ts)", timestampType.getTypeName());
+            execute("insert into tab values (1, null), (2, 20.0), (3, 30.0)");
+
+            // nth_value(val, 1) captures the NULL at row 1 and propagates it (default RESPECT NULLS).
+            // nth_value(val, 2) picks up 20.0 at row 2 — confirms nv1's NULL output is not a trivial constant.
+            assertQueryNoLeakCheck(
+                    replaceTimestampSuffix1("""
+                            ts\tnv1\tnv2
+                            1970-01-01T00:00:00.000001Z\tnull\tnull
+                            1970-01-01T00:00:00.000002Z\tnull\t20.0
+                            1970-01-01T00:00:00.000003Z\tnull\t20.0
+                            """),
+                    "select ts, " +
+                            "nth_value(val, 1) over (order by ts) nv1, " +
+                            "nth_value(val, 2) over (order by ts) nv2 " +
+                            "from tab",
+                    "ts",
+                    false,
+                    true
+            );
+        });
+    }
+
+    @Test
+    public void testNthValueRejectsIgnoreNulls() throws Exception {
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, val double) timestamp(ts)", timestampType.getTypeName());
+
+            assertExceptionNoLeakCheck(
+                    "select nth_value(val, 2) ignore nulls over (order by ts) from tab",
+                    25,
+                    "RESPECT/IGNORE NULLS is not supported for current window function",
+                    sqlExecutionContext
+            );
+        });
+    }
+
+    @Test
+    public void testNthValueRejectsRespectNulls() throws Exception {
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, val double) timestamp(ts)", timestampType.getTypeName());
+
+            assertExceptionNoLeakCheck(
+                    "select nth_value(val, 2) respect nulls over (order by ts) from tab",
+                    25,
+                    "RESPECT/IGNORE NULLS is not supported for current window function",
+                    sqlExecutionContext
+            );
+        });
+    }
+
+    @Test
+    public void testNthValueRangeFrame() throws Exception {
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, val double) timestamp(ts)", timestampType.getTypeName());
+            execute("insert into tab values (1, 10.0), (2, 20.0), (3, 30.0), (4, 40.0), (5, 50.0)");
+
+            assertQueryNoLeakCheck(
+                    replaceTimestampSuffix1("""
+                            ts\tnv
+                            1970-01-01T00:00:00.000001Z\tnull
+                            1970-01-01T00:00:00.000002Z\t20.0
+                            1970-01-01T00:00:00.000003Z\t20.0
+                            1970-01-01T00:00:00.000004Z\t20.0
+                            1970-01-01T00:00:00.000005Z\t20.0
+                            """),
+                    "select ts, nth_value(val, 2) over (order by ts range between 10 microseconds preceding and current row) nv from tab",
+                    "ts",
+                    false,
+                    true
+            );
+        });
+    }
+
+    @Test
+    public void testNthValuePartitionedRangeFrame() throws Exception {
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, i long, val double) timestamp(ts)", timestampType.getTypeName());
+            execute("insert into tab values (1, 1, 10.0), (2, 1, 20.0), (3, 1, 30.0), (4, 2, 40.0), (5, 2, 50.0), (6, 2, 60.0)");
+
+            assertQueryNoLeakCheck(
+                    replaceTimestampSuffix1("""
+                            ts\ti\tnv
+                            1970-01-01T00:00:00.000001Z\t1\tnull
+                            1970-01-01T00:00:00.000002Z\t1\t20.0
+                            1970-01-01T00:00:00.000003Z\t1\t20.0
+                            1970-01-01T00:00:00.000004Z\t2\tnull
+                            1970-01-01T00:00:00.000005Z\t2\t50.0
+                            1970-01-01T00:00:00.000006Z\t2\t50.0
+                            """),
+                    "select ts, i, nth_value(val, 2) over (partition by i order by ts range between 2 microseconds preceding and current row) nv from tab",
+                    "ts",
+                    false,
+                    true
+            );
+        });
+    }
+
+    @Test
+    public void testNthValueRangeFrameBoundedPreceding() throws Exception {
+        // Exercises NthValueOverRangeFrameFunction with frameLoBounded=true and minDiff>0
+        // (the bounded-RANGE branch with a non-current-row upper bound). Values per row:
+        //   ts=1..3: frame starts empty, then grows to {ts=1} with only 1 element -> null
+        //   ts=4:    frame = {ts=1, ts=2}, n=2 -> 20.0
+        //   ts=5:    frame = {ts=1, ts=2, ts=3}, n=2 -> 20.0
+        //   ts=10:   frame = {ts=1..5}, n=2 -> 20.0
+        //   ts=15:   diff>10 evicts ts=1..4, frame = {ts=5, ts=10}, n=2 -> 100.0
+        // Use ::timestamp casts so spacing stays at 1 microsecond under both microsecond
+        // and nanosecond column precision; bare integer literals would be interpreted as
+        // nanoseconds on nanosecond columns and the microsecond-width frame would collapse.
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, val double) timestamp(ts)", timestampType.getTypeName());
+            execute("insert into tab values (1::timestamp, 10.0), (2::timestamp, 20.0), (3::timestamp, 30.0), (4::timestamp, 40.0), (5::timestamp, 50.0), (10::timestamp, 100.0), (15::timestamp, 150.0)");
+
+            assertQueryNoLeakCheck(
+                    replaceTimestampSuffix("""
+                            ts\tnv
+                            1970-01-01T00:00:00.000001Z\tnull
+                            1970-01-01T00:00:00.000002Z\tnull
+                            1970-01-01T00:00:00.000003Z\tnull
+                            1970-01-01T00:00:00.000004Z\t20.0
+                            1970-01-01T00:00:00.000005Z\t20.0
+                            1970-01-01T00:00:00.000010Z\t20.0
+                            1970-01-01T00:00:00.000015Z\t100.0
+                            """),
+                    "select ts, nth_value(val, 2) over (order by ts range between 10 microseconds preceding and 2 microseconds preceding) nv from tab",
+                    "ts",
+                    false,
+                    true
+            );
+        });
+    }
+
+    @Test
+    public void testNthValuePartitionedRangeFrameBoundedPreceding() throws Exception {
+        // Partitioned analogue of testNthValueRangeFrameBoundedPreceding — exercises
+        // NthValueOverPartitionRangeFrameFunction's frameLoBounded=true + minDiff>0 path.
+        // Each partition maintains its own ring buffer; verifies state isolation across
+        // partitions for the bounded-RANGE-with-exclusion branch. ::timestamp casts keep
+        // row spacing at 1 microsecond under both microsecond and nanosecond precision.
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, i long, val double) timestamp(ts)", timestampType.getTypeName());
+            execute("insert into tab values (1::timestamp, 1, 10.0), (2::timestamp, 1, 20.0), (3::timestamp, 1, 30.0), (4::timestamp, 1, 40.0), (5::timestamp, 1, 50.0), (10::timestamp, 2, 100.0), (15::timestamp, 2, 150.0), (20::timestamp, 2, 200.0)");
+
+            assertQueryNoLeakCheck(
+                    replaceTimestampSuffix("""
+                            ts\ti\tnv
+                            1970-01-01T00:00:00.000001Z\t1\tnull
+                            1970-01-01T00:00:00.000002Z\t1\tnull
+                            1970-01-01T00:00:00.000003Z\t1\tnull
+                            1970-01-01T00:00:00.000004Z\t1\t20.0
+                            1970-01-01T00:00:00.000005Z\t1\t20.0
+                            1970-01-01T00:00:00.000010Z\t2\tnull
+                            1970-01-01T00:00:00.000015Z\t2\tnull
+                            1970-01-01T00:00:00.000020Z\t2\t150.0
+                            """),
+                    "select ts, i, nth_value(val, 2) over (partition by i order by ts range between 10 microseconds preceding and 2 microseconds preceding) nv from tab",
+                    "ts",
+                    false,
+                    true
+            );
+        });
+    }
+
+    @Test
+    public void testNthValuePartitionedRangeFrameReopen() throws Exception {
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, i long, val double) timestamp(ts)", timestampType.getTypeName());
+            execute("insert into tab values (1, 1, 10.0), (2, 1, 20.0), (3, 1, 30.0), (4, 2, 40.0), (5, 2, 50.0)");
+
+            assertQueryNoLeakCheck(
+                    replaceTimestampSuffix1("""
+                            ts\ti\tnv
+                            1970-01-01T00:00:00.000001Z\t1\tnull
+                            1970-01-01T00:00:00.000002Z\t1\t20.0
+                            1970-01-01T00:00:00.000003Z\t1\t20.0
+                            1970-01-01T00:00:00.000004Z\t2\tnull
+                            1970-01-01T00:00:00.000005Z\t2\t50.0
+                            """),
+                    "select ts, i, nth_value(val, 2) over (partition by i order by ts range between 2 microseconds preceding and current row) nv from tab",
+                    "ts",
+                    false,
+                    true
+            );
+        });
+    }
+
+    @Test
+    public void testNthValuePartitionedRangeUnboundedAlreadyFoundFastPath() throws Exception {
+        // Partition-level RANGE between UNBOUNDED PRECEDING and K microseconds PRECEDING.
+        // Once a partition's frame has grown to contain n rows, the n-th value is locked
+        // (firstIdx never retreats). Every subsequent row in the partition must enter
+        // NthValueOverPartitionRangeFrameFunction.computeNext through the early-return
+        // branch at the top -- the "already found" fast path. Six rows per partition
+        // spaced 1 second apart with a 2-second lag satisfies:
+        //   row 3: frame = [row 1]            frameSize=1
+        //   row 4: frame = [row 1, row 2]     frameSize=2, nthValue locks to row 2
+        //   row 5: fast-path hit (frameSize >= n on entry)
+        //   row 6: fast-path hit
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, i long, val double) timestamp(ts)", timestampType.getTypeName());
+            execute(timestampType == TestTimestampType.MICRO
+                    ? "insert into tab values " +
+                    "(1000000, 1, 10.0), (1000001, 2, 100.0), " +
+                    "(2000000, 1, 20.0), (2000001, 2, 200.0), " +
+                    "(3000000, 1, 30.0), (3000001, 2, 300.0), " +
+                    "(4000000, 1, 40.0), (4000001, 2, 400.0), " +
+                    "(5000000, 1, 50.0), (5000001, 2, 500.0), " +
+                    "(6000000, 1, 60.0), (6000001, 2, 600.0)"
+                    : "insert into tab values " +
+                    "(1000000000, 1, 10.0), (1000000001, 2, 100.0), " +
+                    "(2000000000, 1, 20.0), (2000000001, 2, 200.0), " +
+                    "(3000000000, 1, 30.0), (3000000001, 2, 300.0), " +
+                    "(4000000000, 1, 40.0), (4000000001, 2, 400.0), " +
+                    "(5000000000, 1, 50.0), (5000000001, 2, 500.0), " +
+                    "(6000000000, 1, 60.0), (6000000001, 2, 600.0)");
+
+            assertQueryNoLeakCheck(
+                    timestampType == TestTimestampType.MICRO
+                            ? """
+                            ts\ti\tnv
+                            1970-01-01T00:00:01.000000Z\t1\tnull
+                            1970-01-01T00:00:01.000001Z\t2\tnull
+                            1970-01-01T00:00:02.000000Z\t1\tnull
+                            1970-01-01T00:00:02.000001Z\t2\tnull
+                            1970-01-01T00:00:03.000000Z\t1\tnull
+                            1970-01-01T00:00:03.000001Z\t2\tnull
+                            1970-01-01T00:00:04.000000Z\t1\t20.0
+                            1970-01-01T00:00:04.000001Z\t2\t200.0
+                            1970-01-01T00:00:05.000000Z\t1\t20.0
+                            1970-01-01T00:00:05.000001Z\t2\t200.0
+                            1970-01-01T00:00:06.000000Z\t1\t20.0
+                            1970-01-01T00:00:06.000001Z\t2\t200.0
+                            """
+                            : """
+                            ts\ti\tnv
+                            1970-01-01T00:00:01.000000000Z\t1\tnull
+                            1970-01-01T00:00:01.000000001Z\t2\tnull
+                            1970-01-01T00:00:02.000000000Z\t1\tnull
+                            1970-01-01T00:00:02.000000001Z\t2\tnull
+                            1970-01-01T00:00:03.000000000Z\t1\tnull
+                            1970-01-01T00:00:03.000000001Z\t2\tnull
+                            1970-01-01T00:00:04.000000000Z\t1\t20.0
+                            1970-01-01T00:00:04.000000001Z\t2\t200.0
+                            1970-01-01T00:00:05.000000000Z\t1\t20.0
+                            1970-01-01T00:00:05.000000001Z\t2\t200.0
+                            1970-01-01T00:00:06.000000000Z\t1\t20.0
+                            1970-01-01T00:00:06.000000001Z\t2\t200.0
+                            """,
+                    "select ts, i, nth_value(val, 2) over (" +
+                            "partition by i order by ts " +
+                            "range between unbounded preceding and 2 seconds preceding) nv " +
+                            "from tab",
+                    "ts",
+                    false,
+                    true
+            );
+        });
+    }
+
+    @Test
+    public void testNthValuePartitionedN1WholePartition() throws Exception {
+        // nth_value(val, 1) over (partition by i) -- whole-partition default frame with n=1.
+        // Exercises the "first row in partition, n==1" branch in
+        // NthValueOverPartitionFunction.pass1: when value.isNew() && n == 1 the first
+        // row's value is stored immediately; subsequent rows in the partition do not
+        // update the stored value.
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, i long, val double) timestamp(ts)", timestampType.getTypeName());
+            execute("insert into tab values (1, 1, 10.0), (2, 1, 20.0), (3, 1, 30.0), (4, 2, 40.0), (5, 2, 50.0)");
+
+            assertQueryNoLeakCheck(
+                    """
+                            i\tnv
+                            1\t10.0
+                            1\t10.0
+                            1\t10.0
+                            2\t40.0
+                            2\t40.0
+                            """,
+                    "select i, nth_value(val, 1) over (partition by i) nv from tab order by i, ts",
+                    null,
+                    true,
+                    true
+            );
+        });
+    }
+
+    @Test
+    public void testNthValuePartitionedCurrentRowFrame() throws Exception {
+        // nth_value(val, n) over (partition by i rows between current row and current row).
+        // Partitioned routing selects NthValueOverCurrentRowFunction (factory line 204):
+        // n == 1 returns the row's own value, n > 1 returns NULL.
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, i long, val double) timestamp(ts)", timestampType.getTypeName());
+            execute("insert into tab values (1, 1, 10.0), (2, 1, 20.0), (3, 1, 30.0), (4, 2, 40.0), (5, 2, 50.0)");
+
+            assertQueryNoLeakCheck(
+                    replaceTimestampSuffix1("""
+                            ts\ti\tnv1\tnv2
+                            1970-01-01T00:00:00.000001Z\t1\t10.0\tnull
+                            1970-01-01T00:00:00.000002Z\t1\t20.0\tnull
+                            1970-01-01T00:00:00.000003Z\t1\t30.0\tnull
+                            1970-01-01T00:00:00.000004Z\t2\t40.0\tnull
+                            1970-01-01T00:00:00.000005Z\t2\t50.0\tnull
+                            """),
+                    "select ts, i, " +
+                            "nth_value(val, 1) over (partition by i order by ts rows between current row and current row) nv1, " +
+                            "nth_value(val, 2) over (partition by i order by ts rows between current row and current row) nv2 " +
+                            "from tab",
+                    "ts",
+                    false,
+                    true
+            );
+        });
+    }
+
+    @Test
+    public void testNthValuePartitionedRangeFrameShrink() throws Exception {
+        // Bounded RANGE frame where earlier rows age out of the frame as newer rows arrive.
+        // Rows at ts 1s, 2s, 5s and a 2-second RANGE PRECEDING window: at row 5s the loop
+        // in NthValueOverPartitionRangeFrameFunction.computeNext walks the buffer and
+        // decrements frameSize / size for every aged-out entry. Exercises lines 555-559.
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, i long, val double) timestamp(ts)", timestampType.getTypeName());
+            execute(timestampType == TestTimestampType.MICRO
+                    ? "insert into tab values " +
+                    "(1000000, 1, 10.0), (1000001, 2, 11.0), " +
+                    "(2000000, 1, 20.0), (2000001, 2, 22.0), " +
+                    "(5000000, 1, 50.0), (5000001, 2, 55.0)"
+                    : "insert into tab values " +
+                    "(1000000000, 1, 10.0), (1000000001, 2, 11.0), " +
+                    "(2000000000, 1, 20.0), (2000000001, 2, 22.0), " +
+                    "(5000000000, 1, 50.0), (5000000001, 2, 55.0)");
+
+            // nth_value(val, 2) over (partition by i order by ts range between 2 seconds preceding and current row)
+            // Per partition:
+            //   ts=1s -> frame: {1s},      size=1, frameSize=1, n=2 -> null
+            //   ts=2s -> frame: {1s, 2s},  size=2, frameSize=2, nth=row 2's val
+            //   ts=5s -> row 1s AND row 2s age out, frame: {5s}, size=1, frameSize=1, n=2 -> null
+            assertQueryNoLeakCheck(
+                    timestampType == TestTimestampType.MICRO
+                            ? """
+                            ts\ti\tnv
+                            1970-01-01T00:00:01.000000Z\t1\tnull
+                            1970-01-01T00:00:01.000001Z\t2\tnull
+                            1970-01-01T00:00:02.000000Z\t1\t20.0
+                            1970-01-01T00:00:02.000001Z\t2\t22.0
+                            1970-01-01T00:00:05.000000Z\t1\tnull
+                            1970-01-01T00:00:05.000001Z\t2\tnull
+                            """
+                            : """
+                            ts\ti\tnv
+                            1970-01-01T00:00:01.000000000Z\t1\tnull
+                            1970-01-01T00:00:01.000000001Z\t2\tnull
+                            1970-01-01T00:00:02.000000000Z\t1\t20.0
+                            1970-01-01T00:00:02.000000001Z\t2\t22.0
+                            1970-01-01T00:00:05.000000000Z\t1\tnull
+                            1970-01-01T00:00:05.000000001Z\t2\tnull
+                            """,
+                    "select ts, i, nth_value(val, 2) over (" +
+                            "partition by i order by ts range between 2 seconds preceding and current row) nv " +
+                            "from tab",
+                    "ts",
+                    false,
+                    true
+            );
+        });
+    }
+
+    @Test
+    public void testNthValueRangeRequiresDesignatedTimestamp() throws Exception {
+        // nth_value is not in FRAME_FUNCTIONS (the parametric loop in
+        // testFrameFunctionOverRangeIsOnlySupportedOverDesignatedTimestamp iterates
+        // aggregate-style functions), so the two throw sites that reject RANGE over
+        // a non-designated-timestamp ORDER BY in NthValueDoubleWindowFunctionFactory
+        // require dedicated coverage.
+        assertMemoryLeak(() -> {
+            // Table without a designated timestamp exercises both non-partitioned
+            // and partitioned branches (isOrderedByDesignatedTimestamp() is false).
+            executeWithRewriteTimestamp("create table nodts (ts #TIMESTAMP, i long, val double)", timestampType.getTypeName());
+
+            // Non-partitioned path: NthValueDoubleWindowFunctionFactory.java ~line 289
+            assertExceptionNoLeakCheck(
+                    "select nth_value(val, 1) over (order by val range between 1 preceding and current row) from nodts",
+                    40,
+                    "RANGE is supported only for queries ordered by designated timestamp",
+                    sqlExecutionContext
+            );
+
+            // Partitioned path: NthValueDoubleWindowFunctionFactory.java ~line 141
+            assertExceptionNoLeakCheck(
+                    "select nth_value(val, 1) over (partition by i order by val range between 1 preceding and current row) from nodts",
+                    55,
+                    "RANGE is supported only for queries ordered by designated timestamp",
+                    sqlExecutionContext
+            );
+        });
+    }
+
+    @Test
+    public void testNthValuePartitionedWithNulls() throws Exception {
+        // Covers NULL-argument propagation for all five partitioned nth_value variants.
+        // testNthValueWithNulls only exercises the non-partitioned
+        // NthValueOverUnboundedRowsFrameFunction path; the map-backed partitioned
+        // classes have parallel NULL-handling code (NaN stored in native memory or
+        // in map slots) that needs separate coverage.
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, i long, val double) timestamp(ts)", timestampType.getTypeName());
+            execute("""
+                    insert into tab values
+                    (1, 1, 10.0),
+                    (2, 1, null),
+                    (3, 1, 30.0),
+                    (4, 2, null),
+                    (5, 2, 20.0),
+                    (6, 2, null)""");
+
+            // Variant 1: NthValueOverPartitionFunction (whole partition, no ORDER BY, default frame).
+            // nth_value(val, 2) per partition: i=1 -> row 2 = null, i=2 -> row 2 = 20.0.
+            // Without ORDER BY the result is constant per partition.
+            assertQueryNoLeakCheck(
+                    """
+                            i\tnv
+                            1\tnull
+                            1\tnull
+                            1\tnull
+                            2\t20.0
+                            2\t20.0
+                            2\t20.0
+                            """,
+                    "select i, nth_value(val, 2) over (partition by i) nv from tab",
+                    null,
+                    true,
+                    true
+            );
+
+            // Variant 2: NthValueOverUnboundedPartitionFrameFunction
+            // (unbounded preceding to current row). nth_value(val, 2).
+            assertQueryNoLeakCheck(
+                    replaceTimestampSuffix1("""
+                            ts\ti\tnv
+                            1970-01-01T00:00:00.000001Z\t1\tnull
+                            1970-01-01T00:00:00.000002Z\t1\tnull
+                            1970-01-01T00:00:00.000003Z\t1\tnull
+                            1970-01-01T00:00:00.000004Z\t2\tnull
+                            1970-01-01T00:00:00.000005Z\t2\t20.0
+                            1970-01-01T00:00:00.000006Z\t2\t20.0
+                            """),
+                    "select ts, i, nth_value(val, 2) over (partition by i order by ts rows between unbounded preceding and current row) nv from tab",
+                    "ts",
+                    false,
+                    true
+            );
+
+            // Variant 3: NthValueOverPartitionRangeFrameFunction (bounded RANGE over
+            // designated timestamp). Uses a 1-second window so the frame behaves
+            // identically under both microsecond and nanosecond timestamp precision
+            // (all partition rows fall within the frame). nth_value(val, 1) therefore
+            // returns the first row's val per partition: 10.0 for i=1, null for i=2.
+            assertQueryNoLeakCheck(
+                    replaceTimestampSuffix1("""
+                            ts\ti\tnv
+                            1970-01-01T00:00:00.000001Z\t1\t10.0
+                            1970-01-01T00:00:00.000002Z\t1\t10.0
+                            1970-01-01T00:00:00.000003Z\t1\t10.0
+                            1970-01-01T00:00:00.000004Z\t2\tnull
+                            1970-01-01T00:00:00.000005Z\t2\tnull
+                            1970-01-01T00:00:00.000006Z\t2\tnull
+                            """),
+                    "select ts, i, nth_value(val, 1) over (partition by i order by ts range between 1 second preceding and current row) nv from tab",
+                    "ts",
+                    false,
+                    true
+            );
+
+            // Variant 4: NthValueOverPartitionRowsFrameFunction (bounded ROWS).
+            // nth_value(val, 1) with rows between 1 preceding and current row.
+            assertQueryNoLeakCheck(
+                    replaceTimestampSuffix1("""
+                            ts\ti\tnv
+                            1970-01-01T00:00:00.000001Z\t1\t10.0
+                            1970-01-01T00:00:00.000002Z\t1\t10.0
+                            1970-01-01T00:00:00.000003Z\t1\tnull
+                            1970-01-01T00:00:00.000004Z\t2\tnull
+                            1970-01-01T00:00:00.000005Z\t2\tnull
+                            1970-01-01T00:00:00.000006Z\t2\t20.0
+                            """),
+                    "select ts, i, nth_value(val, 1) over (partition by i order by ts rows between 1 preceding and current row) nv from tab",
+                    "ts",
+                    false,
+                    true
+            );
+
+            // Variant 5: NthValueOverPartitionRowsFrameUnboundedFunction
+            // (unbounded preceding to K preceding). Locks the n=1 value; emits from
+            // count >= n + K = 2 onward. i=1 locks val@ts=1 = 10. i=2 locks val@ts=4 = null.
+            assertQueryNoLeakCheck(
+                    replaceTimestampSuffix1("""
+                            ts\ti\tnv
+                            1970-01-01T00:00:00.000001Z\t1\tnull
+                            1970-01-01T00:00:00.000002Z\t1\t10.0
+                            1970-01-01T00:00:00.000003Z\t1\t10.0
+                            1970-01-01T00:00:00.000004Z\t2\tnull
+                            1970-01-01T00:00:00.000005Z\t2\tnull
+                            1970-01-01T00:00:00.000006Z\t2\tnull
+                            """),
+                    "select ts, i, nth_value(val, 1) over (partition by i order by ts rows between unbounded preceding and 1 preceding) nv from tab",
+                    "ts",
+                    false,
+                    true
+            );
+        });
+    }
+
+    @Test
+    public void testCumeDistOrderBySymbol() throws Exception {
+        // Exercises SortKeyEncoder.createRankMaps / buildRankMaps for SYMBOL ORDER BY keys.
+        // The rank maps are only materialised when ORDER BY contains a static symbol column;
+        // without this test that whole lifecycle is uncovered.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE tab (s SYMBOL, val DOUBLE)");
+            execute("""
+                    INSERT INTO tab VALUES
+                    ('c', 1.0),
+                    ('a', 2.0),
+                    ('a', 3.0),
+                    ('b', 4.0)""");
+
+            // cume_dist with symbol ORDER BY: symbols sort as a, a, b, c giving ranks
+            // 1, 1, 3, 4 -> cume_dist 2/4, 2/4, 3/4, 4/4.
+            assertQueryNoLeakCheck(
+                    """
+                            s\tcd
+                            a\t0.5
+                            a\t0.5
+                            b\t0.75
+                            c\t1.0
+                            """,
+                    "SELECT s, cume_dist() OVER (ORDER BY s) cd FROM tab ORDER BY s",
+                    null,
+                    true,
+                    true
+            );
+
+            // Partitioned variant: one symbol per partition, ORDER BY another symbol.
+            execute("CREATE TABLE tab2 (part SYMBOL, s SYMBOL, val DOUBLE)");
+            execute("""
+                    INSERT INTO tab2 VALUES
+                    ('p1', 'b', 1.0),
+                    ('p1', 'a', 2.0),
+                    ('p2', 'y', 3.0),
+                    ('p2', 'x', 4.0)""");
+            assertQueryNoLeakCheck(
+                    """
+                            part\ts\tcd
+                            p1\ta\t0.5
+                            p1\tb\t1.0
+                            p2\tx\t0.5
+                            p2\ty\t1.0
+                            """,
+                    "SELECT part, s, cume_dist() OVER (PARTITION BY part ORDER BY s) cd FROM tab2 ORDER BY part, s",
+                    null,
+                    true,
+                    true
+            );
+        });
+    }
+
+    @Test
+    public void testNewWindowFunctionsOnEmptyTable() throws Exception {
+        // preparePass2 computes totalRows = count - 1 which is 0 on empty input. This is a
+        // smoke test that the TWO_PASS machinery does not trip when no rows are produced.
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, i long, val double) timestamp(ts)", timestampType.getTypeName());
+
+            assertQueryNoLeakCheck(
+                    "ts\tbucket\n",
+                    "select ts, ntile(3) over (order by ts) bucket from tab",
+                    "ts",
+                    true,
+                    true
+            );
+            assertQueryNoLeakCheck(
+                    "ts\tbucket\n",
+                    "select ts, ntile(3) over (partition by i order by ts) bucket from tab",
+                    "ts",
+                    true,
+                    true
+            );
+            assertQueryNoLeakCheck(
+                    "ts\tcd\n",
+                    "select ts, cume_dist() over (order by ts) cd from tab",
+                    "ts",
+                    true,
+                    true
+            );
+            assertQueryNoLeakCheck(
+                    "ts\tcd\n",
+                    "select ts, cume_dist() over (partition by i order by ts) cd from tab",
+                    "ts",
+                    true,
+                    true
+            );
+            assertQueryNoLeakCheck(
+                    "ts\tnv\n",
+                    "select ts, nth_value(val, 2) over (order by ts) nv from tab",
+                    "ts",
+                    false,
+                    true
+            );
+            assertQueryNoLeakCheck(
+                    "ts\tnv\n",
+                    "select ts, nth_value(val, 2) over (partition by i order by ts) nv from tab",
+                    "ts",
+                    false,
+                    true
+            );
+        });
+    }
+
+    @Test
+    public void testNthValueRowsFrameBothPreceding() throws Exception {
+        // Exercises the ROWS BETWEEN K PRECEDING AND M PRECEDING branch (both K and M
+        // positive, K > M). Routes to NthValueOverRowsFrameFunction /
+        // NthValueOverPartitionRowsFrameFunction with excludeCount > 0.
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, i long, val double) timestamp(ts)", timestampType.getTypeName());
+            execute("""
+                    insert into tab values
+                    (1, 1, 10.0),
+                    (2, 1, 20.0),
+                    (3, 1, 30.0),
+                    (4, 1, 40.0),
+                    (5, 1, 50.0)""");
+
+            // Frame = rows [3..1] preceding current row. At ts=1 the frame has no rows (nv
+            // null). At ts=2..4 the frame grows up to 3 rows starting at row 1 (nv = 10.0).
+            // At ts=5 the oldest in-frame row is row 2 (rows 2,3,4) so nv = 20.0.
+            assertQueryNoLeakCheck(
+                    replaceTimestampSuffix1("""
+                            ts\tnv
+                            1970-01-01T00:00:00.000001Z\tnull
+                            1970-01-01T00:00:00.000002Z\t10.0
+                            1970-01-01T00:00:00.000003Z\t10.0
+                            1970-01-01T00:00:00.000004Z\t10.0
+                            1970-01-01T00:00:00.000005Z\t20.0
+                            """),
+                    "select ts, nth_value(val, 1) over (order by ts rows between 3 preceding and 1 preceding) nv from tab",
+                    "ts",
+                    false,
+                    true
+            );
+
+            // Partitioned variant over the same frame. Single partition i=1, so the shape
+            // matches the non-partitioned case above.
+            assertQueryNoLeakCheck(
+                    replaceTimestampSuffix1("""
+                            ts\ti\tnv
+                            1970-01-01T00:00:00.000001Z\t1\tnull
+                            1970-01-01T00:00:00.000002Z\t1\t10.0
+                            1970-01-01T00:00:00.000003Z\t1\t10.0
+                            1970-01-01T00:00:00.000004Z\t1\t10.0
+                            1970-01-01T00:00:00.000005Z\t1\t20.0
+                            """),
+                    "select ts, i, nth_value(val, 1) over (partition by i order by ts rows between 3 preceding and 1 preceding) nv from tab",
+                    "ts",
+                    false,
+                    true
+            );
+        });
+    }
+
+    @Test
+    public void testNewWindowFunctionsPlans() throws Exception {
+        // toPlan output is custom per variant and not covered elsewhere. These assertions
+        // catch accidental changes to EXPLAIN text and missing pieces of the render logic.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE tab (ts TIMESTAMP, i LONG, val DOUBLE) TIMESTAMP(ts)");
+
+            assertPlanNoLeakCheck(
+                    "SELECT ts, ntile(3) OVER (ORDER BY ts) FROM tab",
+                    """
+                            CachedWindow
+                              unorderedFunctions: [ntile(3) over (order by [ts])]
+                                PageFrame
+                                    Row forward scan
+                                    Frame forward scan on: tab
+                            """
+            );
+            assertPlanNoLeakCheck(
+                    "SELECT ts, ntile(2) OVER (PARTITION BY i ORDER BY ts) FROM tab",
+                    """
+                            CachedWindow
+                              unorderedFunctions: [ntile(2) over (partition by [i] order by [ts])]
+                                PageFrame
+                                    Row forward scan
+                                    Frame forward scan on: tab
+                            """
+            );
+
+            assertPlanNoLeakCheck(
+                    "SELECT ts, cume_dist() OVER (ORDER BY ts) FROM tab",
+                    """
+                            CachedWindow
+                              unorderedFunctions: [cume_dist() over (order by [ts])]
+                                PageFrame
+                                    Row forward scan
+                                    Frame forward scan on: tab
+                            """
+            );
+            assertPlanNoLeakCheck(
+                    "SELECT ts, cume_dist() OVER (PARTITION BY i ORDER BY ts) FROM tab",
+                    """
+                            CachedWindow
+                              unorderedFunctions: [cume_dist() over (partition by [i] order by [ts])]
+                                PageFrame
+                                    Row forward scan
+                                    Frame forward scan on: tab
+                            """
+            );
+
+            assertPlanNoLeakCheck(
+                    "SELECT ts, nth_value(val, 2) OVER (PARTITION BY i) FROM tab",
+                    """
+                            CachedWindow
+                              unorderedFunctions: [nth_value(val,2) over (partition by [i])]
+                                PageFrame
+                                    Row forward scan
+                                    Frame forward scan on: tab
+                            """
+            );
+        });
+    }
+
+    @Test
+    public void testNthValueRowsFrameCrossCheckRandomData() throws Exception {
+        // Cross-check nth_value over ROWS frames against first_value/row_number references
+        // using random data. Verifies frame sliding, NULL propagation, and the n-not-reached
+        // invariant on the unbounded-preceding ramp-up.
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp(
+                    "create table tab (ts #TIMESTAMP, i long, val double) timestamp(ts)",
+                    timestampType.getTypeName()
+            );
+            execute(
+                    "insert into tab " +
+                            "select x::timestamp, x % 7, " +
+                            "case when x % 11 = 0 then null else rnd_double() end " +
+                            "from long_sequence(2_000)"
+            );
+
+            // Partitioned ROWS frame [3 preceding, current row], n=1 must equal first_value.
+            // Aggregation factory: no timestamp, no random access, size known.
+            assertQueryNoLeakCheck(
+                    "mismatch\n0\n",
+                    "with w as (" +
+                            "  select ts, i, " +
+                            "  nth_value(val, 1) over (partition by i order by ts rows between 3 preceding and current row) nv, " +
+                            "  first_value(val) over (partition by i order by ts rows between 3 preceding and current row) fv " +
+                            "  from tab" +
+                            ") " +
+                            "select count(*) mismatch from w " +
+                            "where (nv is null) != (fv is null) or (nv is not null and fv is not null and nv != fv)",
+                    null,
+                    false,
+                    true
+            );
+
+            // Non-partitioned ROWS frame [5 preceding, current row], n=1 must equal first_value.
+            assertQueryNoLeakCheck(
+                    "mismatch\n0\n",
+                    "with w as (" +
+                            "  select ts, " +
+                            "  nth_value(val, 1) over (order by ts rows between 5 preceding and current row) nv, " +
+                            "  first_value(val) over (order by ts rows between 5 preceding and current row) fv " +
+                            "  from tab" +
+                            ") " +
+                            "select count(*) mismatch from w " +
+                            "where (nv is null) != (fv is null) or (nv is not null and fv is not null and nv != fv)",
+                    null,
+                    false,
+                    true
+            );
+
+            // Partitioned unbounded preceding to current row: until the n-th row arrives,
+            // nth_value must stay NULL. After that it locks on the n-th seen value.
+            assertQueryNoLeakCheck(
+                    "mismatch\n0\n",
+                    "with w as (" +
+                            "  select ts, i, " +
+                            "  nth_value(val, 3) over (partition by i order by ts rows between unbounded preceding and current row) nv, " +
+                            "  row_number() over (partition by i order by ts) rn " +
+                            "  from tab" +
+                            ") " +
+                            "select count(*) mismatch from w where rn < 3 and nv is not null",
+                    null,
+                    false,
+                    true
+            );
+        });
+    }
+
+    @Test
+    public void testCumeDistRejectsFraming() throws Exception {
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, val double) timestamp(ts)", timestampType.getTypeName());
+
+            assertExceptionNoLeakCheck(
+                    "select cume_dist() over (order by ts rows between 1 preceding and current row) from tab",
+                    52,
+                    "cume_dist() does not support framing; remove the frame clause",
+                    sqlExecutionContext
+            );
+
+            assertExceptionNoLeakCheck(
+                    "select cume_dist() over (order by ts range between 10 microseconds preceding and current row) from tab",
+                    67,
+                    "cume_dist() does not support framing; remove the frame clause",
+                    sqlExecutionContext
+            );
+
+            // GROUPS framing: the error must not mention ROWS/RANGE specifically --
+            // the message should cover every frame clause variant.
+            assertExceptionNoLeakCheck(
+                    "select cume_dist() over (order by ts groups between 1 preceding and current row) from tab",
+                    54,
+                    "cume_dist() does not support framing; remove the frame clause",
+                    sqlExecutionContext
+            );
+        });
+    }
+
+    @Test
+    public void testNtileRejectsNonConstant() throws Exception {
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, i int) timestamp(ts)", timestampType.getTypeName());
+
+            assertExceptionNoLeakCheck(
+                    "select ntile(i) over (order by ts) from tab",
+                    13,
+                    "bucket count must be a constant",
+                    sqlExecutionContext
+            );
+        });
+    }
+
+    @Test
+    public void testNtileRejectsNegative() throws Exception {
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, val double) timestamp(ts)", timestampType.getTypeName());
+
+            assertExceptionNoLeakCheck(
+                    "select ntile(-5) over (order by ts) from tab",
+                    13,
+                    "bucket count must be a positive integer",
+                    sqlExecutionContext
+            );
+        });
+    }
+
+    @Test
+    public void testNtileRejectsNull() throws Exception {
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, val double) timestamp(ts)", timestampType.getTypeName());
+
+            assertExceptionNoLeakCheck(
+                    "select ntile(null) over (order by ts) from tab",
+                    13,
+                    "bucket count cannot be NULL",
+                    sqlExecutionContext
+            );
+        });
+    }
+
+    @Test
+    public void testNtileWithoutOrderBy() throws Exception {
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, val double) timestamp(ts)", timestampType.getTypeName());
+            execute("insert into tab values (1, 10.0), (2, 20.0), (3, 30.0), (4, 40.0)");
+
+            assertQueryNoLeakCheck(
+                    replaceTimestampSuffix1("""
+                            ts\tval\tbucket
+                            1970-01-01T00:00:00.000001Z\t10.0\t1
+                            1970-01-01T00:00:00.000002Z\t20.0\t1
+                            1970-01-01T00:00:00.000003Z\t30.0\t2
+                            1970-01-01T00:00:00.000004Z\t40.0\t2
+                            """),
+                    "select ts, val, ntile(2) over () bucket from tab",
+                    "ts",
+                    true,
+                    true
+            );
+        });
+    }
+
+    @Test
+    public void testNthValueRejectsNonConstant() throws Exception {
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, val double, i int) timestamp(ts)", timestampType.getTypeName());
+
+            assertExceptionNoLeakCheck(
+                    "select nth_value(val, i) over (order by ts) from tab",
+                    22,
+                    "n must be a constant",
+                    sqlExecutionContext
+            );
+        });
+    }
+
+    @Test
+    public void testNthValueRejectsNegative() throws Exception {
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, val double) timestamp(ts)", timestampType.getTypeName());
+
+            assertExceptionNoLeakCheck(
+                    "select nth_value(val, -1) over (order by ts) from tab",
+                    22,
+                    "n must be a positive integer",
+                    sqlExecutionContext
+            );
+        });
+    }
+
+    @Test
+    public void testNthValueRejectsNull() throws Exception {
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, val double) timestamp(ts)", timestampType.getTypeName());
+
+            assertExceptionNoLeakCheck(
+                    "select nth_value(val, null) over (order by ts) from tab",
+                    22,
+                    "n cannot be NULL",
+                    sqlExecutionContext
+            );
+        });
+    }
+
+    @Test
+    public void testNthValueAcceptsLongConstant() throws Exception {
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, val double) timestamp(ts)", timestampType.getTypeName());
+            execute("insert into tab values (1, 10.0), (2, 20.0), (3, 30.0)");
+
+            assertQueryNoLeakCheck(
+                    replaceTimestampSuffix1("""
+                            ts\tval\tnv
+                            1970-01-01T00:00:00.000001Z\t10.0\tnull
+                            1970-01-01T00:00:00.000002Z\t20.0\t20.0
+                            1970-01-01T00:00:00.000003Z\t30.0\t20.0
+                            """),
+                    "select ts, val, nth_value(val, 2L) over (order by ts) nv from tab",
+                    "ts",
+                    false,
+                    true
+            );
+        });
+    }
+
+    @Test
+    public void testNthValueRejectsLongOverflow() throws Exception {
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, val double) timestamp(ts)", timestampType.getTypeName());
+
+            assertExceptionNoLeakCheck(
+                    "select nth_value(val, 5_000_000_000L) over (order by ts) from tab",
+                    22,
+                    "n must be a positive integer",
+                    sqlExecutionContext
+            );
+
+            // Integer.MAX_VALUE + 1 -- one past the accepted boundary.
+            assertExceptionNoLeakCheck(
+                    "select nth_value(val, 2_147_483_648L) over (order by ts) from tab",
+                    22,
+                    "n must be a positive integer",
+                    sqlExecutionContext
+            );
+        });
+    }
+
+    @Test
+    public void testNtileAcceptsLongConstant() throws Exception {
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, val double) timestamp(ts)", timestampType.getTypeName());
+            execute("insert into tab values (1, 10.0), (2, 20.0), (3, 30.0), (4, 40.0)");
+
+            assertQueryNoLeakCheck(
+                    replaceTimestampSuffix1("""
+                            ts\tval\tbucket
+                            1970-01-01T00:00:00.000001Z\t10.0\t1
+                            1970-01-01T00:00:00.000002Z\t20.0\t1
+                            1970-01-01T00:00:00.000003Z\t30.0\t2
+                            1970-01-01T00:00:00.000004Z\t40.0\t2
+                            """),
+                    "select ts, val, ntile(2L) over (order by ts) bucket from tab",
+                    "ts",
+                    true,
+                    true
+            );
+        });
+    }
+
+    @Test
+    public void testNtileRejectsLongOverflow() throws Exception {
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, val double) timestamp(ts)", timestampType.getTypeName());
+
+            assertExceptionNoLeakCheck(
+                    "select ntile(5_000_000_000L) over (order by ts) from tab",
+                    13,
+                    "bucket count must be a positive integer",
+                    sqlExecutionContext
+            );
+
+            // Integer.MAX_VALUE + 1 -- one past the accepted boundary.
+            assertExceptionNoLeakCheck(
+                    "select ntile(2_147_483_648L) over (order by ts) from tab",
+                    13,
+                    "bucket count must be a positive integer",
+                    sqlExecutionContext
+            );
+        });
+    }
+
+    @Test
+    public void testNtileDescOrder() throws Exception {
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, val long) timestamp(ts)", timestampType.getTypeName());
+            execute("insert into tab values (1, 10), (2, 30), (3, 20), (4, 40)");
+
+            assertQueryNoLeakCheck(
+                    replaceTimestampSuffix1("""
+                            ts\tval\tbucket
+                            1970-01-01T00:00:00.000001Z\t10\t2
+                            1970-01-01T00:00:00.000002Z\t30\t1
+                            1970-01-01T00:00:00.000003Z\t20\t2
+                            1970-01-01T00:00:00.000004Z\t40\t1
+                            """),
+                    "select ts, val, ntile(2) over (order by val desc) bucket from tab",
+                    "ts",
+                    true,
+                    true
+            );
+        });
+    }
+
+    @Test
+    public void testNtileAcceptsIntegerMaxValue() throws Exception {
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, val double) timestamp(ts)", timestampType.getTypeName());
+            execute("insert into tab values (1, 10.0), (2, 20.0), (3, 30.0)");
+
+            assertQueryNoLeakCheck(
+                    replaceTimestampSuffix1("""
+                            ts\tval\tbucket
+                            1970-01-01T00:00:00.000001Z\t10.0\t1
+                            1970-01-01T00:00:00.000002Z\t20.0\t2
+                            1970-01-01T00:00:00.000003Z\t30.0\t3
+                            """),
+                    "select ts, val, ntile(2_147_483_647) over (order by ts) bucket from tab",
+                    "ts",
+                    true,
+                    true
+            );
+        });
+    }
+
+    @Test
+    public void testNthValueAcceptsIntegerMaxValue() throws Exception {
+        // Constructor-boundary check: n = Integer.MAX_VALUE must not overflow during int
+        // conversion or the n > frameSize comparisons. With only 3 rows the n-th value is
+        // never reached, so every row legitimately resolves to NaN.
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, val double) timestamp(ts)", timestampType.getTypeName());
+            execute("insert into tab values (1, 10.0), (2, 20.0), (3, 30.0)");
+
+            assertQueryNoLeakCheck(
+                    replaceTimestampSuffix1("""
+                            ts\tval\tnv
+                            1970-01-01T00:00:00.000001Z\t10.0\tnull
+                            1970-01-01T00:00:00.000002Z\t20.0\tnull
+                            1970-01-01T00:00:00.000003Z\t30.0\tnull
+                            """),
+                    "select ts, val, nth_value(val, 2_147_483_647) over (order by ts) nv from tab",
+                    "ts",
+                    false,
+                    true
+            );
+        });
+    }
+
+    @Test
+    public void testCumeDistDescOrder() throws Exception {
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, val long) timestamp(ts)", timestampType.getTypeName());
+            execute("insert into tab values (1, 10), (2, 30), (3, 20)");
+
+            assertQueryNoLeakCheck(
+                    replaceTimestampSuffix1("""
+                            ts\tval\tcd
+                            1970-01-01T00:00:00.000001Z\t10\t1.0
+                            1970-01-01T00:00:00.000002Z\t30\t0.3333333333333333
+                            1970-01-01T00:00:00.000003Z\t20\t0.6666666666666666
+                            """),
+                    "select ts, val, cume_dist() over (order by val desc) cd from tab",
+                    "ts",
+                    true,
+                    true
+            );
+        });
+    }
+
+    @Test
+    public void testCumeDistMultiColumnOrder() throws Exception {
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, a long, b long) timestamp(ts)", timestampType.getTypeName());
+            execute("insert into tab values (1, 1, 100), (2, 1, 200), (3, 2, 100)");
+
+            assertQueryNoLeakCheck(
+                    replaceTimestampSuffix1("""
+                            ts\ta\tb\tcd
+                            1970-01-01T00:00:00.000001Z\t1\t100\t0.3333333333333333
+                            1970-01-01T00:00:00.000002Z\t1\t200\t0.6666666666666666
+                            1970-01-01T00:00:00.000003Z\t2\t100\t1.0
+                            """),
+                    "select ts, a, b, cume_dist() over (order by a, b) cd from tab",
+                    "ts",
+                    true,
+                    true
+            );
+        });
+    }
+
+    @Test
+    public void testCumeDistPartitionedWithPeers() throws Exception {
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, i long, val long) timestamp(ts)", timestampType.getTypeName());
+            execute("insert into tab values (1, 1, 1), (2, 1, 1), (3, 1, 2), (4, 2, 1), (5, 2, 1)");
+
+            assertQueryNoLeakCheck(
+                    replaceTimestampSuffix1("""
+                            ts\ti\tval\tcd
+                            1970-01-01T00:00:00.000001Z\t1\t1\t0.6666666666666666
+                            1970-01-01T00:00:00.000002Z\t1\t1\t0.6666666666666666
+                            1970-01-01T00:00:00.000003Z\t1\t2\t1.0
+                            1970-01-01T00:00:00.000004Z\t2\t1\t1.0
+                            1970-01-01T00:00:00.000005Z\t2\t1\t1.0
+                            """),
+                    "select ts, i, val, cume_dist() over (partition by i order by val) cd from tab",
+                    "ts",
+                    true,
+                    true
+            );
+        });
+    }
+
+    @Test
+    public void testCumeDistAllPeers() throws Exception {
+        // All rows share the same ORDER BY value — single peer group covers the entire partition.
+        // Exercises the CumeDistFunction.pass2 path where prevRank never transitions and every
+        // deferred row gets the tentative 1.0.
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, val long) timestamp(ts)", timestampType.getTypeName());
+            execute("insert into tab values (1, 7), (2, 7), (3, 7)");
+
+            assertQueryNoLeakCheck(
+                    replaceTimestampSuffix1("""
+                            ts\tval\tcd
+                            1970-01-01T00:00:00.000001Z\t7\t1.0
+                            1970-01-01T00:00:00.000002Z\t7\t1.0
+                            1970-01-01T00:00:00.000003Z\t7\t1.0
+                            """),
+                    "select ts, val, cume_dist() over (order by val) cd from tab",
+                    "ts",
+                    true,
+                    true
+            );
+        });
+    }
+
+    @Test
+    public void testNthValuePartitionedByTwoColumns() throws Exception {
+        // Exercises multi-key RecordSink / partition map encoding. Data uses 4 distinct (a,b)
+        // partitions interleaved by timestamp so map lookups actually matter.
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, a long, b long, val double) timestamp(ts)", timestampType.getTypeName());
+            execute("insert into tab values " +
+                    "(1, 1, 1, 10.0), (2, 1, 2, 20.0), (3, 2, 1, 30.0), (4, 2, 2, 40.0), " +
+                    "(5, 1, 1, 50.0), (6, 1, 2, 60.0), (7, 2, 1, 70.0), (8, 2, 2, 80.0)");
+
+            assertQueryNoLeakCheck(
+                    replaceTimestampSuffix1("""
+                            ts\ta\tb\tnv
+                            1970-01-01T00:00:00.000001Z\t1\t1\tnull
+                            1970-01-01T00:00:00.000002Z\t1\t2\tnull
+                            1970-01-01T00:00:00.000003Z\t2\t1\tnull
+                            1970-01-01T00:00:00.000004Z\t2\t2\tnull
+                            1970-01-01T00:00:00.000005Z\t1\t1\t50.0
+                            1970-01-01T00:00:00.000006Z\t1\t2\t60.0
+                            1970-01-01T00:00:00.000007Z\t2\t1\t70.0
+                            1970-01-01T00:00:00.000008Z\t2\t2\t80.0
+                            """),
+                    "select ts, a, b, nth_value(val, 2) over (partition by a, b order by ts) nv from tab",
+                    "ts",
+                    false,
+                    true
+            );
+        });
+    }
+
+    @Test
+    public void testNthValueWholeResultSet() throws Exception {
+        // nth_value(val, 3) over () with no partition and no order by routes to
+        // NthValueOverWholeResultSetFunction (TWO_PASS: pass1 finds nth, pass2 emits constant).
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, val double) timestamp(ts)", timestampType.getTypeName());
+            execute("insert into tab values (1, 10.0), (2, 20.0), (3, 30.0), (4, 40.0), (5, 50.0)");
+
+            assertQueryNoLeakCheck(
+                    replaceTimestampSuffix1("""
+                            ts\tnv
+                            1970-01-01T00:00:00.000001Z\t30.0
+                            1970-01-01T00:00:00.000002Z\t30.0
+                            1970-01-01T00:00:00.000003Z\t30.0
+                            1970-01-01T00:00:00.000004Z\t30.0
+                            1970-01-01T00:00:00.000005Z\t30.0
+                            """),
+                    "select ts, nth_value(val, 3) over () nv from tab",
+                    "ts",
+                    true,
+                    true
+            );
+
+            // Edge: n > totalRows → NULL for every row (still exercises the class).
+            assertQueryNoLeakCheck(
+                    replaceTimestampSuffix1("""
+                            ts\tnv
+                            1970-01-01T00:00:00.000001Z\tnull
+                            1970-01-01T00:00:00.000002Z\tnull
+                            1970-01-01T00:00:00.000003Z\tnull
+                            1970-01-01T00:00:00.000004Z\tnull
+                            1970-01-01T00:00:00.000005Z\tnull
+                            """),
+                    "select ts, nth_value(val, 100) over () nv from tab",
+                    "ts",
+                    true,
+                    true
+            );
+        });
+    }
+
+    @Test
+    public void testNthValuePartitionedRowsFrameBounded() throws Exception {
+        // Partitioned ROWS frame with both bounds N PRECEDING (frame excludes current row) —
+        // routes to NthValueOverPartitionRowsFrameFunction, which was largely uncovered.
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, i long, val double) timestamp(ts)", timestampType.getTypeName());
+            execute("insert into tab values " +
+                    "(1, 1, 10.0), (2, 1, 20.0), (3, 1, 30.0), (4, 1, 40.0), (5, 1, 50.0), " +
+                    "(6, 2, 60.0), (7, 2, 70.0), (8, 2, 80.0)");
+
+            assertQueryNoLeakCheck(
+                    replaceTimestampSuffix1("""
+                            ts\ti\tnv
+                            1970-01-01T00:00:00.000001Z\t1\tnull
+                            1970-01-01T00:00:00.000002Z\t1\tnull
+                            1970-01-01T00:00:00.000003Z\t1\t20.0
+                            1970-01-01T00:00:00.000004Z\t1\t30.0
+                            1970-01-01T00:00:00.000005Z\t1\t40.0
+                            1970-01-01T00:00:00.000006Z\t2\tnull
+                            1970-01-01T00:00:00.000007Z\t2\tnull
+                            1970-01-01T00:00:00.000008Z\t2\t70.0
+                            """),
+                    "select ts, i, nth_value(val, 2) over (" +
+                            "partition by i order by ts rows between 2 preceding and 1 preceding) nv from tab",
+                    "ts",
+                    false,
+                    true
+            );
+        });
+    }
+
+    @Test
+    public void testNthValuePartitionedRowsFrameReopen() throws Exception {
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, i long, val double) timestamp(ts)", timestampType.getTypeName());
+            execute("insert into tab values (1, 1, 10.0), (2, 1, 20.0), (3, 1, 30.0), (4, 2, 40.0), (5, 2, 50.0), (6, 2, 60.0)");
+
+            assertQueryNoLeakCheck(
+                    replaceTimestampSuffix1("""
+                            ts\ti\tnv
+                            1970-01-01T00:00:00.000001Z\t1\tnull
+                            1970-01-01T00:00:00.000002Z\t1\tnull
+                            1970-01-01T00:00:00.000003Z\t1\t20.0
+                            1970-01-01T00:00:00.000004Z\t2\tnull
+                            1970-01-01T00:00:00.000005Z\t2\tnull
+                            1970-01-01T00:00:00.000006Z\t2\t50.0
+                            """),
+                    "select ts, i, nth_value(val, 2) over (" +
+                            "partition by i order by ts rows between 2 preceding and 1 preceding) nv from tab",
+                    "ts",
+                    false,
+                    true
+            );
+        });
+    }
+
+    @Test
+    public void testNthValueRowsFrameExcludingCurrent() throws Exception {
+        // Non-partitioned ROWS frame with both bounds N PRECEDING — strengthens
+        // NthValueOverRowsFrameFunction coverage (existing test uses rowsHi=current row).
+        // With bufferSize=|rowsLo|=5 and frameSize=4, the algorithm keeps the earliest rows
+        // in the ring buffer until it wraps around; with only 5 rows that never happens,
+        // so nv stays locked on row 2's value.
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, val double) timestamp(ts)", timestampType.getTypeName());
+            execute("insert into tab values (1, 10.0), (2, 20.0), (3, 30.0), (4, 40.0), (5, 50.0)");
+
+            assertQueryNoLeakCheck(
+                    replaceTimestampSuffix1("""
+                            ts\tnv
+                            1970-01-01T00:00:00.000001Z\tnull
+                            1970-01-01T00:00:00.000002Z\tnull
+                            1970-01-01T00:00:00.000003Z\tnull
+                            1970-01-01T00:00:00.000004Z\t20.0
+                            1970-01-01T00:00:00.000005Z\t20.0
+                            """),
+                    "select ts, nth_value(val, 2) over (" +
+                            "order by ts rows between 5 preceding and 2 preceding) nv from tab",
+                    "ts",
+                    false,
+                    true
+            );
+        });
+    }
+
+    @Test
+    public void testNthValueRowsFrameUnboundedToPreceding() throws Exception {
+        // rows between unbounded preceding and N preceding — NOT the default frame
+        // (rowsHi != 0 / MAX), so it routes to NthValueOverRowsFrameFunction rather than
+        // NthValueOverUnboundedRowsFrameFunction. bufferSize=frameSize=|rowsHi|=2 here,
+        // so the frame effectively slides as a 2-row window ending 2 rows before current.
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, val double) timestamp(ts)", timestampType.getTypeName());
+            execute("insert into tab values (1, 10.0), (2, 20.0), (3, 30.0), (4, 40.0), (5, 50.0)");
+
+            assertQueryNoLeakCheck(
+                    replaceTimestampSuffix1("""
+                            ts\tnv
+                            1970-01-01T00:00:00.000001Z\tnull
+                            1970-01-01T00:00:00.000002Z\tnull
+                            1970-01-01T00:00:00.000003Z\tnull
+                            1970-01-01T00:00:00.000004Z\t20.0
+                            1970-01-01T00:00:00.000005Z\t20.0
+                            """),
+                    "select ts, nth_value(val, 2) over (" +
+                            "order by ts rows between unbounded preceding and 2 preceding) nv from tab",
+                    "ts",
+                    false,
+                    true
+            );
+        });
+    }
+
+    @Test
+    public void testCumeDistPartitionedNoOrder() throws Exception {
+        // cume_dist() over (partition by i) — no order by, so every row is a peer.
+        // Exercises the partitioned branch of CumeDistNoOrderFunction that testCumeDistNoOrder
+        // does not hit (it only covers the non-partitioned path).
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, i long, val double) timestamp(ts)", timestampType.getTypeName());
+            execute("insert into tab values " +
+                    "(1, 1, 100.0), (2, 1, 200.0), " +
+                    "(3, 2, 100.0), " +
+                    "(4, 3, 100.0), (5, 3, 200.0), (6, 3, 300.0)");
+
+            assertQueryNoLeakCheck(
+                    replaceTimestampSuffix1("""
+                            ts\ti\tcd
+                            1970-01-01T00:00:00.000001Z\t1\t1.0
+                            1970-01-01T00:00:00.000002Z\t1\t1.0
+                            1970-01-01T00:00:00.000003Z\t2\t1.0
+                            1970-01-01T00:00:00.000004Z\t3\t1.0
+                            1970-01-01T00:00:00.000005Z\t3\t1.0
+                            1970-01-01T00:00:00.000006Z\t3\t1.0
+                            """),
+                    "select ts, i, cume_dist() over (partition by i) cd from tab",
+                    "ts",
+                    false,
+                    true
+            );
+        });
+    }
+
+    @Test
+    public void testCumeDistPartitionedReopen() throws Exception {
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, i long, val long) timestamp(ts)", timestampType.getTypeName());
+            execute("insert into tab values (1, 1, 10), (2, 1, 20), (3, 1, 20), (4, 2, 30), (5, 2, 40)");
+
+            assertQueryNoLeakCheck(
+                    replaceTimestampSuffix1("""
+                            ts\ti\tcd
+                            1970-01-01T00:00:00.000001Z\t1\t0.3333333333333333
+                            1970-01-01T00:00:00.000002Z\t1\t1.0
+                            1970-01-01T00:00:00.000003Z\t1\t1.0
+                            1970-01-01T00:00:00.000004Z\t2\t0.5
+                            1970-01-01T00:00:00.000005Z\t2\t1.0
+                            """),
+                    "select ts, i, cume_dist() over (partition by i order by val) cd from tab",
+                    "ts",
+                    true,
+                    true
+            );
+        });
+    }
+
+    @Test
+    public void testNthValueRangeUnboundedToPreceding() throws Exception {
+        // RANGE between unbounded preceding and N microseconds preceding — rowsLo=MIN_VALUE,
+        // rowsHi<0 (NOT 0), so the factory skips the UnboundedRowsFrame fast path and routes
+        // to NthValueOverRangeFrameFunction. Exercises the non-default RANGE path. Data
+        // spacing is 1s so "2 microseconds preceding" excludes only the current row in both
+        // MICRO and NANO timestamp modes, keeping expected output stable.
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, val double) timestamp(ts)", timestampType.getTypeName());
+            execute(timestampType == TestTimestampType.MICRO
+                    ? "insert into tab values (1000000, 10.0), (2000000, 20.0), (3000000, 30.0), (4000000, 40.0), (5000000, 50.0)"
+                    : "insert into tab values (1000000000, 10.0), (2000000000, 20.0), (3000000000, 30.0), (4000000000, 40.0), (5000000000, 50.0)");
+
+            assertQueryNoLeakCheck(
+                    timestampType == TestTimestampType.MICRO
+                            ? """
+                            ts\tnv
+                            1970-01-01T00:00:01.000000Z\tnull
+                            1970-01-01T00:00:02.000000Z\tnull
+                            1970-01-01T00:00:03.000000Z\t20.0
+                            1970-01-01T00:00:04.000000Z\t20.0
+                            1970-01-01T00:00:05.000000Z\t20.0
+                            """
+                            : """
+                            ts\tnv
+                            1970-01-01T00:00:01.000000000Z\tnull
+                            1970-01-01T00:00:02.000000000Z\tnull
+                            1970-01-01T00:00:03.000000000Z\t20.0
+                            1970-01-01T00:00:04.000000000Z\t20.0
+                            1970-01-01T00:00:05.000000000Z\t20.0
+                            """,
+                    "select ts, nth_value(val, 2) over (" +
+                            "order by ts range between unbounded preceding and 2 microseconds preceding) nv from tab",
+                    "ts",
+                    false,
+                    true
+            );
+        });
+    }
+
+    @Test
+    public void testNthValueRangeUnboundedToPrecedingPeerExpansion() throws Exception {
+        // RANGE BETWEEN UNBOUNDED PRECEDING AND K PRECEDING when multiple previously-ineligible
+        // rows cross the minDiff threshold together. Rows 1..3 sit within minDiff of each other;
+        // at row 4 (ts gap = 1800μs) all three should enter the frame simultaneously. Regression
+        // for the NthValueOverRangeFrameFunction.computeNext !frameLoBounded branch that grew
+        // frameSize by at most one per call.
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, val double) timestamp(ts)", timestampType.getTypeName());
+            execute(timestampType == TestTimestampType.MICRO
+                    ? "insert into tab values (1000, 10.0), (1100, 20.0), (1200, 30.0), (3000, 40.0), (3100, 50.0)"
+                    : "insert into tab values (1000000, 10.0), (1100000, 20.0), (1200000, 30.0), (3000000, 40.0), (3100000, 50.0)");
+
+            assertQueryNoLeakCheck(
+                    timestampType == TestTimestampType.MICRO
+                            ? """
+                            ts\tnv
+                            1970-01-01T00:00:00.001000Z\tnull
+                            1970-01-01T00:00:00.001100Z\tnull
+                            1970-01-01T00:00:00.001200Z\tnull
+                            1970-01-01T00:00:00.003000Z\t30.0
+                            1970-01-01T00:00:00.003100Z\t30.0
+                            """
+                            : """
+                            ts\tnv
+                            1970-01-01T00:00:00.001000000Z\tnull
+                            1970-01-01T00:00:00.001100000Z\tnull
+                            1970-01-01T00:00:00.001200000Z\tnull
+                            1970-01-01T00:00:00.003000000Z\t30.0
+                            1970-01-01T00:00:00.003100000Z\t30.0
+                            """,
+                    "select ts, nth_value(val, 3) over (" +
+                            "order by ts range between unbounded preceding and 1000 microseconds preceding) nv from tab",
+                    "ts",
+                    false,
+                    true
+            );
+        });
+    }
+
+    @Test
+    public void testNthValuePartitionedRangeUnboundedToPrecedingPeerExpansion() throws Exception {
+        // Partitioned analogue of testNthValueRangeUnboundedToPrecedingPeerExpansion. Each
+        // partition has three closely-spaced rows followed by a jump that makes all three
+        // enter the frame at once. Regression for NthValueOverPartitionRangeFrameFunction.
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, i long, val double) timestamp(ts)", timestampType.getTypeName());
+            execute(timestampType == TestTimestampType.MICRO
+                    ? "insert into tab values " +
+                    "(1000, 1, 10.0), (1100, 2, 15.0), (1200, 1, 20.0), (1300, 2, 25.0), " +
+                    "(1400, 1, 30.0), (1500, 2, 35.0), (3000, 1, 40.0), (3100, 2, 45.0)"
+                    : "insert into tab values " +
+                    "(1000000, 1, 10.0), (1100000, 2, 15.0), (1200000, 1, 20.0), (1300000, 2, 25.0), " +
+                    "(1400000, 1, 30.0), (1500000, 2, 35.0), (3000000, 1, 40.0), (3100000, 2, 45.0)");
+
+            assertQueryNoLeakCheck(
+                    timestampType == TestTimestampType.MICRO
+                            ? """
+                            ts\ti\tnv
+                            1970-01-01T00:00:00.001000Z\t1\tnull
+                            1970-01-01T00:00:00.001100Z\t2\tnull
+                            1970-01-01T00:00:00.001200Z\t1\tnull
+                            1970-01-01T00:00:00.001300Z\t2\tnull
+                            1970-01-01T00:00:00.001400Z\t1\tnull
+                            1970-01-01T00:00:00.001500Z\t2\tnull
+                            1970-01-01T00:00:00.003000Z\t1\t30.0
+                            1970-01-01T00:00:00.003100Z\t2\t35.0
+                            """
+                            : """
+                            ts\ti\tnv
+                            1970-01-01T00:00:00.001000000Z\t1\tnull
+                            1970-01-01T00:00:00.001100000Z\t2\tnull
+                            1970-01-01T00:00:00.001200000Z\t1\tnull
+                            1970-01-01T00:00:00.001300000Z\t2\tnull
+                            1970-01-01T00:00:00.001400000Z\t1\tnull
+                            1970-01-01T00:00:00.001500000Z\t2\tnull
+                            1970-01-01T00:00:00.003000000Z\t1\t30.0
+                            1970-01-01T00:00:00.003100000Z\t2\t35.0
+                            """,
+                    "select ts, i, nth_value(val, 3) over (" +
+                            "partition by i order by ts range between unbounded preceding and 1000 microseconds preceding) nv from tab",
+                    "ts",
+                    false,
+                    true
+            );
+        });
+    }
+
+    @Test
+    public void testCumeDistPartitionedSliceExpansion() throws Exception {
+        // Drop the initial per-partition slice capacity so a single peer group overflows it and
+        // forces expandRingBuffer inside CumeDistOverPartitionFunction.pass2. Two partitions
+        // each carry one large peer group followed by a short singleton: the large group
+        // triggers slice doubling, the transition to the singleton flushes the slice and
+        // exercises the recycle-through-freeList path on the subsequent peer-group boundary.
+        node1.setProperty(PropertyKey.CAIRO_SQL_WINDOW_INITIAL_RANGE_BUFFER_SIZE, 4);
+        try {
+            assertMemoryLeak(() -> {
+                executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, i long, val long) timestamp(ts)", timestampType.getTypeName());
+                // Partition 1: 20 rows with val=1 (one peer group), then 1 row with val=2.
+                // Partition 2: 15 rows with val=1, then 1 row with val=2.
+                StringBuilder sb = new StringBuilder("insert into tab values ");
+                long ts = 1;
+                for (int r = 0; r < 20; r++) {
+                    sb.append('(').append(ts++).append(", 1, 1),");
+                }
+                sb.append('(').append(ts++).append(", 1, 2),");
+                for (int r = 0; r < 15; r++) {
+                    sb.append('(').append(ts++).append(", 2, 1),");
+                }
+                sb.append('(').append(ts).append(", 2, 2)");
+                execute(sb.toString());
+
+                // cume_dist for partition 1: 20/21 for val=1 rows, 21/21=1.0 for val=2.
+                // cume_dist for partition 2: 15/16 for val=1 rows, 16/16=1.0 for val=2.
+                assertQueryNoLeakCheck(
+                        """
+                                i\tcd\tcnt
+                                1\t0.9523809523809523\t20
+                                1\t1.0\t1
+                                2\t0.9375\t15
+                                2\t1.0\t1
+                                """,
+                        "select i, cd, count(*) cnt from (" +
+                                "select i, cume_dist() over (partition by i order by val) cd from tab" +
+                                ") group by i, cd order by i, cd",
+                        null,
+                        true,
+                        true
+                );
+            });
+        } finally {
+            node1.setProperty(PropertyKey.CAIRO_SQL_WINDOW_INITIAL_RANGE_BUFFER_SIZE, 32);
+        }
+    }
+
+    @Test
+    public void testNthValueRangeFrameBufferExpansion() throws Exception {
+        // Shrink the window store page and the initial range buffer so large partitions force
+        // multiple expandRingBuffer calls in NthValueOverPartitionRangeFrameFunction and
+        // NthValueOverRangeFrameFunction. Asserts the full value distribution so that a
+        // miscalculated memcpy size or stale startOffset during resize would produce wrong
+        // nth_value results instead of silently passing a count check.
+        node1.setProperty(PropertyKey.CAIRO_SQL_WINDOW_STORE_PAGE_SIZE, 256);
+        node1.setProperty(PropertyKey.CAIRO_SQL_WINDOW_INITIAL_RANGE_BUFFER_SIZE, 2);
+        try {
+            assertMemoryLeak(() -> {
+                executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, i long, val double) timestamp(ts)", timestampType.getTypeName());
+                execute("insert into tab select (x * 1000000)::timestamp, x % 2, x::double from long_sequence(50)");
+
+                // Non-partitioned: all 50 rows fit in the 100-second frame, so after row 1 the
+                // frame always contains at least 2 rows and nth_value(val,2) locks onto row 2's
+                // value (2.0). Expected distribution: 49 occurrences of 2.0, 1 NaN (NaN sorts
+                // last in ascending order).
+                assertQueryNoLeakCheck(
+                        """
+                                nv\tcnt
+                                2.0\t49
+                                null\t1
+                                """,
+                        "select nv, count(*) cnt from (" +
+                                "select nth_value(val, 2) over (" +
+                                "order by ts range between 100 second preceding and current row) nv from tab" +
+                                ") group by nv order by nv",
+                        null,
+                        true,
+                        true
+                );
+
+                // Partitioned by i (x%2). Each partition has 25 rows; the 100-second frame holds
+                // the whole partition. First row per partition -> NaN. Subsequent rows -> row-2
+                // value: 4.0 for partition 0 (even x), 3.0 for partition 1 (odd x). Expected
+                // distribution: 24 occurrences of 3.0, 24 occurrences of 4.0, 2 NaN.
+                assertQueryNoLeakCheck(
+                        """
+                                nv\tcnt
+                                3.0\t24
+                                4.0\t24
+                                null\t2
+                                """,
+                        "select nv, count(*) cnt from (" +
+                                "select nth_value(val, 2) over (" +
+                                "partition by i order by ts range between 100 second preceding and current row) nv from tab" +
+                                ") group by nv order by nv",
+                        null,
+                        true,
+                        true
+                );
+            });
+        } finally {
+            node1.setProperty(PropertyKey.CAIRO_SQL_WINDOW_STORE_PAGE_SIZE, 1024 * 1024);
+            node1.setProperty(PropertyKey.CAIRO_SQL_WINDOW_INITIAL_RANGE_BUFFER_SIZE, 32);
+        }
+    }
+
+    @Test
+    public void testNthValuePartitionedRowsUnboundedLockedIn() throws Exception {
+        // Partitioned ROWS frame with rowsLo=MIN_VALUE (unbounded preceding) and rowsHi=-1 (1
+        // preceding). Routes to NthValueOverPartitionRowsFrameUnboundedFunction (bufferSize=1,
+        // n=1). The state-machine class captures row-n's value once count reaches n and emits
+        // it for every subsequent row where count >= n + bufferSize. testNthValuePartitionedRows-
+        // FrameBounded exercises the separate bounded-lo class (NthValueOverPartitionRowsFrame-
+        // Function), so this is the only test that covers the unbounded-lo partitioned path.
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, i long, val double) timestamp(ts)", timestampType.getTypeName());
+            execute("insert into tab values " +
+                    "(1, 1, 10.0), (2, 1, 20.0), (3, 1, 30.0), " +
+                    "(4, 2, 40.0), (5, 2, 50.0)");
+
+            // NthValueOverPartitionRowsFrameUnboundedFunction captures the row-n value once seen
+            // and emits it for every subsequent row where count >= n + bufferSize. With n=1 and
+            // bufferSize=1, that threshold is reached on the second row of each partition.
+            assertQueryNoLeakCheck(
+                    replaceTimestampSuffix1("""
+                            ts\ti\tnv
+                            1970-01-01T00:00:00.000001Z\t1\tnull
+                            1970-01-01T00:00:00.000002Z\t1\t10.0
+                            1970-01-01T00:00:00.000003Z\t1\t10.0
+                            1970-01-01T00:00:00.000004Z\t2\tnull
+                            1970-01-01T00:00:00.000005Z\t2\t40.0
+                            """),
+                    "select ts, i, nth_value(val, 1) over (" +
+                            "partition by i order by ts rows between unbounded preceding and 1 preceding) nv from tab",
+                    "ts",
+                    false,
+                    true
+            );
+        });
+    }
+
+    @Test
+    public void testNthValuePartitionedRowsIncludingCurrent() throws Exception {
+        // Partitioned ROWS frame with rowsLo=-2, rowsHi=0 (current row). Routes to
+        // NthValueOverPartitionRowsFrameFunction with frameLoBounded=true,
+        // frameIncludesCurrentValue=true. Exercises computeNext lines 748-758, including
+        // n <= currentFrameSize (main path), n == currentFrameSize + 1 (returns current
+        // row's value — row 2 in partition 1 and row 7 in partition 2), and the else-NaN
+        // fallback. testNthValuePartitionedRowsFrameBounded uses FIC=false, so this is the
+        // only test that covers the FIC=true partitioned branch.
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, i long, val double) timestamp(ts)", timestampType.getTypeName());
+            execute("insert into tab values " +
+                    "(1, 1, 10.0), (2, 1, 20.0), (3, 1, 30.0), (4, 1, 40.0), (5, 1, 50.0), " +
+                    "(6, 2, 60.0), (7, 2, 70.0), (8, 2, 80.0)");
+
+            assertQueryNoLeakCheck(
+                    replaceTimestampSuffix1("""
+                            ts\ti\tnv
+                            1970-01-01T00:00:00.000001Z\t1\tnull
+                            1970-01-01T00:00:00.000002Z\t1\t20.0
+                            1970-01-01T00:00:00.000003Z\t1\t20.0
+                            1970-01-01T00:00:00.000004Z\t1\t30.0
+                            1970-01-01T00:00:00.000005Z\t1\t40.0
+                            1970-01-01T00:00:00.000006Z\t2\tnull
+                            1970-01-01T00:00:00.000007Z\t2\t70.0
+                            1970-01-01T00:00:00.000008Z\t2\t70.0
+                            """),
+                    "select ts, i, nth_value(val, 2) over (" +
+                            "partition by i order by ts rows between 2 preceding and current row) nv from tab",
+                    "ts",
+                    false,
+                    true
+            );
+        });
+    }
+
+    @Test
+    public void testNthValueRowsFrameIncludingCurrentRow() throws Exception {
+        // Non-partitioned ROWS frame with FIC=true. Triple assertion targets the non-
+        // partitioned NthValueOverRowsFrameFunction.computeNext branches:
+        //   - n=3 on "rows between 2 preceding and current row" (frameSize=2, includes
+        //     current): once the frame is full, the n==currentFrameSize+1 path returns
+        //     the current row's value.
+        //   - n=5 on same frame: n > currentFrameSize+1, so the else-NaN path always fires.
+        //   - n=1 on "rows between unbounded preceding and 2 preceding": routes to
+        //     NthValueOverRowsFrameUnboundedFunction, whose state machine locks row 1's
+        //     value and emits it from row 3 onward once totalCount >= n + bufferSize = 3.
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, val double) timestamp(ts)", timestampType.getTypeName());
+            execute("insert into tab values (1, 10.0), (2, 20.0), (3, 30.0), (4, 40.0), (5, 50.0)");
+
+            assertQueryNoLeakCheck(
+                    replaceTimestampSuffix1("""
+                            ts\tnv3\tnv5\tnvlocked
+                            1970-01-01T00:00:00.000001Z\tnull\tnull\tnull
+                            1970-01-01T00:00:00.000002Z\tnull\tnull\tnull
+                            1970-01-01T00:00:00.000003Z\t30.0\tnull\t10.0
+                            1970-01-01T00:00:00.000004Z\t40.0\tnull\t10.0
+                            1970-01-01T00:00:00.000005Z\t50.0\tnull\t10.0
+                            """),
+                    "select ts, " +
+                            "nth_value(val, 3) over (order by ts rows between 2 preceding and current row) nv3, " +
+                            "nth_value(val, 5) over (order by ts rows between 2 preceding and current row) nv5, " +
+                            "nth_value(val, 1) over (order by ts rows between unbounded preceding and 2 preceding) nvlocked " +
+                            "from tab",
+                    "ts",
+                    false,
+                    true
+            );
+        });
+    }
+
+    @Test
+    public void testNthValueToPlan() throws Exception {
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, i long, val double) timestamp(ts)", timestampType.getTypeName());
+
+            // RANGE frames bake the timestamp-unit diff into the plan, so the numeric tokens
+            // differ between MICRO (1 µs = 1 tick) and NANO (1 µs = 1000 ticks).
+            String tenMicros = timestampType == TestTimestampType.MICRO ? "10" : "10000";
+            String twoMicros = timestampType == TestTimestampType.MICRO ? "2" : "2000";
+
+            // NthValueOverPartitionRowsFrameFunction (bounded partitioned rows frame)
+            assertPlanNoLeakCheck(
+                    "select ts, i, nth_value(val, 2) over (partition by i order by ts rows between 2 preceding and current row) from tab",
+                    """
+                            Window
+                              functions: [nth_value(val,2) over (partition by [i] rows between 2 preceding and current row)]
+                                PageFrame
+                                    Row forward scan
+                                    Frame forward scan on: tab
+                            """
+            );
+            // NthValueOverWholeResultSetFunction
+            assertPlanNoLeakCheck(
+                    "select ts, nth_value(val, 2) over () from tab",
+                    """
+                            CachedWindow
+                              unorderedFunctions: [nth_value(val,2) over ()]
+                                PageFrame
+                                    Row forward scan
+                                    Frame forward scan on: tab
+                            """
+            );
+            // NthValueOverUnboundedRowsFrameFunction (default frame with order by)
+            assertPlanNoLeakCheck(
+                    "select ts, nth_value(val, 2) over (order by ts) from tab",
+                    """
+                            Window
+                              functions: [nth_value(val,2) over (rows between unbounded preceding and current row)]
+                                PageFrame
+                                    Row forward scan
+                                    Frame forward scan on: tab
+                            """
+            );
+            // NthValueOverCurrentRowFunction
+            assertPlanNoLeakCheck(
+                    "select ts, nth_value(val, 2) over (order by ts rows between current row and current row) from tab",
+                    """
+                            Window
+                              functions: [nth_value(val,2) over (rows between current row and current row)]
+                                PageFrame
+                                    Row forward scan
+                                    Frame forward scan on: tab
+                            """
+            );
+            // NthValueOverRowsFrameFunction — note leading space after "over (" (pre-existing
+            // pattern copied from FirstValueDoubleWindowFunctionFactory.toPlan)
+            assertPlanNoLeakCheck(
+                    "select ts, nth_value(val, 2) over (order by ts rows between 2 preceding and current row) from tab",
+                    """
+                            Window
+                              functions: [nth_value(val,2) over ( rows between 2 preceding and current row)]
+                                PageFrame
+                                    Row forward scan
+                                    Frame forward scan on: tab
+                            """
+            );
+            // NthValueOverRangeFrameFunction
+            assertPlanNoLeakCheck(
+                    "select ts, nth_value(val, 2) over (order by ts range between 10 microseconds preceding and current row) from tab",
+                    "Window\n" +
+                            "  functions: [nth_value(val,2) over (range between " + tenMicros + " preceding and current row)]\n" +
+                            "    PageFrame\n" +
+                            "        Row forward scan\n" +
+                            "        Frame forward scan on: tab\n"
+            );
+            // NthValueOverPartitionFunction (whole partition)
+            assertPlanNoLeakCheck(
+                    "select ts, i, nth_value(val, 2) over (partition by i) from tab",
+                    """
+                            CachedWindow
+                              unorderedFunctions: [nth_value(val,2) over (partition by [i])]
+                                PageFrame
+                                    Row forward scan
+                                    Frame forward scan on: tab
+                            """
+            );
+            // NthValueOverUnboundedPartitionFrameFunction, RANGE variant -- default frame
+            // for "partition by x order by y" is RANGE BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW.
+            assertPlanNoLeakCheck(
+                    "select ts, i, nth_value(val, 2) over (partition by i order by ts) from tab",
+                    """
+                            Window
+                              functions: [nth_value(val,2) over (partition by [i] range between unbounded preceding and current row)]
+                                PageFrame
+                                    Row forward scan
+                                    Frame forward scan on: tab
+                            """
+            );
+            // NthValueOverUnboundedPartitionFrameFunction, ROWS variant -- same class as
+            // the RANGE variant, but the plan must report "rows".
+            assertPlanNoLeakCheck(
+                    "select ts, i, nth_value(val, 2) over (partition by i order by ts rows between unbounded preceding and current row) from tab",
+                    """
+                            Window
+                              functions: [nth_value(val,2) over (partition by [i] rows between unbounded preceding and current row)]
+                                PageFrame
+                                    Row forward scan
+                                    Frame forward scan on: tab
+                            """
+            );
+            // NthValueOverPartitionRangeFrameFunction
+            assertPlanNoLeakCheck(
+                    "select ts, i, nth_value(val, 2) over (partition by i order by ts range between 2 microseconds preceding and current row) from tab",
+                    "Window\n" +
+                            "  functions: [nth_value(val,2) over (partition by [i] range between " + twoMicros + " preceding and current row)]\n" +
+                            "    PageFrame\n" +
+                            "        Row forward scan\n" +
+                            "        Frame forward scan on: tab\n"
+            );
+            // NthValueOverRowsFrameUnboundedFunction (rows between unbounded preceding and K preceding)
+            assertPlanNoLeakCheck(
+                    "select ts, nth_value(val, 1) over (order by ts rows between unbounded preceding and 2 preceding) from tab",
+                    """
+                            Window
+                              functions: [nth_value(val,1) over ( rows between unbounded preceding and 2 preceding)]
+                                PageFrame
+                                    Row forward scan
+                                    Frame forward scan on: tab
+                            """
+            );
+            // NthValueOverPartitionRowsFrameUnboundedFunction (partitioned variant of the above)
+            assertPlanNoLeakCheck(
+                    "select ts, i, nth_value(val, 1) over (partition by i order by ts rows between unbounded preceding and 1 preceding) from tab",
+                    """
+                            Window
+                              functions: [nth_value(val,1) over (partition by [i] rows between unbounded preceding and 1 preceding)]
+                                PageFrame
+                                    Row forward scan
+                                    Frame forward scan on: tab
+                            """
+            );
+        });
+    }
+
+    @Test
+    public void testNthValueRowsFrameLocksRowN() throws Exception {
+        // Regression pin for the unbounded-preceding..K-preceding ROWS frame: nth_value(1)
+        // must lock onto row 1's value and emit it unchanged for every row past the frame
+        // boundary. Previously a ring buffer of size K overwrote row 1's slot, causing the
+        // output to rotate through stale values.
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, val double) timestamp(ts)", timestampType.getTypeName());
+            execute("insert into tab values (1, 10.0), (2, 20.0), (3, 30.0), (4, 40.0), (5, 50.0), (6, 60.0)");
+
+            assertQueryNoLeakCheck(
+                    replaceTimestampSuffix1("""
+                            ts\tnv
+                            1970-01-01T00:00:00.000001Z\tnull
+                            1970-01-01T00:00:00.000002Z\tnull
+                            1970-01-01T00:00:00.000003Z\t10.0
+                            1970-01-01T00:00:00.000004Z\t10.0
+                            1970-01-01T00:00:00.000005Z\t10.0
+                            1970-01-01T00:00:00.000006Z\t10.0
+                            """),
+                    "select ts, nth_value(val, 1) over (" +
+                            "order by ts rows between unbounded preceding and 2 preceding) nv from tab",
+                    "ts",
+                    false,
+                    true
+            );
+        });
+    }
+
+    @Test
+    public void testNthValueRowsFrameNth2Locks() throws Exception {
+        // Same frame shape as testNthValueRowsFrameLocksRowN, but nth(2). The locked value
+        // must be row 2's value — a ring buffer of size K=2 would have overwritten row 2's
+        // slot by row 4, so this test catches any regression that reintroduces buffer-based
+        // tracking.
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, val double) timestamp(ts)", timestampType.getTypeName());
+            execute("insert into tab values (1, 10.0), (2, 20.0), (3, 30.0), (4, 40.0), (5, 50.0), (6, 60.0)");
+
+            // totalCount locks row 2's value (=20) once totalCount == n == 2; emitted once
+            // totalCount >= n + bufferSize = 4.
+            assertQueryNoLeakCheck(
+                    replaceTimestampSuffix1("""
+                            ts\tnv
+                            1970-01-01T00:00:00.000001Z\tnull
+                            1970-01-01T00:00:00.000002Z\tnull
+                            1970-01-01T00:00:00.000003Z\tnull
+                            1970-01-01T00:00:00.000004Z\t20.0
+                            1970-01-01T00:00:00.000005Z\t20.0
+                            1970-01-01T00:00:00.000006Z\t20.0
+                            """),
+                    "select ts, nth_value(val, 2) over (" +
+                            "order by ts rows between unbounded preceding and 2 preceding) nv from tab",
+                    "ts",
+                    false,
+                    true
+            );
+        });
+    }
+
+    @Test
+    public void testNthValuePartitionedRowsFrameLocksN2() throws Exception {
+        // Partitioned analogue of testNthValueRowsFrameNth2Locks. Each partition's map-stored
+        // count must reach n + bufferSize = 4 before the locked value becomes visible.
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, i long, val double) timestamp(ts)", timestampType.getTypeName());
+            execute("insert into tab values " +
+                    "(1, 1, 10.0), (2, 1, 20.0), (3, 1, 30.0), (4, 1, 40.0), (5, 1, 50.0), " +
+                    "(6, 2, 100.0), (7, 2, 200.0), (8, 2, 300.0), (9, 2, 400.0)");
+
+            assertQueryNoLeakCheck(
+                    replaceTimestampSuffix1("""
+                            ts\ti\tnv
+                            1970-01-01T00:00:00.000001Z\t1\tnull
+                            1970-01-01T00:00:00.000002Z\t1\tnull
+                            1970-01-01T00:00:00.000003Z\t1\tnull
+                            1970-01-01T00:00:00.000004Z\t1\t20.0
+                            1970-01-01T00:00:00.000005Z\t1\t20.0
+                            1970-01-01T00:00:00.000006Z\t2\tnull
+                            1970-01-01T00:00:00.000007Z\t2\tnull
+                            1970-01-01T00:00:00.000008Z\t2\tnull
+                            1970-01-01T00:00:00.000009Z\t2\t200.0
+                            """),
+                    "select ts, i, nth_value(val, 2) over (" +
+                            "partition by i order by ts rows between unbounded preceding and 2 preceding) nv from tab",
+                    "ts",
+                    false,
+                    true
+            );
+        });
+    }
+
+    @Test
+    public void testNthValueRowsFrameBoundaryExclusion() throws Exception {
+        // Regression for rows between X preceding and Y preceding (both bounded, Y > 0).
+        // At row M, frame = [max(1, M-X), M-Y]. With X=3, Y=2 on 5 rows:
+        //   row 3: frame = [1, 1] (single row)     → nth(1) = row 1's value.
+        //   row 4: frame = [1, 2]                   → nth(1) = row 1's value.
+        //   row 5: frame = [2, 3]                   → nth(1) = row 2's value.
+        // Previously the non-FIC arm computed currentFrameElements without subtracting the
+        // excluded tail, so nth(N) could read past the actual frame boundary.
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, val double) timestamp(ts)", timestampType.getTypeName());
+            execute("insert into tab values (1, 10.0), (2, 20.0), (3, 30.0), (4, 40.0), (5, 50.0)");
+
+            assertQueryNoLeakCheck(
+                    replaceTimestampSuffix1("""
+                            ts\tnv
+                            1970-01-01T00:00:00.000001Z\tnull
+                            1970-01-01T00:00:00.000002Z\tnull
+                            1970-01-01T00:00:00.000003Z\t10.0
+                            1970-01-01T00:00:00.000004Z\t10.0
+                            1970-01-01T00:00:00.000005Z\t20.0
+                            """),
+                    "select ts, nth_value(val, 1) over (" +
+                            "order by ts rows between 3 preceding and 2 preceding) nv from tab",
+                    "ts",
+                    false,
+                    true
+            );
+        });
+    }
+
+    @Test
+    public void testNthValuePartitionedRowsUnboundedToCurrent() throws Exception {
+        // Partitioned ROWS frame `unbounded preceding and current row`. Routes to
+        // NthValueOverUnboundedPartitionFrameFunction (factory branch at lines 179-194).
+        // nth(2) returns null until each partition has seen at least 2 rows, then locks on
+        // that partition's row-2 value.
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, i long, val double) timestamp(ts)", timestampType.getTypeName());
+            execute("insert into tab values " +
+                    "(1, 1, 10.0), (2, 1, 20.0), (3, 1, 30.0), " +
+                    "(4, 2, 100.0), (5, 2, 200.0), (6, 2, 300.0)");
+
+            assertQueryNoLeakCheck(
+                    replaceTimestampSuffix1("""
+                            ts\ti\tnv
+                            1970-01-01T00:00:00.000001Z\t1\tnull
+                            1970-01-01T00:00:00.000002Z\t1\t20.0
+                            1970-01-01T00:00:00.000003Z\t1\t20.0
+                            1970-01-01T00:00:00.000004Z\t2\tnull
+                            1970-01-01T00:00:00.000005Z\t2\t200.0
+                            1970-01-01T00:00:00.000006Z\t2\t200.0
+                            """),
+                    "select ts, i, nth_value(val, 2) over (" +
+                            "partition by i order by ts rows between unbounded preceding and current row) nv from tab",
+                    "ts",
+                    false,
+                    true
+            );
+        });
+    }
+
+    @Test
+    public void testNthValuePartitionedRowsWholePartition() throws Exception {
+        // Partitioned ROWS frame `unbounded preceding and unbounded following`. Routes to
+        // NthValueOverPartitionFunction (factory branch at lines 199-213; TWO_PASS). Output
+        // is each partition's row-2 value emitted for every row in that partition.
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, i long, val double) timestamp(ts)", timestampType.getTypeName());
+            execute("insert into tab values " +
+                    "(1, 1, 10.0), (2, 1, 20.0), (3, 1, 30.0), " +
+                    "(4, 2, 100.0), (5, 2, 200.0), (6, 2, 300.0)");
+
+            assertQueryNoLeakCheck(
+                    replaceTimestampSuffix1("""
+                            ts\ti\tnv
+                            1970-01-01T00:00:00.000001Z\t1\t20.0
+                            1970-01-01T00:00:00.000002Z\t1\t20.0
+                            1970-01-01T00:00:00.000003Z\t1\t20.0
+                            1970-01-01T00:00:00.000004Z\t2\t200.0
+                            1970-01-01T00:00:00.000005Z\t2\t200.0
+                            1970-01-01T00:00:00.000006Z\t2\t200.0
+                            """),
+                    "select ts, i, nth_value(val, 2) over (" +
+                            "partition by i order by ts rows between unbounded preceding and unbounded following) nv from tab",
+                    "ts",
+                    true,
+                    true
+            );
+        });
+    }
+
+    @Test
+    public void testNthValueRangeUnboundedToCurrent() throws Exception {
+        // Non-partitioned RANGE frame `unbounded preceding and current row`. Routes to
+        // NthValueOverUnboundedRowsFrameFunction (factory branch at lines 250-252). The
+        // frame grows with each row; nth(2) locks on row 2's value once seen.
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, val double) timestamp(ts)", timestampType.getTypeName());
+            execute("insert into tab values (1, 10.0), (2, 20.0), (3, 30.0), (4, 40.0), (5, 50.0)");
+
+            assertQueryNoLeakCheck(
+                    replaceTimestampSuffix1("""
+                            ts\tnv
+                            1970-01-01T00:00:00.000001Z\tnull
+                            1970-01-01T00:00:00.000002Z\t20.0
+                            1970-01-01T00:00:00.000003Z\t20.0
+                            1970-01-01T00:00:00.000004Z\t20.0
+                            1970-01-01T00:00:00.000005Z\t20.0
+                            """),
+                    "select ts, nth_value(val, 2) over (" +
+                            "order by ts range between unbounded preceding and current row) nv from tab",
+                    "ts",
+                    false,
+                    true
+            );
+        });
+    }
+
+    @Test
+    public void testNthValueRowsUnboundedToUnbounded() throws Exception {
+        // Non-partitioned ROWS frame `unbounded preceding and unbounded following`. Routes
+        // to NthValueOverWholeResultSetFunction (TWO_PASS): pass1 locks on the n-th row's
+        // value, pass2 writes it to every row.
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, val double) timestamp(ts)", timestampType.getTypeName());
+            execute("insert into tab values (1, 10.0), (2, 20.0), (3, 30.0), (4, 40.0), (5, 50.0)");
+
+            assertQueryNoLeakCheck(
+                    replaceTimestampSuffix1("""
+                            ts\tnv
+                            1970-01-01T00:00:00.000001Z\t20.0
+                            1970-01-01T00:00:00.000002Z\t20.0
+                            1970-01-01T00:00:00.000003Z\t20.0
+                            1970-01-01T00:00:00.000004Z\t20.0
+                            1970-01-01T00:00:00.000005Z\t20.0
+                            """),
+                    "select ts, nth_value(val, 2) over (" +
+                            "order by ts rows between unbounded preceding and unbounded following) nv from tab",
+                    "ts",
+                    true,
+                    true
+            );
+        });
+    }
+
+    @Test
+    public void testNtileRejectsIgnoreNulls() throws Exception {
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, val double) timestamp(ts)", timestampType.getTypeName());
+
+            assertExceptionNoLeakCheck(
+                    "select ntile(3) ignore nulls over (order by ts) from tab",
+                    16,
+                    "RESPECT/IGNORE NULLS is not supported for current window function",
+                    sqlExecutionContext
+            );
+        });
+    }
+
+    @Test
+    public void testCumeDistRejectsIgnoreNulls() throws Exception {
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, val double) timestamp(ts)", timestampType.getTypeName());
+
+            assertExceptionNoLeakCheck(
+                    "select cume_dist() ignore nulls over (order by ts) from tab",
+                    19,
+                    "RESPECT/IGNORE NULLS is not supported for current window function",
+                    sqlExecutionContext
+            );
+        });
+    }
+
+    @Test
+    public void testNtileRejectsRespectNulls() throws Exception {
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, val double) timestamp(ts)", timestampType.getTypeName());
+
+            assertExceptionNoLeakCheck(
+                    "select ntile(3) respect nulls over (order by ts) from tab",
+                    16,
+                    "RESPECT/IGNORE NULLS is not supported for current window function",
+                    sqlExecutionContext
+            );
+        });
+    }
+
+    @Test
+    public void testCumeDistRejectsRespectNulls() throws Exception {
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, val double) timestamp(ts)", timestampType.getTypeName());
+
+            assertExceptionNoLeakCheck(
+                    "select cume_dist() respect nulls over (order by ts) from tab",
+                    19,
+                    "RESPECT/IGNORE NULLS is not supported for current window function",
+                    sqlExecutionContext
+            );
+        });
+    }
+
+    @Test
+    public void testNtileRejectsExcludeClause() throws Exception {
+        // ntile() does not support framing, but a default-shape frame with EXCLUDE was
+        // previously slipping past the isDefaultFrame() check because that helper does not
+        // inspect the EXCLUDE clause. Ensure every EXCLUDE_* mode is rejected by ntile.
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, val double) timestamp(ts)", timestampType.getTypeName());
+
+            assertExceptionNoLeakCheck(
+                    "select ntile(3) over (order by ts " +
+                            "range between unbounded preceding and current row exclude current row) from tab",
+                    84,
+                    "ntile() does not support EXCLUDE clause",
+                    sqlExecutionContext
+            );
+            assertExceptionNoLeakCheck(
+                    "select ntile(3) over (order by ts " +
+                            "range between unbounded preceding and current row exclude group) from tab",
+                    84,
+                    "ntile() does not support EXCLUDE clause",
+                    sqlExecutionContext
+            );
+            assertExceptionNoLeakCheck(
+                    "select ntile(3) over (order by ts " +
+                            "range between unbounded preceding and current row exclude ties) from tab",
+                    84,
+                    "ntile() does not support EXCLUDE clause",
+                    sqlExecutionContext
+            );
+        });
+    }
+
+    @Test
+    public void testCumeDistRejectsExcludeClause() throws Exception {
+        // Mirrors testNtileRejectsExcludeClause: every EXCLUDE_* mode must be rejected by
+        // cume_dist, including EXCLUDE CURRENT ROW which is otherwise allowed by
+        // WindowContext.validate() for ranking functions.
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, val double) timestamp(ts)", timestampType.getTypeName());
+
+            assertExceptionNoLeakCheck(
+                    "select cume_dist() over (order by ts " +
+                            "range between unbounded preceding and current row exclude current row) from tab",
+                    87,
+                    "cume_dist() does not support EXCLUDE clause",
+                    sqlExecutionContext
+            );
+            assertExceptionNoLeakCheck(
+                    "select cume_dist() over (order by ts " +
+                            "range between unbounded preceding and current row exclude group) from tab",
+                    87,
+                    "cume_dist() does not support EXCLUDE clause",
+                    sqlExecutionContext
+            );
+            assertExceptionNoLeakCheck(
+                    "select cume_dist() over (order by ts " +
+                            "range between unbounded preceding and current row exclude ties) from tab",
+                    87,
+                    "cume_dist() does not support EXCLUDE clause",
+                    sqlExecutionContext
+            );
+        });
+    }
+
+    @Test
+    public void testNthValueAcceptsExcludeNoOthers() throws Exception {
+        // EXCLUDE NO OTHERS is the no-op default; rejecting it would over-tighten
+        // windowContext.validate(). This pins the accept path explicitly.
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, val double) timestamp(ts)", timestampType.getTypeName());
+            execute("insert into tab values (1, 10.0), (2, 20.0), (3, 30.0)");
+
+            assertQueryNoLeakCheck(
+                    replaceTimestampSuffix1("""
+                            ts\tval\tnv
+                            1970-01-01T00:00:00.000001Z\t10.0\tnull
+                            1970-01-01T00:00:00.000002Z\t20.0\t20.0
+                            1970-01-01T00:00:00.000003Z\t30.0\t20.0
+                            """),
+                    "select ts, val, nth_value(val, 2) over (order by ts " +
+                            "rows between 3 preceding and current row exclude no others) nv from tab",
+                    "ts",
+                    false,
+                    true
+            );
+        });
+    }
+
+    @Test
+    public void testNthValueAcceptsConstantExpression() throws Exception {
+        // n must be constant but does not need to be a literal; constant-folded
+        // expressions like 1+1 must resolve to an integer at compile time.
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, val double) timestamp(ts)", timestampType.getTypeName());
+            execute("insert into tab values (1, 10.0), (2, 20.0), (3, 30.0)");
+
+            assertQueryNoLeakCheck(
+                    replaceTimestampSuffix1("""
+                            ts\tval\tnv
+                            1970-01-01T00:00:00.000001Z\t10.0\tnull
+                            1970-01-01T00:00:00.000002Z\t20.0\t20.0
+                            1970-01-01T00:00:00.000003Z\t30.0\t20.0
+                            """),
+                    "select ts, val, nth_value(val, 1+1) over (order by ts) nv from tab",
+                    "ts",
+                    false,
+                    true
+            );
+        });
+    }
+
+    @Test
+    public void testNtileAcceptsConstantExpression() throws Exception {
+        // bucket count must be constant but does not need to be a literal.
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, val double) timestamp(ts)", timestampType.getTypeName());
+            execute("insert into tab values (1, 10.0), (2, 20.0), (3, 30.0), (4, 40.0)");
+
+            assertQueryNoLeakCheck(
+                    replaceTimestampSuffix1("""
+                            ts\tval\tbucket
+                            1970-01-01T00:00:00.000001Z\t10.0\t1
+                            1970-01-01T00:00:00.000002Z\t20.0\t1
+                            1970-01-01T00:00:00.000003Z\t30.0\t2
+                            1970-01-01T00:00:00.000004Z\t40.0\t2
+                            """),
+                    "select ts, val, ntile(1+1) over (order by ts) bucket from tab",
+                    "ts",
+                    true,
+                    true
+            );
+        });
+    }
+
+    @Test
+    public void testNthValueRejectsExcludeGroup() throws Exception {
+        // nth_value goes through windowContext.validate(), which allows EXCLUDE_NO_OTHERS and
+        // EXCLUDE_CURRENT_ROW but rejects EXCLUDE_GROUP / EXCLUDE_TIES. testNthValueRejects-
+        // ExcludeTies exercises the parallel TIES path.
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, val double) timestamp(ts)", timestampType.getTypeName());
+
+            assertExceptionNoLeakCheck(
+                    "select nth_value(val, 1) over (order by ts " +
+                            "rows between 3 preceding and current row exclude group) from tab",
+                    84,
+                    "only EXCLUDE NO OTHERS and EXCLUDE CURRENT ROW exclusion modes are supported",
+                    sqlExecutionContext
+            );
+        });
+    }
+
+    @Test
+    public void testNthValueRejectsExcludeTies() throws Exception {
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, val double) timestamp(ts)", timestampType.getTypeName());
+
+            assertExceptionNoLeakCheck(
+                    "select nth_value(val, 1) over (order by ts " +
+                            "rows between 3 preceding and current row exclude ties) from tab",
+                    84,
+                    "only EXCLUDE NO OTHERS and EXCLUDE CURRENT ROW exclusion modes are supported",
+                    sqlExecutionContext
+            );
+        });
+    }
+
+    @Test
+    public void testNthValueRejectsFollowing() throws Exception {
+        // FOLLOWING bounds are not in the FRAME_FUNCTIONS rejection loop because nth_value
+        // lives in WINDOW_ONLY_FUNCTIONS. Cover the path explicitly.
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, val double) timestamp(ts)", timestampType.getTypeName());
+
+            assertExceptionNoLeakCheck(
+                    "select nth_value(val, 1) over (order by ts " +
+                            "rows between current row and 1 following) from tab",
+                    74,
+                    "frame end supports _number_ PRECEDING and CURRENT ROW only",
+                    sqlExecutionContext
+            );
+        });
+    }
+
+    @Test
+    public void testNthValueRejectsGroupFraming() throws Exception {
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, val double) timestamp(ts)", timestampType.getTypeName());
+
+            assertExceptionNoLeakCheck(
+                    "select nth_value(val, 1) over (order by ts " +
+                            "groups between unbounded preceding and current row) from tab",
+                    7,
+                    "function not implemented for given window parameters",
+                    sqlExecutionContext
+            );
+        });
+    }
+
+    @Test
+    public void testNthValueRejectsEmptyFrame() throws Exception {
+        // rows between 1 preceding and 2 preceding inverts the bounds (rowsHi=-2 < rowsLo=-1),
+        // so the factory routes to DoubleNullFunction which returns null for every row.
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, val double) timestamp(ts)", timestampType.getTypeName());
+            execute("insert into tab values (1, 10.0), (2, 20.0), (3, 30.0)");
+
+            assertQueryNoLeakCheck(
+                    replaceTimestampSuffix1("""
+                            ts\tnv
+                            1970-01-01T00:00:00.000001Z\tnull
+                            1970-01-01T00:00:00.000002Z\tnull
+                            1970-01-01T00:00:00.000003Z\tnull
+                            """),
+                    "select ts, nth_value(val, 1) over (" +
+                            "order by ts rows between 1 preceding and 2 preceding) nv from tab",
+                    "ts",
+                    false,
+                    true
+            );
+        });
+    }
+
+    @Test
+    public void testCumeDistEmptyTable() throws Exception {
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, i long, val double) timestamp(ts)", timestampType.getTypeName());
+
+            assertQueryNoLeakCheck(
+                    "ts\tcd\n",
+                    "select ts, cume_dist() over (order by ts) cd from tab",
+                    "ts",
+                    true,
+                    true
+            );
+
+            assertQueryNoLeakCheck(
+                    "ts\ti\tcd\n",
+                    "select ts, i, cume_dist() over (partition by i order by ts) cd from tab",
+                    "ts",
+                    true,
+                    true
+            );
+        });
+    }
+
+    @Test
+    public void testCumeDistNullPartitionKey() throws Exception {
+        // NULL partition keys form their own partition per standard SQL.
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, i long, val double) timestamp(ts)", timestampType.getTypeName());
+            execute("insert into tab values " +
+                    "(1, 1, 10.0), (2, 1, 20.0), " +
+                    "(3, null, 30.0), (4, null, 40.0), (5, null, 50.0)");
+
+            assertQueryNoLeakCheck(
+                    replaceTimestampSuffix1("""
+                            ts\ti\tcd
+                            1970-01-01T00:00:00.000001Z\t1\t0.5
+                            1970-01-01T00:00:00.000002Z\t1\t1.0
+                            1970-01-01T00:00:00.000003Z\tnull\t0.3333333333333333
+                            1970-01-01T00:00:00.000004Z\tnull\t0.6666666666666666
+                            1970-01-01T00:00:00.000005Z\tnull\t1.0
+                            """),
+                    "select ts, i, cume_dist() over (partition by i order by ts) cd from tab",
+                    "ts",
+                    true,
+                    true
+            );
+        });
+    }
+
+    @Test
+    public void testCumeDistOrderByNullColumn() throws Exception {
+        // NULLs sort first in QuestDB, so {null, null} is the first peer group.
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, val long) timestamp(ts)", timestampType.getTypeName());
+            execute("insert into tab values (1, 10), (2, null), (3, 20), (4, null), (5, 20)");
+
+            assertQueryNoLeakCheck(
+                    replaceTimestampSuffix1("""
+                            ts\tval\tcd
+                            1970-01-01T00:00:00.000001Z\t10\t0.6
+                            1970-01-01T00:00:00.000002Z\tnull\t0.4
+                            1970-01-01T00:00:00.000003Z\t20\t1.0
+                            1970-01-01T00:00:00.000004Z\tnull\t0.4
+                            1970-01-01T00:00:00.000005Z\t20\t1.0
+                            """),
+                    "select ts, val, cume_dist() over (order by val) cd from tab",
+                    "ts",
+                    true,
+                    true
+            );
+        });
+    }
+
+    @Test
+    public void testCumeDistSingleRow() throws Exception {
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, i long, val double) timestamp(ts)", timestampType.getTypeName());
+            execute("insert into tab values (1, 1, 10.0)");
+
+            assertQueryNoLeakCheck(
+                    replaceTimestampSuffix1("""
+                            ts\tcd
+                            1970-01-01T00:00:00.000001Z\t1.0
+                            """),
+                    "select ts, cume_dist() over (order by ts) cd from tab",
+                    "ts",
+                    true,
+                    true
+            );
+
+            assertQueryNoLeakCheck(
+                    replaceTimestampSuffix1("""
+                            ts\ti\tcd
+                            1970-01-01T00:00:00.000001Z\t1\t1.0
+                            """),
+                    "select ts, i, cume_dist() over (partition by i order by ts) cd from tab",
+                    "ts",
+                    true,
+                    true
+            );
+        });
+    }
+
+    @Test
+    public void testNthValueEmptyTable() throws Exception {
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, i long, val double) timestamp(ts)", timestampType.getTypeName());
+
+            assertQueryNoLeakCheck(
+                    "ts\tnv\n",
+                    "select ts, nth_value(val, 2) over (order by ts) nv from tab",
+                    "ts",
+                    false,
+                    true
+            );
+
+            assertQueryNoLeakCheck(
+                    "ts\ti\tnv\n",
+                    "select ts, i, nth_value(val, 2) over (partition by i order by ts) nv from tab",
+                    "ts",
+                    false,
+                    true
+            );
+        });
+    }
+
+    @Test
+    public void testNthValueNullPartitionKey() throws Exception {
+        // NULL partition keys form their own partition per standard SQL.
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, i long, val double) timestamp(ts)", timestampType.getTypeName());
+            execute("insert into tab values " +
+                    "(1, 1, 10.0), (2, 1, 20.0), " +
+                    "(3, null, 30.0), (4, null, 40.0)");
+
+            assertQueryNoLeakCheck(
+                    replaceTimestampSuffix1("""
+                            ts\ti\tnv
+                            1970-01-01T00:00:00.000001Z\t1\tnull
+                            1970-01-01T00:00:00.000002Z\t1\t20.0
+                            1970-01-01T00:00:00.000003Z\tnull\tnull
+                            1970-01-01T00:00:00.000004Z\tnull\t40.0
+                            """),
+                    "select ts, i, nth_value(val, 2) over (partition by i order by ts) nv from tab",
+                    "ts",
+                    false,
+                    true
+            );
+        });
+    }
+
+    @Test
+    public void testNthValueSingleRow() throws Exception {
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, i long, val double) timestamp(ts)", timestampType.getTypeName());
+            execute("insert into tab values (1, 1, 10.0)");
+
+            assertQueryNoLeakCheck(
+                    replaceTimestampSuffix1("""
+                            ts\tnv1\tnv2
+                            1970-01-01T00:00:00.000001Z\t10.0\tnull
+                            """),
+                    "select ts, " +
+                            "nth_value(val, 1) over (order by ts) nv1, " +
+                            "nth_value(val, 2) over (order by ts) nv2 " +
+                            "from tab",
+                    "ts",
+                    false,
+                    true
+            );
+
+            assertQueryNoLeakCheck(
+                    replaceTimestampSuffix1("""
+                            ts\ti\tnv1\tnv2
+                            1970-01-01T00:00:00.000001Z\t1\t10.0\tnull
+                            """),
+                    "select ts, i, " +
+                            "nth_value(val, 1) over (partition by i order by ts) nv1, " +
+                            "nth_value(val, 2) over (partition by i order by ts) nv2 " +
+                            "from tab",
+                    "ts",
+                    false,
+                    true
+            );
+        });
+    }
+
+    @Test
+    public void testNtileEmptyTable() throws Exception {
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, i long, val double) timestamp(ts)", timestampType.getTypeName());
+
+            assertQueryNoLeakCheck(
+                    "ts\tbucket\n",
+                    "select ts, ntile(3) over (order by ts) bucket from tab",
+                    "ts",
+                    true,
+                    true
+            );
+
+            assertQueryNoLeakCheck(
+                    "ts\ti\tbucket\n",
+                    "select ts, i, ntile(3) over (partition by i order by ts) bucket from tab",
+                    "ts",
+                    true,
+                    true
+            );
+        });
+    }
+
+    @Test
+    public void testNtileNullPartitionKey() throws Exception {
+        // NULL partition keys form their own partition per standard SQL. Asymmetric data
+        // (3 i=1 rows, 5 i=null rows) with ntile(3) distinguishes "NULLs as own partition"
+        // (i=1: 1,2,3; null: 1,1,2,2,3) from "NULLs merged into one big partition" (which
+        // would yield a different distribution across all 8 rows).
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, i long, val double) timestamp(ts)", timestampType.getTypeName());
+            execute("insert into tab values " +
+                    "(1, 1, 10.0), (2, 1, 20.0), (3, 1, 30.0), " +
+                    "(4, null, 40.0), (5, null, 50.0), (6, null, 60.0), (7, null, 70.0), (8, null, 80.0)");
+
+            assertQueryNoLeakCheck(
+                    replaceTimestampSuffix1("""
+                            ts\ti\tbucket
+                            1970-01-01T00:00:00.000001Z\t1\t1
+                            1970-01-01T00:00:00.000002Z\t1\t2
+                            1970-01-01T00:00:00.000003Z\t1\t3
+                            1970-01-01T00:00:00.000004Z\tnull\t1
+                            1970-01-01T00:00:00.000005Z\tnull\t1
+                            1970-01-01T00:00:00.000006Z\tnull\t2
+                            1970-01-01T00:00:00.000007Z\tnull\t2
+                            1970-01-01T00:00:00.000008Z\tnull\t3
+                            """),
+                    "select ts, i, ntile(3) over (partition by i order by ts) bucket from tab",
+                    "ts",
+                    true,
+                    true
+            );
+        });
+    }
+
+    @Test
+    public void testNtileOrderByNullColumn() throws Exception {
+        // NULLs sort first in QuestDB, so the first ntile bucket is filled with NULL-bearing
+        // rows. Mirrors testCumeDistOrderByNullColumn for the ntile factory.
+        // 5 rows, ntile(3) -> bucketSize=1, remainder=2 -> buckets of size 2,2,1.
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, val long) timestamp(ts)", timestampType.getTypeName());
+            execute("insert into tab values (1, 10), (2, null), (3, 20), (4, null), (5, 30)");
+
+            assertQueryNoLeakCheck(
+                    replaceTimestampSuffix1("""
+                            ts\tval\tbucket
+                            1970-01-01T00:00:00.000001Z\t10\t2
+                            1970-01-01T00:00:00.000002Z\tnull\t1
+                            1970-01-01T00:00:00.000003Z\t20\t2
+                            1970-01-01T00:00:00.000004Z\tnull\t1
+                            1970-01-01T00:00:00.000005Z\t30\t3
+                            """),
+                    "select ts, val, ntile(3) over (order by val) bucket from tab",
+                    "ts",
+                    true,
+                    true
+            );
+        });
+    }
+
+    @Test
+    public void testNtilePartitionedReopen() throws Exception {
+        // Partitioned ntile mirrors the cume_dist reopen sibling. Exercises the per-partition
+        // map lifecycle (preparePass2 walks the cursor, pass2 reads back per-partition state)
+        // through assertQueryNoLeakCheck which re-runs the cursor and triggers reopen() paths.
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, i long, val long) timestamp(ts)", timestampType.getTypeName());
+            execute("insert into tab values (1, 1, 10), (2, 1, 20), (3, 1, 30), (4, 2, 40), (5, 2, 50)");
+
+            assertQueryNoLeakCheck(
+                    replaceTimestampSuffix1("""
+                            ts\ti\tbucket
+                            1970-01-01T00:00:00.000001Z\t1\t1
+                            1970-01-01T00:00:00.000002Z\t1\t2
+                            1970-01-01T00:00:00.000003Z\t1\t3
+                            1970-01-01T00:00:00.000004Z\t2\t1
+                            1970-01-01T00:00:00.000005Z\t2\t2
+                            """),
+                    "select ts, i, ntile(3) over (partition by i order by val) bucket from tab",
+                    "ts",
+                    true,
+                    true
+            );
+        });
+    }
+
+    @Test
+    public void testNthValuePartitionedRangeFrameBoundedWithNulls() throws Exception {
+        // NthValueOverPartitionRangeFrameFunction with frameLoBounded=true and NULL values
+        // landing on the n-th frame slot. testNthValuePartitionedWithNulls Variant 3 only
+        // exercises n=1 where the first frame value is never NULL; this case asserts that
+        // a NULL stored at index n-1 inside the native ring buffer round-trips correctly.
+        // 1-second RANGE window keeps all three rows of each partition in the frame at the
+        // last row regardless of timestamp precision (rows are 1us / 1ns apart), so
+        // nth_value(val, 2) reads the second row of each frame:
+        //   i=1 frame[1] = null, i=2 frame[1] = 20.0.
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, i long, val double) timestamp(ts)", timestampType.getTypeName());
+            execute("""
+                    insert into tab values
+                    (1, 1, 10.0),
+                    (2, 1, null),
+                    (3, 1, 30.0),
+                    (4, 2, null),
+                    (5, 2, 20.0),
+                    (6, 2, null)""");
+
+            assertQueryNoLeakCheck(
+                    replaceTimestampSuffix1("""
+                            ts\ti\tnv
+                            1970-01-01T00:00:00.000001Z\t1\tnull
+                            1970-01-01T00:00:00.000002Z\t1\tnull
+                            1970-01-01T00:00:00.000003Z\t1\tnull
+                            1970-01-01T00:00:00.000004Z\t2\tnull
+                            1970-01-01T00:00:00.000005Z\t2\t20.0
+                            1970-01-01T00:00:00.000006Z\t2\t20.0
+                            """),
+                    "select ts, i, nth_value(val, 2) over (" +
+                            "partition by i order by ts range between 1 second preceding and current row) nv from tab",
+                    "ts",
+                    false,
+                    true
+            );
+        });
+    }
+
+    @Test
+    public void testNthValueRejectsFrameOverflow() throws Exception {
+        // ROWS frame bounds map to int-sized ring-buffer indices. NthValueDoubleWindowFunctionFactory
+        // explicitly rejects |rowsLo| > Integer.MAX_VALUE and |rowsHi| > Integer.MAX_VALUE before
+        // attempting to allocate the buffer.
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, val double) timestamp(ts)", timestampType.getTypeName());
+
+            // |rowsLo| = 2^31 > Integer.MAX_VALUE, current row as upper bound.
+            assertExceptionNoLeakCheck(
+                    "select nth_value(val, 1) over (order by ts " +
+                            "rows between 2_147_483_648 preceding and current row) nv from tab",
+                    70,
+                    "frame start exceeds maximum supported size",
+                    sqlExecutionContext
+            );
+
+            // rowsLo = unbounded (skips its own check), |rowsHi| = 2^31 > Integer.MAX_VALUE.
+            assertExceptionNoLeakCheck(
+                    "select nth_value(val, 1) over (order by ts " +
+                            "rows between unbounded preceding and 2_147_483_648 preceding) nv from tab",
+                    94,
+                    "frame end exceeds maximum supported size",
+                    sqlExecutionContext
+            );
+        });
+    }
+
+    @Test
+    public void testNtileCumeDistNthValueCombinedSelect() throws Exception {
+        // Mix all three new window functions in a single SELECT; verifies they coexist when
+        // sharing partition / order / frame state without interfering.
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, val double) timestamp(ts)", timestampType.getTypeName());
+            execute("insert into tab values " +
+                    "(1, 10.0), (2, 20.0), (3, 30.0), (4, 40.0), (5, 50.0)");
+
+            assertQueryNoLeakCheck(
+                    replaceTimestampSuffix1("""
+                            ts\tbucket\tcd\tnv
+                            1970-01-01T00:00:00.000001Z\t1\t0.2\tnull
+                            1970-01-01T00:00:00.000002Z\t1\t0.4\t20.0
+                            1970-01-01T00:00:00.000003Z\t2\t0.6\t20.0
+                            1970-01-01T00:00:00.000004Z\t2\t0.8\t20.0
+                            1970-01-01T00:00:00.000005Z\t3\t1.0\t20.0
+                            """),
+                    "select ts, " +
+                            "ntile(3) over (order by ts) bucket, " +
+                            "cume_dist() over (order by ts) cd, " +
+                            "nth_value(val, 2) over (order by ts rows between unbounded preceding and current row) nv " +
+                            "from tab",
+                    "ts",
+                    true,
+                    true
+            );
+        });
+    }
+
+    @Test
+    public void testNthValueRejectsArity() throws Exception {
+        // nth_value requires (expr, n); a single-argument call must produce a positioned
+        // SqlException pointing at the function token.
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, val double) timestamp(ts)", timestampType.getTypeName());
+
+            assertExceptionNoLeakCheck(
+                    "select nth_value(val) over (order by ts) from tab",
+                    7,
+                    "wrong number of arguments for function `nth_value`",
+                    sqlExecutionContext
+            );
+        });
+    }
+
+    @Test
+    public void testNtileSingleRow() throws Exception {
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, i long, val double) timestamp(ts)", timestampType.getTypeName());
+            execute("insert into tab values (1, 1, 10.0)");
+
+            assertQueryNoLeakCheck(
+                    replaceTimestampSuffix1("""
+                            ts\tbucket
+                            1970-01-01T00:00:00.000001Z\t1
+                            """),
+                    "select ts, ntile(5) over (order by ts) bucket from tab",
+                    "ts",
+                    true,
+                    true
+            );
+
+            assertQueryNoLeakCheck(
+                    replaceTimestampSuffix1("""
+                            ts\ti\tbucket
+                            1970-01-01T00:00:00.000001Z\t1\t1
+                            """),
+                    "select ts, i, ntile(5) over (partition by i order by ts) bucket from tab",
+                    "ts",
+                    true,
+                    true
+            );
+        });
+    }
+
+    @Test
+    public void testNthValueRowsExcludeCurrentRow() throws Exception {
+        // EXCLUDE CURRENT ROW with rowsHi=0 normalizes rowsHi to -1 in WindowContextImpl,
+        // so the frame becomes effectively rows between 3 preceding and 1 preceding.
+        // For nth_value(val, 2) the frame must skip the current row even when nominally
+        // declared as ending at CURRENT ROW.
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, val double) timestamp(ts)", timestampType.getTypeName());
+            execute("insert into tab values (1, 10.0), (2, 20.0), (3, 30.0), (4, 40.0), (5, 50.0)");
+
+            assertQueryNoLeakCheck(
+                    replaceTimestampSuffix1("""
+                            ts\tnv
+                            1970-01-01T00:00:00.000001Z\tnull
+                            1970-01-01T00:00:00.000002Z\tnull
+                            1970-01-01T00:00:00.000003Z\t20.0
+                            1970-01-01T00:00:00.000004Z\t20.0
+                            1970-01-01T00:00:00.000005Z\t30.0
+                            """),
+                    "select ts, nth_value(val, 2) over (" +
+                            "order by ts rows between 3 preceding and current row exclude current row) nv from tab",
+                    "ts",
+                    false,
+                    true
+            );
+        });
+    }
+
+    @Test
+    public void testNthValueRangeFrameOrderByDesc() throws Exception {
+        // RANGE frames are supported only on the designated timestamp; verify the DESC
+        // path through NthValueOverRangeFrameFunction. With ts DESC ordering, the row at
+        // ts=5 sees an empty preceding frame, the row at ts=4 sees [50.0], etc., so
+        // nth_value(val, 2) locks once two values are visible.
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, val double) timestamp(ts)", timestampType.getTypeName());
+            execute("insert into tab values (1, 10.0), (2, 20.0), (3, 30.0), (4, 40.0), (5, 50.0)");
+
+            assertQueryNoLeakCheck(
+                    replaceTimestampSuffix1("""
+                            ts\tnv
+                            1970-01-01T00:00:00.000005Z\tnull
+                            1970-01-01T00:00:00.000004Z\t40.0
+                            1970-01-01T00:00:00.000003Z\t40.0
+                            1970-01-01T00:00:00.000002Z\t40.0
+                            1970-01-01T00:00:00.000001Z\t40.0
+                            """),
+                    "select ts, nth_value(val, 2) over (" +
+                            "order by ts desc range between unbounded preceding and current row) nv from tab order by ts desc",
+                    "ts###DESC",
+                    false,
+                    true
+            );
+        });
+    }
+
+    @Test
+    public void testNtilePartitionedOrderByDesc() throws Exception {
+        // Partition by + order by ts DESC together. Each partition's rows are visited in
+        // descending timestamp order; ntile(2) buckets the partition rows accordingly.
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, i long, val double) timestamp(ts)", timestampType.getTypeName());
+            execute("insert into tab values " +
+                    "(1, 1, 10.0), (2, 1, 20.0), (3, 1, 30.0), (4, 1, 40.0), " +
+                    "(5, 2, 50.0), (6, 2, 60.0), (7, 2, 70.0)");
+
+            assertQueryNoLeakCheck(
+                    replaceTimestampSuffix1("""
+                            ts\ti\tbucket
+                            1970-01-01T00:00:00.000007Z\t2\t1
+                            1970-01-01T00:00:00.000006Z\t2\t1
+                            1970-01-01T00:00:00.000005Z\t2\t2
+                            1970-01-01T00:00:00.000004Z\t1\t1
+                            1970-01-01T00:00:00.000003Z\t1\t1
+                            1970-01-01T00:00:00.000002Z\t1\t2
+                            1970-01-01T00:00:00.000001Z\t1\t2
+                            """),
+                    "select ts, i, ntile(2) over (partition by i order by ts desc) bucket from tab order by ts desc",
+                    "ts###DESC",
+                    true,
+                    true
+            );
+        });
+    }
+
+    @Test
+    public void testCumeDistPartitionedOrderByDesc() throws Exception {
+        // cume_dist with partition by + order by ts DESC. Each partition is ranked
+        // independently in descending timestamp order. Mirrors the ntile DESC sibling.
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, i long, val double) timestamp(ts)", timestampType.getTypeName());
+            execute("insert into tab values " +
+                    "(1, 1, 10.0), (2, 1, 20.0), (3, 1, 30.0), (4, 1, 40.0), " +
+                    "(5, 2, 50.0), (6, 2, 60.0)");
+
+            assertQueryNoLeakCheck(
+                    replaceTimestampSuffix1("""
+                            ts\ti\tcd
+                            1970-01-01T00:00:00.000006Z\t2\t0.5
+                            1970-01-01T00:00:00.000005Z\t2\t1.0
+                            1970-01-01T00:00:00.000004Z\t1\t0.25
+                            1970-01-01T00:00:00.000003Z\t1\t0.5
+                            1970-01-01T00:00:00.000002Z\t1\t0.75
+                            1970-01-01T00:00:00.000001Z\t1\t1.0
+                            """),
+                    "select ts, i, cume_dist() over (partition by i order by ts desc) cd from tab order by ts desc",
+                    "ts###DESC",
+                    true,
+                    true
+            );
+        });
+    }
+
+    @Test
+    public void testNtilePartitionedByTwoColumns() throws Exception {
+        // Multi-column PARTITION BY exercises the composite key path through the partition
+        // map. With (i, j) as the composite key, four distinct partitions form: (1,1),
+        // (1,2), (2,1), (2,2).
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, i long, j long, val double) timestamp(ts)", timestampType.getTypeName());
+            execute("insert into tab values " +
+                    "(1, 1, 1, 10.0), (2, 1, 1, 20.0), (3, 1, 1, 30.0), (4, 1, 1, 40.0), " +
+                    "(5, 1, 2, 50.0), (6, 1, 2, 60.0), " +
+                    "(7, 2, 1, 70.0), " +
+                    "(8, 2, 2, 80.0), (9, 2, 2, 90.0), (10, 2, 2, 100.0)");
+
+            assertQueryNoLeakCheck(
+                    replaceTimestampSuffix1("""
+                            ts\ti\tj\tbucket
+                            1970-01-01T00:00:00.000001Z\t1\t1\t1
+                            1970-01-01T00:00:00.000002Z\t1\t1\t1
+                            1970-01-01T00:00:00.000003Z\t1\t1\t2
+                            1970-01-01T00:00:00.000004Z\t1\t1\t2
+                            1970-01-01T00:00:00.000005Z\t1\t2\t1
+                            1970-01-01T00:00:00.000006Z\t1\t2\t2
+                            1970-01-01T00:00:00.000007Z\t2\t1\t1
+                            1970-01-01T00:00:00.000008Z\t2\t2\t1
+                            1970-01-01T00:00:00.000009Z\t2\t2\t1
+                            1970-01-01T00:00:00.000010Z\t2\t2\t2
+                            """),
+                    "select ts, i, j, ntile(2) over (partition by i, j order by ts) bucket from tab",
+                    "ts",
+                    true,
+                    true
+            );
+        });
+    }
+
+    @Test
+    public void testCumeDistPartitionedByTwoColumns() throws Exception {
+        // Multi-column PARTITION BY for cume_dist. Each (i, j) partition is ranked
+        // independently. Mirrors the ntile two-column test.
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, i long, j long, val double) timestamp(ts)", timestampType.getTypeName());
+            execute("insert into tab values " +
+                    "(1, 1, 1, 10.0), (2, 1, 1, 20.0), " +
+                    "(3, 1, 2, 30.0), (4, 1, 2, 40.0), (5, 1, 2, 50.0), " +
+                    "(6, 2, 1, 60.0)");
+
+            assertQueryNoLeakCheck(
+                    replaceTimestampSuffix1("""
+                            ts\ti\tj\tcd
+                            1970-01-01T00:00:00.000001Z\t1\t1\t0.5
+                            1970-01-01T00:00:00.000002Z\t1\t1\t1.0
+                            1970-01-01T00:00:00.000003Z\t1\t2\t0.3333333333333333
+                            1970-01-01T00:00:00.000004Z\t1\t2\t0.6666666666666666
+                            1970-01-01T00:00:00.000005Z\t1\t2\t1.0
+                            1970-01-01T00:00:00.000006Z\t2\t1\t1.0
+                            """),
+                    "select ts, i, j, cume_dist() over (partition by i, j order by ts) cd from tab",
+                    "ts",
+                    true,
+                    true
+            );
+        });
+    }
+
+    @Test
+    public void testNtilePartitionedBySymbol() throws Exception {
+        // Symbol-typed partition keys go through SymbolFunction-based partitionBySink,
+        // distinct from LONG. Verifies that ntile resolves partitions correctly when the
+        // key is a symbol column.
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, s symbol, val double) timestamp(ts)", timestampType.getTypeName());
+            execute("insert into tab values " +
+                    "(1, 'a', 10.0), (2, 'a', 20.0), (3, 'a', 30.0), " +
+                    "(4, 'b', 40.0), (5, 'b', 50.0)");
+
+            assertQueryNoLeakCheck(
+                    replaceTimestampSuffix1("""
+                            ts\ts\tbucket
+                            1970-01-01T00:00:00.000001Z\ta\t1
+                            1970-01-01T00:00:00.000002Z\ta\t1
+                            1970-01-01T00:00:00.000003Z\ta\t2
+                            1970-01-01T00:00:00.000004Z\tb\t1
+                            1970-01-01T00:00:00.000005Z\tb\t2
+                            """),
+                    "select ts, s, ntile(2) over (partition by s order by ts) bucket from tab",
+                    "ts",
+                    true,
+                    true
+            );
+        });
+    }
+
+    @Test
+    public void testNthValuePartitionedBySymbol() throws Exception {
+        // Mirror of testNtilePartitionedBySymbol for nth_value. Each per-symbol partition
+        // independently locks the second value.
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, s symbol, val double) timestamp(ts)", timestampType.getTypeName());
+            execute("insert into tab values " +
+                    "(1, 'a', 10.0), (2, 'a', 20.0), (3, 'a', 30.0), " +
+                    "(4, 'b', 40.0), (5, 'b', 50.0), (6, 'b', 60.0)");
+
+            assertQueryNoLeakCheck(
+                    replaceTimestampSuffix1("""
+                            ts\ts\tnv
+                            1970-01-01T00:00:00.000001Z\ta\tnull
+                            1970-01-01T00:00:00.000002Z\ta\t20.0
+                            1970-01-01T00:00:00.000003Z\ta\t20.0
+                            1970-01-01T00:00:00.000004Z\tb\tnull
+                            1970-01-01T00:00:00.000005Z\tb\t50.0
+                            1970-01-01T00:00:00.000006Z\tb\t50.0
+                            """),
+                    "select ts, s, nth_value(val, 2) over (" +
+                            "partition by s order by ts rows between unbounded preceding and current row) nv from tab",
+                    "ts",
+                    false,
+                    true
+            );
+        });
+    }
+
+    @Test
+    public void testNthValueRowsNEqualsPartitionSize() throws Exception {
+        // n exactly equals the partition size, so the nth-value lock fires on the very
+        // last row of the partition. The lock-in fast path that skips per-row work after
+        // count >= n is exercised only by the trailing rows of partitions whose size is
+        // strictly larger than n; this test pins the count == n boundary instead.
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, i long, val double) timestamp(ts)", timestampType.getTypeName());
+            execute("insert into tab values " +
+                    "(1, 1, 10.0), (2, 1, 20.0), (3, 1, 30.0), " +
+                    "(4, 2, 40.0), (5, 2, 50.0), (6, 2, 60.0)");
+
+            assertQueryNoLeakCheck(
+                    replaceTimestampSuffix1("""
+                            ts\ti\tnv
+                            1970-01-01T00:00:00.000001Z\t1\tnull
+                            1970-01-01T00:00:00.000002Z\t1\tnull
+                            1970-01-01T00:00:00.000003Z\t1\t30.0
+                            1970-01-01T00:00:00.000004Z\t2\tnull
+                            1970-01-01T00:00:00.000005Z\t2\tnull
+                            1970-01-01T00:00:00.000006Z\t2\t60.0
+                            """),
+                    "select ts, i, nth_value(val, 3) over (" +
+                            "partition by i order by ts rows between unbounded preceding and current row) nv from tab",
+                    "ts",
+                    false,
+                    true
+            );
+        });
+    }
+
+    @Test
+    public void testNtileCumeDistNthValueNamedWindow() throws Exception {
+        // WINDOW w AS (...) names the same OVER clause once and reuses it across all three
+        // factories. This exercises the named-window resolution path for ntile / cume_dist
+        // / nth_value, which is otherwise covered only for sum / row_number elsewhere.
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, val double) timestamp(ts)", timestampType.getTypeName());
+            execute("insert into tab values " +
+                    "(1, 10.0), (2, 20.0), (3, 30.0), (4, 40.0), (5, 50.0)");
+
+            assertQueryNoLeakCheck(
+                    replaceTimestampSuffix1("""
+                            ts\tbucket\tcd\tnv
+                            1970-01-01T00:00:00.000001Z\t1\t0.2\t10.0
+                            1970-01-01T00:00:00.000002Z\t1\t0.4\t10.0
+                            1970-01-01T00:00:00.000003Z\t2\t0.6\t10.0
+                            1970-01-01T00:00:00.000004Z\t2\t0.8\t10.0
+                            1970-01-01T00:00:00.000005Z\t3\t1.0\t10.0
+                            """),
+                    "select ts, " +
+                            "ntile(3) over w bucket, " +
+                            "cume_dist() over w cd, " +
+                            "nth_value(val, 1) over w nv " +
+                            "from tab " +
+                            "window w as (order by ts)",
+                    "ts",
+                    true,
+                    true
+            );
+        });
+    }
+
+    @Test
+    public void testNtileCumeDistNthValueOverFilteredCursor() throws Exception {
+        // Base relation is a WHERE-filtered subquery; the window cursor only sees rows
+        // that survive the predicate. Ensures ntile / cume_dist / nth_value compose with
+        // an upstream filter rather than always reading the full table cursor.
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, i long, val double) timestamp(ts)", timestampType.getTypeName());
+            execute("insert into tab values " +
+                    "(1, 1, 10.0), (2, 2, 20.0), (3, 1, 30.0), (4, 2, 40.0), " +
+                    "(5, 1, 50.0), (6, 2, 60.0)");
+
+            assertQueryNoLeakCheck(
+                    replaceTimestampSuffix1("""
+                            ts\ti\tbucket\tcd\tnv
+                            1970-01-01T00:00:00.000001Z\t1\t1\t0.3333333333333333\tnull
+                            1970-01-01T00:00:00.000003Z\t1\t2\t0.6666666666666666\t30.0
+                            1970-01-01T00:00:00.000005Z\t1\t3\t1.0\t30.0
+                            """),
+                    "select ts, i, " +
+                            "ntile(3) over (order by ts) bucket, " +
+                            "cume_dist() over (order by ts) cd, " +
+                            "nth_value(val, 2) over (order by ts rows between unbounded preceding and current row) nv " +
+                            "from (select * from tab where i = 1)",
+                    "ts",
+                    true,
+                    true
+            );
+        });
+    }
+
+    @Test
     public void testStdDevPopCurrentRowSemantics() throws Exception {
         assertMemoryLeak(() -> {
             executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, j double) timestamp(ts)", timestampType.getTypeName());
@@ -13734,6 +17557,9 @@ public class WindowFunctionTest extends AbstractCairoTest {
                     RankFunctionFactory.class,
                     DenseRankFunctionFactory.class,
                     RowNumberFunctionFactory.class,
+                    NtileFunctionFactory.class,
+                    CumeDistFunctionFactory.class,
+                    NthValueDoubleWindowFunctionFactory.class,
                     AvgDoubleWindowFunctionFactory.class,
                     SumDoubleWindowFunctionFactory.class,
                     StdDevPopDoubleWindowFunctionFactory.class,
@@ -14902,6 +18728,155 @@ public class WindowFunctionTest extends AbstractCairoTest {
         });
     }
 
+    @Test
+    public void testCumeDistExplainPlan() throws Exception {
+        // Locks down toPlan output for cume_dist across both dismissOrder paths.
+        // Before the SqlCodeGenerator fix that passes ac.getOrderBy() to initRecordComparator,
+        // any ORDER BY clause that was not the designated timestamp routed through the
+        // dismissOrder=false branch and crashed with NPE in CumeDistFunction.toPlan because
+        // the orderBy field was left null.
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, i long, val long) timestamp(ts)", timestampType.getTypeName());
+
+            // No ORDER BY -> CumeDistNoOrderFunction (constant 1.0), Window (not Cached).
+            assertPlanNoLeakCheck(
+                    "SELECT cume_dist() OVER () FROM tab",
+                    """
+                            Window
+                              functions: [cume_dist() over ()]
+                                PageFrame
+                                    Row forward scan
+                                    Frame forward scan on: tab
+                            """
+            );
+            assertPlanNoLeakCheck(
+                    "SELECT cume_dist() OVER (PARTITION BY i) FROM tab",
+                    """
+                            Window
+                              functions: [cume_dist() over (partition by [i])]
+                                PageFrame
+                                    Row forward scan
+                                    Frame forward scan on: tab
+                            """
+            );
+
+            // ORDER BY designated timestamp -> dismissOrder=true path.
+            assertPlanNoLeakCheck(
+                    "SELECT cume_dist() OVER (ORDER BY ts) FROM tab",
+                    """
+                            CachedWindow
+                              unorderedFunctions: [cume_dist() over (order by [ts])]
+                                PageFrame
+                                    Row forward scan
+                                    Frame forward scan on: tab
+                            """
+            );
+            assertPlanNoLeakCheck(
+                    "SELECT cume_dist() OVER (PARTITION BY i ORDER BY ts) FROM tab",
+                    """
+                            CachedWindow
+                              unorderedFunctions: [cume_dist() over (partition by [i] order by [ts])]
+                                PageFrame
+                                    Row forward scan
+                                    Frame forward scan on: tab
+                            """
+            );
+
+            // ORDER BY non-timestamp column -> dismissOrder=false path (the previously-broken one).
+            assertPlanNoLeakCheck(
+                    "SELECT cume_dist() OVER (ORDER BY val) FROM tab",
+                    """
+                            CachedWindow
+                              orderedFunctions: [[val] => [cume_dist() over (order by [val])]]
+                                PageFrame
+                                    Row forward scan
+                                    Frame forward scan on: tab
+                            """
+            );
+            assertPlanNoLeakCheck(
+                    "SELECT cume_dist() OVER (PARTITION BY i ORDER BY val) FROM tab",
+                    """
+                            CachedWindow
+                              orderedFunctions: [[val] => [cume_dist() over (partition by [i] order by [val])]]
+                                PageFrame
+                                    Row forward scan
+                                    Frame forward scan on: tab
+                            """
+            );
+        });
+    }
+
+    @Test
+    public void testNtileExplainPlan() throws Exception {
+        // Locks down toPlan output for ntile across both dismissOrder paths.
+        // Before the fix, ntile silently dropped the ORDER BY clause from the plan
+        // whenever the order-by column was not the designated timestamp.
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, i long, val long) timestamp(ts)", timestampType.getTypeName());
+
+            assertPlanNoLeakCheck(
+                    "SELECT ntile(3) OVER () FROM tab",
+                    """
+                            CachedWindow
+                              unorderedFunctions: [ntile(3) over ()]
+                                PageFrame
+                                    Row forward scan
+                                    Frame forward scan on: tab
+                            """
+            );
+            assertPlanNoLeakCheck(
+                    "SELECT ntile(3) OVER (PARTITION BY i) FROM tab",
+                    """
+                            CachedWindow
+                              unorderedFunctions: [ntile(3) over (partition by [i])]
+                                PageFrame
+                                    Row forward scan
+                                    Frame forward scan on: tab
+                            """
+            );
+            assertPlanNoLeakCheck(
+                    "SELECT ntile(3) OVER (ORDER BY ts) FROM tab",
+                    """
+                            CachedWindow
+                              unorderedFunctions: [ntile(3) over (order by [ts])]
+                                PageFrame
+                                    Row forward scan
+                                    Frame forward scan on: tab
+                            """
+            );
+            assertPlanNoLeakCheck(
+                    "SELECT ntile(3) OVER (PARTITION BY i ORDER BY ts) FROM tab",
+                    """
+                            CachedWindow
+                              unorderedFunctions: [ntile(3) over (partition by [i] order by [ts])]
+                                PageFrame
+                                    Row forward scan
+                                    Frame forward scan on: tab
+                            """
+            );
+            assertPlanNoLeakCheck(
+                    "SELECT ntile(3) OVER (ORDER BY val) FROM tab",
+                    """
+                            CachedWindow
+                              orderedFunctions: [[val] => [ntile(3) over (order by [val])]]
+                                PageFrame
+                                    Row forward scan
+                                    Frame forward scan on: tab
+                            """
+            );
+            assertPlanNoLeakCheck(
+                    "SELECT ntile(3) OVER (PARTITION BY i ORDER BY val) FROM tab",
+                    """
+                            CachedWindow
+                              orderedFunctions: [[val] => [ntile(3) over (partition by [i] order by [val])]]
+                                PageFrame
+                                    Row forward scan
+                                    Frame forward scan on: tab
+                            """
+            );
+        });
+    }
+
     private static void normalizeSuffix(List<String> values) {
         int maxLength = 0;
         for (int i = 0, n = values.size(); i < n; i++) {
@@ -14960,7 +18935,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
                 "first_value(#COLUMN) respect nulls", "count(#COLUMN)", "max(#COLUMN)", "min(#COLUMN)",
                 "last_value(#COLUMN)", "last_value(#COLUMN) ignore nulls", "last_value(#COLUMN) respect nulls");
 
-        WINDOW_ONLY_FUNCTIONS = Arrays.asList("rank()", "dense_rank()", "row_number()", "first_value(1.0)", "last_value(1.0)", "lag(1.0)", "lead(1.0)",
+        WINDOW_ONLY_FUNCTIONS = Arrays.asList("rank()", "dense_rank()", "row_number()", "ntile(4)", "cume_dist()", "nth_value(1.0, 1)", "first_value(1.0)", "last_value(1.0)", "lag(1.0)", "lead(1.0)",
                 "lag(1.0) ignore nulls", "lead(1.0) ignore nulls", "lag(1.0) respect nulls", "lead(1.0) respect nulls",
                 "first_value(1.0) ignore nulls", "last_value(1.0) ignore nulls", "first_value(1.0) respect nulls", "last_value(1.0) respect nulls");
 
