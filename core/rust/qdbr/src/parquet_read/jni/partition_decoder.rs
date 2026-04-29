@@ -5,6 +5,9 @@ use crate::parquet::error::{fmt_err, ParquetResult};
 use crate::parquet_metadata::jni::reader::JniParquetMetaReader;
 use crate::parquet_metadata::reader::ParquetMetaReader;
 use crate::parquet_read::jni::validate_jni_column_types;
+use crate::parquet_read::parquet_meta_decode::{
+    decode_row_group, decode_row_group_filtered, ColumnChunkSource,
+};
 use crate::parquet_read::row_groups::ParquetColumnIndex;
 use crate::parquet_read::{DecodeContext, RowGroupBuffers};
 use jni::objects::JClass;
@@ -211,10 +214,10 @@ fn parquet_meta_decode_row_group_filtered_impl<const FILL_NULLS: bool>(
         unsafe { slice::from_raw_parts(filtered_rows_ptr, filtered_rows_count) }
     };
 
-    crate::parquet_read::parquet_meta_decode::decode_row_group_filtered::<FILL_NULLS>(
+    decode_row_group_filtered::<FILL_NULLS>(
         ctx,
         row_group_bufs,
-        file_data,
+        ColumnChunkSource::File(file_data),
         parquet_meta_reader,
         column_offset,
         col_pairs,
@@ -275,10 +278,10 @@ fn parquet_meta_decode_row_group_impl(
         unsafe { slice::from_raw_parts(columns, column_count as usize) }
     };
 
-    crate::parquet_read::parquet_meta_decode::decode_row_group(
+    decode_row_group(
         ctx,
         row_group_bufs,
-        file_data,
+        ColumnChunkSource::File(file_data),
         parquet_meta_reader,
         col_pairs,
         row_group_index as usize,

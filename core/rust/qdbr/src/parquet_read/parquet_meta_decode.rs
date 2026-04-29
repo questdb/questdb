@@ -1,16 +1,188 @@
 use crate::parquet::error::{fmt_err, ParquetResult};
 use crate::parquet::qdb_metadata::{QdbMetaCol, QdbMetaColFormat};
 use crate::parquet_metadata::reader::ParquetMetaReader;
+use crate::parquet_metadata::row_group::RowGroupBlockReader;
 use crate::parquet_metadata::types::{ColumnFlags, StatFlags};
 use crate::parquet_read::decode_column::{
     decode_column_chunk_filtered_with_params, decode_column_chunk_with_params,
     reconstruct_descriptor,
 };
 use crate::parquet_read::{DecodeContext, RowGroupBuffers};
+use parquet2::compression::Compression;
+use parquet2::metadata::Descriptor;
 use parquet2::schema::Repetition;
 use qdb_core::col_type::{ColumnType, ColumnTypeTag};
 
 use crate::parquet_read::row_groups::ParquetColumnIndex;
+
+/// Source of column-chunk bytes for a row-group decode.
+pub enum ColumnChunkSource<'a> {
+    File(&'a [u8]),
+    Buffers(&'a [u64]),
+}
+
+impl<'a> ColumnChunkSource<'a> {
+    /// Validate the source shape against the requested column count.
+    /// `File` has no per-column shape to check; `Buffers` must hold two
+    /// entries (addr, size) per column.
+    fn validate(&self, col_pairs_len: usize) -> ParquetResult<()> {
+        match self {
+            Self::File(file_data) => {
+                if file_data.is_empty() {
+                    return Err(fmt_err!(InvalidType, "parquet file data is empty"));
+                }
+                Ok(())
+            }
+            Self::Buffers(chunks) => {
+                if chunks.len() != 2 * col_pairs_len {
+                    return Err(fmt_err!(
+                        InvalidType,
+                        "chunks slice length {} does not match expected {} (2 * column count)",
+                        chunks.len(),
+                        2 * col_pairs_len
+                    ));
+                }
+                Ok(())
+            }
+        }
+    }
+
+    /// Return the column-chunk byte slice for column at `dest_col_idx`.
+    fn chunk_data(
+        &self,
+        dest_col_idx: usize,
+        parquet_col_idx: usize,
+        col_start: usize,
+        col_len: usize,
+    ) -> ParquetResult<&'a [u8]> {
+        match self {
+            Self::File(file_data) => {
+                let col_end = col_start + col_len;
+                if col_end > file_data.len() {
+                    return Err(fmt_err!(
+                        InvalidType,
+                        "column chunk range {}..{} exceeds file data length {} (parquet column {})",
+                        col_start,
+                        col_end,
+                        file_data.len(),
+                        parquet_col_idx
+                    ));
+                }
+                Ok(&file_data[col_start..col_end])
+            }
+            Self::Buffers(chunks) => chunk_slice(chunks, dest_col_idx, parquet_col_idx),
+        }
+    }
+}
+
+/// Per-column data derived from `_pm` metadata, ready for handoff to
+/// `decode_column_chunk_with_params`. Shared between the mmap and
+/// buffer-based decode paths.
+struct PreparedColumn<'a> {
+    col_info: QdbMetaCol,
+    compression: Compression,
+    descriptor: Descriptor,
+    num_values: i64,
+    /// Absolute byte offset of the column chunk inside the parquet file.
+    /// Used by the mmap path; ignored by the buffer-based path.
+    col_start: usize,
+    /// Compressed byte length of the column chunk.
+    col_len: usize,
+    column_name: &'a str,
+    /// True when the column is statistically all-null and the caller should
+    /// skip the actual page decode.
+    is_all_null: bool,
+}
+
+/// Builds a [`PreparedColumn`] from the `_pm` metadata for the given column.
+/// This is the shared body of `decode_row_group`/`decode_row_group_filtered`
+/// (and their buffer-based variants).
+fn prepare_column<'a>(
+    parquet_meta_reader: &'a ParquetMetaReader,
+    rg_block: &RowGroupBlockReader<'_>,
+    column_idx: usize,
+    to_column_type: ColumnType,
+    col_count: u32,
+) -> ParquetResult<PreparedColumn<'a>> {
+    if column_idx >= col_count as usize {
+        return Err(fmt_err!(
+            InvalidType,
+            "column index {} out of range [0,{})",
+            column_idx,
+            col_count
+        ));
+    }
+
+    let col_desc = parquet_meta_reader.column_descriptor(column_idx)?;
+    let col_type_code = col_desc.col_type;
+    let mut column_type = ColumnType::new_raw(col_type_code)
+        .ok_or_else(|| fmt_err!(InvalidType, "unknown column type code: {}", col_type_code))?;
+
+    // Apply the same Symbol->Varchar and Varchar->VarcharSlice overrides
+    // as ParquetDecoder::decode_row_group().
+    if column_type.tag() == ColumnTypeTag::Symbol
+        && (to_column_type.tag() == ColumnTypeTag::Varchar
+            || to_column_type.tag() == ColumnTypeTag::VarcharSlice)
+    {
+        column_type = to_column_type;
+    }
+    if column_type.tag() == ColumnTypeTag::Varchar
+        && to_column_type.tag() == ColumnTypeTag::VarcharSlice
+    {
+        column_type = to_column_type;
+    }
+
+    let flags = ColumnFlags(col_desc.flags);
+    let field_rep = flags
+        .repetition()
+        .unwrap_or(crate::parquet_metadata::types::FieldRepetition::Optional);
+    let repetition: Repetition = field_rep.into();
+
+    let column_name = parquet_meta_reader
+        .column_name(column_idx)
+        .unwrap_or("<unknown>");
+
+    let format = if flags.is_local_key_global() {
+        Some(QdbMetaColFormat::LocalKeyIsGlobal)
+    } else {
+        None
+    };
+    let ascii = if flags.is_ascii() { Some(true) } else { None };
+
+    let col_info = QdbMetaCol { column_type, column_top: 0, format, ascii };
+
+    let chunk = rg_block.column_chunk(column_idx)?;
+    let stat_flags = StatFlags(chunk.stat_flags);
+    let is_all_null = stat_flags.has_null_count() && chunk.null_count == chunk.num_values;
+
+    let col_start = chunk.byte_range_start as usize;
+    let col_len = chunk.total_compressed as usize;
+    let compression: Compression = chunk
+        .codec()
+        .map_err(|e| fmt_err!(InvalidType, "invalid codec: {}", e))?
+        .into();
+    let num_values = chunk.num_values as i64;
+
+    let descriptor = reconstruct_descriptor(
+        col_desc.physical_type,
+        col_desc.fixed_byte_len,
+        col_desc.max_rep_level,
+        col_desc.max_def_level,
+        column_name,
+        repetition,
+    );
+
+    Ok(PreparedColumn {
+        col_info,
+        compression,
+        descriptor,
+        num_values,
+        col_start,
+        col_len,
+        column_name,
+        is_all_null,
+    })
+}
 
 /// Decode a row group using metadata from a `_pm` sidecar file.
 ///
@@ -20,11 +192,14 @@ use crate::parquet_read::row_groups::ParquetColumnIndex;
 /// `PartitionDecoder` for compatibility with `PageFrameMemoryPool`.
 /// The `column_type` from Java is used for Symbol->Varchar and
 /// Varchar->VarcharSlice overrides; the base type comes from `_pm`.
+///
+/// `source` selects where the column-chunk bytes come from: the mmap'd
+/// parquet file, or per-column buffers fetched from object storage.
 #[allow(clippy::too_many_arguments)]
 pub fn decode_row_group(
     ctx: &mut DecodeContext,
     row_group_bufs: &mut RowGroupBuffers,
-    file_data: &[u8],
+    source: ColumnChunkSource<'_>,
     parquet_meta_reader: &ParquetMetaReader,
     col_pairs: &[(ParquetColumnIndex, ColumnType)],
     row_group_index: usize,
@@ -41,6 +216,8 @@ pub fn decode_row_group(
         ));
     }
 
+    source.validate(col_pairs.len())?;
+
     let rg_block = parquet_meta_reader.row_group(row_group_index)?;
     let col_count = parquet_meta_reader.column_count();
 
@@ -48,103 +225,40 @@ pub fn decode_row_group(
 
     let mut decoded = 0usize;
     for (dest_col_idx, &(column_idx, to_column_type)) in col_pairs.iter().enumerate() {
-        let column_idx = column_idx as usize;
-        if column_idx >= col_count as usize {
-            return Err(fmt_err!(
-                InvalidType,
-                "column index {} out of range [0,{})",
-                column_idx,
-                col_count
-            ));
-        }
-
-        let col_desc = parquet_meta_reader.column_descriptor(column_idx)?;
-        let col_type_code = col_desc.col_type;
-        let mut column_type = ColumnType::new_raw(col_type_code)
-            .ok_or_else(|| fmt_err!(InvalidType, "unknown column type code: {}", col_type_code))?;
-
-        // Apply the same Symbol->Varchar and Varchar->VarcharSlice overrides
-        // as ParquetDecoder::decode_row_group().
-        if column_type.tag() == ColumnTypeTag::Symbol
-            && (to_column_type.tag() == ColumnTypeTag::Varchar
-                || to_column_type.tag() == ColumnTypeTag::VarcharSlice)
-        {
-            column_type = to_column_type;
-        }
-        if column_type.tag() == ColumnTypeTag::Varchar
-            && to_column_type.tag() == ColumnTypeTag::VarcharSlice
-        {
-            column_type = to_column_type;
-        }
-
-        let flags = ColumnFlags(col_desc.flags);
-        let field_rep = flags
-            .repetition()
-            .unwrap_or(crate::parquet_metadata::types::FieldRepetition::Optional);
-        let repetition: Repetition = field_rep.into();
-
-        let column_name = parquet_meta_reader
-            .column_name(column_idx)
-            .unwrap_or("<unknown>");
-
-        let format = if flags.is_local_key_global() {
-            Some(QdbMetaColFormat::LocalKeyIsGlobal)
-        } else {
-            None
-        };
-        let ascii = if flags.is_ascii() { Some(true) } else { None };
+        let prepared = prepare_column(
+            parquet_meta_reader,
+            &rg_block,
+            column_idx as usize,
+            to_column_type,
+            col_count,
+        )?;
 
         let column_chunk_bufs = &mut row_group_bufs.column_bufs[dest_col_idx];
-        let col_info = QdbMetaCol { column_type, column_top: 0, format, ascii };
-
-        let chunk = rg_block.column_chunk(column_idx)?;
-        let stat_flags = StatFlags(chunk.stat_flags);
-        if stat_flags.has_null_count() && chunk.null_count == chunk.num_values {
+        if prepared.is_all_null {
             column_chunk_bufs.reset();
             decoded = row_group_hi.saturating_sub(row_group_lo);
             continue;
         }
-        let col_start = chunk.byte_range_start as usize;
-        let col_len = chunk.total_compressed as usize;
-        let compression = chunk
-            .codec()
-            .map_err(|e| fmt_err!(InvalidType, "invalid codec: {}", e))?;
-        let compression: parquet2::compression::Compression = compression.into();
-        let num_values = i64::try_from(chunk.num_values).map_err(|_| {
-            fmt_err!(
-                InvalidType,
-                "num_values {} out of i64 range",
-                chunk.num_values
-            )
-        })?;
 
-        let descriptor = reconstruct_descriptor(
-            col_desc.physical_type,
-            col_desc.fixed_byte_len,
-            col_desc.max_rep_level,
-            col_desc.max_def_level,
-            column_name,
-            repetition,
-        );
-
-        match decode_column_chunk_with_params(
+        let chunk_data = source.chunk_data(
+            dest_col_idx,
+            column_idx as usize,
+            prepared.col_start,
+            prepared.col_len,
+        )?;
+        decoded = decode_column_chunk_with_params(
             ctx,
             column_chunk_bufs,
-            file_data,
-            col_start,
-            col_len,
-            compression,
-            descriptor,
-            num_values,
-            col_info,
+            chunk_data,
+            prepared.compression,
+            prepared.descriptor,
+            prepared.num_values,
+            prepared.col_info,
             row_group_lo,
             row_group_hi,
-            column_name,
+            prepared.column_name,
             row_group_index,
-        ) {
-            Ok(count) => decoded = count,
-            Err(err) => return Err(err),
-        }
+        )?;
     }
 
     Ok(decoded)
@@ -153,12 +267,13 @@ pub fn decode_row_group(
 /// Decode a row group with row-level filtering using `_pm` metadata.
 ///
 /// When `FILL_NULLS` is true, unfiltered rows are filled with nulls.
-/// When false, unfiltered rows are skipped.
+/// When false, unfiltered rows are skipped. `source` selects the
+/// column-chunk byte source, same as [`decode_row_group`].
 #[allow(clippy::too_many_arguments)]
 pub fn decode_row_group_filtered<const FILL_NULLS: bool>(
     ctx: &mut DecodeContext,
     row_group_bufs: &mut RowGroupBuffers,
-    file_data: &[u8],
+    source: ColumnChunkSource<'_>,
     parquet_meta_reader: &ParquetMetaReader,
     column_offset: usize,
     col_pairs: &[(ParquetColumnIndex, ColumnType)],
@@ -167,6 +282,8 @@ pub fn decode_row_group_filtered<const FILL_NULLS: bool>(
     row_group_hi: usize,
     filtered_rows: &[i64],
 ) -> ParquetResult<usize> {
+    source.validate(col_pairs.len())?;
+
     let rg_block = parquet_meta_reader.row_group(row_group_index)?;
     let col_count = parquet_meta_reader.column_count();
 
@@ -174,54 +291,16 @@ pub fn decode_row_group_filtered<const FILL_NULLS: bool>(
 
     let mut decoded = 0usize;
     for (dest_col_idx, &(column_idx, to_column_type)) in col_pairs.iter().enumerate() {
-        let column_idx = column_idx as usize;
-        if column_idx >= col_count as usize {
-            return Err(fmt_err!(
-                InvalidType,
-                "column index {} out of range [0,{})",
-                column_idx,
-                col_count
-            ));
-        }
+        let prepared = prepare_column(
+            parquet_meta_reader,
+            &rg_block,
+            column_idx as usize,
+            to_column_type,
+            col_count,
+        )?;
 
-        let col_desc = parquet_meta_reader.column_descriptor(column_idx)?;
-        let col_type_code = col_desc.col_type;
-        let mut column_type = ColumnType::new_raw(col_type_code)
-            .ok_or_else(|| fmt_err!(InvalidType, "unknown column type code: {}", col_type_code))?;
-
-        if column_type.tag() == ColumnTypeTag::Symbol
-            && (to_column_type.tag() == ColumnTypeTag::Varchar
-                || to_column_type.tag() == ColumnTypeTag::VarcharSlice)
-        {
-            column_type = to_column_type;
-        }
-        if column_type.tag() == ColumnTypeTag::Varchar
-            && to_column_type.tag() == ColumnTypeTag::VarcharSlice
-        {
-            column_type = to_column_type;
-        }
-
-        let flags = ColumnFlags(col_desc.flags);
-        let field_rep = flags
-            .repetition()
-            .unwrap_or(crate::parquet_metadata::types::FieldRepetition::Optional);
-        let repetition: Repetition = field_rep.into();
-        let column_name = parquet_meta_reader
-            .column_name(column_idx)
-            .unwrap_or("<unknown>");
-        let format = if flags.is_local_key_global() {
-            Some(QdbMetaColFormat::LocalKeyIsGlobal)
-        } else {
-            None
-        };
-        let ascii = if flags.is_ascii() { Some(true) } else { None };
-
-        let chunk = rg_block.column_chunk(column_idx)?;
-        let buf_idx = column_offset + dest_col_idx;
-        let column_chunk_bufs = &mut row_group_bufs.column_bufs[buf_idx];
-        let col_info = QdbMetaCol { column_type, column_top: 0, format, ascii };
-        let stat_flags = StatFlags(chunk.stat_flags);
-        if stat_flags.has_null_count() && chunk.null_count == chunk.num_values {
+        let column_chunk_bufs = &mut row_group_bufs.column_bufs[column_offset + dest_col_idx];
+        if prepared.is_all_null {
             column_chunk_bufs.reset();
             decoded = if FILL_NULLS {
                 row_group_hi.saturating_sub(row_group_lo)
@@ -230,51 +309,50 @@ pub fn decode_row_group_filtered<const FILL_NULLS: bool>(
             };
             continue;
         }
-        let col_start = chunk.byte_range_start as usize;
-        let col_len = chunk.total_compressed as usize;
-        let compression: parquet2::compression::Compression = chunk
-            .codec()
-            .map_err(|e| fmt_err!(InvalidType, "invalid codec: {}", e))?
-            .into();
-        let num_values = i64::try_from(chunk.num_values).map_err(|_| {
-            fmt_err!(
-                InvalidType,
-                "num_values {} out of i64 range",
-                chunk.num_values
-            )
-        })?;
 
-        let descriptor = reconstruct_descriptor(
-            col_desc.physical_type,
-            col_desc.fixed_byte_len,
-            col_desc.max_rep_level,
-            col_desc.max_def_level,
-            column_name,
-            repetition,
-        );
-
-        match decode_column_chunk_filtered_with_params::<FILL_NULLS>(
+        let chunk_data = source.chunk_data(
+            dest_col_idx,
+            column_idx as usize,
+            prepared.col_start,
+            prepared.col_len,
+        )?;
+        decoded = decode_column_chunk_filtered_with_params::<FILL_NULLS>(
             ctx,
             column_chunk_bufs,
-            file_data,
-            col_start,
-            col_len,
-            compression,
-            descriptor,
-            num_values,
-            col_info,
+            chunk_data,
+            prepared.compression,
+            prepared.descriptor,
+            prepared.num_values,
+            prepared.col_info,
             row_group_lo,
             row_group_hi,
             filtered_rows,
-            column_name,
+            prepared.column_name,
             row_group_index,
-        ) {
-            Ok(count) => decoded = count,
-            Err(err) => return Err(err),
-        }
+        )?;
     }
 
     Ok(decoded)
+}
+
+/// Borrow the column-chunk byte slice at position `dest_col_idx` from the
+/// flat `[addr0, size0, addr1, size1, ...]` chunk descriptor array.
+fn chunk_slice<'a>(
+    chunks: &[u64],
+    dest_col_idx: usize,
+    parquet_column_idx: usize,
+) -> ParquetResult<&'a [u8]> {
+    let addr = chunks[2 * dest_col_idx] as *const u8;
+    let len = chunks[2 * dest_col_idx + 1] as usize;
+    if addr.is_null() || len == 0 {
+        return Err(fmt_err!(
+            InvalidType,
+            "chunk buffer null or empty for parquet column {} (slot {})",
+            parquet_column_idx,
+            dest_col_idx
+        ));
+    }
+    Ok(unsafe { std::slice::from_raw_parts(addr, len) })
 }
 
 /// Find the row group containing the given timestamp using `_pm` metadata.
@@ -611,7 +689,7 @@ mod tests {
         let decoded = decode_row_group(
             &mut ctx,
             &mut bufs,
-            &parquet_data,
+            ColumnChunkSource::File(&parquet_data),
             &reader,
             &col_pairs,
             0,
@@ -647,7 +725,7 @@ mod tests {
         let err = decode_row_group(
             &mut ctx,
             &mut bufs,
-            &parquet_data,
+            ColumnChunkSource::File(&parquet_data),
             &reader,
             &col_pairs,
             5,
@@ -679,7 +757,7 @@ mod tests {
         let err = decode_row_group(
             &mut ctx,
             &mut bufs,
-            &parquet_data,
+            ColumnChunkSource::File(&parquet_data),
             &reader,
             &col_pairs,
             0,
@@ -710,7 +788,7 @@ mod tests {
         decode_row_group(
             &mut ctx,
             &mut bufs,
-            &parquet_data,
+            ColumnChunkSource::File(&parquet_data),
             &reader,
             &col_pairs,
             0,
@@ -750,7 +828,7 @@ mod tests {
         let decoded = decode_row_group_filtered::<false>(
             &mut ctx,
             &mut bufs,
-            &parquet_data,
+            ColumnChunkSource::File(&parquet_data),
             &reader,
             0,
             &col_pairs,
@@ -835,5 +913,239 @@ mod tests {
             convert_from_parquet(&metadata, qdb_meta.as_ref(), 0, 0, None)?;
 
         Ok((parquet_buf, parquet_meta_bytes, parquet_meta_file_size))
+    }
+
+    // -----------------------------------------------------------------------
+    // ColumnChunkSource::Buffers path
+    // -----------------------------------------------------------------------
+
+    /// Slice the parquet file into one owned byte vector per requested column,
+    /// using the chunks' byte_range_start/total_compressed recorded in `_pm`.
+    /// Returns the owned buffers (kept alive by the caller) and a flat
+    /// `[addr, size, addr, size, ...]` chunks array referencing them.
+    fn slice_chunks_from_parquet(
+        parquet_data: &[u8],
+        reader: &ParquetMetaReader,
+        row_group_index: usize,
+        col_pairs: &[(ParquetColumnIndex, ColumnType)],
+    ) -> ParquetResult<(Vec<Vec<u8>>, Vec<u64>)> {
+        let rg = reader.row_group(row_group_index)?;
+        let mut bufs = Vec::with_capacity(col_pairs.len());
+        let mut chunks = Vec::with_capacity(2 * col_pairs.len());
+        for &(col_idx, _) in col_pairs {
+            let chunk = rg.column_chunk(col_idx as usize)?;
+            let start = chunk.byte_range_start as usize;
+            let len = chunk.total_compressed as usize;
+            let owned = parquet_data[start..start + len].to_vec();
+            chunks.push(owned.as_ptr() as u64);
+            chunks.push(len as u64);
+            bufs.push(owned);
+        }
+        Ok((bufs, chunks))
+    }
+
+    #[test]
+    fn decode_row_group_buffers_matches_file() -> ParquetResult<()> {
+        let (parquet_data, pm_bytes, parquet_meta_file_size) = build_matched_parquet_meta(50)?;
+        let reader = ParquetMetaReader::from_file_size(&pm_bytes, parquet_meta_file_size)?;
+
+        let tas = crate::allocator::TestAllocatorState::new();
+        let allocator = tas.allocator();
+        let col_pairs = [(0i32, ColumnType::new(ColumnTypeTag::Timestamp, 0))];
+
+        let mut ref_ctx = DecodeContext::new(parquet_data.as_ptr(), parquet_data.len() as u64);
+        let mut ref_bufs = RowGroupBuffers::new(allocator.clone());
+        let ref_decoded = decode_row_group(
+            &mut ref_ctx,
+            &mut ref_bufs,
+            ColumnChunkSource::File(&parquet_data),
+            &reader,
+            &col_pairs,
+            0,
+            0,
+            50,
+        )?;
+
+        let (_owned, chunks) = slice_chunks_from_parquet(&parquet_data, &reader, 0, &col_pairs)?;
+        let mut buf_ctx = DecodeContext::new(std::ptr::null(), 0);
+        let mut buf_bufs = RowGroupBuffers::new(allocator);
+        let buf_decoded = decode_row_group(
+            &mut buf_ctx,
+            &mut buf_bufs,
+            ColumnChunkSource::Buffers(&chunks),
+            &reader,
+            &col_pairs,
+            0,
+            0,
+            50,
+        )?;
+
+        assert_eq!(ref_decoded, buf_decoded);
+        assert_eq!(
+            ref_bufs.column_bufs[0].data_vec,
+            buf_bufs.column_bufs[0].data_vec
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn decode_row_group_filtered_from_buffers_matches_mmap() -> ParquetResult<()> {
+        let (parquet_data, pm_bytes, parquet_meta_file_size) = build_matched_parquet_meta(100)?;
+        let reader = ParquetMetaReader::from_file_size(&pm_bytes, parquet_meta_file_size)?;
+
+        let tas = crate::allocator::TestAllocatorState::new();
+        let allocator = tas.allocator();
+        let col_pairs = [(0i32, ColumnType::new(ColumnTypeTag::Timestamp, 0))];
+        let filtered_rows: Vec<i64> = vec![0, 5, 10, 50, 99];
+
+        let mut ref_ctx = DecodeContext::new(parquet_data.as_ptr(), parquet_data.len() as u64);
+        let mut ref_bufs = RowGroupBuffers::new(allocator.clone());
+        let ref_decoded = decode_row_group_filtered::<false>(
+            &mut ref_ctx,
+            &mut ref_bufs,
+            ColumnChunkSource::File(&parquet_data),
+            &reader,
+            0,
+            &col_pairs,
+            0,
+            0,
+            100,
+            &filtered_rows,
+        )?;
+
+        let (_owned, chunks) = slice_chunks_from_parquet(&parquet_data, &reader, 0, &col_pairs)?;
+        let mut buf_ctx = DecodeContext::new(std::ptr::null(), 0);
+        let mut buf_bufs = RowGroupBuffers::new(allocator);
+        let buf_decoded = decode_row_group_filtered::<false>(
+            &mut buf_ctx,
+            &mut buf_bufs,
+            ColumnChunkSource::Buffers(&chunks),
+            &reader,
+            0,
+            &col_pairs,
+            0,
+            0,
+            100,
+            &filtered_rows,
+        )?;
+
+        assert_eq!(ref_decoded, buf_decoded);
+        assert_eq!(
+            ref_bufs.column_bufs[0].data_vec,
+            buf_bufs.column_bufs[0].data_vec
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn decode_row_group_filtered_fill_nulls_buffers_matches_file() -> ParquetResult<()> {
+        let (parquet_data, pm_bytes, parquet_meta_file_size) = build_matched_parquet_meta(20)?;
+        let reader = ParquetMetaReader::from_file_size(&pm_bytes, parquet_meta_file_size)?;
+
+        let tas = crate::allocator::TestAllocatorState::new();
+        let allocator = tas.allocator();
+        let col_pairs = [(0i32, ColumnType::new(ColumnTypeTag::Timestamp, 0))];
+        let filtered_rows: Vec<i64> = vec![1, 3, 7, 15];
+
+        let mut ref_ctx = DecodeContext::new(parquet_data.as_ptr(), parquet_data.len() as u64);
+        let mut ref_bufs = RowGroupBuffers::new(allocator.clone());
+        let ref_decoded = decode_row_group_filtered::<true>(
+            &mut ref_ctx,
+            &mut ref_bufs,
+            ColumnChunkSource::File(&parquet_data),
+            &reader,
+            0,
+            &col_pairs,
+            0,
+            0,
+            20,
+            &filtered_rows,
+        )?;
+
+        let (_owned, chunks) = slice_chunks_from_parquet(&parquet_data, &reader, 0, &col_pairs)?;
+        let mut buf_ctx = DecodeContext::new(std::ptr::null(), 0);
+        let mut buf_bufs = RowGroupBuffers::new(allocator);
+        let buf_decoded = decode_row_group_filtered::<true>(
+            &mut buf_ctx,
+            &mut buf_bufs,
+            ColumnChunkSource::Buffers(&chunks),
+            &reader,
+            0,
+            &col_pairs,
+            0,
+            0,
+            20,
+            &filtered_rows,
+        )?;
+
+        assert_eq!(ref_decoded, buf_decoded);
+        assert_eq!(
+            ref_bufs.column_bufs[0].data_vec,
+            buf_bufs.column_bufs[0].data_vec
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn decode_row_group_from_buffers_rejects_short_chunks_array() -> ParquetResult<()> {
+        let (_parquet_data, pm_bytes, parquet_meta_file_size) = build_matched_parquet_meta(10)?;
+        let reader = ParquetMetaReader::from_file_size(&pm_bytes, parquet_meta_file_size)?;
+
+        let tas = crate::allocator::TestAllocatorState::new();
+        let allocator = tas.allocator();
+        let col_pairs = [(0i32, ColumnType::new(ColumnTypeTag::Timestamp, 0))];
+        let chunks: Vec<u64> = vec![]; // expected 2, got 0
+
+        let mut ctx = DecodeContext::new(std::ptr::null(), 0);
+        let mut bufs = RowGroupBuffers::new(allocator);
+        let err = decode_row_group(
+            &mut ctx,
+            &mut bufs,
+            ColumnChunkSource::Buffers(&chunks),
+            &reader,
+            &col_pairs,
+            0,
+            0,
+            10,
+        );
+        assert!(err.is_err());
+        let msg = err.unwrap_err().to_string();
+        assert!(
+            msg.contains("chunks slice length 0 does not match expected 2"),
+            "unexpected error: {msg}"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn decode_row_group_from_buffers_rejects_null_chunk() -> ParquetResult<()> {
+        let (_parquet_data, pm_bytes, parquet_meta_file_size) = build_matched_parquet_meta(10)?;
+        let reader = ParquetMetaReader::from_file_size(&pm_bytes, parquet_meta_file_size)?;
+
+        let tas = crate::allocator::TestAllocatorState::new();
+        let allocator = tas.allocator();
+        let col_pairs = [(0i32, ColumnType::new(ColumnTypeTag::Timestamp, 0))];
+        // The non-all-null timestamp column has a null/empty buffer pair.
+        let chunks: Vec<u64> = vec![0, 0];
+
+        let mut ctx = DecodeContext::new(std::ptr::null(), 0);
+        let mut bufs = RowGroupBuffers::new(allocator);
+        let err = decode_row_group(
+            &mut ctx,
+            &mut bufs,
+            ColumnChunkSource::Buffers(&chunks),
+            &reader,
+            &col_pairs,
+            0,
+            0,
+            10,
+        );
+        assert!(err.is_err());
+        let msg = err.unwrap_err().to_string();
+        assert!(
+            msg.contains("chunk buffer null or empty"),
+            "unexpected error: {msg}"
+        );
+        Ok(())
     }
 }

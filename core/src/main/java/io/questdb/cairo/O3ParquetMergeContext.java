@@ -70,7 +70,7 @@ public class O3ParquetMergeContext implements Closeable {
         parquetColumns = new DirectIntList(64, MemoryTag.NATIVE_O3);
         parquetColIdToIdx = new IntIntHashMap();
         parquetMetaReader = new ParquetMetaFileReader();
-        partitionDecoder = new ParquetPartitionDecoder();
+        partitionDecoder = ParquetPartitionDecoder.newInstance();
         partitionDescriptor = new OwnedMemoryPartitionDescriptor();
         partitionUpdater = new PartitionUpdater();
         rgO3Ranges = new LongList();

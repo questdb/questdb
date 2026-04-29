@@ -81,12 +81,11 @@ pub fn decode_single_timestamp_value(
     // for the duration of this call.
     let alloc = unsafe { &*allocator }.clone();
     let mut bufs = ColumnChunkBuffers::new(alloc);
+    let col_data = &file_data[col_start..col_start + col_len];
     decode_column_chunk_with_params(
         &mut ctx,
         &mut bufs,
-        file_data,
-        col_start,
-        col_len,
+        col_data,
         compression,
         descriptor,
         num_values,
@@ -149,9 +148,7 @@ pub fn reconstruct_descriptor(
 pub fn decode_column_chunk_with_params(
     ctx: &mut DecodeContext,
     bufs: &mut ColumnChunkBuffers,
-    file_data: &[u8],
-    col_start: usize,
-    col_len: usize,
+    col_data: &[u8],
     compression: Compression,
     descriptor: Descriptor,
     num_values: i64,
@@ -161,9 +158,10 @@ pub fn decode_column_chunk_with_params(
     column_name: &str,
     row_group_index: usize,
 ) -> ParquetResult<usize> {
+    let col_len = col_data.len();
     let page_reader = SlicePageReader::from_parts(
-        file_data,
-        col_start,
+        col_data,
+        0,
         col_len,
         compression,
         descriptor,
@@ -303,9 +301,7 @@ pub fn decode_column_chunk_with_params(
 pub fn decode_column_chunk_filtered_with_params<const FILL_NULLS: bool>(
     ctx: &mut DecodeContext,
     bufs: &mut ColumnChunkBuffers,
-    file_data: &[u8],
-    col_start: usize,
-    col_len: usize,
+    col_data: &[u8],
     compression: Compression,
     descriptor: Descriptor,
     num_values: i64,
@@ -316,9 +312,10 @@ pub fn decode_column_chunk_filtered_with_params<const FILL_NULLS: bool>(
     column_name: &str,
     row_group_index: usize,
 ) -> ParquetResult<usize> {
+    let col_len = col_data.len();
     let page_reader = SlicePageReader::from_parts(
-        file_data,
-        col_start,
+        col_data,
+        0,
         col_len,
         compression,
         descriptor,
@@ -692,12 +689,12 @@ mod tests {
         let mut ctx = DecodeContext::new(buf.as_ptr(), buf_len);
         let mut bufs = ColumnChunkBuffers::new(allocator);
 
+        let col_start = col_start as usize;
+        let col_len = col_len as usize;
         super::decode_column_chunk_with_params(
             &mut ctx,
             &mut bufs,
-            buf,
-            col_start as usize,
-            col_len as usize,
+            &buf[col_start..col_start + col_len],
             compression,
             descriptor,
             num_values,
@@ -898,7 +895,7 @@ mod tests {
     }
 
     #[test]
-    fn invalid_byte_range_returns_error() {
+    fn truncated_column_chunk_returns_error() {
         let buf = write_i64_parquet(5);
         let tas = TestAllocatorState::new();
         let allocator = tas.allocator();
@@ -932,17 +929,16 @@ mod tests {
             ascii: None,
         };
 
-        // Truncate the buffer so col_start + col_len > truncated.len()
-        let truncated = &buf[..col_start as usize + col_len as usize / 2];
-        let mut ctx = DecodeContext::new(truncated.as_ptr(), truncated.len() as u64);
+        // Truncate the column chunk so the page reader can't parse a full page.
+        let full = &buf[col_start as usize..col_start as usize + col_len as usize];
+        let truncated = &full[..full.len() / 2];
+        let mut ctx = DecodeContext::new(buf.as_ptr(), buf_len);
         let mut bufs = ColumnChunkBuffers::new(allocator);
 
         let result = super::decode_column_chunk_with_params(
             &mut ctx,
             &mut bufs,
             truncated,
-            col_start as usize,
-            col_len as usize,
             compression,
             descriptor,
             num_values,
@@ -952,10 +948,7 @@ mod tests {
             "col",
             0,
         );
-        assert!(
-            result.is_err(),
-            "expected error for out-of-bounds byte range"
-        );
+        assert!(result.is_err(), "expected error for truncated column chunk");
     }
 
     #[test]

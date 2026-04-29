@@ -239,7 +239,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     private final boolean parallelIndexerEnabled;
     private final DirectIntList parquetBloomFilterIndexes;
     private final DirectIntList parquetColumnIdsAndTypes;
-    private final ParquetPartitionDecoder parquetDecoder = new ParquetPartitionDecoder();
+    private final ParquetPartitionDecoder parquetDecoder = ParquetPartitionDecoder.newInstance();
     private final ParquetMetaFileReader parquetMetaReader = new ParquetMetaFileReader();
     private final int partitionBy;
     private final ParquetFileDecoder parquetFileDecoder = new ParquetFileDecoder();
@@ -1054,6 +1054,16 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             rollback();
             throw e;
         }
+    }
+
+    /**
+     * Bumps the partition table version and commits, invalidating reader caches that pin
+     * partition state. Exposed for the cold-storage extension point so eviction/upload
+     * jobs can publish post-conversion partition changes.
+     */
+    public void bumpPartitionTableVersion() {
+        txWriter.bumpPartitionTableVersion();
+        txWriter.commit(denseSymbolMapWriters);
     }
 
     @Override
@@ -2151,6 +2161,10 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         return ff;
     }
 
+    public long getLogicalPartitionTimestamp(long timestamp) {
+        return txWriter.getLogicalPartitionTimestamp(timestamp);
+    }
+
     public long getMaxTimestamp() {
         return txWriter.getMaxTimestamp();
     }
@@ -2373,6 +2387,10 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
     public boolean isOpen() {
         return tempMem16b != 0;
+    }
+
+    public boolean isPartitionParquet(int partitionIndex) {
+        return txWriter.isPartitionParquet(partitionIndex);
     }
 
     public boolean isPartitionReadOnly(int partitionIndex) {
