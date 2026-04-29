@@ -149,7 +149,7 @@ public class QueryFuzzTest extends AbstractCairoTest {
                     .append("        sql: ").append(r.getSql()).append('\n');
         }
         // Chain the first cause so the stack trace still points at real source.
-        return new AssertionError(sb.toString(), failures.get(0).getFailure());
+        return new AssertionError(sb.toString(), failures.getFirst().getFailure());
     }
 
     private static void logSchema(FuzzTable t) {

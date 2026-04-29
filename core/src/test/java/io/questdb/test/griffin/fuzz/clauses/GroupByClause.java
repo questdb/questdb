@@ -127,7 +127,11 @@ public final class GroupByClause {
         if (hasLimit) {
             sql.put(" LIMIT ").put(1 + rnd.nextInt(50));
         }
-        return new GeneratedQuery(sql.toString(), !hasLimit);
+        // first/last over a hash-grouped CTE/subquery is undefined: the inner
+        // iterates a hash map, so which row counts as "first" can change
+        // between runs and across JIT modes.
+        boolean deterministic = !hasLimit && (!agg.isOrderDependent() || source.isOrderStable());
+        return new GeneratedQuery(sql.toString(), deterministic);
     }
 
     private static void appendOrderBy(StringSink sink, Rnd rnd, int numKeys) {
@@ -208,6 +212,10 @@ public final class GroupByClause {
                 arg.appendSql(sink);
             }
             sink.put(')');
+        }
+
+        boolean isOrderDependent() {
+            return "first".equals(name) || "last".equals(name);
         }
     }
 }

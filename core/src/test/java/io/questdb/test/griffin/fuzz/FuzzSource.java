@@ -57,14 +57,16 @@ import io.questdb.test.griffin.fuzz.types.LongType;
 public final class FuzzSource {
     private final String fromSql;
     private final boolean garblable;
+    private final boolean orderStable;
     private final String prefixSql;
     private final FuzzTable table;
 
-    private FuzzSource(String prefixSql, String fromSql, FuzzTable table, boolean garblable) {
+    private FuzzSource(String prefixSql, String fromSql, FuzzTable table, boolean garblable, boolean orderStable) {
         this.prefixSql = prefixSql;
         this.fromSql = fromSql;
         this.table = table;
         this.garblable = garblable;
+        this.orderStable = orderStable;
     }
 
     /**
@@ -76,7 +78,7 @@ public final class FuzzSource {
         String cteName = "cte" + cteIndex;
         String prefix = "WITH " + cteName + " AS (" + inner.sql + ") ";
         FuzzTable cteTable = new FuzzTable(cteName, inner.table.getColumns(), inner.table.getTsColumnName());
-        return new FuzzSource(prefix, cteName, cteTable, true);
+        return new FuzzSource(prefix, cteName, cteTable, true, inner.orderStable);
     }
 
     /**
@@ -84,7 +86,7 @@ public final class FuzzSource {
      * clause to exercise "table does not exist" paths.
      */
     public static FuzzSource direct(FuzzTable table) {
-        return new FuzzSource("", table.getName(), table, true);
+        return new FuzzSource("", table.getName(), table, true, true);
     }
 
     /**
@@ -98,7 +100,7 @@ public final class FuzzSource {
         ObjList<FuzzColumn> cols = new ObjList<>();
         cols.add(new FuzzColumn("x", LongType.INSTANCE));
         FuzzTable virt = new FuzzTable("ls", cols, null);
-        return new FuzzSource("", "long_sequence(" + len + ")", virt, false);
+        return new FuzzSource("", "long_sequence(" + len + ")", virt, false, true);
     }
 
     /**
@@ -108,7 +110,7 @@ public final class FuzzSource {
      */
     public static FuzzSource subquery(Rnd rnd, FuzzSource base) {
         InnerQuery inner = buildInnerQuery(rnd, base);
-        return new FuzzSource("", "(" + inner.sql + ")", inner.table, false);
+        return new FuzzSource("", "(" + inner.sql + ")", inner.table, false, inner.orderStable);
     }
 
     public String getFromSql() {
@@ -136,6 +138,16 @@ public final class FuzzSource {
         return table;
     }
 
+    /**
+     * Returns true when iterating the source emits rows in a deterministic
+     * order across runs. Real tables (timestamp-ordered) and {@code
+     * long_sequence()} are stable; an aggregated CTE/subquery iterates a
+     * hash map, so {@code first}/{@code last} over it is undefined.
+     */
+    public boolean isOrderStable() {
+        return orderStable;
+    }
+
     // Draw an inner-query shape. Distribution is tuned so the simple
     // star shape still dominates but filtered, renaming and aggregated
     // inner queries each appear a measurable fraction of the time.
@@ -154,7 +166,7 @@ public final class FuzzSource {
     }
 
     private static InnerQuery star(FuzzSource base) {
-        return new InnerQuery("SELECT * FROM " + base.getFromSql(), base.getTable());
+        return new InnerQuery("SELECT * FROM " + base.getFromSql(), base.getTable(), base.isOrderStable());
     }
 
     private static InnerQuery filtered(Rnd rnd, FuzzSource base) {
@@ -168,7 +180,7 @@ public final class FuzzSource {
         if (rnd.nextBoolean()) {
             sb.put(" LIMIT ").put(10 + rnd.nextInt(91));
         }
-        return new InnerQuery(sb.toString(), base.getTable());
+        return new InnerQuery(sb.toString(), base.getTable(), base.isOrderStable());
     }
 
     private static InnerQuery projected(Rnd rnd, FuzzSource base) {
@@ -206,7 +218,7 @@ public final class FuzzSource {
         }
         sb.put(" FROM ").put(base.getFromSql());
         FuzzTable newTable = new FuzzTable(base.getTable().getName(), renamedCols, newTsColName);
-        return new InnerQuery(sb.toString(), newTable);
+        return new InnerQuery(sb.toString(), newTable, base.isOrderStable());
     }
 
     private static InnerQuery aggregated(Rnd rnd, FuzzSource base) {
@@ -230,16 +242,19 @@ public final class FuzzSource {
         cols.add(new FuzzColumn("cnt", LongType.INSTANCE));
         // No ts: aggregated output doesn't carry the bucket timestamp.
         FuzzTable newTable = new FuzzTable(base.getTable().getName(), cols, null);
-        return new InnerQuery(sql, newTable);
+        // GROUP BY iterates a hash map, so the row order is implementation-defined.
+        return new InnerQuery(sql, newTable, false);
     }
 
     private static final class InnerQuery {
+        final boolean orderStable;
         final String sql;
         final FuzzTable table;
 
-        InnerQuery(String sql, FuzzTable table) {
+        InnerQuery(String sql, FuzzTable table, boolean orderStable) {
             this.sql = sql;
             this.table = table;
+            this.orderStable = orderStable;
         }
     }
 }
