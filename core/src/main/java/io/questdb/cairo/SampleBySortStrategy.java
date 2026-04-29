@@ -38,6 +38,9 @@ public final class SampleBySortStrategy {
     public static final int LIGHT_ENCODED = 0;
     public static final int LIGHT_RECORDCHAIN = 2;
 
+    private SampleBySortStrategy() {
+    }
+
     public static String toString(int strategy) {
         switch (strategy) {
             case LIGHT_ENCODED:
