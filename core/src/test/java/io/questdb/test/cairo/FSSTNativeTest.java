@@ -327,12 +327,12 @@ public class FSSTNativeTest extends AbstractCairoTest {
                                    long cmpOffsAddr, long offsetsBytes, long tableAddr) implements QuietCloseable {
 
         @Override
-            public void close() {
-                Unsafe.free(tableAddr, FSSTNative.MAX_HEADER_SIZE, MemoryTag.NATIVE_DEFAULT);
-                Unsafe.free(cmpOffsAddr, offsetsBytes, MemoryTag.NATIVE_DEFAULT);
-                Unsafe.free(cmpAddr, cmpCap, MemoryTag.NATIVE_DEFAULT);
-                Unsafe.free(srcOffsAddr, offsetsBytes, MemoryTag.NATIVE_DEFAULT);
-                Unsafe.free(srcAddr, srcLen, MemoryTag.NATIVE_DEFAULT);
-            }
+        public void close() {
+            Unsafe.free(tableAddr, FSSTNative.MAX_HEADER_SIZE, MemoryTag.NATIVE_DEFAULT);
+            Unsafe.free(cmpOffsAddr, offsetsBytes, MemoryTag.NATIVE_DEFAULT);
+            Unsafe.free(cmpAddr, cmpCap, MemoryTag.NATIVE_DEFAULT);
+            Unsafe.free(srcOffsAddr, offsetsBytes, MemoryTag.NATIVE_DEFAULT);
+            Unsafe.free(srcAddr, srcLen, MemoryTag.NATIVE_DEFAULT);
         }
+    }
 }
