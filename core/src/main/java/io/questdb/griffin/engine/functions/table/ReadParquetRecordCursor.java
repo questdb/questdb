@@ -75,7 +75,7 @@ import org.jetbrains.annotations.Nullable;
  * <p>
  * This cursor currently reads external parquet files via {@link ParquetFileDecoder},
  * which materializes all requested chunks. It does not currently understand the
- * `_pm` zero-pointer all-null convention used by {@code ParquetMetaPartitionDecoder}.
+ * `_pm` zero-pointer all-null convention used by {@code ParquetPartitionDecoder}.
  * If {@code read_parquet()} ever starts using `_pm`, the getters in this class
  * must first be taught to treat {@code dataPtr == 0 && auxPtr == 0} as a logical
  * all-null chunk instead of dereferencing the pointers directly.

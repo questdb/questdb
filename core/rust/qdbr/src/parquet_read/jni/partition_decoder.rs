@@ -52,7 +52,7 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_ParquetParti
     match res {
         Ok(count) => count as u32,
         Err(mut err) => {
-            err.add_context("error in ParquetMetaPartitionDecoder.decodeRowGroup");
+            err.add_context("error in ParquetPartitionDecoder.decodeRowGroup");
             err.into_cairo_exception().throw(env)
         }
     }
@@ -100,7 +100,7 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_ParquetParti
         filtered_rows_count,
     );
     if let Err(mut err) = res {
-        err.add_context("error in ParquetMetaPartitionDecoder.decodeRowGroupWithRowFilter");
+        err.add_context("error in ParquetPartitionDecoder.decodeRowGroupWithRowFilter");
         let _: () = err.into_cairo_exception().throw(env);
     }
 }
@@ -148,7 +148,7 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_ParquetParti
     );
     if let Err(mut err) = res {
         err.add_context(
-            "error in ParquetMetaPartitionDecoder.decodeRowGroupWithRowFilterFillNulls",
+            "error in ParquetPartitionDecoder.decodeRowGroupWithRowFilterFillNulls",
         );
         let _: () = err.into_cairo_exception().throw(env);
     }
@@ -319,7 +319,7 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_ParquetParti
     match res {
         Ok(val) => val as i64,
         Err(mut err) => {
-            err.add_context("error in ParquetMetaPartitionDecoder.findRowGroupByTimestamp");
+            err.add_context("error in ParquetPartitionDecoder.findRowGroupByTimestamp");
             err.into_cairo_exception().throw(env)
         }
     }

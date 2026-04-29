@@ -419,7 +419,7 @@ public class ParquetMetaWriteTest extends AbstractCairoTest {
                 }
                 reader.openPartition(i);
                 ParquetMetaFileReader meta = reader
-                        .getAndInitParquetMetaPartitionDecoder(i)
+                        .getAndInitParquetPartitionDecoder(i)
                         .metadata();
                 Assert.assertTrue("row group count must be > 0", meta.getRowGroupCount() > 0);
                 Assert.assertEquals("column count", expectedColumnCount, meta.getColumnCount());

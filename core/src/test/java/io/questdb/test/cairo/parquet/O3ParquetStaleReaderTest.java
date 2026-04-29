@@ -109,7 +109,7 @@ public class O3ParquetStaleReaderTest extends AbstractCairoTest {
                     }
                     reader.openPartition(parquetIdx);
                     ParquetMetaFileReader meta = reader
-                            .getAndInitParquetMetaPartitionDecoder(parquetIdx)
+                            .getAndInitParquetPartitionDecoder(parquetIdx)
                             .metadata();
                     int rgCount = meta.getRowGroupCount();
                     if (rgCount < 2) {
@@ -406,7 +406,7 @@ public class O3ParquetStaleReaderTest extends AbstractCairoTest {
                 }
                 reader.openPartition(i);
                 ParquetMetaFileReader meta = reader
-                        .getAndInitParquetMetaPartitionDecoder(i)
+                        .getAndInitParquetPartitionDecoder(i)
                         .metadata();
                 Assert.assertEquals("column count on parquet partition " + i,
                         expectedColumnCount, meta.getColumnCount());

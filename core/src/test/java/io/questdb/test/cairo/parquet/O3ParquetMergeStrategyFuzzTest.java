@@ -854,7 +854,7 @@ public class O3ParquetMergeStrategyFuzzTest extends AbstractFuzzTest {
                     continue;
                 }
                 reader.openPartition(i);
-                ParquetMetaFileReader parquetMeta = reader.getAndInitParquetMetaPartitionDecoder(i).metadata();
+                ParquetMetaFileReader parquetMeta = reader.getAndInitParquetPartitionDecoder(i).metadata();
 
                 // The _pm footer's parquet file size must equal the size committed in _txn
                 // field 3 (the MVCC version token). Any divergence means the committed
@@ -916,7 +916,7 @@ public class O3ParquetMergeStrategyFuzzTest extends AbstractFuzzTest {
                     continue;
                 }
                 reader.openPartition(i);
-                ParquetMetaFileReader meta = reader.getAndInitParquetMetaPartitionDecoder(i).metadata();
+                ParquetMetaFileReader meta = reader.getAndInitParquetPartitionDecoder(i).metadata();
                 int rgCount = meta.getRowGroupCount();
                 int smallRgCount = 0;
                 for (int rg = 0; rg < rgCount; rg++) {

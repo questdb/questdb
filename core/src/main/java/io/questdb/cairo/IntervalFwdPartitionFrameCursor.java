@@ -223,7 +223,7 @@ public class IntervalFwdPartitionFrameCursor extends AbstractIntervalPartitionFr
                     final byte format = reader.getPartitionFormat(partitionLo);
                     if (format == PartitionFormat.PARQUET) {
                         frame.format = PartitionFormat.PARQUET;
-                        frame.parquetMetaDecoder = reader.getAndInitParquetMetaPartitionDecoder(partitionLo);
+                        frame.parquetMetaDecoder = reader.getAndInitParquetPartitionDecoder(partitionLo);
                         assert frame.parquetMetaDecoder.getFileAddr() != 0 : "parquet decoder is not initialized";
                     } else {
                         assert format == PartitionFormat.NATIVE;

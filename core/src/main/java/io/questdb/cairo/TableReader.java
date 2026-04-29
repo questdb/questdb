@@ -317,9 +317,9 @@ public class TableReader implements Closeable, SymbolTableSource {
      * and delegates data decoding to the stateless Rust decode engine.
      *
      * @param partitionIndex the partition index
-     * @return the initialized ParquetMetaPartitionDecoder
+     * @return the initialized ParquetPartitionDecoder
      */
-    public ParquetPartitionDecoder getAndInitParquetMetaPartitionDecoder(int partitionIndex) {
+    public ParquetPartitionDecoder getAndInitParquetPartitionDecoder(int partitionIndex) {
         ParquetPartitionDecoder decoder = parquetMetaDecoders.getQuick(partitionIndex);
         if (decoder == null) {
             decoder = new ParquetPartitionDecoder();
@@ -1438,7 +1438,7 @@ public class TableReader implements Closeable, SymbolTableSource {
                         openPartitionCount++;
                     }
                     // Release native state on the existing decoder but keep the Java instance.
-                    // getAndInitParquetMetaPartitionDecoder rebinds via of() on next access, and
+                    // getAndInitParquetPartitionDecoder rebinds via of() on next access, and
                     // of() internally destroys stale state. Avoids a new allocation per reload.
                     ParquetPartitionDecoder parquetMetaDecoder = parquetMetaDecoders.getQuick(partitionIndex);
                     if (parquetMetaDecoder != null) {

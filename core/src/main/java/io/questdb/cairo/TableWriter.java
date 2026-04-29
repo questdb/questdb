@@ -6277,7 +6277,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             }
         } finally {
             // Release the decoder's native state before tearing down the mmaps it
-            // borrows from. ParquetMetaPartitionDecoder documents a clear-then-munmap
+            // borrows from. ParquetPartitionDecoder documents a clear-then-munmap
             // contract; tearing the mmaps down first leaves the decoder briefly
             // pointing at unmapped memory.
             Misc.free(parquetDecoder);

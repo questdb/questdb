@@ -109,7 +109,7 @@ public class ParquetPartitionDecoderTest extends AbstractCairoTest {
         // Guards lifecycle invariant 2: destroy() must clear the embedded
         // reader unconditionally. The shallow-copy decoder owns its own
         // ParquetMetaFileReader instance (line 47 in
-        // ParquetMetaPartitionDecoder), and its native handle must be
+        // ParquetPartitionDecoder), and its native handle must be
         // freed when the shallow copy closes — even though owned == false.
         assertMemoryLeak(() -> {
             try (ParquetMetaTestFile file = buildFile(1, 100)) {
