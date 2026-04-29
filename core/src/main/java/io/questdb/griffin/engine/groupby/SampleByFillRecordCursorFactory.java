@@ -64,7 +64,6 @@ import io.questdb.std.Long256;
 import io.questdb.std.Long256Impl;
 import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
-import io.questdb.std.NumericException;
 import io.questdb.std.ObjList;
 import io.questdb.std.datetime.DateLocaleFactory;
 import io.questdb.std.datetime.TimeZoneRules;
@@ -1071,9 +1070,10 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
             }
             // Re-resolve TIME ZONE on every of() so a runtime-constant bind
             // variable picks up its current value. The wrap is required
-            // whenever a named zone resolves, including fixed-offset zones
-            // (e.g. 'UTC', 'Etc/GMT+5'): for super-day strides FILL must
-            // shift the bucket grid by tzOffset to match
+            // whenever a TZ resolves, regardless of whether the string is
+            // a named zone ('Europe/Berlin', 'America/New_York', 'UTC')
+            // or a raw offset literal ('+02:00', '-05:00'): for super-day
+            // strides FILL must shift the bucket grid by tzOffset to match
             // timestamp_floor_utc, and the wrap is the only sampler whose
             // setLocalAnchor / localAnchorAsUtc differ from setStart and
             // hence the only one that can fold tzOffset into the anchor.
@@ -1081,22 +1081,19 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
             // day-or-larger SAMPLE BY + non-trivial FILL, so tzFunc != null
             // implies the wrap is required.
             //
-            // The Dates.parseOffset gate skips raw offset literals
-            // (e.g. '+02:00'): the optimiser already folds those into
-            // calendarOffset / FROM and does not set fillTimezoneName for
-            // the offset-only path, but the runtime guard mirrors the
-            // legacy SAMPLE BY cursor's TZ-name discriminator.
+            // timestampDriver.getTimezoneRules unifies offset-literal and
+            // named-zone resolution: offset literals return a
+            // FixedTimeZoneRule whose getOffset is constant, and named
+            // zones return a full DST-aware TimeZoneRules. Either way the
+            // wrap delegates to tzRules.getOffset uniformly.
             if (tzFunc != null) {
                 tzFunc.init(baseCursor, executionContext);
                 final CharSequence tz = tzFunc.getStrA(null);
-                if (tz != null && Dates.parseOffset(tz) == Long.MIN_VALUE) {
+                if (tz != null) {
                     final TimeZoneRules tzRules;
                     try {
-                        tzRules = DateLocaleFactory.EN_LOCALE.getZoneRules(
-                                Numbers.decodeLowInt(DateLocaleFactory.EN_LOCALE.matchZone(tz, 0, tz.length())),
-                                timestampDriver.getTZRuleResolution()
-                        );
-                    } catch (NumericException e) {
+                        tzRules = timestampDriver.getTimezoneRules(DateLocaleFactory.EN_LOCALE, tz);
+                    } catch (CairoException e) {
                         throw SqlException.$(tzFuncPos, "invalid timezone: ").put(tz);
                     }
                     if (tzWrap == null) {
