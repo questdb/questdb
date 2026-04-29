@@ -8234,13 +8234,10 @@ public class SqlOptimiser implements Mutable {
             // local-calendar walk that timestamp_floor_utc performs per row.
             // SqlCodeGenerator.generateFill consumes setFillTimezoneName below
             // and wraps the UTC sampler in TimezoneFloorTimestampSampler when
-            // present. Until OFFSET semantics through that wrap are settled,
-            // reject day-or-larger + TZ + FILL with a non-default OFFSET — the
-            // fillOffset propagation gate further below otherwise silently
-            // drops the user's offset, which would silently misplace buckets.
-            // Sub-day strides are unaffected because the wrap gate just below
-            // converts the FROM anchor via to_utc, leaving bucketing purely
-            // UTC-uniform.
+            // present. The fillOffset propagation gate further below extends
+            // to this case so the fill cursor's setLocalAnchor + setOffset
+            // pair anchors the local grid at (from + offset) mod bucket --
+            // the same modulus seed timestamp_floor_utc uses.
             final boolean isSampleBySuperDay = sampleBy != null
                     && !sampleBy.token.isEmpty()
                     && !CommonUtils.isSubDayUnit(sampleBy.token.charAt(sampleBy.token.length() - 1));
@@ -8251,13 +8248,6 @@ public class SqlOptimiser implements Mutable {
                         hasFillFastPathTz = true;
                         break;
                     }
-                }
-                if (hasFillFastPathTz
-                        && sampleByOffset != null
-                        && sampleByOffset != SqlParser.ZERO_OFFSET) {
-                    throw SqlException.$(sampleByOffset.position,
-                            "SAMPLE BY with day-or-larger stride, FILL, a non-UTC TIME ZONE, "
-                                    + "and a non-default OFFSET is not supported");
                 }
             }
 
@@ -8534,25 +8524,33 @@ public class SqlOptimiser implements Mutable {
                 nested.setFillStride(sampleBy);
                 nested.setFillTimezoneName(hasFillFastPathTz ? sampleByTimezoneName : null);
                 nested.setFillValues(sampleByFill);
-                // Propagate offset to the fill cursor whenever timestamp_floor_utc
-                // bucketizes purely in UTC space so the sampler can reproduce the
-                // same grid by adding offset to fillFrom.
+                // Propagate offset to the fill cursor whenever the sampler can
+                // reproduce timestamp_floor_utc's grid from (fromTs, offset):
                 //   - No timezone: effectiveOffset = from + offset, grid anchored
                 //     at fromTs + offset directly.
                 //   - Sub-day stride + timezone + FROM: timestamp_floor_utc is
                 //     invoked with tz=null and from=to_utc(FROM, tz) (see above),
                 //     so fillFrom is to_utc(FROM, tz) and the same
                 //     fromTs + offset shift matches the group-by grid.
-                // When a timezone is present without these conditions (day-granular
-                // or sub-day without FROM), timestamp_floor_utc applies timezone
-                // rules per row and the fill sampler anchors on the already-floored
-                // firstTs instead, so the offset must not be applied again.
+                //   - Day-or-larger stride + timezone + FILL: hasFillFastPathTz
+                //     wraps the sampler with TimezoneFloorTimestampSampler.
+                //     The fill cursor calls setLocalAnchor(fromTs + offset) +
+                //     setOffset(offset); the wrap forwards both untranslated to
+                //     the wrapped sampler so its local-grid mod-bucket position
+                //     matches timestamp_floor_utc's effectiveOffset mod bucket.
+                // When a timezone is present and no fast-path wrap is in place
+                // (e.g. sub-day stride + timezone without FROM), timestamp_floor_utc
+                // applies timezone rules per row and the fill sampler anchors on
+                // the already-floored firstTs instead, so the offset must not be
+                // applied again.
                 // Only propagate a non-trivial offset. ZERO_OFFSET ('00:00') is the
                 // identity and the code generator already defaults calendarOffset to 0
                 // when fillOffset is null, so emitting it would just pollute the model.
                 // parseWithOffset() normalises explicit '00:00' to the ZERO_OFFSET
                 // singleton, so a simple identity check covers all zero-offset cases.
-                if ((sampleByTimezoneName == null || (hasSubDayTimezoneWrap && sampleByFrom != null))
+                if ((sampleByTimezoneName == null
+                        || (hasSubDayTimezoneWrap && sampleByFrom != null)
+                        || hasFillFastPathTz)
                         && sampleByOffset != null
                         && sampleByOffset != SqlParser.ZERO_OFFSET) {
                     nested.setFillOffset(sampleByOffset);

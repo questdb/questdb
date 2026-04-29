@@ -3391,8 +3391,9 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             // grid-drift guard fires once a DST transition stretches or shrinks a
             // bucket. SqlOptimiser.rewriteSampleBy only sets fillTimezoneName for
             // this combination (sub-day uses to_utc(FROM, tz) instead and stays
-            // uniform-UTC), and it has already rejected any non-default OFFSET so
-            // the wrap does not need to reason about local-time offset shifts.
+            // uniform-UTC). Non-default OFFSET reaches the cursor as fillOffset
+            // and is anchored on the local grid via setLocalAnchor + setOffset
+            // (TimezoneFloorTimestampSampler forwards both untranslated).
             final ExpressionNode fillTimezoneNode = curr.getFillTimezoneName();
             if (fillTimezoneNode != null) {
                 final Function tzFunc = functionParser.parseFunction(fillTimezoneNode, EmptyRecordMetadata.INSTANCE, executionContext);
