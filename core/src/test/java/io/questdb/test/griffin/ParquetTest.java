@@ -1491,6 +1491,31 @@ public class ParquetTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testProjectionRepeatedColumnAggregateOverParquet() throws Exception {
+        // A SelectedRecord projection can list the same base column twice (e.g.
+        // referencing t0.c via a table alias places the column at two output
+        // slots). PageFrameMemoryPool keyed its decoded-buffer-to-query-column
+        // map by parquet column index, so the second slot's mapping overwrote
+        // the first; the first slot's pageAddress stayed at zero and the
+        // aggregator read NULL for every row.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (k INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("INSERT INTO x VALUES (1, '2024-01-01T00:00:00.000000Z'), (2, '2024-01-01T01:00:00.000000Z'), (null, '2024-01-02T00:00:00.000000Z')");
+            drainWalQueue();
+            execute("ALTER TABLE x CONVERT PARTITION TO PARQUET LIST '2024-01-01'");
+            drainWalQueue();
+            // The qualified column reference forces a SelectedRecord wrapper
+            // that lists k twice -- once for abs(t0.k), once for the * t0.k
+            // factor. Without the fix the first reference reads NULL and both
+            // non-null rows fall into the NULL group.
+            assertSql(
+                    "key\tn\nnull\t1\n1\t1\n4\t1\n",
+                    "SELECT (abs(t0.k) * t0.k) AS key, count() AS n FROM x t0 ORDER BY key"
+            );
+        });
+    }
+
+    @Test
     public void testSinglePartition() throws Exception {
         assertMemoryLeak(() -> {
             execute(
