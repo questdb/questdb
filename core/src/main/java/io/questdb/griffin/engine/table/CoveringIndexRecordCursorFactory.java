@@ -1006,9 +1006,8 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
                             writeStringToFrame(addrs[q], varDataAddrs, varDataPos, varDataCap, q, count, crc.getCoveredStrA(includeIdx));
                     case ColumnType.BINARY ->
                             writeBinaryToFrame(addrs[q], varDataAddrs, varDataPos, varDataCap, q, count, crc.getCoveredBin(includeIdx));
-                    case ColumnType.ARRAY ->
-                            writeArrayToFrame(addrs[q], varDataAddrs, varDataPos, varDataCap, q, count,
-                                    crc.getCoveredArray(includeIdx, columnTypes[q]));
+                    case ColumnType.ARRAY -> writeArrayToFrame(addrs[q], varDataAddrs, varDataPos, varDataCap, q, count,
+                            crc.getCoveredArray(includeIdx, columnTypes[q]));
                     default -> {
                     }
                 }
