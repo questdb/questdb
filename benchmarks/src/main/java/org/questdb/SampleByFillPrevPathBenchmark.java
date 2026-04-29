@@ -27,6 +27,7 @@ package org.questdb;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.DefaultCairoConfiguration;
+import io.questdb.cairo.SampleBySortStrategy;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
@@ -135,9 +136,10 @@ public class SampleByFillPrevPathBenchmark {
     @Param({"WORST_CASE", "POSITIVE_CASE", "BEST_CASE"})
     public String scenario;
 
-    // Sort strategy applied above AGB output before the PROTO fill cursor consumes it.
-    // Has no effect on LEGACY (single-threaded scan, no sort) or FAST_PATH (always uses
-    // SortedRecordCursorFactory because of the BuildChainObserver hook).
+    // Sort strategy applied above AGB output before the fill cursor consumes it.
+    // Has no effect on LEGACY (single-threaded scan, no sort). On FAST_PATH the
+    // strategy is plumbed through CairoConfiguration.getSampleByFillSortStrategy()
+    // (overridden in setUp()) and SqlCodeGenerator picks the matching factory.
     //
     // Four supported values:
     //   "light_encoded"     -> EncodedSortLightRecordCursorFactory
@@ -149,9 +151,9 @@ public class SampleByFillPrevPathBenchmark {
     //   "light_recordchain" -> SortedLightRecordCursorFactory
     //                          red-black tree sort; rowId-based; requires random access
     //   "full_recordchain"  -> SortedRecordCursorFactory
-    //                          red-black tree sort; full record materialisation; today's FAST_PATH default
+    //                          red-black tree sort; full record materialisation
     //
-    // Only "light_encoded" listed here so a default JMH run executes one PROTO sort variant.
+    // Only "light_encoded" listed here so a default JMH run executes the production default.
     // Pass -p sort=full_encoded,light_recordchain,full_recordchain (or any subset) to compare.
     @Param({"light_encoded"})
     public String sort;
@@ -173,6 +175,21 @@ public class SampleByFillPrevPathBenchmark {
         new Runner(opt).run();
     }
 
+    private static int parseSortStrategy(String sort) {
+        switch (sort) {
+            case "light_encoded":
+                return SampleBySortStrategy.LIGHT_ENCODED;
+            case "full_encoded":
+                return SampleBySortStrategy.FULL_ENCODED;
+            case "light_recordchain":
+                return SampleBySortStrategy.LIGHT_RECORDCHAIN;
+            case "full_recordchain":
+                return SampleBySortStrategy.FULL_RECORDCHAIN;
+            default:
+                throw new IllegalArgumentException("unknown sort strategy: " + sort);
+        }
+    }
+
     @Benchmark
     public void run(Blackhole bh) throws SqlException {
         try (RecordCursor cursor = factory.getCursor(ctx)) {
@@ -192,7 +209,13 @@ public class SampleByFillPrevPathBenchmark {
         // Override sort memory caps so the encoded sort variants can hold
         // ~50M AGB output rows (~1.2 GB packed). Default is 256 MB total,
         // which trips LimitOverflowException on WORST 50M.
+        final int sortStrategy = parseSortStrategy(sort);
         final CairoConfiguration configuration = new DefaultCairoConfiguration(tempRoot.toString()) {
+            @Override
+            public int getSampleByFillSortStrategy() {
+                return sortStrategy;
+            }
+
             @Override
             public int getSqlSortKeyMaxPages() {
                 return 8192; // 8192 * 128 KB = 1 GB
@@ -232,11 +255,6 @@ public class SampleByFillPrevPathBenchmark {
         compiler = new SqlCompilerImpl(engine);
 
         seedTable();
-
-        // Sort strategy. SqlCodeGenerator selects the sort factory by
-        // reading this property. Always set explicitly so a stale value
-        // from a previous @Param sweep cannot leak in.
-        System.setProperty("questdb.sample.by.sort", sort);
 
         final String sql = buildSql();
         factory = compiler.compile(sql, ctx).getRecordCursorFactory();
