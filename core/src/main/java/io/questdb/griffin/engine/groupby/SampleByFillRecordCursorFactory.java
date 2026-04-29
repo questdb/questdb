@@ -792,6 +792,13 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
             // LONG_NULL but hasExplicitTo == true, which would otherwise promote
             // maxTimestamp to Long.MAX_VALUE and skip the isBaseCursorExhausted
             // short-circuit at line 362.
+            //
+            // A user-passed Long.MIN_VALUE TO is folded into the same demote path,
+            // because LONG_NULL == Long.MIN_VALUE is QuestDB's universal null
+            // sentinel for timestamps -- no representation distinguishes a "real"
+            // Long.MIN_VALUE from null anywhere in the codebase. The FROM path
+            // collapses Long.MIN_VALUE into LONG_NULL identically (see fromTs
+            // above), so the two ends agree on the convention.
             if (maxTimestamp == Numbers.LONG_NULL) hasExplicitTo = false;
 
             // Pass 1: key discovery (keyed queries only)
