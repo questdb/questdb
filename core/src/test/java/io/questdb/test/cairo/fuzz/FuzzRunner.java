@@ -989,9 +989,16 @@ public class FuzzRunner {
             ConcurrentLinkedQueue<Throwable> errors
     ) {
         final int writerIndex;
+        // Capture dirName at thread creation: dirName is stable across renames
+        // while tableName is not, so the reopenTable branch below can scope the
+        // reset to writers for this table even after a RenameTableOperation has
+        // changed the table's public name.
+        final String dirName;
         synchronized (writers) {
-            writers.add((WalWriter) engine.getTableWriterAPI(tableName, "apply trans test"));
+            WalWriter w = (WalWriter) engine.getTableWriterAPI(tableName, "apply trans test");
+            writers.add(w);
             writerIndex = writers.size() - 1;
+            dirName = w.getTableToken().getDirName();
         }
 
         return new Thread(() -> {
@@ -1040,11 +1047,21 @@ public class FuzzRunner {
 
                     if (transaction.reopenTable) {
                         synchronized (writers) {
-                            // Table is dropped, reload all writers
+                            // Table was dropped or had its writer state invalidated; reload
+                            // all writers for this table. Match by dirName (stable across
+                            // renames) and reopen against the current TableToken so that a
+                            // rename committed earlier in the transaction stream is honoured
+                            // here. If the table has been fully dropped without recreate, the
+                            // slot is nulled so the cleanup `Misc.freeObjList(writers)` won't
+                            // double-close the just-closed writer.
                             for (int ii = 0; ii < writers.size(); ii++) {
-                                if (writers.get(ii).getTableToken().getTableName().equals(tableName)) {
-                                    writers.get(ii).close();
-                                    writers.setQuick(ii, (WalWriter) engine.getTableWriterAPI(tableName, "apply trans test"));
+                                WalWriter cur = writers.getQuick(ii);
+                                if (cur != null && cur.getTableToken().getDirName().equals(dirName)) {
+                                    TableToken currentToken = engine.getTableTokenByDirName(dirName);
+                                    cur.close();
+                                    writers.setQuick(ii, currentToken != null
+                                            ? (WalWriter) engine.getTableWriterAPI(currentToken, "apply trans test")
+                                            : null);
                                 }
                             }
                         }
