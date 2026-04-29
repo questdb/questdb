@@ -12925,7 +12925,11 @@ public class SampleByNanoTimestampTest extends AbstractCairoTest {
                     " from" +
                     " long_sequence(20)" +
                     ") timestamp(k) partition by NONE");
-            printSql("select b, sum_t(a), sum(c), sum(d), sum(e), sum(f), sum(g), k from x sample by 3h fill(20.56, none, 0, 0, 0)");
+            assertExceptionNoLeakCheck(
+                    "select b, sum_t(a), sum(c), sum(d), sum(e), sum(f), sum(g), k from x sample by 3h fill(20.56, none, 0, 0, 0)",
+                    94,
+                    "FILL(NONE) cannot be combined with other fill values"
+            );
         });
     }
 
