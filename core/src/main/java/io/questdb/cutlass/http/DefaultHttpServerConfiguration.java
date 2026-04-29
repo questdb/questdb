@@ -113,6 +113,11 @@ public class DefaultHttpServerConfiguration extends DefaultIODispatcherConfigura
     }
 
     @Override
+    public long getIngestMaxRequestSize() {
+        return 5 * Numbers.SIZE_1MB;
+    }
+
+    @Override
     public JsonQueryProcessorConfiguration getJsonQueryProcessorConfiguration() {
         return jsonQueryProcessorConfiguration;
     }

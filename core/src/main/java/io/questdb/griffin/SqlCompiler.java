@@ -33,6 +33,7 @@ import io.questdb.griffin.model.ExpressionNode;
 import io.questdb.griffin.model.IQueryModel;
 import io.questdb.griffin.model.InsertModel;
 import io.questdb.std.BytecodeAssembler;
+import io.questdb.std.LowerCaseCharSequenceObjHashMap;
 import io.questdb.std.Mutable;
 import io.questdb.std.QuietCloseable;
 import io.questdb.std.Transient;
@@ -42,6 +43,12 @@ import org.jetbrains.annotations.TestOnly;
 public interface SqlCompiler extends QuietCloseable, Mutable {
 
     CompiledQuery compile(CharSequence sqlText, SqlExecutionContext ctx) throws SqlException;
+
+    CompiledQuery compileWithOverrides(
+            CharSequence sqlText,
+            SqlExecutionContext ctx,
+            LowerCaseCharSequenceObjHashMap<CharSequence> overrideValues
+    ) throws SqlException;
 
     void compileBatch(CharSequence batchText, SqlExecutionContext sqlExecutionContext, BatchCallback batchCallback) throws Exception;
 

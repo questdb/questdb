@@ -659,6 +659,13 @@ public class SqlKeywords {
                 && (tok.charAt(7) | 32) == 't';
     }
 
+    public static boolean isDlqKeyword(CharSequence tok) {
+        return tok.length() == 3
+                && (tok.charAt(0) | 32) == 'd'
+                && (tok.charAt(1) | 32) == 'l'
+                && (tok.charAt(2) | 32) == 'q';
+    }
+
     public static boolean isDoubleKeyword(CharSequence tok) {
         return tok.length() == 6
                 && (tok.charAt(0) | 32) == 'd'
@@ -1779,6 +1786,17 @@ public class SqlKeywords {
                 && (tok.charAt(9) | 32) == 's';
     }
 
+    public static boolean isPayloadKeyword(CharSequence tok) {
+        return tok.length() == 7
+                && (tok.charAt(0) | 32) == 'p'
+                && (tok.charAt(1) | 32) == 'a'
+                && (tok.charAt(2) | 32) == 'y'
+                && (tok.charAt(3) | 32) == 'l'
+                && (tok.charAt(4) | 32) == 'o'
+                && (tok.charAt(5) | 32) == 'a'
+                && (tok.charAt(6) | 32) == 'd';
+    }
+
     public static boolean isPeriodKeyword(CharSequence tok) {
         return tok.length() == 6
                 && (tok.charAt(0) | 32) == 'p'
@@ -2339,6 +2357,19 @@ public class SqlKeywords {
                 && (tok.charAt(8) | 32) == 'i'
                 && (tok.charAt(9) | 32) == 'o'
                 && (tok.charAt(10) | 32) == 'n';
+    }
+
+    public static boolean isTransformKeyword(CharSequence tok) {
+        return tok.length() == 9
+                && (tok.charAt(0) | 32) == 't'
+                && (tok.charAt(1) | 32) == 'r'
+                && (tok.charAt(2) | 32) == 'a'
+                && (tok.charAt(3) | 32) == 'n'
+                && (tok.charAt(4) | 32) == 's'
+                && (tok.charAt(5) | 32) == 'f'
+                && (tok.charAt(6) | 32) == 'o'
+                && (tok.charAt(7) | 32) == 'r'
+                && (tok.charAt(8) | 32) == 'm';
     }
 
     public static boolean isTrueKeyword(CharSequence tok) {

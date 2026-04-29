@@ -101,6 +101,10 @@ public interface SecurityContext extends Mutable {
 
     void authorizeMatViewRefresh(TableToken tableToken);
 
+    void authorizePayloadTransformCreate();
+
+    void authorizePayloadTransformDrop();
+
     void authorizePGWire();
 
     void authorizeResumeWal(TableToken tableToken);

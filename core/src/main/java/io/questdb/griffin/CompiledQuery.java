@@ -73,7 +73,8 @@ public interface CompiledQuery {
     short COMPILE_VIEW = CREATE_VIEW + 1; // 35
     short ALTER_VIEW = COMPILE_VIEW + 1; // 36
     short ALTER_STORAGE_POLICY = ALTER_VIEW + 1; // 37
-    short EMPTY = ALTER_STORAGE_POLICY + 1;
+    short CREATE_PAYLOAD_TRANSFORM = ALTER_STORAGE_POLICY + 1; // 38
+    short EMPTY = CREATE_PAYLOAD_TRANSFORM + 1;
     short TYPES_COUNT = EMPTY;
 
     void closeAllButSelect();

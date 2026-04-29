@@ -40,6 +40,7 @@ import io.questdb.griffin.model.ExpressionNode;
 import io.questdb.griffin.model.IQueryModel;
 import io.questdb.griffin.model.InsertModel;
 import io.questdb.std.BytecodeAssembler;
+import io.questdb.std.LowerCaseCharSequenceObjHashMap;
 import io.questdb.std.Rnd;
 import io.questdb.std.str.CharSink;
 import org.jetbrains.annotations.NotNull;
@@ -143,6 +144,15 @@ public final class SqlCompilerPool extends AbstractMultiTenantPool<SqlCompilerPo
         @Override
         public CompiledQuery compile(CharSequence sqlText, SqlExecutionContext ctx) throws SqlException {
             return delegate.compile(sqlText, ctx);
+        }
+
+        @Override
+        public CompiledQuery compileWithOverrides(
+                CharSequence sqlText,
+                SqlExecutionContext ctx,
+                LowerCaseCharSequenceObjHashMap<CharSequence> overrideValues
+        ) throws SqlException {
+            return delegate.compileWithOverrides(sqlText, ctx, overrideValues);
         }
 
         @Override

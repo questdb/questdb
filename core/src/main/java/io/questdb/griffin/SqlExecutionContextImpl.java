@@ -102,6 +102,7 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
     private boolean parallelTopKEnabled;
     private boolean parallelHorizonJoinEnabled;
     private boolean parallelWindowJoinEnabled;
+    private CharSequence payload;
     private QueryFutureUpdateListener queryFutureUpdateListener = QueryFutureUpdateListener.EMPTY;
     private Rnd random;
     private long requestFd = -1;
@@ -293,6 +294,11 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
     }
 
     @Override
+    public CharSequence getPayload() {
+        return payload;
+    }
+
+    @Override
     public QueryFutureUpdateListener getQueryFutureUpdateListener() {
         return queryFutureUpdateListener;
     }
@@ -434,6 +440,7 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
         this.cacheHit = false;
         this.allowNonDeterministicFunction = true;
         this.validationOnly = false;
+        this.payload = null;
         this.timestampRequiredStack.clear();
         this.hasIntervalStack.clear();
         this.intervalModelObjStack.clear();
@@ -486,10 +493,6 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
         this.clockUseNow = true;
     }
 
-    public void setQueryFutureUpdateListener(QueryFutureUpdateListener listener) {
-        this.queryFutureUpdateListener = listener != null ? listener : QueryFutureUpdateListener.EMPTY;
-    }
-
     @Override
     public void setParallelFilterEnabled(boolean parallelFilterEnabled) {
         this.parallelFilterEnabled = parallelFilterEnabled;
@@ -523,6 +526,14 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
     @Override
     public void setParallelWindowJoinEnabled(boolean parallelWindowJoinEnabled) {
         this.parallelWindowJoinEnabled = parallelWindowJoinEnabled;
+    }
+
+    public void setPayload(CharSequence payload) {
+        this.payload = payload;
+    }
+
+    public void setQueryFutureUpdateListener(QueryFutureUpdateListener listener) {
+        this.queryFutureUpdateListener = listener != null ? listener : QueryFutureUpdateListener.EMPTY;
     }
 
     @Override

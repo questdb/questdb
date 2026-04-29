@@ -759,6 +759,7 @@ public class ServerMainTest extends AbstractBootstrapTest {
                                     "http.export.timeout\tQDB_HTTP_EXPORT_TIMEOUT\t300000\tdefault\tfalse\tfalse\n" +
                                     "http.enabled\tQDB_HTTP_ENABLED\ttrue\tconf\tfalse\tfalse\n" +
                                     "http.frozen.clock\tQDB_HTTP_FROZEN_CLOCK\ttrue\tconf\tfalse\tfalse\n" +
+                                    "http.ingest.max.request.size\tQDB_HTTP_INGEST_MAX_REQUEST_SIZE\t5242880\tdefault\tfalse\tfalse\n" +
                                     "http.health.check.authentication.required\tQDB_HTTP_HEALTH_CHECK_AUTHENTICATION_REQUIRED\ttrue\tdefault\tfalse\tfalse\n" +
                                     "http.json.query.connection.check.frequency\tQDB_HTTP_JSON_QUERY_CONNECTION_CHECK_FREQUENCY\t1000000\tdefault\tfalse\tfalse\n" +
                                     "http.keep-alive.max\tQDB_HTTP_KEEP-ALIVE_MAX\t10000\tdefault\tfalse\tfalse\n" +

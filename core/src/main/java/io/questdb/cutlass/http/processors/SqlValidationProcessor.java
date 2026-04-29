@@ -338,6 +338,8 @@ public class SqlValidationProcessor implements HttpRequestProcessor, HttpRequest
                             sendConfirmation(state, configuration.getKeepAliveHeader(), "ALTER VIEW");
                     case CompiledQuery.ALTER_STORAGE_POLICY ->
                             sendConfirmation(state, configuration.getKeepAliveHeader(), "ALTER STORAGE POLICY");
+                    case CompiledQuery.CREATE_PAYLOAD_TRANSFORM ->
+                            sendConfirmation(state, configuration.getKeepAliveHeader(), "CREATE PAYLOAD TRANSFORM");
                     default -> sendConfirmation(state, configuration.getKeepAliveHeader(), "UNKNOWN");
                 }
             } catch (TableReferenceOutOfDateException e) {

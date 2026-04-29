@@ -40,6 +40,7 @@ import io.questdb.griffin.engine.groupby.TimestampSampler;
 import io.questdb.griffin.engine.groupby.TimestampSamplerFactory;
 import io.questdb.griffin.engine.ops.CreateMatViewOperationBuilder;
 import io.questdb.griffin.engine.ops.CreateMatViewOperationBuilderImpl;
+import io.questdb.griffin.engine.ops.CreatePayloadTransformOperationBuilderImpl;
 import io.questdb.griffin.engine.ops.CreateTableOperationBuilder;
 import io.questdb.griffin.engine.ops.CreateTableOperationBuilderImpl;
 import io.questdb.griffin.engine.ops.CreateViewOperationBuilder;
@@ -116,6 +117,7 @@ public class SqlParser {
     private final CairoConfiguration configuration;
     private final ObjectPool<ExportModel> copyModelPool;
     private final CreateMatViewOperationBuilderImpl createMatViewOperationBuilder = new CreateMatViewOperationBuilderImpl();
+    private final CreatePayloadTransformOperationBuilderImpl createPayloadTransformOperationBuilder = new CreatePayloadTransformOperationBuilderImpl();
     private final ObjectPool<CreateTableColumnModel> createTableColumnModelPool;
     private final CreateTableOperationBuilderImpl createTableOperationBuilder = createMatViewOperationBuilder.getCreateTableOperationBuilder();
     private final CreateViewOperationBuilderImpl createViewOperationBuilder = new CreateViewOperationBuilderImpl();
@@ -155,6 +157,10 @@ public class SqlParser {
     private boolean createTableMode = false;
     private boolean createViewMode = false;
     private int digit;
+    // Last start offset captured by parseViewSql(). Reflects the position of the
+    // first token of the view body (after stripping a leading '(' if present),
+    // so callers can align their selectSqlPosition with the returned string.
+    private int lastViewSqlStartPosition;
     private boolean pivotMode = false;
     private boolean subQueryMode = false;
 
@@ -988,7 +994,18 @@ public class SqlParser {
             SqlParserCallback sqlParserCallback,
             LowerCaseCharSequenceObjHashMap<ExpressionNode> decls
     ) throws SqlException {
-        final IQueryModel model = parseAsSubQuery(lexer, withClauses, useTopLevelWithClauses, sqlParserCallback, decls, false);
+        return parseAsSubQueryAndExpectClosingBrace(lexer, withClauses, useTopLevelWithClauses, sqlParserCallback, decls, false);
+    }
+
+    private IQueryModel parseAsSubQueryAndExpectClosingBrace(
+            GenericLexer lexer,
+            LowerCaseCharSequenceObjHashMap<WithClauseModel> withClauses,
+            boolean useTopLevelWithClauses,
+            SqlParserCallback sqlParserCallback,
+            LowerCaseCharSequenceObjHashMap<ExpressionNode> decls,
+            boolean overrideDeclare
+    ) throws SqlException {
+        final IQueryModel model = parseAsSubQuery(lexer, withClauses, useTopLevelWithClauses, sqlParserCallback, decls, overrideDeclare);
         expectTok(lexer, ')');
         return model;
     }
@@ -1242,14 +1259,19 @@ public class SqlParser {
             SqlExecutionContext executionContext,
             SqlParserCallback sqlParserCallback
     ) throws SqlException {
-        CharSequence tok = tok(lexer, "'atomic' or 'table' or 'batch' or 'materialized' or 'view' or 'or replace'");
+        CharSequence tok = tok(lexer, "'atomic' or 'table' or 'batch' or 'materialized' or 'view' or 'payload' or 'or replace'");
+        boolean isReplace = false;
         if (isOrKeyword(tok)) {
             // we need to skip OR REPLACE, it is handled in an executor
             expectTok(lexer, "replace");
-            tok = tok(lexer, "'view'");
+            isReplace = true;
+            tok = tok(lexer, "'view' or 'payload'");
         }
         if (isViewKeyword(tok)) {
             return parseCreateView(lexer, executionContext, sqlParserCallback);
+        }
+        if (isPayloadKeyword(tok)) {
+            return parseCreatePayloadTransform(lexer, sqlParserCallback, isReplace);
         }
         if (isMaterializedKeyword(tok)) {
             if (!configuration.isMatViewEnabled()) {
@@ -1258,6 +1280,101 @@ public class SqlParser {
             return parseCreateMatView(lexer, executionContext, sqlParserCallback);
         }
         return parseCreateTable(lexer, tok, executionContext, sqlParserCallback);
+    }
+
+    // CREATE [OR REPLACE] PAYLOAD TRANSFORM name INTO target_table
+    //   [DLQ dlq_table [PARTITION BY unit] [TTL value unit]]
+    //   AS SELECT ...
+    private ExecutionModel parseCreatePayloadTransform(GenericLexer lexer, SqlParserCallback sqlParserCallback, boolean isReplace) throws SqlException {
+        expectTok(lexer, "transform");
+        final CreatePayloadTransformOperationBuilderImpl builder = createPayloadTransformOperationBuilder;
+        builder.clear();
+        builder.setReplace(isReplace);
+
+        CharSequence tok = tok(lexer, "transform name or 'if'");
+        if (isIfKeyword(tok)) {
+            if (isNotKeyword(tok(lexer, "'not'")) && isExistsKeyword(tok(lexer, "'exists'"))) {
+                if (isReplace) {
+                    throw SqlException.$(lexer.lastTokenPosition(), "OR REPLACE and IF NOT EXISTS cannot be combined");
+                }
+                builder.setIgnoreIfExists(true);
+                tok = tok(lexer, "transform name");
+            } else {
+                throw SqlException.$(lexer.lastTokenPosition(), "'if not exists' expected");
+            }
+        }
+        assertNameIsQuotedOrNotAKeyword(tok, lexer.lastTokenPosition());
+        // Copy the identifier off the lexer flyweight before continuing to lex.
+        // The builder retains this CharSequence until build(), so storing the
+        // raw lexer token would let later tokens overwrite it.
+        builder.setName(GenericLexer.immutableOf(GenericLexer.unquote(tok)));
+        builder.setNamePosition(lexer.lastTokenPosition());
+
+        // INTO target_table
+        tok = tok(lexer, "'into'");
+        if (!isIntoKeyword(tok)) {
+            throw SqlException.position(lexer.lastTokenPosition()).put("'into' expected");
+        }
+        tok = tok(lexer, "target table name");
+        tok = sansPublicSchema(tok, lexer);
+        assertNameIsQuotedOrNotAKeyword(tok, lexer.lastTokenPosition());
+        builder.setTargetTable(GenericLexer.immutableOf(
+                assertNoDotsAndSlashes(GenericLexer.unquote(tok), lexer.lastTokenPosition())));
+        builder.setTargetTablePosition(lexer.lastTokenPosition());
+
+        // Optional DLQ clause
+        tok = tok(lexer, "'dlq' or 'as'");
+        if (isDlqKeyword(tok)) {
+            tok = tok(lexer, "DLQ table name");
+            tok = sansPublicSchema(tok, lexer);
+            assertNameIsQuotedOrNotAKeyword(tok, lexer.lastTokenPosition());
+            builder.setDlqTablePosition(lexer.lastTokenPosition());
+            builder.setDlqTable(GenericLexer.immutableOf(
+                    assertNoDotsAndSlashes(GenericLexer.unquote(tok), lexer.lastTokenPosition())));
+
+            tok = tok(lexer, "'partition' or 'ttl' or 'as'");
+            if (isPartitionKeyword(tok)) {
+                expectTok(lexer, "by");
+                tok = tok(lexer, "partition unit");
+                int partitionBy = PartitionBy.fromString(tok);
+                if (partitionBy < 0) {
+                    throw SqlException.$(lexer.lastTokenPosition(), "invalid partition type");
+                }
+                builder.setDlqPartitionBy(partitionBy);
+                tok = tok(lexer, "'ttl' or 'as'");
+            }
+            if (isTtlKeyword(tok)) {
+                tok = tok(lexer, "TTL value");
+                builder.setDlqTtlValuePosition(lexer.lastTokenPosition());
+                try {
+                    builder.setDlqTtlValue(Numbers.parseLong(tok));
+                } catch (NumericException e) {
+                    throw SqlException.$(lexer.lastTokenPosition(), "invalid TTL value");
+                }
+                tok = tok(lexer, "TTL unit");
+                builder.setDlqTtlUnitPosition(lexer.lastTokenPosition());
+                builder.setDlqTtlUnit(GenericLexer.immutableOf(tok));
+                tok = tok(lexer, "'as'");
+            }
+        }
+
+        // AS SELECT ...
+        if (!isAsKeyword(tok)) {
+            throw SqlException.position(lexer.lastTokenPosition()).put("'as' expected");
+        }
+
+        // Reuse the regular query parser (matches CREATE VIEW). This accepts
+        // both bare SELECT and WITH ... SELECT (CTEs), and rejects trailing
+        // garbage after a parenthesised query.
+        final String selectSql = parseViewSql(lexer, sqlParserCallback);
+        builder.setSelectSql(selectSql);
+        // Use the start offset that parseViewSql actually used for its returned
+        // string. For a parenthesised body parseViewSql skips the leading '('
+        // before capturing, so the offset is one (or more) past where we'd
+        // otherwise see it. Without this, error positions reported by
+        // validateTransformSql would be misaligned for `AS (SELECT ...)` bodies.
+        builder.setSelectSqlPosition(lastViewSqlStartPosition);
+        return builder;
     }
 
     private ExecutionModel parseCreateMatView(
@@ -2459,6 +2576,9 @@ public class SqlParser {
                     } else {
                         throw SqlException.position(lexer.lastTokenPosition()).put("expected 'TABLE' or 'VIEW' or 'MATERIALIZED VIEW'");
                     }
+                } else if (isPayloadKeyword(tok)) {
+                    expectTok(lexer, "transforms");
+                    showKind = IQueryModel.SHOW_PAYLOAD_TRANSFORMS;
                 } else {
                     showKind = sqlParserCallback.parseShowSql(lexer, model, tok, expressionNodePool);
                 }
@@ -3975,8 +4095,17 @@ public class SqlParser {
             SqlParserCallback sqlParserCallback,
             @Nullable LowerCaseCharSequenceObjHashMap<ExpressionNode> decls
     ) throws SqlException {
+        return parseSelectWithOverrides(lexer, sqlParserCallback, decls, false);
+    }
+
+    private ExecutionModel parseSelectWithOverrides(
+            GenericLexer lexer,
+            SqlParserCallback sqlParserCallback,
+            @Nullable LowerCaseCharSequenceObjHashMap<ExpressionNode> decls,
+            boolean overrideDeclare
+    ) throws SqlException {
         lexer.unparseLast();
-        final IQueryModel model = parseDml(lexer, null, lexer.lastTokenPosition(), true, sqlParserCallback, decls, false);
+        final IQueryModel model = parseDml(lexer, null, lexer.lastTokenPosition(), true, sqlParserCallback, decls, overrideDeclare);
         final CharSequence tok = optTok(lexer);
         if (tok == null || Chars.equals(tok, ';')) {
             model.recordViews(recordedViews);
@@ -4499,10 +4628,23 @@ public class SqlParser {
             SqlParserCallback sqlParserCallback,
             @Nullable LowerCaseCharSequenceObjHashMap<ExpressionNode> decls
     ) throws SqlException {
-        parseWithClauses(lexer, topLevelWithModel, sqlParserCallback, decls);
+        return parseWith(lexer, sqlParserCallback, decls, false);
+    }
+
+    private ExecutionModel parseWith(
+            GenericLexer lexer,
+            SqlParserCallback sqlParserCallback,
+            @Nullable LowerCaseCharSequenceObjHashMap<ExpressionNode> decls,
+            boolean overrideDeclare
+    ) throws SqlException {
+        parseWithClauses(lexer, topLevelWithModel, sqlParserCallback, decls, overrideDeclare);
         CharSequence tok = tok(lexer, "'select', 'update' or name expected");
         if (isSelectKeyword(tok)) {
-            return parseSelect(lexer, sqlParserCallback, decls);
+            // Route through parseSelectWithOverrides so the SELECT body that follows
+            // a top-level WITH still respects DECLARE OVERRIDABLE values supplied by
+            // the caller (compileWithOverrides). Without this, CTE bodies and the
+            // outer SELECT would silently fall back to inline DECLARE defaults.
+            return parseSelectWithOverrides(lexer, sqlParserCallback, decls, overrideDeclare);
         }
 
         if (isUpdateKeyword(tok)) {
@@ -4542,6 +4684,16 @@ public class SqlParser {
             SqlParserCallback sqlParserCallback,
             @Nullable LowerCaseCharSequenceObjHashMap<ExpressionNode> decls
     ) throws SqlException {
+        parseWithClauses(lexer, model, sqlParserCallback, decls, false);
+    }
+
+    private void parseWithClauses(
+            GenericLexer lexer,
+            LowerCaseCharSequenceObjHashMap<WithClauseModel> model,
+            SqlParserCallback sqlParserCallback,
+            @Nullable LowerCaseCharSequenceObjHashMap<ExpressionNode> decls,
+            boolean overrideDeclare
+    ) throws SqlException {
         do {
             ExpressionNode name = expectLiteral(lexer);
             if (name.token.isEmpty()) {
@@ -4557,7 +4709,7 @@ public class SqlParser {
             int lo = lexer.lastTokenPosition();
             WithClauseModel wcm = withClauseModelPool.next();
             // todo: review passing non-null here
-            wcm.of(lo + 1, model, parseAsSubQueryAndExpectClosingBrace(lexer, model, true, sqlParserCallback, decls));
+            wcm.of(lo + 1, model, parseAsSubQueryAndExpectClosingBrace(lexer, model, true, sqlParserCallback, decls, overrideDeclare));
             model.put(name.token, wcm);
 
             CharSequence tok = optTok(lexer);
@@ -5187,6 +5339,7 @@ public class SqlParser {
         windowExpressionPool.clear();
         createViewOperationBuilder.clear();
         createMatViewOperationBuilder.clear();
+        createPayloadTransformOperationBuilder.clear();
         createTableOperationBuilder.clear();
         createTableColumnModelPool.clear();
         renameTableModelPool.clear();
@@ -5247,6 +5400,16 @@ public class SqlParser {
     }
 
     ExecutionModel parse(GenericLexer lexer, SqlExecutionContext executionContext, SqlParserCallback sqlParserCallback) throws SqlException {
+        return parse(lexer, executionContext, sqlParserCallback, null, false);
+    }
+
+    ExecutionModel parse(
+            GenericLexer lexer,
+            SqlExecutionContext executionContext,
+            SqlParserCallback sqlParserCallback,
+            @Nullable LowerCaseCharSequenceObjHashMap<ExpressionNode> externalDecls,
+            boolean overrideDeclare
+    ) throws SqlException {
         final CharSequence tok = tok(lexer, "'create', 'rename' or 'select'");
 
         if (isExplainKeyword(tok)) {
@@ -5259,7 +5422,7 @@ public class SqlParser {
         }
 
         if (isSelectKeyword(tok)) {
-            return parseSelect(lexer, sqlParserCallback, null);
+            return parseSelectWithOverrides(lexer, sqlParserCallback, externalDecls, overrideDeclare);
         }
 
         if (isCreateKeyword(tok)) {
@@ -5267,7 +5430,7 @@ public class SqlParser {
         }
 
         if (isUpdateKeyword(tok)) {
-            return parseUpdate(lexer, sqlParserCallback, null);
+            return parseUpdate(lexer, sqlParserCallback, externalDecls);
         }
 
         if (isRenameKeyword(tok)) {
@@ -5275,7 +5438,7 @@ public class SqlParser {
         }
 
         if (isInsertKeyword(tok)) {
-            return parseInsert(lexer, sqlParserCallback, null);
+            return parseInsert(lexer, sqlParserCallback, externalDecls);
         }
 
         if (isCopyKeyword(tok)) {
@@ -5283,7 +5446,7 @@ public class SqlParser {
         }
 
         if (isWithKeyword(tok)) {
-            return parseWith(lexer, sqlParserCallback, null);
+            return parseWith(lexer, sqlParserCallback, externalDecls, overrideDeclare);
         }
 
         if (isCompileKeyword(tok)) {
@@ -5294,7 +5457,7 @@ public class SqlParser {
             throw SqlException.$(lexer.lastTokenPosition(), "Did you mean 'select * from'?");
         }
 
-        return parseSelect(lexer, sqlParserCallback, null);
+        return parseSelectWithOverrides(lexer, sqlParserCallback, externalDecls, overrideDeclare);
     }
 
     IQueryModel parseAsSubQuery(
@@ -5323,6 +5486,7 @@ public class SqlParser {
             startOfQuery = lexer.getPosition();
             tok = tok(lexer, "'with' or 'select'");
         }
+        lastViewSqlStartPosition = startOfQuery;
 
         // Parse SELECT for the sake of basic SQL validation.
         // It'll be compiled and optimized later, at the execution phase.

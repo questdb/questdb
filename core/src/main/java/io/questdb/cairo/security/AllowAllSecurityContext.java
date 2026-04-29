@@ -167,6 +167,14 @@ public class AllowAllSecurityContext implements SecurityContext {
     }
 
     @Override
+    public void authorizePayloadTransformCreate() {
+    }
+
+    @Override
+    public void authorizePayloadTransformDrop() {
+    }
+
+    @Override
     public void authorizePGWire() {
     }
 

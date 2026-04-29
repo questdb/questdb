@@ -74,6 +74,15 @@ public class WithClauseModel implements Mutable {
         this.originalWithClausesSize = withClauses.size();
     }
 
+    /**
+     * Returns the underlying CTE QueryModel without consuming it. Unlike
+     * {@link #popModel()}, the model remains available for subsequent reads.
+     * Use this for read-only inspection (e.g. validation passes).
+     */
+    public IQueryModel peekModel() {
+        return model;
+    }
+
     public IQueryModel popModel() {
         IQueryModel m = model;
         model = null;
