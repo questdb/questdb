@@ -102,27 +102,28 @@ import java.util.concurrent.TimeUnit;
 @Fork(1)
 public class SampleByFillPrevPathBenchmark {
 
-    private static final String BUCKET = "1m";
+    private static final int BEST_CASE_BUCKET_COUNT = 1_440;
     // BEST_CASE keeps A = K * B small even for huge R: span is fixed (B
     // buckets * 1m), so step = (B * 1m) / R. As R grows, step shrinks but B
     // and A stay constant. With B=1440 (1 day @ 1m) and K=100, A=144_000
     // regardless of R. Resolution is fine down to R~5*10^10 (step ~1.7us).
     private static final long BEST_CASE_BUCKET_MICROS = 60_000_000L; // 1m
-    private static final int BEST_CASE_BUCKET_COUNT = 1_440;
     private static final int BEST_CASE_UNIQUE_KEYS = 100;
+    private static final String BUCKET = "1m";
     private static final int POSITIVE_CASE_STEP_MICROS = 6_000;
     private static final int POSITIVE_CASE_UNIQUE_KEYS = 1_000;
     private static final String START_TS = "2024-01-01T00:00:00.000000Z";
+    // 2 * max(WORST_CASE_UNIQUE_KEYS, POSITIVE_CASE_UNIQUE_KEYS,
+    // BEST_CASE_UNIQUE_KEYS). WORST_CASE dominates, so 2 * 50_000 = 100_000.
+    // Inlined as a literal because alphabetical ordering puts SYMBOL_CAPACITY
+    // before WORST_CASE_UNIQUE_KEYS, and forward references to non-constant
+    // expressions resolve to the int default (0) at class init time.
+    private static final int SYMBOL_CAPACITY = 100_000;
     // Coprime to WORST_CASE_UNIQUE_KEYS so keys scatter across buckets without
     // structured alignment.
     private static final int WORST_CASE_KEY_MULTIPLIER = 7_919;
     private static final int WORST_CASE_STEP_MICROS = 120_000;
     private static final int WORST_CASE_UNIQUE_KEYS = 50_000;
-    // Sized to hold the largest of the three scenario key sets with headroom.
-    private static final int SYMBOL_CAPACITY = Math.max(
-            Math.max(WORST_CASE_UNIQUE_KEYS, POSITIVE_CASE_UNIQUE_KEYS),
-            BEST_CASE_UNIQUE_KEYS
-    ) * 2;
 
     @Param({"avg"})
     public String aggFunc;
