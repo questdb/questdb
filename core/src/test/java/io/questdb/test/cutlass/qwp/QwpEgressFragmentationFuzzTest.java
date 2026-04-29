@@ -73,7 +73,7 @@ public class QwpEgressFragmentationFuzzTest extends AbstractBootstrapTest {
         // runs are bit-for-bit reproducible. When a CI failure surfaces a
         // different seed pair, update the constants here so the broken case
         // becomes the new regression baseline.
-        random = TestUtils.generateRandom(LOG, 492919964565416L, 1776636105288L);
+        random = TestUtils.generateRandom(LOG);
     }
 
     @Test

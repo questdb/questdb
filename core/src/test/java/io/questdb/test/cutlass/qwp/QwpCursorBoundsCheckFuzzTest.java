@@ -81,7 +81,7 @@ public class QwpCursorBoundsCheckFuzzTest {
     @Test
     public void testByteCorruption() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
-            Rnd rnd = TestUtils.generateRandom(LOG, 42661209174423L, 1775678559100L);
+            Rnd rnd = TestUtils.generateRandom(LOG);
             int iterations = 50;
             int corruptionsPerMessage = 30;
 

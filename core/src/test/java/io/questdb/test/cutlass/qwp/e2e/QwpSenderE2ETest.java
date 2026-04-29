@@ -25,6 +25,7 @@
 package io.questdb.test.cutlass.qwp.e2e;
 
 import io.questdb.client.Sender;
+import io.questdb.client.SenderError;
 import io.questdb.client.cutlass.line.LineSenderException;
 import io.questdb.client.cutlass.qwp.client.QwpWebSocketSender;
 import io.questdb.client.std.Decimal128;
@@ -36,7 +37,9 @@ import org.junit.Test;
 import java.lang.reflect.Array;
 import java.time.temporal.ChronoUnit;
 import java.util.UUID;
+import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CyclicBarrier;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicReference;
 
 /**
@@ -60,7 +63,7 @@ public class QwpSenderE2ETest extends AbstractQwpWebSocketTest {
     public void testAsyncModeAutoFlushOnClose() throws Exception {
         runInContext((port) -> {
             // Don't call flush() - close() should flush automatically
-            try (QwpWebSocketSender sender = QwpWebSocketSender.connect("localhost", port, null)) {
+            try (QwpWebSocketSender sender = connectWs(port)) {
                 for (int i = 0; i < 25; i++) {
                     sender.table("async_auto_flush")
                             .longColumn("id", i)
@@ -77,7 +80,7 @@ public class QwpSenderE2ETest extends AbstractQwpWebSocketTest {
     @Test
     public void testAsyncModeLargeNumberOfRows() throws Exception {
         runInContext((port) -> {
-            try (QwpWebSocketSender sender = QwpWebSocketSender.connect("localhost", port, null)) {
+            try (QwpWebSocketSender sender = connectWs(port)) {
                 for (int i = 0; i < 25_000_000; i++) {
                     sender.table("async_large")
                             .longColumn("id", i)
@@ -95,7 +98,7 @@ public class QwpSenderE2ETest extends AbstractQwpWebSocketTest {
     @Test
     public void testAsyncModeMultipleRows() throws Exception {
         runInContext((port) -> {
-            try (QwpWebSocketSender sender = QwpWebSocketSender.connect("localhost", port, null)) {
+            try (QwpWebSocketSender sender = connectWs(port)) {
                 for (int i = 0; i < 200_000; i++) {
                     sender.table("async_multi")
                             .longColumn("id", i)
@@ -112,7 +115,7 @@ public class QwpSenderE2ETest extends AbstractQwpWebSocketTest {
     @Test
     public void testAsyncModeSingleRow() throws Exception {
         runInContext((port) -> {
-            try (QwpWebSocketSender sender = QwpWebSocketSender.connect("localhost", port, null)) {
+            try (QwpWebSocketSender sender = connectWs(port)) {
                 sender.table("async_single")
                         .longColumn("value", 42L)
                         .at(1_000_000_000_000L, ChronoUnit.MICROS);
@@ -135,14 +138,11 @@ public class QwpSenderE2ETest extends AbstractQwpWebSocketTest {
     public void testAsyncModeStressAcks() throws Exception {
         runInContext((port) -> {
             // Configure to flush every 2 rows - creates many small batches
-            try (QwpWebSocketSender sender = QwpWebSocketSender.connect(
-                    "localhost", port, null,
-                    2, // autoFlushRows - very small to force many batches
-                    1024 * 1024, // autoFlushBytes
-                    100_000_000L, // autoFlushIntervalNanos
-                    QwpWebSocketSender.DEFAULT_IN_FLIGHT_WINDOW_SIZE,
-                    null
-            )) {
+            try (QwpWebSocketSender sender = connectWs(port,
+                    2,
+                    1024 * 1024,
+                    100_000_000L,
+                    QwpWebSocketSender.DEFAULT_IN_FLIGHT_WINDOW_SIZE)) {
                 // 200 rows / 2 per batch = 100 batches
                 for (int i = 0; i < 200; i++) {
                     sender.table("ack_stress")
@@ -160,7 +160,7 @@ public class QwpSenderE2ETest extends AbstractQwpWebSocketTest {
     @Test
     public void testAsyncModeWithMultipleTables() throws Exception {
         runInContext((port) -> {
-            try (QwpWebSocketSender sender = QwpWebSocketSender.connect("localhost", port, null)) {
+            try (QwpWebSocketSender sender = connectWs(port)) {
                 for (int i = 0; i < 50; i++) {
                     // Interleave writes to two tables
                     sender.table("async_table_a")
@@ -184,14 +184,11 @@ public class QwpSenderE2ETest extends AbstractQwpWebSocketTest {
     public void testAsyncModeWithRowBasedFlush() throws Exception {
         runInContext((port) -> {
             // Configure to flush every 10 rows
-            try (QwpWebSocketSender sender = QwpWebSocketSender.connect(
-                    "localhost", port, null,
-                    10, // autoFlushRows
-                    1024 * 1024, // autoFlushBytes
-                    100_000_000L, // autoFlushIntervalNanos
-                    QwpWebSocketSender.DEFAULT_IN_FLIGHT_WINDOW_SIZE,
-                    null
-            )) {
+            try (QwpWebSocketSender sender = connectWs(port,
+                    10,
+                    1024 * 1024,
+                    100_000_000L,
+                    QwpWebSocketSender.DEFAULT_IN_FLIGHT_WINDOW_SIZE)) {
                 for (int i = 0; i < 50; i++) {
                     sender.table("async_row_flush")
                             .longColumn("id", i)
@@ -208,7 +205,7 @@ public class QwpSenderE2ETest extends AbstractQwpWebSocketTest {
     @Test
     public void testAtNowServerAssignedTimestamp() throws Exception {
         runInContext((port) -> {
-            try (QwpWebSocketSender sender = QwpWebSocketSender.connect("localhost", port)) {
+            try (QwpWebSocketSender sender = connectWs(port)) {
                 sender.table("test_at_now")
                         .longColumn("value", 100L)
                         .atNow();
@@ -227,7 +224,7 @@ public class QwpSenderE2ETest extends AbstractQwpWebSocketTest {
             // auto-creates it, exercising the TYPE_BYTE branch in mapQwpTypeToQuestDB.
             execute("CREATE TABLE " + table + " (ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
 
-            try (QwpWebSocketSender sender = QwpWebSocketSender.connect("localhost", port)) {
+            try (QwpWebSocketSender sender = connectWs(port)) {
                 sender.table(table)
                         .byteColumn("b", (byte) 42)
                         .at(1_000_000, ChronoUnit.MICROS);
@@ -248,7 +245,7 @@ public class QwpSenderE2ETest extends AbstractQwpWebSocketTest {
             // overload that extracts decimal scale from the wire data.
             execute("CREATE TABLE " + table + " (ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
 
-            try (QwpWebSocketSender sender = QwpWebSocketSender.connect("localhost", port)) {
+            try (QwpWebSocketSender sender = connectWs(port)) {
                 sender.table(table)
                         .decimalColumn("d64", Decimal64.fromLong(12_345, 2))
                         .decimalColumn("d128", Decimal128.fromLong(67_890, 3))
@@ -274,15 +271,17 @@ public class QwpSenderE2ETest extends AbstractQwpWebSocketTest {
             String table = "test_qwp_no_auto_col";
             execute("CREATE TABLE " + table + " (v LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
 
-            try (QwpWebSocketSender sender = QwpWebSocketSender.connect("localhost", port)) {
+            CompletableFuture<SenderError> errorFut = new CompletableFuture<>();
+            try (QwpWebSocketSender sender = connectWs(port, errorFut::complete)) {
                 sender.table(table)
                         .longColumn("v", 1L)
                         .longColumn("extra", 2L)
                         .at(1_000_000, ChronoUnit.MICROS);
                 sender.flush();
-                Assert.fail("Expected LineSenderException");
-            } catch (LineSenderException e) {
-                Assert.assertTrue(e.getMessage(), e.getMessage().contains("new columns not allowed"));
+
+                SenderError err = errorFut.get(10, TimeUnit.SECONDS);
+                String msg = err.getServerMessage();
+                Assert.assertTrue("got: " + msg, msg != null && msg.contains("new columns not allowed"));
             }
         });
     }
@@ -292,7 +291,7 @@ public class QwpSenderE2ETest extends AbstractQwpWebSocketTest {
         runInContext((port) -> {
             String table = "test_qwp_auto_varchar";
 
-            try (QwpWebSocketSender sender = QwpWebSocketSender.connect("localhost", port)) {
+            try (QwpWebSocketSender sender = connectWs(port)) {
                 sender.table(table)
                         .stringColumn("msg", "hello")
                         .at(1_000_000, ChronoUnit.MICROS);
@@ -315,7 +314,7 @@ public class QwpSenderE2ETest extends AbstractQwpWebSocketTest {
         runInContext((port) -> {
             String table = "test_qwp_boolean";
 
-            try (QwpWebSocketSender sender = QwpWebSocketSender.connect("localhost", port)) {
+            try (QwpWebSocketSender sender = connectWs(port)) {
                 sender.table(table)
                         .boolColumn("b", true)
                         .at(1_000_000, ChronoUnit.MICROS);
@@ -346,7 +345,7 @@ public class QwpSenderE2ETest extends AbstractQwpWebSocketTest {
                     "ts TIMESTAMP" +
                     ") TIMESTAMP(ts) PARTITION BY DAY WAL");
 
-            try (QwpWebSocketSender sender = QwpWebSocketSender.connect("localhost", port)) {
+            try (QwpWebSocketSender sender = connectWs(port)) {
                 sender.table(table)
                         .byteColumn("b", (byte) -1)
                         .at(1_000_000, ChronoUnit.MICROS);
@@ -369,7 +368,7 @@ public class QwpSenderE2ETest extends AbstractQwpWebSocketTest {
         runInContext((port) -> {
             String table = "test_qwp_char";
 
-            try (QwpWebSocketSender sender = QwpWebSocketSender.connect("localhost", port)) {
+            try (QwpWebSocketSender sender = connectWs(port)) {
                 sender.table(table)
                         .charColumn("c", 'A')
                         .at(1_000_000, ChronoUnit.MICROS);
@@ -391,6 +390,39 @@ public class QwpSenderE2ETest extends AbstractQwpWebSocketTest {
         });
     }
 
+    /**
+     * Regression coverage for the silent-loss-on-close path: when the user
+     * calls only close() (no flush() afterwards) and the I/O loop has latched
+     * a terminal SenderError, close() must propagate it rather than swallow
+     * and log. Without this guarantee, server-side rejections (here:
+     * MESSAGE_TOO_BIG triggered by a frame larger than recvBufferSize)
+     * disappear silently.
+     */
+    @Test
+    public void testCloseRethrowsLatchedTerminalError() throws Exception {
+        // Tight server recv buffer + no client-side row cap forces the
+        // 1000-row default batch to overflow on flush.
+        runInContext((port) -> {
+            try (QwpWebSocketSender sender = connectWs(port)) {
+                for (int i = 0; i < 1500; i++) {
+                    sender.table("close_rethrow")
+                            .stringColumn("payload", "x".repeat(64))
+                            .at(1_000_000_000_000L + i, ChronoUnit.MICROS);
+                }
+                // No explicit flush(); rely on close() to flush + drain. The
+                // server will reject the oversized frame with a MESSAGE_TOO_BIG
+                // close, which the I/O loop latches as a HALT-policy SenderError.
+            } catch (LineSenderException expected) {
+                // Either the typed LineSenderServerException (HALT latched
+                // before drainOnClose returns) or a generic LineSenderException
+                // wrapping the close failure. Either is acceptable; the point
+                // is that close() did NOT silently swallow the rejection.
+                return;
+            }
+            Assert.fail("Expected close() to propagate the latched terminal error");
+        }, 2048);
+    }
+
     @Test
     public void testCoercionToBoolean() throws Exception {
         runInContext((port) -> {
@@ -399,7 +431,7 @@ public class QwpSenderE2ETest extends AbstractQwpWebSocketTest {
                     "from_string BOOLEAN, ts TIMESTAMP" +
                     ") TIMESTAMP(ts) PARTITION BY DAY WAL");
 
-            try (QwpWebSocketSender sender = QwpWebSocketSender.connect("localhost", port)) {
+            try (QwpWebSocketSender sender = connectWs(port)) {
                 sender.table(table)
                         .stringColumn("from_string", "true")
                         .at(1_000_000, ChronoUnit.MICROS);
@@ -476,7 +508,7 @@ public class QwpSenderE2ETest extends AbstractQwpWebSocketTest {
                     "from_double BYTE, from_float BYTE, from_int BYTE, from_long BYTE, from_short BYTE, from_string BYTE, ts TIMESTAMP" +
                     ") TIMESTAMP(ts) PARTITION BY DAY WAL");
 
-            try (QwpWebSocketSender sender = QwpWebSocketSender.connect("localhost", port)) {
+            try (QwpWebSocketSender sender = connectWs(port)) {
                 sender.table(table)
                         .doubleColumn("from_double", 42.0)
                         .floatColumn("from_float", 7.0f)
@@ -552,7 +584,7 @@ public class QwpSenderE2ETest extends AbstractQwpWebSocketTest {
                     "from_string CHAR, ts TIMESTAMP" +
                     ") TIMESTAMP(ts) PARTITION BY DAY WAL");
 
-            try (QwpWebSocketSender sender = QwpWebSocketSender.connect("localhost", port)) {
+            try (QwpWebSocketSender sender = connectWs(port)) {
                 sender.table(table)
                         .stringColumn("from_string", "A")
                         .at(1_000_000, ChronoUnit.MICROS);
@@ -623,7 +655,7 @@ public class QwpSenderE2ETest extends AbstractQwpWebSocketTest {
                     "from_byte DATE, from_int DATE, from_long DATE, from_short DATE, from_string DATE, ts TIMESTAMP" +
                     ") TIMESTAMP(ts) PARTITION BY DAY WAL");
 
-            try (QwpWebSocketSender sender = QwpWebSocketSender.connect("localhost", port)) {
+            try (QwpWebSocketSender sender = connectWs(port)) {
                 sender.table(table)
                         .byteColumn("from_byte", (byte) 0)
                         .intColumn("from_int", 86_400_000)
@@ -696,7 +728,7 @@ public class QwpSenderE2ETest extends AbstractQwpWebSocketTest {
                     "from_int DECIMAL(10,2), from_long DECIMAL(10,2), from_string DECIMAL(10,2), ts TIMESTAMP" +
                     ") TIMESTAMP(ts) PARTITION BY DAY WAL");
 
-            try (QwpWebSocketSender sender = QwpWebSocketSender.connect("localhost", port)) {
+            try (QwpWebSocketSender sender = connectWs(port)) {
                 sender.table(table)
                         .byteColumn("from_byte", (byte) 42)
                         .doubleColumn("from_double", 123.45)
@@ -806,7 +838,7 @@ public class QwpSenderE2ETest extends AbstractQwpWebSocketTest {
             // dec8: DECIMAL(2,1)
             String dec8 = "test_qwp_dec8_coerce";
             execute("CREATE TABLE " + dec8 + " (from_int DECIMAL(2,1), from_long DECIMAL(2,1), from_byte DECIMAL(2,1), from_short DECIMAL(2,1), ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
-            try (QwpWebSocketSender sender = QwpWebSocketSender.connect("localhost", port)) {
+            try (QwpWebSocketSender sender = connectWs(port)) {
                 sender.table(dec8)
                         .intColumn("from_int", 5)
                         .longColumn("from_long", 5)
@@ -822,7 +854,7 @@ public class QwpSenderE2ETest extends AbstractQwpWebSocketTest {
             // dec16: DECIMAL(4,1)
             String dec16 = "test_qwp_dec16_coerce";
             execute("CREATE TABLE " + dec16 + " (from_int DECIMAL(4,1), from_long DECIMAL(4,1), from_byte DECIMAL(4,1), from_short DECIMAL(4,1), ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
-            try (QwpWebSocketSender sender = QwpWebSocketSender.connect("localhost", port)) {
+            try (QwpWebSocketSender sender = connectWs(port)) {
                 sender.table(dec16)
                         .intColumn("from_int", 42)
                         .longColumn("from_long", 42)
@@ -838,7 +870,7 @@ public class QwpSenderE2ETest extends AbstractQwpWebSocketTest {
             // dec32: DECIMAL(6,2)
             String dec32 = "test_qwp_dec32_coerce";
             execute("CREATE TABLE " + dec32 + " (from_int DECIMAL(6,2), from_long DECIMAL(6,2), from_byte DECIMAL(6,2), from_short DECIMAL(6,2), ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
-            try (QwpWebSocketSender sender = QwpWebSocketSender.connect("localhost", port)) {
+            try (QwpWebSocketSender sender = connectWs(port)) {
                 sender.table(dec32)
                         .intColumn("from_int", 42)
                         .longColumn("from_long", 42)
@@ -854,7 +886,7 @@ public class QwpSenderE2ETest extends AbstractQwpWebSocketTest {
             // dec64: DECIMAL(18,2)
             String dec64 = "test_qwp_dec64_coerce";
             execute("CREATE TABLE " + dec64 + " (from_int DECIMAL(18,2), from_long DECIMAL(18,2), from_byte DECIMAL(18,2), from_short DECIMAL(18,2), from_string DECIMAL(18,2), ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
-            try (QwpWebSocketSender sender = QwpWebSocketSender.connect("localhost", port)) {
+            try (QwpWebSocketSender sender = connectWs(port)) {
                 sender.table(dec64)
                         .intColumn("from_int", Integer.MAX_VALUE)
                         .longColumn("from_long", 42)
@@ -871,7 +903,7 @@ public class QwpSenderE2ETest extends AbstractQwpWebSocketTest {
             // dec128: DECIMAL(38,2)
             String dec128 = "test_qwp_dec128_coerce";
             execute("CREATE TABLE " + dec128 + " (from_int DECIMAL(38,2), from_long DECIMAL(38,2), from_byte DECIMAL(38,2), from_short DECIMAL(38,2), from_string DECIMAL(38,2), ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
-            try (QwpWebSocketSender sender = QwpWebSocketSender.connect("localhost", port)) {
+            try (QwpWebSocketSender sender = connectWs(port)) {
                 sender.table(dec128)
                         .intColumn("from_int", 42)
                         .longColumn("from_long", 1_000_000_000L)
@@ -888,7 +920,7 @@ public class QwpSenderE2ETest extends AbstractQwpWebSocketTest {
             // dec256: DECIMAL(76,2)
             String dec256 = "test_qwp_dec256_coerce";
             execute("CREATE TABLE " + dec256 + " (from_int DECIMAL(76,2), from_long DECIMAL(76,2), from_byte DECIMAL(76,2), from_short DECIMAL(76,2), from_string DECIMAL(76,2), ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
-            try (QwpWebSocketSender sender = QwpWebSocketSender.connect("localhost", port)) {
+            try (QwpWebSocketSender sender = connectWs(port)) {
                 sender.table(dec256)
                         .intColumn("from_int", 42)
                         .longColumn("from_long", Long.MAX_VALUE)
@@ -905,7 +937,7 @@ public class QwpSenderE2ETest extends AbstractQwpWebSocketTest {
             // cross-decimal: dec64 from dec128/dec256
             String xDec64 = "test_qwp_x_dec64_coerce";
             execute("CREATE TABLE " + xDec64 + " (from_dec128 DECIMAL(18,2), from_dec256 DECIMAL(18,2), ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
-            try (QwpWebSocketSender sender = QwpWebSocketSender.connect("localhost", port)) {
+            try (QwpWebSocketSender sender = connectWs(port)) {
                 sender.table(xDec64)
                         .decimalColumn("from_dec128", Decimal128.fromLong(12_345, 2))
                         .decimalColumn("from_dec256", Decimal256.fromLong(12_345, 2))
@@ -919,7 +951,7 @@ public class QwpSenderE2ETest extends AbstractQwpWebSocketTest {
             // cross-decimal: dec128 from dec64/dec256
             String xDec128 = "test_qwp_x_dec128_coerce";
             execute("CREATE TABLE " + xDec128 + " (from_dec64 DECIMAL(38,2), from_dec256 DECIMAL(38,2), ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
-            try (QwpWebSocketSender sender = QwpWebSocketSender.connect("localhost", port)) {
+            try (QwpWebSocketSender sender = connectWs(port)) {
                 sender.table(xDec128)
                         .decimalColumn("from_dec64", Decimal64.fromLong(12_345, 2))
                         .decimalColumn("from_dec256", Decimal256.fromLong(12_345, 2))
@@ -933,7 +965,7 @@ public class QwpSenderE2ETest extends AbstractQwpWebSocketTest {
             // cross-decimal: dec256 from dec64/dec128
             String xDec256 = "test_qwp_x_dec256_coerce";
             execute("CREATE TABLE " + xDec256 + " (from_dec64 DECIMAL(76,2), from_dec128 DECIMAL(76,2), ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
-            try (QwpWebSocketSender sender = QwpWebSocketSender.connect("localhost", port)) {
+            try (QwpWebSocketSender sender = connectWs(port)) {
                 sender.table(xDec256)
                         .decimalColumn("from_dec64", Decimal64.fromLong(12_345, 2))
                         .decimalColumn("from_dec128", Decimal128.fromLong(12_345, 2))
@@ -954,7 +986,7 @@ public class QwpSenderE2ETest extends AbstractQwpWebSocketTest {
                     "from_byte DOUBLE, from_float DOUBLE, from_int DOUBLE, from_long DOUBLE, from_short DOUBLE, from_string DOUBLE, ts TIMESTAMP" +
                     ") TIMESTAMP(ts) PARTITION BY DAY WAL");
 
-            try (QwpWebSocketSender sender = QwpWebSocketSender.connect("localhost", port)) {
+            try (QwpWebSocketSender sender = connectWs(port)) {
                 sender.table(table)
                         .byteColumn("from_byte", (byte) 42)
                         .floatColumn("from_float", 1.5f)
@@ -1044,7 +1076,7 @@ public class QwpSenderE2ETest extends AbstractQwpWebSocketTest {
                     "from_byte FLOAT, from_double FLOAT, from_int FLOAT, from_long FLOAT, from_short FLOAT, from_string FLOAT, ts TIMESTAMP" +
                     ") TIMESTAMP(ts) PARTITION BY DAY WAL");
 
-            try (QwpWebSocketSender sender = QwpWebSocketSender.connect("localhost", port)) {
+            try (QwpWebSocketSender sender = connectWs(port)) {
                 sender.table(table)
                         .byteColumn("from_byte", (byte) 7)
                         .doubleColumn("from_double", 1.5)
@@ -1099,7 +1131,7 @@ public class QwpSenderE2ETest extends AbstractQwpWebSocketTest {
                     "from_string GEOHASH(5c), ts TIMESTAMP" +
                     ") TIMESTAMP(ts) PARTITION BY DAY WAL");
 
-            try (QwpWebSocketSender sender = QwpWebSocketSender.connect("localhost", port)) {
+            try (QwpWebSocketSender sender = connectWs(port)) {
                 sender.table(table)
                         .stringColumn("from_string", "s24se")
                         .at(1_000_000, ChronoUnit.MICROS);
@@ -1173,7 +1205,7 @@ public class QwpSenderE2ETest extends AbstractQwpWebSocketTest {
                     "from_byte INT, from_double INT, from_float INT, from_long INT, from_short INT, from_string INT, ts TIMESTAMP" +
                     ") TIMESTAMP(ts) PARTITION BY DAY WAL");
 
-            try (QwpWebSocketSender sender = QwpWebSocketSender.connect("localhost", port)) {
+            try (QwpWebSocketSender sender = connectWs(port)) {
                 sender.table(table)
                         .byteColumn("from_byte", (byte) 42)
                         .doubleColumn("from_double", 100_000.0)
@@ -1243,7 +1275,7 @@ public class QwpSenderE2ETest extends AbstractQwpWebSocketTest {
                     "from_byte LONG, from_double LONG, from_float LONG, from_int LONG, from_short LONG, from_string LONG, ts TIMESTAMP" +
                     ") TIMESTAMP(ts) PARTITION BY DAY WAL");
 
-            try (QwpWebSocketSender sender = QwpWebSocketSender.connect("localhost", port)) {
+            try (QwpWebSocketSender sender = connectWs(port)) {
                 sender.table(table)
                         .byteColumn("from_byte", (byte) 42)
                         .doubleColumn("from_double", 42.0)
@@ -1274,7 +1306,7 @@ public class QwpSenderE2ETest extends AbstractQwpWebSocketTest {
                     "from_string LONG256, ts TIMESTAMP" +
                     ") TIMESTAMP(ts) PARTITION BY DAY WAL");
 
-            try (QwpWebSocketSender sender = QwpWebSocketSender.connect("localhost", port)) {
+            try (QwpWebSocketSender sender = connectWs(port)) {
                 sender.table(table)
                         .stringColumn("from_string", "0x04000000000000000300000000000000020000000000000001")
                         .at(1_000_000, ChronoUnit.MICROS);
@@ -1378,7 +1410,7 @@ public class QwpSenderE2ETest extends AbstractQwpWebSocketTest {
                     "from_byte SHORT, from_double SHORT, from_float SHORT, from_int SHORT, from_long SHORT, from_string SHORT, ts TIMESTAMP" +
                     ") TIMESTAMP(ts) PARTITION BY DAY WAL");
 
-            try (QwpWebSocketSender sender = QwpWebSocketSender.connect("localhost", port)) {
+            try (QwpWebSocketSender sender = connectWs(port)) {
                 sender.table(table)
                         .byteColumn("from_byte", (byte) 42)
                         .doubleColumn("from_double", 100.0)
@@ -1450,7 +1482,7 @@ public class QwpSenderE2ETest extends AbstractQwpWebSocketTest {
             UUID uuid = UUID.fromString("a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11");
             long tsMicros = 1_645_747_200_000_000L;
 
-            try (QwpWebSocketSender sender = QwpWebSocketSender.connect("localhost", port)) {
+            try (QwpWebSocketSender sender = connectWs(port)) {
                 sender.table(table)
                         .boolColumn("from_bool", true)
                         .byteColumn("from_byte", (byte) 42)
@@ -1493,7 +1525,7 @@ public class QwpSenderE2ETest extends AbstractQwpWebSocketTest {
                     "from_byte SYMBOL, from_double SYMBOL, from_float SYMBOL, from_int SYMBOL, from_long SYMBOL, from_short SYMBOL, from_string SYMBOL, ts TIMESTAMP" +
                     ") TIMESTAMP(ts) PARTITION BY DAY WAL");
 
-            try (QwpWebSocketSender sender = QwpWebSocketSender.connect("localhost", port)) {
+            try (QwpWebSocketSender sender = connectWs(port)) {
                 sender.table(table)
                         .byteColumn("from_byte", (byte) 42)
                         .doubleColumn("from_double", 3.14)
@@ -1549,7 +1581,7 @@ public class QwpSenderE2ETest extends AbstractQwpWebSocketTest {
                     "from_byte TIMESTAMP, from_int TIMESTAMP, from_long TIMESTAMP, from_short TIMESTAMP, from_string TIMESTAMP, ts TIMESTAMP" +
                     ") TIMESTAMP(ts) PARTITION BY DAY WAL");
 
-            try (QwpWebSocketSender sender = QwpWebSocketSender.connect("localhost", port)) {
+            try (QwpWebSocketSender sender = connectWs(port)) {
                 sender.table(table)
                         .byteColumn("from_byte", (byte) 0)
                         .intColumn("from_int", 1_000_000)
@@ -1618,7 +1650,7 @@ public class QwpSenderE2ETest extends AbstractQwpWebSocketTest {
                     "from_string TIMESTAMP_NS, ts TIMESTAMP" +
                     ") TIMESTAMP(ts) PARTITION BY DAY WAL");
 
-            try (QwpWebSocketSender sender = QwpWebSocketSender.connect("localhost", port)) {
+            try (QwpWebSocketSender sender = connectWs(port)) {
                 sender.table(table)
                         .stringColumn("from_string", "2022-02-25T00:00:00.000000Z")
                         .at(1_000_000, ChronoUnit.MICROS);
@@ -1659,7 +1691,7 @@ public class QwpSenderE2ETest extends AbstractQwpWebSocketTest {
                     "from_string UUID, ts TIMESTAMP" +
                     ") TIMESTAMP(ts) PARTITION BY DAY WAL");
 
-            try (QwpWebSocketSender sender = QwpWebSocketSender.connect("localhost", port)) {
+            try (QwpWebSocketSender sender = connectWs(port)) {
                 sender.table(table)
                         .stringColumn("from_string", "a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11")
                         .at(1_000_000, ChronoUnit.MICROS);
@@ -1735,7 +1767,7 @@ public class QwpSenderE2ETest extends AbstractQwpWebSocketTest {
             UUID uuid = UUID.fromString("a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11");
             long tsMicros = 1_645_747_200_000_000L;
 
-            try (QwpWebSocketSender sender = QwpWebSocketSender.connect("localhost", port)) {
+            try (QwpWebSocketSender sender = connectWs(port)) {
                 sender.table(table)
                         .boolColumn("from_bool", true)
                         .byteColumn("from_byte", (byte) 42)
@@ -1794,14 +1826,11 @@ public class QwpSenderE2ETest extends AbstractQwpWebSocketTest {
             for (int s = 0; s < senderCount; s++) {
                 final int senderIdx = s;
                 threads[s] = new Thread(() -> {
-                    try (QwpWebSocketSender sender = QwpWebSocketSender.connect(
-                            "localhost", port, null,
+                    try (QwpWebSocketSender sender = connectWs(port,
                             autoFlushRows,
                             1024 * 1024,
                             100_000_000L,
-                            QwpWebSocketSender.DEFAULT_IN_FLIGHT_WINDOW_SIZE,
-                            null
-                    )) {
+                            QwpWebSocketSender.DEFAULT_IN_FLIGHT_WINDOW_SIZE)) {
                         barrier.await();
                         for (int i = 0; i < rowsPerSender; i++) {
                             sender.table("concurrent_diff_" + senderIdx)
@@ -1846,14 +1875,11 @@ public class QwpSenderE2ETest extends AbstractQwpWebSocketTest {
             for (int s = 0; s < senderCount; s++) {
                 final int senderIdx = s;
                 threads[s] = new Thread(() -> {
-                    try (QwpWebSocketSender sender = QwpWebSocketSender.connect(
-                            "localhost", port, null,
+                    try (QwpWebSocketSender sender = connectWs(port,
                             autoFlushRows,
                             1024 * 1024,
                             100_000_000L,
-                            QwpWebSocketSender.DEFAULT_IN_FLIGHT_WINDOW_SIZE,
-                            null
-                    )) {
+                            QwpWebSocketSender.DEFAULT_IN_FLIGHT_WINDOW_SIZE)) {
                         barrier.await();
                         for (int i = 0; i < rowsPerSender; i++) {
                             sender.table("concurrent_same")
@@ -1905,14 +1931,11 @@ public class QwpSenderE2ETest extends AbstractQwpWebSocketTest {
             for (int s = 0; s < senderCount; s++) {
                 final int senderIdx = s;
                 threads[s] = new Thread(() -> {
-                    try (QwpWebSocketSender sender = QwpWebSocketSender.connect(
-                            "localhost", port, null,
+                    try (QwpWebSocketSender sender = connectWs(port,
                             autoFlushRows,
                             1024 * 1024,
                             100_000_000L,
-                            QwpWebSocketSender.DEFAULT_IN_FLIGHT_WINDOW_SIZE,
-                            null
-                    )) {
+                            QwpWebSocketSender.DEFAULT_IN_FLIGHT_WINDOW_SIZE)) {
                         barrier.await();
                         for (int i = 0; i < rowsPerSender; i++) {
                             // All senders use the same set of symbol values
@@ -1962,7 +1985,7 @@ public class QwpSenderE2ETest extends AbstractQwpWebSocketTest {
         runInContext((port) -> {
             String table = "test_qwp_decimal";
 
-            try (QwpWebSocketSender sender = QwpWebSocketSender.connect("localhost", port)) {
+            try (QwpWebSocketSender sender = connectWs(port)) {
                 sender.table(table)
                         .decimalColumn("d", "123.45")
                         .at(1_000_000, ChronoUnit.MICROS);
@@ -1992,7 +2015,7 @@ public class QwpSenderE2ETest extends AbstractQwpWebSocketTest {
                     "ts TIMESTAMP" +
                     ") TIMESTAMP(ts) PARTITION BY DAY WAL");
 
-            try (QwpWebSocketSender sender = QwpWebSocketSender.connect("localhost", port)) {
+            try (QwpWebSocketSender sender = connectWs(port)) {
                 // Send with scale=2, but column expects scale=4 - should rescale
                 sender.table(table)
                         .decimalColumn("d", Decimal64.fromLong(12_345, 2))
@@ -2016,7 +2039,7 @@ public class QwpSenderE2ETest extends AbstractQwpWebSocketTest {
         runInContext((port) -> {
             String table = "test_qwp_double";
 
-            try (QwpWebSocketSender sender = QwpWebSocketSender.connect("localhost", port)) {
+            try (QwpWebSocketSender sender = connectWs(port)) {
                 sender.table(table)
                         .doubleColumn("value", 3.14)
                         .at(1_000_000, ChronoUnit.MICROS);
@@ -2057,7 +2080,7 @@ public class QwpSenderE2ETest extends AbstractQwpWebSocketTest {
             double[][] arr2d = createDoubleArray(2, 3);
             double[][][] arr3d = createDoubleArray(1, 2, 3);
 
-            try (QwpWebSocketSender sender = QwpWebSocketSender.connect("localhost", port)) {
+            try (QwpWebSocketSender sender = connectWs(port)) {
                 sender.table(table)
                         .doubleArray("a1", arr1d)
                         .doubleArray("a2", arr2d)
@@ -2074,7 +2097,7 @@ public class QwpSenderE2ETest extends AbstractQwpWebSocketTest {
     @Test
     public void testEmptyColumnNameRejected() throws Exception {
         runInContext((port) -> {
-            try (QwpWebSocketSender sender = QwpWebSocketSender.connect("localhost", port)) {
+            try (QwpWebSocketSender sender = connectWs(port)) {
                 sender.table("ws_empty_col_name")
                         .longColumn("", 42)
                         .at(1_000_000_000_000L, ChronoUnit.MICROS);
@@ -2089,7 +2112,7 @@ public class QwpSenderE2ETest extends AbstractQwpWebSocketTest {
     @Test
     public void testEmptyTableNameRejected() throws Exception {
         runInContext((port) -> {
-            try (QwpWebSocketSender sender = QwpWebSocketSender.connect("localhost", port)) {
+            try (QwpWebSocketSender sender = connectWs(port)) {
                 sender.table("")
                         .longColumn("value", 42)
                         .at(1_000_000_000_000L, ChronoUnit.MICROS);
@@ -2106,7 +2129,7 @@ public class QwpSenderE2ETest extends AbstractQwpWebSocketTest {
         runInContext((port) -> {
             String table = "test_qwp_float";
 
-            try (QwpWebSocketSender sender = QwpWebSocketSender.connect("localhost", port)) {
+            try (QwpWebSocketSender sender = connectWs(port)) {
                 sender.table(table)
                         .floatColumn("f", 1.5f)
                         .at(1_000_000, ChronoUnit.MICROS);
@@ -2137,7 +2160,7 @@ public class QwpSenderE2ETest extends AbstractQwpWebSocketTest {
         runInContext((port) -> {
             String table = "test_qwp_int";
 
-            try (QwpWebSocketSender sender = QwpWebSocketSender.connect("localhost", port)) {
+            try (QwpWebSocketSender sender = connectWs(port)) {
                 sender.table(table)
                         .intColumn("value", Integer.MIN_VALUE + 1)
                         .at(1_000_000, ChronoUnit.MICROS);
@@ -2173,7 +2196,7 @@ public class QwpSenderE2ETest extends AbstractQwpWebSocketTest {
         runInContext((port) -> {
             String table = "test_qwp_long";
 
-            try (QwpWebSocketSender sender = QwpWebSocketSender.connect("localhost", port)) {
+            try (QwpWebSocketSender sender = connectWs(port)) {
                 sender.table(table)
                         .longColumn("value", Long.MIN_VALUE + 1)
                         .at(1_000_000, ChronoUnit.MICROS);
@@ -2209,7 +2232,7 @@ public class QwpSenderE2ETest extends AbstractQwpWebSocketTest {
         runInContext((port) -> {
             String table = "test_qwp_long256";
 
-            try (QwpWebSocketSender sender = QwpWebSocketSender.connect("localhost", port)) {
+            try (QwpWebSocketSender sender = connectWs(port)) {
                 // 256-bit value: 4 x 64-bit longs in little-endian order
                 sender.table(table)
                         .long256Column("value", 1, 2, 3, 4)
@@ -2233,14 +2256,16 @@ public class QwpSenderE2ETest extends AbstractQwpWebSocketTest {
         runInContext((port) -> {
             String table = "test_qwp_long_arr";
 
-            try (QwpWebSocketSender sender = QwpWebSocketSender.connect("localhost", port)) {
+            CompletableFuture<SenderError> errorFut = new CompletableFuture<>();
+            try (QwpWebSocketSender sender = connectWs(port, errorFut::complete)) {
                 sender.table(table)
                         .longArray("arr", new long[]{1L, 2L, 3L})
                         .at(1_000_000, ChronoUnit.MICROS);
                 sender.flush();
-                Assert.fail("Expected LineSenderException");
-            } catch (LineSenderException e) {
-                Assert.assertTrue(e.getMessage(), e.getMessage().contains("long arrays are not supported"));
+
+                SenderError err = errorFut.get(10, TimeUnit.SECONDS);
+                String msg = err.getServerMessage();
+                Assert.assertTrue("got: " + msg, msg != null && msg.contains("long arrays are not supported"));
             }
         });
     }
@@ -2250,7 +2275,7 @@ public class QwpSenderE2ETest extends AbstractQwpWebSocketTest {
         runInContext((port) -> {
             String table = "test_qwp_mixed_ts";
 
-            try (QwpWebSocketSender sender = QwpWebSocketSender.connect("localhost", port)) {
+            try (QwpWebSocketSender sender = connectWs(port)) {
                 // Row 1: microsecond timestamp
                 sender.table(table)
                         .longColumn("id", 1L)
@@ -2291,7 +2316,7 @@ public class QwpSenderE2ETest extends AbstractQwpWebSocketTest {
                     "ts TIMESTAMP" +
                     ") TIMESTAMP(ts) PARTITION BY DAY WAL");
 
-            try (QwpWebSocketSender sender = QwpWebSocketSender.connect("localhost", port)) {
+            try (QwpWebSocketSender sender = connectWs(port)) {
                 // Send nanosecond timestamp to microsecond table
                 long tsNanos = 1_645_747_200_123_456_789L; // 2022-02-25T00:00:00Z + some nanos
                 sender.table(table)
@@ -2317,7 +2342,7 @@ public class QwpSenderE2ETest extends AbstractQwpWebSocketTest {
         runInContext((port) -> {
             String table = "test_qwp_mixed_ts_nano";
 
-            try (QwpWebSocketSender sender = QwpWebSocketSender.connect("localhost", port)) {
+            try (QwpWebSocketSender sender = connectWs(port)) {
                 // Row 1: nanosecond timestamp
                 sender.table(table)
                         .longColumn("id", 1L)
@@ -2353,7 +2378,7 @@ public class QwpSenderE2ETest extends AbstractQwpWebSocketTest {
                     "ts TIMESTAMP_NS" +
                     ") TIMESTAMP(ts) PARTITION BY DAY WAL");
 
-            try (QwpWebSocketSender sender = QwpWebSocketSender.connect("localhost", port)) {
+            try (QwpWebSocketSender sender = connectWs(port)) {
                 // Send microsecond timestamp to nanosecond table
                 long tsMicros = 1_645_747_200_111_111L; // 2022-02-25T00:00:00Z + some micros
                 sender.table(table)
@@ -2384,7 +2409,7 @@ public class QwpSenderE2ETest extends AbstractQwpWebSocketTest {
             // covering the serverTimestamp < minTimestamp branch.
             long futureTs1 = 32_503_680_000_000_000L; // ~year 3000 in micros
             long futureTs2 = futureTs1 + 1_000_000L;
-            try (QwpWebSocketSender sender = QwpWebSocketSender.connect("localhost", port)) {
+            try (QwpWebSocketSender sender = connectWs(port)) {
                 sender.table(table)
                         .longColumn("id", 1L)
                         .at(futureTs1, ChronoUnit.MICROS);
@@ -2408,7 +2433,7 @@ public class QwpSenderE2ETest extends AbstractQwpWebSocketTest {
             String table = "test_qwp_multiple_rows";
 
             int rowCount = 1000;
-            try (QwpWebSocketSender sender = QwpWebSocketSender.connect("localhost", port)) {
+            try (QwpWebSocketSender sender = connectWs(port)) {
                 for (int i = 0; i < rowCount; i++) {
                     sender.table(table)
                             .symbol("sym", "s" + (i % 10))
@@ -2427,7 +2452,7 @@ public class QwpSenderE2ETest extends AbstractQwpWebSocketTest {
     @Test
     public void testNullColumnNameRejected() throws Exception {
         runInContext((port) -> {
-            try (QwpWebSocketSender sender = QwpWebSocketSender.connect("localhost", port)) {
+            try (QwpWebSocketSender sender = connectWs(port)) {
                 sender.table("ws_null_col_name")
                         .longColumn(null, 42)
                         .at(1_000_000_000_000L, ChronoUnit.MICROS);
@@ -2442,7 +2467,7 @@ public class QwpSenderE2ETest extends AbstractQwpWebSocketTest {
     @Test
     public void testNullDouble() throws Exception {
         runInContext((port) -> {
-            try (QwpWebSocketSender sender = QwpWebSocketSender.connect("localhost", port)) {
+            try (QwpWebSocketSender sender = connectWs(port)) {
                 sender.table("test_null_double")
                         .doubleColumn("value", 3.14)
                         .at(1_000_000_000_000L, ChronoUnit.MICROS);
@@ -2475,7 +2500,7 @@ public class QwpSenderE2ETest extends AbstractQwpWebSocketTest {
     @Test
     public void testNullLong() throws Exception {
         runInContext((port) -> {
-            try (QwpWebSocketSender sender = QwpWebSocketSender.connect("localhost", port)) {
+            try (QwpWebSocketSender sender = connectWs(port)) {
                 sender.table("test_null_long")
                         .longColumn("value", 42L)
                         .at(1_000_000_000_000L, ChronoUnit.MICROS);
@@ -2508,7 +2533,7 @@ public class QwpSenderE2ETest extends AbstractQwpWebSocketTest {
     @Test
     public void testNullMixed() throws Exception {
         runInContext((port) -> {
-            try (QwpWebSocketSender sender = QwpWebSocketSender.connect("localhost", port)) {
+            try (QwpWebSocketSender sender = connectWs(port)) {
                 for (int i = 0; i < 20; i++) {
                     sender.table("test_null_mixed")
                             .stringColumn("s", i % 2 == 0 ? "val_" + i : null)
@@ -2544,7 +2569,7 @@ public class QwpSenderE2ETest extends AbstractQwpWebSocketTest {
     @Test
     public void testNullString() throws Exception {
         runInContext((port) -> {
-            try (QwpWebSocketSender sender = QwpWebSocketSender.connect("localhost", port)) {
+            try (QwpWebSocketSender sender = connectWs(port)) {
                 sender.table("test_null_string")
                         .stringColumn("message", "hello")
                         .at(1_000_000_000_000L, ChronoUnit.MICROS);
@@ -2578,7 +2603,7 @@ public class QwpSenderE2ETest extends AbstractQwpWebSocketTest {
             // boolean: null string -> false
             String boolTable = "test_qwp_null_string_to_boolean";
             execute("CREATE TABLE " + boolTable + " (b BOOLEAN, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
-            try (QwpWebSocketSender sender = QwpWebSocketSender.connect("localhost", port)) {
+            try (QwpWebSocketSender sender = connectWs(port)) {
                 sender.table(boolTable).stringColumn("b", "true").at(1_000_000, ChronoUnit.MICROS);
                 sender.table(boolTable).stringColumn("b", null).at(2_000_000, ChronoUnit.MICROS);
                 sender.flush();
@@ -2590,7 +2615,7 @@ public class QwpSenderE2ETest extends AbstractQwpWebSocketTest {
             // byte: null string -> 0
             String byteTable = "test_qwp_null_string_to_byte";
             execute("CREATE TABLE " + byteTable + " (b BYTE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
-            try (QwpWebSocketSender sender = QwpWebSocketSender.connect("localhost", port)) {
+            try (QwpWebSocketSender sender = connectWs(port)) {
                 sender.table(byteTable).stringColumn("b", "42").at(1_000_000, ChronoUnit.MICROS);
                 sender.table(byteTable).stringColumn("b", null).at(2_000_000, ChronoUnit.MICROS);
                 sender.flush();
@@ -2602,7 +2627,7 @@ public class QwpSenderE2ETest extends AbstractQwpWebSocketTest {
             // char: null string -> empty
             String charTable = "test_qwp_null_string_to_char";
             execute("CREATE TABLE " + charTable + " (c CHAR, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
-            try (QwpWebSocketSender sender = QwpWebSocketSender.connect("localhost", port)) {
+            try (QwpWebSocketSender sender = connectWs(port)) {
                 sender.table(charTable).stringColumn("c", "A").at(1_000_000, ChronoUnit.MICROS);
                 sender.table(charTable).stringColumn("c", null).at(2_000_000, ChronoUnit.MICROS);
                 sender.flush();
@@ -2614,7 +2639,7 @@ public class QwpSenderE2ETest extends AbstractQwpWebSocketTest {
             // date: null string -> empty
             String dateTable = "test_qwp_null_string_to_date";
             execute("CREATE TABLE " + dateTable + " (d DATE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
-            try (QwpWebSocketSender sender = QwpWebSocketSender.connect("localhost", port)) {
+            try (QwpWebSocketSender sender = connectWs(port)) {
                 sender.table(dateTable).stringColumn("d", "2022-02-25T00:00:00.000Z").at(1_000_000, ChronoUnit.MICROS);
                 sender.table(dateTable).stringColumn("d", null).at(2_000_000, ChronoUnit.MICROS);
                 sender.flush();
@@ -2626,7 +2651,7 @@ public class QwpSenderE2ETest extends AbstractQwpWebSocketTest {
             // decimal: null string -> empty
             String decTable = "test_qwp_null_string_to_decimal";
             execute("CREATE TABLE " + decTable + " (d DECIMAL(18,2), ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
-            try (QwpWebSocketSender sender = QwpWebSocketSender.connect("localhost", port)) {
+            try (QwpWebSocketSender sender = connectWs(port)) {
                 sender.table(decTable).stringColumn("d", "123.45").at(1_000_000, ChronoUnit.MICROS);
                 sender.table(decTable).stringColumn("d", null).at(2_000_000, ChronoUnit.MICROS);
                 sender.flush();
@@ -2638,7 +2663,7 @@ public class QwpSenderE2ETest extends AbstractQwpWebSocketTest {
             // float: null string -> null
             String floatTable = "test_qwp_null_string_to_float";
             execute("CREATE TABLE " + floatTable + " (f FLOAT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
-            try (QwpWebSocketSender sender = QwpWebSocketSender.connect("localhost", port)) {
+            try (QwpWebSocketSender sender = connectWs(port)) {
                 sender.table(floatTable).stringColumn("f", "3.14").at(1_000_000, ChronoUnit.MICROS);
                 sender.table(floatTable).stringColumn("f", null).at(2_000_000, ChronoUnit.MICROS);
                 sender.flush();
@@ -2650,7 +2675,7 @@ public class QwpSenderE2ETest extends AbstractQwpWebSocketTest {
             // geohash: null string -> empty
             String geoTable = "test_qwp_null_string_to_geohash";
             execute("CREATE TABLE " + geoTable + " (g GEOHASH(5c), ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
-            try (QwpWebSocketSender sender = QwpWebSocketSender.connect("localhost", port)) {
+            try (QwpWebSocketSender sender = connectWs(port)) {
                 sender.table(geoTable).stringColumn("g", "s09wh").at(1_000_000, ChronoUnit.MICROS);
                 sender.table(geoTable).stringColumn("g", null).at(2_000_000, ChronoUnit.MICROS);
                 sender.flush();
@@ -2662,7 +2687,7 @@ public class QwpSenderE2ETest extends AbstractQwpWebSocketTest {
             // int/long/double: null string -> null
             String numTable = "test_qwp_null_string_to_numeric";
             execute("CREATE TABLE " + numTable + " (i INT, l LONG, d DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
-            try (QwpWebSocketSender sender = QwpWebSocketSender.connect("localhost", port)) {
+            try (QwpWebSocketSender sender = connectWs(port)) {
                 sender.table(numTable).stringColumn("i", "42").stringColumn("l", "100").stringColumn("d", "3.14").at(1_000_000, ChronoUnit.MICROS);
                 sender.table(numTable).stringColumn("i", null).stringColumn("l", null).stringColumn("d", null).at(2_000_000, ChronoUnit.MICROS);
                 sender.flush();
@@ -2674,7 +2699,7 @@ public class QwpSenderE2ETest extends AbstractQwpWebSocketTest {
             // long256: null string -> empty
             String l256Table = "test_qwp_null_string_to_long256";
             execute("CREATE TABLE " + l256Table + " (l LONG256, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
-            try (QwpWebSocketSender sender = QwpWebSocketSender.connect("localhost", port)) {
+            try (QwpWebSocketSender sender = connectWs(port)) {
                 sender.table(l256Table).stringColumn("l", "0x01").at(1_000_000, ChronoUnit.MICROS);
                 sender.table(l256Table).stringColumn("l", null).at(2_000_000, ChronoUnit.MICROS);
                 sender.flush();
@@ -2686,7 +2711,7 @@ public class QwpSenderE2ETest extends AbstractQwpWebSocketTest {
             // short: null string -> 0
             String shortTable = "test_qwp_null_string_to_short";
             execute("CREATE TABLE " + shortTable + " (s SHORT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
-            try (QwpWebSocketSender sender = QwpWebSocketSender.connect("localhost", port)) {
+            try (QwpWebSocketSender sender = connectWs(port)) {
                 sender.table(shortTable).stringColumn("s", "42").at(1_000_000, ChronoUnit.MICROS);
                 sender.table(shortTable).stringColumn("s", null).at(2_000_000, ChronoUnit.MICROS);
                 sender.flush();
@@ -2698,7 +2723,7 @@ public class QwpSenderE2ETest extends AbstractQwpWebSocketTest {
             // symbol: null string -> empty
             String symTable = "test_qwp_null_string_to_symbol";
             execute("CREATE TABLE " + symTable + " (s SYMBOL, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
-            try (QwpWebSocketSender sender = QwpWebSocketSender.connect("localhost", port)) {
+            try (QwpWebSocketSender sender = connectWs(port)) {
                 sender.table(symTable).stringColumn("s", "alpha").at(1_000_000, ChronoUnit.MICROS);
                 sender.table(symTable).stringColumn("s", null).at(2_000_000, ChronoUnit.MICROS);
                 sender.flush();
@@ -2710,7 +2735,7 @@ public class QwpSenderE2ETest extends AbstractQwpWebSocketTest {
             // timestamp: null string -> empty
             String tsTable = "test_qwp_null_string_to_timestamp";
             execute("CREATE TABLE " + tsTable + " (t TIMESTAMP, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
-            try (QwpWebSocketSender sender = QwpWebSocketSender.connect("localhost", port)) {
+            try (QwpWebSocketSender sender = connectWs(port)) {
                 sender.table(tsTable).stringColumn("t", "2022-02-25T00:00:00.000000Z").at(1_000_000, ChronoUnit.MICROS);
                 sender.table(tsTable).stringColumn("t", null).at(2_000_000, ChronoUnit.MICROS);
                 sender.flush();
@@ -2722,7 +2747,7 @@ public class QwpSenderE2ETest extends AbstractQwpWebSocketTest {
             // timestamp_ns: null string -> empty
             String tsNsTable = "test_qwp_null_string_to_timestamp_ns";
             execute("CREATE TABLE " + tsNsTable + " (t TIMESTAMP_NS, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
-            try (QwpWebSocketSender sender = QwpWebSocketSender.connect("localhost", port)) {
+            try (QwpWebSocketSender sender = connectWs(port)) {
                 sender.table(tsNsTable).stringColumn("t", "2022-02-25T00:00:00.000000Z").at(1_000_000, ChronoUnit.MICROS);
                 sender.table(tsNsTable).stringColumn("t", null).at(2_000_000, ChronoUnit.MICROS);
                 sender.flush();
@@ -2734,7 +2759,7 @@ public class QwpSenderE2ETest extends AbstractQwpWebSocketTest {
             // uuid: null string -> empty
             String uuidTable = "test_qwp_null_string_to_uuid";
             execute("CREATE TABLE " + uuidTable + " (u UUID, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
-            try (QwpWebSocketSender sender = QwpWebSocketSender.connect("localhost", port)) {
+            try (QwpWebSocketSender sender = connectWs(port)) {
                 sender.table(uuidTable).stringColumn("u", "a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11").at(1_000_000, ChronoUnit.MICROS);
                 sender.table(uuidTable).stringColumn("u", null).at(2_000_000, ChronoUnit.MICROS);
                 sender.flush();
@@ -2746,7 +2771,7 @@ public class QwpSenderE2ETest extends AbstractQwpWebSocketTest {
             // varchar: null string -> empty
             String varcharTable = "test_qwp_null_string_to_varchar";
             execute("CREATE TABLE " + varcharTable + " (v VARCHAR, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
-            try (QwpWebSocketSender sender = QwpWebSocketSender.connect("localhost", port)) {
+            try (QwpWebSocketSender sender = connectWs(port)) {
                 sender.table(varcharTable).stringColumn("v", "hello").at(1_000_000, ChronoUnit.MICROS);
                 sender.table(varcharTable).stringColumn("v", null).at(2_000_000, ChronoUnit.MICROS);
                 sender.flush();
@@ -2763,7 +2788,7 @@ public class QwpSenderE2ETest extends AbstractQwpWebSocketTest {
             // null symbol to STRING
             String strTable = "test_qwp_null_symbol_to_string";
             execute("CREATE TABLE " + strTable + " (s STRING, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
-            try (QwpWebSocketSender sender = QwpWebSocketSender.connect("localhost", port)) {
+            try (QwpWebSocketSender sender = connectWs(port)) {
                 sender.table(strTable).symbol("s", "hello").at(1_000_000, ChronoUnit.MICROS);
                 sender.table(strTable).symbol("s", null).at(2_000_000, ChronoUnit.MICROS);
                 sender.flush();
@@ -2775,7 +2800,7 @@ public class QwpSenderE2ETest extends AbstractQwpWebSocketTest {
             // null symbol to SYMBOL
             String symTable = "test_qwp_null_symbol_to_symbol";
             execute("CREATE TABLE " + symTable + " (s SYMBOL, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
-            try (QwpWebSocketSender sender = QwpWebSocketSender.connect("localhost", port)) {
+            try (QwpWebSocketSender sender = connectWs(port)) {
                 sender.table(symTable).symbol("s", "alpha").at(1_000_000, ChronoUnit.MICROS);
                 sender.table(symTable).symbol("s", null).at(2_000_000, ChronoUnit.MICROS);
                 sender.flush();
@@ -2787,7 +2812,7 @@ public class QwpSenderE2ETest extends AbstractQwpWebSocketTest {
             // null symbol to VARCHAR
             String varcharTable = "test_qwp_null_symbol_to_varchar";
             execute("CREATE TABLE " + varcharTable + " (v VARCHAR, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
-            try (QwpWebSocketSender sender = QwpWebSocketSender.connect("localhost", port)) {
+            try (QwpWebSocketSender sender = connectWs(port)) {
                 sender.table(varcharTable).symbol("v", "hello").at(1_000_000, ChronoUnit.MICROS);
                 sender.table(varcharTable).symbol("v", null).at(2_000_000, ChronoUnit.MICROS);
                 sender.flush();
@@ -2801,7 +2826,7 @@ public class QwpSenderE2ETest extends AbstractQwpWebSocketTest {
     @Test
     public void testNullTableNameRejected() throws Exception {
         runInContext((port) -> {
-            try (QwpWebSocketSender sender = QwpWebSocketSender.connect("localhost", port)) {
+            try (QwpWebSocketSender sender = connectWs(port)) {
                 sender.table(null)
                         .longColumn("value", 42)
                         .at(1_000_000_000_000L, ChronoUnit.MICROS);
@@ -2839,7 +2864,7 @@ public class QwpSenderE2ETest extends AbstractQwpWebSocketTest {
             UUID uuid2 = UUID.fromString("11111111-2222-3333-4444-555555555555");
             long tsMicros = 1_645_747_200_000_000L;
 
-            try (QwpWebSocketSender sender = QwpWebSocketSender.connect("localhost", port)) {
+            try (QwpWebSocketSender sender = connectWs(port)) {
                 // row 1: all columns set
                 sender.table("omit_all")
                         .boolColumn("bool_col", true)
@@ -2954,7 +2979,7 @@ public class QwpSenderE2ETest extends AbstractQwpWebSocketTest {
             long baseTs = 1_000_000_000_000L;
             long step = 1000L;
 
-            try (QwpWebSocketSender sender = QwpWebSocketSender.connect("localhost", port, null)) {
+            try (QwpWebSocketSender sender = connectWs(port)) {
                 // Send rows with descending timestamps so every row is out of order
                 for (int i = 0; i < rowCount; i++) {
                     long ts = baseTs + (rowCount - 1 - i) * step;
@@ -3006,7 +3031,7 @@ public class QwpSenderE2ETest extends AbstractQwpWebSocketTest {
     @Test
     public void testSameColumnNameDifferentTypesDifferentTables() throws Exception {
         runInContext((port) -> {
-            try (QwpWebSocketSender sender = QwpWebSocketSender.connect("localhost", port)) {
+            try (QwpWebSocketSender sender = connectWs(port)) {
                 for (int i = 0; i < 10; i++) {
                     // table A: "value" is LONG
                     sender.table("schema_iso_a")
@@ -3092,7 +3117,7 @@ public class QwpSenderE2ETest extends AbstractQwpWebSocketTest {
         runInContext((port) -> {
             String table = "test_qwp_short";
 
-            try (QwpWebSocketSender sender = QwpWebSocketSender.connect("localhost", port)) {
+            try (QwpWebSocketSender sender = connectWs(port)) {
                 // Short.MIN_VALUE is the null sentinel for SHORT
                 sender.table(table)
                         .shortColumn("s", Short.MIN_VALUE)
@@ -3116,7 +3141,7 @@ public class QwpSenderE2ETest extends AbstractQwpWebSocketTest {
         runInContext((port) -> {
             String table = "test_qwp_string";
 
-            try (QwpWebSocketSender sender = QwpWebSocketSender.connect("localhost", port)) {
+            try (QwpWebSocketSender sender = connectWs(port)) {
                 sender.table(table)
                         .stringColumn("message", "Hello, World!")
                         .at(1_000_000, ChronoUnit.MICROS);
@@ -3200,7 +3225,7 @@ public class QwpSenderE2ETest extends AbstractQwpWebSocketTest {
         runInContext((port) -> {
             String table = "test_qwp_symbol";
 
-            try (QwpWebSocketSender sender = QwpWebSocketSender.connect("localhost", port)) {
+            try (QwpWebSocketSender sender = connectWs(port)) {
                 sender.table(table)
                         .symbol("s", "alpha")
                         .at(1_000_000, ChronoUnit.MICROS);
@@ -3232,7 +3257,7 @@ public class QwpSenderE2ETest extends AbstractQwpWebSocketTest {
         runInContext((port) -> {
             String table = "test_qwp_timestamp_micros";
 
-            try (QwpWebSocketSender sender = QwpWebSocketSender.connect("localhost", port)) {
+            try (QwpWebSocketSender sender = connectWs(port)) {
                 long tsMicros = 1_645_747_200_000_000L; // 2022-02-25T00:00:00Z in micros
                 sender.table(table)
                         .timestampColumn("ts_col", tsMicros, ChronoUnit.MICROS)
@@ -3254,7 +3279,7 @@ public class QwpSenderE2ETest extends AbstractQwpWebSocketTest {
                     "ts TIMESTAMP" +
                     ") TIMESTAMP(ts) PARTITION BY DAY WAL");
 
-            try (QwpWebSocketSender sender = QwpWebSocketSender.connect("localhost", port)) {
+            try (QwpWebSocketSender sender = connectWs(port)) {
                 long tsMicros = 1_645_747_200_111_111L; // 2022-02-25T00:00:00Z
                 sender.table(table)
                         .timestampColumn("ts_col", tsMicros, ChronoUnit.MICROS)
@@ -3284,14 +3309,17 @@ public class QwpSenderE2ETest extends AbstractQwpWebSocketTest {
             // Send a micros timestamp that overflows when converted to nanos.
             // The threshold is Long.MAX_VALUE / 1000 = 9_223_372_036_854_775.
             long overflowMicros = Long.MAX_VALUE / 1000 + 1;
-            try (QwpWebSocketSender sender = QwpWebSocketSender.connect("localhost", port)) {
+            CompletableFuture<SenderError> errorFut = new CompletableFuture<>();
+            try (QwpWebSocketSender sender = connectWs(port, errorFut::complete)) {
                 sender.table(table)
                         .longColumn("v", 1L)
                         .at(overflowMicros, ChronoUnit.MICROS);
                 sender.flush();
-                Assert.fail("Expected LineSenderException");
-            } catch (LineSenderException e) {
-                Assert.assertTrue(e.getMessage(), e.getMessage().contains("timestamp overflow converting micros to nanos"));
+
+                SenderError err = errorFut.get(10, TimeUnit.SECONDS);
+                String msg = err.getServerMessage();
+                Assert.assertTrue("got: " + msg,
+                        msg != null && msg.contains("timestamp overflow converting micros to nanos"));
             }
         });
     }
@@ -3301,7 +3329,7 @@ public class QwpSenderE2ETest extends AbstractQwpWebSocketTest {
         runInContext((port) -> {
             String table = "test_qwp_timestamp_nanos";
 
-            try (QwpWebSocketSender sender = QwpWebSocketSender.connect("localhost", port)) {
+            try (QwpWebSocketSender sender = connectWs(port)) {
                 long tsNanos = 1_645_747_200_000_000_000L; // 2022-02-25T00:00:00Z in nanos
                 sender.table(table)
                         .timestampColumn("ts_col", tsNanos, ChronoUnit.NANOS)
@@ -3323,7 +3351,7 @@ public class QwpSenderE2ETest extends AbstractQwpWebSocketTest {
                     "ts TIMESTAMP" +
                     ") TIMESTAMP(ts) PARTITION BY DAY WAL");
 
-            try (QwpWebSocketSender sender = QwpWebSocketSender.connect("localhost", port)) {
+            try (QwpWebSocketSender sender = connectWs(port)) {
                 long tsNanos = 1_645_747_200_123_456_789L;
                 sender.table(table)
                         .timestampColumn("ts_col", tsNanos, ChronoUnit.NANOS)
@@ -3353,7 +3381,7 @@ public class QwpSenderE2ETest extends AbstractQwpWebSocketTest {
                     "ts TIMESTAMP" +
                     ") TIMESTAMP(ts) PARTITION BY DAY WAL");
 
-            try (QwpWebSocketSender sender = QwpWebSocketSender.connect("localhost", port)) {
+            try (QwpWebSocketSender sender = connectWs(port)) {
                 sender.setGorillaEnabled(false);
                 // Row 1: sub-microsecond nanos get truncated
                 sender.table(table)
@@ -3395,7 +3423,7 @@ public class QwpSenderE2ETest extends AbstractQwpWebSocketTest {
             UUID uuid1 = UUID.fromString("a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11");
             UUID uuid2 = UUID.fromString("11111111-2222-3333-4444-555555555555");
 
-            try (QwpWebSocketSender sender = QwpWebSocketSender.connect("localhost", port)) {
+            try (QwpWebSocketSender sender = connectWs(port)) {
                 sender.table(table)
                         .uuidColumn("u", uuid1.getLeastSignificantBits(), uuid1.getMostSignificantBits())
                         .at(1_000_000, ChronoUnit.MICROS);
@@ -3420,7 +3448,7 @@ public class QwpSenderE2ETest extends AbstractQwpWebSocketTest {
     @Test
     public void testWhitespaceTableNameRejected() throws Exception {
         runInContext((port) -> {
-            try (QwpWebSocketSender sender = QwpWebSocketSender.connect("localhost", port)) {
+            try (QwpWebSocketSender sender = connectWs(port)) {
                 sender.table("   ")
                         .longColumn("value", 42)
                         .at(1_000_000_000_000L, ChronoUnit.MICROS);
@@ -3441,7 +3469,7 @@ public class QwpSenderE2ETest extends AbstractQwpWebSocketTest {
             double[] arr1d = {1.0, 2.0, 3.0};
             long tsMicros = 1_645_747_200_000_000L; // 2022-02-25T00:00:00Z
 
-            try (QwpWebSocketSender sender = QwpWebSocketSender.connect("localhost", port)) {
+            try (QwpWebSocketSender sender = connectWs(port)) {
                 sender.table(table)
                         .symbol("sym", "test_symbol")
                         .boolColumn("bool_col", true)
@@ -3471,15 +3499,29 @@ public class QwpSenderE2ETest extends AbstractQwpWebSocketTest {
             java.util.function.BiConsumer<QwpWebSocketSender, String> sendAction,
             String expectedMsgPart1, String expectedMsgPart2
     ) {
-        try (QwpWebSocketSender sender = QwpWebSocketSender.connect("localhost", port)) {
+        // Server-side rejections default to DROP_AND_CONTINUE for both
+        // SCHEMA_MISMATCH and WRITE_ERROR, so flush() does not throw — the
+        // rejection arrives asynchronously through the error handler. We block
+        // on a CompletableFuture populated from the dispatcher thread to make
+        // the assertion deterministic.
+        CompletableFuture<SenderError> errorFut = new CompletableFuture<>();
+        try (QwpWebSocketSender sender = connectWs(port, errorFut::complete)) {
             sendAction.accept(sender, table);
-            sender.flush();
-            Assert.fail("Expected LineSenderException");
-        } catch (LineSenderException e) {
-            String msg = e.getMessage();
+            long publishedFsn = sender.flushAndGetSequence();
+
+            SenderError err;
+            try {
+                err = errorFut.get(10, TimeUnit.SECONDS);
+            } catch (Exception e) {
+                throw new AssertionError("Did not receive a SenderError within 10s for table " + table, e);
+            }
+            Assert.assertTrue("error fsn span [" + err.getFromFsn() + ',' + err.getToFsn()
+                            + "] should cover published " + publishedFsn,
+                    publishedFsn >= err.getFromFsn() && publishedFsn <= err.getToFsn());
+            String msg = err.getServerMessage();
             Assert.assertTrue("Expected error containing '" + expectedMsgPart1 +
                             "' and '" + expectedMsgPart2 + "' but got: " + msg,
-                    msg.contains(expectedMsgPart1) && msg.contains(expectedMsgPart2));
+                    msg != null && msg.contains(expectedMsgPart1) && msg.contains(expectedMsgPart2));
         }
     }
 

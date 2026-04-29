@@ -381,6 +381,9 @@ public class QwpWebSocketUpgradeProcessor implements HttpRequestProcessor {
 
         } catch (ServerDisconnectException | PeerIsSlowToWriteException | PeerIsSlowToReadException e) {
             throw e;
+        } catch (PeerDisconnectedException e) {
+            LOG.info().$("WebSocket peer disconnected [fd=").$(context.getFd()).I$();
+            throw ServerDisconnectException.INSTANCE;
         } catch (Throwable e) {
             LOG.error().$("WebSocket error [fd=").$(context.getFd()).$(", error=").$(e).I$();
             throw ServerDisconnectException.INSTANCE;
@@ -734,7 +737,6 @@ public class QwpWebSocketUpgradeProcessor implements HttpRequestProcessor {
             throws ServerDisconnectException, PeerDisconnectedException, PeerIsSlowToReadException {
         long bufferEnd = buffer + bufferLen;
         long pos = buffer;
-        FrameProcessResult result = FrameProcessResult.COMPLETE;
 
         try {
             while (pos < bufferEnd) {
@@ -773,12 +775,10 @@ public class QwpWebSocketUpgradeProcessor implements HttpRequestProcessor {
                         }
                         throw ServerDisconnectException.INSTANCE;
                     }
-                    result = FrameProcessResult.NEED_MORE_DATA;
                     break;
                 }
 
                 if (consumed == 0 || frameParser.getState() == WebSocketFrameParser.STATE_NEED_MORE) {
-                    result = FrameProcessResult.NEED_MORE_DATA;
                     break;
                 }
 
@@ -799,10 +799,14 @@ public class QwpWebSocketUpgradeProcessor implements HttpRequestProcessor {
                 handleWebSocketFrame(context, state, opcode, frameParser.isFin(), payloadPtr, payloadLen);
             }
 
-            if (result == FrameProcessResult.COMPLETE) {
-                // All frames processed — flush any pending cumulative ACK
-                flushPendingAck(context, state);
-            }
+            // Flush any pending cumulative ACK whether or not the buffer ends
+            // on a clean frame boundary. The previous `COMPLETE`-only check
+            // starved senders of ACKs whenever a recv landed mid-frame —
+            // including any time the OS recv chunk was smaller than a full
+            // QWP batch — leaving the client's drainOnClose to time out.
+            // flushPendingAck is a no-op when nothing is pending, so this
+            // is safe in the empty-buffer / partial-frame-only cases too.
+            flushPendingAck(context, state);
         } finally {
             // Compact unprocessed bytes to buffer start and update state.
             // Handles both normal exit (remaining=0) and exception unwind
@@ -1048,8 +1052,4 @@ public class QwpWebSocketUpgradeProcessor implements HttpRequestProcessor {
         }
     }
 
-    private enum FrameProcessResult {
-        COMPLETE,
-        NEED_MORE_DATA
-    }
 }

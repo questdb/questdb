@@ -87,6 +87,16 @@ public class QwpSenderFuzzTest extends AbstractQwpWebSocketTest {
     };
     private final String[] symbolValueBases = new String[]{"us-midwest", "London"};
     private final AtomicLong timestampMicros = new AtomicLong(1_465_839_830_102_300L);
+    // Cap the client's outgoing WS frame size, by row count. The client
+    // never fragments outgoing WS messages, so the per-batch wire payload
+    // plus WS header must stay strictly under the server's recvBufferSize
+    // or the server tears the connection down with MESSAGE_TOO_BIG. We
+    // bound by rows rather than bytes because the auto_flush_bytes
+    // threshold compares against the per-row column-buffer encoding and
+    // significantly underestimates the final wire frame size in
+    // multi-table batches (full schema headers and a global symbol-dict
+    // delta are added at flush time). 0 means use sender defaults.
+    private int clientAutoFlushRows = 0;
     private double columnConvertProb;
     private int columnReorderingFactor = -1;
     private int columnSkipFactor = -1;
@@ -187,6 +197,8 @@ public class QwpSenderFuzzTest extends AbstractQwpWebSocketTest {
     public void testCaseVariationReorderingColumnsSendSymbolsWithSpace() throws Exception {
         initLoadParameters(100, Os.isWindows() ? 3 : 5, 5, 5, 50);
         initFuzzParameters(4, -1, 3, -1, true, true, true);
+        // Same wide-batch-vs-default-recv-buffer issue as testLoadSendSymbolsWithSpace.
+        clientAutoFlushRows = 5;
         runTest();
     }
 
@@ -234,12 +246,23 @@ public class QwpSenderFuzzTest extends AbstractQwpWebSocketTest {
     public void testLoadSendSymbolsWithSpace() throws Exception {
         initLoadParameters(100, Os.isWindows() ? 3 : 5, 4, 8, 20);
         initFuzzParameters(-1, -1, 2, -1, false, true, true);
+        // Frequent new-column injection (newColumnFactor=2) plus 8
+        // interleaved tables and symbols with embedded spaces inflates
+        // batch size enough that a 10-row frame exceeds the default
+        // 8192-byte server recv buffer. Cap rows-per-frame to keep the
+        // wire payload safely under it.
+        clientAutoFlushRows = 5;
         runTest();
     }
 
     @Test
     public void testLoadSmallBuffer() throws Exception {
         recvBufferSize = 2048;
+        // Cap rows-per-frame so the wire payload stays under recvBufferSize.
+        // This schema is ~9 columns of mixed string/double; with 5 tables
+        // interleaved per batch and full schema headers, ~3 rows yields
+        // a wire frame around 1KB, comfortably under 2048.
+        clientAutoFlushRows = 3;
         initLoadParameters(100, Os.isWindows() ? 3 : 5, 5, 5, 20);
         runTest();
     }
@@ -427,7 +450,6 @@ public class QwpSenderFuzzTest extends AbstractQwpWebSocketTest {
                     .$(", table.size(): ").$(table.size()).$(", reader.size(): ").$(reader.size()).$();
             TableReaderMetadata metadata = reader.getMetadata();
             CharSequence expected = table.generateRows(metadata);
-            LOG.info().$safe(table.getName()).$(" expected:\n").$safe(expected).$();
 
             long txnMinTs = reader.getMinTimestamp();
             int timestampIndex = reader.getMetadata().getTimestampIndex();
@@ -697,7 +719,11 @@ public class QwpSenderFuzzTest extends AbstractQwpWebSocketTest {
 
     private void startThread(int port, SOCountDownLatch threadPushFinished, AtomicInteger failureCounter, Rnd rnd) {
         new Thread(() -> {
-            try (QwpWebSocketSender sender = QwpWebSocketSender.connect("localhost", port, null)) {
+            try (QwpWebSocketSender sender = clientAutoFlushRows > 0
+                    ? connectWs(port, clientAutoFlushRows, QwpWebSocketSender.DEFAULT_AUTO_FLUSH_BYTES,
+                            QwpWebSocketSender.DEFAULT_AUTO_FLUSH_INTERVAL_NANOS,
+                            QwpWebSocketSender.DEFAULT_IN_FLIGHT_WINDOW_SIZE)
+                    : connectWs(port)) {
                 long points = 0;
                 for (int n = 0; n < numOfIterations; n++) {
                     for (int j = 0; j < numOfLines; j++) {
