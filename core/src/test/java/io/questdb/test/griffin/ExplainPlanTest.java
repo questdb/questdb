@@ -6863,6 +6863,55 @@ public class ExplainPlanTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testSampleByFillWithConstantProjection() throws Exception {
+        // Locks in that SELECT-list CONSTANT projections hoist into the outer
+        // VirtualRecord and never reach the inner sample-by bottomUpColumns.
+        // SqlCodeGenerator.generateFill walks bottomUpColumns to map factory
+        // columns to user-fill value slots; if a constant ever leaked into
+        // bottomUpColumns, aggNonKeyCount would over-count and per-column FILL
+        // values would shift onto the wrong aggregate. The plan makes the
+        // separation visible: 'tag' lives in VirtualRecord.functions, while
+        // the inner Async Group By values: lists only the aggregates.
+        assertMemoryLeak(() -> {
+            assertPlanNoLeakCheck("create table a (i int, j int, ts timestamp) timestamp(ts);", "select ts, 'tag' as c, first(i) as a, sum(j) as b from a sample by 1h fill(-1, 99) align to calendar", """
+                    VirtualRecord
+                      functions: [ts,'tag',a,b]
+                        Sample By Fill
+                          stride: '1h'
+                          fill: value
+                            Encode sort light
+                              keys: [ts]
+                                Async Group By workers: 1
+                                  keys: [ts]
+                                  keyFunctions: [timestamp_floor_utc('1h',ts)]
+                                  values: [first(i),sum(j)]
+                                  filter: null
+                                    PageFrame
+                                        Row forward scan
+                                        Frame forward scan on: a
+                    """);
+
+            assertPlanNoLeakCheck("select ts, 'tag' as c, first(i) as a, sum(j) as b from a sample by 1h fill(prev) align to calendar", """
+                    VirtualRecord
+                      functions: [ts,'tag',a,b]
+                        Sample By Fill
+                          stride: '1h'
+                          fill: prev
+                            Encode sort light
+                              keys: [ts]
+                                Async Group By workers: 1
+                                  keys: [ts]
+                                  keyFunctions: [timestamp_floor_utc('1h',ts)]
+                                  values: [first(i),sum(j)]
+                                  filter: null
+                                    PageFrame
+                                        Row forward scan
+                                        Frame forward scan on: a
+                    """);
+        });
+    }
+
+    @Test
     public void testSampleByFirstLast() throws Exception {
         assertMemoryLeak(() -> {
             assertPlanNoLeakCheck("create table a ( l long, s symbol, sym symbol index, i int, ts timestamp) timestamp(ts) partition by day;", "select sym, first(i), last(s), first(l) " + "from a " + "where sym in ('S') " + "and   ts > 0::timestamp and ts < 100::timestamp " + "sample by 1h align to first observation", """
