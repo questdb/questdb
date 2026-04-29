@@ -185,7 +185,6 @@ import io.questdb.griffin.engine.groupby.SampleByFirstLastRecordCursorFactory;
 import io.questdb.griffin.engine.groupby.SampleByInterpolateRecordCursorFactory;
 import io.questdb.griffin.engine.groupby.TimestampSampler;
 import io.questdb.griffin.engine.groupby.TimestampSamplerFactory;
-import io.questdb.griffin.engine.groupby.TimezoneFloorTimestampSampler;
 import io.questdb.griffin.engine.groupby.vect.AvgDoubleVectorAggregateFunction;
 import io.questdb.griffin.engine.groupby.vect.AvgIntVectorAggregateFunction;
 import io.questdb.griffin.engine.groupby.vect.AvgLongVectorAggregateFunction;
@@ -3264,6 +3263,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         Function fillFromFunc = null;
         Function fillToFunc = null;
         Function offsetFunc = null;
+        Function tzFunc = null;
 
         try {
             if (fillValuesExprs == null) {
@@ -3386,40 +3386,28 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             TimestampSampler timestampSampler = TimestampSamplerFactory.getInstance(driver, samplingInterval, samplingIntervalUnit, fillStride.position);
             // Day-or-larger stride + non-UTC TIME ZONE: timestamp_floor_utc anchors
             // GROUP BY buckets at TZ-local-calendar boundaries whose UTC width
-            // varies with DST. Wrap the uniform-UTC sampler so it walks the same
-            // local-calendar grid; otherwise the fast-path fill cursor's
-            // grid-drift guard fires once a DST transition stretches or shrinks a
-            // bucket. SqlOptimiser.rewriteSampleBy only sets fillTimezoneName for
-            // this combination (sub-day uses to_utc(FROM, tz) instead and stays
-            // uniform-UTC). Non-default OFFSET reaches the cursor as fillOffset
-            // and is anchored on the local grid via setLocalAnchor + setOffset
+            // varies with DST. The cursor wraps the uniform-UTC sampler with a
+            // TimezoneFloorTimestampSampler at of() time so the fast-path fill
+            // grid mirrors the GROUP BY grid bucket-for-bucket even across DST
+            // transitions. Wrapping is deferred to of() because TIME ZONE may
+            // be a runtime-constant bind variable: AbstractSampleByCursor's
+            // legacy parseParams re-evaluates it on every cursor open, and the
+            // fast-path cursor matches that contract (otherwise re-executing a
+            // compiled statement with a new TZ bind would silently reuse the
+            // first-execute rules). SqlOptimiser.rewriteSampleBy only sets
+            // fillTimezoneName for day-or-larger + non-trivial FILL (sub-day
+            // uses to_utc(FROM, tz) instead and stays uniform-UTC). Non-default
+            // OFFSET reaches the cursor as fillOffset and is anchored on the
+            // local grid via setLocalAnchor + setOffset
             // (TimezoneFloorTimestampSampler forwards both untranslated).
             final ExpressionNode fillTimezoneNode = curr.getFillTimezoneName();
+            int tzFuncPos = 0;
             if (fillTimezoneNode != null) {
-                final Function tzFunc = functionParser.parseFunction(fillTimezoneNode, EmptyRecordMetadata.INSTANCE, executionContext);
-                try {
-                    coerceRuntimeConstantType(tzFunc, STRING, executionContext,
-                            "TIME ZONE must be a constant expression of STRING or CHAR type",
-                            fillTimezoneNode.position);
-                    tzFunc.init(null, executionContext);
-                    final CharSequence tz = tzFunc.getStrA(null);
-                    if (tz != null && Dates.parseOffset(tz) == Long.MIN_VALUE) {
-                        final TimeZoneRules tzRules;
-                        try {
-                            tzRules = DateLocaleFactory.EN_LOCALE.getZoneRules(
-                                    Numbers.decodeLowInt(DateLocaleFactory.EN_LOCALE.matchZone(tz, 0, tz.length())),
-                                    driver.getTZRuleResolution()
-                            );
-                        } catch (NumericException e) {
-                            throw SqlException.$(fillTimezoneNode.position, "invalid timezone: ").put(tz);
-                        }
-                        if (!tzRules.hasFixedOffset()) {
-                            timestampSampler = new TimezoneFloorTimestampSampler(timestampSampler, tzRules, samplingIntervalUnit);
-                        }
-                    }
-                } finally {
-                    Misc.free(tzFunc);
-                }
+                tzFunc = functionParser.parseFunction(fillTimezoneNode, EmptyRecordMetadata.INSTANCE, executionContext);
+                tzFuncPos = fillTimezoneNode.position;
+                coerceRuntimeConstantType(tzFunc, STRING, executionContext,
+                        "TIME ZONE must be a constant expression of STRING or CHAR type",
+                        tzFuncPos);
             }
 
             int offsetFuncPos = 0;
@@ -4066,6 +4054,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     symbolTableColIndices,
                     offsetFunc,
                     offsetFuncPos,
+                    tzFunc,
+                    tzFuncPos,
                     fixedPrevSrcCols,
                     fixedPrevTypeTags,
                     prevValueSlot,
@@ -4077,6 +4067,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             Misc.free(fillFromFunc);
             Misc.free(fillToFunc);
             Misc.free(offsetFunc);
+            Misc.free(tzFunc);
             Misc.free(groupByFactory);
             throw e;
         }

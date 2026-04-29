@@ -64,7 +64,10 @@ import io.questdb.std.Long256;
 import io.questdb.std.Long256Impl;
 import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
+import io.questdb.std.NumericException;
 import io.questdb.std.ObjList;
+import io.questdb.std.datetime.DateLocaleFactory;
+import io.questdb.std.datetime.TimeZoneRules;
 import io.questdb.std.datetime.millitime.Dates;
 import io.questdb.std.str.CharSink;
 import io.questdb.std.str.Utf8Sequence;
@@ -106,6 +109,15 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
     private final int timestampIndex;
     private final int timestampType;
     private final Function toFunc;
+    // tzFunc stays nullable: only populated for the day-or-larger SAMPLE BY +
+    // non-trivial FILL + TIME ZONE combination that SqlOptimiser.rewriteSampleBy
+    // tags via setFillTimezoneName. The cursor evaluates it on every of() call so
+    // a runtime-constant (bind variable) timezone gets re-resolved per execution
+    // of the same compiled factory; otherwise the first-execute rules would be
+    // silently reused. Null means "no TZ wrap is ever applied" -- the cursor
+    // uses the unwrapped sampler from the constructor as-is.
+    private final Function tzFunc;
+    private final int tzFuncPos;
 
     /**
      * Populates {@code mapValueTypes} with the fixed-width value header that the
@@ -140,6 +152,8 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
             IntList symbolTableColIndices,
             Function offsetFunc,
             int offsetFuncPos,
+            Function tzFunc,
+            int tzFuncPos,
             IntList fixedPrevSrcCols,
             IntList fixedPrevTypeTags,
             IntList prevValueSlot,
@@ -169,12 +183,13 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
                     timestampIndex, timestampType, localHasPrevFill,
                     keySink, keysMapLocal, keyColIndices, symbolTableColIndices,
                     offsetFunc, offsetFuncPos,
+                    tzFunc, tzFuncPos, samplingIntervalUnit,
                     fixedPrevSrcCols, fixedPrevTypeTags, prevValueSlot, needsPrevPositioning
             );
         } catch (Throwable th) {
             // Free resources allocated inside the constructor. Inputs (base, fromFunc,
-            // toFunc, constantFills, offsetFunc) remain owned by the caller's catch
-            // block, which frees them on its own — this avoids a double-free.
+            // toFunc, constantFills, offsetFunc, tzFunc) remain owned by the caller's
+            // catch block, which frees them on its own — this avoids a double-free.
             Misc.free(keysMapLocal);
             throw th;
         }
@@ -183,6 +198,8 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
         this.toFunc = toFunc;
         this.offsetFunc = offsetFunc;
         this.offsetFuncPos = offsetFuncPos;
+        this.tzFunc = tzFunc;
+        this.tzFuncPos = tzFuncPos;
         this.samplingInterval = samplingInterval;
         this.samplingIntervalUnit = samplingIntervalUnit;
         this.timestampIndex = timestampIndex;
@@ -265,6 +282,7 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
         Misc.free(fromFunc);
         Misc.free(toFunc);
         Misc.free(offsetFunc);
+        Misc.free(tzFunc);
         Misc.freeObjList(constantFills);
         Misc.free(keysMap);
     }
@@ -326,6 +344,11 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
 
         private RecordCursor baseCursor;
         private Record baseRecord;
+        // The unwrapped uniform-UTC sampler. `timestampSampler` points at this
+        // (or at `tzWrap` when a non-fixed-offset TZ is in effect at the
+        // current of() call). Held separately so the wrap can be torn down
+        // and rebuilt on each cursor open without losing the base reference.
+        private final TimestampSampler baseSampler;
         private long calendarOffset;
         private SqlExecutionCircuitBreaker circuitBreaker;
         private final ObjList<Function> constantFills;
@@ -377,6 +400,11 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
         // keysMapRecord.getSymA/B(slot), which uses the symbolTableResolver
         // wired up in initialize() to turn the id back into a CharSequence.
         private final IntList prevValueSlot;
+        // Stride unit (one of 'd','w','M','y') from the parsed FILL stride
+        // token. Forwarded to TimezoneFloorTimestampSampler when the wrap is
+        // (re)bound at of() time so the local-grid floor uses the right
+        // calendar resolution.
+        private final char samplingIntervalUnit;
         private long simplePrevRowId = -1L;
         // Per output column SymbolTable cache for SYMBOL output cols whose
         // dispatch reads from a slot (DISPATCH_KEY_SLOT or
@@ -388,7 +416,11 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
         private final IntList symbolTableColIndices;
         private final TimestampDriver timestampDriver;
         private final int timestampIndex;
-        private final TimestampSampler timestampSampler;
+        // Active sampler for the current cursor lifetime. Points at baseSampler
+        // when the runtime tz is null or fixed-offset, at tzWrap otherwise.
+        // Re-bound from of() on every execute, so a runtime-constant TIME ZONE
+        // bind variable picks up its current value on each cursor open.
+        private TimestampSampler timestampSampler;
         // Counts keys still pending a fill emission for the current bucket. Reset
         // to keyCount at every bucket boundary; decremented when a data row marks
         // a key present (the false->true flip is one-shot per (bucket,key) since
@@ -397,6 +429,21 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
         // K keys to find none-absent can be skipped entirely.
         private int toEmitCnt;
         private final Function toFunc;
+        // Runtime-constant TIME ZONE Function. Null when SAMPLE BY had no TZ
+        // clause (no wrap is ever applied). When non-null, the cursor reads
+        // it via getStrA on every of() so the bind variable's current value
+        // determines whether the wrap is applied and which TimeZoneRules it
+        // uses. The compile path (SqlCodeGenerator.generateFill) does not
+        // pre-resolve tz: deferring to of() matches AbstractSampleByCursor's
+        // legacy contract and avoids the silent first-execute bake.
+        private final Function tzFunc;
+        private final int tzFuncPos;
+        // Lazily-allocated TZ-aware wrap around baseSampler. Allocated on the
+        // first of() that requires it (tz non-null and not fixed-offset);
+        // subsequent of() calls call setTzRules to rebind without
+        // reallocating. Held even after a fixed-offset of() so the next
+        // execute that re-binds to a DST zone can reuse the wrap.
+        private TimezoneFloorTimestampSampler tzWrap;
 
         private SampleByFillCursor(
                 RecordMetadata metadata,
@@ -414,6 +461,9 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
                 IntList symbolTableColIndices,
                 Function offsetFunc,
                 int offsetFuncPos,
+                Function tzFunc,
+                int tzFuncPos,
+                char samplingIntervalUnit,
                 IntList fixedPrevSrcCols,
                 IntList fixedPrevTypeTags,
                 IntList prevValueSlot,
@@ -421,6 +471,14 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
         ) {
             this.offsetFunc = offsetFunc;
             this.offsetFuncPos = offsetFuncPos;
+            this.tzFunc = tzFunc;
+            this.tzFuncPos = tzFuncPos;
+            this.samplingIntervalUnit = samplingIntervalUnit;
+            // The factory always passes the unwrapped (uniform-UTC) sampler;
+            // wrapping happens lazily in of() based on the runtime tz value.
+            // timestampSampler defaults to baseSampler so any sampler op before
+            // the first of() (none in current code paths) targets the base.
+            this.baseSampler = timestampSampler;
             this.timestampSampler = timestampSampler;
             this.fromFunc = fromFunc;
             this.toFunc = toFunc;
@@ -999,6 +1057,46 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
                 calendarOffset = timestampDriver.fromMinutes(Numbers.decodeLowInt(parsed));
             } else {
                 calendarOffset = 0;
+            }
+            // Re-resolve TIME ZONE on every of() so a runtime-constant bind
+            // variable picks up its current value. Three outcomes:
+            //   - tz string null OR fixed-offset: no DST sub-grid is needed
+            //     (a fixed-offset zone has uniform UTC bucket widths even at
+            //     day-or-larger strides), so route the cursor at baseSampler.
+            //   - non-fixed-offset (real DST zone): allocate tzWrap on first
+            //     hit, rebind tzRules on subsequent hits, point timestampSampler
+            //     at tzWrap. This mirrors AbstractSampleByCursor.parseParams's
+            //     contract that the sampler grid follows the runtime tz, not
+            //     a frozen compile-time snapshot.
+            // SqlOptimiser.rewriteSampleBy only sets fillTimezoneName for
+            // day-or-larger SAMPLE BY + non-trivial FILL, so tzFunc != null
+            // implies the wrap is at least potentially required.
+            if (tzFunc != null) {
+                tzFunc.init(baseCursor, executionContext);
+                final CharSequence tz = tzFunc.getStrA(null);
+                if (tz != null && Dates.parseOffset(tz) == Long.MIN_VALUE) {
+                    final TimeZoneRules tzRules;
+                    try {
+                        tzRules = DateLocaleFactory.EN_LOCALE.getZoneRules(
+                                Numbers.decodeLowInt(DateLocaleFactory.EN_LOCALE.matchZone(tz, 0, tz.length())),
+                                timestampDriver.getTZRuleResolution()
+                        );
+                    } catch (NumericException e) {
+                        throw SqlException.$(tzFuncPos, "invalid timezone: ").put(tz);
+                    }
+                    if (!tzRules.hasFixedOffset()) {
+                        if (tzWrap == null) {
+                            tzWrap = new TimezoneFloorTimestampSampler(baseSampler, tzRules, samplingIntervalUnit);
+                        } else {
+                            tzWrap.setTzRules(tzRules);
+                        }
+                        timestampSampler = tzWrap;
+                    } else {
+                        timestampSampler = baseSampler;
+                    }
+                } else {
+                    timestampSampler = baseSampler;
+                }
             }
             // Cache one SymbolTable per output column whose getSymA/getSymB
             // dispatch reads from a MapRecord/MapValue slot. JFR shows that on

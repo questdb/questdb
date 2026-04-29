@@ -61,8 +61,8 @@ import org.jetbrains.annotations.NotNull;
  */
 public class TimezoneFloorTimestampSampler implements TimestampSampler {
     private final TimestampSampler localSampler;
-    private final TimeZoneRules tzRules;
     private final char unit;
+    private TimeZoneRules tzRules;
 
     public TimezoneFloorTimestampSampler(TimestampSampler localSampler, TimeZoneRules tzRules, char unit) {
         this.localSampler = localSampler;
@@ -156,6 +156,18 @@ public class TimezoneFloorTimestampSampler implements TimestampSampler {
         // local-grid value should use {@link #setLocalAnchor(long)}.
         final long tzOff = CommonUtils.getFloorUtcTzOffset(tzRules, utcTimestamp, unit);
         localSampler.setStart(utcTimestamp + tzOff);
+    }
+
+    /**
+     * Rebinds the timezone rules used by the wrap. Callers must invoke this
+     * before any sampler operation (round/setStart/setOffset/nextTimestamp)
+     * because all of those consult {@code tzRules} for the per-instant local
+     * offset. The cursor calls this from {@code of()} when a runtime-constant
+     * (bind-variable) TIME ZONE may have changed across executions of the
+     * same compiled factory.
+     */
+    public void setTzRules(@NotNull TimeZoneRules tzRules) {
+        this.tzRules = tzRules;
     }
 
     @Override

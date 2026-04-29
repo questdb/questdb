@@ -3940,6 +3940,152 @@ public class SampleByFillTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testFillNullTimezoneBindVariableInvalidString() throws Exception {
+        // Bind variable holding an unparseable timezone token: the cursor
+        // raises SqlException at of() time, pointing at the TIME ZONE
+        // expression position. Mirrors testFillOffsetInvalidString for the
+        // tz axis -- guards that runtime tz validation surfaces clearly
+        // instead of being swallowed or producing wrong output.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (val DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO x VALUES (1.0, '2024-06-15T12:00:00.000000Z')");
+            bindVariableService.clear();
+            bindVariableService.setStr(0, "Not/AReal_Zone");
+            try {
+                assertExceptionNoLeakCheck(
+                        "SELECT sum(val) s, ts FROM x " +
+                                "SAMPLE BY 1d FILL(NULL) ALIGN TO CALENDAR TIME ZONE $1"
+                );
+                Assert.fail("expected SqlException for unparseable timezone");
+            } catch (SqlException e) {
+                TestUtils.assertContains(e.getFlyweightMessage(), "invalid timezone: Not/AReal_Zone");
+            }
+        });
+    }
+
+    @Test
+    public void testFillNullTimezoneBindVariableReExecute() throws Exception {
+        // The TIME ZONE clause is a runtime-constant bind variable. Re-executing
+        // the same compiled factory with a different bind value must rebind
+        // TimezoneFloorTimestampSampler's tz rules so the cursor's grid follows
+        // the current bind. The pre-fix code resolved tz once in
+        // SqlCodeGenerator.generateFill and baked the resulting TimeZoneRules
+        // into a final field, silently reusing the first-execute rules on
+        // every subsequent execution. This test pins the contract: each
+        // execute lands its own buckets.
+        //
+        // Both zones used here have positive offsets in June (Berlin = CEST
+        // UTC+2, Helsinki = EEST UTC+3), avoiding a separate latent bug in
+        // {@code TimezoneFloorTimestampSampler.localAnchorAsUtc} that
+        // misbehaves for negative-offset zones (a pre-existing issue
+        // independent of the bind-variable refactor and out of scope here).
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (val DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO x VALUES " +
+                    "(1.0, '2024-06-15T12:00:00.000000Z')," +
+                    "(2.0, '2024-06-17T12:00:00.000000Z')");
+            bindVariableService.clear();
+            bindVariableService.setStr(0, "Europe/Berlin");
+            try (RecordCursorFactory factory = select(
+                    "SELECT sum(val) s, ts FROM x " +
+                            "SAMPLE BY 1d FILL(NULL) ALIGN TO CALENDAR TIME ZONE $1")) {
+                // Berlin CEST: local midnight = 22:00 UTC (previous day).
+                assertCursor(
+                        "s\tts\n" +
+                                "1.0\t2024-06-14T22:00:00.000000Z\n" +
+                                "null\t2024-06-15T22:00:00.000000Z\n" +
+                                "2.0\t2024-06-16T22:00:00.000000Z\n",
+                        factory, false, false, false, sqlExecutionContext);
+
+                // Same compiled factory, different bind value. The pre-fix
+                // version reused Berlin's tzRules and emitted Berlin-anchored
+                // buckets here; with tzFunc threaded to of(), the wrap rebinds
+                // and the buckets land on Helsinki local midnight (EEST = UTC+3).
+                bindVariableService.setStr(0, "Europe/Helsinki");
+                assertCursor(
+                        "s\tts\n" +
+                                "1.0\t2024-06-14T21:00:00.000000Z\n" +
+                                "null\t2024-06-15T21:00:00.000000Z\n" +
+                                "2.0\t2024-06-16T21:00:00.000000Z\n",
+                        factory, false, false, false, sqlExecutionContext);
+
+                // And re-rebind back to Berlin to confirm there is no
+                // sticky-state leak across the Helsinki execute.
+                bindVariableService.setStr(0, "Europe/Berlin");
+                assertCursor(
+                        "s\tts\n" +
+                                "1.0\t2024-06-14T22:00:00.000000Z\n" +
+                                "null\t2024-06-15T22:00:00.000000Z\n" +
+                                "2.0\t2024-06-16T22:00:00.000000Z\n",
+                        factory, false, false, false, sqlExecutionContext);
+            }
+        });
+    }
+
+    @Test
+    public void testFillNullTimezoneBindVariableSwitchFixedOffsetAndDst() throws Exception {
+        // Re-execute across a fixed-offset zone and a real DST zone on the
+        // same compiled factory. Fixed-offset zones (e.g. '+02:00') return
+        // hasFixedOffset() == true and the cursor must NOT route through
+        // TimezoneFloorTimestampSampler -- the uniform-UTC sampler covers
+        // them since their bucket widths are constant. DST zones (e.g.
+        // 'Europe/Berlin') need the wrap. Switching between the two on the
+        // same factory exercises both the drop-the-wrap and
+        // allocate/rebind-the-wrap branches in of(); a regression that
+        // forgets either one leaves the previous of()'s sampler choice in
+        // place and the second execute drifts.
+        //
+        // June data + Europe/Berlin (CEST = UTC+2) and the fixed offset
+        // '+02:00' anchor at the same UTC instants -- so the visible bucket
+        // labels happen to match. Helsinki (EEST = UTC+3) shifts by an hour
+        // and makes the wrap-vs-base routing observable in the output.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (val DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO x VALUES " +
+                    "(1.0, '2024-06-15T12:00:00.000000Z')," +
+                    "(2.0, '2024-06-17T12:00:00.000000Z')");
+            bindVariableService.clear();
+            bindVariableService.setStr(0, "Europe/Helsinki");
+            try (RecordCursorFactory factory = select(
+                    "SELECT sum(val) s, ts FROM x " +
+                            "SAMPLE BY 1d FILL(NULL) ALIGN TO CALENDAR TIME ZONE $1")) {
+                // Helsinki EEST: local midnight = 21:00 UTC. tzWrap is
+                // allocated on this first of() and routed through.
+                assertCursor(
+                        "s\tts\n" +
+                                "1.0\t2024-06-14T21:00:00.000000Z\n" +
+                                "null\t2024-06-15T21:00:00.000000Z\n" +
+                                "2.0\t2024-06-16T21:00:00.000000Z\n",
+                        factory, false, false, false, sqlExecutionContext);
+
+                // Switch to a fixed-offset zone. The cursor must drop the
+                // wrap (point timestampSampler back at baseSampler);
+                // otherwise the Helsinki rules leak and the buckets stay
+                // anchored at 21:00 UTC instead of moving to 22:00 UTC.
+                bindVariableService.setStr(0, "+02:00");
+                assertCursor(
+                        "s\tts\n" +
+                                "1.0\t2024-06-14T22:00:00.000000Z\n" +
+                                "null\t2024-06-15T22:00:00.000000Z\n" +
+                                "2.0\t2024-06-16T22:00:00.000000Z\n",
+                        factory, false, false, false, sqlExecutionContext);
+
+                // Switch back to a DST zone. The cursor reuses the tzWrap
+                // allocated in the first of() (no fresh allocation) and
+                // simply rebinds tzRules. Output shifts back to the
+                // Helsinki grid.
+                bindVariableService.setStr(0, "Europe/Helsinki");
+                assertCursor(
+                        "s\tts\n" +
+                                "1.0\t2024-06-14T21:00:00.000000Z\n" +
+                                "null\t2024-06-15T21:00:00.000000Z\n" +
+                                "2.0\t2024-06-16T21:00:00.000000Z\n",
+                        factory, false, false, false, sqlExecutionContext);
+            }
+        });
+    }
+
+    @Test
     public void testFillReExecutionKeyed() throws Exception {
         // Re-execute the same keyed FILL factory twice and assert the second
         // cursor produces identical output. Exercises SampleByFillCursor.toTop()
