@@ -4573,6 +4573,10 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     IndexWriter iw = IndexFactory.createWriter(indexType, configuration);
                     try {
                         iw.of(other.trimTo(dstDirLen), columnName, columnNameTxn, indexValueBlockCapacity);
+                        // copyOrRebuildColumnIndexes runs during native->parquet
+                        // conversion before txWriter.commit; tag the chain
+                        // entry with the upcoming committed txn.
+                        iw.setNextTxnAtSeal(txWriter.getTxn() + 1);
                         final int nullKey = TableUtils.toIndexKey(SymbolTable.VALUE_IS_NULL);
                         for (long row = 0; row < colTop; row++) {
                             iw.add(nullKey, row);
@@ -6238,6 +6242,12 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         indexer.getWriter().setCurrentTableTxn(txWriter.getTxn());
         indexer.configureFollowerAndWriter(path.trimTo(plen), columnName, columnNameTxn, getPrimaryColumn(columnIndex), columnTop, lastPartitionTs, lastPartitionNameTxn);
         configureCoveringIfNeeded(indexer, columnIndex, lastPartitionTs);
+        // Tag this seal's chain entry with the txn the upcoming
+        // clearTodoAndCommitMeta will assign, so a recovery walk after a
+        // crash mid-addIndex can identify and drop the orphaned entry.
+        // Must come AFTER configureFollowerAndWriter: of() inside it runs
+        // close() which resets pendingTxnAtSeal.
+        indexer.getWriter().setNextTxnAtSeal(txWriter.getTxn() + 1);
         indexer.refreshSourceAndIndex(0, txWriter.getTransientRowCount());
 
         // Seal now so that covering sidecar files are written immediately.
@@ -6281,6 +6291,10 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 indexer.getWriter().setCurrentTableTxn(txWriter.getTxn());
                 indexer.configureWriter(path.trimTo(plen), columnName, columnNameTxn, columnTop, timestamp, txWriter.getPartitionNameTxnByPartitionTimestamp(timestamp));
                 configureCoveringIfNeeded(indexer, columnIndex, timestamp);
+                // Tag this seal's chain entry with the txn the upcoming
+                // clearTodoAndCommitMeta will assign. Must come AFTER
+                // configureWriter (of() inside it resets pendingTxnAtSeal).
+                indexer.getWriter().setNextTxnAtSeal(txWriter.getTxn() + 1);
                 indexer.index(ff, columnDataFd, columnTop, partitionSize);
                 indexer.seal();
             } finally {
@@ -6335,6 +6349,10 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 // against those partitions then silently use the slower
                 // fallback even though metadata advertises COVERING.
                 configureCoveringIfNeeded(indexer, columnIndex, timestamp);
+                // Tag this seal's chain entry with the txn the upcoming
+                // clearTodoAndCommitMeta will assign. Must come AFTER
+                // configureWriter (of() inside it resets pendingTxnAtSeal).
+                indexer.getWriter().setNextTxnAtSeal(txWriter.getTxn() + 1);
 
                 parquetColumnIdsAndTypes.clear();
                 parquetColumnIdsAndTypes.add(parquetColumnIndex);
@@ -9861,6 +9879,10 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     IndexWriter indexWriter = IndexFactory.createWriter(indexType, configuration);
                     try {
                         indexWriter.of(other.trimTo(dirLen), columnName, columnNameTxn, indexValueBlockCapacity);
+                        // rebuildPartitionIndexFiles runs during parquet->native
+                        // conversion before txWriter.commit; tag the chain
+                        // entry with the upcoming committed txn.
+                        indexWriter.setNextTxnAtSeal(txWriter.getTxn() + 1);
                         for (long row = columnTop; row < partitionRowCount; row++) {
                             int key = TableUtils.toIndexKey(Unsafe.getInt(dataAddr + (row - columnTop) * Integer.BYTES));
                             indexWriter.add(key, row);
@@ -10758,6 +10780,23 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                         indexer.configureCovering(o3SealAddrs, o3SealTops, o3SealShifts, coveringCols, o3SealTypes, coverCount,
                                 metadata.getTimestampIndex());
                         indexer.setCoveredColumnNameTxns(o3SealNameTxns);
+                        // sealPostingIndexesForO3Partitions runs inside
+                        // finishO3Commit, BEFORE txWriter.commit. The
+                        // chain entry rebuildSidecars publishes is tagged
+                        // with the current committed txn (not the upcoming
+                        // one): tagging with getTxn()+1 corrupts covering
+                        // reads, because publishPendingPurges' purge bound
+                        // would push the scoreboard's max ahead of the
+                        // not-yet-committed table txn and shorten the
+                        // window in which an existing reader can still
+                        // resolve the previous-seal sidecar files. Using
+                        // getTxn() leaves a partial-publish chain entry
+                        // undroppable by the recovery walk for this code
+                        // path; the trade-off is accepted here because the
+                        // failure mode (orphan chain head referencing the
+                        // committed state) is data-correct, while
+                        // getTxn()+1 produces wrong query results.
+                        indexer.getWriter().setNextTxnAtSeal(txWriter.getTxn());
                         indexer.rebuildSidecars();
                         indexer.publishPendingPurges(messageBus, tableToken, partitionBy, timestampType, txWriter.getTxn());
                     } finally {
@@ -10780,6 +10819,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                             getPrimaryColumn(colIdx), columnTop,
                             partitionTimestamp, partitionNameTxn
                     );
+                    indexer.getWriter().setNextTxnAtSeal(txWriter.getTxn() + 1);
                     indexer.mergeTentativeIntoActiveIfAny();
                     // See rollbackConditionally comment in the covering branch.
                     indexer.getWriter().rollbackConditionally(partitionSize);
@@ -11298,10 +11338,19 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         // current partition, so we must write the sidecar gen block now,
         // while the MemoryMA still points to the correct file.
         final int sealThreshold = configuration.getPostingSealGenThreshold();
+        // The seal here runs before the upcoming switchPartitions/commit, so
+        // tag any chain entry the seal publishes with txnAtSeal=getTxn()+1
+        // (the txn the next commit will assign). On a successful commit the
+        // recovery walk on next reopen sees committedTxn = getTxn()+1 and the
+        // predicate (txnAtSeal > committedTxn) does not fire. On a crash
+        // before the commit, committedTxn stays at getTxn() and the entry is
+        // dropped as abandoned.
+        final long publishTxn = txWriter.getTxn() + 1;
         for (int i = 0, n = denseIndexers.size(); i < n; i++) {
             ColumnIndexer indexer = denseIndexers.getQuick(i);
             IndexWriter writer = indexer.getWriter();
             try {
+                writer.setNextTxnAtSeal(publishTxn);
                 writer.commit();
                 writer.sealIfMultiGen(sealThreshold);
                 indexer.publishPendingPurges(messageBus, tableToken, partitionBy, timestampType, txWriter.getTxn());

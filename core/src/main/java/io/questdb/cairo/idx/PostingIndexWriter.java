@@ -208,6 +208,11 @@ public class PostingIndexWriter implements IndexWriter {
     public PostingIndexWriter(CairoConfiguration configuration, Path path, CharSequence name, long columnNameTxn) {
         this(configuration);
         of(path, name, columnNameTxn, true);
+        // Tests using this convenience constructor do not need to think
+        // about txn context. Production callers use the no-arg constructor
+        // + 5-arg of(...) (via SymbolColumnIndexer) and must call
+        // setNextTxnAtSeal explicitly with the right per-context value.
+        this.pendingTxnAtSeal = 0L;
     }
 
     public static void initKeyMemory(MemoryMA keyMem) {
@@ -349,6 +354,17 @@ public class PostingIndexWriter implements IndexWriter {
     @Override
     public void closeNoTruncate() {
         try {
+            // Emergency-cleanup path: a SymbolMapWriter rebuild or open
+            // failed and we are closing without a transaction context.
+            // The seal below is best-effort. Tag the chain entry it
+            // publishes with txnAtSeal=0 so the publishToChain contract
+            // (`pendingTxnAtSeal >= 0`) is satisfied. The writer-open
+            // recovery walk on the next reopen cannot drop it (predicate
+            // `0 > committedTxn` is unreachable), but that is acceptable
+            // here — the chain entry references whatever data was in
+            // memory at the moment the rebuild failed, which is the
+            // legitimate prior committed state, not an abandoned commit.
+            this.pendingTxnAtSeal = 0L;
             seal();
         } finally {
             try {
@@ -2634,7 +2650,15 @@ public class PostingIndexWriter implements IndexWriter {
             long prevTxnAtSeal = chain.getSecondEntryTxnAtSeal(keyMem);
             fromTxn = prevTxnAtSeal >= 0 ? prevTxnAtSeal : postingColumnNameTxn;
         }
-        pendingTxnAtSeal = -1;
+        // pendingTxnAtSeal is intentionally NOT reset here: a single logical
+        // TableWriter operation (e.g. sealPostingIndexForPartition) calls
+        // setNextTxnAtSeal once and then runs through rollbackConditionally,
+        // rebuildSidecars/seal in sequence — every one of which may reach
+        // publishToChain. The publishToChain assert catches the
+        // never-set case (pendingTxnAtSeal=-1 after open or close); leaving
+        // the value live across sub-operations preserves the right
+        // txnAtSeal. close() resets the field so a future of(...) starts
+        // clean.
         // Cap the in-memory outbox to prevent unbounded growth when the
         // global PostingSealPurge job is disabled, the queue is permanently
         // saturated, or publishPendingPurges() is never called. When at the
@@ -4037,11 +4061,27 @@ public class PostingIndexWriter implements IndexWriter {
         keyMem.putInt(dirOffset + PostingIndexUtils.GEN_DIR_OFFSET_MAX_KEY, overrideMaxKey);
 
         if (newEntry) {
-            // pendingTxnAtSeal supplied by TableWriter#syncColumns is the
-            // table _txn the upcoming commit will assign. -1 (unset) means
-            // the caller didn't wire the setter — fall back to txnAtSeal=0
-            // so the entry is visible to every pinned reader. The seller
-            // semantic is single-shot: the field is reset on consumption.
+            // pendingTxnAtSeal supplied by the upstream caller is the
+            // table _txn this seal's chain entry should be tagged with.
+            // The required value depends on the context:
+            //   - commit-in-progress paths (TableWriter syncColumns,
+            //     sealPostingIndexesForO3Partitions, ALTER ADD COLUMN/INDEX
+            //     index build): txnAtSeal = txWriter.getTxn() + 1, so a
+            //     writer-open recovery walk after a partial-publish
+            //     failure can drop entries with txnAtSeal > committedTxn.
+            //   - current-state paths (switchPartitionToLast rollback,
+            //     IndexBuilder REINDEX, TableSnapshotRestore, the O3
+            //     covering rebuildSidecars branch): txnAtSeal = current
+            //     committed _txn, so recovery does NOT drop the
+            //     legitimately published entry on the next reopen.
+            // -1 (unset) means the caller didn't wire the setter; fall
+            // back to txnAtSeal=0 so the entry is visible to every pinned
+            // reader. The recovery walk cannot drop a 0-tagged entry
+            // (predicate `0 > committedTxn` never fires), so a partial
+            // publish on this path turns into an undroppable orphan. The
+            // wiring in TableWriter eliminates this for the production
+            // paths that matter; this fallback exists only for legacy
+            // test fixtures and the no-arg of(...) used by O3CopyJob.
             long txnAtSeal = pendingTxnAtSeal >= 0 ? pendingTxnAtSeal : 0L;
             chain.appendNewEntry(
                     keyMem,
