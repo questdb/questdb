@@ -327,16 +327,14 @@ public final class Unsafe {
             incrMallocCount();
             return ptr;
         } catch (OutOfMemoryError oom) {
-            CairoException e = CairoException.nonCritical().setOutOfMemory(true)
+            throw CairoException.nonCritical().setOutOfMemory(true)
                     .put("sun.misc.Unsafe.allocateMemory() OutOfMemoryError [RSS_MEM_USED=")
                     .put(getRssMemUsed())
-                    .put(", size=")
-                    .put(size)
+                    .put(", size=").putSize(size)
                     .put(", memoryTag=").put(memoryTag)
                     .put("], original message: ")
-                    .put(oom.getMessage());
-            System.err.println(e.getFlyweightMessage());
-            throw e;
+                    .put(oom.getMessage())
+                    .put("]");
         }
     }
 
@@ -413,18 +411,13 @@ public final class Unsafe {
             incrReallocCount();
             return ptr;
         } catch (OutOfMemoryError oom) {
-            CairoException e = CairoException.nonCritical().setOutOfMemory(true)
+            throw CairoException.nonCritical().setOutOfMemory(true)
                     .put("sun.misc.Unsafe.reallocateMemory() OutOfMemoryError [RSS_MEM_USED=")
                     .put(getRssMemUsed())
-                    .put(", oldSize=")
-                    .put(oldSize)
-                    .put(", newSize=")
-                    .put(newSize)
+                    .put(", oldSize=").putSize(oldSize)
+                    .put(", newSize=").putSize(newSize)
                     .put(", memoryTag=").put(memoryTag)
-                    .put("], original message: ")
-                    .put(oom.getMessage());
-            System.err.println(e.getFlyweightMessage());
-            throw e;
+                    .put("]");
         }
     }
 
@@ -465,7 +458,7 @@ public final class Unsafe {
                         .put("global RSS memory limit exceeded [usage=")
                         .put(usage)
                         .put(", RSS_MEM_LIMIT=").put(rssMemLimit)
-                        .put(", size=").put(size)
+                        .put(", size=").putSize(size)
                         .put(", memoryTag=").put(memoryTag)
                         .put(']');
             }
