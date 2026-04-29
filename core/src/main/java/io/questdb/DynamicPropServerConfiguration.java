@@ -356,14 +356,13 @@ public class DynamicPropServerConfiguration implements ServerConfiguration, Conf
     }
 
     @Override
-    public QwpUdpReceiverConfiguration getQwpUdpReceiverConfiguration() {
-        // nested object is kept non-reloadable
-        return serverConfig.get().getQwpUdpReceiverConfiguration();
+    public MemoryConfiguration getMemoryConfiguration() {
+        return memoryConfig;
     }
 
     @Override
-    public MemoryConfiguration getMemoryConfiguration() {
-        return memoryConfig;
+    public long getMemoryUsageLogInterval() {
+        return serverConfig.get().getMemoryUsageLogInterval();
     }
 
     @Override
@@ -386,6 +385,12 @@ public class DynamicPropServerConfiguration implements ServerConfiguration, Conf
     public PublicPassthroughConfiguration getPublicPassthroughConfiguration() {
         // nested object is kept non-reloadable
         return serverConfig.get().getPublicPassthroughConfiguration();
+    }
+
+    @Override
+    public QwpUdpReceiverConfiguration getQwpUdpReceiverConfiguration() {
+        // nested object is kept non-reloadable
+        return serverConfig.get().getQwpUdpReceiverConfiguration();
     }
 
     @Override
@@ -427,6 +432,11 @@ public class DynamicPropServerConfiguration implements ServerConfiguration, Conf
         if (configReloadEnabled) {
             engine.setConfigReloader(this);
         }
+    }
+
+    @Override
+    public boolean isMemoryUsageLogEnabled() {
+        return serverConfig.get().isMemoryUsageLogEnabled();
     }
 
     @Override

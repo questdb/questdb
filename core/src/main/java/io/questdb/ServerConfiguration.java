@@ -59,6 +59,8 @@ public interface ServerConfiguration {
 
     CairoConfiguration getCairoConfiguration();
 
+    WorkerPoolConfiguration getExportPoolConfiguration();
+
     FactoryProvider getFactoryProvider();
 
     HttpServerConfiguration getHttpMinServerConfiguration();
@@ -71,9 +73,11 @@ public interface ServerConfiguration {
 
     WorkerPoolConfiguration getMatViewRefreshPoolConfiguration();
 
-    WorkerPoolConfiguration getExportPoolConfiguration();
-
     MemoryConfiguration getMemoryConfiguration();
+
+    default long getMemoryUsageLogInterval() {
+        return 60_000;
+    }
 
     Metrics getMetrics();
 
@@ -107,5 +111,9 @@ public interface ServerConfiguration {
     WorkerPoolConfiguration getWalApplyPoolConfiguration();
 
     default void init(CairoEngine engine, FreeOnExit freeOnExit) {
+    }
+
+    default boolean isMemoryUsageLogEnabled() {
+        return true;
     }
 }

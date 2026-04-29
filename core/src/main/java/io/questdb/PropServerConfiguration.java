@@ -144,6 +144,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private static final String ILP_PROTO_SUPPORT_VERSIONS = "[1,2,3]";
     private static final String ILP_PROTO_SUPPORT_VERSIONS_NAME = "line.proto.support.versions";
     private static final String ILP_PROTO_TRANSPORTS = "ilp.proto.transports";
+    private static final long MAX_MEMORY_USAGE_LOG_INTERVAL_MILLIS = Long.MAX_VALUE / 1000L;
     private static final String RELEASE_TYPE = "release.type";
     private static final String RELEASE_VERSION = "release.version";
     private static final int SECRET_FILE_MAX_SIZE = 65536; // 64KB max for secret files
@@ -350,6 +351,8 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final int maxSwapFileCount;
     private final int maxUncommittedRows;
     private final MemoryConfiguration memoryConfiguration;
+    private final boolean memoryUsageLogEnabled;
+    private final long memoryUsageLogInterval;
     private final int metadataStringPoolCapacity;
     private final MetricsConfiguration metricsConfiguration = new PropMetricsConfiguration();
     private final boolean metricsEnabled;
@@ -822,6 +825,14 @@ public class PropServerConfiguration implements ServerConfiguration {
         this.log = log;
         this.metricsEnabled = getBoolean(properties, env, PropertyKey.METRICS_ENABLED, false);
         this.metrics = metricsEnabled ? new Metrics(true, new MetricsRegistryImpl()) : Metrics.DISABLED;
+        this.memoryUsageLogEnabled = getBoolean(properties, env, PropertyKey.MEMORY_USAGE_LOG_ENABLED, true);
+        this.memoryUsageLogInterval = getMillis(properties, env, PropertyKey.MEMORY_USAGE_LOG_INTERVAL, 60_000);
+        if (memoryUsageLogInterval <= 0 || memoryUsageLogInterval > MAX_MEMORY_USAGE_LOG_INTERVAL_MILLIS) {
+            throw ServerConfigurationException.forInvalidKey(
+                    PropertyKey.MEMORY_USAGE_LOG_INTERVAL.getPropertyPath(),
+                    Long.toString(memoryUsageLogInterval)
+            );
+        }
         this.logSqlQueryProgressExe = getBoolean(properties, env, PropertyKey.LOG_SQL_QUERY_PROGRESS_EXE, true);
         this.logLevelVerbose = getBoolean(properties, env, PropertyKey.LOG_LEVEL_VERBOSE, false);
         this.logTimestampTimezone = getString(properties, env, PropertyKey.LOG_TIMESTAMP_TIMEZONE, "Z");
@@ -2220,6 +2231,11 @@ public class PropServerConfiguration implements ServerConfiguration {
     }
 
     @Override
+    public long getMemoryUsageLogInterval() {
+        return memoryUsageLogInterval;
+    }
+
+    @Override
     public Metrics getMetrics() {
         return metrics;
     }
@@ -2282,6 +2298,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         return configReloadEnabled;
     }
 
+    @Override
+    public boolean isMemoryUsageLogEnabled() {
+        return memoryUsageLogEnabled;
+    }
+
     // Used by dynamic configuration to reuse the already created factory provider.
     public void reinit(FactoryProvider factoryProvider) {
         this.factoryProvider = factoryProvider;
@@ -2300,6 +2321,27 @@ public class PropServerConfiguration implements ServerConfiguration {
             httpContextWebConsole = httpContextWebConsole.substring(0, httpContextWebConsole.length() - n);
         }
         return httpContextWebConsole;
+    }
+
+    private static void validateGroupByBatchSize(PropertyKey key, int value) throws ServerConfigurationException {
+        // A non-positive batch size would turn the reducer loop
+        // `for (long batchStart = 0; batchStart < rowCount; batchStart += batchSize)`
+        // into an infinite loop. Cap at the same 24-bit row index bound as
+        // page frames since the batch cannot exceed a single page frame.
+        final int maxBatchSize = io.questdb.cairo.map.Map.BATCH_ROW_INDEX_MASK + 1;
+        if (value < 1 || value > maxBatchSize) {
+            throw new ServerConfigurationException(key.getPropertyPath() + " must be between 1 and " + maxBatchSize);
+        }
+    }
+
+    private static void validatePageFrameRows(PropertyKey key, int value) throws ServerConfigurationException {
+        // Frame-relative row indexes are packed into the 24-bit slot of every
+        // batched GROUP BY entry, so a frame cannot exceed BATCH_ROW_INDEX_MASK + 1
+        // rows. Reject misconfigurations that would silently truncate.
+        final int maxRows = io.questdb.cairo.map.Map.BATCH_ROW_INDEX_MASK + 1;
+        if (value < 1 || value > maxRows) {
+            throw new ServerConfigurationException(key.getPropertyPath() + " must be between 1 and " + maxRows);
+        }
     }
 
     private int configureSharedThreadPool(
@@ -2483,27 +2525,6 @@ public class PropServerConfiguration implements ServerConfiguration {
                             + ((httpIlpConnectionLimit > 0) ? PropertyKey.HTTP_ILP_CONNECTION_LIMIT.getPropertyPath() + "=" + httpIlpConnectionLimit + ", " : "")
                             + ((httpExportConnectionLimit > 0) ? PropertyKey.HTTP_EXPORT_CONNECTION_LIMIT.getPropertyPath() + "=" + httpExportConnectionLimit + ", " : "")
                             + PropertyKey.HTTP_NET_CONNECTION_LIMIT.getPropertyPath() + "=" + httpNetConnectionLimit + ']');
-        }
-    }
-
-    private static void validateGroupByBatchSize(PropertyKey key, int value) throws ServerConfigurationException {
-        // A non-positive batch size would turn the reducer loop
-        // `for (long batchStart = 0; batchStart < rowCount; batchStart += batchSize)`
-        // into an infinite loop. Cap at the same 24-bit row index bound as
-        // page frames since the batch cannot exceed a single page frame.
-        final int maxBatchSize = io.questdb.cairo.map.Map.BATCH_ROW_INDEX_MASK + 1;
-        if (value < 1 || value > maxBatchSize) {
-            throw new ServerConfigurationException(key.getPropertyPath() + " must be between 1 and " + maxBatchSize);
-        }
-    }
-
-    private static void validatePageFrameRows(PropertyKey key, int value) throws ServerConfigurationException {
-        // Frame-relative row indexes are packed into the 24-bit slot of every
-        // batched GROUP BY entry, so a frame cannot exceed BATCH_ROW_INDEX_MASK + 1
-        // rows. Reject misconfigurations that would silently truncate.
-        final int maxRows = io.questdb.cairo.map.Map.BATCH_ROW_INDEX_MASK + 1;
-        if (value < 1 || value > maxRows) {
-            throw new ServerConfigurationException(key.getPropertyPath() + " must be between 1 and " + maxRows);
         }
     }
 
