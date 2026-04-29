@@ -103,7 +103,6 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
     private final boolean hasPrevFill;
     private final Map keysMap;
     private final Function offsetFunc;
-    private final int offsetFuncPos;
     private final long samplingInterval;
     private final char samplingIntervalUnit;
     private final int timestampIndex;
@@ -117,7 +116,6 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
     // silently reused. Null means "no TZ wrap is ever applied" -- the cursor
     // uses the unwrapped sampler from the constructor as-is.
     private final Function tzFunc;
-    private final int tzFuncPos;
 
     /**
      * Populates {@code mapValueTypes} with the fixed-width value header that the
@@ -197,9 +195,7 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
         this.fromFunc = fromFunc;
         this.toFunc = toFunc;
         this.offsetFunc = offsetFunc;
-        this.offsetFuncPos = offsetFuncPos;
         this.tzFunc = tzFunc;
-        this.tzFuncPos = tzFuncPos;
         this.samplingInterval = samplingInterval;
         this.samplingIntervalUnit = samplingIntervalUnit;
         this.timestampIndex = timestampIndex;
@@ -373,10 +369,6 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
         private boolean isEmittingFills;
         private boolean isInitialized;
         private int keyCount;
-        // Position in MapRecord where user key columns start. KEY_POS_OFFSET +
-        // numFixedPrevSlots, baked into outputColToKeyPos so dispatchSlot[col]
-        // values for KEY_SLOT entries are absolute MapRecord positions.
-        private final int keyPosOffset;
         private boolean[] keyPresent;
         private final RecordSink keySink;
         private final Map keysMap;
@@ -495,13 +487,13 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
             this.fixedPrevTypeTags = fixedPrevTypeTags;
             this.prevValueSlot = prevValueSlot;
             this.isPrevPositioningNeeded = isPrevPositioningNeeded;
-            this.keyPosOffset = KEY_POS_OFFSET + fixedPrevSrcCols.size();
 
             // Key columns in the MapRecord follow the fixed-width value header
             // (KEY_INDEX_SLOT, HAS_PREV_SLOT, PREV_ROWID_SLOT) plus any appended
             // fixed-size FILL_PREV cache slots. keyPosOffset bakes both
             // contributions in so dispatchSlot[col] values for KEY_SLOT entries
             // resolve to the right MapRecord position.
+            final int keyPosOffset = KEY_POS_OFFSET + fixedPrevSrcCols.size();
             outputColToKeyPos.setAll(metadata.getColumnCount(), -1);
             for (int i = 0, n = keyColIndices.size(); i < n; i++) {
                 outputColToKeyPos.setQuick(keyColIndices.getQuick(i), keyPosOffset + i);
@@ -825,8 +817,9 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
                 // Either a real data row is queued at a strictly later timestamp
                 // (gap before pending row), or the base cursor is exhausted and
                 // an explicit TO is driving the trailing fill window.
-                assert (hasPendingRow && pendingTs > nextBucketTimestamp)
-                        || (isBaseCursorExhausted && hasExplicitTo)
+                // The earlier early-return covers `isBaseCursorExhausted && !hasExplicitTo`,
+                // so reaching here with `isBaseCursorExhausted` already implies `hasExplicitTo`.
+                assert (hasPendingRow && pendingTs > nextBucketTimestamp) || isBaseCursorExhausted
                         : "next bucket must be a confirmed gap before re-entering inner emit";
                 // Next bucket is a gap -- emit fills for all keys
                 isEmittingFills = true;
@@ -1712,7 +1705,6 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
 
             @Override
             public CharSequence getSymA(int col) {
-                int code = currentDispatchCode[col];
                 // KEY_SLOT and PREV_CACHE_SLOT both go through symbolCache + MapRecord int read
                 // (cached SymbolTable + direct slot read shortcuts the MapRecord setSymbolTableResolver
                 // chain; PREV_CACHE_SLOT initialised to Numbers.INT_NULL = SymbolTable.VALUE_IS_NULL,
