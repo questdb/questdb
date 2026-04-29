@@ -808,6 +808,20 @@ public class SqlOptimiser implements Mutable {
         return false;
     }
 
+    private static boolean shouldPropagateFillOffset(
+            ExpressionNode sampleByTimezoneName,
+            boolean hasSubDayTimezoneWrap,
+            ExpressionNode sampleByFrom,
+            boolean hasFillFastPathTz,
+            ExpressionNode sampleByOffset
+    ) {
+        return (sampleByTimezoneName == null
+                || (hasSubDayTimezoneWrap && sampleByFrom != null)
+                || hasFillFastPathTz)
+                && sampleByOffset != null
+                && sampleByOffset != SqlParser.ZERO_OFFSET;
+    }
+
     private static void unlinkDependencies(IQueryModel model, int parent, int child) {
         model.getJoinModels().getQuick(parent).removeDependency(child);
     }
@@ -8548,11 +8562,13 @@ public class SqlOptimiser implements Mutable {
                 // when fillOffset is null, so emitting it would just pollute the model.
                 // parseWithOffset() normalises explicit '00:00' to the ZERO_OFFSET
                 // singleton, so a simple identity check covers all zero-offset cases.
-                if ((sampleByTimezoneName == null
-                        || (hasSubDayTimezoneWrap && sampleByFrom != null)
-                        || hasFillFastPathTz)
-                        && sampleByOffset != null
-                        && sampleByOffset != SqlParser.ZERO_OFFSET) {
+                if (shouldPropagateFillOffset(
+                        sampleByTimezoneName,
+                        hasSubDayTimezoneWrap,
+                        sampleByFrom,
+                        hasFillFastPathTz,
+                        sampleByOffset
+                )) {
                     nested.setFillOffset(sampleByOffset);
                 }
 
