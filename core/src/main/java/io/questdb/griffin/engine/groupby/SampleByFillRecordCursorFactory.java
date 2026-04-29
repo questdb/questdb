@@ -1100,7 +1100,10 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
                     case DISPATCH_PREV_SLOT ->
                             hasPrevForCurrentGap ? prevRecord.getArray(dispatchSlot[col], columnType) : null;
                     case DISPATCH_CONSTANT -> dispatchConstant[col].getArray(null);
-                    default -> null;
+                    default -> {
+                        assert false : "unexpected dispatch code: " + currentDispatchCode[col];
+                        yield null;
+                    }
                 };
             }
 
@@ -1111,7 +1114,10 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
                     case DISPATCH_KEY_SLOT -> keysMapRecord.getBin(dispatchSlot[col]);
                     case DISPATCH_PREV_SLOT -> hasPrevForCurrentGap ? prevRecord.getBin(dispatchSlot[col]) : null;
                     case DISPATCH_CONSTANT -> dispatchConstant[col].getBin(null);
-                    default -> null;
+                    default -> {
+                        assert false : "unexpected dispatch code: " + currentDispatchCode[col];
+                        yield null;
+                    }
                 };
             }
 
@@ -1122,7 +1128,10 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
                     case DISPATCH_KEY_SLOT -> keysMapRecord.getBinLen(dispatchSlot[col]);
                     case DISPATCH_PREV_SLOT -> hasPrevForCurrentGap ? prevRecord.getBinLen(dispatchSlot[col]) : -1;
                     case DISPATCH_CONSTANT -> dispatchConstant[col].getBinLen(null);
-                    default -> -1;
+                    default -> {
+                        assert false : "unexpected dispatch code: " + currentDispatchCode[col];
+                        yield -1;
+                    }
                 };
             }
 
@@ -1133,7 +1142,10 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
                     case DISPATCH_KEY_SLOT, DISPATCH_PREV_CACHE_SLOT -> keysMapRecord.getBool(dispatchSlot[col]);
                     case DISPATCH_PREV_SLOT -> hasPrevForCurrentGap && prevRecord.getBool(dispatchSlot[col]);
                     case DISPATCH_CONSTANT -> dispatchConstant[col].getBool(null);
-                    default -> false;
+                    default -> {
+                        assert false : "unexpected dispatch code: " + currentDispatchCode[col];
+                        yield false;
+                    }
                 };
             }
 
@@ -1146,7 +1158,10 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
                     // Constant byte fills go through getInt() to match the
                     // narrow-integer convention used by Function implementations.
                     case DISPATCH_CONSTANT -> (byte) dispatchConstant[col].getInt(null);
-                    default -> 0;
+                    default -> {
+                        assert false : "unexpected dispatch code: " + currentDispatchCode[col];
+                        yield 0;
+                    }
                 };
             }
 
@@ -1157,7 +1172,10 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
                     case DISPATCH_KEY_SLOT, DISPATCH_PREV_CACHE_SLOT -> keysMapRecord.getChar(dispatchSlot[col]);
                     case DISPATCH_PREV_SLOT -> hasPrevForCurrentGap ? prevRecord.getChar(dispatchSlot[col]) : 0;
                     case DISPATCH_CONSTANT -> dispatchConstant[col].getChar(null);
-                    default -> 0;
+                    default -> {
+                        assert false : "unexpected dispatch code: " + currentDispatchCode[col];
+                        yield 0;
+                    }
                 };
             }
 
@@ -1171,7 +1189,10 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
                         else sink.ofRawNull();
                     }
                     case DISPATCH_CONSTANT -> dispatchConstant[col].getDecimal128(null, sink);
-                    default -> sink.ofRawNull();
+                    default -> {
+                        assert false : "unexpected dispatch code: " + currentDispatchCode[col];
+                        sink.ofRawNull();
+                    }
                 }
             }
 
@@ -1184,7 +1205,10 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
                     case DISPATCH_PREV_SLOT ->
                             hasPrevForCurrentGap ? prevRecord.getDecimal16(dispatchSlot[col]) : Decimals.DECIMAL16_NULL;
                     case DISPATCH_CONSTANT -> dispatchConstant[col].getDecimal16(null);
-                    default -> Decimals.DECIMAL16_NULL;
+                    default -> {
+                        assert false : "unexpected dispatch code: " + currentDispatchCode[col];
+                        yield Decimals.DECIMAL16_NULL;
+                    }
                 };
             }
 
@@ -1198,7 +1222,10 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
                         else sink.ofRawNull();
                     }
                     case DISPATCH_CONSTANT -> dispatchConstant[col].getDecimal256(null, sink);
-                    default -> sink.ofRawNull();
+                    default -> {
+                        assert false : "unexpected dispatch code: " + currentDispatchCode[col];
+                        sink.ofRawNull();
+                    }
                 }
             }
 
@@ -1211,7 +1238,10 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
                     case DISPATCH_PREV_SLOT ->
                             hasPrevForCurrentGap ? prevRecord.getDecimal32(dispatchSlot[col]) : Decimals.DECIMAL32_NULL;
                     case DISPATCH_CONSTANT -> dispatchConstant[col].getDecimal32(null);
-                    default -> Decimals.DECIMAL32_NULL;
+                    default -> {
+                        assert false : "unexpected dispatch code: " + currentDispatchCode[col];
+                        yield Decimals.DECIMAL32_NULL;
+                    }
                 };
             }
 
@@ -1224,7 +1254,10 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
                     case DISPATCH_PREV_SLOT ->
                             hasPrevForCurrentGap ? prevRecord.getDecimal64(dispatchSlot[col]) : Decimals.DECIMAL64_NULL;
                     case DISPATCH_CONSTANT -> dispatchConstant[col].getDecimal64(null);
-                    default -> Decimals.DECIMAL64_NULL;
+                    default -> {
+                        assert false : "unexpected dispatch code: " + currentDispatchCode[col];
+                        yield Decimals.DECIMAL64_NULL;
+                    }
                 };
             }
 
@@ -1237,7 +1270,10 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
                     case DISPATCH_PREV_SLOT ->
                             hasPrevForCurrentGap ? prevRecord.getDecimal8(dispatchSlot[col]) : Decimals.DECIMAL8_NULL;
                     case DISPATCH_CONSTANT -> dispatchConstant[col].getDecimal8(null);
-                    default -> Decimals.DECIMAL8_NULL;
+                    default -> {
+                        assert false : "unexpected dispatch code: " + currentDispatchCode[col];
+                        yield Decimals.DECIMAL8_NULL;
+                    }
                 };
             }
 
@@ -1249,7 +1285,10 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
                     case DISPATCH_PREV_SLOT ->
                             hasPrevForCurrentGap ? prevRecord.getDouble(dispatchSlot[col]) : Double.NaN;
                     case DISPATCH_CONSTANT -> dispatchConstant[col].getDouble(null);
-                    default -> Double.NaN;
+                    default -> {
+                        assert false : "unexpected dispatch code: " + currentDispatchCode[col];
+                        yield Double.NaN;
+                    }
                 };
             }
 
@@ -1261,7 +1300,10 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
                     case DISPATCH_PREV_SLOT ->
                             hasPrevForCurrentGap ? prevRecord.getFloat(dispatchSlot[col]) : Float.NaN;
                     case DISPATCH_CONSTANT -> dispatchConstant[col].getFloat(null);
-                    default -> Float.NaN;
+                    default -> {
+                        assert false : "unexpected dispatch code: " + currentDispatchCode[col];
+                        yield Float.NaN;
+                    }
                 };
             }
 
@@ -1274,7 +1316,10 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
                     case DISPATCH_PREV_SLOT ->
                             hasPrevForCurrentGap ? prevRecord.getGeoByte(dispatchSlot[col]) : GeoHashes.BYTE_NULL;
                     case DISPATCH_CONSTANT -> dispatchConstant[col].getGeoByte(null);
-                    default -> GeoHashes.BYTE_NULL;
+                    default -> {
+                        assert false : "unexpected dispatch code: " + currentDispatchCode[col];
+                        yield GeoHashes.BYTE_NULL;
+                    }
                 };
             }
 
@@ -1287,7 +1332,10 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
                     case DISPATCH_PREV_SLOT ->
                             hasPrevForCurrentGap ? prevRecord.getGeoInt(dispatchSlot[col]) : GeoHashes.INT_NULL;
                     case DISPATCH_CONSTANT -> dispatchConstant[col].getGeoInt(null);
-                    default -> GeoHashes.INT_NULL;
+                    default -> {
+                        assert false : "unexpected dispatch code: " + currentDispatchCode[col];
+                        yield GeoHashes.INT_NULL;
+                    }
                 };
             }
 
@@ -1300,7 +1348,10 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
                     case DISPATCH_PREV_SLOT ->
                             hasPrevForCurrentGap ? prevRecord.getGeoLong(dispatchSlot[col]) : GeoHashes.NULL;
                     case DISPATCH_CONSTANT -> dispatchConstant[col].getGeoLong(null);
-                    default -> GeoHashes.NULL;
+                    default -> {
+                        assert false : "unexpected dispatch code: " + currentDispatchCode[col];
+                        yield GeoHashes.NULL;
+                    }
                 };
             }
 
@@ -1313,7 +1364,10 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
                     case DISPATCH_PREV_SLOT ->
                             hasPrevForCurrentGap ? prevRecord.getGeoShort(dispatchSlot[col]) : GeoHashes.SHORT_NULL;
                     case DISPATCH_CONSTANT -> dispatchConstant[col].getGeoShort(null);
-                    default -> GeoHashes.SHORT_NULL;
+                    default -> {
+                        assert false : "unexpected dispatch code: " + currentDispatchCode[col];
+                        yield GeoHashes.SHORT_NULL;
+                    }
                 };
             }
 
@@ -1325,7 +1379,10 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
                     case DISPATCH_PREV_SLOT ->
                             hasPrevForCurrentGap ? prevRecord.getIPv4(dispatchSlot[col]) : Numbers.IPv4_NULL;
                     case DISPATCH_CONSTANT -> dispatchConstant[col].getIPv4(null);
-                    default -> Numbers.IPv4_NULL;
+                    default -> {
+                        assert false : "unexpected dispatch code: " + currentDispatchCode[col];
+                        yield Numbers.IPv4_NULL;
+                    }
                 };
             }
 
@@ -1337,7 +1394,10 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
                     case DISPATCH_PREV_SLOT ->
                             hasPrevForCurrentGap ? prevRecord.getInt(dispatchSlot[col]) : Numbers.INT_NULL;
                     case DISPATCH_CONSTANT -> dispatchConstant[col].getInt(null);
-                    default -> Numbers.INT_NULL;
+                    default -> {
+                        assert false : "unexpected dispatch code: " + currentDispatchCode[col];
+                        yield Numbers.INT_NULL;
+                    }
                 };
             }
 
@@ -1349,7 +1409,10 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
                     case DISPATCH_PREV_SLOT ->
                             hasPrevForCurrentGap ? prevRecord.getInterval(dispatchSlot[col]) : Interval.NULL;
                     case DISPATCH_CONSTANT -> dispatchConstant[col].getInterval(null);
-                    default -> Interval.NULL;
+                    default -> {
+                        assert false : "unexpected dispatch code: " + currentDispatchCode[col];
+                        yield Interval.NULL;
+                    }
                 };
             }
 
@@ -1368,7 +1431,10 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
                     case DISPATCH_PREV_SLOT ->
                             hasPrevForCurrentGap ? prevRecord.getLong(dispatchSlot[col]) : Numbers.LONG_NULL;
                     case DISPATCH_CONSTANT -> dispatchConstant[col].getLong(null);
-                    default -> Numbers.LONG_NULL;
+                    default -> {
+                        assert false : "unexpected dispatch code: " + currentDispatchCode[col];
+                        yield Numbers.LONG_NULL;
+                    }
                 };
             }
 
@@ -1380,7 +1446,10 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
                     case DISPATCH_PREV_SLOT ->
                             hasPrevForCurrentGap ? prevRecord.getLong128Hi(dispatchSlot[col]) : Numbers.LONG_NULL;
                     case DISPATCH_CONSTANT -> dispatchConstant[col].getLong128Hi(null);
-                    default -> Numbers.LONG_NULL;
+                    default -> {
+                        assert false : "unexpected dispatch code: " + currentDispatchCode[col];
+                        yield Numbers.LONG_NULL;
+                    }
                 };
             }
 
@@ -1392,7 +1461,10 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
                     case DISPATCH_PREV_SLOT ->
                             hasPrevForCurrentGap ? prevRecord.getLong128Lo(dispatchSlot[col]) : Numbers.LONG_NULL;
                     case DISPATCH_CONSTANT -> dispatchConstant[col].getLong128Lo(null);
-                    default -> Numbers.LONG_NULL;
+                    default -> {
+                        assert false : "unexpected dispatch code: " + currentDispatchCode[col];
+                        yield Numbers.LONG_NULL;
+                    }
                 };
             }
 
@@ -1411,6 +1483,7 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
                     }
                     case DISPATCH_CONSTANT -> dispatchConstant[col].getLong256(null, sink);
                     default -> {
+                        assert false : "unexpected dispatch code: " + currentDispatchCode[col];
                         // null sentinel: nothing to write
                     }
                 }
@@ -1424,7 +1497,10 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
                     case DISPATCH_PREV_SLOT ->
                             hasPrevForCurrentGap ? prevRecord.getLong256A(dispatchSlot[col]) : Long256Impl.NULL_LONG256;
                     case DISPATCH_CONSTANT -> dispatchConstant[col].getLong256A(null);
-                    default -> Long256Impl.NULL_LONG256;
+                    default -> {
+                        assert false : "unexpected dispatch code: " + currentDispatchCode[col];
+                        yield Long256Impl.NULL_LONG256;
+                    }
                 };
             }
 
@@ -1436,7 +1512,10 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
                     case DISPATCH_PREV_SLOT ->
                             hasPrevForCurrentGap ? prevRecord.getLong256B(dispatchSlot[col]) : Long256Impl.NULL_LONG256;
                     case DISPATCH_CONSTANT -> dispatchConstant[col].getLong256B(null);
-                    default -> Long256Impl.NULL_LONG256;
+                    default -> {
+                        assert false : "unexpected dispatch code: " + currentDispatchCode[col];
+                        yield Long256Impl.NULL_LONG256;
+                    }
                 };
             }
 
@@ -1450,7 +1529,10 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
                     // Constant short fills go through getInt() to match the
                     // narrow-integer convention used by Function implementations.
                     case DISPATCH_CONSTANT -> (short) dispatchConstant[col].getInt(null);
-                    default -> (short) 0;
+                    default -> {
+                        assert false : "unexpected dispatch code: " + currentDispatchCode[col];
+                        yield (short) 0;
+                    }
                 };
             }
 
@@ -1461,7 +1543,10 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
                     case DISPATCH_KEY_SLOT -> keysMapRecord.getStrA(dispatchSlot[col]);
                     case DISPATCH_PREV_SLOT -> hasPrevForCurrentGap ? prevRecord.getStrA(dispatchSlot[col]) : null;
                     case DISPATCH_CONSTANT -> dispatchConstant[col].getStrA(null);
-                    default -> null;
+                    default -> {
+                        assert false : "unexpected dispatch code: " + currentDispatchCode[col];
+                        yield null;
+                    }
                 };
             }
 
@@ -1472,7 +1557,10 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
                     case DISPATCH_KEY_SLOT -> keysMapRecord.getStrB(dispatchSlot[col]);
                     case DISPATCH_PREV_SLOT -> hasPrevForCurrentGap ? prevRecord.getStrB(dispatchSlot[col]) : null;
                     case DISPATCH_CONSTANT -> dispatchConstant[col].getStrB(null);
-                    default -> null;
+                    default -> {
+                        assert false : "unexpected dispatch code: " + currentDispatchCode[col];
+                        yield null;
+                    }
                 };
             }
 
@@ -1483,7 +1571,10 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
                     case DISPATCH_KEY_SLOT -> keysMapRecord.getStrLen(dispatchSlot[col]);
                     case DISPATCH_PREV_SLOT -> hasPrevForCurrentGap ? prevRecord.getStrLen(dispatchSlot[col]) : -1;
                     case DISPATCH_CONSTANT -> dispatchConstant[col].getStrLen(null);
-                    default -> -1;
+                    default -> {
+                        assert false : "unexpected dispatch code: " + currentDispatchCode[col];
+                        yield -1;
+                    }
                 };
             }
 
@@ -1502,7 +1593,10 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
                             symbolCache[col].valueOf(keysMapRecord.getInt(dispatchSlot[col]));
                     case DISPATCH_PREV_SLOT -> hasPrevForCurrentGap ? prevRecord.getSymA(dispatchSlot[col]) : null;
                     case DISPATCH_CONSTANT -> dispatchConstant[col].getSymbol(null);
-                    default -> null;
+                    default -> {
+                        assert false : "unexpected dispatch code: " + currentDispatchCode[col];
+                        yield null;
+                    }
                 };
             }
 
@@ -1514,7 +1608,10 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
                             symbolCache[col].valueBOf(keysMapRecord.getInt(dispatchSlot[col]));
                     case DISPATCH_PREV_SLOT -> hasPrevForCurrentGap ? prevRecord.getSymB(dispatchSlot[col]) : null;
                     case DISPATCH_CONSTANT -> dispatchConstant[col].getSymbolB(null);
-                    default -> null;
+                    default -> {
+                        assert false : "unexpected dispatch code: " + currentDispatchCode[col];
+                        yield null;
+                    }
                 };
             }
 
@@ -1527,7 +1624,10 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
                     case DISPATCH_PREV_SLOT ->
                             hasPrevForCurrentGap ? prevRecord.getTimestamp(dispatchSlot[col]) : Numbers.LONG_NULL;
                     case DISPATCH_CONSTANT -> dispatchConstant[col].getTimestamp(null);
-                    default -> Numbers.LONG_NULL;
+                    default -> {
+                        assert false : "unexpected dispatch code: " + currentDispatchCode[col];
+                        yield Numbers.LONG_NULL;
+                    }
                 };
             }
 
@@ -1538,7 +1638,10 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
                     case DISPATCH_KEY_SLOT -> keysMapRecord.getVarcharA(dispatchSlot[col]);
                     case DISPATCH_PREV_SLOT -> hasPrevForCurrentGap ? prevRecord.getVarcharA(dispatchSlot[col]) : null;
                     case DISPATCH_CONSTANT -> dispatchConstant[col].getVarcharA(null);
-                    default -> null;
+                    default -> {
+                        assert false : "unexpected dispatch code: " + currentDispatchCode[col];
+                        yield null;
+                    }
                 };
             }
 
@@ -1549,7 +1652,10 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
                     case DISPATCH_KEY_SLOT -> keysMapRecord.getVarcharB(dispatchSlot[col]);
                     case DISPATCH_PREV_SLOT -> hasPrevForCurrentGap ? prevRecord.getVarcharB(dispatchSlot[col]) : null;
                     case DISPATCH_CONSTANT -> dispatchConstant[col].getVarcharB(null);
-                    default -> null;
+                    default -> {
+                        assert false : "unexpected dispatch code: " + currentDispatchCode[col];
+                        yield null;
+                    }
                 };
             }
 
@@ -1560,7 +1666,10 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
                     case DISPATCH_KEY_SLOT -> keysMapRecord.getVarcharSize(dispatchSlot[col]);
                     case DISPATCH_PREV_SLOT -> hasPrevForCurrentGap ? prevRecord.getVarcharSize(dispatchSlot[col]) : -1;
                     case DISPATCH_CONSTANT -> dispatchConstant[col].getVarcharSize(null);
-                    default -> -1;
+                    default -> {
+                        assert false : "unexpected dispatch code: " + currentDispatchCode[col];
+                        yield -1;
+                    }
                 };
             }
         }
