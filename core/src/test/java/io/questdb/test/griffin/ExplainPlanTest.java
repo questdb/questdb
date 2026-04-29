@@ -6679,6 +6679,30 @@ public class ExplainPlanTest extends AbstractCairoTest {
                                         Row forward scan
                                         Frame forward scan on: a
                     """);
+
+            // PREV(col_ref) cross-column: fill aggregate `a` with prev value of aggregate `s`.
+            // Mirrors the FillRecordDispatchTest.testDoubleCrossColumnPrevToAggregate scenario.
+            assertPlanNoLeakCheck("create table b (i int, j int, k symbol, ts timestamp) timestamp(ts);", "select k, first(i) AS s, first(j) AS a from b sample by 1h fill(prev, prev(s)) align to calendar", """
+                    SelectedRecord
+                        Sample By Fill
+                          stride: '1h'
+                          fill: prev
+                            Encode sort light
+                              keys: [ts]
+                                Async Group By workers: 1
+                                  keys: [k,ts]
+                                  keyFunctions: [timestamp_floor_utc('1h',ts)]
+                                  values: [first(i),first(j)]
+                                  filter: null
+                                    PageFrame
+                                        Row forward scan
+                                        Frame forward scan on: b
+                    """);
+
+            // Negative: PREV references an alias that does not exist in the select list.
+            assertExceptionNoLeakCheck("select k, first(i) AS s, first(j) AS a from b sample by 1h fill(prev, prev(nonexistent)) align to calendar",
+                    75,
+                    "PREV(col): column not found in output: nonexistent");
         });
     }
 
@@ -6730,6 +6754,30 @@ public class ExplainPlanTest extends AbstractCairoTest {
                                                 Row forward scan
                                                 Frame forward scan on: a
                     """);
+
+            // PREV(col_ref) cross-column on a non-keyed query: fill aggregate `b`
+            // with prev value of aggregate `s`.
+            assertPlanNoLeakCheck("create table c (i int, j int, ts timestamp) timestamp(ts);", "select first(i) AS s, first(j) AS b from c sample by 1h fill(prev, prev(s)) align to calendar", """
+                    SelectedRecord
+                        Sample By Fill
+                          stride: '1h'
+                          fill: prev
+                            Encode sort light
+                              keys: [ts]
+                                Async Group By workers: 1
+                                  keys: [ts]
+                                  keyFunctions: [timestamp_floor_utc('1h',ts)]
+                                  values: [first(i),first(j)]
+                                  filter: null
+                                    PageFrame
+                                        Row forward scan
+                                        Frame forward scan on: c
+                    """);
+
+            // Negative: PREV references an alias that does not exist in the select list.
+            assertExceptionNoLeakCheck("select first(i) AS s, first(j) AS b from c sample by 1h fill(prev, prev(missing)) align to calendar",
+                    72,
+                    "PREV(col): column not found in output: missing");
         });
     }
 
