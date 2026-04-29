@@ -10861,7 +10861,17 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                             getPrimaryColumn(colIdx), columnTop,
                             partitionTimestamp, partitionNameTxn
                     );
-                    indexer.getWriter().setNextTxnAtSeal(txWriter.getTxn() + 1);
+                    // See covering branch above: sealPostingIndexesForO3Partitions
+                    // runs inside finishO3Commit BEFORE txWriter.commit, and
+                    // publishPendingPurges below uses txWriter.getTxn() (the
+                    // current committed txn) for its purge bound. Tagging the
+                    // chain entry with getTxn()+1 here would push the
+                    // scoreboard's max past the not-yet-committed table txn,
+                    // shrinking the window in which an existing reader can
+                    // resolve the previous-seal .pv file. The covering branch
+                    // accepts the partial-publish-leaves-orphan trade-off; the
+                    // same trade-off is correct here.
+                    indexer.getWriter().setNextTxnAtSeal(txWriter.getTxn());
                     indexer.mergeTentativeIntoActiveIfAny();
                     // See rollbackConditionally comment in the covering branch.
                     indexer.getWriter().rollbackConditionally(partitionSize);
