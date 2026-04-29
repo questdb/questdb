@@ -86,7 +86,7 @@ import java.util.regex.Pattern;
  * counts only.
  * <p>
  * Two storage-diff escape valves keep the oracle focused on data
- * correctness rather than planner artefacts:
+ * correctness rather than planner artifacts:
  * <ul>
  *   <li>If both sides throw the same allowlisted exception class (even
  *       with different messages), the query was rejected by both paths
@@ -303,19 +303,24 @@ public final class QueryRunner {
             }
             return Result.failed(sql, a.failure);
         }
-        // Both threw the same allowlisted exception class but with different
-        // messages. For a non-deterministic query, a per-row cast/numeric
-        // exception fires on whichever row the iterator visits first, and
-        // parallel GROUP BY / hash join paths can return rows in different
-        // orders across runs. For a deterministic query under the storage
-        // diff, the two paths can hit different first errors at compile time
-        // because index/parquet settings change which predicate the planner
-        // evaluates first (e.g. one side reports "STRING constant expected"
-        // while the other reports a missing cast on a different sub-expr).
-        // In both cases both paths rejected the query with a consistent
-        // error class, so treat as skip.
-        if (a.exceptionClass.equals(b.exceptionClass) && isAcceptedSkip(a.failure)) {
-            return Result.skipped(a.exceptionClass + ": (varies)");
+        // Both threw allowlisted exceptions but the messages, and possibly
+        // the classes, differ. For a non-deterministic query, a per-row
+        // cast/numeric exception fires on whichever row the iterator visits
+        // first, and parallel GROUP BY / hash join paths can return rows in
+        // different orders across runs. For a deterministic query under the
+        // storage diff, the two paths can hit different first errors because
+        // index/parquet settings change which sub-expression the planner
+        // evaluates first: one side may reject a DECIMAL literal at compile
+        // time (SqlException) while the other compiles and hits a per-row
+        // IPv4 cast at runtime (ImplicitCastException). In all such cases
+        // both paths reject the query, only the stage and the error class
+        // differ, so treat as skip.
+        if (a.failure != null && b.failure != null
+                && isAcceptedSkip(a.failure) && isAcceptedSkip(b.failure)) {
+            if (a.exceptionClass.equals(b.exceptionClass)) {
+                return Result.skipped(a.exceptionClass + ": (varies)");
+            }
+            return Result.skipped(a.exceptionClass + " vs " + b.exceptionClass);
         }
         // One side threw a known planner-sensitivity error and the other
         // accepted the query. The error is a structural check that depends
