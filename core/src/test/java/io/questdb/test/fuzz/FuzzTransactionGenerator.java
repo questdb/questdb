@@ -508,8 +508,6 @@ public class FuzzTransactionGenerator {
             FuzzTransaction transaction = new FuzzTransaction();
             transaction.waitBarrierVersion = waitBarrierVersion;
             transaction.structureVersion = metadataVersion;
-            transaction.waitAllDone = true;
-            transaction.reopenTable = true;
             transaction.operationList.add(new FuzzSetParquetEncodingOperation(colName, encoding, compression, level));
             transactionList.add(transaction);
             return;
