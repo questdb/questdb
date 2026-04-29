@@ -24,7 +24,7 @@
 
 package io.questdb.cairo.wal.seq;
 
-import io.questdb.mp.SqlContinuation;
+import io.questdb.mp.WorkerContinuation;
 import io.questdb.std.Unsafe;
 
 /**
@@ -50,22 +50,26 @@ public final class TxnWaiter {
     public static final int STATE_FIRED = 1;
     public static final int STATE_PENDING = 0;
     static final long STATE_OFFSET = Unsafe.getFieldOffset(TxnWaiter.class, "state");
-    SqlContinuation cont;
     long deadlineMillis = NO_DEADLINE;
     volatile int state = STATE_PENDING;
     long targetWriterTxn;
+    private WorkerContinuation cont;
 
     public TxnWaiter() {
     }
 
-    public TxnWaiter(long targetWriterTxn, SqlContinuation cont) {
+    public TxnWaiter(long targetWriterTxn, WorkerContinuation cont) {
         this(targetWriterTxn, cont, NO_DEADLINE);
     }
 
-    public TxnWaiter(long targetWriterTxn, SqlContinuation cont, long deadlineMillis) {
+    public TxnWaiter(long targetWriterTxn, WorkerContinuation cont, long deadlineMillis) {
         this.targetWriterTxn = targetWriterTxn;
         this.cont = cont;
         this.deadlineMillis = deadlineMillis;
+    }
+
+    public WorkerContinuation getContinuation() {
+        return cont;
     }
 
     public boolean isCancelled() {
@@ -85,7 +89,7 @@ public final class TxnWaiter {
      * {@link #state} back to PENDING; the volatile write on {@code state} synchronizes
      * the reset so any observer that reads state == PENDING sees the refreshed fields.
      */
-    public void reset(long targetWriterTxn, SqlContinuation cont, long deadlineMillis) {
+    public void reset(long targetWriterTxn, WorkerContinuation cont, long deadlineMillis) {
         this.targetWriterTxn = targetWriterTxn;
         this.cont = cont;
         this.deadlineMillis = deadlineMillis;

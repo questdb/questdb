@@ -33,7 +33,7 @@ import io.questdb.cairo.wal.seq.TxnWaiter;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.mp.SOCountDownLatch;
-import io.questdb.mp.SqlContinuation;
+import io.questdb.mp.WorkerContinuation;
 import io.questdb.std.datetime.millitime.MillisecondClock;
 import io.questdb.std.datetime.millitime.MillisecondClockImpl;
 import io.questdb.test.tools.TestUtils;
@@ -342,11 +342,11 @@ public class SeqTxnTrackerTest {
         });
     }
 
-    private static SqlContinuation dummyContinuation() {
+    private static WorkerContinuation dummyContinuation() {
         // A continuation whose body never runs in these tests; we only need a reference
         // that the waiter can stash. The sink is a no-op because tests verify state
         // transitions, not the resume side.
-        return new SqlContinuation(() -> {
+        return new WorkerContinuation(() -> {
         }, c -> {
         });
     }

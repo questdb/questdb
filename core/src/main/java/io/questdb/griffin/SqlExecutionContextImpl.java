@@ -37,13 +37,11 @@ import io.questdb.cairo.sql.AtomicBooleanCircuitBreaker;
 import io.questdb.cairo.sql.BindVariableService;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.cairo.sql.VirtualRecord;
-import io.questdb.cairo.wal.seq.TxnWaiter;
 import io.questdb.griffin.engine.functions.rnd.SharedRandom;
 import io.questdb.griffin.engine.window.WindowContext;
 import io.questdb.griffin.engine.window.WindowContextImpl;
 import io.questdb.griffin.model.IntervalUtils;
 import io.questdb.griffin.model.RuntimeIntrinsicIntervalModel;
-import io.questdb.mp.SqlContinuation;
 import io.questdb.std.Decimal128;
 import io.questdb.std.Decimal256;
 import io.questdb.std.Decimal64;
@@ -75,7 +73,6 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
     private final ObjStack<RuntimeIntrinsicIntervalModel> intervalModelObjStack = new ObjStack<>();
     private final MicrosecondClock microClock;
     private final NanosecondClock nanoClock;
-    private final TxnWaiter pooledTxnWaiter = new TxnWaiter();
     private final int sharedQueryWorkerCount;
     private final AtomicBooleanCircuitBreaker simpleCircuitBreaker;
     private final Telemetry<TelemetryTask> telemetry;
@@ -90,7 +87,6 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
     private boolean clockUseNow = false;
     private boolean cloneSymbolTables;
     private boolean containsSecret;
-    private SqlContinuation currentContinuation;
     private int intervalFunctionType;
     private int jitMode;
     private long nowMicros;
@@ -146,12 +142,6 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
     @Override
     public boolean allowNonDeterministicFunctions() {
         return allowNonDeterministicFunction;
-    }
-
-    @Override
-    public TxnWaiter borrowTxnWaiter(long targetWriterTxn, SqlContinuation cont, long deadlineMillis) {
-        pooledTxnWaiter.reset(targetWriterTxn, cont, deadlineMillis);
-        return pooledTxnWaiter;
     }
 
     @Override
@@ -243,11 +233,6 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
     @Override
     public boolean getCloneSymbolTables() {
         return cloneSymbolTables;
-    }
-
-    @Override
-    public SqlContinuation getCurrentContinuation() {
-        return currentContinuation;
     }
 
     public Decimal128 getDecimal128() {
@@ -480,11 +465,6 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
     @Override
     public void setCloneSymbolTables(boolean cloneSymbolTables) {
         this.cloneSymbolTables = cloneSymbolTables;
-    }
-
-    @Override
-    public void setCurrentContinuation(SqlContinuation cont) {
-        this.currentContinuation = cont;
     }
 
     @Override

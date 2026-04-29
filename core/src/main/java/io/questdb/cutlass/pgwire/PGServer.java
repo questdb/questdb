@@ -32,7 +32,6 @@ import io.questdb.cutlass.auth.SocketAuthenticator;
 import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
-import io.questdb.mp.ContinuationSink;
 import io.questdb.mp.Job;
 import io.questdb.mp.WorkerPool;
 import io.questdb.network.IOContextFactoryImpl;
@@ -84,8 +83,7 @@ public class PGServer implements Closeable {
                 configuration,
                 registry,
                 executionContextObjectFactory,
-                typesAndSelectCache,
-                sharedPoolNetwork.getContinuationSink()
+                typesAndSelectCache
         );
         this.dispatcher = IODispatchers.create(configuration, contextFactory);
         this.sharedPoolNetwork = sharedPoolNetwork;
@@ -101,14 +99,9 @@ public class PGServer implements Closeable {
                             dispatcher.registerChannel(context, IOOperation.HEARTBEAT);
                             return false;
                         }
-                        context.handleClientOperation(operation, dispatcher);
+                        context.handleClientOperation(operation);
                         dispatcher.registerChannel(context, IOOperation.READ);
                         return true;
-                    } catch (OperationParkedException e) {
-                        // A SQL function (e.g. wait_wal_table) parked the continuation.
-                        // The worker that resumes it will re-register the connection with
-                        // the dispatcher — this thread must not touch the fd.
-                        return false;
                     } catch (PeerIsSlowToWriteException e) {
                         dispatcher.registerChannel(context, IOOperation.READ);
                     } catch (PeerIsSlowToReadException e) {
@@ -182,8 +175,7 @@ public class PGServer implements Closeable {
                 PGConfiguration configuration,
                 PGCircuitBreakerRegistry registry,
                 ObjectFactory<SqlExecutionContextImpl> executionContextObjectFactory,
-                AssociativeCache<TypesAndSelect> typesAndSelectCache,
-                ContinuationSink resumeSink
+                AssociativeCache<TypesAndSelect> typesAndSelectCache
         ) {
             super(
                     () -> {
@@ -197,8 +189,7 @@ public class PGServer implements Closeable {
                                 configuration,
                                 executionContextObjectFactory.newInstance(),
                                 circuitBreaker,
-                                typesAndSelectCache,
-                                resumeSink
+                                typesAndSelectCache
                         );
                         FactoryProvider factoryProvider = configuration.getFactoryProvider();
                         SocketAuthenticator authenticator = factoryProvider.getPgWireAuthenticatorFactory().getPgWireAuthenticator(

@@ -37,7 +37,7 @@ import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.BooleanFunction;
-import io.questdb.mp.SqlContinuation;
+import io.questdb.mp.WorkerContinuation;
 import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
 import io.questdb.std.Os;
@@ -58,11 +58,11 @@ public class WaitWalTableFunctionFactory implements FunctionFactory {
 
     private static class WaitWalFunction extends BooleanFunction implements Function {
         // How long the parked continuation sleeps between connection-liveness probes.
-        // Each cycle wakes the body, runs statefulThrowExceptionIfTripped() (which
-        // tests the fd, the cancel flag, and the SQL timeout), and re-parks if the
-        // wait should continue. A 1s cycle keeps disconnect detection latency low
-        // without burning CPU on the timeout sweep.
-        private static final long WAKE_INTERVAL_MILLIS = 1_000L;
+        // Each cycle wakes the body, runs statefulThrowExceptionIfTrippedNoThrottle()
+        // (tests the fd, the cancel flag, and the SQL timeout), and re-parks if the
+        // wait should continue. 200 ms keeps disconnect/timeout detection latency
+        // tight without burning CPU on the timeout sweep.
+        private static final long WAKE_INTERVAL_MILLIS = 200L;
         private final CharSequence tableName;
         private SqlExecutionContext executionContext;
         private long seqTxn;
@@ -84,15 +84,16 @@ public class WaitWalTableFunctionFactory implements FunctionFactory {
                 return true;
             }
 
-            // Continuation path: the caller wrapped SQL execution under a SqlContinuation
-            // gateway, so we can suspend the stack and release the carrier thread.
-            // Wakes every WAKE_INTERVAL_NANOS so the circuit breaker can probe the fd
-            // (broken connection), the cancel flag, and the SQL timeout. If the body
-            // is still healthy after the probe, we re-park; otherwise the breaker
-            // throws and the wait ends. This guarantees the wait can NEVER be
-            // unbounded: a dead client, an explicit cancel, or a timeout always wins.
-            SqlContinuation cont = executionContext.getCurrentContinuation();
-            if (cont != null && SqlContinuation.isMounted()) {
+            // Continuation path: the worker thread is carrying a WorkerContinuation
+            // (mounted in its outer driver), so we can suspend the stack and free
+            // the carrier. Wakes every WAKE_INTERVAL_MILLIS so the circuit breaker
+            // can probe the fd (broken connection), the cancel flag, and the SQL
+            // timeout. If the body is still healthy after the probe, we re-park;
+            // otherwise the breaker throws and the wait ends. This guarantees the
+            // wait can NEVER be unbounded: a dead client, an explicit cancel, or
+            // a timeout always wins.
+            WorkerContinuation cont = WorkerContinuation.current();
+            if (cont != null && WorkerContinuation.isMounted()) {
                 MillisecondClock clock = executionContext.getCairoEngine().getConfiguration().getMillisecondClock();
                 while (seqTxnTracker.getWriterTxn() < seqTxn) {
                     // Owning context is closing: do not re-park. Throwing unwinds the
@@ -103,12 +104,15 @@ public class WaitWalTableFunctionFactory implements FunctionFactory {
                     }
                     // Probe before re-parking: detects timeout, cancellation, broken
                     // connection. If tripped, this throws and the wait ends.
-                    executionContext.getCircuitBreaker().statefulThrowExceptionIfTripped();
+                    // Use NoThrottle: the wake interval (1 s) already paces these
+                    // checks; the throttled variant skips most calls and would let
+                    // a tripped breaker go undetected for many wake cycles.
+                    executionContext.getCircuitBreaker().statefulThrowExceptionIfTrippedNoThrottle();
                     throwIfSuspended();
                     long deadline = clock.getTicks() + WAKE_INTERVAL_MILLIS;
-                    TxnWaiter waiter = executionContext.borrowTxnWaiter(seqTxn, cont, deadline);
+                    TxnWaiter waiter = new TxnWaiter(seqTxn, cont, deadline);
                     seqTxnTracker.registerWaiter(waiter);
-                    if (!SqlContinuation.suspend()) {
+                    if (!WorkerContinuation.suspend()) {
                         // The JDK refused to yield because the carrier is pinned (a
                         // synchronized or native frame sits above this call). The body
                         // never unmounted, so this is the same carrier that registered

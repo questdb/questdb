@@ -24,8 +24,7 @@
 
 package io.questdb.test.mp;
 
-import io.questdb.mp.ContinuationResumeJob;
-import io.questdb.mp.SqlContinuation;
+import io.questdb.mp.WorkerContinuation;
 import org.junit.Assert;
 import org.junit.Test;
 
@@ -33,35 +32,35 @@ import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicReference;
 
-public class SqlContinuationTest {
+public class WorkerContinuationTest {
 
     @Test
     public void testIsMountedFalseOutsideRun() {
-        Assert.assertFalse(SqlContinuation.isMounted());
+        Assert.assertFalse(WorkerContinuation.isMounted());
     }
 
     @Test
     public void testIsMountedTrueInsideRun() {
         AtomicReference<Boolean> mountedInsideBody = new AtomicReference<>();
-        SqlContinuation cont = new SqlContinuation(
-                () -> mountedInsideBody.set(SqlContinuation.isMounted()),
+        WorkerContinuation cont = new WorkerContinuation(
+                () -> mountedInsideBody.set(WorkerContinuation.isMounted()),
                 c -> {
                 }
         );
         cont.run();
         Assert.assertTrue(cont.isDone());
         Assert.assertEquals(Boolean.TRUE, mountedInsideBody.get());
-        Assert.assertFalse(SqlContinuation.isMounted());
+        Assert.assertFalse(WorkerContinuation.isMounted());
     }
 
     @Test
     public void testMultipleYieldsInOneContinuation() {
         AtomicReference<Integer> step = new AtomicReference<>(0);
-        SqlContinuation cont = new SqlContinuation(() -> {
+        WorkerContinuation cont = new WorkerContinuation(() -> {
             step.set(1);
-            SqlContinuation.suspend();
+            WorkerContinuation.suspend();
             step.set(2);
-            SqlContinuation.suspend();
+            WorkerContinuation.suspend();
             step.set(3);
         }, c -> {
         });
@@ -84,16 +83,16 @@ public class SqlContinuationTest {
         AtomicReference<Thread> threadAfterResume = new AtomicReference<>();
         CountDownLatch doneLatch = new CountDownLatch(1);
 
-        ContinuationResumeJob resumeJob = new ContinuationResumeJob();
         TestWorkerPool pool = new TestWorkerPool("sql-continuation-test", 1);
-        pool.assign(resumeJob);
-
-        SqlContinuation cont = new SqlContinuation(() -> {
+        // Cont's sink is the pool's resume queue; the pool's worker outer driver
+        // drains the queue between mounts, so cont.scheduleResume() lands on a
+        // worker of this pool.
+        WorkerContinuation cont = new WorkerContinuation(() -> {
             threadAtStart.set(Thread.currentThread());
-            SqlContinuation.suspend();
+            WorkerContinuation.suspend();
             threadAfterResume.set(Thread.currentThread());
             doneLatch.countDown();
-        }, resumeJob);
+        }, pool.getContinuationSink());
 
         try {
             Thread runner = Thread.currentThread();

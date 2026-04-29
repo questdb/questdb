@@ -22,26 +22,24 @@
  *
  ******************************************************************************/
 
-package io.questdb.cutlass.pgwire;
+package io.questdb.mp;
 
 /**
- * Flow-control signal thrown by {@code PGConnectionContext.handleClientOperation} when a
- * SQL function (e.g. {@code wait_wal_table}) has suspended its continuation. The PGServer
- * processor treats this as "the worker that resumes the continuation will re-register the
- * connection with the dispatcher" and therefore neither disconnects the client nor re-arms
- * the fd itself.
+ * Sink onto which a {@link WorkerContinuation} pushes itself when it wants to be
+ * remounted on a worker. The pool that hosts the originating SQL evaluation owns
+ * the sink (typically a {@link ContinuationQueue} assigned to that pool's
+ * workers), so a parked body always resumes on a worker from the pool that
+ * launched it.
  *
- * <p>Singleton pattern mirrors other network flow-control exceptions
- * ({@link io.questdb.network.PeerIsSlowToWriteException} etc.) to stay allocation-free.
+ * <p>The cont captures its sink at construction; nothing else in the codebase
+ * needs to know which pool will drive the resume.
  */
-public class OperationParkedException extends Exception {
-    public static final OperationParkedException INSTANCE = new OperationParkedException();
-
-    private OperationParkedException() {
-    }
-
-    @Override
-    public Throwable fillInStackTrace() {
-        return this;
-    }
+@FunctionalInterface
+public interface ContinuationSink {
+    /**
+     * Schedule {@code cont} for resumption. Must be safe to call concurrently and
+     * idempotent against double-puts of the same continuation reference (the
+     * caller is expected to gate via {@code TxnWaiter.tryFire} / {@code tryCancel}).
+     */
+    void put(WorkerContinuation cont);
 }

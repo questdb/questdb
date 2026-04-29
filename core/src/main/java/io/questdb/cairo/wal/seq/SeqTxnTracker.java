@@ -87,7 +87,7 @@ public class SeqTxnTracker {
             }
             if (w.isExpired(nowMillis)) {
                 if (w.tryCancel()) {
-                    w.cont.scheduleResume();
+                    w.getContinuation().scheduleResume();
                 }
             } else {
                 if (sentinel == null) {
@@ -197,9 +197,9 @@ public class SeqTxnTracker {
      * <p>If the target is already met (or the table is already suspended/dropped) at
      * registration time, fires the waiter immediately so the caller does not have to
      * wait until the next external event or deadline expiry. This eager fire races
-     * the body before it reaches {@code SqlContinuation.suspend()} -- the cont is
+     * the body before it reaches {@code WorkerContinuation.suspend()} -- the cont is
      * still mounted on the registering carrier when {@code cont.scheduleResume()}
-     * pushes it onto the resume queue. {@link io.questdb.mp.ContinuationResumeJob#run}
+     * pushes it onto the resume queue. {@link io.questdb.mp.ContinuationQueue#run}
      * spin-waits on the resulting IllegalStateException until the carrier unmounts;
      * the same spin-wait already covers concurrent fires from other threads (e.g.
      * a WAL apply firing while the body is between {@code registerWaiter} and
@@ -297,7 +297,7 @@ public class SeqTxnTracker {
             }
             if (terminal || wtxn >= w.targetWriterTxn) {
                 if (w.tryFire()) {
-                    w.cont.scheduleResume();
+                    w.getContinuation().scheduleResume();
                 }
                 // cancelled waiters were already enqueued by the canceller; drop on the floor
             } else {

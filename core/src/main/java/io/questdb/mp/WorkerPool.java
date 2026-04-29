@@ -58,12 +58,12 @@ public class WorkerPool implements Closeable {
     private final ObjList<ObjHashSet<Job>> workerJobs;
     private final ObjList<Worker> workers = new ObjList<>();
     private final long yieldThreshold;
-    // Every pool gets a ContinuationResumeJob assigned to all its workers. A pool
-    // that never hosts SQL evaluation pays only the cost of one extra empty-queue
-    // poll per worker tick (nanoseconds). Construction in the pool's constructor
-    // means callers can rely on getContinuationSink() returning a valid sink at
-    // any time without lazy-init races or "did anyone materialize it yet" worries.
-    private final ContinuationResumeJob continuationResumeJob;
+    // Every pool owns a ContinuationQueue. Workers drain it from their outer
+    // driver between continuation mounts, NOT as a regular job. It cannot be a
+    // regular job because resume requires the calling thread to not already be
+    // carrying a cont in the same scope, which holds in the outer driver but
+    // not inside a mounted worker-loop body.
+    private final ContinuationQueue continuationQueue;
 
     public WorkerPool(WorkerPoolConfiguration configuration) {
         this.workerCount = configuration.getWorkerCount();
@@ -93,8 +93,8 @@ public class WorkerPool implements Closeable {
             threadLocalCleaners.add(new ObjList<>());
         }
 
-        this.continuationResumeJob = new ContinuationResumeJob();
-        assign(continuationResumeJob);
+        this.continuationQueue = new ContinuationQueue();
+        // NOT assigned via assign(): drained by worker outer driver instead.
     }
 
     /**
@@ -123,7 +123,16 @@ public class WorkerPool implements Closeable {
      * is wired during pool construction.
      */
     public ContinuationSink getContinuationSink() {
-        return continuationResumeJob;
+        return continuationQueue;
+    }
+
+    /**
+     * Constructs a fresh {@link WorkerContinuation} bound to this pool's resume sink.
+     * Used by workers to build their own loop-body continuation, and by
+     * suspending-evaluation gateways to wrap a one-shot body.
+     */
+    public WorkerContinuation newContinuation(Runnable body) {
+        return new WorkerContinuation(body, continuationQueue);
     }
 
     public void assignThreadLocalCleaner(int worker, Closeable cleaner) {
@@ -203,6 +212,7 @@ public class WorkerPool implements Closeable {
                         sleepThreshold,
                         sleepMs,
                         metrics,
+                        continuationQueue,
                         log
                 );
                 worker.setPriority(priority);

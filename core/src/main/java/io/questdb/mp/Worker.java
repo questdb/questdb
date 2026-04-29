@@ -51,11 +51,20 @@ public class Worker extends Thread {
     private final long napThreshold;
     private final OnHaltAction onHaltAction;
     private final String poolName;
+    // The pool's continuation queue. Used both as the sink for the worker's own
+    // WorkerContinuation (so a yield from inside the loop body parks back into this
+    // pool) and as the source of parked conts to remount in the outer driver.
+    private final ContinuationQueue continuationQueue;
     private final Job.RunStatus runStatus = () -> lifecycle.get() == Lifecycle.HALTED;
     private final long sleepMs;
     private final long sleepThreshold;
     private final int workerId;
     private final long yieldThreshold;
+    // Handoff slot: loopBody dequeues a parked cont from the queue and stores it
+    // here, then suspends. The outer driver finds the handoff and remounts the
+    // cont. Same-thread access only (body runs on this worker thread; outer
+    // driver runs on this worker thread). No synchronization needed.
+    private WorkerContinuation pendingResume;
 
     public Worker(
             String poolName,
@@ -70,6 +79,7 @@ public class Worker extends Thread {
             long sleepThreshold,
             long sleepMs,
             Metrics metrics,
+            ContinuationQueue continuationQueue,
             @Nullable Log log
     ) {
         assert yieldThreshold > 0L;
@@ -87,6 +97,7 @@ public class Worker extends Thread {
         this.sleepThreshold = sleepThreshold;
         this.sleepMs = sleepMs;
         this.metrics = metrics;
+        this.continuationQueue = continuationQueue;
         this.log = log;
     }
 
@@ -140,50 +151,34 @@ public class Worker extends Thread {
                     }
                 }
 
-                // enter main loop
-                long ticker = 0L;
+                // Outer driver: this thread is NOT carrying any cont here.
+                //
+                // Each iteration:
+                //   1. Build and run a fresh worker-loop continuation.
+                //   2. If the body handed off a parked cont via {@link #pendingResume},
+                //      remount that cont here -- the body has dequeued it from the
+                //      pool's queue and yielded specifically so we can run it.
+                //
+                // The fresh-per-iteration policy avoids racing peer workers that
+                // might also try to remount a cont captured by a suspending function:
+                // we never re-run our own cont reference, so even if the body's cont
+                // got stashed in a TxnWaiter and pushed onto the queue, a peer worker
+                // owns the remount, not us.
                 while (lifecycle.get() == Lifecycle.RUNNING) {
-                    boolean runAsap = false;
-                    // measure latency of all jobs tick
-                    jobStartMicros.lazySet(CLOCK_MICROS.getTicks());
-                    for (int i = 0, n = jobs.size(); i < n; i++) {
-                        Unsafe.loadFence();
-                        try {
-                            runAsap |= jobs.get(i).run(workerId, runStatus);
-                        } catch (Throwable e) {
-                            if (metrics.isEnabled()) {
-                                try {
-                                    metrics.healthMetrics().incrementUnhandledErrors();
-                                } catch (Throwable t) {
-                                    stdErrCritical(t);
-                                }
-                            }
-                            if (log != null) {
-                                log.critical().$("unhandled error [job=").$(jobs.get(i).toString()).$(", ex=").$(e).I$();
-                            } else {
-                                stdErrCritical(e); // log regardless
-                            }
-                            if (haltOnError) {
-                                throw e;
-                            }
-                        } finally {
-                            Unsafe.storeFence();
-                        }
+                    WorkerContinuation workerContinuation = new WorkerContinuation(this::loopBody, continuationQueue);
+                    workerContinuation.run();
+                    if (workerContinuation.isDone()) {
+                        // Body returned because lifecycle observed HALTED. Exit.
+                        break;
                     }
-
-                    if (runAsap) {
-                        ticker = 0;
-                        continue;
-                    }
-                    if (++ticker < 0) {
-                        ticker = sleepThreshold + 1; // overflow
-                    }
-                    if (ticker > sleepThreshold) {
-                        Os.sleep(sleepMs);
-                    } else if (ticker > napThreshold) {
-                        Os.sleep(1);
-                    } else if (ticker > yieldThreshold) {
-                        Os.pause();
+                    // Body yielded. If it dequeued a parked cont before yielding,
+                    // remount that cont here. Otherwise the cont was captured by
+                    // a deep suspending function and the fresh next-iteration cont
+                    // is enough.
+                    if (pendingResume != null) {
+                        WorkerContinuation toResume = pendingResume;
+                        pendingResume = null;
+                        continuationQueue.run(toResume);
                     }
                 }
             }
@@ -204,6 +199,87 @@ public class Worker extends Thread {
             haltLatch.countDown();
             if (log != null) {
                 log.debug().$("os scheduled worker stopped [name=").$(getName()).I$();
+            }
+        }
+    }
+
+    /**
+     * Body of the worker's continuation. Runs the job loop inside the cont so any
+     * suspending function called by a job can yield the cont and free this carrier
+     * thread to do other work. When the loop body's lifecycle observes HALTED, this
+     * method returns and the cont becomes done.
+     *
+     * <p>Each iteration the body attempts to dequeue one parked cont from the
+     * pool's queue. If it wins (tryDequeue returns non-null), it stashes the
+     * dequeued cont in {@link #pendingResume} and yields, letting the outer
+     * driver remount that cont. Workers that lose the dequeue race (null
+     * return) keep running their own jobs without yielding -- only the winner
+     * pays the yield cost per queue item.
+     */
+    private void loopBody() {
+        ContinuationQueue.ResumeTask scratchResumeTask = new ContinuationQueue.ResumeTask();
+        long ticker = 0L;
+        while (lifecycle.get() == Lifecycle.RUNNING) {
+            boolean runAsap = false;
+            // measure latency of all jobs tick
+            jobStartMicros.lazySet(CLOCK_MICROS.getTicks());
+            for (int i = 0, n = jobs.size(); i < n; i++) {
+                Unsafe.loadFence();
+                try {
+                    runAsap |= jobs.get(i).run(workerId, runStatus);
+                } catch (Throwable e) {
+                    if (metrics.isEnabled()) {
+                        try {
+                            metrics.healthMetrics().incrementUnhandledErrors();
+                        } catch (Throwable t) {
+                            stdErrCritical(t);
+                        }
+                    }
+                    if (log != null) {
+                        log.critical().$("unhandled error [job=").$(jobs.get(i).toString()).$(", ex=").$(e).I$();
+                    } else {
+                        stdErrCritical(e); // log regardless
+                    }
+                    if (haltOnError) {
+                        throw e;
+                    }
+                } finally {
+                    Unsafe.storeFence();
+                }
+            }
+
+            // Attempt to claim a parked cont from the pool's queue. Only the
+            // worker that wins the dequeue actually yields -- peer workers that
+            // lose the race (tryDequeue returns null) keep running their own
+            // jobs. ConcurrentQueue tryDequeue on an empty queue is a couple of
+            // volatile reads, cheap enough to do every iteration without a hint.
+            WorkerContinuation toResume = continuationQueue.tryDequeue(scratchResumeTask);
+            if (toResume != null) {
+                pendingResume = toResume;
+                if (!WorkerContinuation.suspend()) {
+                    // Yield refused (carrier pinned). We can't escape this cont
+                    // to mount the dequeued one. Re-queue it so a peer worker
+                    // can pick it up, and continue the loop.
+                    pendingResume = null;
+                    continuationQueue.put(toResume);
+                }
+                // If suspend yielded, body never returns here -- the outer
+                // driver picks up pendingResume and runs it.
+            }
+
+            if (runAsap) {
+                ticker = 0;
+                continue;
+            }
+            if (++ticker < 0) {
+                ticker = sleepThreshold + 1; // overflow
+            }
+            if (ticker > sleepThreshold) {
+                Os.sleep(sleepMs);
+            } else if (ticker > napThreshold) {
+                Os.sleep(1);
+            } else if (ticker > yieldThreshold) {
+                Os.pause();
             }
         }
     }

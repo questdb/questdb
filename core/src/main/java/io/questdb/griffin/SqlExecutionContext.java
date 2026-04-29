@@ -36,12 +36,10 @@ import io.questdb.cairo.sql.BindVariableService;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.cairo.sql.TableRecordMetadata;
 import io.questdb.cairo.sql.VirtualRecord;
-import io.questdb.cairo.wal.seq.TxnWaiter;
 import io.questdb.griffin.engine.functions.rnd.SharedRandom;
 import io.questdb.griffin.engine.window.WindowContext;
 import io.questdb.griffin.model.IntrinsicModel;
 import io.questdb.griffin.model.RuntimeIntrinsicIntervalModel;
-import io.questdb.mp.SqlContinuation;
 import io.questdb.std.Decimal128;
 import io.questdb.std.Decimal256;
 import io.questdb.std.Decimal64;
@@ -100,19 +98,6 @@ public interface SqlExecutionContext extends Sinkable, Closeable {
         return false;
     }
 
-    /**
-     * Returns a {@link TxnWaiter} scoped to this execution context. Implementations are
-     * free to pool a single instance and reuse it across suspending-function invocations
-     * (PGWire serializes queries per connection, so at most one wait is in flight per
-     * context at a time). The default implementation allocates a fresh waiter.
-     *
-     * <p>The continuation already carries its origin pool's resume sink, so the waiter
-     * does not need a separate resume-job reference.
-     */
-    default TxnWaiter borrowTxnWaiter(long targetWriterTxn, SqlContinuation cont, long deadlineMillis) {
-        return new TxnWaiter(targetWriterTxn, cont, deadlineMillis);
-    }
-
     default Rnd getAsyncRandom() {
         return SharedRandom.getAsyncRandom(getCairoEngine().getConfiguration());
     }
@@ -126,17 +111,6 @@ public interface SqlExecutionContext extends Sinkable, Closeable {
     SqlExecutionCircuitBreaker getCircuitBreaker();
 
     boolean getCloneSymbolTables();
-
-    /**
-     * Returns the SqlContinuation that wraps the currently-executing SQL evaluation, or
-     * {@code null} if the caller did not wrap execution in a continuation gateway.
-     * Functions that want to suspend (e.g. {@code wait_wal_table}) must read this to
-     * obtain the reference they hand to a TxnWaiter; a null return means they must fall
-     * back to blocking behavior.
-     */
-    default @Nullable SqlContinuation getCurrentContinuation() {
-        return null;
-    }
 
     Decimal128 getDecimal128();
 
@@ -291,16 +265,6 @@ public interface SqlExecutionContext extends Sinkable, Closeable {
     void setCancelledFlag(AtomicBoolean cancelled);
 
     void setCloneSymbolTables(boolean cloneSymbolTables);
-
-    /**
-     * Binds a SqlContinuation to this execution context so that suspending functions
-     * can retrieve it via {@link #getCurrentContinuation()}. Must be called before
-     * {@link SqlContinuation#run()} and cleared after completion. The default
-     * implementation is a no-op; contexts that support continuation-based suspension
-     * override it.
-     */
-    default void setCurrentContinuation(@Nullable SqlContinuation cont) {
-    }
 
     void setIntervalFunctionType(int intervalType);
 
