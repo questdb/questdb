@@ -302,6 +302,88 @@ public class SampleByFillTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testFillFromNegativeOffsetEqualsStride() throws Exception {
+        // Parity regression: FILL output must equal non-FILL output plus
+        // fill rows for missing labels in non-FILL's set. With FROM=12:00
+        // and OFFSET=-01:00 on a 1h stride, FROM lies on the offset-shifted
+        // grid (effectiveOffset=11:00, grid={..., 11:00, 12:00, 13:00, ...}).
+        // The shortcut fromTs + calendarOffset = 11:00 lies strictly below
+        // floor(fromTs) = 12:00; the bucket [11:00, 12:00) does not overlap
+        // [FROM=12:00, TO=15:00) and the WHERE filter ts >= 12:00 rejects
+        // any data that could land on the 11:00 label. Non-FILL never
+        // produces 11:00 for any data placement, so FILL must not either.
+        // The Math.max(effectiveOffset, round(fromTs)) fix picks 12:00.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (val DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO t VALUES (1.0, '2024-01-01T13:00:00.000000Z')");
+            assertQueryNoLeakCheck(
+                    """
+                            ts\tsum
+                            2024-01-01T12:00:00.000000Z\tnull
+                            2024-01-01T13:00:00.000000Z\t1.0
+                            2024-01-01T14:00:00.000000Z\tnull
+                            """,
+                    "SELECT ts, sum(val) FROM t " +
+                            "SAMPLE BY 1h FROM '2024-01-01T12:00:00.000000Z' TO '2024-01-01T15:00:00.000000Z' " +
+                            "FILL(NULL) ALIGN TO CALENDAR WITH OFFSET '-01:00'",
+                    "ts", false, false
+            );
+        });
+    }
+
+    @Test
+    public void testFillFromNegativeOffsetEqualsStrideEmptyBase() throws Exception {
+        // Same parity rule as testFillFromNegativeOffsetEqualsStride applied
+        // to the initialize() empty-base branch. With FROM, TO, and OFFSET
+        // set but no rows in the base cursor, FILL still emits one fill row
+        // per grid label whose bucket overlaps [FROM, TO). The leading
+        // bucket at fromTs + calendarOffset must not appear in the empty
+        // case either.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (val DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            assertQueryNoLeakCheck(
+                    """
+                            ts\tsum
+                            2024-01-01T12:00:00.000000Z\tnull
+                            2024-01-01T13:00:00.000000Z\tnull
+                            2024-01-01T14:00:00.000000Z\tnull
+                            """,
+                    "SELECT ts, sum(val) FROM t " +
+                            "SAMPLE BY 1h FROM '2024-01-01T12:00:00.000000Z' TO '2024-01-01T15:00:00.000000Z' " +
+                            "FILL(NULL) ALIGN TO CALENDAR WITH OFFSET '-01:00'",
+                    "ts", false, false
+            );
+        });
+    }
+
+    @Test
+    public void testFillFromNegativeOffsetGreaterThanStride() throws Exception {
+        // Parity regression with |OFFSET| > stride. effectiveOffset=10:00
+        // and floor(fromTs)=12:00 differ by two strides, not one. The
+        // current shortcut fromTs + calendarOffset = 10:00 would emit two
+        // leading buckets [10:00, 11:00) and [11:00, 12:00), both below
+        // FROM and both unreachable to data via the WHERE filter. The
+        // Math.max(effectiveOffset, round(fromTs)) expression must pick
+        // round(fromTs) = 12:00 here.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (val DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO t VALUES (1.0, '2024-01-01T13:00:00.000000Z')");
+            assertQueryNoLeakCheck(
+                    """
+                            ts\tsum
+                            2024-01-01T12:00:00.000000Z\tnull
+                            2024-01-01T13:00:00.000000Z\t1.0
+                            2024-01-01T14:00:00.000000Z\tnull
+                            """,
+                    "SELECT ts, sum(val) FROM t " +
+                            "SAMPLE BY 1h FROM '2024-01-01T12:00:00.000000Z' TO '2024-01-01T15:00:00.000000Z' " +
+                            "FILL(NULL) ALIGN TO CALENDAR WITH OFFSET '-02:00'",
+                    "ts", false, false
+            );
+        });
+    }
+
+    @Test
     public void testFillFromNegativeOffsetKeyed() throws Exception {
         // Keyed variant of testFillFromNegativeOffsetAtFromBoundary -- exercises
         // the keyed pass-2 emission path with the corrected grid anchor.

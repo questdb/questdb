@@ -904,11 +904,26 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
                     timestampSampler.setStart(fromTs + calendarOffset);
                     // nextBucketTimestamp intentionally unchanged (== firstTs).
                 } else {
-                    // FROM exists or no offset: anchor sampler at fromTs + offset.
-                    // timestamp_floor_utc uses effectiveOffset = from + offset,
-                    // so the sampler grid must start at the same shifted point.
-                    timestampSampler.setStart(nextBucketTimestamp + calendarOffset);
-                    nextBucketTimestamp = nextBucketTimestamp + calendarOffset;
+                    // FROM exists or no offset: anchor sampler at
+                    // effectiveOffset = fromTs + calendarOffset to match
+                    // timestamp_floor_utc's grid. Emit the first bucket at the
+                    // smallest grid label whose bucket overlaps [FROM, TO)
+                    // after the WHERE filter rewriteSampleByFromTo injects:
+                    //  - negative offset: round(fromTs) is the bucket
+                    //    containing fromTs; always overlaps FROM via
+                    //    [fromTs, round(fromTs) + stride).
+                    //  - positive offset where effectiveOffset > fromTs: the
+                    //    GROUP BY's Micros.floor* clamps data <
+                    //    effectiveOffset up to effectiveOffset.
+                    //    SimpleTimestampSampler.round does not clamp, so
+                    //    Math.max reproduces the clamp here.
+                    // The shortcut nextBucketTimestamp = fromTs + offset
+                    // diverges from round(fromTs) when |offset| >= stride and
+                    // produces a leading bucket whose right edge is <= FROM,
+                    // breaking parity with non-FILL fast path.
+                    final long effectiveOffset = nextBucketTimestamp + calendarOffset;
+                    timestampSampler.setStart(effectiveOffset);
+                    nextBucketTimestamp = Math.max(effectiveOffset, timestampSampler.round(nextBucketTimestamp));
                 }
                 hasPendingRow = true;
                 pendingTs = firstTs;
@@ -917,8 +932,15 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
                 }
             } else {
                 if (fromTs != Numbers.LONG_NULL && maxTimestamp != Numbers.LONG_NULL) {
-                    nextBucketTimestamp = fromTs + calendarOffset;
-                    timestampSampler.setStart(nextBucketTimestamp);
+                    // Same parity rule as the non-empty-base branch above:
+                    // anchor the sampler at effectiveOffset and emit at
+                    // round(fromTs), clamped up to effectiveOffset for the
+                    // positive-offset case. FILL must emit one row per grid
+                    // label whose bucket overlaps [FROM, TO), independent of
+                    // whether the base cursor produced any rows.
+                    final long effectiveOffset = fromTs + calendarOffset;
+                    timestampSampler.setStart(effectiveOffset);
+                    nextBucketTimestamp = Math.max(effectiveOffset, timestampSampler.round(fromTs));
                 } else {
                     maxTimestamp = Long.MIN_VALUE;
                     nextBucketTimestamp = Long.MAX_VALUE;
