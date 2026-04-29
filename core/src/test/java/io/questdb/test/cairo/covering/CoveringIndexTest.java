@@ -22,7 +22,7 @@
  *
  ******************************************************************************/
 
-package io.questdb.test.cairo;
+package io.questdb.test.cairo.covering;
 
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;

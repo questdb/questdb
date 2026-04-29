@@ -22,14 +22,14 @@
  *
  ******************************************************************************/
 
-package io.questdb.test.cairo;
+package io.questdb.test.cairo.covering;
 
 import io.questdb.PropertyKey;
 import org.junit.BeforeClass;
 
-public class CoveringIndexTestEf extends CoveringIndexTest {
+public class CoveringIndexTestDelta extends CoveringIndexTest {
     @BeforeClass
-    public static void setUpEf() {
-        setProperty(PropertyKey.CAIRO_POSTING_INDEX_ROW_ID_ENCODING, "ef");
+    public static void setUpDelta() {
+        setProperty(PropertyKey.CAIRO_POSTING_INDEX_ROW_ID_ENCODING, "delta");
     }
 }
