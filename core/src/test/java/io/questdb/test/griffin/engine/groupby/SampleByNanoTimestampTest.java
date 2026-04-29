@@ -12734,6 +12734,10 @@ public class SampleByNanoTimestampTest extends AbstractCairoTest {
 
     @Test
     public void testSampleFillValueBadType() throws Exception {
+        // sum_t(b) is sum_t(STRING) returning STRING. FILL(20.56) parses to a
+        // DOUBLE constant, not convertible to STRING. The fast path upfront
+        // type check rejects with a targeted error rather than letting the
+        // runtime Function dispatch fail.
         assertException(
                 "select b, sum_t(b), k from x sample by 3h fill(20.56)",
                 "create table x as " +
@@ -12745,8 +12749,8 @@ public class SampleByNanoTimestampTest extends AbstractCairoTest {
                         " from" +
                         " long_sequence(20)" +
                         ") timestamp(k) partition by NONE",
-                0,
-                "inconvertible value"
+                47,
+                "fill value of type DOUBLE cannot fill column of type STRING"
         );
     }
 

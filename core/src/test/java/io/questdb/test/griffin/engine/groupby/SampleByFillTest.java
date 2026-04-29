@@ -249,24 +249,22 @@ public class SampleByFillTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testFillConstLong256Value() throws Exception {
+    public void testFillConstLong256ValueRejectedAgainstLongTarget() throws Exception {
         assertMemoryLeak(() -> {
-            // Non-keyed FILL with a LONG256 constant covers the FILL_CONSTANT
-            // branch in FillRecord.getLong256 / getLong256A / getLong256B.
+            // first(LONG256) silently resolves to first(L) (no first(H) factory
+            // exists), so the aggregate output type is LONG. A LONG256 fill
+            // expression is not formally convertible to LONG via
+            // ColumnType.isConvertibleFrom even though Long256Function.getLong()
+            // happens to return the low 64 bits at runtime. The upfront type
+            // check correctly rejects this so the user sees a clean error
+            // rather than relying on an undocumented narrowing path.
             execute("CREATE TABLE x (val LONG256, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
             execute("INSERT INTO x VALUES " +
                     "(cast('0x01' AS LONG256), '2024-01-01T00:00:00.000000Z')," +
                     "(cast('0x03' AS LONG256), '2024-01-01T02:00:00.000000Z')");
-            assertQueryNoLeakCheck(
-                    """
-                            first\tts
-                            1\t2024-01-01T00:00:00.000000Z
-                            66\t2024-01-01T01:00:00.000000Z
-                            3\t2024-01-01T02:00:00.000000Z
-                            """,
-                    "SELECT first(val), ts FROM x SAMPLE BY 1h FILL(cast('0x42' as LONG256)) ALIGN TO CALENDAR",
-                    "ts", false, false
-            );
+            String sql = "SELECT first(val), ts FROM x SAMPLE BY 1h FILL(cast('0x42' as LONG256)) ALIGN TO CALENDAR";
+            assertExceptionNoLeakCheck(sql, sql.indexOf("cast('0x42'"),
+                    "fill value of type LONG256 cannot fill column of type LONG");
         });
     }
 
@@ -519,19 +517,118 @@ public class SampleByFillTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testFillInsufficientFillValuesSingleConstant() throws Exception {
+    public void testFillSingleConstantBroadcastFunctionRejected() throws Exception {
         assertMemoryLeak(() -> {
-            // A single non-null constant (FILL(0)) must not broadcast across
-            // multiple aggregates. Only bare FILL(PREV) and FILL(NULL) broadcast;
-            // a lone constant with multi-aggregate is under-specified and must
-            // raise "not enough fill values".
+            // FUNCTION-typed expressions (function calls, casts, bind variables)
+            // are deliberately not in the broadcast set: per-aggregate type
+            // coercion for those would need to run per target. Pin this boundary
+            // -- a single rnd_int() against multiple aggregates must keep
+            // hitting the "not enough fill values" path, not silently broadcast.
             execute("CREATE TABLE t (ts TIMESTAMP, a DOUBLE, b DOUBLE) TIMESTAMP(ts) PARTITION BY DAY");
             execute("INSERT INTO t VALUES ('2024-01-01T00:00:00.000000Z', 1, 2)");
-            assertExceptionNoLeakCheck(
-                    "SELECT ts, sum(a), sum(b) FROM t SAMPLE BY 1h FILL(0) ALIGN TO CALENDAR",
-                    51,
-                    "not enough fill values"
+            String sql = "SELECT ts, sum(a), sum(b) FROM t SAMPLE BY 1h FILL(rnd_int()) ALIGN TO CALENDAR";
+            assertExceptionNoLeakCheck(sql, sql.indexOf("rnd_int"), "not enough fill values");
+        });
+    }
+
+    @Test
+    public void testFillSingleConstantBroadcastNumeric() throws Exception {
+        assertMemoryLeak(() -> {
+            // A single numeric CONSTANT fills every non-key aggregate. Two
+            // DOUBLE-output aggregates broadcast the INT 0 via the standard
+            // INT->DOUBLE convertibility path; the gap bucket emits 0.0 in both
+            // columns.
+            execute("CREATE TABLE x (a DOUBLE, b DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO x VALUES " +
+                    "(1.0, 10.0, '2024-01-01T00:00:00.000000Z')," +
+                    "(3.0, 30.0, '2024-01-01T02:00:00.000000Z')");
+            assertQueryNoLeakCheck(
+                    """
+                            first\tfirst1\tts
+                            1.0\t10.0\t2024-01-01T00:00:00.000000Z
+                            0.0\t0.0\t2024-01-01T01:00:00.000000Z
+                            3.0\t30.0\t2024-01-01T02:00:00.000000Z
+                            """,
+                    "SELECT first(a), first(b), ts FROM x SAMPLE BY 1h FILL(0) ALIGN TO CALENDAR",
+                    "ts", false, false
             );
+        });
+    }
+
+    @Test
+    public void testFillSingleConstantBroadcastString() throws Exception {
+        assertMemoryLeak(() -> {
+            // String CONSTANT broadcasts across two VARCHAR-output aggregates.
+            // Verifies the new fast-path broadcast path correctly threads the
+            // parsed VARCHAR Function through every non-key column.
+            execute("CREATE TABLE x (a VARCHAR, b VARCHAR, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO x VALUES " +
+                    "('one', 'ten', '2024-01-01T00:00:00.000000Z')," +
+                    "('three', 'thirty', '2024-01-01T02:00:00.000000Z')");
+            assertQueryNoLeakCheck(
+                    """
+                            first\tfirst1\tts
+                            one\tten\t2024-01-01T00:00:00.000000Z
+                            xx\txx\t2024-01-01T01:00:00.000000Z
+                            three\tthirty\t2024-01-01T02:00:00.000000Z
+                            """,
+                    "SELECT first(a), first(b), ts FROM x SAMPLE BY 1h FILL('xx') ALIGN TO CALENDAR",
+                    "ts", false, false
+            );
+        });
+    }
+
+    @Test
+    public void testFillSingleConstantBroadcastTimestamp() throws Exception {
+        assertMemoryLeak(() -> {
+            // Quoted-timestamp CONSTANT broadcasts across two TIMESTAMP-output
+            // aggregates. The TIMESTAMP coercion path runs once per aggregate,
+            // producing a unit-correct TimestampConstant for each target.
+            execute("CREATE TABLE x (a TIMESTAMP, b TIMESTAMP, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO x VALUES " +
+                    "('2024-02-01T00:00:00.000000Z', '2024-03-01T00:00:00.000000Z', '2024-01-01T00:00:00.000000Z')," +
+                    "('2024-02-01T05:00:00.000000Z', '2024-03-01T05:00:00.000000Z', '2024-01-01T02:00:00.000000Z')");
+            assertQueryNoLeakCheck(
+                    """
+                            first\tfirst1\tts
+                            2024-02-01T00:00:00.000000Z\t2024-03-01T00:00:00.000000Z\t2024-01-01T00:00:00.000000Z
+                            2024-06-15T00:00:00.000000Z\t2024-06-15T00:00:00.000000Z\t2024-01-01T01:00:00.000000Z
+                            2024-02-01T05:00:00.000000Z\t2024-03-01T05:00:00.000000Z\t2024-01-01T02:00:00.000000Z
+                            """,
+                    "SELECT first(a), first(b), ts FROM x SAMPLE BY 1h FILL('2024-06-15T00:00:00.000000Z') ALIGN TO CALENDAR",
+                    "ts", false, false
+            );
+        });
+    }
+
+    @Test
+    public void testFillSingleConstantBroadcastTypeMismatch() throws Exception {
+        assertMemoryLeak(() -> {
+            // INT 0 is convertible to DOUBLE (widening) but not to VARCHAR. A
+            // multi-aggregate broadcast where one target type is incompatible
+            // surfaces a clean upfront error instead of producing garbage at
+            // runtime via the Function dispatch.
+            execute("CREATE TABLE x (a DOUBLE, s VARCHAR, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO x VALUES " +
+                    "(1.0, 'one', '2024-01-01T00:00:00.000000Z')," +
+                    "(3.0, 'three', '2024-01-01T02:00:00.000000Z')");
+            String sql = "SELECT first(a), first(s), ts FROM x SAMPLE BY 1h FILL(42) ALIGN TO CALENDAR";
+            assertExceptionNoLeakCheck(sql, sql.indexOf("42"), "fill value of type INT cannot fill column of type VARCHAR");
+        });
+    }
+
+    @Test
+    public void testFillSingleConstantBroadcastUnquotedTimestamp() throws Exception {
+        assertMemoryLeak(() -> {
+            // FILL(0) against a TIMESTAMP-output aggregate must reject in
+            // broadcast mode just as it does per-column. The TIMESTAMP coercion
+            // path requires a quoted literal so a unit-correct value can be
+            // parsed.
+            execute("CREATE TABLE x (a TIMESTAMP, b TIMESTAMP, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO x VALUES " +
+                    "('2024-02-01T00:00:00.000000Z', '2024-03-01T00:00:00.000000Z', '2024-01-01T00:00:00.000000Z')");
+            String sql = "SELECT first(a), first(b), ts FROM x SAMPLE BY 1h FILL(0) ALIGN TO CALENDAR";
+            assertExceptionNoLeakCheck(sql, sql.indexOf("FILL(0)") + 5, "Timestamp fill value must be in quotes");
         });
     }
 

@@ -3553,8 +3553,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 // Decide broadcast vs per-column up front so the classification loop
                 // runs with consistent state. The user must provide one fill value
                 // per non-key aggregate unless the single value is broadcastable
-                // (bare PREV or NULL). A single non-null constant or PREV(colX)
-                // with missing slots must be rejected as under-specified. Bare PREV
+                // (bare PREV, NULL, or a CONSTANT literal). PREV(colX) is rejected
+                // explicitly because cross-column source is per-aggregate. Bare PREV
                 // parses as LITERAL, PREV(colX) as FUNCTION, so the broadcast
                 // predicate requires LITERAL for PREV; NULL only has a LITERAL form.
                 final boolean isBroadcastMode;
@@ -3583,13 +3583,33 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                         "FILL(PREV(").put(only.rhs.token).put(")) cannot be broadcast across aggregates; ")
                                 .put("specify one fill value per aggregate");
                     }
+                    // CONSTANT covers numeric, string, quoted-timestamp, and boolean
+                    // literals. FUNCTION/OPERATION nodes (casts, function calls,
+                    // bind variables) remain non-broadcastable: per-aggregate type
+                    // coercion for those is non-trivial and out of scope here.
                     final boolean isBareBroadcastable = only != null
                             && ((isPrevKeyword(only.token) && only.type == ExpressionNode.LITERAL)
-                            || isNullKeyword(only.token));
+                            || isNullKeyword(only.token)
+                            || only.type == ExpressionNode.CONSTANT);
                     if (!isBareBroadcastable) {
                         throw SqlException.$(fillValuesExprs.getQuick(0).position, "not enough fill values");
                     }
                     isBroadcastMode = true;
+                    // Pre-expand fillValues for a CONSTANT broadcast: the parse loop
+                    // above produced a single Function in fillValues[0], but the
+                    // per-column loop indexes fillValues with fillIdx in [0,
+                    // aggNonKeyCount). Re-parse the same ExpressionNode once per
+                    // additional slot so each aggregate owns a distinct Function
+                    // instance. Distinct ownership keeps the null-then-free cleanup
+                    // pattern at the per-column transfer correct on OOM. NULL and
+                    // bare-PREV broadcast do not read fillValues[fillIdx] -- their
+                    // per-column branches add NullConstant.NULL directly to
+                    // constantFills -- so they need no pre-expansion.
+                    if (only.type == ExpressionNode.CONSTANT) {
+                        for (int i = 1; i < aggNonKeyCount; i++) {
+                            fillValues.add(functionParser.parseFunction(only, EmptyRecordMetadata.INSTANCE, executionContext));
+                        }
+                    }
                 } else {
                     isBroadcastMode = false;
                 }
@@ -3754,7 +3774,27 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                             // also requires isConstant || isRuntimeConstant, which fails
                             // for valid cast(literal) wrappers whose isConstant default
                             // does not propagate through the abstract base classes.
-                            if (fillValues.getQuick(fillIdx).isNonDeterministic()) {
+                            // Validate the parsed fill type is convertible to the
+                            // aggregate output type. Function.getXxx for a mismatched
+                            // type tag throws UnsupportedOperationException at runtime
+                            // (e.g. IntFunction.getVarcharA), so an obvious type
+                            // mismatch must surface upfront with a clean error rather
+                            // than producing garbage or crashing during cursor read.
+                            // The legacy SampleByFillValueRecordCursorFactory enforced
+                            // this strictly via per-target-type token parsing; the
+                            // fast path keeps the same guarantee via isConvertibleFrom.
+                            // Skips when the parsed type is UNDEFINED (e.g. an unbound
+                            // bind variable) so existing late-binding semantics apply.
+                            final Function fillFunc = fillValues.getQuick(fillIdx);
+                            final int fillType = fillFunc.getType();
+                            if (fillType != ColumnType.UNDEFINED
+                                    && !ColumnType.isConvertibleFrom(fillType, targetColType)) {
+                                throw SqlException.$(fillExpr.position,
+                                                "fill value of type ").put(ColumnType.nameOf(fillType))
+                                        .put(" cannot fill column of type ")
+                                        .put(ColumnType.nameOf(targetColType));
+                            }
+                            if (fillFunc.isNonDeterministic()) {
                                 throw SqlException.$(fillExpr.position,
                                         "fill value must be a constant expression");
                             }

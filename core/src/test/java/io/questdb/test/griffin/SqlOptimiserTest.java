@@ -4327,6 +4327,11 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
     public void testSampleByFromToNotEnoughFillValues() throws Exception {
         assertMemoryLeak(() -> {
             execute(SampleByTest.FROM_TO_DDL);
+            // FILL(42) now broadcasts a single CONSTANT across multiple
+            // aggregates, but a numeric constant cannot fill a VARCHAR-output
+            // column (string_agg). The upfront type check rejects with a
+            // targeted "fill value of type INT cannot fill column of type
+            // VARCHAR" error, pointing at the fill literal.
             final String query =
                     "select ts, avg(x), " +
                             "string_agg(s, ',')," +
@@ -4342,7 +4347,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                             "avg(n::double)," +
                             "from fromto sample by 5d from '2018-01-01' to '2018-01-31' fill(42)";
 
-            assertException(query, 218, "not enough fill values");
+            assertException(query, 218, "fill value of type INT cannot fill column of type VARCHAR");
         });
     }
 
