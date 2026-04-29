@@ -1068,7 +1068,8 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
                 return switch (currentDispatchCode[col]) {
                     case DISPATCH_BASE -> baseRecord.getArray(col, columnType);
                     case DISPATCH_KEY_SLOT -> keysMapRecord.getArray(dispatchSlot[col], columnType);
-                    case DISPATCH_PREV_SLOT -> hasPrevForCurrentGap ? prevRecord.getArray(dispatchSlot[col], columnType) : null;
+                    case DISPATCH_PREV_SLOT ->
+                            hasPrevForCurrentGap ? prevRecord.getArray(dispatchSlot[col], columnType) : null;
                     case DISPATCH_CONSTANT -> dispatchConstant[col].getArray(null);
                     default -> null;
                 };
@@ -1151,7 +1152,8 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
                     case DISPATCH_BASE -> baseRecord.getDecimal16(col);
                     case DISPATCH_KEY_SLOT -> keysMapRecord.getDecimal16(dispatchSlot[col]);
                     case DISPATCH_PREV_CACHE_SLOT -> keysMapRecord.getShort(dispatchSlot[col]);
-                    case DISPATCH_PREV_SLOT -> hasPrevForCurrentGap ? prevRecord.getDecimal16(dispatchSlot[col]) : Decimals.DECIMAL16_NULL;
+                    case DISPATCH_PREV_SLOT ->
+                            hasPrevForCurrentGap ? prevRecord.getDecimal16(dispatchSlot[col]) : Decimals.DECIMAL16_NULL;
                     case DISPATCH_CONSTANT -> dispatchConstant[col].getDecimal16(null);
                     default -> Decimals.DECIMAL16_NULL;
                 };
@@ -1177,7 +1179,8 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
                     case DISPATCH_BASE -> baseRecord.getDecimal32(col);
                     case DISPATCH_KEY_SLOT -> keysMapRecord.getDecimal32(dispatchSlot[col]);
                     case DISPATCH_PREV_CACHE_SLOT -> keysMapRecord.getInt(dispatchSlot[col]);
-                    case DISPATCH_PREV_SLOT -> hasPrevForCurrentGap ? prevRecord.getDecimal32(dispatchSlot[col]) : Decimals.DECIMAL32_NULL;
+                    case DISPATCH_PREV_SLOT ->
+                            hasPrevForCurrentGap ? prevRecord.getDecimal32(dispatchSlot[col]) : Decimals.DECIMAL32_NULL;
                     case DISPATCH_CONSTANT -> dispatchConstant[col].getDecimal32(null);
                     default -> Decimals.DECIMAL32_NULL;
                 };
@@ -1189,7 +1192,8 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
                     case DISPATCH_BASE -> baseRecord.getDecimal64(col);
                     case DISPATCH_KEY_SLOT -> keysMapRecord.getDecimal64(dispatchSlot[col]);
                     case DISPATCH_PREV_CACHE_SLOT -> keysMapRecord.getLong(dispatchSlot[col]);
-                    case DISPATCH_PREV_SLOT -> hasPrevForCurrentGap ? prevRecord.getDecimal64(dispatchSlot[col]) : Decimals.DECIMAL64_NULL;
+                    case DISPATCH_PREV_SLOT ->
+                            hasPrevForCurrentGap ? prevRecord.getDecimal64(dispatchSlot[col]) : Decimals.DECIMAL64_NULL;
                     case DISPATCH_CONSTANT -> dispatchConstant[col].getDecimal64(null);
                     default -> Decimals.DECIMAL64_NULL;
                 };
@@ -1201,7 +1205,8 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
                     case DISPATCH_BASE -> baseRecord.getDecimal8(col);
                     case DISPATCH_KEY_SLOT -> keysMapRecord.getDecimal8(dispatchSlot[col]);
                     case DISPATCH_PREV_CACHE_SLOT -> keysMapRecord.getByte(dispatchSlot[col]);
-                    case DISPATCH_PREV_SLOT -> hasPrevForCurrentGap ? prevRecord.getDecimal8(dispatchSlot[col]) : Decimals.DECIMAL8_NULL;
+                    case DISPATCH_PREV_SLOT ->
+                            hasPrevForCurrentGap ? prevRecord.getDecimal8(dispatchSlot[col]) : Decimals.DECIMAL8_NULL;
                     case DISPATCH_CONSTANT -> dispatchConstant[col].getDecimal8(null);
                     default -> Decimals.DECIMAL8_NULL;
                 };
@@ -1212,7 +1217,8 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
                 return switch (currentDispatchCode[col]) {
                     case DISPATCH_BASE -> baseRecord.getDouble(col);
                     case DISPATCH_KEY_SLOT, DISPATCH_PREV_CACHE_SLOT -> keysMapRecord.getDouble(dispatchSlot[col]);
-                    case DISPATCH_PREV_SLOT -> hasPrevForCurrentGap ? prevRecord.getDouble(dispatchSlot[col]) : Double.NaN;
+                    case DISPATCH_PREV_SLOT ->
+                            hasPrevForCurrentGap ? prevRecord.getDouble(dispatchSlot[col]) : Double.NaN;
                     case DISPATCH_CONSTANT -> dispatchConstant[col].getDouble(null);
                     default -> Double.NaN;
                 };
@@ -1223,7 +1229,8 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
                 return switch (currentDispatchCode[col]) {
                     case DISPATCH_BASE -> baseRecord.getFloat(col);
                     case DISPATCH_KEY_SLOT, DISPATCH_PREV_CACHE_SLOT -> keysMapRecord.getFloat(dispatchSlot[col]);
-                    case DISPATCH_PREV_SLOT -> hasPrevForCurrentGap ? prevRecord.getFloat(dispatchSlot[col]) : Float.NaN;
+                    case DISPATCH_PREV_SLOT ->
+                            hasPrevForCurrentGap ? prevRecord.getFloat(dispatchSlot[col]) : Float.NaN;
                     case DISPATCH_CONSTANT -> dispatchConstant[col].getFloat(null);
                     default -> Float.NaN;
                 };
@@ -1235,7 +1242,8 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
                     case DISPATCH_BASE -> baseRecord.getGeoByte(col);
                     case DISPATCH_KEY_SLOT -> keysMapRecord.getGeoByte(dispatchSlot[col]);
                     case DISPATCH_PREV_CACHE_SLOT -> keysMapRecord.getByte(dispatchSlot[col]);
-                    case DISPATCH_PREV_SLOT -> hasPrevForCurrentGap ? prevRecord.getGeoByte(dispatchSlot[col]) : GeoHashes.BYTE_NULL;
+                    case DISPATCH_PREV_SLOT ->
+                            hasPrevForCurrentGap ? prevRecord.getGeoByte(dispatchSlot[col]) : GeoHashes.BYTE_NULL;
                     case DISPATCH_CONSTANT -> dispatchConstant[col].getGeoByte(null);
                     default -> GeoHashes.BYTE_NULL;
                 };
@@ -1247,7 +1255,8 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
                     case DISPATCH_BASE -> baseRecord.getGeoInt(col);
                     case DISPATCH_KEY_SLOT -> keysMapRecord.getGeoInt(dispatchSlot[col]);
                     case DISPATCH_PREV_CACHE_SLOT -> keysMapRecord.getInt(dispatchSlot[col]);
-                    case DISPATCH_PREV_SLOT -> hasPrevForCurrentGap ? prevRecord.getGeoInt(dispatchSlot[col]) : GeoHashes.INT_NULL;
+                    case DISPATCH_PREV_SLOT ->
+                            hasPrevForCurrentGap ? prevRecord.getGeoInt(dispatchSlot[col]) : GeoHashes.INT_NULL;
                     case DISPATCH_CONSTANT -> dispatchConstant[col].getGeoInt(null);
                     default -> GeoHashes.INT_NULL;
                 };
@@ -1259,7 +1268,8 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
                     case DISPATCH_BASE -> baseRecord.getGeoLong(col);
                     case DISPATCH_KEY_SLOT -> keysMapRecord.getGeoLong(dispatchSlot[col]);
                     case DISPATCH_PREV_CACHE_SLOT -> keysMapRecord.getLong(dispatchSlot[col]);
-                    case DISPATCH_PREV_SLOT -> hasPrevForCurrentGap ? prevRecord.getGeoLong(dispatchSlot[col]) : GeoHashes.NULL;
+                    case DISPATCH_PREV_SLOT ->
+                            hasPrevForCurrentGap ? prevRecord.getGeoLong(dispatchSlot[col]) : GeoHashes.NULL;
                     case DISPATCH_CONSTANT -> dispatchConstant[col].getGeoLong(null);
                     default -> GeoHashes.NULL;
                 };
@@ -1271,7 +1281,8 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
                     case DISPATCH_BASE -> baseRecord.getGeoShort(col);
                     case DISPATCH_KEY_SLOT -> keysMapRecord.getGeoShort(dispatchSlot[col]);
                     case DISPATCH_PREV_CACHE_SLOT -> keysMapRecord.getShort(dispatchSlot[col]);
-                    case DISPATCH_PREV_SLOT -> hasPrevForCurrentGap ? prevRecord.getGeoShort(dispatchSlot[col]) : GeoHashes.SHORT_NULL;
+                    case DISPATCH_PREV_SLOT ->
+                            hasPrevForCurrentGap ? prevRecord.getGeoShort(dispatchSlot[col]) : GeoHashes.SHORT_NULL;
                     case DISPATCH_CONSTANT -> dispatchConstant[col].getGeoShort(null);
                     default -> GeoHashes.SHORT_NULL;
                 };
@@ -1282,7 +1293,8 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
                 return switch (currentDispatchCode[col]) {
                     case DISPATCH_BASE -> baseRecord.getIPv4(col);
                     case DISPATCH_KEY_SLOT, DISPATCH_PREV_CACHE_SLOT -> keysMapRecord.getIPv4(dispatchSlot[col]);
-                    case DISPATCH_PREV_SLOT -> hasPrevForCurrentGap ? prevRecord.getIPv4(dispatchSlot[col]) : Numbers.IPv4_NULL;
+                    case DISPATCH_PREV_SLOT ->
+                            hasPrevForCurrentGap ? prevRecord.getIPv4(dispatchSlot[col]) : Numbers.IPv4_NULL;
                     case DISPATCH_CONSTANT -> dispatchConstant[col].getIPv4(null);
                     default -> Numbers.IPv4_NULL;
                 };
@@ -1293,7 +1305,8 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
                 return switch (currentDispatchCode[col]) {
                     case DISPATCH_BASE -> baseRecord.getInt(col);
                     case DISPATCH_KEY_SLOT, DISPATCH_PREV_CACHE_SLOT -> keysMapRecord.getInt(dispatchSlot[col]);
-                    case DISPATCH_PREV_SLOT -> hasPrevForCurrentGap ? prevRecord.getInt(dispatchSlot[col]) : Numbers.INT_NULL;
+                    case DISPATCH_PREV_SLOT ->
+                            hasPrevForCurrentGap ? prevRecord.getInt(dispatchSlot[col]) : Numbers.INT_NULL;
                     case DISPATCH_CONSTANT -> dispatchConstant[col].getInt(null);
                     default -> Numbers.INT_NULL;
                 };
@@ -1304,7 +1317,8 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
                 return switch (currentDispatchCode[col]) {
                     case DISPATCH_BASE -> baseRecord.getInterval(col);
                     case DISPATCH_KEY_SLOT -> keysMapRecord.getInterval(dispatchSlot[col]);
-                    case DISPATCH_PREV_SLOT -> hasPrevForCurrentGap ? prevRecord.getInterval(dispatchSlot[col]) : Interval.NULL;
+                    case DISPATCH_PREV_SLOT ->
+                            hasPrevForCurrentGap ? prevRecord.getInterval(dispatchSlot[col]) : Interval.NULL;
                     case DISPATCH_CONSTANT -> dispatchConstant[col].getInterval(null);
                     default -> Interval.NULL;
                 };
@@ -1322,7 +1336,8 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
                     case DISPATCH_BASE -> baseRecord.getLong(col);
                     case DISPATCH_TIMESTAMP_FILL -> fillTimestampFunc.value;
                     case DISPATCH_KEY_SLOT, DISPATCH_PREV_CACHE_SLOT -> keysMapRecord.getLong(dispatchSlot[col]);
-                    case DISPATCH_PREV_SLOT -> hasPrevForCurrentGap ? prevRecord.getLong(dispatchSlot[col]) : Numbers.LONG_NULL;
+                    case DISPATCH_PREV_SLOT ->
+                            hasPrevForCurrentGap ? prevRecord.getLong(dispatchSlot[col]) : Numbers.LONG_NULL;
                     case DISPATCH_CONSTANT -> dispatchConstant[col].getLong(null);
                     default -> Numbers.LONG_NULL;
                 };
@@ -1333,7 +1348,8 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
                 return switch (currentDispatchCode[col]) {
                     case DISPATCH_BASE -> baseRecord.getLong128Hi(col);
                     case DISPATCH_KEY_SLOT -> keysMapRecord.getLong128Hi(dispatchSlot[col]);
-                    case DISPATCH_PREV_SLOT -> hasPrevForCurrentGap ? prevRecord.getLong128Hi(dispatchSlot[col]) : Numbers.LONG_NULL;
+                    case DISPATCH_PREV_SLOT ->
+                            hasPrevForCurrentGap ? prevRecord.getLong128Hi(dispatchSlot[col]) : Numbers.LONG_NULL;
                     case DISPATCH_CONSTANT -> dispatchConstant[col].getLong128Hi(null);
                     default -> Numbers.LONG_NULL;
                 };
@@ -1344,7 +1360,8 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
                 return switch (currentDispatchCode[col]) {
                     case DISPATCH_BASE -> baseRecord.getLong128Lo(col);
                     case DISPATCH_KEY_SLOT -> keysMapRecord.getLong128Lo(dispatchSlot[col]);
-                    case DISPATCH_PREV_SLOT -> hasPrevForCurrentGap ? prevRecord.getLong128Lo(dispatchSlot[col]) : Numbers.LONG_NULL;
+                    case DISPATCH_PREV_SLOT ->
+                            hasPrevForCurrentGap ? prevRecord.getLong128Lo(dispatchSlot[col]) : Numbers.LONG_NULL;
                     case DISPATCH_CONSTANT -> dispatchConstant[col].getLong128Lo(null);
                     default -> Numbers.LONG_NULL;
                 };
@@ -1375,7 +1392,8 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
                 return switch (currentDispatchCode[col]) {
                     case DISPATCH_BASE -> baseRecord.getLong256A(col);
                     case DISPATCH_KEY_SLOT -> keysMapRecord.getLong256A(dispatchSlot[col]);
-                    case DISPATCH_PREV_SLOT -> hasPrevForCurrentGap ? prevRecord.getLong256A(dispatchSlot[col]) : Long256Impl.NULL_LONG256;
+                    case DISPATCH_PREV_SLOT ->
+                            hasPrevForCurrentGap ? prevRecord.getLong256A(dispatchSlot[col]) : Long256Impl.NULL_LONG256;
                     case DISPATCH_CONSTANT -> dispatchConstant[col].getLong256A(null);
                     default -> Long256Impl.NULL_LONG256;
                 };
@@ -1386,7 +1404,8 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
                 return switch (currentDispatchCode[col]) {
                     case DISPATCH_BASE -> baseRecord.getLong256B(col);
                     case DISPATCH_KEY_SLOT -> keysMapRecord.getLong256B(dispatchSlot[col]);
-                    case DISPATCH_PREV_SLOT -> hasPrevForCurrentGap ? prevRecord.getLong256B(dispatchSlot[col]) : Long256Impl.NULL_LONG256;
+                    case DISPATCH_PREV_SLOT ->
+                            hasPrevForCurrentGap ? prevRecord.getLong256B(dispatchSlot[col]) : Long256Impl.NULL_LONG256;
                     case DISPATCH_CONSTANT -> dispatchConstant[col].getLong256B(null);
                     default -> Long256Impl.NULL_LONG256;
                 };
@@ -1397,7 +1416,8 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
                 return switch (currentDispatchCode[col]) {
                     case DISPATCH_BASE -> baseRecord.getShort(col);
                     case DISPATCH_KEY_SLOT, DISPATCH_PREV_CACHE_SLOT -> keysMapRecord.getShort(dispatchSlot[col]);
-                    case DISPATCH_PREV_SLOT -> hasPrevForCurrentGap ? prevRecord.getShort(dispatchSlot[col]) : (short) 0;
+                    case DISPATCH_PREV_SLOT ->
+                            hasPrevForCurrentGap ? prevRecord.getShort(dispatchSlot[col]) : (short) 0;
                     // Constant short fills go through getInt() to match the
                     // narrow-integer convention used by Function implementations.
                     case DISPATCH_CONSTANT -> (short) dispatchConstant[col].getInt(null);
@@ -1449,7 +1469,8 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
                 // Function.getSymA() by historical convention.
                 return switch (currentDispatchCode[col]) {
                     case DISPATCH_BASE -> baseRecord.getSymA(col);
-                    case DISPATCH_KEY_SLOT, DISPATCH_PREV_CACHE_SLOT -> symbolCache[col].valueOf(keysMapRecord.getInt(dispatchSlot[col]));
+                    case DISPATCH_KEY_SLOT, DISPATCH_PREV_CACHE_SLOT ->
+                            symbolCache[col].valueOf(keysMapRecord.getInt(dispatchSlot[col]));
                     case DISPATCH_PREV_SLOT -> hasPrevForCurrentGap ? prevRecord.getSymA(dispatchSlot[col]) : null;
                     case DISPATCH_CONSTANT -> dispatchConstant[col].getSymbol(null);
                     default -> null;
@@ -1460,7 +1481,8 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
             public CharSequence getSymB(int col) {
                 return switch (currentDispatchCode[col]) {
                     case DISPATCH_BASE -> baseRecord.getSymB(col);
-                    case DISPATCH_KEY_SLOT, DISPATCH_PREV_CACHE_SLOT -> symbolCache[col].valueBOf(keysMapRecord.getInt(dispatchSlot[col]));
+                    case DISPATCH_KEY_SLOT, DISPATCH_PREV_CACHE_SLOT ->
+                            symbolCache[col].valueBOf(keysMapRecord.getInt(dispatchSlot[col]));
                     case DISPATCH_PREV_SLOT -> hasPrevForCurrentGap ? prevRecord.getSymB(dispatchSlot[col]) : null;
                     case DISPATCH_CONSTANT -> dispatchConstant[col].getSymbolB(null);
                     default -> null;
@@ -1473,7 +1495,8 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
                     case DISPATCH_BASE -> baseRecord.getTimestamp(col);
                     case DISPATCH_TIMESTAMP_FILL -> fillTimestampFunc.value;
                     case DISPATCH_KEY_SLOT, DISPATCH_PREV_CACHE_SLOT -> keysMapRecord.getTimestamp(dispatchSlot[col]);
-                    case DISPATCH_PREV_SLOT -> hasPrevForCurrentGap ? prevRecord.getTimestamp(dispatchSlot[col]) : Numbers.LONG_NULL;
+                    case DISPATCH_PREV_SLOT ->
+                            hasPrevForCurrentGap ? prevRecord.getTimestamp(dispatchSlot[col]) : Numbers.LONG_NULL;
                     case DISPATCH_CONSTANT -> dispatchConstant[col].getTimestamp(null);
                     default -> Numbers.LONG_NULL;
                 };
