@@ -1062,18 +1062,22 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
                 calendarOffset = 0;
             }
             // Re-resolve TIME ZONE on every of() so a runtime-constant bind
-            // variable picks up its current value. Three outcomes:
-            //   - tz string null OR fixed-offset: no DST sub-grid is needed
-            //     (a fixed-offset zone has uniform UTC bucket widths even at
-            //     day-or-larger strides), so route the cursor at baseSampler.
-            //   - non-fixed-offset (real DST zone): allocate tzWrap on first
-            //     hit, rebind tzRules on subsequent hits, point timestampSampler
-            //     at tzWrap. This mirrors AbstractSampleByCursor.parseParams's
-            //     contract that the sampler grid follows the runtime tz, not
-            //     a frozen compile-time snapshot.
+            // variable picks up its current value. The wrap is required
+            // whenever a named zone resolves, including fixed-offset zones
+            // (e.g. 'UTC', 'Etc/GMT+5'): for super-day strides FILL must
+            // shift the bucket grid by tzOffset to match
+            // timestamp_floor_utc, and the wrap is the only sampler whose
+            // setLocalAnchor / localAnchorAsUtc differ from setStart and
+            // hence the only one that can fold tzOffset into the anchor.
             // SqlOptimiser.rewriteSampleBy only sets fillTimezoneName for
             // day-or-larger SAMPLE BY + non-trivial FILL, so tzFunc != null
-            // implies the wrap is at least potentially required.
+            // implies the wrap is required.
+            //
+            // The Dates.parseOffset gate skips raw offset literals
+            // (e.g. '+02:00'): the optimiser already folds those into
+            // calendarOffset / FROM and does not set fillTimezoneName for
+            // the offset-only path, but the runtime guard mirrors the
+            // legacy SAMPLE BY cursor's TZ-name discriminator.
             if (tzFunc != null) {
                 tzFunc.init(baseCursor, executionContext);
                 final CharSequence tz = tzFunc.getStrA(null);
@@ -1087,16 +1091,12 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
                     } catch (NumericException e) {
                         throw SqlException.$(tzFuncPos, "invalid timezone: ").put(tz);
                     }
-                    if (!tzRules.hasFixedOffset()) {
-                        if (tzWrap == null) {
-                            tzWrap = new TimezoneFloorTimestampSampler(baseSampler, tzRules, samplingIntervalUnit);
-                        } else {
-                            tzWrap.setTzRules(tzRules);
-                        }
-                        timestampSampler = tzWrap;
+                    if (tzWrap == null) {
+                        tzWrap = new TimezoneFloorTimestampSampler(baseSampler, tzRules, samplingIntervalUnit);
                     } else {
-                        timestampSampler = baseSampler;
+                        tzWrap.setTzRules(tzRules);
                     }
+                    timestampSampler = tzWrap;
                 } else {
                     timestampSampler = baseSampler;
                 }
