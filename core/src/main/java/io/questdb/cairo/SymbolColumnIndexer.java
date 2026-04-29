@@ -99,6 +99,7 @@ public class SymbolColumnIndexer implements ColumnIndexer, Mutable {
     @Override
     public void configureCovering(
             LongList coveredColumnAddrs,
+            LongList coveredColumnAuxAddrs,
             LongList coveredColumnTops,
             IntList coveredColumnShifts,
             IntList coveredColumnIndices,
@@ -107,7 +108,7 @@ public class SymbolColumnIndexer implements ColumnIndexer, Mutable {
             int timestampColumnIndex
     ) {
         writer.configureCovering(
-                coveredColumnAddrs, coveredColumnTops, coveredColumnShifts,
+                coveredColumnAddrs, coveredColumnAuxAddrs, coveredColumnTops, coveredColumnShifts,
                 coveredColumnIndices, coveredColumnTypes, coverCount, timestampColumnIndex);
     }
 

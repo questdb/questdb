@@ -734,6 +734,60 @@ public class CoveringIndexTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testAsyncFilterPageFrameAllTypesWalUnsealed() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE t_pf_alltypes (
+                        ts TIMESTAMP,
+                        sym SYMBOL INDEX TYPE POSTING INCLUDE (
+                            v_byte, v_short, v_int, v_long, v_float, v_double,
+                            v_bool, v_char, v_date, v_uuid, v_ipv4, v_l256,
+                            v_str, v_vc, v_bin
+                        ),
+                        v_byte BYTE,
+                        v_short SHORT,
+                        v_int INT,
+                        v_long LONG,
+                        v_float FLOAT,
+                        v_double DOUBLE,
+                        v_bool BOOLEAN,
+                        v_char CHAR,
+                        v_date DATE,
+                        v_uuid UUID,
+                        v_ipv4 IPv4,
+                        v_l256 LONG256,
+                        v_str STRING,
+                        v_vc VARCHAR,
+                        v_bin BINARY
+                    ) TIMESTAMP(ts) PARTITION BY DAY WAL
+                    """);
+            execute("""
+                    INSERT INTO t_pf_alltypes VALUES
+                    ('2024-01-01T00:00:00', 'A', 1, 100, 1000, 10_000, 1.5, 2.5, true, 'x',
+                     '2024-06-01T00:00:00.000Z', '11111111-1111-1111-1111-111111111111', '1.2.3.4',
+                     cast('0x1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef' as LONG256),
+                     'str_a', 'vc_a', rnd_bin(8, 16, 0)),
+                    ('2024-01-01T01:00:00', 'B', 9, 900, 9000, 90_000, 9.5, 8.5, false, 'y',
+                     NULL, NULL, NULL, NULL, NULL, NULL, NULL),
+                    ('2024-01-01T02:00:00', 'A', 2, 200, 2000, 20_000, 2.5, 3.5, false, 'z',
+                     '2024-07-01T00:00:00.000Z', '22222222-2222-2222-2222-222222222222', '5.6.7.8',
+                     cast('0xabcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890' as LONG256),
+                     'str_a2', 'vc_a2', rnd_bin(8, 16, 0))
+                    """);
+            drainWalQueue();
+
+            assertSqlCursors(
+                    "SELECT v_byte, v_short, v_int, v_long, v_float, v_double, v_bool, v_char, " +
+                            "v_date, v_uuid, v_ipv4, v_l256, v_str, v_vc, v_bin " +
+                            "FROM t_pf_alltypes WHERE sym = 'A' AND v_int > 0",
+                    "SELECT /*+ no_covering */ v_byte, v_short, v_int, v_long, v_float, v_double, v_bool, v_char, " +
+                            "v_date, v_uuid, v_ipv4, v_l256, v_str, v_vc, v_bin " +
+                            "FROM t_pf_alltypes WHERE sym = 'A' AND v_int > 0"
+            );
+        });
+    }
+
+    @Test
     public void testAsyncFilterPageFrameFallback() throws Exception {
         // Test that the page frame cursor fallback (column file reads) works
         // when covering data may not be in sidecar form. Uses WAL table where
@@ -767,6 +821,36 @@ public class CoveringIndexTest extends AbstractCairoTest {
                     "SELECT sym, sum(price) FROM t_pf_fallback WHERE sym = 'A' AND price > 25 GROUP BY sym",
                     "SELECT /*+ no_covering */ sym, sum(price) FROM t_pf_fallback WHERE sym = 'A' AND price > 25 GROUP BY sym"
             );
+        });
+    }
+
+    @Test
+    public void testAsyncFilterPageFrameLargeRowGrowth() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE t_pf_grow (
+                        ts TIMESTAMP,
+                        sym SYMBOL INDEX TYPE POSTING INCLUDE (price, label, payload),
+                        price DOUBLE,
+                        label VARCHAR,
+                        payload STRING
+                    ) TIMESTAMP(ts) PARTITION BY DAY WAL
+                    """);
+            execute("""
+                    INSERT INTO t_pf_grow
+                    SELECT dateadd('s', x::INT, '2024-01-01')::TIMESTAMP,
+                           CASE WHEN x % 4 = 0 THEN 'B' ELSE 'A' END,
+                           x * 1.5,
+                           ('lbl_' || x)::VARCHAR,
+                           'pay_' || x || '_payload_text'
+                    FROM long_sequence(5_000)
+                    """);
+            drainWalQueue();
+
+            assertSql("""
+                    sym\tcount\tsum_p
+                    A\t3750\t1.40625E7
+                    """, "SELECT sym, count() count, sum(price) sum_p FROM t_pf_grow WHERE sym = 'A' GROUP BY sym");
         });
     }
 
@@ -1302,6 +1386,54 @@ public class CoveringIndexTest extends AbstractCairoTest {
                     count
                     654
                     """, "SELECT COUNT(*) FROM t_count_in WHERE sym IN ('A', 'B')");
+        });
+    }
+
+    @Test
+    public void testCountStarMultiKeyVariations() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE t_count_multi (
+                        ts TIMESTAMP,
+                        sym SYMBOL INDEX TYPE POSTING INCLUDE (price),
+                        price DOUBLE
+                    ) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL
+                    """);
+            execute("""
+                    INSERT INTO t_count_multi
+                    SELECT dateadd('s', x::INT, '2024-01-01')::TIMESTAMP,
+                           ('K' || (x % 5))::SYMBOL,
+                           (x % 100) * 1.5
+                    FROM long_sequence(2_000)
+                    """);
+            engine.releaseAllWriters();
+
+            assertQueryNoLeakCheck(
+                    "count\n400\n",
+                    "SELECT count() FROM t_count_multi WHERE sym IN ('K0')",
+                    null, false, true
+            );
+            assertQueryNoLeakCheck(
+                    "count\n800\n",
+                    "SELECT count() FROM t_count_multi WHERE sym IN ('K0','K1')",
+                    null, false, true
+            );
+            assertQueryNoLeakCheck(
+                    "count\n1200\n",
+                    "SELECT count() FROM t_count_multi WHERE sym IN ('K0','K1','K2')",
+                    null, false, true
+            );
+
+            assertQueryNoLeakCheck(
+                    "sym\nK0\nK1\nK2\nK3\nK4\n",
+                    "SELECT DISTINCT sym FROM t_count_multi WHERE ts BETWEEN '2024-01-01' AND '2024-01-02' ORDER BY sym",
+                    null, true, true
+            );
+            assertQueryNoLeakCheck(
+                    "sym\nK0\nK1\nK2\nK3\nK4\n",
+                    "SELECT DISTINCT sym FROM t_count_multi ORDER BY sym",
+                    null, true, true
+            );
         });
     }
 
@@ -6168,6 +6300,76 @@ public class CoveringIndexTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testDistinctSymKeyRangeScansAllPaths() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE t_distinct_range (
+                        ts TIMESTAMP,
+                        sym SYMBOL INDEX TYPE POSTING INCLUDE (price),
+                        price DOUBLE
+                    ) TIMESTAMP(ts) PARTITION BY DAY WAL
+                    """);
+
+            execute("""
+                    INSERT INTO t_distinct_range
+                    SELECT dateadd('s', x::INT, '2024-01-01T00:00:00')::TIMESTAMP,
+                           ('K' || (x % 50))::SYMBOL,
+                           x * 1.0
+                    FROM long_sequence(2_000)
+                    """);
+            drainWalQueue();
+
+            execute("""
+                    INSERT INTO t_distinct_range
+                    SELECT dateadd('s', (x + 10000)::INT, '2024-01-01T00:00:00')::TIMESTAMP,
+                           ('K' || (x % 3))::SYMBOL,
+                           x * 1.0
+                    FROM long_sequence(500)
+                    """);
+            drainWalQueue();
+
+            execute("""
+                    INSERT INTO t_distinct_range
+                    SELECT dateadd('s', x::INT, '2024-01-02T00:00:00')::TIMESTAMP,
+                           ('K' || (x % 100))::SYMBOL,
+                           x * 1.0
+                    FROM long_sequence(3_000)
+                    """);
+            drainWalQueue();
+
+            assertQueryNoLeakCheck(
+                    "count_distinct\n50\n",
+                    "SELECT count_distinct(sym) FROM t_distinct_range " +
+                            "WHERE ts BETWEEN '2024-01-01T00:30:00' AND '2024-01-01T00:40:00'",
+                    null, false, true
+            );
+            assertQueryNoLeakCheck(
+                    "count_distinct\n3\n",
+                    "SELECT count_distinct(sym) FROM t_distinct_range " +
+                            "WHERE ts BETWEEN '2024-01-01T02:00:00' AND '2024-01-01T03:00:00'",
+                    null, false, true
+            );
+            assertQueryNoLeakCheck(
+                    "count_distinct\n0\n",
+                    "SELECT count_distinct(sym) FROM t_distinct_range " +
+                            "WHERE ts BETWEEN '2024-01-01T03:00:00' AND '2024-01-01T05:00:00'",
+                    null, false, true
+            );
+            assertQueryNoLeakCheck(
+                    "count_distinct\n100\n",
+                    "SELECT count_distinct(sym) FROM t_distinct_range " +
+                            "WHERE ts BETWEEN '2024-01-02T00:00:00' AND '2024-01-02T01:00:00'",
+                    null, false, true
+            );
+            assertQueryNoLeakCheck(
+                    "count_distinct\n100\n",
+                    "SELECT count_distinct(sym) FROM t_distinct_range",
+                    null, false, true
+            );
+        });
+    }
+
+    @Test
     public void testDistinctSymMultiPartition() throws Exception {
         assertMemoryLeak(() -> {
             execute("""
@@ -6773,6 +6975,162 @@ public class CoveringIndexTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testFallbackRecordAllTypesViaSidecarOpenFailure() throws Exception {
+        final AtomicBoolean failArmed = new AtomicBoolean(false);
+        ff = new TestFilesFacadeImpl() {
+            @Override
+            public boolean exists(LPSZ path) {
+                if (failArmed.get() && path != null && Utf8s.containsAscii(path, ".pc1.")) {
+                    return false;
+                }
+                return super.exists(path);
+            }
+
+            @Override
+            public long openRO(LPSZ name) {
+                if (failArmed.get() && name != null && Utf8s.containsAscii(name, ".pc1.")) {
+                    return -1;
+                }
+                return super.openRO(name);
+            }
+        };
+        assertMemoryLeak(ff, () -> {
+            execute("""
+                    CREATE TABLE t_fb (
+                        ts TIMESTAMP,
+                        sym SYMBOL INDEX TYPE POSTING INCLUDE (
+                            v_byte, v_short, v_int, v_long, v_float, v_double,
+                            v_bool, v_char, v_date, v_uuid, v_ipv4, v_l256,
+                            v_str, v_vc, v_bin, v_arr, v_sym2,
+                            v_dec64, v_dec128, v_dec256
+                        ),
+                        v_byte BYTE,
+                        v_short SHORT,
+                        v_int INT,
+                        v_long LONG,
+                        v_float FLOAT,
+                        v_double DOUBLE,
+                        v_bool BOOLEAN,
+                        v_char CHAR,
+                        v_date DATE,
+                        v_uuid UUID,
+                        v_ipv4 IPv4,
+                        v_l256 LONG256,
+                        v_str STRING,
+                        v_vc VARCHAR,
+                        v_bin BINARY,
+                        v_arr DOUBLE[],
+                        v_sym2 SYMBOL,
+                        v_dec64 DECIMAL(18,4),
+                        v_dec128 DECIMAL(38,10),
+                        v_dec256 DECIMAL(40,5)
+                    ) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL
+                    """);
+            execute("""
+                    INSERT INTO t_fb VALUES
+                    ('2024-01-01T00:00:00', 'A', 1, 100, 1000, 10_000, 1.5, 2.5, true, 'x',
+                     '2024-06-01T00:00:00.000Z', '11111111-1111-1111-1111-111111111111', '1.2.3.4',
+                     cast('0x1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef' as LONG256),
+                     'str_one', 'vc_one', rnd_bin(8, 16, 0), ARRAY[1.0, 2.0, 3.0], 'tag_x',
+                     '12.34'::DECIMAL(18,4), '123.4567'::DECIMAL(38,10), '100.50'::DECIMAL(40,5)),
+                    ('2024-01-01T01:00:00', 'A', 2, 200, 2000, 20_000, 2.5, 3.5, false, 'y',
+                     '2024-07-01T00:00:00.000Z', '22222222-2222-2222-2222-222222222222', '5.6.7.8',
+                     cast('0xabcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890' as LONG256),
+                     'str_two', 'vc_two', rnd_bin(8, 16, 0), ARRAY[4.0, 5.0], 'tag_y',
+                     '56.78'::DECIMAL(18,4), '234.5678'::DECIMAL(38,10), '200.75'::DECIMAL(40,5)),
+                    ('2024-01-01T02:00:00', 'B', 9, 900, 9000, 90_000, 9.5, 8.5, true, 'z',
+                     NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL)
+                    """);
+            engine.releaseAllWriters();
+
+            failArmed.set(true);
+            try {
+                assertSqlCursors(
+                        "SELECT v_byte, v_short, v_int, v_long, v_float, v_double, v_bool, " +
+                                "v_char, v_date, v_uuid, v_ipv4, v_l256, v_str, v_vc, v_bin, " +
+                                "v_arr, v_sym2, v_dec64, v_dec128, v_dec256 " +
+                                "FROM t_fb WHERE sym = 'A'",
+                        "SELECT /*+ no_covering */ v_byte, v_short, v_int, v_long, v_float, v_double, v_bool, " +
+                                "v_char, v_date, v_uuid, v_ipv4, v_l256, v_str, v_vc, v_bin, " +
+                                "v_arr, v_sym2, v_dec64, v_dec128, v_dec256 " +
+                                "FROM t_fb WHERE sym = 'A'"
+                );
+
+                assertSqlCursors(
+                        "SELECT v_byte, v_short, v_int, v_long, v_float, v_double, v_bool, " +
+                                "v_char, v_date, v_uuid, v_ipv4, v_l256, v_str, v_vc, v_bin, " +
+                                "v_arr, v_sym2, v_dec64, v_dec128, v_dec256 " +
+                                "FROM t_fb WHERE sym = 'B'",
+                        "SELECT /*+ no_covering */ v_byte, v_short, v_int, v_long, v_float, v_double, v_bool, " +
+                                "v_char, v_date, v_uuid, v_ipv4, v_l256, v_str, v_vc, v_bin, " +
+                                "v_arr, v_sym2, v_dec64, v_dec128, v_dec256 " +
+                                "FROM t_fb WHERE sym = 'B'"
+                );
+
+                assertSqlCursors(
+                        "SELECT v_byte, v_short, v_int, v_long, v_float, v_double, v_bool, " +
+                                "v_char, v_date, v_uuid, v_ipv4, v_l256, v_str, v_vc, v_bin, " +
+                                "v_arr, v_sym2, v_dec64, v_dec128, v_dec256 " +
+                                "FROM t_fb WHERE sym = 'A' LATEST ON ts PARTITION BY sym",
+                        "SELECT /*+ no_covering */ v_byte, v_short, v_int, v_long, v_float, v_double, v_bool, " +
+                                "v_char, v_date, v_uuid, v_ipv4, v_l256, v_str, v_vc, v_bin, " +
+                                "v_arr, v_sym2, v_dec64, v_dec128, v_dec256 " +
+                                "FROM t_fb WHERE sym = 'A' LATEST ON ts PARTITION BY sym"
+                );
+            } finally {
+                failArmed.set(false);
+            }
+        });
+    }
+
+    @Test
+    public void testFallbackRecordColumnTopForNewlyAddedIncludeColumn() throws Exception {
+        final AtomicBoolean failArmed = new AtomicBoolean(false);
+        ff = new TestFilesFacadeImpl() {
+            @Override
+            public boolean exists(LPSZ path) {
+                if (failArmed.get() && path != null && Utf8s.containsAscii(path, ".pc0.")) {
+                    return false;
+                }
+                return super.exists(path);
+            }
+
+            @Override
+            public long openRO(LPSZ name) {
+                if (failArmed.get() && name != null && Utf8s.containsAscii(name, ".pc0.")) {
+                    return -1;
+                }
+                return super.openRO(name);
+            }
+        };
+        assertMemoryLeak(ff, () -> {
+            execute("""
+                    CREATE TABLE t_fb_top (
+                        ts TIMESTAMP,
+                        sym SYMBOL INDEX TYPE POSTING INCLUDE (price),
+                        price DOUBLE
+                    ) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL
+                    """);
+            execute("""
+                    INSERT INTO t_fb_top VALUES
+                    ('2024-01-01T00:00:00', 'A', 10.5),
+                    ('2024-01-01T01:00:00', 'A', 20.5)
+                    """);
+            engine.releaseAllWriters();
+
+            failArmed.set(true);
+            try {
+                assertSqlCursors(
+                        "SELECT price FROM t_fb_top WHERE sym = 'A'",
+                        "SELECT /*+ no_covering */ price FROM t_fb_top WHERE sym = 'A'"
+                );
+            } finally {
+                failArmed.set(false);
+            }
+        });
+    }
+
+    @Test
     public void testFallbackSelectStar() throws Exception {
         assertMemoryLeak(() -> {
             execute("""
@@ -7013,6 +7371,56 @@ public class CoveringIndexTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testFsstLongVarcharTriggersCompression() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE t_fsst (
+                        ts TIMESTAMP,
+                        sym SYMBOL INDEX TYPE POSTING INCLUDE (label, payload),
+                        label VARCHAR,
+                        payload STRING
+                    ) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL
+                    """);
+            execute("""
+                    INSERT INTO t_fsst
+                    SELECT dateadd('s', x::INT, '2024-01-01')::TIMESTAMP,
+                           CASE WHEN x % 5 = 0 THEN 'B' ELSE 'A' END,
+                           ('label_text_with_some_repeating_words_lorem_ipsum_dolor_sit_amet_' || x)::VARCHAR,
+                           'string_payload_with_repeating_text_lorem_ipsum_dolor_sit_amet_consectetur_' || x
+                    FROM long_sequence(500)
+                    """);
+            engine.releaseAllWriters();
+
+            assertQueryNoLeakCheck(
+                    "count\n400\n",
+                    "SELECT count() FROM (SELECT label, payload FROM t_fsst WHERE sym = 'A')",
+                    null, false, true
+            );
+
+            assertQueryNoLeakCheck(
+                    "sym\tcount\nA\t400\n",
+                    "SELECT sym, count() FROM t_fsst WHERE sym = 'A' AND payload != '' GROUP BY sym",
+                    null, true, true
+            );
+
+            assertQueryNoLeakCheck(
+                    "label\tpayload\n" +
+                            "label_text_with_some_repeating_words_lorem_ipsum_dolor_sit_amet_499\t" +
+                            "string_payload_with_repeating_text_lorem_ipsum_dolor_sit_amet_consectetur_499\n",
+                    "SELECT label, payload FROM t_fsst WHERE sym = 'A' LATEST ON ts PARTITION BY sym",
+                    null, false, false
+            );
+            assertQueryNoLeakCheck(
+                    "label\tpayload\n" +
+                            "label_text_with_some_repeating_words_lorem_ipsum_dolor_sit_amet_500\t" +
+                            "string_payload_with_repeating_text_lorem_ipsum_dolor_sit_amet_consectetur_500\n",
+                    "SELECT label, payload FROM t_fsst WHERE sym = 'B' LATEST ON ts PARTITION BY sym",
+                    null, false, false
+            );
+        });
+    }
+
+    @Test
     public void testFsstRoundtrip() throws Exception {
         assertMemoryLeak(() -> {
             String[] values = {
@@ -7092,6 +7500,53 @@ public class CoveringIndexTest extends AbstractCairoTest {
                 Unsafe.free(srcOffsAddr, offsetsBytes, MemoryTag.NATIVE_DEFAULT);
                 Unsafe.free(trainBuf, trainBufSize, MemoryTag.NATIVE_DEFAULT);
             }
+        });
+    }
+
+    @Test
+    public void testGetSymbolTableViaPageFrameMultiKey() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE t_pf_sym (
+                        ts TIMESTAMP,
+                        sym SYMBOL INDEX TYPE POSTING INCLUDE (tag, price),
+                        tag SYMBOL,
+                        price DOUBLE
+                    ) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL
+                    """);
+            execute("""
+                    INSERT INTO t_pf_sym
+                    SELECT dateadd('s', x::INT, '2024-01-01')::TIMESTAMP,
+                           CASE x % 3 WHEN 0 THEN 'A' WHEN 1 THEN 'B' ELSE 'C' END,
+                           CASE x % 3 WHEN 0 THEN 'tag_x' WHEN 1 THEN 'tag_y' ELSE 'tag_z' END,
+                           x * 1.5
+                    FROM long_sequence(2_000)
+                    """);
+            engine.releaseAllWriters();
+
+            assertQueryNoLeakCheck(
+                    """
+                            sym\ttag
+                            B\ttag_y
+                            A\ttag_x
+                            B\ttag_y
+                            A\ttag_x
+                            B\ttag_y
+                            A\ttag_x
+                            B\ttag_y
+                            A\ttag_x
+                            B\ttag_y
+                            A\ttag_x
+                            """,
+                    "SELECT sym, tag FROM t_pf_sym WHERE sym IN ('A','B') AND price > 100 ORDER BY price LIMIT 10",
+                    null, true, false
+            );
+
+            assertQueryNoLeakCheck(
+                    "sym\tcount\nA\t666\nB\t667\n",
+                    "SELECT sym, count() FROM t_pf_sym WHERE sym IN ('A','B') GROUP BY sym ORDER BY sym",
+                    null, true, true
+            );
         });
     }
 
@@ -7523,6 +7978,30 @@ public class CoveringIndexTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testLatestByEmptyResultExercisesOfEmpty() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE t_empty (
+                        ts TIMESTAMP,
+                        sym SYMBOL INDEX TYPE POSTING INCLUDE (price),
+                        price DOUBLE
+                    ) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL
+                    """);
+            execute("INSERT INTO t_empty VALUES ('2024-01-01', 'A', 10.0)");
+            engine.releaseAllWriters();
+
+            assertSql("price\n", "SELECT price FROM t_empty WHERE sym = 'NEVER_INSERTED'");
+            assertSql("price\n",
+                    "SELECT price FROM t_empty WHERE sym IN ('NEVER_INSERTED','ALSO_UNKNOWN')");
+            assertSql("price\n",
+                    "SELECT price FROM t_empty WHERE sym = 'NEVER_INSERTED' AND price > 0");
+
+            assertSql("price\n",
+                    "SELECT price FROM t_empty WHERE sym = 'NEVER_INSERTED' LATEST ON ts PARTITION BY sym");
+        });
+    }
+
+    @Test
     public void testLatestByFilterMultiPartition() throws Exception {
         assertMemoryLeak(() -> {
             execute("""
@@ -7610,6 +8089,59 @@ public class CoveringIndexTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testLatestByMultiKeyExercisesFallback() throws Exception {
+        final AtomicBoolean failArmed = new AtomicBoolean(false);
+        ff = new TestFilesFacadeImpl() {
+            @Override
+            public boolean exists(LPSZ path) {
+                if (failArmed.get() && path != null && Utf8s.containsAscii(path, ".pc1.")) {
+                    return false;
+                }
+                return super.exists(path);
+            }
+
+            @Override
+            public long openRO(LPSZ name) {
+                if (failArmed.get() && name != null && Utf8s.containsAscii(name, ".pc1.")) {
+                    return -1;
+                }
+                return super.openRO(name);
+            }
+        };
+        assertMemoryLeak(ff, () -> {
+            execute("""
+                    CREATE TABLE t_lb_multi (
+                        ts TIMESTAMP,
+                        sym SYMBOL INDEX TYPE POSTING INCLUDE (price, qty),
+                        price DOUBLE,
+                        qty INT
+                    ) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL
+                    """);
+            execute("""
+                    INSERT INTO t_lb_multi VALUES
+                    ('2024-01-01T00:00:00', 'A', 10.5, 1),
+                    ('2024-01-01T01:00:00', 'A', 20.5, 2),
+                    ('2024-01-02T00:00:00', 'B', 30.5, 3),
+                    ('2024-01-02T01:00:00', 'B', 40.5, 4),
+                    ('2024-01-03T00:00:00', 'C', 50.5, 5)
+                    """);
+            engine.releaseAllWriters();
+
+            failArmed.set(true);
+            try {
+                assertSqlCursors(
+                        "SELECT sym, price, qty FROM t_lb_multi WHERE sym IN ('A','B') AND price > 0 " +
+                                "LATEST ON ts PARTITION BY sym",
+                        "SELECT /*+ no_covering */ sym, price, qty FROM t_lb_multi WHERE sym IN ('A','B') AND price > 0 " +
+                                "LATEST ON ts PARTITION BY sym"
+                );
+            } finally {
+                failArmed.set(false);
+            }
+        });
+    }
+
+    @Test
     public void testLatestByNullValues() throws Exception {
         // LATEST BY with NULL values in various types
         assertMemoryLeak(() -> {
@@ -7636,6 +8168,40 @@ public class CoveringIndexTest extends AbstractCairoTest {
                     SELECT v_int, v_double, v_varchar
                     FROM t_latest_nulls WHERE sym = 'A' LATEST ON ts PARTITION BY sym
                     """);
+        });
+    }
+
+    @Test
+    public void testLatestByWithFilterExercisesFindLatestRow() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE t_lb_filter (
+                        ts TIMESTAMP,
+                        sym SYMBOL INDEX TYPE POSTING INCLUDE (price, qty),
+                        price DOUBLE,
+                        qty INT
+                    ) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL
+                    """);
+            execute("""
+                    INSERT INTO t_lb_filter
+                    SELECT dateadd('m', x::INT, '2024-01-01')::TIMESTAMP,
+                           rnd_symbol('A','B','C'),
+                           rnd_double() * 100,
+                           x::INT
+                    FROM long_sequence(500)
+                    """);
+            engine.releaseAllWriters();
+
+            assertSqlCursors(
+                    "SELECT sym, price, qty FROM t_lb_filter WHERE sym = 'A' AND price < 5 " +
+                            "LATEST ON ts PARTITION BY sym",
+                    "SELECT /*+ no_covering */ sym, price, qty FROM t_lb_filter WHERE sym = 'A' AND price < 5 " +
+                            "LATEST ON ts PARTITION BY sym"
+            );
+
+            assertSql("sym\tprice\tqty\n",
+                    "SELECT sym, price, qty FROM t_lb_filter WHERE sym = 'A' AND price < 0 " +
+                            "LATEST ON ts PARTITION BY sym");
         });
     }
 
@@ -9378,6 +9944,62 @@ public class CoveringIndexTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testPageFrameOfEmptyAllPaths() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE t_pf_empty (
+                        ts TIMESTAMP,
+                        sym SYMBOL INDEX TYPE POSTING INCLUDE (price),
+                        price DOUBLE
+                    ) TIMESTAMP(ts) PARTITION BY DAY WAL
+                    """);
+            execute("""
+                    INSERT INTO t_pf_empty
+                    SELECT dateadd('s', x::INT, '2024-01-01')::TIMESTAMP,
+                           rnd_symbol('A','B'),
+                           rnd_double() * 100
+                    FROM long_sequence(200)
+                    """);
+            drainWalQueue();
+
+            assertSql("count\n0\n",
+                    "SELECT count() FROM t_pf_empty WHERE sym = 'NEVER_INSERTED' AND price > 0");
+
+            assertSql("count\n0\n",
+                    "SELECT count() FROM t_pf_empty WHERE sym IN ('NEVER','UNKNOWN') AND price > 0");
+        });
+    }
+
+    @Test
+    public void testPageFrameToTopRecursive() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE t_pf_toTop (
+                        ts TIMESTAMP,
+                        sym SYMBOL INDEX TYPE POSTING INCLUDE (price),
+                        price DOUBLE
+                    ) TIMESTAMP(ts) PARTITION BY DAY WAL
+                    """);
+            execute("""
+                    INSERT INTO t_pf_toTop
+                    SELECT dateadd('s', x::INT, '2024-01-01')::TIMESTAMP,
+                           CASE WHEN x <= 100 THEN 'A' ELSE 'B' END,
+                           ((x % 10) * 10)::DOUBLE
+                    FROM long_sequence(200)
+                    """);
+            drainWalQueue();
+
+            assertQueryNoLeakCheck(
+                    "count\n400\n",
+                    "SELECT count() FROM (" +
+                            "SELECT a.price FROM (SELECT price FROM t_pf_toTop WHERE sym = 'A' AND price > 50) a " +
+                            "JOIN (SELECT price FROM t_pf_toTop WHERE sym = 'B' AND price > 50) b ON a.price = b.price)",
+                    null, false, true
+            );
+        });
+    }
+
+    @Test
     public void testPciFileFormat() throws Exception {
         assertMemoryLeak(() -> {
             try (Path path = new Path().of(configuration.getDbRoot())) {
@@ -9893,6 +10515,87 @@ public class CoveringIndexTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testRowCursorGetSymbolTableForIncludedSymbolColumn() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE t_rc_sym (
+                        ts TIMESTAMP,
+                        sym SYMBOL INDEX TYPE POSTING INCLUDE (tag, price),
+                        tag SYMBOL,
+                        price DOUBLE
+                    ) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL
+                    """);
+            execute("""
+                    INSERT INTO t_rc_sym VALUES
+                    ('2024-01-01T00:00:00', 'A', 'tag_x', 1.0),
+                    ('2024-01-01T01:00:00', 'A', 'tag_y', 2.0),
+                    ('2024-01-01T02:00:00', 'A', 'tag_x', 3.0),
+                    ('2024-01-01T03:00:00', 'B', 'tag_z', 4.0)
+                    """);
+            engine.releaseAllWriters();
+
+            assertSql("""
+                    tag\tprice
+                    tag_x\t1.0
+                    tag_y\t2.0
+                    tag_x\t3.0
+                    """, "SELECT tag, price FROM t_rc_sym WHERE sym = 'A'");
+
+            assertSql("""
+                    tag\tprice
+                    tag_x\t3.0
+                    """, "SELECT tag, price FROM t_rc_sym WHERE sym = 'A' LATEST ON ts PARTITION BY sym");
+        });
+    }
+
+    @Test
+    public void testRuntimeConstantSymbolKeyWithBindVariable() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE t_bind (
+                        ts TIMESTAMP,
+                        sym SYMBOL INDEX TYPE POSTING INCLUDE (price),
+                        price DOUBLE
+                    ) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL
+                    """);
+            execute("""
+                    INSERT INTO t_bind VALUES
+                    ('2024-01-01T00:00:00', 'A', 10.0),
+                    ('2024-01-01T01:00:00', 'B', 20.0),
+                    ('2024-01-01T02:00:00', 'A', 30.0)
+                    """);
+            engine.releaseAllWriters();
+
+            bindVariableService.clear();
+            bindVariableService.setStr(0, "A");
+            assertSql("""
+                    price
+                    10.0
+                    30.0
+                    """, "SELECT price FROM t_bind WHERE sym = $1");
+
+            bindVariableService.clear();
+            bindVariableService.setStr(0, "NEVER_INSERTED");
+            assertSql("price\n", "SELECT price FROM t_bind WHERE sym = $1");
+
+            bindVariableService.clear();
+            bindVariableService.setStr(0, "A");
+            bindVariableService.setStr(1, "B");
+            assertSql("""
+                    price
+                    10.0
+                    20.0
+                    30.0
+                    """, "SELECT price FROM t_bind WHERE sym IN ($1, $2) ORDER BY price");
+
+            bindVariableService.clear();
+            bindVariableService.setStr(0, "NEVER_INSERTED");
+            bindVariableService.setStr(1, "ALSO_UNKNOWN");
+            assertSql("price\n", "SELECT price FROM t_bind WHERE sym IN ($1, $2)");
+        });
+    }
+
+    @Test
     public void testSealCreatesNewValueFile() throws Exception {
         assertMemoryLeak(() -> {
             execute("""
@@ -10052,6 +10755,53 @@ public class CoveringIndexTest extends AbstractCairoTest {
                     price
                     1.0
                     """, "SELECT price FROM t_seek_empty WHERE sym = 'A' LATEST ON ts PARTITION BY sym");
+        });
+    }
+
+    @Test
+    public void testSelfJoinTriggersBVariantGetters() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE t_join (
+                        ts TIMESTAMP,
+                        sym SYMBOL INDEX TYPE POSTING INCLUDE (tag, label, payload, l256, bdata, k),
+                        tag SYMBOL,
+                        label VARCHAR,
+                        payload STRING,
+                        l256 LONG256,
+                        bdata BINARY,
+                        k INT
+                    ) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL
+                    """);
+            execute("""
+                    INSERT INTO t_join VALUES
+                    ('2024-01-01T00:00:00', 'A', 'tag_a', 'lbl_a1', 'pay_a1',
+                     cast('0x1111111111111111111111111111111111111111111111111111111111111111' as LONG256),
+                     rnd_bin(8, 16, 0), 1),
+                    ('2024-01-01T01:00:00', 'A', 'tag_b', 'lbl_a2', 'pay_a2',
+                     cast('0x2222222222222222222222222222222222222222222222222222222222222222' as LONG256),
+                     rnd_bin(8, 16, 0), 2),
+                    ('2024-01-01T02:00:00', 'B', 'tag_a', 'lbl_b1', 'pay_b1',
+                     cast('0x3333333333333333333333333333333333333333333333333333333333333333' as LONG256),
+                     rnd_bin(8, 16, 0), 3)
+                    """);
+            engine.releaseAllWriters();
+
+            assertQueryNoLeakCheck(
+                    "count\n2\n",
+                    "SELECT count() FROM (" +
+                            "SELECT a.tag, a.label, a.payload, a.l256, b.tag b_tag, b.label b_label, b.payload b_payload, b.l256 b_l256 " +
+                            "FROM (SELECT tag, label, payload, l256, k FROM t_join WHERE sym = 'A') a " +
+                            "JOIN (SELECT tag, label, payload, l256, k FROM t_join WHERE sym = 'A') b ON a.k = b.k)",
+                    null, false, true
+            );
+
+            assertQueryNoLeakCheck(
+                    "label\tlabel1\nlbl_a1\tlbl_b1\n",
+                    "SELECT a.label, b.label FROM (SELECT label, tag FROM t_join WHERE sym = 'A') a " +
+                            "JOIN (SELECT label, tag FROM t_join WHERE sym = 'B') b ON a.tag = b.tag",
+                    null, false, true
+            );
         });
     }
 
@@ -10789,6 +11539,45 @@ public class CoveringIndexTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testWalAlterTableAddIncludeColumnTopFallback() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE t_alter (
+                        ts TIMESTAMP,
+                        sym SYMBOL,
+                        v_int INT,
+                        v_str STRING,
+                        v_vc VARCHAR
+                    ) TIMESTAMP(ts) PARTITION BY DAY WAL
+                    """);
+            execute("""
+                    INSERT INTO t_alter VALUES
+                    ('2024-01-01T00:00:00', 'A', 1, 'one', 'vc_one'),
+                    ('2024-01-01T01:00:00', 'B', 2, 'two', 'vc_two'),
+                    ('2024-01-02T00:00:00', 'A', 3, 'three', 'vc_three')
+                    """);
+            drainWalQueue();
+
+            execute("ALTER TABLE t_alter ALTER COLUMN sym ADD INDEX TYPE POSTING INCLUDE (v_int, v_str, v_vc)");
+            drainWalQueue();
+
+            execute("""
+                    INSERT INTO t_alter VALUES
+                    ('2024-01-03T00:00:00', 'A', 4, 'four', 'vc_four'),
+                    ('2024-01-03T01:00:00', 'B', 5, 'five', 'vc_five')
+                    """);
+            drainWalQueue();
+
+            assertSqlCursors(
+                    "SELECT v_int, v_str, v_vc FROM t_alter WHERE sym = 'A'",
+                    "SELECT /*+ no_covering */ v_int, v_str, v_vc FROM t_alter WHERE sym = 'A'"
+            );
+
+            assertSql("count\n3\n", "SELECT count() FROM t_alter WHERE sym = 'A'");
+        });
+    }
+
+    @Test
     public void testWideInclude10Columns() throws Exception {
         assertMemoryLeak(() -> {
             execute("""
@@ -11275,6 +12064,124 @@ public class CoveringIndexTest extends AbstractCairoTest {
                     label\ttag\tnote
                     label_b1\ttag_b\tnote_b1
                     """, "SELECT label, tag, note FROM t_wide_varchar WHERE sym = 'B'");
+        });
+    }
+
+    @Test
+    public void testWideMultiTypeIncludeForCoveringRecord() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE t_wide_cover (
+                        ts TIMESTAMP,
+                        sym SYMBOL INDEX TYPE POSTING INCLUDE (
+                            v_byte, v_short, v_int, v_long, v_float, v_double,
+                            v_bool, v_char, v_date, v_uuid, v_ipv4, v_l256,
+                            v_str, v_vc, v_bin, v_arr, v_sym2,
+                            v_dec64, v_dec128, v_dec256
+                        ),
+                        v_byte BYTE,
+                        v_short SHORT,
+                        v_int INT,
+                        v_long LONG,
+                        v_float FLOAT,
+                        v_double DOUBLE,
+                        v_bool BOOLEAN,
+                        v_char CHAR,
+                        v_date DATE,
+                        v_uuid UUID,
+                        v_ipv4 IPv4,
+                        v_l256 LONG256,
+                        v_str STRING,
+                        v_vc VARCHAR,
+                        v_bin BINARY,
+                        v_arr DOUBLE[],
+                        v_sym2 SYMBOL,
+                        v_dec64 DECIMAL(18,4),
+                        v_dec128 DECIMAL(38,10),
+                        v_dec256 DECIMAL(40,5)
+                    ) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL
+                    """);
+            execute("""
+                    INSERT INTO t_wide_cover VALUES
+                    ('2024-01-01T00:00:00', 'A', 1, 100, 1000, 10_000, 1.5, 2.5, true, 'x',
+                     '2024-06-01T00:00:00.000Z', '11111111-1111-1111-1111-111111111111', '1.2.3.4',
+                     cast('0x1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef' as LONG256),
+                     'str_one', 'vc_one', rnd_bin(8, 16, 0), ARRAY[1.0, 2.0], 'tag_x',
+                     '12.34'::DECIMAL(18,4), '123.4567'::DECIMAL(38,10), '100.50'::DECIMAL(40,5)),
+                    ('2024-01-01T01:00:00', 'A', NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL,
+                     NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL)
+                    """);
+            engine.releaseAllWriters();
+
+            assertSqlCursors(
+                    "SELECT v_byte, v_short, v_int, v_long, v_float, v_double, v_bool, " +
+                            "v_char, v_date, v_uuid, v_ipv4, v_l256, v_str, v_vc, v_bin, " +
+                            "v_arr, v_sym2, v_dec64, v_dec128, v_dec256 " +
+                            "FROM t_wide_cover WHERE sym = 'A'",
+                    "SELECT /*+ no_covering */ v_byte, v_short, v_int, v_long, v_float, v_double, v_bool, " +
+                            "v_char, v_date, v_uuid, v_ipv4, v_l256, v_str, v_vc, v_bin, " +
+                            "v_arr, v_sym2, v_dec64, v_dec128, v_dec256 " +
+                            "FROM t_wide_cover WHERE sym = 'A'"
+            );
+
+            assertSql("count\n2\n", "SELECT count() FROM t_wide_cover WHERE sym = 'A'");
+        });
+    }
+
+    @Test
+    public void testWideMultiTypeIncludePageFrameAllTypes() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE t_pf_wide (
+                        ts TIMESTAMP,
+                        sym SYMBOL INDEX TYPE POSTING INCLUDE (
+                            v_byte, v_short, v_int, v_long, v_float, v_double,
+                            v_bool, v_char, v_date, v_uuid, v_ipv4, v_l256,
+                            v_str, v_vc, v_bin
+                        ),
+                        v_byte BYTE,
+                        v_short SHORT,
+                        v_int INT,
+                        v_long LONG,
+                        v_float FLOAT,
+                        v_double DOUBLE,
+                        v_bool BOOLEAN,
+                        v_char CHAR,
+                        v_date DATE,
+                        v_uuid UUID,
+                        v_ipv4 IPv4,
+                        v_l256 LONG256,
+                        v_str STRING,
+                        v_vc VARCHAR,
+                        v_bin BINARY
+                    ) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL
+                    """);
+            execute("""
+                    INSERT INTO t_pf_wide
+                    SELECT dateadd('s', x::INT, '2024-01-01')::TIMESTAMP,
+                           CASE WHEN x % 3 = 0 THEN 'B' ELSE 'A' END,
+                           x::BYTE, x::SHORT, x::INT, x::LONG, x::FLOAT, x::DOUBLE,
+                           x % 2 = 0,
+                           CASE x % 3 WHEN 0 THEN 'a' WHEN 1 THEN 'b' ELSE 'c' END,
+                           dateadd('s', x::INT, '2020-01-01'),
+                           rnd_uuid4(),
+                           ('1.2.3.' || (x % 256))::IPv4,
+                           rnd_long256(),
+                           ('str_' || x),
+                           ('vc_' || x)::VARCHAR,
+                           rnd_bin(4, 8, 0)
+                    FROM long_sequence(200)
+                    """);
+            engine.releaseAllWriters();
+
+            assertQueryNoLeakCheck(
+                    "count\n134\n",
+                    "SELECT count() FROM (" +
+                            "SELECT v_byte, v_short, v_int, v_long, v_float, v_double, v_bool, " +
+                            "v_char, v_date, v_uuid, v_ipv4, v_l256, v_str, v_vc, v_bin " +
+                            "FROM t_pf_wide WHERE sym = 'A' AND v_int > 0)",
+                    null, false, true
+            );
         });
     }
 

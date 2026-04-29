@@ -81,6 +81,8 @@ import io.questdb.network.NetworkFacade;
 import io.questdb.network.NetworkFacadeImpl;
 import io.questdb.std.BinarySequence;
 import io.questdb.std.Chars;
+import io.questdb.std.Decimal128;
+import io.questdb.std.Decimal256;
 import io.questdb.std.Files;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.FilesFacadeImpl;
@@ -2250,6 +2252,38 @@ public final class TestUtils {
                     case ColumnType.ARRAY:
                         assertEquals(rr.getArray(i, columnType), lr.getArray(i, columnType));
                         break;
+                    case ColumnType.DECIMAL8:
+                        Assert.assertEquals(rr.getDecimal8(i), lr.getDecimal8(i));
+                        break;
+                    case ColumnType.DECIMAL16:
+                        Assert.assertEquals(rr.getDecimal16(i), lr.getDecimal16(i));
+                        break;
+                    case ColumnType.DECIMAL32:
+                        Assert.assertEquals(rr.getDecimal32(i), lr.getDecimal32(i));
+                        break;
+                    case ColumnType.DECIMAL64:
+                        Assert.assertEquals(rr.getDecimal64(i), lr.getDecimal64(i));
+                        break;
+                    case ColumnType.DECIMAL128: {
+                        Decimal128 expected = new Decimal128();
+                        Decimal128 actual = new Decimal128();
+                        rr.getDecimal128(i, expected);
+                        lr.getDecimal128(i, actual);
+                        Assert.assertEquals(expected.getHigh(), actual.getHigh());
+                        Assert.assertEquals(expected.getLow(), actual.getLow());
+                        break;
+                    }
+                    case ColumnType.DECIMAL256: {
+                        Decimal256 expected = new Decimal256();
+                        Decimal256 actual = new Decimal256();
+                        rr.getDecimal256(i, expected);
+                        lr.getDecimal256(i, actual);
+                        Assert.assertEquals(expected.getLh(), actual.getLh());
+                        Assert.assertEquals(expected.getLl(), actual.getLl());
+                        Assert.assertEquals(expected.getHh(), actual.getHh());
+                        Assert.assertEquals(expected.getHl(), actual.getHl());
+                        break;
+                    }
                     default:
                         // Unknown record type.
                         assert false;

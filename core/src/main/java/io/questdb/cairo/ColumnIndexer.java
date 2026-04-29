@@ -59,6 +59,7 @@ public interface ColumnIndexer extends QuietCloseable {
 
     default void configureCovering(
             LongList coveredColumnAddrs,
+            LongList coveredColumnAuxAddrs,
             LongList coveredColumnTops,
             IntList coveredColumnShifts,
             IntList coveredColumnIndices,

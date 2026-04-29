@@ -79,6 +79,7 @@ public interface IndexWriter extends Closeable, Mutable {
 
     default void configureCovering(
             LongList coveredColumnAddrs,
+            LongList coveredColumnAuxAddrs,
             LongList coveredColumnTops,
             IntList coveredColumnShifts,
             IntList coveredColumnIndices,

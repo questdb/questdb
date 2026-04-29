@@ -242,6 +242,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     private final AtomicLong o3PartitionUpdRemaining = new AtomicLong();
     private final boolean o3QuickSortEnabled;
     private final LongList o3SealAddrs = new LongList();
+    private final LongList o3SealAuxAddrs = new LongList();
+    private final LongList o3SealAuxMappedSizes = new LongList();
     private final LongList o3SealMappedSizes = new LongList();
     private final LongList o3SealNameTxns = new LongList();
     private final IntList o3SealShifts = new IntList();
@@ -10714,6 +10716,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 if (hasCovering) {
                     int coverCount = coveringCols.size();
                     o3SealAddrs.setPos(coverCount);
+                    o3SealAuxAddrs.setPos(coverCount);
+                    o3SealAuxMappedSizes.setPos(coverCount);
                     o3SealMappedSizes.setPos(coverCount);
                     o3SealNameTxns.setPos(coverCount);
                     o3SealTops.setPos(coverCount);
@@ -10723,6 +10727,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     try {
                         for (int c = 0; c < coverCount; c++) {
                             o3SealAddrs.setQuick(c, 0);
+                            o3SealAuxAddrs.setQuick(c, 0);
+                            o3SealAuxMappedSizes.setQuick(c, 0);
                             int covCol = coveringCols.getQuick(c);
                             if (covCol < 0) {
                                 o3SealTypes.setQuick(c, -1);
@@ -10732,6 +10738,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                                 continue;
                             }
                             int covType = metadata.getColumnType(covCol);
+                            boolean isVarSize = ColumnType.isVarSize(covType);
                             o3SealTypes.setQuick(c, covType);
                             o3SealShifts.setQuick(c, ColumnType.pow2SizeOf(covType));
                             o3SealTops.setQuick(c, columnVersionWriter.getColumnTopQuick(partitionTimestamp, covCol));
@@ -10745,16 +10752,47 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                             }
                             try {
                                 long fileSize = ff.length(fd);
-                                if (fileSize <= 0) {
+                                if (fileSize < 0) {
                                     throw CairoException.critical(0)
-                                            .put("covering column file is empty [path=").put(colFile)
+                                            .put("invalid covering column file size [path=").put(colFile)
                                             .put(", size=").put(fileSize).put(']');
                                 }
-                                long addr = TableUtils.mapRO(ff, fd, fileSize, MemoryTag.MMAP_DEFAULT);
-                                o3SealAddrs.setQuick(c, addr);
-                                o3SealMappedSizes.setQuick(c, fileSize);
+                                if (fileSize == 0) {
+                                    if (!isVarSize) {
+                                        throw CairoException.critical(0)
+                                                .put("covering column file is empty [path=").put(colFile)
+                                                .put(", size=").put(fileSize).put(']');
+                                    }
+                                } else {
+                                    long addr = TableUtils.mapRO(ff, fd, fileSize, MemoryTag.MMAP_DEFAULT);
+                                    o3SealAddrs.setQuick(c, addr);
+                                    o3SealMappedSizes.setQuick(c, fileSize);
+                                }
                             } finally {
                                 ff.close(fd);
+                            }
+                            if (isVarSize) {
+                                LPSZ auxFile = TableUtils.iFile(path.trimTo(plen), metadata.getColumnName(covCol), covColNameTxn);
+                                long auxFd = ff.openRO(auxFile);
+                                if (auxFd < 0) {
+                                    throw CairoException.critical(ff.errno())
+                                            .put("could not open covering aux file [path=").put(auxFile).put(']');
+                                }
+                                try {
+                                    long auxSize = ff.length(auxFd);
+                                    if (auxSize < 0) {
+                                        throw CairoException.critical(0)
+                                                .put("invalid covering aux file size [path=").put(auxFile)
+                                                .put(", size=").put(auxSize).put(']');
+                                    }
+                                    if (auxSize > 0) {
+                                        long auxAddr = TableUtils.mapRO(ff, auxFd, auxSize, MemoryTag.MMAP_DEFAULT);
+                                        o3SealAuxAddrs.setQuick(c, auxAddr);
+                                        o3SealAuxMappedSizes.setQuick(c, auxSize);
+                                    }
+                                } finally {
+                                    ff.close(auxFd);
+                                }
                             }
                         }
 
@@ -10777,7 +10815,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                         // entry. metadata is TableWriterMetadata, whose
                         // getTimestampIndex returns the writer-space
                         // value directly from META_OFFSET_TIMESTAMP_INDEX.
-                        indexer.configureCovering(o3SealAddrs, o3SealTops, o3SealShifts, coveringCols, o3SealTypes, coverCount,
+                        indexer.configureCovering(o3SealAddrs, o3SealAuxAddrs, o3SealTops, o3SealShifts, coveringCols, o3SealTypes, coverCount,
                                 metadata.getTimestampIndex());
                         indexer.setCoveredColumnNameTxns(o3SealNameTxns);
                         // sealPostingIndexesForO3Partitions runs inside
@@ -10804,6 +10842,10 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                             if (o3SealAddrs.getQuick(c) != 0) {
                                 ff.munmap(o3SealAddrs.getQuick(c), o3SealMappedSizes.getQuick(c), MemoryTag.MMAP_DEFAULT);
                                 o3SealAddrs.setQuick(c, 0);
+                            }
+                            if (o3SealAuxAddrs.getQuick(c) != 0) {
+                                ff.munmap(o3SealAuxAddrs.getQuick(c), o3SealAuxMappedSizes.getQuick(c), MemoryTag.MMAP_DEFAULT);
+                                o3SealAuxAddrs.setQuick(c, 0);
                             }
                         }
                         // Clear the writer's reference to o3SealAddrs so that

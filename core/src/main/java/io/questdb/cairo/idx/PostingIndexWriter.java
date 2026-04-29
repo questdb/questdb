@@ -85,6 +85,7 @@ public class PostingIndexWriter implements IndexWriter {
     private final CairoConfiguration configuration;
     // O3 addr-based covering: caller-provided native memory addresses
     private final LongList coveredColumnAddrs = new LongList();
+    private final LongList coveredColumnAuxAddrs = new LongList();
     private final IntList coveredColumnIndices = new IntList();
     private final LongList coveredColumnNameTxns = new LongList();
     private final ObjList<CharSequence> coveredColumnNames = new ObjList<>();
@@ -291,6 +292,7 @@ public class PostingIndexWriter implements IndexWriter {
     public void clearCovering() {
         unmapCoveredColumnReads();
         this.coveredColumnAddrs.clear();
+        this.coveredColumnAuxAddrs.clear();
         this.coveredPartitionPath.clear();
         this.coveredColumnNames.clear();
         this.coveredColumnNameTxns.clear();
@@ -421,6 +423,7 @@ public class PostingIndexWriter implements IndexWriter {
         this.coveredColumnNames.clear();
         this.coveredColumnNameTxns.clear();
         this.coveredColumnAddrs.clear();
+        this.coveredColumnAuxAddrs.clear();
         this.coveredColumnTops.clear();
         this.coveredColumnShifts.clear();
         this.coveredColumnIndices.clear();
@@ -435,19 +438,9 @@ public class PostingIndexWriter implements IndexWriter {
         this.timestampColumnIndex = timestampColumnIndex;
     }
 
-    /**
-     * Configure covering with pre-mapped addresses. Used by O3 where column
-     * data lives in native memory buffers, not files on disk. The caller
-     * owns the mmaps and is responsible for unmapping them.
-     * <p>
-     * timestampColumnIndex is the writer-space index of the designated
-     * timestamp; pass -1 if no covered column is the designated timestamp.
-     * It must be passed through so the O3 reseal path keeps using the
-     * linear-prediction encoder for the timestamp covering instead of
-     * silently falling back to the generic long encoder.
-     */
     public void configureCovering(
             LongList coveredColumnAddrs,
+            LongList coveredColumnAuxAddrs,
             LongList coveredColumnTops,
             IntList coveredColumnShifts,
             IntList coveredColumnIndices,
@@ -460,12 +453,14 @@ public class PostingIndexWriter implements IndexWriter {
         this.coveredColumnNames.clear();
         this.coveredColumnNameTxns.clear();
         this.coveredColumnAddrs.clear();
+        this.coveredColumnAuxAddrs.clear();
         this.coveredColumnTops.clear();
         this.coveredColumnShifts.clear();
         this.coveredColumnIndices.clear();
         this.coveredColumnTypes.clear();
         for (int i = 0; i < coverCount; i++) {
             this.coveredColumnAddrs.add(coveredColumnAddrs.getQuick(i));
+            this.coveredColumnAuxAddrs.add(coveredColumnAuxAddrs != null ? coveredColumnAuxAddrs.getQuick(i) : 0);
             this.coveredColumnTops.add(coveredColumnTops.getQuick(i));
             this.coveredColumnShifts.add(coveredColumnShifts.getQuick(i));
             this.coveredColumnIndices.add(coveredColumnIndices.getQuick(i));
@@ -511,7 +506,7 @@ public class PostingIndexWriter implements IndexWriter {
             indices.add(coveredColumnIndices[i]);
             types.add(coveredColumnTypes[i]);
         }
-        configureCovering(addrs, tops, shifts, indices, types, coverCount, timestampColumnIndex);
+        configureCovering(addrs, null, tops, shifts, indices, types, coverCount, timestampColumnIndex);
     }
 
     @TestOnly
@@ -1824,10 +1819,13 @@ public class PostingIndexWriter implements IndexWriter {
                 }
             }
         } else if (coveredColumnAddrs.size() > 0) {
-            // Addr-based (O3): reference caller's addresses, size=0 means not owned
             for (int c = 0; c < coverCount; c++) {
                 coveredColReadAddrs[c] = coveredColumnAddrs.getQuick(c);
-                coveredColReadSizes[c] = 0; // not owned — caller unmaps
+                coveredColReadSizes[c] = 0;
+                if (coveredColumnAuxAddrs.size() > c) {
+                    coveredAuxReadAddrs[c] = coveredColumnAuxAddrs.getQuick(c);
+                    coveredAuxReadSizes[c] = 0;
+                }
             }
         }
     }
