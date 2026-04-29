@@ -147,9 +147,7 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_ParquetParti
         filtered_rows_count,
     );
     if let Err(mut err) = res {
-        err.add_context(
-            "error in ParquetPartitionDecoder.decodeRowGroupWithRowFilterFillNulls",
-        );
+        err.add_context("error in ParquetPartitionDecoder.decodeRowGroupWithRowFilterFillNulls");
         let _: () = err.into_cairo_exception().throw(env);
     }
 }
