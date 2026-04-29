@@ -24,6 +24,7 @@
 
 package io.questdb.test.griffin;
 
+import io.questdb.griffin.SqlException;
 import io.questdb.test.AbstractCairoTest;
 import org.junit.Ignore;
 import org.junit.Test;
@@ -408,6 +409,25 @@ public class OrderByExpressionTest extends AbstractCairoTest {
                   SELECT 123 AS "5_sum"
                 )
                 ORDER BY "5_sum\""""));
+    }
+
+    @Test
+    public void testOrderByOnNullConstantDoesNotLeakTreeChain() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (c0 TIMESTAMP, c1 DOUBLE, c2 DOUBLE[], ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO t VALUES (NULL, 1.0, ARRAY[1.0,2.0], '2024-01-01T00:00:00.000000Z')");
+
+            // Multi-column ORDER BY where one key resolves to a NULL constant.
+            // RecordComparatorCompiler throws SqlException("column type is not
+            // supported for order by: NULL") part-way through factory
+            // construction, and a partially built sort factory leaks its
+            // NATIVE_TREE_CHAIN allocation.
+            try {
+                execute("SELECT null AS e0, c2 AS e1, (c1)::INT AS e2 FROM t ORDER BY 3, 1");
+            } catch (SqlException ignore) {
+                // Expected: ORDER BY on a NULL-typed column is rejected.
+            }
+        });
     }
 
     @Test

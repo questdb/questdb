@@ -950,6 +950,37 @@ public class GroupByTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testGroupByArrayKeyDoesNotLeak() throws Exception {
+        // Regression: count_distinct(<expression>) over a row source rewrites to
+        //   count(*) FROM (SELECT <expr> FROM ... WHERE <expr> IS NOT NULL GROUP BY <expr>)
+        // When <expr> is an ARRAY constructor, GroupByUtils rejects the GROUP BY
+        // key as "unsupported type of expression". The first column loop in
+        // assembleGroupByFunctions adds the parsed ARRAY Function to both outer
+        // and inner projection lists, then the third loop replaces the outer
+        // entry with a column-ref Function -- leaving the original ARRAY (and
+        // its NATIVE_ND_ARRAY backing) reachable only via the inner list. The
+        // failure-path cleanup now walks both lists and frees each unique
+        // reference exactly once.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (x INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO t VALUES (1, '2024-01-01T00:00:00.000000Z')");
+            for (String q : new String[]{
+                    "SELECT count_distinct(ARRAY[0.9873]) FROM t WHERE ts < ts",
+                    "SELECT count_distinct(ARRAY[ARRAY[0.7172, 0.6604, 0.0546]," +
+                            " ARRAY[0.1216, 0.4188, 0.8926]]) FROM t WHERE ts < ts",
+            }) {
+                try {
+                    engine.select(q, sqlExecutionContext).close();
+                    Assert.fail("expected SqlException");
+                } catch (SqlException expected) {
+                    TestUtils.assertContains(expected.getFlyweightMessage(),
+                            "unsupported type of expression");
+                }
+            }
+        });
+    }
+
+    @Test
     public void testGroupByColumnIdx1() throws Exception {
         assertQuery(
                 """
@@ -1196,6 +1227,33 @@ public class GroupByTest extends AbstractCairoTest {
                 69,
                 "Invalid date"
         );
+    }
+
+    @Test
+    public void testGroupByNullLiteralKey() throws Exception {
+        // Regression: a bare `null` literal in the SELECT list referenced from GROUP BY
+        // used to blow up the map key sink codegen with
+        //     IllegalArgumentException: Unexpected function type: NULL
+        // The NULL-typed key is now stored as a zero-width column (no bytes reserved),
+        // so all rows collapse into a single group as expected.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (v INT) ");
+            execute("INSERT INTO t VALUES (1), (2), (3)");
+            assertSql(
+                    "e0\ta0\n" +
+                            "null\t2.0\n",
+                    "SELECT null AS e0, avg(v) AS a0 FROM t GROUP BY 1"
+            );
+            // A real key alongside the constant NULL still grouped per real-key value.
+            execute("CREATE TABLE t2 (k INT, v INT)");
+            execute("INSERT INTO t2 VALUES (1, 10), (1, 20), (2, 30)");
+            assertSql(
+                    "e0\tk\ta\n" +
+                            "null\t1\t15.0\n" +
+                            "null\t2\t30.0\n",
+                    "SELECT null AS e0, k, avg(v) AS a FROM t2 GROUP BY 1, k ORDER BY k"
+            );
+        });
     }
 
     @Test

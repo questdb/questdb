@@ -45,6 +45,12 @@ public class IntIntHashMap extends AbstractIntHashSet {
         clear();
     }
 
+    public IntIntHashMap(int initialCapacity, double loadFactor, int noKeyValue) {
+        super(initialCapacity, loadFactor, noKeyValue);
+        values = new int[keys.length];
+        clear();
+    }
+
     public int get(int key) {
         return valueAt(keyIndex(key));
     }

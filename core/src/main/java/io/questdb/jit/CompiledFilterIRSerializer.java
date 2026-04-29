@@ -110,6 +110,7 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
     public static final int RET = 0;  // ret
     public static final int STRING_HEADER_TYPE = 7;
     public static final int SUB = 15;  // a - b
+    public static final int SX_I64 = 22; // sign-extend top of stack to i64
     // Bind variables and deferred symbols
     public static final int VAR = 3;
     public static final int VARCHAR_HEADER_TYPE = 9;
@@ -138,6 +139,7 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
     // List to collect predicates from AND chains for reordering
     private final ObjList<ExpressionNode> collectedPredicates = new ObjList<>();
     private final PredicateContext predicateContext = new PredicateContext();
+    private final NarrowI64WidenDetector narrowI64WidenDetector = new NarrowI64WidenDetector();
     private final ScalarModeDetector scalarModeDetector = new ScalarModeDetector();
     private final StringSink sink = new StringSink();
     private final PostOrderTreeTraversalAlgo traverseAlgo = new PostOrderTreeTraversalAlgo();
@@ -294,11 +296,14 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
         if (predicateLeft) {
             // We're out of a predicate
 
-            // Force scalar mode if the predicate had byte or short arithmetic operations.
-            // That's because SIMD mode uses byte/short-sized overflows for arithmetic
-            // calculations instead of implicit upcast to int done by *.sql.Function classes.
-            forceScalarMode |=
-                    predicateContext.hasArithmeticOperations && predicateContext.localTypesObserver.maxSize() <= 2;
+            // Force scalar mode if the predicate has byte or short arithmetic operations.
+            // SIMD mode operates at byte/short width and overflows on intermediate values
+            // (e.g. SHORT * SHORT for c1=200 yields -25536, not 40000); scalar mode upcasts
+            // to int. This applies whether the predicate is all-narrow (maxSize <= 2) or
+            // mixes narrow with wider operands -- both are unsafe under SIMD.
+            forceScalarMode |= predicateContext.hasArithmeticOperations
+                    && (predicateContext.localTypesObserver.maxSize() <= 2
+                    || predicateContext.localTypesObserver.hasNarrowInt());
 
             // Then backfill constants and symbol bind variables and clean up
             try {
@@ -521,6 +526,7 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
                     break;
                 case NEG:
                 case NOT:
+                case SX_I64:
                     typeStack.pop();
                     typeStack.push(typeCode);
                     break;
@@ -530,6 +536,16 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
                     int rhsType = typeStack.pop();
                     if ((lhsType != rhsType && isVarSizeType(lhsType) && isVarSizeType(rhsType))
                             || (lhsType == rhsType && isVarSizeType(lhsType))) {
+                        throw SqlException.$(0, "var-size columns can only be used in NULL checks");
+                    }
+                    // serializeNull() emits IMM with I8_TYPE / I4_TYPE for var-size
+                    // header NULL sentinels, so the rule above does not catch
+                    // <varsize> >= null and similar. Only IS [NOT] NULL, which
+                    // lowers to EQ/NE against the NULL header IMM, is meaningful
+                    // for var-size operands; every other operator must fall back
+                    // to the Java filter.
+                    if ((isVarSizeType(lhsType) || isVarSizeType(rhsType))
+                            && opCode != EQ && opCode != NE) {
                         throw SqlException.$(0, "var-size columns can only be used in NULL checks");
                     }
                     typeStack.push(typeCode);
@@ -557,6 +573,37 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
             return leftType;
         }
         return findOperandColumnType(node.rhs);
+    }
+
+    private void maybeEmitI64Widening(int typeCode) {
+        // Sign-extend the narrow integer operand to i64 so the next arithmetic
+        // op dispatches to int64_*, matching the Java filter's
+        // MulInt.getLong / AddInt.getLong, which compute via ((long) l) OP r.
+        // Only triggers when NarrowI64WidenDetector saw arithmetic + LONG +
+        // INT in the predicate; BYTE / SHORT alone never overflow int32 so
+        // they do not need widening.
+        if (predicateContext.needsNarrowI64Widening
+                && (typeCode == I1_TYPE || typeCode == I2_TYPE || typeCode == I4_TYPE)) {
+            putOperator(SX_I64);
+        }
+    }
+
+    private Function lookupBindVariable(CharSequence token) {
+        BindVariableService svc = executionContext.getBindVariableService();
+        if (svc == null || token == null || token.length() == 0) {
+            return null;
+        }
+        if (token.charAt(0) == ':') {
+            return svc.getFunction(token);
+        }
+        try {
+            int idx = Numbers.parseInt(token, 1, token.length());
+            if (idx >= 1) {
+                return svc.getFunction(idx - 1);
+            }
+        } catch (NumericException ignore) {
+        }
+        return null;
     }
 
     private Function getBindVariableFunction(int position, CharSequence token) throws SqlException {
@@ -815,6 +862,7 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
             bindVarFunctions.add(varFunction);
             int index = bindVarFunctions.size() - 1;
             putOperand(VAR, typeCode, index);
+            maybeEmitI64Widening(typeCode);
         } else {
             throw SqlException.position(node.position)
                     .put("bind variable outside of predicate: ")
@@ -849,6 +897,7 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
                 return;
             }
             putOperand(MEM, typeCode, index);
+            maybeEmitI64Widening(typeCode);
         } else {
             throw SqlException.position(position)
                     .put("non-boolean column outside of predicate: ")
@@ -1164,14 +1213,29 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
         long sign = negated ? -1 : 1;
         try {
             switch (typeCode) {
-                case I1_TYPE:
-                    final byte b = (byte) Numbers.parseInt(token);
-                    putOperand(offset, IMM, I1_TYPE, sign * b);
+                case I1_TYPE: {
+                    // Range-check before narrowing; an out-of-range int literal would
+                    // silently fold to the column's low byte and admit rows that the
+                    // scalar Java filter (which widens column to int) correctly rejects.
+                    // Throwing SqlException here makes SqlCodeGenerator fall back to
+                    // the Java filter, which evaluates the comparison at int width.
+                    final long bImm = sign * Numbers.parseInt(token);
+                    if (bImm < Byte.MIN_VALUE || bImm > Byte.MAX_VALUE) {
+                        throw SqlException.position(position)
+                                .put("byte literal out of range: ").put(token);
+                    }
+                    putOperand(offset, IMM, I1_TYPE, bImm);
                     break;
-                case I2_TYPE:
-                    final short s = (short) Numbers.parseInt(token);
-                    putOperand(offset, IMM, I2_TYPE, sign * s);
+                }
+                case I2_TYPE: {
+                    final long sImm = sign * Numbers.parseInt(token);
+                    if (sImm < Short.MIN_VALUE || sImm > Short.MAX_VALUE) {
+                        throw SqlException.position(position)
+                                .put("short literal out of range: ").put(token);
+                    }
+                    putOperand(offset, IMM, I2_TYPE, sImm);
                     break;
+                }
                 case I4_TYPE:
                 case F4_TYPE:
                     try {
@@ -1402,11 +1466,18 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
     private void serializeUntypedNumber(long offset, int position, final CharSequence token, boolean negated) throws SqlException {
         long sign = negated ? -1 : 1;
 
-        try {
-            final int i = Numbers.parseInt(token);
-            putOperand(offset, IMM, I4_TYPE, sign * i);
-            return;
-        } catch (NumericException ignore) {
+        // Skip the parseInt fallback when the predicate has a LONG operand: the
+        // Java filter's SubLong / AddLong reaches into MulInt.getLong and
+        // computes at long width, so the JIT IMM must be I8 too. F4 / F8
+        // operands intentionally do not trigger this -- IntFunction.getDouble
+        // does intToDouble(getInt), keeping the int math at int width.
+        if (!predicateContext.localTypesObserver.hasI8()) {
+            try {
+                final int i = Numbers.parseInt(token);
+                putOperand(offset, IMM, I4_TYPE, sign * i);
+                return;
+            } catch (NumericException ignore) {
+            }
         }
 
         try {
@@ -1517,6 +1588,14 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
             return UNDEFINED_CODE;
         }
 
+        public boolean hasI4() {
+            return sizes[I4_INDEX] != 0;
+        }
+
+        public boolean hasI8() {
+            return sizes[I8_INDEX] != 0;
+        }
+
         public boolean hasMixedSizes() {
             byte prevSize = 0;
             for (byte size : sizes) {
@@ -1530,6 +1609,10 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
                 }
             }
             return false;
+        }
+
+        public boolean hasNarrowInt() {
+            return sizes[I1_INDEX] != 0 || sizes[I2_INDEX] != 0;
         }
 
         /**
@@ -1627,6 +1710,11 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
         private final LongList inIntervals = new LongList();
         int columnType;
         boolean hasArithmeticOperations;
+        // True when the predicate has integer arithmetic mixed with a LONG
+        // operand. The IR emitter widens narrow operands to i64 in this case
+        // so the JIT computes at long width, matching MulInt.getLong /
+        // AddInt.getLong (which promote via ((long) l) OP r).
+        boolean needsNarrowI64Widening;
         int shortCircuitMode = SC_NONE; // short-circuit evaluation mode
         boolean singleBooleanColumn;
         int symbolColumnIndex; // used for symbol deferred constants and bind variables
@@ -1654,6 +1742,16 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
                     // We entered a predicate.
                     reset();
                     rootNode = node;
+                    // Pre-pass: decide whether to widen narrow integer operands
+                    // to i64 at IR emission time. See NarrowI64WidenDetector.
+                    try {
+                        narrowI64WidenDetector.clear();
+                        traverseAlgo.traverse(node, narrowI64WidenDetector);
+                        needsNarrowI64Widening = narrowI64WidenDetector.shouldWiden();
+                    } catch (SqlException ignore) {
+                        // Detector does not throw; defensive only.
+                        needsNarrowI64Widening = false;
+                    }
                 }
                 if (topLevelBooleanColumn) {
                     columnType = ColumnType.BOOLEAN;
@@ -1745,6 +1843,7 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
             symbolColumnIndex = -1;
             singleBooleanColumn = false;
             hasArithmeticOperations = false;
+            needsNarrowI64Widening = false;
             localTypesObserver.clear();
             currentInSerialization = false;
             handledShortCircuitExit = false;
@@ -1847,6 +1946,64 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
      * Scalar mode is guaranteed when columns of different sizes are found (mixed sizes),
      * which sets exec_hint to EXEC_HINT_MIXED_SIZE_TYPE, forcing the scalar code path.
      */
+    /**
+     * Per-predicate pre-pass that decides whether the JIT IR emitter should
+     * widen narrow integer operands to i64 before arithmetic ops. Triggers when
+     * the predicate has integer arithmetic AND an I8 operand AND an I4 operand
+     * (BYTE / SHORT alone never overflow int32 and stay correct under int32
+     * arithmetic; INT can overflow). When triggered, the IR emitter wraps each
+     * narrow column / bind variable with `IMM I8 0 + ADD`, which makes the C++
+     * convert() promote the value to i64 before mul / add / sub / div
+     * dispatches to int64_*. This matches the Java filter's
+     * MulInt.getLong / AddInt.getLong, which compute via ((long) l) OP r.
+     */
+    private class NarrowI64WidenDetector implements PostOrderTreeTraversalAlgo.Visitor, Mutable {
+        private final TypesObserver typesObserver = new TypesObserver();
+        private boolean hasArithmetic;
+
+        @Override
+        public void clear() {
+            typesObserver.clear();
+            hasArithmetic = false;
+        }
+
+        @Override
+        public boolean descend(ExpressionNode node) {
+            return true;
+        }
+
+        boolean shouldWiden() {
+            return hasArithmetic && typesObserver.hasI4() && typesObserver.hasI8();
+        }
+
+        @Override
+        public void visit(ExpressionNode node) {
+            switch (node.type) {
+                case ExpressionNode.LITERAL: {
+                    int columnIndex = metadata.getColumnIndexQuiet(node.token);
+                    if (columnIndex != -1) {
+                        int typeCode = columnTypeCode(ColumnType.tagOf(metadata.getColumnType(columnIndex)));
+                        typesObserver.observe(typeCode);
+                    }
+                    break;
+                }
+                case ExpressionNode.BIND_VARIABLE: {
+                    Function bindFunction = lookupBindVariable(node.token);
+                    if (bindFunction != null) {
+                        int typeCode = bindVariableTypeCode(ColumnType.tagOf(bindFunction.getType()));
+                        if (typeCode != UNDEFINED_CODE) {
+                            typesObserver.observe(typeCode);
+                        }
+                    }
+                    break;
+                }
+                case ExpressionNode.OPERATION:
+                    hasArithmetic |= isArithmeticOperation(node);
+                    break;
+            }
+        }
+    }
+
     private class ScalarModeDetector implements PostOrderTreeTraversalAlgo.Visitor, Mutable {
         private final TypesObserver typesObserver = new TypesObserver();
 

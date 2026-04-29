@@ -26,6 +26,7 @@ package io.questdb.griffin.engine.table;
 
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoException;
+import io.questdb.cairo.ImplicitCastException;
 import io.questdb.cairo.sql.PageFrameMemory;
 import io.questdb.cairo.sql.PageFrameMemoryPool;
 import io.questdb.cairo.sql.PageFrameMemoryRecord;
@@ -40,6 +41,7 @@ import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.DirectLongList;
 import io.questdb.std.Misc;
+import io.questdb.std.NumericException;
 import io.questdb.std.Os;
 import io.questdb.std.Rows;
 import org.jetbrains.annotations.NotNull;
@@ -199,13 +201,9 @@ class AsyncFilteredNegativeLimitRecordCursor implements RecordCursor {
                             .$(", active=").$(frameSequence.isActive())
                             .$(", cursor=").$(cursor)
                             .I$();
+
                     if (task.hasError()) {
-                        throw CairoException.nonCritical()
-                                .position(task.getErrorMessagePosition())
-                                .put(task.getErrorMsg())
-                                .setCancellation(task.isCancelled())
-                                .setInterruption(task.isCancelled())
-                                .setOutOfMemory(task.isOutOfMemory());
+                        throw task.buildError();
                     }
 
                     // Consider frame sequence status only if we haven't accumulated enough rows.
@@ -246,6 +244,11 @@ class AsyncFilteredNegativeLimitRecordCursor implements RecordCursor {
                 } else {
                     throw ce;
                 }
+            }
+            // Preserve typed user-facing errors (ImplicitCastException / NumericException)
+            // raised via task.buildError() so the caller can recognise them.
+            if (e instanceof ImplicitCastException || e instanceof NumericException) {
+                throw (RuntimeException) e;
             }
             throw CairoException.nonCritical().put(e.getMessage());
         }

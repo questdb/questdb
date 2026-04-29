@@ -595,6 +595,158 @@ public class SampleByTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testFillValueIntCastsToDecimalAggregate() throws Exception {
+        // IntFunction has no typed DECIMAL accessor, so FillRange would crash at runtime with
+        // UnsupportedOperationException. The compiler wraps the fill value in an INT -> DECIMAL
+        // implicit cast so it reads correctly at runtime.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t_fv_dec_i (d DECIMAL(10,2), ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO t_fv_dec_i VALUES (1.5::DECIMAL(10,2), 0), (2.5::DECIMAL(10,2), 300_000_000)");
+            execute("CREATE TABLE t_fv_dec_i_out AS (SELECT ts, avg(d) AS avg FROM t_fv_dec_i SAMPLE BY 1m FILL(0))");
+        });
+    }
+
+    @Test
+    public void testFillValueIntWidensToLongAggregate() throws Exception {
+        // Sanity check: INT -> LONG is a built-in widening cast, no wrapper needed.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t_fv_long (n INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO t_fv_long VALUES (1, 0), (2, 300_000_000)");
+            execute("CREATE TABLE t_fv_long_out AS (SELECT ts, sum(n) AS s FROM t_fv_long SAMPLE BY 1m FILL(0))");
+        });
+    }
+
+    @Test
+    public void testFillValueRejectedForArrayAggregate() throws Exception {
+        // first(array) returns DOUBLE[]; no INT -> ARRAY implicit cast exists.
+        assertException(
+                "SELECT ts, first(a) FROM t_fv_arr SAMPLE BY 1m FILL(0)",
+                "CREATE TABLE t_fv_arr (a DOUBLE[], ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY",
+                52,
+                "support for VALUE fill is not yet implemented"
+        );
+    }
+
+    @Test
+    public void testFillValueRejectedForGeoHashAggregate() throws Exception {
+        // first(geohash) returns GEOHASH; no INT -> GEOHASH implicit cast exists.
+        assertException(
+                "SELECT ts, first(g) FROM t_fv_geo SAMPLE BY 1m FILL(0)",
+                "CREATE TABLE t_fv_geo (g GEOHASH(5c), ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY",
+                52,
+                "support for VALUE fill is not yet implemented"
+        );
+    }
+
+    @Test
+    public void testFillValueRejectedForIPv4Aggregate() throws Exception {
+        // first(ipv4) returns IPv4; no INT -> IPv4 implicit cast exists, and IntFunction.getIPv4
+        // throws UnsupportedOperationException at runtime.
+        assertException(
+                "SELECT ts, first(ip) FROM t_fv_ip SAMPLE BY 1m FILL(0)",
+                "CREATE TABLE t_fv_ip (ip IPv4, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY",
+                52,
+                "support for VALUE fill is not yet implemented"
+        );
+    }
+
+    @Test
+    public void testFillValueRejectedForLong256Aggregate() throws Exception {
+        // sum(long256) returns LONG256; no INT -> LONG256 implicit cast exists.
+        assertException(
+                "SELECT ts, sum(l) FROM t_fv_l256 SAMPLE BY 1m FILL(0)",
+                "CREATE TABLE t_fv_l256 (l LONG256, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY",
+                51,
+                "support for VALUE fill is not yet implemented"
+        );
+    }
+
+    @Test
+    public void testFillValueRejectedForStringAggregate() throws Exception {
+        // first(string) returns STRING; no INT -> STRING implicit cast exists.
+        assertException(
+                "SELECT ts, first(s) FROM t_fv_str SAMPLE BY 1m FILL(0)",
+                "CREATE TABLE t_fv_str (s STRING, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY",
+                52,
+                "support for VALUE fill is not yet implemented"
+        );
+    }
+
+    @Test
+    public void testFillValueRejectedForUuidAggregate() throws Exception {
+        // first(uuid) returns UUID; no INT -> UUID implicit cast exists.
+        assertException(
+                "SELECT ts, first(u) FROM t_fv_uuid SAMPLE BY 1m FILL(0)",
+                "CREATE TABLE t_fv_uuid (u UUID, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY",
+                53,
+                "support for VALUE fill is not yet implemented"
+        );
+    }
+
+    @Test
+    public void testFillValueStringCastsToDecimalAggregate() throws Exception {
+        // STRING -> DECIMAL implicit cast exists via CastStrToDecimalFunctionFactory.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t_fv_dec_s (d DECIMAL(10,2), ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO t_fv_dec_s VALUES (1.5::DECIMAL(10,2), 0), (2.5::DECIMAL(10,2), 300_000_000)");
+            execute("CREATE TABLE t_fv_dec_s_out AS (SELECT ts, avg(d) AS avg FROM t_fv_dec_s SAMPLE BY 1m FILL('1.5'))");
+        });
+    }
+
+    @Test
+    public void testFillNullOrderBySampleByLong256Key() throws Exception {
+        // Regression: SAMPLE BY ... FILL(NULL) ORDER BY <non-ts> with a LONG256 key hits
+        // SortedRecordCursor -> RecordChain.put -> Record.getLong256A. The fill record used
+        // by the classic keyed SAMPLE BY (SampleByFillRecord) did not implement getLong256*,
+        // so it fell through to Record's default throwing impl.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t_sb_l256 (k LONG256, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO t_sb_l256 VALUES ('0x01'::LONG256, 0), ('0x02'::LONG256, 60_000_000), ('0x01'::LONG256, 900_000_000)");
+            assertQueryNoLeakCheck(
+                    """
+                            k\tcnt\tts
+                            0x01\t1\t1970-01-01T00:00:00.000000Z
+                            0x01\tnull\t1970-01-01T00:01:00.000000Z
+                            0x01\tnull\t1970-01-01T00:02:00.000000Z
+                            0x01\tnull\t1970-01-01T00:03:00.000000Z
+                            0x01\tnull\t1970-01-01T00:04:00.000000Z
+                            0x01\tnull\t1970-01-01T00:05:00.000000Z
+                            0x01\tnull\t1970-01-01T00:06:00.000000Z
+                            0x01\tnull\t1970-01-01T00:07:00.000000Z
+                            0x01\tnull\t1970-01-01T00:08:00.000000Z
+                            0x01\tnull\t1970-01-01T00:09:00.000000Z
+                            0x01\tnull\t1970-01-01T00:10:00.000000Z
+                            0x01\tnull\t1970-01-01T00:11:00.000000Z
+                            0x01\tnull\t1970-01-01T00:12:00.000000Z
+                            0x01\tnull\t1970-01-01T00:13:00.000000Z
+                            0x01\tnull\t1970-01-01T00:14:00.000000Z
+                            0x01\t1\t1970-01-01T00:15:00.000000Z
+                            0x02\tnull\t1970-01-01T00:00:00.000000Z
+                            0x02\t1\t1970-01-01T00:01:00.000000Z
+                            0x02\tnull\t1970-01-01T00:02:00.000000Z
+                            0x02\tnull\t1970-01-01T00:03:00.000000Z
+                            0x02\tnull\t1970-01-01T00:04:00.000000Z
+                            0x02\tnull\t1970-01-01T00:05:00.000000Z
+                            0x02\tnull\t1970-01-01T00:06:00.000000Z
+                            0x02\tnull\t1970-01-01T00:07:00.000000Z
+                            0x02\tnull\t1970-01-01T00:08:00.000000Z
+                            0x02\tnull\t1970-01-01T00:09:00.000000Z
+                            0x02\tnull\t1970-01-01T00:10:00.000000Z
+                            0x02\tnull\t1970-01-01T00:11:00.000000Z
+                            0x02\tnull\t1970-01-01T00:12:00.000000Z
+                            0x02\tnull\t1970-01-01T00:13:00.000000Z
+                            0x02\tnull\t1970-01-01T00:14:00.000000Z
+                            0x02\tnull\t1970-01-01T00:15:00.000000Z
+                            """,
+                    "SELECT k, count() AS cnt, ts FROM t_sb_l256 SAMPLE BY 1m FILL(NULL) ORDER BY k, ts",
+                    null,
+                    true,
+                    false
+            );
+        });
+    }
+
+    @Test
     public void testFillValueException() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table telem (created timestamp, event_type int, table_id int, latency double) timestamp(created) partition by DAY");
@@ -4163,6 +4315,39 @@ public class SampleByTest extends AbstractCairoTest {
                 145,
                 "SELECT query must not contain both GROUP BY and SAMPLE BY"
         );
+    }
+
+    @Test
+    public void testSampleByIntCastToSymbolKeyHandlesNullLength() throws Exception {
+        // Regression: AbstractCastToSymbolFunction.symbolTableShortcut used IntIntHashMap
+        // with the default sentinel of -1 for the empty-slot marker. length(null_sym)
+        // returns -1, which collided with the sentinel, so each call inserted a fresh
+        // entry instead of reusing the cached id. Pass 1 (initMap) and pass 2 (buildMap)
+        // of SampleByFillValueRecordCursor consequently produced different keys for
+        // the same row, tripping `assert value != null` in buildMap.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t_sb_intsym (sym SYMBOL, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO t_sb_intsym SELECT rnd_symbol(8, 3, 5, 8), " +
+                    "timestamp_sequence(to_timestamp('2024-01-01', 'yyyy-MM-dd'), 100_000_000L) " +
+                    "FROM long_sequence(200)");
+            // The key is length(sym)::SYMBOL; null symbols produce length=-1 which used
+            // to collide with the IntIntHashMap empty-slot sentinel.
+            try (
+                    RecordCursorFactory f = engine.select(
+                            "SELECT (length(sym))::SYMBOL AS k_a, count() AS agg_a, ts AS ts_a " +
+                                    "FROM t_sb_intsym SAMPLE BY 30s FILL(0) ALIGN TO CALENDAR ORDER BY 3 ASC",
+                            sqlExecutionContext);
+                    RecordCursor c = f.getCursor(sqlExecutionContext)
+            ) {
+                Record r = c.getRecord();
+                while (c.hasNext()) {
+                    // materialize all columns to drive every accessor
+                    r.getSymA(0);
+                    r.getLong(1);
+                    r.getTimestamp(2);
+                }
+            }
+        });
     }
 
     @Test

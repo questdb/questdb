@@ -30,10 +30,41 @@ import io.questdb.test.griffin.engine.AbstractFunctionFactoryTest;
 import org.junit.Test;
 
 public class SubIntFunctionFactoryTest extends AbstractFunctionFactoryTest {
+
+    @Test
+    public void testGetLongPropagatesNullAsLongNull() throws Exception {
+        // Cross-type LONG = (INT - INT) compares c6.getLong() with the
+        // subtract result widened to long. When either operand is INT_NULL
+        // the result must widen to LONG_NULL, not the int value INT_NULL
+        // (-2_147_483_648) accidentally widened to a regular long. Java
+        // filter previously returned INT_NULL from SubIntFunc.getLong(),
+        // which silently widened to long -2_147_483_648 and matched any
+        // c6 column row holding that exact value.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (c4 INT, c6 LONG)");
+            execute("INSERT INTO x VALUES " +
+                    "(NULL, NULL), " +
+                    "(NULL, -2147483648), " +
+                    "(5, 562940)");
+            assertQueryNoLeakCheck(
+                    "c4\tc6\nnull\tnull\n5\t562940\n",
+                    "SELECT * FROM x WHERE c6 = (562945 - c4)",
+                    null,
+                    true,
+                    false
+            );
+        });
+    }
+
     @Test
     public void testLeftNan() throws Exception {
-        assertQuery("column\n" +
-                "null\n", "SELECT null - 5");
+        assertQuery(
+                """
+                        column
+                        null
+                        """,
+                "SELECT null - 5"
+        );
     }
 
     @Test

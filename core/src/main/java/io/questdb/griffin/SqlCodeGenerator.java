@@ -29,7 +29,6 @@ import io.questdb.TelemetryOrigin;
 import io.questdb.cairo.ArrayColumnTypes;
 import io.questdb.cairo.BitmapIndexReader;
 import io.questdb.cairo.CairoConfiguration;
-import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnFilter;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.ColumnTypes;
@@ -1497,18 +1496,15 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             return false;
         }
 
-        if (loFunc != null && loFunc.isConstant()
-                && hiFunc != null && hiFunc.isConstant()) {
+        if (loFunc != null && loFunc.isConstant() && hiFunc != null && hiFunc.isConstant()) {
             try {
                 loFunc.init(null, context);
                 hiFunc.init(null, context);
-
                 return !(loFunc.getLong(null) >= 0 && hiFunc.getLong(null) < 0);
             } catch (SqlException ex) {
                 LOG.error().$("Failed to initialize lo or hi functions [").$("error=").$safe(ex.getMessage()).I$();
             }
         }
-
         return true;
     }
 
@@ -3311,8 +3307,46 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 }
             }
 
-            int timestampIndex = groupByFactory.getMetadata().getColumnIndexQuiet(alias);
-            int timestampType = groupByFactory.getMetadata().getColumnType(timestampIndex);
+            final RecordMetadata baseMeta = groupByFactory.getMetadata();
+            int timestampIndex = baseMeta.getColumnIndexQuiet(alias);
+            int timestampType = baseMeta.getColumnType(timestampIndex);
+
+            // FillRangeRecord.getXxx(col) reads fillValues[col] through the target column's
+            // typed accessor. Constant functions from bare literals (IntFunction, DoubleFunction,
+            // ...) only implement a narrow set of accessors; e.g. IntFunction.getDecimal64()
+            // throws UnsupportedOperationException at runtime. Validate each fill value against
+            // the target column type here so we fail fast with a typed SqlException and, when
+            // the types are implicitly castable, wrap the fill value in a cast so it reads
+            // correctly at runtime. initValueFuncs() at cursor start inserts a NullConstant at
+            // timestampIndex, so fillValues[i] maps to column i for i < timestampIndex and to
+            // column i+1 for i >= timestampIndex. Walk the list in reverse so the indexing
+            // remains correct if we wrap an element.
+            for (int i = fillValues.size() - 1; i >= 0; i--) {
+                final int targetColumn = i < timestampIndex ? i : i + 1;
+                if (targetColumn >= baseMeta.getColumnCount()) {
+                    // Trailing fill values beyond the projection are validated by the existing
+                    // "not enough fill values" logic at cursor start.
+                    continue;
+                }
+                final Function fillValueFunc = fillValues.getQuick(i);
+                if (fillValueFunc.isNullConstant()) {
+                    continue;
+                }
+                final int targetType = baseMeta.getColumnType(targetColumn);
+                final int fromType = fillValueFunc.getType();
+                if (fromType == targetType || ColumnType.isBuiltInWideningCast(fromType, targetType)) {
+                    continue;
+                }
+                final int fillPos = fillValuesExprs.getQuick(i).position;
+                final Function cast = functionParser.createImplicitCast(fillPos, fillValueFunc, targetType);
+                if (cast == null) {
+                    throw SqlException.$(fillPos, "support for VALUE fill is not yet implemented [column=")
+                            .put(baseMeta.getColumnName(targetColumn))
+                            .put(", type=").put(ColumnType.nameOf(targetType))
+                            .put(']');
+                }
+                fillValues.setQuick(i, cast);
+            }
             TimestampDriver driver = getTimestampDriver(timestampType);
             fillFromFunc = driver.getTimestampConstantNull();
             fillToFunc = driver.getTimestampConstantNull();
@@ -6609,7 +6643,6 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                             );
                         }
 
-                        RecordCursorFactory sortBase = recordCursorFactory;
                         if (recordCursorFactory instanceof VirtualRecordCursorFactory virtualFactory) {
                             IntList materializedColIndices = null;
                             IntList materializedColTypes = null;
@@ -6634,7 +6667,12 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                 }
                             }
                             if (materializedColIndices != null) {
-                                sortBase = new SortKeyMaterializingRecordCursorFactory(
+                                // Reassign recordCursorFactory so the outer catch
+                                // closes the wrapper too; otherwise a throw from
+                                // the comparator compilation below leaks the
+                                // materializing cursor's native buffers
+                                // (NATIVE_TREE_CHAIN).
+                                recordCursorFactory = new SortKeyMaterializingRecordCursorFactory(
                                         configuration,
                                         orderedMetadata,
                                         recordCursorFactory,
@@ -6647,7 +6685,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                         return new SortedLightRecordCursorFactory(
                                 configuration,
                                 orderedMetadata,
-                                sortBase,
+                                recordCursorFactory,
                                 recordComparatorCompiler.newInstance(metadata, listColumnFilterA),
                                 listColumnFilterA.copy()
                         );
@@ -6677,8 +6715,11 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             }
 
             return recordCursorFactory;
-        } catch (SqlException | CairoException e) {
-            recordCursorFactory.close();
+        } catch (Throwable e) {
+            // ImplicitCastException, NumericException etc. are RuntimeException
+            // and would bypass a narrower catch, leaking the partially-built factory
+            // tree (which can hold native memory via PageFrameSequence).
+            Misc.free(recordCursorFactory);
             throw e;
         }
     }
@@ -7519,7 +7560,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     limitHiFunc
             );
         } catch (Throwable e) {
-            factory.close();
+            Misc.free(factory);
             throw e;
         }
     }
@@ -8285,9 +8326,12 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     factory,
                     virtualColumnReservedSlots
             );
-        } catch (SqlException | CairoException e) {
+        } catch (Throwable e) {
+            // Constant-folding a cast (e.g. `(-1234567L)::DECIMAL(4,2)`) can throw
+            // ImplicitCastException at compile time. That escapes a narrower catch
+            // and leaks the inner factory together with its PageFrameSequence.
             Misc.freeObjList(functions);
-            factory.close();
+            Misc.free(factory);
             throw e;
         }
     }

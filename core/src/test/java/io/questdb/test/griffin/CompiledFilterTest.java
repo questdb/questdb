@@ -325,6 +325,372 @@ public class CompiledFilterTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testNarrowIntColumnVsOutOfRangeLiteral() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x AS (SELECT" +
+                    " rnd_byte() b," +
+                    " rnd_short() s," +
+                    " timestamp_sequence(0, 1_000_000) ts" +
+                    " FROM long_sequence(1_000)) TIMESTAMP(ts) PARTITION BY DAY");
+
+            sqlExecutionContext.setJitMode(SqlJitMode.JIT_MODE_ENABLED);
+
+            // SHORT range is [-32768, 32767]; literals outside this range must yield no rows.
+            // Before the fix, JIT silently truncated the literal to the column's width
+            // (e.g. (short) 346548 = 18868), letting matching values through and diverging
+            // from the Java filter. The fix throws SqlException at IR serialization time so
+            // SqlCodeGenerator falls back to the Java filter, which evaluates the comparison
+            // at int width.
+            assertSql("count\n0\n", "SELECT count(*) FROM x WHERE s > 346548");
+            assertSql("count\n0\n", "SELECT count(*) FROM x WHERE s <= -897671");
+            assertSql("count\n0\n", "SELECT count(*) FROM x WHERE s = 100000");
+            // != against an out-of-range literal is true for every row.
+            assertSql("count\n1000\n", "SELECT count(*) FROM x WHERE s != 100000");
+            // BYTE range is [-128, 127].
+            assertSql("count\n0\n", "SELECT count(*) FROM x WHERE b > 200");
+            assertSql("count\n0\n", "SELECT count(*) FROM x WHERE b <= -300");
+            assertSql("count\n0\n", "SELECT count(*) FROM x WHERE b = 1000");
+
+            // Sanity-check the fallback path.
+            try (RecordCursorFactory factory = select("SELECT count(*) FROM x WHERE s > 346548")) {
+                Assert.assertFalse("JIT must not compile out-of-range short comparison",
+                        factory.usesCompiledFilter());
+            }
+            try (RecordCursorFactory factory = select("SELECT count(*) FROM x WHERE b <= -300")) {
+                Assert.assertFalse("JIT must not compile out-of-range byte comparison",
+                        factory.usesCompiledFilter());
+            }
+
+            // In-range literals must continue to JIT.
+            try (RecordCursorFactory factory = select("SELECT count(*) FROM x WHERE s > 100")) {
+                Assert.assertTrue("in-range short comparison must JIT",
+                        factory.usesCompiledFilter());
+            }
+            try (RecordCursorFactory factory = select("SELECT count(*) FROM x WHERE b > 100")) {
+                Assert.assertTrue("in-range byte comparison must JIT",
+                        factory.usesCompiledFilter());
+            }
+        });
+    }
+
+    @Test
+    public void testNarrowIntArithmeticWithIntLiteralInLongContext() throws Exception {
+        assertMemoryLeak(() -> {
+            // Predicate (s * 78941) > l mixes a SHORT column with an INT literal
+            // and a LONG column. The Java filter's MulInt.getLong promotes via
+            // ((long) l) * r and computes the product at long width; the JIT
+            // used to emit 78941 as an I4 IMM (serializeUntypedNumber's first
+            // try is parseInt) so load_registers normalised both operands to
+            // i32 and dispatched int32_mul, overflowing for s = +-30000-ish.
+            // After the fix, the IMM is emitted at I8 when the predicate has a
+            // LONG operand, so convert() widens s to i64 and mul dispatches to
+            // int64_mul, matching the Java filter.
+            execute("CREATE TABLE x (s SHORT, l LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO x VALUES " +
+                    "(32767, 0, '2024-01-01T00:00:00.000000Z')," +
+                    " (-32768, 0, '2024-01-01T00:00:00.000001Z')," +
+                    " (30000, 0, '2024-01-01T00:00:00.000002Z')," +
+                    " (10, 0, '2024-01-01T00:00:00.000003Z')");
+
+            sqlExecutionContext.setJitMode(SqlJitMode.JIT_MODE_ENABLED);
+            // s = 32767, 30000, 10 all yield positive long products; s = -32768
+            // yields negative -2_586_738_688L. So three rows match.
+            assertSql("count\n3\n", "SELECT count(*) FROM x WHERE (s * 78941) > l");
+
+            try (RecordCursorFactory factory = select("SELECT count(*) FROM x WHERE (s * 78941) > l")) {
+                Assert.assertTrue("narrow * int literal vs long must still JIT",
+                        factory.usesCompiledFilter());
+            }
+        });
+    }
+
+    @Test
+    public void testNarrowIntArithmeticWithIntLiteralInFloatContext() throws Exception {
+        assertMemoryLeak(() -> {
+            // Predicate (s * 78941) > f compares a SHORT*INT product against a
+            // FLOAT column. The Java filter consumes the IntFunction via
+            // CastIntToDouble.getDouble = intToDouble(getInt), keeping the
+            // multiplication at int width with overflow. The JIT must do the
+            // same: emitting 78941 at I8 here would force long-width mul and
+            // diverge. serializeUntypedNumber's hasI8() check excludes F4
+            // exactly so this case stays at I4 IMM and matches the Java path.
+            execute("CREATE TABLE x (s SHORT, f FLOAT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO x VALUES " +
+                    "(32767, 0.0, '2024-01-01T00:00:00.000000Z')," +
+                    " (-32768, 0.0, '2024-01-01T00:00:00.000001Z')," +
+                    " (30000, 0.0, '2024-01-01T00:00:00.000002Z')," +
+                    " (10, 0.0, '2024-01-01T00:00:00.000003Z')");
+
+            sqlExecutionContext.setJitMode(SqlJitMode.JIT_MODE_ENABLED);
+            // At int width: 32767*78941 wraps to -1_707_954_509,
+            // 30000*78941 wraps to -1_926_737_296, both negative -- excluded.
+            // -32768*78941 wraps to +1_708_228_608 (positive int after wrap)
+            // and 10*78941 = 789_410 -- both included. So two rows match.
+            assertSql("count\n2\n", "SELECT count(*) FROM x WHERE (s * 78941) > f");
+
+            try (RecordCursorFactory factory = select("SELECT count(*) FROM x WHERE (s * 78941) > f")) {
+                Assert.assertTrue("narrow * int literal vs float must still JIT",
+                        factory.usesCompiledFilter());
+            }
+        });
+    }
+
+    @Test
+    public void testNarrowIntArithmeticWithIntLiteralInDoubleContext() throws Exception {
+        assertMemoryLeak(() -> {
+            // Same shape as the FLOAT case but with a DOUBLE column. F8 also
+            // does not trigger the I8-IMM path -- IntFunction.getDouble keeps
+            // the int math at int width regardless of whether the consumer is
+            // FLOAT or DOUBLE.
+            execute("CREATE TABLE x (s SHORT, d DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO x VALUES " +
+                    "(32767, 0.0, '2024-01-01T00:00:00.000000Z')," +
+                    " (-32768, 0.0, '2024-01-01T00:00:00.000001Z')," +
+                    " (30000, 0.0, '2024-01-01T00:00:00.000002Z')," +
+                    " (10, 0.0, '2024-01-01T00:00:00.000003Z')");
+
+            sqlExecutionContext.setJitMode(SqlJitMode.JIT_MODE_ENABLED);
+            assertSql("count\n2\n", "SELECT count(*) FROM x WHERE (s * 78941) > d");
+
+            try (RecordCursorFactory factory = select("SELECT count(*) FROM x WHERE (s * 78941) > d")) {
+                Assert.assertTrue("narrow * int literal vs double must still JIT",
+                        factory.usesCompiledFilter());
+            }
+        });
+    }
+
+    @Test
+    public void testIntColumnArithmeticWidenedToLongInLongContext() throws Exception {
+        assertMemoryLeak(() -> {
+            // INT-INT arithmetic compared to a LONG column would compute at int32
+            // width on the JIT path (load_registers third branch + int32_*),
+            // wrapping for inputs that exceed INT_MAX. The Java filter promotes
+            // the inner expression via AddInt.getLong / MulInt.getLong /
+            // SubInt.getLong, computing at long width with no overflow. To match,
+            // the IR emitter inserts a SX_I64 opcode after each narrow operand
+            // when the predicate has both integer arithmetic and a LONG operand,
+            // so convert() promotes to i64 before the arithmetic dispatches to
+            // int64_*.
+            execute("CREATE TABLE x (a INT, b INT, l LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO x VALUES " +
+                    "(2147483640, 1, 0, '2024-01-01T00:00:00.000000Z')," +
+                    " (-2147483640, -1, 0, '2024-01-01T00:00:00.000001Z')," +
+                    " (46341, 46341, 0, '2024-01-01T00:00:00.000002Z')," +
+                    " (10, 5, 0, '2024-01-01T00:00:00.000003Z')");
+
+            sqlExecutionContext.setJitMode(SqlJitMode.JIT_MODE_ENABLED);
+            // a + b: 2147483640+1=2147483641 (positive long), -2147483640-1 negative,
+            // 46341+46341=92682 positive, 10+5=15 positive -> three rows match.
+            assertSql("count\n3\n", "SELECT count(*) FROM x WHERE (a + b) > l");
+            // a - b: 2147483640-1=positive, -2147483640-(-1)=negative,
+            // 46341-46341=0 (not > 0), 10-5=5 positive -> two rows match.
+            assertSql("count\n2\n", "SELECT count(*) FROM x WHERE (a - b) > l");
+            // a * b: 2147483640*1=positive, -2147483640*-1=positive long,
+            // 46341*46341=2_147_488_281L (positive long, overflows int32),
+            // 10*5=50 -> four rows match.
+            assertSql("count\n4\n", "SELECT count(*) FROM x WHERE (a * b) > l");
+
+            try (RecordCursorFactory factory = select("SELECT count(*) FROM x WHERE (a + b) > l")) {
+                Assert.assertTrue("INT-INT arithmetic in LONG context must still JIT",
+                        factory.usesCompiledFilter());
+            }
+            try (RecordCursorFactory factory = select("SELECT count(*) FROM x WHERE (a * b) > l")) {
+                Assert.assertTrue("INT*INT arithmetic in LONG context must still JIT",
+                        factory.usesCompiledFilter());
+            }
+        });
+    }
+
+    @Test
+    public void testByteIntArithmeticWidenedToLongInLongContext() throws Exception {
+        assertMemoryLeak(() -> {
+            // BYTE * INT can overflow int32 (e.g., 127 * 20_000_000), so the same
+            // SX_I64 widening must apply to non-INT narrow operands as well when
+            // the predicate has integer arithmetic and a LONG operand.
+            execute("CREATE TABLE x (b BYTE, i INT, l LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO x VALUES " +
+                    "(127, 20000000, 0, '2024-01-01T00:00:00.000000Z')," +
+                    " (-128, 20000000, 0, '2024-01-01T00:00:00.000001Z')," +
+                    " (10, 5, 0, '2024-01-01T00:00:00.000002Z')");
+
+            sqlExecutionContext.setJitMode(SqlJitMode.JIT_MODE_ENABLED);
+            // 127 * 20_000_000 = 2_540_000_000L (positive long, overflows int32);
+            // -128 * 20_000_000 negative; 10*5=50 positive -> two rows match.
+            assertSql("count\n2\n", "SELECT count(*) FROM x WHERE (b * i) > l");
+
+            try (RecordCursorFactory factory = select("SELECT count(*) FROM x WHERE (b * i) > l")) {
+                Assert.assertTrue("BYTE*INT in LONG context must still JIT",
+                        factory.usesCompiledFilter());
+            }
+        });
+    }
+
+    @Test
+    public void testIntColumnArithmeticInDoubleContextStaysAtIntWidth() throws Exception {
+        assertMemoryLeak(() -> {
+            // Negative case: in DOUBLE context the Java filter goes through
+            // CastIntToDouble.getDouble = intToDouble(getInt) at int width, so
+            // the JIT must NOT widen INT operands to i64. NarrowI64WidenDetector
+            // only triggers when a LONG operand is present, leaving the FLOAT /
+            // DOUBLE path at int width (matching int32_mul / int32_add overflow
+            // semantics on both sides).
+            execute("CREATE TABLE x (i INT, d DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO x VALUES " +
+                    "(46341, 0.0, '2024-01-01T00:00:00.000000Z')," +
+                    " (46340, 0.0, '2024-01-01T00:00:00.000001Z')," +
+                    " (10, 0.0, '2024-01-01T00:00:00.000002Z')");
+
+            sqlExecutionContext.setJitMode(SqlJitMode.JIT_MODE_ENABLED);
+            // 46341 * 46341 = 2_147_488_281 -> int32 wraps to negative -> excluded.
+            // 46340 * 46340 = 2_147_395_600 -> fits int32, positive -> included.
+            // 10 * 10 = 100 -> included. So two rows match.
+            assertSql("count\n2\n", "SELECT count(*) FROM x WHERE (i * i) > d");
+
+            try (RecordCursorFactory factory = select("SELECT count(*) FROM x WHERE (i * i) > d")) {
+                Assert.assertTrue("INT*INT in DOUBLE context must still JIT",
+                        factory.usesCompiledFilter());
+            }
+        });
+    }
+
+    @Test
+    public void testNarrowMixedWidthArithmetic() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (s SHORT, i INT, d DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            // s=200 -> s*s = 40_000 in int math, but overflows SHORT (low 16 bits = -25_536).
+            // s*s + i = 40_000, matches d=40_000.0; the Java filter widens s to int via the
+            // *.sql.Function classes and returns the row. A SIMD JIT computing s*s at SHORT
+            // width would miss it. Same for s=-200; s=10 stays in range, so its row is
+            // uncontroversial.
+            execute("INSERT INTO x VALUES (200, 0, 40000.0, '2024-01-01T00:00:00.000000Z')," +
+                    " (-200, 0, 40000.0, '2024-01-01T00:00:01.000000Z')," +
+                    " (10, 0, 100.0, '2024-01-01T00:00:02.000000Z')");
+
+            sqlExecutionContext.setJitMode(SqlJitMode.JIT_MODE_ENABLED);
+            assertSql("count\n3\n", "SELECT count(*) FROM x WHERE d = (s * s) + i");
+
+            // Narrow arithmetic mixed with a wider operand must JIT in scalar mode --
+            // SIMD would overflow at narrow width, but scalar upcasts to int.
+            try (RecordCursorFactory factory = select("SELECT count(*) FROM x WHERE d = (s * s) + i")) {
+                Assert.assertTrue("narrow arithmetic must JIT (scalar mode)",
+                        factory.usesCompiledFilter());
+            }
+        });
+    }
+
+    @Test
+    public void testIntegerArithmeticPreservesNullThroughVectorPath() throws Exception {
+        assertMemoryLeak(() -> {
+            // The AVX2 i64 mul kernel mutated its lhs vector while computing the
+            // 64-bit product, then passed the now-clobbered vector into the
+            // null-propagation blend. With a LONG null sentinel (Long.MIN_VALUE)
+            // multiplied by an even constant, the low-32-bit product wraps to
+            // zero, so the blend no longer recognised the lane as null and the
+            // JIT result diverged from the scalar path.
+            // The audit walked every AVX2 arithmetic kernel (add/sub/mul/div
+            // for i32 and i64) and only i64 mul actually mutated its inputs.
+            // This test covers the original bug and locks the audit in: each
+            // predicate would return zero JIT rows (and diverge from the Java
+            // filter) if any of these kernels stopped feeding pristine lhs/rhs
+            // into blend_with_nulls.
+            // Predicate shape: <col> = (<col> <op> <const>). Under QuestDB's
+            // EqXxxFunctionFactory, NULL == NULL is true (both sides return
+            // the type's null sentinel and the primitive == matches), so a
+            // NULL row matches iff arithmetic on a NULL preserves NULL.
+            //   col = NULL -> Java: <op> propagates NULL, NULL = NULL -> true.
+            //   col != NULL -> any of these <op>s yield a different value,
+            //                  so the predicate is false.
+            // Need >=4 rows so the AVX2 main loop runs (the bug never reached
+            // the scalar tail path, which preserves lhs).
+            execute("CREATE TABLE x (l LONG, i INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO x VALUES " +
+                    "(NULL, NULL, '2024-01-01T00:00:00.000000Z')," +
+                    " (1L, 1, '2024-01-01T00:00:01.000000Z')," +
+                    " (2L, 2, '2024-01-01T00:00:02.000000Z')," +
+                    " (3L, 3, '2024-01-01T00:00:03.000000Z')," +
+                    " (4L, 4, '2024-01-01T00:00:04.000000Z')");
+
+            sqlExecutionContext.setJitMode(SqlJitMode.JIT_MODE_ENABLED);
+
+            // i64 (LONG): the original failing shape plus the other operators.
+            assertSql("count\n1\n", "SELECT count(*) FROM x WHERE l = (l * 939722L)");
+            assertSql("count\n1\n", "SELECT count(*) FROM x WHERE l = (l + 1L)");
+            assertSql("count\n1\n", "SELECT count(*) FROM x WHERE l = (l - 1L)");
+            assertSql("count\n1\n", "SELECT count(*) FROM x WHERE l = (l / 2L)");
+
+            // i32 (INT): all four operators.
+            assertSql("count\n1\n", "SELECT count(*) FROM x WHERE i = (i * 939722)");
+            assertSql("count\n1\n", "SELECT count(*) FROM x WHERE i = (i + 1)");
+            assertSql("count\n1\n", "SELECT count(*) FROM x WHERE i = (i - 1)");
+            assertSql("count\n1\n", "SELECT count(*) FROM x WHERE i = (i / 2)");
+
+            // Sanity check that JIT actually compiled (otherwise the test
+            // would silently pass via the Java filter).
+            try (RecordCursorFactory factory = select("SELECT count(*) FROM x WHERE l = (l * 939722L)")) {
+                Assert.assertTrue("JIT must compile this filter", factory.usesCompiledFilter());
+            }
+        });
+    }
+
+    @Test
+    public void testNonEqualityNullCompareWithVarSizeColumnRejectedByJit() throws Exception {
+        assertMemoryLeak(() -> {
+            // The fuzzer surfaced JIT-vs-Java divergences on queries like
+            //   WHERE null >= v AND d <= 0.7    (v VARCHAR)
+            // The IR serializer's ensureOnlyVarSizeHeaderChecks() fired only when
+            // both operands were var-size, but serializeNull() emitted the null
+            // sentinel as an I8/I4 IMM. So <varsize_col> >= null was accepted by
+            // the JIT path and the native kernel produced an arbitrary integer
+            // comparison against the var-size header that diverged from the Java
+            // filter's evaluation. Now JIT must reject any non-equality binary
+            // operator that touches a var-size operand and fall back to the Java
+            // filter, leaving IS NULL / IS NOT NULL (which lower to EQ/NE
+            // against the NULL header IMM) on the JIT path.
+            execute("CREATE TABLE x (v VARCHAR, s STRING, b BINARY, d DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO x VALUES ('a', 'a', null, 0.1, '2024-01-01T00:00:00.000000Z')," +
+                    " ('b', 'b', null, 0.2, '2024-01-01T00:00:01.000000Z')," +
+                    " ('c', 'c', null, 0.3, '2024-01-01T00:00:02.000000Z')," +
+                    " ('d', 'd', null, 0.4, '2024-01-01T00:00:03.000000Z')," +
+                    " ('e', 'e', null, 0.5, '2024-01-01T00:00:04.000000Z')");
+
+            sqlExecutionContext.setJitMode(SqlJitMode.JIT_MODE_ENABLED);
+
+            // Non-equality comparisons against NULL with a var-size column on
+            // either side must not JIT.
+            String[] nonJitQueries = {
+                    "SELECT count(*) FROM x WHERE null >= v AND d <= 0.7",
+                    "SELECT count(*) FROM x WHERE v >= null AND d <= 0.7",
+                    "SELECT count(*) FROM x WHERE v < null",
+                    "SELECT count(*) FROM x WHERE null > s",
+            };
+            for (String q : nonJitQueries) {
+                try (RecordCursorFactory factory = select(q)) {
+                    Assert.assertFalse("must not JIT: " + q, factory.usesCompiledFilter());
+                }
+            }
+
+            // var-size IS NULL / IS NOT NULL must continue to JIT (these lower
+            // to EQ/NE against the NULL header IMM, which is the only legitimate
+            // var-size operand the JIT runtime supports). BINARY non-equality vs
+            // NULL is rejected at SQL parse time before reaching the JIT path,
+            // so only IS [NOT] NULL is meaningful to assert here for it.
+            String[] jitQueries = {
+                    "SELECT count(*) FROM x WHERE v IS NULL",
+                    "SELECT count(*) FROM x WHERE v IS NOT NULL",
+                    "SELECT count(*) FROM x WHERE s IS NULL",
+                    "SELECT count(*) FROM x WHERE s IS NOT NULL",
+                    "SELECT count(*) FROM x WHERE b IS NULL",
+                    "SELECT count(*) FROM x WHERE b IS NOT NULL",
+            };
+            for (String q : jitQueries) {
+                try (RecordCursorFactory factory = select(q)) {
+                    Assert.assertTrue("must JIT: " + q, factory.usesCompiledFilter());
+                }
+            }
+        });
+    }
+
+    @Test
     public void testPageFrameMaxSize() throws Exception {
         int pageFrameMaxRows = 128;
         setProperty(PropertyKey.CAIRO_SQL_PAGE_FRAME_MAX_ROWS, pageFrameMaxRows);
@@ -872,6 +1238,74 @@ public class CompiledFilterTest extends AbstractCairoTest {
 
             assertSql(expected, query);
             assertSqlRunWithJit(query);
+        });
+    }
+
+    @Test
+    public void testNarrowIntArithmeticPreservesNullInFloatContext() throws Exception {
+        assertMemoryLeak(() -> {
+            // Narrow int arithmetic (i8/i16/i32 add/sub/mul/div via int32_*)
+            // runs at i32 width and can carry INT_NULL: either an INT operand
+            // was INT_NULL, or division by zero produced INT_NULL via
+            // int32_div. Before the fix the kernel returned the result tagged
+            // with the narrower lhs dtype (e.g. i8 for BYTE * INT). The
+            // downstream f32 / f64 conversion then went through
+            // cvt_null_check(i8) = false and skipped the NaN substitution, so
+            // INT_NULL flowed into the float comparison as -2_147_483_648.0.
+            // Java's path (MulInt.getDouble = intToDouble(getInt)) substitutes
+            // NaN whenever the int product was INT_NULL, and the negating `<=`
+            // / `<` wrapper treats any NaN side as matching, so the two paths
+            // diverged.
+            //
+            // Rows: b/s/i columns drive the narrow arithmetic; the (0, 0,
+            // NULL) row covers div-by-zero and the i = NULL rows cover
+            // INT_NULL propagation through mul / add / sub.
+            execute("CREATE TABLE x (b BYTE, s SHORT, i INT, ts TIMESTAMP) " +
+                    "TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO x VALUES " +
+                    "(1, 1, NULL, '2024-01-01T00:00:00.000000Z')," +
+                    " (2, 2, NULL, '2024-01-01T00:00:00.000001Z')," +
+                    " (5, 5, 7, '2024-01-01T00:00:00.000002Z')," +
+                    " (0, 0, NULL, '2024-01-01T00:00:00.000003Z')");
+
+            sqlExecutionContext.setJitMode(SqlJitMode.JIT_MODE_ENABLED);
+
+            // BYTE * INT (the original fuzzer divergence). Three of the four
+            // rows have i = NULL, so the int product is INT_NULL and the
+            // f64 cast returns NaN; the (b=5, i=7) row gives 35 and 1.74256
+            // <= 35.0, so the predicate excludes every row.
+            assertSql("count\n0\n",
+                    "SELECT count(*) FROM x WHERE NOT ((0.348512 * b) <= (b * i))");
+            // Same shape with addition (int32_add propagates INT_NULL).
+            assertSql("count\n0\n",
+                    "SELECT count(*) FROM x WHERE NOT ((0.348512 * b) <= (b + i))");
+            // Subtraction: NaN rows still excluded; the (b=5, i=7) row gives
+            // -2, so NOT(1.74256 <= -2.0) matches and the count is 1.
+            assertSql("count\n1\n",
+                    "SELECT count(*) FROM x WHERE NOT ((0.348512 * b) <= (b - i))");
+            // SHORT * INT exercises the i16 narrow path.
+            assertSql("count\n0\n",
+                    "SELECT count(*) FROM x WHERE NOT ((0.348512 * s) <= (s * i))");
+            // Division by zero on narrow operands: int32_div returns INT_NULL
+            // when rhs is 0 even though both inputs are BYTE / SHORT, so the
+            // i32 widening matters here too. The (0, 0, _) row divides by
+            // zero -> NaN -> excluded; the (5, 5, _) row gives 1 and
+            // NOT(1.74256 <= 1.0) matches, so the count is 1.
+            assertSql("count\n1\n",
+                    "SELECT count(*) FROM x WHERE NOT ((0.348512 * b) <= (b / s))");
+
+            // JIT must still compile each predicate -- the fix is at the C++
+            // kernel level (result dtype tagging), the IR side is unchanged.
+            try (RecordCursorFactory factory = select(
+                    "SELECT count(*) FROM x WHERE NOT ((0.348512 * b) <= (b * i))")) {
+                Assert.assertTrue("BYTE * INT in DOUBLE context must still JIT",
+                        factory.usesCompiledFilter());
+            }
+            try (RecordCursorFactory factory = select(
+                    "SELECT count(*) FROM x WHERE NOT ((0.348512 * b) <= (b / s))")) {
+                Assert.assertTrue("BYTE / SHORT in DOUBLE context must still JIT",
+                        factory.usesCompiledFilter());
+            }
         });
     }
 }

@@ -83,6 +83,11 @@ public final class WhereClauseParser implements Mutable {
     private final ObjectPool<FlyweightCharSequence> csPool = new ObjectPool<>(FlyweightCharSequence.FACTORY, 64);
     private final ObjList<ExpressionNode> keyExclNodes = new ObjList<>();
     private final ObjList<ExpressionNode> keyNodes = new ObjList<>();
+    // Tracks every node we mark with intrinsicValue=TRUE during a single
+    // OR-tree extraction pass. If extraction fails partway through, the
+    // marks must be reverted so collapseIntrinsicNodes does not later
+    // shred a still-needed branch and leave a half-collapsed OR node.
+    private final ObjList<ExpressionNode> orIntrinsicNodes = new ObjList<>();
     // TODO: configure size
     private final ObjectPool<IntrinsicModel> models = new ObjectPool<>(IntrinsicModel.FACTORY, 8);
     private final ArrayDeque<ExpressionNode> stack = new ArrayDeque<>();
@@ -729,7 +734,17 @@ public final class WhereClauseParser implements Mutable {
         checkNodeValid(node);
 
         if (nodesEqual(node.lhs, node.rhs)) {
-            model.intrinsicValue = equalsTo ? IntrinsicModel.TRUE : IntrinsicModel.FALSE;
+            // x > x is a contradiction; x >= x is a tautology. The contradiction
+            // sets FALSE unconditionally (a sibling conjunct that already set
+            // FALSE stays FALSE either way). The tautology only writes TRUE if
+            // the model has not already been killed by an earlier conjunct;
+            // otherwise the write would clobber that FALSE and let the planner
+            // into the index-driven path with empty key value lists.
+            if (!equalsTo) {
+                model.intrinsicValue = IntrinsicModel.FALSE;
+            } else if (model.intrinsicValue != IntrinsicModel.FALSE) {
+                model.intrinsicValue = IntrinsicModel.TRUE;
+            }
             return false;
         }
 
@@ -983,7 +998,13 @@ public final class WhereClauseParser implements Mutable {
         checkNodeValid(node);
 
         if (nodesEqual(node.lhs, node.rhs)) {
-            model.intrinsicValue = equalsTo ? IntrinsicModel.TRUE : IntrinsicModel.FALSE;
+            // See analyzeGreater for the rationale: contradiction sets FALSE,
+            // tautology only sets TRUE when the model is not already FALSE.
+            if (!equalsTo) {
+                model.intrinsicValue = IntrinsicModel.FALSE;
+            } else if (model.intrinsicValue != IntrinsicModel.FALSE) {
+                model.intrinsicValue = IntrinsicModel.TRUE;
+            }
             return false;
         }
 
@@ -2071,7 +2092,7 @@ public final class WhereClauseParser implements Mutable {
             if (!extractOrTimestampIntervals(timestampDriver, model, node.rhs, false, functionParser, metadata, executionContext)) {
                 return false;
             }
-            node.intrinsicValue = IntrinsicModel.TRUE;
+            markOrIntrinsic(node);
             return true;
         }
 
@@ -2119,7 +2140,7 @@ public final class WhereClauseParser implements Mutable {
                     }
                 }
             }
-            node.intrinsicValue = IntrinsicModel.TRUE;
+            markOrIntrinsic(node);
             return true;
         }
 
@@ -2143,7 +2164,7 @@ public final class WhereClauseParser implements Mutable {
                     model.unionIntervals(ts, ts);
                 }
             }
-            node.intrinsicValue = IntrinsicModel.TRUE;
+            markOrIntrinsic(node);
             return true;
         }
 
@@ -2313,6 +2334,11 @@ public final class WhereClauseParser implements Mutable {
 
     private boolean isTimestamp(ExpressionNode n) {
         return Chars.equalsIgnoreCaseNc(n.token, timestamp);
+    }
+
+    private void markOrIntrinsic(ExpressionNode node) {
+        node.intrinsicValue = IntrinsicModel.TRUE;
+        orIntrinsicNodes.add(node);
     }
 
     // calculates intersect of existing and new set for IN ()
@@ -2763,8 +2789,24 @@ public final class WhereClauseParser implements Mutable {
             return false;
         }
 
-        // Extract the intervals with union semantics
-        return extractOrTimestampIntervals(timestampDriver, model, node, true, functionParser, metadata, executionContext);
+        // Extract the intervals with union semantics. The check above is a quick
+        // structural test; it can't tell whether a function's return type is a
+        // TIMESTAMP without parsing it. If a leaf turns out non-extractable
+        // partway through, the recursion has already accumulated intervals on
+        // the model and intrinsicValue=TRUE marks on earlier branches. Without
+        // a rollback, collapseIntrinsicNodes would later drop those branches
+        // and leave a half-collapsed OR (lhs/rhs == null while paramCount == 2),
+        // which crashes the FunctionParser post-order traversal.
+        orIntrinsicNodes.clear();
+        final int savedIntrinsicValue = model.intrinsicValue;
+        if (extractOrTimestampIntervals(timestampDriver, model, node, true, functionParser, metadata, executionContext)) {
+            orIntrinsicNodes.clear();
+            return true;
+        }
+        revertNodes(orIntrinsicNodes);
+        model.clearIntervalFilters();
+        model.intrinsicValue = savedIntrinsicValue;
+        return false;
     }
 
     /**

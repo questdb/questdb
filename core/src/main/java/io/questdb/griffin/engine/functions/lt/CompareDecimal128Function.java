@@ -38,7 +38,7 @@ public abstract class CompareDecimal128Function extends NegatableBooleanFunction
     protected final Function left;
     protected final int leftScale;
     protected final Function right;
-    private final int rightScale;
+    protected final int rightScale;
 
     public CompareDecimal128Function(Function left, Function right) {
         this.left = Decimal128LoaderFunctionFactory.getInstance(left);
@@ -50,8 +50,11 @@ public abstract class CompareDecimal128Function extends NegatableBooleanFunction
     @Override
     public boolean getBool(Record rec) {
         left.getDecimal128(rec, decimalLeft);
-        decimalLeft.setScale(leftScale);
         right.getDecimal128(rec, decimalRight);
+        if (decimalLeft.isNull() || decimalRight.isNull()) {
+            return negated && decimalLeft.isNull() == decimalRight.isNull();
+        }
+        decimalLeft.setScale(leftScale);
         decimalRight.setScale(rightScale);
         return negated != exec();
     }

@@ -1081,6 +1081,19 @@ public class WhereClauseParserTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testContradictingNullSearchKeptByTautologicalSelfCompare() throws Exception {
+        // sym is null AND sym is not null is FALSE; a sibling tautological
+        // self-comparison (sym <= sym) must not overwrite that FALSE back to
+        // UNDEFINED/TRUE on its way through analyzeLess. Without the guard,
+        // the index-driven path saw keyColumn=sym with empty value/excluded
+        // lists and tripped an internal assert in SqlCodeGenerator.
+        IntrinsicModel m = modelOf("(sym <= sym and sym != null) and sym = null");
+        Assert.assertEquals(IntrinsicModel.FALSE, m.intrinsicValue);
+        Assert.assertEquals("[]", keyValueFuncsToString(m.keyValueFuncs));
+        Assert.assertEquals("[]", keyValueFuncsToString(m.keyExcludedValueFuncs));
+    }
+
+    @Test
     public void testContradictingSearch1() throws Exception {
         IntrinsicModel m = modelOf("sym != 'blah' and sym = 'blah'");
         Assert.assertEquals(IntrinsicModel.FALSE, m.intrinsicValue);
@@ -3577,6 +3590,24 @@ public class WhereClauseParserTest extends AbstractCairoTest {
                 replaceTimestampSuffix("[{lo=2018-01-01T00:00:00.000000Z, hi=2018-01-01T00:00:00.000000Z},{lo=2018-01-02T00:00:00.000000Z, hi=2018-01-02T00:00:00.000000Z}]"),
                 intervalToString(m)
         );
+    }
+
+    @Test
+    public void testTimestampEqualsOrWithNonTimestampCastRollback() throws Exception {
+        // The OR's lhs (timestamp = 'value') is extractable, but the rhs has a
+        // function that returns DATE, not TIMESTAMP. The structural check in
+        // isOrOfTimestampIn() lets the recursion start; the type check fires
+        // only after lhs has already accumulated an interval and a TRUE
+        // intrinsicValue mark. tryExtractOrTimestampIntrinsics must roll the
+        // partial state back so the OR survives intact as the model filter.
+        IntrinsicModel m = modelOf("timestamp = '2018-01-01' or (-339289)::DATE = timestamp");
+        Assert.assertFalse(m.hasIntervalFilters());
+        Assert.assertNotNull("filter must survive partial OR rollback", m.filter);
+        Assert.assertEquals(IntrinsicModel.UNDEFINED, m.filter.intrinsicValue);
+        Assert.assertNotNull("OR.lhs must survive rollback", m.filter.lhs);
+        Assert.assertNotNull("OR.rhs must survive rollback", m.filter.rhs);
+        Assert.assertEquals(IntrinsicModel.UNDEFINED, m.filter.lhs.intrinsicValue);
+        Assert.assertEquals(IntrinsicModel.UNDEFINED, m.filter.rhs.intrinsicValue);
     }
 
     @Test

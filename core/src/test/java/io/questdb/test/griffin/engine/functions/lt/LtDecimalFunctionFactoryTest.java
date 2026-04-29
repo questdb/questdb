@@ -108,6 +108,30 @@ public class LtDecimalFunctionFactoryTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testLtDecimal128SlowPathBothNull() {
+        // Different scales force the slow path (CompareDecimal128Function). For
+        // `<` both NULL must evaluate to false; the negated `>=` case is checked
+        // separately in testGeDecimal128SlowPathBothNullIsTrue.
+        createFunctionAndAssert(
+                new Decimal128Constant(Decimals.DECIMAL128_HI_NULL, Decimals.DECIMAL128_LO_NULL, ColumnType.getDecimalType(20, 2)),
+                new Decimal128Constant(Decimals.DECIMAL128_HI_NULL, Decimals.DECIMAL128_LO_NULL, ColumnType.getDecimalType(20, 4)),
+                false
+        );
+    }
+
+    @Test
+    public void testLtDecimal128SlowPathNullVsValue() {
+        // Different scales force the slow path. Without the NULL guard
+        // Decimal128.compareTo(NULL, value) returns -1, which would make `c1 < value`
+        // evaluate to true on a NULL c1.
+        createFunctionAndAssert(
+                new Decimal128Constant(Decimals.DECIMAL128_HI_NULL, Decimals.DECIMAL128_LO_NULL, ColumnType.getDecimalType(20, 2)),
+                new Decimal128Constant(0, 100, ColumnType.getDecimalType(20, 4)),
+                false
+        );
+    }
+
+    @Test
     public void testLtDecimal128VsDecimal256() {
         createFunctionAndAssert(
                 new Decimal128Constant(0, 100, ColumnType.getDecimalType(20, 2)),
@@ -333,6 +357,38 @@ public class LtDecimalFunctionFactoryTest extends AbstractCairoTest {
                         ColumnType.getDecimalType(40, 0)
                 ),
                 new Decimal256Constant(0, 0, 0, 100, ColumnType.getDecimalType(40, 0)),
+                false
+        );
+    }
+
+    @Test
+    public void testLtDecimal256SlowPathBothNull() {
+        // Different scales force the slow path (CompareDecimal256Function).
+        createFunctionAndAssert(
+                new Decimal256Constant(
+                        Decimals.DECIMAL256_HH_NULL, Decimals.DECIMAL256_HL_NULL,
+                        Decimals.DECIMAL256_LH_NULL, Decimals.DECIMAL256_LL_NULL,
+                        ColumnType.getDecimalType(40, 2)
+                ),
+                new Decimal256Constant(
+                        Decimals.DECIMAL256_HH_NULL, Decimals.DECIMAL256_HL_NULL,
+                        Decimals.DECIMAL256_LH_NULL, Decimals.DECIMAL256_LL_NULL,
+                        ColumnType.getDecimalType(40, 4)
+                ),
+                false
+        );
+    }
+
+    @Test
+    public void testLtDecimal256SlowPathNullVsValue() {
+        // Different scales force the slow path. NULL on either side must produce false.
+        createFunctionAndAssert(
+                new Decimal256Constant(
+                        Decimals.DECIMAL256_HH_NULL, Decimals.DECIMAL256_HL_NULL,
+                        Decimals.DECIMAL256_LH_NULL, Decimals.DECIMAL256_LL_NULL,
+                        ColumnType.getDecimalType(40, 2)
+                ),
+                new Decimal256Constant(0, 0, 0, 100, ColumnType.getDecimalType(40, 4)),
                 false
         );
     }
@@ -569,6 +625,59 @@ public class LtDecimalFunctionFactoryTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testLtDecimal64NegatedBothNullIsTrue() {
+        // Fast path (UnscaledDecimal64Func) with `>=`: two NULLs must compare
+        // equal so that `>=(null,null)` is true, matching `=(null,null)=true`
+        // and the convention used for STRING/LONG. One-sided NULL stays false.
+        assertNegated(
+                new Decimal64Constant(Decimals.DECIMAL64_NULL, ColumnType.getDecimalType(10, 2)),
+                new Decimal64Constant(Decimals.DECIMAL64_NULL, ColumnType.getDecimalType(10, 2)),
+                true
+        );
+        assertNegated(
+                new Decimal64Constant(Decimals.DECIMAL64_NULL, ColumnType.getDecimalType(10, 2)),
+                new Decimal64Constant(100, ColumnType.getDecimalType(10, 2)),
+                false
+        );
+    }
+
+    @Test
+    public void testLtDecimal64SlowPathBothNull() {
+        // Different scales force the slow path (CompareDecimal64Function).
+        createFunctionAndAssert(
+                new Decimal64Constant(Decimals.DECIMAL64_NULL, ColumnType.getDecimalType(10, 2)),
+                new Decimal64Constant(Decimals.DECIMAL64_NULL, ColumnType.getDecimalType(10, 4)),
+                false
+        );
+    }
+
+    @Test
+    public void testLtDecimal64SlowPathNegatedBothNullIsTrue() {
+        // Slow path (CompareDecimal64Function) with `>=`: same convention as
+        // the fast path -- two NULLs compare equal, one-sided NULL is false.
+        assertNegated(
+                new Decimal64Constant(Decimals.DECIMAL64_NULL, ColumnType.getDecimalType(10, 2)),
+                new Decimal64Constant(Decimals.DECIMAL64_NULL, ColumnType.getDecimalType(10, 4)),
+                true
+        );
+        assertNegated(
+                new Decimal64Constant(Decimals.DECIMAL64_NULL, ColumnType.getDecimalType(10, 2)),
+                new Decimal64Constant(100, ColumnType.getDecimalType(10, 4)),
+                false
+        );
+    }
+
+    @Test
+    public void testLtDecimal64SlowPathNullVsValue() {
+        // Different scales force the slow path. NULL on either side must produce false.
+        createFunctionAndAssert(
+                new Decimal64Constant(Decimals.DECIMAL64_NULL, ColumnType.getDecimalType(10, 2)),
+                new Decimal64Constant(100, ColumnType.getDecimalType(10, 4)),
+                false
+        );
+    }
+
+    @Test
     public void testLtDecimal64VsDecimal128() {
         createFunctionAndAssert(
                 new Decimal64Constant(100, ColumnType.getDecimalType(10, 2)),
@@ -791,6 +900,16 @@ public class LtDecimalFunctionFactoryTest extends AbstractCairoTest {
                     new Decimal128Constant(0, val, ColumnType.getDecimalType(21, scale)),
                     false
             );
+        }
+    }
+
+    private void assertNegated(Function left, Function right, boolean expected) {
+        args.clear();
+        args.add(left);
+        args.add(right);
+        try (Function func = factory.newInstance(-1, args, null, configuration, sqlExecutionContext)) {
+            ((NegatableBooleanFunction) func).setNegated();
+            Assert.assertEquals(expected, func.getBool(null));
         }
     }
 

@@ -1920,6 +1920,168 @@ public class ParquetRowGroupPruningTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testMinMaxPruningDecimalRescaleScaleUp() throws Exception {
+        // PushdownFilterExtractor#rescaleDecimalForPushdown rebuilds the literal at
+        // the column's scale when the literal scale is smaller. Pushdown still works
+        // because the rescaled raw value matches the column's row group statistics.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (val DECIMAL(15,2), ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO x VALUES
+                    ('1000000.10', '2024-01-01T00:00:00.000000Z'),
+                    ('5000000.50', '2024-01-01T01:00:00.000000Z'),
+                    ('9999999.99', '2024-01-01T02:00:00.000000Z'),
+                    ('9999999.98', '2024-01-02T02:00:00.000000Z')
+                    """);
+            execute("ALTER TABLE x CONVERT PARTITION TO PARQUET WHERE ts >= 0");
+
+            // literal scale 1 < column scale 2, value rescales to 50000005 (scale 2)
+            assertQueryNoLeakCheck(
+                    """
+                            val
+                            5000000.50
+                            """,
+                    "SELECT val FROM x WHERE val = '5000000.5'::DECIMAL(15, 1)",
+                    null, true, false
+            );
+            // out-of-range literal: rescale produces a value smaller than the row
+            // group min, so the second partition's row group is pruned.
+            ParquetRowGroupFilter.resetRowGroupsSkipped();
+            assertQueryNoLeakCheck(
+                    "val\n",
+                    "SELECT val FROM x WHERE val = '100.1'::DECIMAL(15, 1)",
+                    null, true, false
+            );
+            Assert.assertTrue(ParquetRowGroupFilter.getRowGroupsSkipped() > 0);
+        });
+    }
+
+    @Test
+    public void testMinMaxPruningDecimalRescaleScaleDownLossless() throws Exception {
+        // Literal carries trailing zeros beyond the column's scale, so the rescale
+        // is lossless; pushdown keeps working with the rebuilt constant.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (val DECIMAL(15,2), ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO x VALUES
+                    ('1000000.10', '2024-01-01T00:00:00.000000Z'),
+                    ('5000000.50', '2024-01-01T01:00:00.000000Z'),
+                    ('9999999.99', '2024-01-01T02:00:00.000000Z'),
+                    ('9999999.98', '2024-01-02T02:00:00.000000Z')
+                    """);
+            execute("ALTER TABLE x CONVERT PARTITION TO PARQUET WHERE ts >= 0");
+
+            assertQueryNoLeakCheck(
+                    """
+                            val
+                            5000000.50
+                            """,
+                    "SELECT val FROM x WHERE val = '5000000.500'::DECIMAL(15, 3)",
+                    null, true, false
+            );
+            ParquetRowGroupFilter.resetRowGroupsSkipped();
+            assertQueryNoLeakCheck(
+                    "val\n",
+                    "SELECT val FROM x WHERE val = '100.100'::DECIMAL(15, 3)",
+                    null, true, false
+            );
+            Assert.assertTrue(ParquetRowGroupFilter.getRowGroupsSkipped() > 0);
+        });
+    }
+
+    @Test
+    public void testMinMaxPruningDecimalRescaleScaleDownLossy() throws Exception {
+        // Literal has non-zero fractional digits beyond the column's scale, so
+        // rescaling would lose precision and pushdown is abandoned. The runtime
+        // filter still correctly returns no matching rows.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (val DECIMAL(15,2), ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO x VALUES
+                    ('1000000.10', '2024-01-01T00:00:00.000000Z'),
+                    ('5000000.50', '2024-01-01T01:00:00.000000Z'),
+                    ('9999999.99', '2024-01-01T02:00:00.000000Z'),
+                    ('9999999.98', '2024-01-02T02:00:00.000000Z')
+                    """);
+            execute("ALTER TABLE x CONVERT PARTITION TO PARQUET WHERE ts >= 0");
+
+            ParquetRowGroupFilter.resetRowGroupsSkipped();
+            assertQueryNoLeakCheck(
+                    "val\n",
+                    "SELECT val FROM x WHERE val = '5000000.501'::DECIMAL(15, 3)",
+                    null, true, false
+            );
+            Assert.assertEquals(0, ParquetRowGroupFilter.getRowGroupsSkipped());
+        });
+    }
+
+    @Test
+    public void testMinMaxPruningDecimalRescaleWiderLiteralFits() throws Exception {
+        // Literal is DECIMAL128 but its value fits in the column's DECIMAL64
+        // storage. The helper rebuilds the constant at the narrower tag so
+        // pushdown's getDecimal64 dispatch produces the right value.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (val DECIMAL(15,2), ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO x VALUES
+                    ('1000000.10', '2024-01-01T00:00:00.000000Z'),
+                    ('5000000.50', '2024-01-01T01:00:00.000000Z'),
+                    ('9999999.99', '2024-01-01T02:00:00.000000Z'),
+                    ('9999999.98', '2024-01-02T02:00:00.000000Z')
+                    """);
+            execute("ALTER TABLE x CONVERT PARTITION TO PARQUET WHERE ts >= 0");
+
+            assertQueryNoLeakCheck(
+                    """
+                            val
+                            5000000.50
+                            """,
+                    "SELECT val FROM x WHERE val = '5000000.50'::DECIMAL(30, 2)",
+                    null, true, false
+            );
+            ParquetRowGroupFilter.resetRowGroupsSkipped();
+            assertQueryNoLeakCheck(
+                    "val\n",
+                    "SELECT val FROM x WHERE val = '100.10'::DECIMAL(30, 2)",
+                    null, true, false
+            );
+            Assert.assertTrue(ParquetRowGroupFilter.getRowGroupsSkipped() > 0);
+        });
+    }
+
+    @Test
+    public void testMinMaxPruningDecimalRescaleWiderLiteralOverflows() throws Exception {
+        // Literal value is larger than the column's DECIMAL64 storage can hold,
+        // so the helper abandons pushdown. The runtime filter still produces the
+        // correct (full) result for `c <= huge_literal`.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (val DECIMAL(15,2), ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO x VALUES
+                    ('1000000.10', '2024-01-01T00:00:00.000000Z'),
+                    ('5000000.50', '2024-01-01T01:00:00.000000Z'),
+                    ('9999999.99', '2024-01-01T02:00:00.000000Z'),
+                    ('9999999.98', '2024-01-02T02:00:00.000000Z')
+                    """);
+            execute("ALTER TABLE x CONVERT PARTITION TO PARQUET WHERE ts >= 0");
+
+            ParquetRowGroupFilter.resetRowGroupsSkipped();
+            assertQueryNoLeakCheck(
+                    """
+                            val
+                            1000000.10
+                            5000000.50
+                            9999999.98
+                            9999999.99
+                            """,
+                    "SELECT val FROM x WHERE val <= '99999999999999999999999999.99'::DECIMAL(30, 2) ORDER BY val",
+                    null, true, false
+            );
+            Assert.assertEquals(0, ParquetRowGroupFilter.getRowGroupsSkipped());
+        });
+    }
+
+    @Test
     public void testMinMaxPruningDouble() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE x (val DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");

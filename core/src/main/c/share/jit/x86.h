@@ -708,6 +708,15 @@ namespace questdb::x86 {
         }
     }
 
+    // Narrow int arithmetic always runs at i32 width via int32_*. With
+    // null_check on, the result can carry INT_NULL (e.g. INT operand was
+    // INT_NULL, or division by zero), so it must be tagged i32 -- otherwise
+    // a downstream f32/f64 conversion would skip the null check via
+    // cvt_null_check(i8) / cvt_null_check(i16) and miss the NaN substitution.
+    inline data_type_t narrow_arith_result(data_type_t dt, bool null_check) {
+        return null_check ? data_type_t::i32 : dt;
+    }
+
     jit_value_t add(Compiler &c, const jit_value_t &lhs, const jit_value_t &rhs, bool null_check) {
         auto dt = lhs.dtype();
         auto dk = dst_kind(lhs, rhs);
@@ -715,7 +724,8 @@ namespace questdb::x86 {
             case data_type_t::i8:
             case data_type_t::i16:
             case data_type_t::i32:
-                return {int32_add(c, lhs.gp().r32(), rhs.gp().r32(), null_check), dt, dk};
+                return {int32_add(c, lhs.gp().r32(), rhs.gp().r32(), null_check),
+                        narrow_arith_result(dt, null_check), dk};
             case data_type_t::i64:
                 return {int64_add(c, lhs.gp(), rhs.gp(), null_check), dt, dk};
             case data_type_t::f32:
@@ -734,7 +744,8 @@ namespace questdb::x86 {
             case data_type_t::i8:
             case data_type_t::i16:
             case data_type_t::i32:
-                return {int32_sub(c, lhs.gp().r32(), rhs.gp().r32(), null_check), dt, dk};
+                return {int32_sub(c, lhs.gp().r32(), rhs.gp().r32(), null_check),
+                        narrow_arith_result(dt, null_check), dk};
             case data_type_t::i64:
                 return {int64_sub(c, lhs.gp(), rhs.gp(), null_check), dt, dk};
             case data_type_t::f32:
@@ -753,7 +764,8 @@ namespace questdb::x86 {
             case data_type_t::i8:
             case data_type_t::i16:
             case data_type_t::i32:
-                return {int32_mul(c, lhs.gp().r32(), rhs.gp().r32(), null_check), dt, dk};
+                return {int32_mul(c, lhs.gp().r32(), rhs.gp().r32(), null_check),
+                        narrow_arith_result(dt, null_check), dk};
             case data_type_t::i64:
                 return {int64_mul(c, lhs.gp(), rhs.gp(), null_check), dt, dk};
             case data_type_t::f32:
@@ -772,7 +784,8 @@ namespace questdb::x86 {
             case data_type_t::i8:
             case data_type_t::i16:
             case data_type_t::i32:
-                return {int32_div(c, lhs.gp().r32(), rhs.gp().r32(), null_check), dt, dk};
+                return {int32_div(c, lhs.gp().r32(), rhs.gp().r32(), null_check),
+                        narrow_arith_result(dt, null_check), dk};
             case data_type_t::i64:
                 return {int64_div(c, lhs.gp(), rhs.gp(), null_check), dt, dk};
             case data_type_t::f32:
@@ -1114,6 +1127,25 @@ namespace questdb::x86 {
                 case opcodes::Not:
                     values.append(arena, bin_not(c, get_argument(c, values)));
                     break;
+                case opcodes::Sx_I64: {
+                    // Sign-extend the top of stack to i64. Used to widen narrow
+                    // integer operands (BYTE/SHORT/INT) before arithmetic so the
+                    // op dispatches to int64_*, matching the Java filter's
+                    // MulInt.getLong / AddInt.getLong (which compute via
+                    // ((long) l) OP r at long width). For i64 / f32 / f64 inputs
+                    // this is a no-op (left untouched).
+                    auto arg = get_argument(c, values);
+                    auto dt = arg.dtype();
+                    if (dt == data_type_t::i8 || dt == data_type_t::i16 || dt == data_type_t::i32) {
+                        values.append(arena, jit_value_t(
+                                int32_to_int64(c, arg.gp().r32(), null_check),
+                                data_type_t::i64,
+                                arg.dkind()));
+                    } else {
+                        values.append(arena, arg);
+                    }
+                    break;
+                }
                 case opcodes::And_Sc: {
                     // Short-circuit AND: if false, jump to label[index]
                     auto label_idx = static_cast<size_t>(instr.ipayload.lo);

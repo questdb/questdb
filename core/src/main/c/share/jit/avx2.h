@@ -679,7 +679,8 @@ namespace questdb::avx2 {
                 case opcodes::Or_Sc:
                 case opcodes::Begin_Sc:
                 case opcodes::End_Sc:
-                    return; // Compilation error: short-circuit opcodes in SIMD path
+                case opcodes::Sx_I64: // Sx_I64 only feeds narrow+i8 mixed predicates, which force scalar
+                    return; // Compilation error: opcode not supported in SIMD path
                 default:
                     emit_bin_op(c, arena, instr, values, ncheck);
                     break;

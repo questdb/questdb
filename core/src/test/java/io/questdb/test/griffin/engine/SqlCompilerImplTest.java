@@ -4091,6 +4091,54 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testEvaluateNullArithmeticColumnExpression() throws Exception {
+        // Regression: AddIntFunc.isConstant() used to claim true when one operand was a null
+        // constant, even if the other operand was a column reference. This made
+        // FunctionParser.functionToConstant() try to evaluate the expression at compile time
+        // with a null record, which NPEd on the column's getInt(null). The fuzzer surfaced
+        // this via filter and projection expressions like `WHERE c6 >= ((null + c6) + ...)`.
+        //
+        // The fix folds `null <op> column` and `column <op> null` to a typed null constant at
+        // construction time in the arithmetic factories (Int/Long/Float/Double variants of
+        // Add/Sub/Mul/Div). The non-null operand is closed and never read at runtime.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (b BYTE, s SHORT, i INT, l LONG, f FLOAT, d DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO t VALUES (1::BYTE, 100::SHORT, 10, 1000, 1.5, 2.5, 0), (2::BYTE, 200::SHORT, 20, 2000, 3.5, 4.5, 1000)");
+
+            // INT: all four operators, left and right positions.
+            assertSql("column\nnull\nnull\n", "SELECT (null + i) FROM t");
+            assertSql("column\nnull\nnull\n", "SELECT (i + null) FROM t");
+            assertSql("column\nnull\nnull\n", "SELECT (null - i) FROM t");
+            assertSql("column\nnull\nnull\n", "SELECT (i - null) FROM t");
+            assertSql("column\nnull\nnull\n", "SELECT (null * i) FROM t");
+            assertSql("column\nnull\nnull\n", "SELECT (i * null) FROM t");
+            assertSql("column\nnull\nnull\n", "SELECT (null / i) FROM t");
+            assertSql("column\nnull\nnull\n", "SELECT (i / null) FROM t");
+
+            // LONG: all four operators.
+            assertSql("column\nnull\nnull\n", "SELECT (null::LONG + l) FROM t");
+            assertSql("column\nnull\nnull\n", "SELECT (l - null::LONG) FROM t");
+            assertSql("column\nnull\nnull\n", "SELECT (null::LONG * l) FROM t");
+            assertSql("column\nnull\nnull\n", "SELECT (l / null::LONG) FROM t");
+
+            // FLOAT: add, mul, div (no sub float factory exists).
+            assertSql("column\nnull\nnull\n", "SELECT (null::FLOAT + f) FROM t");
+            assertSql("column\nnull\nnull\n", "SELECT (f * null::FLOAT) FROM t");
+            assertSql("column\nnull\nnull\n", "SELECT (null::FLOAT / f) FROM t");
+
+            // DOUBLE: all four operators.
+            assertSql("column\nnull\nnull\n", "SELECT (null::DOUBLE + d) FROM t");
+            assertSql("column\nnull\nnull\n", "SELECT (d - null::DOUBLE) FROM t");
+            assertSql("column\nnull\nnull\n", "SELECT (null::DOUBLE * d) FROM t");
+            assertSql("column\nnull\nnull\n", "SELECT (d / null::DOUBLE) FROM t");
+
+            // Usage inside a WHERE clause: compile and return zero rows (null comparison).
+            assertSql("i\n", "SELECT i FROM t WHERE i >= (null + i)");
+            assertSql("i\n", "SELECT i FROM t WHERE i >= ((null + b) + i)");
+        });
+    }
+
+    @Test
     public void testExecuteQuery() throws Exception {
         assertMemoryLeak(() -> assertExceptionNoLeakCheck("select * from (select rnd_int() x from long_sequence(20)) timestamp(x)", 68, "not a TIMESTAMP"));
     }
@@ -6204,6 +6252,29 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
                     true,
                     true
             );
+        });
+    }
+
+    @Test
+    public void testProjectionConstantCastOverflowDoesNotLeakInnerFactory() throws Exception {
+        // The DECIMAL cast in the projection constant-folds at compile time and
+        // throws ImplicitCastException when the literal does not fit. The inner
+        // factory tree -- including the AsyncFiltered factory's PageFrameSequence,
+        // which holds a native circuit-breaker buffer -- was leaking because the
+        // virtual-projection codegen caught only SqlException | CairoException and
+        // ImplicitCastException is a plain RuntimeException.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (s SHORT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO t VALUES (10, '2024-01-01T00:00:00.000000Z')," +
+                    " (20, '2024-01-01T00:00:01.000000Z')");
+            for (int i = 0; i < 50; i++) {
+                try {
+                    engine.select("SELECT (-1234567L)::DECIMAL(4,2) FROM t WHERE s > 5", sqlExecutionContext)
+                            .close();
+                    Assert.fail("expected ImplicitCastException");
+                } catch (ImplicitCastException expected) {
+                }
+            }
         });
     }
 

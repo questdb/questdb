@@ -333,7 +333,8 @@ class AsyncGroupByRecordCursor implements RecordCursor {
         LOG.debug().$("parallel long top K done [total=").$(total)
                 .$(", ownCount=").$(ownCount)
                 .$(", reclaimed=").$(reclaimed)
-                .$(", queuedCount=").$(queuedCount).I$();
+                .$(", queuedCount=").$(queuedCount)
+                .I$();
     }
 
     private void throwTimeoutException() {

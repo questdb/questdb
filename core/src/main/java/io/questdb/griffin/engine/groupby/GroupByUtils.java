@@ -335,7 +335,23 @@ public class GroupByUtils {
             }
             validateGroupByColumns(sqlNodeStack, model, inferredKeyColumnCount);
         } catch (Throwable e) {
-            Misc.freeObjListAndClear(outerProjectionFunctions);
+            // The first column loop adds the parsed Function to both outer and inner
+            // projection lists, so they share references. The third loop may replace
+            // some outer entries with newly created column-ref Functions, leaving the
+            // original parsed Function reachable only through the inner list.
+            // Walk both lists once and free each unique reference exactly once --
+            // closing the same Function twice would underflow allocator counters.
+            int n = Math.max(outerProjectionFunctions.size(), innerProjectionFunctions.size());
+            for (int i = 0; i < n; i++) {
+                Function outerFunc = i < outerProjectionFunctions.size() ? outerProjectionFunctions.getQuick(i) : null;
+                Function innerFunc = i < innerProjectionFunctions.size() ? innerProjectionFunctions.getQuick(i) : null;
+                Misc.free(outerFunc);
+                if (innerFunc != outerFunc) {
+                    Misc.free(innerFunc);
+                }
+            }
+            outerProjectionFunctions.clear();
+            innerProjectionFunctions.clear();
             if (extraOuterProjectionFunctions != null) {
                 for (int d = 0, dn = extraOuterProjectionFunctions.size(); d < dn; d++) {
                     Misc.freeObjListAndClear(extraOuterProjectionFunctions.getQuick(d));

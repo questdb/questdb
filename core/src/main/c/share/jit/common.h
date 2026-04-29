@@ -77,6 +77,7 @@ enum class opcodes : int32_t {
     Or_Sc = 19,  // Short-circuit OR: if true, jump to label[payload.lo] (0 = next_row)
     Begin_Sc = 20, // Create label at index payload.lo
     End_Sc = 21,   // Bind label at index payload.lo
+    Sx_I64 = 22,   // Sign-extend top of stack to i64
 };
 
 struct instruction_t {

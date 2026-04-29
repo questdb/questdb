@@ -37,6 +37,7 @@ import io.questdb.std.Decimal128;
 import io.questdb.std.Decimal256;
 import io.questdb.std.IntHashSet;
 import io.questdb.std.Long256;
+import io.questdb.std.Long256Acceptor;
 import io.questdb.std.Unsafe;
 import io.questdb.std.str.CharSink;
 import io.questdb.std.str.DirectString;
@@ -474,6 +475,16 @@ public class PageFrameFilteredMemoryRecord extends PageFrameMemoryRecord {
             return rowIndex;
         }
         return compactedRowIndex;
+    }
+
+    @Override
+    protected void getLong256(int columnIndex, Long256Acceptor sink) {
+        final long columnAddress = pageAddresses.get(columnOffset + columnIndex);
+        if (columnAddress != 0) {
+            sink.fromAddress(columnAddress + (getRowIndex(columnIndex) << 5));
+            return;
+        }
+        NullMemoryCMR.INSTANCE.getLong256(0, sink);
     }
 
     @Override

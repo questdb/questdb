@@ -32,7 +32,9 @@ import io.questdb.std.BinarySequence;
 import io.questdb.std.Decimal128;
 import io.questdb.std.Decimal256;
 import io.questdb.std.Interval;
+import io.questdb.std.Long256;
 import io.questdb.std.ObjList;
+import io.questdb.std.str.CharSink;
 import io.questdb.std.str.Utf8Sequence;
 
 public class SampleByFillRecord implements Record {
@@ -182,6 +184,21 @@ public class SampleByFillRecord implements Record {
     @Override
     public long getLong128Lo(int col) {
         return getFunction(col).getLong128Lo(base);
+    }
+
+    @Override
+    public void getLong256(int col, CharSink<?> sink) {
+        getFunction(col).getLong256(base, sink);
+    }
+
+    @Override
+    public Long256 getLong256A(int col) {
+        return getFunction(col).getLong256A(base);
+    }
+
+    @Override
+    public Long256 getLong256B(int col) {
+        return getFunction(col).getLong256B(base);
     }
 
     @Override
