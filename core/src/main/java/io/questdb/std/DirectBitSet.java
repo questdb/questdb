@@ -78,7 +78,7 @@ public class DirectBitSet implements Mutable, Closeable, Reopenable {
         if (wi >= wordCount) {
             return false;
         }
-        long word = Unsafe.getUnsafe().getLong(address + ((long) wi << WORD_BYTES_SHIFT));
+        long word = Unsafe.getLong(address + ((long) wi << WORD_BYTES_SHIFT));
         return (word & 1L << bitIndex) != 0L;
     }
 
@@ -86,12 +86,12 @@ public class DirectBitSet implements Mutable, Closeable, Reopenable {
         int wi = wordIndex(bitIndex);
         checkCapacity(wi + 1);
         long wordAddr = address + ((long) wi << WORD_BYTES_SHIFT);
-        long word = Unsafe.getUnsafe().getLong(wordAddr);
+        long word = Unsafe.getLong(wordAddr);
         long mask = 1L << bitIndex;
         if ((word & mask) != 0L) {
             return true;
         }
-        Unsafe.getUnsafe().putLong(wordAddr, word | mask);
+        Unsafe.putLong(wordAddr, word | mask);
         return false;
     }
 
@@ -103,7 +103,7 @@ public class DirectBitSet implements Mutable, Closeable, Reopenable {
         if (wi >= wordCount) {
             return -1;
         }
-        long word = Unsafe.getUnsafe().getLong(address + ((long) wi << WORD_BYTES_SHIFT)) & (-1L << fromIndex);
+        long word = Unsafe.getLong(address + ((long) wi << WORD_BYTES_SHIFT)) & (-1L << fromIndex);
         while (true) {
             if (word != 0L) {
                 return (wi << 6) + Long.numberOfTrailingZeros(word);
@@ -111,7 +111,7 @@ public class DirectBitSet implements Mutable, Closeable, Reopenable {
             if (++wi >= wordCount) {
                 return -1;
             }
-            word = Unsafe.getUnsafe().getLong(address + ((long) wi << WORD_BYTES_SHIFT));
+            word = Unsafe.getLong(address + ((long) wi << WORD_BYTES_SHIFT));
         }
     }
 
@@ -152,8 +152,8 @@ public class DirectBitSet implements Mutable, Closeable, Reopenable {
         int wi = wordIndex(bitIndex);
         checkCapacity(wi + 1);
         long wordAddr = address + ((long) wi << WORD_BYTES_SHIFT);
-        long word = Unsafe.getUnsafe().getLong(wordAddr);
-        Unsafe.getUnsafe().putLong(wordAddr, word | 1L << bitIndex);
+        long word = Unsafe.getLong(wordAddr);
+        Unsafe.putLong(wordAddr, word | 1L << bitIndex);
     }
 
     public void unset(int bitIndex) {
@@ -162,8 +162,8 @@ public class DirectBitSet implements Mutable, Closeable, Reopenable {
             return;
         }
         long wordAddr = address + ((long) wi << WORD_BYTES_SHIFT);
-        long word = Unsafe.getUnsafe().getLong(wordAddr);
-        Unsafe.getUnsafe().putLong(wordAddr, word & ~(1L << bitIndex));
+        long word = Unsafe.getLong(wordAddr);
+        Unsafe.putLong(wordAddr, word & ~(1L << bitIndex));
     }
 
     private static int requiredWordCount(int nBits) {

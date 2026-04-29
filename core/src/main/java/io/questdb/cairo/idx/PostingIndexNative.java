@@ -70,13 +70,13 @@ public final class PostingIndexNative {
         int destOffset = 0;
 
         for (int i = 0; i < count; i++) {
-            long offset = Unsafe.getUnsafe().getLong(valuesAddr + (long) i * Long.BYTES) - minValue;
+            long offset = Unsafe.getLong(valuesAddr + (long) i * Long.BYTES) - minValue;
             int oldBufferBits = bufferBits;
             buffer |= (offset << bufferBits);
             bufferBits += bitWidth;
 
             while (bufferBits >= 8) {
-                Unsafe.getUnsafe().putByte(destAddr + destOffset, (byte) buffer);
+                Unsafe.putByte(destAddr + destOffset, (byte) buffer);
                 buffer >>>= 8;
                 bufferBits -= 8;
                 destOffset++;
@@ -92,7 +92,7 @@ public final class PostingIndexNative {
         }
 
         if (bufferBits > 0) {
-            Unsafe.getUnsafe().putByte(destAddr + destOffset, (byte) buffer);
+            Unsafe.putByte(destAddr + destOffset, (byte) buffer);
         }
     }
 
@@ -136,7 +136,7 @@ public final class PostingIndexNative {
 
         for (int i = 0; i < valueCount; i++) {
             while (bufferBits < bitWidth && srcOffset < totalBytes) {
-                long b = Unsafe.getUnsafe().getByte(srcAddr + srcOffset) & 0xFFL;
+                long b = Unsafe.getByte(srcAddr + srcOffset) & 0xFFL;
                 srcOffset++;
                 if (bufferBits <= 56) {
                     buffer |= (b << bufferBits);
@@ -149,7 +149,7 @@ public final class PostingIndexNative {
                     bufferBits = 64;
                 }
             }
-            Unsafe.getUnsafe().putLong(destAddr + (long) i * Long.BYTES, minValue + (buffer & mask));
+            Unsafe.putLong(destAddr + (long) i * Long.BYTES, minValue + (buffer & mask));
             // Java's >>> uses only the low 6 bits of the shift count, so
             // buffer >>>= 64 is a no-op. Zero the buffer explicitly when
             // the full 64 bits were consumed; otherwise leftover high bits

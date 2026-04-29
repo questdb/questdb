@@ -214,14 +214,11 @@ public abstract class BasePlanSink implements PlanSink {
                 sink.put(',');
             }
             Object obj = list.getQuick(i);
-            if (obj instanceof Plannable) {
-                ((Plannable) obj).toPlan(this);
-            } else if (obj instanceof Sinkable) {
-                sink.put((Sinkable) obj);
-            } else if (obj == null) {
-                sink.put("null");
-            } else {
-                sink.put(obj.toString());
+            switch (obj) {
+                case Plannable plannable -> plannable.toPlan(this);
+                case Sinkable sinkable -> sink.put(sinkable);
+                case null -> sink.put("null");
+                default -> sink.put(obj.toString());
             }
         }
         sink.put(']');

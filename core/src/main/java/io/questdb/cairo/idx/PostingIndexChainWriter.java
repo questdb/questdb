@@ -138,7 +138,7 @@ public final class PostingIndexChainWriter {
                 coveringFormat,
                 prevHead
         );
-        Unsafe.getUnsafe().storeFence();
+        Unsafe.storeFence();
         // Update mirrors before publishing so accessors see the new state
         // by the time the publish becomes visible to readers.
         long newRegionLimit = entryOffset + PostingIndexChainEntry.entrySize(genCount);
@@ -202,11 +202,10 @@ public final class PostingIndexChainWriter {
         // PostingIndexChainEntry.read: if a reader observes the new
         // GEN_COUNT, all stores above (and the gen-dir bytes the caller
         // wrote before this call) are also visible.
-        Unsafe.getUnsafe().storeFence();
+        Unsafe.storeFence();
         keyMem.putInt(headEntryOffset + PostingIndexUtils.V2_ENTRY_OFFSET_GEN_COUNT, newGenCount);
-        Unsafe.getUnsafe().storeFence();
-        long newRegionLimit = headEntryOffset + newLen;
-        regionLimit = newRegionLimit;
+        Unsafe.storeFence();
+        regionLimit = headEntryOffset + newLen;
         activePageOffset = PostingIndexChainHeader.publish(
                 keyMem,
                 activePageOffset,
@@ -425,7 +424,7 @@ public final class PostingIndexChainWriter {
         } else {
             currentTxnAtSeal = -1L;
         }
-        Unsafe.getUnsafe().storeFence();
+        Unsafe.storeFence();
         activePageOffset = PostingIndexChainHeader.publish(
                 keyMem,
                 activePageOffset,
@@ -473,7 +472,7 @@ public final class PostingIndexChainWriter {
             return;
         }
         keyMem.putLong(headEntryOffset + PostingIndexUtils.V2_ENTRY_OFFSET_MAX_VALUE, maxValue);
-        Unsafe.getUnsafe().storeFence();
+        Unsafe.storeFence();
         activePageOffset = PostingIndexChainHeader.publish(
                 keyMem,
                 activePageOffset,

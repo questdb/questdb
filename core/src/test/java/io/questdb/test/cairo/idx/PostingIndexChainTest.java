@@ -105,41 +105,157 @@ public class PostingIndexChainTest {
     }
 
     @Test
-    public void testSingleEntryPicker() {
+    public void testAbandonedEntrySkipped() {
+        // Healthy entries:  (sealTxn=1, txnAtSeal=10), (sealTxn=2, txnAtSeal=20)
+        // Abandoned entry:  (sealTxn=3, txnAtSeal=99) — publish landed but
+        //   commit never did, so any pinned reader has _txn < 99.
         PostingIndexChainHeader.initialiseEmpty(mem);
-        long offset = appendEntry(
-                /* sealTxn */ 1,
-                /* txnAtSeal */ 5,
-                /* prevOffset */ PostingIndexUtils.V2_NO_HEAD,
-                /* genCount */ 0
-        );
-        publishHead(offset, /* count */ 1, /* genCounter */ 1);
+        long off1 = appendEntry(1, 10, PostingIndexUtils.V2_NO_HEAD);
+        long off2 = appendEntry(2, 20, off1);
+        long off3 = appendEntry(3, 99, off2);
+        publishHead(off3, /* count */ 3, /* genCounter */ 3);
 
         PostingIndexChainHeader.Snapshot header = new PostingIndexChainHeader.Snapshot();
         PostingIndexChainEntry.Snapshot entry = new PostingIndexChainEntry.Snapshot();
 
-        // Pin at exactly the seal txn.
+        // Reader pinned at 25 walks head (sealTxn=3, txnAtSeal=99 — skip)
+        // then sealTxn=2, txnAtSeal=20 — visible.
         Assert.assertEquals(PostingIndexChainPicker.RESULT_OK,
-                PostingIndexChainPicker.pick(mem, 5L, header, entry));
-        Assert.assertEquals(1, entry.sealTxn);
-        Assert.assertEquals(5, entry.txnAtSeal);
+                PostingIndexChainPicker.pick(mem, 25L, header, entry));
+        Assert.assertEquals(2, entry.sealTxn);
 
-        // Pin above the seal txn.
         Assert.assertEquals(PostingIndexChainPicker.RESULT_OK,
-                PostingIndexChainPicker.pick(mem, 100L, header, entry));
-        Assert.assertEquals(1, entry.sealTxn);
+                PostingIndexChainPicker.pick(mem, 50L, header, entry));
+        Assert.assertEquals(2, entry.sealTxn);
 
-        // Pin below the seal txn — entry not visible to this reader.
-        Assert.assertEquals(PostingIndexChainPicker.RESULT_NO_VISIBLE_ENTRY,
-                PostingIndexChainPicker.pick(mem, 4L, header, entry));
+        // Pin at 99 sees the (now-no-longer-abandoned) head; this case
+        // exists only as a deterministic check of the picker, not a real
+        // production state.
+        Assert.assertEquals(PostingIndexChainPicker.RESULT_OK,
+                PostingIndexChainPicker.pick(mem, 99L, header, entry));
+        Assert.assertEquals(3, entry.sealTxn);
+    }
+
+    /**
+     * NOTE: an in-memory concurrency stress test was attempted here but
+     * MemoryCARWImpl is not designed for concurrent access (its
+     * appendAddress and growth are not thread-safe). Real concurrency
+     * testing happens at integration in Phase 2 when this code is wired
+     * into PostingIndexWriter against a mmap-backed MemoryCMARW.
+     */
+    @org.junit.Ignore("see comment; concurrency tested at integration")
+    @Test
+    public void testConcurrentReaderObservesConsistentSnapshot() throws Exception {
+        PostingIndexChainHeader.initialiseEmpty(mem);
+        long off1 = PostingIndexUtils.V2_ENTRY_REGION_BASE;
+        PostingIndexChainEntry.writeHeader(mem, off1, 1, 10, 0, 0, 0, 0, 64, 0, PostingIndexUtils.V2_NO_HEAD);
+        long limit = off1 + PostingIndexChainEntry.entrySize(0);
+        publishHead(off1, 1, 1, limit);
+
+        AtomicBoolean stop = new AtomicBoolean(false);
+        AtomicInteger inconsistencies = new AtomicInteger(0);
+        AtomicInteger readerOps = new AtomicInteger(0);
+        CountDownLatch readyToStart = new CountDownLatch(4);
+        CountDownLatch done = new CountDownLatch(4);
+
+        Thread writer = new Thread(() -> {
+            try {
+                readyToStart.countDown();
+                long activePage = PostingIndexUtils.PAGE_A_OFFSET;
+                long prevOffset = off1;
+                long nextOffset = limit;
+                long sealTxn = 1;
+                long entryCount = 1;
+                long bufferEnd = 64 * 1024 - PostingIndexChainEntry.entrySize(0);
+                while (!stop.get() && nextOffset < bufferEnd) {
+                    sealTxn++;
+                    long txnAtSeal = sealTxn * 10;
+                    PostingIndexChainEntry.writeHeader(
+                            mem, nextOffset, sealTxn, txnAtSeal, 0, 0, 0, 0, 64, 0, prevOffset
+                    );
+                    long thisOffset = nextOffset;
+                    nextOffset += PostingIndexChainEntry.entrySize(0);
+                    entryCount++;
+                    activePage = PostingIndexChainHeader.publish(
+                            mem, activePage, thisOffset, entryCount,
+                            PostingIndexUtils.V2_ENTRY_REGION_BASE, nextOffset, sealTxn
+                    );
+                    prevOffset = thisOffset;
+                }
+            } finally {
+                done.countDown();
+            }
+        }, "chain-writer");
+
+        Runnable readerTask = () -> {
+            PostingIndexChainHeader.Snapshot header = new PostingIndexChainHeader.Snapshot();
+            PostingIndexChainEntry.Snapshot entry = new PostingIndexChainEntry.Snapshot();
+            try {
+                readyToStart.countDown();
+                while (!stop.get()) {
+                    if (!PostingIndexChainHeader.readUnderSeqlock(mem, header)) {
+                        inconsistencies.incrementAndGet();
+                        continue;
+                    }
+                    if (header.formatVersion != PostingIndexUtils.V2_FORMAT_VERSION) {
+                        inconsistencies.incrementAndGet();
+                        continue;
+                    }
+                    if (header.headEntryOffset != PostingIndexUtils.V2_NO_HEAD) {
+                        if (header.headEntryOffset < header.regionBase
+                                || header.headEntryOffset >= header.regionLimit) {
+                            inconsistencies.incrementAndGet();
+                            continue;
+                        }
+                        // Picker re-reads the header under its own seqlock,
+                        // so its returned entry is consistent with whatever
+                        // header it observed (possibly newer than ours). We
+                        // only verify the entry it picked is internally
+                        // consistent: offset within region, txnAtSeal <= pin,
+                        // sealTxn > 0.
+                        int rc = PostingIndexChainPicker.pick(mem, Long.MAX_VALUE, header, entry);
+                        if (rc != PostingIndexChainPicker.RESULT_OK) {
+                            inconsistencies.incrementAndGet();
+                            continue;
+                        }
+                        if (entry.offset < header.regionBase || entry.sealTxn <= 0 || entry.txnAtSeal < 0) {
+                            inconsistencies.incrementAndGet();
+                            continue;
+                        }
+                    }
+                    readerOps.incrementAndGet();
+                }
+            } finally {
+                done.countDown();
+            }
+        };
+
+        Thread r1 = new Thread(readerTask, "chain-reader-1");
+        Thread r2 = new Thread(readerTask, "chain-reader-2");
+        Thread r3 = new Thread(readerTask, "chain-reader-3");
+
+        writer.start();
+        r1.start();
+        r2.start();
+        r3.start();
+        readyToStart.await();
+
+        Thread.sleep(200);
+        stop.set(true);
+        done.await();
+
+        Assert.assertTrue("readers should complete at least one cycle",
+                readerOps.get() > 0);
+        Assert.assertEquals("no torn reads should be observed",
+                0, inconsistencies.get());
     }
 
     @Test
     public void testMultiEntryPicker() {
         PostingIndexChainHeader.initialiseEmpty(mem);
-        long off1 = appendEntry(1, 10, PostingIndexUtils.V2_NO_HEAD, 0);
-        long off2 = appendEntry(2, 20, off1, 0);
-        long off3 = appendEntry(3, 30, off2, 0);
+        long off1 = appendEntry(1, 10, PostingIndexUtils.V2_NO_HEAD);
+        long off2 = appendEntry(2, 20, off1);
+        long off3 = appendEntry(3, 30, off2);
         publishHead(off3, /* count */ 3, /* genCounter */ 3);
 
         PostingIndexChainHeader.Snapshot header = new PostingIndexChainHeader.Snapshot();
@@ -173,38 +289,6 @@ public class PostingIndexChainTest {
         // Pin below all entries.
         Assert.assertEquals(PostingIndexChainPicker.RESULT_NO_VISIBLE_ENTRY,
                 PostingIndexChainPicker.pick(mem, 5L, header, entry));
-    }
-
-    @Test
-    public void testAbandonedEntrySkipped() {
-        // Healthy entries:  (sealTxn=1, txnAtSeal=10), (sealTxn=2, txnAtSeal=20)
-        // Abandoned entry:  (sealTxn=3, txnAtSeal=99) — publish landed but
-        //   commit never did, so any pinned reader has _txn < 99.
-        PostingIndexChainHeader.initialiseEmpty(mem);
-        long off1 = appendEntry(1, 10, PostingIndexUtils.V2_NO_HEAD, 0);
-        long off2 = appendEntry(2, 20, off1, 0);
-        long off3 = appendEntry(3, 99, off2, 0);
-        publishHead(off3, /* count */ 3, /* genCounter */ 3);
-
-        PostingIndexChainHeader.Snapshot header = new PostingIndexChainHeader.Snapshot();
-        PostingIndexChainEntry.Snapshot entry = new PostingIndexChainEntry.Snapshot();
-
-        // Reader pinned at 25 walks head (sealTxn=3, txnAtSeal=99 — skip)
-        // then sealTxn=2, txnAtSeal=20 — visible.
-        Assert.assertEquals(PostingIndexChainPicker.RESULT_OK,
-                PostingIndexChainPicker.pick(mem, 25L, header, entry));
-        Assert.assertEquals(2, entry.sealTxn);
-
-        Assert.assertEquals(PostingIndexChainPicker.RESULT_OK,
-                PostingIndexChainPicker.pick(mem, 50L, header, entry));
-        Assert.assertEquals(2, entry.sealTxn);
-
-        // Pin at 99 sees the (now-no-longer-abandoned) head; this case
-        // exists only as a deterministic check of the picker, not a real
-        // production state.
-        Assert.assertEquals(PostingIndexChainPicker.RESULT_OK,
-                PostingIndexChainPicker.pick(mem, 99L, header, entry));
-        Assert.assertEquals(3, entry.sealTxn);
     }
 
     @Test
@@ -346,124 +430,37 @@ public class PostingIndexChainTest {
         }
     }
 
-    /**
-     * NOTE: an in-memory concurrency stress test was attempted here but
-     * MemoryCARWImpl is not designed for concurrent access (its
-     * appendAddress and growth are not thread-safe). Real concurrency
-     * testing happens at integration in Phase 2 when this code is wired
-     * into PostingIndexWriter against a mmap-backed MemoryCMARW.
-     */
-    @org.junit.Ignore("see comment; concurrency tested at integration")
     @Test
-    public void testConcurrentReaderObservesConsistentSnapshot() throws Exception {
+    public void testSingleEntryPicker() {
         PostingIndexChainHeader.initialiseEmpty(mem);
-        long off1 = PostingIndexUtils.V2_ENTRY_REGION_BASE;
-        PostingIndexChainEntry.writeHeader(mem, off1, 1, 10, 0, 0, 0, 0, 64, 0, PostingIndexUtils.V2_NO_HEAD);
-        long limit = off1 + PostingIndexChainEntry.entrySize(0);
-        publishHead(off1, 1, 1, limit);
+        long offset = appendEntry(
+                /* sealTxn */ 1,
+                /* txnAtSeal */ 5,
+                /* prevOffset */ PostingIndexUtils.V2_NO_HEAD
+                /* genCount */
+        );
+        publishHead(offset, /* count */ 1, /* genCounter */ 1);
 
-        AtomicBoolean stop = new AtomicBoolean(false);
-        AtomicInteger inconsistencies = new AtomicInteger(0);
-        AtomicInteger readerOps = new AtomicInteger(0);
-        CountDownLatch readyToStart = new CountDownLatch(4);
-        CountDownLatch done = new CountDownLatch(4);
+        PostingIndexChainHeader.Snapshot header = new PostingIndexChainHeader.Snapshot();
+        PostingIndexChainEntry.Snapshot entry = new PostingIndexChainEntry.Snapshot();
 
-        Thread writer = new Thread(() -> {
-            try {
-                readyToStart.countDown();
-                long activePage = PostingIndexUtils.PAGE_A_OFFSET;
-                long prevOffset = off1;
-                long nextOffset = limit;
-                long sealTxn = 1;
-                long entryCount = 1;
-                long bufferEnd = 64 * 1024 - PostingIndexChainEntry.entrySize(0);
-                while (!stop.get() && nextOffset < bufferEnd) {
-                    sealTxn++;
-                    long txnAtSeal = sealTxn * 10;
-                    PostingIndexChainEntry.writeHeader(
-                            mem, nextOffset, sealTxn, txnAtSeal, 0, 0, 0, 0, 64, 0, prevOffset
-                    );
-                    long thisOffset = nextOffset;
-                    nextOffset += PostingIndexChainEntry.entrySize(0);
-                    entryCount++;
-                    activePage = PostingIndexChainHeader.publish(
-                            mem, activePage, thisOffset, entryCount,
-                            PostingIndexUtils.V2_ENTRY_REGION_BASE, nextOffset, sealTxn
-                    );
-                    prevOffset = thisOffset;
-                }
-            } finally {
-                done.countDown();
-            }
-        }, "chain-writer");
+        // Pin at exactly the seal txn.
+        Assert.assertEquals(PostingIndexChainPicker.RESULT_OK,
+                PostingIndexChainPicker.pick(mem, 5L, header, entry));
+        Assert.assertEquals(1, entry.sealTxn);
+        Assert.assertEquals(5, entry.txnAtSeal);
 
-        Runnable readerTask = () -> {
-            PostingIndexChainHeader.Snapshot header = new PostingIndexChainHeader.Snapshot();
-            PostingIndexChainEntry.Snapshot entry = new PostingIndexChainEntry.Snapshot();
-            try {
-                readyToStart.countDown();
-                while (!stop.get()) {
-                    if (!PostingIndexChainHeader.readUnderSeqlock(mem, header)) {
-                        inconsistencies.incrementAndGet();
-                        continue;
-                    }
-                    if (header.formatVersion != PostingIndexUtils.V2_FORMAT_VERSION) {
-                        inconsistencies.incrementAndGet();
-                        continue;
-                    }
-                    if (header.headEntryOffset != PostingIndexUtils.V2_NO_HEAD) {
-                        if (header.headEntryOffset < header.regionBase
-                                || header.headEntryOffset >= header.regionLimit) {
-                            inconsistencies.incrementAndGet();
-                            continue;
-                        }
-                        // Picker re-reads the header under its own seqlock,
-                        // so its returned entry is consistent with whatever
-                        // header it observed (possibly newer than ours). We
-                        // only verify the entry it picked is internally
-                        // consistent: offset within region, txnAtSeal <= pin,
-                        // sealTxn > 0.
-                        int rc = PostingIndexChainPicker.pick(mem, Long.MAX_VALUE, header, entry);
-                        if (rc != PostingIndexChainPicker.RESULT_OK) {
-                            inconsistencies.incrementAndGet();
-                            continue;
-                        }
-                        if (entry.offset < header.regionBase
-                                || entry.sealTxn <= 0
-                                || entry.txnAtSeal > Long.MAX_VALUE
-                                || entry.txnAtSeal < 0) {
-                            inconsistencies.incrementAndGet();
-                            continue;
-                        }
-                    }
-                    readerOps.incrementAndGet();
-                }
-            } finally {
-                done.countDown();
-            }
-        };
+        // Pin above the seal txn.
+        Assert.assertEquals(PostingIndexChainPicker.RESULT_OK,
+                PostingIndexChainPicker.pick(mem, 100L, header, entry));
+        Assert.assertEquals(1, entry.sealTxn);
 
-        Thread r1 = new Thread(readerTask, "chain-reader-1");
-        Thread r2 = new Thread(readerTask, "chain-reader-2");
-        Thread r3 = new Thread(readerTask, "chain-reader-3");
-
-        writer.start();
-        r1.start();
-        r2.start();
-        r3.start();
-        readyToStart.await();
-
-        Thread.sleep(200);
-        stop.set(true);
-        done.await();
-
-        Assert.assertTrue("readers should complete at least one cycle",
-                readerOps.get() > 0);
-        Assert.assertEquals("no torn reads should be observed",
-                0, inconsistencies.get());
+        // Pin below the seal txn — entry not visible to this reader.
+        Assert.assertEquals(PostingIndexChainPicker.RESULT_NO_VISIBLE_ENTRY,
+                PostingIndexChainPicker.pick(mem, 4L, header, entry));
     }
 
-    private long appendEntry(long sealTxn, long txnAtSeal, long prevOffset, int genCount) {
+    private long appendEntry(long sealTxn, long txnAtSeal, long prevOffset) {
         long offset;
         if (prevOffset == PostingIndexUtils.V2_NO_HEAD) {
             offset = PostingIndexUtils.V2_ENTRY_REGION_BASE;
@@ -472,7 +469,7 @@ public class PostingIndexChainTest {
         }
         PostingIndexChainEntry.writeHeader(
                 mem, offset, sealTxn, txnAtSeal, /* valueMemSize */ 0,
-                /* maxValue */ 0, /* keyCount */ 0, genCount,
+                /* maxValue */ 0, /* keyCount */ 0, 0,
                 /* blockCapacity */ 64, /* coveringFormat */ 0, prevOffset
         );
         return offset;

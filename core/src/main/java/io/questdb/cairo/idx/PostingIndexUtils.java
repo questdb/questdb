@@ -197,12 +197,7 @@ public final class PostingIndexUtils {
     // to match v2 header bytes for the seqlock fields, and bytes for
     // the v1-only fields are arbitrary "some byte in the header" probes
     // in tests that no longer assert v1 semantics).
-    public static final int PAGE_OFFSET_BLOCK_CAPACITY = 16;
-    public static final int PAGE_OFFSET_FORMAT_VERSION = 36;
     public static final int PAGE_OFFSET_GEN_COUNT = 32;
-    public static final int PAGE_OFFSET_GEN_DIR = 64;
-    public static final int PAGE_OFFSET_KEY_COUNT = 20;
-    public static final int PAGE_OFFSET_MAX_VALUE = 24;
     public static final int PAGE_OFFSET_SEAL_TXN = 40;
     public static final int PAGE_OFFSET_SEQUENCE_END = 4088;
     public static final int PAGE_OFFSET_SEQUENCE_START = 0;

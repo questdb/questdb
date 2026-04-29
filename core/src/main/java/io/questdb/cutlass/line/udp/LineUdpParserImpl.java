@@ -60,11 +60,11 @@ import static io.questdb.cutlass.line.LineUtils.from;
 
 public class LineUdpParserImpl implements LineUdpParser, Closeable {
     private final static Log LOG = LogFactory.getLog(LineUdpParserImpl.class);
-    private static final FieldNameParser NOOP_FIELD_NAME = name -> {
+    private static final FieldNameParser NOOP_FIELD_NAME = _ -> {
     };
-    private static final FieldValueParser NOOP_FIELD_VALUE = (value, cache) -> {
+    private static final FieldValueParser NOOP_FIELD_VALUE = (_, _) -> {
     };
-    private static final LineEndParser NOOP_LINE_END = cache -> {
+    private static final LineEndParser NOOP_LINE_END = _ -> {
     };
     private static final String WRITER_LOCK_REASON = "ilpUdp";
     private final boolean autoCreateNewColumns;

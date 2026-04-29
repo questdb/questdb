@@ -130,8 +130,8 @@ public class FSSTNativeTest extends AbstractCairoTest {
             long decoder = Unsafe.malloc(FSSTNative.DECODER_STRUCT_SIZE, MemoryTag.NATIVE_DEFAULT);
             try {
                 for (int i = 0; i <= count; i++) {
-                    long off = Unsafe.getUnsafe().getLong(block.cmpOffsAddr + (long) i * Long.BYTES);
-                    Unsafe.getUnsafe().putInt(offsets32 + (long) i * Integer.BYTES, (int) off);
+                    long off = Unsafe.getLong(block.cmpOffsAddr + (long) i * Long.BYTES);
+                    Unsafe.putInt(offsets32 + (long) i * Integer.BYTES, (int) off);
                 }
                 assertTrue("import", FSSTNative.importTable(decoder, block.tableAddr) > 0);
                 long decoded = FSSTNative.decompressBlock(
@@ -139,12 +139,12 @@ public class FSSTNativeTest extends AbstractCairoTest {
                         dstAddr, dstCap, dstOffsAddr);
                 assertEquals("decoded total", decodedTotal, decoded);
                 for (int i = 0; i < count; i++) {
-                    long lo = Unsafe.getUnsafe().getLong(dstOffsAddr + (long) i * Long.BYTES);
-                    long hi = Unsafe.getUnsafe().getLong(dstOffsAddr + (long) (i + 1) * Long.BYTES);
+                    long lo = Unsafe.getLong(dstOffsAddr + (long) i * Long.BYTES);
+                    long hi = Unsafe.getLong(dstOffsAddr + (long) (i + 1) * Long.BYTES);
                     assertEquals("value " + i + " length", payload[i].length, (int) (hi - lo));
                     for (int j = 0; j < payload[i].length; j++) {
                         assertEquals("value " + i + " byte " + j,
-                                payload[i][j], Unsafe.getUnsafe().getByte(dstAddr + lo + j));
+                                payload[i][j], Unsafe.getByte(dstAddr + lo + j));
                     }
                 }
             } finally {
@@ -244,12 +244,12 @@ public class FSSTNativeTest extends AbstractCairoTest {
                     dstAddr, dstCap, dstOffsAddr);
             assertEquals("decoded total", decodedTotal, decoded);
             for (int i = 0; i < count; i++) {
-                long lo = Unsafe.getUnsafe().getLong(dstOffsAddr + (long) i * Long.BYTES);
-                long hi = Unsafe.getUnsafe().getLong(dstOffsAddr + (long) (i + 1) * Long.BYTES);
+                long lo = Unsafe.getLong(dstOffsAddr + (long) i * Long.BYTES);
+                long hi = Unsafe.getLong(dstOffsAddr + (long) (i + 1) * Long.BYTES);
                 assertEquals("value " + i + " length", expected[i].length, (int) (hi - lo));
                 for (int j = 0; j < expected[i].length; j++) {
                     assertEquals("value " + i + " byte " + j,
-                            expected[i][j], Unsafe.getUnsafe().getByte(dstAddr + lo + j));
+                            expected[i][j], Unsafe.getByte(dstAddr + lo + j));
                 }
             }
         } finally {
@@ -284,12 +284,12 @@ public class FSSTNativeTest extends AbstractCairoTest {
 
             long pos = 0;
             for (int i = 0; i < count; i++) {
-                Unsafe.getUnsafe().putLong(srcOffsAddr + (long) i * Long.BYTES, pos);
+                Unsafe.putLong(srcOffsAddr + (long) i * Long.BYTES, pos);
                 for (byte b : payload[i]) {
-                    Unsafe.getUnsafe().putByte(srcAddr + pos++, b);
+                    Unsafe.putByte(srcAddr + pos++, b);
                 }
             }
-            Unsafe.getUnsafe().putLong(srcOffsAddr + (long) count * Long.BYTES, pos);
+            Unsafe.putLong(srcOffsAddr + (long) count * Long.BYTES, pos);
 
             long packed = FSSTNative.trainAndCompressBlock(
                     srcAddr, srcOffsAddr, count,
@@ -323,36 +323,16 @@ public class FSSTNativeTest extends AbstractCairoTest {
         }
     }
 
-    private static final class CompressedBlock implements QuietCloseable {
-        final long cmpAddr;
-        final long cmpCap;
-        final long cmpOffsAddr;
-        final long offsetsBytes;
-        final long srcAddr;
-        final long srcLen;
-        final long srcOffsAddr;
-        final long tableAddr;
-
-        CompressedBlock(long srcAddr, long srcLen, long srcOffsAddr,
-                        long cmpAddr, long cmpCap, long cmpOffsAddr,
-                        long offsetsBytes, long tableAddr) {
-            this.srcAddr = srcAddr;
-            this.srcLen = srcLen;
-            this.srcOffsAddr = srcOffsAddr;
-            this.cmpAddr = cmpAddr;
-            this.cmpCap = cmpCap;
-            this.cmpOffsAddr = cmpOffsAddr;
-            this.offsetsBytes = offsetsBytes;
-            this.tableAddr = tableAddr;
-        }
+    private record CompressedBlock(long srcAddr, long srcLen, long srcOffsAddr, long cmpAddr, long cmpCap,
+                                   long cmpOffsAddr, long offsetsBytes, long tableAddr) implements QuietCloseable {
 
         @Override
-        public void close() {
-            Unsafe.free(tableAddr, FSSTNative.MAX_HEADER_SIZE, MemoryTag.NATIVE_DEFAULT);
-            Unsafe.free(cmpOffsAddr, offsetsBytes, MemoryTag.NATIVE_DEFAULT);
-            Unsafe.free(cmpAddr, cmpCap, MemoryTag.NATIVE_DEFAULT);
-            Unsafe.free(srcOffsAddr, offsetsBytes, MemoryTag.NATIVE_DEFAULT);
-            Unsafe.free(srcAddr, srcLen, MemoryTag.NATIVE_DEFAULT);
+            public void close() {
+                Unsafe.free(tableAddr, FSSTNative.MAX_HEADER_SIZE, MemoryTag.NATIVE_DEFAULT);
+                Unsafe.free(cmpOffsAddr, offsetsBytes, MemoryTag.NATIVE_DEFAULT);
+                Unsafe.free(cmpAddr, cmpCap, MemoryTag.NATIVE_DEFAULT);
+                Unsafe.free(srcOffsAddr, offsetsBytes, MemoryTag.NATIVE_DEFAULT);
+                Unsafe.free(srcAddr, srcLen, MemoryTag.NATIVE_DEFAULT);
+            }
         }
-    }
 }

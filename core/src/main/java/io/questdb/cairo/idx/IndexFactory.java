@@ -33,8 +33,6 @@ import io.questdb.cairo.vm.api.MemoryMA;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
 
-import static io.questdb.cairo.idx.PostingIndexUtils.BLOCK_CAPACITY;
-
 public final class IndexFactory {
 
     private IndexFactory() {
@@ -80,7 +78,7 @@ public final class IndexFactory {
         switch (indexType) {
             case IndexType.BITMAP -> BitmapIndexWriter.initKeyMemory(keyMem, blockCapacity);
             case IndexType.POSTING, IndexType.POSTING_DELTA, IndexType.POSTING_EF ->
-                    PostingIndexWriter.initKeyMemory(keyMem, BLOCK_CAPACITY);
+                    PostingIndexWriter.initKeyMemory(keyMem);
             default -> throw unsupportedIndexType(indexType);
         }
     }

@@ -60,7 +60,6 @@ import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
 import io.questdb.std.str.Utf8StringSink;
-import io.questdb.std.str.Utf8s;
 import io.questdb.tasks.PostingSealPurgeTask;
 import org.jetbrains.annotations.TestOnly;
 
@@ -211,11 +210,11 @@ public class PostingIndexWriter implements IndexWriter {
         of(path, name, columnNameTxn, true);
     }
 
-    public static void initKeyMemory(MemoryMA keyMem, int blockCapacity) {
+    public static void initKeyMemory(MemoryMA keyMem) {
         // Default: first chain entry will use sealTxn=0, matching the
         // historical .pv.0 filename for a freshly-initialised, never-sealed
         // index.
-        initKeyMemory(keyMem, blockCapacity, 0L);
+        initKeyMemory(keyMem, 0L);
     }
 
     @Override
@@ -700,7 +699,7 @@ public class PostingIndexWriter implements IndexWriter {
                     kFdUnassigned = false;
                     keyMem.of(ff, keyFd, false, null, keyAppendPageSize, keyAppendPageSize, MemoryTag.MMAP_INDEX_WRITER);
                     this.blockCapacity = BLOCK_CAPACITY;
-                    initKeyMemory(keyMem, this.blockCapacity);
+                    initKeyMemory(keyMem);
                 } else {
                     throw CairoException.critical(ff.errno()).put("Could not truncate [fd=").put(keyFd).put(']');
                 }
@@ -804,7 +803,7 @@ public class PostingIndexWriter implements IndexWriter {
             if (init) {
                 keyMem.of(ff, keyFile, configuration.getDataIndexKeyAppendPageSize(), 0L, MemoryTag.MMAP_INDEX_WRITER);
                 this.blockCapacity = BLOCK_CAPACITY;
-                initKeyMemory(keyMem, blockCapacity);
+                initKeyMemory(keyMem);
             } else {
                 if (!ff.exists(keyFile)) {
                     throw CairoException.critical(0).put("index does not exist [path=").put(path).put(']');
@@ -1260,12 +1259,12 @@ public class PostingIndexWriter implements IndexWriter {
                     configuration.getDataIndexValueAppendPageSize(), 0L,
                     MemoryTag.MMAP_INDEX_WRITER, configuration.getWriterFileOpenOpts(), -1);
             sealTxn = newTxn;
-            initKeyMemory(keyMem, blockCapacity, sealTxn);
+            initKeyMemory(keyMem, sealTxn);
             recordPostingSealPurge(oldSealTxn);
         } else {
             // fd-based writer (O3 path): no concurrent readers, safe to truncate in place
             valueMem.truncate();
-            initKeyMemory(keyMem, blockCapacity);
+            initKeyMemory(keyMem);
         }
         // initKeyMemory just rewrote the .pk header pages; resync the chain
         // helper's in-memory mirror to the new starting state. genCounter
@@ -1331,7 +1330,7 @@ public class PostingIndexWriter implements IndexWriter {
         };
     }
 
-    private static void initKeyMemory(MemoryMA keyMem, int blockCapacity, long startSealTxn) {
+    private static void initKeyMemory(MemoryMA keyMem, long startSealTxn) {
         // v2 layout: two 4 KB header pages followed by an empty entry region.
         // Page A is published with sequence=2 (even, non-zero) and an empty
         // chain. Page B is zeroed and stays inactive until the first

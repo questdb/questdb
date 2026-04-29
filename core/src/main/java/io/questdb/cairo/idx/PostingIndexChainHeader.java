@@ -44,42 +44,6 @@ import io.questdb.std.Unsafe;
  */
 public final class PostingIndexChainHeader {
 
-    /**
-     * Snapshot of the active header fields, populated by
-     * {@link #readUnderSeqlock(MemoryR, Snapshot)}. Reusable: callers can
-     * keep one instance and pass it in repeatedly to avoid allocation on
-     * the hot path.
-     */
-    public static final class Snapshot {
-        public long entryCount;
-        public long formatVersion;
-        public long generationCounter;
-        public long headEntryOffset;
-        public long pageOffset;
-        public long regionBase;
-        public long regionLimit;
-        // Even, monotonically-advancing seqlock value of the picked page.
-        // Callers that need to extend the seqlock window past the header
-        // payload (e.g. across an in-place chain-entry mutation) re-validate
-        // this with {@link #stillStable}.
-        public long sequence;
-
-        public boolean isEmpty() {
-            return headEntryOffset == PostingIndexUtils.V2_NO_HEAD;
-        }
-
-        public void reset() {
-            this.formatVersion = 0;
-            this.headEntryOffset = PostingIndexUtils.V2_NO_HEAD;
-            this.entryCount = 0;
-            this.regionBase = 0;
-            this.regionLimit = 0;
-            this.generationCounter = 0;
-            this.pageOffset = -1;
-            this.sequence = 0;
-        }
-    }
-
     private PostingIndexChainHeader() {
     }
 
@@ -117,8 +81,7 @@ public final class PostingIndexChainHeader {
                 PostingIndexUtils.PAGE_A_OFFSET,
                 /* sequence */ 2L,
                 PostingIndexUtils.V2_FORMAT_VERSION,
-                PostingIndexUtils.V2_NO_HEAD,
-                /* entryCount */ 0L,
+                /* entryCount */
                 /* regionBase */ PostingIndexUtils.V2_ENTRY_REGION_BASE,
                 /* regionLimit */ PostingIndexUtils.V2_ENTRY_REGION_BASE,
                 /* genCounter */ startSealTxn - 1L
@@ -129,8 +92,7 @@ public final class PostingIndexChainHeader {
                 PostingIndexUtils.PAGE_B_OFFSET,
                 /* sequence */ 0L,
                 /* formatVersion */ 0L,
-                PostingIndexUtils.V2_NO_HEAD,
-                0L, 0L, 0L, 0L
+                0L, 0L, 0L
         );
     }
 
@@ -171,7 +133,7 @@ public final class PostingIndexChainHeader {
 
         // Phase 1: stage with sequence == newSeq | 1 (odd, in-progress).
         long stagingSeq = newSeq | 1L;
-        Unsafe.getUnsafe().storeFence();
+        Unsafe.storeFence();
         keyMem.putLong(inactiveOffset + PostingIndexUtils.V2_HEADER_OFFSET_SEQUENCE_START, stagingSeq);
         keyMem.putLong(inactiveOffset + PostingIndexUtils.V2_HEADER_OFFSET_SEQUENCE_END, stagingSeq);
 
@@ -184,9 +146,9 @@ public final class PostingIndexChainHeader {
         keyMem.putLong(inactiveOffset + PostingIndexUtils.V2_HEADER_OFFSET_GEN_COUNTER, newGenCounter);
 
         // Phase 3: finalise with even sequence == newSeq, releasing the page.
-        Unsafe.getUnsafe().storeFence();
+        Unsafe.storeFence();
         keyMem.putLong(inactiveOffset + PostingIndexUtils.V2_HEADER_OFFSET_SEQUENCE_END, newSeq);
-        Unsafe.getUnsafe().storeFence();
+        Unsafe.storeFence();
         keyMem.putLong(inactiveOffset + PostingIndexUtils.V2_HEADER_OFFSET_SEQUENCE_START, newSeq);
 
         return inactiveOffset;
@@ -208,7 +170,7 @@ public final class PostingIndexChainHeader {
             long seqEndA = keyMem.getLong(PostingIndexUtils.PAGE_A_OFFSET + PostingIndexUtils.V2_HEADER_OFFSET_SEQUENCE_END);
             long seqStartB = keyMem.getLong(PostingIndexUtils.PAGE_B_OFFSET + PostingIndexUtils.V2_HEADER_OFFSET_SEQUENCE_START);
             long seqEndB = keyMem.getLong(PostingIndexUtils.PAGE_B_OFFSET + PostingIndexUtils.V2_HEADER_OFFSET_SEQUENCE_END);
-            Unsafe.getUnsafe().loadFence();
+            Unsafe.loadFence();
 
             boolean aStable = seqStartA == seqEndA && (seqStartA & 1L) == 0L && seqStartA != 0L;
             boolean bStable = seqStartB == seqEndB && (seqStartB & 1L) == 0L && seqStartB != 0L;
@@ -234,7 +196,7 @@ public final class PostingIndexChainHeader {
             long regionBase = keyMem.getLong(pageOffset + PostingIndexUtils.V2_HEADER_OFFSET_REGION_BASE);
             long regionLimit = keyMem.getLong(pageOffset + PostingIndexUtils.V2_HEADER_OFFSET_REGION_LIMIT);
             long genCounter = keyMem.getLong(pageOffset + PostingIndexUtils.V2_HEADER_OFFSET_GEN_COUNTER);
-            Unsafe.getUnsafe().loadFence();
+            Unsafe.loadFence();
 
             // Re-read the seqlock pair on the picked page; if either changed,
             // retry. This closes the window where a writer flipped to this
@@ -270,7 +232,7 @@ public final class PostingIndexChainHeader {
     public static boolean stillStable(MemoryR keyMem, long pageOffset, long expectedSeq) {
         long seqStart = keyMem.getLong(pageOffset + PostingIndexUtils.V2_HEADER_OFFSET_SEQUENCE_START);
         long seqEnd = keyMem.getLong(pageOffset + PostingIndexUtils.V2_HEADER_OFFSET_SEQUENCE_END);
-        Unsafe.getUnsafe().loadFence();
+        Unsafe.loadFence();
         return seqStart == expectedSeq && seqEnd == expectedSeq;
     }
 
@@ -279,19 +241,53 @@ public final class PostingIndexChainHeader {
             long pageOffset,
             long sequence,
             long formatVersion,
-            long headEntryOffset,
-            long entryCount,
             long regionBase,
             long regionLimit,
             long genCounter
     ) {
         keyMem.putLong(pageOffset + PostingIndexUtils.V2_HEADER_OFFSET_SEQUENCE_START, sequence);
         keyMem.putLong(pageOffset + PostingIndexUtils.V2_HEADER_OFFSET_FORMAT_VERSION, formatVersion);
-        keyMem.putLong(pageOffset + PostingIndexUtils.V2_HEADER_OFFSET_HEAD_ENTRY_OFFSET, headEntryOffset);
-        keyMem.putLong(pageOffset + PostingIndexUtils.V2_HEADER_OFFSET_ENTRY_COUNT, entryCount);
+        keyMem.putLong(pageOffset + PostingIndexUtils.V2_HEADER_OFFSET_HEAD_ENTRY_OFFSET, PostingIndexUtils.V2_NO_HEAD);
+        keyMem.putLong(pageOffset + PostingIndexUtils.V2_HEADER_OFFSET_ENTRY_COUNT, 0L);
         keyMem.putLong(pageOffset + PostingIndexUtils.V2_HEADER_OFFSET_REGION_BASE, regionBase);
         keyMem.putLong(pageOffset + PostingIndexUtils.V2_HEADER_OFFSET_REGION_LIMIT, regionLimit);
         keyMem.putLong(pageOffset + PostingIndexUtils.V2_HEADER_OFFSET_GEN_COUNTER, genCounter);
         keyMem.putLong(pageOffset + PostingIndexUtils.V2_HEADER_OFFSET_SEQUENCE_END, sequence);
+    }
+
+    /**
+     * Snapshot of the active header fields, populated by
+     * {@link #readUnderSeqlock(MemoryR, Snapshot)}. Reusable: callers can
+     * keep one instance and pass it in repeatedly to avoid allocation on
+     * the hot path.
+     */
+    public static final class Snapshot {
+        public long entryCount;
+        public long formatVersion;
+        public long generationCounter;
+        public long headEntryOffset;
+        public long pageOffset;
+        public long regionBase;
+        public long regionLimit;
+        // Even, monotonically-advancing seqlock value of the picked page.
+        // Callers that need to extend the seqlock window past the header
+        // payload (e.g. across an in-place chain-entry mutation) re-validate
+        // this with {@link #stillStable}.
+        public long sequence;
+
+        public boolean isEmpty() {
+            return headEntryOffset == PostingIndexUtils.V2_NO_HEAD;
+        }
+
+        public void reset() {
+            this.formatVersion = 0;
+            this.headEntryOffset = PostingIndexUtils.V2_NO_HEAD;
+            this.entryCount = 0;
+            this.regionBase = 0;
+            this.regionLimit = 0;
+            this.generationCounter = 0;
+            this.pageOffset = -1;
+            this.sequence = 0;
+        }
     }
 }

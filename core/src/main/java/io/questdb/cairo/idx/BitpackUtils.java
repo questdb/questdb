@@ -137,13 +137,13 @@ public final class BitpackUtils {
             if (bufferBits < bitWidth) {
                 if (bufferBits == 0 && srcOffset + 8 <= totalBytes) {
                     // Fast path: buffer is empty and at least 8 bytes remain — read a full long
-                    buffer = Unsafe.getUnsafe().getLong(srcAddr + srcOffset);
+                    buffer = Unsafe.getLong(srcAddr + srcOffset);
                     bufferBits = 64;
                     srcOffset += 8;
                 } else {
                     // Slow path: read byte-by-byte near the end or when buffer has residual bits.
                     while (bufferBits < bitWidth && srcOffset < totalBytes) {
-                        long b = Unsafe.getUnsafe().getByte(srcAddr + srcOffset) & 0xFFL;
+                        long b = Unsafe.getByte(srcAddr + srcOffset) & 0xFFL;
                         srcOffset++;
                         if (bufferBits <= 56) {
                             buffer |= (b << bufferBits);
@@ -163,7 +163,7 @@ public final class BitpackUtils {
 
             // Extract offset and add minValue
             long offset = buffer & mask;
-            Unsafe.getUnsafe().putLong(destAddr + (long) i * Long.BYTES, minValue + offset);
+            Unsafe.putLong(destAddr + (long) i * Long.BYTES, minValue + offset);
 
             // Remove used bits
             if (bitWidth < 64) {
@@ -200,11 +200,11 @@ public final class BitpackUtils {
         // Subsequent bytes each contribute 8 bits at the next free position. This keeps
         // the maximum left-shift at <= 56, avoiding the Java shift-mod-64 overflow that
         // would otherwise drop the high bits when bitShift + bitWidth > 64.
-        long value = (Unsafe.getUnsafe().getByte(srcAddr + byteOffset) & 0xFFL) >>> bitShift;
+        long value = (Unsafe.getByte(srcAddr + byteOffset) & 0xFFL) >>> bitShift;
         int valueBits = 8 - bitShift;
         int byteIdx = 1;
         while (valueBits < bitWidth) {
-            long b = Unsafe.getUnsafe().getByte(srcAddr + byteOffset + byteIdx) & 0xFFL;
+            long b = Unsafe.getByte(srcAddr + byteOffset + byteIdx) & 0xFFL;
             value |= (b << valueBits);
             valueBits += 8;
             byteIdx++;
@@ -258,13 +258,13 @@ public final class BitpackUtils {
         int bufferBits = 0;
         if (skipBits == 0 && srcOffset + 8 <= totalBytes) {
             // Fast path: aligned start, read a full long
-            buffer = Unsafe.getUnsafe().getLong(srcAddr + srcOffset);
+            buffer = Unsafe.getLong(srcAddr + srcOffset);
             bufferBits = 64;
             srcOffset += 8;
         } else {
             int target = Math.min(skipBits + bitWidth, 64);
             while (bufferBits < target && srcOffset < totalBytes) {
-                buffer |= ((Unsafe.getUnsafe().getByte(srcAddr + srcOffset) & 0xFFL) << bufferBits);
+                buffer |= ((Unsafe.getByte(srcAddr + srcOffset) & 0xFFL) << bufferBits);
                 bufferBits += 8;
                 srcOffset++;
             }
@@ -277,12 +277,12 @@ public final class BitpackUtils {
         for (int i = 0; i < valueCount; i++) {
             if (bufferBits < bitWidth) {
                 if (bufferBits == 0 && srcOffset + 8 <= totalBytes) {
-                    buffer = Unsafe.getUnsafe().getLong(srcAddr + srcOffset);
+                    buffer = Unsafe.getLong(srcAddr + srcOffset);
                     bufferBits = 64;
                     srcOffset += 8;
                 } else {
                     while (bufferBits < bitWidth && srcOffset < totalBytes) {
-                        long b = Unsafe.getUnsafe().getByte(srcAddr + srcOffset) & 0xFFL;
+                        long b = Unsafe.getByte(srcAddr + srcOffset) & 0xFFL;
                         srcOffset++;
                         if (bufferBits <= 56) {
                             buffer |= (b << bufferBits);
@@ -297,7 +297,7 @@ public final class BitpackUtils {
                     }
                 }
             }
-            Unsafe.getUnsafe().putLong(destAddr + (long) i * Long.BYTES, minValue + (buffer & mask));
+            Unsafe.putLong(destAddr + (long) i * Long.BYTES, minValue + (buffer & mask));
             if (bitWidth < 64) {
                 buffer >>>= bitWidth;
             } else {

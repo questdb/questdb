@@ -318,10 +318,10 @@ public class PostingIndexChainWriterTest {
         w.appendNewEntry(mem, 2, 20, 0, 0, 0, 0, 64, 0);
         w.appendNewEntry(mem, 3, 30, 0, 0, 0, 0, 64, 0);
         // Two abandoned entries — txnAtSeal beyond what _txn ever committed.
-        long abandoned1 = w.appendNewEntry(mem, 4, 99, 0, 0, 0, 0, 64, 0);
+        long expectedRegionLimitAfter = w.appendNewEntry(mem, 4, 99, 0, 0, 0, 0, 64, 0);
         w.appendNewEntry(mem, 5, 100, 0, 0, 0, 0, 64, 0);
 
-        long expectedRegionLimitAfter = abandoned1; // entry #4's start
+        // entry #4's start
 
         LongList orphans = new LongList();
         int dropped = w.recoveryDropAbandoned(mem, /* currentTableTxn */ 30L, orphans);

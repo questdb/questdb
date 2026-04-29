@@ -63,7 +63,7 @@ public final class SplitBlockBloomFilter {
 
     public static long allocate(int filterSize) {
         long addr = Unsafe.malloc(filterSize, MemoryTag.NATIVE_INDEX_READER);
-        Unsafe.getUnsafe().setMemory(addr, filterSize, (byte) 0);
+        Unsafe.setMemory(addr, filterSize, (byte) 0);
         return addr;
     }
 
@@ -107,10 +107,10 @@ public final class SplitBlockBloomFilter {
         int key = (int) hash;
 
         // Load block as 4 longs
-        long w01 = Unsafe.getUnsafe().getLong(blockAddr);
-        long w23 = Unsafe.getUnsafe().getLong(blockAddr + 8);
-        long w45 = Unsafe.getUnsafe().getLong(blockAddr + 16);
-        long w67 = Unsafe.getUnsafe().getLong(blockAddr + 24);
+        long w01 = Unsafe.getLong(blockAddr);
+        long w23 = Unsafe.getLong(blockAddr + 8);
+        long w45 = Unsafe.getLong(blockAddr + 16);
+        long w67 = Unsafe.getLong(blockAddr + 24);
 
         // Compute 8 masks: 1 << ((key * SALT[i]) >>> 27), packed pairwise into longs
         w01 |= mask01(key);
@@ -118,10 +118,10 @@ public final class SplitBlockBloomFilter {
         w45 |= mask45(key);
         w67 |= mask67(key);
 
-        Unsafe.getUnsafe().putLong(blockAddr, w01);
-        Unsafe.getUnsafe().putLong(blockAddr + 8, w23);
-        Unsafe.getUnsafe().putLong(blockAddr + 16, w45);
-        Unsafe.getUnsafe().putLong(blockAddr + 24, w67);
+        Unsafe.putLong(blockAddr, w01);
+        Unsafe.putLong(blockAddr + 8, w23);
+        Unsafe.putLong(blockAddr + 16, w45);
+        Unsafe.putLong(blockAddr + 24, w67);
     }
 
     public static boolean mightContain(long filterAddr, int filterSize, long hash) {
@@ -131,10 +131,10 @@ public final class SplitBlockBloomFilter {
 
         int key = (int) hash;
 
-        long w01 = Unsafe.getUnsafe().getLong(blockAddr);
-        long w23 = Unsafe.getUnsafe().getLong(blockAddr + 8);
-        long w45 = Unsafe.getUnsafe().getLong(blockAddr + 16);
-        long w67 = Unsafe.getUnsafe().getLong(blockAddr + 24);
+        long w01 = Unsafe.getLong(blockAddr);
+        long w23 = Unsafe.getLong(blockAddr + 8);
+        long w45 = Unsafe.getLong(blockAddr + 16);
+        long w67 = Unsafe.getLong(blockAddr + 24);
 
         long m01 = mask01(key);
         long m23 = mask23(key);

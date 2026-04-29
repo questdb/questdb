@@ -303,7 +303,7 @@ public abstract class AbstractPostingIndexReader implements IndexReader {
             if (fd > 0) {
                 long fileLen = ff.length(fd);
                 if (fileLen > 0 && fileLen > keyMem.size()) {
-                    ((MemoryCMR) keyMem).extend(fileLen);
+                    keyMem.extend(fileLen);
                 }
             }
         }
@@ -326,20 +326,6 @@ public abstract class AbstractPostingIndexReader implements IndexReader {
             // valueMem here even though headEntryOffset is unchanged.
             ((MemoryCMR) this.valueMem).changeSize(valueMemSize);
         }
-    }
-
-    /**
-     * Set the table-level txn that this reader is pinned at via the
-     * scoreboard. The picker selects the chain entry with the largest
-     * {@code txnAtSeal <= pinnedTableTxn}. Defaults to {@link Long#MAX_VALUE}
-     * for callers that haven't yet been wired to plumb {@code _txn}.
-     * <p>
-     * Must be called before {@code of()} or before the next
-     * {@link #reloadConditionally()} for the new pin to take effect; the
-     * current snapshot is not re-picked retroactively.
-     */
-    public void setPinnedTableTxn(long pinnedTableTxn) {
-        this.pinnedTableTxn = pinnedTableTxn;
     }
 
     @TestOnly
@@ -687,7 +673,7 @@ public abstract class AbstractPostingIndexReader implements IndexReader {
                 if (fd > 0) {
                     long fileLen = ff.length(fd);
                     if (fileLen > 0 && fileLen > keyMem.size()) {
-                        ((MemoryCMR) keyMem).extend(fileLen);
+                        keyMem.extend(fileLen);
                     }
                 }
             }

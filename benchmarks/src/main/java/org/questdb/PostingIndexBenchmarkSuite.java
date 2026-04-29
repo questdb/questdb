@@ -427,7 +427,7 @@ public class PostingIndexBenchmarkSuite {
             FilesFacade ff = config.getFilesFacade();
             try (MemoryMA mem = Vm.getSmallCMARWInstance(ff, PostingIndexUtils.keyFileName(path, "test", COL_TXN),
                     MemoryTag.MMAP_DEFAULT, config.getWriterFileOpenOpts())) {
-                PostingIndexWriter.initKeyMemory(mem, PostingIndexUtils.BLOCK_CAPACITY);
+                PostingIndexWriter.initKeyMemory(mem);
             }
             // Fresh file: sealTxn starts equal to postingColumnNameTxn (no seal performed yet).
             ff.touch(PostingIndexUtils.valueFileName(path.trimTo(plen), "test", COL_TXN, COL_TXN));

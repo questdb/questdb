@@ -115,7 +115,7 @@ public final class PostingIndexChainEntry {
         // matching old fields) or a new GEN_COUNT (with matching new
         // fields), but never new GEN_COUNT with old VALUE_MEM_SIZE.
         into.genCount = keyMem.getInt(entryOffset + PostingIndexUtils.V2_ENTRY_OFFSET_GEN_COUNT);
-        Unsafe.getUnsafe().loadFence();
+        Unsafe.loadFence();
         into.len = keyMem.getLong(entryOffset + PostingIndexUtils.V2_ENTRY_OFFSET_LEN);
         into.sealTxn = keyMem.getLong(entryOffset + PostingIndexUtils.V2_ENTRY_OFFSET_SEAL_TXN);
         into.txnAtSeal = keyMem.getLong(entryOffset + PostingIndexUtils.V2_ENTRY_OFFSET_TXN_AT_SEAL);
