@@ -14746,6 +14746,51 @@ public class SqlParserTest extends AbstractSqlParserTest {
         );
     }
 
+    @Test
+    public void testBetweenAndSeparatorRespectsScopeDepth() throws Exception {
+        // AND inside a sub-expression that opens a new scope must NOT be claimed as
+        // BETWEEN's separator; only an AND at the same scope depth as BETWEEN is the
+        // separator. Covers every scope kind on scopeStack: PAREN, BRACKET, ARRAY,
+        // CASE, CAST/CAST_AS.
+
+        // PAREN
+        assertQuery(
+                "select-virtual 1 between (0 and 2, 3) column from (long_sequence(1))",
+                "SELECT 1 BETWEEN (0 AND 2) AND 3"
+        );
+
+        // ARRAY constructor
+        assertQuery(
+                "select-virtual 1 between (ARRAY[0 and 1], 3) column from (long_sequence(1))",
+                "SELECT 1 BETWEEN ARRAY[0 AND 1] AND 3"
+        );
+
+        // BRACKET (array indexing)
+        assertQuery(
+                "select-virtual 1 between (ARRAY[10, 20, 30][1 and 1], 3) column from (long_sequence(1))",
+                "SELECT 1 BETWEEN (ARRAY[10, 20, 30])[1 AND 1] AND 3"
+        );
+
+        // CASE
+        assertQuery(
+                "select-virtual 1 between (case when 1 = 1 and 2 = 2 then 0 else 0 end, 3) column from (long_sequence(1))",
+                "SELECT 1 BETWEEN CASE WHEN 1=1 AND 2=2 THEN 0 ELSE 0 END AND 3"
+        );
+
+        // CAST (and CAST_AS)
+        assertQuery(
+                "select-virtual 1 between ((0 and 1)::INT, 3) column from (long_sequence(1))",
+                "SELECT 1 BETWEEN CAST(0 AND 1 AS INT) AND 3"
+        );
+    }
+
+    @Test
+    public void testBetweenIssue6534() throws Exception {
+        // https://github.com/questdb/questdb/issues/6534
+        // Malformed SQL must throw SqlException, not AssertionError.
+        assertSyntaxError("SELECT fun(col BETWEEN (0 AND 1, col), col;", 42, "dangling literal");
+    }
+
     private void assertCreateTable(String expected, String ddl, TableModel... tableModels) throws SqlException {
         assertModel(expected, ddl, ExecutionModel.CREATE_TABLE, tableModels);
     }
