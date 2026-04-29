@@ -176,32 +176,32 @@ public final class ColumnType {
         if (typeB == VARCHAR_SLICE) typeB = VARCHAR;
         return (typeA == typeB && typeA != SYMBOL) ? typeA
                 : (isStringyType(typeA) && isStringyType(typeB)) ? STRING
-                : (isStringyType(typeA) && isParseableType(typeB)) ? typeA
-                : (isStringyType(typeB) && isParseableType(typeA)) ? typeB
+                  : (isStringyType(typeA) && isParseableType(typeB)) ? typeA
+                    : (isStringyType(typeB) && isParseableType(typeA)) ? typeB
 
-                // NULL casts to any other nullable type, except for symbols which can't cross symbol tables.
-                : ((typeA == NULL) && isCastableFromNull(typeB) && (typeB != SYMBOL)) ? typeB
-                : ((typeB == NULL) && isCastableFromNull(typeA) && (typeA != SYMBOL)) ? typeA
+                      // NULL casts to any other nullable type, except for symbols which can't cross symbol tables.
+                      : ((typeA == NULL) && isCastableFromNull(typeB) && (typeB != SYMBOL)) ? typeB
+                        : ((typeB == NULL) && isCastableFromNull(typeA) && (typeA != SYMBOL)) ? typeA
 
-                // cast long and timestamp to timestamp in unions instead of longs.
-                : ((isTimestamp(typeA)) && (typeB == LONG)) ? typeA
-                : ((typeA == LONG) && (isTimestamp(typeB))) ? typeB
-                : (isTimestamp(typeA) && (isTimestamp(typeB))) ? getHigherPrecisionTimestampType(typeA, typeB)
+                          // cast long and timestamp to timestamp in unions instead of longs.
+                          : ((isTimestamp(typeA)) && (typeB == LONG)) ? typeA
+                            : ((typeA == LONG) && (isTimestamp(typeB))) ? typeB
+                              : (isTimestamp(typeA) && (isTimestamp(typeB))) ? getHigherPrecisionTimestampType(typeA, typeB)
 
-                // cast long and date to date in unions instead of longs.
-                : ((typeA == LONG) && (typeB == DATE)) ? DATE
-                : ((typeA == DATE) && (typeB == LONG)) ? DATE
+                                // cast long and date to date in unions instead of longs.
+                                : ((typeA == LONG) && (typeB == DATE)) ? DATE
+                                  : ((typeA == DATE) && (typeB == LONG)) ? DATE
 
-                // Varchars take priority over strings, but strings over most types.
-                : (isVarchar(typeA) || isVarchar(typeB)) ? VARCHAR
-                : ((typeA == STRING) || (typeB == STRING)) ? STRING
+                                    // Varchars take priority over strings, but strings over most types.
+                                    : (isVarchar(typeA) || isVarchar(typeB)) ? VARCHAR
+                                      : ((typeA == STRING) || (typeB == STRING)) ? STRING
 
-                // cast booleans vs anything other than varchars to strings.
-                : ((typeA == BOOLEAN) || (typeB == BOOLEAN)) ? STRING
+                                        // cast booleans vs anything other than varchars to strings.
+                                        : ((typeA == BOOLEAN) || (typeB == BOOLEAN)) ? STRING
 
-                : (isToSameOrWider(typeB, typeA) && typeA != SYMBOL && typeA != CHAR) ? typeA
-                : (isToSameOrWider(typeA, typeB) && typeB != SYMBOL && typeB != CHAR) ? typeB
-                : STRING;
+                                          : (isToSameOrWider(typeB, typeA) && typeA != SYMBOL && typeA != CHAR) ? typeA
+                                            : (isToSameOrWider(typeA, typeB) && typeB != SYMBOL && typeB != CHAR) ? typeB
+                                              : STRING;
     }
 
     public static int decodeArrayDimensionality(int encodedType) {

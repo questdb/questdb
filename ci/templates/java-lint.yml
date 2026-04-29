@@ -2,7 +2,7 @@ steps:
   - bash: python3 find_unterminated_logs.py core/src --exclude=LogParanoiaTest.java
     displayName: "Check for unterminated log statements"
   - bash: |
-      wget "https://download.jetbrains.com/product?code=IIC&latest&distribution=linux" -O intellij.tar.gz
+      wget "https://download.jetbrains.com/product?code=IIU&latest&distribution=linux" -O intellij.tar.gz
       mkdir -p /opt/intellij
       tar xvz -C /opt/intellij -f intellij.tar.gz
       rm intellij.tar.gz

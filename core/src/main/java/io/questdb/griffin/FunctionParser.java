@@ -1615,7 +1615,7 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
     private int mergeWithExactMatch(int match) {
         return match == MATCH_NO_MATCH ? MATCH_EXACT_MATCH
                 : match == MATCH_FUZZY_MATCH ? MATCH_PARTIAL_MATCH
-                : match;
+                  : match;
     }
 
     private Function parseIndexedParameter(int position, CharSequence name) throws SqlException {

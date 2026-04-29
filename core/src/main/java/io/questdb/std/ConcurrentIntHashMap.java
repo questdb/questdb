@@ -603,7 +603,7 @@ public class ConcurrentIntHashMap<V> implements Serializable {
                     if (tabAt(tab, i) == f) {
                         Node<V> p = (fh >= 0 ? f :
                                 (f instanceof TreeBin) ?
-                                        ((TreeBin<V>) f).first : null);
+                                ((TreeBin<V>) f).first : null);
                         while (p != null) {
                             --delta;
                             p = p.next;
@@ -1335,7 +1335,7 @@ public class ConcurrentIntHashMap<V> implements Serializable {
         long n = sumCount();
         return ((n < 0L) ? 0 :
                 (n > (long) Integer.MAX_VALUE) ? Integer.MAX_VALUE :
-                        (int) n);
+                (int) n);
     }
 
     /**
@@ -2276,7 +2276,7 @@ public class ConcurrentIntHashMap<V> implements Serializable {
             int m = (int) sz;
             T[] r = (a.length >= m) ? a :
                     (T[]) java.lang.reflect.Array
-                            .newInstance(a.getClass().getComponentType(), m);
+                          .newInstance(a.getClass().getComponentType(), m);
             int n = r.length;
             int i = 0;
             for (E e : this) {
