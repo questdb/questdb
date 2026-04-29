@@ -268,11 +268,11 @@ public final class Mig940 {
         TableUtils.setPathForNativePartition(path.trimTo(pathRootLen), timestampType, partitionBy, partitionTs, nameTxn);
         path.concat(TableUtils.PARQUET_METADATA_FILE_NAME).$();
         try {
-            ParquetMetaFileReader.openAndMapRO(ff, path.$(), reader);
-            if (reader.getAddr() == 0) {
-                return true;
-            }
             try {
+                ParquetMetaFileReader.openAndMapRO(ff, path.$(), reader);
+                if (reader.getAddr() == 0) {
+                    return true;
+                }
                 return !reader.resolveFooter(parquetFileSizeFromTxn);
             } catch (CairoException ignored) {
                 return true;

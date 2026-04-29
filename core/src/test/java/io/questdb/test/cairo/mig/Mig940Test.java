@@ -402,6 +402,85 @@ public class Mig940Test extends AbstractCairoTest {
     }
 
     @Test
+    public void testMigrateContinuesAfterCorruptPm() throws Exception {
+        // A _pm whose header claims a size larger than the actual file length
+        // (e.g. from a torn write of a prior interrupted migration) must not
+        // abort the migration of remaining partitions. Mig940 has to treat the
+        // unreadable _pm as stale and regenerate it just like the missing-file
+        // case.
+        assertMemoryLeak(TestFilesFacadeImpl.INSTANCE, () -> {
+            execute("CREATE TABLE t (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO t VALUES(1, '2024-06-10T00:00:00.000000Z')," +
+                    "(2, '2024-06-11T00:00:00.000000Z')," +
+                    "(3, '2024-06-12T00:00:00.000000Z')");
+            execute("ALTER TABLE t CONVERT PARTITION TO PARQUET WHERE ts > 0");
+
+            final FilesFacade ff = configuration.getFilesFacade();
+            final TableToken token = engine.verifyTableName("t");
+
+            long[] partitionTimestamps = new long[2];
+            long[] partitionNameTxns = new long[2];
+            try (TableReader reader = engine.getReader(token)) {
+                Assert.assertEquals(3, reader.getPartitionCount());
+                Assert.assertTrue("first partition must be parquet", reader.getTxFile().isPartitionParquet(0));
+                Assert.assertTrue("second partition must be parquet", reader.getTxFile().isPartitionParquet(1));
+                for (int i = 0; i < 2; i++) {
+                    partitionTimestamps[i] = reader.getTxFile().getPartitionTimestampByIndex(i);
+                    partitionNameTxns[i] = reader.getTxFile().getPartitionNameTxn(i);
+                }
+            }
+
+            // Truncate the first partition's _pm to a size smaller than the
+            // value its header records at offset 0. The first 8 bytes survive
+            // the truncate, so openAndMapRO reads parquetMetaFileSize > actual
+            // length and throws CairoException. The second partition's _pm is
+            // left intact.
+            long preCorruptionSize;
+            try (Path path = new Path()) {
+                path.of(configuration.getDbRoot()).concat(token);
+                TableUtils.setPathForParquetPartitionMetadata(path, ColumnType.TIMESTAMP, PartitionBy.DAY, partitionTimestamps[0], partitionNameTxns[0]);
+                long fd = ff.openRW(path.$(), 0);
+                try {
+                    preCorruptionSize = ff.length(fd);
+                    Assert.assertTrue("_pm must be larger than 50 bytes for the corruption to be observable", preCorruptionSize > 50);
+                    Assert.assertTrue("truncate _pm to 50 bytes", ff.truncate(fd, 50));
+                } finally {
+                    ff.close(fd);
+                }
+            }
+
+            // Migration must complete without throwing, even though the first
+            // partition's _pm reports an inconsistent size.
+            runMig940(token);
+
+            // Both _pm files exist, are readable, and resolve a footer.
+            for (int i = 0; i < 2; i++) {
+                try (Path path = new Path()) {
+                    path.of(configuration.getDbRoot()).concat(token);
+                    TableUtils.setPathForParquetPartitionMetadata(path, ColumnType.TIMESTAMP, PartitionBy.DAY, partitionTimestamps[i], partitionNameTxns[i]);
+                    Assert.assertTrue("_pm must exist after migration (partition " + i + ")", ff.exists(path.$()));
+
+                    long parquetMetaSize = ParquetMetaFileReader.readParquetMetaFileSize(ff, path.$());
+                    Assert.assertTrue("_pm must have positive size (partition " + i + ")", parquetMetaSize > 0);
+
+                    long parquetMetaAddr = TableUtils.mapRO(ff, path.$(), LOG, parquetMetaSize, MemoryTag.MMAP_DEFAULT);
+                    try {
+                        ParquetMetaFileReader parquetMetaReader = new ParquetMetaFileReader();
+                        parquetMetaReader.of(parquetMetaAddr, parquetMetaSize);
+                        Assert.assertTrue(
+                                "regenerated _pm must resolve a footer (partition " + i + ")",
+                                parquetMetaReader.resolveFooter(Long.MAX_VALUE)
+                        );
+                        Assert.assertEquals(2, parquetMetaReader.getColumnCount());
+                    } finally {
+                        ff.munmap(parquetMetaAddr, parquetMetaSize, MemoryTag.MMAP_DEFAULT);
+                    }
+                }
+            }
+        });
+    }
+
+    @Test
     public void testMigrateRegeneratesStalePm() throws Exception {
         assertMemoryLeak(TestFilesFacadeImpl.INSTANCE, () -> {
             execute("CREATE TABLE t (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
