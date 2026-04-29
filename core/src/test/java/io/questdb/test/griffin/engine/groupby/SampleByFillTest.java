@@ -854,6 +854,137 @@ public class SampleByFillTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testFillNullDstBerlinFallBackDayStride() throws Exception {
+        // Day-granular SAMPLE BY with FILL(NULL) across Europe/Berlin DST
+        // fall-back. The CEST -> CET transition at 2024-10-27 03:00 local
+        // stretches Oct 27 to 25 h in UTC, so local-midnight buckets land at:
+        //   2024-10-25T22:00:00Z (Oct 26 00:00 CEST)
+        //   2024-10-26T22:00:00Z (Oct 27 00:00 CEST, 25 h gap, no data)
+        //   2024-10-27T23:00:00Z (Oct 28 00:00 CET)
+        // A uniform 24 h sampler would drift one hour after the transition and
+        // the fill cursor would throw "data row timestamp ... precedes next
+        // bucket". TimezoneFloorTimestampSampler walks the same local-calendar
+        // grid as timestamp_floor_utc, so the two grids stay locked. The
+        // sparse middle row is missing, exercising the gap-fill emit path on
+        // the variable-width Oct 27 bucket.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (val DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO x VALUES " +
+                    "(1.0, '2024-10-25T22:00:00.000000Z')," +
+                    "(3.0, '2024-10-27T23:00:00.000000Z')");
+            assertQueryNoLeakCheck(
+                    """
+                            s\tts
+                            1.0\t2024-10-25T22:00:00.000000Z
+                            null\t2024-10-26T22:00:00.000000Z
+                            3.0\t2024-10-27T23:00:00.000000Z
+                            """,
+                    "SELECT sum(val) s, ts FROM x " +
+                            "SAMPLE BY 1d FILL(NULL) ALIGN TO CALENDAR TIME ZONE 'Europe/Berlin'",
+                    "ts", false, false
+            );
+        });
+    }
+
+    @Test
+    public void testFillNullDstBerlinSpringForwardDayStride() throws Exception {
+        // Spring-forward mirror of the fall-back regression. The CET -> CEST
+        // transition at 2024-03-31 02:00 local shrinks Mar 31 to 23 h in UTC;
+        // local-midnight buckets land at:
+        //   2024-03-29T23:00:00Z (Mar 30 00:00 CET)
+        //   2024-03-30T23:00:00Z (Mar 31 00:00 CET, 23 h gap, no data)
+        //   2024-03-31T22:00:00Z (Apr  1 00:00 CEST)
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (val DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO x VALUES " +
+                    "(10.0, '2024-03-29T23:00:00.000000Z')," +
+                    "(30.0, '2024-03-31T22:00:00.000000Z')");
+            assertQueryNoLeakCheck(
+                    """
+                            s\tts
+                            10.0\t2024-03-29T23:00:00.000000Z
+                            null\t2024-03-30T23:00:00.000000Z
+                            30.0\t2024-03-31T22:00:00.000000Z
+                            """,
+                    "SELECT sum(val) s, ts FROM x " +
+                            "SAMPLE BY 1d FILL(NULL) ALIGN TO CALENDAR TIME ZONE 'Europe/Berlin'",
+                    "ts", false, false
+            );
+        });
+    }
+
+    @Test
+    public void testFillPrevDstBerlinSpringForwardDayStride() throws Exception {
+        // FILL(PREV) over the spring-forward day. The middle bucket has no
+        // data and must carry forward the previous value across the 23 h gap
+        // without drifting; the trailing bucket's data row sits at
+        // Apr 1 00:00 CEST = 2024-03-31T22:00 UTC, exactly on the
+        // post-transition local-midnight boundary.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (val DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO x VALUES " +
+                    "(10.0, '2024-03-29T23:00:00.000000Z')," +
+                    "(30.0, '2024-03-31T22:00:00.000000Z')");
+            assertQueryNoLeakCheck(
+                    """
+                            s\tts
+                            10.0\t2024-03-29T23:00:00.000000Z
+                            10.0\t2024-03-30T23:00:00.000000Z
+                            30.0\t2024-03-31T22:00:00.000000Z
+                            """,
+                    "SELECT sum(val) s, ts FROM x " +
+                            "SAMPLE BY 1d FILL(PREV) ALIGN TO CALENDAR TIME ZONE 'Europe/Berlin'",
+                    "ts", false, false
+            );
+        });
+    }
+
+    @Test
+    public void testFillNullDstBerlinFallBackWeekStride() throws Exception {
+        // Week-granular variant. ISO weeks anchor on Monday local. The week
+        // containing 2024-10-27 (fall-back Sunday) starts Mon Oct 21 00:00
+        // local (Oct 20 22:00 UTC, CEST) and ends Mon Oct 28 00:00 local
+        // (Oct 27 23:00 UTC, CET). The middle bucket is sparse, so the fill
+        // cursor must walk the 169 h week without drifting against the
+        // GROUP BY's timestamp_floor_utc grid.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (val DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO x VALUES " +
+                    "(1.0, '2024-10-20T22:00:00.000000Z')," +
+                    "(3.0, '2024-11-03T23:00:00.000000Z')");
+            assertQueryNoLeakCheck(
+                    """
+                            s\tts
+                            1.0\t2024-10-20T22:00:00.000000Z
+                            null\t2024-10-27T23:00:00.000000Z
+                            3.0\t2024-11-03T23:00:00.000000Z
+                            """,
+                    "SELECT sum(val) s, ts FROM x " +
+                            "SAMPLE BY 1w FILL(NULL) ALIGN TO CALENDAR TIME ZONE 'Europe/Berlin'",
+                    "ts", false, false
+            );
+        });
+    }
+
+    @Test
+    public void testFillDayStrideWithTimezoneAndOffsetRejected() throws Exception {
+        // Day-or-larger stride + TZ + FILL with a non-default OFFSET is
+        // rejected. The fast path's setStart/setOffset interface treats
+        // calendarOffset in UTC space, but timestamp_floor_utc applies it in
+        // local time, so silently wiring the two would misplace buckets. The
+        // optimiser intentionally throws here until the OFFSET semantics
+        // through TimezoneFloorTimestampSampler are settled.
+        final String sql = "SELECT sum(val) s, ts FROM x SAMPLE BY 1d FROM '2024-10-26' TO '2024-10-29' " +
+                "FILL(NULL) ALIGN TO CALENDAR TIME ZONE 'Europe/Berlin' WITH OFFSET '02:00'";
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (val DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            assertExceptionNoLeakCheck(sql, sql.indexOf("'02:00'"),
+                    "SAMPLE BY with day-or-larger stride, FILL, a non-UTC TIME ZONE, "
+                            + "and a non-default OFFSET is not supported");
+        });
+    }
+
+    @Test
     public void testFillNullEmptyTable() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE x (val DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");

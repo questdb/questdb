@@ -8226,6 +8226,41 @@ public class SqlOptimiser implements Mutable {
                 throw SqlException.$(sampleBy.position, "SAMPLE BY cannot be used with HORIZON JOIN");
             }
 
+            // The SAMPLE BY rewrite into timestamp_floor_utc + GROUP BY pairs the
+            // group-by bucket grid with a TimestampSampler-driven fill cursor.
+            // For day-or-larger stride + non-UTC TIME ZONE the bucket UTC width
+            // varies with DST (Berlin "1d" spans 23 h on spring-forward, 25 h
+            // on fall-back), so the fast-path sampler must mirror the same
+            // local-calendar walk that timestamp_floor_utc performs per row.
+            // SqlCodeGenerator.generateFill consumes setFillTimezoneName below
+            // and wraps the UTC sampler in TimezoneFloorTimestampSampler when
+            // present. Until OFFSET semantics through that wrap are settled,
+            // reject day-or-larger + TZ + FILL with a non-default OFFSET — the
+            // fillOffset propagation gate further below otherwise silently
+            // drops the user's offset, which would silently misplace buckets.
+            // Sub-day strides are unaffected because the wrap gate just below
+            // converts the FROM anchor via to_utc, leaving bucketing purely
+            // UTC-uniform.
+            final boolean isSampleBySuperDay = sampleBy != null
+                    && !sampleBy.token.isEmpty()
+                    && !CommonUtils.isSubDayUnit(sampleBy.token.charAt(sampleBy.token.length() - 1));
+            boolean hasFillFastPathTz = false;
+            if (sampleByTimezoneName != null && isSampleBySuperDay) {
+                for (int i = 0, n = sampleByFill.size(); i < n; i++) {
+                    if (!isNoneKeyword(sampleByFill.getQuick(i).token)) {
+                        hasFillFastPathTz = true;
+                        break;
+                    }
+                }
+                if (hasFillFastPathTz
+                        && sampleByOffset != null
+                        && sampleByOffset != SqlParser.ZERO_OFFSET) {
+                    throw SqlException.$(sampleByOffset.position,
+                            "SAMPLE BY with day-or-larger stride, FILL, a non-UTC TIME ZONE, "
+                                    + "and a non-default OFFSET is not supported");
+                }
+            }
+
             if (
                     sampleBy != null
                             && timestamp != null
@@ -8483,14 +8518,21 @@ public class SqlOptimiser implements Mutable {
                 // Sub-day SAMPLE BY with a TIME ZONE shifts the GROUP BY tsFloor's
                 // FROM argument via to_utc(FROM, tz). The fill cursor's bucket grid
                 // must align with tsFloor's grid, so wrap setFillFrom/setFillTo with
-                // the same to_utc call. Day-granular queries skip the wrap because
-                // the UTC local-day anchor and UTC absolute-day anchor coincide.
+                // the same to_utc call. Day-or-larger stride + TZ uses a different
+                // strategy: timestamp_floor_utc walks local-calendar boundaries per
+                // row, and the fast path mirrors that walk inside
+                // TimezoneFloorTimestampSampler. setFillTimezoneName below propagates
+                // the TZ token down to generateFill, which builds TimeZoneRules and
+                // wraps the UTC sampler. Day-or-larger stride + TZ without FILL or
+                // with FILL(NONE) flows through with the wrap inactive; the fill
+                // cursor never builds, so the sampler grid is never consulted.
                 final boolean hasSubDayTimezoneWrap = isSubDay && sampleByTimezoneName != null;
                 nested.setFillFrom(hasSubDayTimezoneWrap && sampleByFrom != null
                         ? createToUtcCall(sampleByFrom, sampleByTimezoneName) : sampleByFrom);
                 nested.setFillTo(hasSubDayTimezoneWrap && sampleByTo != null
                         ? createToUtcCall(sampleByTo, sampleByTimezoneName) : sampleByTo);
                 nested.setFillStride(sampleBy);
+                nested.setFillTimezoneName(hasFillFastPathTz ? sampleByTimezoneName : null);
                 nested.setFillValues(sampleByFill);
                 // Propagate offset to the fill cursor whenever timestamp_floor_utc
                 // bucketizes purely in UTC space so the sampler can reproduce the

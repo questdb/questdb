@@ -185,6 +185,7 @@ import io.questdb.griffin.engine.groupby.SampleByFirstLastRecordCursorFactory;
 import io.questdb.griffin.engine.groupby.SampleByInterpolateRecordCursorFactory;
 import io.questdb.griffin.engine.groupby.TimestampSampler;
 import io.questdb.griffin.engine.groupby.TimestampSamplerFactory;
+import io.questdb.griffin.engine.groupby.TimezoneFloorTimestampSampler;
 import io.questdb.griffin.engine.groupby.vect.AvgDoubleVectorAggregateFunction;
 import io.questdb.griffin.engine.groupby.vect.AvgIntVectorAggregateFunction;
 import io.questdb.griffin.engine.groupby.vect.AvgLongVectorAggregateFunction;
@@ -370,6 +371,7 @@ import io.questdb.std.Transient;
 import io.questdb.std.datetime.CommonUtils;
 import io.questdb.std.datetime.DateLocaleFactory;
 import io.questdb.std.datetime.TimeZoneRules;
+import io.questdb.std.datetime.millitime.Dates;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 import org.jetbrains.annotations.TestOnly;
@@ -3382,6 +3384,42 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             assert samplingIntervalEnd < fillStride.token.length();
             char samplingIntervalUnit = fillStride.token.charAt(samplingIntervalEnd);
             TimestampSampler timestampSampler = TimestampSamplerFactory.getInstance(driver, samplingInterval, samplingIntervalUnit, fillStride.position);
+            // Day-or-larger stride + non-UTC TIME ZONE: timestamp_floor_utc anchors
+            // GROUP BY buckets at TZ-local-calendar boundaries whose UTC width
+            // varies with DST. Wrap the uniform-UTC sampler so it walks the same
+            // local-calendar grid; otherwise the fast-path fill cursor's
+            // grid-drift guard fires once a DST transition stretches or shrinks a
+            // bucket. SqlOptimiser.rewriteSampleBy only sets fillTimezoneName for
+            // this combination (sub-day uses to_utc(FROM, tz) instead and stays
+            // uniform-UTC), and it has already rejected any non-default OFFSET so
+            // the wrap does not need to reason about local-time offset shifts.
+            final ExpressionNode fillTimezoneNode = curr.getFillTimezoneName();
+            if (fillTimezoneNode != null) {
+                final Function tzFunc = functionParser.parseFunction(fillTimezoneNode, EmptyRecordMetadata.INSTANCE, executionContext);
+                try {
+                    coerceRuntimeConstantType(tzFunc, STRING, executionContext,
+                            "TIME ZONE must be a constant expression of STRING or CHAR type",
+                            fillTimezoneNode.position);
+                    tzFunc.init(null, executionContext);
+                    final CharSequence tz = tzFunc.getStrA(null);
+                    if (tz != null && Dates.parseOffset(tz) == Long.MIN_VALUE) {
+                        final TimeZoneRules tzRules;
+                        try {
+                            tzRules = DateLocaleFactory.EN_LOCALE.getZoneRules(
+                                    Numbers.decodeLowInt(DateLocaleFactory.EN_LOCALE.matchZone(tz, 0, tz.length())),
+                                    driver.getTZRuleResolution()
+                            );
+                        } catch (NumericException e) {
+                            throw SqlException.$(fillTimezoneNode.position, "invalid timezone: ").put(tz);
+                        }
+                        if (!tzRules.hasFixedOffset()) {
+                            timestampSampler = new TimezoneFloorTimestampSampler(timestampSampler, tzRules, samplingIntervalUnit);
+                        }
+                    }
+                } finally {
+                    Misc.free(tzFunc);
+                }
+            }
 
             int offsetFuncPos = 0;
             final ExpressionNode fillOffsetNode = curr.getFillOffset();

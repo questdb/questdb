@@ -353,6 +353,11 @@ public class QueryModelWrapper implements IQueryModel {
     }
 
     @Override
+    public ExpressionNode getFillTimezoneName() {
+        return delegate.getFillTimezoneName();
+    }
+
+    @Override
     public ExpressionNode getFillTo() {
         return delegate.getFillTo();
     }
@@ -1054,6 +1059,11 @@ public class QueryModelWrapper implements IQueryModel {
 
     @Override
     public void setFillStride(ExpressionNode fillStride) {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
+    public void setFillTimezoneName(ExpressionNode fillTimezoneName) {
         throw new UnsupportedOperationException();
     }
 

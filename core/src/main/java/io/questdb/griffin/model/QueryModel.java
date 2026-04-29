@@ -136,6 +136,7 @@ public class QueryModel implements IQueryModel {
     private ExpressionNode fillFrom;
     private ExpressionNode fillOffset;
     private ExpressionNode fillStride;
+    private ExpressionNode fillTimezoneName;
     private ExpressionNode fillTo;
     private ObjList<ExpressionNode> fillValues;
     private boolean forceBackwardScan;
@@ -471,6 +472,7 @@ public class QueryModel implements IQueryModel {
         fillOffset = null;
         fillTo = null;
         fillStride = null;
+        fillTimezoneName = null;
         fillValues = null;
         skipped = false;
         allowPropagationOfOrderByAdvice = true;
@@ -755,6 +757,11 @@ public class QueryModel implements IQueryModel {
     @Override
     public ExpressionNode getFillStride() {
         return fillStride;
+    }
+
+    @Override
+    public ExpressionNode getFillTimezoneName() {
+        return fillTimezoneName;
     }
 
     @Override
@@ -1650,6 +1657,11 @@ public class QueryModel implements IQueryModel {
     @Override
     public void setFillStride(ExpressionNode fillStride) {
         this.fillStride = fillStride;
+    }
+
+    @Override
+    public void setFillTimezoneName(ExpressionNode fillTimezoneName) {
+        this.fillTimezoneName = fillTimezoneName;
     }
 
     @Override

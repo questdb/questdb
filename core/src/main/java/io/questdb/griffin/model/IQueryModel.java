@@ -288,6 +288,8 @@ public interface IQueryModel extends Mutable, ExecutionModel, AliasTranslator, S
 
     ExpressionNode getFillStride();
 
+    ExpressionNode getFillTimezoneName();
+
     ExpressionNode getFillTo();
 
     ObjList<ExpressionNode> getFillValues();
@@ -561,6 +563,8 @@ public interface IQueryModel extends Mutable, ExecutionModel, AliasTranslator, S
     void setFillOffset(ExpressionNode fillOffset);
 
     void setFillStride(ExpressionNode fillStride);
+
+    void setFillTimezoneName(ExpressionNode fillTimezoneName);
 
     void setFillTo(ExpressionNode fillTo);
 
