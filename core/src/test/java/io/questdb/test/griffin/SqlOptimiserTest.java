@@ -6013,8 +6013,6 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
         });
     }
 
-    // ==================== Timestamp Predicate Pushdown Through Virtual Models with Offset ====================
-
     @Test
     public void testWhereClauseOnNestedModelWithFirstAggregateFunctionOnParentModel() throws Exception {
         assertMemoryLeak(() -> {
