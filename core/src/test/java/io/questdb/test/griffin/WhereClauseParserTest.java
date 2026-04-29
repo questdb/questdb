@@ -1081,6 +1081,19 @@ public class WhereClauseParserTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testContradictingNullSearchKeptByTautologicalSelfCompare() throws Exception {
+        // sym is null AND sym is not null is FALSE; a sibling tautological
+        // self-comparison (sym <= sym) must not overwrite that FALSE back to
+        // UNDEFINED/TRUE on its way through analyzeLess. Without the guard,
+        // the index-driven path saw keyColumn=sym with empty value/excluded
+        // lists and tripped an internal assert in SqlCodeGenerator.
+        IntrinsicModel m = modelOf("(sym <= sym and sym != null) and sym = null");
+        Assert.assertEquals(IntrinsicModel.FALSE, m.intrinsicValue);
+        Assert.assertEquals("[]", keyValueFuncsToString(m.keyValueFuncs));
+        Assert.assertEquals("[]", keyValueFuncsToString(m.keyExcludedValueFuncs));
+    }
+
+    @Test
     public void testContradictingSearch1() throws Exception {
         IntrinsicModel m = modelOf("sym != 'blah' and sym = 'blah'");
         Assert.assertEquals(IntrinsicModel.FALSE, m.intrinsicValue);

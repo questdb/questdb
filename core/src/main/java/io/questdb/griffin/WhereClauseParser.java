@@ -734,7 +734,17 @@ public final class WhereClauseParser implements Mutable {
         checkNodeValid(node);
 
         if (nodesEqual(node.lhs, node.rhs)) {
-            model.intrinsicValue = equalsTo ? IntrinsicModel.TRUE : IntrinsicModel.FALSE;
+            // x > x is a contradiction; x >= x is a tautology. The contradiction
+            // sets FALSE unconditionally (a sibling conjunct that already set
+            // FALSE stays FALSE either way). The tautology only writes TRUE if
+            // the model has not already been killed by an earlier conjunct;
+            // otherwise the write would clobber that FALSE and let the planner
+            // into the index-driven path with empty key value lists.
+            if (!equalsTo) {
+                model.intrinsicValue = IntrinsicModel.FALSE;
+            } else if (model.intrinsicValue != IntrinsicModel.FALSE) {
+                model.intrinsicValue = IntrinsicModel.TRUE;
+            }
             return false;
         }
 
@@ -988,7 +998,13 @@ public final class WhereClauseParser implements Mutable {
         checkNodeValid(node);
 
         if (nodesEqual(node.lhs, node.rhs)) {
-            model.intrinsicValue = equalsTo ? IntrinsicModel.TRUE : IntrinsicModel.FALSE;
+            // See analyzeGreater for the rationale: contradiction sets FALSE,
+            // tautology only sets TRUE when the model is not already FALSE.
+            if (!equalsTo) {
+                model.intrinsicValue = IntrinsicModel.FALSE;
+            } else if (model.intrinsicValue != IntrinsicModel.FALSE) {
+                model.intrinsicValue = IntrinsicModel.TRUE;
+            }
             return false;
         }
 
