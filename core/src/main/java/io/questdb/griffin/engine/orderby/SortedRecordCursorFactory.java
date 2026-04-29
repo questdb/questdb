@@ -41,10 +41,7 @@ import io.questdb.std.ObjList;
 import org.jetbrains.annotations.NotNull;
 
 public class SortedRecordCursorFactory extends AbstractRecordCursorFactory {
-    // `base` is non-final because the constructor sets it to null in the catch
-    // block so `_close()` does not double-free a caller-owned factory when
-    // construction throws after the field has been assigned.
-    private RecordCursorFactory base;
+    private final RecordCursorFactory base;
     private final SortedRecordCursor cursor;
     private final ListColumnFilter sortColumnFilter;
 
@@ -57,6 +54,7 @@ public class SortedRecordCursorFactory extends AbstractRecordCursorFactory {
             @NotNull ListColumnFilter sortColumnFilter
     ) {
         super(metadata);
+        this.base = base;
         this.sortColumnFilter = sortColumnFilter;
         RecordTreeChain chain = null;
         ObjList<DirectIntList> rankMaps = null;
@@ -70,13 +68,6 @@ public class SortedRecordCursorFactory extends AbstractRecordCursorFactory {
                     configuration.getSqlSortValuePageSize(),
                     configuration.getSqlSortValueMaxPages()
             );
-            // Assign this.base only after RecordTreeChain construction succeeds,
-            // so that if the allocation above throws, the catch block sees
-            // this.base == null and the cascaded close() does not free the
-            // caller-owned base factory. The caller retains ownership of base
-            // on any constructor-throw path and frees it through its own
-            // error handling.
-            this.base = base;
             // Hoist rankMaps into a named local so the catch can free the
             // (native-memory-owning) list if the cursor ctor below throws after
             // createRankMaps succeeds. On success, ownership passes to the cursor.
@@ -90,9 +81,6 @@ public class SortedRecordCursorFactory extends AbstractRecordCursorFactory {
             chain = null;
             rankMaps = null;
         } catch (Throwable th) {
-            // Null the field so _close() does not double-free the caller-owned
-            // base factory if the assignment above completed before the throw.
-            this.base = null;
             Misc.free(chain);
             Misc.freeObjList(rankMaps);
             close();

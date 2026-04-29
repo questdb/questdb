@@ -1538,43 +1538,6 @@ public class SampleByFillTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testFillPrevAcceptPrevToConstant() throws Exception {
-        assertMemoryLeak(() -> {
-            // FILL(PREV(b), NULL) and FILL(PREV(b), 42.0): the source `b` resolves
-            // to FILL_CONSTANT at codegen. The chain-rejection rule rejects only
-            // when the source is itself cross-column PREV, so a FILL_CONSTANT
-            // source is accepted. Both NULL and a literal constant are exercised.
-            execute("CREATE TABLE t (a DOUBLE, b DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("INSERT INTO t VALUES " +
-                    "(1.0, 10.0, '2024-01-01T00:00:00.000000Z')," +
-                    "(3.0, 30.0, '2024-01-01T02:00:00.000000Z')");
-            // PREV(b) with b = NULL at gap: a carries forward from b's prev (10.0).
-            assertQueryNoLeakCheck(
-                    """
-                            ts\ta\tb
-                            2024-01-01T00:00:00.000000Z\t1.0\t10.0
-                            2024-01-01T01:00:00.000000Z\t10.0\tnull
-                            2024-01-01T02:00:00.000000Z\t3.0\t30.0
-                            """,
-                    "SELECT ts, sum(a) AS a, sum(b) AS b FROM t SAMPLE BY 1h FILL(PREV(b), NULL) ALIGN TO CALENDAR",
-                    "ts", false, false
-            );
-            // PREV(b) with b = 42.0 at gap: a carries forward from b's prev (10.0),
-            // b's own fill uses the literal 42.
-            assertQueryNoLeakCheck(
-                    """
-                            ts\ta\tb
-                            2024-01-01T00:00:00.000000Z\t1.0\t10.0
-                            2024-01-01T01:00:00.000000Z\t10.0\t42.0
-                            2024-01-01T02:00:00.000000Z\t3.0\t30.0
-                            """,
-                    "SELECT ts, sum(a) AS a, sum(b) AS b FROM t SAMPLE BY 1h FILL(PREV(b), 42.0) ALIGN TO CALENDAR",
-                    "ts", false, false
-            );
-        });
-    }
-
-    @Test
     public void testFillPrevAcceptPrevToSelfPrev() throws Exception {
         assertMemoryLeak(() -> {
             // FILL(PREV(b), PREV): a references b, and b is bare PREV
@@ -1950,30 +1913,6 @@ public class SampleByFillTest extends AbstractCairoTest {
                             """,
                     "SELECT ts, key, sum(val) AS s, sum(ival::DOUBLE) AS a " +
                             "FROM x SAMPLE BY 1h FILL(PREV, PREV(s)) ALIGN TO CALENDAR",
-                    "ts", false, false
-            );
-        });
-    }
-
-    @Test
-    public void testFillPrevCrossColumnMixedFill() throws Exception {
-        assertMemoryLeak(() -> {
-            // FILL(PREV(a), NULL) — column `s` fills from column `a`'s prev, column `a` fills with null.
-            // This multi-fill spec must reach the GROUP BY fast path (not old cursor path).
-            execute("CREATE TABLE x (val DOUBLE, ival INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("INSERT INTO x VALUES " +
-                    "(1.0, 10, '2024-01-01T00:00:00.000000Z')," +
-                    "(3.0, 30, '2024-01-01T02:00:00.000000Z')");
-            // At 01:00 gap: s=prev(a)=10.0, a=null
-            assertQueryNoLeakCheck(
-                    """
-                            ts\ts\ta
-                            2024-01-01T00:00:00.000000Z\t1.0\t10.0
-                            2024-01-01T01:00:00.000000Z\t10.0\tnull
-                            2024-01-01T02:00:00.000000Z\t3.0\t30.0
-                            """,
-                    "SELECT ts, sum(val) AS s, sum(ival::DOUBLE) AS a " +
-                            "FROM x SAMPLE BY 1h FILL(PREV(a), NULL) ALIGN TO CALENDAR",
                     "ts", false, false
             );
         });
@@ -3006,6 +2945,28 @@ public class SampleByFillTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testFillPrevRejectConstantSource() throws Exception {
+        assertMemoryLeak(() -> {
+            // FILL(0, PREV(a)) -- column 'a' is filled with a constant on gaps,
+            // so its user-visible value diverges from the base-cursor read
+            // PREV(a) resolves to. Reject by analogy with FILL(PREV) chains
+            // until we either materialise synthesised values into the snapshot
+            // or commit to "PREV reads last real aggregate" as documented
+            // semantics.
+            execute("CREATE TABLE t (a DOUBLE, b DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO t VALUES " +
+                    "(1.0, 10.0, '2024-01-01T00:00:00.000000Z')," +
+                    "(3.0, 30.0, '2024-01-01T02:00:00.000000Z')");
+            final String sql = "SELECT ts, sum(a) a, sum(b) b FROM t SAMPLE BY 1h FILL(0, PREV(a)) ALIGN TO CALENDAR";
+            assertExceptionNoLeakCheck(
+                    sql,
+                    sql.indexOf("PREV(a)"),
+                    "FILL(PREV) cannot reference a column that is itself filled with a constant"
+            );
+        });
+    }
+
+    @Test
     public void testFillPrevRejectMutualChain() throws Exception {
         assertMemoryLeak(() -> {
             // FILL(PREV(b), PREV(a)) — mutual cycle: a -> b and b -> a. Must be
@@ -3018,6 +2979,25 @@ public class SampleByFillTest extends AbstractCairoTest {
                     "SELECT ts, sum(a) a, sum(b) b FROM t SAMPLE BY 1h FILL(PREV(b), PREV(a)) ALIGN TO CALENDAR",
                     55,
                     "FILL(PREV) chains are not supported"
+            );
+        });
+    }
+
+    @Test
+    public void testFillPrevRejectNullSource() throws Exception {
+        assertMemoryLeak(() -> {
+            // FILL(NULL, PREV(a)) -- same ambiguity as a literal constant. The
+            // user-visible 'a' on a gap is NULL, but PREV(a) reads a's last
+            // real aggregate from the base cursor.
+            execute("CREATE TABLE t (a DOUBLE, b DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO t VALUES " +
+                    "(1.0, 10.0, '2024-01-01T00:00:00.000000Z')," +
+                    "(3.0, 30.0, '2024-01-01T02:00:00.000000Z')");
+            final String sql = "SELECT ts, sum(a) a, sum(b) b FROM t SAMPLE BY 1h FILL(NULL, PREV(a)) ALIGN TO CALENDAR";
+            assertExceptionNoLeakCheck(
+                    sql,
+                    sql.indexOf("PREV(a)"),
+                    "FILL(PREV) cannot reference a column that is itself filled with a constant"
             );
         });
     }
@@ -3150,6 +3130,52 @@ public class SampleByFillTest extends AbstractCairoTest {
                     false,
                     false);
         });
+    }
+
+    @Test
+    public void testFillPrevSortStrategiesProduceIdenticalOutput() throws Exception {
+        // Pin the prevRecord/baseRecord independence contract: the fill cursor
+        // captures prevRecord = baseCursor.getRecordB() and interleaves reads of
+        // baseRecord (current row) and prevRecord (saved rowId) on every fill
+        // emission. Each SampleBySortStrategy wraps the GROUP BY base in a
+        // different sort cursor, but recordA and recordB must remain independent
+        // for the interleave to be correct. AsyncGroupByRecordCursor satisfies
+        // this today via separate VirtualRecord instances (recordA/recordB);
+        // a future refactor that collapses them into shared state would break
+        // every strategy on this test.
+        //
+        // Two keys with offset gaps so pass 2 emits fill rows that read both
+        // baseRecord (the current data row's columns) and prevRecord (the
+        // carried-forward column for the absent key) on the same row.
+        final String[] strategies = {"light_encoded", "full_encoded", "light_recordchain", "full_recordchain"};
+        final String expected = "ts\tk\ta\tb\n" +
+                "2024-01-01T00:00:00.000000Z\tA\t1.0\t10.0\n" +
+                "2024-01-01T00:00:00.000000Z\tB\tnull\tnull\n" +
+                "2024-01-01T01:00:00.000000Z\tA\t1.0\t10.0\n" +
+                "2024-01-01T01:00:00.000000Z\tB\t2.0\t20.0\n" +
+                "2024-01-01T02:00:00.000000Z\tA\t3.0\t30.0\n" +
+                "2024-01-01T02:00:00.000000Z\tB\t2.0\t20.0\n" +
+                "2024-01-01T03:00:00.000000Z\tA\t3.0\t30.0\n" +
+                "2024-01-01T03:00:00.000000Z\tB\t4.0\t40.0\n";
+        for (String strategy : strategies) {
+            setProperty(PropertyKey.CAIRO_SQL_SAMPLEBY_FILL_SORT_STRATEGY, strategy);
+            assertMemoryLeak(() -> {
+                execute("DROP TABLE IF EXISTS t");
+                execute("CREATE TABLE t (ts TIMESTAMP, k SYMBOL, a DOUBLE, b DOUBLE) " +
+                        "TIMESTAMP(ts) PARTITION BY DAY");
+                execute("INSERT INTO t VALUES " +
+                        "('2024-01-01T00:00:00.000000Z', 'A', 1.0, 10.0), " +
+                        "('2024-01-01T01:00:00.000000Z', 'B', 2.0, 20.0), " +
+                        "('2024-01-01T02:00:00.000000Z', 'A', 3.0, 30.0), " +
+                        "('2024-01-01T03:00:00.000000Z', 'B', 4.0, 40.0)");
+                assertQueryNoLeakCheck(
+                        expected,
+                        "SELECT ts, k, sum(a) AS a, sum(b) AS b FROM t " +
+                                "SAMPLE BY 1h FILL(PREV) ALIGN TO CALENDAR ORDER BY ts, k",
+                        "ts", true, false
+                );
+            });
+        }
     }
 
     @Test

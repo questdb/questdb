@@ -3688,19 +3688,35 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                         fillValues.setQuick(fillIdx, null); // transfer ownership
                     }
                 }
-                // Reject chains: a cross-column PREV whose source is itself a
-                // cross-column PREV. Runtime-safe but semantically ambiguous; keep
-                // the grammar narrow until a clear use case emerges. The error
-                // position points at the specific offending PREV(...).
+                // Reject cross-column PREV whose source column is itself filled
+                // with a synthesized value on gaps:
+                //   - source is another cross-column PREV (mode >= 0): chain.
+                //   - source is FILL_CONSTANT (NULL or a literal): the user-visible
+                //     source on a gap is the constant, but PREV resolves through
+                //     the base cursor and reads the source's last real aggregate,
+                //     diverging from what the prior bucket displayed.
+                // Sources that ARE consistent with the base-cursor read are
+                // accepted: FILL_KEY (key columns are real on every row) and
+                // FILL_PREV_SELF (self-prev returns the same last real value).
+                // Keep the grammar narrow until a clear use case emerges. The
+                // error position points at the specific offending PREV(...).
                 for (int col = 0; col < columnCount; col++) {
                     int mode = fillModes.getQuick(col);
-                    if (mode >= 0 && fillModes.getQuick(mode) >= 0) {
+                    if (mode < 0) {
+                        continue;
+                    }
+                    int srcMode = fillModes.getQuick(mode);
+                    if (srcMode >= 0 || srcMode == SampleByFillRecordCursorFactory.FILL_CONSTANT) {
                         ExpressionNode offendingExpr = perColFillNodes.getQuick(col);
                         int pos = offendingExpr != null
                                 ? offendingExpr.position
                                 : fillValuesExprs.getQuick(0).position;
+                        if (srcMode >= 0) {
+                            throw SqlException.$(pos,
+                                    "FILL(PREV) chains are not supported: source column is itself a cross-column PREV");
+                        }
                         throw SqlException.$(pos,
-                                "FILL(PREV) chains are not supported: source column is itself a cross-column PREV");
+                                "FILL(PREV) cannot reference a column that is itself filled with a constant");
                     }
                 }
             }
@@ -3868,6 +3884,17 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             listColumnFilterA.add(timestampIndex + 1); // positive = ascending
             entityColumnFilter.of(sortMetadata.getColumnCount());
             final int sortStrategy = configuration.getSampleByFillSortStrategy();
+            // The LIGHT_RECORDCHAIN and FULL_RECORDCHAIN branches use the
+            // null-before-risky pattern because SortedLightRecordCursorFactory
+            // and SortedRecordCursorFactory both have a ctor catch that
+            // cascades close(), freeing the caller-owned `base` on throw.
+            // Without nulling `groupByFactory`, the surrounding
+            // `Misc.free(groupByFactory)` in generateFill's outer catch would
+            // double-free natively (JVM-fatal). LIGHT_ENCODED and FULL_ENCODED
+            // have no such ctor catch -- their inner cursor ctor failure
+            // abandons the half-constructed factory without freeing `base`,
+            // so the caller-side `Misc.free(groupByFactory)` is the single
+            // owner of cleanup on those branches; do NOT null in advance.
             switch (sortStrategy) {
                 case SampleBySortStrategy.LIGHT_ENCODED -> {
                     assert SortKeyEncoder.isSupported(sortMetadata, listColumnFilterA)
@@ -3891,22 +3918,28 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 }
                 case SampleBySortStrategy.LIGHT_RECORDCHAIN -> {
                     assert groupByFactory.recordCursorSupportsRandomAccess();
+                    final RecordCursorFactory base = groupByFactory;
+                    groupByFactory = null;
                     groupByFactory = new SortedLightRecordCursorFactory(
                             configuration,
                             sortMetadata,
-                            groupByFactory,
+                            base,
                             recordComparatorCompiler.newInstance(sortMetadata, listColumnFilterA),
                             listColumnFilterA.copy()
                     );
                 }
-                case SampleBySortStrategy.FULL_RECORDCHAIN -> groupByFactory = new SortedRecordCursorFactory(
-                        configuration,
-                        sortMetadata,
-                        groupByFactory,
-                        RecordSinkFactory.getInstance(configuration, asm, sortMetadata, entityColumnFilter),
-                        recordComparatorCompiler.newInstance(sortMetadata, listColumnFilterA),
-                        listColumnFilterA.copy()
-                );
+                case SampleBySortStrategy.FULL_RECORDCHAIN -> {
+                    final RecordCursorFactory base = groupByFactory;
+                    groupByFactory = null;
+                    groupByFactory = new SortedRecordCursorFactory(
+                            configuration,
+                            sortMetadata,
+                            base,
+                            RecordSinkFactory.getInstance(configuration, asm, sortMetadata, entityColumnFilter),
+                            recordComparatorCompiler.newInstance(sortMetadata, listColumnFilterA),
+                            listColumnFilterA.copy()
+                    );
+                }
                 default -> throw new IllegalStateException("unknown sample-by fill sort strategy: "
                         + SampleBySortStrategy.toString(sortStrategy));
             }
@@ -7260,10 +7293,18 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                             }
                         }
 
+                        // Null-before-risky: SortedLightRecordCursorFactory's
+                        // ctor catch cascades close() and frees `sortBase`
+                        // (which is either recordCursorFactory directly, or a
+                        // SortKeyMaterializingRecordCursorFactory wrapping it).
+                        // Without nulling, the surrounding catch's free of
+                        // recordCursorFactory becomes a JVM-fatal double-free.
+                        final RecordCursorFactory sortBaseForSort = sortBase;
+                        recordCursorFactory = null;
                         return new SortedLightRecordCursorFactory(
                                 configuration,
                                 orderedMetadata,
-                                sortBase,
+                                sortBaseForSort,
                                 recordComparatorCompiler.newInstance(metadata, listColumnFilterA),
                                 listColumnFilterA.copy()
                         );
@@ -7282,10 +7323,15 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                             listColumnFilterA.copy()
                     );
                 }
+                // Null-before-risky for the SortedRecordCursorFactory ctor --
+                // its catch cascades close() and frees `base`, so retaining
+                // recordCursorFactory across this call would double-free.
+                final RecordCursorFactory baseForFullSort = recordCursorFactory;
+                recordCursorFactory = null;
                 return new SortedRecordCursorFactory(
                         configuration,
                         orderedMetadata,
-                        recordCursorFactory,
+                        baseForFullSort,
                         RecordSinkFactory.getInstance(configuration, asm, orderedMetadata, entityColumnFilter),
                         recordComparatorCompiler.newInstance(metadata, listColumnFilterA),
                         listColumnFilterA.copy()
@@ -7294,7 +7340,9 @@ public class SqlCodeGenerator implements Mutable, Closeable {
 
             return recordCursorFactory;
         } catch (SqlException | CairoException e) {
-            recordCursorFactory.close();
+            // recordCursorFactory may be null if a wrap-and-go ctor above took
+            // ownership before throwing; Misc.free is null-safe.
+            Misc.free(recordCursorFactory);
             throw e;
         }
     }
