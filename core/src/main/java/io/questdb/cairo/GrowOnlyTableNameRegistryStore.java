@@ -77,8 +77,8 @@ public class GrowOnlyTableNameRegistryStore implements Closeable {
                 tableToken.isLiveView() ? TABLE_TYPE_LIVE_VIEW
                         : tableToken.isView() ? TABLE_TYPE_VIEW
                         : tableToken.isMatView() ? TABLE_TYPE_MAT
-                        : tableToken.isWal() ? TABLE_TYPE_WAL
-                        : TABLE_TYPE_NON_WAL;
+                          : tableToken.isWal() ? TABLE_TYPE_WAL
+                            : TABLE_TYPE_NON_WAL;
         tableNameMemory.putInt(tableType);
 
         if (operation != OPERATION_REMOVE) {

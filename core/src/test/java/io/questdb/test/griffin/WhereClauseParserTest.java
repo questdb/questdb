@@ -4411,9 +4411,9 @@ public class WhereClauseParserTest extends AbstractCairoTest {
     private String replaceTimestampSuffix(String expected) {
         return ColumnType.isTimestampNano(timestampType.getTimestampType())
                 ? expected.replaceAll("00000", "00000000")
-                .replaceAll("99999", "99999999")
-                .replaceAll("294247-01-10T04:00:54.775807Z", "2262-04-11T23:47:16.854775807Z")
-                .replaceAll("-290308-01-01T19:59:05.224193Z", "1677-01-01T00:12:43.145224193Z")
+                  .replaceAll("99999", "99999999")
+                  .replaceAll("294247-01-10T04:00:54.775807Z", "2262-04-11T23:47:16.854775807Z")
+                  .replaceAll("-290308-01-01T19:59:05.224193Z", "1677-01-01T00:12:43.145224193Z")
                 : expected;
     }
 
