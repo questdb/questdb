@@ -998,6 +998,7 @@ public class FuzzRunner {
             int opIndex;
 
             try {
+                String updatedTableName = tableName;
                 Rnd tempRnd = new Rnd();
                 while (errors.isEmpty() && (opIndex = nextOperation.incrementAndGet()) < transactions.size() && errors.isEmpty()) {
                     FuzzTransaction transaction = transactions.getQuick(opIndex);
@@ -1026,13 +1027,6 @@ public class FuzzRunner {
                         walWriter = writers.get(writerIndex);
                     }
 
-                    if (walWriter == null) {
-                        // Table was fully dropped without recreate by an earlier
-                        // reopenTable transaction. There is no writer to drive
-                        // further operations; stop this worker.
-                        return;
-                    }
-
                     walWriter.goActive(transaction.structureVersion);
                     if (walWriter.getMetadataVersion() != transaction.structureVersion) {
                         throw CairoException.critical(0)
@@ -1040,6 +1034,15 @@ public class FuzzRunner {
                     }
 
                     boolean increment = false;
+
+                    if (transaction.reopenTable) {
+                        TableToken updatedTableToken = engine.getTableTokenByDirName(walWriter.getTableToken().getDirName());
+                        if (updatedTableToken == null) {
+                            throw new IllegalStateException("table is missing after reopen [table=" + tableName + "]");
+                        }
+                        updatedTableName = updatedTableToken.getTableName();
+                    }
+
                     for (int operationIndex = 0; operationIndex < transaction.operationList.size(); operationIndex++) {
                         FuzzTransactionOperation operation = transaction.operationList.getQuick(operationIndex);
                         increment |= operation.apply(tempRnd, engine, walWriter, -1, null);
@@ -1058,39 +1061,11 @@ public class FuzzRunner {
                             // the captured-at-thread-creation strings would go stale after
                             // a rename, which is what previously caused this branch to
                             // throw and orphan a closed writer.
-                            TableToken liveToken = walWriter.getTableToken();
-                            String liveDir = liveToken.getDirName();
-                            String liveName = liveToken.getTableName();
-
-                            // The transaction's operations may have changed the identity
-                            // again (drop+create issues a new dirName under the same
-                            // name). Re-resolve: by dirName first (rename / metadata-only
-                            // refresh — identity unchanged), falling back to tableName
-                            // (drop+create — new dirName), or null if the table was fully
-                            // dropped without recreate.
-                            TableToken newToken = engine.getTableTokenByDirName(liveDir);
-                            if (newToken != null && newToken.getDirName().equals(liveDir)) {
-                                // Identity unchanged — this was a metadata-only reopen
-                                // (SET TTL / SET PARQUET ENCODING) or a rename, and
-                                // goActive on the next iteration will refresh the writer's
-                                // view. Closing peer writers now would deadlock against
-                                // their in-flight work, so leave them alone.
-                            } else {
-                                if (newToken == null) {
-                                    newToken = engine.getTableTokenIfExists(liveName);
-                                }
-                                for (int ii = 0; ii < writers.size(); ii++) {
-                                    WalWriter cur = writers.getQuick(ii);
-                                    if (cur == null) {
-                                        continue;
-                                    }
-                                    TableToken curToken = cur.getTableToken();
-                                    if (curToken.getDirName().equals(liveDir) || curToken.getTableName().equals(liveName)) {
-                                        cur.close();
-                                        writers.setQuick(ii, newToken != null
-                                                ? (WalWriter) engine.getTableWriterAPI(newToken, "apply trans test")
-                                                : null);
-                                    }
+                            // Table is dropped, reload all writers
+                            for (int ii = 0; ii < writers.size(); ii++) {
+                                if (writers.get(ii).getTableToken().getTableName().equals(updatedTableName)) {
+                                    writers.get(ii).close();
+                                    writers.setQuick(ii, (WalWriter) engine.getTableWriterAPI(updatedTableName, "apply trans test"));
                                 }
                             }
                         }
