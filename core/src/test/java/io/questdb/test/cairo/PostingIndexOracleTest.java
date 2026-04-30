@@ -421,7 +421,7 @@ public class PostingIndexOracleTest extends AbstractCairoTest {
                     PostingIndexUtils.EncodeContext ctx2 = new PostingIndexUtils.EncodeContext()
             ) {
                 for (int i = 0; i < count; i++) {
-                    Unsafe.getUnsafe().putLong(srcAddr + (long) i * Long.BYTES, values[i]);
+                    Unsafe.putLong(srcAddr + (long) i * Long.BYTES, values[i]);
                 }
 
                 ctx1.ensureCapacity(count);
@@ -433,8 +433,8 @@ public class PostingIndexOracleTest extends AbstractCairoTest {
                 Assert.assertEquals("Encoded sizes differ", size1, size2);
                 for (int i = 0; i < size1; i++) {
                     Assert.assertEquals("Byte mismatch at offset " + i,
-                            Unsafe.getUnsafe().getByte(destAddr1 + i),
-                            Unsafe.getUnsafe().getByte(destAddr2 + i));
+                            Unsafe.getByte(destAddr1 + i),
+                            Unsafe.getByte(destAddr2 + i));
                 }
             } finally {
                 Unsafe.free(srcAddr, (long) count * Long.BYTES, MemoryTag.NATIVE_DEFAULT);
@@ -508,7 +508,7 @@ public class PostingIndexOracleTest extends AbstractCairoTest {
         long nativeOutAddr = Unsafe.malloc((long) count * Long.BYTES, MemoryTag.NATIVE_DEFAULT);
         try (PostingIndexUtils.EncodeContext ctx = new PostingIndexUtils.EncodeContext()) {
             for (int i = 0; i < count; i++) {
-                Unsafe.getUnsafe().putLong(srcAddr + (long) i * Long.BYTES, values[i]);
+                Unsafe.putLong(srcAddr + (long) i * Long.BYTES, values[i]);
             }
             ctx.ensureCapacity(count);
             int size = PostingIndexUtils.encodeKeyEF(srcAddr, count, destAddr, ctx);
@@ -516,7 +516,7 @@ public class PostingIndexOracleTest extends AbstractCairoTest {
             // Sentinel at start signals EF format to the decoder.
             Assert.assertEquals("EF sentinel missing",
                     PostingIndexUtils.EF_FORMAT_SENTINEL,
-                    Unsafe.getUnsafe().getInt(destAddr));
+                    Unsafe.getInt(destAddr));
 
             long[] decoded = new long[count];
             PostingIndexUtils.decodeKeyEF(destAddr, decoded);
@@ -528,7 +528,7 @@ public class PostingIndexOracleTest extends AbstractCairoTest {
             for (int i = 0; i < count; i++) {
                 Assert.assertEquals("decodeKeyEFToNative mismatch at " + i,
                         values[i],
-                        Unsafe.getUnsafe().getLong(nativeOutAddr + (long) i * Long.BYTES));
+                        Unsafe.getLong(nativeOutAddr + (long) i * Long.BYTES));
             }
         } finally {
             Unsafe.free(srcAddr, (long) count * Long.BYTES, MemoryTag.NATIVE_DEFAULT);

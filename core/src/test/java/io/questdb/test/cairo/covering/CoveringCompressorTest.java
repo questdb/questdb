@@ -49,7 +49,7 @@ public class CoveringCompressorTest extends AbstractCairoTest {
             long destAddr = Unsafe.malloc(CoveringCompressor.maxCompressedSize(count, ColumnType.DOUBLE), MemoryTag.NATIVE_DEFAULT);
             try {
                 for (int i = 0; i < count; i++) {
-                    Unsafe.getUnsafe().putDouble(srcAddr + (long) i * Double.BYTES, input[i]);
+                    Unsafe.putDouble(srcAddr + (long) i * Double.BYTES, input[i]);
                 }
                 compressDoubles(srcAddr, count, 3, destAddr);
                 double[] output = new double[count];
@@ -75,7 +75,7 @@ public class CoveringCompressorTest extends AbstractCairoTest {
             long destAddr = Unsafe.malloc(CoveringCompressor.maxCompressedSize(count, ColumnType.DOUBLE), MemoryTag.NATIVE_DEFAULT);
             try {
                 for (int i = 0; i < count; i++) {
-                    Unsafe.getUnsafe().putDouble(srcAddr + (long) i * Double.BYTES, input[i]);
+                    Unsafe.putDouble(srcAddr + (long) i * Double.BYTES, input[i]);
                 }
                 int compressedSize = compressDoubles(srcAddr, count, 3, destAddr);
                 Assert.assertEquals(CoveringCompressor.DOUBLE_HEADER_SIZE, compressedSize);
@@ -136,7 +136,7 @@ public class CoveringCompressorTest extends AbstractCairoTest {
             long destAddr = Unsafe.malloc(CoveringCompressor.maxCompressedSize(count, ColumnType.DOUBLE), MemoryTag.NATIVE_DEFAULT);
             try {
                 for (int i = 0; i < count; i++) {
-                    Unsafe.getUnsafe().putDouble(srcAddr + (long) i * Double.BYTES, input[i]);
+                    Unsafe.putDouble(srcAddr + (long) i * Double.BYTES, input[i]);
                 }
                 int compressedSize = compressDoubles(srcAddr, count, 3, destAddr);
                 Assert.assertTrue("compressed should be smaller", compressedSize < count * Double.BYTES);
@@ -163,7 +163,7 @@ public class CoveringCompressorTest extends AbstractCairoTest {
             long destAddr = Unsafe.malloc(CoveringCompressor.maxCompressedSize(count, ColumnType.INT), MemoryTag.NATIVE_DEFAULT);
             try {
                 for (int i = 0; i < count; i++) {
-                    Unsafe.getUnsafe().putFloat(srcAddr + (long) i * Float.BYTES, input[i]);
+                    Unsafe.putFloat(srcAddr + (long) i * Float.BYTES, input[i]);
                 }
                 compressInts(srcAddr, count, destAddr);
                 int[] output = new int[count];
@@ -189,7 +189,7 @@ public class CoveringCompressorTest extends AbstractCairoTest {
             long destAddr = Unsafe.malloc(CoveringCompressor.maxCompressedSize(count, ColumnType.INT), MemoryTag.NATIVE_DEFAULT);
             try {
                 for (int i = 0; i < count; i++) {
-                    Unsafe.getUnsafe().putInt(srcAddr + (long) i * Integer.BYTES, input[i]);
+                    Unsafe.putInt(srcAddr + (long) i * Integer.BYTES, input[i]);
                 }
                 int compressedSize = compressInts(srcAddr, count, destAddr);
                 Assert.assertTrue("compressed should be smaller", compressedSize < count * Integer.BYTES);
@@ -212,7 +212,7 @@ public class CoveringCompressorTest extends AbstractCairoTest {
             long destAddr = Unsafe.malloc(CoveringCompressor.maxCompressedSize(count, ColumnType.LONG), MemoryTag.NATIVE_DEFAULT);
             try {
                 for (int i = 0; i < count; i++) {
-                    Unsafe.getUnsafe().putLong(srcAddr + (long) i * Long.BYTES, input[i]);
+                    Unsafe.putLong(srcAddr + (long) i * Long.BYTES, input[i]);
                 }
                 int compressedSize = CoveringCompressor.compressLongs(srcAddr, count, destAddr);
                 Assert.assertTrue("compressed should be smaller", compressedSize < count * Long.BYTES);
@@ -243,14 +243,14 @@ public class CoveringCompressorTest extends AbstractCairoTest {
             long decodeWsAddr = Unsafe.malloc((long) count * Long.BYTES, MemoryTag.NATIVE_DEFAULT);
             try {
                 for (int i = 0; i < count; i++) {
-                    Unsafe.getUnsafe().putFloat(srcAddr + (long) i * Float.BYTES, input[i]);
+                    Unsafe.putFloat(srcAddr + (long) i * Float.BYTES, input[i]);
                 }
                 int sz = CoveringCompressor.compressFloats(srcAddr, count, destAddr, encAddr, excAddr);
                 Assert.assertTrue("compressed size must be positive", sz > 0);
 
                 CoveringCompressor.decompressFloatsToAddr(destAddr, decAddr, decodeWsAddr);
                 for (int i = 0; i < count; i++) {
-                    float actual = Unsafe.getUnsafe().getFloat(decAddr + (long) i * Float.BYTES);
+                    float actual = Unsafe.getFloat(decAddr + (long) i * Float.BYTES);
                     Assert.assertEquals("value " + i,
                             Float.floatToRawIntBits(input[i]), Float.floatToRawIntBits(actual));
                 }
@@ -278,7 +278,7 @@ public class CoveringCompressorTest extends AbstractCairoTest {
             long destAddr = Unsafe.malloc(CoveringCompressor.maxCompressedSize(count, ColumnType.DOUBLE), MemoryTag.NATIVE_DEFAULT);
             try {
                 for (int i = 0; i < count; i++) {
-                    Unsafe.getUnsafe().putDouble(srcAddr + (long) i * Double.BYTES, input[i]);
+                    Unsafe.putDouble(srcAddr + (long) i * Double.BYTES, input[i]);
                 }
                 int compressedSize = compressDoubles(srcAddr, count, 3, destAddr);
                 double ratio = (double) (count * Double.BYTES) / compressedSize;
@@ -304,8 +304,8 @@ public class CoveringCompressorTest extends AbstractCairoTest {
             try {
                 int sz = CoveringCompressor.compressLongs(0L, 0, destAddr);
                 Assert.assertTrue("header must fit", sz > 0);
-                Assert.assertEquals(0, Unsafe.getUnsafe().getInt(destAddr));
-                Assert.assertEquals(0, Unsafe.getUnsafe().getByte(destAddr + 4));
+                Assert.assertEquals(0, Unsafe.getInt(destAddr));
+                Assert.assertEquals(0, Unsafe.getByte(destAddr + 4));
             } finally {
                 Unsafe.free(destAddr, destCap, MemoryTag.NATIVE_DEFAULT);
             }
@@ -323,12 +323,12 @@ public class CoveringCompressorTest extends AbstractCairoTest {
             long workAddr = Unsafe.malloc((long) count * Long.BYTES, MemoryTag.NATIVE_DEFAULT);
             try {
                 for (int i = 0; i < count; i++) {
-                    Unsafe.getUnsafe().putLong(srcAddr + (long) i * Long.BYTES, input[i]);
+                    Unsafe.putLong(srcAddr + (long) i * Long.BYTES, input[i]);
                 }
                 int sz = CoveringCompressor.compressLongsLinearPred(srcAddr, count, destAddr, workAddr);
                 Assert.assertTrue("compressed size must be positive", sz > 0);
 
-                int flagByte = Unsafe.getUnsafe().getByte(destAddr + 4) & 0xFF;
+                int flagByte = Unsafe.getByte(destAddr + 4) & 0xFF;
                 Assert.assertNotEquals("expected plain FoR after fallback, got linear-pred",
                         0xC0, flagByte & 0xC0);
 
@@ -363,7 +363,7 @@ public class CoveringCompressorTest extends AbstractCairoTest {
             long destAddr = Unsafe.malloc(CoveringCompressor.maxCompressedSize(count, ColumnType.DOUBLE), MemoryTag.NATIVE_DEFAULT);
             try {
                 for (int i = 0; i < count; i++) {
-                    Unsafe.getUnsafe().putDouble(srcAddr + (long) i * Double.BYTES, input[i]);
+                    Unsafe.putDouble(srcAddr + (long) i * Double.BYTES, input[i]);
                 }
                 compressDoubles(srcAddr, count, 3, destAddr);
                 double[] output = new double[count];
@@ -391,7 +391,7 @@ public class CoveringCompressorTest extends AbstractCairoTest {
             long destAddr = Unsafe.malloc(CoveringCompressor.maxCompressedSize(count, ColumnType.DOUBLE), MemoryTag.NATIVE_DEFAULT);
             try {
                 for (int i = 0; i < count; i++) {
-                    Unsafe.getUnsafe().putDouble(srcAddr + (long) i * Double.BYTES, input[i]);
+                    Unsafe.putDouble(srcAddr + (long) i * Double.BYTES, input[i]);
                 }
                 compressDoubles(srcAddr, count, 3, destAddr);
                 double[] output = new double[count];
@@ -431,11 +431,11 @@ public class CoveringCompressorTest extends AbstractCairoTest {
             long destAddr = Unsafe.malloc(CoveringCompressor.maxCompressedSize(count, ColumnType.LONG), MemoryTag.NATIVE_DEFAULT);
             try {
                 for (int i = 0; i < count; i++) {
-                    Unsafe.getUnsafe().putLong(srcAddr + (long) i * Long.BYTES, input[i]);
+                    Unsafe.putLong(srcAddr + (long) i * Long.BYTES, input[i]);
                 }
                 CoveringCompressor.compressLongs(srcAddr, count, destAddr);
                 // Assert the compressor really picked bw=63, otherwise the test premise is invalid.
-                int bw = Unsafe.getUnsafe().getByte(destAddr + 4) & 0xFF;
+                int bw = Unsafe.getByte(destAddr + 4) & 0xFF;
                 Assert.assertEquals("expected bw=63", 63, bw);
                 for (int i = 0; i < count; i++) {
                     Assert.assertEquals("readLongAt at index " + i, input[i], CoveringCompressor.readLongAt(destAddr, i));
@@ -458,7 +458,7 @@ public class CoveringCompressorTest extends AbstractCairoTest {
             long destAddr = Unsafe.malloc(CoveringCompressor.maxCompressedSize(count, ColumnType.DOUBLE), MemoryTag.NATIVE_DEFAULT);
             try {
                 for (int i = 0; i < count; i++) {
-                    Unsafe.getUnsafe().putDouble(srcAddr + (long) i * Double.BYTES, input[i]);
+                    Unsafe.putDouble(srcAddr + (long) i * Double.BYTES, input[i]);
                 }
                 compressDoubles(srcAddr, count, 3, destAddr);
                 double[] output = new double[count];
@@ -501,7 +501,7 @@ public class CoveringCompressorTest extends AbstractCairoTest {
         try {
             CoveringCompressor.decompressDoublesToAddr(srcAddr, outAddr, wsAddr);
             for (int i = 0; i < count; i++) {
-                output[i] = Unsafe.getUnsafe().getDouble(outAddr + (long) i * Double.BYTES);
+                output[i] = Unsafe.getDouble(outAddr + (long) i * Double.BYTES);
             }
         } finally {
             Unsafe.free(wsAddr, (long) count * Long.BYTES, MemoryTag.NATIVE_DEFAULT);
@@ -516,7 +516,7 @@ public class CoveringCompressorTest extends AbstractCairoTest {
         try {
             CoveringCompressor.decompressIntsToAddr(srcAddr, outAddr, wsAddr);
             for (int i = 0; i < count; i++) {
-                output[i] = Unsafe.getUnsafe().getInt(outAddr + (long) i * Integer.BYTES);
+                output[i] = Unsafe.getInt(outAddr + (long) i * Integer.BYTES);
             }
         } finally {
             Unsafe.free(wsAddr, (long) count * Long.BYTES, MemoryTag.NATIVE_DEFAULT);
@@ -531,7 +531,7 @@ public class CoveringCompressorTest extends AbstractCairoTest {
         try {
             CoveringCompressor.decompressLongsToAddr(srcAddr, outAddr, wsAddr);
             for (int i = 0; i < count; i++) {
-                output[i] = Unsafe.getUnsafe().getLong(outAddr + (long) i * Long.BYTES);
+                output[i] = Unsafe.getLong(outAddr + (long) i * Long.BYTES);
             }
         } finally {
             Unsafe.free(wsAddr, (long) count * Long.BYTES, MemoryTag.NATIVE_DEFAULT);
@@ -543,7 +543,7 @@ public class CoveringCompressorTest extends AbstractCairoTest {
         long addr = Unsafe.malloc((long) values.length * Double.BYTES, MemoryTag.NATIVE_DEFAULT);
         try {
             for (int i = 0; i < values.length; i++) {
-                Unsafe.getUnsafe().putDouble(addr + (long) i * Double.BYTES, values[i]);
+                Unsafe.putDouble(addr + (long) i * Double.BYTES, values[i]);
             }
             return CoveringCompressor.findBestAlpParams(addr, values.length, 3);
         } finally {

@@ -227,11 +227,11 @@ public class PostingIndexBenchmarkSuite {
                             while (cursor.hasNext()) {
                                 long rowId = cursor.next();
                                 sum += switch (s.columnType) {
-                                    case "DOUBLE" -> (long) Unsafe.getUnsafe().getDouble(s.colAddr + rowId * 8);
-                                    case "FLOAT" -> (long) Unsafe.getUnsafe().getFloat(s.colAddr + rowId * 4);
-                                    case "LONG", "DECIMAL64" -> Unsafe.getUnsafe().getLong(s.colAddr + rowId * 8);
-                                    case "INT", "DECIMAL32" -> Unsafe.getUnsafe().getInt(s.colAddr + rowId * 4);
-                                    case "SHORT" -> Unsafe.getUnsafe().getShort(s.colAddr + rowId * 2);
+                                    case "DOUBLE" -> (long) Unsafe.getDouble(s.colAddr + rowId * 8);
+                                    case "FLOAT" -> (long) Unsafe.getFloat(s.colAddr + rowId * 4);
+                                    case "LONG", "DECIMAL64" -> Unsafe.getLong(s.colAddr + rowId * 8);
+                                    case "INT", "DECIMAL32" -> Unsafe.getInt(s.colAddr + rowId * 4);
+                                    case "SHORT" -> Unsafe.getShort(s.colAddr + rowId * 2);
                                     default -> 0;
                                 };
                             }
@@ -373,10 +373,10 @@ public class PostingIndexBenchmarkSuite {
                         while (cursor.hasNext()) {
                             long rowId = cursor.next();
                             switch (ct) {
-                                case DOUBLE -> Unsafe.getUnsafe().getDouble(colAddr + rowId * 8);
-                                case FLOAT -> Unsafe.getUnsafe().getFloat(colAddr + rowId * 4);
-                                case LONG -> Unsafe.getUnsafe().getLong(colAddr + rowId * 8);
-                                case INT -> Unsafe.getUnsafe().getInt(colAddr + rowId * 4);
+                                case DOUBLE -> Unsafe.getDouble(colAddr + rowId * 8);
+                                case FLOAT -> Unsafe.getFloat(colAddr + rowId * 4);
+                                case LONG -> Unsafe.getLong(colAddr + rowId * 8);
+                                case INT -> Unsafe.getInt(colAddr + rowId * 4);
                             }
                         }
                     }
@@ -606,13 +606,11 @@ public class PostingIndexBenchmarkSuite {
             Random dataRng = new Random(42);
             for (int i = 0; i < rows; i++) {
                 switch (ct) {
-                    case DOUBLE ->
-                            Unsafe.getUnsafe().putDouble(colAddr + (long) i * 8, 100.0 + dataRng.nextInt(90_000) * 0.01);
-                    case FLOAT ->
-                            Unsafe.getUnsafe().putFloat(colAddr + (long) i * 4, 20.0f + dataRng.nextInt(500) * 0.01f);
+                    case DOUBLE -> Unsafe.putDouble(colAddr + (long) i * 8, 100.0 + dataRng.nextInt(90_000) * 0.01);
+                    case FLOAT -> Unsafe.putFloat(colAddr + (long) i * 4, 20.0f + dataRng.nextInt(500) * 0.01f);
                     case LONG ->
-                            Unsafe.getUnsafe().putLong(colAddr + (long) i * 8, 1_700_000_000_000_000L + dataRng.nextInt(1_000_000));
-                    case INT -> Unsafe.getUnsafe().putInt(colAddr + (long) i * 4, dataRng.nextInt(10_000));
+                            Unsafe.putLong(colAddr + (long) i * 8, 1_700_000_000_000_000L + dataRng.nextInt(1_000_000));
+                    case INT -> Unsafe.putInt(colAddr + (long) i * 4, dataRng.nextInt(10_000));
                 }
             }
 
@@ -772,12 +770,12 @@ public class PostingIndexBenchmarkSuite {
             long maxOffset = (1L << bitWidth) - 1;
             packedSize = BitpackUtils.packedDataSize(TOTAL, bitWidth);
             packedAddr = Unsafe.malloc(packedSize, MemoryTag.NATIVE_DEFAULT);
-            Unsafe.getUnsafe().setMemory(packedAddr, packedSize, (byte) 0);
+            Unsafe.setMemory(packedAddr, packedSize, (byte) 0);
 
             long valuesSize = (long) TOTAL * Long.BYTES;
             long valuesAddr = Unsafe.malloc(valuesSize, MemoryTag.NATIVE_DEFAULT);
             for (int i = 0; i < TOTAL; i++) {
-                Unsafe.getUnsafe().putLong(valuesAddr + (long) i * Long.BYTES,
+                Unsafe.putLong(valuesAddr + (long) i * Long.BYTES,
                         minValue + (i % (maxOffset + 1)));
             }
             PostingIndexNative.packValuesNativeFallback(valuesAddr, TOTAL, minValue, bitWidth, packedAddr);
@@ -1054,20 +1052,18 @@ public class PostingIndexBenchmarkSuite {
             Random rng = new Random(42);
             for (int i = 0; i < ROWS; i++) {
                 switch (columnType) {
-                    case "DOUBLE" ->
-                            Unsafe.getUnsafe().putDouble(colAddr + (long) i * 8, 100.0 + rng.nextInt(90_000) * 0.01);
-                    case "FLOAT" ->
-                            Unsafe.getUnsafe().putFloat(colAddr + (long) i * 4, 20.0f + rng.nextInt(500) * 0.01f);
+                    case "DOUBLE" -> Unsafe.putDouble(colAddr + (long) i * 8, 100.0 + rng.nextInt(90_000) * 0.01);
+                    case "FLOAT" -> Unsafe.putFloat(colAddr + (long) i * 4, 20.0f + rng.nextInt(500) * 0.01f);
                     case "LONG" ->
-                            Unsafe.getUnsafe().putLong(colAddr + (long) i * 8, 1_700_000_000_000_000L + rng.nextInt(1_000_000));
-                    case "INT" -> Unsafe.getUnsafe().putInt(colAddr + (long) i * 4, rng.nextInt(10_000));
+                            Unsafe.putLong(colAddr + (long) i * 8, 1_700_000_000_000_000L + rng.nextInt(1_000_000));
+                    case "INT" -> Unsafe.putInt(colAddr + (long) i * 4, rng.nextInt(10_000));
                     case "DECIMAL64" ->
                         // Prices with scale=2: 100.00–1000.00 → unscaled 10_000–100_000
-                            Unsafe.getUnsafe().putLong(colAddr + (long) i * 8, 10_000L + rng.nextInt(90_000));
+                            Unsafe.putLong(colAddr + (long) i * 8, 10_000L + rng.nextInt(90_000));
                     case "DECIMAL32" ->
                         // Prices with scale=2: 20.00–25.00 → unscaled 2_000–2_500
-                            Unsafe.getUnsafe().putInt(colAddr + (long) i * 4, 2_000 + rng.nextInt(500));
-                    case "SHORT" -> Unsafe.getUnsafe().putShort(colAddr + (long) i * 2, (short) rng.nextInt(1_000));
+                            Unsafe.putInt(colAddr + (long) i * 4, 2_000 + rng.nextInt(500));
+                    case "SHORT" -> Unsafe.putShort(colAddr + (long) i * 2, (short) rng.nextInt(1_000));
                 }
             }
 

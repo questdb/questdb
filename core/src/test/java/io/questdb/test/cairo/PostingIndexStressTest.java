@@ -336,10 +336,11 @@ public class PostingIndexStressTest extends AbstractCairoTest {
                             try (Path rPath = new Path().of(dbRoot);
                                  PostingIndexBwdReader reader = new PostingIndexBwdReader(
                                          configuration, rPath, name, COLUMN_NAME_TXN_NONE, -1, 0, null, null, 0)) {
-                                reader.reloadConditionally();
+                                // Pin the snapshot before the barrier — getCursor reloads
+                                // internally and would otherwise race with writer.seal().
+                                RowCursor cursor = reader.getCursor(0, 0, Long.MAX_VALUE);
                                 barrier.await();
 
-                                RowCursor cursor = reader.getCursor(0, 0, Long.MAX_VALUE);
                                 long prev = Long.MAX_VALUE;
                                 int count = 0;
                                 while (cursor.hasNext()) {
@@ -784,10 +785,13 @@ public class PostingIndexStressTest extends AbstractCairoTest {
                             try (Path rPath = new Path().of(dbRoot);
                                  PostingIndexFwdReader reader = new PostingIndexFwdReader(
                                          configuration, rPath, name, COLUMN_NAME_TXN_NONE, -1, 0)) {
-                                reader.reloadConditionally();
+                                // Pin the snapshot at 10 sparse gens BEFORE the barrier. getCursor
+                                // calls reloadConditionally() internally, so a getCursor done after
+                                // the barrier would race with the writer's seal+post-seal commits
+                                // and could capture a snapshot containing all 20 batches.
+                                RowCursor cursor = reader.getCursor(0, 0, Long.MAX_VALUE);
                                 barrier.await();
 
-                                RowCursor cursor = reader.getCursor(0, 0, Long.MAX_VALUE);
                                 long prev = -1;
                                 int count = 0;
                                 while (cursor.hasNext()) {
@@ -2327,13 +2331,13 @@ public class PostingIndexStressTest extends AbstractCairoTest {
 
                                 // Verify both pages have valid sequences (no corruption)
                                 long keyBase = reader.getKeyBaseAddress();
-                                long seqA = Unsafe.getUnsafe().getLong(
+                                long seqA = Unsafe.getLong(
                                         keyBase + PostingIndexUtils.PAGE_A_OFFSET + PostingIndexUtils.PAGE_OFFSET_SEQUENCE_START);
-                                long seqEndA = Unsafe.getUnsafe().getLong(
+                                long seqEndA = Unsafe.getLong(
                                         keyBase + PostingIndexUtils.PAGE_A_OFFSET + PostingIndexUtils.PAGE_OFFSET_SEQUENCE_END);
-                                long seqB = Unsafe.getUnsafe().getLong(
+                                long seqB = Unsafe.getLong(
                                         keyBase + PostingIndexUtils.PAGE_B_OFFSET + PostingIndexUtils.PAGE_OFFSET_SEQUENCE_START);
-                                long seqEndB = Unsafe.getUnsafe().getLong(
+                                long seqEndB = Unsafe.getLong(
                                         keyBase + PostingIndexUtils.PAGE_B_OFFSET + PostingIndexUtils.PAGE_OFFSET_SEQUENCE_END);
 
                                 // Both pages should be valid (seq_start == seq_end) since writes are single-threaded
@@ -3540,7 +3544,7 @@ public class PostingIndexStressTest extends AbstractCairoTest {
 
                         // Make page A valid with seq=50
                         keyMem.putLong(PostingIndexUtils.PAGE_A_OFFSET + PostingIndexUtils.PAGE_OFFSET_SEQUENCE_START, 50L);
-                        Unsafe.getUnsafe().storeFence();
+                        Unsafe.storeFence();
                         keyMem.putLong(PostingIndexUtils.PAGE_A_OFFSET + PostingIndexUtils.PAGE_OFFSET_SEQUENCE_END, 50L);
 
                         // Page B stays torn (seq_start=999 != seq_end)

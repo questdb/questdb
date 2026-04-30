@@ -215,9 +215,9 @@ public class QwpEgressReadBenchmark {
                     int[] idIdx = batch.nonNullIndex(1);
                     int[] priceIdx = batch.nonNullIndex(2);
                     for (int r = 0; r < n; r++) {
-                        long ts = io.questdb.client.std.Unsafe.getUnsafe().getLong(tsBase + 8L * tsIdx[r]);
-                        long id = io.questdb.client.std.Unsafe.getUnsafe().getLong(idBase + 8L * idIdx[r]);
-                        long priceBits = io.questdb.client.std.Unsafe.getUnsafe().getLong(priceBase + 8L * priceIdx[r]);
+                        long ts = io.questdb.std.Unsafe.getLong(tsBase + 8L * tsIdx[r]);
+                        long id = io.questdb.std.Unsafe.getLong(idBase + 8L * idIdx[r]);
+                        long priceBits = io.questdb.std.Unsafe.getLong(priceBase + 8L * priceIdx[r]);
                         DirectUtf8Sequence sym = batch.getStrA(3, r);
                         DirectUtf8Sequence note = batch.getStrB(4, r);
                         checksum[0] ^= ts ^ id ^ priceBits
@@ -329,15 +329,6 @@ public class QwpEgressReadBenchmark {
                 phase, label, rows, TimeUnit.NANOSECONDS.toMillis(elapsedNanos), checksumOrBytes);
     }
 
-    private static final class Result {
-        final long bytes;
-        final long elapsedNanos;
-        final long rows;
-
-        Result(long elapsedNanos, long rows, long bytes) {
-            this.elapsedNanos = elapsedNanos;
-            this.rows = rows;
-            this.bytes = bytes;
-        }
+    private record Result(long elapsedNanos, long rows, long bytes) {
     }
 }

@@ -77,8 +77,8 @@ public class FsstBenchmark {
     @Benchmark
     public long lookupOneValueWarm(StrideState s) {
         int idx = s.nextIdx();
-        long lo = Unsafe.getUnsafe().getLong(s.dstOffsetsAddr + (long) idx * Long.BYTES);
-        long hi = Unsafe.getUnsafe().getLong(s.dstOffsetsAddr + (long) (idx + 1) * Long.BYTES);
+        long lo = Unsafe.getLong(s.dstOffsetsAddr + (long) idx * Long.BYTES);
+        long hi = Unsafe.getLong(s.dstOffsetsAddr + (long) (idx + 1) * Long.BYTES);
         return s.dstAddr + lo + (hi - lo);
     }
 
@@ -93,8 +93,8 @@ public class FsstBenchmark {
         if (decoded < 0) return -1;
         long sum = 0;
         for (int i = 0; i < s.valueCount; i++) {
-            long lo = Unsafe.getUnsafe().getLong(s.dstOffsetsAddr + (long) i * Long.BYTES);
-            long hi = Unsafe.getUnsafe().getLong(s.dstOffsetsAddr + (long) (i + 1) * Long.BYTES);
+            long lo = Unsafe.getLong(s.dstOffsetsAddr + (long) i * Long.BYTES);
+            long hi = Unsafe.getLong(s.dstOffsetsAddr + (long) (i + 1) * Long.BYTES);
             sum += s.dstAddr + lo + (hi - lo);
         }
         return sum;
@@ -172,16 +172,16 @@ public class FsstBenchmark {
             rawOffsetsAddr = Unsafe.malloc(offsetsArrayBytes, MemoryTag.NATIVE_DEFAULT);
             long pos = 0;
             for (int i = 0; i < valueCount; i++) {
-                Unsafe.getUnsafe().putLong(rawOffsetsAddr + (long) i * Long.BYTES, pos);
+                Unsafe.putLong(rawOffsetsAddr + (long) i * Long.BYTES, pos);
                 long dst = rawAddr + pos;
                 int start = starts[i];
                 int len = lens[i];
                 for (int j = 0; j < len; j++) {
-                    Unsafe.getUnsafe().putByte(dst + j, CORPUS[start + j]);
+                    Unsafe.putByte(dst + j, CORPUS[start + j]);
                 }
                 pos += len;
             }
-            Unsafe.getUnsafe().putLong(rawOffsetsAddr + (long) valueCount * Long.BYTES, pos);
+            Unsafe.putLong(rawOffsetsAddr + (long) valueCount * Long.BYTES, pos);
 
             compCap = rawTotalLen * 2 + 16;
             compAddr = Unsafe.malloc(compCap, MemoryTag.NATIVE_DEFAULT);

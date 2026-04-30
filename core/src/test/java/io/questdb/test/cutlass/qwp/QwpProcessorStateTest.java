@@ -793,7 +793,7 @@ public class QwpProcessorStateTest extends AbstractCairoTest {
                 ObjList<Utf8String> captured = new ObjList<>();
                 long[] capturedSeq = new long[]{Long.MIN_VALUE};
                 try {
-                    cache.commitAll((tableName, tableDirName, seqTxn) -> {
+                    cache.commitAll((_, tableDirName, seqTxn) -> {
                         captured.add(new Utf8String(tableDirName));
                         capturedSeq[0] = seqTxn;
                     });
@@ -972,7 +972,7 @@ public class QwpProcessorStateTest extends AbstractCairoTest {
 
                 boolean[] invoked = new boolean[]{false};
                 try {
-                    cache.commitAll((tableName, tableDirName, seqTxn) -> invoked[0] = true);
+                    cache.commitAll((_, _, _) -> invoked[0] = true);
                 } catch (Exception e) {
                     throw e;
                 } catch (Throwable t) {
@@ -1672,131 +1672,6 @@ public class QwpProcessorStateTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testShouldSendAckReturnsFalseWhenSending() throws Exception {
-        assertMemoryLeak(() -> {
-            LineHttpProcessorConfiguration lineConfig =
-                    new DefaultHttpServerConfiguration.DefaultLineHttpProcessorConfiguration(configuration);
-            QwpProcessorState state = new QwpProcessorState(1024, 4096, engine, lineConfig);
-            try {
-                state.of(1, AllowAllSecurityContext.INSTANCE);
-
-                // Set up sequences so the threshold IS met
-                state.setHighestProcessedSequence(10);
-                // lastAckedSequence defaults to -1, so gap=11 >= batchSize=1
-
-                // Block ACK → sendState != READY
-                state.onAckBlocked(5);
-                Assert.assertFalse(state.shouldSendAck(1));
-            } finally {
-                state.onDisconnected();
-                state.close();
-            }
-        });
-    }
-
-    @Test
-    public void testWriteTableSeqTxnEntriesEmpty() throws Exception {
-        assertMemoryLeak(() -> {
-            CharSequenceLongHashMap entries = new CharSequenceLongHashMap();
-            long ptr = Unsafe.malloc(64, MemoryTag.NATIVE_DEFAULT);
-            try {
-                int written = QwpProcessorState.writeTableSeqTxnEntries(ptr, entries);
-                // Empty map: just tableCount(2) = 0
-                Assert.assertEquals(2, written);
-                Assert.assertEquals(0, Unsafe.getUnsafe().getShort(ptr) & 0xFFFF);
-            } finally {
-                Unsafe.free(ptr, 64, MemoryTag.NATIVE_DEFAULT);
-            }
-        });
-    }
-
-    @Test
-    public void testWriteTableSeqTxnEntriesSingleEntry() throws Exception {
-        assertMemoryLeak(() -> {
-            CharSequenceLongHashMap entries = new CharSequenceLongHashMap();
-            entries.put("trades", 42L);
-            long ptr = Unsafe.malloc(128, MemoryTag.NATIVE_DEFAULT);
-            try {
-                int written = QwpProcessorState.writeTableSeqTxnEntries(ptr, entries);
-                // tableCount(2) + nameLen(2) + "trades"(6) + seqTxn(8) = 18
-                Assert.assertEquals(18, written);
-                Assert.assertEquals(1, Unsafe.getUnsafe().getShort(ptr) & 0xFFFF);
-                Assert.assertEquals(6, Unsafe.getUnsafe().getShort(ptr + 2) & 0xFFFF);
-                Assert.assertEquals((byte) 't', Unsafe.getUnsafe().getByte(ptr + 4));
-                Assert.assertEquals(42L, Unsafe.getUnsafe().getLong(ptr + 10));
-            } finally {
-                Unsafe.free(ptr, 128, MemoryTag.NATIVE_DEFAULT);
-            }
-        });
-    }
-
-    @Test
-    public void testWriteTableSeqTxnEntriesMultipleEntries() throws Exception {
-        assertMemoryLeak(() -> {
-            CharSequenceLongHashMap entries = new CharSequenceLongHashMap();
-            entries.put("t1", 10L);
-            entries.put("t2", 20L);
-            entries.put("abc", 30L);
-            long ptr = Unsafe.malloc(256, MemoryTag.NATIVE_DEFAULT);
-            try {
-                int written = QwpProcessorState.writeTableSeqTxnEntries(ptr, entries);
-                // tableCount(2) + 3 * (nameLen(2) + name + seqTxn(8))
-                // "t1"(2), "t2"(2), "abc"(3) -> 2 + (2+2+8) + (2+2+8) + (2+3+8) = 39
-                Assert.assertEquals(39, written);
-                int tableCount = Unsafe.getUnsafe().getShort(ptr) & 0xFFFF;
-                Assert.assertEquals(3, tableCount);
-
-                // Verify all entries are readable by walking the wire format
-                int offset = 2;
-                for (int i = 0; i < tableCount; i++) {
-                    int nameLen = Unsafe.getUnsafe().getShort(ptr + offset) & 0xFFFF;
-                    offset += 2;
-                    StringBuilder sb = new StringBuilder();
-                    for (int j = 0; j < nameLen; j++) {
-                        sb.append((char) (Unsafe.getUnsafe().getByte(ptr + offset + j) & 0xFF));
-                    }
-                    offset += nameLen;
-                    long seqTxn = Unsafe.getUnsafe().getLong(ptr + offset);
-                    offset += 8;
-                    Assert.assertEquals(entries.get(sb), seqTxn);
-                }
-                Assert.assertEquals(written, offset);
-            } finally {
-                Unsafe.free(ptr, 256, MemoryTag.NATIVE_DEFAULT);
-            }
-        });
-    }
-
-    @Test
-    public void testWriteTableSeqTxnEntriesNonAsciiTableName() throws Exception {
-        assertMemoryLeak(() -> {
-            CharSequenceLongHashMap entries = new CharSequenceLongHashMap();
-            // "caf\u00e9" — the \u00e9 encodes to two UTF-8 bytes (0xC3 0xA9),
-            // so UTF-8 byte length (5) differs from char length (4).
-            entries.put("caf\u00e9", 77L);
-            long ptr = Unsafe.malloc(128, MemoryTag.NATIVE_DEFAULT);
-            try {
-                int written = QwpProcessorState.writeTableSeqTxnEntries(ptr, entries);
-                // tableCount(2) + nameLen(2) + "caf\u00e9" UTF-8 (5 bytes) + seqTxn(8) = 17
-                Assert.assertEquals(17, written);
-                int tableCount = Unsafe.getUnsafe().getShort(ptr) & 0xFFFF;
-                Assert.assertEquals(1, tableCount);
-                int nameLen = Unsafe.getUnsafe().getShort(ptr + 2) & 0xFFFF;
-                Assert.assertEquals(5, nameLen);
-                // Verify UTF-8 bytes: 'c'=0x63, 'a'=0x61, 'f'=0x66, \u00e9=0xC3 0xA9
-                Assert.assertEquals((byte) 'c', Unsafe.getUnsafe().getByte(ptr + 4));
-                Assert.assertEquals((byte) 'a', Unsafe.getUnsafe().getByte(ptr + 5));
-                Assert.assertEquals((byte) 'f', Unsafe.getUnsafe().getByte(ptr + 6));
-                Assert.assertEquals((byte) 0xC3, Unsafe.getUnsafe().getByte(ptr + 7));
-                Assert.assertEquals((byte) 0xA9, Unsafe.getUnsafe().getByte(ptr + 8));
-                Assert.assertEquals(77L, Unsafe.getUnsafe().getLong(ptr + 9));
-            } finally {
-                Unsafe.free(ptr, 128, MemoryTag.NATIVE_DEFAULT);
-            }
-        });
-    }
-
-    @Test
     public void testComputeAckPayloadSizeMatchesWrittenBytes() throws Exception {
         assertMemoryLeak(() -> {
             LineHttpProcessorConfiguration lineConfig =
@@ -1818,8 +1693,8 @@ public class QwpProcessorStateTest extends AbstractCairoTest {
                 // Verify by writing: status(1) + sequence(8) + writeTableSeqTxnEntries
                 long ptr = Unsafe.malloc(payloadSize, MemoryTag.NATIVE_DEFAULT);
                 try {
-                    Unsafe.getUnsafe().putByte(ptr, (byte) 0x00); // STATUS_OK
-                    Unsafe.getUnsafe().putLong(ptr + 1, 0L);      // sequence
+                    Unsafe.putByte(ptr, (byte) 0x00); // STATUS_OK
+                    Unsafe.putLong(ptr + 1, 0L);      // sequence
                     int tableBytes = QwpProcessorState.writeTableSeqTxnEntries(ptr + 9, state.getPendingAckSeqTxns());
                     Assert.assertEquals(payloadSize, 9 + tableBytes);
                 } finally {
@@ -1861,7 +1736,7 @@ public class QwpProcessorStateTest extends AbstractCairoTest {
                 // Verify by writing: status(1) + writeTableSeqTxnEntries
                 long ptr = Unsafe.malloc(payloadSize, MemoryTag.NATIVE_DEFAULT);
                 try {
-                    Unsafe.getUnsafe().putByte(ptr, (byte) 0x02); // STATUS_DURABLE_ACK
+                    Unsafe.putByte(ptr, (byte) 0x02); // STATUS_DURABLE_ACK
                     int tableBytes = QwpProcessorState.writeTableSeqTxnEntries(ptr + 1, progress);
                     Assert.assertEquals(payloadSize, 1 + tableBytes);
                 } finally {
@@ -1870,6 +1745,131 @@ public class QwpProcessorStateTest extends AbstractCairoTest {
             } finally {
                 state.onDisconnected();
                 state.close();
+            }
+        });
+    }
+
+    @Test
+    public void testShouldSendAckReturnsFalseWhenSending() throws Exception {
+        assertMemoryLeak(() -> {
+            LineHttpProcessorConfiguration lineConfig =
+                    new DefaultHttpServerConfiguration.DefaultLineHttpProcessorConfiguration(configuration);
+            QwpProcessorState state = new QwpProcessorState(1024, 4096, engine, lineConfig);
+            try {
+                state.of(1, AllowAllSecurityContext.INSTANCE);
+
+                // Set up sequences so the threshold IS met
+                state.setHighestProcessedSequence(10);
+                // lastAckedSequence defaults to -1, so gap=11 >= batchSize=1
+
+                // Block ACK → sendState != READY
+                state.onAckBlocked(5);
+                Assert.assertFalse(state.shouldSendAck(1));
+            } finally {
+                state.onDisconnected();
+                state.close();
+            }
+        });
+    }
+
+    @Test
+    public void testWriteTableSeqTxnEntriesEmpty() throws Exception {
+        assertMemoryLeak(() -> {
+            CharSequenceLongHashMap entries = new CharSequenceLongHashMap();
+            long ptr = Unsafe.malloc(64, MemoryTag.NATIVE_DEFAULT);
+            try {
+                int written = QwpProcessorState.writeTableSeqTxnEntries(ptr, entries);
+                // Empty map: just tableCount(2) = 0
+                Assert.assertEquals(2, written);
+                Assert.assertEquals(0, Unsafe.getShort(ptr) & 0xFFFF);
+            } finally {
+                Unsafe.free(ptr, 64, MemoryTag.NATIVE_DEFAULT);
+            }
+        });
+    }
+
+    @Test
+    public void testWriteTableSeqTxnEntriesMultipleEntries() throws Exception {
+        assertMemoryLeak(() -> {
+            CharSequenceLongHashMap entries = new CharSequenceLongHashMap();
+            entries.put("t1", 10L);
+            entries.put("t2", 20L);
+            entries.put("abc", 30L);
+            long ptr = Unsafe.malloc(256, MemoryTag.NATIVE_DEFAULT);
+            try {
+                int written = QwpProcessorState.writeTableSeqTxnEntries(ptr, entries);
+                // tableCount(2) + 3 * (nameLen(2) + name + seqTxn(8))
+                // "t1"(2), "t2"(2), "abc"(3) -> 2 + (2+2+8) + (2+2+8) + (2+3+8) = 39
+                Assert.assertEquals(39, written);
+                int tableCount = Unsafe.getShort(ptr) & 0xFFFF;
+                Assert.assertEquals(3, tableCount);
+
+                // Verify all entries are readable by walking the wire format
+                int offset = 2;
+                for (int i = 0; i < tableCount; i++) {
+                    int nameLen = Unsafe.getShort(ptr + offset) & 0xFFFF;
+                    offset += 2;
+                    StringBuilder sb = new StringBuilder();
+                    for (int j = 0; j < nameLen; j++) {
+                        sb.append((char) (Unsafe.getByte(ptr + offset + j) & 0xFF));
+                    }
+                    offset += nameLen;
+                    long seqTxn = Unsafe.getLong(ptr + offset);
+                    offset += 8;
+                    Assert.assertEquals(entries.get(sb), seqTxn);
+                }
+                Assert.assertEquals(written, offset);
+            } finally {
+                Unsafe.free(ptr, 256, MemoryTag.NATIVE_DEFAULT);
+            }
+        });
+    }
+
+    @Test
+    public void testWriteTableSeqTxnEntriesNonAsciiTableName() throws Exception {
+        assertMemoryLeak(() -> {
+            CharSequenceLongHashMap entries = new CharSequenceLongHashMap();
+            // "café" — the é encodes to two UTF-8 bytes (0xC3 0xA9),
+            // so UTF-8 byte length (5) differs from char length (4).
+            entries.put("café", 77L);
+            long ptr = Unsafe.malloc(128, MemoryTag.NATIVE_DEFAULT);
+            try {
+                int written = QwpProcessorState.writeTableSeqTxnEntries(ptr, entries);
+                // tableCount(2) + nameLen(2) + "café" UTF-8 (5 bytes) + seqTxn(8) = 17
+                Assert.assertEquals(17, written);
+                int tableCount = Unsafe.getShort(ptr) & 0xFFFF;
+                Assert.assertEquals(1, tableCount);
+                int nameLen = Unsafe.getShort(ptr + 2) & 0xFFFF;
+                Assert.assertEquals(5, nameLen);
+                // Verify UTF-8 bytes: 'c'=0x63, 'a'=0x61, 'f'=0x66, é=0xC3 0xA9
+                Assert.assertEquals((byte) 'c', Unsafe.getByte(ptr + 4));
+                Assert.assertEquals((byte) 'a', Unsafe.getByte(ptr + 5));
+                Assert.assertEquals((byte) 'f', Unsafe.getByte(ptr + 6));
+                Assert.assertEquals((byte) 0xC3, Unsafe.getByte(ptr + 7));
+                Assert.assertEquals((byte) 0xA9, Unsafe.getByte(ptr + 8));
+                Assert.assertEquals(77L, Unsafe.getLong(ptr + 9));
+            } finally {
+                Unsafe.free(ptr, 128, MemoryTag.NATIVE_DEFAULT);
+            }
+        });
+    }
+
+    @Test
+    public void testWriteTableSeqTxnEntriesSingleEntry() throws Exception {
+        assertMemoryLeak(() -> {
+            CharSequenceLongHashMap entries = new CharSequenceLongHashMap();
+            entries.put("trades", 42L);
+            long ptr = Unsafe.malloc(128, MemoryTag.NATIVE_DEFAULT);
+            try {
+                int written = QwpProcessorState.writeTableSeqTxnEntries(ptr, entries);
+                // tableCount(2) + nameLen(2) + "trades"(6) + seqTxn(8) = 18
+                Assert.assertEquals(18, written);
+                Assert.assertEquals(1, Unsafe.getShort(ptr) & 0xFFFF);
+                Assert.assertEquals(6, Unsafe.getShort(ptr + 2) & 0xFFFF);
+                Assert.assertEquals((byte) 't', Unsafe.getByte(ptr + 4));
+                Assert.assertEquals(42L, Unsafe.getLong(ptr + 10));
+            } finally {
+                Unsafe.free(ptr, 128, MemoryTag.NATIVE_DEFAULT);
             }
         });
     }
@@ -2063,7 +2063,7 @@ public class QwpProcessorStateTest extends AbstractCairoTest {
         writerField.set(tud, Proxy.newProxyInstance(
                 TableWriterAPI.class.getClassLoader(),
                 new Class[]{TableWriterAPI.class},
-                (proxy, method, args) -> switch (method.getName()) {
+                (_, method, _) -> switch (method.getName()) {
                     case "getUncommittedRowCount" -> 1L;
                     case "getWalId" -> 1;
                     case "getSegmentId" -> 0;
