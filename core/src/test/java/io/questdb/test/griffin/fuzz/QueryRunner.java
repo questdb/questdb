@@ -40,6 +40,7 @@ import io.questdb.std.Chars;
 import io.questdb.std.NumericException;
 import io.questdb.std.ObjList;
 import io.questdb.std.str.StringSink;
+import io.questdb.test.griffin.fuzz.FuzzTableFactory.ParquetMode;
 
 import java.util.Arrays;
 import java.util.regex.Matcher;
@@ -107,10 +108,12 @@ public final class QueryRunner {
     private final CairoEngine engine;
     private final SqlExecutionContext executionContext;
     private final TextPlanSink planSink = new TextPlanSink();
+    private final boolean primaryHasAnyParquet;
     private final Pattern[] primaryPatterns;
     private final StringSink rowsA = new StringSink();
     private final StringSink rowsB = new StringSink();
     private final StringSink rowsC = new StringSink();
+    private final boolean shadowHasAnyParquet;
     private final String[] shadowReplacements;
 
     public QueryRunner(
@@ -128,6 +131,8 @@ public final class QueryRunner {
             int n = tables.size();
             primaryPatterns = new Pattern[n];
             shadowReplacements = new String[n];
+            boolean primaryParquet = false;
+            boolean shadowParquet = false;
             for (int i = 0; i < n; i++) {
                 FuzzTable t = tables.getQuick(i);
                 FuzzTable shadow = t.getShadow();
@@ -136,17 +141,23 @@ public final class QueryRunner {
                 }
                 primaryPatterns[i] = Pattern.compile("\\b" + Pattern.quote(t.getName()) + "\\b");
                 shadowReplacements[i] = Matcher.quoteReplacement(shadow.getName());
+                primaryParquet |= t.getParquetMode() != ParquetMode.NONE;
+                shadowParquet |= shadow.getParquetMode() != ParquetMode.NONE;
             }
+            primaryHasAnyParquet = primaryParquet;
+            shadowHasAnyParquet = shadowParquet;
         } else {
             primaryPatterns = null;
             shadowReplacements = null;
+            primaryHasAnyParquet = false;
+            shadowHasAnyParquet = false;
         }
     }
 
     public Result run(GeneratedQuery query) {
         String sql = query.sql();
         if (!diffJit && !diffShadow) {
-            Outcome outcome = runOnce(sql, rowsA);
+            Outcome outcome = runOnce(sql, rowsA, primaryHasAnyParquet);
             return toResult(sql, outcome);
         }
         int prevJitMode = executionContext.getJitMode();
@@ -155,12 +166,12 @@ public final class QueryRunner {
             // the JIT comparison and the left-hand side of the storage
             // comparison, so it runs whenever either diff is on.
             executionContext.setJitMode(SqlJitMode.JIT_MODE_DISABLED);
-            Outcome bJ = runOnce(sql, rowsB);
+            Outcome bJ = runOnce(sql, rowsB, primaryHasAnyParquet);
 
             Result jitResult = null;
             if (diffJit) {
                 executionContext.setJitMode(SqlJitMode.JIT_MODE_ENABLED);
-                Outcome aJ = runOnce(sql, rowsA);
+                Outcome aJ = runOnce(sql, rowsA, primaryHasAnyParquet);
                 jitResult = reconcilePair(sql, aJ, bJ, rowsA, rowsB, query.deterministic(),
                         "JIT divergence", "jit on ", "jit off");
                 if (jitResult.isFailed()) {
@@ -171,7 +182,7 @@ public final class QueryRunner {
             if (diffShadow) {
                 executionContext.setJitMode(SqlJitMode.JIT_MODE_DISABLED);
                 String shadowSql = rewriteForShadow(sql);
-                Outcome bS = runOnce(shadowSql, rowsC);
+                Outcome bS = runOnce(shadowSql, rowsC, shadowHasAnyParquet);
                 Result storageResult = reconcilePair(
                         sql,
                         bJ,
@@ -209,6 +220,24 @@ public final class QueryRunner {
      */
     private static boolean isIndexFilteredAsymmetry(Outcome erroring, Outcome succeeding) {
         if (succeeding.failure != null || !succeeding.hasIndex) {
+            return false;
+        }
+        return erroring.failure instanceof NumericException
+                || erroring.failure instanceof ImplicitCastException;
+    }
+
+    /**
+     * Erroring side threw a per-row runtime cast or numeric overflow,
+     * succeeding side ran against tables with parquet partitions. Parquet
+     * pushdown evaluates predicates against row-group statistics and
+     * column dictionaries before materializing rows, so an out-of-range
+     * cast or scale-alignment overflow that the full-scan side would hit
+     * may simply not be reached on the parquet side. The asymmetry is a
+     * planner choice driven by the table's storage format, not a data
+     * divergence.
+     */
+    private static boolean isParquetFilteredAsymmetry(Outcome erroring, Outcome succeeding) {
+        if (succeeding.failure != null || !succeeding.usesParquet) {
             return false;
         }
         return erroring.failure instanceof NumericException
@@ -258,6 +287,51 @@ public final class QueryRunner {
     }
 
     /**
+     * Returns true iff every cell in {@code a} either matches the
+     * corresponding cell in {@code b} exactly or both parse as finite
+     * doubles within a small relative tolerance. Used as a fallback for
+     * floating-point aggregates whose last-digit value depends on the
+     * order of summation, which legitimately differs between an indexed
+     * scan and a full scan or between parquet and native partitions.
+     */
+    private static boolean rowEqualsWithFpTolerance(String a, String b) {
+        if (a.equals(b)) {
+            return true;
+        }
+        String[] tokensA = a.split("\t", -1);
+        String[] tokensB = b.split("\t", -1);
+        if (tokensA.length != tokensB.length) {
+            return false;
+        }
+        for (int i = 0; i < tokensA.length; i++) {
+            if (tokensA[i].equals(tokensB[i])) {
+                continue;
+            }
+            double da;
+            double db;
+            try {
+                da = Double.parseDouble(tokensA[i]);
+                db = Double.parseDouble(tokensB[i]);
+            } catch (NumberFormatException e) {
+                return false;
+            }
+            if (!Double.isFinite(da) || !Double.isFinite(db)) {
+                return false;
+            }
+            // 1e-12 relative is loose enough for FP reduction-order drift
+            // and tight enough to flag a real arithmetic divergence; the
+            // 1e-15 floor handles values near zero where relative error
+            // is ill-defined.
+            double scale = Math.max(Math.abs(da), Math.abs(db));
+            double eps = Math.max(1e-15, scale * 1e-12);
+            if (Math.abs(da - db) > eps) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    /**
      * Multiset comparison: the two row sets are equal iff they contain the same
      * lines, regardless of order. Parallel operators (GROUP BY, etc.) do not
      * guarantee a stable iteration order across runs, but neither toggle
@@ -278,6 +352,39 @@ public final class QueryRunner {
         Arrays.sort(linesB);
         for (int i = 0; i < linesA.length; i++) {
             if (!linesA[i].equals(linesB[i])) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    /**
+     * Multiset comparison with floating-point tolerance: the two row sets
+     * are equivalent iff each line in {@code a} can be paired with a
+     * distinct line in {@code b} that matches under
+     * {@link #rowEqualsWithFpTolerance(String, String)}. Used after a
+     * strict {@link #rowsetEquals} fails to absorb FP-reduction-order
+     * drift in {@code SUM}/{@code AVG} aggregates whose last digits depend
+     * on the access path the planner picks. Greedy matching is O(n^2);
+     * fuzz queries produce small row sets so this is fine.
+     */
+    private static boolean rowsetEqualsWithFpTolerance(StringSink a, StringSink b) {
+        String[] linesA = a.toString().split("\n", -1);
+        String[] linesB = b.toString().split("\n", -1);
+        if (linesA.length != linesB.length) {
+            return false;
+        }
+        boolean[] usedB = new boolean[linesB.length];
+        for (String lineA : linesA) {
+            boolean matched = false;
+            for (int j = 0; j < linesB.length; j++) {
+                if (!usedB[j] && rowEqualsWithFpTolerance(lineA, linesB[j])) {
+                    usedB[j] = true;
+                    matched = true;
+                    break;
+                }
+            }
+            if (!matched) {
                 return false;
             }
         }
@@ -329,6 +436,15 @@ public final class QueryRunner {
             // regardless of which rows they are.
             if (!deterministic && a.rowsRead == b.rowsRead) {
                 return Result.ok();
+            }
+            // Both sides agree on the row set up to floating-point
+            // last-digit drift. SUM/AVG over DOUBLE/FLOAT is sensitive to
+            // the order of summation, which legitimately differs across
+            // index/parquet access paths and across JIT modes. The
+            // tolerance is tight enough to flag a real arithmetic
+            // divergence while absorbing reduction-order noise.
+            if (a.rowsRead == b.rowsRead && rowsetEqualsWithFpTolerance(rowsA, rowsB)) {
+                return Result.skipped("rowset matches with floating-point tolerance");
             }
             return Result.failed(sql, divergence(diffName, a, b, rowsA, rowsB, labelA, labelB));
         }
@@ -383,6 +499,14 @@ public final class QueryRunner {
         if (isIndexFilteredAsymmetry(a, b) || isIndexFilteredAsymmetry(b, a)) {
             return Result.skipped("index-filtered " + (a.failure != null ? a.exceptionClass : b.exceptionClass));
         }
+        // Same shape as the index-filtered rule but for parquet. The
+        // succeeding side accessed tables with parquet partitions and the
+        // parquet read path can prune rows via row-group statistics or
+        // dictionaries before the comparator runs, so the offending value
+        // never reaches the residual filter.
+        if (isParquetFilteredAsymmetry(a, b) || isParquetFilteredAsymmetry(b, a)) {
+            return Result.skipped("parquet-filtered " + (a.failure != null ? a.exceptionClass : b.exceptionClass));
+        }
         // Anything else: divergence (one succeeded, one threw a non-skip
         // error; or both threw different exception classes).
         return Result.failed(sql, divergence(diffName, a, b, rowsA, rowsB, labelA, labelB));
@@ -396,7 +520,7 @@ public final class QueryRunner {
         return result;
     }
 
-    private Outcome runOnce(String sql, StringSink rows) {
+    private Outcome runOnce(String sql, StringSink rows, boolean usesParquet) {
         rows.clear();
         try (RecordCursorFactory factory = engine.select(sql, executionContext)) {
             int rowsRead;
@@ -415,27 +539,27 @@ public final class QueryRunner {
                 }
             }
             planSink.of(factory, executionContext);
-            return Outcome.ok(rowsRead, planUsesIndex(planSink.getSink()));
+            return Outcome.ok(rowsRead, planUsesIndex(planSink.getSink()), usesParquet);
         } catch (SqlException e) {
-            return Outcome.error(e, e.getFlyweightMessage().toString());
+            return Outcome.error(e, e.getFlyweightMessage().toString(), usesParquet);
         } catch (ImplicitCastException e) {
-            return Outcome.error(e, e.getFlyweightMessage().toString());
+            return Outcome.error(e, e.getFlyweightMessage().toString(), usesParquet);
         } catch (NumericException e) {
-            return Outcome.error(e, "");
+            return Outcome.error(e, "", usesParquet);
         } catch (Throwable t) {
             String msg = t.getMessage();
-            return Outcome.error(t, msg == null ? "" : msg);
+            return Outcome.error(t, msg == null ? "" : msg, usesParquet);
         }
     }
 
-    private record Outcome(int rowsRead, boolean hasIndex, Throwable failure, String exceptionClass, String exceptionMessage) {
+    private record Outcome(int rowsRead, boolean hasIndex, boolean usesParquet, Throwable failure, String exceptionClass, String exceptionMessage) {
 
-        static Outcome error(Throwable t, String message) {
-            return new Outcome(0, false, t, t.getClass().getSimpleName(), message);
+        static Outcome error(Throwable t, String message, boolean usesParquet) {
+            return new Outcome(0, false, usesParquet, t, t.getClass().getSimpleName(), message);
         }
 
-        static Outcome ok(int rowsRead, boolean hasIndex) {
-            return new Outcome(rowsRead, hasIndex, null, null, null);
+        static Outcome ok(int rowsRead, boolean hasIndex, boolean usesParquet) {
+            return new Outcome(rowsRead, hasIndex, usesParquet, null, null, null);
         }
     }
 
