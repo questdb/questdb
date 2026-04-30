@@ -88,6 +88,8 @@ public class FuzzSetParquetEncodingOperation implements FuzzTransactionOperation
             } catch (CairoException e) {
                 if (Chars.contains(e.getFlyweightMessage(), "table does not exist")
                         || Chars.contains(e.getFlyweightMessage(), "does not exist in table")
+                        || Chars.contains(e.getFlyweightMessage(), "cached query plan cannot be used")
+                        || Chars.contains(e.getFlyweightMessage(), "could not lock table")
                         || e.isTableDropped()) {
                     return true;
                 } else {

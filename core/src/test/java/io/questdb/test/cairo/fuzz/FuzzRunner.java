@@ -1101,6 +1101,13 @@ public class FuzzRunner {
             } catch (Throwable e) {
                 e.printStackTrace(System.out);
                 errors.add(e);
+                // Unblock peers waiting on a barrier this worker was supposed to advance.
+                // Without this, peers spin in the Os.sleep loop above because their wait
+                // condition (waitBarrierVersion < target) stays true; the errors check
+                // inside the loop relies on Os.sleep returning, which under heavy load
+                // can be delayed indefinitely. Overshooting to MAX guarantees the wait
+                // condition flips so peers reach the errors.isEmpty() check and return.
+                waitBarrierVersion.set(Long.MAX_VALUE);
             } finally {
                 Path.clearThreadLocals();
             }
