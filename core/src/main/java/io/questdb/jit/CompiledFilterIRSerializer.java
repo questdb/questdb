@@ -52,6 +52,7 @@ import io.questdb.std.GenericLexer;
 import io.questdb.std.IntStack;
 import io.questdb.std.LongList;
 import io.questdb.std.LongObjHashMap;
+import io.questdb.std.Misc;
 import io.questdb.std.Mutable;
 import io.questdb.std.Numbers;
 import io.questdb.std.NumericException;
@@ -184,6 +185,43 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
                 // Store negation node for later backfilling
                 serializeConstantStub(node);
                 return false;
+            }
+        }
+
+        // Fold cast(<inner>, T) when T matches the operand's type, so the various
+        // ::TYPE workarounds (constants from PR #6413, bind variables from the same
+        // PR's predecessor, and redundant column-side casts) all keep using JIT
+        // instead of tripping the "invalid operator: cast" rejection. Mismatched
+        // casts fall through here and bail out at serializeOperator -> Java handles.
+        if (node.type == ExpressionNode.FUNCTION && node.paramCount == 2 && SqlKeywords.isCastKeyword(node.token)) {
+            ExpressionNode argNode = node.lhs;
+            if (argNode != null && isCastTargetTypeLiteral(node.rhs)) {
+                // Constant or negated-constant cast: defer the type-match check to
+                // backfill (column hasn't been visited yet in post-order).
+                if (isFoldableConstantArg(argNode)) {
+                    serializeConstantStub(node);
+                    return false;
+                }
+                // Bind-variable cast: same deferral pattern. backfillCast checks both
+                // the cast target type (against the column) and the bind variable's
+                // bound type (against the cast target).
+                if (argNode.type == ExpressionNode.BIND_VARIABLE && argNode.paramCount == 0) {
+                    serializeConstantStub(node);
+                    return false;
+                }
+                // Column-side cast: only fold when the cast is a no-op (target type
+                // matches the column's actual type). The check uses metadata directly
+                // since the column type doesn't depend on the predicate context.
+                if (argNode.type == ExpressionNode.LITERAL && argNode.paramCount == 0) {
+                    int columnIndex = metadata.getColumnIndexQuiet(argNode.token);
+                    if (columnIndex != -1
+                            && metadata.getColumnType(columnIndex) == ColumnType.typeOf(node.rhs.token)) {
+                        // Behave as if we descended into the column literal directly.
+                        serializeColumn(argNode.position, argNode.token);
+                        predicateContext.onNodeVisited(argNode);
+                        return false;
+                    }
+                }
             }
         }
 
@@ -358,6 +396,26 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
         return Chars.equals(token, "/");
     }
 
+    // The cast's rhs is the type literal (e.g. CONSTANT "uuid"). We need a non-null
+    // CONSTANT token here so we can resolve its ColumnType tag at backfill time.
+    private static boolean isCastTargetTypeLiteral(ExpressionNode node) {
+        return node != null && node.type == ExpressionNode.CONSTANT && node.token != null;
+    }
+
+    // Returns true for a leaf node that the backfill consumer can serialize as a single
+    // constant operand. Accepts a bare CONSTANT and the unary-`-` over a CONSTANT shape
+    // that the existing negation lookahead already produces.
+    private static boolean isFoldableConstantArg(ExpressionNode node) {
+        if (node.paramCount == 0 && node.type == ExpressionNode.CONSTANT) {
+            return true;
+        }
+        if (node.type == ExpressionNode.OPERATION && node.paramCount == 1 && Chars.equals(node.token, "-")) {
+            ExpressionNode inner = node.lhs != null ? node.lhs : node.rhs;
+            return inner != null && inner.paramCount == 0 && inner.type == ExpressionNode.CONSTANT;
+        }
+        return false;
+    }
+
     private static boolean isGeoHash(int columnType) {
         return switch (ColumnType.tagOf(columnType)) {
             case ColumnType.GEOBYTE, ColumnType.GEOSHORT, ColumnType.GEOINT, ColumnType.GEOLONG -> true;
@@ -407,6 +465,77 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
         return type == STRING_HEADER_TYPE || type == BINARY_HEADER_TYPE || type == VARCHAR_HEADER_TYPE;
     }
 
+    // Parses with the sign baked in. Routing negation through parseLong rather than
+    // multiplying by -1 lets LONG_MIN round-trip: "9223372036854775808" overflows
+    // when parsed unsigned but is a valid long when parsed as "-9223372036854775808".
+    private static long parseSignedLong(CharSequence token, boolean negated) throws NumericException {
+        if (negated) {
+            StringSink sink = Misc.getThreadLocalSink();
+            sink.put('-').put(token);
+            return Numbers.parseLong(sink);
+        }
+        return Numbers.parseLong(token);
+    }
+
+    private void backfillBindVariableCast(long offset, ExpressionNode varNode, int castType) throws SqlException {
+        // The cast target type already matches the column type (checked by the caller).
+        // Additionally require the bind variable's bound type to match the cast target;
+        // a mismatch means the cast performs runtime coercion (e.g. STRING -> UUID),
+        // which the JIT IR cannot replicate, so we bail out.
+        Function varFunction = getBindVariableFunction(varNode.position, varNode.token);
+        int boundType = varFunction.getType();
+        if (boundType != castType) {
+            throw SqlException.position(varNode.position)
+                    .put("bind variable type does not match cast target: bound=")
+                    .put(ColumnType.nameOf(boundType))
+                    .put(", cast=")
+                    .put(ColumnType.nameOf(castType));
+        }
+        int columnTypeTag = ColumnType.tagOf(boundType);
+        if (columnTypeTag == ColumnType.STRING) {
+            // Defensive: unreachable today. The outer `castType == columnType` guard
+            // requires a STRING column, and STRING columns have no IMM constant path
+            // in serializeConstant, so STRING-vs-STRING never gets this far. Kept as
+            // a sentinel in case someone later adds STRING-column JIT support without
+            // wiring the deferred-symbol backfill into this fold.
+            throw SqlException.position(varNode.position)
+                    .put("string bind variable cast not foldable: ")
+                    .put(varNode.token);
+        }
+        int typeCode = bindVariableTypeCode(columnTypeTag);
+        if (typeCode == UNDEFINED_CODE) {
+            // Defensive: unreachable today. VARCHAR/BINARY/LONG256/etc. columns don't
+            // JIT, so their bound types never reach this path. Kept as a guard against
+            // silent miscompilation if someone later expands JIT column support.
+            throw SqlException.position(varNode.position)
+                    .put("unsupported bind variable type: ")
+                    .put(ColumnType.nameOf(columnTypeTag));
+        }
+        bindVarFunctions.add(varFunction);
+        int index = bindVarFunctions.size() - 1;
+        putOperand(offset, VAR, typeCode, index);
+    }
+
+    private void backfillCast(long offset, final ExpressionNode castNode) throws SqlException {
+        // Only fold when the cast's full target type matches the predicate's column type.
+        // Tag-only matching is unsafe: TIMESTAMP_MICRO and TIMESTAMP_NANO share the
+        // TIMESTAMP tag but use different drivers, so `cast(str, timestamp_ns)` against
+        // a micro column would parse the literal at the wrong precision. Type mismatches
+        // also cover cases like INT_MIN-as-LONG which is the INT NULL sentinel when
+        // reinterpreted as INT.
+        int castType = ColumnType.typeOf(castNode.rhs.token);
+        if (castType != predicateContext.columnType) {
+            throw SqlException.position(castNode.position)
+                    .put("cast target type does not match column type: ")
+                    .put(castNode.rhs.token);
+        }
+        if (castNode.lhs.type == ExpressionNode.BIND_VARIABLE) {
+            backfillBindVariableCast(offset, castNode.lhs, castType);
+            return;
+        }
+        backfillConstant(offset, castNode.lhs);
+    }
+
     private void backfillConstant(long offset, final ExpressionNode node) throws SqlException {
         int position = node.position;
         CharSequence token = node.token;
@@ -430,6 +559,9 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
                 case ExpressionNode.CONSTANT:
                 case ExpressionNode.OPERATION: // constant negation case
                     backfillConstant(key, value);
+                    break;
+                case ExpressionNode.FUNCTION: // cast(<constant>, <type>)
+                    backfillCast(key, value);
                     break;
                 case ExpressionNode.BIND_VARIABLE:
                     backfillSymbolBindVariable(key, value);
@@ -1165,18 +1297,17 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
         try {
             switch (typeCode) {
                 case I1_TYPE:
-                    final byte b = (byte) Numbers.parseInt(token);
-                    putOperand(offset, IMM, I1_TYPE, sign * b);
+                    // Bake the sign into the parse: `sign * (byte) parseInt("128")`
+                    // would re-overflow -128 back to 128 at long width. See parseSignedLong.
+                    putOperand(offset, IMM, I1_TYPE, (byte) parseSignedLong(token, negated));
                     break;
                 case I2_TYPE:
-                    final short s = (short) Numbers.parseInt(token);
-                    putOperand(offset, IMM, I2_TYPE, sign * s);
+                    putOperand(offset, IMM, I2_TYPE, (short) parseSignedLong(token, negated));
                     break;
                 case I4_TYPE:
                 case F4_TYPE:
                     try {
-                        final int i = Numbers.parseInt(token);
-                        putOperand(offset, IMM, I4_TYPE, sign * i);
+                        putOperand(offset, IMM, I4_TYPE, (int) parseSignedLong(token, negated));
                     } catch (NumericException e) {
                         final float fi = Numbers.parseFloat(token);
                         putDoubleOperand(offset, F4_TYPE, sign * fi);
@@ -1185,8 +1316,7 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
                 case I8_TYPE:
                 case F8_TYPE:
                     try {
-                        final long l = Numbers.parseLong(token);
-                        putOperand(offset, IMM, I8_TYPE, sign * l);
+                        putOperand(offset, IMM, I8_TYPE, parseSignedLong(token, negated));
                     } catch (NumericException e) {
                         final double dl = Numbers.parseDouble(token);
                         putDoubleOperand(offset, F8_TYPE, sign * dl);
