@@ -276,6 +276,42 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testParallelApproxCountDistinctOverCastToSymbol() throws Exception {
+        // approx_count_distinct((int_expr)::SYMBOL) routes through the Int variant and ::SYMBOL is thread-unsafe.
+        assertMemoryLeak(() -> {
+            final WorkerPool pool = new WorkerPool(() -> 4);
+            TestUtils.execute(
+                    pool,
+                    (engine, compiler, sqlExecutionContext) -> {
+                        engine.execute("CREATE TABLE tab (ts TIMESTAMP, v INT) timestamp(ts) PARTITION BY DAY", sqlExecutionContext);
+                        // 40 partitions, each holding rows with a single distinct value
+                        // ((x - 1) / rows_per_partition). Workers picking up disjoint
+                        // partitions will see disjoint value sets, which is what the
+                        // parallel HLL merge needs to mis-count.
+                        final int rowsPerPartition = MIN_PAGE_FRAME_MAX_ROWS;
+                        final int partitions = 40;
+                        engine.execute(
+                                "INSERT INTO tab SELECT" +
+                                        " ((x - 1) / " + rowsPerPartition + " * 86400000000 + x)::timestamp," +
+                                        " ((x - 1) / " + rowsPerPartition + ")::int" +
+                                        " FROM long_sequence(" + (rowsPerPartition * partitions) + ")",
+                                sqlExecutionContext
+                        );
+                        TestUtils.assertSql(
+                                engine,
+                                sqlExecutionContext,
+                                "SELECT approx_count_distinct((v)::SYMBOL) FROM tab",
+                                sink,
+                                "approx_count_distinct\n" + partitions + "\n"
+                        );
+                    },
+                    configuration,
+                    LOG
+            );
+        });
+    }
+
+    @Test
     public void testParallelBitwiseAggregates() throws Exception {
         // Exercises the new computeKeyedBatch overrides for bit_and / bit_or / bit_xor
         // across byte / short / int / long. The 'k0'..'k4' SYMBOL key routes through
