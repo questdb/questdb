@@ -113,8 +113,8 @@ public class AlterTableAddColumnTest extends AbstractCairoTest {
                             isWal
                                     ? originalColumns
                                     : originalColumns +
-                                    "mycol\tINT\tfalse\t256\tfalse\t0\t0\tfalse\tfalse\t\t\n" +
-                                    "mycol2\tINT\tfalse\t256\tfalse\t0\t0\tfalse\tfalse\t\t\n",
+                                      "mycol\tINT\tfalse\t256\tfalse\t0\t0\tfalse\tfalse\t\t\n" +
+                                      "mycol2\tINT\tfalse\t256\tfalse\t0\t0\tfalse\tfalse\t\t\n",
                             "show columns from x",
                             null,
                             false
@@ -1027,8 +1027,8 @@ public class AlterTableAddColumnTest extends AbstractCairoTest {
                             isWal
                                     ? originalColumns
                                     : originalColumns +
-                                    "mycol\tINT\tfalse\t256\tfalse\t0\t0\tfalse\tfalse\t\t\n" +
-                                    "second\tSYMBOL\tfalse\t256\ttrue\t128\t1\tfalse\tfalse\t\t\n",
+                                      "mycol\tINT\tfalse\t256\tfalse\t0\t0\tfalse\tfalse\t\t\n" +
+                                      "second\tSYMBOL\tfalse\t256\ttrue\t128\t1\tfalse\tfalse\t\t\n",
                             "show columns from x",
                             null,
                             false
