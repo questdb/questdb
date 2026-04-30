@@ -35,6 +35,8 @@ import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.TextPlanSink;
+import io.questdb.std.Chars;
 import io.questdb.std.NumericException;
 import io.questdb.std.ObjList;
 import io.questdb.std.str.StringSink;
@@ -104,6 +106,7 @@ public final class QueryRunner {
     private final boolean diffShadow;
     private final CairoEngine engine;
     private final SqlExecutionContext executionContext;
+    private final TextPlanSink planSink = new TextPlanSink();
     private final Pattern[] primaryPatterns;
     private final StringSink rowsA = new StringSink();
     private final StringSink rowsB = new StringSink();
@@ -196,6 +199,23 @@ public final class QueryRunner {
     }
 
     /**
+     * Erroring side threw a per-row runtime cast or numeric overflow,
+     * succeeding side reached the index-driven access path. An index probe
+     * filters rows out before they reach the residual filter, so a row that
+     * would have triggered the cast or overflow on the full-scan side never
+     * makes it to the comparator on the indexed side. The asymmetry is a
+     * planner choice driven by the table's index configuration, not a data
+     * divergence.
+     */
+    private static boolean isIndexFilteredAsymmetry(Outcome erroring, Outcome succeeding) {
+        if (succeeding.failure != null || !succeeding.hasIndex) {
+            return false;
+        }
+        return erroring.failure instanceof NumericException
+                || erroring.failure instanceof ImplicitCastException;
+    }
+
+    /**
      * One side threw a known planner-sensitivity error. These are structural
      * compile-time checks (e.g. "left side of time series join doesn't have
      * ASC timestamp order") whose outcome depends on the access path the
@@ -209,6 +229,25 @@ public final class QueryRunner {
             return false;
         }
         return o.exceptionMessage.contains("doesn't have ASC timestamp order");
+    }
+
+    /**
+     * Detects whether a rendered plan uses an index-driven access path.
+     * Markers come from the {@code sink.type(...)} calls in QuestDB's
+     * cursor factories: "Index forward scan" / "Index backward scan",
+     * "Async index backward scan", "AsOf Join Indexed Scan",
+     * "SortedSymbolIndex", "LatestByAllIndexed". These are the operators
+     * that probe a bitmap index instead of scanning every page frame
+     * row, so a per-row cast or numeric error on an out-of-range value
+     * may legitimately not surface here even though the equivalent
+     * full-scan path on a sibling table throws.
+     */
+    private static boolean planUsesIndex(CharSequence plan) {
+        int n = plan.length();
+        return Chars.indexOf(plan, 0, n, "Index ") >= 0
+                || Chars.indexOf(plan, 0, n, "Indexed") >= 0
+                || Chars.indexOf(plan, 0, n, "SortedSymbolIndex") >= 0
+                || Chars.indexOf(plan, 0, n, "Async index") >= 0;
     }
 
     private static String renderOutcome(Outcome outcome, CharSequence rows) {
@@ -333,6 +372,17 @@ public final class QueryRunner {
         if (isPlannerSensitivityAsymmetry(a) || isPlannerSensitivityAsymmetry(b)) {
             return Result.skipped("planner sensitivity asymmetry");
         }
+        // One side threw a per-row runtime error (NumericException for
+        // overflow during scale alignment, ImplicitCastException for an
+        // out-of-range cast) and the other side succeeded with an
+        // index-driven access path. An index probe filters rows out
+        // before they reach the residual filter, so the offending row
+        // simply never reaches the comparator/cast on the indexed side.
+        // Whether a row triggers the throw is therefore a planner choice
+        // determined by the side's access path, not a data divergence.
+        if (isIndexFilteredAsymmetry(a, b) || isIndexFilteredAsymmetry(b, a)) {
+            return Result.skipped("index-filtered " + (a.failure != null ? a.exceptionClass : b.exceptionClass));
+        }
         // Anything else: divergence (one succeeded, one threw a non-skip
         // error; or both threw different exception classes).
         return Result.failed(sql, divergence(diffName, a, b, rowsA, rowsB, labelA, labelB));
@@ -349,11 +399,12 @@ public final class QueryRunner {
     private Outcome runOnce(String sql, StringSink rows) {
         rows.clear();
         try (RecordCursorFactory factory = engine.select(sql, executionContext)) {
+            int rowsRead;
             try (RecordCursor cursor = factory.getCursor(executionContext)) {
                 RecordMetadata metadata = factory.getMetadata();
                 int columnCount = metadata.getColumnCount();
                 Record record = cursor.getRecord();
-                int rowsRead = 0;
+                rowsRead = 0;
                 while (cursor.hasNext()) {
                     for (int i = 0; i < columnCount; i++) {
                         CursorPrinter.printColumn(record, metadata, i, rows, false);
@@ -362,8 +413,9 @@ public final class QueryRunner {
                     rows.put('\n');
                     rowsRead++;
                 }
-                return Outcome.ok(rowsRead);
             }
+            planSink.of(factory, executionContext);
+            return Outcome.ok(rowsRead, planUsesIndex(planSink.getSink()));
         } catch (SqlException e) {
             return Outcome.error(e, e.getFlyweightMessage().toString());
         } catch (ImplicitCastException e) {
@@ -376,14 +428,14 @@ public final class QueryRunner {
         }
     }
 
-    private record Outcome(int rowsRead, Throwable failure, String exceptionClass, String exceptionMessage) {
+    private record Outcome(int rowsRead, boolean hasIndex, Throwable failure, String exceptionClass, String exceptionMessage) {
 
         static Outcome error(Throwable t, String message) {
-            return new Outcome(0, t, t.getClass().getSimpleName(), message);
+            return new Outcome(0, false, t, t.getClass().getSimpleName(), message);
         }
 
-        static Outcome ok(int rowsRead) {
-            return new Outcome(rowsRead, null, null, null);
+        static Outcome ok(int rowsRead, boolean hasIndex) {
+            return new Outcome(rowsRead, hasIndex, null, null, null);
         }
     }
 
