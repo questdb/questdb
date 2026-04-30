@@ -86,7 +86,7 @@ public class QueryFuzzTest extends AbstractCairoTest {
             // GROUP BY, top-K, window/horizon join and parquet read paths are exercised.
             // The default test sqlExecutionContext reports getSharedQueryWorkerCount()=1,
             // so build a fresh one that advertises the actual pool width to the planner.
-            final int workerCount = 4;
+            final int workerCount = Integer.getInteger("questdb.fuzz.workers", 4);
             final WorkerPool pool = new WorkerPool(() -> workerCount);
             TestUtils.setupWorkerPool(pool, engine);
             pool.start(LOG);

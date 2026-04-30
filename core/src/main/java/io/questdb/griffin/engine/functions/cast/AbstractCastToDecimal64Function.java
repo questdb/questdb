@@ -28,28 +28,25 @@ import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.PlanSink;
-
-import io.questdb.griffin.engine.functions.decimal.ToDecimal64Function;
+import io.questdb.griffin.engine.functions.decimal.Decimal64Function;
+import io.questdb.std.Decimal64;
+import io.questdb.std.Decimals;
 
 /**
  * Abstract base class for functions that cast values to decimal64.
  */
-public abstract class AbstractCastToDecimal64Function extends ToDecimal64Function implements CastFunction {
-    /**
-     * The function argument to cast.
-     */
+public abstract class AbstractCastToDecimal64Function extends Decimal64Function implements CastFunction {
+    // The function argument to cast.
     protected final Function arg;
-    /**
-     * The position in the SQL statement.
-     */
+    // Reused buffer that {@link #cast(Record)} fills and the {@code getDecimalNN}
+    // accessors read back from. Sharing it across worker threads would race, so
+    // {@link #isThreadSafe()} returns false.
+    protected final Decimal64 decimal = new Decimal64();
+    // The position in the SQL statement.
     protected final int position;
-    /**
-     * The target decimal precision.
-     */
+    // The target decimal precision.
     protected final int precision;
-    /**
-     * The target decimal scale.
-     */
+    // The target decimal scale.
     protected final int scale;
 
     /**
@@ -72,8 +69,41 @@ public abstract class AbstractCastToDecimal64Function extends ToDecimal64Functio
         return arg;
     }
 
-    public boolean store(Record rec) {
-        return cast(rec);
+    @Override
+    public short getDecimal16(Record rec) {
+        if (!cast(rec)) {
+            return Decimals.DECIMAL16_NULL;
+        }
+        return (short) decimal.getValue();
+    }
+
+    @Override
+    public int getDecimal32(Record rec) {
+        if (!cast(rec)) {
+            return Decimals.DECIMAL32_NULL;
+        }
+        return (int) decimal.getValue();
+    }
+
+    @Override
+    public long getDecimal64(Record rec) {
+        if (!cast(rec)) {
+            return Decimals.DECIMAL64_NULL;
+        }
+        return decimal.getValue();
+    }
+
+    @Override
+    public byte getDecimal8(Record rec) {
+        if (!cast(rec)) {
+            return Decimals.DECIMAL8_NULL;
+        }
+        return (byte) decimal.getValue();
+    }
+
+    @Override
+    public boolean isThreadSafe() {
+        return false;
     }
 
     @Override

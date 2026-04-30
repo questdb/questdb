@@ -304,8 +304,7 @@ public class ParallelFilterTest extends AbstractCairoTest {
 
     @Test
     public void testCastToSymbolInParallelFilter() throws Exception {
-        // Cast-to-symbol functions maintain a mutable hash-map symbol cache that
-        // the parallel filter must clone per worker thread, so they're thread-unsafe.
+        // Cast-to-symbol functions maintain a mutable hash-map symbol cache, so they're thread-unsafe.
         WorkerPool pool = new WorkerPool(() -> 4);
         TestUtils.execute(
                 pool,

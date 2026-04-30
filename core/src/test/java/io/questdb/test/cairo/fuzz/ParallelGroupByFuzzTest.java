@@ -1379,11 +1379,44 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testParallelGroupByCastDoubleToDecimal64() throws Exception {
+        // Cast-to-decimal64 functions reuse a per-instance Decimal64, so they're thread-unsafe.
+        assertMemoryLeak(() -> {
+            final WorkerPool pool = new WorkerPool(() -> 4);
+            TestUtils.execute(
+                    pool,
+                    (engine, compiler, sqlExecutionContext) -> {
+                        execute(
+                                compiler,
+                                "CREATE TABLE x (ts TIMESTAMP, v DOUBLE) timestamp(ts) PARTITION BY DAY",
+                                sqlExecutionContext
+                        );
+                        // Each row gets a distinct DOUBLE that maps to a distinct
+                        // DECIMAL(18, 3); the GROUP BY on the cast must produce
+                        // ROW_COUNT distinct groups, each with count=1.
+                        execute(
+                                compiler,
+                                "INSERT INTO x SELECT x::timestamp, x::double / 1000 FROM long_sequence(" + ROW_COUNT + ")",
+                                sqlExecutionContext
+                        );
+                        assertQueries(
+                                engine,
+                                sqlExecutionContext,
+                                "SELECT max(c), min(c), count(*) FROM (" +
+                                        "  SELECT (v)::DECIMAL(18, 3) AS v_dec, count() AS c FROM x" +
+                                        ")",
+                                "max\tmin\tcount\n1\t1\t" + ROW_COUNT + "\n"
+                        );
+                    },
+                    configuration,
+                    LOG
+            );
+        });
+    }
+
+    @Test
     public void testParallelGroupByCastToSymbol() throws Exception {
-        // The table is non-partitioned.
-        Assume.assumeFalse(convertToParquet);
-        // This query shouldn't be executed in parallel,
-        // so this test verifies that nothing breaks.
+        // This query shouldn't be executed in parallel, so this test verifies that nothing breaks.
         assertMemoryLeak(() -> {
             final WorkerPool pool = new WorkerPool(() -> 4);
             TestUtils.execute(
