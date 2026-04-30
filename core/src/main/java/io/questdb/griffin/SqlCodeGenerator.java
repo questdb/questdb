@@ -3732,6 +3732,13 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                         }
                         constantFills.add(NullConstant.NULL);
                     } else if (isNullKeyword(fillExpr.token)) {
+                        final int targetColType = groupByMetadata.getColumnType(col);
+                        final short targetTag = ColumnType.tagOf(targetColType);
+                        if (targetTag == ColumnType.BOOLEAN || targetTag == ColumnType.CHAR) {
+                            throw SqlException.$(fillExpr.position,
+                                            "fill value of type NULL cannot fill column of type ")
+                                    .put(ColumnType.nameOf(targetColType));
+                        }
                         fillModes.add(SampleByFillRecordCursorFactory.FILL_CONSTANT);
                         constantFills.add(NullConstant.NULL);
                     } else {

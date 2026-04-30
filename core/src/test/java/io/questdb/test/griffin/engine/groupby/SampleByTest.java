@@ -12447,38 +12447,40 @@ public class SampleByTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testSampleFillNullBadType() throws Exception {
+    public void testSampleFillNullBadTypeBoolean() throws Exception {
         assertException(
-                "select b, sum_t(b), k from x sample by 3h fill(null)",
+                "select b, last(c), k from x sample by 3h fill(null)",
                 "create table x as " +
                         "(" +
                         "select" +
                         " rnd_double(0)*100 a," +
                         " rnd_str(1,1,2) b," +
+                        " rnd_boolean() c," +
                         " timestamp_sequence(172800000000, 3600000000) k" +
                         " from" +
                         " long_sequence(20)" +
                         ") timestamp(k) partition by NONE",
-                0,
-                "inconvertible value"
+                46,
+                "fill value of type NULL cannot fill column of type BOOLEAN"
         );
     }
 
     @Test
-    public void testSampleFillNullBadTypeSequential() throws Exception {
+    public void testSampleFillNullBadTypeChar() throws Exception {
         assertException(
-                "select b, sum_t(b), k from x sample by 3h fill(null)",
+                "select b, last(c), k from x sample by 3h fill(null)",
                 "create table x as " +
                         "(" +
                         "select" +
                         " rnd_double(0)*100 a," +
                         " rnd_str(1,1,2) b," +
+                        " rnd_char() c," +
                         " timestamp_sequence(172800000000, 3600000000) k" +
                         " from" +
                         " long_sequence(20)" +
                         ") timestamp(k) partition by NONE",
-                0,
-                "inconvertible value"
+                46,
+                "fill value of type NULL cannot fill column of type CHAR"
         );
     }
 
@@ -12883,94 +12885,18 @@ public class SampleByTest extends AbstractCairoTest {
 
     @Test
     public void testSampleFillNullNotKeyedCharColumn() throws Exception {
-        // The old SAMPLE BY code path rejected CHAR columns with fill(null).
-        // The GROUP BY rewrite handles them correctly.
-        assertQuery(
-                """
-                        s\tk
-                        B\t2021-10-31T00:00:00.000000Z
-                        T\t2021-10-31T00:30:00.000000Z
-                        \t2021-10-31T01:00:00.000000Z
-                        U\t2021-10-31T01:30:00.000000Z
-                        \t2021-10-31T02:00:00.000000Z
-                        O\t2021-10-31T02:30:00.000000Z
-                        \t2021-10-31T03:00:00.000000Z
-                        G\t2021-10-31T03:30:00.000000Z
-                        \t2021-10-31T04:00:00.000000Z
-                        I\t2021-10-31T04:30:00.000000Z
-                        \t2021-10-31T05:00:00.000000Z
-                        U\t2021-10-31T05:30:00.000000Z
-                        \t2021-10-31T06:00:00.000000Z
-                        E\t2021-10-31T06:30:00.000000Z
-                        \t2021-10-31T07:00:00.000000Z
-                        X\t2021-10-31T07:30:00.000000Z
-                        \t2021-10-31T08:00:00.000000Z
-                        E\t2021-10-31T08:30:00.000000Z
-                        I\t2021-10-31T09:00:00.000000Z
-                        \t2021-10-31T09:30:00.000000Z
-                        W\t2021-10-31T10:00:00.000000Z
-                        \t2021-10-31T10:30:00.000000Z
-                        N\t2021-10-31T11:00:00.000000Z
-                        \t2021-10-31T11:30:00.000000Z
-                        Q\t2021-10-31T12:00:00.000000Z
-                        \t2021-10-31T12:30:00.000000Z
-                        B\t2021-10-31T13:00:00.000000Z
-                        \t2021-10-31T13:30:00.000000Z
-                        Z\t2021-10-31T14:00:00.000000Z
-                        \t2021-10-31T14:30:00.000000Z
-                        T\t2021-10-31T15:00:00.000000Z
-                        \t2021-10-31T15:30:00.000000Z
-                        H\t2021-10-31T16:00:00.000000Z
-                        \t2021-10-31T16:30:00.000000Z
-                        L\t2021-10-31T17:00:00.000000Z
-                        I\t2021-10-31T17:30:00.000000Z
-                        \t2021-10-31T18:00:00.000000Z
-                        W\t2021-10-31T18:30:00.000000Z
-                        \t2021-10-31T19:00:00.000000Z
-                        X\t2021-10-31T19:30:00.000000Z
-                        \t2021-10-31T20:00:00.000000Z
-                        K\t2021-10-31T20:30:00.000000Z
-                        \t2021-10-31T21:00:00.000000Z
-                        J\t2021-10-31T21:30:00.000000Z
-                        \t2021-10-31T22:00:00.000000Z
-                        B\t2021-10-31T22:30:00.000000Z
-                        \t2021-10-31T23:00:00.000000Z
-                        I\t2021-10-31T23:30:00.000000Z
-                        \t2021-11-01T00:00:00.000000Z
-                        Y\t2021-11-01T00:30:00.000000Z
-                        \t2021-11-01T01:00:00.000000Z
-                        I\t2021-11-01T01:30:00.000000Z
-                        P\t2021-11-01T02:00:00.000000Z
-                        \t2021-11-01T02:30:00.000000Z
-                        V\t2021-11-01T03:00:00.000000Z
-                        """,
+        assertException(
                 "select last(z) s, k from x sample by 30m fill(null) align to calendar with offset '10:00'",
                 "create table x as " +
                         "(" +
                         "select" +
-                        " rnd_int() a," +
-                        " rnd_boolean() b," +
-                        " rnd_str(1,1,2) c," +
-                        " rnd_double(2) d," +
-                        " rnd_float(2) e," +
-                        " rnd_short(10,1024) f," +
-                        " rnd_date(to_date('2015', 'yyyy'), to_date('2016', 'yyyy'), 2) g," +
-                        " rnd_symbol(4,4,4,2) i," +
-                        " rnd_long() j," +
-                        " rnd_byte(2,50) l," +
-                        " rnd_bin(10, 20, 2) m," +
-                        " rnd_str(5,16,2) n," +
-                        " rnd_double(2) o," +
                         " rnd_char() z," +
-                        " rnd_varchar(5, 16, 2) vch," +
-                        " timestamp_sequence(cast('2020-03-28T03:20:00.000000Z' as timestamp), 3600000000) p," +
                         " timestamp_sequence(cast('2021-10-31T00:00:00.000000Z' as timestamp), 3400000000) k" +
                         " from" +
                         " long_sequence(30)" +
                         ") timestamp(k) partition by NONE",
-                "k",
-                false,
-                false
+                46,
+                "fill value of type NULL cannot fill column of type CHAR"
         );
     }
 
@@ -13040,7 +12966,7 @@ public class SampleByTest extends AbstractCairoTest {
                     ") timestamp(k) partition by NONE");
 
             assertPlanNoLeakCheck(
-                    "select last(z) s from x sample by 30m fill(null)",
+                    "select last(n) s from x sample by 30m fill(null)",
                     """
                             SelectedRecord
                                 Sample By Fill
@@ -13051,7 +12977,7 @@ public class SampleByTest extends AbstractCairoTest {
                                         Async Group By workers: 1
                                           keys: [k]
                                           keyFunctions: [timestamp_floor_utc('30m',k)]
-                                          values: [last(z)]
+                                          values: [last(n)]
                                           filter: null
                                             PageFrame
                                                 Row forward scan
