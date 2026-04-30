@@ -58,11 +58,11 @@ public class SubIntFunctionFactory implements FunctionFactory {
         // null - x and x - null always evaluate to null. Fold at construction time so the
         // non-null operand (potentially a column reference) is never evaluated with a null
         // record via FunctionParser.functionToConstant().
-        if (left.isConstant() && left.getInt(null) == Numbers.INT_NULL) {
+        if (left.isNullConstant()) {
             Misc.free(right);
             return IntConstant.NULL;
         }
-        if (right.isConstant() && right.getInt(null) == Numbers.INT_NULL) {
+        if (right.isNullConstant()) {
             Misc.free(left);
             return IntConstant.NULL;
         }

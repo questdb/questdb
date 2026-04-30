@@ -57,11 +57,11 @@ public class DivDoubleFunctionFactory implements FunctionFactory {
         final Function right = args.getQuick(1);
         // null / x and x / null always evaluate to null. Fold at construction time so the
         // non-null operand is never read at all at runtime.
-        if (left.isConstant() && Numbers.isNull(left.getDouble(null))) {
+        if (left.isNullConstant()) {
             Misc.free(right);
             return DoubleConstant.NULL;
         }
-        if (right.isConstant() && Numbers.isNull(right.getDouble(null))) {
+        if (right.isNullConstant()) {
             Misc.free(left);
             return DoubleConstant.NULL;
         }

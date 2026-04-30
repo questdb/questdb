@@ -58,11 +58,11 @@ public class AddIntFunctionFactory implements FunctionFactory {
         // null + x and x + null always evaluate to null. Fold to an int null constant at
         // construction time, so the non-null operand (which may be a column reference that
         // needs a record to evaluate) is never asked for its value with a null record.
-        if (left.isConstant() && left.getInt(null) == Numbers.INT_NULL) {
+        if (left.isNullConstant()) {
             Misc.free(right);
             return IntConstant.NULL;
         }
-        if (right.isConstant() && right.getInt(null) == Numbers.INT_NULL) {
+        if (right.isNullConstant()) {
             Misc.free(left);
             return IntConstant.NULL;
         }

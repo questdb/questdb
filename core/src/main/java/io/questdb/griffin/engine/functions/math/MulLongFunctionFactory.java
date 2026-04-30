@@ -58,11 +58,11 @@ public class MulLongFunctionFactory implements FunctionFactory {
         // null * x and x * null always evaluate to null. Fold at construction time so the
         // non-null operand (potentially a column reference) is never evaluated with a null
         // record via FunctionParser.functionToConstant().
-        if (left.isConstant() && left.getLong(null) == Numbers.LONG_NULL) {
+        if (left.isNullConstant()) {
             Misc.free(right);
             return LongConstant.NULL;
         }
-        if (right.isConstant() && right.getLong(null) == Numbers.LONG_NULL) {
+        if (right.isNullConstant()) {
             Misc.free(left);
             return LongConstant.NULL;
         }

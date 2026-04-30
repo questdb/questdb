@@ -34,7 +34,6 @@ import io.questdb.griffin.engine.functions.FloatFunction;
 import io.questdb.griffin.engine.functions.constants.FloatConstant;
 import io.questdb.std.IntList;
 import io.questdb.std.Misc;
-import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 import io.questdb.std.Transient;
 
@@ -57,11 +56,11 @@ public class SubFloatFunctionFactory implements FunctionFactory {
         final Function right = args.getQuick(1);
         // null - x and x - null always evaluate to null. Fold at construction time so the
         // non-null operand is never read at all at runtime.
-        if (left.isConstant() && Numbers.isNull(left.getFloat(null))) {
+        if (left.isNullConstant()) {
             Misc.free(right);
             return FloatConstant.NULL;
         }
-        if (right.isConstant() && Numbers.isNull(right.getFloat(null))) {
+        if (right.isNullConstant()) {
             Misc.free(left);
             return FloatConstant.NULL;
         }
