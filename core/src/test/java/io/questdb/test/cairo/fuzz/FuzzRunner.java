@@ -871,12 +871,12 @@ public class FuzzRunner {
                 }
             }
 
-            sink.put("), index(sym2) timestamp(ts) partition by DAY BYPASS WAL");
+            sink.put("), index(sym2 ").put(randomIndexTypeClause()).put(") timestamp(ts) partition by DAY BYPASS WAL");
             engine.execute(sink, sqlExecutionContext);
             // force few column tops
             engine.execute("alter table " + tableName + " add column long_top long", sqlExecutionContext);
             engine.execute("alter table " + tableName + " add column str_top long", sqlExecutionContext);
-            engine.execute("alter table " + tableName + " add column sym_top symbol index", sqlExecutionContext);
+            engine.execute("alter table " + tableName + " add column sym_top symbol index " + randomIndexTypeClause(), sqlExecutionContext);
             engine.execute("alter table " + tableName + " add column ip4 ipv4", sqlExecutionContext);
             engine.execute("alter table " + tableName + " add column var_top varchar", sqlExecutionContext);
         }
@@ -909,13 +909,13 @@ public class FuzzRunner {
             engine.execute(
                     "create atomic table " + tableName + " as (" +
                             "select * from data_temp" +
-                            "), index(sym2) timestamp(ts) partition by DAY " + (isWal ? "WAL" : "BYPASS WAL"),
+                            "), index(sym2 " + randomIndexTypeClause() + ") timestamp(ts) partition by DAY " + (isWal ? "WAL" : "BYPASS WAL"),
                     sqlExecutionContext
             );
             // force few column tops
             engine.execute("alter table " + tableName + " add column long_top long", sqlExecutionContext);
             engine.execute("alter table " + tableName + " add column str_top long", sqlExecutionContext);
-            engine.execute("alter table " + tableName + " add column sym_top symbol index", sqlExecutionContext);
+            engine.execute("alter table " + tableName + " add column sym_top symbol index " + randomIndexTypeClause(), sqlExecutionContext);
             engine.execute("alter table " + tableName + " add column ip4 ipv4", sqlExecutionContext);
             engine.execute("alter table " + tableName + " add column var_top varchar", sqlExecutionContext);
         }
@@ -948,17 +948,41 @@ public class FuzzRunner {
             engine.execute(
                     "create atomic table " + tableName + " as (" +
                             "select * from data_temp" +
-                            "), index(sym2) timestamp(ts) partition by DAY WAL",
+                            "), index(sym2 " + randomIndexTypeClause() + ") timestamp(ts) partition by DAY WAL",
                     sqlExecutionContext
             );
             // force few column tops
             engine.execute("alter table " + tableName + " add column long_top long", sqlExecutionContext);
             engine.execute("alter table " + tableName + " add column str_top long", sqlExecutionContext);
-            engine.execute("alter table " + tableName + " add column sym_top symbol index", sqlExecutionContext);
+            engine.execute("alter table " + tableName + " add column sym_top symbol index " + randomIndexTypeClause(), sqlExecutionContext);
             engine.execute("alter table " + tableName + " add column ip4 ipv4", sqlExecutionContext);
             engine.execute("alter table " + tableName + " add column var_top varchar", sqlExecutionContext);
         }
         engine.verifyTableName(tableName);
+    }
+
+    /**
+     * Picks an index type clause for fuzz table creation. Returns either
+     * an empty string (BITMAP — the default), or one of the POSTING
+     * variants. Uses {@link SharedRandom} so the choice tracks the existing
+     * fuzz seed.
+     */
+    private String randomIndexTypeClause() {
+        Rnd rnd = SharedRandom.RANDOM.get();
+        if (rnd == null) {
+            return "";
+        }
+        double pick = rnd.nextDouble();
+        if (pick < 0.5) {
+            return ""; // BITMAP (the default for the existing INDEX clause)
+        }
+        if (pick < 0.7) {
+            return "TYPE POSTING";
+        }
+        if (pick < 0.85) {
+            return "TYPE POSTING DELTA";
+        }
+        return "TYPE POSTING EF";
     }
 
     @NotNull

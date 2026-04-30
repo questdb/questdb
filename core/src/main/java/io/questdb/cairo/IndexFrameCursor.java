@@ -24,6 +24,8 @@
 
 package io.questdb.cairo;
 
+import io.questdb.cairo.idx.IndexFrame;
+
 public interface IndexFrameCursor {
     IndexFrame nextIndexFrame();
 }

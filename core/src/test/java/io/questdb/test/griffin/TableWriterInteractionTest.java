@@ -24,10 +24,12 @@
 
 package io.questdb.test.griffin;
 
+import io.questdb.PropertyKey;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.security.AllowAllSecurityContext;
+import io.questdb.std.Rnd;
 import io.questdb.std.datetime.microtime.MicrosFormatUtils;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.cairo.TableModel;
@@ -35,6 +37,14 @@ import io.questdb.test.tools.TestUtils;
 import org.junit.Test;
 
 public class TableWriterInteractionTest extends AbstractCairoTest {
+
+    @Override
+    public void setUp() {
+        Rnd rnd = TestUtils.generateRandom(LOG);
+        setProperty(PropertyKey.CAIRO_DEFAULT_SYMBOL_INDEX_TYPE, TestUtils.randomSymbolIndexTypeName(rnd));
+        super.setUp();
+    }
+
     @Test
     public void testRowCancelRowIndexUpdate() throws Exception {
         assertMemoryLeak(() -> {

@@ -64,12 +64,14 @@ import static io.questdb.cairo.TableUtils.TXN_FILE_NAME;
 public class DropIndexTest extends AbstractCairoTest {
 
     private static final String columnName = "sensor_id";
-    private static final String expected = "sensor_id\ttemperature\tdegrees\tts\n" +
-            "ALPHA\tHOT\t1548800833\t1970-01-01T00:00:00.000000Z\n" +
-            "THETA\tCOLD\t-948263339\t1970-01-01T06:00:00.000000Z\n" +
-            "THETA\tCOLD\t1868723706\t1970-01-01T12:00:00.000000Z\n" +
-            "OMEGA\tHOT\t-2041844972\t1970-01-01T18:00:00.000000Z\n" +
-            "OMEGA\tCOLD\t806715481\t1970-01-02T00:00:00.000000Z\n";
+    private static final String expected = """
+            sensor_id\ttemperature\tdegrees\tts
+            ALPHA\tHOT\t1548800833\t1970-01-01T00:00:00.000000Z
+            THETA\tCOLD\t-948263339\t1970-01-01T06:00:00.000000Z
+            THETA\tCOLD\t1868723706\t1970-01-01T12:00:00.000000Z
+            OMEGA\tHOT\t-2041844972\t1970-01-01T18:00:00.000000Z
+            OMEGA\tCOLD\t806715481\t1970-01-02T00:00:00.000000Z
+            """;
     private static final int indexBlockValueSize = 32;
     private static final String tableName = "sensors";
     private static final String CREATE_TABLE_STMT = "CREATE TABLE " + tableName + " AS (" +
@@ -110,25 +112,29 @@ public class DropIndexTest extends AbstractCairoTest {
                 " select x, timestamp_sequence('2022-02-24T01:30', 1000000000), rnd_symbol('A', 'B', 'C') from long_sequence(5)");
         assertIndexFileExist(true);
 
-        assertSql("a\tts\tsym\n" +
-                "1\t2022-02-24T00:23:59.800000Z\t\n" +
-                "2\t2022-02-24T00:47:59.600000Z\t\n" +
-                "3\t2022-02-24T01:11:59.400000Z\t\n" +
-                "1\t2022-02-24T01:30:00.000000Z\tA\n" +
-                "4\t2022-02-24T01:35:59.200000Z\t\n" +
-                "2\t2022-02-24T01:46:40.000000Z\tA\n" +
-                "5\t2022-02-24T01:59:59.000000Z\t\n" +
-                "3\t2022-02-24T02:03:20.000000Z\tB\n" +
-                "4\t2022-02-24T02:20:00.000000Z\tC\n" +
-                "5\t2022-02-24T02:36:40.000000Z\tC\n", tableName);
+        assertSql("""
+                a\tts\tsym
+                1\t2022-02-24T00:23:59.800000Z\t
+                2\t2022-02-24T00:47:59.600000Z\t
+                3\t2022-02-24T01:11:59.400000Z\t
+                1\t2022-02-24T01:30:00.000000Z\tA
+                4\t2022-02-24T01:35:59.200000Z\t
+                2\t2022-02-24T01:46:40.000000Z\tA
+                5\t2022-02-24T01:59:59.000000Z\t
+                3\t2022-02-24T02:03:20.000000Z\tB
+                4\t2022-02-24T02:20:00.000000Z\tC
+                5\t2022-02-24T02:36:40.000000Z\tC
+                """, tableName);
 
 
-        assertSql("a\tts\tsym\n" +
-                "1\t2022-02-24T00:23:59.800000Z\t\n" +
-                "2\t2022-02-24T00:47:59.600000Z\t\n" +
-                "3\t2022-02-24T01:11:59.400000Z\t\n" +
-                "4\t2022-02-24T01:35:59.200000Z\t\n" +
-                "5\t2022-02-24T01:59:59.000000Z\t\n", "select * from " + tableName + " where sym is null");
+        assertSql("""
+                a\tts\tsym
+                1\t2022-02-24T00:23:59.800000Z\t
+                2\t2022-02-24T00:47:59.600000Z\t
+                3\t2022-02-24T01:11:59.400000Z\t
+                4\t2022-02-24T01:35:59.200000Z\t
+                5\t2022-02-24T01:59:59.000000Z\t
+                """, "select * from " + tableName + " where sym is null");
 
         if (Os.isWindows()) {
             // Release readers so that we can drop index files
@@ -136,28 +142,34 @@ public class DropIndexTest extends AbstractCairoTest {
         }
         execute("alter table " + tableName + " alter column sym drop index");
 
-        assertSql("a\tts\tsym\n" +
-                "1\t2022-02-24T00:23:59.800000Z\t\n" +
-                "2\t2022-02-24T00:47:59.600000Z\t\n" +
-                "3\t2022-02-24T01:11:59.400000Z\t\n" +
-                "1\t2022-02-24T01:30:00.000000Z\tA\n" +
-                "4\t2022-02-24T01:35:59.200000Z\t\n" +
-                "2\t2022-02-24T01:46:40.000000Z\tA\n" +
-                "5\t2022-02-24T01:59:59.000000Z\t\n" +
-                "3\t2022-02-24T02:03:20.000000Z\tB\n" +
-                "4\t2022-02-24T02:20:00.000000Z\tC\n" +
-                "5\t2022-02-24T02:36:40.000000Z\tC\n", tableName);
+        assertSql("""
+                a\tts\tsym
+                1\t2022-02-24T00:23:59.800000Z\t
+                2\t2022-02-24T00:47:59.600000Z\t
+                3\t2022-02-24T01:11:59.400000Z\t
+                1\t2022-02-24T01:30:00.000000Z\tA
+                4\t2022-02-24T01:35:59.200000Z\t
+                2\t2022-02-24T01:46:40.000000Z\tA
+                5\t2022-02-24T01:59:59.000000Z\t
+                3\t2022-02-24T02:03:20.000000Z\tB
+                4\t2022-02-24T02:20:00.000000Z\tC
+                5\t2022-02-24T02:36:40.000000Z\tC
+                """, tableName);
 
-        assertSql("a\tts\tsym\n" +
-                "1\t2022-02-24T00:23:59.800000Z\t\n" +
-                "2\t2022-02-24T00:47:59.600000Z\t\n" +
-                "3\t2022-02-24T01:11:59.400000Z\t\n" +
-                "4\t2022-02-24T01:35:59.200000Z\t\n" +
-                "5\t2022-02-24T01:59:59.000000Z\t\n", "select * from " + tableName + " where sym is null");
+        assertSql("""
+                a\tts\tsym
+                1\t2022-02-24T00:23:59.800000Z\t
+                2\t2022-02-24T00:47:59.600000Z\t
+                3\t2022-02-24T01:11:59.400000Z\t
+                4\t2022-02-24T01:35:59.200000Z\t
+                5\t2022-02-24T01:59:59.000000Z\t
+                """, "select * from " + tableName + " where sym is null");
 
-        assertSql("a\tts\tsym\n" +
-                "1\t2022-02-24T01:30:00.000000Z\tA\n" +
-                "2\t2022-02-24T01:46:40.000000Z\tA\n", "select * from " + tableName + " where sym = 'A'");
+        assertSql("""
+                a\tts\tsym
+                1\t2022-02-24T01:30:00.000000Z\tA
+                2\t2022-02-24T01:46:40.000000Z\tA
+                """, "select * from " + tableName + " where sym = 'A'");
 
         assertIndexFileExist(false);
     }
@@ -170,28 +182,34 @@ public class DropIndexTest extends AbstractCairoTest {
         createPopulateTable(model, 5, "2022-02-24", 2);
         execute("alter table " + tableName + " add column sym symbol index");
 
-        assertSql("a\tts\tsym\n" +
-                "1\t2022-02-24T00:23:59.800000Z\t\n" +
-                "2\t2022-02-24T00:47:59.600000Z\t\n" +
-                "3\t2022-02-24T01:11:59.400000Z\t\n" +
-                "4\t2022-02-24T01:35:59.200000Z\t\n" +
-                "5\t2022-02-24T01:59:59.000000Z\t\n", tableName);
+        assertSql("""
+                a\tts\tsym
+                1\t2022-02-24T00:23:59.800000Z\t
+                2\t2022-02-24T00:47:59.600000Z\t
+                3\t2022-02-24T01:11:59.400000Z\t
+                4\t2022-02-24T01:35:59.200000Z\t
+                5\t2022-02-24T01:59:59.000000Z\t
+                """, tableName);
 
         execute("alter table " + tableName + " alter column sym drop index");
 
-        assertSql("a\tts\tsym\n" +
-                "1\t2022-02-24T00:23:59.800000Z\t\n" +
-                "2\t2022-02-24T00:47:59.600000Z\t\n" +
-                "3\t2022-02-24T01:11:59.400000Z\t\n" +
-                "4\t2022-02-24T01:35:59.200000Z\t\n" +
-                "5\t2022-02-24T01:59:59.000000Z\t\n", tableName);
+        assertSql("""
+                a\tts\tsym
+                1\t2022-02-24T00:23:59.800000Z\t
+                2\t2022-02-24T00:47:59.600000Z\t
+                3\t2022-02-24T01:11:59.400000Z\t
+                4\t2022-02-24T01:35:59.200000Z\t
+                5\t2022-02-24T01:59:59.000000Z\t
+                """, tableName);
 
-        assertSql("a\tts\tsym\n" +
-                "1\t2022-02-24T00:23:59.800000Z\t\n" +
-                "2\t2022-02-24T00:47:59.600000Z\t\n" +
-                "3\t2022-02-24T01:11:59.400000Z\t\n" +
-                "4\t2022-02-24T01:35:59.200000Z\t\n" +
-                "5\t2022-02-24T01:59:59.000000Z\t\n", "select * from " + tableName + " where sym is null");
+        assertSql("""
+                a\tts\tsym
+                1\t2022-02-24T00:23:59.800000Z\t
+                2\t2022-02-24T00:47:59.600000Z\t
+                3\t2022-02-24T01:11:59.400000Z\t
+                4\t2022-02-24T01:35:59.200000Z\t
+                5\t2022-02-24T01:59:59.000000Z\t
+                """, "select * from " + tableName + " where sym is null");
 
         assertSql("a\tts\tsym\n", "select * from " + tableName + " where sym = 'A'");
     }
@@ -280,13 +298,14 @@ public class DropIndexTest extends AbstractCairoTest {
     public void testDropIndexOfNonSymbolColumnShouldFail() throws Exception {
         assertException(
                 "alter table trades alter column price drop index",
-                "create table trades as (\n" +
-                        "    select \n" +
-                        "        rnd_symbol('ABB', 'HBC', 'DXR') sym, \n" +
-                        "        rnd_double() price, \n" +
-                        "        timestamp_sequence(172800000000, 360) ts \n" +
-                        "    from long_sequence(30)\n" +
-                        "), index(sym) timestamp(ts) partition by DAY",
+                """
+                        create table trades as (
+                            select\s
+                                rnd_symbol('ABB', 'HBC', 'DXR') sym,\s
+                                rnd_double() price,\s
+                                timestamp_sequence(172800000000, 360) ts\s
+                            from long_sequence(30)
+                        ), index(sym) timestamp(ts) partition by DAY""",
                 32,
                 "indexes are only supported for symbol type [column=price, type=DOUBLE]"
         );

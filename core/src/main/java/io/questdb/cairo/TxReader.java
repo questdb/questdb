@@ -478,6 +478,14 @@ public class TxReader implements Closeable, Mutable {
         return isPartitionReadOnlyByRawIndex(i * LONGS_PER_TX_ATTACHED_PARTITION);
     }
 
+    public boolean isPartitionParquetByPartitionTimestamp(long ts) {
+        int indexRaw = findAttachedPartitionRawIndexByLoTimestamp(ts);
+        if (indexRaw > -1) {
+            return isPartitionParquetByRawIndex(indexRaw);
+        }
+        return false;
+    }
+
     public boolean isPartitionReadOnlyByPartitionTimestamp(long ts) {
         int indexRaw = findAttachedPartitionRawIndexByLoTimestamp(ts);
         if (indexRaw > -1) {

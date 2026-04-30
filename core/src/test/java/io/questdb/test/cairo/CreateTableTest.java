@@ -24,8 +24,10 @@
 
 package io.questdb.test.cairo;
 
+import io.questdb.PropertyKey;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.IndexType;
 import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableReaderMetadata;
@@ -43,6 +45,7 @@ import io.questdb.std.IntList;
 import io.questdb.std.ObjHashSet;
 import io.questdb.std.ObjList;
 import io.questdb.std.Os;
+import io.questdb.std.Rnd;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.Utf8s;
@@ -61,6 +64,77 @@ import static org.junit.Assert.*;
 
 @SuppressWarnings("SameParameterValue")
 public class CreateTableTest extends AbstractCairoTest {
+
+    @Override
+    public void setUp() {
+        Rnd rnd = TestUtils.generateRandom(LOG);
+        setProperty(PropertyKey.CAIRO_DEFAULT_SYMBOL_INDEX_TYPE, TestUtils.randomSymbolIndexTypeName(rnd));
+        super.setUp();
+    }
+
+    @Test
+    public void testAlterTableAddColumnWithPostingIndex() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE tab (ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("ALTER TABLE tab ADD COLUMN s SYMBOL INDEX TYPE POSTING");
+            try (TableReader r = engine.getReader("tab")) {
+                TableReaderMetadata metadata = r.getMetadata();
+                int colIndex = metadata.getColumnIndex("s");
+                assertTrue(metadata.isColumnIndexed(colIndex));
+                assertEquals(IndexType.POSTING, metadata.getColumnIndexType(colIndex));
+            }
+        });
+    }
+
+    @Test
+    public void testAlterTableAddIndexPostingCapacityFails() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE tab (s SYMBOL, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            assertException(
+                    "ALTER TABLE tab ALTER COLUMN s ADD INDEX TYPE POSTING CAPACITY 256",
+                    54,
+                    "CAPACITY is only supported for BITMAP index type"
+            );
+        });
+    }
+
+    @Test
+    public void testAlterTableAddIndexPostingDelta() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE tab (s SYMBOL, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("ALTER TABLE tab ALTER COLUMN s ADD INDEX TYPE POSTING DELTA");
+            try (TableReader r = engine.getReader("tab")) {
+                int colIndex = r.getMetadata().getColumnIndex("s");
+                assertEquals(IndexType.POSTING_DELTA, r.getMetadata().getColumnIndexType(colIndex));
+            }
+        });
+    }
+
+    @Test
+    public void testAlterTableAddIndexUnknownTypeFails() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE tab (s SYMBOL, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            assertException(
+                    "ALTER TABLE tab ALTER COLUMN s ADD INDEX TYPE FOOBAR",
+                    46,
+                    "unknown index type"
+            );
+        });
+    }
+
+    @Test
+    public void testAlterTableAddPostingIndex() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE tab (s SYMBOL, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("ALTER TABLE tab ALTER COLUMN s ADD INDEX TYPE POSTING");
+            try (TableReader r = engine.getReader("tab")) {
+                TableReaderMetadata metadata = r.getMetadata();
+                int colIndex = metadata.getColumnIndex("s");
+                assertTrue(metadata.isColumnIndexed(colIndex));
+                assertEquals(IndexType.POSTING, metadata.getColumnIndexType(colIndex));
+            }
+        });
+    }
 
     @Test
     public void testCreateCleanupFailureDoesNotMaskOriginalError() throws Exception {
@@ -658,6 +732,64 @@ public class CreateTableTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testCreateTableInlinePostingIndexWithInclude() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE tab (
+                        ts TIMESTAMP,
+                        s SYMBOL INDEX TYPE POSTING INCLUDE (v),
+                        v DOUBLE
+                    ) TIMESTAMP(ts) PARTITION BY DAY
+                    """);
+            try (TableReader r = engine.getReader("tab")) {
+                int colIndex = r.getMetadata().getColumnIndex("s");
+                assertEquals(IndexType.POSTING, r.getMetadata().getColumnIndexType(colIndex));
+            }
+        });
+    }
+
+    @Test
+    public void testCreateTableInlinePostingIndexWithIncludeEmptyList() throws Exception {
+        // Regression: SqlParser must reject `INCLUDE ()` with a clear error.
+        // The ALTER TABLE path at SqlCompilerImpl:2381-2383 explicitly throws
+        // "at least one column name expected in INCLUDE"; the CREATE TABLE
+        // path in SqlParser silently consumes ')' as a column name and
+        // produces a confusing downstream error.
+        assertMemoryLeak(() -> assertException(
+                "CREATE TABLE tab (ts TIMESTAMP, s SYMBOL INDEX TYPE POSTING INCLUDE (), v DOUBLE) TIMESTAMP(ts) PARTITION BY DAY",
+                69,
+                "at least one column name expected in INCLUDE"
+        ));
+    }
+
+    @Test
+    public void testCreateTableInlinePostingIndexWithIncludeQuotedIdentifier() throws Exception {
+        // Regression: SqlParser must unquote column names in `INCLUDE (...)`,
+        // mirroring SqlCompilerImpl:2389 which calls unquote(tok). The bug
+        // stores the raw token "v" (with quotes), then
+        // CreateTableOperationImpl.resolveCoveringColumnIndices fails its
+        // name lookup against the unquoted column map and reports a
+        // misleading "INCLUDE column doesn't exist" error.
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE tab (
+                        ts TIMESTAMP,
+                        s SYMBOL INDEX TYPE POSTING INCLUDE ("v"),
+                        v DOUBLE
+                    ) TIMESTAMP(ts) PARTITION BY DAY
+                    """);
+            try (TableReader r = engine.getReader("tab")) {
+                int colIndex = r.getMetadata().getColumnIndex("s");
+                assertEquals(IndexType.POSTING, r.getMetadata().getColumnIndexType(colIndex));
+                IntList covering = r.getMetadata().getColumnMetadata(colIndex).getCoveringColumnIndices();
+                assertNotNull("INCLUDE list missing after CREATE TABLE with quoted identifier", covering);
+                assertTrue("quoted INCLUDE column 'v' did not resolve",
+                        covering.contains(r.getMetadata().getColumnIndex("v")));
+            }
+        });
+    }
+
+    @Test
     public void testCreateTableLikeTableAllColumnTypes() throws Exception {
         String[][] columnTypes = new String[][]{
                 {"a", "INT"},
@@ -713,10 +845,12 @@ public class CreateTableTest extends AbstractCairoTest {
         );
         execute("create table foo_clone ( like foo)");
         assertSql(
-                "column\ttype\tindexed\tindexBlockCapacity\tsymbolCached\tsymbolCapacity\tsymbolTableSize\tdesignated\tupsertKey\n" +
-                        "ts\tTIMESTAMP\tfalse\t0\tfalse\t0\t0\ttrue\ttrue\n" +
-                        "a\tINT\tfalse\t0\tfalse\t0\t0\tfalse\ttrue\n" +
-                        "b\tSTRING\tfalse\t0\tfalse\t0\t0\tfalse\tfalse\n",
+                """
+                        column\ttype\tindexed\tindexBlockCapacity\tsymbolCached\tsymbolCapacity\tsymbolTableSize\tdesignated\tupsertKey\tindexType\tindexInclude
+                        ts\tTIMESTAMP\tfalse\t0\tfalse\t0\t0\ttrue\ttrue\t\t
+                        a\tINT\tfalse\t0\tfalse\t0\t0\tfalse\ttrue\t\t
+                        b\tSTRING\tfalse\t0\tfalse\t0\t0\tfalse\tfalse\t\t
+                        """,
                 "SHOW COLUMNS FROM foo_clone"
         );
     }
@@ -777,6 +911,50 @@ public class CreateTableTest extends AbstractCairoTest {
     @Test
     public void testCreateTableLikeTableWithWALEnabled() throws Exception {
         createTableLike(true);
+    }
+
+    @Test
+    public void testCreateTableOutOfLinePostingCapacityFails() throws Exception {
+        assertException(
+                "CREATE TABLE tab (s SYMBOL, ts TIMESTAMP), INDEX(s TYPE POSTING CAPACITY 64) TIMESTAMP(ts) PARTITION BY DAY",
+                64,
+                "CAPACITY is only supported for BITMAP index type"
+        );
+    }
+
+    @Test
+    public void testCreateTableOutOfLinePostingDelta() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE tab (s SYMBOL, ts TIMESTAMP), INDEX(s TYPE POSTING DELTA) TIMESTAMP(ts) PARTITION BY DAY");
+            try (TableReader r = engine.getReader("tab")) {
+                int colIndex = r.getMetadata().getColumnIndex("s");
+                assertEquals(IndexType.POSTING_DELTA, r.getMetadata().getColumnIndexType(colIndex));
+            }
+        });
+    }
+
+    @Test
+    public void testCreateTableOutOfLinePostingEf() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE tab (s SYMBOL, ts TIMESTAMP), INDEX(s TYPE POSTING EF) TIMESTAMP(ts) PARTITION BY DAY");
+            try (TableReader r = engine.getReader("tab")) {
+                int colIndex = r.getMetadata().getColumnIndex("s");
+                assertEquals(IndexType.POSTING_EF, r.getMetadata().getColumnIndexType(colIndex));
+            }
+        });
+    }
+
+    @Test
+    public void testCreateTableOutOfLinePostingIndex() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE tab (s SYMBOL, ts TIMESTAMP), INDEX(s TYPE POSTING) TIMESTAMP(ts) PARTITION BY DAY");
+            try (TableReader r = engine.getReader("tab")) {
+                TableReaderMetadata metadata = r.getMetadata();
+                int colIndex = metadata.getColumnIndex("s");
+                assertTrue(metadata.isColumnIndexed(colIndex));
+                assertEquals(IndexType.POSTING, metadata.getColumnIndexType(colIndex));
+            }
+        });
     }
 
     @Test
@@ -859,6 +1037,64 @@ public class CreateTableTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testCreateTablePostingDelta() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE tab (s SYMBOL INDEX TYPE POSTING DELTA, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            try (TableReader r = engine.getReader("tab")) {
+                int colIndex = r.getMetadata().getColumnIndex("s");
+                assertEquals(IndexType.POSTING_DELTA, r.getMetadata().getColumnIndexType(colIndex));
+            }
+        });
+    }
+
+    @Test
+    public void testCreateTablePostingEf() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE tab (s SYMBOL INDEX TYPE POSTING EF, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            try (TableReader r = engine.getReader("tab")) {
+                int colIndex = r.getMetadata().getColumnIndex("s");
+                assertEquals(IndexType.POSTING_EF, r.getMetadata().getColumnIndexType(colIndex));
+            }
+        });
+    }
+
+    @Test
+    public void testCreateTablePostingIndexCapacityFails() throws Exception {
+        assertException(
+                "CREATE TABLE tab (s SYMBOL INDEX TYPE POSTING CAPACITY 64, ts TIMESTAMP) TIMESTAMP(ts)",
+                46,
+                "CAPACITY is only supported for BITMAP index type"
+        );
+    }
+
+    @Test
+    public void testCreateTablePostingIndexShowCreate() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE tab (s SYMBOL INDEX TYPE POSTING, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
+            // The default cairo.posting.index.auto.include.timestamp=true
+            // appends the designated timestamp to the covering list, so
+            // SHOW CREATE TABLE renders an explicit INCLUDE (ts) clause.
+            assertSql("""
+                            ddl
+                            CREATE TABLE 'tab' (\s
+                            \ts SYMBOL INDEX TYPE POSTING INCLUDE (ts),
+                            \tts TIMESTAMP
+                            ) timestamp(ts) PARTITION BY DAY BYPASS WAL;
+                            """,
+                    "SHOW CREATE TABLE tab");
+        });
+    }
+
+    @Test
+    public void testCreateTableUnknownIndexTypeFails() throws Exception {
+        assertException(
+                "CREATE TABLE tab (s SYMBOL INDEX TYPE FOOBAR, ts TIMESTAMP) TIMESTAMP(ts)",
+                38,
+                "unknown index type"
+        );
+    }
+
+    @Test
     public void testCreateTableWithArrayColumn() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table x (arr double[]);");
@@ -869,6 +1105,20 @@ public class CreateTableTest extends AbstractCairoTest {
                             );
                             """,
                     "show create table x;");
+        });
+    }
+
+    @Test
+    public void testCreateTableWithDefaultIndexType() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table tab (s symbol index, ts timestamp) timestamp(ts)");
+            assertSql("s\tts\n", "select * from tab");
+            try (TableReader r = engine.getReader("tab")) {
+                TableReaderMetadata metadata = r.getMetadata();
+                int colIndex = metadata.getColumnIndex("s");
+                assertTrue(metadata.isColumnIndexed(colIndex));
+                assertEquals(configuration.getDefaultSymbolIndexType(), metadata.getColumnIndexType(colIndex));
+            }
         });
     }
 
@@ -898,6 +1148,47 @@ public class CreateTableTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testCreateTableWithPostingIndex() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE tab (s SYMBOL INDEX TYPE POSTING, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            try (TableReader r = engine.getReader("tab")) {
+                TableReaderMetadata metadata = r.getMetadata();
+                int colIndex = metadata.getColumnIndex("s");
+                assertTrue(metadata.isColumnIndexed(colIndex));
+                assertEquals(IndexType.POSTING, metadata.getColumnIndexType(colIndex));
+            }
+        });
+    }
+
+    @Test
+    public void testCreateTableWithPostingIndexType() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table tab (s symbol index type posting, ts timestamp) timestamp(ts)");
+            assertSql("s\tts\n", "select * from tab");
+            try (TableReader r = engine.getReader("tab")) {
+                TableReaderMetadata metadata = r.getMetadata();
+                int colIndex = metadata.getColumnIndex("s");
+                assertTrue(metadata.isColumnIndexed(colIndex));
+                assertEquals(IndexType.POSTING, metadata.getColumnIndexType(colIndex));
+            }
+        });
+    }
+
+    @Test
+    public void testCreateTableWithSymbolIndexType() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table tab (s symbol index type bitmap, ts timestamp) timestamp(ts)");
+            assertSql("s\tts\n", "select * from tab");
+            try (TableReader r = engine.getReader("tab")) {
+                TableReaderMetadata metadata = r.getMetadata();
+                int colIndex = metadata.getColumnIndex("s");
+                assertTrue(metadata.isColumnIndexed(colIndex));
+                assertEquals(IndexType.BITMAP, metadata.getColumnIndexType(colIndex));
+            }
+        });
+    }
+
+    @Test
     public void testCreateTableWithTimestampNSColumn() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table x (ns timestamp_ns, s symbol) timestamp(ns) partition by DAY WAL;");
@@ -917,16 +1208,20 @@ public class CreateTableTest extends AbstractCairoTest {
                 assertEquals(0, reader.getMetadata().getTimestampIndex());
             }
 
-            assertSql("ddl\n" +
-                            "CREATE TABLE 'y' ( \n" +
-                            "\tns TIMESTAMP_NS,\n" +
-                            "\ts SYMBOL\n" +
-                            ") timestamp(ns) PARTITION BY DAY;\n",
+            assertSql("""
+                            ddl
+                            CREATE TABLE 'y' (\s
+                            \tns TIMESTAMP_NS,
+                            \ts SYMBOL
+                            ) timestamp(ns) PARTITION BY DAY;
+                            """,
                     "show create table y;");
             assertSql(
-                    "column\ttype\tindexed\tindexBlockCapacity\tsymbolCached\tsymbolCapacity\tsymbolTableSize\tdesignated\tupsertKey\n" +
-                            "ns\tTIMESTAMP_NS\tfalse\t0\tfalse\t0\t0\ttrue\tfalse\n" +
-                            "s\tSYMBOL\tfalse\t256\ttrue\t128\t0\tfalse\tfalse\n"
+                    """
+                            column\ttype\tindexed\tindexBlockCapacity\tsymbolCached\tsymbolCapacity\tsymbolTableSize\tdesignated\tupsertKey\tindexType\tindexInclude
+                            ns\tTIMESTAMP_NS\tfalse\t0\tfalse\t0\t0\ttrue\tfalse\t\t
+                            s\tSYMBOL\tfalse\t256\ttrue\t128\t0\tfalse\tfalse\t\t
+                            """
                     ,
                     "SHOW COLUMNS FROM y"
             );
@@ -940,13 +1235,15 @@ public class CreateTableTest extends AbstractCairoTest {
                             "TIMESTAMP(ns) PARTITION BY DAY WAL " +
                             "DEDUP UPSERT KEYS(ns, a)"
             );
-            assertSql("ddl\n" +
-                            "CREATE TABLE 'z' ( \n" +
-                            "\tns TIMESTAMP_NS,\n" +
-                            "\ta INT,\n" +
-                            "\tb STRING\n" +
-                            ") timestamp(ns) PARTITION BY DAY\n" +
-                            "DEDUP UPSERT KEYS(ns,a);\n",
+            assertSql("""
+                            ddl
+                            CREATE TABLE 'z' (\s
+                            \tns TIMESTAMP_NS,
+                            \ta INT,
+                            \tb STRING
+                            ) timestamp(ns) PARTITION BY DAY
+                            DEDUP UPSERT KEYS(ns,a);
+                            """,
                     "show create table z;");
         });
     }
@@ -1013,6 +1310,172 @@ public class CreateTableTest extends AbstractCairoTest {
             if (ref.get() != null) {
                 throw new RuntimeException(ref.get());
             }
+        });
+    }
+
+    @Test
+    public void testDropIndexPosting() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (ts TIMESTAMP, s SYMBOL INDEX TYPE POSTING) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
+            execute("""
+                    INSERT INTO t VALUES
+                    ('2024-01-01T00:00:00', 'A'),
+                    ('2024-01-01T01:00:00', 'B'),
+                    ('2024-01-01T02:00:00', 'A')
+                    """);
+
+            try (TableReader r = engine.getReader("t")) {
+                assertTrue(r.getMetadata().isColumnIndexed(r.getMetadata().getColumnIndex("s")));
+                assertEquals(IndexType.POSTING, r.getMetadata().getColumnIndexType(r.getMetadata().getColumnIndex("s")));
+            }
+
+            execute("ALTER TABLE t ALTER COLUMN s DROP INDEX");
+
+            try (TableReader r = engine.getReader("t")) {
+                assertFalse(r.getMetadata().isColumnIndexed(r.getMetadata().getColumnIndex("s")));
+            }
+
+            assertSql("""
+                    ts\ts
+                    2024-01-01T00:00:00.000000Z\tA
+                    2024-01-01T01:00:00.000000Z\tB
+                    2024-01-01T02:00:00.000000Z\tA
+                    """, "SELECT * FROM t");
+        });
+    }
+
+    @Test
+    public void testIndexPostingWithoutTypeKeywordFails() throws Exception {
+        assertException(
+                "CREATE TABLE tab (s SYMBOL INDEX POSTING, ts TIMESTAMP) TIMESTAMP(ts)",
+                33,
+                "capacity"
+        );
+    }
+
+    @Test
+    public void testPostingIndexInsertAndQuery() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (ts TIMESTAMP, s SYMBOL INDEX TYPE POSTING) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("""
+                    INSERT INTO t VALUES
+                    ('2024-01-01T00:00:00', 'A'),
+                    ('2024-01-01T01:00:00', 'B'),
+                    ('2024-01-01T02:00:00', 'A'),
+                    ('2024-01-01T03:00:00', 'C'),
+                    ('2024-01-01T04:00:00', 'B'),
+                    ('2024-01-01T05:00:00', 'A')
+                    """);
+            drainWalQueue();
+
+            try (TableReader r = engine.getReader("t")) {
+                TableReaderMetadata metadata = r.getMetadata();
+                int colIndex = metadata.getColumnIndex("s");
+                assertTrue(metadata.isColumnIndexed(colIndex));
+                assertEquals(IndexType.POSTING, metadata.getColumnIndexType(colIndex));
+            }
+
+            // Verify all rows are readable
+            assertSql("""
+                    count
+                    6
+                    """, "SELECT count() FROM t");
+        });
+    }
+
+    @Test
+    public void testPostingIndexWhereFilter() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (ts TIMESTAMP, s SYMBOL INDEX TYPE POSTING) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("""
+                    INSERT INTO t VALUES
+                    ('2024-01-01T00:00:00', 'A'),
+                    ('2024-01-01T01:00:00', 'B'),
+                    ('2024-01-01T02:00:00', 'A'),
+                    ('2024-01-01T03:00:00', 'C'),
+                    ('2024-01-01T04:00:00', 'B'),
+                    ('2024-01-01T05:00:00', 'A')
+                    """);
+            drainWalQueue();
+
+            // Query BEFORE releaseAllWriters (unsealed sparse gens)
+            assertSql("""
+                    ts\ts
+                    2024-01-01T00:00:00.000000Z\tA
+                    2024-01-01T02:00:00.000000Z\tA
+                    2024-01-01T05:00:00.000000Z\tA
+                    """, "SELECT * FROM t WHERE s = 'A'");
+
+            // Release writers (triggers seal)
+            engine.releaseAllWriters();
+
+            // Query AFTER seal (dense gen, stride-indexed)
+            assertSql("""
+                    ts\ts
+                    2024-01-01T00:00:00.000000Z\tA
+                    2024-01-01T02:00:00.000000Z\tA
+                    2024-01-01T05:00:00.000000Z\tA
+                    """, "SELECT * FROM t WHERE s = 'A'");
+
+            assertSql("""
+                    ts\ts
+                    2024-01-01T01:00:00.000000Z\tB
+                    2024-01-01T04:00:00.000000Z\tB
+                    """, "SELECT * FROM t WHERE s = 'B'");
+
+            assertSql("""
+                    ts\ts
+                    2024-01-01T03:00:00.000000Z\tC
+                    """, "SELECT * FROM t WHERE s = 'C'");
+
+            // Non-existent symbol returns no rows
+            assertSql("""
+                    ts\ts
+                    """, "SELECT * FROM t WHERE s = 'Z'");
+        });
+    }
+
+    @Test
+    public void testPostingIndexWhereFilterBeforeWriterRelease() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (ts TIMESTAMP, s SYMBOL INDEX TYPE POSTING) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("""
+                    INSERT INTO t VALUES
+                    ('2024-01-01T00:00:00', 'A'),
+                    ('2024-01-01T01:00:00', 'B'),
+                    ('2024-01-01T02:00:00', 'A'),
+                    ('2024-01-01T03:00:00', 'C'),
+                    ('2024-01-01T04:00:00', 'B'),
+                    ('2024-01-01T05:00:00', 'A')
+                    """);
+            drainWalQueue();
+            // Do NOT call engine.releaseAllWriters() — the writer is still open.
+            // PostingIndexWriter must flush pending data during commit so that
+            // readers can see it without waiting for close/seal.
+            assertSql("""
+                    ts\ts
+                    2024-01-01T00:00:00.000000Z\tA
+                    2024-01-01T02:00:00.000000Z\tA
+                    2024-01-01T05:00:00.000000Z\tA
+                    """, "SELECT * FROM t WHERE s = 'A'");
+        });
+    }
+
+    @Test
+    public void testShowColumnsKeepsLegacyOrdinals() throws Exception {
+        // Regression test: SHOW COLUMNS must preserve the column ordering
+        // that existed before the posting-index feature, so that JDBC
+        // clients reading by ordinal (ResultSet.getString(1), etc.) keep
+        // working on upgrade. The two new columns ("indexType" and
+        // "indexInclude") must land AFTER the legacy columns, not between
+        // them.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t_show_ord (ts TIMESTAMP, s SYMBOL) TIMESTAMP(ts)");
+            assertSql("""
+                    column\ttype\tindexed\tindexBlockCapacity\tsymbolCached\tsymbolCapacity\tsymbolTableSize\tdesignated\tupsertKey\tindexType\tindexInclude
+                    ts\tTIMESTAMP\tfalse\t0\tfalse\t0\t0\ttrue\tfalse\t\t
+                    s\tSYMBOL\tfalse\t256\ttrue\t128\t0\tfalse\tfalse\t\t
+                    """, "SHOW COLUMNS FROM t_show_ord");
         });
     }
 
@@ -1145,17 +1608,7 @@ public class CreateTableTest extends AbstractCairoTest {
         assertSymbolParameters(parameters);
     }
 
-    private static class SymbolParameters {
-        private final Integer indexBlockCapacity;
-        private final boolean isCached;
-        private final boolean isIndexed;
-        private final Integer symbolCapacity;
-
-        SymbolParameters(Integer symbolCapacity, boolean isCached, boolean isIndexed, Integer indexBlockCapacity) {
-            this.symbolCapacity = symbolCapacity;
-            this.isCached = isCached;
-            this.isIndexed = isIndexed;
-            this.indexBlockCapacity = indexBlockCapacity;
-        }
+    private record SymbolParameters(Integer symbolCapacity, boolean isCached, boolean isIndexed,
+                                    Integer indexBlockCapacity) {
     }
 }

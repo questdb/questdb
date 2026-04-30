@@ -22,11 +22,15 @@
  *
  ******************************************************************************/
 
-package io.questdb.cairo;
+package io.questdb.cairo.idx;
 
+import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.CairoException;
+import io.questdb.cairo.EmptyRowCursor;
 import io.questdb.cairo.sql.RowCursor;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
+import io.questdb.mp.ConcurrentPool;
 import io.questdb.std.Unsafe;
 import io.questdb.std.str.Path;
 
@@ -38,9 +42,9 @@ import io.questdb.std.str.Path;
  * prior to any cursor operations. Once this happens, cursors can be obtained and
  * called concurrently.
  */
-public class ConcurrentBitmapIndexFwdReader extends AbstractIndexReader {
+public class ConcurrentBitmapIndexFwdReader extends AbstractBitmapIndexReader {
     private final static Log LOG = LogFactory.getLog(ConcurrentBitmapIndexFwdReader.class);
-    private final Cursor cursor = new Cursor();
+    private final ConcurrentPool<Cursor> freeCursors = new ConcurrentPool<>();
 
     public ConcurrentBitmapIndexFwdReader() {
     }
@@ -54,12 +58,17 @@ public class ConcurrentBitmapIndexFwdReader extends AbstractIndexReader {
             long partitionTxn,
             long columnTop
     ) {
-        of(configuration, path, name, columnNameTxn, partitionTxn, columnTop);
+        of(configuration, path, name, columnNameTxn, partitionTxn, columnTop, null, null, 0);
     }
 
     @Override
-    public RowCursor getCursor(boolean cachedInstance, int key, long minValue, long maxValue) {
-        return initCursor(cachedInstance ? this.cursor : null, key, minValue, maxValue);
+    public RowCursor getCursor(int key, long minValue, long maxValue) {
+        Cursor c = freeCursors.pop();
+        if (c == null) {
+            c = new Cursor();
+        }
+        c.isPooled = false;
+        return initCursor(c, key, minValue, maxValue);
     }
 
     /**
@@ -102,12 +111,21 @@ public class ConcurrentBitmapIndexFwdReader extends AbstractIndexReader {
         protected long next;
         protected long position;
         protected long valueCount;
+        private boolean isPooled;
         private long maxValue;
         private long minValue;
         private long nullCount;
         private long nullPos;
         private long valueBlockOffset;
         private final BitmapIndexUtils.ValueBlockSeeker SEEKER = this::seekValue;
+
+        @Override
+        public void close() {
+            if (!isPooled && freeCursors.count() < MAX_CACHED_FREE_CURSORS) {
+                freeCursors.push(this);
+                isPooled = true;
+            }
+        }
 
         @Override
         public boolean hasNext() {

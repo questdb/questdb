@@ -24,8 +24,8 @@
 
 package io.questdb.griffin.engine.table;
 
-import io.questdb.cairo.BitmapIndexReader;
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.idx.IndexReader;
 import io.questdb.cairo.sql.PageFrame;
 import io.questdb.cairo.sql.PageFrameCursor;
 import io.questdb.cairo.sql.RecordMetadata;
@@ -93,13 +93,13 @@ class LatestByValuesIndexedRecordCursor extends AbstractPageFrameRecordCursor {
     }
 
     @Override
-    public long size() {
-        return isTreeMapBuilt ? rows.size() : -1;
+    public long preComputedStateSize() {
+        return (isTreeMapBuilt ? 1 : 0) + rows.size();
     }
 
     @Override
-    public long preComputedStateSize() {
-        return (isTreeMapBuilt ? 1 : 0) + rows.size();
+    public long size() {
+        return isTreeMapBuilt ? rows.size() : -1;
     }
 
     @Override
@@ -112,14 +112,15 @@ class LatestByValuesIndexedRecordCursor extends AbstractPageFrameRecordCursor {
         index = rows.size() - 1;
     }
 
-    private void addFoundKey(int symbolKey, BitmapIndexReader indexReader, int frameIndex, long partitionLo, long partitionHi) {
+    private void addFoundKey(int symbolKey, IndexReader indexReader, int frameIndex, long partitionLo, long partitionHi) {
         int index = found.keyIndex(symbolKey);
         if (index > -1) {
-            RowCursor cursor = indexReader.getCursor(false, symbolKey, partitionLo, partitionHi);
-            if (cursor.hasNext()) {
-                final long rowId = Rows.toRowID(frameIndex, cursor.next());
-                rows.add(rowId);
-                found.addAt(index, symbolKey);
+            try (RowCursor cursor = indexReader.getCursor(symbolKey, partitionLo, partitionHi)) {
+                if (cursor.hasNext()) {
+                    final long rowId = Rows.toRowID(frameIndex, cursor.next());
+                    rows.add(rowId);
+                    found.addAt(index, symbolKey);
+                }
             }
         }
     }
@@ -136,7 +137,7 @@ class LatestByValuesIndexedRecordCursor extends AbstractPageFrameRecordCursor {
         while ((frame = frameCursor.next()) != null && found.size() < keyCount) {
             circuitBreaker.statefulThrowExceptionIfTripped();
             final int frameIndex = frameCount;
-            final BitmapIndexReader indexReader = frame.getBitmapIndexReader(columnIndex, BitmapIndexReader.DIR_BACKWARD);
+            final IndexReader indexReader = frame.getIndexReader(columnIndex, IndexReader.DIR_BACKWARD);
             final long partitionLo = frame.getPartitionLo();
             final long partitionHi = frame.getPartitionHi() - 1;
 

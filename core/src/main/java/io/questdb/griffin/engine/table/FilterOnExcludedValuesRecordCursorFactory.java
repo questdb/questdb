@@ -227,13 +227,11 @@ public class FilterOnExcludedValuesRecordCursorFactory extends AbstractPageFrame
             return;
         }
 
-        // Create a new factory.
         final SymbolFunctionRowCursorFactory rowCursorFactory;
         if (filter == null) {
             rowCursorFactory = new SymbolIndexRowCursorFactory(
                     columnIndex,
                     symbolKey,
-                    false,
                     indexDirection,
                     null
             );
@@ -242,7 +240,6 @@ public class FilterOnExcludedValuesRecordCursorFactory extends AbstractPageFrame
                     columnIndex,
                     symbolKey,
                     filter,
-                    false,
                     indexDirection,
                     null
             );

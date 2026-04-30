@@ -48,6 +48,7 @@ import io.questdb.tasks.O3CopyTask;
 import io.questdb.tasks.O3OpenColumnTask;
 import io.questdb.tasks.O3PartitionPurgeTask;
 import io.questdb.tasks.O3PartitionTask;
+import io.questdb.tasks.PostingSealPurgeTask;
 import io.questdb.tasks.TableWriterTask;
 import io.questdb.tasks.VectorAggregateTask;
 import io.questdb.tasks.WalTxnNotificationTask;
@@ -147,6 +148,12 @@ public interface MessageBus extends Closeable {
     int getPageFrameReduceShardCount();
 
     MCSequence getPageFrameReduceSubSeq(int shard);
+
+    MPSequence getPostingSealPurgePubSeq();
+
+    RingQueue<PostingSealPurgeTask> getPostingSealPurgeQueue();
+
+    SCSequence getPostingSealPurgeSubSeq();
 
     MPSequence getQueryCacheEventPubSeq();
 

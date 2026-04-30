@@ -595,16 +595,16 @@ public class QwpProcessorState implements QuietCloseable, ConnectionAware {
         int offset = 0;
         ObjList<CharSequence> keys = entries.keys();
         int count = keys.size();
-        Unsafe.getUnsafe().putShort(addr + offset, (short) count);
+        Unsafe.putShort(addr + offset, (short) count);
         offset += 2;
         for (int i = 0; i < count; i++) {
             CharSequence tableName = keys.getQuick(i);
             int utf8Len = Utf8s.utf8Bytes(tableName);
-            Unsafe.getUnsafe().putShort(addr + offset, (short) utf8Len);
+            Unsafe.putShort(addr + offset, (short) utf8Len);
             offset += 2;
             Utf8s.strCpyUtf8(tableName, addr + offset, utf8Len);
             offset += utf8Len;
-            Unsafe.getUnsafe().putLong(addr + offset, entries.get(tableName));
+            Unsafe.putLong(addr + offset, entries.get(tableName));
             offset += 8;
         }
         return offset;

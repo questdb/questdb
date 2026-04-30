@@ -322,6 +322,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
+    public byte getDefaultSymbolIndexType() {
+        return getDelegate().getDefaultSymbolIndexType();
+    }
+
+    @Override
     public int getDetachedMkDirMode() {
         return getDelegate().getDetachedMkDirMode();
     }
@@ -794,6 +799,16 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     @Override
     public int getPoolSegmentSize() {
         return getDelegate().getPoolSegmentSize();
+    }
+
+    @Override
+    public int getPostingSealGenThreshold() {
+        return getDelegate().getPostingSealGenThreshold();
+    }
+
+    @Override
+    public int getPostingSealPurgeOutboxMax() {
+        return getDelegate().getPostingSealPurgeOutboxMax();
     }
 
     @Override
@@ -1564,6 +1579,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     @Override
     public boolean isPartitionO3OverwriteControlEnabled() {
         return getDelegate().isPartitionO3OverwriteControlEnabled();
+    }
+
+    @Override
+    public boolean isPostingIndexAutoIncludeTimestamp() {
+        return getDelegate().isPostingIndexAutoIncludeTimestamp();
     }
 
     @Override

@@ -1,4 +1,4 @@
-/*+*****************************************************************************
+/*******************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -22,24 +22,14 @@
  *
  ******************************************************************************/
 
-package io.questdb.cairo;
+package io.questdb.test.cairo;
 
-public class IndexFrame {
-    public static final IndexFrame NULL_INSTANCE = new IndexFrame();
-    private long address;
-    private long size;
+import io.questdb.PropertyKey;
+import org.junit.BeforeClass;
 
-    public long getAddress() {
-        return address;
-    }
-
-    public long getSize() {
-        return size;
-    }
-
-    IndexFrame of(long address, long size) {
-        this.address = address;
-        this.size = size;
-        return this;
+public class PostingIndexOracleTestEf extends PostingIndexOracleTest {
+    @BeforeClass
+    public static void setUpEf() {
+        setProperty(PropertyKey.CAIRO_POSTING_INDEX_ROW_ID_ENCODING, "ef");
     }
 }

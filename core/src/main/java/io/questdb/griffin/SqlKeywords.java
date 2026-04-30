@@ -536,6 +536,15 @@ public class SqlKeywords {
                 && (tok.charAt(4) | 32) == 'p';
     }
 
+    public static boolean isDeltaKeyword(CharSequence tok) {
+        return tok.length() == 5
+                && (tok.charAt(0) | 32) == 'd'
+                && (tok.charAt(1) | 32) == 'e'
+                && (tok.charAt(2) | 32) == 'l'
+                && (tok.charAt(3) | 32) == 't'
+                && (tok.charAt(4) | 32) == 'a';
+    }
+
     public static boolean isDeduplicateKeyword(CharSequence tok) {
         return tok.length() == 11
                 && (tok.charAt(0) | 32) == 'd'
@@ -689,6 +698,12 @@ public class SqlKeywords {
                 && (tok.charAt(1) | 32) == 'r'
                 && (tok.charAt(2) | 32) == 'o'
                 && (tok.charAt(3) | 32) == 'p';
+    }
+
+    public static boolean isEfKeyword(CharSequence tok) {
+        return tok.length() == 2
+                && (tok.charAt(0) | 32) == 'e'
+                && (tok.charAt(1) | 32) == 'f';
     }
 
     public static boolean isEmptyAlias(CharSequence tok) {

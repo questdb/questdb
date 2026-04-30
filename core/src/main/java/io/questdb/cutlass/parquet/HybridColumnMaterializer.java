@@ -26,6 +26,7 @@ package io.questdb.cutlass.parquet;
 
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.GenericRecordMetadata;
+import io.questdb.cairo.IndexType;
 import io.questdb.cairo.StringTypeDriver;
 import io.questdb.cairo.SymbolMapReader;
 import io.questdb.cairo.TableColumnMetadata;
@@ -435,7 +436,7 @@ public class HybridColumnMaterializer implements Mutable, QuietCloseable {
                     passThrough = new TableColumnMetadata(
                             outputMeta.getColumnName(i),
                             columnType,
-                            false,
+                            IndexType.NONE,
                             0,
                             true,
                             null

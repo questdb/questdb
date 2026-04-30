@@ -25,10 +25,10 @@
 package io.questdb.griffin.engine.table;
 
 import io.questdb.MessageBus;
-import io.questdb.cairo.BitmapIndexReader;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.idx.IndexReader;
 import io.questdb.cairo.sql.AtomicBooleanCircuitBreaker;
 import io.questdb.cairo.sql.PageFrame;
 import io.questdb.cairo.sql.PageFrameCursor;
@@ -222,7 +222,7 @@ class LatestByAllIndexedRecordCursor extends AbstractPageFrameRecordCursor {
             int frameIndex = 0;
             frameCursor.toTop();
             while ((frame = frameCursor.next()) != null && foundRowCount < keyCount) {
-                final BitmapIndexReader indexReader = frame.getBitmapIndexReader(columnIndex, BitmapIndexReader.DIR_BACKWARD);
+                final IndexReader indexReader = frame.getIndexReader(columnIndex, IndexReader.DIR_BACKWARD);
                 final long partitionLo = frame.getPartitionLo();
                 final long partitionHi = frame.getPartitionHi() - 1;
 

@@ -24,12 +24,12 @@
 
 package io.questdb.griffin.engine.table;
 
-import io.questdb.cairo.BitmapIndexReader;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnVersionReader;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TimestampDriver;
+import io.questdb.cairo.idx.IndexReader;
 import io.questdb.cairo.sql.ColumnMapping;
 import io.questdb.cairo.sql.PageFrame;
 import io.questdb.cairo.sql.PageFrameAddressCache;
@@ -127,7 +127,7 @@ public final class TimeFrameCursorImpl implements TimeFrameCursor {
     }
 
     @Override
-    public BitmapIndexReader getIndexReaderForCurrentFrame(int logicalColumnIndex, int direction) {
+    public IndexReader getIndexReaderForCurrentFrame(int logicalColumnIndex, int direction) {
         int physicalColumnIndex = frameCursor.getColumnMapping().getColumnIndex(logicalColumnIndex);
         int frameIndex = timeFrame.getFrameIndex();
         if (frameIndex == -1) {
@@ -135,7 +135,7 @@ public final class TimeFrameCursorImpl implements TimeFrameCursor {
         }
         int partitionIndex = framePartitionIndexes.get(frameIndex);
         assert partitionOpened.get(partitionIndex) : "partition " + partitionIndex + " not opened before getIndexReaderForCurrentFrame";
-        return tableReader.getBitmapIndexReader(partitionIndex, physicalColumnIndex, direction);
+        return tableReader.getIndexReader(partitionIndex, physicalColumnIndex, direction);
     }
 
     @Override

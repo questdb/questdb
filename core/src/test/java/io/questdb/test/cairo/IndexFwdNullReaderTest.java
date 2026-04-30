@@ -24,14 +24,14 @@
 
 package io.questdb.test.cairo;
 
-import io.questdb.cairo.BitmapIndexBwdNullReader;
+import io.questdb.cairo.idx.IndexFwdNullReader;
 import io.questdb.cairo.sql.RowCursor;
 import io.questdb.std.Rnd;
 import org.junit.Assert;
 import org.junit.Test;
 
-public class BitmapIndexBwdNullReaderTest {
-    private static final BitmapIndexBwdNullReader reader = new BitmapIndexBwdNullReader(-1, -1);
+public class IndexFwdNullReaderTest {
+    private static final IndexFwdNullReader reader = new IndexFwdNullReader(-1, -1);
 
     @Test
     public void testAlwaysOpen() {
@@ -44,16 +44,18 @@ public class BitmapIndexBwdNullReaderTest {
         for (int i = 0; i < 10; i++) {
             final int n = rnd.nextPositiveInt() % 1024;
 
-            int m = n;
-            RowCursor cursor = reader.getCursor(true, 0, 0, n);
-            while (cursor.hasNext()) {
-                Assert.assertEquals(m--, cursor.next());
+            int m = 0;
+            try (RowCursor cursor = reader.getCursor(0, 0, n)) {
+                while (cursor.hasNext()) {
+                    Assert.assertEquals(m++, cursor.next());
+                }
             }
-            Assert.assertEquals(-1, m);
+            Assert.assertEquals(n + 1, m);
 
             // non-null key
-            cursor = reader.getCursor(true, 42, 0, n);
-            Assert.assertFalse(cursor.hasNext());
+            try (RowCursor cursor = reader.getCursor(42, 0, n)) {
+                Assert.assertFalse(cursor.hasNext());
+            }
         }
     }
 

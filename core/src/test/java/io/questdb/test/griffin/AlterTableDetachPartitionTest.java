@@ -111,6 +111,13 @@ public class AlterTableDetachPartitionTest extends AbstractAlterTableAttachParti
         });
     }
 
+    @Override
+    public void setUp() {
+        Rnd rnd = TestUtils.generateRandom(LOG);
+        setProperty(PropertyKey.CAIRO_DEFAULT_SYMBOL_INDEX_TYPE, TestUtils.randomSymbolIndexTypeName(rnd));
+        super.setUp();
+    }
+
     @Test
     public void testAlreadyDetached1() throws Exception {
         assertFailure(
@@ -2900,7 +2907,7 @@ public class AlterTableDetachPartitionTest extends AbstractAlterTableAttachParti
     }
 
     private String replaceTimestampSuffix(String expected) {
-        return ColumnType.isTimestampNano(timestampType.getTimestampType()) ? expected.replaceAll("Z\t", "000Z\t").replaceAll("Z\n", "000Z\n") : expected;
+        return ColumnType.isTimestampNano(timestampType.getTimestampType()) ? expected.replace("Z\t", "000Z\t").replace("Z\n", "000Z\n") : expected;
     }
 
     private void runPartitionPurgeJobs() {

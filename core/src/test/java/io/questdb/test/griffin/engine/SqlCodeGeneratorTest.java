@@ -9069,10 +9069,10 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                             "show columns from 'привет от штиблет'",
                             sink,
                             """
-                                    column\ttype\tindexed\tindexBlockCapacity\tsymbolCached\tsymbolCapacity\tsymbolTableSize\tdesignated\tupsertKey
-                                    f0\tSTRING\tfalse\t0\tfalse\t0\t0\tfalse\tfalse
-                                    штиблет\tSTRING\tfalse\t0\tfalse\t0\t0\tfalse\tfalse
-                                    f2\tSTRING\tfalse\t0\tfalse\t0\t0\tfalse\tfalse
+                                    column\ttype\tindexed\tindexBlockCapacity\tsymbolCached\tsymbolCapacity\tsymbolTableSize\tdesignated\tupsertKey\tindexType\tindexInclude
+                                    f0\tSTRING\tfalse\t0\tfalse\t0\t0\tfalse\tfalse\t\t
+                                    штиблет\tSTRING\tfalse\t0\tfalse\t0\t0\tfalse\tfalse\t\t
+                                    f2\tSTRING\tfalse\t0\tfalse\t0\t0\tfalse\tfalse\t\t
                                     """
                     );
                 }

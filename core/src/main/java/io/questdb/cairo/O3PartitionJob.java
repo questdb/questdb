@@ -25,6 +25,7 @@
 package io.questdb.cairo;
 
 import io.questdb.MessageBus;
+import io.questdb.cairo.idx.IndexWriter;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cairo.sql.TableRecordMetadata;
 import io.questdb.cairo.vm.api.MemoryCR;
@@ -2499,7 +2500,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
             long srcDataOldPartitionSize,
             long o3SplitPartitionSize,
             TableWriter tableWriter,
-            BitmapIndexWriter indexWriter,
+            IndexWriter indexWriter,
             long partitionUpdateSinkAddr,
             int columnIndex,
             long columnNameTxn
@@ -2652,7 +2653,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
             long srcDataOldPartitionSize,
             long o3SplitPartitionSize,
             TableWriter tableWriter,
-            BitmapIndexWriter indexWriter,
+            IndexWriter indexWriter,
             long partitionUpdateSinkAddr,
             int columnIndex,
             long columnNameTxn
@@ -2996,15 +2997,16 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                 final CharSequence columnName = metadata.getColumnName(i);
                 final boolean isIndexed = metadata.isColumnIndexed(i);
                 final int indexBlockCapacity = isIndexed ? metadata.getIndexValueBlockCapacity(i) : -1;
+                final byte indexType = metadata.getColumnIndexType(i);
                 if (openColumnMode == OPEN_LAST_PARTITION_FOR_APPEND || openColumnMode == OPEN_LAST_PARTITION_FOR_MERGE) {
                     srcDataTop = tableWriter.getColumnTop(i);
                 } else {
                     srcDataTop = -1; // column open job will have to find out if top exists and its value
                 }
 
-                final BitmapIndexWriter indexWriter;
+                final IndexWriter indexWriter;
                 if (isIndexed) {
-                    indexWriter = o3Basket.nextIndexer();
+                    indexWriter = o3Basket.nextIndexer(indexType);
                 } else {
                     indexWriter = null;
                 }
@@ -3200,7 +3202,8 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
             );
             final int pLen = path.size();
 
-            BitmapIndexWriter indexWriter = null;
+            IndexWriter indexWriter = null;
+            byte currentWriterType = IndexType.NONE;
             final int columnCount = tableWriterMetadata.getColumnCount();
             for (int columnIndex = 0; columnIndex < columnCount; columnIndex++) {
                 if (tableWriterMetadata.getColumnType(columnIndex) == ColumnType.SYMBOL && tableWriterMetadata.isColumnIndexed(columnIndex)) {
@@ -3212,29 +3215,13 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                     final CharSequence columnName = tableWriterMetadata.getColumnName(columnIndex);
                     final long columnNameTxn = tableWriter.getColumnNameTxn(partitionTimestamp, columnIndex);
 
-                    long kFd = 0;
-                    long vFd = 0;
-                    try {
-                        kFd = openRW(
-                                ff,
-                                BitmapIndexUtils.keyFileName(path.trimTo(pLen), columnName, columnNameTxn),
-                                LOG,
-                                tableWriter.getConfiguration().getWriterFileOpenOpts()
-                        );
-                        vFd = openRW(
-                                ff,
-                                BitmapIndexUtils.valueFileName(path.trimTo(pLen), columnName, columnNameTxn),
-                                LOG,
-                                tableWriter.getConfiguration().getWriterFileOpenOpts()
-                        );
-                    } catch (Throwable th) {
-                        O3Utils.close(ff, kFd);
-                        O3Utils.close(ff, vFd);
-                        throw th;
-                    }
+                    byte indexType = tableWriterMetadata.getColumnIndexType(columnIndex);
 
-                    if (indexWriter == null) {
-                        indexWriter = o3Basket.nextIndexer();
+                    // Get a fresh writer when index type changes so different index
+                    // types can coexist across columns in the same partition.
+                    if (currentWriterType != indexType || indexWriter == null) {
+                        indexWriter = o3Basket.nextIndexer(indexType);
+                        currentWriterType = indexType;
                     }
 
                     try {
@@ -3256,8 +3243,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                             continue;
                         }
 
-                        indexWriter.of(tableWriter.getConfiguration(), kFd, vFd, true, indexBlockCapacity);
-                        vFd = kFd = -1;
+                        indexWriter.of(path.trimTo(pLen), columnName, columnNameTxn, indexBlockCapacity);
 
                         // In rewrite mode all columns exist in the new parquet file
                         // (the Rust encoder fills missing columns with NULLs),
@@ -3298,10 +3284,10 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                         }
 
                         indexWriter.commit();
+                        indexWriter.seal();
                     } finally {
                         Misc.free(indexWriter);
-                        O3Utils.close(ff, kFd);
-                        O3Utils.close(ff, vFd);
+                        indexWriter = null;
                     }
                 }
             }

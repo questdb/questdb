@@ -156,12 +156,14 @@ public class VacuumColumnVersions implements Closeable {
                             rogueColumns.keys().get(-newReaderIndex - 1).toString();
 
                     int columnType = newReaderIndex > -1 ? metadata.getColumnType(newReaderIndex) : ColumnType.UNDEFINED;
+                    byte indexType = newReaderIndex > -1 ? metadata.getColumnIndexType(newReaderIndex) : IndexType.NONE;
                     purgeTask.of(
                             reader.getTableToken(),
                             columnName,
                             tableId,
                             truncateVersion,
                             columnType,
+                            indexType,
                             timestampType,
                             partitionBy,
                             updateTxn
@@ -249,11 +251,20 @@ public class VacuumColumnVersions implements Closeable {
                                 && !Utf8s.containsAscii(fileNameSink, ".v.")
                                 && !Utf8s.containsAscii(fileNameSink, ".c.")
                                 && !Utf8s.containsAscii(fileNameSink, ".o.")
+                                && !Utf8s.containsAscii(fileNameSink, ".pk.")
+                                && !Utf8s.containsAscii(fileNameSink, ".pv.")
+                                && !Utf8s.containsAscii(fileNameSink, ".pci.")
+                                && !Utf8s.containsAscii(fileNameSink, ".pc") // covers .pc0, .pc1, ..., .pci
+                                && !Utf8s.containsAscii(fileNameSink, ".pd")
                                 && !Utf8s.endsWithAscii(fileNameSink, ".d")
                                 && !Utf8s.endsWithAscii(fileNameSink, ".i")
                                 && !Utf8s.endsWithAscii(fileNameSink, ".k")
                                 && !Utf8s.endsWithAscii(fileNameSink, ".v")
                                 && !Utf8s.endsWithAscii(fileNameSink, ".c")
+                                && !Utf8s.endsWithAscii(fileNameSink, ".pk")
+                                && !Utf8s.endsWithAscii(fileNameSink, ".pv")
+                                && !Utf8s.endsWithAscii(fileNameSink, ".pci")
+                                && !Utf8s.endsWithAscii(fileNameSink, ".pd")
                                 && !Utf8s.endsWithAscii(fileNameSink, ".lock")
                                 && !Utf8s.endsWithAscii(fileNameSink, ".o")) {
                             LOG.critical().$("file does not belong to the table, will be left on disk [name=").$(fileNameSink).$(", path=").$(path2).I$();

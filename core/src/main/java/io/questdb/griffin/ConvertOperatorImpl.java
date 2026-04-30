@@ -121,13 +121,13 @@ public class ConvertOperatorImpl implements Closeable {
             @NotNull String columnName,
             int existingColIndex,
             int existingType,
-            boolean existingIndexed,
+            byte existingIndexType,
             int columnIndex,
             int newType
     ) {
         clear();
         partitionUpdated = 0;
-        convertColumn0(columnName, existingColIndex, existingType, existingIndexed, columnIndex, newType);
+        convertColumn0(columnName, existingColIndex, existingType, existingIndexType, columnIndex, newType);
     }
 
     public void finishColumnConversion() {
@@ -189,7 +189,7 @@ public class ConvertOperatorImpl implements Closeable {
             @NotNull String columnName,
             int existingColIndex,
             int existingType,
-            boolean existingIndexed,
+            byte existingIndexType,
             int columnIndex,
             int newType
     ) {
@@ -274,7 +274,7 @@ public class ConvertOperatorImpl implements Closeable {
                                     existingColIndex,
                                     columnName,
                                     existingType,
-                                    existingIndexed,
+                                    existingIndexType,
                                     existingColTxnVer,
                                     partitionTimestamp,
                                     partitionNameTxn);

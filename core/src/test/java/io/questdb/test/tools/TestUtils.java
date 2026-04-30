@@ -27,7 +27,6 @@ package io.questdb.test.tools;
 import io.questdb.MessageBus;
 import io.questdb.MessageBusImpl;
 import io.questdb.ServerMain;
-import io.questdb.cairo.BitmapIndexReader;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.CairoException;
@@ -47,6 +46,7 @@ import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.TimestampDriver;
 import io.questdb.cairo.arr.ArrayView;
+import io.questdb.cairo.idx.IndexReader;
 import io.questdb.cairo.sql.BindVariableService;
 import io.questdb.cairo.sql.InsertOperation;
 import io.questdb.cairo.sql.OperationFuture;
@@ -81,6 +81,8 @@ import io.questdb.network.NetworkFacade;
 import io.questdb.network.NetworkFacadeImpl;
 import io.questdb.std.BinarySequence;
 import io.questdb.std.Chars;
+import io.questdb.std.Decimal128;
+import io.questdb.std.Decimal256;
 import io.questdb.std.Files;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.FilesFacadeImpl;
@@ -845,9 +847,9 @@ public final class TestUtils {
                 int expectedCapacity = metadata.getIndexValueBlockCapacity(symIndex);
 
                 for (int partitionIndex = 0; partitionIndex < rdr.getPartitionCount(); partitionIndex++) {
-                    BitmapIndexReader bitmapIndexReader =
-                            rdr.getBitmapIndexReader(0, symIndex, BitmapIndexReader.DIR_BACKWARD);
-                    Assert.assertEquals(expectedCapacity, bitmapIndexReader.getValueBlockCapacity() + 1);
+                    IndexReader indexReader =
+                            rdr.getIndexReader(0, symIndex, IndexReader.DIR_BACKWARD);
+                    Assert.assertEquals(expectedCapacity, indexReader.getValueBlockCapacity() + 1);
                 }
             }
         }
@@ -1980,6 +1982,16 @@ public final class TestUtils {
         return seq;
     }
 
+    public static String randomSymbolIndexTypeName(Rnd rnd) {
+        return switch (rnd.nextInt(4)) {
+            case 0 -> "BITMAP";
+            case 1 -> "POSTING";
+            case 2 -> "POSTING DELTA";
+            case 3 -> "POSTING EF";
+            default -> throw new AssertionError();
+        };
+    }
+
     public static String randomiseCase(Rnd rnd, String columName) {
         int changeCase = rnd.nextInt(3);
         if (changeCase == 0) {
@@ -2240,6 +2252,38 @@ public final class TestUtils {
                     case ColumnType.ARRAY:
                         assertEquals(rr.getArray(i, columnType), lr.getArray(i, columnType));
                         break;
+                    case ColumnType.DECIMAL8:
+                        Assert.assertEquals(rr.getDecimal8(i), lr.getDecimal8(i));
+                        break;
+                    case ColumnType.DECIMAL16:
+                        Assert.assertEquals(rr.getDecimal16(i), lr.getDecimal16(i));
+                        break;
+                    case ColumnType.DECIMAL32:
+                        Assert.assertEquals(rr.getDecimal32(i), lr.getDecimal32(i));
+                        break;
+                    case ColumnType.DECIMAL64:
+                        Assert.assertEquals(rr.getDecimal64(i), lr.getDecimal64(i));
+                        break;
+                    case ColumnType.DECIMAL128: {
+                        Decimal128 expected = new Decimal128();
+                        Decimal128 actual = new Decimal128();
+                        rr.getDecimal128(i, expected);
+                        lr.getDecimal128(i, actual);
+                        Assert.assertEquals(expected.getHigh(), actual.getHigh());
+                        Assert.assertEquals(expected.getLow(), actual.getLow());
+                        break;
+                    }
+                    case ColumnType.DECIMAL256: {
+                        Decimal256 expected = new Decimal256();
+                        Decimal256 actual = new Decimal256();
+                        rr.getDecimal256(i, expected);
+                        lr.getDecimal256(i, actual);
+                        Assert.assertEquals(expected.getLh(), actual.getLh());
+                        Assert.assertEquals(expected.getLl(), actual.getLl());
+                        Assert.assertEquals(expected.getHh(), actual.getHh());
+                        Assert.assertEquals(expected.getHl(), actual.getHl());
+                        break;
+                    }
                     default:
                         // Unknown record type.
                         assert false;

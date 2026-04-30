@@ -22,18 +22,24 @@
  *
  ******************************************************************************/
 
-package io.questdb.cairo;
+package io.questdb.cairo.idx;
 
+import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.CairoException;
+import io.questdb.cairo.EmptyRowCursor;
+import io.questdb.cairo.IndexFrameCursor;
 import io.questdb.cairo.sql.RowCursor;
+import io.questdb.std.Misc;
+import io.questdb.std.ObjList;
 import io.questdb.std.Unsafe;
 import io.questdb.std.str.Path;
 
 /**
  * Cursors returned by this class are not thread-safe.
  */
-public class BitmapIndexBwdReader extends AbstractIndexReader {
-    private final Cursor cursor = new Cursor();
-    private final NullCursor nullCursor = new NullCursor();
+public class BitmapIndexBwdReader extends AbstractBitmapIndexReader {
+    private final ObjList<Cursor> freeCursors = new ObjList<>();
+    private final ObjList<NullCursor> freeNullCursors = new ObjList<>();
 
     public BitmapIndexBwdReader(
             CairoConfiguration configuration,
@@ -43,11 +49,18 @@ public class BitmapIndexBwdReader extends AbstractIndexReader {
             long partitionTxn,
             long columnTop
     ) {
-        of(configuration, path, name, columnNameTxn, partitionTxn, columnTop);
+        of(configuration, path, name, columnNameTxn, partitionTxn, columnTop, null, null, 0);
     }
 
     @Override
-    public RowCursor getCursor(boolean cachedInstance, int key, long minValue, long maxValue) {
+    public void close() {
+        super.close();
+        Misc.clear(freeCursors);
+        Misc.clear(freeNullCursors);
+    }
+
+    @Override
+    public RowCursor getCursor(int key, long minValue, long maxValue) {
         assert minValue <= maxValue;
 
         if (key >= keyCount) {
@@ -55,37 +68,49 @@ public class BitmapIndexBwdReader extends AbstractIndexReader {
         }
 
         if (key == 0 && columnTop > 0 && minValue < columnTop) {
-            // we need to return the whole set of actual index values and then some nulls
-            final NullCursor nullCursor = getNullCursor(cachedInstance);
+            NullCursor nc;
+            if (freeNullCursors.size() > 0) {
+                nc = freeNullCursors.popLast();
+                nc.isPooled = false;
+            } else {
+                nc = new NullCursor();
+            }
             final long hi = maxValue == Long.MAX_VALUE ? Long.MAX_VALUE : maxValue + 1;
-            nullCursor.nullCount = Math.min(columnTop, hi);
-            nullCursor.of(key, minValue, maxValue, keyCount);
-            return nullCursor;
+            nc.nullCount = Math.min(columnTop, hi);
+            nc.of(key, minValue, maxValue, keyCount);
+            return nc;
         }
 
         if (key < keyCount) {
-            final Cursor cursor = getCursor(cachedInstance);
-            cursor.of(key, minValue, maxValue, keyCount);
-            return cursor;
+            Cursor c;
+            if (freeCursors.size() > 0) {
+                c = freeCursors.popLast();
+                c.isPooled = false;
+            } else {
+                c = new Cursor();
+            }
+            c.of(key, minValue, maxValue, keyCount);
+            return c;
         }
 
         return EmptyRowCursor.INSTANCE;
-    }
-
-    private Cursor getCursor(boolean cachedInstance) {
-        return cachedInstance ? cursor : new Cursor();
-    }
-
-    private NullCursor getNullCursor(boolean cachedInstance) {
-        return cachedInstance ? nullCursor : new NullCursor();
     }
 
     private class Cursor implements RowCursor, IndexFrameCursor {
         protected long minValue;
         protected long next;
         protected long valueCount;
+        boolean isPooled;
         private long valueBlockOffset;
         private final BitmapIndexUtils.ValueBlockSeeker SEEKER = this::seekValue;
+
+        @Override
+        public void close() {
+            if (!isPooled && freeCursors.size() < MAX_CACHED_FREE_CURSORS) {
+                isPooled = true;
+                freeCursors.add(this);
+            }
+        }
 
         @Override
         public boolean hasNext() {
@@ -185,6 +210,14 @@ public class BitmapIndexBwdReader extends AbstractIndexReader {
 
     private class NullCursor extends Cursor {
         private long nullCount;
+
+        @Override
+        public void close() {
+            if (!isPooled && freeNullCursors.size() < MAX_CACHED_FREE_CURSORS) {
+                isPooled = true;
+                freeNullCursors.add(this);
+            }
+        }
 
         @Override
         public boolean hasNext() {

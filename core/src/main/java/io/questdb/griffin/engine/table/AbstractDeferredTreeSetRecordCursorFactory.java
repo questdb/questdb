@@ -38,6 +38,7 @@ import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.IntHashSet;
 import io.questdb.std.IntList;
+import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 import io.questdb.std.Transient;
 import org.jetbrains.annotations.NotNull;
@@ -123,6 +124,12 @@ public abstract class AbstractDeferredTreeSetRecordCursorFactory extends Abstrac
             close();
             throw th;
         }
+    }
+
+    @Override
+    protected void _close() {
+        super._close();
+        Misc.freeObjList(deferredSymbolFuncs);
     }
 
     @Override

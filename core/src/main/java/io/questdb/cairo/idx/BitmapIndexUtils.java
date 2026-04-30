@@ -22,8 +22,9 @@
  *
  ******************************************************************************/
 
-package io.questdb.cairo;
+package io.questdb.cairo.idx;
 
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.vm.api.MemoryR;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;

@@ -90,31 +90,31 @@ public class AlterTableAddColumnTest extends AbstractCairoTest {
                     drainWalQueue();
 
                     final String originalColumns = """
-                            column\ttype\tindexed\tindexBlockCapacity\tsymbolCached\tsymbolCapacity\tsymbolTableSize\tdesignated\tupsertKey
-                            i\tINT\tfalse\t0\tfalse\t0\t0\tfalse\tfalse
-                            sym\tSYMBOL\tfalse\t0\ttrue\t128\t3\tfalse\tfalse
-                            amt\tDOUBLE\tfalse\t0\tfalse\t0\t0\tfalse\tfalse
-                            timestamp\tTIMESTAMP\tfalse\t0\tfalse\t0\t0\ttrue\tfalse
-                            b\tBOOLEAN\tfalse\t0\tfalse\t0\t0\tfalse\tfalse
-                            c\tSTRING\tfalse\t0\tfalse\t0\t0\tfalse\tfalse
-                            d\tDOUBLE\tfalse\t0\tfalse\t0\t0\tfalse\tfalse
-                            e\tFLOAT\tfalse\t0\tfalse\t0\t0\tfalse\tfalse
-                            f\tSHORT\tfalse\t0\tfalse\t0\t0\tfalse\tfalse
-                            g\tDATE\tfalse\t0\tfalse\t0\t0\tfalse\tfalse
-                            ik\tSYMBOL\tfalse\t0\ttrue\t128\t4\tfalse\tfalse
-                            j\tLONG\tfalse\t0\tfalse\t0\t0\tfalse\tfalse
-                            k\tTIMESTAMP\tfalse\t0\tfalse\t0\t0\tfalse\tfalse
-                            l\tBYTE\tfalse\t0\tfalse\t0\t0\tfalse\tfalse
-                            m\tBINARY\tfalse\t0\tfalse\t0\t0\tfalse\tfalse
-                            n\tSTRING\tfalse\t0\tfalse\t0\t0\tfalse\tfalse
+                            column\ttype\tindexed\tindexBlockCapacity\tsymbolCached\tsymbolCapacity\tsymbolTableSize\tdesignated\tupsertKey\tindexType\tindexInclude
+                            i\tINT\tfalse\t0\tfalse\t0\t0\tfalse\tfalse\t\t
+                            sym\tSYMBOL\tfalse\t0\ttrue\t128\t3\tfalse\tfalse\t\t
+                            amt\tDOUBLE\tfalse\t0\tfalse\t0\t0\tfalse\tfalse\t\t
+                            timestamp\tTIMESTAMP\tfalse\t0\tfalse\t0\t0\ttrue\tfalse\t\t
+                            b\tBOOLEAN\tfalse\t0\tfalse\t0\t0\tfalse\tfalse\t\t
+                            c\tSTRING\tfalse\t0\tfalse\t0\t0\tfalse\tfalse\t\t
+                            d\tDOUBLE\tfalse\t0\tfalse\t0\t0\tfalse\tfalse\t\t
+                            e\tFLOAT\tfalse\t0\tfalse\t0\t0\tfalse\tfalse\t\t
+                            f\tSHORT\tfalse\t0\tfalse\t0\t0\tfalse\tfalse\t\t
+                            g\tDATE\tfalse\t0\tfalse\t0\t0\tfalse\tfalse\t\t
+                            ik\tSYMBOL\tfalse\t0\ttrue\t128\t4\tfalse\tfalse\t\t
+                            j\tLONG\tfalse\t0\tfalse\t0\t0\tfalse\tfalse\t\t
+                            k\tTIMESTAMP\tfalse\t0\tfalse\t0\t0\tfalse\tfalse\t\t
+                            l\tBYTE\tfalse\t0\tfalse\t0\t0\tfalse\tfalse\t\t
+                            m\tBINARY\tfalse\t0\tfalse\t0\t0\tfalse\tfalse\t\t
+                            n\tSTRING\tfalse\t0\tfalse\t0\t0\tfalse\tfalse\t\t
                             """;
 
                     assertQueryNoLeakCheck(
                             isWal
                                     ? originalColumns
                                     : originalColumns +
-                                    "mycol\tINT\tfalse\t256\tfalse\t0\t0\tfalse\tfalse\n" +
-                                    "mycol2\tINT\tfalse\t256\tfalse\t0\t0\tfalse\tfalse\n",
+                                    "mycol\tINT\tfalse\t256\tfalse\t0\t0\tfalse\tfalse\t\t\n" +
+                                    "mycol2\tINT\tfalse\t256\tfalse\t0\t0\tfalse\tfalse\t\t\n",
                             "show columns from x",
                             null,
                             false
@@ -610,8 +610,8 @@ public class AlterTableAddColumnTest extends AbstractCairoTest {
             drainWalQueue();
             assertSql(
                     """
-                            column\ttype\tindexed\tindexBlockCapacity\tsymbolCached\tsymbolCapacity\tsymbolTableSize\tdesignated\tupsertKey
-                            b_col\tLONG\tfalse\t256\tfalse\t0\t0\tfalse\tfalse
+                            column\ttype\tindexed\tindexBlockCapacity\tsymbolCached\tsymbolCapacity\tsymbolTableSize\tdesignated\tupsertKey\tindexType\tindexInclude
+                            b_col\tLONG\tfalse\t256\tfalse\t0\t0\tfalse\tfalse\t\t
                             """,
                     "table_columns('x') where column = 'b_col'"
             );
@@ -1004,31 +1004,31 @@ public class AlterTableAddColumnTest extends AbstractCairoTest {
                     drainWalQueue();
 
                     final String originalColumns = """
-                            column\ttype\tindexed\tindexBlockCapacity\tsymbolCached\tsymbolCapacity\tsymbolTableSize\tdesignated\tupsertKey
-                            i\tINT\tfalse\t0\tfalse\t0\t0\tfalse\tfalse
-                            sym\tSYMBOL\tfalse\t0\ttrue\t128\t3\tfalse\tfalse
-                            amt\tDOUBLE\tfalse\t0\tfalse\t0\t0\tfalse\tfalse
-                            timestamp\tTIMESTAMP\tfalse\t0\tfalse\t0\t0\ttrue\tfalse
-                            b\tBOOLEAN\tfalse\t0\tfalse\t0\t0\tfalse\tfalse
-                            c\tSTRING\tfalse\t0\tfalse\t0\t0\tfalse\tfalse
-                            d\tDOUBLE\tfalse\t0\tfalse\t0\t0\tfalse\tfalse
-                            e\tFLOAT\tfalse\t0\tfalse\t0\t0\tfalse\tfalse
-                            f\tSHORT\tfalse\t0\tfalse\t0\t0\tfalse\tfalse
-                            g\tDATE\tfalse\t0\tfalse\t0\t0\tfalse\tfalse
-                            ik\tSYMBOL\tfalse\t0\ttrue\t128\t4\tfalse\tfalse
-                            j\tLONG\tfalse\t0\tfalse\t0\t0\tfalse\tfalse
-                            k\tTIMESTAMP\tfalse\t0\tfalse\t0\t0\tfalse\tfalse
-                            l\tBYTE\tfalse\t0\tfalse\t0\t0\tfalse\tfalse
-                            m\tBINARY\tfalse\t0\tfalse\t0\t0\tfalse\tfalse
-                            n\tSTRING\tfalse\t0\tfalse\t0\t0\tfalse\tfalse
+                            column\ttype\tindexed\tindexBlockCapacity\tsymbolCached\tsymbolCapacity\tsymbolTableSize\tdesignated\tupsertKey\tindexType\tindexInclude
+                            i\tINT\tfalse\t0\tfalse\t0\t0\tfalse\tfalse\t\t
+                            sym\tSYMBOL\tfalse\t0\ttrue\t128\t3\tfalse\tfalse\t\t
+                            amt\tDOUBLE\tfalse\t0\tfalse\t0\t0\tfalse\tfalse\t\t
+                            timestamp\tTIMESTAMP\tfalse\t0\tfalse\t0\t0\ttrue\tfalse\t\t
+                            b\tBOOLEAN\tfalse\t0\tfalse\t0\t0\tfalse\tfalse\t\t
+                            c\tSTRING\tfalse\t0\tfalse\t0\t0\tfalse\tfalse\t\t
+                            d\tDOUBLE\tfalse\t0\tfalse\t0\t0\tfalse\tfalse\t\t
+                            e\tFLOAT\tfalse\t0\tfalse\t0\t0\tfalse\tfalse\t\t
+                            f\tSHORT\tfalse\t0\tfalse\t0\t0\tfalse\tfalse\t\t
+                            g\tDATE\tfalse\t0\tfalse\t0\t0\tfalse\tfalse\t\t
+                            ik\tSYMBOL\tfalse\t0\ttrue\t128\t4\tfalse\tfalse\t\t
+                            j\tLONG\tfalse\t0\tfalse\t0\t0\tfalse\tfalse\t\t
+                            k\tTIMESTAMP\tfalse\t0\tfalse\t0\t0\tfalse\tfalse\t\t
+                            l\tBYTE\tfalse\t0\tfalse\t0\t0\tfalse\tfalse\t\t
+                            m\tBINARY\tfalse\t0\tfalse\t0\t0\tfalse\tfalse\t\t
+                            n\tSTRING\tfalse\t0\tfalse\t0\t0\tfalse\tfalse\t\t
                             """;
 
                     assertQueryNoLeakCheck(
                             isWal
                                     ? originalColumns
                                     : originalColumns +
-                                    "mycol\tINT\tfalse\t256\tfalse\t0\t0\tfalse\tfalse\n" +
-                                    "second\tSYMBOL\tfalse\t256\ttrue\t128\t1\tfalse\tfalse\n",
+                                    "mycol\tINT\tfalse\t256\tfalse\t0\t0\tfalse\tfalse\t\t\n" +
+                                    "second\tSYMBOL\tfalse\t256\ttrue\t128\t1\tfalse\tfalse\t\t\n",
                             "show columns from x",
                             null,
                             false

@@ -26,7 +26,9 @@ package io.questdb.cairo.wal.seq;
 
 import io.questdb.cairo.AbstractRecordMetadata;
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.IndexType;
 import io.questdb.cairo.TableColumnMetadata;
 import io.questdb.cairo.TableStructure;
 import io.questdb.cairo.TableToken;
@@ -43,6 +45,7 @@ import io.questdb.std.Chars;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.IntList;
 import io.questdb.std.MemoryTag;
+import io.questdb.std.ObjList;
 import io.questdb.std.Misc;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.Utf8Sequence;
@@ -85,12 +88,44 @@ public class SequencerMetadata extends AbstractRecordMetadata implements TableRe
             int columnType,
             int symbolCapacity,
             boolean symbolCacheFlag,
-            boolean isIndexed,
+            byte indexType,
             int indexValueBlockCapacity,
             boolean isDedupKey
     ) {
-        addColumn0(columnName, columnType, symbolCapacity, symbolCacheFlag, isIndexed, indexValueBlockCapacity, isDedupKey);
+        addColumn0(columnName, columnType, symbolCapacity, symbolCacheFlag, indexType, indexValueBlockCapacity, isDedupKey);
         readColumnOrder.add(columnMetadata.size() - 1);
+        structureVersion.incrementAndGet();
+    }
+
+    public void addIndex(CharSequence columnName, int indexValueBlockSize, byte indexType, ObjList<CharSequence> coveringColumnNames) {
+        int colIdx = columnNameIndexMap.get(columnName);
+        if (colIdx < 0) {
+            throw CairoException.critical(0).put("column not found for addIndex [name=").put(columnName).put(']');
+        }
+        TableColumnMetadata colMeta = columnMetadata.getQuick(colIdx);
+        colMeta.setIndexType(indexType);
+        colMeta.setIndexValueBlockCapacity(indexValueBlockSize);
+
+        if (coveringColumnNames != null && coveringColumnNames.size() > 0) {
+            IntList coveringIndices = new IntList(coveringColumnNames.size());
+            for (int i = 0, n = coveringColumnNames.size(); i < n; i++) {
+                CharSequence covName = coveringColumnNames.get(i);
+                int covIdx = columnNameIndexMap.get(covName);
+                if (covIdx < 0) {
+                    throw CairoException.nonCritical().put("INCLUDE column does not exist [column=").put(covName).put(']');
+                }
+                if (covIdx == colIdx) {
+                    throw CairoException.nonCritical().put("INCLUDE must not contain the indexed column [column=").put(covName).put(']');
+                }
+                for (int j = 0; j < i; j++) {
+                    if (coveringIndices.getQuick(j) == covIdx) {
+                        throw CairoException.nonCritical().put("duplicate column in INCLUDE [column=").put(covName).put(']');
+                    }
+                }
+                coveringIndices.add(covIdx);
+            }
+            colMeta.setCoveringColumnIndices(coveringIndices);
+        }
         structureVersion.incrementAndGet();
     }
 
@@ -99,7 +134,7 @@ public class SequencerMetadata extends AbstractRecordMetadata implements TableRe
             int columnType,
             int symbolCapacity,
             boolean symbolCacheFlag,
-            boolean isIndexed,
+            byte indexType,
             int indexValueBlockCapacity
     ) {
         int existingColumnIndex = TableUtils.changeColumnTypeInMetadata(
@@ -107,7 +142,7 @@ public class SequencerMetadata extends AbstractRecordMetadata implements TableRe
                 columnType,
                 symbolCapacity,
                 symbolCacheFlag,
-                isIndexed,
+                indexType,
                 indexValueBlockCapacity,
                 columnNameIndexMap, columnMetadata
         );
@@ -275,7 +310,7 @@ public class SequencerMetadata extends AbstractRecordMetadata implements TableRe
             int columnType,
             int symbolCapacity,
             boolean symbolCacheFlag,
-            boolean isIndexed,
+            byte indexType,
             int indexValueBlockCapacity,
             boolean isDedupKey
     ) {
@@ -287,7 +322,7 @@ public class SequencerMetadata extends AbstractRecordMetadata implements TableRe
                 new TableColumnMetadata(
                         name,
                         columnType,
-                        isIndexed,
+                        indexType,
                         indexValueBlockCapacity,
                         false,
                         null,
@@ -317,10 +352,15 @@ public class SequencerMetadata extends AbstractRecordMetadata implements TableRe
                     tableStruct.getColumnType(i),
                     tableStruct.getSymbolCapacity(i),
                     tableStruct.getSymbolCacheFlag(i),
-                    tableStruct.isIndexed(i),
+                    tableStruct.getIndexType(i),
                     tableStruct.getIndexBlockCapacity(i),
                     tableStruct.isDedupKey(i)
             );
+            // Propagate covering column indices (INCLUDE list) from the table structure
+            IntList coveringIndices = tableStruct.getCoveringColumnIndices(i);
+            if (coveringIndices != null && coveringIndices.size() > 0) {
+                columnMetadata.getQuick(columnMetadata.size() - 1).setCoveringColumnIndices(coveringIndices);
+            }
             readColumnOrder.add(i);
         }
 
@@ -354,7 +394,8 @@ public class SequencerMetadata extends AbstractRecordMetadata implements TableRe
                 }
 
                 if (ColumnType.isSymbol(Math.abs(type))) {
-                    columnMetadata.add(new TableColumnMetadata(name, type, true, 1024, true, null));
+                    // Default to BITMAP; overridden by optional index-type section if present
+                    columnMetadata.add(new TableColumnMetadata(name, type, IndexType.BITMAP, 1024, true, null));
                 } else {
                     columnMetadata.add(new TableColumnMetadata(name, type));
                 }
@@ -384,6 +425,53 @@ public class SequencerMetadata extends AbstractRecordMetadata implements TableRe
                         for (int i = 0; i < records; i++) {
                             readColumnOrder.add(metaMem.getInt(offset));
                             offset += Integer.BYTES;
+                        }
+                    }
+                }
+            }
+
+            // Optional section: index types (backward compatible)
+            if (memSize > offset + 8 + 4) {
+                long indexTypeCheckSum = checkSum * 31 + 0x494E4458; // "INDX" salt
+                long storedCheckSum = metaMem.getLong(offset);
+                offset += Long.BYTES;
+                if (storedCheckSum == indexTypeCheckSum) {
+                    int indexTypeCount = metaMem.getInt(offset);
+                    offset += Integer.BYTES;
+                    if (indexTypeCount == columnCount && memSize - offset >= columnCount) {
+                        for (int i = 0; i < columnCount; i++) {
+                            byte indexType = metaMem.getByte(offset);
+                            offset += Byte.BYTES;
+                            columnMetadata.getQuick(i).setIndexType(indexType);
+                        }
+                    } else if (memSize - offset >= indexTypeCount) {
+                        offset += indexTypeCount;
+                    }
+                }
+            }
+
+            // Optional section: covering column indices (backward compatible)
+            if (memSize > offset + 8 + 4) {
+                long coverCheckSum = checkSum * 31 + 0x434F5652; // "COVR" salt
+                long storedCoverSum = metaMem.getLong(offset);
+                offset += Long.BYTES;
+                if (storedCoverSum == coverCheckSum) {
+                    int coveringColumnCount = metaMem.getInt(offset);
+                    offset += Integer.BYTES;
+                    for (int c = 0; c < coveringColumnCount; c++) {
+                        if (memSize - offset < 2 * Integer.BYTES) break;
+                        int colIdx = metaMem.getInt(offset);
+                        offset += Integer.BYTES;
+                        int includeCount = metaMem.getInt(offset);
+                        offset += Integer.BYTES;
+                        if (includeCount > 0 && memSize - offset >= (long) includeCount * Integer.BYTES
+                                && colIdx >= 0 && colIdx < columnCount) {
+                            IntList indices = new IntList(includeCount);
+                            for (int j = 0; j < includeCount; j++) {
+                                indices.add(metaMem.getInt(offset));
+                                offset += Integer.BYTES;
+                            }
+                            columnMetadata.getQuick(colIdx).setCoveringColumnIndices(indices);
                         }
                     }
                 }
@@ -436,6 +524,37 @@ public class SequencerMetadata extends AbstractRecordMetadata implements TableRe
         metaMem.putInt(readColumnOrder.size());
         for (int i = 0, n = readColumnOrder.size(); i < n; i++) {
             metaMem.putInt(readColumnOrder.get(i));
+        }
+
+        // write index types (optional section, backward compatible)
+        long indexTypeCheckSum = checkSum * 31 + 0x494E4458; // "INDX" salt
+        metaMem.putLong(indexTypeCheckSum);
+        metaMem.putInt(columnCount);
+        for (int i = 0; i < columnCount; i++) {
+            metaMem.putByte(getColumnMetadata(i).getIndexType());
+        }
+
+        // write covering column indices (optional section, backward compatible)
+        long coverCheckSum = checkSum * 31 + 0x434F5652; // "COVR" salt
+        metaMem.putLong(coverCheckSum);
+        // Count how many columns have covering indices
+        int coveringColumnCount = 0;
+        for (int i = 0; i < columnCount; i++) {
+            IntList indices = getColumnMetadata(i).getCoveringColumnIndices();
+            if (indices != null && indices.size() > 0) {
+                coveringColumnCount++;
+            }
+        }
+        metaMem.putInt(coveringColumnCount);
+        for (int i = 0; i < columnCount; i++) {
+            IntList indices = getColumnMetadata(i).getCoveringColumnIndices();
+            if (indices != null && indices.size() > 0) {
+                metaMem.putInt(i); // column index
+                metaMem.putInt(indices.size());
+                for (int j = 0, n = indices.size(); j < n; j++) {
+                    metaMem.putInt(indices.getQuick(j));
+                }
+            }
         }
 
         // update metadata size

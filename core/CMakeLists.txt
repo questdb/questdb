@@ -67,6 +67,7 @@ set(
         src/main/c/share/ooo.cpp
         src/main/c/share/bitmap_index_utils.h
         src/main/c/share/bitmap_index_utils.cpp
+        src/main/c/share/bp_bitpack.cpp
         src/main/c/share/geohash.cpp
         src/main/c/share/jit/compiler.h
         src/main/c/share/jit/compiler.cpp
@@ -78,6 +79,7 @@ set(
         src/main/c/share/converters.cpp
         src/main/c/share/converters.h
         src/main/c/share/json.cpp
+        src/main/c/share/fsst_jni.cpp
 )
 
 # JNI includes
@@ -329,9 +331,37 @@ else ()
     )
 endif (ARCH_AARCH64)
 
+#cwida/fsst — bulk varchar codec, vendored as submodule.
+# Pinned at e638d4c (2026-04-07)
+set(FSST_DIR ${CMAKE_CURRENT_SOURCE_DIR}/src/main/c/share/fsst)
+add_library(questdb-fsst STATIC
+        ${FSST_DIR}/libfsst.cpp
+        ${FSST_DIR}/fsst_avx512.cpp
+)
+target_include_directories(questdb-fsst PUBLIC ${FSST_DIR})
+set_target_properties(questdb-fsst PROPERTIES POSITION_INDEPENDENT_CODE ON)
+target_compile_options(questdb-fsst PRIVATE
+        $<$<CONFIG:RELEASE>:-O3 -DNDEBUG>
+        $<$<CONFIG:DEBUG>:-g -O0>
+)
+
+if (ARCH_AARCH64)
+    set_source_files_properties(${FSST_DIR}/fsst_avx512.cpp PROPERTIES
+            COMPILE_OPTIONS "-O1")
+elseif (OS_WINDOWS)
+    set_source_files_properties(${FSST_DIR}/fsst_avx512.cpp PROPERTIES
+            COMPILE_OPTIONS "-mavx2;-mfma;-mavx512f;-mavx512vl;-mavx512bw;-mavx512dq;-O1;-include;intrin.h")
+else ()
+    set_source_files_properties(${FSST_DIR}/fsst_avx512.cpp PROPERTIES
+            COMPILE_OPTIONS "-mavx2;-mfma;-mavx512f;-mavx512vl;-mavx512bw;-mavx512dq;-O1")
+endif ()
+
 #simdjson
 set(SIMDJSON_ENABLE_THREADS OFF CACHE BOOL "Link with thread support" FORCE)
 include(${CMAKE_CURRENT_SOURCE_DIR}/src/main/c/share/simdjson-cmake/CMakeLists.txt)
+
+target_link_libraries(questdb questdb-fsst)
+target_include_directories(questdb PRIVATE ${FSST_DIR})
 
 if (OS_WINDOWS)
     target_link_libraries(questdb wsock32 ws2_32 secur32 shlwapi psapi -s -static-libgcc -static-libstdc++ _simdjson)

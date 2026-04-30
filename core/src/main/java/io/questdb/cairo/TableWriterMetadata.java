@@ -29,6 +29,7 @@ import io.questdb.cairo.sql.TableMetadata;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryMR;
 import io.questdb.std.Chars;
+import io.questdb.std.IntList;
 import io.questdb.std.str.Utf8Sequence;
 import org.jetbrains.annotations.NotNull;
 
@@ -56,8 +57,18 @@ public class TableWriterMetadata extends AbstractRecordMetadata implements Table
     }
 
     @Override
+    public IntList getCoveringColumnIndices(int columnIndex) {
+        return getColumnMetadata(columnIndex).getCoveringColumnIndices();
+    }
+
+    @Override
     public int getIndexBlockCapacity(int columnIndex) {
         return getColumnMetadata(columnIndex).getIndexValueBlockCapacity();
+    }
+
+    @Override
+    public byte getIndexType(int columnIndex) {
+        return getColumnMetadata(columnIndex).getIndexType();
     }
 
     @Override
@@ -129,11 +140,6 @@ public class TableWriterMetadata extends AbstractRecordMetadata implements Table
     }
 
     @Override
-    public boolean isIndexed(int columnIndex) {
-        return getColumnMetadata(columnIndex).isSymbolIndexFlag();
-    }
-
-    @Override
     public boolean isWalEnabled() {
         return walEnabled;
     }
@@ -164,7 +170,7 @@ public class TableWriterMetadata extends AbstractRecordMetadata implements Table
             WriterTableColumnMetadata colMeta = new WriterTableColumnMetadata(
                     nameStr,
                     type,
-                    TableUtils.isColumnIndexed(metaMem, i),
+                    TableUtils.getColumnIndexType(metaMem, i),
                     TableUtils.getIndexBlockCapacity(metaMem, i),
                     true,
                     null,
@@ -183,6 +189,28 @@ public class TableWriterMetadata extends AbstractRecordMetadata implements Table
                 }
             }
             offset += Vm.getStorageLength(name);
+        }
+        long metaSize = metaMem.size();
+        if (offset < metaSize) {
+            for (int i = 0; i < columnCount; i++) {
+                if (TableUtils.isColumnCovering(metaMem, i)) {
+                    if (offset + Integer.BYTES > metaSize) {
+                        break;
+                    }
+                    int includeCount = metaMem.getInt(offset);
+                    offset += Integer.BYTES;
+                    if (includeCount > 0 && offset + (long) includeCount * Integer.BYTES <= metaSize) {
+                        IntList indices = new IntList(includeCount);
+                        for (int j = 0; j < includeCount; j++) {
+                            indices.add(metaMem.getInt(offset));
+                            offset += Integer.BYTES;
+                        }
+                        columnMetadata.getQuick(i).setCoveringColumnIndices(indices);
+                    } else if (includeCount > 0) {
+                        break;
+                    }
+                }
+            }
         }
     }
 
@@ -213,7 +241,7 @@ public class TableWriterMetadata extends AbstractRecordMetadata implements Table
     void addColumn(
             CharSequence name,
             int type,
-            boolean indexFlag,
+            byte indexType,
             int indexValueBlockCapacity,
             int columnIndex,
             int symbolCapacity,
@@ -227,7 +255,7 @@ public class TableWriterMetadata extends AbstractRecordMetadata implements Table
                 new WriterTableColumnMetadata(
                         str,
                         type,
-                        indexFlag,
+                        indexType,
                         indexValueBlockCapacity,
                         true,
                         null,
@@ -273,7 +301,7 @@ public class TableWriterMetadata extends AbstractRecordMetadata implements Table
         var newColumnMetadata = new WriterTableColumnMetadata(
                 oldMeta.getColumnName(),
                 ColumnType.SYMBOL,
-                oldMeta.isSymbolIndexFlag(),
+                oldMeta.getIndexType(),
                 oldMeta.getIndexValueBlockCapacity(),
                 oldMeta.isSymbolTableStatic(),
                 null,
@@ -292,7 +320,7 @@ public class TableWriterMetadata extends AbstractRecordMetadata implements Table
         public WriterTableColumnMetadata(
                 String nameStr,
                 int type,
-                boolean columnIndexed,
+                byte indexType,
                 int indexBlockCapacity,
                 boolean symbolTableStatic,
                 RecordMetadata parent,
@@ -305,7 +333,7 @@ public class TableWriterMetadata extends AbstractRecordMetadata implements Table
             super(
                     nameStr,
                     type,
-                    columnIndexed,
+                    indexType,
                     indexBlockCapacity,
                     symbolTableStatic,
                     parent,

@@ -71,7 +71,7 @@ public class JoinRecordMetadata extends AbstractRecordMetadata implements Closea
             CharSequence tableAlias,
             CharSequence columnName,
             int columnType,
-            boolean indexFlag,
+            byte indexType,
             int indexValueBlockCapacity,
             boolean symbolTableStatic,
             RecordMetadata metadata
@@ -83,7 +83,7 @@ public class JoinRecordMetadata extends AbstractRecordMetadata implements Closea
             cm = new TableColumnMetadata(
                     b.put(tableAlias).put('.').put(columnName).toString(),
                     columnType,
-                    indexFlag,
+                    indexType,
                     indexValueBlockCapacity,
                     symbolTableStatic,
                     metadata
@@ -92,7 +92,7 @@ public class JoinRecordMetadata extends AbstractRecordMetadata implements Closea
             cm = new TableColumnMetadata(
                     Chars.toString(columnName),
                     columnType,
-                    indexFlag,
+                    indexType,
                     indexValueBlockCapacity,
                     symbolTableStatic,
                     metadata
@@ -110,7 +110,7 @@ public class JoinRecordMetadata extends AbstractRecordMetadata implements Closea
             cm = new TableColumnMetadata(
                     b.put(tableAlias).put('.').put(columnName).toString(),
                     m.getColumnType(),
-                    m.isSymbolIndexFlag(),
+                    m.getIndexType(),
                     m.getIndexValueBlockCapacity(),
                     m.isSymbolTableStatic(),
                     m.getMetadata()

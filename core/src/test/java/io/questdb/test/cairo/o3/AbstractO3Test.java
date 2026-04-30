@@ -30,6 +30,7 @@ import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.CommitMode;
 import io.questdb.cairo.EntityColumnFilter;
+import io.questdb.cairo.IndexType;
 import io.questdb.cairo.MicrosTimestampDriver;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableWriter;
@@ -89,6 +90,7 @@ public class AbstractO3Test extends AbstractTest {
             .withTimeout(20 * 60 * 1000, TimeUnit.MILLISECONDS)
             .withLookingForStuckThread(true)
             .build();
+    protected byte defaultSymbolIndexType;
     private RecordToRowCopier copier;
 
     public AbstractO3Test() {
@@ -115,6 +117,7 @@ public class AbstractO3Test extends AbstractTest {
         mixedIOEnabled = mixedIOEnabledFFDefault;
         copier = null;
         Metrics.ENABLED.clear();
+        defaultSymbolIndexType = rnd.nextBoolean() ? IndexType.BITMAP : IndexType.POSTING;
     }
 
     @After
@@ -135,14 +138,18 @@ public class AbstractO3Test extends AbstractTest {
             String table,
             CairoEngine engine
     ) throws SqlException {
+        byte indexType;
         try (TableReader reader = engine.getReader("x")) {
             int symIndex = reader.getMetadata().getColumnIndexQuiet("sym");
             if (symIndex == -1 || !reader.getMetadata().isColumnIndexed(symIndex)) {
                 return;
             }
+            indexType = reader.getMetadata().getColumnIndexType(symIndex);
         }
         TestUtils.assertEquals(compiler, sqlExecutionContext, table + " where sym = 'googl' order by ts", "x where sym = 'googl'");
-        TestUtils.assertIndexBlockCapacity(engine, "x", "sym");
+        if (indexType == IndexType.BITMAP) {
+            TestUtils.assertIndexBlockCapacity(engine, "x", "sym");
+        }
     }
 
     protected static void assertIndexConsistency(
@@ -359,6 +366,11 @@ public class AbstractO3Test extends AbstractTest {
                     }
 
                     @Override
+                    public byte getDefaultSymbolIndexType() {
+                        return defaultSymbolIndexType;
+                    }
+
+                    @Override
                     public @NotNull FilesFacade getFilesFacade() {
                         return ff;
                     }
@@ -426,6 +438,11 @@ public class AbstractO3Test extends AbstractTest {
                     @Override
                     public long getDataAppendPageSize() {
                         return dataAppendPageSize > 0 ? dataAppendPageSize : super.getDataAppendPageSize();
+                    }
+
+                    @Override
+                    public byte getDefaultSymbolIndexType() {
+                        return defaultSymbolIndexType;
                     }
 
                     @Override

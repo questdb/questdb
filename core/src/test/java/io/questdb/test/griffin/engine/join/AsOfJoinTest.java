@@ -43,6 +43,7 @@ import org.junit.Assert;
 import org.junit.Test;
 
 public class AsOfJoinTest extends AbstractCairoTest {
+    private final String defaultIndexTypeName;
     private final TestTimestampType leftTableTimestampType;
     private final TestTimestampType rightTableTimestampType;
 
@@ -50,6 +51,13 @@ public class AsOfJoinTest extends AbstractCairoTest {
         Rnd rnd = TestUtils.generateRandom(LOG);
         this.leftTableTimestampType = TestUtils.getTimestampType(rnd);
         this.rightTableTimestampType = TestUtils.getTimestampType(rnd);
+        this.defaultIndexTypeName = TestUtils.randomSymbolIndexTypeName(rnd);
+    }
+
+    @Override
+    public void setUp() {
+        setProperty(PropertyKey.CAIRO_DEFAULT_SYMBOL_INDEX_TYPE, defaultIndexTypeName);
+        super.setUp();
     }
 
     @Test

@@ -22,19 +22,26 @@
  *
  ******************************************************************************/
 
-package io.questdb.cairo;
+package io.questdb.cairo.idx;
 
 
+import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.ColumnVersionReader;
+import io.questdb.cairo.IndexFrameCursor;
+import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cairo.sql.RowCursor;
+import io.questdb.std.DirectBitSet;
 import io.questdb.std.Transient;
 import io.questdb.std.str.Path;
 
 import java.io.Closeable;
 
-public interface BitmapIndexReader extends Closeable {
+public interface IndexReader extends Closeable {
 
     int DIR_BACKWARD = 2;
     int DIR_FORWARD = 1;
+
+    int MAX_CACHED_FREE_CURSORS = 128;
     String NAME_BACKWARD = "backward";
     String NAME_FORWARD = "forward";
 
@@ -46,22 +53,44 @@ public interface BitmapIndexReader extends Closeable {
     default void close() {
     }
 
+    /**
+     * Bulk-marks all keys present in this partition into the bit set.
+     * Walks dense generation strides sequentially (one pass, optimal page access).
+     * Returns the number of newly found keys.
+     * For bitmap indexes this is a no-op returning -1 (caller uses getCursor fallback).
+     *
+     * @param foundKeys bit set indexed by index key (0 = NULL, 1..N = symbol keys)
+     * @return number of keys newly marked as found, or -1 if not supported
+     */
+    default int collectDistinctKeys(DirectBitSet foundKeys) {
+        return -1;
+    }
+
+    default int collectDistinctKeysInRange(DirectBitSet foundKeys, long rowLo, long rowHi) {
+        return -1;
+    }
+
     long getColumnTop();
 
     long getColumnTxn();
 
     /**
-     * Setup value cursor. Values in this cursor will be bounded by provided
-     * minimum and maximum, both of which are inclusive. Order of values is
-     * determined by specific implementations of this method.
+     * Acquire a value cursor bounded by the given min/max (inclusive). The returned
+     * cursor must be {@link RowCursor#close() closed} when iteration is done — prefer
+     * try-with-resources. On close, pool-backed cursors return to a free list for
+     * reuse; stateless cursors are no-op. Order of values is determined by specific
+     * implementations of this method.
      *
-     * @param cachedInstance when this parameter is true, index reader may return singleton instance of cursor.
-     * @param key            index key
-     * @param minValue       inclusive minimum value
-     * @param maxValue       inclusive maximum value
+     * @param key      index key
+     * @param minValue inclusive minimum value
+     * @param maxValue inclusive maximum value
      * @return index value cursor, relative to the minValue
      */
-    RowCursor getCursor(boolean cachedInstance, int key, long minValue, long maxValue);
+    RowCursor getCursor(int key, long minValue, long maxValue);
+
+    default RowCursor getCursor(int key, long minValue, long maxValue, int[] requiredCoverColumns) {
+        return getCursor(key, minValue, maxValue);
+    }
 
     default IndexFrameCursor getFrameCursor(int key, long minValue, long maxValue) {
         throw new UnsupportedOperationException();
@@ -89,7 +118,10 @@ public interface BitmapIndexReader extends Closeable {
             CharSequence columnName,
             long columnNameTxn,
             long partitionTxn,
-            long columnTop
+            long columnTop,
+            RecordMetadata metadata,
+            ColumnVersionReader columnVersionReader,
+            long partitionTimestamp
     );
 
     void reloadConditionally();

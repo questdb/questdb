@@ -24,9 +24,11 @@
 
 package io.questdb.test.griffin;
 
+import io.questdb.PropertyKey;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnPurgeJob;
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.IndexType;
 import io.questdb.cairo.O3PartitionPurgeJob;
 import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.TableReader;
@@ -76,6 +78,7 @@ public class AlterTableAttachPartitionFromSoftLinkTest extends AbstractAlterTabl
     @Override
     @Before
     public void setUp() {
+        setProperty(PropertyKey.CAIRO_DEFAULT_SYMBOL_INDEX_TYPE, TestUtils.randomSymbolIndexTypeName(rnd));
         super.setUp();
         Assert.assertEquals(TableUtils.ATTACHABLE_DIR_MARKER, configuration.getAttachPartitionSuffix());
         Assert.assertFalse(configuration.attachPartitionCopy());
@@ -850,8 +853,13 @@ public class AlterTableAttachPartitionFromSoftLinkTest extends AbstractAlterTabl
                         // check that the column files still exist within the partition folder (attached from soft link)
                         final int pathLen = path.size();
                         Assert.assertTrue(ff.exists(path.trimTo(pathLen).concat("s.d").$()));
-                        Assert.assertTrue(ff.exists(path.trimTo(pathLen).concat("s.k").$()));
-                        Assert.assertTrue(ff.exists(path.trimTo(pathLen).concat("s.v").$()));
+                        if (configuration.getDefaultSymbolIndexType() == IndexType.BITMAP) {
+                            Assert.assertTrue(ff.exists(path.trimTo(pathLen).concat("s.k").$()));
+                            Assert.assertTrue(ff.exists(path.trimTo(pathLen).concat("s.v").$()));
+                        } else {
+                            Assert.assertTrue(ff.exists(path.trimTo(pathLen).concat("s.pk").$()));
+                            Assert.assertTrue(ff.exists(path.trimTo(pathLen).concat("s.pv.0").$()));
+                        }
 
                         engine.releaseAllReaders();
                         engine.releaseAllWriters();
@@ -873,8 +881,13 @@ public class AlterTableAttachPartitionFromSoftLinkTest extends AbstractAlterTabl
 
                         // check that the column files still exist within the partition folder (attached from soft link)
                         Assert.assertTrue(ff.exists(path.trimTo(pathLen).concat("s.d").$()));
-                        Assert.assertTrue(ff.exists(path.trimTo(pathLen).concat("s.k").$()));
-                        Assert.assertTrue(ff.exists(path.trimTo(pathLen).concat("s.v").$()));
+                        if (configuration.getDefaultSymbolIndexType() == IndexType.BITMAP) {
+                            Assert.assertTrue(ff.exists(path.trimTo(pathLen).concat("s.k").$()));
+                            Assert.assertTrue(ff.exists(path.trimTo(pathLen).concat("s.v").$()));
+                        } else {
+                            Assert.assertTrue(ff.exists(path.trimTo(pathLen).concat("s.pk").$()));
+                            Assert.assertTrue(ff.exists(path.trimTo(pathLen).concat("s.pv.0").$()));
+                        }
                         return null;
                     }
             );

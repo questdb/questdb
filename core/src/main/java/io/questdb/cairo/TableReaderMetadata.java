@@ -162,6 +162,11 @@ public class TableReaderMetadata extends AbstractRecordMetadata implements Table
     }
 
     @Override
+    public byte getIndexType(int columnIndex) {
+        return getColumnMetadata(columnIndex).getIndexType();
+    }
+
+    @Override
     public int getMaxUncommittedRows() {
         return maxUncommittedRows;
     }
@@ -183,7 +188,7 @@ public class TableReaderMetadata extends AbstractRecordMetadata implements Table
 
     @Override
     public boolean getSymbolCacheFlag(int columnIndex) {
-        return getColumnMetadata(columnIndex).isSymbolIndexFlag();
+        return getColumnMetadata(columnIndex).isSymbolCacheFlag();
     }
 
     @Override
@@ -213,11 +218,6 @@ public class TableReaderMetadata extends AbstractRecordMetadata implements Table
 
     public int getWriterColumnCount() {
         return writerColumnCount;
-    }
-
-    @Override
-    public boolean isIndexed(int columnIndex) {
-        return getColumnMetadata(columnIndex).isSymbolIndexFlag();
     }
 
     public boolean isSoftLink() {
@@ -333,7 +333,7 @@ public class TableReaderMetadata extends AbstractRecordMetadata implements Table
                 TableReaderMetadataColumn colMeta = new TableReaderMetadataColumn(
                         colName,
                         columnType,
-                        TableUtils.isColumnIndexed(mem, writerIndex),
+                        TableUtils.getColumnIndexType(mem, writerIndex),
                         TableUtils.getIndexBlockCapacity(mem, writerIndex),
                         true,
                         null,
@@ -356,6 +356,7 @@ public class TableReaderMetadata extends AbstractRecordMetadata implements Table
             }
         }
         this.columnCount = columnMetadata.size();
+        readCoveringColumnData(mem, columnCount);
     }
 
     public void updateTableToken(TableToken tableToken) {
@@ -399,7 +400,7 @@ public class TableReaderMetadata extends AbstractRecordMetadata implements Table
             int denseSymbolIndex = columnOrderList.get(i + 2);
             int newColumnType = TableUtils.getColumnType(newMetaMem, writerIndex);
             int columnType = TableUtils.getColumnType(newMetaMem, writerIndex);
-            boolean isIndexed = TableUtils.isColumnIndexed(newMetaMem, writerIndex);
+            byte indexType = TableUtils.getColumnIndexType(newMetaMem, writerIndex);
             boolean isDedupKey = TableUtils.isColumnDedupKey(newMetaMem, writerIndex);
             int indexBlockCapacity = TableUtils.getIndexBlockCapacity(newMetaMem, writerIndex);
             boolean symbolIsCached = TableUtils.isSymbolCached(newMetaMem, writerIndex);
@@ -436,7 +437,7 @@ public class TableReaderMetadata extends AbstractRecordMetadata implements Table
                 if (rename
                         || existing == null
                         || existing.getWriterIndex() != writerIndex
-                        || existing.isSymbolIndexFlag() != isIndexed
+                        || existing.getIndexType() != indexType
                         || existing.getIndexValueBlockCapacity() != indexBlockCapacity
                         || existing.isDedupKeyFlag() != isDedupKey
                         || existing.getDenseSymbolIndex() != denseSymbolIndex
@@ -448,7 +449,7 @@ public class TableReaderMetadata extends AbstractRecordMetadata implements Table
                             new TableReaderMetadataColumn(
                                     newName,
                                     columnType,
-                                    isIndexed,
+                                    indexType,
                                     indexBlockCapacity,
                                     true,
                                     null,
@@ -488,6 +489,7 @@ public class TableReaderMetadata extends AbstractRecordMetadata implements Table
             this.timestampIndex = timestampIndex;
         }
 
+        readCoveringColumnData(newMetaMem, newColumnCount);
         return transitionIndex;
     }
 
@@ -502,5 +504,49 @@ public class TableReaderMetadata extends AbstractRecordMetadata implements Table
 
     private MemoryR getMetaMem() {
         return !isCopy ? metaMem : metaCopyMem;
+    }
+
+    private void readCoveringColumnData(MemoryR mem, int columnCount) {
+        long memSize = mem.size();
+        // Compute offset past all column names
+        long offset = TableUtils.getColumnNameOffset(columnCount);
+        for (int i = 0; i < columnCount; i++) {
+            if (offset + Integer.BYTES > memSize) {
+                return;
+            }
+            int strLen = mem.getInt(offset);
+            offset += Vm.getStorageLength(strLen);
+        }
+        if (offset >= memSize) {
+            return;
+        }
+
+        // Read covering column indices for each column that has the covering flag
+        for (int i = 0; i < columnCount; i++) {
+            boolean isCovering = TableUtils.isColumnCovering(mem, i);
+            if (isCovering) {
+                if (offset + Integer.BYTES > mem.size()) {
+                    break;
+                }
+                int includeCount = mem.getInt(offset);
+                offset += Integer.BYTES;
+                if (includeCount > 0 && offset + (long) includeCount * Integer.BYTES <= mem.size()) {
+                    IntList indices = new IntList(includeCount);
+                    for (int j = 0; j < includeCount; j++) {
+                        indices.add(mem.getInt(offset));
+                        offset += Integer.BYTES;
+                    }
+                    // Find the corresponding TableColumnMetadata for writerIndex i
+                    for (int k = 0, n = columnMetadata.size(); k < n; k++) {
+                        if (columnMetadata.getQuick(k).getWriterIndex() == i) {
+                            columnMetadata.getQuick(k).setCoveringColumnIndices(indices);
+                            break;
+                        }
+                    }
+                } else if (includeCount > 0) {
+                    break;
+                }
+            }
+        }
     }
 }

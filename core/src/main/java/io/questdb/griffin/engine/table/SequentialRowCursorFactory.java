@@ -24,10 +24,15 @@
 
 package io.questdb.griffin.engine.table;
 
-import io.questdb.cairo.sql.*;
+import io.questdb.cairo.sql.PageFrame;
+import io.questdb.cairo.sql.PageFrameCursor;
+import io.questdb.cairo.sql.PageFrameMemory;
+import io.questdb.cairo.sql.RowCursor;
+import io.questdb.cairo.sql.RowCursorFactory;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 
 /**
@@ -51,6 +56,7 @@ public class SequentialRowCursorFactory implements RowCursorFactory {
 
     @Override
     public RowCursor getCursor(PageFrame pageFrame, PageFrameMemory pageFrameMemory) {
+        Misc.freeObjListAndClear(cursors);
         for (int i = 0, n = cursorFactoriesIdx[0]; i < n; i++) {
             cursors.extendAndSet(i, cursorFactories.getQuick(i).getCursor(pageFrame, pageFrameMemory));
         }
@@ -88,6 +94,12 @@ public class SequentialRowCursorFactory implements RowCursorFactory {
     private class SequentialRowCursor implements RowCursor {
         private RowCursor currentCursor;
         private int cursorIndex = 0;
+
+        @Override
+        public void close() {
+            Misc.freeObjListAndClear(cursors);
+            currentCursor = null;
+        }
 
         @Override
         public boolean hasNext() {

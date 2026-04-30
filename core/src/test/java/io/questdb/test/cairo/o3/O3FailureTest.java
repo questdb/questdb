@@ -74,7 +74,9 @@ public class O3FailureTest extends AbstractO3Test {
     private static final FilesFacade ffOpenIndexFailure = new TestFilesFacadeImpl() {
         @Override
         public long openRW(LPSZ name, int opts) {
-            if (Utf8s.endsWithAscii(name, Files.SEPARATOR + "sym.v") && Utf8s.containsAscii(name, "1970-01-02") && counter.decrementAndGet() == 0) {
+            boolean isSymIndexValueFile = Utf8s.endsWithAscii(name, Files.SEPARATOR + "sym.v")
+                    || Utf8s.containsAscii(name, Files.SEPARATOR + "sym.pv.");
+            if (isSymIndexValueFile && Utf8s.containsAscii(name, "1970-01-02") && counter.decrementAndGet() == 0) {
                 return -1;
             }
             return super.openRW(name, opts);

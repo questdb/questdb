@@ -36,8 +36,10 @@ public class HydrateTableMetadataFunctionFactoryTest extends AbstractCairoTest {
             execute("CREATE TABLE 'b' ( ts timestamp) timestamp(ts) partition by day wal");
             assertSql("hydrate_table_metadata\ntrue\n", "select hydrate_table_metadata('a', 'b')");
             assertSql(
-                    "column\ttype\tindexed\tindexBlockCapacity\tsymbolCached\tsymbolCapacity\tsymbolTableSize\tdesignated\tupsertKey\n" +
-                            "ts\tTIMESTAMP\tfalse\t0\tfalse\t0\t0\ttrue\tfalse\n",
+                    """
+                            column\ttype\tindexed\tindexBlockCapacity\tsymbolCached\tsymbolCapacity\tsymbolTableSize\tdesignated\tupsertKey\tindexType\tindexInclude
+                            ts\tTIMESTAMP\tfalse\t0\tfalse\t0\t0\ttrue\tfalse\t\t
+                            """,
                     "table_columns('a')"
             );
         });

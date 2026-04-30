@@ -26,14 +26,15 @@ package io.questdb.test.cairo.wal;
 
 import io.questdb.PropertyKey;
 import io.questdb.cairo.AlterTableContextException;
-import io.questdb.cairo.BitmapIndexUtils;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.IndexType;
 import io.questdb.cairo.MicrosTimestampDriver;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.TableWriterAPI;
+import io.questdb.cairo.idx.BitmapIndexUtils;
 import io.questdb.cairo.security.AllowAllSecurityContext;
 import io.questdb.cairo.sql.InsertMethod;
 import io.questdb.cairo.sql.InsertOperation;
@@ -58,6 +59,7 @@ import io.questdb.std.IntHashSet;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 import io.questdb.std.Os;
+import io.questdb.std.Rnd;
 import io.questdb.std.datetime.microtime.Micros;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
@@ -109,7 +111,7 @@ public class WalTableFailureTest extends AbstractCairoTest {
                                 ColumnType.INT,
                                 0,
                                 false,
-                                false,
+                                IndexType.NONE,
                                 12,
                                 false,
                                 false,
@@ -165,7 +167,7 @@ public class WalTableFailureTest extends AbstractCairoTest {
                                 ColumnType.INT,
                                 0,
                                 false,
-                                false,
+                                IndexType.NONE,
                                 12,
                                 false,
                                 false,
@@ -455,7 +457,7 @@ public class WalTableFailureTest extends AbstractCairoTest {
                                 ColumnType.INT,
                                 0,
                                 false,
-                                false,
+                                IndexType.NONE,
                                 12,
                                 false,
                                 false,
@@ -511,7 +513,7 @@ public class WalTableFailureTest extends AbstractCairoTest {
                                 ColumnType.INT,
                                 0,
                                 false,
-                                false,
+                                IndexType.NONE,
                                 12,
                                 false,
                                 false,
@@ -1453,6 +1455,8 @@ public class WalTableFailureTest extends AbstractCairoTest {
     @Test
     public void testWalMultipleColumnConversions() throws Exception {
         assertMemoryLeak(() -> {
+            Rnd rnd = TestUtils.generateRandom(LOG);
+            node1.setProperty(PropertyKey.CAIRO_DEFAULT_SYMBOL_INDEX_TYPE, TestUtils.randomSymbolIndexTypeName(rnd));
             execute("create table abc (x0 symbol, x string, y string, y1 symbol, ts timestamp) timestamp(ts) partition by DAY WAL");
             execute("insert into abc values('aa', 'a', 'b', 'bb', '2022-02-24T01')");
             drainWalQueue();

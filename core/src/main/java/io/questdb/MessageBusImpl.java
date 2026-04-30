@@ -50,6 +50,7 @@ import io.questdb.tasks.O3CopyTask;
 import io.questdb.tasks.O3OpenColumnTask;
 import io.questdb.tasks.O3PartitionPurgeTask;
 import io.questdb.tasks.O3PartitionTask;
+import io.questdb.tasks.PostingSealPurgeTask;
 import io.questdb.tasks.TableWriterTask;
 import io.questdb.tasks.VectorAggregateTask;
 import io.questdb.tasks.WalTxnNotificationTask;
@@ -103,6 +104,9 @@ public class MessageBusImpl implements MessageBus {
     private final RingQueue<PageFrameReduceTask>[] pageFrameReduceQueue;
     private final int pageFrameReduceShardCount;
     private final MCSequence[] pageFrameReduceSubSeq;
+    private final MPSequence postingSealPurgePubSeq;
+    private final RingQueue<PostingSealPurgeTask> postingSealPurgeQueue;
+    private final SCSequence postingSealPurgeSubSeq;
     private final MPSequence queryCacheEventPubSeq;
     private final MCSequence queryCacheEventSubSeq;
     private final ConcurrentQueue<QueryTrace> queryTraceQueue;
@@ -176,6 +180,15 @@ public class MessageBusImpl implements MessageBus {
             this.columnPurgeSubSeq = new SCSequence();
             this.columnPurgePubSeq = new MPSequence(this.columnPurgeQueue.getCycle());
             this.columnPurgePubSeq.then(this.columnPurgeSubSeq).then(this.columnPurgePubSeq);
+
+            // POSTING-seal purge queue. Multi-producer (every TableWriter
+            // commit thread can publish) → single-consumer (PostingSealPurgeJob).
+            // Reuses the column-purge capacity knob — publish rate is bounded
+            // by seal frequency (one per ~MAX_GEN_COUNT commits per column).
+            this.postingSealPurgeQueue = new RingQueue<>(PostingSealPurgeTask::new, configuration.getColumnPurgeQueueCapacity());
+            this.postingSealPurgeSubSeq = new SCSequence();
+            this.postingSealPurgePubSeq = new MPSequence(this.postingSealPurgeQueue.getCycle());
+            this.postingSealPurgePubSeq.then(this.postingSealPurgeSubSeq).then(this.postingSealPurgePubSeq);
 
             this.pageFrameReduceShardCount = configuration.getPageFrameReduceShardCount();
 
@@ -518,6 +531,21 @@ public class MessageBusImpl implements MessageBus {
     @Override
     public MCSequence getPageFrameReduceSubSeq(int shard) {
         return pageFrameReduceSubSeq[shard];
+    }
+
+    @Override
+    public MPSequence getPostingSealPurgePubSeq() {
+        return postingSealPurgePubSeq;
+    }
+
+    @Override
+    public RingQueue<PostingSealPurgeTask> getPostingSealPurgeQueue() {
+        return postingSealPurgeQueue;
+    }
+
+    @Override
+    public SCSequence getPostingSealPurgeSubSeq() {
+        return postingSealPurgeSubSeq;
     }
 
     @Override

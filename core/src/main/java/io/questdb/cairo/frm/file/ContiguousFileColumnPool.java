@@ -72,6 +72,7 @@ public class ContiguousFileColumnPool implements FrameColumnPool, Closeable {
                 long columnTxn,
                 int columnType,
                 int indexBlockCapacity,
+                byte indexType,
                 long columnTop,
                 int columnIndex,
                 boolean isEmpty,
@@ -92,7 +93,7 @@ public class ContiguousFileColumnPool implements FrameColumnPool, Closeable {
             if (columnType == ColumnType.SYMBOL) {
                 if (canWrite && isIndexed) {
                     ContiguousFileIndexedFrameColumn indexedColumn = getIndexedColumn();
-                    indexedColumn.ofRW(partitionPath, columnName, columnTxn, columnType, indexBlockCapacity, columnTop, columnIndex, isEmpty);
+                    indexedColumn.ofRW(partitionPath, columnName, columnTxn, columnType, indexBlockCapacity, indexType, columnTop, columnIndex, isEmpty);
                     return indexedColumn;
                 }
             }

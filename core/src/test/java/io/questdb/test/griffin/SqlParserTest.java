@@ -3159,6 +3159,205 @@ public class SqlParserTest extends AbstractSqlParserTest {
     }
 
     @Test
+    public void testCreateTableInPlaceIndexTypePosting() throws SqlException {
+        assertCreateTable(
+                "create atomic table x (" +
+                        "t TIMESTAMP," +
+                        " x SYMBOL capacity 128 cache index type POSTING) timestamp(t)",
+                "create table x (" +
+                        "t TIMESTAMP, " +
+                        "x SYMBOL index type posting) " +
+                        "timestamp(t)"
+        );
+    }
+
+    @Test
+    public void testCreateTableInPlaceIndexTypeBitmap() throws SqlException {
+        assertCreateTable(
+                "create atomic table x (" +
+                        "t TIMESTAMP," +
+                        " x SYMBOL capacity 128 cache index capacity 256) timestamp(t)",
+                "create table x (" +
+                        "t TIMESTAMP, " +
+                        "x SYMBOL index type bitmap) " +
+                        "timestamp(t)"
+        );
+    }
+
+    @Test
+    public void testCreateTableInPlaceIndexTypeBitmapWithCapacity() throws SqlException {
+        assertCreateTable(
+                "create atomic table x (" +
+                        "t TIMESTAMP," +
+                        " x SYMBOL capacity 128 cache index capacity 64) timestamp(t)",
+                "create table x (" +
+                        "t TIMESTAMP, " +
+                        "x SYMBOL index type bitmap capacity 64) " +
+                        "timestamp(t)"
+        );
+    }
+
+    @Test
+    public void testCreateTableInPlaceIndexTypePostingWithCapacityFails() throws Exception {
+        assertSyntaxError(
+                "create table x (" +
+                        "t TIMESTAMP, " +
+                        "x SYMBOL index type posting capacity 64) " +
+                        "timestamp(t)",
+                57,
+                "CAPACITY is only supported for BITMAP index type"
+        );
+    }
+
+    @Test
+    public void testCreateTableInPlaceIndexTypeUnknown() throws Exception {
+        assertSyntaxError(
+                "create table x (" +
+                        "t TIMESTAMP, " +
+                        "x SYMBOL index type foo) " +
+                        "timestamp(t)",
+                49,
+                "unknown index type: foo"
+        );
+    }
+
+    @Test
+    public void testCreateTableInPlaceIndexTypePostingDelta() throws SqlException {
+        assertCreateTable(
+                "create atomic table x (" +
+                        "t TIMESTAMP," +
+                        " x SYMBOL capacity 128 cache index type POSTING DELTA) timestamp(t)",
+                "create table x (" +
+                        "t TIMESTAMP, " +
+                        "x SYMBOL index type posting delta) " +
+                        "timestamp(t)"
+        );
+    }
+
+    @Test
+    public void testCreateTableInPlaceIndexTypePostingEf() throws SqlException {
+        assertCreateTable(
+                "create atomic table x (" +
+                        "t TIMESTAMP," +
+                        " x SYMBOL capacity 128 cache index type POSTING EF) timestamp(t)",
+                "create table x (" +
+                        "t TIMESTAMP, " +
+                        "x SYMBOL index type posting ef) " +
+                        "timestamp(t)"
+        );
+    }
+
+    @Test
+    public void testCreateTableInPlaceIndexTypePostingDeltaWithCapacityFails() throws Exception {
+        assertSyntaxError(
+                "create table x (" +
+                        "t TIMESTAMP, " +
+                        "x SYMBOL index type posting delta capacity 64) " +
+                        "timestamp(t)",
+                63,
+                "CAPACITY is only supported for BITMAP index type"
+        );
+    }
+
+    @Test
+    public void testCreateTableInPlaceIndexTypePostingEfWithCapacityFails() throws Exception {
+        assertSyntaxError(
+                "create table x (" +
+                        "t TIMESTAMP, " +
+                        "x SYMBOL index type posting ef capacity 64) " +
+                        "timestamp(t)",
+                60,
+                "CAPACITY is only supported for BITMAP index type"
+        );
+    }
+
+    @Test
+    public void testCreateTableInPlaceIndexIncludeInfersPosting() throws SqlException {
+        assertCreateTable(
+                "create atomic table x (" +
+                        "t TIMESTAMP," +
+                        " p DOUBLE," +
+                        " x SYMBOL capacity 128 cache index type POSTING) timestamp(t)",
+                "create table x (" +
+                        "t TIMESTAMP, " +
+                        "p DOUBLE, " +
+                        "x SYMBOL index include (p)) " +
+                        "timestamp(t)"
+        );
+    }
+
+    @Test
+    public void testCreateTableInPlaceIndexTypePostingInclude() throws SqlException {
+        assertCreateTable(
+                "create atomic table x (" +
+                        "t TIMESTAMP," +
+                        " p DOUBLE," +
+                        " x SYMBOL capacity 128 cache index type POSTING) timestamp(t)",
+                "create table x (" +
+                        "t TIMESTAMP, " +
+                        "p DOUBLE, " +
+                        "x SYMBOL index type posting include (p)) " +
+                        "timestamp(t)"
+        );
+    }
+
+    @Test
+    public void testCreateTableInPlaceIndexTypePostingEfInclude() throws SqlException {
+        assertCreateTable(
+                "create atomic table x (" +
+                        "t TIMESTAMP," +
+                        " p DOUBLE," +
+                        " x SYMBOL capacity 128 cache index type POSTING EF) timestamp(t)",
+                "create table x (" +
+                        "t TIMESTAMP, " +
+                        "p DOUBLE, " +
+                        "x SYMBOL index type posting ef include (p)) " +
+                        "timestamp(t)"
+        );
+    }
+
+    @Test
+    public void testCreateTableInPlaceIndexTypeBitmapIncludeFails() throws Exception {
+        assertSyntaxError(
+                "create table x (" +
+                        "t TIMESTAMP, " +
+                        "p DOUBLE, " +
+                        "x SYMBOL index type bitmap include (p)) " +
+                        "timestamp(t)",
+                66,
+                "INCLUDE is only supported for POSTING index type"
+        );
+    }
+
+    @Test
+    public void testCreateTableOutOfLineIndexTypePostingDelta() throws SqlException {
+        assertCreateTable(
+                "create atomic table x (" +
+                        "t TIMESTAMP," +
+                        " x SYMBOL capacity 128 cache index type POSTING DELTA) timestamp(t)",
+                "create table x (" +
+                        "t TIMESTAMP, " +
+                        "x SYMBOL), " +
+                        "index(x type posting delta) " +
+                        "timestamp(t)"
+        );
+    }
+
+    @Test
+    public void testCreateTableOutOfLineIndexTypePostingEf() throws SqlException {
+        assertCreateTable(
+                "create atomic table x (" +
+                        "t TIMESTAMP," +
+                        " x SYMBOL capacity 128 cache index type POSTING EF) timestamp(t)",
+                "create table x (" +
+                        "t TIMESTAMP, " +
+                        "x SYMBOL), " +
+                        "index(x type posting ef) " +
+                        "timestamp(t)"
+        );
+    }
+
+    @Test
     public void testCreateTableInPlaceIndexCapacityHigh() throws Exception {
         assertSyntaxError(
                 "create table x (" +

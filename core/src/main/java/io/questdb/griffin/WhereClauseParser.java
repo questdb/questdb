@@ -106,6 +106,7 @@ public final class WhereClauseParser implements Mutable {
     private boolean allKeyExcludedValuesAreKnown = true;
     private boolean allKeyValuesAreKnown = true;
     private boolean isConstFunction;
+    private boolean noIndex;
     private CharSequence preferredKeyColumn;
     private CharSequence timestamp;
 
@@ -143,12 +144,14 @@ public final class WhereClauseParser implements Mutable {
             @NotNull RecordMetadata metadata,
             @NotNull SqlExecutionContext executionContext,
             boolean latestByMultiColumn,
-            @NotNull TableReader reader
+            @NotNull TableReader reader,
+            boolean noIndex
     ) throws SqlException {
         clearKeys();
         clearExcludedKeys();
 
         this.timestamp = timestampIndex < 0 ? null : m.getColumnName(timestampIndex);
+        this.noIndex = noIndex;
         this.preferredKeyColumn = preferredKeyColumn;
 
         // Extracts designated timestamp argument from dateadd predicates, if any.
@@ -1888,7 +1891,7 @@ public final class WhereClauseParser implements Mutable {
         return !latestByMultiColumn &&
                 (
                         Chars.equalsIgnoreCaseNc(columnName, preferredKeyColumn)
-                                || (preferredKeyColumn == null && m.isColumnIndexed(m.getColumnIndex(columnName)))
+                                || (preferredKeyColumn == null && !noIndex && m.isColumnIndexed(m.getColumnIndex(columnName)))
                 );
     }
 

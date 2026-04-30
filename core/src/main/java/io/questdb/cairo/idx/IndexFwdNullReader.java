@@ -22,21 +22,32 @@
  *
  ******************************************************************************/
 
-package io.questdb.cairo;
+package io.questdb.cairo.idx;
 
 
 import io.questdb.NullIndexFrameCursor;
+import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.ColumnVersionReader;
+import io.questdb.cairo.IndexFrameCursor;
+import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cairo.sql.RowCursor;
+import io.questdb.std.Misc;
+import io.questdb.std.ObjList;
 import io.questdb.std.str.Path;
 
-public class BitmapIndexFwdNullReader implements BitmapIndexReader {
-    private final NullCursor cursor = new NullCursor();
+public class IndexFwdNullReader implements IndexReader {
+    private final ObjList<NullCursor> freeCursors = new ObjList<>();
     private long columnTxn;
     private long partitionTxn;
 
-    public BitmapIndexFwdNullReader(long columnTxn, long partitionTxn) {
+    public IndexFwdNullReader(long columnTxn, long partitionTxn) {
         this.columnTxn = columnTxn;
         this.partitionTxn = partitionTxn;
+    }
+
+    @Override
+    public void close() {
+        Misc.clear(freeCursors);
     }
 
     @Override
@@ -50,12 +61,17 @@ public class BitmapIndexFwdNullReader implements BitmapIndexReader {
     }
 
     @Override
-    public RowCursor getCursor(boolean cachedInstance, int key, long minValue, long maxValue) {
-        final NullCursor cursor = getCursor(cachedInstance);
-        // Cursor only returns records when key is for the NULL value.
-        cursor.maxValue = key == 0 ? maxValue - minValue + 1 : 0;
-        cursor.value = 0;
-        return cursor;
+    public RowCursor getCursor(int key, long minValue, long maxValue) {
+        NullCursor c;
+        if (freeCursors.size() > 0) {
+            c = freeCursors.popLast();
+            c.isPooled = false;
+        } else {
+            c = new NullCursor(this.freeCursors);
+        }
+        c.maxValue = key == 0 ? maxValue - minValue + 1 : 0;
+        c.value = 0;
+        return c;
     }
 
     @Override
@@ -104,7 +120,9 @@ public class BitmapIndexFwdNullReader implements BitmapIndexReader {
     }
 
     @Override
-    public void of(CairoConfiguration configuration, Path path, CharSequence columnName, long columnNameTxn, long partitionTxn, long columnTop) {
+    public void of(CairoConfiguration configuration, Path path, CharSequence columnName, long columnNameTxn,
+                   long partitionTxn, long columnTop, RecordMetadata metadata,
+                   ColumnVersionReader columnVersionReader, long partitionTimestamp) {
         this.partitionTxn = partitionTxn;
         this.columnTxn = columnNameTxn;
     }
@@ -114,13 +132,24 @@ public class BitmapIndexFwdNullReader implements BitmapIndexReader {
         // no-op
     }
 
-    private NullCursor getCursor(boolean cachedInstance) {
-        return cachedInstance ? cursor : new NullCursor();
-    }
 
     private static class NullCursor implements RowCursor {
+        private final ObjList<NullCursor> pool;
+        private boolean isPooled;
         private long maxValue;
         private long value;
+
+        NullCursor(ObjList<NullCursor> freeCursors) {
+            this.pool = freeCursors;
+        }
+
+        @Override
+        public void close() {
+            if (!isPooled && pool.size() < MAX_CACHED_FREE_CURSORS) {
+                pool.add(this);
+                isPooled = true;
+            }
+        }
 
         @Override
         public boolean hasNext() {

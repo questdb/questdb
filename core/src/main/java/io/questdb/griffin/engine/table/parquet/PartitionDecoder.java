@@ -27,6 +27,7 @@ package io.questdb.griffin.engine.table.parquet;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.GenericRecordMetadata;
+import io.questdb.cairo.IndexType;
 import io.questdb.cairo.TableColumnMetadata;
 import io.questdb.griffin.engine.table.ParquetRowGroupFilter;
 import io.questdb.log.Log;
@@ -491,7 +492,7 @@ public class PartitionDecoder implements QuietCloseable {
                         dest.add(new TableColumnMetadata(
                                 columnName,
                                 columnType,
-                                false,
+                                IndexType.NONE,
                                 64,
                                 true,
                                 null

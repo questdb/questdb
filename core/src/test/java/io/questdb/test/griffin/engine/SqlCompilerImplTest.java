@@ -223,6 +223,145 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testAlterTableAddIndexBitmapIncludeFails() throws Exception {
+        execute("create table t_idx (ts TIMESTAMP, sym SYMBOL, p DOUBLE) timestamp(ts) PARTITION BY DAY BYPASS WAL");
+        assertException(
+                "alter table t_idx alter column sym add index type bitmap include (p)",
+                57,
+                "INCLUDE is only supported for POSTING index type"
+        );
+    }
+
+    @Test
+    public void testAlterTableAddIndexCapacityInfersBitmap() throws Exception {
+        addIndexAndAssertType("alter table t_idx alter column sym add index capacity 256", "BITMAP");
+    }
+
+    @Test
+    public void testAlterTableAddIndexDefault() throws Exception {
+        addIndexAndAssertType("alter table t_idx alter column sym add index", "BITMAP");
+    }
+
+    @Test
+    public void testAlterTableAddIndexIncludeInfersPosting() throws Exception {
+        addIndexAndAssertType("alter table t_idx alter column sym add index include (p)", "POSTING");
+    }
+
+    @Test
+    public void testAlterTableAddIndexPosting() throws Exception {
+        addIndexAndAssertType("alter table t_idx alter column sym add index type posting", "POSTING");
+    }
+
+    @Test
+    public void testAlterTableAddColumnIndexBitmapCapacity() throws Exception {
+        addColumnAndAssertType("alter table t_idx add column sym SYMBOL INDEX TYPE BITMAP CAPACITY 256", "BITMAP");
+    }
+
+    @Test
+    public void testAlterTableAddColumnIndexCapacityInfersBitmap() throws Exception {
+        addColumnAndAssertType("alter table t_idx add column sym SYMBOL INDEX CAPACITY 256", "BITMAP");
+    }
+
+    @Test
+    public void testAlterTableAddColumnIndexDefault() throws Exception {
+        addColumnAndAssertType("alter table t_idx add column sym SYMBOL INDEX", "BITMAP");
+    }
+
+    @Test
+    public void testAlterTableAddColumnIndexPosting() throws Exception {
+        addColumnAndAssertType("alter table t_idx add column sym SYMBOL INDEX TYPE POSTING", "POSTING");
+    }
+
+    @Test
+    public void testAlterTableAddColumnIndexPostingDelta() throws Exception {
+        addColumnAndAssertType("alter table t_idx add column sym SYMBOL INDEX TYPE POSTING DELTA", "POSTING DELTA");
+    }
+
+    @Test
+    public void testAlterTableAddColumnIndexPostingEf() throws Exception {
+        addColumnAndAssertType("alter table t_idx add column sym SYMBOL INDEX TYPE POSTING EF", "POSTING EF");
+    }
+
+    @Test
+    public void testAlterTableAddColumnPostingCapacityFails() throws Exception {
+        execute("create table t_idx (ts TIMESTAMP) timestamp(ts) PARTITION BY DAY BYPASS WAL");
+        assertException(
+                "alter table t_idx add column sym SYMBOL INDEX TYPE POSTING CAPACITY 256",
+                59,
+                "CAPACITY is only supported for BITMAP index type"
+        );
+    }
+
+    @Test
+    public void testAlterTableAddColumnPostingDeltaCapacityFails() throws Exception {
+        execute("create table t_idx (ts TIMESTAMP) timestamp(ts) PARTITION BY DAY BYPASS WAL");
+        assertException(
+                "alter table t_idx add column sym SYMBOL INDEX TYPE POSTING DELTA CAPACITY 256",
+                65,
+                "CAPACITY is only supported for BITMAP index type"
+        );
+    }
+
+    @Test
+    public void testAlterTableAddColumnPostingEfCapacityFails() throws Exception {
+        execute("create table t_idx (ts TIMESTAMP) timestamp(ts) PARTITION BY DAY BYPASS WAL");
+        assertException(
+                "alter table t_idx add column sym SYMBOL INDEX TYPE POSTING EF CAPACITY 256",
+                62,
+                "CAPACITY is only supported for BITMAP index type"
+        );
+    }
+
+    private void addColumnAndAssertType(String alterSql, String expectedIndexType) throws Exception {
+        execute("create table t_idx (ts TIMESTAMP) timestamp(ts) PARTITION BY DAY BYPASS WAL");
+        execute(alterSql);
+        assertSql(
+                "indexType\n" + expectedIndexType + "\n",
+                "SELECT indexType FROM (SHOW COLUMNS FROM t_idx) WHERE column = 'sym'"
+        );
+    }
+
+    @Test
+    public void testAlterTableAddIndexPostingCapacityFails() throws Exception {
+        execute("create table t_idx (ts TIMESTAMP, sym SYMBOL, p DOUBLE) timestamp(ts) PARTITION BY DAY BYPASS WAL");
+        assertException(
+                "alter table t_idx alter column sym add index type posting capacity 256",
+                58,
+                "CAPACITY is only supported for BITMAP index type"
+        );
+    }
+
+    @Test
+    public void testAlterTableAddIndexPostingDelta() throws Exception {
+        addIndexAndAssertType("alter table t_idx alter column sym add index type posting delta", "POSTING DELTA");
+    }
+
+    @Test
+    public void testAlterTableAddIndexPostingEf() throws Exception {
+        addIndexAndAssertType("alter table t_idx alter column sym add index type posting ef", "POSTING EF");
+    }
+
+    @Test
+    public void testAlterTableAddIndexPostingEfInclude() throws Exception {
+        addIndexAndAssertType("alter table t_idx alter column sym add index type posting ef include (p)", "POSTING EF");
+    }
+
+    @Test
+    public void testAlterTableAddIndexPostingInclude() throws Exception {
+        addIndexAndAssertType("alter table t_idx alter column sym add index type posting include (p)", "POSTING");
+    }
+
+    private void addIndexAndAssertType(String alterSql, String expectedIndexType) throws Exception {
+        execute("create table t_idx (ts TIMESTAMP, sym SYMBOL, p DOUBLE) timestamp(ts) PARTITION BY DAY BYPASS WAL");
+        execute("insert into t_idx values ('2024-01-01T00:00:00', 'A', 1.0)");
+        execute(alterSql);
+        assertSql(
+                "indexType\n" + expectedIndexType + "\n",
+                "SELECT indexType FROM (SHOW COLUMNS FROM t_idx) WHERE column = 'sym'"
+        );
+    }
+
+    @Test
     public void testCannotCreateTable() throws Exception {
         assertException(
                 new TestFilesFacadeImpl() {

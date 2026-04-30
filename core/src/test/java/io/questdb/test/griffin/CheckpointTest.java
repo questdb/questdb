@@ -33,9 +33,9 @@ import io.questdb.PropBootstrapConfiguration;
 import io.questdb.PropertyKey;
 import io.questdb.PublicPassthroughConfiguration;
 import io.questdb.ServerConfiguration;
-import io.questdb.cairo.BitmapIndexUtils;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoConfigurationWrapper;
+import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.CheckpointListener;
 import io.questdb.cairo.ColumnType;
@@ -49,6 +49,7 @@ import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.TxReader;
+import io.questdb.cairo.idx.BitmapIndexUtils;
 import io.questdb.cairo.mv.MatViewDefinition;
 import io.questdb.cairo.mv.MatViewState;
 import io.questdb.cairo.security.AllowAllSecurityContext;
@@ -1018,6 +1019,354 @@ public class CheckpointTest extends AbstractCairoTest {
             final long expectedSym2X = Long.parseLong(sym2XCountBefore.split("\n")[1].trim()) + 1;
             assertSql("count\n" + expectedSym1A + "\n", "select count() from " + tableName + " where sym1 = 'A'");
             assertSql("count\n" + expectedSym2X + "\n", "select count() from " + tableName + " where sym2 = 'X'");
+            engine.checkpointRelease();
+        });
+    }
+
+    @Test
+    public void testCheckpointRestoreRebuildsPostingIndex() throws Exception {
+        // Regression: TableSnapshotRestore must produce sealed posting index
+        // generations and covering sidecars after rebuild, parallel to how it
+        // produces bitmap .k/.v files. Without the fix, rebuild calls
+        // indexer.index(...) but never seal()/configureCovering(), so .pv
+        // stays at sealTxn=0 and no .pci/.pc<N> files exist. After restore
+        // the table is queryable through the bitmap-style fallback path but
+        // the covering fast path is silently disabled.
+        final String snapshotId = "00000000-0000-0000-0000-000000000000";
+        final String restartedId = "123e4567-e89b-12d3-a456-426614174000";
+        assertMemoryLeak(() -> {
+            setProperty(PropertyKey.CAIRO_LEGACY_SNAPSHOT_INSTANCE_ID, snapshotId);
+            // Force the rebuild path during recovery so the fix in
+            // TableSnapshotRestore is exercised.
+            setProperty(PropertyKey.CAIRO_CHECKPOINT_RECOVERY_REBUILD_COLUMN_INDEXES, "true");
+
+            execute("""
+                    CREATE TABLE t_pi (
+                        ts TIMESTAMP,
+                        sym SYMBOL INDEX TYPE POSTING INCLUDE (price),
+                        price DOUBLE
+                    ) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL
+                    """);
+            // Two partitions, each with several rows of 'A' so the seal
+            // produces measurable sidecar data.
+            execute("""
+                    INSERT INTO t_pi VALUES
+                    ('2024-01-01T00:00:00', 'A', 1.0),
+                    ('2024-01-01T01:00:00', 'B', 2.0),
+                    ('2024-01-01T02:00:00', 'A', 3.0),
+                    ('2024-01-02T00:00:00', 'A', 4.0),
+                    ('2024-01-02T01:00:00', 'B', 5.0),
+                    ('2024-01-02T02:00:00', 'A', 6.0)
+                    """);
+            engine.releaseAllWriters();
+
+            String expected = """
+                    price
+                    1.0
+                    3.0
+                    4.0
+                    6.0
+                    """;
+            assertSql(expected, "SELECT price FROM t_pi WHERE sym = 'A'");
+
+            execute("checkpoint create");
+            engine.clear();
+            setProperty(PropertyKey.CAIRO_LEGACY_SNAPSHOT_INSTANCE_ID, restartedId);
+            engine.checkpointRecover();
+
+            // After restore the data must still be queryable.
+            assertSql(expected, "SELECT price FROM t_pi WHERE sym = 'A'");
+
+            // File-level invariant: every partition must have a sealed
+            // value file (sym.pv.<sealTxn> with sealTxn > 0) and a covering
+            // info sidecar (sym.pci...). Rebuild without seal leaves only
+            // the unsealed sym.pv.0.
+            TableToken tableToken = engine.verifyTableName("t_pi");
+            String dbRoot = engine.getConfiguration().getDbRoot().toString();
+            File tableDir = new File(dbRoot, tableToken.getDirName());
+            for (String partitionPrefix : new String[]{"2024-01-01", "2024-01-02"}) {
+                File[] partDirs = tableDir.listFiles((d, n) -> n.startsWith(partitionPrefix));
+                Assert.assertNotNull("partition dir missing: " + partitionPrefix, partDirs);
+                Assert.assertTrue("partition dir missing: " + partitionPrefix, partDirs.length > 0);
+                File partDir = partDirs[0];
+
+                File[] sealedPv = partDir.listFiles((d, n) -> {
+                    if (!n.startsWith("sym.pv")) return false;
+                    int lastDot = n.lastIndexOf('.');
+                    if (lastDot < 0) return false;
+                    String sealTxn = n.substring(lastDot + 1);
+                    try {
+                        return Long.parseLong(sealTxn) > 0;
+                    } catch (NumberFormatException e) {
+                        return false;
+                    }
+                });
+                Assert.assertNotNull(partitionPrefix + ": sealed .pv file missing", sealedPv);
+                Assert.assertTrue(partitionPrefix + ": sealed .pv file missing (only unsealed sym.pv.0 exists)",
+                        sealedPv.length > 0);
+
+                File[] pci = partDir.listFiles((d, n) -> n.startsWith("sym.pci"));
+                Assert.assertNotNull(partitionPrefix + ": sym.pci sidecar missing", pci);
+                Assert.assertTrue(partitionPrefix + ": sym.pci sidecar missing", pci.length > 0);
+            }
+            engine.checkpointRelease();
+        });
+    }
+
+    @Test
+    public void testCheckpointRestoreRebuildsPostingIndexAfterDropColumn() throws Exception {
+        // Regression: TableSnapshotRestore.configureCoveringForPosting()
+        // dereferences entries in coveringColumnIndices as dense column
+        // indices, but the IntList stores them as writer indices. Once a
+        // table has had any column dropped, dense != writer for columns
+        // that lived after the dropped slot, so the rebuild wires the
+        // .pci sidecar to the wrong covered column.
+        //
+        // Schema below: junk=0, pad=1, sym=2, qty=3, ts=4 (writer indices).
+        // After DROP junk, dense indices become pad=0, sym=1, qty=2, ts=3,
+        // but the on-disk coveringCols entry for sym is still [3] = writer
+        // index of qty. configureCoveringForPosting reads
+        // tableMetadata.getColumnType(3)/getColumnName(3) which now points
+        // at ts. Without the fix, sym.pci is rewritten with ts's writer
+        // index (4) instead of qty's (3).
+        final String snapshotId = "00000000-0000-0000-0000-000000000000";
+        final String restartedId = "123e4567-e89b-12d3-a456-426614174001";
+        assertMemoryLeak(() -> {
+            setProperty(PropertyKey.CAIRO_LEGACY_SNAPSHOT_INSTANCE_ID, snapshotId);
+            setProperty(PropertyKey.CAIRO_CHECKPOINT_RECOVERY_REBUILD_COLUMN_INDEXES, "true");
+            // Disable auto-include so the INCLUDE list is exactly (qty), making
+            // it possible to assert .pci content without coupling to the
+            // designated-timestamp auto-include behavior.
+            setProperty(PropertyKey.CAIRO_POSTING_INDEX_AUTO_INCLUDE_TIMESTAMP, "false");
+
+            execute("""
+                    CREATE TABLE t_pi_drop (
+                        junk DOUBLE,
+                        pad LONG,
+                        sym SYMBOL INDEX TYPE POSTING INCLUDE (qty),
+                        qty LONG,
+                        ts TIMESTAMP
+                    ) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL
+                    """);
+            execute("""
+                    INSERT INTO t_pi_drop VALUES
+                    (0.0, 0, 'A', 100, '2024-01-01T00:00:00'),
+                    (0.0, 0, 'B', 200, '2024-01-01T01:00:00'),
+                    (0.0, 0, 'A', 300, '2024-01-01T02:00:00')
+                    """);
+            execute("ALTER TABLE t_pi_drop DROP COLUMN junk");
+            engine.releaseAllWriters();
+
+            final TableToken tableToken = engine.verifyTableName("t_pi_drop");
+
+            // Resolve qty's and ts's writer indices via the live metadata
+            // so the assertion does not silently flip if the schema changes.
+            final int qtyWriterIdx;
+            final int tsWriterIdx;
+            try (TableReaderMetadata md = new TableReaderMetadata(configuration, tableToken)) {
+                md.loadMetadata();
+                qtyWriterIdx = md.getWriterIndex(md.getColumnIndex("qty"));
+                tsWriterIdx = md.getWriterIndex(md.getColumnIndex("ts"));
+            }
+            Assert.assertNotEquals("setup error: column drop did not shift dense vs. writer indices",
+                    qtyWriterIdx, tsWriterIdx);
+
+            execute("checkpoint create");
+            engine.clear();
+            setProperty(PropertyKey.CAIRO_LEGACY_SNAPSHOT_INSTANCE_ID, restartedId);
+            engine.checkpointRecover();
+
+            String dbRoot = engine.getConfiguration().getDbRoot().toString();
+            File tableDir = new File(dbRoot, tableToken.getDirName());
+            File[] partDirs = tableDir.listFiles((d, n) -> n.startsWith("2024-01-01"));
+            Assert.assertNotNull("partition dir missing", partDirs);
+            Assert.assertTrue("partition dir missing", partDirs.length > 0);
+            File partDir = partDirs[0];
+
+            File[] pci = partDir.listFiles((d, n) -> n.startsWith("sym.pci"));
+            Assert.assertNotNull("sym.pci sidecar missing", pci);
+            Assert.assertTrue("sym.pci sidecar missing", pci.length > 0);
+
+            int[] coverIndices = readPciCoverIndices(pci[0]);
+            Assert.assertEquals("sym.pci must record exactly one INCLUDE column",
+                    1, coverIndices.length);
+            Assert.assertEquals(
+                    "sym.pci must reference qty's writer index, not ts's. "
+                            + "Got " + coverIndices[0] + " (ts writer idx=" + tsWriterIdx + ")",
+                    qtyWriterIdx, coverIndices[0]);
+
+            engine.checkpointRelease();
+        });
+    }
+
+    @Test
+    public void testCheckpointRestoreRebuildsPostingIndexOnParquetPartition() throws Exception {
+        // Regression: TableSnapshotRestore.rebuildParquetPartitionIndexes()
+        // rebuilds POSTING indexes as if they were plain bitmap indexes:
+        // it opens an index writer, feeds row ids, and only does
+        // setMaxValue() + commit(). It never calls configureCovering(...) or
+        // seal(), so .pci / .pc<N> covering sidecars are never produced for
+        // parquet partitions. Worse, removeIndexFiles() (called before the
+        // rebuild) wipes the .pci/.pc<N> that parquet conversion had
+        // originally produced — leaving the partition with no covering
+        // sidecars at all. The reader silently treats missing .pci as "no
+        // sidecars" and the cursor falls back to tableReader.getColumn(...)
+        // which returns null for parquet partitions.
+        assertMemoryLeak(() -> {
+            // Disable auto-include of the designated timestamp so the .pci
+            // contains exactly the explicit INCLUDE column (price).
+            setProperty(PropertyKey.CAIRO_POSTING_INDEX_AUTO_INCLUDE_TIMESTAMP, "false");
+
+            execute("""
+                    CREATE TABLE t_pi_parquet (
+                        ts TIMESTAMP,
+                        sym SYMBOL INDEX TYPE POSTING INCLUDE (price),
+                        price DOUBLE
+                    ) TIMESTAMP(ts) PARTITION BY DAY WAL
+                    """);
+            execute("""
+                    INSERT INTO t_pi_parquet VALUES
+                    ('2024-01-01T00:00:00', 'A', 1.0),
+                    ('2024-01-01T01:00:00', 'B', 2.0),
+                    ('2024-01-01T02:00:00', 'A', 3.0),
+                    ('2024-01-01T03:00:00', 'A', 4.0)
+                    """);
+            drainWalQueue();
+            execute("ALTER TABLE t_pi_parquet CONVERT PARTITION TO PARQUET LIST '2024-01-01'");
+            drainWalQueue();
+
+            // Sanity: covering query works against the parquet partition
+            // before the rebuild, and the .pci sidecar exists.
+            String expected = """
+                    price
+                    1.0
+                    3.0
+                    4.0
+                    """;
+            assertSql(expected, "SELECT price FROM t_pi_parquet WHERE sym = 'A' ORDER BY ts");
+
+            TableToken tableToken = engine.verifyTableName("t_pi_parquet");
+            String dbRoot = engine.getConfiguration().getDbRoot().toString();
+            File tableDir = new File(dbRoot, tableToken.getDirName());
+            File[] partDirs = tableDir.listFiles((d, n) -> n.startsWith("2024-01-01"));
+            Assert.assertNotNull("parquet partition dir missing", partDirs);
+            Assert.assertTrue("parquet partition dir missing", partDirs.length > 0);
+            File partDir = partDirs[0];
+
+            File[] pciBefore = partDir.listFiles((d, n) -> n.startsWith("sym.pci"));
+            Assert.assertNotNull("setup: sym.pci must exist after parquet conversion", pciBefore);
+            Assert.assertTrue("setup: sym.pci must exist after parquet conversion",
+                    pciBefore.length > 0);
+
+            // Release all readers and writers before rebuilding files on
+            // disk. rebuildTableFiles is designed for checkpoint recovery
+            // where the engine restarts, so cached readers must be released
+            // first.
+            engine.clear();
+
+            try (
+                    Path tablePath = new Path().of(dbRoot).concat(tableToken).slash();
+                    TableSnapshotRestore restoreAgent = new TableSnapshotRestore(configuration)
+            ) {
+                restoreAgent.rebuildTableFiles(tablePath, new AtomicInteger(), true);
+            }
+
+            // .pci must still exist after the rebuild. Without the fix,
+            // removeIndexFiles wipes it and the parquet rebuild path never
+            // recreates it.
+            File[] pciAfter = partDir.listFiles((d, n) -> n.startsWith("sym.pci"));
+            Assert.assertNotNull("sym.pci must exist after parquet partition rebuild", pciAfter);
+            Assert.assertTrue("sym.pci must exist after parquet partition rebuild "
+                            + "(parquet rebuild path is missing seal()/configureCovering)",
+                    pciAfter.length > 0);
+
+            // .pc0 must also exist (the actual covered column data file).
+            File[] pc0After = partDir.listFiles((d, n) -> n.startsWith("sym.pc0"));
+            Assert.assertNotNull("sym.pc0 must exist after parquet partition rebuild", pc0After);
+            Assert.assertTrue("sym.pc0 must exist after parquet partition rebuild",
+                    pc0After.length > 0);
+
+            // Covering query must keep returning the same rows.
+            assertSql(expected, "SELECT price FROM t_pi_parquet WHERE sym = 'A' ORDER BY ts");
+        });
+    }
+
+    @Test
+    public void testCheckpointRestoreRebuildsPostingIndexWithTwoCoveringIndexes() throws Exception {
+        // Regression: TableSnapshotRestore.configureCoveringForPosting()
+        // returns the first indexed-symbol column that has a non-empty
+        // covering list, regardless of which indexer is being configured.
+        // With two POSTING+INCLUDE columns, the second indexer wires its
+        // sidecars to the first column's INCLUDE list.
+        final String snapshotId = "00000000-0000-0000-0000-000000000000";
+        final String restartedId = "123e4567-e89b-12d3-a456-426614174002";
+        assertMemoryLeak(() -> {
+            setProperty(PropertyKey.CAIRO_LEGACY_SNAPSHOT_INSTANCE_ID, snapshotId);
+            setProperty(PropertyKey.CAIRO_CHECKPOINT_RECOVERY_REBUILD_COLUMN_INDEXES, "true");
+            // Disable auto-include of the designated timestamp so each .pci
+            // records exactly the explicit INCLUDE column.
+            setProperty(PropertyKey.CAIRO_POSTING_INDEX_AUTO_INCLUDE_TIMESTAMP, "false");
+
+            execute("""
+                    CREATE TABLE t_pi_two (
+                        ts TIMESTAMP,
+                        sym1 SYMBOL INDEX TYPE POSTING INCLUDE (price),
+                        sym2 SYMBOL INDEX TYPE POSTING INCLUDE (qty),
+                        price DOUBLE,
+                        qty LONG
+                    ) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL
+                    """);
+            execute("""
+                    INSERT INTO t_pi_two VALUES
+                    ('2024-01-01T00:00:00', 'A', 'X', 1.0, 10),
+                    ('2024-01-01T01:00:00', 'B', 'Y', 2.0, 20),
+                    ('2024-01-01T02:00:00', 'A', 'X', 3.0, 30),
+                    ('2024-01-01T03:00:00', 'B', 'Y', 4.0, 40)
+                    """);
+            engine.releaseAllWriters();
+
+            final TableToken tableToken = engine.verifyTableName("t_pi_two");
+            final int priceWriterIdx;
+            final int qtyWriterIdx;
+            try (TableReaderMetadata md = new TableReaderMetadata(configuration, tableToken)) {
+                md.loadMetadata();
+                priceWriterIdx = md.getWriterIndex(md.getColumnIndex("price"));
+                qtyWriterIdx = md.getWriterIndex(md.getColumnIndex("qty"));
+            }
+            Assert.assertNotEquals(priceWriterIdx, qtyWriterIdx);
+
+            execute("checkpoint create");
+            engine.clear();
+            setProperty(PropertyKey.CAIRO_LEGACY_SNAPSHOT_INSTANCE_ID, restartedId);
+            engine.checkpointRecover();
+
+            String dbRoot = engine.getConfiguration().getDbRoot().toString();
+            File tableDir = new File(dbRoot, tableToken.getDirName());
+            File[] partDirs = tableDir.listFiles((d, n) -> n.startsWith("2024-01-01"));
+            Assert.assertNotNull("partition dir missing", partDirs);
+            Assert.assertTrue("partition dir missing", partDirs.length > 0);
+            File partDir = partDirs[0];
+
+            File[] sym1Pci = partDir.listFiles((d, n) -> n.startsWith("sym1.pci"));
+            File[] sym2Pci = partDir.listFiles((d, n) -> n.startsWith("sym2.pci"));
+            Assert.assertNotNull("sym1.pci missing", sym1Pci);
+            Assert.assertTrue("sym1.pci missing", sym1Pci.length > 0);
+            Assert.assertNotNull("sym2.pci missing", sym2Pci);
+            Assert.assertTrue("sym2.pci missing", sym2Pci.length > 0);
+
+            int[] sym1Indices = readPciCoverIndices(sym1Pci[0]);
+            int[] sym2Indices = readPciCoverIndices(sym2Pci[0]);
+
+            Assert.assertEquals("sym1.pci must record exactly one INCLUDE column",
+                    1, sym1Indices.length);
+            Assert.assertEquals("sym2.pci must record exactly one INCLUDE column",
+                    1, sym2Indices.length);
+            Assert.assertEquals("sym1.pci must reference price",
+                    priceWriterIdx, sym1Indices[0]);
+            Assert.assertEquals("sym2.pci must reference qty (not price). Bug: every "
+                            + "indexer receives the first non-empty covering list.",
+                    qtyWriterIdx, sym2Indices[0]);
+
             engine.checkpointRelease();
         });
     }
@@ -2691,6 +3040,21 @@ public class CheckpointTest extends AbstractCairoTest {
         return list;
     }
 
+    private static int[] readPciCoverIndices(File pciFile) throws IOException {
+        // .pci layout: magic(4B) + count(4B) + writerIndex[count](4B each).
+        // Native byte order is little-endian on all platforms QuestDB targets.
+        byte[] bytes = java.nio.file.Files.readAllBytes(pciFile.toPath());
+        java.nio.ByteBuffer buf = java.nio.ByteBuffer.wrap(bytes).order(java.nio.ByteOrder.LITTLE_ENDIAN);
+        int magic = buf.getInt();
+        Assert.assertEquals("bad .pci magic in " + pciFile, 0x50434931, magic);
+        int count = buf.getInt();
+        int[] out = new int[count];
+        for (int i = 0; i < count; i++) {
+            out[i] = buf.getInt();
+        }
+        return out;
+    }
+
     private static TestServerMain startServerMain(String root, String... envKeyValues) {
         Map<String, String> env = new HashMap<>(System.getenv());
         for (int i = 0; i < envKeyValues.length; i += 2) {
@@ -2886,7 +3250,7 @@ public class CheckpointTest extends AbstractCairoTest {
                                 Assert.assertEquals(columnMetadata0.getColumnName(), columnMetadata1.getColumnName());
                                 Assert.assertEquals(columnMetadata0.getColumnType(), columnMetadata1.getColumnType());
                                 Assert.assertEquals(columnMetadata0.getIndexValueBlockCapacity(), columnMetadata1.getIndexValueBlockCapacity());
-                                Assert.assertEquals(columnMetadata0.isSymbolIndexFlag(), columnMetadata1.isSymbolIndexFlag());
+                                Assert.assertEquals(columnMetadata0.isIndexed(), columnMetadata1.isIndexed());
                                 Assert.assertEquals(columnMetadata0.isSymbolTableStatic(), columnMetadata1.isSymbolTableStatic());
                             }
 
@@ -3264,23 +3628,11 @@ public class CheckpointTest extends AbstractCairoTest {
      * Snapshot of a bitmap index file contents for testing purposes.
      * Reads the .k and .v files and extracts all key entries with their row IDs.
      */
-    private static class IndexSnapshot {
+    private record IndexSnapshot(IntObjHashMap<LongList> entries, int keyCount, long sequence, long maxValue) {
         private static final long MAX_VALUE_OFFSET = 37L;
 
-        final IntObjHashMap<LongList> entries;
-        final int keyCount;
-        final long maxValue;
-        final long sequence;
-
-        private IndexSnapshot(IntObjHashMap<LongList> entries, int keyCount, long sequence, long maxValue) {
-            this.entries = entries;
-            this.keyCount = keyCount;
-            this.sequence = sequence;
-            this.maxValue = maxValue;
-        }
-
         @Override
-        public String toString() {
+        public @NotNull String toString() {
             StringBuilder sb = new StringBuilder();
             sb.append("IndexSnapshot{keyCount=").append(keyCount)
                     .append(", sequence=").append(sequence)
@@ -3383,14 +3735,8 @@ public class CheckpointTest extends AbstractCairoTest {
     /**
      * Wrapper for ServerConfiguration that allows overriding the CairoConfiguration.
      */
-    private static class ServerConfigurationWrapper implements ServerConfiguration {
-        private final CairoConfiguration cairoConfig;
-        private final ServerConfiguration delegate;
-
-        ServerConfigurationWrapper(ServerConfiguration delegate, CairoConfiguration cairoConfig) {
-            this.delegate = delegate;
-            this.cairoConfig = cairoConfig;
-        }
+    private record ServerConfigurationWrapper(ServerConfiguration delegate,
+                                              CairoConfiguration cairoConfig) implements ServerConfiguration {
 
         @Override
         public CairoConfiguration getCairoConfiguration() {
@@ -3483,7 +3829,7 @@ public class CheckpointTest extends AbstractCairoTest {
         }
 
         @Override
-        public void init(io.questdb.cairo.CairoEngine engine, FreeOnExit freeOnExit) {
+        public void init(CairoEngine engine, FreeOnExit freeOnExit) {
             delegate.init(engine, freeOnExit);
         }
     }
