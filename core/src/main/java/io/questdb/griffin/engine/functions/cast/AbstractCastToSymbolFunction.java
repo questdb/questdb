@@ -44,35 +44,20 @@ import org.jetbrains.annotations.Nullable;
  * Abstract base class for functions that cast values to symbol.
  */
 public abstract class AbstractCastToSymbolFunction extends SymbolFunction implements CastFunction {
-    /**
-     * The function argument to cast.
-     */
+    // The function argument to cast.
     protected final Function arg;
-    /**
-     * Sink for building symbol strings.
-     */
+    // Sink for building symbol strings.
     protected final StringSink sink = new StringSink();
-    /**
-     * Map for symbol table shortcuts. The sentinel is Numbers.INT_NULL rather than the
-     * default -1 so that -1 (the value length() returns for a null symbol/string) can be
-     * stored as a key without colliding with the "empty slot" marker. INT_NULL itself
-     * never reaches this map because it is filtered upstream in getInt()/getSymbol().
-     */
+    // Map for symbol table shortcuts. The sentinel is Numbers.INT_NULL rather than the
+    // default -1 so that -1 (the value length() returns for a null symbol/string) can be
+    // stored as a key without colliding with the "empty slot" marker. INT_NULL itself
+    // never reaches this map because it is filtered upstream in getInt()/getSymbol().
     protected final IntIntHashMap symbolTableShortcut = new IntIntHashMap(16, 0.5, Numbers.INT_NULL);
-    /**
-     * List of symbol values.
-     */
+    // List of symbol values.
     protected final ObjList<String> symbols = new ObjList<>();
-    /**
-     * Next symbol index.
-     */
+    // Next symbol index.
     protected int next = 1;
 
-    /**
-     * Constructs a new cast to symbol function.
-     *
-     * @param arg the function argument to cast
-     */
     public AbstractCastToSymbolFunction(Function arg) {
         this.arg = arg;
         symbols.add(null);
@@ -103,6 +88,11 @@ public abstract class AbstractCastToSymbolFunction extends SymbolFunction implem
     }
 
     @Override
+    public boolean isThreadSafe() {
+        return false;
+    }
+
+    @Override
     public @Nullable SymbolTable newSymbolTable() {
         AbstractCastToSymbolFunction copy = newFunc();
         copy.symbolTableShortcut.putAll(this.symbolTableShortcut);
@@ -129,9 +119,6 @@ public abstract class AbstractCastToSymbolFunction extends SymbolFunction implem
 
     /**
      * Returns the symbol key for the given int value.
-     *
-     * @param value the int value
-     * @return the symbol key
      */
     protected int getInt0(int value) {
         final int keyIndex = symbolTableShortcut.keyIndex(value);
@@ -148,9 +135,6 @@ public abstract class AbstractCastToSymbolFunction extends SymbolFunction implem
 
     /**
      * Returns the symbol string for the given int value.
-     *
-     * @param value the int value
-     * @return the symbol string
      */
     @Nullable
     protected String getSymbol0(int value) {
@@ -169,8 +153,6 @@ public abstract class AbstractCastToSymbolFunction extends SymbolFunction implem
 
     /**
      * Creates a new instance of this function for symbol table copying.
-     *
-     * @return a new function instance
      */
     protected abstract AbstractCastToSymbolFunction newFunc();
 }

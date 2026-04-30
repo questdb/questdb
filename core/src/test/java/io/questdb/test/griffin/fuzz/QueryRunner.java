@@ -481,8 +481,7 @@ public final class QueryRunner {
         // IPv4 cast at runtime (ImplicitCastException). In all such cases
         // both paths reject the query, only the stage and the error class
         // differ, so treat as skip.
-        if (a.failure != null && b.failure != null
-                && isAcceptedSkip(a.failure) && isAcceptedSkip(b.failure)) {
+        if (isAcceptedSkip(a.failure) && isAcceptedSkip(b.failure)) {
             if (a.exceptionClass.equals(b.exceptionClass)) {
                 return Result.skipped(a.exceptionClass + ": (varies)");
             }
@@ -507,8 +506,9 @@ public final class QueryRunner {
         // simply never reaches the comparator/cast on the indexed side.
         // Whether a row triggers the throw is therefore a planner choice
         // determined by the side's access path, not a data divergence.
+        final String exceptionClass = a.failure != null ? a.exceptionClass : b.exceptionClass;
         if (isIndexFilteredAsymmetry(a, b) || isIndexFilteredAsymmetry(b, a)) {
-            return Result.skipped("index-filtered " + (a.failure != null ? a.exceptionClass : b.exceptionClass));
+            return Result.skipped("index-filtered " + exceptionClass);
         }
         // Same shape as the index-filtered rule but for parquet. The
         // succeeding side accessed tables with parquet partitions and the
@@ -516,7 +516,7 @@ public final class QueryRunner {
         // dictionaries before the comparator runs, so the offending value
         // never reaches the residual filter.
         if (isParquetFilteredAsymmetry(a, b) || isParquetFilteredAsymmetry(b, a)) {
-            return Result.skipped("parquet-filtered " + (a.failure != null ? a.exceptionClass : b.exceptionClass));
+            return Result.skipped("parquet-filtered " + exceptionClass);
         }
         // Anything else: divergence (one succeeded, one threw a non-skip
         // error; or both threw different exception classes).
@@ -563,7 +563,14 @@ public final class QueryRunner {
         }
     }
 
-    private record Outcome(int rowsRead, boolean hasIndex, boolean usesParquet, Throwable failure, String exceptionClass, String exceptionMessage) {
+    private record Outcome(
+            int rowsRead,
+            boolean hasIndex,
+            boolean usesParquet,
+            Throwable failure,
+            String exceptionClass,
+            String exceptionMessage
+    ) {
 
         static Outcome error(Throwable t, String message, boolean usesParquet) {
             return new Outcome(0, false, usesParquet, t, t.getClass().getSimpleName(), message);
