@@ -1050,18 +1050,6 @@ public class FuzzRunner {
 
                     if (transaction.reopenTable) {
                         synchronized (writers) {
-                            // Read the writer's live identity at this moment. goActive at
-                            // the start of this iteration has already pulled the writer's
-                            // stored TableToken forward through any renames committed by
-                            // previous transactions in the stream, so liveDir / liveName
-                            // are the table's current name and dirName as of "just before
-                            // this transaction's operations were applied". That is the
-                            // right reference point for both matching peer writers in the
-                            // shared list and for re-resolving through the engine — using
-                            // the captured-at-thread-creation strings would go stale after
-                            // a rename, which is what previously caused this branch to
-                            // throw and orphan a closed writer.
-                            // Table is dropped, reload all writers
                             for (int ii = 0; ii < writers.size(); ii++) {
                                 if (writers.get(ii).getTableToken().getTableName().equals(updatedTableName)) {
                                     writers.get(ii).close();
