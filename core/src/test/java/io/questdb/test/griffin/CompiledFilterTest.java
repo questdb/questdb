@@ -460,6 +460,37 @@ public class CompiledFilterTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testIntColumnArithmeticInFloatContextStaysAtFloatWidth() throws Exception {
+        assertMemoryLeak(() -> {
+            // INT-FLOAT arithmetic resolves to `-(FF)` (FloatFunctionFactory),
+            // matching `+(FF)` / `*(FF)` / `/(FF)`. Both interpreter and JIT
+            // therefore compute at f32 width and agree on rounding. Without
+            // `-(FF)`, the parser's only viable match is `-(DD)` (since FLOAT
+            // does not widen to INT or LONG), which would push the interpreter
+            // to f64 while JIT stays at f32 -- the original divergence the
+            // fuzzer found on `(c0 - (c0 - c5)) <= c5`.
+            execute("CREATE TABLE x (c0 INT, c5 FLOAT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO x VALUES " +
+                    "(999999, 0.123456, '2024-01-01T00:00:00.000000Z')," +
+                    " (10, 0.5, '2024-01-01T00:00:00.000001Z')");
+
+            // Row 1 is excluded under f32 rounding: `999999 - 0.123456` rounds
+            // to 999998.875, so `999999 - 999998.875 = 0.125`, which is
+            // strictly greater than 0.123456. Row 2 has small magnitudes that
+            // fit exactly in f32 and matches.
+            String sql = "SELECT count(*) FROM x WHERE (c0 - (c0 - c5)) <= c5";
+            sqlExecutionContext.setJitMode(SqlJitMode.JIT_MODE_DISABLED);
+            assertSql("count\n1\n", sql);
+            sqlExecutionContext.setJitMode(SqlJitMode.JIT_MODE_ENABLED);
+            assertSql("count\n1\n", sql);
+
+            try (RecordCursorFactory factory = select(sql)) {
+                Assert.assertTrue("INT-FLOAT arithmetic must still JIT", factory.usesCompiledFilter());
+            }
+        });
+    }
+
+    @Test
     public void testIntColumnArithmeticWidenedToLongInLongContext() throws Exception {
         assertMemoryLeak(() -> {
             // INT-INT arithmetic compared to a LONG column would compute at int32
