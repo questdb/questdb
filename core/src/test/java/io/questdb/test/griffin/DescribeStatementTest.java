@@ -253,7 +253,7 @@ public class DescribeStatementTest extends AbstractCairoTest {
                     ordinal_position\tcolumn_name\tdata_type
                     0\tordinal_position\tINT
                     1\tcolumn_name\tSTRING
-                    2\tdata_type\tSYMBOL
+                    2\tdata_type\tSTRING
                     """, "SELECT * FROM describe((SELECT * FROM describe((SELECT * FROM test_table))))");
         });
     }

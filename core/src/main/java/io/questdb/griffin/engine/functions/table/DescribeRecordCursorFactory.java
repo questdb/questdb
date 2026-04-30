@@ -33,10 +33,8 @@ import io.questdb.cairo.sql.NoRandomAccessRecordCursor;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordMetadata;
-import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.griffin.SqlUtil;
 import org.jetbrains.annotations.NotNull;
 
 public class DescribeRecordCursorFactory extends AbstractRecordCursorFactory {
@@ -82,26 +80,13 @@ public class DescribeRecordCursorFactory extends AbstractRecordCursorFactory {
         }
 
         @Override
-        public SymbolTable getSymbolTable(int columnIndex) {
-            if (columnIndex == 2) {
-                return SqlUtil.ColumnTypeSymbolTable.INSTANCE;
-            } else {
-                throw new UnsupportedOperationException();
-            }
-        }
-
-        @Override
         public boolean hasNext() {
             if (++pos < childMetadata.getColumnCount()) {
-                record.of(pos, childMetadata.getColumnName(pos), childMetadata.getColumnType(pos));
+                record.of(pos, childMetadata.getColumnName(pos),
+                        ColumnType.nameOf(childMetadata.getColumnType(pos)));
                 return true;
             }
             return false;
-        }
-
-        @Override
-        public SymbolTable newSymbolTable(int columnIndex) {
-            return new SqlUtil.ColumnTypeSymbolTable();
         }
 
         public void of(@NotNull RecordMetadata childMetadata) {
@@ -126,15 +111,14 @@ public class DescribeRecordCursorFactory extends AbstractRecordCursorFactory {
         private static class DescribeRecord implements Record {
             private CharSequence name;
             private int position;
-            private int type;
+            private CharSequence typeName;
 
             @Override
             public int getInt(int col) {
-                return switch (col) {
-                    case 2 -> type;
-                    case 0 -> position;
-                    default -> throw new UnsupportedOperationException();
-                };
+                if (col == 0) {
+                    return position;
+                }
+                throw new UnsupportedOperationException();
             }
 
             @Override
@@ -144,10 +128,11 @@ public class DescribeRecordCursorFactory extends AbstractRecordCursorFactory {
 
             @Override
             public CharSequence getStrA(int col) {
-                if (col == 1) {
-                    return name;
-                }
-                throw new UnsupportedOperationException();
+                return switch (col) {
+                    case 1 -> name;
+                    case 2 -> typeName;
+                    default -> throw new UnsupportedOperationException();
+                };
             }
 
             @Override
@@ -160,23 +145,10 @@ public class DescribeRecordCursorFactory extends AbstractRecordCursorFactory {
                 return TableUtils.lengthOf(getStrA(col));
             }
 
-            @Override
-            public CharSequence getSymA(int col) {
-                if (col == 2) {
-                    return SqlUtil.ColumnTypeSymbolTable.INSTANCE.valueOf(type);
-                }
-                throw new UnsupportedOperationException();
-            }
-
-            @Override
-            public CharSequence getSymB(int col) {
-                return getSymA(col);
-            }
-
-            private void of(int position, CharSequence name, int type) {
+            private void of(int position, CharSequence name, CharSequence typeName) {
                 this.position = position;
                 this.name = name;
-                this.type = type;
+                this.typeName = typeName;
             }
         }
     }
@@ -185,7 +157,7 @@ public class DescribeRecordCursorFactory extends AbstractRecordCursorFactory {
         GenericRecordMetadata metadata = new GenericRecordMetadata();
         metadata.add(new TableColumnMetadata("ordinal_position", ColumnType.INT));
         metadata.add(new TableColumnMetadata("column_name", ColumnType.STRING));
-        metadata.add(new TableColumnMetadata("data_type", ColumnType.SYMBOL, null, true, true, ColumnType.NULL));
+        metadata.add(new TableColumnMetadata("data_type", ColumnType.STRING));
         METADATA = metadata;
     }
 }
