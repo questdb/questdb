@@ -7199,6 +7199,31 @@ public class ExplainPlanTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testSampleByKeyed3MultiKeyLinear() throws Exception {
+        assertMemoryLeak(() -> {
+            assertPlanNoLeakCheck("create table a (i int, l long, m long, ts timestamp) timestamp(ts);", "select l, m, first(i) from a sample by 1d fill(linear) align to first observation", """
+                    Sample By
+                      fill: linear
+                      keys: [l,m]
+                      values: [first(i)]
+                        PageFrame
+                            Row forward scan
+                            Frame forward scan on: a
+                    """);
+
+            assertPlanNoLeakCheck("select l, m, first(i) from a sample by 1d fill(linear) align to calendar", """
+                    Sample By
+                      fill: linear
+                      keys: [l,m]
+                      values: [first(i)]
+                        PageFrame
+                            Row forward scan
+                            Frame forward scan on: a
+                    """);
+        });
+    }
+
+    @Test
     public void testSampleByKeyed4() throws Exception {
         assertMemoryLeak(() -> {
             assertPlanNoLeakCheck("create table a ( i int, l long, ts timestamp) timestamp(ts);", "select l, first(i), last(i) from a sample by 1d fill(1,2) align to first observation", """

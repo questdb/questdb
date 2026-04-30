@@ -3310,6 +3310,16 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     Misc.freeObjList(fillValues);
                     return groupByFactory;
                 }
+                // SqlOptimiser.rewriteSampleBy gates LINEAR-bearing fills out of
+                // the SAMPLE BY -> GROUP BY rewrite via hasLinearFill so they
+                // stay on the legacy generateSampleBy path (single LINEAR ->
+                // SampleByInterpolateRecordCursorFactory; mixed LINEAR + keyed
+                // -> rejected at SampleByFillValueRecordCursorFactory). The
+                // fast-path SampleByFillRecordCursorFactory has no LINEAR
+                // support, so a LINEAR token reaching here would silently
+                // degrade to PREV-like output. Fail loud instead.
+                assert !isLinearKeyword(expr.token)
+                        : "LINEAR fill reached generateFill: SqlOptimiser.hasLinearFill gate must keep these on the legacy SAMPLE BY path";
                 if (isPrevKeyword(expr.token)) {
                     // PREV is a fill keyword, not a function — add a placeholder
                     fillValues.add(NullConstant.NULL);
