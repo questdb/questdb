@@ -326,6 +326,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     private ReadOnlyObjList<? extends MemoryCR> o3Columns;
     private long o3CommitBatchTimestampMin = Long.MAX_VALUE;
     private long o3EffectiveLag = 0L;
+    private boolean o3FinishInFlight = false;
     private boolean o3InError = false;
     private long o3MasterRef = -1L;
     private ObjList<MemoryCARW> o3MemColumns1;
@@ -5801,52 +5802,57 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     }
 
     private void finishO3Commit(long partitionTimestampHiLimit) {
-        if (!o3InError) {
-            updateO3ColumnTops();
+        o3FinishInFlight = true;
+        try {
+            if (!o3InError) {
+                updateO3ColumnTops();
+                try {
+                    sealPostingIndexesForO3Partitions();
+                } catch (Throwable e) {
+                    // O3 data is already on disk; a partial-seal failure leaves
+                    // some partitions with a fresh chain entry whose txnAtSeal
+                    // is the upcoming commit value while others are not yet
+                    // republished. The on-disk recovery is now structurally
+                    // sound: the v2 chain's recoveryDropAbandoned, run from
+                    // PostingIndexWriter.of() on the next reopen, drops every
+                    // entry with txnAtSeal > currentTableTxn — i.e. the
+                    // entries the failed seal loop published before the
+                    // encompassing txWriter.commit landed. The catch still
+                    // marks the writer distressed because the in-memory
+                    // writer state is no longer trustworthy after a partial
+                    // seal; the pool replaces it instead of handing back a
+                    // writer that thinks the commit succeeded.
+                    LOG.critical().$("data is committed but posting-index seal failed `").$(e).$('`').$();
+                    distressed = true;
+                    throw e;
+                }
+            }
+            if (!isEmptyTable()
+                    && (isLastPartitionClosed() || partitionTimestampHi > partitionTimestampHiLimit)
+                    && !isLastPartitionParquet()) {
+                openPartition(txWriter.getLastPartitionTimestamp(), txWriter.getTransientRowCount());
+            }
+
+            // Data is written out successfully, however, we can still fail to set append position, for
+            // example, when we ran out of address space and new page cannot be mapped. The "allocate" calls here
+            // ensure we can trigger this situation in tests. We should perhaps align our data such that setAppendPosition()
+            // will attempt to mmap new page and fail... Then we can remove the 'true' parameter
             try {
-                sealPostingIndexesForO3Partitions();
+                // Set append position if this commit did not result in full table truncate
+                // which is possible with replace commits.
+                if (txWriter.getTransientRowCount() > 0 && !isLastPartitionParquet()) {
+                    setAppendPosition(txWriter.getTransientRowCount(), !metadata.isWalEnabled());
+                }
             } catch (Throwable e) {
-                // O3 data is already on disk; a partial-seal failure leaves
-                // some partitions with a fresh chain entry whose txnAtSeal
-                // is the upcoming commit value while others are not yet
-                // republished. The on-disk recovery is now structurally
-                // sound: the v2 chain's recoveryDropAbandoned, run from
-                // PostingIndexWriter.of() on the next reopen, drops every
-                // entry with txnAtSeal > currentTableTxn — i.e. the
-                // entries the failed seal loop published before the
-                // encompassing txWriter.commit landed. The catch still
-                // marks the writer distressed because the in-memory
-                // writer state is no longer trustworthy after a partial
-                // seal; the pool replaces it instead of handing back a
-                // writer that thinks the commit succeeded.
-                LOG.critical().$("data is committed but posting-index seal failed `").$(e).$('`').$();
+                LOG.critical().$("data is committed but writer failed to update its state `").$(e).$('`').$();
                 distressed = true;
                 throw e;
             }
-        }
-        if (!isEmptyTable()
-                && (isLastPartitionClosed() || partitionTimestampHi > partitionTimestampHiLimit)
-                && !isLastPartitionParquet()) {
-            openPartition(txWriter.getLastPartitionTimestamp(), txWriter.getTransientRowCount());
-        }
 
-        // Data is written out successfully, however, we can still fail to set append position, for
-        // example, when we ran out of address space and new page cannot be mapped. The "allocate" calls here
-        // ensure we can trigger this situation in tests. We should perhaps align our data such that setAppendPosition()
-        // will attempt to mmap new page and fail... Then we can remove the 'true' parameter
-        try {
-            // Set append position if this commit did not result in full table truncate
-            // which is possible with replace commits.
-            if (txWriter.getTransientRowCount() > 0 && !isLastPartitionParquet()) {
-                setAppendPosition(txWriter.getTransientRowCount(), !metadata.isWalEnabled());
-            }
-        } catch (Throwable e) {
-            LOG.critical().$("data is committed but writer failed to update its state `").$(e).$('`').$();
-            distressed = true;
-            throw e;
+            metrics.tableWriterMetrics().incrementO3Commits();
+        } finally {
+            o3FinishInFlight = false;
         }
-
-        metrics.tableWriterMetrics().incrementO3Commits();
     }
 
     private Utf8Sequence formatPartitionForTimestamp(long partitionTimestamp, long nameTxn) {
@@ -7602,7 +7608,9 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
                     if (indexer != null) {
                         final long columnTop = columnVersionWriter.getColumnTopQuick(lastOpenPartitionTs, i);
-                        indexer.getWriter().setCurrentTableTxn(txWriter.getTxn());
+                        if (!o3FinishInFlight) {
+                            indexer.getWriter().setCurrentTableTxn(txWriter.getTxn());
+                        }
                         indexer.configureFollowerAndWriter(path, name, columnNameTxn, getPrimaryColumn(i), columnTop, lastOpenPartitionTs, lastOpenPartitionTxnName);
                         configureCoveringIfNeeded(indexer, i, lastOpenPartitionTs);
                         // Recover from a crash that left .pk's sealTxn advanced
@@ -10796,7 +10804,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                             }
                         }
 
-                        indexer.getWriter().setCurrentTableTxn(txWriter.getTxn());
                         indexer.configureFollowerAndWriter(
                                 path.trimTo(plen), colName, colNameTxn,
                                 getPrimaryColumn(colIdx), columnTop,
@@ -10855,7 +10862,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                         indexer.clearCovering();
                     }
                 } else {
-                    indexer.getWriter().setCurrentTableTxn(txWriter.getTxn());
                     indexer.configureFollowerAndWriter(
                             path.trimTo(plen), colName, colNameTxn,
                             getPrimaryColumn(colIdx), columnTop,
@@ -10955,7 +10961,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                         }
                         CharSequence colName = metadata.getColumnName(colIdx);
                         long colNameTxn = columnVersionWriter.getColumnNameTxn(lastOpenPartitionTs, colIdx);
-                        indexer.getWriter().setCurrentTableTxn(txWriter.getTxn());
                         indexer.configureFollowerAndWriter(
                                 path.trimTo(plen), colName, colNameTxn,
                                 getPrimaryColumn(colIdx), columnTop,
