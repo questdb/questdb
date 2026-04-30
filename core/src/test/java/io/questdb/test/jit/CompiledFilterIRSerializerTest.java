@@ -679,7 +679,9 @@ public class CompiledFilterIRSerializerTest extends BaseFunctionFactoryTest {
     @Test
     public void testNullConstantMixedIntegerColumns() throws Exception {
         serialize("anint + along <> null or null <> along + anint");
-        assertIR("(i32 anint)(i64 along)(+)(i64 -9223372036854775808L)(<>)(||_sc)(i64 -9223372036854775808L)(i64 along)(i32 anint)(+)(<>)(ret)");
+        // (sx_i64) widens narrow INT operands to i64 inside arithmetic predicates that also
+        // have a LONG operand, so the JIT computes at long width and matches AddInt.getLong.
+        assertIR("(i32 anint)(sx_i64)(i64 along)(+)(i64 -9223372036854775808L)(<>)(||_sc)(i64 -9223372036854775808L)(i64 along)(i32 anint)(sx_i64)(+)(<>)(ret)");
     }
 
     @Test
@@ -732,6 +734,9 @@ public class CompiledFilterIRSerializerTest extends BaseFunctionFactoryTest {
         filterToOptions.put("ashort - ashort = 0", 2);
         filterToOptions.put("abyte * ashort = 0", 2);
         filterToOptions.put("1 * abyte / ashort = 0", 2);
+        // Narrow int mixed with a wider operand in arithmetic also forces scalar:
+        // SIMD would compute at the narrow width and overflow, while scalar upcasts.
+        filterToOptions.put("afloat / abyte = 0", 4);
 
         for (Map.Entry<String, Integer> entry : filterToOptions.entrySet()) {
             int options = serialize(entry.getKey(), false, false, false);
@@ -749,7 +754,6 @@ public class CompiledFilterIRSerializerTest extends BaseFunctionFactoryTest {
         // 4B
         filterToOptions.put("anint = 0 or abyte = 0", 4);
         filterToOptions.put("afloat = 0 or abyte = 0", 4);
-        filterToOptions.put("afloat / abyte = 0", 4);
         // 8B
         filterToOptions.put("along = 0 or ashort = 0", 8);
         filterToOptions.put("adouble = 0 or ashort = 0", 8);
@@ -1471,6 +1475,7 @@ public class CompiledFilterIRSerializerTest extends BaseFunctionFactoryTest {
                 case AND_SC -> "&&_sc";
                 case OR_SC -> "||_sc";
                 case END_SC -> "end_sc";
+                case SX_I64 -> "sx_i64";
                 default -> "unknown";
             };
         }
