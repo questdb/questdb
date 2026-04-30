@@ -177,18 +177,13 @@ public class SampleByFillPrevPathBenchmark {
     }
 
     private static int parseSortStrategy(String sort) {
-        switch (sort) {
-            case "light_encoded":
-                return SampleBySortStrategy.LIGHT_ENCODED;
-            case "full_encoded":
-                return SampleBySortStrategy.FULL_ENCODED;
-            case "light_recordchain":
-                return SampleBySortStrategy.LIGHT_RECORDCHAIN;
-            case "full_recordchain":
-                return SampleBySortStrategy.FULL_RECORDCHAIN;
-            default:
-                throw new IllegalArgumentException("unknown sort strategy: " + sort);
-        }
+        return switch (sort) {
+            case "light_encoded" -> SampleBySortStrategy.LIGHT_ENCODED;
+            case "full_encoded" -> SampleBySortStrategy.FULL_ENCODED;
+            case "light_recordchain" -> SampleBySortStrategy.LIGHT_RECORDCHAIN;
+            case "full_recordchain" -> SampleBySortStrategy.FULL_RECORDCHAIN;
+            default -> throw new IllegalArgumentException("unknown sort strategy: " + sort);
+        };
     }
 
     @Benchmark
@@ -299,6 +294,7 @@ public class SampleByFillPrevPathBenchmark {
             }
             cur = next;
         }
+        assert root != null;
         throw new IllegalStateException(
                 "routing drift: expected " + expected.getSimpleName()
                         + " in factory chain but did not find it. path=" + path

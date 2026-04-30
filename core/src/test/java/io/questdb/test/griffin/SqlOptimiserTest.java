@@ -4905,13 +4905,15 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
             // Keyed FILL(NULL) on FROM-TO needs a bounded TO and a cardinality
             // cap (WHERE x <= 4) so the output can be asserted directly. The two
             // literal-key variants below cover the plain and with-offset shapes.
-            final String shouldSucceedKeyedBounded = "select ts, avg(x), s from fromto\n" +
-                    "where x <= 4\n" +
-                    "sample by 5d from '2017-12-20' to '2018-01-31' fill(null) ";
+            final String shouldSucceedKeyedBounded = """
+                    select ts, avg(x), s from fromto
+                    where x <= 4
+                    sample by 5d from '2017-12-20' to '2018-01-31' fill(null)\s""";
 
-            final String shouldSucceedKeyedWithOffsetBounded = "select ts, avg(x), s from fromto\n" +
-                    "where x <= 4\n" +
-                    "sample by 5d from '2017-12-20' to '2018-01-31' fill(null) align to calendar with offset '10:00'";
+            final String shouldSucceedKeyedWithOffsetBounded = """
+                    select ts, avg(x), s from fromto
+                    where x <= 4
+                    sample by 5d from '2017-12-20' to '2018-01-31' fill(null) align to calendar with offset '10:00'""";
 
             final String shouldSucceedKeyedBoundedResult = """
                     ts\tavg\ts
@@ -5450,10 +5452,12 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
         assertMemoryLeak(() -> {
             execute(SampleByTest.FROM_TO_DDL);
             assertQueryNoLeakCheck(
-                    "ts\tavg\n" +
-                            "2018-01-01T00:00:00.000000Z\t1.5\n" +
-                            "2018-01-01T01:00:00.000000Z\t3.5\n" +
-                            "2018-01-01T02:00:00.000000Z\tnull\n",
+                    """
+                            ts\tavg
+                            2018-01-01T00:00:00.000000Z\t1.5
+                            2018-01-01T01:00:00.000000Z\t3.5
+                            2018-01-01T02:00:00.000000Z\tnull
+                            """,
                     """
                             SELECT ts, avg(x) FROM (
                               SELECT ts, x FROM fromto WHERE x <= 4

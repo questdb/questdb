@@ -32,7 +32,6 @@ import io.questdb.cairo.RecordSinkFactory;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.sql.DelegatingRecordCursor;
 import io.questdb.cairo.sql.Record;
-import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.std.BytecodeAssembler;
 import io.questdb.std.IntList;

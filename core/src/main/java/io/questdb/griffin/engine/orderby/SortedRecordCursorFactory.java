@@ -73,13 +73,6 @@ public class SortedRecordCursorFactory extends AbstractRecordCursorFactory {
             // createRankMaps succeeds. On success, ownership passes to the cursor.
             rankMaps = SortKeyEncoder.createRankMaps(metadata, sortColumnFilter);
             this.cursor = new SortedRecordCursor(chain, comparator, rankMaps);
-            // Ownership of chain and rankMaps has transferred to the cursor.
-            // Null the locals so the catch block does not double-free them if
-            // any future statement between here and the closing brace throws;
-            // the cursor's close() (reached via close() -> _close() -> Misc.free(cursor))
-            // will handle their release.
-            chain = null;
-            rankMaps = null;
         } catch (Throwable th) {
             Misc.free(chain);
             Misc.freeObjList(rankMaps);

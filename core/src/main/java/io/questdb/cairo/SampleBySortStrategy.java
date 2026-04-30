@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -42,16 +42,12 @@ public final class SampleBySortStrategy {
     }
 
     public static String toString(int strategy) {
-        switch (strategy) {
-            case LIGHT_ENCODED:
-                return "light_encoded";
-            case FULL_ENCODED:
-                return "full_encoded";
-            case LIGHT_RECORDCHAIN:
-                return "light_recordchain";
-            case FULL_RECORDCHAIN:
-                return "full_recordchain";
-        }
-        return "unknown";
+        return switch (strategy) {
+            case LIGHT_ENCODED -> "light_encoded";
+            case FULL_ENCODED -> "full_encoded";
+            case LIGHT_RECORDCHAIN -> "light_recordchain";
+            case FULL_RECORDCHAIN -> "full_recordchain";
+            default -> "unknown";
+        };
     }
 }

@@ -106,10 +106,12 @@ public class FillRecordDispatchTest extends AbstractCairoTest {
             // either fail compilation (wrong number of fill values) or
             // assign -1 to the wrong column.
             assertQueryNoLeakCheck(
-                    "ts\tc\ta\tb\n" +
-                            "2024-01-01T00:00:00.000000Z\ttag\t10\t100\n" +
-                            "2024-01-01T01:00:00.000000Z\ttag\t-1\t99\n" +
-                            "2024-01-01T02:00:00.000000Z\ttag\t30\t300\n",
+                    """
+                            ts\tc\ta\tb
+                            2024-01-01T00:00:00.000000Z\ttag\t10\t100
+                            2024-01-01T01:00:00.000000Z\ttag\t-1\t99
+                            2024-01-01T02:00:00.000000Z\ttag\t30\t300
+                            """,
                     "SELECT ts, 'tag' AS c, first(i) AS a, sum(j) AS b FROM x " +
                             "SAMPLE BY 1h FILL(-1, 99) ALIGN TO CALENDAR",
                     "ts", false, false
@@ -117,10 +119,12 @@ public class FillRecordDispatchTest extends AbstractCairoTest {
             // Bare FILL(PREV) variant: same hoisting assumption, different
             // dispatch arm (factoryColToUserFillIdx classifies key vs. agg).
             assertQueryNoLeakCheck(
-                    "ts\tc\ta\tb\n" +
-                            "2024-01-01T00:00:00.000000Z\ttag\t10\t100\n" +
-                            "2024-01-01T01:00:00.000000Z\ttag\t10\t100\n" +
-                            "2024-01-01T02:00:00.000000Z\ttag\t30\t300\n",
+                    """
+                            ts\tc\ta\tb
+                            2024-01-01T00:00:00.000000Z\ttag\t10\t100
+                            2024-01-01T01:00:00.000000Z\ttag\t10\t100
+                            2024-01-01T02:00:00.000000Z\ttag\t30\t300
+                            """,
                     "SELECT ts, 'tag' AS c, first(i) AS a, sum(j) AS b FROM x " +
                             "SAMPLE BY 1h FILL(PREV) ALIGN TO CALENDAR",
                     "ts", false, false
@@ -148,13 +152,15 @@ public class FillRecordDispatchTest extends AbstractCairoTest {
             // 01:00 is a gap bucket for both keys. Both keys have prev values
             // observed at 00:00, so the cached slots return 1.0 / 2.0 directly.
             assertQueryNoLeakCheck(
-                    "ts\tk\tfv\n" +
-                            "2024-01-01T00:00:00.000000Z\tA\t1.0\n" +
-                            "2024-01-01T00:00:00.000000Z\tB\t2.0\n" +
-                            "2024-01-01T01:00:00.000000Z\tA\t1.0\n" +
-                            "2024-01-01T01:00:00.000000Z\tB\t2.0\n" +
-                            "2024-01-01T02:00:00.000000Z\tA\t3.0\n" +
-                            "2024-01-01T02:00:00.000000Z\tB\t4.0\n",
+                    """
+                            ts\tk\tfv
+                            2024-01-01T00:00:00.000000Z\tA\t1.0
+                            2024-01-01T00:00:00.000000Z\tB\t2.0
+                            2024-01-01T01:00:00.000000Z\tA\t1.0
+                            2024-01-01T01:00:00.000000Z\tB\t2.0
+                            2024-01-01T02:00:00.000000Z\tA\t3.0
+                            2024-01-01T02:00:00.000000Z\tB\t4.0
+                            """,
                     "SELECT * FROM (" +
                             "SELECT ts, k, first(v) fv FROM x " +
                             "SAMPLE BY 1h FILL(PREV) ALIGN TO CALENDAR" +
@@ -178,10 +184,12 @@ public class FillRecordDispatchTest extends AbstractCairoTest {
                     "(3.0, 30, '2024-01-01T02:00:00.000000Z')");
             // FILL(PREV, PREV(s)) -- a at 01:00 pulls s's prev value (1.0).
             assertQueryNoLeakCheck(
-                    "ts\ts\ta\n" +
-                            "2024-01-01T00:00:00.000000Z\t1.0\t10.0\n" +
-                            "2024-01-01T01:00:00.000000Z\t1.0\t1.0\n" +
-                            "2024-01-01T02:00:00.000000Z\t3.0\t30.0\n",
+                    """
+                            ts\ts\ta
+                            2024-01-01T00:00:00.000000Z\t1.0\t10.0
+                            2024-01-01T01:00:00.000000Z\t1.0\t1.0
+                            2024-01-01T02:00:00.000000Z\t3.0\t30.0
+                            """,
                     "SELECT ts, sum(val) AS s, sum(ival::DOUBLE) AS a FROM x " +
                             "SAMPLE BY 1h FILL(PREV, PREV(s)) ALIGN TO CALENDAR",
                     "ts", false, false
@@ -203,13 +211,15 @@ public class FillRecordDispatchTest extends AbstractCairoTest {
             // Key B has no data in the 00:00 or 01:00 buckets -- its fill
             // rows fall through to the null sentinel (no prev yet).
             assertQueryNoLeakCheck(
-                    "ts\tk\tfv\n" +
-                            "2024-01-01T00:00:00.000000Z\tA\t1.0\n" +
-                            "2024-01-01T00:00:00.000000Z\tB\tnull\n" +
-                            "2024-01-01T01:00:00.000000Z\tA\t1.0\n" +
-                            "2024-01-01T01:00:00.000000Z\tB\tnull\n" +
-                            "2024-01-01T02:00:00.000000Z\tA\t1.0\n" +
-                            "2024-01-01T02:00:00.000000Z\tB\t3.0\n",
+                    """
+                            ts\tk\tfv
+                            2024-01-01T00:00:00.000000Z\tA\t1.0
+                            2024-01-01T00:00:00.000000Z\tB\tnull
+                            2024-01-01T01:00:00.000000Z\tA\t1.0
+                            2024-01-01T01:00:00.000000Z\tB\tnull
+                            2024-01-01T02:00:00.000000Z\tA\t1.0
+                            2024-01-01T02:00:00.000000Z\tB\t3.0
+                            """,
                     "SELECT * FROM (" +
                             "SELECT ts, k, first(v) fv FROM x " +
                             "SAMPLE BY 1h FILL(PREV) ALIGN TO CALENDAR" +
@@ -234,10 +244,12 @@ public class FillRecordDispatchTest extends AbstractCairoTest {
             execute("INSERT INTO x SELECT rnd_bin(4, 4, 0), 1.0, " +
                     "'2024-01-01T00:00:00.000000Z' FROM long_sequence(1)");
             assertQueryNoLeakCheck(
-                    "ts\tbn\tsum\n" +
-                            "2024-01-01T00:00:00.000000Z\t00000000 ee 41 1d 15\t1.0\n" +
-                            "2024-01-01T01:00:00.000000Z\t00000000 ee 41 1d 15\tnull\n" +
-                            "2024-01-01T02:00:00.000000Z\t00000000 ee 41 1d 15\tnull\n",
+                    """
+                            ts\tbn\tsum
+                            2024-01-01T00:00:00.000000Z\t00000000 ee 41 1d 15\t1.0
+                            2024-01-01T01:00:00.000000Z\t00000000 ee 41 1d 15\tnull
+                            2024-01-01T02:00:00.000000Z\t00000000 ee 41 1d 15\tnull
+                            """,
                     "SELECT ts, bn, sum(v) FROM x " +
                             "SAMPLE BY 1h FROM '2024-01-01T00:00:00' TO '2024-01-01T03:00:00' FILL(NULL) " +
                             "ALIGN TO CALENDAR",
@@ -256,10 +268,12 @@ public class FillRecordDispatchTest extends AbstractCairoTest {
                     "(true, '2024-01-01T00:00:00.000000Z')," +
                     "(true, '2024-01-01T02:00:00.000000Z')");
             assertQueryNoLeakCheck(
-                    "ts\tfb\n" +
-                            "2024-01-01T00:00:00.000000Z\ttrue\n" +
-                            "2024-01-01T01:00:00.000000Z\ttrue\n" +
-                            "2024-01-01T02:00:00.000000Z\ttrue\n",
+                    """
+                            ts\tfb
+                            2024-01-01T00:00:00.000000Z\ttrue
+                            2024-01-01T01:00:00.000000Z\ttrue
+                            2024-01-01T02:00:00.000000Z\ttrue
+                            """,
                     "SELECT ts, first(b) fb FROM x SAMPLE BY 1h FILL(PREV) ALIGN TO CALENDAR",
                     "ts", false, false
             );
@@ -275,10 +289,12 @@ public class FillRecordDispatchTest extends AbstractCairoTest {
                     "(17::BYTE, '2024-01-01T00:00:00.000000Z')," +
                     "(17::BYTE, '2024-01-01T02:00:00.000000Z')");
             assertQueryNoLeakCheck(
-                    "ts\tfb\n" +
-                            "2024-01-01T00:00:00.000000Z\t17\n" +
-                            "2024-01-01T01:00:00.000000Z\t17\n" +
-                            "2024-01-01T02:00:00.000000Z\t17\n",
+                    """
+                            ts\tfb
+                            2024-01-01T00:00:00.000000Z\t17
+                            2024-01-01T01:00:00.000000Z\t17
+                            2024-01-01T02:00:00.000000Z\t17
+                            """,
                     "SELECT ts, first(b) fb FROM x SAMPLE BY 1h FILL(PREV) ALIGN TO CALENDAR",
                     "ts", false, false
             );
@@ -294,10 +310,12 @@ public class FillRecordDispatchTest extends AbstractCairoTest {
                     "('A', '2024-01-01T00:00:00.000000Z')," +
                     "('A', '2024-01-01T02:00:00.000000Z')");
             assertQueryNoLeakCheck(
-                    "ts\tfc\n" +
-                            "2024-01-01T00:00:00.000000Z\tA\n" +
-                            "2024-01-01T01:00:00.000000Z\tA\n" +
-                            "2024-01-01T02:00:00.000000Z\tA\n",
+                    """
+                            ts\tfc
+                            2024-01-01T00:00:00.000000Z\tA
+                            2024-01-01T01:00:00.000000Z\tA
+                            2024-01-01T02:00:00.000000Z\tA
+                            """,
                     "SELECT ts, first(c) fc FROM x SAMPLE BY 1h FILL(PREV) ALIGN TO CALENDAR",
                     "ts", false, false
             );
@@ -313,10 +331,12 @@ public class FillRecordDispatchTest extends AbstractCairoTest {
                     "(123.45::DECIMAL(30, 2), '2024-01-01T00:00:00.000000Z')," +
                     "(123.45::DECIMAL(30, 2), '2024-01-01T02:00:00.000000Z')");
             assertQueryNoLeakCheck(
-                    "ts\tfd\n" +
-                            "2024-01-01T00:00:00.000000Z\t123.45\n" +
-                            "2024-01-01T01:00:00.000000Z\t123.45\n" +
-                            "2024-01-01T02:00:00.000000Z\t123.45\n",
+                    """
+                            ts\tfd
+                            2024-01-01T00:00:00.000000Z\t123.45
+                            2024-01-01T01:00:00.000000Z\t123.45
+                            2024-01-01T02:00:00.000000Z\t123.45
+                            """,
                     "SELECT ts, first(d) fd FROM x SAMPLE BY 1h FILL(PREV) ALIGN TO CALENDAR",
                     "ts", false, false
             );
@@ -331,10 +351,12 @@ public class FillRecordDispatchTest extends AbstractCairoTest {
                     "(12.3::DECIMAL(4, 1), '2024-01-01T00:00:00.000000Z')," +
                     "(12.3::DECIMAL(4, 1), '2024-01-01T02:00:00.000000Z')");
             assertQueryNoLeakCheck(
-                    "ts\tfd\n" +
-                            "2024-01-01T00:00:00.000000Z\t12.3\n" +
-                            "2024-01-01T01:00:00.000000Z\t12.3\n" +
-                            "2024-01-01T02:00:00.000000Z\t12.3\n",
+                    """
+                            ts\tfd
+                            2024-01-01T00:00:00.000000Z\t12.3
+                            2024-01-01T01:00:00.000000Z\t12.3
+                            2024-01-01T02:00:00.000000Z\t12.3
+                            """,
                     "SELECT ts, first(d) fd FROM x SAMPLE BY 1h FILL(PREV) ALIGN TO CALENDAR",
                     "ts", false, false
             );
@@ -350,10 +372,12 @@ public class FillRecordDispatchTest extends AbstractCairoTest {
                     "(99999999.99::DECIMAL(60, 2), '2024-01-01T00:00:00.000000Z')," +
                     "(99999999.99::DECIMAL(60, 2), '2024-01-01T02:00:00.000000Z')");
             assertQueryNoLeakCheck(
-                    "ts\tfd\n" +
-                            "2024-01-01T00:00:00.000000Z\t99999999.99\n" +
-                            "2024-01-01T01:00:00.000000Z\t99999999.99\n" +
-                            "2024-01-01T02:00:00.000000Z\t99999999.99\n",
+                    """
+                            ts\tfd
+                            2024-01-01T00:00:00.000000Z\t99999999.99
+                            2024-01-01T01:00:00.000000Z\t99999999.99
+                            2024-01-01T02:00:00.000000Z\t99999999.99
+                            """,
                     "SELECT ts, first(d) fd FROM x SAMPLE BY 1h FILL(PREV) ALIGN TO CALENDAR",
                     "ts", false, false
             );
@@ -368,10 +392,12 @@ public class FillRecordDispatchTest extends AbstractCairoTest {
                     "(12345.67::DECIMAL(9, 2), '2024-01-01T00:00:00.000000Z')," +
                     "(12345.67::DECIMAL(9, 2), '2024-01-01T02:00:00.000000Z')");
             assertQueryNoLeakCheck(
-                    "ts\tfd\n" +
-                            "2024-01-01T00:00:00.000000Z\t12345.67\n" +
-                            "2024-01-01T01:00:00.000000Z\t12345.67\n" +
-                            "2024-01-01T02:00:00.000000Z\t12345.67\n",
+                    """
+                            ts\tfd
+                            2024-01-01T00:00:00.000000Z\t12345.67
+                            2024-01-01T01:00:00.000000Z\t12345.67
+                            2024-01-01T02:00:00.000000Z\t12345.67
+                            """,
                     "SELECT ts, first(d) fd FROM x SAMPLE BY 1h FILL(PREV) ALIGN TO CALENDAR",
                     "ts", false, false
             );
@@ -386,10 +412,12 @@ public class FillRecordDispatchTest extends AbstractCairoTest {
                     "(123456789.01::DECIMAL(18, 2), '2024-01-01T00:00:00.000000Z')," +
                     "(123456789.01::DECIMAL(18, 2), '2024-01-01T02:00:00.000000Z')");
             assertQueryNoLeakCheck(
-                    "ts\tfd\n" +
-                            "2024-01-01T00:00:00.000000Z\t123456789.01\n" +
-                            "2024-01-01T01:00:00.000000Z\t123456789.01\n" +
-                            "2024-01-01T02:00:00.000000Z\t123456789.01\n",
+                    """
+                            ts\tfd
+                            2024-01-01T00:00:00.000000Z\t123456789.01
+                            2024-01-01T01:00:00.000000Z\t123456789.01
+                            2024-01-01T02:00:00.000000Z\t123456789.01
+                            """,
                     "SELECT ts, first(d) fd FROM x SAMPLE BY 1h FILL(PREV) ALIGN TO CALENDAR",
                     "ts", false, false
             );
@@ -404,10 +432,12 @@ public class FillRecordDispatchTest extends AbstractCairoTest {
                     "(1.2::DECIMAL(2, 1), '2024-01-01T00:00:00.000000Z')," +
                     "(1.2::DECIMAL(2, 1), '2024-01-01T02:00:00.000000Z')");
             assertQueryNoLeakCheck(
-                    "ts\tfd\n" +
-                            "2024-01-01T00:00:00.000000Z\t1.2\n" +
-                            "2024-01-01T01:00:00.000000Z\t1.2\n" +
-                            "2024-01-01T02:00:00.000000Z\t1.2\n",
+                    """
+                            ts\tfd
+                            2024-01-01T00:00:00.000000Z\t1.2
+                            2024-01-01T01:00:00.000000Z\t1.2
+                            2024-01-01T02:00:00.000000Z\t1.2
+                            """,
                     "SELECT ts, first(d) fd FROM x SAMPLE BY 1h FILL(PREV) ALIGN TO CALENDAR",
                     "ts", false, false
             );
@@ -423,10 +453,12 @@ public class FillRecordDispatchTest extends AbstractCairoTest {
                     "(1.0, '2024-01-01T00:00:00.000000Z')," +
                     "(3.0, '2024-01-01T02:00:00.000000Z')");
             assertQueryNoLeakCheck(
-                    "ts\tfv\n" +
-                            "2024-01-01T00:00:00.000000Z\t1.0\n" +
-                            "2024-01-01T01:00:00.000000Z\t42.0\n" +
-                            "2024-01-01T02:00:00.000000Z\t3.0\n",
+                    """
+                            ts\tfv
+                            2024-01-01T00:00:00.000000Z\t1.0
+                            2024-01-01T01:00:00.000000Z\t42.0
+                            2024-01-01T02:00:00.000000Z\t3.0
+                            """,
                     "SELECT ts, first(v) fv FROM x SAMPLE BY 1h FILL(42.0) ALIGN TO CALENDAR",
                     "ts", false, false
             );
@@ -448,10 +480,12 @@ public class FillRecordDispatchTest extends AbstractCairoTest {
                     "(1.0, '2024-01-01T00:00:00.000000Z')," +
                     "(3.0, '2024-01-01T02:00:00.000000Z')");
             assertQueryNoLeakCheck(
-                    "ts\tfv\n" +
-                            "2024-01-01T00:00:00.000000Z\t1.0\n" +
-                            "2024-01-01T01:00:00.000000Z\t1.0\n" +
-                            "2024-01-01T02:00:00.000000Z\t3.0\n",
+                    """
+                            ts\tfv
+                            2024-01-01T00:00:00.000000Z\t1.0
+                            2024-01-01T01:00:00.000000Z\t1.0
+                            2024-01-01T02:00:00.000000Z\t3.0
+                            """,
                     "SELECT ts, first(v) fv FROM x SAMPLE BY 1h FILL(PREV) ALIGN TO CALENDAR",
                     "ts", false, false
             );
@@ -466,10 +500,12 @@ public class FillRecordDispatchTest extends AbstractCairoTest {
                     "(4.5::FLOAT, '2024-01-01T00:00:00.000000Z')," +
                     "(4.5::FLOAT, '2024-01-01T02:00:00.000000Z')");
             assertQueryNoLeakCheck(
-                    "ts\tff\n" +
-                            "2024-01-01T00:00:00.000000Z\t4.5\n" +
-                            "2024-01-01T01:00:00.000000Z\t4.5\n" +
-                            "2024-01-01T02:00:00.000000Z\t4.5\n",
+                    """
+                            ts\tff
+                            2024-01-01T00:00:00.000000Z\t4.5
+                            2024-01-01T01:00:00.000000Z\t4.5
+                            2024-01-01T02:00:00.000000Z\t4.5
+                            """,
                     "SELECT ts, first(f) ff FROM x SAMPLE BY 1h FILL(PREV) ALIGN TO CALENDAR",
                     "ts", false, false
             );
@@ -566,10 +602,12 @@ public class FillRecordDispatchTest extends AbstractCairoTest {
                     "('1.2.3.4'::IPV4, '2024-01-01T00:00:00.000000Z')," +
                     "('1.2.3.4'::IPV4, '2024-01-01T02:00:00.000000Z')");
             assertQueryNoLeakCheck(
-                    "ts\tfip\n" +
-                            "2024-01-01T00:00:00.000000Z\t1.2.3.4\n" +
-                            "2024-01-01T01:00:00.000000Z\t1.2.3.4\n" +
-                            "2024-01-01T02:00:00.000000Z\t1.2.3.4\n",
+                    """
+                            ts\tfip
+                            2024-01-01T00:00:00.000000Z\t1.2.3.4
+                            2024-01-01T01:00:00.000000Z\t1.2.3.4
+                            2024-01-01T02:00:00.000000Z\t1.2.3.4
+                            """,
                     "SELECT ts, first(ip) fip FROM x SAMPLE BY 1h FILL(PREV) ALIGN TO CALENDAR",
                     "ts", false, false
             );
@@ -584,10 +622,12 @@ public class FillRecordDispatchTest extends AbstractCairoTest {
                     "(17, '2024-01-01T00:00:00.000000Z')," +
                     "(17, '2024-01-01T02:00:00.000000Z')");
             assertQueryNoLeakCheck(
-                    "ts\tfi\n" +
-                            "2024-01-01T00:00:00.000000Z\t17\n" +
-                            "2024-01-01T01:00:00.000000Z\t17\n" +
-                            "2024-01-01T02:00:00.000000Z\t17\n",
+                    """
+                            ts\tfi
+                            2024-01-01T00:00:00.000000Z\t17
+                            2024-01-01T01:00:00.000000Z\t17
+                            2024-01-01T02:00:00.000000Z\t17
+                            """,
                     "SELECT ts, first(i) fi FROM x SAMPLE BY 1h FILL(PREV) ALIGN TO CALENDAR",
                     "ts", false, false
             );
@@ -606,10 +646,12 @@ public class FillRecordDispatchTest extends AbstractCairoTest {
                     "('2020-01-01T00:00:00.000Z'::TIMESTAMP, '2020-02-01T00:00:00.000Z'::TIMESTAMP, 10.0, '2024-01-01T00:00:00.000000Z')," +
                     "('2020-01-01T00:00:00.000Z'::TIMESTAMP, '2020-02-01T00:00:00.000Z'::TIMESTAMP, 30.0, '2024-01-01T02:00:00.000000Z')");
             assertQueryNoLeakCheck(
-                    "ts\tk\tfirst\n" +
-                            "2024-01-01T00:00:00.000000Z\t('2020-01-01T00:00:00.000Z', '2020-02-01T00:00:00.000Z')\t10.0\n" +
-                            "2024-01-01T01:00:00.000000Z\t('2020-01-01T00:00:00.000Z', '2020-02-01T00:00:00.000Z')\t10.0\n" +
-                            "2024-01-01T02:00:00.000000Z\t('2020-01-01T00:00:00.000Z', '2020-02-01T00:00:00.000Z')\t30.0\n",
+                    """
+                            ts\tk\tfirst
+                            2024-01-01T00:00:00.000000Z\t('2020-01-01T00:00:00.000Z', '2020-02-01T00:00:00.000Z')\t10.0
+                            2024-01-01T01:00:00.000000Z\t('2020-01-01T00:00:00.000Z', '2020-02-01T00:00:00.000Z')\t10.0
+                            2024-01-01T02:00:00.000000Z\t('2020-01-01T00:00:00.000Z', '2020-02-01T00:00:00.000Z')\t30.0
+                            """,
                     "SELECT ts, interval(lo, hi) k, first(v) FROM t " +
                             "SAMPLE BY 1h FILL(PREV) ALIGN TO CALENDAR",
                     "ts", false, false
@@ -627,10 +669,12 @@ public class FillRecordDispatchTest extends AbstractCairoTest {
                     "('11111111-2222-3333-4444-555555555555'::UUID, '2024-01-01T00:00:00.000000Z')," +
                     "('11111111-2222-3333-4444-555555555555'::UUID, '2024-01-01T02:00:00.000000Z')");
             assertQueryNoLeakCheck(
-                    "ts\tfu\n" +
-                            "2024-01-01T00:00:00.000000Z\t11111111-2222-3333-4444-555555555555\n" +
-                            "2024-01-01T01:00:00.000000Z\t11111111-2222-3333-4444-555555555555\n" +
-                            "2024-01-01T02:00:00.000000Z\t11111111-2222-3333-4444-555555555555\n",
+                    """
+                            ts\tfu
+                            2024-01-01T00:00:00.000000Z\t11111111-2222-3333-4444-555555555555
+                            2024-01-01T01:00:00.000000Z\t11111111-2222-3333-4444-555555555555
+                            2024-01-01T02:00:00.000000Z\t11111111-2222-3333-4444-555555555555
+                            """,
                     "SELECT ts, first(u) fu FROM x SAMPLE BY 1h FILL(PREV) ALIGN TO CALENDAR",
                     "ts", false, false
             );
@@ -670,10 +714,12 @@ public class FillRecordDispatchTest extends AbstractCairoTest {
                     "(1234567890, '2024-01-01T00:00:00.000000Z')," +
                     "(1234567890, '2024-01-01T02:00:00.000000Z')");
             assertQueryNoLeakCheck(
-                    "ts\tfl\n" +
-                            "2024-01-01T00:00:00.000000Z\t1234567890\n" +
-                            "2024-01-01T01:00:00.000000Z\t1234567890\n" +
-                            "2024-01-01T02:00:00.000000Z\t1234567890\n",
+                    """
+                            ts\tfl
+                            2024-01-01T00:00:00.000000Z\t1234567890
+                            2024-01-01T01:00:00.000000Z\t1234567890
+                            2024-01-01T02:00:00.000000Z\t1234567890
+                            """,
                     "SELECT ts, first(l) fl FROM x SAMPLE BY 1h FILL(PREV) ALIGN TO CALENDAR",
                     "ts", false, false
             );
@@ -737,10 +783,12 @@ public class FillRecordDispatchTest extends AbstractCairoTest {
                     "(17::SHORT, '2024-01-01T00:00:00.000000Z')," +
                     "(17::SHORT, '2024-01-01T02:00:00.000000Z')");
             assertQueryNoLeakCheck(
-                    "ts\tfs\n" +
-                            "2024-01-01T00:00:00.000000Z\t17\n" +
-                            "2024-01-01T01:00:00.000000Z\t17\n" +
-                            "2024-01-01T02:00:00.000000Z\t17\n",
+                    """
+                            ts\tfs
+                            2024-01-01T00:00:00.000000Z\t17
+                            2024-01-01T01:00:00.000000Z\t17
+                            2024-01-01T02:00:00.000000Z\t17
+                            """,
                     "SELECT ts, first(s) fs FROM x SAMPLE BY 1h FILL(PREV) ALIGN TO CALENDAR",
                     "ts", false, false
             );
@@ -757,10 +805,12 @@ public class FillRecordDispatchTest extends AbstractCairoTest {
                     "('hello', '2024-01-01T00:00:00.000000Z')," +
                     "('hello', '2024-01-01T02:00:00.000000Z')");
             assertQueryNoLeakCheck(
-                    "ts\tfs\n" +
-                            "2024-01-01T00:00:00.000000Z\thello\n" +
-                            "2024-01-01T01:00:00.000000Z\thello\n" +
-                            "2024-01-01T02:00:00.000000Z\thello\n",
+                    """
+                            ts\tfs
+                            2024-01-01T00:00:00.000000Z\thello
+                            2024-01-01T01:00:00.000000Z\thello
+                            2024-01-01T02:00:00.000000Z\thello
+                            """,
                     "SELECT ts, first(s) fs FROM x SAMPLE BY 1h FILL(PREV) ALIGN TO CALENDAR",
                     "ts", false, false
             );
@@ -778,10 +828,12 @@ public class FillRecordDispatchTest extends AbstractCairoTest {
                     "('sym1', '2024-01-01T00:00:00.000000Z')," +
                     "('sym1', '2024-01-01T02:00:00.000000Z')");
             assertQueryNoLeakCheck(
-                    "ts\tfsym\n" +
-                            "2024-01-01T00:00:00.000000Z\tsym1\n" +
-                            "2024-01-01T01:00:00.000000Z\tsym1\n" +
-                            "2024-01-01T02:00:00.000000Z\tsym1\n",
+                    """
+                            ts\tfsym
+                            2024-01-01T00:00:00.000000Z\tsym1
+                            2024-01-01T01:00:00.000000Z\tsym1
+                            2024-01-01T02:00:00.000000Z\tsym1
+                            """,
                     "SELECT ts, first(sym) fsym FROM x SAMPLE BY 1h FILL(PREV) ALIGN TO CALENDAR",
                     "ts", false, false
             );
@@ -801,10 +853,12 @@ public class FillRecordDispatchTest extends AbstractCairoTest {
                     "(1.0, '2024-01-01T00:00:00.000000Z')," +
                     "(3.0, '2024-01-01T02:00:00.000000Z')");
             assertQueryNoLeakCheck(
-                    "ts\tfv\n" +
-                            "2024-01-01T00:00:00.000000Z\t1.0\n" +
-                            "2024-01-01T01:00:00.000000Z\t1.0\n" +
-                            "2024-01-01T02:00:00.000000Z\t3.0\n",
+                    """
+                            ts\tfv
+                            2024-01-01T00:00:00.000000Z\t1.0
+                            2024-01-01T01:00:00.000000Z\t1.0
+                            2024-01-01T02:00:00.000000Z\t3.0
+                            """,
                     "SELECT ts, first(v) fv FROM x SAMPLE BY 1h FILL(PREV) ALIGN TO CALENDAR",
                     "ts", false, false
             );
@@ -821,10 +875,12 @@ public class FillRecordDispatchTest extends AbstractCairoTest {
                     "('varchar_val', '2024-01-01T00:00:00.000000Z')," +
                     "('varchar_val', '2024-01-01T02:00:00.000000Z')");
             assertQueryNoLeakCheck(
-                    "ts\tfvc\n" +
-                            "2024-01-01T00:00:00.000000Z\tvarchar_val\n" +
-                            "2024-01-01T01:00:00.000000Z\tvarchar_val\n" +
-                            "2024-01-01T02:00:00.000000Z\tvarchar_val\n",
+                    """
+                            ts\tfvc
+                            2024-01-01T00:00:00.000000Z\tvarchar_val
+                            2024-01-01T01:00:00.000000Z\tvarchar_val
+                            2024-01-01T02:00:00.000000Z\tvarchar_val
+                            """,
                     "SELECT ts, first(vc) fvc FROM x SAMPLE BY 1h FILL(PREV) ALIGN TO CALENDAR",
                     "ts", false, false
             );
