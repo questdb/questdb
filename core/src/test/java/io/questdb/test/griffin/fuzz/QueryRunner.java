@@ -318,13 +318,24 @@ public final class QueryRunner {
             if (!Double.isFinite(da) || !Double.isFinite(db)) {
                 return false;
             }
-            // 1e-12 relative is loose enough for FP reduction-order drift
+            // 1e-12 relative is loose enough for DOUBLE reduction-order drift
             // and tight enough to flag a real arithmetic divergence; the
             // 1e-15 floor handles values near zero where relative error
             // is ill-defined.
             double scale = Math.max(Math.abs(da), Math.abs(db));
-            double eps = Math.max(1e-15, scale * 1e-12);
-            if (Math.abs(da - db) > eps) {
+            double doubleEps = Math.max(1e-15, scale * 1e-12);
+            if (Math.abs(da - db) <= doubleEps) {
+                continue;
+            }
+            // Parallel SUM/AVG over FLOAT (or DOUBLE columns whose values
+            // were promoted from FLOAT) drifts at single-precision ulps
+            // when partial sums are merged across worker threads, which
+            // is several orders of magnitude looser than 1e-12 relative.
+            // Allow up to 32 FLOAT ulps -- still tight enough to flag a
+            // real arithmetic bug, which would shift the result by far
+            // more than ulp-scale noise.
+            double floatEps = Math.max(1e-15, Math.ulp((float) scale) * 32.0);
+            if (Math.abs(da - db) > floatEps) {
                 return false;
             }
         }

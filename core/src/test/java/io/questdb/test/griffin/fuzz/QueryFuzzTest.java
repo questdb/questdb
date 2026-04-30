@@ -26,6 +26,9 @@ package io.questdb.test.griffin.fuzz;
 
 import io.questdb.cairo.CairoException;
 import io.questdb.griffin.SqlException;
+import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.SqlExecutionContextImpl;
+import io.questdb.mp.WorkerPool;
 import io.questdb.std.ObjList;
 import io.questdb.std.Rnd;
 import io.questdb.test.AbstractCairoTest;
@@ -79,61 +82,22 @@ public class QueryFuzzTest extends AbstractCairoTest {
     @Test
     public void testQueryFuzz() throws Exception {
         assertMemoryLeak(() -> {
-            Long s0 = Long.getLong("questdb.fuzz.s0");
-            Long s1 = Long.getLong("questdb.fuzz.s1");
-            Rnd rnd = (s0 != null && s1 != null)
-                    ? TestUtils.generateRandom(LOG, s0, s1)
-                    : TestUtils.generateRandom(LOG);
-            FuzzConfig config = new FuzzConfig(rnd);
-
-            LOG.info().$("fuzz config: tables=").$(config.getNumTables())
-                    .$(", rows=").$(config.getRowsPerTable())
-                    .$(", queries=").$(config.getNumQueries())
-                    .$(", diffJit=").$(config.isDiffJitEnabled())
-                    .$(", diffShadow=").$(config.isDiffShadowEnabled())
-                    .$();
-
-            FuzzTableFactory factory = new FuzzTableFactory(config);
-            ObjList<FuzzTable> tables = new ObjList<>();
-            for (int i = 0; i < config.getNumTables(); i++) {
-                FuzzTable t = factory.create(rnd, "fuzz_t" + i, QueryFuzzTest::execute, QueryFuzzTest::drainWalQueue);
-                tables.add(t);
-                logSchema(t);
-                if (t.getShadow() != null) {
-                    logSchema(t.getShadow());
-                }
-            }
-
-            QueryRunner runner = new QueryRunner(engine, sqlExecutionContext, config.isDiffJitEnabled(), config.isDiffShadowEnabled(), tables);
-            int skipped = 0;
-            List<QueryRunner.Result> failures = new ArrayList<>();
-            try (BufferedWriter dump = openDump(config.getDumpPath())) {
-                for (int q = 0; q < config.getNumQueries(); q++) {
-                    GeneratedQuery query = QueryGenerator.generate(rnd, tables);
-                    if (dump != null) {
-                        dump.write(query.sql());
-                        dump.newLine();
-                    }
-                    QueryRunner.Result result = runner.run(query);
-                    if (result.isSkipped()) {
-                        skipped++;
-                        LOG.info().$("fuzz skip (").$safe(result.getSkipReason()).$("): ").$safe(query.sql()).$();
-                    } else if (result.isFailed()) {
-                        LOG.error().$("fuzz failure on query: ").$safe(query.sql())
-                                .$(" -- ").$(result.getFailure().getClass().getName())
-                                .$(": ").$safe(result.getFailure().getMessage())
-                                .$();
-                        failures.add(result);
-                    }
-                }
-            }
-            LOG.info().$("fuzz done: ").$(config.getNumQueries()).$(" queries, ")
-                    .$(skipped).$(" skipped on expected errors, ")
-                    .$(failures.size()).$(" failures")
-                    .$();
-
-            if (!failures.isEmpty()) {
-                throw buildFailure(failures);
+            // Run queries through a 4-thread shared worker pool so parallel filter,
+            // GROUP BY, top-K, window/horizon join and parquet read paths are exercised.
+            // The default test sqlExecutionContext reports getSharedQueryWorkerCount()=1,
+            // so build a fresh one that advertises the actual pool width to the planner.
+            final int workerCount = 4;
+            final WorkerPool pool = new WorkerPool(() -> workerCount);
+            TestUtils.setupWorkerPool(pool, engine);
+            pool.start(LOG);
+            try (
+                    SqlExecutionContext parallelCtx = new SqlExecutionContextImpl(engine, workerCount)
+                            .with(securityContext, bindVariableService, null, -1, circuitBreaker)
+            ) {
+                parallelCtx.initNow();
+                runFuzz(parallelCtx);
+            } finally {
+                pool.halt();
             }
         });
     }
@@ -170,5 +134,69 @@ public class QueryFuzzTest extends AbstractCairoTest {
             return null;
         }
         return new BufferedWriter(new FileWriter(Paths.get(path).toFile(), true));
+    }
+
+    private static void runFuzz(SqlExecutionContext sqlExecutionContext) throws Exception {
+        Long s0 = Long.getLong("questdb.fuzz.s0");
+        Long s1 = Long.getLong("questdb.fuzz.s1");
+        Rnd rnd = (s0 != null && s1 != null)
+                ? TestUtils.generateRandom(LOG, s0, s1)
+                : TestUtils.generateRandom(LOG);
+        FuzzConfig config = new FuzzConfig(rnd);
+
+        LOG.info().$("fuzz config: tables=").$(config.getNumTables())
+                .$(", rows=").$(config.getRowsPerTable())
+                .$(", queries=").$(config.getNumQueries())
+                .$(", diffJit=").$(config.isDiffJitEnabled())
+                .$(", diffShadow=").$(config.isDiffShadowEnabled())
+                .$();
+
+        FuzzTableFactory factory = new FuzzTableFactory(config);
+        ObjList<FuzzTable> tables = new ObjList<>();
+        for (int i = 0; i < config.getNumTables(); i++) {
+            FuzzTable t = factory.create(
+                    rnd,
+                    "fuzz_t" + i,
+                    sql -> engine.execute(sql, sqlExecutionContext),
+                    QueryFuzzTest::drainWalQueue
+            );
+            tables.add(t);
+            logSchema(t);
+            if (t.getShadow() != null) {
+                logSchema(t.getShadow());
+            }
+        }
+
+        QueryRunner runner = new QueryRunner(engine, sqlExecutionContext, config.isDiffJitEnabled(), config.isDiffShadowEnabled(), tables);
+        int skipped = 0;
+        List<QueryRunner.Result> failures = new ArrayList<>();
+        try (BufferedWriter dump = openDump(config.getDumpPath())) {
+            for (int q = 0; q < config.getNumQueries(); q++) {
+                GeneratedQuery query = QueryGenerator.generate(rnd, tables);
+                if (dump != null) {
+                    dump.write(query.sql());
+                    dump.newLine();
+                }
+                QueryRunner.Result result = runner.run(query);
+                if (result.isSkipped()) {
+                    skipped++;
+                    LOG.info().$("fuzz skip (").$safe(result.getSkipReason()).$("): ").$safe(query.sql()).$();
+                } else if (result.isFailed()) {
+                    LOG.error().$("fuzz failure on query: ").$safe(query.sql())
+                            .$(" -- ").$(result.getFailure().getClass().getName())
+                            .$(": ").$safe(result.getFailure().getMessage())
+                            .$();
+                    failures.add(result);
+                }
+            }
+        }
+        LOG.info().$("fuzz done: ").$(config.getNumQueries()).$(" queries, ")
+                .$(skipped).$(" skipped on expected errors, ")
+                .$(failures.size()).$(" failures")
+                .$();
+
+        if (!failures.isEmpty()) {
+            throw buildFailure(failures);
+        }
     }
 }
