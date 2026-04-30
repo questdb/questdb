@@ -52,6 +52,7 @@ import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.SqlExecutionContextImpl;
+import io.questdb.std.DirectBitSet;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.IntList;
 import io.questdb.std.MemoryTag;
@@ -1243,6 +1244,205 @@ public class CoveringIndexTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testCollectDistinctKeysAcrossManyGens() throws Exception {
+        assertMemoryLeak(() -> {
+            try (Path path = new Path().of(configuration.getDbRoot())) {
+                String name = "many_gens";
+                int plen = path.size();
+                int genCount = 8;
+                int keysPerGen = 6;
+                int rowsPerGen = keysPerGen * 4;
+                try (PostingIndexWriter writer = new PostingIndexWriter(configuration, path, name, COLUMN_NAME_TXN_NONE)) {
+                    int row = 0;
+                    for (int g = 0; g < genCount; g++) {
+                        for (int j = 0; j < rowsPerGen; j++) {
+                            writer.add(j % keysPerGen, row++);
+                        }
+                        writer.setMaxValue(row - 1);
+                        writer.commit();
+                    }
+                    writer.seal();
+                }
+
+                try (DirectBitSet found = new DirectBitSet(64);
+                     PostingIndexFwdReader reader = new PostingIndexFwdReader(
+                             configuration, path.trimTo(plen), name, COLUMN_NAME_TXN_NONE, -1, 0)) {
+                    int total = reader.collectDistinctKeysInRange(found, 0, (long) genCount * rowsPerGen - 1);
+                    assertEquals(keysPerGen, total);
+
+                    found.clear();
+                    int firstGen = reader.collectDistinctKeysInRange(found, 0, rowsPerGen - 1);
+                    assertEquals(keysPerGen, firstGen);
+
+                    found.clear();
+                    int singleRow = reader.collectDistinctKeysInRange(found, 0, 0);
+                    assertEquals(1, singleRow);
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testCollectDistinctKeysInRangeDeltaStrideFew() throws Exception {
+        assertMemoryLeak(() -> {
+            try (Path path = new Path().of(configuration.getDbRoot())) {
+                String name = "dist_delta";
+                int plen = path.size();
+                int keyCount = 5;
+                int rowsPerKey = 200;
+                int totalRows = keyCount * rowsPerKey;
+                try (PostingIndexWriter writer = new PostingIndexWriter(configuration, path, name, COLUMN_NAME_TXN_NONE)) {
+                    int half = totalRows / 2;
+                    for (int row = 0; row < half; row++) {
+                        writer.add(row % keyCount, row);
+                    }
+                    writer.setMaxValue(half - 1);
+                    writer.commit();
+                    for (int row = half; row < totalRows; row++) {
+                        writer.add(row % keyCount, row);
+                    }
+                    writer.setMaxValue(totalRows - 1);
+                    writer.commit();
+                    writer.seal();
+                }
+
+                try (DirectBitSet found = new DirectBitSet(keyCount);
+                     PostingIndexFwdReader reader = new PostingIndexFwdReader(
+                             configuration, path.trimTo(plen), name, COLUMN_NAME_TXN_NONE, -1, 0)) {
+                    int distinctAll = reader.collectDistinctKeysInRange(found, 0, totalRows - 1);
+                    assertEquals(keyCount, distinctAll);
+
+                    found.clear();
+                    int distinctNarrow = reader.collectDistinctKeysInRange(found, 0, keyCount - 1);
+                    assertEquals(keyCount, distinctNarrow);
+
+                    found.clear();
+                    int distinctSingle = reader.collectDistinctKeysInRange(found, 0, 0);
+                    assertEquals(1, distinctSingle);
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testCollectDistinctKeysInRangeFlatStrideMany() throws Exception {
+        assertMemoryLeak(() -> {
+            try (Path path = new Path().of(configuration.getDbRoot())) {
+                String name = "dist_flat";
+                int plen = path.size();
+                int keyCount = 300;
+                int rowsPerKey = 2;
+                int totalRows = keyCount * rowsPerKey;
+                try (PostingIndexWriter writer = new PostingIndexWriter(configuration, path, name, COLUMN_NAME_TXN_NONE)) {
+                    int half = totalRows / 2;
+                    for (int row = 0; row < half; row++) {
+                        writer.add(row % keyCount, row);
+                    }
+                    writer.setMaxValue(half - 1);
+                    writer.commit();
+                    for (int row = half; row < totalRows; row++) {
+                        writer.add(row % keyCount, row);
+                    }
+                    writer.setMaxValue(totalRows - 1);
+                    writer.commit();
+                    writer.seal();
+                }
+
+                try (DirectBitSet found = new DirectBitSet(keyCount);
+                     PostingIndexFwdReader reader = new PostingIndexFwdReader(
+                             configuration, path.trimTo(plen), name, COLUMN_NAME_TXN_NONE, -1, 0)) {
+                    int distinctAll = reader.collectDistinctKeysInRange(found, 0, totalRows - 1);
+                    assertEquals(keyCount, distinctAll);
+
+                    found.clear();
+                    int distinctMid = reader.collectDistinctKeysInRange(found, totalRows / 2, totalRows / 2 + 100);
+                    assertTrue(distinctMid > 0 && distinctMid <= keyCount);
+
+                    found.clear();
+                    int distinctEmpty = reader.collectDistinctKeysInRange(found, totalRows + 100, totalRows + 200);
+                    assertEquals(0, distinctEmpty);
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testCollectDistinctKeysInRangeManyValuesPerKey() throws Exception {
+        assertMemoryLeak(() -> {
+            try (Path path = new Path().of(configuration.getDbRoot())) {
+                String name = "dist_ef";
+                int plen = path.size();
+                int totalRows = 4_000;
+                long[] rowIds = new long[totalRows];
+                long pos = 0;
+                for (int i = 0; i < totalRows; i++) {
+                    pos += 1 + ((i * 0x9E3779B1L) & 0x7F);
+                    rowIds[i] = pos;
+                }
+                long maxRow = rowIds[totalRows - 1];
+                try (PostingIndexWriter writer = new PostingIndexWriter(configuration, path, name, COLUMN_NAME_TXN_NONE)) {
+                    int half = totalRows / 2;
+                    for (int row = 0; row < half; row++) {
+                        writer.add(0, rowIds[row]);
+                    }
+                    writer.setMaxValue(rowIds[half - 1]);
+                    writer.commit();
+                    for (int row = half; row < totalRows; row++) {
+                        writer.add(0, rowIds[row]);
+                    }
+                    writer.setMaxValue(maxRow);
+                    writer.commit();
+                    writer.seal();
+                }
+
+                try (DirectBitSet found = new DirectBitSet(8);
+                     PostingIndexFwdReader reader = new PostingIndexFwdReader(
+                             configuration, path.trimTo(plen), name, COLUMN_NAME_TXN_NONE, -1, 0)) {
+                    int hit = reader.collectDistinctKeysInRange(found, 0, maxRow);
+                    assertEquals(1, hit);
+
+                    found.clear();
+                    int high = reader.collectDistinctKeysInRange(found, rowIds[totalRows - 5], maxRow);
+                    assertEquals(1, high);
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testCollectDistinctKeysInRangeSparseGen() throws Exception {
+        assertMemoryLeak(() -> {
+            try (Path path = new Path().of(configuration.getDbRoot())) {
+                String name = "dist_sparse";
+                int plen = path.size();
+                try (PostingIndexWriter writer = new PostingIndexWriter(configuration, path, name, COLUMN_NAME_TXN_NONE)) {
+                    for (int row = 0; row < 500; row++) {
+                        writer.add(row % 50, row);
+                    }
+                    writer.setMaxValue(499);
+                    writer.commit();
+                    for (int row = 500; row < 600; row++) {
+                        writer.add(row % 3, row);
+                    }
+                    writer.setMaxValue(599);
+                    writer.commit();
+                }
+
+                try (DirectBitSet found = new DirectBitSet(64);
+                     PostingIndexFwdReader reader = new PostingIndexFwdReader(
+                             configuration, path.trimTo(plen), name, COLUMN_NAME_TXN_NONE, -1, 0)) {
+                    int total = reader.collectDistinctKeysInRange(found, 0, 599);
+                    assertEquals(50, total);
+
+                    found.clear();
+                    int gen1Only = reader.collectDistinctKeysInRange(found, 500, 599);
+                    assertEquals(3, gen1Only);
+                }
+            }
+        });
+    }
+
+    @Test
     public void testCountPushdown() throws Exception {
         assertMemoryLeak(() -> {
             execute("""
@@ -1436,6 +1636,386 @@ public class CoveringIndexTest extends AbstractCairoTest {
                     "SELECT DISTINCT sym FROM t_count_multi ORDER BY sym",
                     null, true, true
             );
+        });
+    }
+
+    @Test
+    public void testCoveredBinLenDirectRead() throws Exception {
+        assertMemoryLeak(() -> {
+            try (Path path = new Path().of(configuration.getDbRoot())) {
+                String name = "cov_binlen";
+                int plen = path.size();
+                int rowCount = 8;
+                long binDataSize = (long) rowCount * 64;
+                long binDataAddr = Unsafe.malloc(binDataSize, MemoryTag.NATIVE_DEFAULT);
+                long binAuxSize = (long) (rowCount + 1) * Long.BYTES;
+                long binAuxAddr = Unsafe.malloc(binAuxSize, MemoryTag.NATIVE_DEFAULT);
+                try {
+                    long off = 0;
+                    for (int i = 0; i < rowCount; i++) {
+                        Unsafe.putLong(binAuxAddr + (long) i * Long.BYTES, off);
+                        long binLen = 4L + i;
+                        Unsafe.putLong(binDataAddr + off, binLen);
+                        off += Long.BYTES;
+                        for (long b = 0; b < binLen; b++) {
+                            Unsafe.putByte(binDataAddr + off + b, (byte) (b + i));
+                        }
+                        off += binLen;
+                    }
+                    Unsafe.putLong(binAuxAddr + (long) rowCount * Long.BYTES, off);
+
+                    try (PostingIndexWriter writer = new PostingIndexWriter(configuration, path, name, COLUMN_NAME_TXN_NONE)) {
+                        writer.configureCovering(
+                                new long[]{binDataAddr},
+                                new long[]{binAuxAddr},
+                                new long[]{0},
+                                new int[]{-1},
+                                new int[]{2},
+                                new int[]{ColumnType.BINARY},
+                                1,
+                                -1
+                        );
+                        int half = rowCount / 2;
+                        for (int i = 0; i < half; i++) writer.add(0, i);
+                        writer.setMaxValue(half - 1);
+                        writer.commit();
+                        for (int i = half; i < rowCount; i++) writer.add(0, i);
+                        writer.setMaxValue(rowCount - 1);
+                        writer.commit();
+                        writer.seal();
+                    }
+
+                    try (PostingIndexFwdReader reader = new PostingIndexFwdReader(
+                            configuration, path.trimTo(plen), name, COLUMN_NAME_TXN_NONE, -1, 0,
+                            coveringMetadata(new int[]{2}, new int[]{ColumnType.BINARY}),
+                            EMPTY_CVR, 0)) {
+                        try (RowCursor c = reader.getCursor(0, 0, Long.MAX_VALUE, new int[]{0})) {
+                            assertTrue(c instanceof CoveringRowCursor);
+                            CoveringRowCursor cc = (CoveringRowCursor) c;
+                            int seen = 0;
+                            while (cc.hasNext()) {
+                                cc.next();
+                                assertEquals(4L + seen, cc.getCoveredBinLen(0));
+                                seen++;
+                            }
+                            assertEquals(rowCount, seen);
+                        }
+                    }
+                } finally {
+                    Unsafe.free(binAuxAddr, binAuxSize, MemoryTag.NATIVE_DEFAULT);
+                    Unsafe.free(binDataAddr, binDataSize, MemoryTag.NATIVE_DEFAULT);
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testCoveredFloatAndBinLenDirectRead() throws Exception {
+        assertMemoryLeak(() -> {
+            try (Path path = new Path().of(configuration.getDbRoot())) {
+                String name = "cov_float_bin";
+                int plen = path.size();
+                int rowCount = 10;
+                long fAddr = Unsafe.malloc((long) rowCount * Float.BYTES, MemoryTag.NATIVE_DEFAULT);
+                long binDataSize = (long) rowCount * 32; // 4 byte length + 28 byte payload per row
+                long binDataAddr = Unsafe.malloc(binDataSize, MemoryTag.NATIVE_DEFAULT);
+                long binAuxSize = (long) (rowCount + 1) * Long.BYTES;
+                long binAuxAddr = Unsafe.malloc(binAuxSize, MemoryTag.NATIVE_DEFAULT);
+                try {
+                    long off = 0;
+                    for (int i = 0; i < rowCount; i++) {
+                        Unsafe.putFloat(fAddr + (long) i * Float.BYTES, 1.5f * i);
+                        Unsafe.putLong(binAuxAddr + (long) i * Long.BYTES, off);
+                        long binLen = 8L + i;
+                        Unsafe.putLong(binDataAddr + off, binLen);
+                        off += Long.BYTES;
+                        for (long b = 0; b < binLen; b++) {
+                            Unsafe.putByte(binDataAddr + off + b, (byte) (b + i));
+                        }
+                        off += binLen;
+                    }
+                    Unsafe.putLong(binAuxAddr + (long) rowCount * Long.BYTES, off);
+
+                    try (PostingIndexWriter writer = new PostingIndexWriter(configuration, path, name, COLUMN_NAME_TXN_NONE)) {
+                        writer.configureCovering(
+                                new long[]{fAddr},
+                                new long[]{0},
+                                new int[]{2},
+                                new int[]{2},
+                                new int[]{ColumnType.FLOAT},
+                                1
+                        );
+                        int half = rowCount / 2;
+                        for (int i = 0; i < half; i++) writer.add(0, i);
+                        writer.setMaxValue(half - 1);
+                        writer.commit();
+                        for (int i = half; i < rowCount; i++) writer.add(0, i);
+                        writer.setMaxValue(rowCount - 1);
+                        writer.commit();
+                        writer.seal();
+                    }
+
+                    try (PostingIndexFwdReader reader = new PostingIndexFwdReader(
+                            configuration, path.trimTo(plen), name, COLUMN_NAME_TXN_NONE, -1, 0,
+                            coveringMetadata(new int[]{2}, new int[]{ColumnType.FLOAT}),
+                            EMPTY_CVR, 0)) {
+                        try (RowCursor c = reader.getCursor(0, 0, Long.MAX_VALUE, new int[]{0})) {
+                            assertTrue(c instanceof CoveringRowCursor);
+                            CoveringRowCursor cc = (CoveringRowCursor) c;
+                            int seen = 0;
+                            while (cc.hasNext()) {
+                                cc.next();
+                                assertEquals(1.5f * seen, cc.getCoveredFloat(0), 1e-6);
+                                seen++;
+                            }
+                            assertEquals(rowCount, seen);
+                        }
+                    }
+                } finally {
+                    Unsafe.free(binAuxAddr, binAuxSize, MemoryTag.NATIVE_DEFAULT);
+                    Unsafe.free(binDataAddr, binDataSize, MemoryTag.NATIVE_DEFAULT);
+                    Unsafe.free(fAddr, (long) rowCount * Float.BYTES, MemoryTag.NATIVE_DEFAULT);
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testCoveredLong256DenseGenDirectRead() throws Exception {
+        assertMemoryLeak(() -> {
+            try (Path path = new Path().of(configuration.getDbRoot())) {
+                String name = "cov_long256";
+                int plen = path.size();
+                int rowCount = 8;
+                long colAddr256 = Unsafe.malloc((long) rowCount * 32, MemoryTag.NATIVE_DEFAULT);
+                try {
+                    for (int i = 0; i < rowCount; i++) {
+                        long b256 = (long) i * 32;
+                        Unsafe.putLong(colAddr256 + b256, 100L + i);
+                        Unsafe.putLong(colAddr256 + b256 + 8, 200L + i);
+                        Unsafe.putLong(colAddr256 + b256 + 16, 300L + i);
+                        Unsafe.putLong(colAddr256 + b256 + 24, 400L + i);
+                    }
+                    try (PostingIndexWriter writer = new PostingIndexWriter(configuration, path, name, COLUMN_NAME_TXN_NONE)) {
+                        writer.configureCovering(
+                                new long[]{colAddr256},
+                                new long[]{0},
+                                new int[]{5},
+                                new int[]{2},
+                                new int[]{ColumnType.LONG256},
+                                1
+                        );
+                        // Two commits + seal so the merged gen is stride-encoded
+                        // dense and reads go through the dense-branch of
+                        // getCoveredLong256_*.
+                        int half = rowCount / 2;
+                        for (int i = 0; i < half; i++) writer.add(0, i);
+                        writer.setMaxValue(half - 1);
+                        writer.commit();
+                        for (int i = half; i < rowCount; i++) writer.add(0, i);
+                        writer.setMaxValue(rowCount - 1);
+                        writer.commit();
+                        writer.seal();
+                    }
+
+                    try (PostingIndexFwdReader reader = new PostingIndexFwdReader(
+                            configuration, path.trimTo(plen), name, COLUMN_NAME_TXN_NONE, -1, 0,
+                            coveringMetadata(new int[]{2}, new int[]{ColumnType.LONG256}),
+                            EMPTY_CVR, 0)) {
+                        try (RowCursor c = reader.getCursor(0, 0, Long.MAX_VALUE, new int[]{0})) {
+                            assertTrue(c instanceof CoveringRowCursor);
+                            CoveringRowCursor cc = (CoveringRowCursor) c;
+                            int seen = 0;
+                            while (cc.hasNext()) {
+                                cc.next();
+                                assertEquals(100L + seen, cc.getCoveredLong256_0(0));
+                                assertEquals(200L + seen, cc.getCoveredLong256_1(0));
+                                assertEquals(300L + seen, cc.getCoveredLong256_2(0));
+                                assertEquals(400L + seen, cc.getCoveredLong256_3(0));
+                                seen++;
+                            }
+                            assertEquals(rowCount, seen);
+                        }
+                    }
+                } finally {
+                    Unsafe.free(colAddr256, (long) rowCount * 32, MemoryTag.NATIVE_DEFAULT);
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testCoveredStringFsstAndBinaryArray() throws Exception {
+        // Covers the STRING / BINARY / ARRAY var-sidecar read paths via the
+        // same O3 stride-merge route used by the varchar FSST test, hitting
+        // decompressFsstStr / getVarSidecarStr / getVarSidecarBin /
+        // getVarSidecarBinLen / getVarSidecarArray.
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE t_str_bin_arr (
+                        ts TIMESTAMP,
+                        sym SYMBOL INDEX TYPE POSTING INCLUDE (s, b, a),
+                        s STRING,
+                        b BINARY,
+                        a DOUBLE[]
+                    ) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL
+                    """);
+            execute("""
+                    INSERT INTO t_str_bin_arr
+                    SELECT dateadd('s', (x * 2)::INT, '2024-01-01')::TIMESTAMP,
+                           CASE x % 5 WHEN 0 THEN 'A' WHEN 1 THEN 'B' WHEN 2 THEN 'C'
+                                      WHEN 3 THEN 'D' ELSE 'E' END,
+                           ('abcdefgh_abcdefgh_abcdefgh_abcdefgh_abcdefgh_abcdefgh_abcdefgh_abcdefgh_abcdefgh_' || (x % 4)),
+                           rnd_bin(8, 16, 0),
+                           ARRAY[x::DOUBLE, (x + 1)::DOUBLE]
+                    FROM long_sequence(2000)
+                    """);
+            execute("""
+                    INSERT INTO t_str_bin_arr
+                    SELECT dateadd('s', (x * 2 + 1)::INT, '2024-01-01')::TIMESTAMP,
+                           CASE x % 5 WHEN 0 THEN 'A' WHEN 1 THEN 'B' WHEN 2 THEN 'C'
+                                      WHEN 3 THEN 'D' ELSE 'E' END,
+                           ('abcdefgh_abcdefgh_abcdefgh_abcdefgh_abcdefgh_abcdefgh_abcdefgh_abcdefgh_abcdefgh_' || (x % 4)),
+                           rnd_bin(8, 16, 0),
+                           ARRAY[x::DOUBLE, (x + 1)::DOUBLE]
+                    FROM long_sequence(2000)
+                    """);
+            engine.releaseAllWriters();
+
+            // Fetch all three covered columns to walk getVarSidecarStr,
+            // getVarSidecarBin/getVarSidecarBinLen and getVarSidecarArray.
+            assertSql("c\n800\n",
+                    "SELECT count() c FROM t_str_bin_arr " +
+                            "WHERE sym = 'A' AND s LIKE 'abcdefgh%' AND length(b) > 0 AND a[1] > 0");
+        });
+    }
+
+    @Test
+    public void testCoveredUuidDenseGenDirectRead() throws Exception {
+        assertMemoryLeak(() -> {
+            try (Path path = new Path().of(configuration.getDbRoot())) {
+                String name = "cov_uuid";
+                int plen = path.size();
+                int rowCount = 8;
+                long colAddr = Unsafe.malloc((long) rowCount * 16, MemoryTag.NATIVE_DEFAULT);
+                try {
+                    for (int i = 0; i < rowCount; i++) {
+                        Unsafe.putLong(colAddr + (long) i * 16, 700L + i);
+                        Unsafe.putLong(colAddr + (long) i * 16 + 8, 800L + i);
+                    }
+                    try (PostingIndexWriter writer = new PostingIndexWriter(configuration, path, name, COLUMN_NAME_TXN_NONE)) {
+                        writer.configureCovering(
+                                new long[]{colAddr},
+                                new long[]{0},
+                                new int[]{4},
+                                new int[]{2},
+                                new int[]{ColumnType.UUID},
+                                1
+                        );
+                        int half = rowCount / 2;
+                        for (int i = 0; i < half; i++) writer.add(0, i);
+                        writer.setMaxValue(half - 1);
+                        writer.commit();
+                        for (int i = half; i < rowCount; i++) writer.add(0, i);
+                        writer.setMaxValue(rowCount - 1);
+                        writer.commit();
+                        writer.seal();
+                    }
+
+                    try (PostingIndexFwdReader reader = new PostingIndexFwdReader(
+                            configuration, path.trimTo(plen), name, COLUMN_NAME_TXN_NONE, -1, 0,
+                            coveringMetadata(new int[]{2}, new int[]{ColumnType.UUID}),
+                            EMPTY_CVR, 0)) {
+                        try (RowCursor c = reader.getCursor(0, 0, Long.MAX_VALUE, new int[]{0})) {
+                            assertTrue(c instanceof CoveringRowCursor);
+                            CoveringRowCursor cc = (CoveringRowCursor) c;
+                            int seen = 0;
+                            while (cc.hasNext()) {
+                                cc.next();
+                                assertEquals(700L + seen, cc.getCoveredLong128Lo(0));
+                                assertEquals(800L + seen, cc.getCoveredLong128Hi(0));
+                                seen++;
+                            }
+                            assertEquals(rowCount, seen);
+                        }
+                    }
+                } finally {
+                    Unsafe.free(colAddr, (long) rowCount * 16, MemoryTag.NATIVE_DEFAULT);
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testCoveredVarcharFsstDecompress() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE t_fsst_dec (
+                        ts TIMESTAMP,
+                        sym SYMBOL INDEX TYPE POSTING INCLUDE (msg),
+                        msg VARCHAR
+                    ) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL
+                    """);
+            execute("""
+                    INSERT INTO t_fsst_dec
+                    SELECT dateadd('s', x::INT, '2024-01-01')::TIMESTAMP,
+                           'A',
+                           ('order_confirmation_alpha_beta_gamma_delta_epsilon_zeta_eta_theta_iota_kappa_' || x)::VARCHAR
+                    FROM long_sequence(200)
+                    """);
+            engine.releaseAllWriters();
+
+            assertSql("count\n200\n",
+                    "SELECT count() FROM (SELECT msg FROM t_fsst_dec WHERE sym = 'A')");
+
+            assertSql("""
+                    msg
+                    order_confirmation_alpha_beta_gamma_delta_epsilon_zeta_eta_theta_iota_kappa_200
+                    """, "SELECT msg FROM t_fsst_dec WHERE sym = 'A' LATEST ON ts PARTITION BY sym");
+        });
+    }
+
+    @Test
+    public void testCoveredVarcharFsstStrideMerge() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE t_fsst_merge (
+                        ts TIMESTAMP,
+                        sym SYMBOL INDEX TYPE POSTING INCLUDE (msg),
+                        msg VARCHAR
+                    ) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL
+                    """);
+            execute("""
+                    INSERT INTO t_fsst_merge
+                    SELECT dateadd('s', (x * 2)::INT, '2024-01-01')::TIMESTAMP,
+                           CASE x % 7 WHEN 0 THEN 'A' WHEN 1 THEN 'B' WHEN 2 THEN 'C'
+                                      WHEN 3 THEN 'D' WHEN 4 THEN 'E' WHEN 5 THEN 'F' ELSE 'G' END,
+                           ('abcdefgh_abcdefgh_abcdefgh_abcdefgh_abcdefgh_abcdefgh_abcdefgh_abcdefgh_abcdefgh_' || (x % 5))::VARCHAR
+                    FROM long_sequence(3000)
+                    """);
+            execute("""
+                    INSERT INTO t_fsst_merge
+                    SELECT dateadd('s', (x * 2 + 1)::INT, '2024-01-01')::TIMESTAMP,
+                           CASE x % 7 WHEN 0 THEN 'A' WHEN 1 THEN 'B' WHEN 2 THEN 'C'
+                                      WHEN 3 THEN 'D' WHEN 4 THEN 'E' WHEN 5 THEN 'F' ELSE 'G' END,
+                           ('abcdefgh_abcdefgh_abcdefgh_abcdefgh_abcdefgh_abcdefgh_abcdefgh_abcdefgh_abcdefgh_' || (x % 5))::VARCHAR
+                    FROM long_sequence(3000)
+                    """);
+            engine.releaseAllWriters();
+
+            assertSql("count\n856\n",
+                    "SELECT count() FROM (SELECT msg FROM t_fsst_merge WHERE sym = 'A')");
+            // Actually FETCH varchar values from the FSST-flagged sidecar block
+            // so the reader walks decompressFsstUtf8 / ensureFsstCacheCapacity.
+            // x=2996 has x%7==0 (sym='A') and largest ts in batch 2 (5993).
+            // 2996%5==1 so msg ends with _1.
+            assertSql("""
+                            msg
+                            abcdefgh_abcdefgh_abcdefgh_abcdefgh_abcdefgh_abcdefgh_abcdefgh_abcdefgh_abcdefgh_1
+                            """,
+                    "SELECT msg FROM t_fsst_merge WHERE sym = 'A' LATEST ON ts PARTITION BY sym");
+            assertSql("c\n856\n",
+                    "SELECT count() c FROM t_fsst_merge WHERE sym = 'A' AND msg LIKE 'abcdefgh%'");
         });
     }
 
@@ -5313,6 +5893,143 @@ public class CoveringIndexTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testCoveringRecord_AllColumnTypes() throws Exception {
+        // Exercise every column type the covering writer supports
+        // (writeCoveredRow's switch enumerates them). assertQueryNoLeakCheck
+        // drives the full RecordCursorFactory/RecordCursor API:
+        //   - CursorPrinter calls every type's primary accessor
+        //   - testStringsLong256AndBinary covers STRING getStrA+B+Len,
+        //     BINARY getBin+Len, LONG256 getLong256A+B
+        //   - assertVariableColumns covers VARCHAR getVarcharA+B+Size
+        //   - testSymbolAPI covers SYMBOL getInt+getSymA+symbol table API
+        //     including the indexed sym column whose getInt must return the
+        //     resolved key.
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE t_all_types (
+                        ts TIMESTAMP,
+                        sym SYMBOL INDEX TYPE POSTING INCLUDE (
+                            b, sh, i, l, ts_inc, dt, f, d, c, bo, ip,
+                            uuid_col, l256,
+                            d8, d16, d32, d64, d128, d256,
+                            gb, gs, gi, gl,
+                            label, name, payload, kind
+                        ),
+                        b BYTE,
+                        sh SHORT,
+                        i INT,
+                        l LONG,
+                        ts_inc TIMESTAMP,
+                        dt DATE,
+                        f FLOAT,
+                        d DOUBLE,
+                        c CHAR,
+                        bo BOOLEAN,
+                        ip IPv4,
+                        uuid_col UUID,
+                        l256 LONG256,
+                        d8 DECIMAL(2, 1),
+                        d16 DECIMAL(4, 2),
+                        d32 DECIMAL(9, 2),
+                        d64 DECIMAL(18, 4),
+                        d128 DECIMAL(38, 10),
+                        d256 DECIMAL(40, 5),
+                        gb GEOHASH(5b),
+                        gs GEOHASH(10b),
+                        gi GEOHASH(20b),
+                        gl GEOHASH(40b),
+                        label STRING,
+                        name VARCHAR,
+                        payload BINARY,
+                        kind SYMBOL
+                    ) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL
+                    """);
+            // Two rows: row 1 is fully populated, row 2 is all-null. Each
+            // accessor is exercised in both branches of its null-handling
+            // logic.
+            execute("""
+                    INSERT INTO t_all_types VALUES
+                    (
+                        '2024-01-01T00:00:00', 'A',
+                        7, 1234, 99, 1000000,
+                        '2024-06-15T10:30:00', '2024-06-15',
+                        1.5, 2.25, 'X', true,
+                        '10.0.0.1',
+                        '00000000-0000-0000-0000-000000000001',
+                        0x0a,
+                        '1.5'::DECIMAL(2, 1),
+                        '12.34'::DECIMAL(4, 2),
+                        '1234567.89'::DECIMAL(9, 2),
+                        '12345678901234.5678'::DECIMAL(18, 4),
+                        '1234567890123456789012345678.1234567890'::DECIMAL(38, 10),
+                        '12345678901234567890123456789012345.67890'::DECIMAL(40, 5),
+                        #y, #yz, #yzbc, #yzbc1234,
+                        'alice', 'va', null, 'k1'
+                    ),
+                    (
+                        '2024-01-01T01:00:00', 'A',
+                        null, null, null, null,
+                        null, null,
+                        null, null, null, null,
+                        null,
+                        null,
+                        null,
+                        null, null, null, null, null, null,
+                        null, null, null, null,
+                        null, null, null, null
+                    )
+                    """);
+            engine.releaseAllWriters();
+
+            // Selecting only the indexed sym column plus all INCLUDE'd
+            // columns keeps the optimizer on the CoveringIndex factory.
+            // Including ts (uncovered) here would fall back to a regular scan.
+            String allTypesSelect = "SELECT sym, b, sh, i, l, ts_inc, dt, f, d, c, bo, ip, uuid_col, l256, d8, d16, d32, d64, d128, d256, gb, gs, gi, gl, label, name, payload, kind FROM t_all_types WHERE sym = 'A'";
+            assertQueryNoLeakCheck(
+                    """
+                            sym\tb\tsh\ti\tl\tts_inc\tdt\tf\td\tc\tbo\tip\tuuid_col\tl256\td8\td16\td32\td64\td128\td256\tgb\tgs\tgi\tgl\tlabel\tname\tpayload\tkind
+                            A\t7\t1234\t99\t1000000\t2024-06-15T10:30:00.000000Z\t2024-06-15T00:00:00.000Z\t1.5\t2.25\tX\ttrue\t10.0.0.1\t00000000-0000-0000-0000-000000000001\t0x0a\t1.5\t12.34\t1234567.89\t12345678901234.5678\t1234567890123456789012345678.1234567890\t12345678901234567890123456789012345.67890\ty\tyz\tyzbc\tyzbc1234\talice\tva\t\tk1
+                            A\t0\t0\tnull\tnull\t\t\tnull\tnull\t\tfalse\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t
+                            """,
+                    allTypesSelect,
+                    null,
+                    false,
+                    true
+            );
+
+            // Manual pass for accessors not exercised by assertQueryNoLeakCheck:
+            //   - SYMBOL getSymB on the indexed col + INCLUDE'd col
+            //   - getRowId() (Record metadata, not column data)
+            try (var factory = select(allTypesSelect);
+                 RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                Record r = cursor.getRecord();
+                assertTrue(cursor.hasNext());
+                assertEquals("A", r.getSymA(0).toString());
+                assertEquals("A", r.getSymB(0).toString());
+                // kind is the last column (index 27)
+                assertEquals("k1", r.getSymA(27).toString());
+                assertEquals("k1", r.getSymB(27).toString());
+                // getRowId returns the file row id stored on the record
+                assertTrue(r.getRowId() >= 0);
+            }
+
+            // Page-frame cursor pass: exercises writeCoveredRow's full type
+            // switch including STRING/VARCHAR/BINARY/LONG256/DECIMAL128+256,
+            // plus writeStringToFrame and writeBinaryToFrame paths that the
+            // record cursor does not visit.
+            try (var factory = select(allTypesSelect);
+                 PageFrameCursor cursor = factory.getPageFrameCursor(sqlExecutionContext, PartitionFrameCursorFactory.ORDER_ASC)) {
+                long rows = 0;
+                PageFrame f;
+                while ((f = cursor.next(0)) != null) {
+                    rows += f.getPartitionHi() - f.getPartitionLo();
+                }
+                assertEquals(2, rows);
+            }
+        });
+    }
+
+    @Test
     public void testCoveringStringFsstCompression() throws Exception {
         assertMemoryLeak(() -> {
             execute("""
@@ -7354,6 +8071,40 @@ public class CoveringIndexTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testGetPageFrameCursor_MultiKeyMixedKnownUnknown() throws Exception {
+        // Multi-key getPageFrameCursor: bind variable list with one known and
+        // one unknown value. Drives the keyValueFuncs != null branch where a
+        // pre-resolved VALUE_NOT_FOUND is re-resolved at exec time, plus the
+        // "skip unknown, keep known" path that leaves multiKeys non-empty.
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE t_pf_mk_bind (
+                        ts TIMESTAMP,
+                        sym SYMBOL INDEX TYPE POSTING INCLUDE (price),
+                        price DOUBLE
+                    ) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL
+                    """);
+            execute("""
+                    INSERT INTO t_pf_mk_bind VALUES
+                    ('2024-01-01T00:00:00', 'A', 10.0),
+                    ('2024-01-01T01:00:00', 'B', 20.0)
+                    """);
+            engine.releaseAllWriters();
+
+            bindVariableService.clear();
+            bindVariableService.setStr("k1", "A");
+            bindVariableService.setStr("k2", "MISSING");
+            assertQueryNoLeakCheck(
+                    "cnt\n1\n",
+                    "SELECT count() cnt FROM t_pf_mk_bind WHERE sym IN (:k1, :k2)",
+                    null,
+                    false,
+                    true
+            );
+        });
+    }
+
+    @Test
     public void testGetSymbolTableViaPageFrameMultiKey() throws Exception {
         assertMemoryLeak(() -> {
             execute("""
@@ -9341,56 +10092,74 @@ public class CoveringIndexTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testPageFrameCursor_MultiPartition() throws Exception {
+    public void testPageFrameCursor_BinaryWrite() throws Exception {
+        // Drives writeBinaryToFrame path of the page-frame cursor.
         assertMemoryLeak(() -> {
             execute("""
-                    CREATE TABLE t_pf_multi (
+                    CREATE TABLE t_pf_bin (
                         ts TIMESTAMP,
-                        sym SYMBOL INDEX TYPE POSTING INCLUDE (val),
-                        val DOUBLE
+                        sym SYMBOL INDEX TYPE POSTING INCLUDE (payload),
+                        payload BINARY
                     ) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL
                     """);
             execute("""
-                    INSERT INTO t_pf_multi VALUES
-                    ('2024-01-01T00:00:00', 'A', 1.0),
-                    ('2024-01-01T01:00:00', 'B', 2.0),
-                    ('2024-01-02T00:00:00', 'A', 3.0),
-                    ('2024-01-02T01:00:00', 'B', 4.0),
-                    ('2024-01-03T00:00:00', 'A', 5.0)
+                    INSERT INTO t_pf_bin
+                    SELECT
+                        '2024-01-01T00:00:00'::TIMESTAMP + x * 1_000_000L,
+                        'A',
+                        rnd_bin(8, 16, 0)
+                    FROM long_sequence(10)
                     """);
             engine.releaseAllWriters();
 
-            assertSql("""
-                    val
-                    1.0
-                    3.0
-                    5.0
-                    """, "SELECT val FROM t_pf_multi WHERE sym = 'A'");
+            try (var factory = select("SELECT sym, payload FROM t_pf_bin WHERE sym = 'A'");
+                 PageFrameCursor cursor = factory.getPageFrameCursor(sqlExecutionContext, PartitionFrameCursorFactory.ORDER_ASC)) {
+                long rows = 0;
+                PageFrame f;
+                while ((f = cursor.next(0)) != null) {
+                    rows += f.getPartitionHi() - f.getPartitionLo();
+                }
+                assertEquals(10, rows);
+            }
         });
     }
 
     @Test
-    public void testPageFrameCursor_SupportsPageFrame() throws Exception {
+    public void testPageFrameCursor_GrowFrameBuffers() throws Exception {
+        // Drives growFrameBuffers + ensureVarDataCapacity by inserting more
+        // than INITIAL_CAPACITY (4096) rows for one symbol with VARCHAR
+        // payload large enough to overflow the initial var-data buffer.
         assertMemoryLeak(() -> {
             execute("""
-                    CREATE TABLE t_pf_support (
+                    CREATE TABLE t_pf_grow (
                         ts TIMESTAMP,
-                        sym SYMBOL INDEX TYPE POSTING INCLUDE (val),
-                        val DOUBLE
+                        sym SYMBOL INDEX TYPE POSTING INCLUDE (name, payload),
+                        name VARCHAR,
+                        payload STRING
                     ) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL
                     """);
+            // 5000 rows for 'A', each with a 64-byte varchar (320KB total var
+            // data, 5x the initial 64KB capacity) and a 32-char string.
             execute("""
-                    INSERT INTO t_pf_support VALUES
-                    ('2024-01-01T00:00:00', 'A', 1.0),
-                    ('2024-01-01T01:00:00', 'B', 2.0)
+                    INSERT INTO t_pf_grow
+                    SELECT
+                        '2024-01-01T00:00:00'::TIMESTAMP + x * 1_000_000L,
+                        'A',
+                        rpad('v', 64, 'x'),
+                        rpad('s', 32, 'y')
+                    FROM long_sequence(5000)
                     """);
             engine.releaseAllWriters();
 
-            // Verify the factory reports page frame support
-            assertSql("""
-                    val
-                    1.0
-                    """, "SELECT val FROM t_pf_support WHERE sym = 'A'");
+            try (var factory = select("SELECT sym, name, payload FROM t_pf_grow WHERE sym = 'A'");
+                 PageFrameCursor cursor = factory.getPageFrameCursor(sqlExecutionContext, PartitionFrameCursorFactory.ORDER_ASC)) {
+                long rows = 0;
+                PageFrame f;
+                while ((f = cursor.next(0)) != null) {
+                    rows += f.getPartitionHi() - f.getPartitionLo();
+                }
+                assertEquals(5000, rows);
+            }
         });
     }
 
@@ -9484,6 +10253,68 @@ public class CoveringIndexTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testPageFrameCursor_MultiPartition() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE t_pf_multi (
+                        ts TIMESTAMP,
+                        sym SYMBOL INDEX TYPE POSTING INCLUDE (val),
+                        val DOUBLE
+                    ) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL
+                    """);
+            execute("""
+                    INSERT INTO t_pf_multi VALUES
+                    ('2024-01-01T00:00:00', 'A', 1.0),
+                    ('2024-01-01T01:00:00', 'B', 2.0),
+                    ('2024-01-02T00:00:00', 'A', 3.0),
+                    ('2024-01-02T01:00:00', 'B', 4.0),
+                    ('2024-01-03T00:00:00', 'A', 5.0)
+                    """);
+            engine.releaseAllWriters();
+
+            assertSql("""
+                    val
+                    1.0
+                    3.0
+                    5.0
+                    """, "SELECT val FROM t_pf_multi WHERE sym = 'A'");
+        });
+    }
+
+    @Test
+    public void testPageFrameCursor_OfEmptyMultiKey() throws Exception {
+        // Multi-key page frame cursor: an IN-list with all values resolving to
+        // VALUE_NOT_FOUND drives multiKeyPageFrameCursor.ofEmpty() via the
+        // multiKeys.size() == 0 short-circuit in getPageFrameCursor().
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE t_pf_ofempty_mk (
+                        ts TIMESTAMP,
+                        sym SYMBOL INDEX TYPE POSTING INCLUDE (price),
+                        price DOUBLE
+                    ) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL
+                    """);
+            execute("INSERT INTO t_pf_ofempty_mk VALUES ('2024-01-01T00:00:00', 'A', 10.0)");
+            engine.releaseAllWriters();
+
+            try (var factory = select("SELECT sym, price FROM t_pf_ofempty_mk WHERE sym IN ('NOPE1', 'NOPE2')")) {
+                try (PageFrameCursor cursor = factory.getPageFrameCursor(sqlExecutionContext, PartitionFrameCursorFactory.ORDER_ASC)) {
+                    assertNull(cursor.next(0));
+                    cursor.toTop();
+                    assertNull(cursor.next(0));
+                }
+            }
+
+            assertQueryNoLeakCheck(
+                    "sym\tprice\n",
+                    "SELECT sym, price FROM t_pf_ofempty_mk WHERE sym IN ('NOPE1', 'NOPE2')",
+                    null,
+                    false
+            );
+        });
+    }
+
+    @Test
     public void testPageFrameCursor_OfEmptyNullSymbolTables() throws Exception {
         // When the WHERE key resolves to VALUE_NOT_FOUND, the page frame
         // cursor's ofEmpty() path runs (tableReader = null, isExhausted = true).
@@ -9522,278 +10353,27 @@ public class CoveringIndexTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testPageFrameCursor_OfEmptyMultiKey() throws Exception {
-        // Multi-key page frame cursor: an IN-list with all values resolving to
-        // VALUE_NOT_FOUND drives multiKeyPageFrameCursor.ofEmpty() via the
-        // multiKeys.size() == 0 short-circuit in getPageFrameCursor().
+    public void testPageFrameCursor_SupportsPageFrame() throws Exception {
         assertMemoryLeak(() -> {
             execute("""
-                    CREATE TABLE t_pf_ofempty_mk (
+                    CREATE TABLE t_pf_support (
                         ts TIMESTAMP,
-                        sym SYMBOL INDEX TYPE POSTING INCLUDE (price),
-                        price DOUBLE
-                    ) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL
-                    """);
-            execute("INSERT INTO t_pf_ofempty_mk VALUES ('2024-01-01T00:00:00', 'A', 10.0)");
-            engine.releaseAllWriters();
-
-            try (var factory = select("SELECT sym, price FROM t_pf_ofempty_mk WHERE sym IN ('NOPE1', 'NOPE2')")) {
-                try (PageFrameCursor cursor = factory.getPageFrameCursor(sqlExecutionContext, PartitionFrameCursorFactory.ORDER_ASC)) {
-                    assertNull(cursor.next(0));
-                    cursor.toTop();
-                    assertNull(cursor.next(0));
-                }
-            }
-
-            assertQueryNoLeakCheck(
-                    "sym\tprice\n",
-                    "SELECT sym, price FROM t_pf_ofempty_mk WHERE sym IN ('NOPE1', 'NOPE2')",
-                    null,
-                    false
-            );
-        });
-    }
-
-    @Test
-    public void testGetPageFrameCursor_MultiKeyMixedKnownUnknown() throws Exception {
-        // Multi-key getPageFrameCursor: bind variable list with one known and
-        // one unknown value. Drives the keyValueFuncs != null branch where a
-        // pre-resolved VALUE_NOT_FOUND is re-resolved at exec time, plus the
-        // "skip unknown, keep known" path that leaves multiKeys non-empty.
-        assertMemoryLeak(() -> {
-            execute("""
-                    CREATE TABLE t_pf_mk_bind (
-                        ts TIMESTAMP,
-                        sym SYMBOL INDEX TYPE POSTING INCLUDE (price),
-                        price DOUBLE
+                        sym SYMBOL INDEX TYPE POSTING INCLUDE (val),
+                        val DOUBLE
                     ) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL
                     """);
             execute("""
-                    INSERT INTO t_pf_mk_bind VALUES
-                    ('2024-01-01T00:00:00', 'A', 10.0),
-                    ('2024-01-01T01:00:00', 'B', 20.0)
+                    INSERT INTO t_pf_support VALUES
+                    ('2024-01-01T00:00:00', 'A', 1.0),
+                    ('2024-01-01T01:00:00', 'B', 2.0)
                     """);
             engine.releaseAllWriters();
 
-            bindVariableService.clear();
-            bindVariableService.setStr("k1", "A");
-            bindVariableService.setStr("k2", "MISSING");
-            assertQueryNoLeakCheck(
-                    "cnt\n1\n",
-                    "SELECT count() cnt FROM t_pf_mk_bind WHERE sym IN (:k1, :k2)",
-                    null,
-                    false,
-                    true
-            );
-        });
-    }
-
-    @Test
-    public void testCoveringRecord_AllColumnTypes() throws Exception {
-        // Exercise every column type the covering writer supports
-        // (writeCoveredRow's switch enumerates them). assertQueryNoLeakCheck
-        // drives the full RecordCursorFactory/RecordCursor API:
-        //   - CursorPrinter calls every type's primary accessor
-        //   - testStringsLong256AndBinary covers STRING getStrA+B+Len,
-        //     BINARY getBin+Len, LONG256 getLong256A+B
-        //   - assertVariableColumns covers VARCHAR getVarcharA+B+Size
-        //   - testSymbolAPI covers SYMBOL getInt+getSymA+symbol table API
-        //     including the indexed sym column whose getInt must return the
-        //     resolved key.
-        assertMemoryLeak(() -> {
-            execute("""
-                    CREATE TABLE t_all_types (
-                        ts TIMESTAMP,
-                        sym SYMBOL INDEX TYPE POSTING INCLUDE (
-                            b, sh, i, l, ts_inc, dt, f, d, c, bo, ip,
-                            uuid_col, l256,
-                            d8, d16, d32, d64, d128, d256,
-                            gb, gs, gi, gl,
-                            label, name, payload, kind
-                        ),
-                        b BYTE,
-                        sh SHORT,
-                        i INT,
-                        l LONG,
-                        ts_inc TIMESTAMP,
-                        dt DATE,
-                        f FLOAT,
-                        d DOUBLE,
-                        c CHAR,
-                        bo BOOLEAN,
-                        ip IPv4,
-                        uuid_col UUID,
-                        l256 LONG256,
-                        d8 DECIMAL(2, 1),
-                        d16 DECIMAL(4, 2),
-                        d32 DECIMAL(9, 2),
-                        d64 DECIMAL(18, 4),
-                        d128 DECIMAL(38, 10),
-                        d256 DECIMAL(40, 5),
-                        gb GEOHASH(5b),
-                        gs GEOHASH(10b),
-                        gi GEOHASH(20b),
-                        gl GEOHASH(40b),
-                        label STRING,
-                        name VARCHAR,
-                        payload BINARY,
-                        kind SYMBOL
-                    ) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL
-                    """);
-            // Two rows: row 1 is fully populated, row 2 is all-null. Each
-            // accessor is exercised in both branches of its null-handling
-            // logic.
-            execute("""
-                    INSERT INTO t_all_types VALUES
-                    (
-                        '2024-01-01T00:00:00', 'A',
-                        7, 1234, 99, 1000000,
-                        '2024-06-15T10:30:00', '2024-06-15',
-                        1.5, 2.25, 'X', true,
-                        '10.0.0.1',
-                        '00000000-0000-0000-0000-000000000001',
-                        0x0a,
-                        '1.5'::DECIMAL(2, 1),
-                        '12.34'::DECIMAL(4, 2),
-                        '1234567.89'::DECIMAL(9, 2),
-                        '12345678901234.5678'::DECIMAL(18, 4),
-                        '1234567890123456789012345678.1234567890'::DECIMAL(38, 10),
-                        '12345678901234567890123456789012345.67890'::DECIMAL(40, 5),
-                        #y, #yz, #yzbc, #yzbc1234,
-                        'alice', 'va', null, 'k1'
-                    ),
-                    (
-                        '2024-01-01T01:00:00', 'A',
-                        null, null, null, null,
-                        null, null,
-                        null, null, null, null,
-                        null,
-                        null,
-                        null,
-                        null, null, null, null, null, null,
-                        null, null, null, null,
-                        null, null, null, null
-                    )
-                    """);
-            engine.releaseAllWriters();
-
-            // Selecting only the indexed sym column plus all INCLUDE'd
-            // columns keeps the optimizer on the CoveringIndex factory.
-            // Including ts (uncovered) here would fall back to a regular scan.
-            String allTypesSelect = "SELECT sym, b, sh, i, l, ts_inc, dt, f, d, c, bo, ip, uuid_col, l256, d8, d16, d32, d64, d128, d256, gb, gs, gi, gl, label, name, payload, kind FROM t_all_types WHERE sym = 'A'";
-            assertQueryNoLeakCheck(
-                    """
-                            sym\tb\tsh\ti\tl\tts_inc\tdt\tf\td\tc\tbo\tip\tuuid_col\tl256\td8\td16\td32\td64\td128\td256\tgb\tgs\tgi\tgl\tlabel\tname\tpayload\tkind
-                            A\t7\t1234\t99\t1000000\t2024-06-15T10:30:00.000000Z\t2024-06-15T00:00:00.000Z\t1.5\t2.25\tX\ttrue\t10.0.0.1\t00000000-0000-0000-0000-000000000001\t0x0a\t1.5\t12.34\t1234567.89\t12345678901234.5678\t1234567890123456789012345678.1234567890\t12345678901234567890123456789012345.67890\ty\tyz\tyzbc\tyzbc1234\talice\tva\t\tk1
-                            A\t0\t0\tnull\tnull\t\t\tnull\tnull\t\tfalse\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t
-                            """,
-                    allTypesSelect,
-                    null,
-                    false,
-                    true
-            );
-
-            // Manual pass for accessors not exercised by assertQueryNoLeakCheck:
-            //   - SYMBOL getSymB on the indexed col + INCLUDE'd col
-            //   - getRowId() (Record metadata, not column data)
-            try (var factory = select(allTypesSelect);
-                 RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
-                Record r = cursor.getRecord();
-                assertTrue(cursor.hasNext());
-                assertEquals("A", r.getSymA(0).toString());
-                assertEquals("A", r.getSymB(0).toString());
-                // kind is the last column (index 27)
-                assertEquals("k1", r.getSymA(27).toString());
-                assertEquals("k1", r.getSymB(27).toString());
-                // getRowId returns the file row id stored on the record
-                assertTrue(r.getRowId() >= 0);
-            }
-
-            // Page-frame cursor pass: exercises writeCoveredRow's full type
-            // switch including STRING/VARCHAR/BINARY/LONG256/DECIMAL128+256,
-            // plus writeStringToFrame and writeBinaryToFrame paths that the
-            // record cursor does not visit.
-            try (var factory = select(allTypesSelect);
-                 PageFrameCursor cursor = factory.getPageFrameCursor(sqlExecutionContext, PartitionFrameCursorFactory.ORDER_ASC)) {
-                long rows = 0;
-                PageFrame f;
-                while ((f = cursor.next(0)) != null) {
-                    rows += f.getPartitionHi() - f.getPartitionLo();
-                }
-                assertEquals(2, rows);
-            }
-        });
-    }
-
-    @Test
-    public void testPageFrameCursor_GrowFrameBuffers() throws Exception {
-        // Drives growFrameBuffers + ensureVarDataCapacity by inserting more
-        // than INITIAL_CAPACITY (4096) rows for one symbol with VARCHAR
-        // payload large enough to overflow the initial var-data buffer.
-        assertMemoryLeak(() -> {
-            execute("""
-                    CREATE TABLE t_pf_grow (
-                        ts TIMESTAMP,
-                        sym SYMBOL INDEX TYPE POSTING INCLUDE (name, payload),
-                        name VARCHAR,
-                        payload STRING
-                    ) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL
-                    """);
-            // 5000 rows for 'A', each with a 64-byte varchar (320KB total var
-            // data, 5x the initial 64KB capacity) and a 32-char string.
-            execute("""
-                    INSERT INTO t_pf_grow
-                    SELECT
-                        '2024-01-01T00:00:00'::TIMESTAMP + x * 1_000_000L,
-                        'A',
-                        rpad('v', 64, 'x'),
-                        rpad('s', 32, 'y')
-                    FROM long_sequence(5000)
-                    """);
-            engine.releaseAllWriters();
-
-            try (var factory = select("SELECT sym, name, payload FROM t_pf_grow WHERE sym = 'A'");
-                 PageFrameCursor cursor = factory.getPageFrameCursor(sqlExecutionContext, PartitionFrameCursorFactory.ORDER_ASC)) {
-                long rows = 0;
-                PageFrame f;
-                while ((f = cursor.next(0)) != null) {
-                    rows += f.getPartitionHi() - f.getPartitionLo();
-                }
-                assertEquals(5000, rows);
-            }
-        });
-    }
-
-    @Test
-    public void testPageFrameCursor_BinaryWrite() throws Exception {
-        // Drives writeBinaryToFrame path of the page-frame cursor.
-        assertMemoryLeak(() -> {
-            execute("""
-                    CREATE TABLE t_pf_bin (
-                        ts TIMESTAMP,
-                        sym SYMBOL INDEX TYPE POSTING INCLUDE (payload),
-                        payload BINARY
-                    ) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL
-                    """);
-            execute("""
-                    INSERT INTO t_pf_bin
-                    SELECT
-                        '2024-01-01T00:00:00'::TIMESTAMP + x * 1_000_000L,
-                        'A',
-                        rnd_bin(8, 16, 0)
-                    FROM long_sequence(10)
-                    """);
-            engine.releaseAllWriters();
-
-            try (var factory = select("SELECT sym, payload FROM t_pf_bin WHERE sym = 'A'");
-                 PageFrameCursor cursor = factory.getPageFrameCursor(sqlExecutionContext, PartitionFrameCursorFactory.ORDER_ASC)) {
-                long rows = 0;
-                PageFrame f;
-                while ((f = cursor.next(0)) != null) {
-                    rows += f.getPartitionHi() - f.getPartitionLo();
-                }
-                assertEquals(10, rows);
-            }
+            // Verify the factory reports page frame support
+            assertSql("""
+                    val
+                    1.0
+                    """, "SELECT val FROM t_pf_support WHERE sym = 'A'");
         });
     }
 
@@ -10267,6 +10847,37 @@ public class CoveringIndexTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testReaderStateGetters() throws Exception {
+        assertMemoryLeak(() -> {
+            try (Path path = new Path().of(configuration.getDbRoot())) {
+                String name = "reader_state";
+                int plen = path.size();
+                try (PostingIndexWriter writer = new PostingIndexWriter(configuration, path, name, COLUMN_NAME_TXN_NONE)) {
+                    for (int i = 0; i < 10; i++) {
+                        writer.add(i % 3, i);
+                    }
+                    writer.setMaxValue(9);
+                    writer.commit();
+                }
+
+                try (PostingIndexFwdReader reader = new PostingIndexFwdReader(
+                        configuration, path.trimTo(plen), name, COLUMN_NAME_TXN_NONE, 7L, 0L)) {
+                    assertNotEquals(0, reader.getKeyBaseAddress());
+                    assertNotEquals(0, reader.getValueBaseAddress());
+                    assertTrue(reader.getKeyMemorySize() > 0);
+                    assertTrue(reader.getValueMemorySize() > 0);
+                    assertEquals(0L, reader.getColumnTop());
+                    assertEquals(0, reader.getValueBlockCapacity());
+                    assertEquals(COLUMN_NAME_TXN_NONE, reader.getColumnTxn());
+                    assertEquals(7L, reader.getPartitionTxn());
+                    assertEquals(3, reader.getKeyCount());
+                    assertTrue(reader.isOpen());
+                }
+            }
+        });
+    }
+
+    @Test
     public void testReindexPreservesCoveringWithDroppedColumnsBeforeTimestamp() throws Exception {
         // Regression: IndexBuilder and TableSnapshotRestore both fed
         // PostingIndexWriter.configureCovering with metadata.getTimestampIndex()
@@ -10609,6 +11220,46 @@ public class CoveringIndexTest extends AbstractCairoTest {
                     price
                     1.0
                     """, "SELECT price FROM t_seek_empty WHERE sym = 'A' LATEST ON ts PARTITION BY sym");
+        });
+    }
+
+    @Test
+    public void testSeekToLastForwardCursorThrows() throws Exception {
+        assertMemoryLeak(() -> {
+            try (Path path = new Path().of(configuration.getDbRoot())) {
+                String name = "seek_last_fwd";
+                int plen = path.size();
+                int rowCount = 4;
+                long colAddr = Unsafe.malloc((long) rowCount * Double.BYTES, MemoryTag.NATIVE_DEFAULT);
+                try {
+                    for (int i = 0; i < rowCount; i++) {
+                        Unsafe.putDouble(colAddr + (long) i * Double.BYTES, i + 1);
+                    }
+                    try (PostingIndexWriter writer = new PostingIndexWriter(configuration, path, name, COLUMN_NAME_TXN_NONE)) {
+                        writer.configureCovering(
+                                new long[]{colAddr}, new long[]{0}, new int[]{3},
+                                new int[]{2}, new int[]{ColumnType.DOUBLE}, 1
+                        );
+                        for (int i = 0; i < rowCount; i++) writer.add(0, i);
+                        writer.setMaxValue(rowCount - 1);
+                        writer.commit();
+                    }
+                    try (PostingIndexFwdReader reader = new PostingIndexFwdReader(
+                            configuration, path.trimTo(plen), name, COLUMN_NAME_TXN_NONE, -1, 0,
+                            coveringMetadata(new int[]{2}, new int[]{ColumnType.DOUBLE}), EMPTY_CVR, 0)) {
+                        try (RowCursor cursor = reader.getCursor(0, 0, Long.MAX_VALUE, new int[]{0})) {
+                            assertTrue(cursor instanceof CoveringRowCursor);
+                            try {
+                                ((CoveringRowCursor) cursor).seekToLast();
+                                fail("expected UnsupportedOperationException");
+                            } catch (UnsupportedOperationException ignored) {
+                            }
+                        }
+                    }
+                } finally {
+                    Unsafe.free(colAddr, (long) rowCount * Double.BYTES, MemoryTag.NATIVE_DEFAULT);
+                }
+            }
         });
     }
 

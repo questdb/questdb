@@ -487,6 +487,34 @@ public class PostingIndexWriter implements IndexWriter {
     @TestOnly
     public void configureCovering(
             long[] coveredColumnAddrs,
+            long[] coveredColumnAuxAddrs,
+            long[] coveredColumnTops,
+            int[] coveredColumnShifts,
+            int[] coveredColumnIndices,
+            int[] coveredColumnTypes,
+            int coverCount,
+            int timestampColumnIndex
+    ) {
+        LongList addrs = new LongList(coverCount);
+        LongList auxAddrs = coveredColumnAuxAddrs != null ? new LongList(coverCount) : null;
+        LongList tops = new LongList(coverCount);
+        IntList shifts = new IntList(coverCount);
+        IntList indices = new IntList(coverCount);
+        IntList types = new IntList(coverCount);
+        for (int i = 0; i < coverCount; i++) {
+            addrs.add(coveredColumnAddrs[i]);
+            if (auxAddrs != null) auxAddrs.add(coveredColumnAuxAddrs[i]);
+            tops.add(coveredColumnTops[i]);
+            shifts.add(coveredColumnShifts[i]);
+            indices.add(coveredColumnIndices[i]);
+            types.add(coveredColumnTypes[i]);
+        }
+        configureCovering(addrs, auxAddrs, tops, shifts, indices, types, coverCount, timestampColumnIndex);
+    }
+
+    @TestOnly
+    public void configureCovering(
+            long[] coveredColumnAddrs,
             long[] coveredColumnTops,
             int[] coveredColumnShifts,
             int[] coveredColumnIndices,
