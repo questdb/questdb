@@ -65,20 +65,14 @@ public class MinDecimalGroupByFunctionFactory implements FunctionFactory {
             SqlExecutionContext sqlExecutionContext
     ) {
         final Function func = args.getQuick(0);
-        switch (ColumnType.tagOf(func.getType())) {
-            case ColumnType.DECIMAL8:
-                return new Decimal8Func(func);
-            case ColumnType.DECIMAL16:
-                return new Decimal16Func(func);
-            case ColumnType.DECIMAL32:
-                return new Decimal32Func(func);
-            case ColumnType.DECIMAL64:
-                return new Decimal64Func(func);
-            case ColumnType.DECIMAL128:
-                return new Decimal128Func(func);
-            default:
-                return new Decimal256Func(func);
-        }
+        return switch (ColumnType.tagOf(func.getType())) {
+            case ColumnType.DECIMAL8 -> new Decimal8Func(func);
+            case ColumnType.DECIMAL16 -> new Decimal16Func(func);
+            case ColumnType.DECIMAL32 -> new Decimal32Func(func);
+            case ColumnType.DECIMAL64 -> new Decimal64Func(func);
+            case ColumnType.DECIMAL128 -> new Decimal128Func(func);
+            default -> new Decimal256Func(func);
+        };
     }
 
     private static class Decimal128Func extends MinMaxDecimal128Func {
@@ -217,6 +211,11 @@ public class MinDecimalGroupByFunctionFactory implements FunctionFactory {
         public void initValueTypes(ArrayColumnTypes columnTypes) {
             this.valueIndex = columnTypes.getColumnCount();
             columnTypes.add(ColumnType.DECIMAL128);
+        }
+
+        @Override
+        public boolean isThreadSafe() {
+            return false;
         }
 
         @Override

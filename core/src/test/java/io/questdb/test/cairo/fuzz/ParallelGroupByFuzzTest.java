@@ -510,6 +510,43 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testParallelDecimal128MinMax() throws Exception {
+        // MinMaxDecimal128Func keeps two Decimal128 mutable fields, so it's thread-unsafe.
+        assertMemoryLeak(() -> {
+            final WorkerPool pool = new WorkerPool(() -> 4);
+            TestUtils.execute(
+                    pool,
+                    (engine, compiler, sqlExecutionContext) -> {
+                        engine.execute(
+                                "CREATE TABLE tab (ts TIMESTAMP, k INT, v DECIMAL(20, 2)) timestamp(ts) PARTITION BY DAY",
+                                sqlExecutionContext
+                        );
+                        engine.execute(
+                                "INSERT INTO tab SELECT (x * 864000000)::timestamp, (x % 4)::int, (x * 0.01)::DECIMAL(20, 2)" +
+                                        " FROM long_sequence(" + (10 * ROW_COUNT) + ")",
+                                sqlExecutionContext
+                        );
+                        TestUtils.assertSql(
+                                engine,
+                                sqlExecutionContext,
+                                "SELECT k, min(v), max(v) FROM tab GROUP BY k ORDER BY k",
+                                sink,
+                                """
+                                        k\tmin\tmax
+                                        0\t0.04\t400.00
+                                        1\t0.01\t399.97
+                                        2\t0.02\t399.98
+                                        3\t0.03\t399.99
+                                        """
+                        );
+                    },
+                    configuration,
+                    LOG
+            );
+        });
+    }
+
+    @Test
     public void testParallelDecimal256KeyGroupBy() throws Exception {
         testParallelDecimalKeyGroupBy(
                 "SELECT d256, avg(d64) FROM tab ORDER BY d256 LIMIT 5",

@@ -518,9 +518,29 @@ public final class QueryRunner {
         if (isParquetFilteredAsymmetry(a, b) || isParquetFilteredAsymmetry(b, a)) {
             return Result.skipped("parquet-filtered " + exceptionClass);
         }
+        // One side returned an empty result, the other threw an allowlisted
+        // cast/numeric error. The succeeding side's WHERE was statically
+        // satisfiable-as-empty (e.g. WhereClauseParser folded a contradiction
+        // like 'c IS NOT NULL AND c IS NULL' to FALSE), so its compiler short
+        // -circuited before reaching a constant subtree that contains an
+        // out-of-range cast literal. The erroring side's compiler reached
+        // that subtree and threw on the constant fold. Both sides agree the
+        // query has zero valid rows; the diff is purely planner-fold-order,
+        // not a data divergence.
+        if (isUnsatisfiableShortCircuitAsymmetry(a, b) || isUnsatisfiableShortCircuitAsymmetry(b, a)) {
+            return Result.skipped("unsatisfiable-shortcircuit " + exceptionClass);
+        }
         // Anything else: divergence (one succeeded, one threw a non-skip
         // error; or both threw different exception classes).
         return Result.failed(sql, divergence(diffName, a, b, rowsA, rowsB, labelA, labelB));
+    }
+
+    private static boolean isUnsatisfiableShortCircuitAsymmetry(Outcome erroring, Outcome succeeding) {
+        if (succeeding.failure != null || succeeding.rowsRead != 0) {
+            return false;
+        }
+        return erroring.failure instanceof ImplicitCastException
+                || erroring.failure instanceof NumericException;
     }
 
     private String rewriteForShadow(String sql) {
