@@ -40,6 +40,10 @@ public class Worker extends Thread {
     public static final Clock CLOCK_MICROS = MicrosecondClockImpl.INSTANCE;
     public static final int NO_THREAD_AFFINITY = -1;
     private final int affinity;
+    // The pool's continuation queue. Used both as the sink for the worker's own
+    // WorkerContinuation (so a yield from inside the loop body parks back into this
+    // pool) and as the source of parked conts to remount in the outer driver.
+    private final ContinuationQueue continuationQueue;
     private final String criticalErrorLine;
     private final SOCountDownLatch haltLatch;
     private final boolean haltOnError;
@@ -51,20 +55,11 @@ public class Worker extends Thread {
     private final long napThreshold;
     private final OnHaltAction onHaltAction;
     private final String poolName;
-    // The pool's continuation queue. Used both as the sink for the worker's own
-    // WorkerContinuation (so a yield from inside the loop body parks back into this
-    // pool) and as the source of parked conts to remount in the outer driver.
-    private final ContinuationQueue continuationQueue;
     private final Job.RunStatus runStatus = () -> lifecycle.get() == Lifecycle.HALTED;
     private final long sleepMs;
     private final long sleepThreshold;
     private final int workerId;
     private final long yieldThreshold;
-    // Handoff slot: loopBody dequeues a parked cont from the queue and stores it
-    // here, then suspends. The outer driver finds the handoff and remounts the
-    // cont. Same-thread access only (body runs on this worker thread; outer
-    // driver runs on this worker thread). No synchronization needed.
-    private WorkerContinuation pendingResume;
 
     public Worker(
             String poolName,
@@ -155,30 +150,48 @@ public class Worker extends Thread {
                 //
                 // Each iteration:
                 //   1. Build and run a fresh worker-loop continuation.
-                //   2. If the body handed off a parked cont via {@link #pendingResume},
-                //      remount that cont here -- the body has dequeued it from the
-                //      pool's queue and yielded specifically so we can run it.
+                //   2. After every run() return, read the cont's handoff slot. The
+                //      body writes the slot just before suspending if it dequeued
+                //      a parked cont; we then remount that cont here. A remounted
+                //      cont may itself dequeue and hand off another, so we walk
+                //      the chain until a body suspends without a handoff (captured
+                //      by a deep suspending function) or returns (worker halted).
                 //
                 // The fresh-per-iteration policy avoids racing peer workers that
                 // might also try to remount a cont captured by a suspending function:
                 // we never re-run our own cont reference, so even if the body's cont
                 // got stashed in a TxnWaiter and pushed onto the queue, a peer worker
                 // owns the remount, not us.
+                //
+                // The handoff slot lives on the WorkerContinuation rather than on
+                // this Worker because a cont parked deep inside a suspending
+                // function can be remounted on a peer carrier; the body's writes
+                // to per-mount state must travel with the cont, not be aliased to
+                // a specific Worker instance.
+                outer:
                 while (lifecycle.get() == Lifecycle.RUNNING) {
-                    WorkerContinuation workerContinuation = new WorkerContinuation(this::loopBody, continuationQueue);
-                    workerContinuation.run();
-                    if (workerContinuation.isDone()) {
-                        // Body returned because lifecycle observed HALTED. Exit.
-                        break;
-                    }
-                    // Body yielded. If it dequeued a parked cont before yielding,
-                    // remount that cont here. Otherwise the cont was captured by
-                    // a deep suspending function and the fresh next-iteration cont
-                    // is enough.
-                    if (pendingResume != null) {
-                        WorkerContinuation toResume = pendingResume;
-                        pendingResume = null;
-                        continuationQueue.run(toResume);
+                    WorkerContinuation cont = new WorkerContinuation(this::loopBody, continuationQueue);
+                    cont.run();
+                    while (true) {
+                        if (cont.isDone()) {
+                            // Body returned because lifecycle observed HALTED. Exit.
+                            break outer;
+                        }
+                        WorkerContinuation handoff = cont.takeHandoff();
+                        if (handoff == null) {
+                            // Body parked deep inside a job (no dequeue this turn).
+                            // The fresh next-iteration cont is enough; whoever fires
+                            // the parked cont will push it onto the queue and a
+                            // worker will dequeue it.
+                            break;
+                        }
+                        // Remount the dequeued cont here. continuationQueue.run()
+                        // spins through any IllegalStateException window where the
+                        // cont's previous carrier has not yet finished unmounting.
+                        // Reassign cont so the loop re-checks done/handoff against
+                        // the cont we actually just ran.
+                        cont = handoff;
+                        continuationQueue.run(cont);
                     }
                 }
             }
@@ -211,12 +224,19 @@ public class Worker extends Thread {
      *
      * <p>Each iteration the body attempts to dequeue one parked cont from the
      * pool's queue. If it wins (tryDequeue returns non-null), it stashes the
-     * dequeued cont in {@link #pendingResume} and yields, letting the outer
-     * driver remount that cont. Workers that lose the dequeue race (null
-     * return) keep running their own jobs without yielding -- only the winner
-     * pays the yield cost per queue item.
+     * dequeued cont in the currently mounted cont's handoff slot and yields,
+     * letting whichever outer driver mounted us remount the dequeued cont.
+     * Workers that lose the dequeue race (null return) keep running their own
+     * jobs without yielding -- only the winner pays the yield cost per queue
+     * item.
+     *
+     * <p>The handoff slot is read off {@link WorkerContinuation#current()}, not
+     * a {@link Worker} field: a cont parked deep inside a suspending function
+     * may be remounted on a peer carrier, and any per-mount writes need to
+     * travel with the cont rather than be aliased to a specific Worker.
      */
     private void loopBody() {
+        WorkerContinuation self = WorkerContinuation.current();
         ContinuationQueue.ResumeTask scratchResumeTask = new ContinuationQueue.ResumeTask();
         long ticker = 0L;
         while (lifecycle.get() == Lifecycle.RUNNING) {
@@ -255,16 +275,22 @@ public class Worker extends Thread {
             // volatile reads, cheap enough to do every iteration without a hint.
             WorkerContinuation toResume = continuationQueue.tryDequeue(scratchResumeTask);
             if (toResume != null) {
-                pendingResume = toResume;
+                self.setHandoff(toResume);
                 if (!WorkerContinuation.suspend()) {
+                    if (log != null) {
+                        log.critical().$("async yield to run continuation is refused (carrier pinned), re-queuing [worker=").$(getName()).I$();
+                    } else {
+                        System.err.println("0000-00-00T00:00:00.000000Z C Async yield to run continuation is refused (carrier pinned), re-queuing [worker=" + getName() + "]");
+                    }
+
                     // Yield refused (carrier pinned). We can't escape this cont
                     // to mount the dequeued one. Re-queue it so a peer worker
                     // can pick it up, and continue the loop.
-                    pendingResume = null;
+                    self.setHandoff(null);
                     continuationQueue.put(toResume);
                 }
-                // If suspend yielded, body never returns here -- the outer
-                // driver picks up pendingResume and runs it.
+                // If suspend yielded, body never returns here -- whichever outer
+                // driver mounted this cont takes the handoff and runs it.
             }
 
             if (runAsap) {

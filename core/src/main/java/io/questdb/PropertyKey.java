@@ -567,6 +567,8 @@ public enum PropertyKey implements ConfigPropertyKey {
     CAIRO_WAL_WRITER_POOL_MAX_SEGMENTS("cairo.wal.writer.pool.max.segments"),
     CAIRO_VIEW_WAL_WRITER_POOL_MAX_SEGMENTS("cairo.view.wal.writer.pool.max.segments"),
     CAIRO_WAL_APPLY_PARALLEL_SQL_ENABLED("cairo.wal.apply.parallel.sql.enabled"),
+    GRIFFIN_QUERY_CONTINUATION_WAKE_INTERVAL("griffin.query.continuation.wake.interval"),
+    CAIRO_WAIT_WAL_TABLE_WAKE_INTERVAL("cairo.wait.wal.table.wake.interval"),
     READ_ONLY_INSTANCE("readonly"),
     CAIRO_TABLE_REGISTRY_AUTO_RELOAD_FREQUENCY("cairo.table.registry.auto.reload.frequency"),
     CAIRO_METADATA_CACHE_SNAPSHOT_ORDERED("cairo.metadata.cache.snapshot.ordered"),

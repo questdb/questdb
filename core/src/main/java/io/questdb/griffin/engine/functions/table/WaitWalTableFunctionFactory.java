@@ -37,14 +37,12 @@ import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.BooleanFunction;
-import io.questdb.mp.WorkerContinuation;
 import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
 import io.questdb.std.Os;
 import io.questdb.std.datetime.millitime.MillisecondClock;
 
 public class WaitWalTableFunctionFactory implements FunctionFactory {
-
     @Override
     public String getSignature() {
         return "wait_wal_table(s)";
@@ -57,16 +55,11 @@ public class WaitWalTableFunctionFactory implements FunctionFactory {
     }
 
     private static class WaitWalFunction extends BooleanFunction implements Function {
-        // How long the parked continuation sleeps between connection-liveness probes.
-        // Each cycle wakes the body, runs statefulThrowExceptionIfTrippedNoThrottle()
-        // (tests the fd, the cancel flag, and the SQL timeout), and re-parks if the
-        // wait should continue. 200 ms keeps disconnect/timeout detection latency
-        // tight without burning CPU on the timeout sweep.
-        private static final long WAKE_INTERVAL_MILLIS = 200L;
         private final CharSequence tableName;
         private SqlExecutionContext executionContext;
         private long seqTxn;
         private SeqTxnTracker seqTxnTracker;
+        private TableToken tableToken;
 
         public WaitWalFunction(CharSequence tableName) {
             this.tableName = tableName;
@@ -80,46 +73,52 @@ public class WaitWalTableFunctionFactory implements FunctionFactory {
 
             // Fast path: already caught up.
             if (seqTxnTracker.getWriterTxn() >= seqTxn) {
-                throwIfSuspended();
+                throwIfTerminated();
                 return true;
             }
 
             // Continuation path: the worker thread is carrying a WorkerContinuation
             // (mounted in its outer driver), so we can suspend the stack and free
-            // the carrier. Wakes every WAKE_INTERVAL_MILLIS so the circuit breaker
-            // can probe the fd (broken connection), the cancel flag, and the SQL
-            // timeout. If the body is still healthy after the probe, we re-park;
-            // otherwise the breaker throws and the wait ends. This guarantees the
-            // wait can NEVER be unbounded: a dead client, an explicit cancel, or
-            // a timeout always wins.
-            WorkerContinuation cont = WorkerContinuation.current();
-            if (cont != null && WorkerContinuation.isMounted()) {
-                MillisecondClock clock = executionContext.getCairoEngine().getConfiguration().getMillisecondClock();
+            // the carrier. Wakes on each cycle so the circuit breaker can probe
+            // the fd (broken connection), the cancel flag, and the SQL timeout.
+            // If the body is still healthy after the probe, we re-park; otherwise
+            // the breaker throws and the wait ends. This guarantees the wait can
+            // NEVER be unbounded: a dead client, an explicit cancel, or a timeout
+            // always wins.
+            //
+            // Pooled across iterations: fireWaiters/cancelExpiredWaiters drop the
+            // waiter from the tracker queue when they CAS its state, so by the
+            // time we resume from suspend the previous queue entry is gone and
+            // reset() can safely flip state back to PENDING for the next park.
+            TxnWaiter waiter = new TxnWaiter();
+            if (waiter.tryBindCurrent()) {
+                CairoConfiguration configuration = executionContext.getCairoEngine().getConfiguration();
+                MillisecondClock clock = configuration.getMillisecondClock();
                 while (seqTxnTracker.getWriterTxn() < seqTxn) {
                     // Owning context is closing: do not re-park. Throwing unwinds the
                     // body all the way to the continuation loop's tail suspend, which is
                     // what the close path needs in order to drive cont.run() to isDone().
-                    if (cont.isShutdown()) {
+                    if (waiter.isShuttingDown()) {
                         throw CairoException.nonCritical().put("wait_wal_table aborted, connection closing [tableName=").put(tableName).put("]");
                     }
                     // Probe before re-parking: detects timeout, cancellation, broken
                     // connection. If tripped, this throws and the wait ends.
-                    // Use NoThrottle: the wake interval (1 s) already paces these
-                    // checks; the throttled variant skips most calls and would let
-                    // a tripped breaker go undetected for many wake cycles.
+                    // Use NoThrottle: the wake interval already paces these checks;
+                    // the throttled variant skips most calls and would let a tripped
+                    // breaker go undetected for many wake cycles.
                     executionContext.getCircuitBreaker().statefulThrowExceptionIfTrippedNoThrottle();
-                    throwIfSuspended();
-                    long deadline = clock.getTicks() + WAKE_INTERVAL_MILLIS;
-                    TxnWaiter waiter = new TxnWaiter(seqTxn, cont, deadline);
+                    throwIfTerminated();
+                    // Re-read on every iteration so a runtime config reload of
+                    // griffin.query.continuation.wake.interval takes effect on
+                    // the next park without restarting the wait.
+                    long deadline = clock.getTicks() + configuration.getQueryContinuationWakeIntervalMillis();
+                    waiter.reset(seqTxn, deadline);
                     seqTxnTracker.registerWaiter(waiter);
-                    if (!WorkerContinuation.suspend()) {
+                    if (!waiter.suspend()) {
                         // The JDK refused to yield because the carrier is pinned (a
                         // synchronized or native frame sits above this call). The body
                         // never unmounted, so this is the same carrier that registered
-                        // the waiter. Cancel the waiter so a concurrent fireWaiters does
-                        // not schedule a phantom resume of this still-mounted
-                        // continuation, then fall through to legacy polling.
-                        waiter.tryCancel();
+                        // the waiter.
                         break;
                     }
                     // Resumed: either the waiter fired (target met or table state
@@ -127,7 +126,7 @@ public class WaitWalTableFunctionFactory implements FunctionFactory {
                     // Loop top re-checks writerTxn and probes the breaker.
                 }
                 if (seqTxnTracker.getWriterTxn() >= seqTxn) {
-                    throwIfSuspended();
+                    throwIfTerminated();
                     return true;
                 }
                 // else: yield was refused at least once; fall through to polling.
@@ -138,17 +137,11 @@ public class WaitWalTableFunctionFactory implements FunctionFactory {
                 Os.sleep(1);
                 executionContext.getCircuitBreaker().statefulThrowExceptionIfTripped();
                 if (i % 1000 == 0 && seqTxnTracker.isSuspended()) {
-                    throwIfSuspended();
+                    throwIfTerminated();
                 }
             }
-            throwIfSuspended();
+            throwIfTerminated();
             return true;
-        }
-
-        private void throwIfSuspended() {
-            if (seqTxnTracker.isSuspended()) {
-                throw CairoException.nonCritical().put("table is suspended [tableName=").put(tableName).put("]");
-            }
         }
 
         @Override
@@ -157,6 +150,7 @@ public class WaitWalTableFunctionFactory implements FunctionFactory {
             if (tt.isWal()) {
                 seqTxnTracker = executionContext.getCairoEngine().getTableSequencerAPI().getTxnTracker(tt);
                 seqTxn = seqTxnTracker.getSeqTxn();
+                tableToken = tt;
                 this.executionContext = executionContext;
             } else {
                 seqTxnTracker = null;
@@ -173,6 +167,15 @@ public class WaitWalTableFunctionFactory implements FunctionFactory {
         @Override
         public void toPlan(PlanSink sink) {
             sink.val("wait_wal_table(").val(tableName).val(')');
+        }
+
+        private void throwIfTerminated() {
+            if (seqTxnTracker.isSuspended()) {
+                throw CairoException.nonCritical().put("table is suspended [tableName=").put(tableName).put("]");
+            }
+            if (seqTxnTracker.isDropped()) {
+                throw CairoException.tableDoesNotExist(tableToken.getTableName());
+            }
         }
     }
 }

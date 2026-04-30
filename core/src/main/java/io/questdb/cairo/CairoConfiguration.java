@@ -496,6 +496,8 @@ public interface CairoConfiguration {
 
     int getQueryCacheEventQueueCapacity();
 
+    long getQueryContinuationWakeIntervalMillis();
+
     int getQueryRegistryPoolSize();
 
     /**

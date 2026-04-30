@@ -24,6 +24,8 @@
 
 package io.questdb.mp;
 
+import io.questdb.std.Os;
+
 /**
  * Holds an MPMC queue of {@link WorkerContinuation} objects waiting to be remounted on
  * a worker. Implements {@link ContinuationSink} so a continuation captures the
@@ -78,19 +80,36 @@ public final class ContinuationQueue implements ContinuationSink {
      * Remount {@code cont} on the calling thread. Must be called from a thread
      * that is NOT already carrying a cont in {@link WorkerContinuation#SCOPE}.
      *
-     * <p>A waiter can be fired by a concurrent thread (e.g. updateWriterTxns from
-     * the WAL apply pool) in the narrow window between registerWaiter enqueueing
-     * the waiter and the body actually reaching WorkerContinuation.suspend(). In
-     * that window the cont is still mounted on its registering carrier and
-     * Continuation.run() rejects the remount with IllegalStateException. We spin
-     * until the carrier unmounts -- typically nanoseconds. {@code cont.isDone()}
-     * is the structural test (not message-text matching against an internal JDK
-     * string): a not-done cont that refused to run can only be in the
-     * mounted-elsewhere state. If isDone() is true, this is a real bug (cont
-     * was put after completing) and the exception propagates.
+     * <p>Two distinct race shapes are handled here:
+     *
+     * <ol>
+     *   <li><b>Benign mount race.</b> A waiter can be fired by a concurrent
+     *       thread (e.g. updateWriterTxns from the WAL apply pool) in the narrow
+     *       window between registerWaiter enqueueing the waiter and the body
+     *       actually reaching {@link WorkerContinuation#suspend()}. In that
+     *       window the cont is still mounted on its registering carrier and
+     *       {@code Continuation.run()} rejects the remount with
+     *       {@code IllegalStateException}. We spin until the carrier unmounts --
+     *       typically nanoseconds.</li>
+     *   <li><b>Phantom resume.</b> A body that called {@code suspend()} on a
+     *       pinned carrier (e.g. a synchronized or native frame above) gets back
+     *       a {@code false} from suspend, but a {@code scheduleResume} may have
+     *       already enqueued the cont. The cont stays mounted on the original
+     *       carrier for the entire legacy polling fallback (potentially
+     *       seconds-to-minutes). The body sets {@code parkRefused} on the cont;
+     *       we consume it here and drop the dequeue so a peer doesn't burn CPU
+     *       waiting for an unmount that won't happen any time soon.</li>
+     * </ol>
+     *
+     * <p>{@code cont.isDone()} is the structural test (not message-text matching
+     * against an internal JDK string): a not-done cont that refused to run can
+     * only be in the mounted-elsewhere state. If isDone() is true, this is a real
+     * bug (cont was put after completing) and the exception propagates.
      */
     public void run(WorkerContinuation cont) {
-        int spins = 0;
+        if (cont.consumeParkRefused()) {
+            return;
+        }
         while (true) {
             try {
                 cont.run();
@@ -99,11 +118,10 @@ public final class ContinuationQueue implements ContinuationSink {
                 if (cont.isDone()) {
                     throw e;
                 }
-                if (++spins < 64) {
-                    Thread.onSpinWait();
-                } else {
-                    Thread.yield();
+                if (cont.consumeParkRefused()) {
+                    return;
                 }
+                Os.pause();
             }
         }
     }

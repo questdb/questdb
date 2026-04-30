@@ -40,6 +40,12 @@ import java.util.concurrent.atomic.AtomicBoolean;
 
 public class WorkerPool implements Closeable {
     private final AtomicBoolean closed = new AtomicBoolean();
+    // Every pool owns a ContinuationQueue. Workers drain it from their outer
+    // driver between continuation mounts, NOT as a regular job. It cannot be a
+    // regular job because resume requires the calling thread to not already be
+    // carrying a cont in the same scope, which holds in the outer driver but
+    // not inside a mounted worker-loop body.
+    private final ContinuationQueue continuationQueue;
     private final boolean daemons;
     private final ObjList<Closeable> freeOnExit = new ObjList<>();
     private final boolean haltOnError;
@@ -58,12 +64,6 @@ public class WorkerPool implements Closeable {
     private final ObjList<ObjHashSet<Job>> workerJobs;
     private final ObjList<Worker> workers = new ObjList<>();
     private final long yieldThreshold;
-    // Every pool owns a ContinuationQueue. Workers drain it from their outer
-    // driver between continuation mounts, NOT as a regular job. It cannot be a
-    // regular job because resume requires the calling thread to not already be
-    // carrying a cont in the same scope, which holds in the outer driver but
-    // not inside a mounted worker-loop body.
-    private final ContinuationQueue continuationQueue;
 
     public WorkerPool(WorkerPoolConfiguration configuration) {
         this.workerCount = configuration.getWorkerCount();
@@ -117,24 +117,6 @@ public class WorkerPool implements Closeable {
         workerJobs.getQuick(worker).add(job);
     }
 
-    /**
-     * Returns the {@link ContinuationSink} for this pool. Continuations constructed
-     * with this sink will resume on workers of this pool. Always non-null; the sink
-     * is wired during pool construction.
-     */
-    public ContinuationSink getContinuationSink() {
-        return continuationQueue;
-    }
-
-    /**
-     * Constructs a fresh {@link WorkerContinuation} bound to this pool's resume sink.
-     * Used by workers to build their own loop-body continuation, and by
-     * suspending-evaluation gateways to wrap a one-shot body.
-     */
-    public WorkerContinuation newContinuation(Runnable body) {
-        return new WorkerContinuation(body, continuationQueue);
-    }
-
     public void assignThreadLocalCleaner(int worker, Closeable cleaner) {
         assert worker > -1 && worker < workerCount && !running.get() && !closed.get();
         threadLocalCleaners.getQuick(worker).add(cleaner);
@@ -149,6 +131,15 @@ public class WorkerPool implements Closeable {
         assert !running.get() && !closed.get();
 
         freeOnExit.add(closeable);
+    }
+
+    /**
+     * Returns the {@link ContinuationSink} for this pool. Continuations constructed
+     * with this sink will resume on workers of this pool. Always non-null; the sink
+     * is wired during pool construction.
+     */
+    public ContinuationSink getContinuationSink() {
+        return continuationQueue;
     }
 
     public String getPoolName() {
@@ -171,6 +162,15 @@ public class WorkerPool implements Closeable {
             workers.clear(); // Worker is not closable
             Misc.freeObjListAndClear(freeOnExit);
         }
+    }
+
+    /**
+     * Constructs a fresh {@link WorkerContinuation} bound to this pool's resume sink.
+     * Used by workers to build their own loop-body continuation, and by
+     * suspending-evaluation gateways to wrap a one-shot body.
+     */
+    public WorkerContinuation newContinuation(Runnable body) {
+        return new WorkerContinuation(body, continuationQueue);
     }
 
     @TestOnly

@@ -45,6 +45,22 @@ public final class WorkerContinuation {
     private static final ThreadLocal<WorkerContinuation> CURRENT = new ThreadLocal<>();
     private final Continuation cont;
     private final ContinuationSink resumeSink;
+    // Per-cont handoff slot: the body writes a dequeued cont here just before
+    // yielding; the outer driver reads it after run() returns and remounts the
+    // dequeued cont. Lives on the cont (not on the Worker) because the cont can
+    // migrate to a different carrier between mount and unmount, while the
+    // body's binding to a specific Worker instance does not. Single-writer
+    // (the carrier currently mounting the cont) and read by whichever thread
+    // called run(); the yield/run boundary supplies the memory fence, so no
+    // volatile is needed.
+    private WorkerContinuation handoff;
+    // Set when a body called suspend() but the JDK refused the yield AND a
+    // scheduleResume has already pushed this cont onto its pool's resume queue
+    // (i.e. a phantom entry exists). The cont is still mounted on the carrier
+    // that tried to suspend; remounting from a peer worker would IllegalStateException
+    // and busy-spin until that carrier unmounts. ContinuationQueue.run consumes
+    // this flag to drop the phantom dequeue so peers don't burn CPU.
+    private volatile boolean parkRefused;
     private volatile boolean shutdown;
 
     public WorkerContinuation(Runnable body, ContinuationSink resumeSink) {
@@ -86,6 +102,22 @@ public final class WorkerContinuation {
         return Continuation.yield(SCOPE);
     }
 
+    /**
+     * If the park-refused flag is set, clears it and returns {@code true}. Called by
+     * {@link ContinuationQueue#run} on each dequeue (and inside its IllegalStateException
+     * spin loop) so that a phantom queue entry left behind by a refused {@link #suspend()}
+     * is dropped instead of busy-spinning a peer carrier.
+     *
+     * <p>Idempotent: a single set is consumed by exactly one observer.
+     */
+    public boolean consumeParkRefused() {
+        if (!parkRefused) {
+            return false;
+        }
+        parkRefused = false;
+        return true;
+    }
+
     public boolean isDone() {
         return cont.isDone();
     }
@@ -97,6 +129,18 @@ public final class WorkerContinuation {
      */
     public boolean isShutdown() {
         return shutdown;
+    }
+
+    /**
+     * Marks this cont as having a phantom entry on its resume queue: a
+     * {@link #suspend()} that returned {@code false} after a {@code scheduleResume}
+     * had already enqueued it. The next {@link ContinuationQueue#run} on this cont
+     * consumes the flag and drops the dequeue. Callers must only set this when they
+     * know an enqueue has actually happened (e.g. tryCancel on the gating waiter
+     * lost to a tryFire).
+     */
+    public void markParkRefused() {
+        parkRefused = true;
     }
 
     /**
@@ -127,6 +171,17 @@ public final class WorkerContinuation {
     }
 
     /**
+     * Stash a dequeued continuation that should be remounted by the outer driver of
+     * whichever carrier is currently running this cont. The body writes here just
+     * before {@link #suspend()}; the outer driver reads via {@link #takeHandoff()}
+     * after {@link #run()} returns. Must only be called from a frame currently
+     * mounted in this cont.
+     */
+    public void setHandoff(WorkerContinuation handoff) {
+        this.handoff = handoff;
+    }
+
+    /**
      * Marks this continuation as shutting down. Suspending functions that consult
      * {@link #isShutdown()} between suspends must terminate their wake loop. Combined
      * with a bounded {@link #run()} drive in the owning context's close path, this
@@ -134,5 +189,15 @@ public final class WorkerContinuation {
      */
     public void shutdown() {
         this.shutdown = true;
+    }
+
+    /**
+     * Read and clear the handoff slot. Called by whichever thread drove {@link #run()}
+     * once it returns: the yield/run boundary publishes the body's last write.
+     */
+    public WorkerContinuation takeHandoff() {
+        WorkerContinuation h = handoff;
+        handoff = null;
+        return h;
     }
 }

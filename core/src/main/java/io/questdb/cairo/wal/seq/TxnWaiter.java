@@ -31,11 +31,12 @@ import io.questdb.std.Unsafe;
  * Represents a single SQL evaluation parked inside a {@link SeqTxnTracker}, waiting for
  * the tracker's {@code writerTxn} to reach {@link #targetWriterTxn}.
  *
- * <p>Instances are pooled: typically one per {@link io.questdb.griffin.SqlExecutionContext}.
- * {@link #reset} clears the state back to PENDING and publishes fresh target / continuation
- * / deadline fields. Since PGWire serializes queries per connection and a single
- * {@code wait_wal_table} invocation is sequential within a query, only one wait is in
- * flight per context at a time -- the pooled instance is safe to reuse across waits.
+ * <p>Allocated once per {@code wait_wal_table} call and reused across the wake/sleep
+ * loop via {@link #reset(long, long)}: a fresh instance binds the carrier's
+ * {@link WorkerContinuation} via {@link #tryBindCurrent}, then each iteration calls
+ * reset to clear {@link #state} back to PENDING and publish a new target/deadline
+ * before re-registering. The waiter is not pooled across calls; the cost is one
+ * allocation per active wait.
  *
  * <p>The {@link #state} field is a CAS'd 3-way marker. Only one concurrent thread wins
  * the CAS from PENDING to FIRED or CANCELLED, so {@code cont.scheduleResume()} is invoked
@@ -59,17 +60,22 @@ public final class TxnWaiter {
     }
 
     public TxnWaiter(long targetWriterTxn, WorkerContinuation cont) {
-        this(targetWriterTxn, cont, NO_DEADLINE);
-    }
-
-    public TxnWaiter(long targetWriterTxn, WorkerContinuation cont, long deadlineMillis) {
         this.targetWriterTxn = targetWriterTxn;
         this.cont = cont;
-        this.deadlineMillis = deadlineMillis;
     }
 
-    public WorkerContinuation getContinuation() {
-        return cont;
+    public void abortContinuation() {
+        // Try to cancel the waiter first: if PENDING -> CANCELLED
+        // wins, no scheduleResume happens and there is no phantom queue
+        // entry. If tryCancel loses (waiter already FIRED, or the timeout
+        // job got there first), a scheduleResume has pushed this cont onto
+        // the resume queue while the cont is still mounted here -- mark
+        // parkRefused so ContinuationQueue.run drops the phantom dequeue
+        // instead of burning a peer carrier for the duration of the legacy
+        // polling fallback below.
+        if (!Unsafe.cas(this, STATE_OFFSET, STATE_PENDING, STATE_CANCELLED)) {
+            cont.markParkRefused();
+        }
     }
 
     public boolean isCancelled() {
@@ -85,15 +91,68 @@ public final class TxnWaiter {
     }
 
     /**
-     * Resets this pooled waiter for reuse. Publishes the new fields and clears
-     * {@link #state} back to PENDING; the volatile write on {@code state} synchronizes
-     * the reset so any observer that reads state == PENDING sees the refreshed fields.
+     * Returns {@code true} if the bound continuation's owning context is closing.
+     * Suspending callers must check this between waits and exit instead of re-parking,
+     * so the close path can drive the body through the cont loop's tail suspend.
      */
-    public void reset(long targetWriterTxn, WorkerContinuation cont, long deadlineMillis) {
+    public boolean isShuttingDown() {
+        return cont.isShutdown();
+    }
+
+    /**
+     * Resets this waiter for reuse across the wake/sleep loop, keeping the bound
+     * continuation. Publishes the new fields and clears {@link #state} back to PENDING;
+     * the volatile write on {@code state} synchronizes the reset so any observer that
+     * reads state == PENDING sees the refreshed fields.
+     */
+    public void reset(long targetWriterTxn, long deadlineMillis) {
         this.targetWriterTxn = targetWriterTxn;
-        this.cont = cont;
         this.deadlineMillis = deadlineMillis;
         this.state = STATE_PENDING;
+    }
+
+    public void scheduleResume() {
+        cont.scheduleResume();
+    }
+
+    /**
+     * Engine-shutdown path. Marks the bound continuation as shutting down so the
+     * body's wake loop exits instead of re-parking, then transitions PENDING ->
+     * CANCELLED and schedules a resume so a worker remounts the cont and observes
+     * the flag. If state is already FIRED or CANCELLED a {@code scheduleResume}
+     * has already been issued; setting the shutdown flag alone is enough -- the
+     * pending dequeue will see it on remount.
+     */
+    public void shutdown() {
+        cont.shutdown();
+        if (Unsafe.cas(this, STATE_OFFSET, STATE_PENDING, STATE_CANCELLED)) {
+            cont.scheduleResume();
+        }
+    }
+
+    public boolean suspend() {
+        if (cont == null) {
+            throw new IllegalStateException("Cannot suspend TxnWaiter: no continuation bound");
+        }
+        if (!WorkerContinuation.suspend()) {
+            abortContinuation();
+            return false;
+        }
+        return true;
+    }
+
+    /**
+     * Binds this waiter to the {@link WorkerContinuation} currently mounted on the calling
+     * thread, if any. Returns {@code true} on success; {@code false} when no cont is mounted
+     * in {@link WorkerContinuation#SCOPE} and callers must fall back to legacy polling.
+     */
+    public boolean tryBindCurrent() {
+        WorkerContinuation c = WorkerContinuation.current();
+        if (c == null || !WorkerContinuation.isMounted()) {
+            return false;
+        }
+        this.cont = c;
+        return true;
     }
 
     /**
@@ -105,7 +164,10 @@ public final class TxnWaiter {
         return Unsafe.cas(this, STATE_OFFSET, STATE_PENDING, STATE_CANCELLED);
     }
 
-    public boolean tryFire() {
-        return Unsafe.cas(this, STATE_OFFSET, STATE_PENDING, STATE_FIRED);
+    public void tryFire() {
+        if (Unsafe.cas(this, STATE_OFFSET, STATE_PENDING, STATE_FIRED)) {
+            cont.scheduleResume();
+        }
+        // cancelled waiters were already enqueued by the canceller; drop on the floor
     }
 }

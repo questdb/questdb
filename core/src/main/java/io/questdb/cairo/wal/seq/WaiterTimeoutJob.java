@@ -24,57 +24,55 @@
 
 package io.questdb.cairo.wal.seq;
 
-import io.questdb.mp.Job;
-import io.questdb.std.Unsafe;
+import io.questdb.mp.SynchronizedJob;
 import io.questdb.std.datetime.millitime.MillisecondClock;
 import org.jetbrains.annotations.NotNull;
 
 import java.util.function.Consumer;
 
 /**
- * Periodic sweep that cancels {@link TxnWaiter} instances whose deadline has passed.
- * Runs on the shared worker pool; on each invocation it walks every known
- * {@link SeqTxnTracker} at most once per {@code sweepIntervalMillis} and invokes
- * {@link SeqTxnTracker#cancelExpiredWaiters(long)} on it.
+ * Sweep that cancels {@link TxnWaiter} instances whose deadline has passed. On each
+ * invocation it walks every known {@link SeqTxnTracker} and calls
+ * {@link SeqTxnTracker#cancelExpiredWaiters(long)} on it. The base
+ * {@link SynchronizedJob} CAS lock ensures at most one worker performs the sweep at a
+ * time when the same instance is assigned to every worker via {@code WorkerPool.assign(Job)};
+ * losers exit immediately.
  *
  * <p>The tracker enumeration is supplied as a {@link Consumer}-accepting callback so the
  * job does not need to know whether trackers live inside a sequencer API, a test
  * harness, or a mock.
  *
- * <p>The same instance may be assigned to every worker via {@code WorkerPool.assign(Job)};
- * a CAS on {@link #nextSweepMillis} ensures that at most one worker performs the sweep
- * per interval, regardless of how many workers race into {@link #run}.
+ * <p>{@link #shutdown()} is the engine-shutdown hook: it walks every tracker and forces
+ * every parked waiter to wake with the shutdown flag set, so worker pools can halt
+ * without blocking on continuations that nothing else will ever fire.
  */
-public final class WaiterTimeoutJob implements Job {
-    private static final long NEXT_SWEEP_OFFSET = Unsafe.getFieldOffset(WaiterTimeoutJob.class, "nextSweepMillis");
+public final class WaiterTimeoutJob extends SynchronizedJob {
     private final MillisecondClock clock;
-    private final long sweepIntervalMillis;
     private final Consumer<Consumer<SeqTxnTracker>> trackerEnumerator;
-    @SuppressWarnings("FieldMayBeFinal")
-    private volatile long nextSweepMillis;
 
     public WaiterTimeoutJob(
             @NotNull MillisecondClock clock,
-            long sweepIntervalMillis,
             @NotNull Consumer<Consumer<SeqTxnTracker>> trackerEnumerator
     ) {
         this.clock = clock;
-        this.sweepIntervalMillis = sweepIntervalMillis;
         this.trackerEnumerator = trackerEnumerator;
     }
 
+    /**
+     * Releases every parked waiter across all trackers: marks each waiter's continuation
+     * as shutting down and schedules a resume so the body wakes, observes the flag, and
+     * unwinds. Must run while worker pools are still RUNNING -- otherwise the resumed
+     * conts have no carrier left to remount them. Idempotent: late waiters that get
+     * registered after this call still observe the engine's closing state through the
+     * SQL circuit breaker before they reach {@code suspend()}.
+     */
+    public void shutdown() {
+        trackerEnumerator.accept(SeqTxnTracker::shutdownAllWaiters);
+    }
+
     @Override
-    public boolean run(int workerId, @NotNull RunStatus runStatus) {
+    protected boolean runSerially() {
         long now = clock.getTicks();
-        long expected = nextSweepMillis;
-        if (now < expected) {
-            return false;
-        }
-        // CAS prevents multiple workers (when assigned via WorkerPool.assign(Job)) from
-        // double-sweeping in the same interval. The loser exits without sweeping.
-        if (!Unsafe.cas(this, NEXT_SWEEP_OFFSET, expected, now + sweepIntervalMillis)) {
-            return false;
-        }
         trackerEnumerator.accept(tracker -> tracker.cancelExpiredWaiters(now));
         return false;
     }

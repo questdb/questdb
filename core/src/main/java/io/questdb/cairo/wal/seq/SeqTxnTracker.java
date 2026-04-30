@@ -36,10 +36,11 @@ import org.jetbrains.annotations.TestOnly;
 
 public class SeqTxnTracker {
     public static final long UNINITIALIZED_TXN = -1;
+    private static final ThreadLocal<WaiterHolder> HOLDER = ThreadLocal.withInitial(WaiterHolder::new);
     private static final long SEQ_TXN_OFFSET = Unsafe.getFieldOffset(SeqTxnTracker.class, "seqTxn");
     private static final long SUSPENDED_STATE_OFFSET = Unsafe.getFieldOffset(SeqTxnTracker.class, "suspendedState");
+    private static final long WAITER_REGISTRATION_COUNT_OFFSET = Unsafe.getFieldOffset(SeqTxnTracker.class, "waiterRegistrationCount");
     private static final long WRITER_TXN_OFFSET = Unsafe.getFieldOffset(SeqTxnTracker.class, "writerTxn");
-    private static final ThreadLocal<WaiterHolder> HOLDER = ThreadLocal.withInitial(WaiterHolder::new);
     private final Metrics metrics;
     private final TableWriterPressureControlImpl pressureControl;
     private final Queue<WaiterHolder> waiters = ConcurrentQueue.createConcurrentQueue(WaiterHolder::new);
@@ -56,6 +57,8 @@ public class SeqTxnTracker {
     // 0 unknown
     // 1 not suspended
     private volatile int suspendedState = 0;
+    @SuppressWarnings("FieldMayBeFinal")
+    private volatile long waiterRegistrationCount;
     private volatile long writerTxn = UNINITIALIZED_TXN;
 
     public SeqTxnTracker(CairoConfiguration configuration) {
@@ -87,7 +90,7 @@ public class SeqTxnTracker {
             }
             if (w.isExpired(nowMillis)) {
                 if (w.tryCancel()) {
-                    w.getContinuation().scheduleResume();
+                    w.scheduleResume();
                 }
             } else {
                 if (sentinel == null) {
@@ -119,6 +122,17 @@ public class SeqTxnTracker {
         return seqTxn;
     }
 
+    /**
+     * Monotonic count of {@link #registerWaiter(TxnWaiter)} invocations on this tracker.
+     * Tests poll this to confirm that a parked {@code wait_wal_table} body has reached
+     * the registration point, replacing fixed-duration {@code Os.sleep()} synchronization
+     * that flakes on slow CI machines.
+     */
+    @TestOnly
+    public long getWaiterRegistrationCount() {
+        return waiterRegistrationCount;
+    }
+
     @TestOnly
     public long getWriterTxn() {
         return writerTxn;
@@ -140,6 +154,10 @@ public class SeqTxnTracker {
         }
         metrics.walMetrics().addWriterTxn(newWriterTxn - Math.max(0, wtxn));
         return seqTxn > 0 && seqTxn > writerTxn;
+    }
+
+    public boolean isDropped() {
+        return dropped;
     }
 
     public boolean isInitialised() {
@@ -178,11 +196,13 @@ public class SeqTxnTracker {
         return (stxn < 1 || writerTxn == (newSeqTxn - 1)) && suspendedState >= 0;
     }
 
-    public synchronized void notifyOnDrop() {
-        if (dropped) {
-            return;
+    public void notifyOnDrop() {
+        synchronized (this) {
+            if (dropped) {
+                return;
+            }
+            dropped = true;
         }
-        dropped = true;
         metrics.walMetrics().addSeqTxn(-seqTxn);
         metrics.walMetrics().addWriterTxn(-writerTxn);
         fireWaiters();
@@ -199,14 +219,17 @@ public class SeqTxnTracker {
      * wait until the next external event or deadline expiry. This eager fire races
      * the body before it reaches {@code WorkerContinuation.suspend()} -- the cont is
      * still mounted on the registering carrier when {@code cont.scheduleResume()}
-     * pushes it onto the resume queue. {@link io.questdb.mp.ContinuationQueue#run}
-     * spin-waits on the resulting IllegalStateException until the carrier unmounts;
-     * the same spin-wait already covers concurrent fires from other threads (e.g.
-     * a WAL apply firing while the body is between {@code registerWaiter} and
-     * {@code suspend}), so this eager path adds no new race source.
+     * pushes it onto the resume queue. The mount race is benign on the happy path:
+     * {@link io.questdb.mp.ContinuationQueue#run} spin-waits on the resulting
+     * IllegalStateException for the (typically nanosecond) window until the body
+     * reaches suspend and the carrier unmounts. If suspend is refused (carrier
+     * pinned), the body marks {@code parkRefused} on the cont so the dequeuer
+     * drops the phantom entry instead of spinning for the duration of the legacy
+     * polling fallback.
      */
     public void registerWaiter(TxnWaiter waiter) {
         enqueueHolder(HOLDER.get(), waiter);
+        Unsafe.getAndAddLong(this, WAITER_REGISTRATION_COUNT_OFFSET, 1);
         if (writerTxn >= waiter.targetWriterTxn || isSuspended() || dropped) {
             fireWaiters();
         }
@@ -236,27 +259,52 @@ public class SeqTxnTracker {
     }
 
     /**
+     * Engine-shutdown drain. Removes every waiter from the queue, marks each one's
+     * continuation as shutting down and pushes it onto its origin pool's resume
+     * queue. Called by {@link WaiterTimeoutJob#shutdown()} before worker pools halt,
+     * so the parked bodies wake one last time, observe {@code isShuttingDown()},
+     * unwind through their cont, and let the carriers progress to HALTED.
+     */
+    public void shutdownAllWaiters() {
+        WaiterHolder holder = HOLDER.get();
+        while (waiters.tryDequeue(holder)) {
+            TxnWaiter w = holder.waiter;
+            holder.waiter = null;
+            if (w == null) {
+                continue;
+            }
+            w.shutdown();
+        }
+    }
+
+    /**
      * Updates writerTxn and dirtyWriterTxn and returns true if the ApplyWal2Tables job should be notified.
      *
      * @param writerTxn      txn that is available for reading
      * @param dirtyWriterTxn txn that is in flight that is not yet fully written
      * @return true if ApplyWal2Tables job should be notified
      */
-    public synchronized boolean updateWriterTxns(long writerTxn, long dirtyWriterTxn) {
-        if (dropped) {
-            return false;
+    public boolean updateWriterTxns(long writerTxn, long dirtyWriterTxn) {
+        boolean progressMade = false;
+        synchronized (this) {
+            if (dropped) {
+                return false;
+            }
+            long prevWriterTxn = this.writerTxn;
+            long prevDirtyWriterTxn = this.dirtyWriterTxn;
+            this.writerTxn = writerTxn;
+            this.dirtyWriterTxn = dirtyWriterTxn;
+            // Progress made means table is not suspended
+            if (writerTxn > prevWriterTxn) {
+                suspendedState = 1;
+                metrics.walMetrics().addWriterTxn(writerTxn - prevWriterTxn);
+                progressMade = true;
+            } else if (dirtyWriterTxn > prevDirtyWriterTxn) {
+                suspendedState = 1;
+            }
         }
-        long prevWriterTxn = this.writerTxn;
-        long prevDirtyWriterTxn = this.dirtyWriterTxn;
-        this.writerTxn = writerTxn;
-        this.dirtyWriterTxn = dirtyWriterTxn;
-        // Progress made means table is not suspended
-        if (writerTxn > prevWriterTxn) {
-            suspendedState = 1;
-            metrics.walMetrics().addWriterTxn(writerTxn - prevWriterTxn);
+        if (progressMade) {
             fireWaiters();
-        } else if (dirtyWriterTxn > prevDirtyWriterTxn) {
-            suspendedState = 1;
         }
         return writerTxn < seqTxn;
     }
@@ -275,7 +323,7 @@ public class SeqTxnTracker {
      *
      * <p>Streaming algorithm: dequeue one waiter at a time, fire-or-reenqueue, and remember
      * the first waiter we put back. When we encounter that sentinel a second time, we have
-     * made one full pass without firing anything more in the tail — put the sentinel back
+     * made one full pass without firing anything more in the tail -- put the sentinel back
      * and stop. Zero allocation; tolerates concurrent drains because each thread carries
      * its own sentinel and the {@code TxnWaiter.state} CAS makes double-firing impossible.
      */
@@ -296,10 +344,7 @@ public class SeqTxnTracker {
                 return;
             }
             if (terminal || wtxn >= w.targetWriterTxn) {
-                if (w.tryFire()) {
-                    w.getContinuation().scheduleResume();
-                }
-                // cancelled waiters were already enqueued by the canceller; drop on the floor
+                w.tryFire();
             } else {
                 if (sentinel == null) {
                     sentinel = w;

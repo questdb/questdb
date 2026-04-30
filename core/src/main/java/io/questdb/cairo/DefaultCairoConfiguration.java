@@ -825,6 +825,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
+    public long getQueryContinuationWakeIntervalMillis() {
+        return 1_000L;
+    }
+
+    @Override
     public int getQueryRegistryPoolSize() {
         return 8;
     }

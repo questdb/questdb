@@ -118,19 +118,6 @@ public class TableSequencerAPI implements QuietCloseable {
         }
     }
 
-    /**
-     * Visits every live {@link SeqTxnTracker} in the registry. Used by
-     * {@link io.questdb.cairo.wal.seq.WaiterTimeoutJob} to scan parked SQL waiters for
-     * deadline expiration. The action runs on the calling thread; trackers may appear
-     * concurrently with iteration but the visit set is consistent with the registry's
-     * weakly-consistent semantics.
-     */
-    public void forEachTxnTracker(Consumer<SeqTxnTracker> action) {
-        for (SeqTxnTracker tracker : seqTxnTrackers.values()) {
-            action.accept(tracker);
-        }
-    }
-
     public void forAllWalTables(ObjHashSet<TableToken> tableTokenBucket, boolean includeDropped, TableSequencerCallback callback) {
         final CharSequence root = configuration.getDbRoot();
         final FilesFacade ff = configuration.getFilesFacade();
@@ -193,6 +180,19 @@ public class TableSequencerAPI implements QuietCloseable {
                             .$(", error=").$((Throwable) ex).I$();
                 }
             }
+        }
+    }
+
+    /**
+     * Visits every live {@link SeqTxnTracker} in the registry. Used by
+     * {@link WaiterTimeoutJob} to scan parked SQL waiters for deadline expiration.
+     * The action runs on the calling thread; trackers may appear concurrently with
+     * iteration but the visit set is consistent with the registry's weakly-consistent
+     * semantics.
+     */
+    public void forEachTxnTracker(Consumer<SeqTxnTracker> action) {
+        for (SeqTxnTracker tracker : seqTxnTrackers.values()) {
+            action.accept(tracker);
         }
     }
 
