@@ -155,10 +155,6 @@ impl ParquetDecoder {
         }
 
         let unused_bytes = qdb_meta.as_ref().map(|m| m.unused_bytes).unwrap_or(0);
-        let column_structure_version = qdb_meta
-            .as_ref()
-            .map(|m| m.column_structure_version)
-            .unwrap_or(-1);
 
         // TODO(eugenels): add some validation
         Ok(Self {
@@ -175,7 +171,6 @@ impl ParquetDecoder {
             columns,
             row_group_sizes_acc,
             unused_bytes,
-            column_structure_version,
         })
     }
 
@@ -413,7 +408,7 @@ mod tests {
         }
 
         let column_count = columns.len();
-        let partition = Partition { table: "test_table".to_string(), columns, column_structure_version: -1 };
+        let partition = Partition { table: "test_table".to_string(), columns };
         ParquetWriter::new(&mut buf)
             .with_statistics(false)
             .with_row_group_size(Some(1048576))

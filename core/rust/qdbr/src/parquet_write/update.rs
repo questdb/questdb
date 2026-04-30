@@ -1307,7 +1307,6 @@ mod tests {
         let partition = Partition {
             table: "test_table".to_string(),
             columns: [col1_w, col2_w].to_vec(),
-            column_structure_version: -1,
         };
 
         ParquetWriter::new(&mut buf)
@@ -1325,7 +1324,6 @@ mod tests {
         let new_partition = Partition {
             table: "test_table".to_string(),
             columns: [col1_extra_w, col2_extra_w].to_vec(),
-            column_structure_version: -1,
         };
 
         let orig_offset = buf.position();
@@ -1596,7 +1594,6 @@ mod tests {
                 make_column("col0", ColumnTypeTag::Int.into_type(), &col0_rg0),
                 make_column("col1", ColumnTypeTag::Float.into_type(), &col1_rg0),
             ],
-            column_structure_version: -1,
         };
         let partition_rg1 = Partition {
             table: "test_table".to_string(),
@@ -1604,7 +1601,6 @@ mod tests {
                 make_column("col0", ColumnTypeTag::Int.into_type(), &col0_rg1),
                 make_column("col1", ColumnTypeTag::Float.into_type(), &col1_rg1),
             ],
-            column_structure_version: -1,
         };
 
         let (schema, _) =
@@ -1740,7 +1736,6 @@ mod tests {
                 make_column("col0", ColumnTypeTag::Int.into_type(), &col0_new),
                 make_column("col1", ColumnTypeTag::Float.into_type(), &col1_new),
             ],
-            column_structure_version: -1,
         };
         let compressions_new = to_compressions(&partition_new);
         let (rg_new, bloom_new) = create_row_group(
