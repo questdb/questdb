@@ -134,6 +134,11 @@ public class CastTimestampToSymbolFunctionFactory implements FunctionFactory {
         }
 
         @Override
+        public boolean isThreadSafe() {
+            return false;
+        }
+
+        @Override
         public @Nullable SymbolTable newSymbolTable() {
             Func copy = new Func(arg);
             copy.symbolTableShortcut.putAll(this.symbolTableShortcut);

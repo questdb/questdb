@@ -303,32 +303,33 @@ public class ParallelFilterTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testCastIntToSymbolInParallelFilter() throws Exception {
-        // AbstractCastToSymbolFunction maintains a mutable IntIntHashMap symbol cache
-        // that the parallel filter must clone per worker thread. Before the fix this
-        // function reported isThreadSafe()==true (inherited from UnaryFunction, since
-        // its column-ref child is thread-safe), so all four workers shared one cache
-        // and a concurrent rehash drove AbstractIntHashSet.probe() into an infinite
-        // loop, hanging the query. Many distinct INT values across many page frames
-        // are needed to force concurrent rehashes, and JIT must be off so the filter
-        // actually invokes the cast function (the JIT path bypasses it).
+    public void testCastToSymbolInParallelFilter() throws Exception {
+        // Cast-to-symbol functions maintain a mutable hash-map symbol cache that
+        // the parallel filter must clone per worker thread, so they're thread-unsafe.
         WorkerPool pool = new WorkerPool(() -> 4);
         TestUtils.execute(
                 pool,
                 (engine, compiler, sqlExecutionContext) -> {
                     sqlExecutionContext.setJitMode(SqlJitMode.JIT_MODE_DISABLED);
                     engine.execute(
-                            "CREATE TABLE x (ts TIMESTAMP, iv INT) timestamp(ts) PARTITION BY DAY;",
+                            "CREATE TABLE x (ts TIMESTAMP, iv INT, lv LONG) timestamp(ts) PARTITION BY DAY;",
                             sqlExecutionContext
                     );
                     engine.execute(
-                            "INSERT INTO x SELECT x::timestamp, x::int FROM long_sequence(" + (1000 * PAGE_FRAME_MAX_ROWS) + ")",
+                            "INSERT INTO x SELECT x::timestamp, x::int, x FROM long_sequence(" + (1000 * PAGE_FRAME_MAX_ROWS) + ")",
                             sqlExecutionContext
                     );
                     TestUtils.assertSql(
                             engine,
                             sqlExecutionContext,
                             "SELECT count(*) FROM x WHERE length((iv)::SYMBOL) < 4",
+                            sink,
+                            "count\n999\n"
+                    );
+                    TestUtils.assertSql(
+                            engine,
+                            sqlExecutionContext,
+                            "SELECT count(*) FROM x WHERE length((lv)::SYMBOL) < 4",
                             sink,
                             "count\n999\n"
                     );
