@@ -989,16 +989,9 @@ public class FuzzRunner {
             ConcurrentLinkedQueue<Throwable> errors
     ) {
         final int writerIndex;
-        // Capture dirName at thread creation: dirName is stable across renames
-        // while tableName is not, so the reopenTable branch below can scope the
-        // reset to writers for this table even after a RenameTableOperation has
-        // changed the table's public name.
-        final String dirName;
         synchronized (writers) {
-            WalWriter w = (WalWriter) engine.getTableWriterAPI(tableName, "apply trans test");
-            writers.add(w);
+            writers.add((WalWriter) engine.getTableWriterAPI(tableName, "apply trans test"));
             writerIndex = writers.size() - 1;
-            dirName = w.getTableToken().getDirName();
         }
 
         return new Thread(() -> {
@@ -1054,39 +1047,52 @@ public class FuzzRunner {
 
                     if (transaction.reopenTable) {
                         synchronized (writers) {
-                            // Decide what reopenTable actually means here by checking
-                            // whether the original dirName still resolves:
-                            //  - resolves    -> table identity is intact (a rename or a
-                            //    pure metadata-refresh op like SET TTL / SET PARQUET
-                            //    ENCODING). The writer's metadata is refreshed by
-                            //    goActive on the next iteration, so leave the writers
-                            //    alone — closing them now would deadlock against an
-                            //    in-flight write of a parallel worker for the same
-                            //    table.
-                            //  - does not resolve, but tableName resolves -> drop+create
-                            //    under the same name (new dirName / new tableId). Close
-                            //    each matching writer and reopen against the new token.
-                            //  - neither resolves -> true drop without recreate. Close
-                            //    each matching writer and null the slot so the cleanup
-                            //    `Misc.freeObjList(writers)` won't double-close it.
-                            TableToken byDir = engine.getTableTokenByDirName(dirName);
-                            if (byDir == null) {
-                                TableToken byName = engine.getTableTokenIfExists(tableName);
+                            // Read the writer's live identity at this moment. goActive at
+                            // the start of this iteration has already pulled the writer's
+                            // stored TableToken forward through any renames committed by
+                            // previous transactions in the stream, so liveDir / liveName
+                            // are the table's current name and dirName as of "just before
+                            // this transaction's operations were applied". That is the
+                            // right reference point for both matching peer writers in the
+                            // shared list and for re-resolving through the engine — using
+                            // the captured-at-thread-creation strings would go stale after
+                            // a rename, which is what previously caused this branch to
+                            // throw and orphan a closed writer.
+                            TableToken liveToken = walWriter.getTableToken();
+                            String liveDir = liveToken.getDirName();
+                            String liveName = liveToken.getTableName();
+
+                            // The transaction's operations may have changed the identity
+                            // again (drop+create issues a new dirName under the same
+                            // name). Re-resolve: by dirName first (rename / metadata-only
+                            // refresh — identity unchanged), falling back to tableName
+                            // (drop+create — new dirName), or null if the table was fully
+                            // dropped without recreate.
+                            TableToken newToken = engine.getTableTokenByDirName(liveDir);
+                            if (newToken != null && newToken.getDirName().equals(liveDir)) {
+                                // Identity unchanged — this was a metadata-only reopen
+                                // (SET TTL / SET PARQUET ENCODING) or a rename, and
+                                // goActive on the next iteration will refresh the writer's
+                                // view. Closing peer writers now would deadlock against
+                                // their in-flight work, so leave them alone.
+                            } else {
+                                if (newToken == null) {
+                                    newToken = engine.getTableTokenIfExists(liveName);
+                                }
                                 for (int ii = 0; ii < writers.size(); ii++) {
                                     WalWriter cur = writers.getQuick(ii);
                                     if (cur == null) {
                                         continue;
                                     }
                                     TableToken curToken = cur.getTableToken();
-                                    if (curToken.getDirName().equals(dirName) || curToken.getTableName().equals(tableName)) {
+                                    if (curToken.getDirName().equals(liveDir) || curToken.getTableName().equals(liveName)) {
                                         cur.close();
-                                        writers.setQuick(ii, byName != null
-                                                ? (WalWriter) engine.getTableWriterAPI(byName, "apply trans test")
+                                        writers.setQuick(ii, newToken != null
+                                                ? (WalWriter) engine.getTableWriterAPI(newToken, "apply trans test")
                                                 : null);
                                     }
                                 }
                             }
-                            // else: identity unchanged, goActive will refresh metadata
                         }
                         forceReaderReload.incrementAndGet();
                         engine.releaseInactive();
