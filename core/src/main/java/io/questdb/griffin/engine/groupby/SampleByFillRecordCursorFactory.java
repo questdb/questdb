@@ -89,8 +89,8 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
     public static final int FILL_PREV_SELF = -2;
     private static final int HAS_PREV_SLOT = 1;
     private static final int KEY_INDEX_SLOT = 0;
-    // Key columns in the MapRecord start at KEY_POS_OFFSET (= PREV_ROWID_SLOT + 1);
-    // slots below it are the fixed-width value header (KEY_INDEX, HAS_PREV, PREV_ROWID).
+    // Key columns in MapRecord start at KEY_POS_OFFSET, after the fixed-width
+    // value header (KEY_INDEX, HAS_PREV, PREV_ROWID).
     private static final int KEY_POS_OFFSET = 3;
     private static final int PREV_ROWID_SLOT = 2;
 
@@ -100,33 +100,26 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
     private final IntList fillModes;
     private final Function fromFunc;
     private final boolean hasPrevFill;
-    private final Map keysMap;
     private final Function offsetFunc;
     private final long samplingInterval;
     private final char samplingIntervalUnit;
     private final int timestampIndex;
     private final int timestampType;
     private final Function toFunc;
-    // tzFunc stays nullable: only populated for the day-or-larger SAMPLE BY +
-    // non-trivial FILL + TIME ZONE combination that SqlOptimiser.rewriteSampleBy
-    // tags via setFillTimezoneName. The cursor evaluates it on every of() call so
-    // a runtime-constant (bind variable) timezone gets re-resolved per execution
-    // of the same compiled factory; otherwise the first-execute rules would be
-    // silently reused. Null means "no TZ wrap is ever applied" -- the cursor
-    // uses the unwrapped sampler from the constructor as-is.
+    // Non-null only for day-or-larger SAMPLE BY + non-trivial FILL + TIME ZONE
+    // (set by SqlOptimiser.rewriteSampleBy). Cursor re-evaluates per of() so a
+    // bind-variable TZ picks up its current value. Null means no TZ wrap.
     private final Function tzFunc;
 
     /**
-     * Populates {@code mapValueTypes} with the fixed-width value header that the
-     * cursor expects on every key entry: three LONG slots in KEY_INDEX_SLOT,
-     * HAS_PREV_SLOT, PREV_ROWID_SLOT order. Callers that build the keys map
-     * externally (e.g., {@code generateFill}) must invoke this helper so the
-     * cursor's slot indices remain authoritative.
+     * Appends the fixed-width value header (KEY_INDEX_SLOT, HAS_PREV_SLOT,
+     * PREV_ROWID_SLOT — three LONGs) the cursor expects on every key entry.
+     * External map builders must call this so slot indices stay authoritative.
      */
     public static void populateMapValueTypes(ArrayColumnTypes mapValueTypes) {
-        mapValueTypes.add(ColumnType.LONG); // slot KEY_INDEX_SLOT
-        mapValueTypes.add(ColumnType.LONG); // slot HAS_PREV_SLOT
-        mapValueTypes.add(ColumnType.LONG); // slot PREV_ROWID_SLOT
+        mapValueTypes.add(ColumnType.LONG);
+        mapValueTypes.add(ColumnType.LONG);
+        mapValueTypes.add(ColumnType.LONG);
     }
 
     public SampleByFillRecordCursorFactory(
@@ -157,9 +150,7 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
             boolean isPrevPositioningNeeded
     ) {
         super(metadata);
-        // hasPrevFill mirrors the "any PREV mode" signal consumed by toPlan and
-        // the cursor's emit branches. Self-prev (FILL_PREV_SELF) and cross-column
-        // prev (mode >= 0) both count.
+        // True if any column uses self-prev or cross-column prev fill.
         boolean localHasPrevFill = false;
         for (int i = 0, n = fillModes.size(); i < n; i++) {
             int mode = fillModes.getQuick(i);
@@ -168,26 +159,25 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
                 break;
             }
         }
-        Map keysMapLocal = null;
+        Map keysMap = null;
         SampleByFillCursor cursorLocal;
         try {
             if (keyColIndices.size() > 0) {
-                keysMapLocal = MapFactory.createOrderedMap(configuration, mapKeyTypes, mapValueTypes);
+                keysMap = MapFactory.createOrderedMap(configuration, mapKeyTypes, mapValueTypes);
             }
             cursorLocal = new SampleByFillCursor(
                     metadata, timestampSampler,
                     fromFunc, toFunc, fillModes, constantFills,
                     timestampIndex, timestampType, localHasPrevFill,
-                    keySink, keysMapLocal, keyColIndices, symbolTableColIndices,
+                    keySink, keysMap, keyColIndices, symbolTableColIndices,
                     offsetFunc, offsetFuncPos,
                     tzFunc, tzFuncPos, samplingIntervalUnit,
                     fixedPrevSrcCols, fixedPrevTypeTags, prevValueSlot, isPrevPositioningNeeded
             );
         } catch (Throwable th) {
-            // Free resources allocated inside the constructor. Inputs (base, fromFunc,
-            // toFunc, constantFills, offsetFunc, tzFunc) remain owned by the caller's
-            // catch block, which frees them on its own — this avoids a double-free.
-            Misc.free(keysMapLocal);
+            // Free what this constructor allocated. Caller still owns its inputs
+            // (base, fromFunc, toFunc, constantFills, offsetFunc, tzFunc).
+            Misc.free(keysMap);
             throw th;
         }
         this.base = base;
@@ -202,7 +192,6 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
         this.constantFills = constantFills;
         this.fillModes = fillModes;
         this.hasPrevFill = localHasPrevFill;
-        this.keysMap = keysMapLocal;
         this.cursor = cursorLocal;
     }
 
@@ -218,22 +207,14 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
             cursor.of(baseCursor, executionContext);
             return cursor;
         } catch (Throwable th) {
-            // Function.init() can throw SqlException; close the cursor so its
-            // internal resources don't leak before rethrowing.
             cursor.close();
             throw th;
         }
     }
 
-    /**
-     * Fill rows are synthesized per {@code hasNext()} from PREV snapshots, the
-     * keys map, and bucket state; they have no row id, so {@code recordAt()}
-     * has no meaningful slot to land on. The cursor-path equivalent only
-     * advertised random access through an outer Sort wrapper that materialized
-     * the entire result — the fill cursor itself never has.
-     */
     @Override
     public boolean recordCursorSupportsRandomAccess() {
+        // Fill rows are synthesized per hasNext() and have no row id.
         return false;
     }
 
@@ -246,9 +227,7 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
         }
         sink.attr("stride").val('\'').val(samplingInterval).val(samplingIntervalUnit).val('\'');
         if (hasPrevFill && hasAnyConstantSlot()) {
-            // At least one aggregate is filled via PREV and at least one is
-            // filled via a constant (NULL or non-null). "prev" alone would
-            // misrepresent the per-column behavior.
+            // PREV mixed with a constant fill column — "prev" alone would mislead.
             sink.attr("fill").val("mixed");
         } else if (hasPrevFill) {
             sink.attr("fill").val("prev");
@@ -279,16 +258,12 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
         Misc.free(offsetFunc);
         Misc.free(tzFunc);
         Misc.freeObjList(constantFills);
-        Misc.free(keysMap);
     }
 
     private boolean hasAnyConstantFill() {
-        // Intentional asymmetry with hasAnyConstantSlot: this method scans ALL
-        // fillModes entries (including timestampIndex, which is always classified
-        // FILL_CONSTANT with NullConstant.NULL), and the `!(f instanceof NullConstant)`
-        // filter below naturally excludes the timestamp's sentinel. The sibling
-        // method skips timestampIndex explicitly because it does NOT apply a
-        // NullConstant filter.
+        // Returns true if any column has a non-null constant fill. The
+        // !(f instanceof NullConstant) filter excludes both NULL fills and the
+        // timestamp slot (always FILL_CONSTANT/NullConstant.NULL).
         for (int i = 0, n = fillModes.size(); i < n; i++) {
             if (fillModes.getQuick(i) == FILL_CONSTANT) {
                 Function f = constantFills.getQuick(i);
@@ -301,10 +276,8 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
     }
 
     private boolean hasAnyConstantSlot() {
-        // Returns true when any non-timestamp, non-key column is classified as
-        // FILL_CONSTANT (NULL or a concrete value). Used by toPlan to detect
-        // heterogeneous fill modes: a "value"/"null" slot alongside a PREV
-        // slot warrants the "mixed" label instead of "prev".
+        // Returns true when any non-timestamp column is FILL_CONSTANT
+        // (NULL or value). Used by toPlan to label "mixed" when PREV coexists.
         for (int i = 0, n = fillModes.size(); i < n; i++) {
             if (i == timestampIndex) {
                 continue;
@@ -317,32 +290,24 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
     }
 
     private static class SampleByFillCursor implements NoRandomAccessRecordCursor {
-        // Dispatch codes compiled once per query from fillModes + outputColToKeyPos +
-        // constantFills + timestampIndex into flat per-column arrays consumed by
-        // FillRecord.getXxx on every read. See compileDispatchPlan(). Two
-        // parallel tables exist: fillDispatchCode encodes the per-column behaviour
-        // for fill rows, dataDispatchCode is uniformly DISPATCH_BASE so data rows
-        // pass through to baseRecord.getXxx. currentDispatchCode points at the
-        // active table and is swapped at row boundaries.
+        // Per-column dispatch codes compiled by compileDispatchPlan(). Two parallel
+        // tables: fillDispatchCode for fill rows, dataDispatchCode (all DISPATCH_BASE)
+        // for data rows. currentDispatchCode swaps between them at row boundaries.
         private static final int DISPATCH_BASE = 6;
         private static final int DISPATCH_CONSTANT = 0;
         private static final int DISPATCH_KEY_SLOT = 1;
         private static final int DISPATCH_NULL = 2;
-        // Cached FILL_PREV: read keysMapRecord.getXxx(dispatchSlot[col]) --
-        // OrderedMapFixedSizeRecord.columnOffsets makes value-section slots
-        // index identically to MapValue, so we read straight off the
-        // MapRecord without rebinding a MapValue per row. SYMBOL slots store
-        // the 4-byte id and getSymA/B resolve via the cached SymbolTable.
+        // Cached FILL_PREV: read directly off keysMapRecord without rebinding a
+        // MapValue (OrderedMap value slots share the MapValue offsets). SYMBOL
+        // slots hold the 4-byte id; getSymA/B resolve via the cached SymbolTable.
         private static final int DISPATCH_PREV_CACHE_SLOT = 5;
         private static final int DISPATCH_PREV_SLOT = 3;
         private static final int DISPATCH_TIMESTAMP_FILL = 4;
 
         private RecordCursor baseCursor;
         private Record baseRecord;
-        // The unwrapped uniform-UTC sampler. `timestampSampler` points at this
-        // (or at `tzWrap` when a non-fixed-offset TZ is in effect at the
-        // current of() call). Held separately so the wrap can be torn down
-        // and rebuilt on each cursor open without losing the base reference.
+        // Unwrapped uniform-UTC sampler. timestampSampler may point here or at
+        // tzWrap; held separately so the wrap can be rebuilt per of().
         private final TimestampSampler baseSampler;
         private long calendarOffset;
         private SqlExecutionCircuitBreaker circuitBreaker;
@@ -367,6 +332,13 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
         private boolean isBaseCursorExhausted;
         private boolean isEmittingFills;
         private boolean isInitialized;
+        private final boolean isKeyed;
+        private boolean isOpen = true;
+        // True when the recordAt-based PREV path is reachable: any FILL_PREV
+        // output column reads a variable-width source (VARCHAR/BIN/STRING/ARRAY),
+        // or non-keyed FILL_PREV is in use (no MapValue cache available).
+        // False lets emitNextFillRow skip baseCursor.recordAt entirely.
+        private final boolean isPrevPositioningNeeded;
         private int keyCount;
         private boolean[] keyPresent;
         private final RecordSink keySink;
@@ -374,66 +346,40 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
         private MapRecordCursor keysMapCursor;
         private MapRecord keysMapRecord;
         private long maxTimestamp;
-        // True when at least one FILL_PREV output column reads a variable-width
-        // source (VARCHAR/BIN/STRING/ARRAY) or non-keyed FILL_PREV is in use --
-        // i.e. the recordAt-based PREV path is reachable. False allows
-        // emitNextFillRow to skip baseCursor.recordAt entirely.
-        private final boolean isPrevPositioningNeeded;
         private long nextBucketTimestamp;
         private final Function offsetFunc;
         private final int offsetFuncPos;
         private final IntList outputColToKeyPos = new IntList();
         private long pendingTs;
         private Record prevRecord;
-        // Per output column: index into the MapValue value section where the
-        // cached fixed-size PREV value lives, or -1 if not slot-eligible.
-        // SYMBOL slots store the 4-byte symbol id and are read via
-        // keysMapRecord.getSymA/B(slot), which uses the symbolTableResolver
-        // wired up in initialize() to turn the id back into a CharSequence.
+        // Per output column: MapValue slot for the cached fixed-size PREV value,
+        // or -1 if not slot-eligible (variable-width sources fall back to PREV_SLOT).
         private final IntList prevValueSlot;
-        // Stride unit (one of 'd','w','M','y') from the parsed FILL stride
-        // token. Forwarded to TimezoneFloorTimestampSampler when the wrap is
-        // (re)bound at of() time so the local-grid floor uses the right
-        // calendar resolution.
+        // FILL stride unit ('d','w','M','y'), forwarded to the TZ wrap so the
+        // local-grid floor uses the right calendar resolution.
         private final char samplingIntervalUnit;
         private long simplePrevRowId = -1L;
-        // Per output column SymbolTable cache for SYMBOL output cols whose
-        // dispatch reads from a slot (DISPATCH_KEY_SLOT or
-        // DISPATCH_PREV_CACHE_SLOT). Populated in of() and used by
-        // getSymA/getSymB to short-circuit the MapRecord
-        // setSymbolTableResolver chain (one IntList.getQuick + one virtual
-        // getSymbolTable call per per-cell read).
+        // Per output column SymbolTable cache, populated in of(); used by
+        // getSymA/getSymB to skip the MapRecord setSymbolTableResolver chain.
         private final ObjList<SymbolTable> symbolCache = new ObjList<>();
         private final IntList symbolTableColIndices;
         private final TimestampDriver timestampDriver;
         private final int timestampIndex;
-        // Active sampler for the current cursor lifetime. Points at baseSampler
-        // when the runtime tz is null or fixed-offset, at tzWrap otherwise.
-        // Re-bound from of() on every execute, so a runtime-constant TIME ZONE
-        // bind variable picks up its current value on each cursor open.
+        // Active sampler. Points at baseSampler or tzWrap; re-bound per of()
+        // so a runtime-constant TIME ZONE picks up its current value.
         private TimestampSampler timestampSampler;
-        // Counts keys still pending a fill emission for the current bucket. Reset
-        // to keyCount at every bucket boundary; decremented when a data row marks
-        // a key present (the false->true flip is one-shot per (bucket,key) since
-        // upstream GROUP BY emits one row per pair). When toEmitCnt reaches 0 the
-        // bucket is dense (every key had data), so the gap-fill scan that walks
-        // K keys to find none-absent can be skipped entirely.
+        // Keys still pending a fill emission for the current bucket. Reset to
+        // keyCount at every boundary; decremented when a data row marks a key
+        // present. toEmitCnt == 0 means the bucket is dense -- skip the scan.
         private int toEmitCnt;
         private final Function toFunc;
-        // Runtime-constant TIME ZONE Function. Null when SAMPLE BY had no TZ
-        // clause (no wrap is ever applied). When non-null, the cursor reads
-        // it via getStrA on every of() so the bind variable's current value
-        // determines whether the wrap is applied and which TimeZoneRules it
-        // uses. The compile path (SqlCodeGenerator.generateFill) does not
-        // pre-resolve tz: deferring to of() matches AbstractSampleByCursor's
-        // legacy contract and avoids the silent first-execute bake.
+        // Runtime-constant TIME ZONE Function (null when no TZ clause). Re-read
+        // per of() so a bind variable picks up its current value -- pre-resolving
+        // at compile time would silently bake the first-execute value.
         private final Function tzFunc;
         private final int tzFuncPos;
-        // Lazily-allocated TZ-aware wrap around baseSampler. Allocated on the
-        // first of() that requires it (tz non-null and not fixed-offset);
-        // subsequent of() calls call setTzRules to rebind without
-        // reallocating. Held even after a fixed-offset of() so the next
-        // execute that re-binds to a DST zone can reuse the wrap.
+        // Lazily-allocated TZ wrap around baseSampler. Reused across of() calls
+        // via setTzRules; held even after a fixed-offset of() for the next bind.
         private TimezoneFloorTimestampSampler tzWrap;
 
         private SampleByFillCursor(
@@ -465,10 +411,7 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
             this.tzFunc = tzFunc;
             this.tzFuncPos = tzFuncPos;
             this.samplingIntervalUnit = samplingIntervalUnit;
-            // The factory always passes the unwrapped (uniform-UTC) sampler;
-            // wrapping happens lazily in of() based on the runtime tz value.
-            // timestampSampler defaults to baseSampler so any sampler op before
-            // the first of() (none in current code paths) targets the base.
+            // Factory passes the unwrapped sampler; of() lazily binds tzWrap.
             this.baseSampler = timestampSampler;
             this.timestampSampler = timestampSampler;
             this.fromFunc = fromFunc;
@@ -486,12 +429,12 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
             this.fixedPrevTypeTags = fixedPrevTypeTags;
             this.prevValueSlot = prevValueSlot;
             this.isPrevPositioningNeeded = isPrevPositioningNeeded;
+            assert (keysMap == null) == (keyColIndices.size() == 0);
+            this.isKeyed = keysMap != null;
 
-            // Key columns in the MapRecord follow the fixed-width value header
-            // (KEY_INDEX_SLOT, HAS_PREV_SLOT, PREV_ROWID_SLOT) plus any appended
-            // fixed-size FILL_PREV cache slots. keyPosOffset bakes both
-            // contributions in so dispatchSlot[col] values for KEY_SLOT entries
-            // resolve to the right MapRecord position.
+            // Key columns sit after the fixed-width value header plus any
+            // FILL_PREV cache slots; dispatchSlot[col] for KEY_SLOT entries
+            // resolves through this offset.
             final int keyPosOffset = KEY_POS_OFFSET + fixedPrevSrcCols.size();
             outputColToKeyPos.setAll(metadata.getColumnCount(), -1);
             for (int i = 0, n = keyColIndices.size(); i < n; i++) {
@@ -504,6 +447,10 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
         @Override
         public void close() {
             baseCursor = Misc.free(baseCursor);
+            if (isOpen) {
+                isOpen = false;
+                Misc.free(keysMap);
+            }
         }
 
         @Override
@@ -561,13 +508,8 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
                         MapKey mapKey = keysMap.withKey();
                         keySink.copy(baseRecord, mapKey);
                         MapValue value = mapKey.findValue();
-                        // Pass 2 iterates the same sorted cursor as pass 1, so every key must already be in
-                        // the map. A null hit implies a bug in SortedRecordCursor, OrderedMap, or RecordSink
-                        // -- internal corruption of a direct dependency, which matches CLAUDE.md's assert
-                        // pattern. The explicit throw below (on the "dataTs precedes nextBucketTimestamp"
-                        // branch) guards cross-component grid drift (sampler vs timestamp_floor_utc), which
-                        // was empirically triggered during this PR's development and must fail visibly
-                        // regardless of -ea.
+                        // Pass 2 sees the same cursor as pass 1, so every key must be in the map.
+                        // A null hit would mean internal corruption of a direct dependency.
                         assert value != null : "key discovered in pass 1 must exist in keysMap";
                         int keyIdx = (int) value.getLong(KEY_INDEX_SLOT);
                         keyPresent[keyIdx] = true;
@@ -586,12 +528,9 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
                 }
 
                 if (dataTs > nextBucketTimestamp) {
-                    // Gap — emit fill rows before advancing bucket.
+                    // Gap -- emit fill rows before advancing bucket.
                     if (hasDataForCurrentBucket && keysMap != null) {
-                        // Dense bucket fast-path: if every key already had data
-                        // in this bucket (toEmitCnt == 0), there are no fills to
-                        // emit. Skip the inner key-scan that would walk all K
-                        // keys looking for absents and find none.
+                        // Dense bucket fast-path: skip the inner key-scan if every key already had data.
                         if (toEmitCnt == 0) {
                             Arrays.fill(keyPresent, 0, keyCount, false);
                             toEmitCnt = keyCount;
@@ -625,9 +564,7 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
                     hasPrevForCurrentGap = hasSimplePrev;
                     if (hasPrevForCurrentGap && isPrevPositioningNeeded) {
                         // Position prevRecord once; FillRecord getters read from it directly.
-                        // Non-keyed FILL_PREV always needs positioning because there is no
-                        // MapValue to cache slots in -- SqlCodeGenerator forces
-                        // isPrevPositioningNeeded on for any non-keyed FILL_PREV column.
+                        // Non-keyed FILL_PREV always lands here (no MapValue cache available).
                         baseCursor.recordAt(prevRecord, simplePrevRowId);
                     }
                     nextBucketTimestamp = timestampSampler.nextTimestamp(nextBucketTimestamp);
@@ -635,16 +572,9 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
                     return true;
                 }
 
-                // A pending data row landed at a timestamp strictly before the current
-                // bucket boundary. The async GROUP BY upstream emits one row per
-                // (bucket, key) and the bucket sampler moves forward in lockstep with
-                // observed data, so this case implies an upstream contract violation or
-                // a bucket grid drift (e.g., DST fall-back interacting with the sampler
-                // or a FROM/offset misalignment between the sampler and floor_utc).
-                // Either way the row is already being emitted against a bucket grid
-                // that disagrees with the data, so silently passing it through would
-                // corrupt query output. Fail the query so the problem is visible
-                // instead of being absorbed into results.
+                // Data row before the current bucket boundary -- upstream contract
+                // violation or bucket-grid drift (DST, FROM/offset misalignment).
+                // Fail visibly rather than silently corrupting output.
                 throw CairoException.critical(0)
                         .put("sample by fill: data row timestamp ")
                         .put(dataTs)
@@ -674,7 +604,7 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
             if (baseCursor != null) {
                 baseCursor.toTop();
             }
-            if (keysMap != null) {
+            if (isKeyed) {
                 keysMap.clear();
             }
             isInitialized = false;
@@ -685,40 +615,25 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
             hasExplicitTo = false;
             hasDataForCurrentBucket = false;
             isEmittingFills = false;
-            // Defensive reset: only the variable-width PREV_SLOT path reads
-            // hasPrevForCurrentGap, and that path is reached only when
-            // isPrevPositioningNeeded is true (which always sets it before use).
-            // When isPrevPositioningNeeded is false, no getter consults this
-            // field, but a clean default keeps the state predictable.
             hasPrevForCurrentGap = false;
-            // Drop the reference to the previous baseCursor's recordB so a
-            // future getter that forgets the hasPrevForCurrentGap /
-            // hasSimplePrev gate cannot dereference a record that belongs to
-            // a closed cursor. initialize() reassigns prevRecord on the next
-            // run when the new base has rows; the empty-base early-return
-            // branch leaves it null and prevents stale-pointer access.
+            // Drop the previous baseCursor's recordB so a stale-pointer read
+            // can't survive cursor reuse. initialize() reassigns it on the
+            // next run when the new base has rows.
             prevRecord = null;
         }
 
         private void compileDispatchPlan(int columnCount) {
-            // Precompute per-output-column dispatch for FillRecord.getXxx once
-            // per cursor. Inputs (fillModes, outputColToKeyPos, constantFills,
-            // timestampIndex) are query-constants; the per-row FillRecord code
-            // consumes the flat fillDispatchCode / dataDispatchCode /
-            // dispatchSlot / dispatchConstant arrays directly. The two
-            // dispatch tables let row boundaries swap a single pointer
-            // (currentDispatchCode) instead of toggling an isGapFilling
-            // flag that every getter would have to consult per cell.
+            // Precompute per-column dispatch tables once per cursor. Two parallel
+            // arrays let hasNext swap a single pointer at row boundaries instead
+            // of branching on an isGapFilling flag inside every getter.
             if (fillDispatchCode == null || fillDispatchCode.length < columnCount) {
                 fillDispatchCode = new int[columnCount];
                 dataDispatchCode = new int[columnCount];
                 dispatchSlot = new int[columnCount];
             }
             dispatchConstant.setAll(columnCount, null);
-            // Data rows always pass through to baseRecord. The timestamp
-            // column uses the same arm because the existing FillRecord
-            // already returned baseRecord.getTimestamp(col) for non-fill
-            // rows.
+            // Data rows always pass through to baseRecord, including the
+            // timestamp column.
             Arrays.fill(dataDispatchCode, 0, columnCount, DISPATCH_BASE);
             for (int col = 0; col < columnCount; col++) {
                 if (col == timestampIndex) {
@@ -735,19 +650,11 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
                 } else if (mode == FILL_PREV_SELF || mode >= 0) {
                     int slot = prevValueSlot.getQuick(col);
                     if (slot >= 0) {
-                        // Source value is cached in the keysMap value section
-                        // at the assigned slot. The same dispatch handles
-                        // fixed-size scalars and SYMBOL (read via
-                        // keysMapRecord.getXxx, with SymbolTable resolution
-                        // through the cached symbolCache for SYMBOL output
-                        // cols in getSymA/getSymB).
+                        // Fixed-size scalar (or SYMBOL) -- read from the cached MapValue slot.
                         fillDispatchCode[col] = DISPATCH_PREV_CACHE_SLOT;
                         dispatchSlot[col] = slot;
                     } else {
-                        // Variable-width or otherwise non-cacheable source
-                        // (VARCHAR, STRING, BIN, ARRAY) -- fall back to the
-                        // recordAt-based PREV path that materialises the row
-                        // through prevRecord.
+                        // Variable-width source -- materialize via baseCursor.recordAt.
                         fillDispatchCode[col] = DISPATCH_PREV_SLOT;
                         dispatchSlot[col] = mode >= 0 ? mode : col;
                     }
@@ -758,33 +665,25 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
                     fillDispatchCode[col] = DISPATCH_NULL;
                 }
             }
-            // Default to fill mode so any consumer that reads before a
-            // row boundary swap gets defined dispatch behaviour. hasNext
-            // overwrites the pointer before returning the first row.
+            // hasNext rebinds this before returning the first row; defaulting
+            // to fill mode keeps pre-first-row reads well-defined.
             currentDispatchCode = fillDispatchCode;
         }
 
         private boolean emitNextFillRow() {
             while (true) {
                 circuitBreaker.statefulThrowExceptionIfTripped();
-                // Inner loop: scan remaining keys in current bucket. Reads go
-                // directly through keysMapRecord (whose internal addresses
-                // are advanced by keysMapCursor.hasNext()); the unified
-                // OrderedMapFixedSizeRecord.columnOffsets table maps every
-                // value-section slot to the same byte address that the
-                // MapValue view would compute, so there is no need to call
-                // keysMapRecord.getValue() per row -- LEGACY's pattern.
+                // Scan remaining keys in current bucket. Reads go through
+                // keysMapRecord directly; OrderedMap value slots share the
+                // MapValue offsets, so no per-row getValue() rebind is needed.
                 while (keysMapCursor.hasNext()) {
                     int keyIdx = (int) keysMapRecord.getLong(KEY_INDEX_SLOT);
                     if (!keyPresent[keyIdx]) {
                         currentDispatchCode = fillDispatchCode;
                         fillTimestampFunc.value = nextBucketTimestamp;
-                        // PREV_CACHE_SLOT getters now read the cached slot
-                        // unconditionally because the slot is pre-filled with the
-                        // per-type null sentinel in initialize(). The HAS_PREV_SLOT
-                        // load and the hasPrevForCurrentGap field write only matter
-                        // for the variable-width PREV_SLOT path, which is reachable
-                        // only when isPrevPositioningNeeded is true.
+                        // PREV_CACHE_SLOT slots are pre-filled with null sentinels in
+                        // initialize(), so HAS_PREV / hasPrevForCurrentGap matter only
+                        // for the variable-width PREV_SLOT path.
                         if (isPrevPositioningNeeded) {
                             boolean hasPrev = keysMapRecord.getLong(HAS_PREV_SLOT) != 0;
                             hasPrevForCurrentGap = hasPrev;
@@ -812,15 +711,11 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
                 if (isBaseCursorExhausted && !hasExplicitTo) {
                     return false;
                 }
-                // Reaching here implies the next bucket has no data of its own.
-                // Either a real data row is queued at a strictly later timestamp
-                // (gap before pending row), or the base cursor is exhausted and
-                // an explicit TO is driving the trailing fill window.
-                // The earlier early-return covers `isBaseCursorExhausted && !hasExplicitTo`,
-                // so reaching here with `isBaseCursorExhausted` already implies `hasExplicitTo`.
+                // Reaching here means the next bucket is a confirmed gap:
+                // either a pending row sits at a later timestamp, or the base
+                // is exhausted with an explicit TO still driving fills.
                 assert (hasPendingRow && pendingTs > nextBucketTimestamp) || isBaseCursorExhausted
                         : "next bucket must be a confirmed gap before re-entering inner emit";
-                // Next bucket is a gap -- emit fills for all keys
                 isEmittingFills = true;
                 keysMapCursor.toTop();
             }
@@ -834,20 +729,11 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
             maxTimestamp = hasExplicitTo
                     ? driver.from(toFunc.getTimestamp(null), ColumnType.getTimestampType(toFunc.getType()))
                     : Numbers.LONG_NULL;
-            // Demote hasExplicitTo when the runtime-evaluated TO expression returns
-            // LONG_NULL. Object-identity check on toFunc above only catches the
-            // TimestampConstantNull singleton; TO null::timestamp, bind variables,
-            // and functions returning null at runtime reach here with maxTimestamp ==
-            // LONG_NULL but hasExplicitTo == true, which would otherwise promote
-            // maxTimestamp to Long.MAX_VALUE and skip the isBaseCursorExhausted
-            // short-circuit at line 362.
-            //
-            // A user-passed Long.MIN_VALUE TO is folded into the same demote path,
-            // because LONG_NULL == Long.MIN_VALUE is QuestDB's universal null
-            // sentinel for timestamps -- no representation distinguishes a "real"
-            // Long.MIN_VALUE from null anywhere in the codebase. The FROM path
-            // collapses Long.MIN_VALUE into LONG_NULL identically (see fromTs
-            // above), so the two ends agree on the convention.
+            // Demote hasExplicitTo when TO evaluates to LONG_NULL at runtime
+            // (bind variable, null::timestamp, or function returning null).
+            // The toFunc identity check above only catches the constant-null
+            // singleton. Long.MIN_VALUE folds into the same path: LONG_NULL ==
+            // Long.MIN_VALUE is QuestDB's universal timestamp null sentinel.
             if (maxTimestamp == Numbers.LONG_NULL) hasExplicitTo = false;
 
             // Pass 1: key discovery (keyed queries only)
@@ -863,14 +749,9 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
                     if (value.isNew()) {
                         value.putLong(KEY_INDEX_SLOT, keyIdx++);
                         value.putLong(HAS_PREV_SLOT, 0L);
-                        // Pre-fill cached PREV slots with their per-type null
-                        // sentinel -- mirrors what the FillRecord
-                        // PREV_CACHE_SLOT getters used to return when
-                        // hasPrevForCurrentGap was false. Once the slot carries
-                        // the sentinel up front, the per-cell hasPrev branch in
-                        // those getters drops out and gap rows for keys whose
-                        // prev value has not yet been observed still read the
-                        // same null/zero/NaN value.
+                        // Pre-fill cached PREV slots with per-type null sentinels
+                        // so PREV_CACHE_SLOT getters can read unconditionally
+                        // -- no hasPrev branch needed in the hot path.
                         for (int i = 0; i < prevSlotCount; i++) {
                             int slot = KEY_POS_OFFSET + i;
                             switch (fixedPrevTypeTags.getQuick(i)) {
@@ -902,9 +783,7 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
                 }
                 keyCount = keyIdx;
                 if (keyCount == 0) {
-                    // No keys discovered — empty GROUP BY output.
-                    // With FROM/TO, emit zero rows (no keys to fill).
-                    // Without FROM/TO, also emit zero rows (no data).
+                    // Empty GROUP BY output -- no keys to fill, emit zero rows.
                     isBaseCursorExhausted = true;
                     maxTimestamp = Long.MIN_VALUE;
                     nextBucketTimestamp = Long.MAX_VALUE;
@@ -929,78 +808,43 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
                 toEmitCnt = 1;
             }
 
-            // Peek first row to determine range. The previous step either ran
-            // pass 1 (keyed path) or will run buildChain() on this first
-            // baseCursor.hasNext() call (non-keyed path). Either way, by the time
-            // this branch body executes, SortedRecordCursor has completed
-            // buildChain() and recordB is stable for the remainder of the cursor
-            // lifetime. prevRecord MUST be initialized here, not in of(), because
-            // buildChain would otherwise reposition recordB underneath us.
+            // Peek first row to determine range. prevRecord MUST be captured
+            // AFTER buildChain (i.e. after the first hasNext on the non-keyed
+            // path) -- earlier capture would let SortedRecordCursor reposition
+            // recordB underneath us.
             if (baseCursor.hasNext()) {
                 prevRecord = baseCursor.getRecordB();
                 long firstTs = baseRecord.getTimestamp(timestampIndex);
                 final boolean nextBucketIsFirstTs = (fromTs == Numbers.LONG_NULL || firstTs < fromTs);
                 nextBucketTimestamp = nextBucketIsFirstTs ? firstTs : fromTs;
                 if (calendarOffset != 0 && fromTs == Numbers.LONG_NULL) {
-                    // No explicit FROM but offset exists: align sampler grid
-                    // to the offset so round() matches timestamp_floor_utc buckets.
+                    // No FROM but offset exists: align grid to offset so round()
+                    // matches timestamp_floor_utc buckets.
                     timestampSampler.setOffset(calendarOffset);
                     nextBucketTimestamp = timestampSampler.round(nextBucketTimestamp);
                 } else if (calendarOffset != 0 && nextBucketIsFirstTs) {
-                    // firstTs is already a bucket on the floor grid (grid is
-                    // anchored at effectiveOffset = fromTs + calendarOffset).
-                    // With a non-zero offset the grid can place buckets strictly
-                    // below fromTs -- e.g. FROM='05:00' WITH OFFSET '-00:30' and
-                    // data at 05:00 floors to 04:30. Anchor the sampler at
-                    // effectiveOffset; keep nextBucketTimestamp at firstTs so the
-                    // first emitted bucket matches the data row. setLocalAnchor
-                    // (rather than setStart) lets TimezoneFloorTimestampSampler
-                    // forward the value untranslated, since fromTs+calendarOffset
-                    // is already in local-grid space (matching how
-                    // timestamp_floor_utc treats from+offset as a raw modulus).
+                    // firstTs already sits on the floor grid (anchored at
+                    // fromTs+calendarOffset). setLocalAnchor forwards untranslated
+                    // because fromTs+calendarOffset is local-grid space (matches
+                    // timestamp_floor_utc's raw-modulus treatment).
                     timestampSampler.setLocalAnchor(fromTs + calendarOffset);
-                    // nextBucketTimestamp intentionally unchanged (== firstTs).
                 } else {
-                    // Branch reached when:
-                    //  - firstTs path with calendarOffset == 0 (no FROM
-                    //    or firstTs < fromTs), OR
-                    //  - fromTs path with any calendarOffset (firstTs >=
-                    //    fromTs and fromTs != LONG_NULL).
-                    // Anchor sampler at effectiveOffset = nextBucketTimestamp
-                    // + calendarOffset to match timestamp_floor_utc's grid.
-                    // Emit the first bucket at the smallest grid label
-                    // whose bucket overlaps [FROM, TO) after the WHERE
-                    // filter rewriteSampleByFromTo injects:
-                    //  - negative offset: round(seed) is the bucket
-                    //    containing the seed; always overlaps FROM via
-                    //    [seed, round(seed) + stride).
-                    //  - positive offset where effectiveOffset > seed: the
-                    //    GROUP BY's Micros.floor* clamps data <
-                    //    effectiveOffset up to effectiveOffset.
-                    //    SimpleTimestampSampler.round does not clamp, so
-                    //    Math.max reproduces the clamp here.
+                    // firstTs path (calendarOffset == 0) OR fromTs path (any offset).
+                    // Anchor at effectiveOffset = nextBucketTimestamp + calendarOffset
+                    // to match timestamp_floor_utc's grid.
                     //
-                    // The setStart-vs-setLocalAnchor split tracks the
-                    // semantic origin of nextBucketTimestamp:
-                    //  - firstTs path: nextBucketTimestamp is a GROUP BY
-                    //    bucket label (a UTC instant on the local grid).
-                    //    TimezoneFloorTimestampSampler.setStart applies
-                    //    the UTC->local conversion so the wrapped sampler
-                    //    anchors at the matching local position. Branch
-                    //    1/2 catch the calendarOffset != 0 sub-cases, so
-                    //    here calendarOffset == 0 and effectiveOffset ==
-                    //    firstTs.
-                    //  - fromTs path: nextBucketTimestamp is the raw user
-                    //    FROM (or fromTs+calendarOffset), which
-                    //    timestamp_floor_utc treats as a local-grid
-                    //    modulus seed without UTC->local conversion.
-                    //    setLocalAnchor forwards untranslated;
-                    //    localAnchorAsUtc lifts the local-grid value back
-                    //    to UTC so Math.max compares operands in the same
-                    //    space.
-                    // Picking setStart on the fromTs path would land the
-                    // local grid at fromTs+tzOff and trip the grid-drift
-                    // guard for westward-TZ data on super-day strides.
+                    // Math.max clamps a positive-offset case where effectiveOffset
+                    // > seed: GROUP BY's Micros.floor* clamps up; round() doesn't.
+                    //
+                    // setStart vs setLocalAnchor tracks the origin of nextBucketTimestamp:
+                    //  - firstTs path: a GROUP BY bucket label on the local grid;
+                    //    setStart applies UTC->local conversion. (Here calendarOffset
+                    //    is 0, so effectiveOffset == firstTs.)
+                    //  - fromTs path: a raw user FROM in local-grid space;
+                    //    setLocalAnchor forwards untranslated, and localAnchorAsUtc
+                    //    lifts back to UTC for the Math.max comparison.
+                    //  Using setStart on the fromTs path would shift the grid by
+                    //  tzOffset and trip the grid-drift guard on super-day strides.
                     final long effectiveOffset = nextBucketTimestamp + calendarOffset;
                     final long anchorUtc;
                     if (nextBucketIsFirstTs) {
@@ -1019,20 +863,10 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
                 }
             } else {
                 if (fromTs != Numbers.LONG_NULL && maxTimestamp != Numbers.LONG_NULL) {
-                    // Same parity rule as the non-empty-base branch above:
-                    // anchor the sampler at effectiveOffset and emit at
-                    // round(fromTs), clamped up to effectiveOffset for the
-                    // positive-offset case. FILL must emit one row per grid
-                    // label whose bucket overlaps [FROM, TO), independent of
-                    // whether the base cursor produced any rows.
-                    //
-                    // Empty base is always the fromTs path (no firstTs
-                    // exists), so effectiveOffset is in local-grid space
-                    // for any calendarOffset value -- timestamp_floor_utc
-                    // treats from+offset as a raw modulus seed without
-                    // UTC->local conversion. setLocalAnchor forwards
-                    // untranslated; localAnchorAsUtc lifts the seed back
-                    // to UTC so Math.max can clamp in UTC space.
+                    // Same anchor rule as the non-empty-base branch, fromTs path
+                    // only (no firstTs). effectiveOffset is local-grid space;
+                    // setLocalAnchor forwards untranslated and localAnchorAsUtc
+                    // lifts back so Math.max clamps in UTC.
                     final long effectiveOffset = fromTs + calendarOffset;
                     timestampSampler.setLocalAnchor(effectiveOffset);
                     final long anchorUtc = timestampSampler.localAnchorAsUtc(effectiveOffset);
@@ -1048,16 +882,20 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
         private void of(RecordCursor baseCursor, SqlExecutionContext executionContext) throws SqlException {
             this.baseCursor = baseCursor;
             this.baseRecord = baseCursor.getRecord();
+            if (!isOpen) {
+                isOpen = true;
+                if (isKeyed) {
+                    keysMap.reopen();
+                }
+            }
             this.circuitBreaker = executionContext.getCircuitBreaker();
             Function.init(constantFills, baseCursor, executionContext, null);
             fromFunc.init(baseCursor, executionContext);
             toFunc.init(baseCursor, executionContext);
             offsetFunc.init(baseCursor, executionContext);
-            // Evaluate the runtime-constant OFFSET into native units. Mirrors
-            // AbstractSampleByCursor.parseParams: STRING value -> Dates.parseOffset
-            // -> driver.fromMinutes(decodeLowInt). When OFFSET is absent or evaluates
-            // to null (StrConstant.NULL), calendarOffset stays 0 and the existing
-            // initialize() branches that key off `calendarOffset != 0` no-op.
+            // Evaluate runtime-constant OFFSET into native units. Mirrors
+            // AbstractSampleByCursor.parseParams. Null/absent leaves
+            // calendarOffset == 0, which the initialize() branches no-op.
             final CharSequence offsetStr = offsetFunc.getStrA(null);
             if (offsetStr != null) {
                 final long parsed = Dates.parseOffset(offsetStr);
@@ -1068,24 +906,14 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
             } else {
                 calendarOffset = 0;
             }
-            // Re-resolve TIME ZONE on every of() so a runtime-constant bind
-            // variable picks up its current value. The wrap is required
-            // whenever a TZ resolves, regardless of whether the string is
-            // a named zone ('Europe/Berlin', 'America/New_York', 'UTC')
-            // or a raw offset literal ('+02:00', '-05:00'): for super-day
-            // strides FILL must shift the bucket grid by tzOffset to match
-            // timestamp_floor_utc, and the wrap is the only sampler whose
-            // setLocalAnchor / localAnchorAsUtc differ from setStart and
-            // hence the only one that can fold tzOffset into the anchor.
-            // SqlOptimiser.rewriteSampleBy only sets fillTimezoneName for
-            // day-or-larger SAMPLE BY + non-trivial FILL, so tzFunc != null
-            // implies the wrap is required.
-            //
-            // timestampDriver.getTimezoneRules unifies offset-literal and
-            // named-zone resolution: offset literals return a
-            // FixedTimeZoneRule whose getOffset is constant, and named
-            // zones return a full DST-aware TimeZoneRules. Either way the
-            // wrap delegates to tzRules.getOffset uniformly.
+            // Re-resolve TIME ZONE per of() so bind variables pick up their
+            // current value. The wrap is needed whenever a TZ resolves
+            // (named zone or offset literal): only setLocalAnchor /
+            // localAnchorAsUtc can fold tzOffset into the anchor for
+            // super-day strides. tzFunc != null already implies the wrap
+            // is required (SqlOptimiser only sets it for day-or-larger
+            // SAMPLE BY + non-trivial FILL). getTimezoneRules unifies
+            // offset literals (FixedTimeZoneRule) and DST zones uniformly.
             if (tzFunc != null) {
                 tzFunc.init(baseCursor, executionContext);
                 final CharSequence tz = tzFunc.getStrA(null);
@@ -1106,12 +934,9 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
                     timestampSampler = baseSampler;
                 }
             }
-            // Cache one SymbolTable per output column whose getSymA/getSymB
-            // dispatch reads from a MapRecord/MapValue slot. JFR shows that on
-            // sparse keyed fills the SYMBOL key column dominates per-cell cost
-            // via the keysMapRecord.getSymA -> setSymbolTableResolver chain.
-            // Caching the resolver per output col cuts that chain to one
-            // valueOf call.
+            // Cache one SymbolTable per slot-dispatched output column. Cuts the
+            // per-cell setSymbolTableResolver chain to a single valueOf call --
+            // the dominant cost on sparse keyed SYMBOL fills.
             int columnCount = fillDispatchCode.length;
             symbolCache.setAll(columnCount, null);
             int symTableSize = symbolTableColIndices.size();
@@ -1126,15 +951,11 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
                 }
                 int srcCol = symbolTableColIndices.getQuick(slot);
                 if (srcCol >= 0) {
-                    // Unwrap the SymbolFunction wrapper (e.g., MapSymbolColumn)
-                    // when it advertises a static inner table. The wrapper's
-                    // valueOf delegates to that inner table; caching the inner
-                    // table directly drops the per-cell wrapper hop that JFR
-                    // attributes to MapSymbolColumn.valueOf in WORST_CASE
-                    // sparse fills.
+                    // Unwrap MapSymbolColumn-style wrappers to drop the
+                    // per-cell wrapper hop on the hot read path.
                     SymbolTable st = baseCursor.getSymbolTable(srcCol);
-                    if (st instanceof SymbolFunction) {
-                        StaticSymbolTable inner = ((SymbolFunction) st).getStaticSymbolTable();
+                    if (st instanceof SymbolFunction sf) {
+                        StaticSymbolTable inner = sf.getStaticSymbolTable();
                         if (inner != null) {
                             st = inner;
                         }
@@ -1153,11 +974,8 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
         private void updateKeyPrevRowId(MapValue value, Record record) {
             value.putLong(HAS_PREV_SLOT, 1L);
             value.putLong(PREV_ROWID_SLOT, record.getRowId());
-            // Copy each fixed-size FILL_PREV source value into its cached
-            // MapValue slot. Per-row cost is N small writes onto the same
-            // cache-hot MapValue page already touched for HAS_PREV/PREV_ROWID;
-            // amortised over many fill rows that would otherwise pay
-            // recordAt + RecordChain on every read.
+            // Copy fixed-size FILL_PREV values into cached MapValue slots --
+            // amortises a recordAt+RecordChain per read into N small writes.
             for (int i = 0, n = fixedPrevSrcCols.size(); i < n; i++) {
                 int slot = KEY_POS_OFFSET + i;
                 int srcCol = fixedPrevSrcCols.getQuick(i);
@@ -1172,9 +990,7 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
                     case ColumnType.INT -> value.putInt(slot, record.getInt(srcCol));
                     case ColumnType.IPv4 -> value.putInt(slot, record.getIPv4(srcCol));
                     case ColumnType.GEOINT -> value.putInt(slot, record.getGeoInt(srcCol));
-                    // SYMBOL stores the 4-byte symbol id; getSymA/getSymB read
-                    // it back via keysMapRecord which routes the slot through
-                    // the symbolTableResolver wired up in initialize().
+                    // SYMBOL stores the 4-byte id; getSymA/B resolves via symbolCache.
                     case ColumnType.SYMBOL -> value.putInt(slot, record.getInt(srcCol));
                     case ColumnType.SHORT -> value.putShort(slot, record.getShort(srcCol));
                     case ColumnType.GEOSHORT -> value.putShort(slot, record.getGeoShort(srcCol));
@@ -1195,30 +1011,16 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
         }
 
         /**
-         * The default null/0/NaN returns at the tail of each getter are defensive:
-         * the GROUP BY pipeline always supplies a fill mode (FILL_KEY, FILL_PREV_SELF,
-         * cross-column, or FILL_CONSTANT) for every output column, so those branches
-         * are unreachable in practice.
+         * Per-cell dispatch consumes the flat arrays compiled by
+         * {@link #compileDispatchPlan}. The default null/0/NaN tail in each getter
+         * is defensive -- compileDispatchPlan always assigns a known code.
          * <p>
-         * Every output column is compiled once by compileDispatchPlan() into a
-         * single dispatch code (DISPATCH_KEY_SLOT, DISPATCH_PREV_SLOT,
-         * DISPATCH_CONSTANT, DISPATCH_TIMESTAMP_FILL, DISPATCH_NULL) plus an
-         * optional slot index (for KEY_SLOT / PREV_SLOT) or Function reference
-         * (for CONSTANT). The per-row dispatch below consumes those flat arrays
-         * directly; no IntList.getQuick lookups, no fill-mode conditional chain.
+         * For PREV fills, the emit path positions prevRecord once via
+         * {@code baseCursor.recordAt}; getters read typed values uniformly.
          * <p>
-         * PREV fill uses a single rowId per key (keyed) or one simplePrevRowId
-         * (non-keyed); the fill emit path calls baseCursor.recordAt(prevRecord,
-         * rowId) once per row, and the getters below read typed values uniformly
-         * from prevRecord for every supported type.
-         * <p>
-         * Record methods intentionally NOT overridden: {@code getRecord(int)},
-         * {@code getRowId()}, {@code getUpdateRowId()}. These are plumbing for
-         * nested records, UPDATE row targeting, and filesystem row identifiers,
-         * and are never valid output columns of a SAMPLE BY FILL query. Calling
-         * them during gap-fill produces the default
-         * {@link UnsupportedOperationException}, which is the desired signal if
-         * an upstream change makes one of them reachable.
+         * {@code getRecord(int)}, {@code getRowId()}, {@code getUpdateRowId()} are
+         * deliberately not overridden -- they are not valid output columns for
+         * SAMPLE BY FILL, and the inherited UOE flags any upstream regression.
          */
         private class FillRecord implements Record {
 
@@ -1285,8 +1087,7 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
                     case DISPATCH_BASE -> baseRecord.getByte(col);
                     case DISPATCH_KEY_SLOT, DISPATCH_PREV_CACHE_SLOT -> keysMapRecord.getByte(dispatchSlot[col]);
                     case DISPATCH_PREV_SLOT -> hasPrevForCurrentGap ? prevRecord.getByte(dispatchSlot[col]) : 0;
-                    // Constant byte fills go through getInt() to match the
-                    // narrow-integer convention used by Function implementations.
+                    // Narrow-integer Function convention: byte fills come through getInt().
                     case DISPATCH_CONSTANT -> (byte) dispatchConstant.getQuick(col).getInt(null);
                     default -> {
                         assert false : "unexpected dispatch code: " + currentDispatchCode[col];
@@ -1548,12 +1349,10 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
 
             @Override
             public long getLong(int col) {
-                // The timestamp column is internally a 64-bit long: Record.getLong(timestampIndex)
-                // is a valid call from any caller that doesn't go through getTimestamp/TimestampFunction.
-                // Without DISPATCH_TIMESTAMP_FILL handling here, fill rows would silently return
-                // LONG_NULL for the bucket timestamp -- masked as long as upstream callers route
-                // through getTimestamp, but a latent silent-data-corruption hazard. getDate() defaults
-                // to getLong() (Record.java:159), so this arm covers both.
+                // Timestamp is a 64-bit long internally; Record.getLong(timestampIndex)
+                // is a valid call. Without DISPATCH_TIMESTAMP_FILL here, fill rows
+                // would silently return LONG_NULL for the bucket timestamp.
+                // getDate() defaults to getLong(), so this arm covers both.
                 return switch (currentDispatchCode[col]) {
                     case DISPATCH_BASE -> baseRecord.getLong(col);
                     case DISPATCH_TIMESTAMP_FILL -> fillTimestampFunc.value;
@@ -1600,11 +1399,8 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
 
             @Override
             public void getLong256(int col, CharSink<?> sink) {
-                // Per the Record.getLong256(int, CharSink) contract: null Long256 appends nothing to
-                // the sink. The caller owns the delimiters on both sides, and an empty segment reads
-                // as an empty text value -- this is how QuestDB renders null Long256 in text output.
-                // Do NOT call sink.clear() in default/null arms: it would erase row-prefix content
-                // written by the caller (e.g., CursorPrinter before the cell is rendered).
+                // Per the Record.getLong256 contract, null appends nothing.
+                // Do NOT call sink.clear() -- it would erase the caller's row prefix.
                 switch (currentDispatchCode[col]) {
                     case DISPATCH_BASE -> baseRecord.getLong256(col, sink);
                     case DISPATCH_KEY_SLOT -> keysMapRecord.getLong256(dispatchSlot[col], sink);
@@ -1614,7 +1410,6 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
                     case DISPATCH_CONSTANT -> dispatchConstant.getQuick(col).getLong256(null, sink);
                     default -> {
                         assert false : "unexpected dispatch code: " + currentDispatchCode[col];
-                        // null sentinel: nothing to write
                     }
                 }
             }
@@ -1656,8 +1451,7 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
                     case DISPATCH_KEY_SLOT, DISPATCH_PREV_CACHE_SLOT -> keysMapRecord.getShort(dispatchSlot[col]);
                     case DISPATCH_PREV_SLOT ->
                             hasPrevForCurrentGap ? prevRecord.getShort(dispatchSlot[col]) : (short) 0;
-                    // Constant short fills go through getInt() to match the
-                    // narrow-integer convention used by Function implementations.
+                    // Narrow-integer Function convention: short fills come through getInt().
                     case DISPATCH_CONSTANT -> (short) dispatchConstant.getQuick(col).getInt(null);
                     default -> {
                         assert false : "unexpected dispatch code: " + currentDispatchCode[col];
@@ -1710,12 +1504,10 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
 
             @Override
             public CharSequence getSymA(int col) {
-                // KEY_SLOT and PREV_CACHE_SLOT both go through symbolCache + MapRecord int read
-                // (cached SymbolTable + direct slot read shortcuts the MapRecord setSymbolTableResolver
-                // chain; PREV_CACHE_SLOT initialised to Numbers.INT_NULL = SymbolTable.VALUE_IS_NULL,
-                // so valueOf returns null in that case per the SymbolTable contract).
-                // Constant symbol fills dispatch through Function.getSymbol() rather than
-                // Function.getSymA() by historical convention.
+                // KEY_SLOT and PREV_CACHE_SLOT route through the cached symbolCache
+                // for a direct slot read. PREV_CACHE_SLOT is pre-filled with
+                // INT_NULL == VALUE_IS_NULL, so valueOf returns null on first read.
+                // Constant fills go through Function.getSymbol() by historical convention.
                 return switch (currentDispatchCode[col]) {
                     case DISPATCH_BASE -> baseRecord.getSymA(col);
                     case DISPATCH_KEY_SLOT, DISPATCH_PREV_CACHE_SLOT ->
@@ -1804,12 +1596,9 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
         }
 
         private static class FillTimestampConstant extends TimestampFunction {
-            // The cursor mutates `value` per gap bucket and reads it back through
-            // FillRecord.getTimestamp's DISPATCH_TIMESTAMP_FILL arm. The class
-            // intentionally does NOT implement ConstantFunction: `value` is not
-            // constant, and the framework never sees this instance, so the
-            // inherited Function defaults (isConstant() == false,
-            // isThreadSafe() == false) match the actual semantics.
+            // value is mutated per gap bucket and read by FillRecord. Not a
+            // ConstantFunction -- the framework never sees this instance, and
+            // the Function defaults (isConstant=false) match actual semantics.
             long value;
 
             FillTimestampConstant(int timestampType) {

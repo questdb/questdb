@@ -8242,18 +8242,11 @@ public class SqlOptimiser implements Mutable {
                 throw SqlException.$(sampleBy.position, "SAMPLE BY cannot be used with HORIZON JOIN");
             }
 
-            // The SAMPLE BY rewrite into timestamp_floor_utc + GROUP BY pairs the
-            // group-by bucket grid with a TimestampSampler-driven fill cursor.
-            // For day-or-larger stride + non-UTC TIME ZONE the bucket UTC width
-            // varies with DST (Berlin "1d" spans 23 h on spring-forward, 25 h
-            // on fall-back), so the fast-path sampler must mirror the same
-            // local-calendar walk that timestamp_floor_utc performs per row.
-            // SqlCodeGenerator.generateFill consumes setFillTimezoneName below
-            // and wraps the UTC sampler in TimezoneFloorTimestampSampler when
-            // present. The fillOffset propagation gate further below extends
-            // to this case so the fill cursor's setLocalAnchor + setOffset
-            // pair anchors the local grid at (from + offset) mod bucket --
-            // the same modulus seed timestamp_floor_utc uses.
+            // Day-or-larger stride + non-UTC TIME ZONE: DST makes UTC bucket widths
+            // vary (e.g. Berlin "1d" spans 23h on spring-forward, 25h on fall-back),
+            // so the fill sampler must walk local-calendar boundaries to match
+            // timestamp_floor_utc. setFillTimezoneName below tells generateFill to
+            // wrap the UTC sampler in TimezoneFloorTimestampSampler.
             final boolean isSampleBySuperDay = sampleBy != null
                     && !sampleBy.token.isEmpty()
                     && !CommonUtils.isSubDayUnit(sampleBy.token.charAt(sampleBy.token.length() - 1));
@@ -8521,17 +8514,9 @@ public class SqlOptimiser implements Mutable {
                     nested.addGroupBy(tsFloorFunc);
                 }
 
-                // Sub-day SAMPLE BY with a TIME ZONE shifts the GROUP BY tsFloor's
-                // FROM argument via to_utc(FROM, tz). The fill cursor's bucket grid
-                // must align with tsFloor's grid, so wrap setFillFrom/setFillTo with
-                // the same to_utc call. Day-or-larger stride + TZ uses a different
-                // strategy: timestamp_floor_utc walks local-calendar boundaries per
-                // row, and the fast path mirrors that walk inside
-                // TimezoneFloorTimestampSampler. setFillTimezoneName below propagates
-                // the TZ token down to generateFill, which builds TimeZoneRules and
-                // wraps the UTC sampler. Day-or-larger stride + TZ without FILL or
-                // with FILL(NONE) flows through with the wrap inactive; the fill
-                // cursor never builds, so the sampler grid is never consulted.
+                // Sub-day SAMPLE BY with a TIME ZONE: tsFloor's FROM argument is
+                // shifted via to_utc(FROM, tz) above, so wrap fillFrom/fillTo with
+                // the same call to keep the fill grid aligned.
                 final boolean hasSubDayTimezoneWrap = isSubDay && sampleByTimezoneName != null;
                 nested.setFillFrom(hasSubDayTimezoneWrap && sampleByFrom != null
                         ? createToUtcCall(sampleByFrom, sampleByTimezoneName) : sampleByFrom);
@@ -8540,30 +8525,14 @@ public class SqlOptimiser implements Mutable {
                 nested.setFillStride(sampleBy);
                 nested.setFillTimezoneName(hasFillFastPathTz ? sampleByTimezoneName : null);
                 nested.setFillValues(sampleByFill);
-                // Propagate offset to the fill cursor whenever the sampler can
-                // reproduce timestamp_floor_utc's grid from (fromTs, offset):
-                //   - No timezone: effectiveOffset = from + offset, grid anchored
-                //     at fromTs + offset directly.
-                //   - Sub-day stride + timezone + FROM: timestamp_floor_utc is
-                //     invoked with tz=null and from=to_utc(FROM, tz) (see above),
-                //     so fillFrom is to_utc(FROM, tz) and the same
-                //     fromTs + offset shift matches the group-by grid.
-                //   - Day-or-larger stride + timezone + FILL: hasFillFastPathTz
-                //     wraps the sampler with TimezoneFloorTimestampSampler.
-                //     The fill cursor calls setLocalAnchor(fromTs + offset) +
-                //     setOffset(offset); the wrap forwards both untranslated to
-                //     the wrapped sampler so its local-grid mod-bucket position
-                //     matches timestamp_floor_utc's effectiveOffset mod bucket.
-                // When a timezone is present and no fast-path wrap is in place
-                // (e.g. sub-day stride + timezone without FROM), timestamp_floor_utc
-                // applies timezone rules per row and the fill sampler anchors on
-                // the already-floored firstTs instead, so the offset must not be
-                // applied again.
-                // Only propagate a non-trivial offset. ZERO_OFFSET ('00:00') is the
-                // identity and the code generator already defaults calendarOffset to 0
-                // when fillOffset is null, so emitting it would just pollute the model.
-                // parseWithOffset() normalises explicit '00:00' to the ZERO_OFFSET
-                // singleton, so a simple identity check covers all zero-offset cases.
+                // Propagate offset to the fill cursor only when the sampler grid
+                // can match timestamp_floor_utc's effectiveOffset = (fromTs + offset)
+                // mod bucket: no timezone, sub-day + timezone + FROM (covered by the
+                // to_utc wrap above), or day-or-larger + timezone + FILL (covered by
+                // TimezoneFloorTimestampSampler). Other timezone cases anchor on the
+                // already-floored firstTs and must not re-apply the offset.
+                // ZERO_OFFSET is the parser's '00:00' singleton; the code generator
+                // already defaults calendarOffset to 0 when fillOffset is null.
                 if (shouldPropagateFillOffset(
                         sampleByTimezoneName,
                         hasSubDayTimezoneWrap,

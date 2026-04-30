@@ -1192,13 +1192,9 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         return viewExpr != null ? viewExpr.position : 0;
     }
 
-    // Slot-eligible types for the FILL_PREV value cache in
-    // SampleByFillRecordCursorFactory's keysMap value section. The
-    // cursor's update path writes via MapValue.put<Tag>() and the read
-    // path reads via MapValue.get<Tag>() -- both APIs only support
-    // these single-slot fixed-size scalars (plus SYMBOL, cached as int
-    // symbol id). Wide types (LONG128/256, UUID, DECIMAL128/256) and
-    // variable-width types stay on the existing recordAt path.
+    // Single-slot fixed-size scalars that fit MapValue.put/get<Tag>(). SYMBOL is
+    // cached as the int symbol id. Wide types (LONG128/256, UUID, DECIMAL128/256)
+    // and variable-width types fall back to the recordAt path.
     private static boolean isFixedSizePrevSlotEligible(int srcTag) {
         return switch (srcTag) {
             case ColumnType.BOOLEAN, ColumnType.BYTE, ColumnType.CHAR, ColumnType.DATE, ColumnType.DECIMAL16,
@@ -3288,11 +3284,9 @@ public class SqlCodeGenerator implements Mutable, Closeable {
 
             fillValues = new ObjList<>(fillValuesExprs.size());
 
-            // FILL(NONE) means "do not synthesize fill rows" and is incompatible
-            // with per-aggregate fill values: a query either fills gaps or it
-            // does not. The optimizer gate accepts multi-element fill lists, so
-            // reject a mixed form like FILL(NONE, 1) here rather than silently
-            // dropping the trailing values via the early-return path.
+            // FILL(NONE) is incompatible with per-aggregate fill values. The
+            // optimizer accepts multi-element fill lists, so reject FILL(NONE, 1)
+            // here rather than silently dropping the trailing values.
             if (fillValuesExprs.size() > 1) {
                 for (int i = 0, n = fillValuesExprs.size(); i < n; i++) {
                     final ExpressionNode e = fillValuesExprs.getQuick(i);
@@ -3309,18 +3303,13 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     Misc.freeObjList(fillValues);
                     return groupByFactory;
                 }
-                // SqlOptimiser.rewriteSampleBy gates LINEAR-bearing fills out of
-                // the SAMPLE BY -> GROUP BY rewrite via hasLinearFill so they
-                // stay on the legacy generateSampleBy path (single LINEAR ->
-                // SampleByInterpolateRecordCursorFactory; mixed LINEAR + keyed
-                // -> rejected at SampleByFillValueRecordCursorFactory). The
-                // fast-path SampleByFillRecordCursorFactory has no LINEAR
-                // support, so a LINEAR token reaching here would silently
-                // degrade to PREV-like output. Fail loud instead.
+                // LINEAR is unsupported on the fast path. SqlOptimiser.hasLinearFill
+                // routes LINEAR-bearing fills to the legacy SAMPLE BY path; reaching
+                // here would silently degrade to PREV-like output.
                 assert !isLinearKeyword(expr.token)
                         : "LINEAR fill reached generateFill: SqlOptimiser.hasLinearFill gate must keep these on the legacy SAMPLE BY path";
                 if (isPrevKeyword(expr.token)) {
-                    // PREV is a fill keyword, not a function — add a placeholder
+                    // PREV is a keyword, not a function -- placeholder.
                     fillValues.add(NullConstant.NULL);
                     continue;
                 }
@@ -3363,18 +3352,16 @@ public class SqlCodeGenerator implements Mutable, Closeable {
 
             int timestampIndex = groupByFactory.getMetadata().getColumnIndexQuiet(alias);
             // The alias may resolve to a non-TIMESTAMP column after outer projection
-            // (e.g., SELECT ts::LONG AS ts, ...) -- reset so the fallback can try the
-            // raw timestamp token and the skip-fill guard at the next if-block fires
-            // cleanly when no TIMESTAMP column is reachable. Without this guard,
-            // getTimestampDriver(timestampType) below would trip its tag-assert under
-            // -ea or throw UnsupportedOperationException at runtime.
+            // (e.g. SELECT ts::LONG AS ts, ...). Reset so the fallback below can try
+            // the raw timestamp token and getTimestampDriver doesn't trip its tag
+            // assert.
             if (timestampIndex >= 0
                     && !ColumnType.isTimestamp(groupByFactory.getMetadata().getColumnType(timestampIndex))) {
                 timestampIndex = -1;
             }
             // When the same timestamp column appears multiple times (e.g. SELECT k, k),
-            // the alias may resolve to a renamed duplicate. Fall back to the original
-            // timestamp token if it yields a valid, earlier, TIMESTAMP-typed column index.
+            // the alias may land on a renamed duplicate. Prefer the original token if
+            // it yields an earlier TIMESTAMP-typed index.
             if (!Chars.equalsIgnoreCase(alias, timestamp.token)) {
                 int origIndex = groupByFactory.getMetadata().getColumnIndexQuiet(timestamp.token);
                 if (origIndex >= 0
@@ -3383,9 +3370,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     timestampIndex = origIndex;
                 }
             }
-            // The timestamp column may not be present in the output metadata when
-            // the fill query is wrapped by an outer GROUP BY that projects
-            // different columns. In that case skip fill entirely.
+            // No TIMESTAMP column reachable (e.g. wrapped by an outer GROUP BY that
+            // projects different columns). Skip fill entirely.
             if (timestampIndex < 0) {
                 Misc.freeObjList(fillValues);
                 return groupByFactory;
@@ -3410,22 +3396,13 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             assert samplingIntervalEnd < fillStride.token.length();
             char samplingIntervalUnit = fillStride.token.charAt(samplingIntervalEnd);
             TimestampSampler timestampSampler = TimestampSamplerFactory.getInstance(driver, samplingInterval, samplingIntervalUnit, fillStride.position);
-            // Day-or-larger stride + non-UTC TIME ZONE: timestamp_floor_utc anchors
-            // GROUP BY buckets at TZ-local-calendar boundaries whose UTC width
-            // varies with DST. The cursor wraps the uniform-UTC sampler with a
-            // TimezoneFloorTimestampSampler at of() time so the fast-path fill
-            // grid mirrors the GROUP BY grid bucket-for-bucket even across DST
-            // transitions. Wrapping is deferred to of() because TIME ZONE may
-            // be a runtime-constant bind variable: AbstractSampleByCursor's
-            // legacy parseParams re-evaluates it on every cursor open, and the
-            // fast-path cursor matches that contract (otherwise re-executing a
-            // compiled statement with a new TZ bind would silently reuse the
-            // first-execute rules). SqlOptimiser.rewriteSampleBy only sets
-            // fillTimezoneName for day-or-larger + non-trivial FILL (sub-day
-            // uses to_utc(FROM, tz) instead and stays uniform-UTC). Non-default
-            // OFFSET reaches the cursor as fillOffset and is anchored on the
-            // local grid via setLocalAnchor + setOffset
-            // (TimezoneFloorTimestampSampler forwards both untranslated).
+            // For day-or-larger stride with non-UTC TIME ZONE, the cursor wraps the
+            // uniform-UTC sampler with a TimezoneFloorTimestampSampler at of() time
+            // so the fill grid mirrors the GROUP BY grid across DST. Wrapping is
+            // deferred to of() because TIME ZONE may be a runtime-constant bind
+            // variable that AbstractSampleByCursor re-evaluates per cursor open.
+            // SqlOptimiser.rewriteSampleBy only sets fillTimezoneName here; sub-day
+            // strides use to_utc(FROM, tz) and stay uniform-UTC.
             final ExpressionNode fillTimezoneNode = curr.getFillTimezoneName();
             int tzFuncPos = 0;
             if (fillTimezoneNode != null) {
@@ -3441,10 +3418,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             if (fillOffsetNode != null) {
                 offsetFunc = functionParser.parseFunction(fillOffsetNode, EmptyRecordMetadata.INSTANCE, executionContext);
                 offsetFuncPos = fillOffsetNode.position;
-                // STRING type matches the legacy SAMPLE BY offset path (line 7408 in this file).
-                // Constant or runtime-constant only -- per-row offset doesn't make sense for a
-                // bucket-grid anchor. The cursor evaluates getStrA(null) once per of() call and
-                // parses via Dates.parseOffset, identical to AbstractSampleByCursor.parseParams.
+                // Constant or runtime-constant STRING, matching the legacy SAMPLE BY
+                // offset path. The cursor evaluates getStrA(null) once per of() call.
                 coerceRuntimeConstantType(offsetFunc, STRING, executionContext,
                         "offset must be a constant expression of STRING or CHAR type",
                         offsetFuncPos);
@@ -3457,23 +3432,13 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             final IntList fillModes = new IntList(columnCount);
             constantFills = new ObjList<>(columnCount);
 
-            // Detect key columns: output columns whose AST expression is a
-            // LITERAL (column reference) that is not the timestamp floor function.
-            // Key columns get FILL_KEY and do NOT consume a fill expression index.
             final ObjList<QueryColumn> bottomUpCols = model.getBottomUpColumns();
 
-            // The user's fill-value list is keyed by user SELECT order (the order
-            // in which non-key aggregate columns appear in bottomUpCols), but
-            // SqlOptimiser.propagateTopDownColumns0 may reorder the inner
-            // sample-by model's columns based on outer-query DFS, so factory
-            // metadata order is NOT guaranteed to match user SELECT order.
-            // GROUP BY consumes the reorder correctly, but positional
-            // assignment of fill values here would land a fill spec on the
-            // wrong aggregate. Precompute a lookup from factory-metadata
-            // column index to user-fill-list index by walking bottomUpCols
-            // in user order and matching via alias. Shared by both the bare
-            // FILL(PREV) branch (decides FILL_KEY vs FILL_PREV_SELF) and the
-            // per-column branch (decides fill-spec slot).
+            // SqlOptimiser.propagateTopDownColumns0 may reorder factory metadata
+            // away from user SELECT order, so positional assignment of fill values
+            // would land on the wrong aggregate. Build a factory-index -> user-fill-list
+            // index map by walking bottomUpCols in user order. Shared by the bare
+            // FILL(PREV) branch and the per-column branch below.
             final IntList factoryColToUserFillIdx = new IntList(columnCount);
             for (int i = 0; i < columnCount; i++) {
                 factoryColToUserFillIdx.add(-1);
@@ -3481,12 +3446,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             int userFillIdx = 0;
             for (int i = 0, n = bottomUpCols.size(); i < n; i++) {
                 final QueryColumn qc = bottomUpCols.getQuick(i);
-                // Key columns and the timestamp column do NOT consume a user
-                // fill-value index. Detect them directly from the QueryColumn
-                // AST (LITERAL = column reference = key, or timestamp_floor
-                // function = timestamp column) rather than via isKeyColumn on
-                // a factory index — bottomUpCols is indexed in user order
-                // and factory order may diverge after propagateTopDownColumns0.
+                // Key columns (LITERAL) and the timestamp column (timestamp_floor)
+                // do NOT consume a fill-value index.
                 final ExpressionNode ast = qc.getAst();
                 if (ast.type == ExpressionNode.LITERAL) {
                     continue;
@@ -3494,10 +3455,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 if (SqlUtil.isTimestampFloorFunction(ast)) {
                     continue;
                 }
-                // Non-aggregate FUNCTION / OPERATION used as a grouping key
-                // (e.g., interval(lo, hi), concat(a, b), cast(x AS STRING),
-                // a || b). These are factory key columns, not aggregates, and
-                // must not consume a slot in the user's fill-value list.
+                // Non-aggregate FUNCTION/OPERATION used as a grouping key (e.g.
+                // interval(lo, hi), concat(a, b), cast(x AS STRING), a || b).
                 if ((ast.type == ExpressionNode.FUNCTION || ast.type == ExpressionNode.OPERATION)
                         && !functionParser.getFunctionFactoryCache().isGroupBy(ast.token)) {
                     assert qc.getAlias() != null
@@ -3509,13 +3468,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 assert ast.type == ExpressionNode.FUNCTION
                         && functionParser.getFunctionFactoryCache().isGroupBy(ast.token)
                         : "generateFill aggregate arm: expected aggregate FUNCTION, got type=" + ast.type + " token=" + ast.token;
-                // This bottomUp column is an aggregate and therefore consumes
-                // one slot in the user's fill-value list, regardless of whether
-                // the outer projection keeps the column in the factory metadata.
-                // When the column IS present in factory metadata, record the
-                // mapping from factory index to user fill idx; when it is not,
-                // skip the mapping but still advance userFillIdx so subsequent
-                // aggregates land on the correct fill value.
+                // Aggregate column. Always advances userFillIdx so subsequent aggregates
+                // land on the correct slot, even when outer projection drops this column.
                 final CharSequence qcAlias = qc.getAlias();
                 if (qcAlias != null) {
                     final int factoryIdx = groupByMetadata.getColumnIndexQuiet(qcAlias);
@@ -3526,22 +3480,15 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 userFillIdx++;
             }
 
-            // aggNonKeyCount counts every non-key, non-timestamp column in
-            // the user's SELECT list, which is the number of fill values
-            // the user must provide in per-column mode. Computed from
-            // bottomUpCols (user order) rather than from factory metadata
-            // because outer projection may drop aggregate columns while
-            // the user-facing fill-value grammar still requires one spec
-            // per user aggregate.
+            // Number of fill values the user must provide in per-column mode --
+            // counted in user order from bottomUpCols, not from factory metadata.
             final int aggNonKeyCount = userFillIdx;
 
             if (fillValuesExprs.size() == 1
                     && isPrevKeyword(fillValuesExprs.getQuick(0).token)
                     && fillValuesExprs.getQuick(0).type == ExpressionNode.LITERAL) {
-                // bare FILL(PREV): classify each factory-order column via the
-                // user-fill-idx mapping. An entry of -1 means the factory column
-                // is either a key column or the timestamp floor and gets FILL_KEY;
-                // a mapping >= 0 marks an aggregate that fills from its own prior value.
+                // Bare FILL(PREV): -1 in the user-fill-idx map means key/timestamp
+                // (FILL_KEY); >= 0 means aggregate (FILL_PREV_SELF).
                 for (int col = 0; col < columnCount; col++) {
                     if (col == timestampIndex) {
                         fillModes.add(SampleByFillRecordCursorFactory.FILL_CONSTANT);
@@ -3555,24 +3502,16 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     }
                 }
             } else {
-                // Per-column fill spec — key columns get FILL_KEY and skip fillIdx.
-                // factoryColToUserFillIdx and aggNonKeyCount are already built above
-                // (shared with the bare FILL(PREV) branch).
-
-                // Decide broadcast vs per-column up front so the classification loop
-                // runs with consistent state. The user must provide one fill value
-                // per non-key aggregate unless the single value is broadcastable
-                // (bare PREV, NULL, or a CONSTANT literal). PREV(colX) is rejected
-                // explicitly because cross-column source is per-aggregate. Bare PREV
-                // parses as LITERAL, PREV(colX) as FUNCTION, so the broadcast
-                // predicate requires LITERAL for PREV; NULL only has a LITERAL form.
+                // Per-column fill spec. The user must provide one value per non-key
+                // aggregate unless the single value is broadcastable (bare PREV, NULL,
+                // or a CONSTANT literal). Bare PREV parses as LITERAL, PREV(colX) as
+                // FUNCTION; PREV(colX) cannot broadcast because the source is
+                // column-specific and per-aggregate type validation would diverge.
                 final boolean isBroadcastMode;
                 if (fillValuesExprs.size() < aggNonKeyCount) {
                     final ExpressionNode only = fillValuesExprs.size() == 1 ? fillValuesExprs.getQuick(0) : null;
-                    // If the single value is a PREV expression with arguments, validate
-                    // its syntax first so the user sees the precise grammar error instead
-                    // of the count-mismatch fallback. The per-column loop enforces the
-                    // same rule for each slot in non-broadcast mode.
+                    // Validate PREV(...) grammar first so the user sees the precise
+                    // error instead of the count-mismatch fallback.
                     if (only != null && isPrevKeyword(only.token) && only.type != ExpressionNode.LITERAL) {
                         final boolean isPrevWithLiteralArg = only.type == ExpressionNode.FUNCTION
                                 && only.paramCount == 1
@@ -3581,21 +3520,13 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                         if (!isPrevWithLiteralArg) {
                             throw SqlException.$(only.position, "PREV argument must be a single column name");
                         }
-                        // Well-formed PREV(colX) cannot broadcast across multiple
-                        // aggregates: the cross-column source is column-specific,
-                        // and per-aggregate type validation (DECIMAL precision,
-                        // GEOHASH width, ARRAY element type/dims, TIMESTAMP/INTERVAL
-                        // unit) would need to run per target independently. Emit a
-                        // targeted error instead of falling through to the generic
-                        // "not enough fill values" count-mismatch message.
                         throw SqlException.$(only.position,
                                         "FILL(PREV(").put(only.rhs.token).put(")) cannot be broadcast across aggregates; ")
                                 .put("specify one fill value per aggregate");
                     }
                     // CONSTANT covers numeric, string, quoted-timestamp, and boolean
-                    // literals. FUNCTION/OPERATION nodes (casts, function calls,
-                    // bind variables) remain non-broadcastable: per-aggregate type
-                    // coercion for those is non-trivial and out of scope here.
+                    // literals. Casts, function calls, and bind variables stay
+                    // non-broadcastable -- per-aggregate type coercion is out of scope.
                     final boolean isBareBroadcastable = only != null
                             && ((isPrevKeyword(only.token) && only.type == ExpressionNode.LITERAL)
                             || isNullKeyword(only.token)
@@ -3604,17 +3535,15 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                         throw SqlException.$(fillValuesExprs.getQuick(0).position, "not enough fill values");
                     }
                     isBroadcastMode = true;
-                    // Pre-expand fillValues for a CONSTANT broadcast: the parse loop
-                    // above produced a single Function in fillValues[0], but the
-                    // per-column loop indexes fillValues with fillIdx in [0,
-                    // aggNonKeyCount). Re-parse the same ExpressionNode once per
-                    // additional slot so each aggregate owns a distinct Function
-                    // instance. Distinct ownership keeps the null-then-free cleanup
-                    // pattern at the per-column transfer correct on OOM. NULL and
-                    // bare-PREV broadcast do not read fillValues[fillIdx] -- their
-                    // per-column branches add NullConstant.NULL directly to
-                    // constantFills -- so they need no pre-expansion.
+                    // Re-parse the CONSTANT once per slot so each aggregate owns a
+                    // distinct Function -- required for the null-then-free cleanup
+                    // at the per-column transfer below. NULL and bare PREV broadcast
+                    // never read fillValues[fillIdx], so they need no pre-expansion.
                     if (only.type == ExpressionNode.CONSTANT) {
+                        // Pre-grow so add() below cannot OOM mid-parse and strand a
+                        // Function outside fillValues. Matters only when
+                        // aggNonKeyCount > DEFAULT_ARRAY_SIZE (16).
+                        fillValues.checkCapacity(aggNonKeyCount);
                         for (int i = 1; i < aggNonKeyCount; i++) {
                             fillValues.add(functionParser.parseFunction(only, EmptyRecordMetadata.INSTANCE, executionContext));
                         }
@@ -3623,9 +3552,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     isBroadcastMode = false;
                 }
 
-                // Track the ExpressionNode that established each column's fill mode
-                // so the chain-rejection error can point at the specific offending
-                // PREV(...) expression rather than at the first fill expression.
+                // Track which ExpressionNode set each column's fill mode so the
+                // chain-rejection error can point at the offending PREV(...).
                 final ObjList<ExpressionNode> perColFillNodes = new ObjList<>(columnCount);
                 for (int i = 0; i < columnCount; i++) {
                     perColFillNodes.add(null);
@@ -3639,22 +3567,16 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     }
                     final int fillIdx = factoryColToUserFillIdx.getQuick(col);
                     if (fillIdx < 0) {
-                        // factoryColToUserFillIdx left this slot as -1 because the
-                        // matching bottomUpCols entry was a LITERAL (key column);
-                        // a missing alias or absent column also lands here and
-                        // correctly defaults to FILL_KEY for backwards compatibility
-                        // with the original isKeyColumn(col, bottomUpCols, ...) path.
+                        // -1: bottomUpCols entry was a LITERAL (key column), or
+                        // alias missing -- default to FILL_KEY.
                         fillModes.add(SampleByFillRecordCursorFactory.FILL_KEY);
                         constantFills.add(NullConstant.NULL);
                         continue;
                     }
-                    // In broadcast mode the pre-loop check above validated a single
-                    // broadcastable value (NULL or bare PREV); in per-column mode
-                    // aggNonKeyCount <= fillValuesExprs.size() guarantees fillIdx
-                    // is in range.
+                    // In per-column mode aggNonKeyCount <= fillValuesExprs.size()
+                    // guarantees fillIdx is in range; broadcast mode reads slot 0.
                     final ExpressionNode fillExpr = fillValuesExprs.getQuick(isBroadcastMode ? 0 : fillIdx);
                     if (isPrevKeyword(fillExpr.token)) {
-                        // Bare PREV in per-column list means self-prev for this slot.
                         boolean isBarePrev = fillExpr.type == ExpressionNode.LITERAL;
                         boolean isPrevWithLiteralArg = fillExpr.type == ExpressionNode.FUNCTION
                                 && fillExpr.paramCount == 1
@@ -3664,7 +3586,6 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                             throw SqlException.$(fillExpr.position, "PREV argument must be a single column name");
                         }
                         if (isPrevWithLiteralArg) {
-                            // PREV(col_name) — cross-column prev
                             CharSequence srcAlias = fillExpr.rhs.token;
                             int srcColIdx = groupByMetadata.getColumnIndexQuiet(srcAlias);
                             if (srcColIdx < 0) {
@@ -3676,33 +3597,23 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                         "PREV cannot reference the designated timestamp column");
                             }
                             if (srcColIdx == col) {
-                                // PREV(self) — equivalent to bare PREV; normalize internally to avoid
-                                // a dead snapshot slot.
+                                // PREV(self) is bare PREV; normalize to avoid a dead snapshot slot.
                                 fillModes.add(SampleByFillRecordCursorFactory.FILL_PREV_SELF);
                                 constantFills.add(NullConstant.NULL);
                                 continue;
                             }
-                            // Cross-column PREV type check: most types only need
-                            // tag-level equality, but DECIMAL (precision/scale),
-                            // GEOHASH (bit width), and ARRAY (element type +
-                            // dimensionality) encode discriminating subtype
-                            // information in the high bits of the type int. For
-                            // those families the check demands full-int equality
-                            // so that PREV(colX) cannot carry values across a
-                            // precision/width/dims mismatch. ColumnType.isDecimal
-                            // covers DECIMAL8..DECIMAL256 via tag range.
+                            // DECIMAL (precision/scale), GEOHASH (bit width), ARRAY
+                            // (element type + dims), TIMESTAMP and INTERVAL (unit)
+                            // encode subtype info in the high bits, so they require
+                            // full-int equality. Other types match by tag.
                             final int targetType = groupByMetadata.getColumnType(col);
                             final int sourceType = groupByMetadata.getColumnType(srcColIdx);
                             final short targetTag = ColumnType.tagOf(targetType);
                             final short sourceTag = ColumnType.tagOf(sourceType);
-                            // SYMBOL columns carry a per-column symbol table. The fill
-                            // cursor's getInt(target) would return the source column's
-                            // symbol id while getSymbolTable(target) resolves against
-                            // the target column's table, so a client that decodes via
-                            // getInt + getSymbolTable would see inconsistent values.
-                            // Until per-output-column symbol remapping exists, reject
-                            // cross-column PREV whose source or target is a SYMBOL;
-                            // bare FILL(PREV) keeps self-prev semantics and is safe.
+                            // SYMBOL columns carry a per-column symbol table, so
+                            // getInt(target) + getSymbolTable(target) would resolve
+                            // inconsistently against a different source column.
+                            // Bare FILL(PREV) keeps self-prev semantics and is safe.
                             if (targetTag == ColumnType.SYMBOL || sourceTag == ColumnType.SYMBOL) {
                                 throw SqlException.$(fillExpr.rhs.position,
                                                 "FILL(PREV(").put(srcAlias).put(")) is not supported on SYMBOL columns; ")
@@ -3727,7 +3638,6 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                             fillModes.add(srcColIdx);
                             perColFillNodes.setQuick(col, fillExpr);
                         } else {
-                            // bare PREV — self-prev
                             fillModes.add(SampleByFillRecordCursorFactory.FILL_PREV_SELF);
                         }
                         constantFills.add(NullConstant.NULL);
@@ -3742,18 +3652,14 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                         fillModes.add(SampleByFillRecordCursorFactory.FILL_CONSTANT);
                         constantFills.add(NullConstant.NULL);
                     } else {
-                        // Reaching this branch implies isBroadcastMode == false,
-                        // because every broadcastable fill value (NULL or bare PREV)
-                        // is handled by one of the branches above. Therefore
-                        // fillIdx < fillValues.size() is guaranteed here.
+                        // Reachable only in non-broadcast mode (NULL/bare PREV
+                        // handled above), so fillIdx is in range.
                         final int targetColType = groupByMetadata.getColumnType(col);
                         if (ColumnType.isTimestamp(targetColType)) {
-                            // Mirror the legacy cursor path's createPlaceHolderFunction
-                            // TIMESTAMP branch (SampleByFillValueRecordCursorFactory:160-166)
-                            // so the fast path stores a unit-correct constant. The upstream
-                            // functionParser.parseFunction call produces a TIMESTAMP_NANO
-                            // typed constant for any string literal, which drifts by 1000x
-                            // when read back through a MICRO-target column.
+                            // functionParser produces TIMESTAMP_NANO for any string
+                            // literal, which drifts by 1000x against a MICRO target.
+                            // Re-parse with the target driver to keep units correct,
+                            // mirroring SampleByFillValueRecordCursorFactory's path.
                             if (!Chars.isQuoted(fillExpr.token)) {
                                 throw SqlException.position(fillExpr.position)
                                         .put("Invalid fill value: '").put(fillExpr.token)
@@ -3763,11 +3669,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                             try {
                                 final long parsed = targetDriver.parseQuotedLiteral(fillExpr.token);
                                 // Null-then-free: if Misc.free's close() throws, the
-                                // outer catch's Misc.freeObjList(fillValues) must not
-                                // double-close the same instance. Nulling the slot
-                                // first leaves the post-throw freeObjList with a no-op
-                                // for this index. Most Function close()s are idempotent,
-                                // but the contract is not guaranteed.
+                                // outer catch must not double-close the same instance.
                                 Function staleFunc = fillValues.getQuick(fillIdx);
                                 fillValues.setQuick(fillIdx, null);
                                 Misc.free(staleFunc);
@@ -3777,30 +3679,16 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                         .put("invalid fill value: ").put(fillExpr.token);
                             }
                         } else {
-                            // A FILL_CONSTANT slot stores a single Function instance whose
-                            // typed accessor (getDouble/getLong/getLong256A/...) is invoked
-                            // on every synthesized fill row. Deterministic non-folded
-                            // expressions like cast('0x42' as LONG256) compute the same
-                            // value on every read and are intentionally accepted here, but
-                            // a non-deterministic function such as rnd_double() would
-                            // produce a different value per cursor read -- not a "fill
-                            // value" by any reasonable interpretation. Reject it. The
-                            // narrower isNonDeterministic gate is preferred over the
-                            // sibling slots' coerceRuntimeConstantType because that helper
-                            // also requires isConstant || isRuntimeConstant, which fails
-                            // for valid cast(literal) wrappers whose isConstant default
-                            // does not propagate through the abstract base classes.
-                            // Validate the parsed fill type is convertible to the
-                            // aggregate output type. Function.getXxx for a mismatched
-                            // type tag throws UnsupportedOperationException at runtime
-                            // (e.g. IntFunction.getVarcharA), so an obvious type
-                            // mismatch must surface upfront with a clean error rather
-                            // than producing garbage or crashing during cursor read.
-                            // The legacy SampleByFillValueRecordCursorFactory enforced
-                            // this strictly via per-target-type token parsing; the
-                            // fast path keeps the same guarantee via isConvertibleFrom.
-                            // Skips when the parsed type is UNDEFINED (e.g. an unbound
-                            // bind variable) so existing late-binding semantics apply.
+                            // Reject non-deterministic functions like rnd_double() --
+                            // a fill value must yield the same result on every read.
+                            // isNonDeterministic is preferred over coerceRuntimeConstantType,
+                            // which would also require isConstant/isRuntimeConstant and
+                            // reject valid cast(literal) wrappers.
+                            //
+                            // isConvertibleFrom catches obvious type mismatches up front;
+                            // otherwise Function.getXxx throws UnsupportedOperationException
+                            // at runtime. UNDEFINED (unbound bind variable) is left to
+                            // late binding.
                             final Function fillFunc = fillValues.getQuick(fillIdx);
                             final int fillType = fillFunc.getType();
                             if (fillType != ColumnType.UNDEFINED
@@ -3816,30 +3704,19 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                             }
                         }
                         fillModes.add(SampleByFillRecordCursorFactory.FILL_CONSTANT);
-                        // Atomic transfer: take a local reference, null the
-                        // source slot, then add to the destination list. If
-                        // ObjList.add throws (e.g. OOM during a backing-array
-                        // grow), the outer catch's freeObjList(fillValues) +
-                        // freeObjList(constantFills) cannot reach the same
-                        // Function from both lists. Mirrors the null-then-free
-                        // idiom used in the TIMESTAMP coercion branch above.
+                        // add() before setQuick(null): if the array grow OOMs,
+                        // the function is still in fillValues for the outer catch.
                         final Function constFn = fillValues.getQuick(fillIdx);
-                        fillValues.setQuick(fillIdx, null);
                         constantFills.add(constFn);
+                        fillValues.setQuick(fillIdx, null);
                     }
                 }
-                // Reject cross-column PREV whose source column is itself filled
-                // with a synthesized value on gaps:
+                // Reject cross-column PREV whose source is itself synthesized on gaps:
                 //   - source is another cross-column PREV (mode >= 0): chain.
-                //   - source is FILL_CONSTANT (NULL or a literal): the user-visible
-                //     source on a gap is the constant, but PREV resolves through
-                //     the base cursor and reads the source's last real aggregate,
-                //     diverging from what the prior bucket displayed.
-                // Sources that ARE consistent with the base-cursor read are
-                // accepted: FILL_KEY (key columns are real on every row) and
-                // FILL_PREV_SELF (self-prev returns the same last real value).
-                // Keep the grammar narrow until a clear use case emerges. The
-                // error position points at the specific offending PREV(...).
+                //   - source is FILL_CONSTANT: PREV reads the base cursor's last real
+                //     value, diverging from the constant the prior bucket displayed.
+                // FILL_KEY and FILL_PREV_SELF are accepted because both stay
+                // consistent with the base-cursor read.
                 for (int col = 0; col < columnCount; col++) {
                     int mode = fillModes.getQuick(col);
                     if (mode < 0) {
@@ -3880,28 +3757,20 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 }
             }
 
-            // The cursor reads typed prev values either from per-source-col
-            // cached MapValue slots (slot-eligible: fixed-size scalar +
-            // SYMBOL) or, for the variable-width fall-back, via
-            // baseCursor.recordAt(prevRecord, prevRowId).
-            // populateMapValueTypes owns the fixed-width value header layout
-            // so the keys map's slot indices stay in sync with the cursor's
-            // constants.
+            // populateMapValueTypes owns the fixed-width value header layout so
+            // slot indices stay in sync with the cursor's constants.
             final ArrayColumnTypes mapValueTypes = new ArrayColumnTypes();
             SampleByFillRecordCursorFactory.populateMapValueTypes(mapValueTypes);
 
-            // Per-source-col cached prev value slots. Allocated for each
-            // unique non-key FILL_PREV source col whose type is fixed-size
-            // (or SYMBOL, stored as the int symbol id).
-            // - fixedPrevSrcCols[i] = source col index for slot i
-            // - fixedPrevTypeTags[i] = ColumnType.tagOf the source type
-            //   (SYMBOL kept as SYMBOL so the cursor knows to resolve the
-            //   id via baseCursor.getSymbolTable on read)
-            // - prevValueSlot[outputCol] = slot index, or -1 if not eligible
-            // - needsPrevPositioning = at least one FILL_PREV col is
-            //   variable-width and still needs prevRecord positioned via
-            //   recordAt (Decimal128/256, Long128/256, UUID, varchar, str,
-            //   bin, array, interval also count -- they fall through).
+            // Cached prev-value slots, allocated per unique non-key FILL_PREV
+            // source col with slot-eligible type:
+            // - fixedPrevSrcCols[i]  = source col index for slot i
+            // - fixedPrevTypeTags[i] = source type tag (SYMBOL kept as SYMBOL so
+            //                          the cursor resolves via getSymbolTable)
+            // - prevValueSlot[outputCol] = slot index, or -1 if ineligible
+            // - needsPrevPositioning = some FILL_PREV col still needs prevRecord
+            //                          positioned via recordAt (variable-width
+            //                          or multi-slot wide types).
             final IntList fixedPrevSrcCols = new IntList();
             final IntList fixedPrevTypeTags = new IntList();
             final IntList prevValueSlot = new IntList(columnCount);
@@ -3909,37 +3778,26 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 prevValueSlot.add(-1);
             }
             boolean needsPrevPositioning = false;
-            // Slots live in the keysMap value section, so they only exist
-            // for keyed queries. Non-keyed queries take the simplePrevRowId
-            // path with prevRecord positioned by recordAt -- needsPrevPositioning
-            // stays true via the variable-width fall-through below or, for
-            // wholly fixed-size non-keyed queries, the cursor handles it
-            // through hasSimplePrev unaffected by this loop.
+            // Slots live in the keysMap value section, so non-keyed queries skip
+            // this loop and take the simplePrevRowId + recordAt path below.
             for (int col = 0; keyColIndices.size() > 0 && col < columnCount; col++) {
                 int mode = fillModes.getQuick(col);
                 if (mode != SampleByFillRecordCursorFactory.FILL_PREV_SELF && mode < 0) {
-                    continue; // not a FILL_PREV column
+                    continue;
                 }
                 int srcCol = (mode == SampleByFillRecordCursorFactory.FILL_PREV_SELF) ? col : mode;
-                // Source col is itself a key column -> read goes through
-                // keysMapRecord at outputColToKeyPos[srcCol], no slot needed.
+                // Source is a key column -- read goes through keysMapRecord directly.
                 if (fillModes.getQuick(srcCol) == SampleByFillRecordCursorFactory.FILL_KEY) {
                     continue;
                 }
                 int srcType = groupByMetadata.getColumnType(srcCol);
                 int srcTag = ColumnType.tagOf(srcType);
-                // Slot-eligible: scalar fixed-size types that map cleanly
-                // to a single MapValue.putXxx slot. SYMBOL is special-cased
-                // (4-byte int symbol id stored in an INT slot, resolved via
-                // SymbolTable on read). Multi-slot wide types (LONG128,
-                // LONG256, UUID, DECIMAL128, DECIMAL256) and variable-width
-                // types stay on the recordAt fall-back -- this iteration
-                // does not introduce slot reads for them.
+                // Multi-slot wide types and variable-width fall back to recordAt.
                 if (!isFixedSizePrevSlotEligible(srcTag)) {
                     needsPrevPositioning = true;
                     continue;
                 }
-                // Find or assign a slot for this source col (deduplicated).
+                // Deduplicate slots per source col.
                 int slot = -1;
                 for (int j = 0, n = fixedPrevSrcCols.size(); j < n; j++) {
                     if (fixedPrevSrcCols.getQuick(j) == srcCol) {
@@ -3951,16 +3809,12 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     slot = mapValueTypes.getColumnCount();
                     fixedPrevSrcCols.add(srcCol);
                     fixedPrevTypeTags.add(srcTag);
-                    // Cache SYMBOL as INT (the symbol id); other slot-eligible
-                    // tags map to themselves (DOUBLE, LONG, etc.).
                     mapValueTypes.add(srcTag == ColumnType.SYMBOL ? ColumnType.INT : srcType);
                 }
                 prevValueSlot.setQuick(col, slot);
             }
-            // Non-keyed FILL_PREV always uses the simplePrevRowId + recordAt
-            // path because there is no MapValue to cache slots in. Force
-            // needsPrevPositioning on if this query has any FILL_PREV col
-            // and no keys.
+            // Non-keyed FILL_PREV has no MapValue to cache, so force
+            // needsPrevPositioning on for the simplePrevRowId path.
             if (keyColIndices.size() == 0) {
                 for (int col = 0; col < columnCount; col++) {
                     int mode = fillModes.getQuick(col);
@@ -3982,12 +3836,10 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 );
             }
 
-            // symbolTableColIndices covers ALL map columns (value columns
-            // first, then key columns). The 3-slot value header is never
-            // SYMBOL (-1). Cached prev-value slots get the source col index
-            // for SYMBOL slots so the existing MapRecord symbol-table wiring
-            // resolves via the right base column. Key columns get the base
-            // col index if they are SYMBOL.
+            // Maps every map column (values then keys) to the base SYMBOL col it
+            // resolves against, or -1 if not a SYMBOL. Header slots and non-SYMBOL
+            // slots are -1; SYMBOL prev-value slots and SYMBOL key columns carry
+            // the source col index so MapRecord resolves via the right base column.
             final IntList symbolTableColIndices = new IntList();
             for (int i = 0, n = mapValueTypes.getColumnCount() - fixedPrevSrcCols.size(); i < n; i++) {
                 symbolTableColIndices.add(-1); // header slots (KEY_INDEX, HAS_PREV, PREV_ROWID)
@@ -4008,44 +3860,23 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 }
             }
 
-            // Sort the GROUP BY output by timestamp ascending. The fill cursor
-            // requires sorted input. We build the sort factory explicitly because
-            // the optimizer strips the ORDER BY added by rewriteSampleBy before
-            // code generation runs.
-            //
-            // Sort strategy comes from cairo.sql.sampleby.fill.sort.strategy.
-            // The default LIGHT_ENCODED is the cheapest when the base supports
-            // random access and the sort key is encodable -- both hold for a
-            // single-TIMESTAMP sort over Async/GroupBy output. Strict validation
-            // at startup rejects unknown values, so the switch below is
-            // exhaustive over the four constants.
+            // The fill cursor requires sorted input, but the optimizer strips
+            // rewriteSampleBy's ORDER BY before code generation, so build it here.
+            // Strategy comes from cairo.sql.sampleby.fill.sort.strategy; startup
+            // validation makes the switch exhaustive.
             final RecordMetadata sortMetadata = groupByFactory.getMetadata();
             listColumnFilterA.clear();
             listColumnFilterA.add(timestampIndex + 1); // positive = ascending
             entityColumnFilter.of(sortMetadata.getColumnCount());
             final int sortStrategy = configuration.getSampleByFillSortStrategy();
-            // The LIGHT_RECORDCHAIN and FULL_RECORDCHAIN branches use the
-            // null-before-risky pattern because SortedLightRecordCursorFactory
-            // and SortedRecordCursorFactory both have a ctor catch that
-            // cascades close(), freeing the caller-owned `base` on throw.
-            // Without nulling `groupByFactory`, the surrounding
-            // `Misc.free(groupByFactory)` in generateFill's outer catch would
-            // double-free natively (JVM-fatal). LIGHT_ENCODED and FULL_ENCODED
-            // have no such ctor catch -- their inner cursor ctor failure
-            // abandons the half-constructed factory without freeing `base`,
-            // so the caller-side `Misc.free(groupByFactory)` is the single
-            // owner of cleanup on those branches; do NOT null in advance.
-            //
-            // The risky-arg calls (recordComparatorCompiler.newInstance,
-            // RecordSinkFactory.getInstance, listColumnFilterA.copy) run
-            // BEFORE `groupByFactory = null` so the outer catch's
-            // Misc.free(groupByFactory) still owns `base` when those throw.
-            // The wrapping ctor body runs only after every arg is in hand;
-            // its catch is then responsible for freeing `base` and the
-            // caller-side null defangs the resulting double-free.
-            // RecordComparator, RecordSink, and ListColumnFilter are not
-            // Closeable, so a wrapper-body throw past these locals leaves
-            // them as GC garbage rather than leaked native memory.
+            // LIGHT_RECORDCHAIN and FULL_RECORDCHAIN need null-before-risky:
+            // SortedLight/SortedRecordCursorFactory's ctor catch cascades close()
+            // and frees `base`, so the outer catch's Misc.free(groupByFactory)
+            // would double-free unless we null first. Risky-arg calls (newInstance,
+            // RecordSinkFactory.getInstance, copy) run BEFORE the null so the
+            // outer catch still owns base on their failure. LIGHT_ENCODED and
+            // FULL_ENCODED have no such ctor catch -- the caller is the single
+            // owner there.
             switch (sortStrategy) {
                 case SampleBySortStrategy.LIGHT_ENCODED -> {
                     assert SortKeyEncoder.isSupported(sortMetadata, listColumnFilterA)
@@ -4103,9 +3934,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             final GenericRecordMetadata fillMetadata = GenericRecordMetadata.copyOfNew(groupByFactory.getMetadata());
             fillMetadata.setTimestampIndex(timestampIndex);
 
-            // Transferred slots were already nulled by the per-column branch;
-            // this frees any residual non-transferred fill functions. No-op on
-            // the success path when every slot has been transferred.
+            // Transferred slots were nulled in the per-column branch; this frees
+            // any residual non-transferred fill functions.
             Misc.freeObjList(fillValues);
             return new SampleByFillRecordCursorFactory(
                     configuration,
@@ -7436,16 +7266,11 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                         }
 
                         // Null-before-risky: SortedLightRecordCursorFactory's
-                        // ctor catch cascades close() and frees `sortBase`
-                        // (which is either recordCursorFactory directly, or a
-                        // SortKeyMaterializingRecordCursorFactory wrapping it).
-                        // Without nulling, the surrounding catch's free of
-                        // recordCursorFactory becomes a JVM-fatal double-free.
-                        // Risky-arg calls run BEFORE `recordCursorFactory = null`
-                        // so the outer catch still owns `sortBase` when those
-                        // throw. RecordComparator and ListColumnFilter are not
-                        // Closeable, so a wrapper-body throw past these locals
-                        // leaves them as GC garbage.
+                        // ctor catch frees `sortBase` (recordCursorFactory or a
+                        // wrapping SortKeyMaterializingRecordCursorFactory), so
+                        // not nulling would let the outer catch double-free.
+                        // Risky-arg calls run before the null so the outer catch
+                        // still owns sortBase on their failure.
                         final RecordComparator sortLightComparator = recordComparatorCompiler.newInstance(metadata, listColumnFilterA);
                         final ListColumnFilter sortLightFilterCopy = listColumnFilterA.copy();
                         final RecordCursorFactory sortBaseForSort = sortBase;
@@ -7472,14 +7297,10 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                             listColumnFilterA.copy()
                     );
                 }
-                // Null-before-risky for the SortedRecordCursorFactory ctor --
-                // its catch cascades close() and frees `base`, so retaining
-                // recordCursorFactory across this call would double-free.
-                // Risky-arg calls run BEFORE `recordCursorFactory = null` so
-                // the outer catch still owns `base` when those throw.
-                // RecordSink, RecordComparator, and ListColumnFilter are not
-                // Closeable, so a wrapper-body throw past these locals leaves
-                // them as GC garbage.
+                // Null-before-risky: SortedRecordCursorFactory's ctor catch
+                // frees `base`, so retaining recordCursorFactory would
+                // double-free. Risky-arg calls run before the null so the
+                // outer catch still owns base on their failure.
                 final RecordSink fullSortSink = RecordSinkFactory.getInstance(configuration, asm, orderedMetadata, entityColumnFilter);
                 final RecordComparator fullSortComparator = recordComparatorCompiler.newInstance(metadata, listColumnFilterA);
                 final ListColumnFilter fullSortFilterCopy = listColumnFilterA.copy();

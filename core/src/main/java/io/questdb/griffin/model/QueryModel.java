@@ -521,9 +521,6 @@ public class QueryModel implements IQueryModel {
         sampleByOffset = null;
         sampleByTo = null;
         sampleByFrom = null;
-        fillOffset = null;
-        fillStride = null;
-        fillTimezoneName = null;
     }
 
     @Override
@@ -1478,6 +1475,16 @@ public class QueryModel implements IQueryModel {
 
     @Override
     public void moveSampleByFrom(IQueryModel model) {
+        // Donor must not carry fill* state. SqlOptimiser.rewriteSampleBy is the only fill* writer
+        // and clears sampleBy in the same block, so the gate `sampleBy != null` at the caller
+        // (SqlOptimiser.rewriteSelectClause0) is mutually exclusive with fill* being set.
+        assert model.getFillStride() == null
+                && model.getFillOffset() == null
+                && model.getFillTimezoneName() == null
+                && model.getFillFrom() == null
+                && model.getFillTo() == null
+                && model.getFillValues() == null
+                : "moveSampleByFrom donor must not have fill* set";
         this.sampleBy = model.getSampleBy();
         this.sampleByUnit = model.getSampleByUnit();
         this.sampleByFill.clear();
@@ -1486,9 +1493,6 @@ public class QueryModel implements IQueryModel {
         this.sampleByOffset = model.getSampleByOffset();
         this.sampleByTo = model.getSampleByTo();
         this.sampleByFrom = model.getSampleByFrom();
-        this.fillOffset = model.getFillOffset();
-        this.fillStride = model.getFillStride();
-        this.fillTimezoneName = model.getFillTimezoneName();
 
         // clear the source
         model.clearSampleBy();
