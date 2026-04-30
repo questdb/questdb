@@ -164,7 +164,7 @@ public final class Mig940 {
                 if (!isParquetMetadataStale(reader, ff, path, plen, timestampType, partitionBy, partitionTs, nameTxn, parquetFileSizeFromTxn)) {
                     continue;
                 }
-                generateParquetMetaForPartition(ff, path, plen, timestampType, partitionBy, partitionTs, nameTxn);
+                generateParquetMetaForPartition(ff, path, plen, timestampType, partitionBy, partitionTs, nameTxn, parquetFileSizeFromTxn);
             }
         }
         path.trimTo(plen);
@@ -177,7 +177,8 @@ public final class Mig940 {
             int timestampType,
             int partitionBy,
             long partitionTs,
-            long nameTxn
+            long nameTxn,
+            long parquetFileSizeFromTxn
     ) {
         TableUtils.setPathForNativePartition(path.trimTo(pathRootLen), timestampType, partitionBy, partitionTs, nameTxn);
         int partitionDirLen = path.size();
@@ -190,7 +191,7 @@ public final class Mig940 {
         }
 
         long parquetFileSize = ff.length(path.$());
-        if (parquetFileSize <= 0) {
+        if (parquetFileSize <= 0 || parquetFileSize < parquetFileSizeFromTxn) {
             path.trimTo(partitionDirLen);
             throw CairoException.critical(0).put("parquet file empty or unreadable [path=").put(path).put(']');
         }
@@ -217,7 +218,7 @@ public final class Mig940 {
                 throw CairoException.critical(ff.errno()).put("could not truncate _pm [path=").put(path).put(']');
             }
             long allocator = Unsafe.getNativeAllocator(MemoryTag.NATIVE_MIG);
-            long parquetMetaSize = ParquetMetadataWriter.generate(allocator, Files.toOsFd(parquetFd), parquetFileSize, Files.toOsFd(parquetMetaFd));
+            long parquetMetaSize = ParquetMetadataWriter.generate(allocator, Files.toOsFd(parquetFd), parquetFileSizeFromTxn, Files.toOsFd(parquetMetaFd));
             // Persist the new _pm before the migration completes. If the process
             // crashes between this generate call and the next time the engine
             // syncs the partition dir, partitions referenced by _txn would
