@@ -102,9 +102,9 @@ public class CreateTableFuzzTest extends AbstractCairoTest {
                     }
                     int errPos = wrongName == CAST ? castPos
                             : wrongName == INDEX ? indexPos
-                            : wrongName == TIMESTAMP ? tsPos
-                            : wrongName == DEDUP ? dedupPos
-                            : -1;
+                              : wrongName == TIMESTAMP ? tsPos
+                                : wrongName == DEDUP ? dedupPos
+                                  : -1;
                     assertEquals(withErrPos(errPos, "Invalid column: " + WRONG_NAME), message);
                     return;
                 }
@@ -421,7 +421,7 @@ public class CreateTableFuzzTest extends AbstractCairoTest {
         if (columnChaos != DROP_STR) {
             String strColType = useCast ? "SYMBOL"
                     : columnChaos == CHANGE_TYPE || columnChaos == RENAME_AND_ADD ? "DOUBLE"
-                    : "STRING";
+                      : "STRING";
             b.append(strCol).append("\t").append(strColType).append("\tfalse\t0\t")
                     .append(useCast).append('\t')
                     .append(useCastSymbolCapacity ? SYMBOL_CAPACITY : useCast ? defaultSymbolCapacity : 0)

@@ -680,7 +680,7 @@ public class CreateMatViewOperationImpl implements CreateMatViewOperation {
             final long approxBucket = timestampSampler.getApproxBucketSize();
             final int partitionBy = approxBucket > timestampDriver.fromHours(1) ? PartitionBy.YEAR
                     : approxBucket > timestampDriver.fromMinutes(1) ? PartitionBy.MONTH
-                    : PartitionBy.DAY;
+                      : PartitionBy.DAY;
             createTableOperation.setPartitionBy(partitionBy);
             final int ttlHoursOrMonths = createTableOperation.getTtlHoursOrMonths();
             if (ttlHoursOrMonths > 0) {

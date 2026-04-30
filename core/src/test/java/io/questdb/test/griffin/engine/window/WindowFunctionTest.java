@@ -13628,23 +13628,23 @@ public class WindowFunctionTest extends AbstractCairoTest {
                         func.contains("first_value") || func.contains("last_value") ?
                                 "Window\n" +
                                         "  functions: [#FUNCT_NAME(1) over (partition by [i] rows between 1 preceding and current row)]\n".replace("#FUNCT_NAME(1)", replace) +
-                                        "    FilterOnValues\n" +
-                                        "        Table-order scan\n" +
-                                        "            Index forward scan on: sym deferred: true\n" +
-                                        "              filter: sym='B'\n" +
-                                        "            Index forward scan on: sym deferred: true\n" +
-                                        "              filter: sym='A'\n" +
-                                        "        Frame forward scan on: tab\n"
+                                "    FilterOnValues\n" +
+                                "        Table-order scan\n" +
+                                "            Index forward scan on: sym deferred: true\n" +
+                                "              filter: sym='B'\n" +
+                                "            Index forward scan on: sym deferred: true\n" +
+                                "              filter: sym='A'\n" +
+                                "        Frame forward scan on: tab\n"
                                 :
                                 "CachedWindow\n" +
                                         "  orderedFunctions: [[ts] => [#FUNCT_NAME(1) over (partition by [i] rows between 1 preceding and current row)]]\n".replace("#FUNCT_NAME(1)", replace) +
-                                        "    FilterOnValues symbolOrder: desc\n" +
-                                        "        Cursor-order scan\n" +
-                                        "            Index forward scan on: sym deferred: true\n" +
-                                        "              filter: sym='B'\n" +
-                                        "            Index forward scan on: sym deferred: true\n" +
-                                        "              filter: sym='A'\n" +
-                                        "        Frame forward scan on: tab\n"
+                                "    FilterOnValues symbolOrder: desc\n" +
+                                "        Cursor-order scan\n" +
+                                "            Index forward scan on: sym deferred: true\n" +
+                                "              filter: sym='B'\n" +
+                                "            Index forward scan on: sym deferred: true\n" +
+                                "              filter: sym='A'\n" +
+                                "        Frame forward scan on: tab\n"
 
                 );
 
