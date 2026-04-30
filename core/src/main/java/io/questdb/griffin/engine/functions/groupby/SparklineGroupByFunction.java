@@ -388,7 +388,7 @@ public class SparklineGroupByFunction extends VarcharFunction implements UnaryFu
 
     @Override
     public boolean supportsParallelism() {
-        return true;
+        return UnaryFunction.super.supportsParallelism();
     }
 
     @Override

@@ -153,6 +153,6 @@ public class LastArrayGroupByFunction extends ArrayFunction implements GroupByFu
     }
 
     public boolean supportsParallelism() {
-        return true;
+        return UnaryFunction.super.supportsParallelism();
     }
 }
