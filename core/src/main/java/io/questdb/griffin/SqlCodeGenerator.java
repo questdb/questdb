@@ -617,7 +617,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             // cast both types to string.
             return isStringyType(typeA) ? typeB
                     : isStringyType(typeB) ? typeA
-                    : STRING;
+                      : STRING;
         }
         if (isGeoHashA) {
             // Both types are geohash, resolve to the one with fewer geohash bits.
@@ -642,7 +642,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             // We also support casting between decimal and stringy types.
             return isStringyType(typeA) ? typeB :
                     isStringyType(typeB) ? typeA :
-                            ColumnType.STRING; // Fallback should be supported by any type
+                    ColumnType.STRING; // Fallback should be supported by any type
         }
 
         if (tagA == INTERVAL || tagB == INTERVAL) {
@@ -10541,7 +10541,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                 isStandalone
                                         ? totalUnnestColumns
                                         : masterColumnCount
-                                        + totalUnnestColumns
+                                          + totalUnnestColumns
                         );
                 if (!isStandalone) {
                     outputMetadata.copyColumnMetadataFrom(
