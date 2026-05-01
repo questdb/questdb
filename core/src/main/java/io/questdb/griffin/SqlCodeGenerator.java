@@ -3943,6 +3943,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     groupByFactory,
                     fillFromFunc,
                     fillToFunc,
+                    fillTo != null ? fillTo.position : 0,
                     samplingInterval,
                     samplingIntervalUnit,
                     timestampSampler,

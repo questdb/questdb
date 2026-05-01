@@ -879,6 +879,69 @@ public class SampleByFillNullValueTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testFillNullKeyedCte() throws Exception {
+        // Wrapping SAMPLE BY FILL(NULL) in a CTE verifies the FILL_KEY
+        // reclassification works correctly when the factory is reused as
+        // a subquery, mirroring testFillPrevKeyedCte. The CTE projection
+        // path differs from FILL(PREV) because FILL(NULL) routes through
+        // DISPATCH_CONSTANT with NullConstant.NULL rather than the prev
+        // cache slot; this guards both projection paths through CTE.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE weather (city STRING, temp DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO weather VALUES " +
+                    "('London', 10.0, '2024-01-01T00:00:00.000000Z')," +
+                    "('Paris', 20.0, '2024-01-01T00:00:00.000000Z')," +
+                    "('Paris', 21.0, '2024-01-01T01:00:00.000000Z')," +
+                    "('London', 12.0, '2024-01-01T02:00:00.000000Z')");
+            assertQueryNoLeakCheck(
+                    """
+                            ts\tcity\ta
+                            2024-01-01T00:00:00.000000Z\tLondon\t10.0
+                            2024-01-01T00:00:00.000000Z\tParis\t20.0
+                            2024-01-01T01:00:00.000000Z\tParis\t21.0
+                            2024-01-01T01:00:00.000000Z\tLondon\tnull
+                            2024-01-01T02:00:00.000000Z\tLondon\t12.0
+                            2024-01-01T02:00:00.000000Z\tParis\tnull
+                            """,
+                    "WITH sq AS (SELECT ts, city, avg(temp) AS a FROM weather SAMPLE BY 1h FILL(NULL) ALIGN TO CALENDAR) " +
+                            "SELECT * FROM sq",
+                    "ts",
+                    false
+            );
+        });
+    }
+
+    @Test
+    public void testFillNullKeyedConstantValueCte() throws Exception {
+        // Sibling of testFillNullKeyedCte covering FILL(<numeric const>).
+        // FILL(0.0) routes through DISPATCH_CONSTANT with a DoubleConstant;
+        // CTE wrapping must preserve constant emission across the projection.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE weather (city STRING, temp DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO weather VALUES " +
+                    "('London', 10.0, '2024-01-01T00:00:00.000000Z')," +
+                    "('Paris', 20.0, '2024-01-01T00:00:00.000000Z')," +
+                    "('Paris', 21.0, '2024-01-01T01:00:00.000000Z')," +
+                    "('London', 12.0, '2024-01-01T02:00:00.000000Z')");
+            assertQueryNoLeakCheck(
+                    """
+                            ts\tcity\ta
+                            2024-01-01T00:00:00.000000Z\tLondon\t10.0
+                            2024-01-01T00:00:00.000000Z\tParis\t20.0
+                            2024-01-01T01:00:00.000000Z\tParis\t21.0
+                            2024-01-01T01:00:00.000000Z\tLondon\t-1.0
+                            2024-01-01T02:00:00.000000Z\tLondon\t12.0
+                            2024-01-01T02:00:00.000000Z\tParis\t-1.0
+                            """,
+                    "WITH sq AS (SELECT ts, city, avg(temp) AS a FROM weather SAMPLE BY 1h FILL(-1.0) ALIGN TO CALENDAR) " +
+                            "SELECT * FROM sq",
+                    "ts",
+                    false
+            );
+        });
+    }
+
+    @Test
     public void testFillNullKeyedFromTo() throws Exception {
         assertMemoryLeak(() -> {
             // 6 buckets (00:00..05:00) x 2 keys = 12 rows.
@@ -1468,24 +1531,28 @@ public class SampleByFillNullValueTest extends AbstractCairoTest {
                 2024-01-01T03:00:00.000000Z\tA\tnull\tnull
                 2024-01-01T03:00:00.000000Z\tB\t4.0\t40.0
                 """;
-        for (String strategy : strategies) {
-            setProperty(PropertyKey.CAIRO_SQL_SAMPLEBY_FILL_SORT_STRATEGY, strategy);
-            assertMemoryLeak(() -> {
-                execute("DROP TABLE IF EXISTS t");
-                execute("CREATE TABLE t (ts TIMESTAMP, k SYMBOL, a DOUBLE, b DOUBLE) " +
-                        "TIMESTAMP(ts) PARTITION BY DAY");
-                execute("INSERT INTO t VALUES " +
-                        "('2024-01-01T00:00:00.000000Z', 'A', 1.0, 10.0), " +
-                        "('2024-01-01T01:00:00.000000Z', 'B', 2.0, 20.0), " +
-                        "('2024-01-01T02:00:00.000000Z', 'A', 3.0, 30.0), " +
-                        "('2024-01-01T03:00:00.000000Z', 'B', 4.0, 40.0)");
-                assertQueryNoLeakCheck(
-                        expected,
-                        "SELECT ts, k, sum(a) AS a, sum(b) AS b FROM t " +
-                                "SAMPLE BY 1h FILL(NULL) ALIGN TO CALENDAR ORDER BY ts, k",
-                        "ts", true, false
-                );
-            });
+        try {
+            for (String strategy : strategies) {
+                setProperty(PropertyKey.CAIRO_SQL_SAMPLEBY_FILL_SORT_STRATEGY, strategy);
+                assertMemoryLeak(() -> {
+                    execute("DROP TABLE IF EXISTS t");
+                    execute("CREATE TABLE t (ts TIMESTAMP, k SYMBOL, a DOUBLE, b DOUBLE) " +
+                            "TIMESTAMP(ts) PARTITION BY DAY");
+                    execute("INSERT INTO t VALUES " +
+                            "('2024-01-01T00:00:00.000000Z', 'A', 1.0, 10.0), " +
+                            "('2024-01-01T01:00:00.000000Z', 'B', 2.0, 20.0), " +
+                            "('2024-01-01T02:00:00.000000Z', 'A', 3.0, 30.0), " +
+                            "('2024-01-01T03:00:00.000000Z', 'B', 4.0, 40.0)");
+                    assertQueryNoLeakCheck(
+                            expected,
+                            "SELECT ts, k, sum(a) AS a, sum(b) AS b FROM t " +
+                                    "SAMPLE BY 1h FILL(NULL) ALIGN TO CALENDAR ORDER BY ts, k",
+                            "ts", true, false
+                    );
+                });
+            }
+        } finally {
+            setProperty(PropertyKey.CAIRO_SQL_SAMPLEBY_FILL_SORT_STRATEGY, "light_encoded");
         }
     }
 
@@ -1508,24 +1575,28 @@ public class SampleByFillNullValueTest extends AbstractCairoTest {
                 2024-01-01T03:00:00.000000Z\tA\t0.0\t0.0
                 2024-01-01T03:00:00.000000Z\tB\t4.0\t40.0
                 """;
-        for (String strategy : strategies) {
-            setProperty(PropertyKey.CAIRO_SQL_SAMPLEBY_FILL_SORT_STRATEGY, strategy);
-            assertMemoryLeak(() -> {
-                execute("DROP TABLE IF EXISTS t");
-                execute("CREATE TABLE t (ts TIMESTAMP, k SYMBOL, a DOUBLE, b DOUBLE) " +
-                        "TIMESTAMP(ts) PARTITION BY DAY");
-                execute("INSERT INTO t VALUES " +
-                        "('2024-01-01T00:00:00.000000Z', 'A', 1.0, 10.0), " +
-                        "('2024-01-01T01:00:00.000000Z', 'B', 2.0, 20.0), " +
-                        "('2024-01-01T02:00:00.000000Z', 'A', 3.0, 30.0), " +
-                        "('2024-01-01T03:00:00.000000Z', 'B', 4.0, 40.0)");
-                assertQueryNoLeakCheck(
-                        expected,
-                        "SELECT ts, k, sum(a) AS a, sum(b) AS b FROM t " +
-                                "SAMPLE BY 1h FILL(0.0, 0.0) ALIGN TO CALENDAR ORDER BY ts, k",
-                        "ts", true, false
-                );
-            });
+        try {
+            for (String strategy : strategies) {
+                setProperty(PropertyKey.CAIRO_SQL_SAMPLEBY_FILL_SORT_STRATEGY, strategy);
+                assertMemoryLeak(() -> {
+                    execute("DROP TABLE IF EXISTS t");
+                    execute("CREATE TABLE t (ts TIMESTAMP, k SYMBOL, a DOUBLE, b DOUBLE) " +
+                            "TIMESTAMP(ts) PARTITION BY DAY");
+                    execute("INSERT INTO t VALUES " +
+                            "('2024-01-01T00:00:00.000000Z', 'A', 1.0, 10.0), " +
+                            "('2024-01-01T01:00:00.000000Z', 'B', 2.0, 20.0), " +
+                            "('2024-01-01T02:00:00.000000Z', 'A', 3.0, 30.0), " +
+                            "('2024-01-01T03:00:00.000000Z', 'B', 4.0, 40.0)");
+                    assertQueryNoLeakCheck(
+                            expected,
+                            "SELECT ts, k, sum(a) AS a, sum(b) AS b FROM t " +
+                                    "SAMPLE BY 1h FILL(0.0, 0.0) ALIGN TO CALENDAR ORDER BY ts, k",
+                            "ts", true, false
+                    );
+                });
+            }
+        } finally {
+            setProperty(PropertyKey.CAIRO_SQL_SAMPLEBY_FILL_SORT_STRATEGY, "light_encoded");
         }
     }
 
@@ -1592,15 +1663,9 @@ public class SampleByFillNullValueTest extends AbstractCairoTest {
             execute("INSERT INTO x VALUES (1.0, '2024-06-15T12:00:00.000000Z')");
             bindVariableService.clear();
             bindVariableService.setStr(0, "Not/AReal_Zone");
-            try {
-                assertExceptionNoLeakCheck(
-                        "SELECT sum(val) s, ts FROM x " +
-                                "SAMPLE BY 1d FILL(NULL) ALIGN TO CALENDAR TIME ZONE $1"
-                );
-                Assert.fail("expected SqlException for unparseable timezone");
-            } catch (SqlException e) {
-                TestUtils.assertContains(e.getFlyweightMessage(), "invalid timezone: Not/AReal_Zone");
-            }
+            final String sql = "SELECT sum(val) s, ts FROM x " +
+                    "SAMPLE BY 1d FILL(NULL) ALIGN TO CALENDAR TIME ZONE $1";
+            assertExceptionNoLeakCheck(sql, sql.indexOf("$1"), "invalid timezone: Not/AReal_Zone");
         });
     }
 

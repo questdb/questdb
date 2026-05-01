@@ -8194,7 +8194,7 @@ public class SqlOptimiser implements Mutable {
     /**
      * Recursive. Replaces SAMPLE BY models with GROUP BY + ORDER BY. For now, the rewrite
      * avoids the following:
-     * - linear and prev fills
+     * - linear fills
      * - ALIGN TO FIRST OBSERVATION
      * - FROM as a bind variable / function / operation.
      * <p>

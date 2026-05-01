@@ -269,6 +269,61 @@ public class SampleByFillTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testFillFromGreaterThanToRejected() throws Exception {
+        // Pin SAMPLE BY ... FILL ... FROM '<later>' TO '<earlier>' to a
+        // position-pointing SqlException at cursor.of() time. Aligns SAMPLE BY
+        // with the existing time-range constructs:
+        //   - HORIZON JOIN RANGE     (SqlCodeGenerator.java:1690-1691)
+        //     "FROM must be less than or equal to TO"
+        //   - REFRESH ... RANGE      (SqlCompilerImpl.java:3281-3283)
+        //     "TO timestamp must not be earlier than FROM timestamp"
+        // FROM == TO is allowed (single-point range). The check fires only
+        // when both bounds are concrete (LONG_NULL on either side leaves the
+        // bound unset and the validation no-ops). Covers every fill mode
+        // (NULL, PREV, constant) and both keyed and non-keyed paths.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (k SYMBOL, val DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO t VALUES " +
+                    "('A', 1.0, '2024-01-01T00:00:00.000000Z')," +
+                    "('A', 2.0, '2024-01-05T00:00:00.000000Z')");
+            for (String spec : new String[]{
+                    "FILL(NULL)",
+                    "FILL(PREV)",
+                    "FILL(0.0)"
+            }) {
+                final String sql = "SELECT ts, sum(val) FROM t " +
+                        "SAMPLE BY 1d FROM '2024-01-10' TO '2024-01-05' " + spec + " ALIGN TO CALENDAR";
+                assertExceptionNoLeakCheck(sql, sql.indexOf("'2024-01-05'"),
+                        "TO timestamp must not be earlier than FROM timestamp");
+            }
+            // Keyed: FILL(PREV) takes the keyed pass-1 path; same guard fires.
+            final String keyedSql = "SELECT ts, k, sum(val) FROM t " +
+                    "SAMPLE BY 1d FROM '2024-01-10' TO '2024-01-05' FILL(PREV) ALIGN TO CALENDAR";
+            assertExceptionNoLeakCheck(keyedSql, keyedSql.indexOf("'2024-01-05'"),
+                    "TO timestamp must not be earlier than FROM timestamp");
+        });
+    }
+
+    @Test
+    public void testFillFromEqualsToAccepted() throws Exception {
+        // Companion of testFillFromGreaterThanToRejected: FROM == TO must NOT
+        // raise -- a zero-length range is valid (matches HORIZON JOIN RANGE
+        // and REFRESH RANGE precedents). The TO bound is exclusive in
+        // SAMPLE BY, so FROM == TO yields zero rows; the test asserts empty
+        // result rather than the exception path.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (val DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO t VALUES (1.0, '2024-01-05T12:00:00.000000Z')");
+            assertQueryNoLeakCheck(
+                    "ts\tsum\n",
+                    "SELECT ts, sum(val) FROM t " +
+                            "SAMPLE BY 1d FROM '2024-01-05' TO '2024-01-05' FILL(NULL) ALIGN TO CALENDAR",
+                    "ts", false, false
+            );
+        });
+    }
+
+    @Test
     public void testFillFromNegativeOffsetAtFromBoundary() throws Exception {
         // Regression for PR #6946 C1. With FROM + negative OFFSET, the
         // floor grid is anchored at effectiveOffset = FROM + OFFSET, which
@@ -1027,22 +1082,162 @@ public class SampleByFillTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testFillKeyedAsOfJoinConsumesFillCursor() throws Exception {
+        // SAMPLE BY ... FILL(PREV) inside an ASOF JOIN. The fill factory now
+        // exposes recordCursorSupportsRandomAccess=false, a behaviour change
+        // vs master that the plan-only ExplainPlanTest snapshots cannot catch.
+        // Asserts that the join consumer reads every fill and data row,
+        // including rows produced by FILL_PREV emission, and that the ASOF
+        // pairing on (sym, ts) lands the correct rate value per row.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE prices (sym SYMBOL, price DOUBLE, ts TIMESTAMP) " +
+                    "TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE rates (sym SYMBOL, rate DOUBLE, ts TIMESTAMP) " +
+                    "TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO prices VALUES " +
+                    "('A', 1.0, '2024-01-01T00:00:00.000000Z')," +
+                    "('B', 2.0, '2024-01-01T00:00:00.000000Z')," +
+                    "('A', 3.0, '2024-01-01T02:00:00.000000Z')," +
+                    "('B', 4.0, '2024-01-01T02:00:00.000000Z')");
+            execute("INSERT INTO rates VALUES " +
+                    "('A', 1.1, '2024-01-01T00:00:00.000000Z')," +
+                    "('B', 2.2, '2024-01-01T00:00:00.000000Z')");
+            assertQueryNoLeakCheck(
+                    """
+                            ts\tsym\tfv\trate
+                            2024-01-01T00:00:00.000000Z\tA\t1.0\t1.1
+                            2024-01-01T00:00:00.000000Z\tB\t2.0\t2.2
+                            2024-01-01T01:00:00.000000Z\tA\t1.0\t1.1
+                            2024-01-01T01:00:00.000000Z\tB\t2.0\t2.2
+                            2024-01-01T02:00:00.000000Z\tA\t3.0\t1.1
+                            2024-01-01T02:00:00.000000Z\tB\t4.0\t2.2
+                            """,
+                    "SELECT * FROM (" +
+                            "SELECT f.ts, f.sym, f.fv, r.rate FROM (" +
+                            "SELECT ts, sym, first(price) fv FROM prices " +
+                            "SAMPLE BY 1h FILL(PREV) ALIGN TO CALENDAR" +
+                            ") f ASOF JOIN rates r ON f.sym = r.sym" +
+                            ") ORDER BY ts, sym",
+                    "ts", true, false
+            );
+        });
+    }
+
+    @Test
+    public void testFillKeyedInnerJoinConsumesFillCursor() throws Exception {
+        // SAMPLE BY ... FILL(PREV) inside an INNER JOIN against a static
+        // lookup table. Verifies the join consumer iterates the non-random-
+        // access fill cursor without losing rows.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE prices (sym SYMBOL, price DOUBLE, ts TIMESTAMP) " +
+                    "TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE labels (sym SYMBOL, name STRING)");
+            execute("INSERT INTO prices VALUES " +
+                    "('A', 1.0, '2024-01-01T00:00:00.000000Z')," +
+                    "('B', 2.0, '2024-01-01T00:00:00.000000Z')," +
+                    "('A', 3.0, '2024-01-01T02:00:00.000000Z')," +
+                    "('B', 4.0, '2024-01-01T02:00:00.000000Z')");
+            execute("INSERT INTO labels VALUES ('A', 'AAA'), ('B', 'BBB')");
+            assertQueryNoLeakCheck(
+                    """
+                            ts\tsym\tfv\tname
+                            2024-01-01T00:00:00.000000Z\tA\t1.0\tAAA
+                            2024-01-01T00:00:00.000000Z\tB\t2.0\tBBB
+                            2024-01-01T01:00:00.000000Z\tA\t1.0\tAAA
+                            2024-01-01T01:00:00.000000Z\tB\t2.0\tBBB
+                            2024-01-01T02:00:00.000000Z\tA\t3.0\tAAA
+                            2024-01-01T02:00:00.000000Z\tB\t4.0\tBBB
+                            """,
+                    "SELECT * FROM (" +
+                            "SELECT f.ts, f.sym, f.fv, l.name FROM (" +
+                            "SELECT ts, sym, first(price) fv FROM prices " +
+                            "SAMPLE BY 1h FILL(PREV) ALIGN TO CALENDAR" +
+                            ") f INNER JOIN labels l ON f.sym = l.sym" +
+                            ") ORDER BY ts, sym",
+                    "ts", true, false
+            );
+        });
+    }
+
+    @Test
+    public void testFillKeyedLeftJoinConsumesFillCursor() throws Exception {
+        // SAMPLE BY ... FILL(NULL) inside a LEFT JOIN. One key in the fill
+        // result has no matching lookup row -- the LEFT JOIN must still emit
+        // the fill row with NULL on the right side. Differs from INNER JOIN:
+        // the fill cursor's reduced semantics must not collapse the LEFT
+        // JOIN's null-padding behaviour.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE prices (sym SYMBOL, price DOUBLE, ts TIMESTAMP) " +
+                    "TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE labels (sym SYMBOL, name STRING)");
+            execute("INSERT INTO prices VALUES " +
+                    "('A', 1.0, '2024-01-01T00:00:00.000000Z')," +
+                    "('B', 2.0, '2024-01-01T00:00:00.000000Z')," +
+                    "('A', 3.0, '2024-01-01T02:00:00.000000Z')," +
+                    "('B', 4.0, '2024-01-01T02:00:00.000000Z')");
+            execute("INSERT INTO labels VALUES ('A', 'AAA')");
+            assertQueryNoLeakCheck(
+                    """
+                            ts\tsym\tfv\tname
+                            2024-01-01T00:00:00.000000Z\tA\t1.0\tAAA
+                            2024-01-01T00:00:00.000000Z\tB\t2.0\t
+                            2024-01-01T01:00:00.000000Z\tA\tnull\tAAA
+                            2024-01-01T01:00:00.000000Z\tB\tnull\t
+                            2024-01-01T02:00:00.000000Z\tA\t3.0\tAAA
+                            2024-01-01T02:00:00.000000Z\tB\t4.0\t
+                            """,
+                    "SELECT * FROM (" +
+                            "SELECT f.ts, f.sym, f.fv, l.name FROM (" +
+                            "SELECT ts, sym, first(price) fv FROM prices " +
+                            "SAMPLE BY 1h FILL(NULL) ALIGN TO CALENDAR" +
+                            ") f LEFT JOIN labels l ON f.sym = l.sym" +
+                            ") ORDER BY ts, sym",
+                    "ts", true, false
+            );
+        });
+    }
+
+    @Test
     public void testFillOffsetInvalidString() throws Exception {
         // Bind variable holding an unparseable offset value: SqlException at
-        // cursor.of() time (runtime), pointing at the offset's source position.
+        // cursor.of() time (runtime), pointing at the offset bind-variable
+        // position so operators can locate the offending token in the SQL.
         assertMemoryLeak(() -> {
             execute("CREATE TABLE test (ts TIMESTAMP, value DOUBLE) TIMESTAMP(ts) PARTITION BY DAY WAL");
             execute("INSERT INTO test VALUES ('2024-01-01T12:00:00.000000Z', 1.0)");
             drainWalQueue();
             bindVariableService.clear();
             bindVariableService.setStr(0, "not_an_offset");
-            try {
-                assertExceptionNoLeakCheck(
-                        "SELECT ts, avg(value) FROM test SAMPLE BY 1d FILL(NULL) ALIGN TO CALENDAR WITH OFFSET $1"
+            final String sql = "SELECT ts, avg(value) FROM test SAMPLE BY 1d FILL(NULL) ALIGN TO CALENDAR WITH OFFSET $1";
+            assertExceptionNoLeakCheck(sql, sql.indexOf("$1"), "invalid offset: not_an_offset");
+        });
+    }
+
+    @Test
+    public void testFillOffsetZeroLiteralNormalisation() throws Exception {
+        // SqlParser.isZeroOffsetToken normalises '00:00', '+00:00' and '-00:00'
+        // to the canonical ZERO_OFFSET singleton so downstream identity checks
+        // (e.g., the FILL+FROM+OFFSET wrap in SqlOptimiser) treat all three
+        // forms as a no-op offset. Regression guard: these three queries must
+        // produce byte-identical results.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (val DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO x VALUES " +
+                    "(1.0, '2024-01-01T00:00:00.000000Z')," +
+                    "(3.0, '2024-01-01T02:00:00.000000Z')");
+            final String expected = """
+                    ts\tfv
+                    2024-01-01T00:00:00.000000Z\t1.0
+                    2024-01-01T01:00:00.000000Z\t1.0
+                    2024-01-01T02:00:00.000000Z\t3.0
+                    """;
+            for (String offset : new String[]{"'00:00'", "'+00:00'", "'-00:00'"}) {
+                assertQueryNoLeakCheck(
+                        expected,
+                        "SELECT ts, first(val) fv FROM x " +
+                                "SAMPLE BY 1h FILL(PREV) ALIGN TO CALENDAR WITH OFFSET " + offset,
+                        "ts", false, false
                 );
-                Assert.fail("expected SqlException for unparseable offset");
-            } catch (SqlException e) {
-                TestUtils.assertContains(e.getFlyweightMessage(), "invalid offset: not_an_offset");
             }
         });
     }
@@ -1101,6 +1296,47 @@ public class SampleByFillTest extends AbstractCairoTest {
                     "SELECT ts, first(val) fv FROM t SAMPLE BY 1h FILL(PREV) ALIGN TO CALENDAR")) {
                 assertCursor(expected, factory, false, false, false, sqlExecutionContext);
                 assertCursor(expected, factory, false, false, false, sqlExecutionContext);
+            }
+        });
+    }
+
+    @Test
+    public void testFillReExecutionOffsetBindFlipZeroNonZero() throws Exception {
+        // Re-execute the same compiled FILL factory with an OFFSET bind variable
+        // flipping zero <-> non-zero across runs. Exercises Branch-1 vs Branch-3
+        // in SampleByFillRecordCursor.initialize: when calendarOffset != 0 and
+        // fromTs == LONG_NULL, MonthTimestampMicrosSampler.setOffset (and the
+        // year/nano variants) leave startDay/startMonth untouched, so a stale
+        // setStart from a previous execute would corrupt the bucket grid.
+        // The fix: every of() must reach a clean bucket grid regardless of the
+        // prior bind value. Three flips lock the regression: 0 -> 10 -> 0.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE test (ts TIMESTAMP, value DOUBLE) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("INSERT INTO test VALUES " +
+                    "('2024-01-01T12:00:00.000000Z', 1.0)," +
+                    "('2024-01-03T12:00:00.000000Z', 3.0)");
+            drainWalQueue();
+            final String expectedZero = """
+                    ts\tavg
+                    2024-01-01T00:00:00.000000Z\t1.0
+                    2024-01-02T00:00:00.000000Z\tnull
+                    2024-01-03T00:00:00.000000Z\t3.0
+                    """;
+            final String expectedTen = """
+                    ts\tavg
+                    2024-01-01T10:00:00.000000Z\t1.0
+                    2024-01-02T10:00:00.000000Z\tnull
+                    2024-01-03T10:00:00.000000Z\t3.0
+                    """;
+            bindVariableService.clear();
+            bindVariableService.setStr(0, "00:00");
+            try (RecordCursorFactory factory = select(
+                    "SELECT ts, avg(value) FROM test SAMPLE BY 1d FILL(NULL) ALIGN TO CALENDAR WITH OFFSET $1")) {
+                assertCursor(expectedZero, factory, false, false, false, sqlExecutionContext);
+                bindVariableService.setStr(0, "10:00");
+                assertCursor(expectedTen, factory, false, false, false, sqlExecutionContext);
+                bindVariableService.setStr(0, "00:00");
+                assertCursor(expectedZero, factory, false, false, false, sqlExecutionContext);
             }
         });
     }

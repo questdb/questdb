@@ -128,6 +128,7 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
             RecordCursorFactory base,
             Function fromFunc,
             Function toFunc,
+            int toFuncPos,
             long samplingInterval,
             char samplingIntervalUnit,
             TimestampSampler timestampSampler,
@@ -167,7 +168,7 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
             }
             cursorLocal = new SampleByFillCursor(
                     metadata, timestampSampler,
-                    fromFunc, toFunc, fillModes, constantFills,
+                    fromFunc, toFunc, toFuncPos, fillModes, constantFills,
                     timestampIndex, timestampType, localHasPrevFill,
                     keySink, keysMap, keyColIndices, symbolTableColIndices,
                     offsetFunc, offsetFuncPos,
@@ -373,6 +374,7 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
         // present. toEmitCnt == 0 means the bucket is dense -- skip the scan.
         private int toEmitCnt;
         private final Function toFunc;
+        private final int toFuncPos;
         // Runtime-constant TIME ZONE Function (null when no TZ clause). Re-read
         // per of() so a bind variable picks up its current value -- pre-resolving
         // at compile time would silently bake the first-execute value.
@@ -387,6 +389,7 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
                 TimestampSampler timestampSampler,
                 @NotNull Function fromFunc,
                 @NotNull Function toFunc,
+                int toFuncPos,
                 IntList fillModes,
                 ObjList<Function> constantFills,
                 int timestampIndex,
@@ -416,6 +419,7 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
             this.timestampSampler = timestampSampler;
             this.fromFunc = fromFunc;
             this.toFunc = toFunc;
+            this.toFuncPos = toFuncPos;
             this.fillModes = fillModes;
             this.constantFills = constantFills;
             this.timestampIndex = timestampIndex;
@@ -892,6 +896,24 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
             Function.init(constantFills, baseCursor, executionContext, null);
             fromFunc.init(baseCursor, executionContext);
             toFunc.init(baseCursor, executionContext);
+            // Reject FROM > TO at the same point as HORIZON JOIN RANGE
+            // (SqlCodeGenerator.java) and MAT VIEW REFRESH RANGE
+            // (SqlCompilerImpl.java). Both surface a clear SQL-level error
+            // pointing at the offending TO expression. Without this guard
+            // SAMPLE BY silently returns zero rows, masking what is almost
+            // always a query-construction bug. FROM == TO is allowed (a
+            // single-point range) -- only strict inversion is rejected.
+            // LONG_NULL on either side means the clause is absent / null /
+            // unbound and the bound is not in effect; only check when both
+            // are concrete timestamps.
+            final TimestampDriver driver = timestampDriver;
+            if (fromFunc != driver.getTimestampConstantNull() && toFunc != driver.getTimestampConstantNull()) {
+                final long fromTs = driver.from(fromFunc.getTimestamp(null), ColumnType.getTimestampType(fromFunc.getType()));
+                final long toTs = driver.from(toFunc.getTimestamp(null), ColumnType.getTimestampType(toFunc.getType()));
+                if (fromTs != Numbers.LONG_NULL && toTs != Numbers.LONG_NULL && fromTs > toTs) {
+                    throw SqlException.$(toFuncPos, "TO timestamp must not be earlier than FROM timestamp");
+                }
+            }
             offsetFunc.init(baseCursor, executionContext);
             // Evaluate runtime-constant OFFSET into native units. Mirrors
             // AbstractSampleByCursor.parseParams. Null/absent leaves

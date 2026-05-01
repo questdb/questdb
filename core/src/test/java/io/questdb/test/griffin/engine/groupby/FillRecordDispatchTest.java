@@ -29,6 +29,7 @@ import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.test.AbstractCairoTest;
 import org.junit.Assert;
+import org.junit.Ignore;
 import org.junit.Test;
 
 /**
@@ -127,6 +128,143 @@ public class FillRecordDispatchTest extends AbstractCairoTest {
                             """,
                     "SELECT ts, 'tag' AS c, first(i) AS a, sum(j) AS b FROM x " +
                             "SAMPLE BY 1h FILL(PREV) ALIGN TO CALENDAR",
+                    "ts", false, false
+            );
+        });
+    }
+
+    @Test
+    public void testCrossColumnPrevToAggregateBool() throws Exception {
+        // Cross-col PREV(s) where the source aggregate is BOOLEAN exercises
+        // FillRecord.getBool's "(mode == FILL_PREV_SELF || mode >= 0) &&
+        // hasKeyPrev() -> prevRecord.getBool(mode >= 0 ? mode : col)"
+        // branch. Mirrors testDoubleCrossColumnPrevToAggregate.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (b BOOLEAN, i INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO x VALUES " +
+                    "(true, 10, '2024-01-01T00:00:00.000000Z')," +
+                    "(false, 30, '2024-01-01T02:00:00.000000Z')");
+            // FILL(PREV, PREV(s)) -- a at 01:00 pulls s's prev value (true).
+            assertQueryNoLeakCheck(
+                    """
+                            ts\ts\ta
+                            2024-01-01T00:00:00.000000Z\ttrue\ttrue
+                            2024-01-01T01:00:00.000000Z\ttrue\ttrue
+                            2024-01-01T02:00:00.000000Z\tfalse\tfalse
+                            """,
+                    "SELECT ts, first(b) AS s, first(b) AS a FROM x " +
+                            "SAMPLE BY 1h FILL(PREV, PREV(s)) ALIGN TO CALENDAR",
+                    "ts", false, false
+            );
+        });
+    }
+
+    @Test
+    public void testCrossColumnPrevToAggregateChar() throws Exception {
+        // CHAR cross-col PREV exercises FillRecord.getChar's mode>=0 arm.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (c CHAR, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO x VALUES " +
+                    "('A', '2024-01-01T00:00:00.000000Z')," +
+                    "('B', '2024-01-01T02:00:00.000000Z')");
+            assertQueryNoLeakCheck(
+                    """
+                            ts\ts\ta
+                            2024-01-01T00:00:00.000000Z\tA\tA
+                            2024-01-01T01:00:00.000000Z\tA\tA
+                            2024-01-01T02:00:00.000000Z\tB\tB
+                            """,
+                    "SELECT ts, first(c) AS s, first(c) AS a FROM x " +
+                            "SAMPLE BY 1h FILL(PREV, PREV(s)) ALIGN TO CALENDAR",
+                    "ts", false, false
+            );
+        });
+    }
+
+    @Test
+    public void testCrossColumnPrevToAggregateInt() throws Exception {
+        // INT cross-col PREV exercises FillRecord.getInt's mode>=0 arm.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (i INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO x VALUES " +
+                    "(10, '2024-01-01T00:00:00.000000Z')," +
+                    "(30, '2024-01-01T02:00:00.000000Z')");
+            assertQueryNoLeakCheck(
+                    """
+                            ts\ts\ta
+                            2024-01-01T00:00:00.000000Z\t10\t10
+                            2024-01-01T01:00:00.000000Z\t10\t10
+                            2024-01-01T02:00:00.000000Z\t30\t30
+                            """,
+                    "SELECT ts, first(i) AS s, first(i) AS a FROM x " +
+                            "SAMPLE BY 1h FILL(PREV, PREV(s)) ALIGN TO CALENDAR",
+                    "ts", false, false
+            );
+        });
+    }
+
+    @Test
+    public void testCrossColumnPrevToAggregateLong() throws Exception {
+        // LONG cross-col PREV exercises FillRecord.getLong's mode>=0 arm.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (l LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO x VALUES " +
+                    "(1_000_000, '2024-01-01T00:00:00.000000Z')," +
+                    "(3_000_000, '2024-01-01T02:00:00.000000Z')");
+            assertQueryNoLeakCheck(
+                    """
+                            ts\ts\ta
+                            2024-01-01T00:00:00.000000Z\t1000000\t1000000
+                            2024-01-01T01:00:00.000000Z\t1000000\t1000000
+                            2024-01-01T02:00:00.000000Z\t3000000\t3000000
+                            """,
+                    "SELECT ts, first(l) AS s, first(l) AS a FROM x " +
+                            "SAMPLE BY 1h FILL(PREV, PREV(s)) ALIGN TO CALENDAR",
+                    "ts", false, false
+            );
+        });
+    }
+
+    @Test
+    public void testCrossColumnPrevToAggregateSymbol() throws Exception {
+        // SYMBOL cross-col PREV exercises FillRecord.getSym's mode>=0 arm
+        // including symbol-table lookup through the cached prev row.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (s SYMBOL, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO x VALUES " +
+                    "('alpha', '2024-01-01T00:00:00.000000Z')," +
+                    "('beta', '2024-01-01T02:00:00.000000Z')");
+            assertQueryNoLeakCheck(
+                    """
+                            ts\tsv\ta
+                            2024-01-01T00:00:00.000000Z\talpha\talpha
+                            2024-01-01T01:00:00.000000Z\talpha\talpha
+                            2024-01-01T02:00:00.000000Z\tbeta\tbeta
+                            """,
+                    "SELECT ts, first(s) AS sv, first(s) AS a FROM x " +
+                            "SAMPLE BY 1h FILL(PREV, PREV(sv)) ALIGN TO CALENDAR",
+                    "ts", false, false
+            );
+        });
+    }
+
+    @Test
+    public void testCrossColumnPrevToAggregateTimestamp() throws Exception {
+        // TIMESTAMP cross-col PREV exercises FillRecord.getTimestamp's mode>=0 arm.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (t TIMESTAMP, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO x VALUES " +
+                    "('2023-12-31T00:00:00.000000Z', '2024-01-01T00:00:00.000000Z')," +
+                    "('2023-12-31T05:00:00.000000Z', '2024-01-01T02:00:00.000000Z')");
+            assertQueryNoLeakCheck(
+                    """
+                            ts\ts\ta
+                            2024-01-01T00:00:00.000000Z\t2023-12-31T00:00:00.000000Z\t2023-12-31T00:00:00.000000Z
+                            2024-01-01T01:00:00.000000Z\t2023-12-31T00:00:00.000000Z\t2023-12-31T00:00:00.000000Z
+                            2024-01-01T02:00:00.000000Z\t2023-12-31T05:00:00.000000Z\t2023-12-31T05:00:00.000000Z
+                            """,
+                    "SELECT ts, first(t) AS s, first(t) AS a FROM x " +
+                            "SAMPLE BY 1h FILL(PREV, PREV(s)) ALIGN TO CALENDAR",
                     "ts", false, false
             );
         });
@@ -515,43 +653,47 @@ public class FillRecordDispatchTest extends AbstractCairoTest {
     @Test
     public void testGetGeoByteDispatch() throws Exception {
         // GEOHASH <= 7 bits -> stored as byte. first(g) + FILL(PREV) exercises
-        // FillRecord.getGeoByte via the FILL_PREV_SELF branch. Use a row-count
-        // assertion to avoid coupling on geohash text rendering.
+        // FillRecord.getGeoByte via the FILL_PREV_SELF branch. Two distinct
+        // values at 00:00 and 02:00 with a fill at 01:00 lets us pin the gap
+        // row to the carried-forward value rather than just row count.
         assertMemoryLeak(() -> {
             execute("CREATE TABLE x (g GEOHASH(5b), ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
             execute("INSERT INTO x VALUES " +
-                    "(rnd_geohash(5), '2024-01-01T00:00:00.000000Z')," +
-                    "(rnd_geohash(5), '2024-01-01T02:00:00.000000Z')");
+                    "(##00111, '2024-01-01T00:00:00.000000Z')," +
+                    "(##11000, '2024-01-01T02:00:00.000000Z')");
             assertQueryNoLeakCheck(
-                    "c\n3\n",
-                    "SELECT count(*) c FROM (" +
-                            "SELECT ts, first(g) fg FROM x " +
-                            "SAMPLE BY 1h FILL(PREV) ALIGN TO CALENDAR" +
-                            ")",
-                    null, false, true
+                    """
+                            ts\tfg
+                            2024-01-01T00:00:00.000000Z\t7
+                            2024-01-01T01:00:00.000000Z\t7
+                            2024-01-01T02:00:00.000000Z\ts
+                            """,
+                    "SELECT ts, first(g) fg FROM x " +
+                            "SAMPLE BY 1h FILL(PREV) ALIGN TO CALENDAR",
+                    "ts", false, false
             );
         });
     }
 
     @Test
     public void testGetGeoIntDispatch() throws Exception {
-        // GEOHASH 16..31 bits -> stored as int. Use a numeric-size geohash so
-        // the constant is unambiguous.
+        // GEOHASH 16..31 bits -> stored as int. Two distinct literal geohashes
+        // pin the FILL_PREV_SELF carry-forward to a specific char value.
         assertMemoryLeak(() -> {
             execute("CREATE TABLE x (g GEOHASH(4c), ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
             execute("INSERT INTO x VALUES " +
-                    "(rnd_geohash(20), '2024-01-01T00:00:00.000000Z')," +
-                    "(rnd_geohash(20), '2024-01-01T02:00:00.000000Z')");
-            // Cannot assert on rnd_geohash output text directly; instead check
-            // the query runs without error and emits the 3 rows including the
-            // FILL_PREV_SELF gap row (which proves getGeoInt dispatches).
+                    "('sp05', '2024-01-01T00:00:00.000000Z')," +
+                    "('u33d', '2024-01-01T02:00:00.000000Z')");
             assertQueryNoLeakCheck(
-                    "c\n3\n",
-                    "SELECT count(*) c FROM (" +
-                            "SELECT ts, first(g) fg FROM x " +
-                            "SAMPLE BY 1h FILL(PREV) ALIGN TO CALENDAR" +
-                            ")",
-                    null, false, true
+                    """
+                            ts\tfg
+                            2024-01-01T00:00:00.000000Z\tsp05
+                            2024-01-01T01:00:00.000000Z\tsp05
+                            2024-01-01T02:00:00.000000Z\tu33d
+                            """,
+                    "SELECT ts, first(g) fg FROM x " +
+                            "SAMPLE BY 1h FILL(PREV) ALIGN TO CALENDAR",
+                    "ts", false, false
             );
         });
     }
@@ -562,15 +704,18 @@ public class FillRecordDispatchTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE x (g GEOHASH(10c), ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
             execute("INSERT INTO x VALUES " +
-                    "(rnd_geohash(50), '2024-01-01T00:00:00.000000Z')," +
-                    "(rnd_geohash(50), '2024-01-01T02:00:00.000000Z')");
+                    "('sp052n01b3', '2024-01-01T00:00:00.000000Z')," +
+                    "('u33d8b1234', '2024-01-01T02:00:00.000000Z')");
             assertQueryNoLeakCheck(
-                    "c\n3\n",
-                    "SELECT count(*) c FROM (" +
-                            "SELECT ts, first(g) fg FROM x " +
-                            "SAMPLE BY 1h FILL(PREV) ALIGN TO CALENDAR" +
-                            ")",
-                    null, false, true
+                    """
+                            ts\tfg
+                            2024-01-01T00:00:00.000000Z\tsp052n01b3
+                            2024-01-01T01:00:00.000000Z\tsp052n01b3
+                            2024-01-01T02:00:00.000000Z\tu33d8b1234
+                            """,
+                    "SELECT ts, first(g) fg FROM x " +
+                            "SAMPLE BY 1h FILL(PREV) ALIGN TO CALENDAR",
+                    "ts", false, false
             );
         });
     }
@@ -581,15 +726,18 @@ public class FillRecordDispatchTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE x (g GEOHASH(12b), ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
             execute("INSERT INTO x VALUES " +
-                    "(rnd_geohash(12), '2024-01-01T00:00:00.000000Z')," +
-                    "(rnd_geohash(12), '2024-01-01T02:00:00.000000Z')");
+                    "(##011001100101, '2024-01-01T00:00:00.000000Z')," +
+                    "(##111000111000, '2024-01-01T02:00:00.000000Z')");
             assertQueryNoLeakCheck(
-                    "c\n3\n",
-                    "SELECT count(*) c FROM (" +
-                            "SELECT ts, first(g) fg FROM x " +
-                            "SAMPLE BY 1h FILL(PREV) ALIGN TO CALENDAR" +
-                            ")",
-                    null, false, true
+                    """
+                            ts\tfg
+                            2024-01-01T00:00:00.000000Z\t011001100101
+                            2024-01-01T01:00:00.000000Z\t011001100101
+                            2024-01-01T02:00:00.000000Z\t111000111000
+                            """,
+                    "SELECT ts, first(g) fg FROM x " +
+                            "SAMPLE BY 1h FILL(PREV) ALIGN TO CALENDAR",
+                    "ts", false, false
             );
         });
     }

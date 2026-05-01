@@ -943,6 +943,70 @@ public class SampleByFillPrevTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testFillPrevKeyedDenseBucketsEmitNoFillRows() throws Exception {
+        // Pin the dense-bucket fast-path: when every key has a data row in
+        // every bucket (toEmitCnt == 0 at the start of bucket emission),
+        // SampleByFillRecordCursor short-circuits, advances to the next
+        // bucket and resets keyPresent without invoking emitNextFillRow.
+        // Visible end-to-end as: row count == data row count, no FILL rows
+        // injected. Regression guard for any change to the toEmitCnt
+        // bookkeeping (#6, #93) that could leak gap rows into a dense bucket.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE weather (city STRING, temp DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO weather VALUES " +
+                    "('London', 10.0, '2024-01-01T00:00:00.000000Z')," +
+                    "('Paris', 20.0, '2024-01-01T00:00:00.000000Z')," +
+                    "('London', 11.0, '2024-01-01T01:00:00.000000Z')," +
+                    "('Paris', 21.0, '2024-01-01T01:00:00.000000Z')," +
+                    "('London', 12.0, '2024-01-01T02:00:00.000000Z')," +
+                    "('Paris', 22.0, '2024-01-01T02:00:00.000000Z')");
+            // 3 buckets x 2 keys, all dense -> exactly 6 rows out, no fills.
+            assertQueryNoLeakCheck(
+                    """
+                            ts\tcity\tavg
+                            2024-01-01T00:00:00.000000Z\tLondon\t10.0
+                            2024-01-01T00:00:00.000000Z\tParis\t20.0
+                            2024-01-01T01:00:00.000000Z\tLondon\t11.0
+                            2024-01-01T01:00:00.000000Z\tParis\t21.0
+                            2024-01-01T02:00:00.000000Z\tLondon\t12.0
+                            2024-01-01T02:00:00.000000Z\tParis\t22.0
+                            """,
+                    "SELECT * FROM (" +
+                            "SELECT ts, city, avg(temp) FROM weather " +
+                            "SAMPLE BY 1h FILL(PREV) ALIGN TO CALENDAR" +
+                            ") ORDER BY ts, city",
+                    "ts", true, false
+            );
+        });
+    }
+
+    @Test
+    public void testFillPrevKeyedHighCardinalityCorrectness() throws Exception {
+        // High-cardinality (10_000 distinct keys) keyed FILL(PREV) correctness.
+        // Every key has a single data row in bucket 0; FROM..TO covers 5 buckets,
+        // so the fill cursor must emit one row per (bucket, key) for buckets
+        // 1..4 carrying the prev value forward. Asserts (a) total row count is
+        // 10_000 * 5 = 50_000 (no drops or duplicates from toEmitCnt-- under
+        // duplicate (bucket, key) handling, no leaks from emitNextFillRow),
+        // (b) every fill row carries the right prev value (sum invariant).
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (k SYMBOL, val DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO t " +
+                    "SELECT 'k_' || x, 1.0, '2024-01-01T00:00:00.000000Z'::TIMESTAMP " +
+                    "FROM long_sequence(10000)");
+            assertQueryNoLeakCheck(
+                    "c\ts\tmn\tmx\n50000\t50000.0\t1.0\t1.0\n",
+                    "SELECT count(*) c, sum(fv) s, min(fv) mn, max(fv) mx FROM (" +
+                            "SELECT ts, k, first(val) fv FROM t " +
+                            "SAMPLE BY 1h FROM '2024-01-01T00:00:00.000000Z' " +
+                            "TO '2024-01-01T05:00:00.000000Z' FILL(PREV) ALIGN TO CALENDAR" +
+                            ")",
+                    null, false, true
+            );
+        });
+    }
+
+    @Test
     public void testFillPrevKeyedIndependent() throws Exception {
         assertMemoryLeak(() -> {
             // Tests that per-key prev tracking does not bleed between keys.
@@ -1691,6 +1755,54 @@ public class SampleByFillPrevTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testFillPrevSortStrategiesReExecuteIdenticalOutput() throws Exception {
+        // Re-execute the same compiled FILL factory under each
+        // SampleBySortStrategy and assert output is byte-identical across
+        // re-executions. The sort wrapper for each strategy is a different
+        // cursor: light_encoded -> EncodedSortLightRecordCursor,
+        // full_encoded -> EncodedSortRecordCursor,
+        // light_recordchain -> SortedLightRecordCursor,
+        // full_recordchain -> SortedRecordCursor.
+        // Each cursor's of() reuse path (chain.clear vs chain.reopen, plus
+        // SortKeyEncoder.buildRankMaps) must leave no state from the prior
+        // run. A regression in any sort cursor's reuse path corrupts the
+        // FILL output on the second execute -- this test catches it
+        // end-to-end without depending on cursor-internal reflection.
+        final String[] strategies = {"light_encoded", "full_encoded", "light_recordchain", "full_recordchain"};
+        final String expected = """
+                ts\tk\tsum
+                2024-01-01T00:00:00.000000Z\tA\t1.0
+                2024-01-01T00:00:00.000000Z\tB\t2.0
+                2024-01-01T01:00:00.000000Z\tA\t1.0
+                2024-01-01T01:00:00.000000Z\tB\t2.0
+                2024-01-01T02:00:00.000000Z\tA\t3.0
+                2024-01-01T02:00:00.000000Z\tB\t2.0
+                """;
+        try {
+            for (String strategy : strategies) {
+                setProperty(PropertyKey.CAIRO_SQL_SAMPLEBY_FILL_SORT_STRATEGY, strategy);
+                assertMemoryLeak(() -> {
+                    execute("DROP TABLE IF EXISTS t");
+                    execute("CREATE TABLE t (k SYMBOL, val DOUBLE, ts TIMESTAMP) " +
+                            "TIMESTAMP(ts) PARTITION BY DAY");
+                    execute("INSERT INTO t VALUES " +
+                            "('A', 1.0, '2024-01-01T00:00:00.000000Z')," +
+                            "('B', 2.0, '2024-01-01T00:00:00.000000Z')," +
+                            "('A', 3.0, '2024-01-01T02:00:00.000000Z')");
+                    try (RecordCursorFactory factory = select(
+                            "SELECT * FROM (SELECT ts, k, sum(val) FROM t " +
+                                    "SAMPLE BY 1h FILL(PREV) ALIGN TO CALENDAR) ORDER BY ts, k")) {
+                        assertCursor(expected, factory, true, false, false, sqlExecutionContext);
+                        assertCursor(expected, factory, true, false, false, sqlExecutionContext);
+                    }
+                });
+            }
+        } finally {
+            setProperty(PropertyKey.CAIRO_SQL_SAMPLEBY_FILL_SORT_STRATEGY, "light_encoded");
+        }
+    }
+
+    @Test
     public void testFillPrevSortStrategiesProduceIdenticalOutput() throws Exception {
         // Pin the prevRecord/baseRecord independence contract: the fill cursor
         // captures prevRecord = baseCursor.getRecordB() and interleaves reads of
@@ -1717,24 +1829,28 @@ public class SampleByFillPrevTest extends AbstractCairoTest {
                 2024-01-01T03:00:00.000000Z\tA\t3.0\t30.0
                 2024-01-01T03:00:00.000000Z\tB\t4.0\t40.0
                 """;
-        for (String strategy : strategies) {
-            setProperty(PropertyKey.CAIRO_SQL_SAMPLEBY_FILL_SORT_STRATEGY, strategy);
-            assertMemoryLeak(() -> {
-                execute("DROP TABLE IF EXISTS t");
-                execute("CREATE TABLE t (ts TIMESTAMP, k SYMBOL, a DOUBLE, b DOUBLE) " +
-                        "TIMESTAMP(ts) PARTITION BY DAY");
-                execute("INSERT INTO t VALUES " +
-                        "('2024-01-01T00:00:00.000000Z', 'A', 1.0, 10.0), " +
-                        "('2024-01-01T01:00:00.000000Z', 'B', 2.0, 20.0), " +
-                        "('2024-01-01T02:00:00.000000Z', 'A', 3.0, 30.0), " +
-                        "('2024-01-01T03:00:00.000000Z', 'B', 4.0, 40.0)");
-                assertQueryNoLeakCheck(
-                        expected,
-                        "SELECT ts, k, sum(a) AS a, sum(b) AS b FROM t " +
-                                "SAMPLE BY 1h FILL(PREV) ALIGN TO CALENDAR ORDER BY ts, k",
-                        "ts", true, false
-                );
-            });
+        try {
+            for (String strategy : strategies) {
+                setProperty(PropertyKey.CAIRO_SQL_SAMPLEBY_FILL_SORT_STRATEGY, strategy);
+                assertMemoryLeak(() -> {
+                    execute("DROP TABLE IF EXISTS t");
+                    execute("CREATE TABLE t (ts TIMESTAMP, k SYMBOL, a DOUBLE, b DOUBLE) " +
+                            "TIMESTAMP(ts) PARTITION BY DAY");
+                    execute("INSERT INTO t VALUES " +
+                            "('2024-01-01T00:00:00.000000Z', 'A', 1.0, 10.0), " +
+                            "('2024-01-01T01:00:00.000000Z', 'B', 2.0, 20.0), " +
+                            "('2024-01-01T02:00:00.000000Z', 'A', 3.0, 30.0), " +
+                            "('2024-01-01T03:00:00.000000Z', 'B', 4.0, 40.0)");
+                    assertQueryNoLeakCheck(
+                            expected,
+                            "SELECT ts, k, sum(a) AS a, sum(b) AS b FROM t " +
+                                    "SAMPLE BY 1h FILL(PREV) ALIGN TO CALENDAR ORDER BY ts, k",
+                            "ts", true, false
+                    );
+                });
+            }
+        } finally {
+            setProperty(PropertyKey.CAIRO_SQL_SAMPLEBY_FILL_SORT_STRATEGY, "light_encoded");
         }
     }
 
