@@ -65,34 +65,29 @@ import java.util.Comparator;
 import java.util.concurrent.TimeUnit;
 
 /**
- * End-to-end SAMPLE BY 1m FILL(PREV) benchmark that measures the new
- * fast path ({@link SampleByFillRecordCursorFactory}) against the legacy
- * non-parallel cursor ({@link SampleByFillPrevRecordCursorFactory}).
+ * End-to-end SAMPLE BY 1m FILL(PREV) benchmark comparing the fast path
+ * ({@link SampleByFillRecordCursorFactory}) against the legacy cursor
+ * ({@link SampleByFillPrevRecordCursorFactory}). Path selection is gated
+ * by query shape: ALIGN TO CALENDAR triggers the SAMPLE BY to GROUP BY
+ * rewrite (fast path); ALIGN TO FIRST OBSERVATION blocks it (legacy).
  * <p>
- * The fast path does two scans of the base cursor (pass 1 discovers keys,
- * pass 2 emits rows) plus a per-gap iteration over the materialised keys
- * map. Payoff: parallel Async GroupBy dispatch. Cost: pure overhead in a
- * single-worker context.
- * <p>
- * The path the compiler selects is gated by query shape: ALIGN TO CALENDAR
- * triggers the SAMPLE BY to GROUP BY rewrite (fast path); ALIGN TO FIRST
- * OBSERVATION blocks the rewrite (legacy). There is no config toggle.
- * <p>
- * Two scenarios, two paths each:
+ * Params:
  * <ul>
- *   <li>{@code WORST_CASE}: 50k keys, sparse (~1% density), 200 buckets,
- *       single worker. Fast path carries two-pass overhead without
- *       parallelism to offset it.</li>
- *   <li>{@code POSITIVE_CASE}: 1k keys, dense (no gaps), 500 buckets,
- *       worker count configurable via -Dsample.by.fill.workers (default 4).
- *       Parallel Async GroupBy should amortize the two-pass cost.</li>
+ *   <li>{@code path}: {@code FAST_PATH} or {@code LEGACY}.</li>
+ *   <li>{@code scenario}: {@code WORST_CASE} (50k sparse keys, fast path
+ *       pays two-pass overhead per gap), {@code POSITIVE_CASE} (1k dense
+ *       keys, aggregation dominates), {@code BEST_CASE} (high R, low K,
+ *       fixed bucket span -- aggregated set A = K * B stays constant).</li>
+ *   <li>{@code rowCount}: base cursor row count.</li>
+ *   <li>{@code workers}: query worker pool size; >1 enables Async GroupBy.</li>
+ *   <li>{@code aggFunc}: aggregation function applied per bucket.</li>
+ *   <li>{@code sort}: sort factory wrapping AGB output before the fill
+ *       cursor consumes it (see field comment for the four variants).</li>
  * </ul>
  * <p>
  * A {@code @Setup(Level.Trial)} routing guard walks the compiled factory
- * chain (base-factory traversal, the same pattern as
- * {@code RecordCursorMemoryUsageTest.testSampleByCursorReleasesMemoryOnClose})
- * to confirm each scenario+path pair actually hits the expected factory
- * class. A silent routing drift would corrupt the numbers.
+ * chain to confirm each {@code scenario}+{@code path} pair hits the
+ * expected factory class. Silent routing drift would corrupt the numbers.
  */
 @State(Scope.Benchmark)
 @BenchmarkMode(Mode.AverageTime)
