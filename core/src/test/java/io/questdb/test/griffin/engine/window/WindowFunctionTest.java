@@ -36,6 +36,7 @@ import io.questdb.griffin.engine.functions.window.CountSymbolWindowFunctionFacto
 import io.questdb.griffin.engine.functions.window.CountVarcharWindowFunctionFactory;
 import io.questdb.griffin.engine.functions.window.CovarPopDoubleWindowFunctionFactory;
 import io.questdb.griffin.engine.functions.window.CovarSampDoubleWindowFunctionFactory;
+import io.questdb.griffin.engine.functions.window.CumeDistFunctionFactory;
 import io.questdb.griffin.engine.functions.window.DenseRankFunctionFactory;
 import io.questdb.griffin.engine.functions.window.FirstValueDoubleWindowFunctionFactory;
 import io.questdb.griffin.engine.functions.window.KSumDoubleWindowFunctionFactory;
@@ -50,7 +51,6 @@ import io.questdb.griffin.engine.functions.window.LeadLongFunctionFactory;
 import io.questdb.griffin.engine.functions.window.LeadTimestampFunctionFactory;
 import io.questdb.griffin.engine.functions.window.MaxDoubleWindowFunctionFactory;
 import io.questdb.griffin.engine.functions.window.MinDoubleWindowFunctionFactory;
-import io.questdb.griffin.engine.functions.window.CumeDistFunctionFactory;
 import io.questdb.griffin.engine.functions.window.NthValueDoubleWindowFunctionFactory;
 import io.questdb.griffin.engine.functions.window.NtileFunctionFactory;
 import io.questdb.griffin.engine.functions.window.RankFunctionFactory;
@@ -12154,19 +12154,19 @@ public class WindowFunctionTest extends AbstractCairoTest {
             executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, i long, val double) timestamp(ts)", timestampType.getTypeName());
             execute(timestampType == TestTimestampType.MICRO
                     ? "insert into tab values " +
-                    "(1000000, 1, 10.0), (1000001, 2, 100.0), " +
-                    "(2000000, 1, 20.0), (2000001, 2, 200.0), " +
-                    "(3000000, 1, 30.0), (3000001, 2, 300.0), " +
-                    "(4000000, 1, 40.0), (4000001, 2, 400.0), " +
-                    "(5000000, 1, 50.0), (5000001, 2, 500.0), " +
-                    "(6000000, 1, 60.0), (6000001, 2, 600.0)"
+                      "(1000000, 1, 10.0), (1000001, 2, 100.0), " +
+                      "(2000000, 1, 20.0), (2000001, 2, 200.0), " +
+                      "(3000000, 1, 30.0), (3000001, 2, 300.0), " +
+                      "(4000000, 1, 40.0), (4000001, 2, 400.0), " +
+                      "(5000000, 1, 50.0), (5000001, 2, 500.0), " +
+                      "(6000000, 1, 60.0), (6000001, 2, 600.0)"
                     : "insert into tab values " +
-                    "(1000000000, 1, 10.0), (1000000001, 2, 100.0), " +
-                    "(2000000000, 1, 20.0), (2000000001, 2, 200.0), " +
-                    "(3000000000, 1, 30.0), (3000000001, 2, 300.0), " +
-                    "(4000000000, 1, 40.0), (4000000001, 2, 400.0), " +
-                    "(5000000000, 1, 50.0), (5000000001, 2, 500.0), " +
-                    "(6000000000, 1, 60.0), (6000000001, 2, 600.0)");
+                      "(1000000000, 1, 10.0), (1000000001, 2, 100.0), " +
+                      "(2000000000, 1, 20.0), (2000000001, 2, 200.0), " +
+                      "(3000000000, 1, 30.0), (3000000001, 2, 300.0), " +
+                      "(4000000000, 1, 40.0), (4000000001, 2, 400.0), " +
+                      "(5000000000, 1, 50.0), (5000000001, 2, 500.0), " +
+                      "(6000000000, 1, 60.0), (6000000001, 2, 600.0)");
 
             assertQueryNoLeakCheck(
                     timestampType == TestTimestampType.MICRO
@@ -12278,13 +12278,13 @@ public class WindowFunctionTest extends AbstractCairoTest {
             executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, i long, val double) timestamp(ts)", timestampType.getTypeName());
             execute(timestampType == TestTimestampType.MICRO
                     ? "insert into tab values " +
-                    "(1000000, 1, 10.0), (1000001, 2, 11.0), " +
-                    "(2000000, 1, 20.0), (2000001, 2, 22.0), " +
-                    "(5000000, 1, 50.0), (5000001, 2, 55.0)"
+                      "(1000000, 1, 10.0), (1000001, 2, 11.0), " +
+                      "(2000000, 1, 20.0), (2000001, 2, 22.0), " +
+                      "(5000000, 1, 50.0), (5000001, 2, 55.0)"
                     : "insert into tab values " +
-                    "(1000000000, 1, 10.0), (1000000001, 2, 11.0), " +
-                    "(2000000000, 1, 20.0), (2000000001, 2, 22.0), " +
-                    "(5000000000, 1, 50.0), (5000000001, 2, 55.0)");
+                      "(1000000000, 1, 10.0), (1000000001, 2, 11.0), " +
+                      "(2000000000, 1, 20.0), (2000000001, 2, 22.0), " +
+                      "(5000000000, 1, 50.0), (5000000001, 2, 55.0)");
 
             // nth_value(val, 2) over (partition by i order by ts range between 2 seconds preceding and current row)
             // Per partition:
@@ -13459,11 +13459,11 @@ public class WindowFunctionTest extends AbstractCairoTest {
             executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, i long, val double) timestamp(ts)", timestampType.getTypeName());
             execute(timestampType == TestTimestampType.MICRO
                     ? "insert into tab values " +
-                    "(1000, 1, 10.0), (1100, 2, 15.0), (1200, 1, 20.0), (1300, 2, 25.0), " +
-                    "(1400, 1, 30.0), (1500, 2, 35.0), (3000, 1, 40.0), (3100, 2, 45.0)"
+                      "(1000, 1, 10.0), (1100, 2, 15.0), (1200, 1, 20.0), (1300, 2, 25.0), " +
+                      "(1400, 1, 30.0), (1500, 2, 35.0), (3000, 1, 40.0), (3100, 2, 45.0)"
                     : "insert into tab values " +
-                    "(1000000, 1, 10.0), (1100000, 2, 15.0), (1200000, 1, 20.0), (1300000, 2, 25.0), " +
-                    "(1400000, 1, 30.0), (1500000, 2, 35.0), (3000000, 1, 40.0), (3100000, 2, 45.0)");
+                      "(1000000, 1, 10.0), (1100000, 2, 15.0), (1200000, 1, 20.0), (1300000, 2, 25.0), " +
+                      "(1400000, 1, 30.0), (1500000, 2, 35.0), (3000000, 1, 40.0), (3100000, 2, 45.0)");
 
             assertQueryNoLeakCheck(
                     timestampType == TestTimestampType.MICRO
