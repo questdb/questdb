@@ -54,6 +54,17 @@ public final class Files {
     public static final int MAP_RO = 1;
     public static final int MAP_RW = 2;
     public static final int NFS_MAGIC = 0x6969;
+    /**
+     * Linux v9fs magic number — the 9P protocol filesystem.
+     * Docker Desktop uses this to bridge bind-mounted Windows host paths into the WSL2 VM.
+     * On 9p with the typical {@code cache=mmap} (or {@code cache=loose}) options, mmap'd
+     * writes are buffered in the client page cache and flushed to the 9p server only via
+     * an asynchronous, best-effort writeback. Writeback timing is unspecified and silent
+     * failures are not surfaced to the application. QuestDB's WAL apply path relies on
+     * mmap'd writes being durable; on 9p they may silently never reach the underlying file
+     * unless the application calls {@code msync(MS_SYNC)} explicitly. See issue #6999.
+     */
+    public static final int V9FS_MAGIC = 0x01021997;
     public static final long PAGE_SIZE;
     public static final int POSIX_FADV_RANDOM;
     public static final int POSIX_FADV_SEQUENTIAL;

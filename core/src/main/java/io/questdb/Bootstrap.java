@@ -26,6 +26,7 @@ package io.questdb;
 
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoEngine;
+import io.questdb.cairo.CommitMode;
 import io.questdb.cairo.SqlJitMode;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cutlass.http.HttpFullFatServerConfiguration;
@@ -568,13 +569,14 @@ public class Bootstrap {
                 log.advisoryW().$(" - THIS IS READ ONLY INSTANCE").$();
             }
             try (Path path = new Path()) {
-                verifyFileSystem(path, cairoConfig.getDbRoot(), "db", true, true);
-                verifyFileSystem(path, cairoConfig.getCheckpointRoot(), TableUtils.CHECKPOINT_DIRECTORY, true, false);
-                verifyFileSystem(path, cairoConfig.getLegacyCheckpointRoot(), TableUtils.LEGACY_CHECKPOINT_DIRECTORY, false, false);
-                verifyFileSystem(path, cairoConfig.getSqlCopyInputRoot(), "sql copy input", false, false);
-                verifyFileSystem(path, cairoConfig.getSqlCopyInputWorkRoot(), "sql copy input worker", true, false);
+                final int commitMode = cairoConfig.getCommitMode();
+                verifyFileSystem(path, cairoConfig.getDbRoot(), "db", true, true, commitMode);
+                verifyFileSystem(path, cairoConfig.getCheckpointRoot(), TableUtils.CHECKPOINT_DIRECTORY, true, false, commitMode);
+                verifyFileSystem(path, cairoConfig.getLegacyCheckpointRoot(), TableUtils.LEGACY_CHECKPOINT_DIRECTORY, false, false, commitMode);
+                verifyFileSystem(path, cairoConfig.getSqlCopyInputRoot(), "sql copy input", false, false, commitMode);
+                verifyFileSystem(path, cairoConfig.getSqlCopyInputWorkRoot(), "sql copy input worker", true, false, commitMode);
                 verifyFileOpts(path, cairoConfig);
-                cairoConfig.getVolumeDefinitions().forEach((alias, volumePath) -> verifyFileSystem(path, volumePath, "create table allowed volume [" + alias + ']', true, false));
+                cairoConfig.getVolumeDefinitions().forEach((alias, volumePath) -> verifyFileSystem(path, volumePath, "create table allowed volume [" + alias + ']', true, false, commitMode));
             }
             if (JitUtil.isJitSupported()) {
                 final int jitMode = cairoConfig.getSqlJitMode();
@@ -643,7 +645,7 @@ public class Bootstrap {
         }
     }
 
-    private void verifyFileSystem(Path path, CharSequence rootDir, String kind, boolean failOnNfs, boolean logUnstable) {
+    private void verifyFileSystem(Path path, CharSequence rootDir, String kind, boolean failOnNfs, boolean logUnstable, int commitMode) {
         if (rootDir == null) {
             log.advisoryW().$(" - ").$(kind).$(" root: NOT SET").$();
             return;
@@ -673,8 +675,39 @@ public class Bootstrap {
                         + "For a list of supported filesystems and further guidance, please visit: https://questdb.io/docs/deployment/capacity-planning/#supported-filesystems "
                         + "[path=" + rootDir + ", kind=" + kind + ", fs=NFS]", true);
             }
+
+            checkV9fsCommitMode(fsStatus, commitMode, rootDir, kind);
         } else {
             log.info().$(" - ").$(kind).$(" root: [path=").$(rootDir).$("] -> NOT FOUND").$();
+        }
+    }
+
+    /**
+     * 9p (typically a Docker Desktop bind mount on WSL2) provides only weak writeback
+     * guarantees for mmap'd files: dirty pages are flushed to the 9p server
+     * asynchronously, with no error reporting if the writeback fails. QuestDB writes
+     * partition column data via mmap and assumes the writes become durable on the
+     * backing file — an assumption 9p does not honour without an explicit msync().
+     * Setting commit.mode=sync forces an msync(MS_SYNC) after each commit, which makes
+     * 9p durable enough to use; any other mode silently corrupts data (numerics
+     * appear as zero on disk). See issue #6999.
+     * <p>
+     * Static so unit tests can drive it with a synthetic fsStatus without needing
+     * an actual 9p mount.
+     */
+    public static void checkV9fsCommitMode(long fsStatus, int commitMode, CharSequence rootDir, String kind) {
+        if (Math.abs(fsStatus) == Files.V9FS_MAGIC && commitMode != CommitMode.SYNC) {
+            throw new BootstrapException("Error: Unsupported Filesystem Configuration Detected. " + Misc.EOL
+                    + "QuestDB cannot start because the '" + kind + " root' is on a 9p filesystem "
+                    + "(typically a Docker Desktop bind mount of a Windows host path on WSL2), "
+                    + "and 'cairo.commit.mode' is not set to 'sync'. " + Misc.EOL
+                    + "On 9p, mmap'd writes are buffered in the client page cache and may silently "
+                    + "never reach the underlying file, causing corruption that looks like numeric columns "
+                    + "being zeroed on disk. " + Misc.EOL
+                    + "Please either: " + Misc.EOL
+                    + "  1) Set 'cairo.commit.mode=sync' in server.conf — slower but safe on 9p, OR " + Misc.EOL
+                    + "  2) Switch to a Docker named volume so the data lives on ext4 inside the WSL2 VM (recommended). " + Misc.EOL
+                    + "[path=" + rootDir + ", kind=" + kind + ", fs=V9FS]", true);
         }
     }
 
