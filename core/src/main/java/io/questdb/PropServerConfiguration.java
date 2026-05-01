@@ -528,6 +528,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final int sqlSortValueMaxPages;
     private final int sqlSortValuePageSize;
     private final int sqlStrFunctionBufferMaxSize;
+    private final int sqlTimerShardCount;
     private final int sqlTxnScoreboardEntryCount;
     private final int sqlUnorderedMapMaxEntrySize;
     private final int sqlViewLexerPoolCapacity;
@@ -1730,6 +1731,8 @@ public class PropServerConfiguration implements ServerConfiguration {
             this.cairoSqlLegacyOperatorPrecedence = getBoolean(properties, env, PropertyKey.CAIRO_SQL_LEGACY_OPERATOR_PRECEDENCE, false);
             this.sqlWindowInitialRangeBufferSize = getInt(properties, env, PropertyKey.CAIRO_SQL_ANALYTIC_INITIAL_RANGE_BUFFER_SIZE, 32);
             this.sqlTxnScoreboardEntryCount = Numbers.ceilPow2(getInt(properties, env, PropertyKey.CAIRO_O3_TXN_SCOREBOARD_ENTRY_COUNT, 16384));
+            this.sqlTimerShardCount = Math.max(1, getInt(properties, env, PropertyKey.CAIRO_TIMER_SHARDS,
+                    Math.min(4, Math.max(1, Runtime.getRuntime().availableProcessors() / 4))));
             this.latestByQueueCapacity = Numbers.ceilPow2(getInt(properties, env, PropertyKey.CAIRO_LATEST_ON_QUEUE_CAPACITY, 32));
 
             // telemetry config
@@ -4621,6 +4624,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public @NotNull TextConfiguration getTextConfiguration() {
             return textConfiguration;
+        }
+
+        @Override
+        public int getTimerShardCount() {
+            return sqlTimerShardCount;
         }
 
         @Override

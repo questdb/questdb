@@ -1317,6 +1317,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
+    public int getTimerShardCount() {
+        return getDelegate().getTimerShardCount();
+    }
+
+    @Override
     public int getTxnScoreboardEntryCount() {
         return getDelegate().getTxnScoreboardEntryCount();
     }

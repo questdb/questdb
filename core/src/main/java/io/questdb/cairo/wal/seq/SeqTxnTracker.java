@@ -66,41 +66,6 @@ public class SeqTxnTracker {
         this.metrics = configuration.getMetrics();
     }
 
-    /**
-     * Drains the waiter queue and cancels any waiter whose deadline has passed.
-     * Cancelled waiters are enqueued on their resume job so the parked body can observe
-     * the cancellation and throw. Non-expired waiters are re-enqueued. Called periodically
-     * by {@link io.questdb.cairo.wal.seq.WaiterTimeoutJob}.
-     *
-     * @param nowMillis current time in milliseconds, same clock domain as waiter deadlines
-     */
-    public void cancelExpiredWaiters(long nowMillis) {
-        WaiterHolder holder = HOLDER.get();
-        TxnWaiter sentinel = null;
-        while (waiters.tryDequeue(holder)) {
-            TxnWaiter w = holder.waiter;
-            holder.waiter = null;
-            if (w == null) {
-                continue;
-            }
-            if (w == sentinel) {
-                // Completed one full pass with no further expirations; put w back and stop.
-                enqueueHolder(holder, w);
-                return;
-            }
-            if (w.isExpired(nowMillis)) {
-                if (w.tryCancel()) {
-                    w.scheduleResume();
-                }
-            } else {
-                if (sentinel == null) {
-                    sentinel = w;
-                }
-                enqueueHolder(holder, w);
-            }
-        }
-    }
-
     public String getErrorMessage() {
         return errorMessage;
     }
@@ -212,7 +177,8 @@ public class SeqTxnTracker {
      * Registers a parked SQL continuation that will be resumed when the tracker's
      * {@code writerTxn} advances to at least {@code waiter.targetWriterTxn}, or when
      * the table becomes suspended/dropped, or when the waiter's deadline elapses
-     * (via {@link WaiterTimeoutJob}).
+     * (via the {@link io.questdb.mp.TimerShards} entry registered by
+     * {@link TxnWaiter#reset(long, long)}).
      *
      * <p>If the target is already met (or the table is already suspended/dropped) at
      * registration time, fires the waiter immediately so the caller does not have to
@@ -256,25 +222,6 @@ public class SeqTxnTracker {
         this.errorMessage = "";
 
         metrics.tableWriterMetrics().decSuspendedTables();
-    }
-
-    /**
-     * Engine-shutdown drain. Removes every waiter from the queue, marks each one's
-     * continuation as shutting down and pushes it onto its origin pool's resume
-     * queue. Called by {@link WaiterTimeoutJob#shutdown()} before worker pools halt,
-     * so the parked bodies wake one last time, observe {@code isShuttingDown()},
-     * unwind through their cont, and let the carriers progress to HALTED.
-     */
-    public void shutdownAllWaiters() {
-        WaiterHolder holder = HOLDER.get();
-        while (waiters.tryDequeue(holder)) {
-            TxnWaiter w = holder.waiter;
-            holder.waiter = null;
-            if (w == null) {
-                continue;
-            }
-            w.shutdown();
-        }
     }
 
     /**

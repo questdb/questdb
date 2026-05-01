@@ -24,8 +24,15 @@
 
 package io.questdb.cairo.wal.seq;
 
+import io.questdb.mp.DelayedFireable;
+import io.questdb.mp.TimerShards;
 import io.questdb.mp.WorkerContinuation;
 import io.questdb.std.Unsafe;
+import org.jetbrains.annotations.NotNull;
+import org.jetbrains.annotations.Nullable;
+
+import java.util.concurrent.Delayed;
+import java.util.concurrent.TimeUnit;
 
 /**
  * Represents a single SQL evaluation parked inside a {@link SeqTxnTracker}, waiting for
@@ -34,7 +41,7 @@ import io.questdb.std.Unsafe;
  * <p>Allocated once per {@code wait_wal_table} call and reused across the wake/sleep
  * loop via {@link #reset(long, long)}: a fresh instance binds the carrier's
  * {@link WorkerContinuation} via {@link #tryBindCurrent}, then each iteration calls
- * reset to clear {@link #state} back to PENDING and publish a new target/deadline
+ * reset to clear {@link #state} back to PENDING and publish a new target/delay
  * before re-registering. The waiter is not pooled across calls; the cost is one
  * allocation per active wait.
  *
@@ -45,21 +52,28 @@ import io.questdb.std.Unsafe;
  * <p>The continuation knows its origin pool's resume sink at construction; firing/cancelling
  * therefore does not need to thread a resume job through the waiter.
  */
-public final class TxnWaiter {
-    public static final long NO_DEADLINE = Long.MAX_VALUE;
+public final class TxnWaiter implements DelayedFireable {
+    public static final long NO_DELAY = Long.MAX_VALUE;
     public static final int STATE_CANCELLED = 2;
     public static final int STATE_FIRED = 1;
     public static final int STATE_PENDING = 0;
     static final long STATE_OFFSET = Unsafe.getFieldOffset(TxnWaiter.class, "state");
-    long deadlineMillis = NO_DEADLINE;
+    private final TimerShards timerShards;
+    volatile long deadlineMillis = NO_DELAY;
     volatile int state = STATE_PENDING;
     long targetWriterTxn;
     private WorkerContinuation cont;
 
     public TxnWaiter() {
+        this(null);
+    }
+
+    public TxnWaiter(@Nullable TimerShards timerShards) {
+        this.timerShards = timerShards;
     }
 
     public TxnWaiter(long targetWriterTxn, WorkerContinuation cont) {
+        this.timerShards = null;
         this.targetWriterTxn = targetWriterTxn;
         this.cont = cont;
     }
@@ -78,12 +92,32 @@ public final class TxnWaiter {
         }
     }
 
-    public boolean isCancelled() {
-        return state == STATE_CANCELLED;
+    @Override
+    public int compareTo(@NotNull Delayed o) {
+        return Long.compare(getDelay(TimeUnit.NANOSECONDS), o.getDelay(TimeUnit.NANOSECONDS));
     }
 
-    public boolean isExpired(long nowMillis) {
-        return deadlineMillis != NO_DEADLINE && nowMillis >= deadlineMillis;
+    /**
+     * Timer-shard pop. State-driven: if PENDING, CAS to CANCELLED and resume the body
+     * so the loop top observes the timeout. Never reads {@link #deadlineMillis}; a stale
+     * heap entry from a previous {@link #reset(long, long)} cycle finds either a fresh
+     * PENDING (cancels it; the new wait was on the same waiter and is now timed out),
+     * or a terminal state (no-op).
+     */
+    @Override
+    public void expire() {
+        if (Unsafe.cas(this, STATE_OFFSET, STATE_PENDING, STATE_CANCELLED)) {
+            cont.scheduleResume();
+        }
+    }
+
+    @Override
+    public long getDelay(@NotNull TimeUnit unit) {
+        return unit.convert(deadlineMillis - System.currentTimeMillis(), TimeUnit.MILLISECONDS);
+    }
+
+    public boolean isCancelled() {
+        return state == STATE_CANCELLED;
     }
 
     public boolean isFired() {
@@ -104,11 +138,26 @@ public final class TxnWaiter {
      * continuation. Publishes the new fields and clears {@link #state} back to PENDING;
      * the volatile write on {@code state} synchronizes the reset so any observer that
      * reads state == PENDING sees the refreshed fields.
+     *
+     * <p>The {@code delayMillis} argument is relative: it is added to
+     * {@link System#currentTimeMillis()} to form the absolute deadline used by the
+     * {@link Delayed} contract. Pass {@link #NO_DELAY} to opt out of timer-shard
+     * registration entirely.
+     *
+     * <p>If a {@link TimerShards} reference is bound and the delay is finite, also
+     * registers this waiter into a timer shard. A previous cycle may have left a stale
+     * entry in the heap (its {@code tryFire} won, leaving the entry sorted by an older
+     * deadline). That stale entry is harmless: {@link #expire()} is state-driven, never
+     * consults {@code deadlineMillis}, and the per-instance CAS makes a double-fire
+     * impossible.
      */
-    public void reset(long targetWriterTxn, long deadlineMillis) {
+    public void reset(long targetWriterTxn, long delayMillis) {
         this.targetWriterTxn = targetWriterTxn;
-        this.deadlineMillis = deadlineMillis;
+        this.deadlineMillis = delayMillis == NO_DELAY ? NO_DELAY : System.currentTimeMillis() + delayMillis;
         this.state = STATE_PENDING;
+        if (timerShards != null && delayMillis != NO_DELAY) {
+            timerShards.register(this);
+        }
     }
 
     public void scheduleResume() {

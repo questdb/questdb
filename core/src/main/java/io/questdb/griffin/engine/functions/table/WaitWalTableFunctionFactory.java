@@ -40,7 +40,6 @@ import io.questdb.griffin.engine.functions.BooleanFunction;
 import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
 import io.questdb.std.Os;
-import io.questdb.std.datetime.millitime.MillisecondClock;
 
 public class WaitWalTableFunctionFactory implements FunctionFactory {
     @Override
@@ -86,14 +85,15 @@ public class WaitWalTableFunctionFactory implements FunctionFactory {
             // NEVER be unbounded: a dead client, an explicit cancel, or a timeout
             // always wins.
             //
-            // Pooled across iterations: fireWaiters/cancelExpiredWaiters drop the
-            // waiter from the tracker queue when they CAS its state, so by the
-            // time we resume from suspend the previous queue entry is gone and
-            // reset() can safely flip state back to PENDING for the next park.
-            TxnWaiter waiter = new TxnWaiter();
+            // Pooled across iterations: fireWaiters drops the waiter from the
+            // tracker queue when it CASes the state to FIRED, so by the time we
+            // resume from suspend the previous queue entry is gone and reset()
+            // can safely flip state back to PENDING for the next park. Stale
+            // shard entries from a prior cycle are harmless: expire() is purely
+            // state-driven, never reads deadlineMillis.
+            TxnWaiter waiter = new TxnWaiter(executionContext.getCairoEngine().getTimerShards());
             if (waiter.tryBindCurrent()) {
                 CairoConfiguration configuration = executionContext.getCairoEngine().getConfiguration();
-                MillisecondClock clock = configuration.getMillisecondClock();
                 while (seqTxnTracker.getWriterTxn() < seqTxn) {
                     // Owning context is closing: do not re-park. Throwing unwinds the
                     // body all the way to the continuation loop's tail suspend, which is
@@ -111,8 +111,7 @@ public class WaitWalTableFunctionFactory implements FunctionFactory {
                     // Re-read on every iteration so a runtime config reload of
                     // griffin.query.continuation.wake.interval takes effect on
                     // the next park without restarting the wait.
-                    long deadline = clock.getTicks() + configuration.getQueryContinuationWakeIntervalMillis();
-                    waiter.reset(seqTxn, deadline);
+                    waiter.reset(seqTxn, configuration.getQueryContinuationWakeIntervalMillis());
                     seqTxnTracker.registerWaiter(waiter);
                     if (!waiter.suspend()) {
                         // The JDK refused to yield because the carrier is pinned (a
@@ -122,7 +121,7 @@ public class WaitWalTableFunctionFactory implements FunctionFactory {
                         break;
                     }
                     // Resumed: either the waiter fired (target met or table state
-                    // changed) or the WaiterTimeoutJob cancelled it after WAKE_INTERVAL.
+                    // changed) or the timer shard cancelled it at the deadline.
                     // Loop top re-checks writerTxn and probes the breaker.
                 }
                 if (seqTxnTracker.getWriterTxn() >= seqTxn) {

@@ -754,6 +754,14 @@ public interface CairoConfiguration {
     @NotNull
     TextConfiguration getTextConfiguration();
 
+    /**
+     * Number of {@link io.questdb.mp.TimerShards} shards (one daemon thread each) used
+     * to fire timer-based wakeups for parked SQL continuations and other
+     * {@link io.questdb.mp.DelayedFireable} entries. Higher values reduce
+     * {@code DelayQueue} lock contention but cost one always-on thread per shard.
+     */
+    int getTimerShardCount();
+
     int getTxnScoreboardEntryCount();
 
     int getUnorderedPageFrameReduceQueueCapacity();

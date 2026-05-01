@@ -80,7 +80,7 @@ public final class ContinuationQueue implements ContinuationSink {
      * Remount {@code cont} on the calling thread. Must be called from a thread
      * that is NOT already carrying a cont in {@link WorkerContinuation#SCOPE}.
      *
-     * <p>Two distinct race shapes are handled here:
+     * <p>Three distinct race shapes are handled here:
      *
      * <ol>
      *   <li><b>Benign mount race.</b> A waiter can be fired by a concurrent
@@ -99,15 +99,24 @@ public final class ContinuationQueue implements ContinuationSink {
      *       seconds-to-minutes). The body sets {@code parkRefused} on the cont;
      *       we consume it here and drop the dequeue so a peer doesn't burn CPU
      *       waiting for an unmount that won't happen any time soon.</li>
+     *   <li><b>Already-done shutdown race.</b> During engine shutdown a
+     *       {@link TimerShards#shutdown()} drain may CAS a {@link TimerCont} entry
+     *       to CANCELLED and {@code scheduleResume} a cont that has, by then,
+     *       already completed via a different path (e.g. its loopBody returned
+     *       because the worker's lifecycle transitioned to HALTED while another
+     *       wakeup raced ahead). The cont is on the queue but its run() is no
+     *       longer legal. Silently drop instead of crashing the worker -- the
+     *       body has already unwound and there is no remaining work to mount.
+     *       The producer-side narrowing in {@code TimerCont} reduces but cannot
+     *       fully close this TOCTOU window, so the queue side absorbs it.</li>
      * </ol>
      *
      * <p>{@code cont.isDone()} is the structural test (not message-text matching
      * against an internal JDK string): a not-done cont that refused to run can
-     * only be in the mounted-elsewhere state. If isDone() is true, this is a real
-     * bug (cont was put after completing) and the exception propagates.
+     * only be in the mounted-elsewhere state.
      */
     public void run(WorkerContinuation cont) {
-        if (cont.consumeParkRefused()) {
+        if (cont.consumeParkRefused() || cont.isDone()) {
             return;
         }
         while (true) {
@@ -116,7 +125,7 @@ public final class ContinuationQueue implements ContinuationSink {
                 return;
             } catch (IllegalStateException e) {
                 if (cont.isDone()) {
-                    throw e;
+                    return;
                 }
                 if (cont.consumeParkRefused()) {
                     return;

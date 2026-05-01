@@ -95,7 +95,6 @@ import io.questdb.cairo.wal.seq.SeqTxnTracker;
 import io.questdb.cairo.wal.seq.SequencerMetadata;
 import io.questdb.cairo.wal.seq.TableSequencerAPI;
 import io.questdb.cairo.wal.seq.TxnWaiter;
-import io.questdb.cairo.wal.seq.WaiterTimeoutJob;
 import io.questdb.cutlass.text.CopyExportContext;
 import io.questdb.cutlass.text.CopyImportContext;
 import io.questdb.griffin.CompiledQuery;
@@ -117,6 +116,7 @@ import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.log.LogRecord;
 import io.questdb.mp.ConcurrentQueue;
+import io.questdb.mp.TimerShards;
 import io.questdb.mp.NoOpQueue;
 import io.questdb.mp.Queue;
 import io.questdb.mp.SCSequence;
@@ -200,7 +200,7 @@ public class CairoEngine implements Closeable, WriterSource {
     private final AtomicLong unpublishedWalTxnCount = new AtomicLong(1);
     private final ViewGraph viewGraph;
     private final ViewWalWriterPool viewWalWriterPool;
-    private final WaiterTimeoutJob waiterTimeoutJob;
+    private final TimerShards timerShards;
     private final SimpleWaitingLock walPurgeJobLock = new SimpleWaitingLock();
     private final WalWriterPool walWriterPool;
     private final WriterPool writerPool;
@@ -244,14 +244,18 @@ public class CairoEngine implements Closeable, WriterSource {
             this.copyImportContext = new CopyImportContext(this, configuration);
             this.copyExportContext = new CopyExportContext(this);
             this.tableSequencerAPI = new TableSequencerAPI(this, configuration);
-            // Sweep parked TxnWaiters; bounds resource retention when a wait_wal_table
-            // call is parked and the deadline elapses (e.g., client disconnect on an
-            // idle table). Same instance assigned to every worker via assign(Job); the
-            // SynchronizedJob lock ensures at most one worker sweeps at a time.
-            this.waiterTimeoutJob = new WaiterTimeoutJob(
-                    configuration.getMillisecondClock(),
-                    tableSequencerAPI::forEachTxnTracker
+            // Per-deadline blocking timer threads. Each parked TxnWaiter (or other
+            // DelayedFireable) sits in a shard and is woken at its precise deadline,
+            // bounding resource retention when a wait_wal_table call parks and the
+            // client disconnects or the table goes idle. Started eagerly here because
+            // the threads are independent of any worker pool. signalClose() drains,
+            // close() halts defensively.
+            this.timerShards = new TimerShards(
+                    configuration.getTimerShardCount(),
+                    "questdb-timer",
+                    LOG
             );
+            this.timerShards.start();
             this.messageBus = new MessageBusImpl(configuration);
             this.metrics = configuration.getMetrics();
             // Message bus and metrics must be initialized before the pools.
@@ -612,6 +616,10 @@ public class CairoEngine implements Closeable, WriterSource {
         Misc.free(settingsStore);
         Misc.free(frameFactory);
         Misc.free(walLocker);
+        // Defensive: signalClose() already shutdown timerShards in the normal path.
+        // halt() is idempotent and ensures the daemon threads are joined even if
+        // close() runs without a prior signalClose().
+        timerShards.halt();
     }
 
     @TestOnly
@@ -1233,8 +1241,8 @@ public class CairoEngine implements Closeable, WriterSource {
      * after a client disconnect or on idle tables, so it MUST be assigned to a worker
      * pool for the SQL-suspend feature to be safe in production.
      */
-    public WaiterTimeoutJob getWaiterTimeoutJob() {
-        return waiterTimeoutJob;
+    public TimerShards getTimerShards() {
+        return timerShards;
     }
 
     public @NotNull WalDirectoryPolicy getWalDirectoryPolicy() {
@@ -1840,9 +1848,9 @@ public class CairoEngine implements Closeable, WriterSource {
         // gets its shutdown flag set and a scheduleResume, so workers (still RUNNING at
         // this point) remount them, the bodies observe isShuttingDown(), and unwind.
         // Without this, WorkerPool.halt() blocks on conts that nothing else will fire,
-        // for at least getQueryContinuationWakeIntervalMillis() and potentially forever
-        // if WaiterTimeoutJob shares a pool that is also halting.
-        waiterTimeoutJob.shutdown();
+        // for at least getQueryContinuationWakeIntervalMillis() and potentially forever.
+        // Order matters: timerShards.shutdown() MUST run before any worker pool halts.
+        timerShards.shutdown();
     }
 
     public void snapshotCreate(SqlExecutionCircuitBreaker circuitBreaker) throws SqlException {
