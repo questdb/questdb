@@ -115,8 +115,8 @@ public class RecentWriteTrackerIntegrationTest extends AbstractCairoTest {
      * iter 1: INSERT 100 unique rows in day-1 partition (no dedup, baseline)
      * iter 2: INSERT 200 duplicates (dedupRowsRemovedSinceLastCommit -> 200)
      * iter 3: INSERT 1 row in day-2 partition that the next REPLACE_RANGE covers
-     *         -> trySkipWalTransactions, counter still 200, recordWalProcessed
-     *            adds 200 a second time
+     * -> trySkipWalTransactions, counter still 200, recordWalProcessed
+     * adds 200 a second time
      * iter 4: REPLACE_RANGE covering day-2
      * Expected dedup count: 200. With bug: 400.
      */
@@ -810,7 +810,7 @@ public class RecentWriteTrackerIntegrationTest extends AbstractCairoTest {
      * Layout the test sets up in a single drain:
      * iter 1: INSERT into range R1 (not covered by future REPLACE_RANGE) -- normal write, counter = N
      * iter 2: INSERT into range R2 (covered by future REPLACE_RANGE) -- SKIPPED, counter still N
-     *         the physicalRowsAdded accumulator re-reads N and inflates
+     * the physicalRowsAdded accumulator re-reads N and inflates
      * iter 3: REPLACE_RANGE write -- normal write, counter resets
      */
     @Test
