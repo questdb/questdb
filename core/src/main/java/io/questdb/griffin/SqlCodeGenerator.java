@@ -1192,15 +1192,18 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         return viewExpr != null ? viewExpr.position : 0;
     }
 
-    // Single-slot fixed-size scalars that fit MapValue.put/get<Tag>(). SYMBOL is
-    // cached as the int symbol id. Wide types (LONG128/256, UUID, DECIMAL128/256)
-    // and variable-width types fall back to the recordAt path.
+    // Fixed-size scalars and wide types that MapValue can put/get directly.
+    // SYMBOL is cached as the int symbol id. UUID, INTERVAL, and variable-width
+    // types fall back to the recordAt path -- MapValue lacks symmetric put APIs
+    // for those.
     private static boolean isFixedSizePrevSlotEligible(int srcTag) {
         return switch (srcTag) {
-            case ColumnType.BOOLEAN, ColumnType.BYTE, ColumnType.CHAR, ColumnType.DATE, ColumnType.DECIMAL16,
-                 ColumnType.DECIMAL32, ColumnType.DECIMAL64, ColumnType.DECIMAL8, ColumnType.DOUBLE, ColumnType.FLOAT,
-                 ColumnType.GEOBYTE, ColumnType.GEOINT, ColumnType.GEOLONG, ColumnType.GEOSHORT, ColumnType.INT,
-                 ColumnType.IPv4, ColumnType.LONG, ColumnType.SHORT, ColumnType.SYMBOL, ColumnType.TIMESTAMP -> true;
+            case ColumnType.BOOLEAN, ColumnType.BYTE, ColumnType.CHAR, ColumnType.DATE, ColumnType.DECIMAL128,
+                 ColumnType.DECIMAL16, ColumnType.DECIMAL256, ColumnType.DECIMAL32, ColumnType.DECIMAL64,
+                 ColumnType.DECIMAL8, ColumnType.DOUBLE, ColumnType.FLOAT, ColumnType.GEOBYTE, ColumnType.GEOINT,
+                 ColumnType.GEOLONG, ColumnType.GEOSHORT, ColumnType.INT, ColumnType.IPv4, ColumnType.LONG,
+                 ColumnType.LONG128, ColumnType.LONG256, ColumnType.SHORT, ColumnType.SYMBOL,
+                 ColumnType.TIMESTAMP -> true;
             default -> false;
         };
     }

@@ -581,6 +581,100 @@ public class SampleByFillPrevTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testFillPrevDecimal128Keyed() throws Exception {
+        // Keyed FILL(PREV) on DECIMAL128 exercises the prev-cache fast path
+        // -- the per-key prev value lives in the keys-map slot directly,
+        // read via DISPATCH_PREV_CACHE_SLOT. Sparse keys and a NULL row in
+        // the middle stress null-sentinel handling.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (sym SYMBOL, d DECIMAL(20, 2), ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO x VALUES
+                        ('A', 12.34::DECIMAL(20,2), '2024-01-01T00:00:00.000000Z'),
+                        ('B', 99.99::DECIMAL(20,2), '2024-01-01T00:00:00.000000Z'),
+                        ('A', NULL, '2024-01-01T02:00:00.000000Z'),
+                        ('A', 56.78::DECIMAL(20,2), '2024-01-01T04:00:00.000000Z'),
+                        ('B', 11.11::DECIMAL(20,2), '2024-01-01T04:00:00.000000Z')""");
+            assertQueryNoLeakCheck(
+                    """
+                            ts\tsym\tfirst
+                            2024-01-01T00:00:00.000000Z\tA\t12.34
+                            2024-01-01T00:00:00.000000Z\tB\t99.99
+                            2024-01-01T01:00:00.000000Z\tA\t12.34
+                            2024-01-01T01:00:00.000000Z\tB\t99.99
+                            2024-01-01T02:00:00.000000Z\tA\t
+                            2024-01-01T02:00:00.000000Z\tB\t99.99
+                            2024-01-01T03:00:00.000000Z\tA\t
+                            2024-01-01T03:00:00.000000Z\tB\t99.99
+                            2024-01-01T04:00:00.000000Z\tA\t56.78
+                            2024-01-01T04:00:00.000000Z\tB\t11.11
+                            """,
+                    "SELECT ts, sym, first(d) FROM x SAMPLE BY 1h FILL(PREV) ALIGN TO CALENDAR",
+                    "ts",
+                    false,
+                    false
+            );
+        });
+    }
+
+    @Test
+    public void testFillPrevDecimal128KeyedHighPrecision() throws Exception {
+        // High-precision DECIMAL128 (38,9) round-trips through the cache slot.
+        // Slot stores 16 bytes; precision/scale travel through srcType in
+        // mapValueTypes and resurface in the output metadata.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (sym SYMBOL, d DECIMAL(38, 9), ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO x VALUES
+                        ('A', 1234567890.123456789::DECIMAL(38,9), '2024-01-01T00:00:00.000000Z'),
+                        ('B', 0.000000001::DECIMAL(38,9), '2024-01-01T00:00:00.000000Z'),
+                        ('A', 9876543210.987654321::DECIMAL(38,9), '2024-01-01T03:00:00.000000Z')""");
+            assertQueryNoLeakCheck(
+                    """
+                            ts\tsym\tfirst
+                            2024-01-01T00:00:00.000000Z\tA\t1234567890.123456789
+                            2024-01-01T00:00:00.000000Z\tB\t0.000000001
+                            2024-01-01T01:00:00.000000Z\tA\t1234567890.123456789
+                            2024-01-01T01:00:00.000000Z\tB\t0.000000001
+                            2024-01-01T02:00:00.000000Z\tA\t1234567890.123456789
+                            2024-01-01T02:00:00.000000Z\tB\t0.000000001
+                            2024-01-01T03:00:00.000000Z\tA\t9876543210.987654321
+                            2024-01-01T03:00:00.000000Z\tB\t0.000000001
+                            """,
+                    "SELECT ts, sym, first(d) FROM x SAMPLE BY 1h FILL(PREV) ALIGN TO CALENDAR",
+                    "ts",
+                    false,
+                    false
+            );
+        });
+    }
+
+    @Test
+    public void testFillPrevDecimal128KeyedNullOnly() throws Exception {
+        // A keyed group with all-NULL source rows: leading and trailing fills
+        // must render as NULL (the cached null sentinel from the init switch).
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (sym SYMBOL, d DECIMAL(20, 2), ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO x VALUES
+                        ('A', NULL, '2024-01-01T00:00:00.000000Z'),
+                        ('A', NULL, '2024-01-01T02:00:00.000000Z')""");
+            assertQueryNoLeakCheck(
+                    """
+                            ts\tsym\tfirst
+                            2024-01-01T00:00:00.000000Z\tA\t
+                            2024-01-01T01:00:00.000000Z\tA\t
+                            2024-01-01T02:00:00.000000Z\tA\t
+                            """,
+                    "SELECT ts, sym, first(d) FROM x SAMPLE BY 1h FILL(PREV) ALIGN TO CALENDAR",
+                    "ts",
+                    false,
+                    false
+            );
+        });
+    }
+
+    @Test
     public void testFillPrevDecimal256() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE x (d DECIMAL(40, 2), ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
@@ -603,6 +697,37 @@ public class SampleByFillPrevTest extends AbstractCairoTest {
                     false
             );
             Assert.assertTrue(Chars.contains(getPlanSink(query).getSink(), "Sample By Fill"));
+        });
+    }
+
+    @Test
+    public void testFillPrevDecimal256Keyed() throws Exception {
+        // Keyed FILL(PREV) on DECIMAL256 (32-byte slot). Two sparse keys,
+        // multiple gaps, mixed-precision values.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (sym SYMBOL, d DECIMAL(70, 18), ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO x VALUES
+                        ('A', 100.500000000000000001::DECIMAL(70,18), '2024-01-01T00:00:00.000000Z'),
+                        ('B', 200.000000000000000002::DECIMAL(70,18), '2024-01-01T00:00:00.000000Z'),
+                        ('A', 300.750000000000000003::DECIMAL(70,18), '2024-01-01T03:00:00.000000Z')""");
+            assertQueryNoLeakCheck(
+                    """
+                            ts\tsym\tfirst
+                            2024-01-01T00:00:00.000000Z\tA\t100.500000000000000001
+                            2024-01-01T00:00:00.000000Z\tB\t200.000000000000000002
+                            2024-01-01T01:00:00.000000Z\tA\t100.500000000000000001
+                            2024-01-01T01:00:00.000000Z\tB\t200.000000000000000002
+                            2024-01-01T02:00:00.000000Z\tA\t100.500000000000000001
+                            2024-01-01T02:00:00.000000Z\tB\t200.000000000000000002
+                            2024-01-01T03:00:00.000000Z\tA\t300.750000000000000003
+                            2024-01-01T03:00:00.000000Z\tB\t200.000000000000000002
+                            """,
+                    "SELECT ts, sym, first(d) FROM x SAMPLE BY 1h FILL(PREV) ALIGN TO CALENDAR",
+                    "ts",
+                    false,
+                    false
+            );
         });
     }
 
@@ -1168,6 +1293,42 @@ public class SampleByFillPrevTest extends AbstractCairoTest {
                     "SELECT ts, first(val) FROM t SAMPLE BY 1h FILL(PREV) ALIGN TO CALENDAR",
                     11,
                     "there is no matching function `first` with the argument types"
+            );
+        });
+    }
+
+    @Test
+    public void testFillPrevLong256Keyed() throws Exception {
+        // Keyed FILL(PREV) on LONG256 (32-byte slot) exercises the cache
+        // fast path. Two sparse keys, multiple gaps, plus a NULL row in
+        // one key's history to exercise null-sentinel handling.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (sym SYMBOL, h LONG256, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO x VALUES
+                        ('A', '0x10', '2024-01-01T00:00:00.000000Z'),
+                        ('B', '0xabcdef', '2024-01-01T00:00:00.000000Z'),
+                        ('A', NULL, '2024-01-01T02:00:00.000000Z'),
+                        ('A', '0xff00', '2024-01-01T04:00:00.000000Z'),
+                        ('B', '0x123456', '2024-01-01T04:00:00.000000Z')""");
+            assertQueryNoLeakCheck(
+                    """
+                            ts\tsym\tsum
+                            2024-01-01T00:00:00.000000Z\tA\t0x10
+                            2024-01-01T00:00:00.000000Z\tB\t0xabcdef
+                            2024-01-01T01:00:00.000000Z\tA\t0x10
+                            2024-01-01T01:00:00.000000Z\tB\t0xabcdef
+                            2024-01-01T02:00:00.000000Z\tA\t
+                            2024-01-01T02:00:00.000000Z\tB\t0xabcdef
+                            2024-01-01T03:00:00.000000Z\tA\t
+                            2024-01-01T03:00:00.000000Z\tB\t0xabcdef
+                            2024-01-01T04:00:00.000000Z\tA\t0xff00
+                            2024-01-01T04:00:00.000000Z\tB\t0x123456
+                            """,
+                    "SELECT ts, sym, sum(h) FROM x SAMPLE BY 1h FILL(PREV) ALIGN TO CALENDAR",
+                    "ts",
+                    false,
+                    false
             );
         });
     }

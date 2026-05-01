@@ -777,6 +777,10 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
                                 case ColumnType.DECIMAL8 -> value.putByte(slot, Decimals.DECIMAL8_NULL);
                                 case ColumnType.BOOLEAN -> value.putBool(slot, false);
                                 case ColumnType.CHAR -> value.putChar(slot, (char) 0);
+                                case ColumnType.LONG128 -> value.putLong128(slot, Numbers.LONG_NULL, Numbers.LONG_NULL);
+                                case ColumnType.LONG256 -> value.putLong256(slot, Long256Impl.NULL_LONG256);
+                                case ColumnType.DECIMAL128 -> value.putDecimal128Null(slot);
+                                case ColumnType.DECIMAL256 -> value.putDecimal256Null(slot);
                                 default -> {
                                     assert false : "unsupported fixed-size FILL(PREV) source type: "
                                             + ColumnType.nameOf(fixedPrevTypeTags.getQuick(i));
@@ -910,7 +914,7 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
             if (fromFunc != driver.getTimestampConstantNull() && toFunc != driver.getTimestampConstantNull()) {
                 final long fromTs = driver.from(fromFunc.getTimestamp(null), ColumnType.getTimestampType(fromFunc.getType()));
                 final long toTs = driver.from(toFunc.getTimestamp(null), ColumnType.getTimestampType(toFunc.getType()));
-                if (fromTs != Numbers.LONG_NULL && toTs != Numbers.LONG_NULL && fromTs > toTs) {
+                if (toTs != Numbers.LONG_NULL && fromTs > toTs) {
                     throw SqlException.$(toFuncPos, "TO timestamp must not be earlier than FROM timestamp");
                 }
             }
@@ -1024,6 +1028,11 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
                     case ColumnType.DECIMAL16 -> value.putShort(slot, record.getDecimal16(srcCol));
                     case ColumnType.DECIMAL32 -> value.putInt(slot, record.getDecimal32(srcCol));
                     case ColumnType.DECIMAL64 -> value.putLong(slot, record.getDecimal64(srcCol));
+                    case ColumnType.LONG128 ->
+                            value.putLong128(slot, record.getLong128Lo(srcCol), record.getLong128Hi(srcCol));
+                    case ColumnType.LONG256 -> value.putLong256(slot, record.getLong256A(srcCol));
+                    case ColumnType.DECIMAL128 -> value.putDecimal128(slot, record, srcCol);
+                    case ColumnType.DECIMAL256 -> value.putDecimal256(slot, record, srcCol);
                     default -> {
                         assert false : "unsupported fixed-size FILL(PREV) source type: "
                                 + ColumnType.nameOf(tag);
@@ -1136,7 +1145,8 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
             public void getDecimal128(int col, Decimal128 sink) {
                 switch (currentDispatchCode[col]) {
                     case DISPATCH_BASE -> baseRecord.getDecimal128(col, sink);
-                    case DISPATCH_KEY_SLOT -> keysMapRecord.getDecimal128(dispatchSlot[col], sink);
+                    case DISPATCH_KEY_SLOT, DISPATCH_PREV_CACHE_SLOT ->
+                            keysMapRecord.getDecimal128(dispatchSlot[col], sink);
                     case DISPATCH_PREV_SLOT -> {
                         if (hasPrevForCurrentGap) prevRecord.getDecimal128(dispatchSlot[col], sink);
                         else sink.ofRawNull();
@@ -1169,7 +1179,8 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
             public void getDecimal256(int col, Decimal256 sink) {
                 switch (currentDispatchCode[col]) {
                     case DISPATCH_BASE -> baseRecord.getDecimal256(col, sink);
-                    case DISPATCH_KEY_SLOT -> keysMapRecord.getDecimal256(dispatchSlot[col], sink);
+                    case DISPATCH_KEY_SLOT, DISPATCH_PREV_CACHE_SLOT ->
+                            keysMapRecord.getDecimal256(dispatchSlot[col], sink);
                     case DISPATCH_PREV_SLOT -> {
                         if (hasPrevForCurrentGap) prevRecord.getDecimal256(dispatchSlot[col], sink);
                         else sink.ofRawNull();
@@ -1393,7 +1404,7 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
             public long getLong128Hi(int col) {
                 return switch (currentDispatchCode[col]) {
                     case DISPATCH_BASE -> baseRecord.getLong128Hi(col);
-                    case DISPATCH_KEY_SLOT -> keysMapRecord.getLong128Hi(dispatchSlot[col]);
+                    case DISPATCH_KEY_SLOT, DISPATCH_PREV_CACHE_SLOT -> keysMapRecord.getLong128Hi(dispatchSlot[col]);
                     case DISPATCH_PREV_SLOT ->
                             hasPrevForCurrentGap ? prevRecord.getLong128Hi(dispatchSlot[col]) : Numbers.LONG_NULL;
                     case DISPATCH_CONSTANT -> dispatchConstant.getQuick(col).getLong128Hi(null);
@@ -1408,7 +1419,7 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
             public long getLong128Lo(int col) {
                 return switch (currentDispatchCode[col]) {
                     case DISPATCH_BASE -> baseRecord.getLong128Lo(col);
-                    case DISPATCH_KEY_SLOT -> keysMapRecord.getLong128Lo(dispatchSlot[col]);
+                    case DISPATCH_KEY_SLOT, DISPATCH_PREV_CACHE_SLOT -> keysMapRecord.getLong128Lo(dispatchSlot[col]);
                     case DISPATCH_PREV_SLOT ->
                             hasPrevForCurrentGap ? prevRecord.getLong128Lo(dispatchSlot[col]) : Numbers.LONG_NULL;
                     case DISPATCH_CONSTANT -> dispatchConstant.getQuick(col).getLong128Lo(null);
@@ -1425,7 +1436,8 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
                 // Do NOT call sink.clear() -- it would erase the caller's row prefix.
                 switch (currentDispatchCode[col]) {
                     case DISPATCH_BASE -> baseRecord.getLong256(col, sink);
-                    case DISPATCH_KEY_SLOT -> keysMapRecord.getLong256(dispatchSlot[col], sink);
+                    case DISPATCH_KEY_SLOT, DISPATCH_PREV_CACHE_SLOT ->
+                            keysMapRecord.getLong256(dispatchSlot[col], sink);
                     case DISPATCH_PREV_SLOT -> {
                         if (hasPrevForCurrentGap) prevRecord.getLong256(dispatchSlot[col], sink);
                     }
@@ -1440,7 +1452,7 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
             public Long256 getLong256A(int col) {
                 return switch (currentDispatchCode[col]) {
                     case DISPATCH_BASE -> baseRecord.getLong256A(col);
-                    case DISPATCH_KEY_SLOT -> keysMapRecord.getLong256A(dispatchSlot[col]);
+                    case DISPATCH_KEY_SLOT, DISPATCH_PREV_CACHE_SLOT -> keysMapRecord.getLong256A(dispatchSlot[col]);
                     case DISPATCH_PREV_SLOT ->
                             hasPrevForCurrentGap ? prevRecord.getLong256A(dispatchSlot[col]) : Long256Impl.NULL_LONG256;
                     case DISPATCH_CONSTANT -> dispatchConstant.getQuick(col).getLong256A(null);
@@ -1455,7 +1467,7 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
             public Long256 getLong256B(int col) {
                 return switch (currentDispatchCode[col]) {
                     case DISPATCH_BASE -> baseRecord.getLong256B(col);
-                    case DISPATCH_KEY_SLOT -> keysMapRecord.getLong256B(dispatchSlot[col]);
+                    case DISPATCH_KEY_SLOT, DISPATCH_PREV_CACHE_SLOT -> keysMapRecord.getLong256B(dispatchSlot[col]);
                     case DISPATCH_PREV_SLOT ->
                             hasPrevForCurrentGap ? prevRecord.getLong256B(dispatchSlot[col]) : Long256Impl.NULL_LONG256;
                     case DISPATCH_CONSTANT -> dispatchConstant.getQuick(col).getLong256B(null);
