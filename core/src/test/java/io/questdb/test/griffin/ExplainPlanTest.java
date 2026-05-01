@@ -9182,7 +9182,8 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 """);
     }
 
-    @Test // jit is not used due to type mismatch -- the cast-fold guard only unwraps when target type matches column type
+    @Test
+    // jit is not used due to type mismatch -- the cast-fold guard only unwraps when target type matches column type
     public void testSelectWithNonJittedFilter1() throws Exception {
         assertPlan("create table tab ( l long, ts timestamp);", "select * from tab where l = 12::short ", """
                 Async Filter workers: 1
@@ -9308,7 +9309,8 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 """);
     }
 
-    @Test // jit is not used due to type mismatch -- the cast-fold guard only unwraps when target type matches column type
+    @Test
+    // jit is not used due to type mismatch -- the cast-fold guard only unwraps when target type matches column type
     public void testSelectWithNonJittedFilter2() throws Exception {
         assertPlan("create table tab ( l long, ts timestamp);", "select * from tab where l = 12::byte ", """
                 Async Filter workers: 1
@@ -9319,7 +9321,8 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 """);
     }
 
-    @Test // jit is not used due to type mismatch
+    @Test
+    // jit is not used due to type mismatch
     public void testSelectWithNonJittedFilter3() throws Exception {
         assertPlan("create table tab ( l long, ts timestamp);", "select * from tab where l = '123' ", """
                 Async Filter workers: 1
