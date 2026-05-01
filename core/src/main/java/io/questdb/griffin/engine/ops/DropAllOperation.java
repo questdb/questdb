@@ -2,6 +2,7 @@ package io.questdb.griffin.engine.ops;
 
 import io.questdb.cairo.DdlListener;
 import io.questdb.cairo.OperationCodes;
+import io.questdb.cairo.TableToken;
 import io.questdb.cairo.sql.OperationFuture;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
@@ -42,7 +43,7 @@ public class DropAllOperation implements Operation {
         return ImmutableDoneOperationFuture.INSTANCE;
     }
 
-    public void onTableOrViewOrMatViewDropped(DdlListener ddlListener, String tableName) {
-        ddlListener.onTableOrViewOrMatViewDropped(tableName);
+    public void onTableOrViewOrMatViewDropped(DdlListener ddlListener, TableToken tableToken) {
+        ddlListener.onTableOrViewOrMatViewDropped(tableToken);
     }
 }

@@ -35,6 +35,8 @@ import io.questdb.cutlass.http.processors.StaticContentProcessorFactory;
 import io.questdb.cutlass.http.processors.TableStatusCheckProcessor;
 import io.questdb.cutlass.http.processors.TextImportProcessor;
 import io.questdb.cutlass.http.processors.WarningsProcessor;
+import io.questdb.cutlass.qwp.server.QwpWebSocketHttpProcessor;
+import io.questdb.cutlass.qwp.server.egress.QwpEgressHttpProcessor;
 import io.questdb.mp.Job;
 import io.questdb.mp.WorkerPool;
 import io.questdb.network.HeartBeatException;
@@ -167,6 +169,32 @@ public class HttpServer implements Closeable {
                     return pingProcessor;
                 }
             });
+
+            // QWP v1 endpoint (WebSocket only)
+            server.bind(new HttpRequestHandlerFactory() {
+                @Override
+                public ObjHashSet<String> getUrls() {
+                    return httpServerConfiguration.getContextPathQWP();
+                }
+
+                @Override
+                public HttpRequestHandler newInstance() {
+                    return new QwpWebSocketHttpProcessor(cairoEngine, httpServerConfiguration);
+                }
+            });
+
+            // QWP egress endpoint (query results, WebSocket only)
+            server.bind(new HttpRequestHandlerFactory() {
+                @Override
+                public ObjHashSet<String> getUrls() {
+                    return httpServerConfiguration.getContextPathQWPRead();
+                }
+
+                @Override
+                public HttpRequestHandler newInstance() {
+                    return new QwpEgressHttpProcessor(cairoEngine, httpServerConfiguration, sharedQueryWorkerCount);
+                }
+            });
         }
 
         final SettingsProcessor settingsProcessor = new SettingsProcessor(cairoEngine, serverConfiguration);
@@ -279,7 +307,7 @@ public class HttpServer implements Closeable {
                 lastSlash = false;
             }
             if (shift > 0) {
-                Unsafe.getUnsafe().putByte(p + i - shift, b);
+                Unsafe.putByte(p + i - shift, b);
             }
         }
         url.squeezeHi(shift);
@@ -393,9 +421,6 @@ public class HttpServer implements Closeable {
         }
     }
 
-    private record IndexedHandler(HttpRequestHandler handler, int handlerId) {
-    }
-
     private static class HttpRequestProcessorSelectorImpl implements HttpRequestProcessorSelector {
 
         private final ObjList<HttpRequestHandler> handlersByIdList = new ObjList<>();
@@ -449,5 +474,8 @@ public class HttpServer implements Closeable {
             lastSelectedHandlerId = defaultProcessorId;
             return defaultRequestProcessor;
         }
+    }
+
+    private record IndexedHandler(HttpRequestHandler handler, int handlerId) {
     }
 }

@@ -687,7 +687,7 @@ impl<W: Write> ParquetFile<W> {
                             "Row group ordinal must be non-negative, got {}",
                             ordinal
                         ))
-                            .into());
+                        .into());
                     }
                     let num_row_groups = metadata.row_groups.len();
                     let ordinal = ordinal as usize;
@@ -727,7 +727,7 @@ impl<W: Write> ParquetFile<W> {
                 "Insert position must be non-negative, got {}",
                 position
             ))
-                .into());
+            .into());
         }
         match &self.mode {
             Mode::Update(_, _) => {

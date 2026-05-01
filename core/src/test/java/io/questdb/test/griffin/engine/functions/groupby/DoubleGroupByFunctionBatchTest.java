@@ -635,7 +635,7 @@ public class DoubleGroupByFunctionBatchTest {
         lastSize = (long) values.length * Double.BYTES;
         lastAllocated = Unsafe.malloc(lastSize, MemoryTag.NATIVE_DEFAULT);
         for (int i = 0; i < values.length; i++) {
-            Unsafe.getUnsafe().putDouble(lastAllocated + (long) i * Double.BYTES, values[i]);
+            Unsafe.putDouble(lastAllocated + (long) i * Double.BYTES, values[i]);
         }
         return lastAllocated;
     }

@@ -683,7 +683,7 @@ public class IntervalBwdPartitionFrameCursorTest extends AbstractCairoTest {
                     parquetDecoder.decodeRowGroup(parquetBuffers, parquetColumns, i, 0, size);
                     long addr = parquetBuffers.getChunkDataPtr(0);
                     for (long r = frame.getRowHi() - 1; r > frame.getRowLo() - 1; r--) {
-                        sink.putISODate(timestampType.getDriver(), Unsafe.getUnsafe().getLong(addr + r * Long.BYTES)).put('\n');
+                        sink.putISODate(timestampType.getDriver(), Unsafe.getLong(addr + r * Long.BYTES)).put('\n');
                     }
                 }
             }

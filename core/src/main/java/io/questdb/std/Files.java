@@ -69,6 +69,9 @@ public final class Files {
     public static final int POSIX_FADV_RANDOM;
     public static final int POSIX_FADV_SEQUENTIAL;
     public static final int POSIX_MADV_DONTNEED;
+    // Pre-fault pages for writing. Linux 5.14+. On older kernels, madvise() returns
+    // EINVAL which the caller ignores, so using this flag is safe on any kernel version.
+    public static final int POSIX_MADV_POPULATE_WRITE;
     // Apart from obvious random read use case, MADV_RANDOM/FADV_RANDOM should be used for write-only
     // append-only files. Otherwise, OS starts reading adjacent pages under memory pressure generating
     // wasted disk read ops.
@@ -432,14 +435,14 @@ public final class Files {
     }
 
     public static boolean notDots(long pUtf8NameZ) {
-        final byte b0 = Unsafe.getUnsafe().getByte(pUtf8NameZ);
+        final byte b0 = Unsafe.getByte(pUtf8NameZ);
 
         if (b0 != '.') {
             return true;
         }
 
-        final byte b1 = Unsafe.getUnsafe().getByte(pUtf8NameZ + 1);
-        return b1 != 0 && (b1 != '.' || Unsafe.getUnsafe().getByte(pUtf8NameZ + 2) != 0);
+        final byte b1 = Unsafe.getByte(pUtf8NameZ + 1);
+        return b1 != 0 && (b1 != '.' || Unsafe.getByte(pUtf8NameZ + 2) != 0);
     }
 
     public static long openAppend(LPSZ lpsz) {
@@ -662,6 +665,8 @@ public final class Files {
 
     private native static int getPosixFadvSequential();
 
+    private native static int getMadvPopulateWrite();
+
     private native static int getPosixMadvDontneed();
 
     private native static int getPosixMadvRandom();
@@ -833,12 +838,14 @@ public final class Files {
             POSIX_MADV_RANDOM = getPosixMadvRandom();
             POSIX_MADV_SEQUENTIAL = getPosixMadvSequential();
             POSIX_MADV_DONTNEED = getPosixMadvDontneed();
+            POSIX_MADV_POPULATE_WRITE = getMadvPopulateWrite();
         } else {
             POSIX_FADV_SEQUENTIAL = -1;
             POSIX_FADV_RANDOM = -1;
             POSIX_MADV_SEQUENTIAL = -1;
             POSIX_MADV_RANDOM = -1;
             POSIX_MADV_DONTNEED = -1;
+            POSIX_MADV_POPULATE_WRITE = -1;
         }
     }
 }

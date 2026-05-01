@@ -60,14 +60,16 @@ public class LineWalAppender {
     private final Decimal256 decimal256;
     private final Long256Impl long256;
     private final int maxFileNameLength;
+    private final int maxMetadataChangeRetries;
     private final boolean stringToCharCastAllowed;
     private final DirectUtf8Sink utf8Sink; // owned by LineHttpProcessorState or LineTcpMeasurementScheduler
     private byte timestampUnit;
 
-    public LineWalAppender(boolean autoCreateNewColumns, boolean stringToCharCastAllowed, byte timestampUnit, DirectUtf8Sink utf8Sink, int maxFileNameLength) {
+    public LineWalAppender(boolean autoCreateNewColumns, boolean stringToCharCastAllowed, byte timestampUnit, DirectUtf8Sink utf8Sink, int maxFileNameLength, int maxMetadataChangeRetries) {
         this.autoCreateNewColumns = autoCreateNewColumns;
         this.stringToCharCastAllowed = stringToCharCastAllowed;
         this.maxFileNameLength = maxFileNameLength;
+        this.maxMetadataChangeRetries = maxMetadataChangeRetries;
         this.timestampUnit = timestampUnit;
         this.long256 = new Long256Impl();
         this.decimal256 = new Decimal256();
@@ -75,13 +77,14 @@ public class LineWalAppender {
     }
 
     public void appendToWal(SecurityContext securityContext, LineTcpParser parser, TableUpdateDetails tud) throws CommitFailedException {
-        while (!tud.isDropped()) {
+        for (int retryCount = 0; !tud.isDropped(); retryCount++) {
             try {
                 appendToWal0(securityContext, parser, tud);
-                break;
+                return;
             } catch (MetadataChangedException e) {
-                // do another retry, metadata has changed while processing the line
-                // and all the resolved column indexes have been invalidated
+                if (retryCount == maxMetadataChangeRetries) {
+                    throw CairoException.nonCritical().put("metadata changed too many times during WAL append");
+                }
             }
         }
     }

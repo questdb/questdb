@@ -273,7 +273,8 @@ public class SQLSerialParquetExporter extends BaseParquetExporter implements Clo
                                     bloomFilterIndexesPtr,
                                     bloomFilterCount,
                                     bloomFilterFpp,
-                                    0.0
+                                    0.0,
+                                    -1L
                             );
                             long parquetFileSize = ff.length(tempPath.$());
                             LOG.info().$("converted partition to parquet temp [id=").$hexPadded(task.getCopyID()).$(", table=").$(tableToken)
@@ -436,7 +437,11 @@ public class SQLSerialParquetExporter extends BaseParquetExporter implements Clo
                 exporter.setUp(streamBuffers.getAdjustedMetadata(), pfc, streamBuffers.getBaseColumnMap());
             } else {
                 cursor = factory.getCursor(sqlExecutionContext);
-                streamBuffers.setUp(factory.getMetadata());
+                if (factory instanceof VirtualRecordCursorFactory vf) {
+                    streamBuffers.setUpCursorBacked(vf);
+                } else {
+                    streamBuffers.setUp(factory.getMetadata());
+                }
                 exporter.setUp(streamBuffers.getAdjustedMetadata());
             }
 

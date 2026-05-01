@@ -24,23 +24,27 @@
 
 package io.questdb.griffin;
 
+import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.SecurityContext;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.griffin.engine.ops.CreateMatViewOperationBuilder;
 import io.questdb.griffin.engine.ops.CreateTableOperationBuilder;
+import io.questdb.griffin.engine.ops.CreateTableOperationBuilderImpl;
 import io.questdb.griffin.engine.ops.CreateViewOperationBuilder;
 import io.questdb.griffin.engine.table.ShowCreateMatViewRecordCursorFactory;
 import io.questdb.griffin.engine.table.ShowCreateTableRecordCursorFactory;
 import io.questdb.griffin.engine.table.ShowCreateViewRecordCursorFactory;
 import io.questdb.griffin.model.ExpressionNode;
-import io.questdb.griffin.model.QueryModel;
+import io.questdb.griffin.model.IQueryModel;
 import io.questdb.std.GenericLexer;
 import io.questdb.std.ObjectPool;
 import io.questdb.std.str.Path;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
+
+import static io.questdb.griffin.SqlKeywords.isTtlKeyword;
 
 public interface SqlParserCallback {
 
@@ -70,22 +74,22 @@ public interface SqlParserCallback {
         return viewToken;
     }
 
-    default RecordCursorFactory generateShowCreateMatViewFactory(QueryModel model, SqlExecutionContext executionContext, Path path) throws SqlException {
+    default RecordCursorFactory generateShowCreateMatViewFactory(IQueryModel model, SqlExecutionContext executionContext, Path path) throws SqlException {
         final TableToken viewToken = getMatViewToken(model.getTableNameExpr(), executionContext, path);
         return new ShowCreateMatViewRecordCursorFactory(viewToken, model.getTableNameExpr().position);
     }
 
-    default RecordCursorFactory generateShowCreateTableFactory(QueryModel model, SqlExecutionContext executionContext, Path path) throws SqlException {
+    default RecordCursorFactory generateShowCreateTableFactory(IQueryModel model, SqlExecutionContext executionContext, Path path) throws SqlException {
         final TableToken tableToken = getTableToken(model.getTableNameExpr(), executionContext, path);
         return new ShowCreateTableRecordCursorFactory(tableToken, model.getTableNameExpr().position);
     }
 
-    default RecordCursorFactory generateShowCreateViewFactory(QueryModel model, SqlExecutionContext executionContext, Path path) throws SqlException {
+    default RecordCursorFactory generateShowCreateViewFactory(IQueryModel model, SqlExecutionContext executionContext, Path path) throws SqlException {
         final TableToken viewToken = getViewToken(model.getTableNameExpr(), executionContext, path);
         return new ShowCreateViewRecordCursorFactory(viewToken, model.getTableNameExpr().position);
     }
 
-    default RecordCursorFactory generateShowSqlFactory(QueryModel model) {
+    default RecordCursorFactory generateShowSqlFactory(IQueryModel model) {
         assert false;
         return null;
     }
@@ -128,11 +132,31 @@ public interface SqlParserCallback {
 
     default int parseShowSql(
             GenericLexer lexer,
-            QueryModel model,
+            IQueryModel model,
             CharSequence tok,
             ObjectPool<ExpressionNode> expressionNodePool
     ) throws SqlException {
         return -1;
+    }
+
+    default CharSequence parseTtlSettings(
+            GenericLexer lexer,
+            CharSequence tok,
+            int partitionBy,
+            CreateTableOperationBuilderImpl builder,
+            boolean isMatView
+    ) throws SqlException {
+        if (tok != null && isTtlKeyword(tok)) {
+            final int ttlValuePos = lexer.getPosition();
+            final int ttlHoursOrMonths = SqlParser.parseTtlHoursOrMonths(lexer);
+            if (partitionBy != -1) {
+                PartitionBy.validateTtlGranularity(partitionBy, ttlHoursOrMonths, ttlValuePos);
+            }
+            builder.setTtlHoursOrMonths(ttlHoursOrMonths);
+            builder.setTtlPosition(ttlValuePos);
+            tok = SqlUtil.fetchNext(lexer);
+        }
+        return tok;
     }
 
     private static TableToken getTableToken(ExpressionNode tableNameExpr, SqlExecutionContext executionContext, Path path, SqlException notExistsError) throws SqlException {

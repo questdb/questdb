@@ -454,7 +454,7 @@ public class CopyImportTask {
 
                     while (ptr < hi) {
                         if (ptr < hi - 7) {
-                            long word = Unsafe.getUnsafe().getLong(ptr);
+                            long word = Unsafe.getLong(ptr);
                             long zeroBytesWord = SwarUtils.markZeroBytes(word ^ MASK_NEW_LINE)
                                     | SwarUtils.markZeroBytes(word ^ MASK_QUOTE);
                             if (zeroBytesWord == 0) {
@@ -465,7 +465,7 @@ public class CopyImportTask {
                             }
                         }
 
-                        final byte b = Unsafe.getUnsafe().getByte(ptr++);
+                        final byte b = Unsafe.getByte(ptr++);
                         if (b == '"') {
                             quotes++;
                         } else if (b == '\n') {
@@ -1180,7 +1180,7 @@ public class CopyImportTask {
                     for (long i = 0; i < count; i++) {
                         throwIfCancelled();
 
-                        final long lengthAndOffset = Unsafe.getUnsafe().getLong(address + i * 2L * Long.BYTES + Long.BYTES);
+                        final long lengthAndOffset = Unsafe.getLong(address + i * 2L * Long.BYTES + Long.BYTES);
                         final int lineLength = (int) (lengthAndOffset >>> 48);
                         // the offset is used by the callback to report errors
                         offset = lengthAndOffset & MASK;
@@ -1208,7 +1208,7 @@ public class CopyImportTask {
                         // try to coalesce ahead lines into the same read, if they're sequential
                         additionalLines = 0;
                         for (long j = i + 1; j < count; j++) {
-                            long nextLengthAndOffset = Unsafe.getUnsafe().getLong(address + j * 2L * Long.BYTES + Long.BYTES);
+                            long nextLengthAndOffset = Unsafe.getLong(address + j * 2L * Long.BYTES + Long.BYTES);
                             int nextLineLength = (int) (nextLengthAndOffset >>> 48);
                             long nextOffset = nextLengthAndOffset & MASK;
 
@@ -1286,7 +1286,7 @@ public class CopyImportTask {
                 for (long i = 0; i < count; i++) {
                     throwIfCancelled();
 
-                    long lengthAndOffset = Unsafe.getUnsafe().getLong(address + i * 2L * Long.BYTES + Long.BYTES);
+                    long lengthAndOffset = Unsafe.getLong(address + i * 2L * Long.BYTES + Long.BYTES);
                     int lineLength = (int) (lengthAndOffset >>> 48);
                     offset = lengthAndOffset & MASK;
                     bytesToRead = lineLength;
@@ -1294,7 +1294,7 @@ public class CopyImportTask {
                     // try to coalesce ahead lines into the same read, if they're sequential
                     additionalLines = 0;
                     for (long j = i + 1; j < count; j++) {
-                        long nextLengthAndOffset = Unsafe.getUnsafe().getLong(address + j * 2L * Long.BYTES + Long.BYTES);
+                        long nextLengthAndOffset = Unsafe.getLong(address + j * 2L * Long.BYTES + Long.BYTES);
                         int nextLineLength = (int) (nextLengthAndOffset >>> 48);
                         long nextOffset = nextLengthAndOffset & MASK;
 

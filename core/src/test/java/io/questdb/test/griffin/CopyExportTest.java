@@ -29,18 +29,25 @@ import io.questdb.cairo.CairoException;
 import io.questdb.cairo.MicrosTimestampDriver;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableToken;
+import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.TableWriterMetrics;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cutlass.parquet.CopyExportRequestJob;
+import io.questdb.cutlass.parquet.ParquetExportMode;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.engine.table.VirtualRecordCursorFactory;
+import io.questdb.griffin.engine.table.parquet.PartitionDecoder;
 import io.questdb.griffin.engine.table.parquet.PartitionDescriptor;
 import io.questdb.griffin.engine.table.parquet.PartitionEncoder;
+import io.questdb.log.Log;
+import io.questdb.log.LogFactory;
 import io.questdb.mp.Job;
 import io.questdb.std.Files;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.LongHashSet;
+import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjHashSet;
@@ -52,6 +59,7 @@ import io.questdb.std.str.StringSink;
 import io.questdb.std.str.Utf8s;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.std.TestFilesFacadeImpl;
+import io.questdb.test.tools.ParquetTestUtils;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Before;
@@ -1255,6 +1263,367 @@ public class CopyExportTest extends AbstractCairoTest {
                                         ❤️🍺.parquet\t639.0 B
                                         """,
                                 "select path, diskSizeHuman from export_files()  order by path");
+                    });
+
+            testCopyExport(stmt, test);
+        });
+    }
+
+    @Test
+    public void testCopyQueryCursorBackedPreservesDictionaryEncodingAcrossPartitions() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE dict_copy_cursor_src (
+                        metric INT PARQUET(RLE_DICTIONARY),
+                        total LONG PARQUET(RLE_DICTIONARY),
+                        ts TIMESTAMP
+                    ) TIMESTAMP(ts) PARTITION BY DAY
+                    """);
+            execute("""
+                    INSERT INTO dict_copy_cursor_src VALUES
+                        (10, 1000, '2020-01-01T00:00:00.000000Z'),
+                        (20, 2000, '2020-01-01T01:00:00.000000Z'),
+                        (NULL, NULL, '2020-01-01T02:00:00.000000Z'),
+                        (10, 1000, '2020-01-02T00:00:00.000000Z'),
+                        (30, 3000, '2020-01-02T01:00:00.000000Z'),
+                        (NULL, NULL, '2020-01-02T02:00:00.000000Z'),
+                        (20, 2000, '2020-01-03T00:00:00.000000Z'),
+                        (40, 4000, '2020-01-03T01:00:00.000000Z'),
+                        (NULL, NULL, '2020-01-03T02:00:00.000000Z')
+                    """);
+
+            final String parquetPath = exportRoot + File.separator + "dict_copy_cursor_output.parquet";
+            final String query = """
+                    SELECT metric, total, ts, metric + 1 AS computed_metric
+                    FROM dict_copy_cursor_src
+                    CROSS JOIN long_sequence(1)
+                    """;
+
+            CopyExportRunnable stmt = () ->
+                    runAndFetchCopyExportID(
+                            "COPY (" + query + ") TO 'dict_copy_cursor_output' WITH FORMAT parquet",
+                            sqlExecutionContext
+                    );
+
+            CopyExportRunnable test = () ->
+                    assertEventually(() -> {
+                        assertSql(
+                                "export_path\tnum_exported_files\tstatus\n" +
+                                        parquetPath + "\t1\tfinished\n",
+                                "SELECT export_path, num_exported_files, status FROM \"sys.copy_export_log\" LIMIT -1"
+                        );
+                        assertParquetMatchesQuery(query, parquetPath);
+                        ParquetTestUtils.assertColumnsUseDictionaryEncoding(
+                                parquetPath,
+                                configuration.getFilesFacade(),
+                                0,
+                                1
+                        );
+                        ParquetTestUtils.assertColumnsDoNotUseDictionaryEncoding(
+                                parquetPath,
+                                configuration.getFilesFacade(),
+                                3
+                        );
+                    });
+
+            testCopyExport(stmt, test);
+        });
+    }
+
+    @Test
+    public void testCopyQueryDirectPageFramePreservesDictionaryEncodingAcrossPartitions() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE dict_copy_src (
+                        metric INT PARQUET(RLE_DICTIONARY),
+                        total LONG PARQUET(RLE_DICTIONARY),
+                        ts TIMESTAMP
+                    ) TIMESTAMP(ts) PARTITION BY DAY
+                    """);
+            execute("""
+                    INSERT INTO dict_copy_src VALUES
+                        (10, 1000, '2020-01-01T00:00:00.000000Z'),
+                        (20, 2000, '2020-01-01T01:00:00.000000Z'),
+                        (NULL, NULL, '2020-01-01T02:00:00.000000Z'),
+                        (10, 1000, '2020-01-02T00:00:00.000000Z'),
+                        (30, 3000, '2020-01-02T01:00:00.000000Z'),
+                        (NULL, NULL, '2020-01-02T02:00:00.000000Z'),
+                        (20, 2000, '2020-01-03T00:00:00.000000Z'),
+                        (40, 4000, '2020-01-03T01:00:00.000000Z'),
+                        (NULL, NULL, '2020-01-03T02:00:00.000000Z')
+                    """);
+
+            final String parquetPath = exportRoot + File.separator + "dict_copy_output.parquet";
+            final String query = "SELECT metric, total, ts FROM dict_copy_src";
+
+            CopyExportRunnable stmt = () ->
+                    runAndFetchCopyExportID(
+                            "COPY (" + query + ") TO 'dict_copy_output' WITH FORMAT parquet",
+                            sqlExecutionContext
+                    );
+
+            CopyExportRunnable test = () ->
+                    assertEventually(() -> {
+                        assertSql(
+                                "export_path\tnum_exported_files\tstatus\n" +
+                                        parquetPath + "\t1\tfinished\n",
+                                "SELECT export_path, num_exported_files, status FROM \"sys.copy_export_log\" LIMIT -1"
+                        );
+                        assertParquetMatchesQuery(query, parquetPath);
+                        ParquetTestUtils.assertColumnsUseDictionaryEncoding(
+                                parquetPath,
+                                configuration.getFilesFacade(),
+                                0,
+                                1
+                        );
+                    });
+
+            testCopyExport(stmt, test);
+        });
+    }
+
+    @Test
+    public void testCopyQueryJoinPreservesDictionaryEncoding() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE dict_join_master (
+                        id LONG,
+                        metric INT PARQUET(RLE_DICTIONARY),
+                        ts TIMESTAMP
+                    ) TIMESTAMP(ts) PARTITION BY DAY
+                    """);
+            execute("""
+                    CREATE TABLE dict_join_slave (
+                        id LONG,
+                        total LONG PARQUET(RLE_DICTIONARY),
+                        ts TIMESTAMP
+                    ) TIMESTAMP(ts) PARTITION BY DAY
+                    """);
+            execute("""
+                    INSERT INTO dict_join_master VALUES
+                        (1, 10, '2020-01-01T00:00:00.000000Z'),
+                        (1, 10, '2020-01-01T01:00:00.000000Z'),
+                        (2, 20, '2020-01-02T00:00:00.000000Z'),
+                        (2, 20, '2020-01-02T01:00:00.000000Z')
+                    """);
+            execute("""
+                    INSERT INTO dict_join_slave VALUES
+                        (1, 1000, '2020-01-01T00:00:00.000000Z'),
+                        (1, 1000, '2020-01-01T01:00:00.000000Z'),
+                        (2, 2000, '2020-01-02T00:00:00.000000Z'),
+                        (2, 2000, '2020-01-02T01:00:00.000000Z')
+                    """);
+
+            final String query = """
+                    SELECT *
+                    FROM dict_join_master
+                    ASOF JOIN dict_join_slave ON id
+                    """;
+
+            // Sanity-check that the test exercises the non-VRCF CURSOR_BASED path:
+            // SelectedRecordCursorFactory(AsOfJoin*) is not a VirtualRecordCursorFactory.
+            try (RecordCursorFactory f = select(query)) {
+                RecordCursorFactory unwrapped = ParquetExportMode.unwrapFactory(f);
+                Assert.assertFalse(
+                        "expected non-VRCF factory; got " + unwrapped.getClass().getName(),
+                        unwrapped instanceof VirtualRecordCursorFactory
+                );
+                Assert.assertFalse(
+                        "expected CURSOR_BASED dispatch (no page-frame cursor support)",
+                        f.supportsPageFrameCursor()
+                );
+            }
+
+            final String parquetPath = exportRoot + File.separator + "dict_join_output.parquet";
+
+            CopyExportRunnable stmt = () ->
+                    runAndFetchCopyExportID(
+                            "COPY (" + query + ") TO 'dict_join_output' WITH FORMAT parquet",
+                            sqlExecutionContext
+                    );
+
+            CopyExportRunnable test = () ->
+                    assertEventually(() -> {
+                        assertSql(
+                                "export_path\tnum_exported_files\tstatus\n" +
+                                        parquetPath + "\t1\tfinished\n",
+                                "SELECT export_path, num_exported_files, status FROM \"sys.copy_export_log\" LIMIT -1"
+                        );
+                        assertParquetMatchesQuery(query, parquetPath);
+                        // Output column order: id, metric, ts, id1, total, ts1.
+                        // metric is column 1 and total is column 4.
+                        ParquetTestUtils.assertColumnsUseDictionaryEncoding(
+                                parquetPath,
+                                configuration.getFilesFacade(),
+                                1,
+                                4
+                        );
+                    });
+
+            testCopyExport(stmt, test);
+        });
+    }
+
+    @Test
+    public void testCopyQueryMemoizedColumnPreservesDictionaryEncoding() throws Exception {
+        // SqlCodeGenerator wraps a ColumnFunction in a *FunctionMemoizer when its projection
+        // alias is referenced more than once. The hybrid materializer must still discover
+        // the per-column parquet encoding override through the memoizer wrapper.
+        assertMemoryLeak(() -> {
+            allowFunctionMemoization();
+            execute("""
+                    CREATE TABLE dict_memo_src (
+                        metric INT PARQUET(RLE_DICTIONARY),
+                        ts TIMESTAMP
+                    ) TIMESTAMP(ts) PARTITION BY DAY
+                    """);
+            execute("""
+                    INSERT INTO dict_memo_src VALUES
+                        (10, '2020-01-01T00:00:00.000000Z'),
+                        (20, '2020-01-01T01:00:00.000000Z'),
+                        (10, '2020-01-02T00:00:00.000000Z')
+                    """);
+
+            // `metric` is referenced in two additional projections; the alias's ref count
+            // forces SqlCodeGenerator to wrap the ColumnFunction in an IntFunctionMemoizer.
+            final String query = """
+                    SELECT metric, metric + 1 AS metric_plus, metric - 1 AS metric_minus, ts
+                    FROM dict_memo_src
+                    """;
+            final String parquetPath = exportRoot + File.separator + "dict_memo_output.parquet";
+
+            CopyExportRunnable stmt = () ->
+                    runAndFetchCopyExportID(
+                            "COPY (" + query + ") TO 'dict_memo_output' WITH FORMAT parquet",
+                            sqlExecutionContext
+                    );
+
+            CopyExportRunnable test = () ->
+                    assertEventually(() -> {
+                        assertSql(
+                                "export_path\tnum_exported_files\tstatus\n" +
+                                        parquetPath + "\t1\tfinished\n",
+                                "SELECT export_path, num_exported_files, status FROM \"sys.copy_export_log\" LIMIT -1"
+                        );
+                        // Source col 0 (metric) must still be dict-encoded despite the memoizer wrap.
+                        ParquetTestUtils.assertColumnsUseDictionaryEncoding(
+                                parquetPath, configuration.getFilesFacade(), 0
+                        );
+                        // Computed cols 1, 2 are expressions; they must not inherit the override.
+                        ParquetTestUtils.assertColumnsDoNotUseDictionaryEncoding(
+                                parquetPath, configuration.getFilesFacade(), 1, 2
+                        );
+                    });
+
+            testCopyExport(stmt, test);
+        });
+    }
+
+    @Test
+    public void testCopyQueryNestedProjectionPreservesDictionaryEncoding() throws Exception {
+        // Nested virtual projections: the outer factory's base is another VRCF, not the
+        // underlying reader. The per-column parquet encoding must ride through both levels
+        // of generateSelectVirtualWithSubQuery.
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE dict_nested_src (
+                        metric INT PARQUET(RLE_DICTIONARY),
+                        ts TIMESTAMP
+                    ) TIMESTAMP(ts) PARTITION BY DAY
+                    """);
+            execute("""
+                    INSERT INTO dict_nested_src VALUES
+                        (10, '2020-01-01T00:00:00.000000Z'),
+                        (20, '2020-01-01T01:00:00.000000Z'),
+                        (10, '2020-01-02T00:00:00.000000Z')
+                    """);
+
+            // Both the inner and outer SELECTs add a computed column to ensure each level
+            // generates its own VirtualRecordCursorFactory, exercising the nested path.
+            final String query = """
+                    SELECT metric, inner_expr + 1 AS outer_expr, ts
+                    FROM (
+                        SELECT metric, metric * 2 AS inner_expr, ts
+                        FROM dict_nested_src
+                    )
+                    """;
+            final String parquetPath = exportRoot + File.separator + "dict_nested_output.parquet";
+
+            CopyExportRunnable stmt = () ->
+                    runAndFetchCopyExportID(
+                            "COPY (" + query + ") TO 'dict_nested_output' WITH FORMAT parquet",
+                            sqlExecutionContext
+                    );
+
+            CopyExportRunnable test = () ->
+                    assertEventually(() -> {
+                        assertSql(
+                                "export_path\tnum_exported_files\tstatus\n" +
+                                        parquetPath + "\t1\tfinished\n",
+                                "SELECT export_path, num_exported_files, status FROM \"sys.copy_export_log\" LIMIT -1"
+                        );
+                        // Col 0 (metric) is a pass-through through both nested VRCFs and
+                        // must retain its RLE_DICTIONARY override.
+                        ParquetTestUtils.assertColumnsUseDictionaryEncoding(
+                                parquetPath, configuration.getFilesFacade(), 0
+                        );
+                        // Col 1 (outer_expr) is a computed expression; must not inherit.
+                        ParquetTestUtils.assertColumnsDoNotUseDictionaryEncoding(
+                                parquetPath, configuration.getFilesFacade(), 1
+                        );
+                    });
+
+            testCopyExport(stmt, test);
+        });
+    }
+
+    @Test
+    public void testCopyQuerySymbolWithDictionaryEncodingDropsOverride() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE dict_sym_src (
+                        label SYMBOL PARQUET(RLE_DICTIONARY),
+                        ts TIMESTAMP
+                    ) TIMESTAMP(ts) PARTITION BY DAY
+                    """);
+            execute("""
+                    INSERT INTO dict_sym_src VALUES
+                        ('A', '2020-01-01T00:00:00.000000Z'),
+                        ('B', '2020-01-01T01:00:00.000000Z'),
+                        ('A', '2020-01-02T00:00:00.000000Z')
+                    """);
+
+            // Force CURSOR_BASED mode via CROSS JOIN (base no longer supports
+            // page frame cursor). In the cursor path, SYMBOL is materialised
+            // as STRING, so the RLE_DICTIONARY override must NOT survive.
+            final String query = """
+                    SELECT label, ts, label || '!' AS computed_label
+                    FROM dict_sym_src
+                    CROSS JOIN long_sequence(1)
+                    """;
+            final String parquetPath = exportRoot + File.separator + "dict_sym_output.parquet";
+
+            CopyExportRunnable stmt = () ->
+                    runAndFetchCopyExportID(
+                            "COPY (" + query + ") TO 'dict_sym_output' WITH FORMAT parquet",
+                            sqlExecutionContext
+                    );
+
+            CopyExportRunnable test = () ->
+                    assertEventually(() -> {
+                        assertSql(
+                                "export_path\tnum_exported_files\tstatus\n" +
+                                        parquetPath + "\t1\tfinished\n",
+                                "SELECT export_path, num_exported_files, status FROM \"sys.copy_export_log\" LIMIT -1"
+                        );
+                        assertParquetMatchesQuery(query, parquetPath);
+
+                        // Col 0 (label, SYMBOL->STRING) is type-changed; col 2 (computed_label)
+                        // is a computed expression. Neither should inherit the RLE_DICTIONARY
+                        // override of the source symbol column.
+                        ParquetTestUtils.assertColumnsDoNotUseDictionaryEncoding(
+                                parquetPath, configuration.getFilesFacade(), 0, 2
+                        );
                     });
 
             testCopyExport(stmt, test);
@@ -3345,6 +3714,86 @@ public class CopyExportTest extends AbstractCairoTest {
         });
     }
 
+    @Test
+    public void testRowGroupColumnHasEncodingRejectsInvalidEncodingId() throws Exception {
+        // The Rust JNI helper translates an integer encoding id into a parquet
+        // thrift encoding byte. Anything outside the supported set must surface
+        // as a CairoException whose message names the rejected id and includes
+        // the row-group/column context added by the JNI wrapper.
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE dict_jni_src (
+                        metric INT PARQUET(RLE_DICTIONARY),
+                        ts TIMESTAMP
+                    ) TIMESTAMP(ts) PARTITION BY DAY
+                    """);
+            execute("""
+                    INSERT INTO dict_jni_src VALUES
+                        (10, '2020-01-01T00:00:00.000000Z'),
+                        (20, '2020-01-01T01:00:00.000000Z')
+                    """);
+
+            final String parquetPath = exportRoot + File.separator + "dict_jni_output.parquet";
+            final String query = "SELECT metric, ts FROM dict_jni_src";
+
+            CopyExportRunnable stmt = () ->
+                    runAndFetchCopyExportID(
+                            "COPY (" + query + ") TO 'dict_jni_output' WITH FORMAT parquet",
+                            sqlExecutionContext
+                    );
+
+            CopyExportRunnable test = () ->
+                    assertEventually(() -> {
+                        assertSql(
+                                "export_path\tnum_exported_files\tstatus\n" +
+                                        parquetPath + "\t1\tfinished\n",
+                                "SELECT export_path, num_exported_files, status FROM \"sys.copy_export_log\" LIMIT -1"
+                        );
+
+                        final FilesFacade ff = configuration.getFilesFacade();
+                        final Log log = LogFactory.getLog(CopyExportTest.class);
+                        long fd = -1;
+                        long addr = 0;
+                        long fileSize = 0;
+                        try (Path path = new Path(); PartitionDecoder decoder = new PartitionDecoder()) {
+                            path.of(parquetPath).$();
+                            fd = TableUtils.openRO(ff, path.$(), log);
+                            fileSize = ff.length(fd);
+                            addr = TableUtils.mapRO(ff, fd, fileSize, MemoryTag.MMAP_PARQUET_PARTITION_DECODER);
+                            decoder.of(addr, fileSize, MemoryTag.NATIVE_PARQUET_PARTITION_DECODER);
+
+                            try {
+                                decoder.rowGroupColumnHasEncoding(0, 0, 99);
+                                Assert.fail("expected CairoException for invalid encoding id");
+                            } catch (CairoException ex) {
+                                final String msg = ex.getMessage();
+                                Assert.assertTrue(
+                                        "error should mention 'unsupported parquet encoding id', got: " + msg,
+                                        msg.contains("unsupported parquet encoding id")
+                                );
+                                Assert.assertTrue(
+                                        "error should include the rejected id 99, got: " + msg,
+                                        msg.contains("99")
+                                );
+                                Assert.assertTrue(
+                                        "error should include the row-group/column context, got: " + msg,
+                                        msg.contains("row group 0") && msg.contains("column 0")
+                                );
+                            }
+                        } finally {
+                            if (addr != 0) {
+                                ff.munmap(addr, fileSize, MemoryTag.MMAP_PARQUET_PARTITION_DECODER);
+                            }
+                            if (fd != -1) {
+                                ff.close(fd);
+                            }
+                        }
+                    });
+
+            testCopyExport(stmt, test);
+        });
+    }
+
     private static Thread createJobThread(Job job, CountDownLatch workCount, AtomicBoolean stop, int workerId) {
         return new Thread(() -> {
             try {
@@ -3359,6 +3808,14 @@ public class CopyExportTest extends AbstractCairoTest {
                 workCount.countDown();
             }
         });
+    }
+
+    private void assertParquetMatchesQuery(String query, String parquetPath) throws Exception {
+        StringSink expectedSink = new StringSink();
+        StringSink actualSink = new StringSink();
+        TestUtils.printSql(engine, sqlExecutionContext, query, expectedSink);
+        TestUtils.printSql(engine, sqlExecutionContext, "SELECT * FROM read_parquet('" + parquetPath + "')", actualSink);
+        TestUtils.assertEquals(expectedSink, actualSink);
     }
 
     // Helper methods for copy export operations

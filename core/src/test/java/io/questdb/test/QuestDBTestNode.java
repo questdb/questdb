@@ -191,6 +191,7 @@ public class QuestDBTestNode {
         public void tearDown(boolean removeDir) {
             engine.getTableIdGenerator().close();
             engine.clear();
+            engine.getViewStateStore().clear();
             engine.closeNameRegistry();
             engine.getMetrics().clear();
             if (removeDir && ownRoot) {

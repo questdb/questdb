@@ -57,17 +57,17 @@ public class RowGroupStatBuffers implements QuietCloseable, Reopenable {
         assert size == Long.BYTES;
         final long ptr = getMaxValuePtr(columnIndex);
         assert ptr != 0;
-        return Unsafe.getUnsafe().getLong(ptr);
+        return Unsafe.getLong(ptr);
     }
 
     public long getMaxValuePtr(int columnIndex) {
-        final long statBuffersPtr = Unsafe.getUnsafe().getLong(ptr + CHUNK_STATS_PTR_OFFSET);
-        return Unsafe.getUnsafe().getLong(statBuffersPtr + columnIndex * CHUNK_STATS_STRUCT_SIZE + CHUNK_STATS_MAX_VALUE_PTR_OFFSET);
+        final long statBuffersPtr = Unsafe.getLong(ptr + CHUNK_STATS_PTR_OFFSET);
+        return Unsafe.getLong(statBuffersPtr + columnIndex * CHUNK_STATS_STRUCT_SIZE + CHUNK_STATS_MAX_VALUE_PTR_OFFSET);
     }
 
     public long getMaxValueSize(int columnIndex) {
-        final long statBuffersPtr = Unsafe.getUnsafe().getLong(ptr + CHUNK_STATS_PTR_OFFSET);
-        return Unsafe.getUnsafe().getLong(statBuffersPtr + columnIndex * CHUNK_STATS_STRUCT_SIZE + CHUNK_STATS_MAX_VALUE_SIZE_OFFSET);
+        final long statBuffersPtr = Unsafe.getLong(ptr + CHUNK_STATS_PTR_OFFSET);
+        return Unsafe.getLong(statBuffersPtr + columnIndex * CHUNK_STATS_STRUCT_SIZE + CHUNK_STATS_MAX_VALUE_SIZE_OFFSET);
     }
 
     public long getMinValueLong(int columnIndex) {
@@ -75,17 +75,17 @@ public class RowGroupStatBuffers implements QuietCloseable, Reopenable {
         assert size == Long.BYTES;
         final long ptr = getMinValuePtr(columnIndex);
         assert ptr != 0;
-        return Unsafe.getUnsafe().getLong(ptr);
+        return Unsafe.getLong(ptr);
     }
 
     public long getMinValuePtr(int columnIndex) {
-        final long statBuffersPtr = Unsafe.getUnsafe().getLong(ptr + CHUNK_STATS_PTR_OFFSET);
-        return Unsafe.getUnsafe().getLong(statBuffersPtr + columnIndex * CHUNK_STATS_STRUCT_SIZE + CHUNK_STATS_MIN_VALUE_PTR_OFFSET);
+        final long statBuffersPtr = Unsafe.getLong(ptr + CHUNK_STATS_PTR_OFFSET);
+        return Unsafe.getLong(statBuffersPtr + columnIndex * CHUNK_STATS_STRUCT_SIZE + CHUNK_STATS_MIN_VALUE_PTR_OFFSET);
     }
 
     public long getMinValueSize(int columnIndex) {
-        final long statBuffersPtr = Unsafe.getUnsafe().getLong(ptr + CHUNK_STATS_PTR_OFFSET);
-        return Unsafe.getUnsafe().getLong(statBuffersPtr + columnIndex * CHUNK_STATS_STRUCT_SIZE + CHUNK_STATS_MIN_VALUE_SIZE_OFFSET);
+        final long statBuffersPtr = Unsafe.getLong(ptr + CHUNK_STATS_PTR_OFFSET);
+        return Unsafe.getLong(statBuffersPtr + columnIndex * CHUNK_STATS_STRUCT_SIZE + CHUNK_STATS_MIN_VALUE_SIZE_OFFSET);
     }
 
     public long ptr() {

@@ -28,7 +28,7 @@ import io.questdb.griffin.ExpressionTreeBuilder;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.model.ExpressionNode;
-import io.questdb.griffin.model.QueryModel;
+import io.questdb.griffin.model.IQueryModel;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
@@ -123,13 +123,13 @@ public class ConstantReassociationTest extends AbstractCairoTest {
     @Test
     public void testReturnValueIndicatesConstantSubtree() throws Exception {
         try (SqlCompiler compiler = engine.getSqlCompiler()) {
-            ExpressionNode allConst = compiler.testParseExpression("1 + 2 + 3", (QueryModel) null);
+            ExpressionNode allConst = compiler.testParseExpression("1 + 2 + 3", (IQueryModel) null);
             Assert.assertTrue(allConst.reassociateConstants(false));
 
-            ExpressionNode hasColumn = compiler.testParseExpression("d + 1 + 4", (QueryModel) null);
+            ExpressionNode hasColumn = compiler.testParseExpression("d + 1 + 4", (IQueryModel) null);
             Assert.assertFalse(hasColumn.reassociateConstants(false));
 
-            ExpressionNode leaf = compiler.testParseExpression("42", (QueryModel) null);
+            ExpressionNode leaf = compiler.testParseExpression("42", (IQueryModel) null);
             Assert.assertTrue(leaf.reassociateConstants(false));
         }
     }

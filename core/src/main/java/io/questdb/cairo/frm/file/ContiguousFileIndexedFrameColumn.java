@@ -54,7 +54,7 @@ public class ContiguousFileIndexedFrameColumn extends ContiguousFileFixFrameColu
             try {
                 indexWriter.rollbackConditionally(appendOffsetRowCount);
                 for (long i = 0; i < size; i++) {
-                    indexWriter.add(TableUtils.toIndexKey(Unsafe.getUnsafe().getInt(mappedAddress + (i << shl))), appendOffsetRowCount + i);
+                    indexWriter.add(TableUtils.toIndexKey(Unsafe.getInt(mappedAddress + (i << shl))), appendOffsetRowCount + i);
                 }
                 indexWriter.setMaxValue(appendOffsetRowCount + size - 1);
                 indexWriter.commit();
@@ -120,7 +120,7 @@ public class ContiguousFileIndexedFrameColumn extends ContiguousFileFixFrameColu
     private int keyCount(int key, long size, long mappedAddress) {
         int count = 0;
         for (long i = 0; i < size; i++) {
-            if (TableUtils.toIndexKey(Unsafe.getUnsafe().getInt(mappedAddress + (i << 2))) == key) {
+            if (TableUtils.toIndexKey(Unsafe.getInt(mappedAddress + (i << 2))) == key) {
                 count++;
             }
         }

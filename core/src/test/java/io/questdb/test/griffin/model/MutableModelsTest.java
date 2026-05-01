@@ -32,6 +32,7 @@ import io.questdb.griffin.model.ExplainModel;
 import io.questdb.griffin.model.ExportModel;
 import io.questdb.griffin.model.ExpressionNode;
 import io.questdb.griffin.model.HorizonJoinContext;
+import io.questdb.griffin.model.IQueryModel;
 import io.questdb.griffin.model.InsertModel;
 import io.questdb.griffin.model.IntrinsicModel;
 import io.questdb.griffin.model.JoinContext;
@@ -251,7 +252,7 @@ public class MutableModelsTest {
         model.setAlias(newExpressionNode());
         model.setArtificialStar(true);
         model.setTableNameExpr(newExpressionNode());
-        model.setJoinType(QueryModel.JOIN_LT);
+        model.setJoinType(IQueryModel.JOIN_LT);
         model.setJoinCriteria(newExpressionNode());
         model.setModelPosition(42);
         model.setLimit(newExpressionNode(), newExpressionNode());
@@ -260,13 +261,13 @@ public class MutableModelsTest {
         model.setTimestamp(newExpressionNode());
         model.setContext(new JoinContext());
         model.setIsUpdate(true);
-        model.setSelectModelType(QueryModel.SELECT_MODEL_VIRTUAL);
+        model.setSelectModelType(IQueryModel.SELECT_MODEL_VIRTUAL);
         model.setSelectTranslation(true);
-        model.setSetOperationType(QueryModel.SET_OPERATION_EXCEPT);
+        model.setSetOperationType(IQueryModel.SET_OPERATION_EXCEPT);
         model.setSampleByOffset(newExpressionNode());
         model.setSampleBy(newExpressionNode(), newExpressionNode());
         model.setSampleByTimezoneName(newExpressionNode());
-        model.setLatestByType(QueryModel.LATEST_BY_NEW);
+        model.setLatestByType(IQueryModel.LATEST_BY_NEW);
         model.setOrderByAdviceMnemonic(42);
         model.setOrderByPosition(42);
         IntList jm = model.nextOrderedJoinModels();
@@ -281,7 +282,7 @@ public class MutableModelsTest {
         model.setWhereClause(newExpressionNode());
         model.setPostJoinWhereClause(newExpressionNode());
         model.addParsedWhereNode(newExpressionNode(), true);
-        model.addOrderBy(newExpressionNode(), QueryModel.ORDER_DIRECTION_DESCENDING);
+        model.addOrderBy(newExpressionNode(), IQueryModel.ORDER_DIRECTION_DESCENDING);
         model.addGroupBy(newExpressionNode());
         ObjList<ExpressionNode> orderByAdvice = new ObjList<>();
         orderByAdvice.add(newExpressionNode());
@@ -326,7 +327,7 @@ public class MutableModelsTest {
         column.of("alias", newExpressionNode(), false, 42);
         // WindowColumn fields
         column.getPartitionBy().add(newExpressionNode());
-        column.addOrderBy(newExpressionNode(), QueryModel.ORDER_DIRECTION_DESCENDING);
+        column.addOrderBy(newExpressionNode(), IQueryModel.ORDER_DIRECTION_DESCENDING);
         column.setRowsLoExpr(newExpressionNode(), 10);
         column.setRowsLoExprTimeUnit(WindowExpression.TIME_UNIT_SECOND);
         column.setRowsHiExpr(newExpressionNode(), 20);

@@ -99,6 +99,11 @@ public interface MetadataServiceStub extends MetadataService {
     }
 
     @Override
+    default int getTtlHoursOrMonths() {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
     default UpdateOperator getUpdateOperator() {
         throw new UnsupportedOperationException();
     }

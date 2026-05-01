@@ -32,8 +32,8 @@ import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.model.ExecutionModel;
 import io.questdb.griffin.model.ExpressionNode;
+import io.questdb.griffin.model.IQueryModel;
 import io.questdb.griffin.model.QueryColumn;
-import io.questdb.griffin.model.QueryModel;
 import io.questdb.std.Chars;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.LowerCaseCharSequenceHashSet;
@@ -172,8 +172,8 @@ public class AbstractSqlParserTest extends AbstractCairoTest {
                         Assert.assertEquals(model.getModelType(), modelType);
                         ((Sinkable) model).toSink(sink);
                         TestUtils.assertEquals(expected, sink);
-                        if (model instanceof QueryModel && model.getModelType() == ExecutionModel.QUERY) {
-                            validateTopDownColumns((QueryModel) model);
+                        if (model instanceof IQueryModel && model.getModelType() == ExecutionModel.QUERY) {
+                            validateTopDownColumns((IQueryModel) model);
                         }
                     }
                 },
@@ -210,17 +210,17 @@ public class AbstractSqlParserTest extends AbstractCairoTest {
         }
     }
 
-    protected void validateTopDownColumns(QueryModel model) {
+    protected void validateTopDownColumns(IQueryModel model) {
         ObjList<QueryColumn> columns = model.getColumns();
         final ObjList<LowerCaseCharSequenceHashSet> nameSets = new ObjList<>();
 
-        QueryModel nested = model.getNestedModel();
+        IQueryModel nested = model.getNestedModel();
         while (nested != null) {
             nameSets.clear();
 
             for (int i = 0, n = nested.getJoinModels().size(); i < n; i++) {
                 LowerCaseCharSequenceHashSet set = new LowerCaseCharSequenceHashSet();
-                final QueryModel m = nested.getJoinModels().getQuick(i);
+                final IQueryModel m = nested.getJoinModels().getQuick(i);
                 // validate uniqueness of top-down column names.
                 final ObjList<QueryColumn> cols = m.getTopDownColumns();
                 for (int j = 0, k = cols.size(); j < k; j++) {

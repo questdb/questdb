@@ -155,7 +155,7 @@ public class WalWriterSymbolBenchmark {
             for (int i = 0; i < nSymbols; i++) {
                 CharSequence symbol = rnd.nextChars(symbolLength);
                 for (int j = 0; j < symbolLength; j++) {
-                    Unsafe.getUnsafe().putChar(lo + (i * symbolLength + j) * 2, symbol.charAt(j));
+                    Unsafe.putChar(lo + (i * symbolLength + j) * 2, symbol.charAt(j));
                 }
                 DirectString ds = new DirectString();
                 ds.of(lo + (i * symbolLength) * 2, symbolLength);

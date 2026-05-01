@@ -176,14 +176,14 @@ public class PercentRankFunctionFactory extends AbstractWindowFunctionFactory {
             }
             lastRecordOffset = recordOffset;
             // Store rank temporarily in the output column (as long)
-            Unsafe.getUnsafe().putLong(spi.getAddress(recordOffset, columnIndex), rank);
+            Unsafe.putLong(spi.getAddress(recordOffset, columnIndex), rank);
             count++;
         }
 
         @Override
         public void pass2(Record record, long recordOffset, WindowSPI spi) {
             // Read rank stored in pass1
-            long storedRank = Unsafe.getUnsafe().getLong(spi.getAddress(recordOffset, columnIndex));
+            long storedRank = Unsafe.getLong(spi.getAddress(recordOffset, columnIndex));
             // Calculate percent_rank = (rank - 1) / (total_rows - 1)
             double percentRank;
             if (totalRows <= 1) {
@@ -191,7 +191,7 @@ public class PercentRankFunctionFactory extends AbstractWindowFunctionFactory {
             } else {
                 percentRank = (double) (storedRank - 1) / (double) (totalRows - 1);
             }
-            Unsafe.getUnsafe().putDouble(spi.getAddress(recordOffset, columnIndex), percentRank);
+            Unsafe.putDouble(spi.getAddress(recordOffset, columnIndex), percentRank);
         }
 
         @Override
@@ -278,7 +278,7 @@ public class PercentRankFunctionFactory extends AbstractWindowFunctionFactory {
 
         @Override
         public void pass1(Record record, long recordOffset, WindowSPI spi) {
-            Unsafe.getUnsafe().putDouble(spi.getAddress(recordOffset, columnIndex), PERCENT_RANK_CONST);
+            Unsafe.putDouble(spi.getAddress(recordOffset, columnIndex), PERCENT_RANK_CONST);
         }
 
         @Override
@@ -406,7 +406,7 @@ public class PercentRankFunctionFactory extends AbstractWindowFunctionFactory {
             mapValue.putLong(1, rank);
             mapValue.putLong(2, count + 1);
             // Store rank temporarily in the output column (as long)
-            Unsafe.getUnsafe().putLong(spi.getAddress(recordOffset, columnIndex), rank);
+            Unsafe.putLong(spi.getAddress(recordOffset, columnIndex), rank);
         }
 
         @Override
@@ -417,7 +417,7 @@ public class PercentRankFunctionFactory extends AbstractWindowFunctionFactory {
             MapValue mapValue = key.findValue();
 
             // Read rank stored in pass1
-            long storedRank = Unsafe.getUnsafe().getLong(spi.getAddress(recordOffset, columnIndex));
+            long storedRank = Unsafe.getLong(spi.getAddress(recordOffset, columnIndex));
 
             // Get total rows for this partition (count was incremented after each row, so it's total + 1)
             long totalRows = mapValue.getLong(2) - 1;
@@ -429,7 +429,7 @@ public class PercentRankFunctionFactory extends AbstractWindowFunctionFactory {
             } else {
                 percentRank = (double) (storedRank - 1) / (double) (totalRows - 1);
             }
-            Unsafe.getUnsafe().putDouble(spi.getAddress(recordOffset, columnIndex), percentRank);
+            Unsafe.putDouble(spi.getAddress(recordOffset, columnIndex), percentRank);
         }
 
         @Override

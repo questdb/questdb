@@ -32,6 +32,7 @@ import io.questdb.cairo.map.MapKey;
 import io.questdb.cairo.map.MapRecord;
 import io.questdb.cairo.map.MapValue;
 import io.questdb.cairo.sql.RecordCursor;
+import io.questdb.griffin.engine.groupby.GroupByFunctionsUpdater;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 import io.questdb.std.QuietCloseable;
@@ -46,13 +47,14 @@ public class GroupByMapFragment implements QuietCloseable {
     // We use the first bits of hash code to determine the shard.
     public static final int NUM_SHARDS = 256;
     public static final int NUM_SHARDS_SHR = Long.numberOfLeadingZeros(NUM_SHARDS) + 1;
-    private final CairoConfiguration configuration;
-    private final ColumnTypes keyTypes;
     final Map map; // non-sharded partial result
+    final int slotId; // -1 stands for owner fragment
+    private final CairoConfiguration configuration;
+    private final GroupByFunctionsUpdater groupByFunctionsUpdater;
+    private final ColumnTypes keyTypes;
     private final GroupByMapStats ownerStats;
     private final ObjList<GroupByMapStats> shardStats;
     private final ObjList<Map> shards; // this.map split into shards
-    final int slotId; // -1 stands for owner fragment
     private final ColumnTypes valueTypes;
     private final int workerCount;
     boolean sharded;
@@ -64,6 +66,7 @@ public class GroupByMapFragment implements QuietCloseable {
             ColumnTypes valueTypes,
             GroupByMapStats ownerStats,
             ObjList<GroupByMapStats> shardStats,
+            GroupByFunctionsUpdater groupByFunctionsUpdater,
             int workerCount,
             int slotId
     ) {
@@ -72,10 +75,19 @@ public class GroupByMapFragment implements QuietCloseable {
         this.valueTypes = valueTypes;
         this.ownerStats = ownerStats;
         this.shardStats = shardStats;
+        this.groupByFunctionsUpdater = groupByFunctionsUpdater;
         this.workerCount = workerCount;
-        this.map = MapFactory.createUnorderedMap(configuration, keyTypes, valueTypes, true);
         this.shards = new ObjList<>(NUM_SHARDS);
         this.slotId = slotId;
+        this.map = MapFactory.createUnorderedMap(configuration, keyTypes, valueTypes, true);
+        try {
+            // Set up the empty value pattern used by the batched dispatch path.
+            // The map is created in an already-open state, so reopenMap() would skip this on first use.
+            map.setBatchEmptyValue(groupByFunctionsUpdater);
+        } catch (Throwable th) {
+            Misc.free(map);
+            throw th;
+        }
     }
 
     @Override
@@ -111,6 +123,13 @@ public class GroupByMapFragment implements QuietCloseable {
             int keyCapacity = targetKeyCapacity(configuration, workerCount, ownerStats, owner);
             long heapSize = targetHeapSize(configuration, workerCount, ownerStats, owner);
             map.reopen(keyCapacity, heapSize);
+            try {
+                // Set up the empty value pattern used by the batched dispatch path.
+                map.setBatchEmptyValue(groupByFunctionsUpdater);
+            } catch (Throwable th) {
+                map.close();
+                throw th;
+            }
         }
         return map;
     }
@@ -137,6 +156,22 @@ public class GroupByMapFragment implements QuietCloseable {
 
         map.close();
         sharded = true;
+    }
+
+    private void reopenShards() {
+        int size = shards.size();
+        if (size == 0) {
+            for (int i = 0; i < NUM_SHARDS; i++) {
+                shards.add(MapFactory.createUnorderedMap(configuration, keyTypes, valueTypes, true));
+            }
+        } else {
+            for (int i = 0; i < NUM_SHARDS; i++) {
+                GroupByMapStats stats = shardStats.getQuick(i);
+                int keyCapacity = targetKeyCapacity(configuration, workerCount, stats, false);
+                long heapSize = targetHeapSize(configuration, workerCount, stats, false);
+                shards.getQuick(i).reopen(keyCapacity, heapSize);
+            }
+        }
     }
 
     /**
@@ -183,21 +218,5 @@ public class GroupByMapFragment implements QuietCloseable {
             keyCapacity = Math.max((int) statKeyCapacity, keyCapacity);
         }
         return keyCapacity;
-    }
-
-    private void reopenShards() {
-        int size = shards.size();
-        if (size == 0) {
-            for (int i = 0; i < NUM_SHARDS; i++) {
-                shards.add(MapFactory.createUnorderedMap(configuration, keyTypes, valueTypes, true));
-            }
-        } else {
-            for (int i = 0; i < NUM_SHARDS; i++) {
-                GroupByMapStats stats = shardStats.getQuick(i);
-                int keyCapacity = targetKeyCapacity(configuration, workerCount, stats, false);
-                long heapSize = targetHeapSize(configuration, workerCount, stats, false);
-                shards.getQuick(i).reopen(keyCapacity, heapSize);
-            }
-        }
     }
 }

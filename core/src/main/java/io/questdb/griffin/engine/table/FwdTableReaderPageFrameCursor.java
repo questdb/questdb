@@ -25,6 +25,7 @@
 package io.questdb.griffin.engine.table;
 
 import io.questdb.cairo.BitmapIndexReader;
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.ColumnTypeDriver;
 import io.questdb.cairo.ColumnVersionReader;
@@ -350,7 +351,13 @@ public class FwdTableReaderPageFrameCursor implements TablePageFrameCursor {
         final PartitionDecoder.Metadata metadata = reenterParquetDecoder.metadata();
         final int rowGroupCount = metadata.getRowGroupCount();
 
-        assert partitionHi <= metadata.getRowCount();
+        if (partitionHi > metadata.getRowCount()) {
+            throw CairoException.critical(0)
+                    .put("parquet partition row count mismatch [partitionHi=").put(partitionHi)
+                    .put(", parquetRowCount=").put(metadata.getRowCount())
+                    .put(", partitionIndex=").put(reenterPartitionIndex)
+                    .put(']');
+        }
 
         long rowGroupStartRow = cachedRowGroupStartRow;
         for (int i = cachedRowGroupIndex; i < rowGroupCount; i++) {

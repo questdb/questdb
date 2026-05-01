@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -2096,7 +2096,7 @@ public class JsonUnnestTest extends AbstractCairoTest {
         });
     }
 
-    // ---- Tests for COLUMNS keyword validation ----
+    // Tests for COLUMNS keyword validation
 
     @Test
     public void testMultipleSourcesBoundsTimestamp() throws Exception {
@@ -2140,11 +2140,11 @@ public class JsonUnnestTest extends AbstractCairoTest {
         });
     }
 
-    // ========================================================================
-    // Comprehensive per-type tests: scalar arrays, object arrays, nullability
-    // ========================================================================
 
-    // ---- INT: scalar array ----
+    // Comprehensive per-type tests: scalar arrays, object arrays, nullability
+
+
+    // INT: scalar array
 
     @Test
     public void testNotAnArrayReturnsNoRows() throws Exception {
@@ -2231,7 +2231,7 @@ public class JsonUnnestTest extends AbstractCairoTest {
         });
     }
 
-    // ---- INT: object array ----
+    // INT: object array
 
     @Test
     public void testObjectAllFieldsMissing() throws Exception {
@@ -2273,7 +2273,7 @@ public class JsonUnnestTest extends AbstractCairoTest {
         });
     }
 
-    // ---- LONG: scalar array ----
+    // LONG: scalar array
 
     @Test
     public void testObjectArrayWithNullFirstElement() throws Exception {
@@ -2359,7 +2359,7 @@ public class JsonUnnestTest extends AbstractCairoTest {
         });
     }
 
-    // ---- LONG: object array ----
+    // LONG: object array
 
     @Test
     public void testObjectBooleanNullField() throws Exception {
@@ -2379,7 +2379,7 @@ public class JsonUnnestTest extends AbstractCairoTest {
         });
     }
 
-    // ---- SHORT: scalar array ----
+    // SHORT: scalar array
 
     @Test
     public void testObjectDoubleMissingField() throws Exception {
@@ -2435,7 +2435,7 @@ public class JsonUnnestTest extends AbstractCairoTest {
         });
     }
 
-    // ---- SHORT: object array ----
+    // SHORT: object array
 
     @Test
     public void testObjectIntNullField() throws Exception {
@@ -2472,7 +2472,7 @@ public class JsonUnnestTest extends AbstractCairoTest {
         });
     }
 
-    // ---- DOUBLE: scalar array ----
+    // DOUBLE: scalar array
 
     @Test
     public void testObjectMultiTypeWithNulls() throws Exception {
@@ -2551,7 +2551,7 @@ public class JsonUnnestTest extends AbstractCairoTest {
         });
     }
 
-    // ---- DOUBLE: object array ----
+    // DOUBLE: object array
 
     @Test
     public void testObjectTimestampMissingField() throws Exception {
@@ -2587,7 +2587,7 @@ public class JsonUnnestTest extends AbstractCairoTest {
         });
     }
 
-    // ---- BOOLEAN: scalar array ----
+    // BOOLEAN: scalar array
 
     @Test
     public void testObjectVarcharMissingField() throws Exception {
@@ -2645,7 +2645,7 @@ public class JsonUnnestTest extends AbstractCairoTest {
         });
     }
 
-    // ---- BOOLEAN: object array ----
+    // BOOLEAN: object array
 
     @Test
     public void testOrdinalityCastToDouble() throws Exception {
@@ -2682,7 +2682,7 @@ public class JsonUnnestTest extends AbstractCairoTest {
         });
     }
 
-    // ---- VARCHAR: scalar array ----
+    // VARCHAR: scalar array
 
     @Test
     public void testParserRoundtrip() throws Exception {
@@ -2803,7 +2803,7 @@ public class JsonUnnestTest extends AbstractCairoTest {
         });
     }
 
-    // ---- VARCHAR: object array ----
+    // VARCHAR: object array
 
     @Test
     public void testScalarDateArray() throws Exception {
@@ -2879,7 +2879,7 @@ public class JsonUnnestTest extends AbstractCairoTest {
         });
     }
 
-    // ---- TIMESTAMP: scalar array ----
+    // TIMESTAMP: scalar array
 
     @Test
     public void testScalarDoubleNullElement() throws Exception {
@@ -2991,7 +2991,7 @@ public class JsonUnnestTest extends AbstractCairoTest {
         });
     }
 
-    // ---- TIMESTAMP: object array ----
+    // TIMESTAMP: object array
 
     @Test
     public void testScalarIntNegativeValues() throws Exception {
@@ -3031,7 +3031,7 @@ public class JsonUnnestTest extends AbstractCairoTest {
         });
     }
 
-    // ---- Multi-column object array: all types together ----
+    // Multi-column object array: all types together
 
     @Test
     public void testScalarIntTypeMismatchString() throws Exception {
@@ -3087,7 +3087,7 @@ public class JsonUnnestTest extends AbstractCairoTest {
         });
     }
 
-    // ---- Edge cases: empty/null/invalid JSON payload ----
+    // Edge cases: empty/null/invalid JSON payload
 
     @Test
     public void testScalarLongLargeValues() throws Exception {
@@ -3163,7 +3163,7 @@ public class JsonUnnestTest extends AbstractCairoTest {
         });
     }
 
-    // ---- Multiple rows with mixed null/valid payloads ----
+    // Multiple rows with mixed null/valid payloads
 
     @Test
     public void testScalarShortNegativeValues() throws Exception {
@@ -3183,7 +3183,7 @@ public class JsonUnnestTest extends AbstractCairoTest {
         });
     }
 
-    // ---- getVarcharSize ----
+    // getVarcharSize
 
     @Test
     public void testScalarShortNullElement() throws Exception {
@@ -3204,7 +3204,7 @@ public class JsonUnnestTest extends AbstractCairoTest {
         });
     }
 
-    // ---- CAST TESTS: casting unnested JSON values ----
+    // CAST TESTS: casting unnested JSON values
 
     @Test
     public void testScalarShortTypeMismatch() throws Exception {
@@ -3783,7 +3783,7 @@ public class JsonUnnestTest extends AbstractCairoTest {
         });
     }
 
-    // ---- WITH ORDINALITY cast tests ----
+    // WITH ORDINALITY cast tests
 
     @Test
     public void testTypeMismatchIntReturnsNull() throws Exception {
@@ -3821,7 +3821,7 @@ public class JsonUnnestTest extends AbstractCairoTest {
         });
     }
 
-    // ---- Varchar B copy (cursor stability) via cross-join ----
+    // Varchar B copy (cursor stability) via cross-join
 
     @Test
     public void testTypeMismatchReturnsNaN() throws Exception {
@@ -3843,7 +3843,7 @@ public class JsonUnnestTest extends AbstractCairoTest {
         });
     }
 
-    // ---- Overflow / truncation tests ----
+    // Overflow / truncation tests
 
     @Test
     public void testUnicodeStringsInJson() throws Exception {
@@ -3934,7 +3934,7 @@ public class JsonUnnestTest extends AbstractCairoTest {
         });
     }
 
-    // ---- init() edge cases ----
+    // init() edge cases
 
     @Test
     public void testVarcharExactlyAtCapDoesNotError() throws Exception {
@@ -3995,7 +3995,7 @@ public class JsonUnnestTest extends AbstractCairoTest {
         });
     }
 
-    // ---- Expressions on unnested values ----
+    // Expressions on unnested values
 
     @Test
     public void testVarcharTruncationInObjectThrows() throws Exception {
@@ -4033,7 +4033,7 @@ public class JsonUnnestTest extends AbstractCairoTest {
         });
     }
 
-    // ---- Multi-row with mixed array lengths ----
+    // Multi-row with mixed array lengths
 
     @Test
     public void testWhitespaceOnlyPayloadReturnsNoRows() throws Exception {

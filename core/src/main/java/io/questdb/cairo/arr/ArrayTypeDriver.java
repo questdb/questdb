@@ -145,17 +145,17 @@ public class ArrayTypeDriver implements ColumnTypeDriver {
      */
     public static void appendCompactPlainValue(long addr, ArrayView value, int nDims, int elemSize) {
         if (value == null || value.isNull()) {
-            Unsafe.getUnsafe().putInt(addr, TableUtils.NULL_LEN);
+            Unsafe.putInt(addr, TableUtils.NULL_LEN);
             return;
         }
 
         int dataSize = value.getCardinality() * elemSize;
 
-        Unsafe.getUnsafe().putInt(addr, dataSize);
+        Unsafe.putInt(addr, dataSize);
         addr += Integer.BYTES;
 
         for (int i = 0; i < nDims; i++) {
-            Unsafe.getUnsafe().putInt(addr, value.getDimLen(i));
+            Unsafe.putInt(addr, value.getDimLen(i));
             addr += Integer.BYTES;
         }
 
@@ -188,15 +188,15 @@ public class ArrayTypeDriver implements ColumnTypeDriver {
     public static long appendPlainValue(long appendAddress, ArrayView value) {
         long startAddress = appendAddress;
         if (value == null || value.isNull()) {
-            Unsafe.getUnsafe().putLong(appendAddress, TableUtils.NULL_LEN);
+            Unsafe.putLong(appendAddress, TableUtils.NULL_LEN);
             return Long.BYTES;
         }
-        Unsafe.getUnsafe().putLong(appendAddress, value.getVanillaMemoryLayoutSize());
+        Unsafe.putLong(appendAddress, value.getVanillaMemoryLayoutSize());
         appendAddress += Long.BYTES;
-        Unsafe.getUnsafe().putInt(appendAddress, value.getType());
+        Unsafe.putInt(appendAddress, value.getType());
         appendAddress += Integer.BYTES;
         for (int nDims = value.getDimCount(), i = 0; i < nDims; i++) {
-            Unsafe.getUnsafe().putInt(appendAddress, value.getDimLen(i));
+            Unsafe.putInt(appendAddress, value.getDimLen(i));
             appendAddress += Integer.BYTES;
         }
         if (value.isVanilla()) {
@@ -347,7 +347,7 @@ public class ArrayTypeDriver implements ColumnTypeDriver {
      * @return the populated array
      */
     public static BorrowedArray getCompactPlainValue(long addr, int type, int nDims, @NotNull BorrowedArray value) {
-        final int dataSize = Unsafe.getUnsafe().getInt(addr);
+        final int dataSize = Unsafe.getInt(addr);
         if (dataSize < 0) {
             value.ofNull();
             return value;
@@ -382,13 +382,13 @@ public class ArrayTypeDriver implements ColumnTypeDriver {
     }
 
     public static BorrowedArray getPlainValue(long addr, @NotNull BorrowedArray value) {
-        final long totalSize = Unsafe.getUnsafe().getLong(addr);
+        final long totalSize = Unsafe.getLong(addr);
         addr += Long.BYTES;
         if (totalSize <= 0) {
             value.ofNull();
             return value;
         }
-        final int type = Unsafe.getUnsafe().getInt(addr);
+        final int type = Unsafe.getInt(addr);
         addr += Integer.BYTES;
         int nDims = ColumnType.decodeArrayDimensionality(type);
         int shapeLen = nDims * Integer.BYTES;
@@ -398,7 +398,7 @@ public class ArrayTypeDriver implements ColumnTypeDriver {
     }
 
     public static long getPlainValueSize(long arrayAddress) {
-        return Long.BYTES + Unsafe.getUnsafe().getLong(arrayAddress);
+        return Long.BYTES + Unsafe.getLong(arrayAddress);
     }
 
     public static long getPlainValueSize(@NotNull ArrayView value) {
@@ -746,7 +746,7 @@ public class ArrayTypeDriver implements ColumnTypeDriver {
         if (atDeepestDim) {
             if (elemType == ColumnType.DOUBLE) {
                 for (int i = 0; i < count; i++) {
-                    Unsafe.getUnsafe().putDouble(appendAddress, value.getDouble(flatIndex));
+                    Unsafe.putDouble(appendAddress, value.getDouble(flatIndex));
                     appendAddress += Double.BYTES;
                     flatIndex += stride;
                 }
@@ -816,7 +816,7 @@ public class ArrayTypeDriver implements ColumnTypeDriver {
     }
 
     private static long readDataOffset(long auxEntryAddress) {
-        return Unsafe.getUnsafe().getLong(auxEntryAddress) & OFFSET_MAX;
+        return Unsafe.getLong(auxEntryAddress) & OFFSET_MAX;
     }
 
     private static int readInt(FilesFacade ff, long fd, long offset) {
@@ -847,20 +847,17 @@ public class ArrayTypeDriver implements ColumnTypeDriver {
 
     private static @NotNull ArrayValueAppender resolveAppender(@NotNull ArrayView array) {
         int elemType = array.getElemType();
-        switch (elemType) {
-            case ColumnType.DOUBLE:
-                return VALUE_APPENDER_DOUBLE;
-            case ColumnType.LONG:
-            case ColumnType.NULL:
-                return VALUE_APPENDER_LONG;
-            case ColumnType.VARCHAR:
-                return VALUE_APPENDER_VARCHAR;
-            default:
+        return switch (elemType) {
+            case ColumnType.DOUBLE -> VALUE_APPENDER_DOUBLE;
+            case ColumnType.LONG, ColumnType.NULL -> VALUE_APPENDER_LONG;
+            case ColumnType.VARCHAR -> VALUE_APPENDER_VARCHAR;
+            default -> {
                 if (array.isEmpty()) {
-                    return VALUE_APPENDER_LONG;
+                    yield VALUE_APPENDER_LONG;
                 }
                 throw new AssertionError("No appender for ColumnType " + elemType);
-        }
+            }
+        };
     }
 
     private static void writeAuxEntry(MemoryA auxMem, long offset, int size) {
@@ -902,8 +899,8 @@ public class ArrayTypeDriver implements ColumnTypeDriver {
      * <code>auxAddr</code>.
      */
     private long calcDataOffsetEnd(long auxAddr) {
-        final long offset = Unsafe.getUnsafe().getLong(auxAddr) & OFFSET_MAX;
-        final int size = Unsafe.getUnsafe().getInt(auxAddr + Long.BYTES);
+        final long offset = Unsafe.getLong(auxAddr) & OFFSET_MAX;
+        final int size = Unsafe.getInt(auxAddr + Long.BYTES);
         return offset + size;
     }
 

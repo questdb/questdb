@@ -421,6 +421,57 @@ public class LateralJoinTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testLateralWithUnionAllBuckets() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE orders (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE trades (id INT, order_id INT, qty DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO orders VALUES
+                    (1, '2024-01-01T00:00:00.000000Z'),
+                    (2, '2024-01-01T01:00:00.000000Z'),
+                    (3, '2024-01-01T02:00:00.000000Z'),
+                    (4, '2024-01-01T03:00:00.000000Z')
+                    """);
+            execute("""
+                    INSERT INTO trades VALUES
+                    (1, 1, 10.0, '2024-01-01T00:10:00.000000Z'),
+                    (2, 1, 25.0, '2024-01-01T00:20:00.000000Z'),
+                    (3, 1, 40.0, '2024-01-01T00:30:00.000000Z'),
+                    (4, 2, 15.0, '2024-01-01T01:10:00.000000Z'),
+                    (5, 2, 50.0, '2024-01-01T01:20:00.000000Z'),
+                    (6, 3, 29.0, '2024-01-01T02:10:00.000000Z'),
+                    (7, 3, 30.0, '2024-01-01T02:20:00.000000Z')
+                    """);
+
+            assertQueryNoLeakCheck(
+                    """
+                            id\tqty\tbucket
+                            1\t10.0\tsmall
+                            1\t25.0\tsmall
+                            1\t40.0\tlarge
+                            2\t15.0\tsmall
+                            2\t50.0\tlarge
+                            3\t29.0\tsmall
+                            3\t30.0\tlarge
+                            """,
+                    """
+                            SELECT o.id, t.qty, t.bucket
+                            FROM orders o
+                            JOIN LATERAL (
+                                SELECT qty, 'small' AS bucket FROM trades
+                                    WHERE order_id = o.id AND qty < 30
+                                UNION ALL
+                                SELECT qty, 'large' AS bucket FROM trades
+                                    WHERE order_id = o.id AND qty >= 30
+                            ) t
+                            ORDER BY o.id, t.qty
+                            """,
+                    null, true, true
+            );
+        });
+    }
+
+    @Test
     public void testLateralWithUnionAndLimit() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE t_outer (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");

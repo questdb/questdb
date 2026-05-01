@@ -50,7 +50,7 @@ public class HorizonJoinContext implements Mutable {
     private ExpressionNode alias;
     private int aliasPosition;
     private int mode = MODE_NONE;
-    private QueryModel parentModel;
+    private IQueryModel parentModel;
     private ExpressionNode rangeFrom;
     private int rangeFromPosition;
     private ExpressionNode rangeStep;
@@ -104,7 +104,7 @@ public class HorizonJoinContext implements Mutable {
         return mode;
     }
 
-    public QueryModel getParentModel() {
+    public IQueryModel getParentModel() {
         return parentModel;
     }
 
@@ -137,7 +137,7 @@ public class HorizonJoinContext implements Mutable {
         this.mode = mode;
     }
 
-    public void setParentModel(QueryModel parentModel) {
+    public void setParentModel(IQueryModel parentModel) {
         this.parentModel = parentModel;
     }
 

@@ -28,7 +28,7 @@ import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.model.ExecutionModel;
-import io.questdb.griffin.model.QueryModel;
+import io.questdb.griffin.model.IQueryModel;
 import io.questdb.std.str.Sinkable;
 
 public interface CreateMatViewOperationBuilder extends ExecutionModel, Sinkable {
@@ -44,5 +44,5 @@ public interface CreateMatViewOperationBuilder extends ExecutionModel, Sinkable 
         return CREATE_MAT_VIEW;
     }
 
-    void setSelectModel(QueryModel selectModel);
+    void setSelectModel(IQueryModel selectModel);
 }

@@ -64,8 +64,8 @@ import io.questdb.griffin.engine.functions.columns.TimestampColumn;
 import io.questdb.griffin.engine.functions.columns.UuidColumn;
 import io.questdb.griffin.engine.functions.columns.VarcharColumn;
 import io.questdb.griffin.model.ExpressionNode;
+import io.questdb.griffin.model.IQueryModel;
 import io.questdb.griffin.model.QueryColumn;
-import io.questdb.griffin.model.QueryModel;
 import io.questdb.std.Chars;
 import io.questdb.std.IntList;
 import io.questdb.std.Misc;
@@ -86,7 +86,7 @@ public class GroupByUtils {
     public static void assembleGroupByFunctions(
             @NotNull FunctionParser functionParser,
             @NotNull ArrayDeque<ExpressionNode> sqlNodeStack,
-            QueryModel model,
+            IQueryModel model,
             SqlExecutionContext executionContext,
             RecordMetadata baseMetadata,
             int timestampIndex,
@@ -103,7 +103,8 @@ public class GroupByUtils {
             ListColumnFilter outColumnFilter,
             @Nullable ObjList<ExpressionNode> sampleByFill, // fill mode for sample by functions, for validation
             boolean validateFill,
-            ObjList<QueryColumn> columns
+            ObjList<QueryColumn> columns,
+            @Nullable ObjList<ObjList<Function>> extraOuterProjectionFunctions
     ) throws SqlException {
         try {
             outGroupByFunctionPositions.clear();
@@ -126,8 +127,13 @@ public class GroupByUtils {
                             executionContext
                     );
 
-                    // functions added to the outer projections will later be replaced by column references
                     outerProjectionFunctions.add(func);
+                    if (extraOuterProjectionFunctions != null) {
+                        for (int d = 0, dn = extraOuterProjectionFunctions.size(); d < dn; d++) {
+                            Function extraFunc = functionParser.parseFunction(node, baseMetadata, executionContext);
+                            extraOuterProjectionFunctions.getQuick(d).add(extraFunc);
+                        }
+                    }
                     innerProjectionFunctions.add(func);
 
                     index = findColumnKeyIndex(node, func, baseMetadata);
@@ -156,6 +162,11 @@ public class GroupByUtils {
                     // timestamp function returns value of class member which makes it impossible
                     // to create these columns in advance of cursor instantiation
                     outerProjectionFunctions.add(null);
+                    if (extraOuterProjectionFunctions != null) {
+                        for (int d = 0, dn = extraOuterProjectionFunctions.size(); d < dn; d++) {
+                            extraOuterProjectionFunctions.getQuick(d).add(null);
+                        }
+                    }
                     projectionFunctionFlags.add(PROJECTION_FUNCTION_FLAG_COLUMN);
 
                     if (projectionMetadata.getTimestampIndex() == -1) {
@@ -251,6 +262,14 @@ public class GroupByUtils {
                             }
                         }
                         groupByFunc.initValueTypes(outValueTypes);
+                        if (extraOuterProjectionFunctions != null) {
+                            for (int d = 0, dn = extraOuterProjectionFunctions.size(); d < dn; d++) {
+                                Function extraFunc = extraOuterProjectionFunctions.getQuick(d).getQuick(i);
+                                if (extraFunc instanceof GroupByFunction extraGbf) {
+                                    extraGbf.initSharedFrom(groupByFunc);
+                                }
+                            }
+                        }
                     }
                 }
                 projectionFunctionPositions.add(node.position);
@@ -279,6 +298,11 @@ public class GroupByUtils {
                             lastIndex = index;
                         }
                         outerProjectionFunctions.set(i, createColumnFunction(baseMetadata, keyColumnIndex, type, index));
+                        if (extraOuterProjectionFunctions != null) {
+                            for (int d = 0, dn = extraOuterProjectionFunctions.size(); d < dn; d++) {
+                                extraOuterProjectionFunctions.getQuick(d).set(i, createColumnFunction(baseMetadata, keyColumnIndex, type, index));
+                            }
+                        }
                     }
 
                     // and finish with populating metadata for this factory
@@ -294,12 +318,30 @@ public class GroupByUtils {
                     }
                     // override function with column ref function
                     outerProjectionFunctions.set(i, columnRefFunc);
+
+                    // Currently unreachable: VirtualRecordCursorFactory does not support shared cursors currently.
+                    // This code becomes reachable if VirtualRecordCursorFactory gains supportsSharedCursors() support in the future.
+                    if (extraOuterProjectionFunctions != null) {
+                        for (int d = 0, dn = extraOuterProjectionFunctions.size(); d < dn; d++) {
+                            Function extraRef = createColumnFunction(null, functionKeyColumnIndex, func.getType(), -1);
+                            if (func.getType() == ColumnType.SYMBOL && extraRef.getType() == ColumnType.STRING) {
+                                extraRef = new CastStrToSymbolFunctionFactory.Func(extraRef);
+                            }
+                            extraOuterProjectionFunctions.getQuick(d).set(i, extraRef);
+                        }
+                    }
                     inferredKeyColumnCount++;
                 }
             }
             validateGroupByColumns(sqlNodeStack, model, inferredKeyColumnCount);
         } catch (Throwable e) {
             Misc.freeObjListAndClear(outerProjectionFunctions);
+            if (extraOuterProjectionFunctions != null) {
+                for (int d = 0, dn = extraOuterProjectionFunctions.size(); d < dn; d++) {
+                    Misc.freeObjListAndClear(extraOuterProjectionFunctions.getQuick(d));
+                }
+                extraOuterProjectionFunctions.clear();
+            }
             throw e;
         }
     }
@@ -402,6 +444,39 @@ public class GroupByUtils {
         return func;
     }
 
+    /**
+     * Returns the page-frame column index when {@code arg} is a direct
+     * {@link ColumnFunction} reference whose native storage matches
+     * {@code expectedType}, allowing the batched GROUP BY fast path to read
+     * values straight from page-frame memory. Returns -1 otherwise, signalling
+     * that the caller must fall back to {@code arg.getXxx(record)}.
+     * <p>
+     * The type check guards against silent type reinterpretation: a function
+     * like {@code avg(long_col)} keeps the raw {@code LongColumn} as its arg
+     * (no explicit cast, because {@link io.questdb.griffin.engine.functions.LongFunction#getDouble}
+     * already widens), but reading that column's 8-byte storage as a
+     * {@code double} would produce meaningless denormal values.
+     */
+    public static int directArgColumnIndex(Function arg, int expectedType) {
+        if (arg instanceof ColumnFunction cf && arg.getType() == expectedType) {
+            return cf.getColumnIndex();
+        }
+        return -1;
+    }
+
+    /**
+     * Variant of {@link #directArgColumnIndex} that matches by column type tag
+     * rather than by full type. Useful for parameterised types such as geohashes
+     * whose full {@code arg.getType()} value packs storage bits into the upper
+     * half and so never equals a bare tag like {@link ColumnType#GEOBYTE}.
+     */
+    public static int directArgColumnIndexByTag(Function arg, int expectedTag) {
+        if (arg instanceof ColumnFunction cf && ColumnType.tagOf(arg.getType()) == expectedTag) {
+            return cf.getColumnIndex();
+        }
+        return -1;
+    }
+
     public static boolean isEarlyExitSupported(ObjList<GroupByFunction> functions) {
         for (int i = 0, n = functions.size(); i < n; i++) {
             if (!functions.getQuick(i).isEarlyExitSupported()) {
@@ -423,7 +498,7 @@ public class GroupByUtils {
     // assembleGroupByFunctions must be called before this call to get the idea of how many map values
     // we will have. Map value count is needed to calculate offsets for map key columns.
     public static void prepareWorkerGroupByFunctions(
-            @NotNull QueryModel model,
+            @NotNull IQueryModel model,
             @NotNull RecordMetadata metadata,
             @NotNull FunctionParser functionParser,
             @NotNull SqlExecutionContext executionContext,
@@ -477,7 +552,7 @@ public class GroupByUtils {
 
     public static void validateGroupByColumns(
             @NotNull ArrayDeque<ExpressionNode> sqlNodeStack,
-            @NotNull QueryModel model,
+            @NotNull IQueryModel model,
             int inferredKeyColumnCount
     ) throws SqlException {
         final ObjList<ExpressionNode> groupByColumns = model.getGroupBy();
@@ -486,10 +561,10 @@ public class GroupByUtils {
             return;
         }
 
-        QueryModel chooseModel = model;
+        IQueryModel chooseModel = model;
         while (chooseModel != null
-                && chooseModel.getSelectModelType() != QueryModel.SELECT_MODEL_CHOOSE
-                && chooseModel.getSelectModelType() != QueryModel.SELECT_MODEL_NONE) {
+                && chooseModel.getSelectModelType() != IQueryModel.SELECT_MODEL_CHOOSE
+                && chooseModel.getSelectModelType() != IQueryModel.SELECT_MODEL_NONE) {
             chooseModel = chooseModel.getNestedModel();
         }
 
@@ -573,7 +648,7 @@ public class GroupByUtils {
 
     private static boolean compareNodesGroupByFunctionKey(
             ArrayDeque<ExpressionNode> sqlNodeStack,
-            QueryModel chooseModel,
+            IQueryModel chooseModel,
             ExpressionNode functionKey,
             ExpressionNode arg
     ) {

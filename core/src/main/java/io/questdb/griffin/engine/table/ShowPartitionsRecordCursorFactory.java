@@ -121,8 +121,9 @@ public class ShowPartitionsRecordCursorFactory extends AbstractRecordCursorFacto
         IS_ATTACHED(10, "attached", ColumnType.BOOLEAN),
         IS_DETACHED(11, "detached", ColumnType.BOOLEAN),
         IS_ATTACHABLE(12, "attachable", ColumnType.BOOLEAN),
-        IS_PARQUET(13, "isParquet", ColumnType.BOOLEAN),
-        PARQUET_FILE_SIZE(14, "parquetFileSize", ColumnType.LONG);
+        HAS_PARQUET_GENERATED(13, "hasParquetGenerated", ColumnType.BOOLEAN),
+        IS_PARQUET(14, "isParquet", ColumnType.BOOLEAN),
+        PARQUET_FILE_SIZE(15, "parquetFileSize", ColumnType.LONG);
 
         private final int idx;
         private final TableColumnMetadata metadata;
@@ -150,6 +151,7 @@ public class ShowPartitionsRecordCursorFactory extends AbstractRecordCursorFacto
         private TableReaderMetadata detachedMetaReader;
         private TxReader detachedTxReader;
         private int dynamicPartitionIndex = -1;
+        private boolean hasParquetGenerated;
         private boolean isActive;
         private boolean isAttachable;
         private boolean isDetached;
@@ -239,6 +241,7 @@ public class ShowPartitionsRecordCursorFactory extends AbstractRecordCursorFacto
             isDetached = false;
             isAttachable = false;
             isParquet = false;
+            hasParquetGenerated = false;
             parquetFileSize = -1L;
             minTimestamp = Numbers.LONG_NULL; // so that in absence of metadata is NaN
             maxTimestamp = Long.MIN_VALUE;
@@ -254,8 +257,9 @@ public class ShowPartitionsRecordCursorFactory extends AbstractRecordCursorFacto
             if (partitionIndex < partitionCount) {
                 // we are within the partition table
                 isReadOnly = tableTxReader.isPartitionReadOnly(partitionIndex);
+                hasParquetGenerated = tableTxReader.isPartitionParquetGenerated(partitionIndex);
                 isParquet = tableTxReader.isPartitionParquet(partitionIndex);
-                if (isParquet) {
+                if (hasParquetGenerated || isParquet) {
                     parquetFileSize = tableTxReader.getPartitionParquetFileSize(partitionIndex);
                 }
                 long timestamp = tableTxReader.getPartitionTimestampByIndex(partitionIndex);
@@ -279,7 +283,7 @@ public class ShowPartitionsRecordCursorFactory extends AbstractRecordCursorFacto
                         isAttachable = true;
                     }
                 }
-                assert partitionName.length() != 0;
+                assert !partitionName.isEmpty();
 
                 // open detached meta files (_meta, _txn) if they exist
                 dynamicPartitionIndex = Numbers.INT_NULL; // so that in absence of metadata is NaN
@@ -391,22 +395,16 @@ public class ShowPartitionsRecordCursorFactory extends AbstractRecordCursorFacto
 
             @Override
             public boolean getBool(int col) {
-                switch (col) {
-                    case 8: // isReadOnly
-                        return isReadOnly;
-                    case 9:
-                        return isActive;
-                    case 10:
-                        return isReadOnly || !isDetached;
-                    case 11:
-                        return isDetached;
-                    case 12:
-                        return isAttachable;
-                    case 13:
-                        return isParquet;
-                    default:
-                        throw new UnsupportedOperationException();
-                }
+                return switch (col) {
+                    case 8 -> isReadOnly;
+                    case 9 -> isActive;
+                    case 10 -> isReadOnly || !isDetached;
+                    case 11 -> isDetached;
+                    case 12 -> isAttachable;
+                    case 13 -> hasParquetGenerated;
+                    case 14 -> isParquet;
+                    default -> throw new UnsupportedOperationException();
+                };
             }
 
             @Override
@@ -419,34 +417,24 @@ public class ShowPartitionsRecordCursorFactory extends AbstractRecordCursorFacto
 
             @Override
             public long getLong(int col) {
-                switch (col) {
-                    case 3:
-                        return minTimestamp;
-                    case 4:
-                        return maxTimestamp;
-                    case 5:
-                        return numRows;
-                    case 6:
-                        return partitionSize;
-                    case 14:
-                        return parquetFileSize;
-                    default:
-                        throw new UnsupportedOperationException();
-                }
+                return switch (col) {
+                    case 3 -> minTimestamp;
+                    case 4 -> maxTimestamp;
+                    case 5 -> numRows;
+                    case 6 -> partitionSize;
+                    case 15 -> parquetFileSize;
+                    default -> throw new UnsupportedOperationException();
+                };
             }
 
             @Override
             public CharSequence getStrA(int col) {
-                switch (col) {
-                    case 1:
-                        return PartitionBy.toString(partitionBy);
-                    case 2:
-                        return partitionName;
-                    case 7:
-                        return partitionSizeSink;
-                    default:
-                        throw new UnsupportedOperationException();
-                }
+                return switch (col) {
+                    case 1 -> PartitionBy.toString(partitionBy);
+                    case 2 -> partitionName;
+                    case 7 -> partitionSizeSink;
+                    default -> throw new UnsupportedOperationException();
+                };
             }
 
             @Override
@@ -461,14 +449,11 @@ public class ShowPartitionsRecordCursorFactory extends AbstractRecordCursorFacto
 
             @Override
             public long getTimestamp(int col) {
-                switch (col) {
-                    case 3:
-                        return minTimestamp;
-                    case 4:
-                        return maxTimestamp;
-                    default:
-                        throw new UnsupportedOperationException();
-                }
+                return switch (col) {
+                    case 3 -> minTimestamp;
+                    case 4 -> maxTimestamp;
+                    default -> throw new UnsupportedOperationException();
+                };
             }
         }
     }
@@ -488,6 +473,7 @@ public class ShowPartitionsRecordCursorFactory extends AbstractRecordCursorFacto
         metadata.add(Column.IS_ATTACHED.metadata());
         metadata.add(Column.IS_DETACHED.metadata());
         metadata.add(Column.IS_ATTACHABLE.metadata());
+        metadata.add(Column.HAS_PARQUET_GENERATED.metadata());
         metadata.add(Column.IS_PARQUET.metadata());
         metadata.add(Column.PARQUET_FILE_SIZE.metadata());
         METADATA_TIMESTAMP = metadata;
@@ -505,6 +491,7 @@ public class ShowPartitionsRecordCursorFactory extends AbstractRecordCursorFacto
         metadataNs.add(Column.IS_ATTACHED.metadata());
         metadataNs.add(Column.IS_DETACHED.metadata());
         metadataNs.add(Column.IS_ATTACHABLE.metadata());
+        metadataNs.add(Column.HAS_PARQUET_GENERATED.metadata());
         metadataNs.add(Column.IS_PARQUET.metadata());
         metadataNs.add(Column.PARQUET_FILE_SIZE.metadata());
         METADATA_TIMESTAMP_NS = metadataNs;

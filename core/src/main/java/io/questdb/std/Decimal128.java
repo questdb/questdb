@@ -516,13 +516,13 @@ public class Decimal128 implements Sinkable, Decimal {
     }
 
     public static void put(long high, long low, long addr) {
-        Unsafe.getUnsafe().putLong(addr, high);
-        Unsafe.getUnsafe().putLong(addr + Long.BYTES, low);
+        Unsafe.putLong(addr, high);
+        Unsafe.putLong(addr + Long.BYTES, low);
     }
 
     public static void putNull(long addr) {
-        Unsafe.getUnsafe().putLong(addr, Decimals.DECIMAL128_HI_NULL);
-        Unsafe.getUnsafe().putLong(addr + 8L, Decimals.DECIMAL128_LO_NULL);
+        Unsafe.putLong(addr, Decimals.DECIMAL128_HI_NULL);
+        Unsafe.putLong(addr + 8L, Decimals.DECIMAL128_LO_NULL);
     }
 
     /**

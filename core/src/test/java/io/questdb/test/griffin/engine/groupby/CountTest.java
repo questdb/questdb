@@ -177,6 +177,40 @@ public class CountTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testCountUuidWithHighHalfEqualToNullSentinel() throws Exception {
+        // Regression test: CountUuidGroupByFunction previously read getLong128Hi twice
+        // instead of reading hi and lo separately. A UUID whose high 64 bits equal
+        // Numbers.LONG_NULL (Long.MIN_VALUE, hex 0x8000_0000_0000_0000) but whose low
+        // 64 bits are non-null is a valid, non-NULL UUID. Under the bug, Uuid.isNull(hi, hi)
+        // returned true for these rows and count(uuid) silently excluded them.
+        execute("CREATE TABLE x (k INT, u UUID)");
+        execute(
+                """
+                        INSERT INTO x VALUES
+                        (1, '80000000-0000-0000-0000-000000000001'::UUID),
+                        (1, '80000000-0000-0000-1234-567890abcdef'::UUID),
+                        (1, '80000000-0000-0000-0000-000000000002'::UUID),
+                        (1, CAST(NULL AS UUID)),
+                        (2, '00000000-0000-0000-0000-000000000001'::UUID),
+                        (2, '80000000-0000-0000-ffff-ffffffffffff'::UUID),
+                        (2, CAST(NULL AS UUID))"""
+        );
+
+        // Non-keyed count: total of 5 valid UUIDs (3 + 2 non-nulls).
+        assertSql("count\n5\n", "SELECT count(u) FROM x");
+
+        // Keyed count: exercises CountUuidGroupByFunction.computeKeyedBatch.
+        assertSql(
+                """
+                        k\tcount
+                        1\t3
+                        2\t2
+                        """,
+                "SELECT k, count(u) FROM x ORDER BY k"
+        );
+    }
+
+    @Test
     public void testInterpolation() throws Exception {
         execute("create table x (ts timestamp, d double, f float, ip ipv4, i int, l256 long256, l long, s string, sym symbol, vch varchar) timestamp(ts);");
         execute("insert into x values " +

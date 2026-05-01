@@ -65,6 +65,8 @@ public class JoinRecordMetadata extends AbstractRecordMetadata implements Closea
         this.refCount = 1;
     }
 
+    // This overload does not propagate parquetEncodingConfig because it is only
+    // used for synthetic horizon join pseudo-columns that never carry encoding overrides.
     public void add(
             CharSequence tableAlias,
             CharSequence columnName,
@@ -113,6 +115,7 @@ public class JoinRecordMetadata extends AbstractRecordMetadata implements Closea
                     m.isSymbolTableStatic(),
                     m.getMetadata()
             );
+            cm.setParquetEncodingConfig(m.getParquetEncodingConfig());
         } else {
             cm = m;
         }

@@ -34,6 +34,7 @@ import java.io.Closeable;
 
 public class TableWriterTask implements Closeable {
     public static final int CMD_ALTER_TABLE = 2;
+    public static final int CMD_STORAGE_POLICY = 4;
     public static final int CMD_UNUSED = 1;
     public static final int CMD_UPDATE_TABLE = 3;
 
@@ -60,6 +61,7 @@ public class TableWriterTask implements Closeable {
     public static String getCommandName(int cmd) {
         return switch (cmd) {
             case CMD_ALTER_TABLE -> "ALTER TABLE";
+            case CMD_STORAGE_POLICY -> "STORAGE POLICY";
             case CMD_UPDATE_TABLE -> "UPDATE TABLE";
             default -> "UNKNOWN COMMAND";
         };
@@ -117,24 +119,24 @@ public class TableWriterTask implements Closeable {
 
     public void putByte(byte c) {
         checkCapacity(Byte.BYTES);
-        Unsafe.getUnsafe().putByte(appendPtr++, c);
+        Unsafe.putByte(appendPtr++, c);
     }
 
     public void putInt(int value) {
         checkCapacity(Integer.BYTES);
-        Unsafe.getUnsafe().putInt(appendPtr, value);
+        Unsafe.putInt(appendPtr, value);
         appendPtr += Integer.BYTES;
     }
 
     public void putLong(long value) {
         checkCapacity(Long.BYTES);
-        Unsafe.getUnsafe().putLong(appendPtr, value);
+        Unsafe.putLong(appendPtr, value);
         appendPtr += Long.BYTES;
     }
 
     public void putShort(short value) {
         checkCapacity(Short.BYTES);
-        Unsafe.getUnsafe().putShort(appendPtr, value);
+        Unsafe.putShort(appendPtr, value);
         appendPtr += Short.BYTES;
     }
 
@@ -142,7 +144,7 @@ public class TableWriterTask implements Closeable {
         int len = value.length();
         final int byteLen = len * 2 + Integer.BYTES;
         checkCapacity(byteLen);
-        Unsafe.getUnsafe().putInt(appendPtr, len);
+        Unsafe.putInt(appendPtr, len);
         Chars.copyStrChars(value, 0, len, appendPtr + Integer.BYTES);
         appendPtr += byteLen;
     }

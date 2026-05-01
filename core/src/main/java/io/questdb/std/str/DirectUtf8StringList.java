@@ -187,7 +187,7 @@ public class DirectUtf8StringList implements Mutable, QuietCloseable, Reopenable
 
         @Override
         public byte byteAt(int index) {
-            return Unsafe.getUnsafe().getByte(lo + index);
+            return Unsafe.getByte(lo + index);
         }
 
         @Override

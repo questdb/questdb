@@ -69,7 +69,7 @@ public class ExpressionNode implements Mutable, Sinkable {
     public int paramCount;
     public int position;
     public int precedence;
-    public QueryModel queryModel;
+    public IQueryModel queryModel;
     public ExpressionNode rhs;
     public CharSequence token;
     public int type;
@@ -94,7 +94,7 @@ public class ExpressionNode implements Mutable, Sinkable {
     public static boolean compareNodesGroupBy(
             ExpressionNode groupByExpr,
             ExpressionNode columnExpr,
-            QueryModel translatingModel
+            IQueryModel translatingModel
     ) {
         if (groupByExpr == null && columnExpr == null) {
             return true;
@@ -183,45 +183,26 @@ public class ExpressionNode implements Mutable, Sinkable {
     }
 
     public static ExpressionNode deepClone(final ObjectPool<ExpressionNode> pool, final ExpressionNode node) {
-        return deepClone(pool, node, null, null, null);
-    }
-
-    public static ExpressionNode deepClone(
-            final ObjectPool<ExpressionNode> pool,
-            final ExpressionNode node,
-            final ObjectPool<QueryModel> queryModelPool,
-            final ObjectPool<QueryColumn> queryColumnPool,
-            final ObjectPool<WindowExpression> windowExpressionPool
-    ) {
         if (node == null) {
             return null;
         }
         ExpressionNode copy = pool.next();
         for (int i = 0, n = node.args.size(); i < n; i++) {
-            copy.args.add(ExpressionNode.deepClone(pool, node.args.get(i), queryModelPool, queryColumnPool, windowExpressionPool));
+            copy.args.add(ExpressionNode.deepClone(pool, node.args.get(i)));
         }
         copy.token = node.token;
-        if (node.queryModel != null && queryModelPool != null) {
-            copy.queryModel = node.queryModel.deepClone(queryModelPool, queryColumnPool, pool, windowExpressionPool);
-        } else {
-            copy.queryModel = node.queryModel;
-        }
+        copy.queryModel = node.queryModel;
         copy.precedence = node.precedence;
         copy.position = node.position;
-        copy.lhs = ExpressionNode.deepClone(pool, node.lhs, queryModelPool, queryColumnPool, windowExpressionPool);
-        copy.rhs = ExpressionNode.deepClone(pool, node.rhs, queryModelPool, queryColumnPool, windowExpressionPool);
+        copy.lhs = ExpressionNode.deepClone(pool, node.lhs);
+        copy.rhs = ExpressionNode.deepClone(pool, node.rhs);
         copy.type = node.type;
         copy.paramCount = node.paramCount;
         copy.intrinsicValue = node.intrinsicValue;
         copy.isConstantExpression = node.isConstantExpression;
         copy.innerPredicate = node.innerPredicate;
         copy.implemented = node.implemented;
-        if (node.windowExpression != null && windowExpressionPool != null) {
-            copy.windowExpression = node.windowExpression.deepClone(windowExpressionPool, pool);
-        } else {
-            copy.windowExpression = node.windowExpression;
-        }
-        copy.lateralDepth = node.lateralDepth;
+        copy.windowExpression = node.windowExpression; // shallow copy - WindowColumn is pooled
         return copy;
     }
 
@@ -631,7 +612,7 @@ public class ExpressionNode implements Mutable, Sinkable {
     private static boolean compareArgs(
             ExpressionNode groupByExpr,
             ExpressionNode columnExpr,
-            QueryModel translatingModel
+            IQueryModel translatingModel
     ) {
         final int groupByArgsSize = groupByExpr.args.size();
         final int selectNodeArgsSize = columnExpr.args.size();

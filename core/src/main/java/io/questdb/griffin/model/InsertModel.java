@@ -25,7 +25,12 @@
 package io.questdb.griffin.model;
 
 import io.questdb.griffin.SqlException;
-import io.questdb.std.*;
+import io.questdb.std.Chars;
+import io.questdb.std.IntList;
+import io.questdb.std.LowerCaseCharSequenceHashSet;
+import io.questdb.std.Mutable;
+import io.questdb.std.ObjList;
+import io.questdb.std.ObjectFactory;
 import io.questdb.std.str.CharSink;
 import io.questdb.std.str.Sinkable;
 import org.jetbrains.annotations.NotNull;
@@ -39,7 +44,7 @@ public class InsertModel implements ExecutionModel, Mutable, Sinkable {
     private final ObjList<ObjList<ExpressionNode>> rowTupleValues = new ObjList<>();
     private long batchSize = -1;
     private long o3MaxLag = 0;
-    private QueryModel queryModel;
+    private IQueryModel queryModel;
     private int selectKeywordPosition;
     private ExpressionNode tableNameExpr;
 
@@ -108,7 +113,7 @@ public class InsertModel implements ExecutionModel, Mutable, Sinkable {
         return o3MaxLag;
     }
 
-    public QueryModel getQueryModel() {
+    public IQueryModel getQueryModel() {
         return queryModel;
     }
 
@@ -142,7 +147,7 @@ public class InsertModel implements ExecutionModel, Mutable, Sinkable {
         this.o3MaxLag = o3MaxLag;
     }
 
-    public void setQueryModel(QueryModel queryModel) {
+    public void setQueryModel(IQueryModel queryModel) {
         this.queryModel = queryModel;
     }
 

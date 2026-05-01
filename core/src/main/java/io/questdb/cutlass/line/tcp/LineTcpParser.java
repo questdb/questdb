@@ -218,7 +218,7 @@ public class LineTcpParser implements QuietCloseable {
 
         // Main parsing loop
         while (bufAt < bufHi) {
-            byte b = Unsafe.getUnsafe().getByte(bufAt);
+            byte b = Unsafe.getByte(bufAt);
 
             if (nEscapedChars == 0 && !controlBytes[b & 0xff]) {
                 // hot path
@@ -282,7 +282,7 @@ public class LineTcpParser implements QuietCloseable {
                     }
                     nEscapedChars++;
                     bufAt++;
-                    b = Unsafe.getUnsafe().getByte(bufAt);
+                    b = Unsafe.getByte(bufAt);
                     if (b == '\\' && (entityHandler != ENTITY_HANDLER_VALUE)) {
                         return getError(bufHi);
                     }
@@ -336,7 +336,7 @@ public class LineTcpParser implements QuietCloseable {
                 // from the result key / value.
                 // shift copy current byte back
                 if (nEscapedChars > 0) {
-                    Unsafe.getUnsafe().putByte(bufAt - nEscapedChars, b);
+                    Unsafe.putByte(bufAt - nEscapedChars, b);
                 }
                 bufAt++;
             }
@@ -357,7 +357,7 @@ public class LineTcpParser implements QuietCloseable {
     public ParseResult skipMeasurement(long bufHi) {
         assert bufAt != 0 && bufHi >= bufAt;
         while (bufAt < bufHi) {
-            byte b = Unsafe.getUnsafe().getByte(bufAt);
+            byte b = Unsafe.getByte(bufAt);
             if (b == (byte) '\n' || b == (byte) '\r') {
                 return ParseResult.MEASUREMENT_COMPLETE;
             }
@@ -408,7 +408,7 @@ public class LineTcpParser implements QuietCloseable {
 
         if (bufAt + 1 < bufHi) {
             long next = bufAt + 1;
-            byte expectSeparator = Unsafe.getUnsafe().getByte(next);
+            byte expectSeparator = Unsafe.getByte(next);
             if (expectSeparator == (byte) ' ') {
                 entityHandler = ENTITY_HANDLER_TIMESTAMP;
                 bufAt++;
@@ -452,7 +452,7 @@ public class LineTcpParser implements QuietCloseable {
             if (tagsComplete) {
                 if (bufAt + 3 < bufHi) { // peek oncoming value's 1st byte, only caring for valid strings (2 quotes plus a follow-up byte)
                     long candidateQuoteIdx = bufAt + 1;
-                    byte b = Unsafe.getUnsafe().getByte(candidateQuoteIdx);
+                    byte b = Unsafe.getByte(candidateQuoteIdx);
                     if (b == (byte) '"') {
                         nEscapedChars = 0;
                         nQuoteCharacters++;
@@ -635,7 +635,7 @@ public class LineTcpParser implements QuietCloseable {
         entityLo = openQuoteIdx; // from the quote
         boolean copyByte;
         while (bufAt < bufHi) { // consume until the next quote, '\n', or eof
-            byte b = Unsafe.getUnsafe().getByte(bufAt);
+            byte b = Unsafe.getByte(bufAt);
             copyByte = true;
             asciiSegment &= b >= 0;
             switch (b) {
@@ -651,7 +651,7 @@ public class LineTcpParser implements QuietCloseable {
                         isQuotedFieldValue = true;
                         nQuoteCharacters--;
                         if (nEscapedChars > 0) {
-                            Unsafe.getUnsafe().putByte(bufAt - nEscapedChars, b);
+                            Unsafe.putByte(bufAt - nEscapedChars, b);
                         }
                         return true;
                     }
@@ -670,7 +670,7 @@ public class LineTcpParser implements QuietCloseable {
             }
             nextValueCanBeOpenQuote = false;
             if (copyByte && nEscapedChars > 0) {
-                Unsafe.getUnsafe().putByte(bufAt - nEscapedChars, b);
+                Unsafe.putByte(bufAt - nEscapedChars, b);
             }
             bufAt++;
         }
@@ -903,7 +903,7 @@ public class LineTcpParser implements QuietCloseable {
             try {
                 while (bufAt < bufHi) {
                     if (type == ENTITY_TYPE_NONE) {
-                        type = Unsafe.getUnsafe().getByte(bufAt);
+                        type = Unsafe.getByte(bufAt);
                         if (!binaryFormatSupportType.contains(type)) {
                             errorCode = ErrorCode.UNSUPPORTED_BINARY_FORMAT;
                             return false;
@@ -921,11 +921,11 @@ public class LineTcpParser implements QuietCloseable {
 
                     switch (type) {
                         case ENTITY_TYPE_BOOLEAN:
-                            booleanValue = Unsafe.getUnsafe().getByte(entityLo) == 1;
+                            booleanValue = Unsafe.getByte(entityLo) == 1;
                             return true;
                         case ENTITY_TYPE_FLOAT:
                             if (bufAt - entityLo + 1 == 4) {
-                                floatValue = Unsafe.getUnsafe().getFloat(entityLo);
+                                floatValue = Unsafe.getFloat(entityLo);
                                 return true;
                             }
                             bufAt++;
@@ -933,14 +933,14 @@ public class LineTcpParser implements QuietCloseable {
                         case ENTITY_TYPE_DOUBLE:
                             if (bufAt - entityLo + 1 == 8) {
                                 type = ENTITY_TYPE_FLOAT;
-                                floatValue = Unsafe.getUnsafe().getDouble(entityLo);
+                                floatValue = Unsafe.getDouble(entityLo);
                                 return true;
                             }
                             bufAt++;
                             break;
                         case ENTITY_TYPE_INTEGER:
                             if (bufAt - entityLo + 1 == 4) {
-                                longValue = Unsafe.getUnsafe().getInt(entityLo);
+                                longValue = Unsafe.getInt(entityLo);
                                 return true;
                             }
                             bufAt++;
@@ -948,15 +948,15 @@ public class LineTcpParser implements QuietCloseable {
                         case ENTITY_TYPE_LONG:
                             if (bufAt - entityLo + 1 == 8) {
                                 type = ENTITY_TYPE_INTEGER;
-                                longValue = Unsafe.getUnsafe().getLong(entityLo);
+                                longValue = Unsafe.getLong(entityLo);
                                 return true;
                             }
                             bufAt++;
                             break;
                         case ENTITY_TYPE_TIMESTAMP:
                             if (bufAt - entityLo + 1 == 9) {
-                                unit = Unsafe.getUnsafe().getByte(entityLo);
-                                longValue = Unsafe.getUnsafe().getLong(entityLo + 1);
+                                unit = Unsafe.getByte(entityLo);
+                                longValue = Unsafe.getLong(entityLo + 1);
                                 return true;
                             }
                             bufAt++;

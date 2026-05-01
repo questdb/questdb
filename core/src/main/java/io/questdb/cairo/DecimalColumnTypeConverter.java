@@ -93,13 +93,13 @@ public class DecimalColumnTypeConverter {
     }
 
     private static void loadDecimalFromByte(Decimal256 decimal, long addr) {
-        byte b = Unsafe.getUnsafe().getByte(addr);
+        byte b = Unsafe.getByte(addr);
         decimal.ofRaw(b);
     }
 
     private static void loadDecimalFromDecimal128(Decimal256 decimal, long addr) {
-        long hi = Unsafe.getUnsafe().getLong(addr);
-        long lo = Unsafe.getUnsafe().getLong(addr + 8L);
+        long hi = Unsafe.getLong(addr);
+        long lo = Unsafe.getLong(addr + 8L);
         if (Decimal128.isNull(hi, lo)) {
             decimal.ofRawNull();
         } else {
@@ -108,7 +108,7 @@ public class DecimalColumnTypeConverter {
     }
 
     private static void loadDecimalFromDecimal16(Decimal256 decimal, long addr) {
-        short s = Unsafe.getUnsafe().getShort(addr);
+        short s = Unsafe.getShort(addr);
         if (s == Decimals.DECIMAL16_NULL) {
             decimal.ofRawNull();
         } else {
@@ -121,7 +121,7 @@ public class DecimalColumnTypeConverter {
     }
 
     private static void loadDecimalFromDecimal32(Decimal256 decimal, long addr) {
-        int i = Unsafe.getUnsafe().getInt(addr);
+        int i = Unsafe.getInt(addr);
         if (i == Decimals.DECIMAL32_NULL) {
             decimal.ofRawNull();
         } else {
@@ -130,7 +130,7 @@ public class DecimalColumnTypeConverter {
     }
 
     private static void loadDecimalFromDecimal64(Decimal256 decimal, long addr) {
-        long l = Unsafe.getUnsafe().getLong(addr);
+        long l = Unsafe.getLong(addr);
         if (l == Decimals.DECIMAL64_NULL) {
             decimal.ofRawNull();
         } else {
@@ -139,7 +139,7 @@ public class DecimalColumnTypeConverter {
     }
 
     private static void loadDecimalFromDecimal8(Decimal256 decimal, long addr) {
-        byte b = Unsafe.getUnsafe().getByte(addr);
+        byte b = Unsafe.getByte(addr);
         if (b == Decimals.DECIMAL8_NULL) {
             decimal.ofRawNull();
         } else {
@@ -148,7 +148,7 @@ public class DecimalColumnTypeConverter {
     }
 
     private static void loadDecimalFromInt(Decimal256 decimal, long addr) {
-        int i = Unsafe.getUnsafe().getInt(addr);
+        int i = Unsafe.getInt(addr);
         if (i == Numbers.INT_NULL) {
             decimal.ofRawNull();
         } else {
@@ -157,7 +157,7 @@ public class DecimalColumnTypeConverter {
     }
 
     private static void loadDecimalFromLong(Decimal256 decimal, long addr) {
-        long l = Unsafe.getUnsafe().getLong(addr);
+        long l = Unsafe.getLong(addr);
         if (l == Numbers.LONG_NULL) {
             decimal.ofNull();
         } else {
@@ -166,7 +166,7 @@ public class DecimalColumnTypeConverter {
     }
 
     private static void loadDecimalFromShort(Decimal256 decimal, long addr) {
-        short s = Unsafe.getUnsafe().getShort(addr);
+        short s = Unsafe.getShort(addr);
         decimal.ofRaw(s);
     }
 

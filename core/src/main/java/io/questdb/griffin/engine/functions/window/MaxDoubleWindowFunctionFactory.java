@@ -395,7 +395,7 @@ public class MaxDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
         @Override
         public void pass1(Record record, long recordOffset, WindowSPI spi) {
             computeNext(record);
-            Unsafe.getUnsafe().putDouble(spi.getAddress(recordOffset, columnIndex), value);
+            Unsafe.putDouble(spi.getAddress(recordOffset, columnIndex), value);
         }
     }
 
@@ -456,7 +456,7 @@ public class MaxDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
 
             double val = value != null ? value.getDouble(0) : Double.NaN;
 
-            Unsafe.getUnsafe().putDouble(spi.getAddress(recordOffset, columnIndex), val);
+            Unsafe.putDouble(spi.getAddress(recordOffset, columnIndex), val);
         }
     }
 
@@ -726,7 +726,7 @@ public class MaxDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
         @Override
         public void pass1(Record record, long recordOffset, WindowSPI spi) {
             computeNext(record);
-            Unsafe.getUnsafe().putDouble(spi.getAddress(recordOffset, columnIndex), maxMin);
+            Unsafe.putDouble(spi.getAddress(recordOffset, columnIndex), maxMin);
         }
 
         @Override
@@ -958,7 +958,7 @@ public class MaxDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
         @Override
         public void pass1(Record record, long recordOffset, WindowSPI spi) {
             computeNext(record);
-            Unsafe.getUnsafe().putDouble(spi.getAddress(recordOffset, columnIndex), maxMin);
+            Unsafe.putDouble(spi.getAddress(recordOffset, columnIndex), maxMin);
         }
 
         @Override
@@ -1229,7 +1229,7 @@ public class MaxDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
         @Override
         public void pass1(Record record, long recordOffset, WindowSPI spi) {
             computeNext(record);
-            Unsafe.getUnsafe().putDouble(spi.getAddress(recordOffset, columnIndex), maxMin);
+            Unsafe.putDouble(spi.getAddress(recordOffset, columnIndex), maxMin);
         }
 
         @Override
@@ -1422,7 +1422,7 @@ public class MaxDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
         @Override
         public void pass1(Record record, long recordOffset, WindowSPI spi) {
             computeNext(record);
-            Unsafe.getUnsafe().putDouble(spi.getAddress(recordOffset, columnIndex), maxMin);
+            Unsafe.putDouble(spi.getAddress(recordOffset, columnIndex), maxMin);
         }
 
         @Override
@@ -1554,7 +1554,7 @@ public class MaxDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
         @Override
         public void pass1(Record record, long recordOffset, WindowSPI spi) {
             computeNext(record);
-            Unsafe.getUnsafe().putDouble(spi.getAddress(recordOffset, columnIndex), maxMin);
+            Unsafe.putDouble(spi.getAddress(recordOffset, columnIndex), maxMin);
         }
 
         @Override
@@ -1607,7 +1607,7 @@ public class MaxDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
         @Override
         public void pass1(Record record, long recordOffset, WindowSPI spi) {
             computeNext(record);
-            Unsafe.getUnsafe().putDouble(spi.getAddress(recordOffset, columnIndex), maxMin);
+            Unsafe.putDouble(spi.getAddress(recordOffset, columnIndex), maxMin);
         }
 
         @Override
@@ -1664,7 +1664,7 @@ public class MaxDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
 
         @Override
         public void pass2(Record record, long recordOffset, WindowSPI spi) {
-            Unsafe.getUnsafe().putDouble(spi.getAddress(recordOffset, columnIndex), maxMin);
+            Unsafe.putDouble(spi.getAddress(recordOffset, columnIndex), maxMin);
         }
 
         @Override

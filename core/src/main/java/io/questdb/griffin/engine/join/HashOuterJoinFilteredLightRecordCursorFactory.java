@@ -45,8 +45,8 @@ import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.table.SymbolTranslatingRecord;
+import io.questdb.griffin.model.IQueryModel;
 import io.questdb.griffin.model.JoinContext;
-import io.questdb.griffin.model.QueryModel;
 import io.questdb.std.Misc;
 import io.questdb.std.Transient;
 import org.jetbrains.annotations.NotNull;
@@ -103,7 +103,7 @@ public class HashOuterJoinFilteredLightRecordCursorFactory extends AbstractJoinR
             this.slaveChain = new LongChain(configuration.getSqlHashJoinLightValuePageSize(), configuration.getSqlHashJoinLightValueMaxPages());
             this.columnSplit = columnSplit;
             this.joinType = joinType;
-            if (joinType != QueryModel.JOIN_LEFT_OUTER) {
+            if (joinType != IQueryModel.JOIN_LEFT_OUTER) {
                 matchIdsMap = MapFactory.createUnorderedMap(configuration, RecordIdSink.RECORD_ID_COLUMN_TYPE, ArrayColumnTypes.EMPTY);
             }
             this.filter = filter;
@@ -115,14 +115,14 @@ public class HashOuterJoinFilteredLightRecordCursorFactory extends AbstractJoinR
 
     @Override
     public boolean followedOrderByAdvice() {
-        return joinType == QueryModel.JOIN_LEFT_OUTER && masterFactory.followedOrderByAdvice();
+        return joinType == IQueryModel.JOIN_LEFT_OUTER && masterFactory.followedOrderByAdvice();
     }
 
     @Override
     public RecordCursor getCursor(SqlExecutionContext executionContext) throws SqlException {
         if (cursor == null) {
             switch (joinType) {
-                case QueryModel.JOIN_LEFT_OUTER:
+                case IQueryModel.JOIN_LEFT_OUTER:
                     cursor = new HashLeftOuterJoinLightRecordCursor(
                             columnSplit,
                             NullRecordFactory.getInstance(slaveFactory.getMetadata()),
@@ -131,7 +131,7 @@ public class HashOuterJoinFilteredLightRecordCursorFactory extends AbstractJoinR
 
                     );
                     break;
-                case QueryModel.JOIN_RIGHT_OUTER:
+                case IQueryModel.JOIN_RIGHT_OUTER:
                     cursor = new HashRightOuterJoinLightRecordCursor(
                             columnSplit,
                             NullRecordFactory.getInstance(masterFactory.getMetadata()),
@@ -140,7 +140,7 @@ public class HashOuterJoinFilteredLightRecordCursorFactory extends AbstractJoinR
                             slaveChain
                     );
                     break;
-                case QueryModel.JOIN_FULL_OUTER:
+                case IQueryModel.JOIN_FULL_OUTER:
                     cursor = new HashFullOuterJoinLightRecordCursor(
                             columnSplit,
                             NullRecordFactory.getInstance(masterFactory.getMetadata()),
@@ -162,7 +162,7 @@ public class HashOuterJoinFilteredLightRecordCursorFactory extends AbstractJoinR
         RecordCursor masterCursor = null;
         try {
             masterCursor = masterFactory.getCursor(executionContext);
-            if (joinType == QueryModel.JOIN_FULL_OUTER) {
+            if (joinType == IQueryModel.JOIN_FULL_OUTER) {
                 boolean swapped = false;
                 if (masterFactory.recordCursorSupportsRandomAccess()) {
                     long masterSize = masterCursor.size();
@@ -191,7 +191,7 @@ public class HashOuterJoinFilteredLightRecordCursorFactory extends AbstractJoinR
 
     @Override
     public int getScanDirection() {
-        return joinType == QueryModel.JOIN_LEFT_OUTER ? masterFactory.getScanDirection() : SCAN_DIRECTION_OTHER;
+        return joinType == IQueryModel.JOIN_LEFT_OUTER ? masterFactory.getScanDirection() : SCAN_DIRECTION_OTHER;
     }
 
     @Override
@@ -213,11 +213,11 @@ public class HashOuterJoinFilteredLightRecordCursorFactory extends AbstractJoinR
 
     protected static CharSequence outerJoinTypeToString(int joinType) {
         switch (joinType) {
-            case QueryModel.JOIN_LEFT_OUTER:
+            case IQueryModel.JOIN_LEFT_OUTER:
                 return "Left";
-            case QueryModel.JOIN_RIGHT_OUTER:
+            case IQueryModel.JOIN_RIGHT_OUTER:
                 return "Right";
-            case QueryModel.JOIN_FULL_OUTER:
+            case IQueryModel.JOIN_FULL_OUTER:
                 return "Full";
             default:
                 return "Unknown";

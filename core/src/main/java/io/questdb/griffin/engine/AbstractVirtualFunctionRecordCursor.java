@@ -24,8 +24,11 @@
 
 package io.questdb.griffin.engine;
 
+import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
-import io.questdb.cairo.sql.*;
+import io.questdb.cairo.sql.RecordCursor;
+import io.questdb.cairo.sql.SymbolTable;
+import io.questdb.cairo.sql.VirtualRecord;
 import io.questdb.griffin.engine.functions.SymbolFunction;
 import io.questdb.griffin.engine.groupby.GroupByUtils;
 import io.questdb.std.Misc;
@@ -54,7 +57,10 @@ public abstract class AbstractVirtualFunctionRecordCursor implements RecordCurso
     public void close() {
         baseCursor = Misc.free(baseCursor);
         for (int i = 0, n = functions.size(); i < n; i++) {
-            functions.getQuick(i).cursorClosed();
+            Function function = functions.getQuick(i);
+            if (function != null) {
+                function.cursorClosed();
+            }
         }
     }
 
@@ -117,5 +123,9 @@ public abstract class AbstractVirtualFunctionRecordCursor implements RecordCurso
             baseCursor.toTop();
             GroupByUtils.toTop(functions);
         }
+    }
+
+    protected ObjList<Function> getFunctions() {
+        return functions;
     }
 }

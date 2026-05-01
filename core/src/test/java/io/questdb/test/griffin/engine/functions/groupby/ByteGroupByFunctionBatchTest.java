@@ -35,7 +35,6 @@ import io.questdb.griffin.engine.functions.groupby.FirstByteGroupByFunction;
 import io.questdb.griffin.engine.functions.groupby.LastByteGroupByFunction;
 import io.questdb.griffin.engine.groupby.SimpleMapValue;
 import io.questdb.std.MemoryTag;
-import io.questdb.std.Numbers;
 import io.questdb.std.Unsafe;
 import org.junit.After;
 import org.junit.Assert;
@@ -177,7 +176,7 @@ public class ByteGroupByFunctionBatchTest {
         lastSize = values.length;
         lastAllocated = Unsafe.malloc(lastSize, MemoryTag.NATIVE_DEFAULT);
         for (int i = 0; i < values.length; i++) {
-            Unsafe.getUnsafe().putByte(lastAllocated + i, values[i]);
+            Unsafe.putByte(lastAllocated + i, values[i]);
         }
         return lastAllocated;
     }

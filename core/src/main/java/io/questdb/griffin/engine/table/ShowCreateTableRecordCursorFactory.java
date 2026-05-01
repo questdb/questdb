@@ -205,10 +205,6 @@ public class ShowCreateTableRecordCursorFactory extends AbstractRecordCursorFact
             hasRun = false;
         }
 
-        private void putTtl() {
-            ttlToSink(table.getTtlHoursOrMonths(), sink);
-        }
-
         private void showCreateTable(CairoConfiguration config) {
             // CREATE TABLE table_name
             putCreateTable();
@@ -220,7 +216,7 @@ public class ShowCreateTableRecordCursorFactory extends AbstractRecordCursorFact
                 // PARTITION BY unit
                 putPartitionBy();
                 // TTL n unit
-                putTtl();
+                ttlToSink(sink);
                 // (BYPASS) WAL
                 putWal();
             }
@@ -343,6 +339,11 @@ public class ShowCreateTableRecordCursorFactory extends AbstractRecordCursorFact
                 sink.putAscii(" BYPASS");
                 sink.putAscii(" WAL");
             }
+        }
+
+        // overridden in ent, do not remove!
+        protected void ttlToSink(CharSink<?> sink) {
+            ShowCreateTableRecordCursorFactory.ttlToSink(table.getTtlHoursOrMonths(), sink);
         }
 
         public class ShowCreateTableRecord implements Record {

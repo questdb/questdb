@@ -32,6 +32,7 @@ pub mod files;
 pub mod parquet;
 pub mod parquet_read;
 pub mod parquet_write;
+pub mod qwp_zstd;
 mod wal_lock;
 
 use jni::sys::jlong;

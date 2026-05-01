@@ -251,11 +251,16 @@ public abstract class AbstractNoRecordSampleByCursor extends AbstractSampleByCur
 
     protected void nextSamplePeriod(long timestamp) {
         localEpoch = timestampSampler.round(timestamp);
-        // Sometimes rounding, especially around Days can throw localEpoch
-        // to the "before" previous DST. When this happens we need to compensate for
-        // tzOffset subtraction at the time of delivery of the timestamp to client
-        if (localEpoch - tzOffset < prevDst) {
-            localEpoch += tzOffset;
+        // After a DST transition, rounding down (common for multi-hour or day units) can place
+        // the new bucket's boundary at a local time whose UTC instant lies before the transition
+        // we just crossed. TimestampFunc emits `sampleLocalEpoch - tzOffset`, so if we leave
+        // localEpoch as-is, we'd back-convert with the post-transition offset even though the
+        // bucket start belongs to the pre-transition offset. Shift localEpoch by the delta
+        // between the current offset and the one valid at the bucket boundary so the emitted
+        // UTC timestamp lands on the correct side of the transition.
+        if (rules != null && localEpoch - tzOffset < prevDst) {
+            final long boundaryTzOffset = rules.getOffset(localEpoch - tzOffset);
+            localEpoch += (tzOffset - boundaryTzOffset);
         }
         GroupByUtils.toTop(groupByFunctions);
     }

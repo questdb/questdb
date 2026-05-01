@@ -36,6 +36,7 @@ import io.questdb.cutlass.json.JsonException;
 import io.questdb.cutlass.line.tcp.LineTcpReceiverConfiguration;
 import io.questdb.cutlass.line.tcp.LineTcpReceiverConfigurationWrapper;
 import io.questdb.cutlass.line.udp.LineUdpReceiverConfiguration;
+import io.questdb.cutlass.qwp.server.QwpUdpReceiverConfiguration;
 import io.questdb.cutlass.pgwire.PGConfiguration;
 import io.questdb.cutlass.pgwire.PGConfigurationWrapper;
 import io.questdb.log.Log;
@@ -352,6 +353,12 @@ public class DynamicPropServerConfiguration implements ServerConfiguration, Conf
     public WorkerPoolConfiguration getMatViewRefreshPoolConfiguration() {
         // nested object is kept non-reloadable
         return serverConfig.get().getMatViewRefreshPoolConfiguration();
+    }
+
+    @Override
+    public QwpUdpReceiverConfiguration getQwpUdpReceiverConfiguration() {
+        // nested object is kept non-reloadable
+        return serverConfig.get().getQwpUdpReceiverConfiguration();
     }
 
     @Override

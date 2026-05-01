@@ -121,7 +121,7 @@ fi
 # Check if arguments are provided in the configuration file
 if [ $# -eq 0 ]; then
     echo "No arguments found in the configuration, start with default arguments"
-    set -- $JAVA_COMMAND $QUESTDB_LIBS_DIR_PROP -ea -Dnoebug -XX:+UseParallelGC ${PROFILER_AGENT} -XX:ErrorFile=${QUESTDB_DATA_DIR}/db/hs_err_pid+%p.log -Dout=${QUESTDB_DATA_DIR}/conf/log.conf -m io.questdb/io.questdb.ServerMain -d ${QUESTDB_DATA_DIR} -f
+    set -- $JAVA_COMMAND $QUESTDB_LIBS_DIR_PROP -ea -Dnoebug -XX:+UseParallelGC --sun-misc-unsafe-memory-access=allow --enable-native-access=io.questdb --add-opens=java.base/java.lang=io.questdb --add-opens=java.base/java.lang.reflect=io.questdb --add-opens=java.base/java.nio=io.questdb --add-opens=java.base/java.time.zone=io.questdb ${PROFILER_AGENT} -XX:ErrorFile=${QUESTDB_DATA_DIR}/db/hs_err_pid+%p.log -Dout=${QUESTDB_DATA_DIR}/conf/log.conf -m io.questdb/io.questdb.ServerMain -d ${QUESTDB_DATA_DIR} -f
 else
     if [ "${1:0:1}" = '-' ]; then
         echo "Found config arguments $@"

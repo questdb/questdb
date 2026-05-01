@@ -290,7 +290,7 @@ public class ShortGroupByFunctionBatchTest {
         lastSize = (long) values.length * Short.BYTES;
         lastAllocated = Unsafe.malloc(lastSize, MemoryTag.NATIVE_DEFAULT);
         for (int i = 0; i < values.length; i++) {
-            Unsafe.getUnsafe().putShort(lastAllocated + (long) i * Short.BYTES, values[i]);
+            Unsafe.putShort(lastAllocated + (long) i * Short.BYTES, values[i]);
         }
         return lastAllocated;
     }
