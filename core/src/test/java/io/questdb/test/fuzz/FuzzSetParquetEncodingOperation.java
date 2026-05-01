@@ -92,9 +92,8 @@ public class FuzzSetParquetEncodingOperation implements FuzzTransactionOperation
                         || Chars.contains(e.getFlyweightMessage(), "could not lock table")
                         || e.isTableDropped()) {
                     return true;
-                } else {
-                    throw e;
                 }
+                throw e;
             }
         } catch (SqlException e) {
             throw new RuntimeException(e);
