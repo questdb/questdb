@@ -76,8 +76,16 @@ import java.util.List;
  *         specific seed pair, as printed in the run's "random seeds: ..."
  *         line. Use to reproduce a failure deterministically.</li>
  * </ul>
+ * <p>
+ * Each query also has a small chance of running with parallel SQL
+ * execution disabled (parallel filter, GROUP BY, top-K, parquet read), so
+ * the serial code paths get exercised alongside the parallel ones. The
+ * coin flip pulls from the seeded rnd, so replaying with the same seeds
+ * reproduces the same on/off pattern.
  */
 public class QueryFuzzTest extends AbstractCairoTest {
+    // Per-query chance, in percent, of running with parallel SQL execution disabled.
+    private static final int SERIAL_PROBABILITY_PCT = 5;
 
     @Test
     public void testQueryFuzz() throws Exception {
@@ -168,7 +176,15 @@ public class QueryFuzzTest extends AbstractCairoTest {
         }
 
         QueryRunner runner = new QueryRunner(engine, sqlExecutionContext, config.isDiffJitEnabled(), config.isDiffShadowEnabled(), tables);
+        // Snapshot the four parallel-execution flags so the per-query serial
+        // override can restore them. Snapshotting once outside the loop also
+        // preserves any global override the user passed via system properties.
+        final boolean savedParallelFilter = sqlExecutionContext.isParallelFilterEnabled();
+        final boolean savedParallelGroupBy = sqlExecutionContext.isParallelGroupByEnabled();
+        final boolean savedParallelReadParquet = sqlExecutionContext.isParallelReadParquetEnabled();
+        final boolean savedParallelTopK = sqlExecutionContext.isParallelTopKEnabled();
         int skipped = 0;
+        int serial = 0;
         List<QueryRunner.Result> failures = new ArrayList<>();
         try (BufferedWriter dump = openDump(config.getDumpPath())) {
             for (int q = 0; q < config.getNumQueries(); q++) {
@@ -177,7 +193,26 @@ public class QueryFuzzTest extends AbstractCairoTest {
                     dump.write(query.sql());
                     dump.newLine();
                 }
-                QueryRunner.Result result = runner.run(query);
+                boolean disableParallel = rnd.nextInt(100) < SERIAL_PROBABILITY_PCT;
+                if (disableParallel) {
+                    serial++;
+                    sqlExecutionContext.setParallelFilterEnabled(false);
+                    sqlExecutionContext.setParallelGroupByEnabled(false);
+                    sqlExecutionContext.setParallelReadParquetEnabled(false);
+                    sqlExecutionContext.setParallelTopKEnabled(false);
+                    LOG.info().$("fuzz serial: ").$safe(query.sql()).$();
+                }
+                QueryRunner.Result result;
+                try {
+                    result = runner.run(query);
+                } finally {
+                    if (disableParallel) {
+                        sqlExecutionContext.setParallelFilterEnabled(savedParallelFilter);
+                        sqlExecutionContext.setParallelGroupByEnabled(savedParallelGroupBy);
+                        sqlExecutionContext.setParallelReadParquetEnabled(savedParallelReadParquet);
+                        sqlExecutionContext.setParallelTopKEnabled(savedParallelTopK);
+                    }
+                }
                 if (result.isSkipped()) {
                     skipped++;
                     LOG.info().$("fuzz skip (").$safe(result.getSkipReason()).$("): ").$safe(query.sql()).$();
@@ -191,6 +226,7 @@ public class QueryFuzzTest extends AbstractCairoTest {
             }
         }
         LOG.info().$("fuzz done: ").$(config.getNumQueries()).$(" queries, ")
+                .$(serial).$(" serial, ")
                 .$(skipped).$(" skipped on expected errors, ")
                 .$(failures.size()).$(" failures")
                 .$();
