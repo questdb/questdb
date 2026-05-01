@@ -25,11 +25,18 @@
 package io.questdb.test.griffin.fuzz.types;
 
 import io.questdb.std.Rnd;
+import io.questdb.test.griffin.fuzz.expr.FuzzConstant;
 
 public final class BooleanType implements FuzzColumnType {
     public static final BooleanType INSTANCE = new BooleanType();
 
     private BooleanType() {
+    }
+
+    @Override
+    public FuzzConstant generateConstant(Rnd rnd) {
+        String v = Boolean.toString(rnd.nextBoolean());
+        return new FuzzConstant(v, "BOOLEAN", v);
     }
 
     @Override
@@ -49,6 +56,6 @@ public final class BooleanType implements FuzzColumnType {
 
     @Override
     public String randomLiteral(Rnd rnd) {
-        return Boolean.toString(rnd.nextBoolean());
+        return generateConstant(rnd).literal();
     }
 }

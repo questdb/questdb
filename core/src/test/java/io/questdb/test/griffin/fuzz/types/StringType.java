@@ -25,11 +25,21 @@
 package io.questdb.test.griffin.fuzz.types;
 
 import io.questdb.std.Rnd;
+import io.questdb.test.griffin.fuzz.expr.FuzzConstant;
 
 public final class StringType implements FuzzColumnType {
     public static final StringType INSTANCE = new StringType();
 
     private StringType() {
+    }
+
+    @Override
+    public FuzzConstant generateConstant(Rnd rnd) {
+        if (rnd.nextInt(32) == 0) {
+            return FuzzConstant.nonBindable("null");
+        }
+        String v = rnd.nextString(1 + rnd.nextInt(6));
+        return new FuzzConstant("'" + v + "'", "STRING", v);
     }
 
     @Override
@@ -50,9 +60,6 @@ public final class StringType implements FuzzColumnType {
 
     @Override
     public String randomLiteral(Rnd rnd) {
-        if (rnd.nextInt(32) == 0) {
-            return "null";
-        }
-        return "'" + rnd.nextString(1 + rnd.nextInt(6)) + "'";
+        return generateConstant(rnd).literal();
     }
 }

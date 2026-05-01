@@ -45,9 +45,9 @@ public final class FunctionCallExpr implements FuzzExpr {
     }
 
     @Override
-    public void appendSql(StringSink sink) {
+    public void appendSql(StringSink sink, BindContext ctx) {
         sink.put(name).put('(');
-        arg.appendSql(sink);
+        arg.appendSql(sink, ctx);
         sink.put(')');
     }
 

@@ -25,6 +25,7 @@
 package io.questdb.test.griffin.fuzz.types;
 
 import io.questdb.std.Rnd;
+import io.questdb.test.griffin.fuzz.expr.FuzzConstant;
 
 /**
  * Describes one column type the fuzzer can generate. Each implementation
@@ -34,6 +35,18 @@ import io.questdb.std.Rnd;
  * so precision/scale/dimensionality varies between columns.
  */
 public interface FuzzColumnType {
+
+    /**
+     * Pick a random typed constant of this type. The default implementation
+     * wraps {@link #randomLiteral} as a non-bindable constant. Types whose
+     * literal value round-trips through {@code BindVariableService.setStr}
+     * override this to return a bindable {@link FuzzConstant} so the bind
+     * variable variant of the differential runner can substitute a
+     * {@code ?::TYPE} placeholder for the literal.
+     */
+    default FuzzConstant generateConstant(Rnd rnd) {
+        return FuzzConstant.nonBindable(randomLiteral(rnd));
+    }
 
     /**
      * SQL DDL fragment that follows the column name in CREATE TABLE, e.g.

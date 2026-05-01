@@ -104,7 +104,7 @@ public final class ExpressionGenerator {
         // Otherwise pick a constant whose type matches the kind.
         FuzzColumnType type = FuzzColumnTypes.pickOfKind(rnd, target);
         if (type != null) {
-            return new ConstantExpr(target, type.randomLiteral(rnd));
+            return new ConstantExpr(target, type.generateConstant(rnd));
         }
         // Last resort: any column ref. Slot consumers tolerate kind noise.
         return generateLeafAny();

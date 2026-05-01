@@ -47,7 +47,7 @@ public final class ColumnRefExpr implements FuzzExpr {
     }
 
     @Override
-    public void appendSql(StringSink sink) {
+    public void appendSql(StringSink sink, BindContext ctx) {
         if (qualifier != null && !qualifier.isEmpty()) {
             sink.put(qualifier).put('.');
         }

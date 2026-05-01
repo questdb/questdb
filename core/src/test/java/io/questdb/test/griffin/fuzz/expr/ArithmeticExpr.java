@@ -44,11 +44,11 @@ public final class ArithmeticExpr implements FuzzExpr {
     }
 
     @Override
-    public void appendSql(StringSink sink) {
+    public void appendSql(StringSink sink, BindContext ctx) {
         sink.put('(');
-        lhs.appendSql(sink);
+        lhs.appendSql(sink, ctx);
         sink.put(' ').put(op).put(' ');
-        rhs.appendSql(sink);
+        rhs.appendSql(sink, ctx);
         sink.put(')');
     }
 

@@ -25,11 +25,21 @@
 package io.questdb.test.griffin.fuzz.types;
 
 import io.questdb.std.Rnd;
+import io.questdb.test.griffin.fuzz.expr.FuzzConstant;
 
 public final class VarcharType implements FuzzColumnType {
     public static final VarcharType INSTANCE = new VarcharType();
 
     private VarcharType() {
+    }
+
+    @Override
+    public FuzzConstant generateConstant(Rnd rnd) {
+        if (rnd.nextInt(32) == 0) {
+            return FuzzConstant.nonBindable("null");
+        }
+        String v = rnd.nextString(1 + rnd.nextInt(6));
+        return new FuzzConstant("'" + v + "'::VARCHAR", "VARCHAR", v);
     }
 
     @Override
@@ -49,9 +59,6 @@ public final class VarcharType implements FuzzColumnType {
 
     @Override
     public String randomLiteral(Rnd rnd) {
-        if (rnd.nextInt(32) == 0) {
-            return "null";
-        }
-        return "'" + rnd.nextString(1 + rnd.nextInt(6)) + "'::VARCHAR";
+        return generateConstant(rnd).literal();
     }
 }

@@ -31,6 +31,7 @@ import io.questdb.test.griffin.fuzz.FuzzSource;
 import io.questdb.test.griffin.fuzz.FuzzTable;
 import io.questdb.test.griffin.fuzz.GeneratedQuery;
 import io.questdb.test.griffin.fuzz.PredicateGenerator;
+import io.questdb.test.griffin.fuzz.expr.BindContext;
 import io.questdb.test.griffin.fuzz.expr.ExpressionGenerator;
 import io.questdb.test.griffin.fuzz.expr.FuzzExpr;
 
@@ -50,7 +51,7 @@ public final class TemporalJoinClause {
     private TemporalJoinClause() {
     }
 
-    public static GeneratedQuery generate(Rnd rnd, FuzzSource leftSrc, FuzzSource rightSrc) {
+    public static GeneratedQuery generate(Rnd rnd, FuzzSource leftSrc, FuzzSource rightSrc, BindContext ctx) {
         FuzzTable left = leftSrc.getTable();
         FuzzTable right = rightSrc.getTable();
         String joinKind = JOIN_KINDS[rnd.nextInt(JOIN_KINDS.length)];
@@ -72,7 +73,7 @@ public final class TemporalJoinClause {
                 sql.put(", ");
             }
             FuzzExpr e = rnd.nextBoolean() ? leftGen.generateAnyKind() : rightGen.generateAnyKind();
-            e.appendSql(sql);
+            e.appendSql(sql, ctx);
             sql.put(" AS e").put(i);
         }
 
@@ -91,7 +92,7 @@ public final class TemporalJoinClause {
 
         if (rnd.nextBoolean()) {
             // WHERE can touch either side; use left.
-            String pred = new PredicateGenerator(rnd, 1).generate(left.getColumns(), leftAlias);
+            String pred = new PredicateGenerator(rnd, 1).generate(left.getColumns(), leftAlias, ctx);
             sql.put(" WHERE ").put(pred);
         }
 

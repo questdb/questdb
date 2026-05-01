@@ -30,20 +30,36 @@ import io.questdb.test.griffin.fuzz.types.ColumnKind;
 /**
  * Typed literal expression. The literal string is generated once by the
  * owning {@link io.questdb.test.griffin.fuzz.types.FuzzColumnType} and
- * frozen in the node so re-emission is stable.
+ * frozen in the node so re-emission is stable. When the constant is
+ * bindable (i.e. {@code FuzzConstant.isBindable()}) and a non-null
+ * {@link BindContext} is threaded into {@link #appendSql}, the node may
+ * emit {@code ?::TYPE} instead of the literal text and register its
+ * value with the context.
  */
 public final class ConstantExpr implements FuzzExpr {
+    private final FuzzConstant constant;
     private final ColumnKind kind;
-    private final String literal;
+
+    public ConstantExpr(ColumnKind kind, FuzzConstant constant) {
+        this.kind = kind;
+        this.constant = constant;
+    }
 
     public ConstantExpr(ColumnKind kind, String literal) {
-        this.kind = kind;
-        this.literal = literal;
+        this(kind, FuzzConstant.nonBindable(literal));
     }
 
     @Override
-    public void appendSql(StringSink sink) {
-        sink.put(literal);
+    public void appendSql(StringSink sink, BindContext ctx) {
+        if (ctx != null && constant.isBindable() && ctx.shouldBind()) {
+            String name = ctx.addBinding(constant.bindValue());
+            // Named bind variables avoid the bare-? vs column-ref ambiguity
+            // the parser hits when a positional ? appears in a projection
+            // slot.
+            sink.put(':').put(name).put("::").put(constant.bindCastDdl());
+            return;
+        }
+        sink.put(constant.literal());
     }
 
     @Override

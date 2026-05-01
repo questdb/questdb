@@ -25,11 +25,21 @@
 package io.questdb.test.griffin.fuzz.types;
 
 import io.questdb.std.Rnd;
+import io.questdb.test.griffin.fuzz.expr.FuzzConstant;
 
 public final class SymbolType implements FuzzColumnType {
     public static final SymbolType INSTANCE = new SymbolType();
 
     private SymbolType() {
+    }
+
+    @Override
+    public FuzzConstant generateConstant(Rnd rnd) {
+        if (rnd.nextInt(32) == 0) {
+            return FuzzConstant.nonBindable("null");
+        }
+        String v = rnd.nextString(1 + rnd.nextInt(4));
+        return new FuzzConstant("'" + v + "'", "SYMBOL", v);
     }
 
     @Override
@@ -50,9 +60,6 @@ public final class SymbolType implements FuzzColumnType {
 
     @Override
     public String randomLiteral(Rnd rnd) {
-        if (rnd.nextInt(32) == 0) {
-            return "null";
-        }
-        return "'" + rnd.nextString(1 + rnd.nextInt(4)) + "'";
+        return generateConstant(rnd).literal();
     }
 }

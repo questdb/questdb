@@ -25,11 +25,19 @@
 package io.questdb.test.griffin.fuzz.types;
 
 import io.questdb.std.Rnd;
+import io.questdb.test.griffin.fuzz.expr.FuzzConstant;
 
 public final class ByteType implements FuzzColumnType {
     public static final ByteType INSTANCE = new ByteType();
 
     private ByteType() {
+    }
+
+    @Override
+    public FuzzConstant generateConstant(Rnd rnd) {
+        int n = rnd.nextByte();
+        String v = Integer.toString(n);
+        return new FuzzConstant(v + "::BYTE", "BYTE", v);
     }
 
     @Override
@@ -49,6 +57,6 @@ public final class ByteType implements FuzzColumnType {
 
     @Override
     public String randomLiteral(Rnd rnd) {
-        return (int) rnd.nextByte() + "::BYTE";
+        return generateConstant(rnd).literal();
     }
 }

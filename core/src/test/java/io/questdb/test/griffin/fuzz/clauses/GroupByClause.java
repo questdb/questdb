@@ -31,6 +31,7 @@ import io.questdb.test.griffin.fuzz.FuzzSource;
 import io.questdb.test.griffin.fuzz.FuzzTable;
 import io.questdb.test.griffin.fuzz.GeneratedQuery;
 import io.questdb.test.griffin.fuzz.PredicateGenerator;
+import io.questdb.test.griffin.fuzz.expr.BindContext;
 import io.questdb.test.griffin.fuzz.expr.ExpressionGenerator;
 import io.questdb.test.griffin.fuzz.expr.FuzzExpr;
 import io.questdb.test.griffin.fuzz.types.ColumnKind;
@@ -52,7 +53,7 @@ public final class GroupByClause {
     private GroupByClause() {
     }
 
-    public static GeneratedQuery generate(Rnd rnd, FuzzSource source) {
+    public static GeneratedQuery generate(Rnd rnd, FuzzSource source, BindContext ctx) {
         FuzzTable table = source.getTable();
         boolean useAlias = rnd.nextBoolean();
         String alias = useAlias ? "t0" : null;
@@ -74,11 +75,11 @@ public final class GroupByClause {
         sql.put(source.getPrefixSql());
         sql.put("SELECT ");
         for (int i = 0, n = keys.size(); i < n; i++) {
-            keys.getQuick(i).appendSql(sql);
+            keys.getQuick(i).appendSql(sql, ctx);
             sql.put(" AS e").put(i);
             sql.put(", ");
         }
-        agg.appendSql(sql);
+        agg.appendSql(sql, ctx);
         sql.put(" AS a0");
 
         sql.put(" FROM ").put(source.getFromSqlWithGarble(rnd));
@@ -87,7 +88,7 @@ public final class GroupByClause {
         }
 
         if (rnd.nextBoolean()) {
-            String pred = new PredicateGenerator(rnd, 2).generate(table.getColumns(), qualifier);
+            String pred = new PredicateGenerator(rnd, 2).generate(table.getColumns(), qualifier, ctx);
             sql.put(" WHERE ").put(pred);
         }
 
@@ -108,7 +109,7 @@ public final class GroupByClause {
                     // positional: keys occupy positions 1..n; aggregate is n+1.
                     sql.put(i + 1);
                 } else {
-                    keys.getQuick(i).appendSql(sql);
+                    keys.getQuick(i).appendSql(sql, ctx);
                 }
             }
         }
@@ -206,10 +207,10 @@ public final class GroupByClause {
             return new Aggregate(name, arg);
         }
 
-        void appendSql(StringSink sink) {
+        void appendSql(StringSink sink, BindContext ctx) {
             sink.put(name).put('(');
             if (arg != null) {
-                arg.appendSql(sink);
+                arg.appendSql(sink, ctx);
             }
             sink.put(')');
         }

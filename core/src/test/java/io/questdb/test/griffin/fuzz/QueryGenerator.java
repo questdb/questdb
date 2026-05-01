@@ -30,6 +30,7 @@ import io.questdb.test.griffin.fuzz.clauses.GroupByClause;
 import io.questdb.test.griffin.fuzz.clauses.SampleByClause;
 import io.questdb.test.griffin.fuzz.clauses.SimpleClause;
 import io.questdb.test.griffin.fuzz.clauses.TemporalJoinClause;
+import io.questdb.test.griffin.fuzz.expr.BindContext;
 
 /**
  * Picks a query shape and delegates to the matching clause generator.
@@ -54,7 +55,7 @@ public final class QueryGenerator {
     private QueryGenerator() {
     }
 
-    public static GeneratedQuery generate(Rnd rnd, ObjList<FuzzTable> tables) {
+    public static GeneratedQuery generate(Rnd rnd, ObjList<FuzzTable> tables, BindContext ctx) {
         int pick = rnd.nextInt(100);
         FuzzTable t = tables.getQuick(rnd.nextInt(tables.size()));
 
@@ -66,7 +67,7 @@ public final class QueryGenerator {
             // Joins stay on direct, real tables: ASOF/LT/SPLICE need a
             // designated timestamp on both sides which virtual tables
             // don't carry.
-            return TemporalJoinClause.generate(rnd, FuzzSource.direct(t), FuzzSource.direct(other));
+            return TemporalJoinClause.generate(rnd, FuzzSource.direct(t), FuzzSource.direct(other), ctx);
         }
 
         FuzzSource source = pickSource(rnd, t);
@@ -74,14 +75,14 @@ public final class QueryGenerator {
             // SAMPLE BY requires a designated ts; downgrade to SIMPLE on
             // virtual-only sources.
             if (source.getTable().getTsColumnName() == null) {
-                return SimpleClause.generate(rnd, source);
+                return SimpleClause.generate(rnd, source, ctx);
             }
-            return SampleByClause.generate(rnd, source);
+            return SampleByClause.generate(rnd, source, ctx);
         }
         if (pick < 60) {
-            return GroupByClause.generate(rnd, source);
+            return GroupByClause.generate(rnd, source, ctx);
         }
-        return SimpleClause.generate(rnd, source);
+        return SimpleClause.generate(rnd, source, ctx);
     }
 
     private static FuzzSource pickSource(Rnd rnd, FuzzTable realTable) {

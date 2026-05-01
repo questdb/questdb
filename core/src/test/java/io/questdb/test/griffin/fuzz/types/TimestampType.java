@@ -25,11 +25,29 @@
 package io.questdb.test.griffin.fuzz.types;
 
 import io.questdb.std.Rnd;
+import io.questdb.test.griffin.fuzz.expr.FuzzConstant;
 
 public final class TimestampType implements FuzzColumnType {
     public static final TimestampType INSTANCE = new TimestampType();
 
     private TimestampType() {
+    }
+
+    @Override
+    public FuzzConstant generateConstant(Rnd rnd) {
+        if (rnd.nextInt(32) == 0) {
+            return FuzzConstant.nonBindable("null");
+        }
+        int month = 1 + rnd.nextInt(3);
+        int day = 1 + rnd.nextInt(27);
+        int hour = rnd.nextInt(24);
+        int minute = rnd.nextInt(60);
+        String v = String.format(
+                java.util.Locale.ROOT,
+                "2024-%02d-%02dT%02d:%02d:00.000000Z",
+                month, day, hour, minute
+        );
+        return new FuzzConstant("'" + v + "'::TIMESTAMP", "TIMESTAMP", v);
     }
 
     @Override
@@ -50,17 +68,6 @@ public final class TimestampType implements FuzzColumnType {
 
     @Override
     public String randomLiteral(Rnd rnd) {
-        if (rnd.nextInt(32) == 0) {
-            return "null";
-        }
-        int month = 1 + rnd.nextInt(3);
-        int day = 1 + rnd.nextInt(27);
-        int hour = rnd.nextInt(24);
-        int minute = rnd.nextInt(60);
-        return String.format(
-                java.util.Locale.ROOT,
-                "'2024-%02d-%02dT%02d:%02d:00.000000Z'",
-                month, day, hour, minute
-        ) + "::TIMESTAMP";
+        return generateConstant(rnd).literal();
     }
 }

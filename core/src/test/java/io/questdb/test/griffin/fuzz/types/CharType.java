@@ -25,11 +25,18 @@
 package io.questdb.test.griffin.fuzz.types;
 
 import io.questdb.std.Rnd;
+import io.questdb.test.griffin.fuzz.expr.FuzzConstant;
 
 public final class CharType implements FuzzColumnType {
     public static final CharType INSTANCE = new CharType();
 
     private CharType() {
+    }
+
+    @Override
+    public FuzzConstant generateConstant(Rnd rnd) {
+        char c = rnd.nextChar();
+        return new FuzzConstant("'" + c + "'", "CHAR", String.valueOf(c));
     }
 
     @Override
@@ -49,6 +56,6 @@ public final class CharType implements FuzzColumnType {
 
     @Override
     public String randomLiteral(Rnd rnd) {
-        return "'" + rnd.nextChar() + "'";
+        return generateConstant(rnd).literal();
     }
 }

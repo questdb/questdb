@@ -32,6 +32,7 @@ import io.questdb.mp.WorkerPool;
 import io.questdb.std.ObjList;
 import io.questdb.std.Rnd;
 import io.questdb.test.AbstractCairoTest;
+import io.questdb.test.griffin.fuzz.expr.BindContext;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Test;
 
@@ -82,8 +83,25 @@ import java.util.List;
  * the serial code paths get exercised alongside the parallel ones. The
  * coin flip pulls from the seeded rnd, so replaying with the same seeds
  * reproduces the same on/off pattern.
+ * <p>
+ * On a smaller fraction of queries the runner also generates a
+ * bind-variable variant: the same query rewritten with a subset of
+ * bindable typed constants replaced by named {@code :bN::TYPE}
+ * placeholders, with values supplied through
+ * {@code BindVariableService.setStr(name, value)}. The variant runs at
+ * JIT-off and (when diff-JIT is enabled) at JIT-on, each compared
+ * against the literal form's pivot at the same JIT mode, since the JIT
+ * compiler has its own bind-variable handling that doesn't share code
+ * with the Java-filter path. Any divergence between the literal and bind
+ * paths (bind-time coercion vs constant fold) is reported as a fuzz
+ * failure.
  */
 public class QueryFuzzTest extends AbstractCairoTest {
+    // Per-constant chance, in percent, of substituting a bindable literal
+    // with a bind variable inside the bind variant.
+    private static final int CONSTANT_BIND_PROBABILITY_PCT = 50;
+    // Per-query chance, in percent, of generating a bind-variable variant.
+    private static final int QUERY_BIND_PROBABILITY_PCT = 20;
     // Per-query chance, in percent, of running with parallel SQL execution disabled.
     private static final int SERIAL_PROBABILITY_PCT = 5;
 
@@ -183,12 +201,33 @@ public class QueryFuzzTest extends AbstractCairoTest {
         final boolean savedParallelGroupBy = sqlExecutionContext.isParallelGroupByEnabled();
         final boolean savedParallelReadParquet = sqlExecutionContext.isParallelReadParquetEnabled();
         final boolean savedParallelTopK = sqlExecutionContext.isParallelTopKEnabled();
+        int bindGen = 0;
         int skipped = 0;
         int serial = 0;
         List<QueryRunner.Result> failures = new ArrayList<>();
         try (BufferedWriter dump = openDump(config.getDumpPath())) {
             for (int q = 0; q < config.getNumQueries(); q++) {
-                GeneratedQuery query = QueryGenerator.generate(rnd, tables);
+                long preGenS0 = rnd.getSeed0();
+                long preGenS1 = rnd.getSeed1();
+                GeneratedQuery query = QueryGenerator.generate(rnd, tables, null);
+                // With small probability, regenerate the same query with a
+                // BindContext threaded through so a fraction of bindable
+                // typed constants emit as ?::TYPE bind variables. The Rnd
+                // is rewound to the pre-literal state so the tree shape
+                // matches; the BindContext gets its own derived Rnd so the
+                // bind/no-bind decisions are deterministic per seed.
+                if (rnd.nextInt(100) < QUERY_BIND_PROBABILITY_PCT) {
+                    long bindS0 = rnd.nextLong();
+                    long bindS1 = rnd.nextLong();
+                    rnd.reset(preGenS0, preGenS1);
+                    BindContext ctx = new BindContext(new Rnd(bindS0, bindS1), CONSTANT_BIND_PROBABILITY_PCT);
+                    GeneratedQuery bindForm = QueryGenerator.generate(rnd, tables, ctx);
+                    if (ctx.getBindValues().size() > 0) {
+                        query = query.withBind(bindForm.sql(), ctx.getBindNames(), ctx.getBindValues());
+                        bindGen++;
+                        LOG.info().$("fuzz bind: ").$safe(query.bindSql()).$();
+                    }
+                }
                 if (dump != null) {
                     dump.write(query.sql());
                     dump.newLine();
@@ -227,6 +266,7 @@ public class QueryFuzzTest extends AbstractCairoTest {
         }
         LOG.info().$("fuzz done: ").$(config.getNumQueries()).$(" queries, ")
                 .$(serial).$(" serial, ")
+                .$(bindGen).$(" with bind variant, ")
                 .$(skipped).$(" skipped on expected errors, ")
                 .$(failures.size()).$(" failures")
                 .$();

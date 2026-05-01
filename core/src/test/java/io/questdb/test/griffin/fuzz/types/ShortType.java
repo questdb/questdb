@@ -25,11 +25,19 @@
 package io.questdb.test.griffin.fuzz.types;
 
 import io.questdb.std.Rnd;
+import io.questdb.test.griffin.fuzz.expr.FuzzConstant;
 
 public final class ShortType implements FuzzColumnType {
     public static final ShortType INSTANCE = new ShortType();
 
     private ShortType() {
+    }
+
+    @Override
+    public FuzzConstant generateConstant(Rnd rnd) {
+        int n = rnd.nextShort();
+        String v = Integer.toString(n);
+        return new FuzzConstant(v + "::SHORT", "SHORT", v);
     }
 
     @Override
@@ -49,6 +57,6 @@ public final class ShortType implements FuzzColumnType {
 
     @Override
     public String randomLiteral(Rnd rnd) {
-        return Integer.toString((int) rnd.nextShort()) + "::SHORT";
+        return generateConstant(rnd).literal();
     }
 }

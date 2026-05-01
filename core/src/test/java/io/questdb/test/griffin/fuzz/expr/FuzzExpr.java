@@ -30,15 +30,29 @@ import io.questdb.test.griffin.fuzz.types.ColumnKind;
 /**
  * An expression node. Stateless after construction: {@link #appendSql}
  * can be called multiple times so the same expression can be emitted in
- * SELECT and re-emitted in GROUP BY / ORDER BY.
+ * SELECT and re-emitted in GROUP BY / ORDER BY. The {@code BindContext}
+ * overload is used by the differential bind-variable runner to emit a
+ * second copy of the same tree with bindable {@link ConstantExpr} nodes
+ * replaced by {@code ?} placeholders.
  */
 public interface FuzzExpr {
 
     /**
-     * Render the expression as SQL. Parenthesises composite nodes so
-     * nested rewrites never lose operator precedence.
+     * Render the expression as SQL in literal form. Equivalent to
+     * {@code appendSql(sink, null)}.
      */
-    void appendSql(StringSink sink);
+    default void appendSql(StringSink sink) {
+        appendSql(sink, null);
+    }
+
+    /**
+     * Render the expression as SQL. When {@code ctx} is non-null, bindable
+     * constant leaves may emit {@code ?::TYPE} and register their value with
+     * the context; all other nodes thread {@code ctx} to their children
+     * unchanged. Parenthesises composite nodes so nested rewrites never
+     * lose operator precedence.
+     */
+    void appendSql(StringSink sink, BindContext ctx);
 
     /**
      * Approximate type category of the expression result. Generators

@@ -24,6 +24,8 @@
 
 package io.questdb.test.griffin.fuzz;
 
+import io.questdb.std.ObjList;
+
 /**
  * A single generated query plus a flag describing whether two runs of it
  * are guaranteed to return the same row content (in any order). Queries
@@ -31,6 +33,32 @@ package io.questdb.test.griffin.fuzz;
  * over a parallel GROUP BY / hash join may pick a different valid subset
  * on each run; for those, the diff-JIT oracle compares row counts and
  * exception classes only.
+ * <p>
+ * When the bind-variable differential variant fires for the query,
+ * {@code bindSql} carries the same query rewritten with {@code :bN::TYPE}
+ * placeholders, {@code bindNames} holds the placeholder names and
+ * {@code bindValues} holds the matching {@code setStr} values, both in
+ * emission order. {@code hasBind()} returns false when bindSql is null
+ * (most queries) or no bindable constant rolled the per-constant coin
+ * flip.
  */
-public record GeneratedQuery(String sql, boolean deterministic) {
+public record GeneratedQuery(
+        String sql,
+        boolean deterministic,
+        String bindSql,
+        ObjList<String> bindNames,
+        ObjList<String> bindValues
+) {
+
+    public GeneratedQuery(String sql, boolean deterministic) {
+        this(sql, deterministic, null, null, null);
+    }
+
+    public boolean hasBind() {
+        return bindSql != null && bindValues != null && bindValues.size() > 0;
+    }
+
+    public GeneratedQuery withBind(String bindSql, ObjList<String> bindNames, ObjList<String> bindValues) {
+        return new GeneratedQuery(this.sql, this.deterministic, bindSql, bindNames, bindValues);
+    }
 }

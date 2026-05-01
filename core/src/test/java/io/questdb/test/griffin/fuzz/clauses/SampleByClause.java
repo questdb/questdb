@@ -31,6 +31,7 @@ import io.questdb.test.griffin.fuzz.FuzzSource;
 import io.questdb.test.griffin.fuzz.FuzzTable;
 import io.questdb.test.griffin.fuzz.GeneratedQuery;
 import io.questdb.test.griffin.fuzz.PredicateGenerator;
+import io.questdb.test.griffin.fuzz.expr.BindContext;
 import io.questdb.test.griffin.fuzz.expr.ExpressionGenerator;
 import io.questdb.test.griffin.fuzz.expr.FuzzExpr;
 import io.questdb.test.griffin.fuzz.types.ColumnKind;
@@ -62,7 +63,7 @@ public final class SampleByClause {
     private SampleByClause() {
     }
 
-    public static GeneratedQuery generate(Rnd rnd, FuzzSource source) {
+    public static GeneratedQuery generate(Rnd rnd, FuzzSource source, BindContext ctx) {
         FuzzTable table = source.getTable();
         boolean useColAliases = rnd.nextBoolean();
         ExpressionGenerator exprGen = new ExpressionGenerator(rnd, table.getColumns(), null, 2);
@@ -77,7 +78,7 @@ public final class SampleByClause {
         sql.put("SELECT ");
         if (rnd.nextBoolean()) {
             FuzzExpr key = exprGen.generateOfKind(pickGroupableKind(rnd));
-            key.appendSql(sql);
+            key.appendSql(sql, ctx);
             if (useColAliases) {
                 sql.put(" AS k_a");
                 aliasNames[slots] = "k_a";
@@ -87,7 +88,7 @@ public final class SampleByClause {
         }
         if (rnd.nextBoolean()) {
             sql.put(rnd.nextBoolean() ? "avg(" : "sum(");
-            exprGen.generateOfKind(ColumnKind.NUMERIC).appendSql(sql);
+            exprGen.generateOfKind(ColumnKind.NUMERIC).appendSql(sql, ctx);
             sql.put(')');
         } else {
             sql.put("count()");
@@ -107,7 +108,7 @@ public final class SampleByClause {
         sql.put(" FROM ").put(source.getFromSqlWithGarble(rnd));
 
         if (rnd.nextBoolean()) {
-            String pred = new PredicateGenerator(rnd, 1).generate(table.getColumns(), null);
+            String pred = new PredicateGenerator(rnd, 1).generate(table.getColumns(), null, ctx);
             sql.put(" WHERE ").put(pred);
         }
 

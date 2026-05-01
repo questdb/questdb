@@ -25,11 +25,25 @@
 package io.questdb.test.griffin.fuzz.types;
 
 import io.questdb.std.Rnd;
+import io.questdb.test.griffin.fuzz.expr.FuzzConstant;
 
 public final class DateType implements FuzzColumnType {
     public static final DateType INSTANCE = new DateType();
 
     private DateType() {
+    }
+
+    @Override
+    public FuzzConstant generateConstant(Rnd rnd) {
+        if (rnd.nextInt(32) == 0) {
+            return FuzzConstant.nonBindable("null");
+        }
+        // Pick a date in 2024 (day granularity is enough)
+        int dayOfYear = 1 + rnd.nextInt(365);
+        int month = Math.min(12, 1 + (dayOfYear - 1) / 31);
+        int day = 1 + (dayOfYear - 1) % 28;
+        String v = String.format(java.util.Locale.ROOT, "2024-%02d-%02d", month, day);
+        return new FuzzConstant("'" + v + "'::DATE", "DATE", v);
     }
 
     @Override
@@ -50,13 +64,6 @@ public final class DateType implements FuzzColumnType {
 
     @Override
     public String randomLiteral(Rnd rnd) {
-        if (rnd.nextInt(32) == 0) {
-            return "null";
-        }
-        // Pick a date in 2024 (day granularity is enough)
-        int dayOfYear = 1 + rnd.nextInt(365);
-        int month = Math.min(12, 1 + (dayOfYear - 1) / 31);
-        int day = 1 + (dayOfYear - 1) % 28;
-        return String.format(java.util.Locale.ROOT, "'2024-%02d-%02d'", month, day) + "::DATE";
+        return generateConstant(rnd).literal();
     }
 }

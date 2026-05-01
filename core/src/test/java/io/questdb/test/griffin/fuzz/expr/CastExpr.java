@@ -43,9 +43,9 @@ public final class CastExpr implements FuzzExpr {
     }
 
     @Override
-    public void appendSql(StringSink sink) {
+    public void appendSql(StringSink sink, BindContext ctx) {
         sink.put('(');
-        inner.appendSql(sink);
+        inner.appendSql(sink, ctx);
         sink.put(")::").put(targetType.getDdl());
     }
 

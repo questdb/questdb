@@ -31,6 +31,7 @@ import io.questdb.test.griffin.fuzz.FuzzSource;
 import io.questdb.test.griffin.fuzz.FuzzTable;
 import io.questdb.test.griffin.fuzz.GeneratedQuery;
 import io.questdb.test.griffin.fuzz.PredicateGenerator;
+import io.questdb.test.griffin.fuzz.expr.BindContext;
 import io.questdb.test.griffin.fuzz.expr.ExpressionGenerator;
 import io.questdb.test.griffin.fuzz.expr.FuzzExpr;
 
@@ -49,7 +50,7 @@ public final class SimpleClause {
     private SimpleClause() {
     }
 
-    public static GeneratedQuery generate(Rnd rnd, FuzzSource source) {
+    public static GeneratedQuery generate(Rnd rnd, FuzzSource source, BindContext ctx) {
         FuzzTable table = source.getTable();
         boolean useTableAlias = rnd.nextBoolean();
         boolean useColAliases = rnd.nextBoolean();
@@ -59,14 +60,14 @@ public final class SimpleClause {
         StringSink sql = new StringSink();
         sql.put(source.getPrefixSql());
         sql.put("SELECT ");
-        int numAliases = appendProjection(sql, rnd, table, qualifier, useColAliases);
+        int numAliases = appendProjection(sql, rnd, table, qualifier, useColAliases, ctx);
         sql.put(" FROM ").put(source.getFromSqlWithGarble(rnd));
         if (useTableAlias) {
             sql.put(' ').put(alias);
         }
 
         if (rnd.nextBoolean()) {
-            String pred = new PredicateGenerator(rnd, 2).generate(table.getColumns(), qualifier);
+            String pred = new PredicateGenerator(rnd, 2).generate(table.getColumns(), qualifier, ctx);
             sql.put(" WHERE ").put(pred);
         }
 
@@ -132,7 +133,8 @@ public final class SimpleClause {
             Rnd rnd,
             FuzzTable table,
             String qualifier,
-            boolean useColAliases
+            boolean useColAliases,
+            BindContext ctx
     ) {
         if (rnd.nextInt(5) == 0) {
             if (qualifier != null) {
@@ -150,7 +152,7 @@ public final class SimpleClause {
                 sink.put(", ");
             }
             FuzzExpr e = gen.generateAnyKind();
-            e.appendSql(sink);
+            e.appendSql(sink, ctx);
             if (useColAliases) {
                 sink.put(" AS e").put(i);
             }
