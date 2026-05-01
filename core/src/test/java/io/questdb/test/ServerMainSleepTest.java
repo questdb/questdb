@@ -588,9 +588,14 @@ public class ServerMainSleepTest extends AbstractBootstrapTest {
     }
 
     private static void runConnectionDropFuzz(Rnd tr, AtomicInteger counter) throws Exception {
-        // Fire a sleep on a dedicated connection, then close the connection from
-        // the calling thread while the body is parked. Verifies the server-side
-        // breaker reaps the parked body so a follow-up query elsewhere succeeds.
+        // Fire a sleep on a dedicated connection, then forcibly tear down the
+        // socket from the calling thread while the runner is parked in
+        // executeQuery. Uses JDBC Connection.abort(Executor) -- conn.close()
+        // would deadlock because the PG driver holds the connection's monitor
+        // while the runner's executeQuery is waiting for a server response.
+        // abort() bypasses that lock and rips the socket down asynchronously,
+        // which is exactly the scenario we want to exercise: server-side FD
+        // closure mid-query.
         Connection conn = DriverManager.getConnection(PG_CONNECTION_URI, PG_CONNECTION_PROPERTIES);
         AtomicReference<Throwable> outcome = new AtomicReference<>();
         CountDownLatch started = new CountDownLatch(1);
@@ -618,7 +623,7 @@ public class ServerMainSleepTest extends AbstractBootstrapTest {
         // re-arm cycle (some before first wake, some after).
         Thread.sleep(50 + tr.nextInt(400));
         try {
-            conn.close();
+            conn.abort(Runnable::run);
         } catch (SQLException ignored) {
         }
         runner.join(10_000);
