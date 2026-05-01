@@ -76,9 +76,10 @@ class EncodedSortLightRecordCursor implements DelegatingRecordCursor {
             );
             this.parallelThreshold = configuration.getSqlSortEncodedParallelThreshold();
             this.isOpen = true;
-        } catch (Throwable th) {
-            close();
-            throw th;
+        } finally {
+            if (!this.isOpen) {
+                forceClose();
+            }
         }
     }
 
@@ -86,10 +87,7 @@ class EncodedSortLightRecordCursor implements DelegatingRecordCursor {
     public void close() {
         if (isOpen) {
             isOpen = false;
-            Misc.free(entryMem);
-            Misc.free(encoder);
-            baseCursor = Misc.free(baseCursor);
-            baseRecord = null;
+            forceClose();
         }
     }
 
@@ -218,5 +216,12 @@ class EncodedSortLightRecordCursor implements DelegatingRecordCursor {
         circuitBreaker.statefulThrowExceptionIfTrippedNoThrottle();
         startAddr = entryMem.getAddress() + rowIdOffset;
         toTop();
+    }
+
+    private void forceClose() {
+        Misc.free(entryMem);
+        Misc.free(encoder);
+        baseCursor = Misc.free(baseCursor);
+        baseRecord = null;
     }
 }
