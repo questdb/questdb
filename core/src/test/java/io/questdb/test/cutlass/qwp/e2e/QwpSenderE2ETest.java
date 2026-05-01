@@ -720,39 +720,6 @@ public class QwpSenderE2ETest extends AbstractQwpWebSocketTest {
     }
 
     @Test
-    public void testCoercionToDecimalErrors() throws Exception {
-        runInContext((port) -> {
-            String table = "test_qwp_coerce_decimal_err";
-            execute("CREATE TABLE " + table + " (v DECIMAL(2,1), ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
-
-            assertCoercionError(port, table,
-                    (s, t) -> s.table(t).boolColumn("v", true).at(1_000_000, ChronoUnit.MICROS),
-                    "cannot write BOOLEAN", "DECIMAL");
-            assertCoercionError(port, table,
-                    (s, t) -> s.table(t).doubleColumn("v", 123.456).at(1_000_000, ChronoUnit.MICROS),
-                    "cannot be converted to", "scale=1");
-            assertCoercionError(port, table,
-                    (s, t) -> s.table(t).floatColumn("v", 1.25f).at(1_000_000, ChronoUnit.MICROS),
-                    "cannot be converted to", "scale=1");
-            assertCoercionError(port, table,
-                    (s, t) -> s.table(t).long256Column("v", 1, 1, 1, 1).at(1_000_000, ChronoUnit.MICROS),
-                    "cannot write LONG256", "DECIMAL");
-            assertCoercionError(port, table,
-                    (s, t) -> s.table(t).symbol("v", "hello").at(1_000_000, ChronoUnit.MICROS),
-                    "cannot write SYMBOL", "DECIMAL");
-            assertCoercionError(port, table,
-                    (s, t) -> s.table(t).timestampColumn("v", 1_645_747_200_000_000L, ChronoUnit.MICROS).at(1_000_000, ChronoUnit.MICROS),
-                    "cannot write TIMESTAMP", "DECIMAL");
-            assertCoercionError(port, table,
-                    (s, t) -> {
-                        UUID uuid = UUID.fromString("a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11");
-                        s.table(t).uuidColumn("v", uuid.getLeastSignificantBits(), uuid.getMostSignificantBits()).at(1_000_000, ChronoUnit.MICROS);
-                    },
-                    "cannot write UUID", "DECIMAL");
-        });
-    }
-
-    @Test
     public void testCoercionToDecimal128Errors() throws Exception {
         runInContext((port) -> {
             String table = "test_qwp_dec128_err";
@@ -797,6 +764,39 @@ public class QwpSenderE2ETest extends AbstractQwpWebSocketTest {
             assertCoercionError(port, table,
                     (s, t) -> s.table(t).boolColumn("v", true).at(1_000_000, ChronoUnit.MICROS),
                     "cannot write BOOLEAN", "DECIMAL(18,2)");
+        });
+    }
+
+    @Test
+    public void testCoercionToDecimalErrors() throws Exception {
+        runInContext((port) -> {
+            String table = "test_qwp_coerce_decimal_err";
+            execute("CREATE TABLE " + table + " (v DECIMAL(2,1), ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+
+            assertCoercionError(port, table,
+                    (s, t) -> s.table(t).boolColumn("v", true).at(1_000_000, ChronoUnit.MICROS),
+                    "cannot write BOOLEAN", "DECIMAL");
+            assertCoercionError(port, table,
+                    (s, t) -> s.table(t).doubleColumn("v", 123.456).at(1_000_000, ChronoUnit.MICROS),
+                    "cannot be converted to", "scale=1");
+            assertCoercionError(port, table,
+                    (s, t) -> s.table(t).floatColumn("v", 1.25f).at(1_000_000, ChronoUnit.MICROS),
+                    "cannot be converted to", "scale=1");
+            assertCoercionError(port, table,
+                    (s, t) -> s.table(t).long256Column("v", 1, 1, 1, 1).at(1_000_000, ChronoUnit.MICROS),
+                    "cannot write LONG256", "DECIMAL");
+            assertCoercionError(port, table,
+                    (s, t) -> s.table(t).symbol("v", "hello").at(1_000_000, ChronoUnit.MICROS),
+                    "cannot write SYMBOL", "DECIMAL");
+            assertCoercionError(port, table,
+                    (s, t) -> s.table(t).timestampColumn("v", 1_645_747_200_000_000L, ChronoUnit.MICROS).at(1_000_000, ChronoUnit.MICROS),
+                    "cannot write TIMESTAMP", "DECIMAL");
+            assertCoercionError(port, table,
+                    (s, t) -> {
+                        UUID uuid = UUID.fromString("a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11");
+                        s.table(t).uuidColumn("v", uuid.getLeastSignificantBits(), uuid.getMostSignificantBits()).at(1_000_000, ChronoUnit.MICROS);
+                    },
+                    "cannot write UUID", "DECIMAL");
         });
     }
 
@@ -3140,6 +3140,58 @@ public class QwpSenderE2ETest extends AbstractQwpWebSocketTest {
                             
                             unicode: éàü
                             """);
+        });
+    }
+
+    @Test
+    public void testStringValueForDoubleColumnReturnsSchemaMismatchStatus() throws Exception {
+        runInContext((port) -> {
+            String table = "test_qwp_string_to_double_status";
+
+            try (QwpWebSocketSender sender = QwpWebSocketSender.connect("localhost", port)) {
+                sender.table(table)
+                        .doubleColumn("px", 1.5)
+                        .at(1_000_000, ChronoUnit.MICROS);
+                sender.flush();
+            }
+            drainWalQueue();
+
+            try (QwpWebSocketSender sender = QwpWebSocketSender.connect("localhost", port)) {
+                sender.table(table)
+                        .stringColumn("px", "not-a-double")
+                        .at(2_000_000, ChronoUnit.MICROS);
+                sender.flush();
+                Assert.fail("Expected LineSenderException");
+            } catch (LineSenderException e) {
+                String msg = e.getMessage();
+                Assert.assertTrue("Expected SCHEMA_MISMATCH, got: " + msg, msg.contains("SCHEMA_MISMATCH"));
+                Assert.assertFalse("Expected deterministic value error, not WRITE_ERROR: " + msg, msg.contains("WRITE_ERROR"));
+                Assert.assertTrue(
+                        "Expected parse details, got: " + msg,
+                        msg.contains("cannot parse DOUBLE from string")
+                                && msg.contains("not-a-double")
+                                && msg.contains("column=px]")
+                );
+            }
+
+            try (QwpWebSocketSender sender = QwpWebSocketSender.connect("localhost", port)) {
+                sender.table(table)
+                        .doubleColumn("px", 2.5)
+                        .at(3_000_000, ChronoUnit.MICROS);
+                sender.flush();
+            }
+            drainWalQueue();
+
+            assertQueryNoLeakCheck(
+                    """
+                            px\ttimestamp
+                            1.5\t1970-01-01T00:00:01.000000Z
+                            2.5\t1970-01-01T00:00:03.000000Z
+                            """,
+                    "SELECT px, timestamp FROM " + table + " ORDER BY timestamp",
+                    "timestamp",
+                    true,
+                    true);
         });
     }
 
