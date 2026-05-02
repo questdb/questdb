@@ -3681,6 +3681,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 }
             }
             updateIndexesParallel(initialTransientRowCount, newTransientRowCount);
+            sealPostingIndexesForLastPartitionFastLag();
         }
         // set append position on columns so that the files are truncated to the correct size
         // if the partition is closed after the commit.
@@ -10889,6 +10890,45 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             path.trimTo(pathSize);
         }
         return processed;
+    }
+
+    private void sealPostingIndexesForLastPartitionFastLag() {
+        // applyLagToLastPartition runs OUTSIDE the o3 commit window — there
+        // is no sealPostingIndexesForO3Partitions sweep to follow. The
+        // writer for each indexed column is already open at the last
+        // partition (configured by openPartition), and updateIndexesParallel
+        // has just called writer.add() for every fresh row. POSTING writers
+        // hold those entries in memory until seal() flushes them to .pv;
+        // BITMAP writers persist incrementally and need no extra step.
+        // Without this seal, queries hit the .pv file and return zero rows
+        // for symbols added through the fast-lag path.
+        if (lastPartitionTimestamp == Long.MIN_VALUE) {
+            return;
+        }
+        for (int colIdx = 0; colIdx < columnCount; colIdx++) {
+            if (metadata.getColumnType(colIdx) <= 0
+                    || !metadata.isColumnIndexed(colIdx)
+                    || !IndexType.isPosting(metadata.getColumnIndexType(colIdx))) {
+                continue;
+            }
+            ColumnIndexer indexer = indexers.getQuick(colIdx);
+            if (indexer == null) {
+                continue;
+            }
+            IntList coveringCols = metadata.getColumnMetadata(colIdx).getCoveringColumnIndices();
+            if (coveringCols != null && coveringCols.size() > 0) {
+                // Covering POSTING indexes need the full reseal in
+                // sealPostingIndexForPartition (covering-file remap +
+                // rebuildSidecars). The fast-lag commit path is followed by
+                // a full O3 commit when more transactions accumulate, which
+                // catches the covering reseal then. Non-covering POSTING is
+                // the only path that has no later sweep.
+                continue;
+            }
+            indexer.getWriter().setNextTxnAtSeal(txWriter.getTxn());
+            indexer.seal();
+            indexer.publishPendingPurges(messageBus, tableToken, partitionBy, timestampType, txWriter.getTxn());
+        }
     }
 
     private void sealPostingIndexesForO3Partitions() {
