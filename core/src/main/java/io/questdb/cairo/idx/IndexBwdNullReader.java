@@ -22,19 +22,28 @@
  *
  ******************************************************************************/
 
-package io.questdb.cairo;
+package io.questdb.cairo.idx;
 
+import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.ColumnVersionReader;
+import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cairo.sql.RowCursor;
+import io.questdb.std.ObjList;
 import io.questdb.std.str.Path;
 
-public class BitmapIndexBwdNullReader implements BitmapIndexReader {
-    private final NullCursor cursor = new NullCursor();
+public class IndexBwdNullReader implements IndexReader {
+    private final ObjList<NullCursor> freeCursors = new ObjList<>();
     private long columnTxn;
     private long partitionTxn;
 
-    public BitmapIndexBwdNullReader(long columnTxn, long partitionTxn) {
+    public IndexBwdNullReader(long columnTxn, long partitionTxn) {
         this.columnTxn = columnTxn;
         this.partitionTxn = partitionTxn;
+    }
+
+    @Override
+    public void close() {
+        freeCursors.clear();
     }
 
     @Override
@@ -48,11 +57,16 @@ public class BitmapIndexBwdNullReader implements BitmapIndexReader {
     }
 
     @Override
-    public RowCursor getCursor(boolean cachedInstance, int key, long minValue, long maxValue) {
-        final NullCursor cursor = getCursor(cachedInstance);
-        // Cursor only returns records when key is for the NULL value.
-        cursor.value = key == 0 ? maxValue - minValue : -1;
-        return cursor;
+    public RowCursor getCursor(int key, long minValue, long maxValue) {
+        NullCursor c;
+        if (freeCursors.size() > 0) {
+            c = freeCursors.popLast();
+            c.isPooled = false;
+        } else {
+            c = new NullCursor(this.freeCursors);
+        }
+        c.value = key == 0 ? maxValue - minValue : -1;
+        return c;
     }
 
     @Override
@@ -96,7 +110,9 @@ public class BitmapIndexBwdNullReader implements BitmapIndexReader {
     }
 
     @Override
-    public void of(CairoConfiguration configuration, Path path, CharSequence columnName, long columnNameTxn, long partitionTxn, long columnTop) {
+    public void of(CairoConfiguration configuration, Path path, CharSequence columnName, long columnNameTxn,
+                   long partitionTxn, long columnTop, RecordMetadata metadata,
+                   ColumnVersionReader columnVersionReader, long partitionTimestamp) {
         this.columnTxn = columnNameTxn;
         this.partitionTxn = partitionTxn;
     }
@@ -106,12 +122,23 @@ public class BitmapIndexBwdNullReader implements BitmapIndexReader {
         // no-op
     }
 
-    private NullCursor getCursor(boolean cachedInstance) {
-        return cachedInstance ? cursor : new NullCursor();
-    }
 
     private static class NullCursor implements RowCursor {
+        private final ObjList<NullCursor> pool;
+        private boolean isPooled;
         private long value;
+
+        NullCursor(ObjList<NullCursor> freeCursors) {
+            this.pool = freeCursors;
+        }
+
+        @Override
+        public void close() {
+            if (pool.size() < MAX_CACHED_FREE_CURSORS && !isPooled) {
+                pool.add(this);
+                isPooled = true;
+            }
+        }
 
         @Override
         public boolean hasNext() {

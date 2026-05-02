@@ -24,11 +24,17 @@
 
 package io.questdb.cairo;
 
+import io.questdb.MessageBus;
+import io.questdb.cairo.idx.IndexFactory;
+import io.questdb.cairo.idx.IndexWriter;
 import io.questdb.cairo.vm.api.MemoryMA;
 import io.questdb.std.FilesFacade;
+import io.questdb.std.IntList;
+import io.questdb.std.LongList;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
 import io.questdb.std.Mutable;
+import io.questdb.std.ObjList;
 import io.questdb.std.Unsafe;
 import io.questdb.std.str.Path;
 
@@ -36,7 +42,7 @@ public class SymbolColumnIndexer implements ColumnIndexer, Mutable {
 
     private static final long SEQUENCE_OFFSET;
     private final int bufferSize;
-    private final BitmapIndexWriter writer;
+    private final IndexWriter writer;
     private long buffer;
     private long columnTop;
     private volatile boolean distressed = false;
@@ -46,7 +52,11 @@ public class SymbolColumnIndexer implements ColumnIndexer, Mutable {
     private volatile long sequence = 0L;
 
     public SymbolColumnIndexer(CairoConfiguration configuration) {
-        writer = new BitmapIndexWriter(configuration);
+        this(configuration, IndexType.BITMAP);
+    }
+
+    public SymbolColumnIndexer(CairoConfiguration configuration, byte indexType) {
+        writer = IndexFactory.createWriter(indexType, configuration);
         bufferSize = 4096 * 1024;
         buffer = Unsafe.malloc(bufferSize, MemoryTag.NATIVE_INDEX_READER);
     }
@@ -54,6 +64,11 @@ public class SymbolColumnIndexer implements ColumnIndexer, Mutable {
     @Override
     public void clear() {
         writer.clear();
+    }
+
+    @Override
+    public void clearCovering() {
+        writer.clearCovering();
     }
 
     @Override
@@ -67,16 +82,49 @@ public class SymbolColumnIndexer implements ColumnIndexer, Mutable {
     }
 
     @Override
+    public void configureCovering(
+            ObjList<CharSequence> coveredColumnNames,
+            LongList coveredColumnNameTxns,
+            LongList coveredColumnTops,
+            IntList coveredColumnShifts,
+            IntList coveredColumnIndices,
+            IntList coveredColumnTypes,
+            int timestampColumnIndex
+    ) {
+        writer.configureCovering(
+                coveredColumnNames, coveredColumnNameTxns, coveredColumnTops, coveredColumnShifts,
+                coveredColumnIndices, coveredColumnTypes, timestampColumnIndex);
+    }
+
+    @Override
+    public void configureCovering(
+            LongList coveredColumnAddrs,
+            LongList coveredColumnAuxAddrs,
+            LongList coveredColumnTops,
+            IntList coveredColumnShifts,
+            IntList coveredColumnIndices,
+            IntList coveredColumnTypes,
+            int coverCount,
+            int timestampColumnIndex
+    ) {
+        writer.configureCovering(
+                coveredColumnAddrs, coveredColumnAuxAddrs, coveredColumnTops, coveredColumnShifts,
+                coveredColumnIndices, coveredColumnTypes, coverCount, timestampColumnIndex);
+    }
+
+    @Override
     public void configureFollowerAndWriter(
             Path path,
             CharSequence name,
             long columnNameTxn,
             MemoryMA columnMem,
-            long columnTop
+            long columnTop,
+            long partitionTimestamp,
+            long partitionNameTxn
     ) {
         this.columnTop = columnTop;
         try {
-            this.writer.of(path, name, columnNameTxn);
+            this.writer.of(path, name, columnNameTxn, partitionTimestamp, partitionNameTxn);
             this.ff = columnMem.getFilesFacade();
             // we don't own the fd, it comes from column mem
             this.fd = columnMem.getFd();
@@ -87,13 +135,31 @@ public class SymbolColumnIndexer implements ColumnIndexer, Mutable {
     }
 
     @Override
-    public void configureWriter(Path path, CharSequence name, long columnNameTxn, long columnTop) {
+    public void configureWriter(
+            Path path,
+            CharSequence name,
+            long columnNameTxn,
+            long columnTop,
+            long partitionTimestamp,
+            long partitionNameTxn
+    ) {
         this.columnTop = columnTop;
         try {
-            writer.of(path, name, columnNameTxn);
+            writer.of(path, name, columnNameTxn, partitionTimestamp, partitionNameTxn);
         } catch (Throwable e) {
             this.close();
             throw e;
+        }
+    }
+
+    @Override
+    public void discardAndClose() {
+        writer.clearCovering();
+        Misc.free(writer);
+        if (buffer != 0) {
+            fd = -1;
+            Unsafe.free(buffer, bufferSize, MemoryTag.NATIVE_INDEX_READER);
+            buffer = 0;
         }
     }
 
@@ -113,7 +179,7 @@ public class SymbolColumnIndexer implements ColumnIndexer, Mutable {
     }
 
     @Override
-    public BitmapIndexWriter getWriter() {
+    public IndexWriter getWriter() {
         return writer;
     }
 
@@ -149,6 +215,27 @@ public class SymbolColumnIndexer implements ColumnIndexer, Mutable {
     }
 
     @Override
+    public void mergeTentativeIntoActiveIfAny() {
+        writer.mergeTentativeIntoActiveIfAny();
+    }
+
+    @Override
+    public void publishPendingPurges(
+            MessageBus messageBus,
+            TableToken tableToken,
+            int partitionBy,
+            int timestampType,
+            long currentTableTxn
+    ) {
+        writer.publishPendingPurges(messageBus, tableToken, partitionBy, timestampType, currentTableTxn);
+    }
+
+    @Override
+    public void rebuildSidecars() {
+        writer.rebuildSidecars();
+    }
+
+    @Override
     public void refreshSourceAndIndex(long loRow, long hiRow) {
         index(ff, fd, loRow, hiRow);
     }
@@ -165,6 +252,16 @@ public class SymbolColumnIndexer implements ColumnIndexer, Mutable {
     @Override
     public void rollback(long maxRow) {
         this.writer.rollbackValues(maxRow);
+    }
+
+    @Override
+    public void seal() {
+        writer.seal();
+    }
+
+    @Override
+    public void setCoveredColumnNameTxns(LongList txns) {
+        writer.setCoveredColumnNameTxns(txns);
     }
 
     @Override

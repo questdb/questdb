@@ -2674,8 +2674,8 @@ public class WindowJoinTest extends AbstractCairoTest {
                             "            Row forward scan\n" +
                             (includePrevailing ? "            Frame forward scan on: prices\n" :
                                     "            Interval forward scan on: prices\n" +
-                                            "              intervals: [(\"" + (ColumnType.isTimestampMicro(leftTableTimestampType.getTimestampType()) ? (ColumnType.isTimestampMicro(rightTableTimestampType.getTimestampType()) ? "1969-12-31T23:58:00.001001Z" : "1969-12-31T23:58:00.001001000Z")
-                                            : (ColumnType.isTimestampMicro(rightTableTimestampType.getTimestampType()) ? "1969-12-31T23:58:00.000001Z" : "1969-12-31T23:58:00.000001001Z")) + "\",\"MAX\")]\n"),
+                                    "              intervals: [(\"" + (ColumnType.isTimestampMicro(leftTableTimestampType.getTimestampType()) ? (ColumnType.isTimestampMicro(rightTableTimestampType.getTimestampType()) ? "1969-12-31T23:58:00.001001Z" : "1969-12-31T23:58:00.001001000Z")
+                                                                       : (ColumnType.isTimestampMicro(rightTableTimestampType.getTimestampType()) ? "1969-12-31T23:58:00.000001Z" : "1969-12-31T23:58:00.000001001Z")) + "\",\"MAX\")]\n"),
                     "select t.sym, t.price, t.ts, avg(p.price) as window_price " +
                             "from trades t " +
                             "window join prices p " +
@@ -3634,8 +3634,8 @@ public class WindowJoinTest extends AbstractCairoTest {
                             (includePrevailing ?
                                     "            Frame forward scan on: prices\n"
                                     : "            Interval forward scan on: prices\n" +
-                                    "              intervals: [(\"" + (ColumnType.isTimestampMicro(leftTableTimestampType.getTimestampType()) ? (ColumnType.isTimestampMicro(rightTableTimestampType.getTimestampType()) ? "2023-01-01T09:03:00.000001Z" : "2023-01-01T09:03:00.000001000Z")
-                                    : (ColumnType.isTimestampMicro(rightTableTimestampType.getTimestampType()) ? "2023-01-01T09:03:00.000000Z" : "2023-01-01T09:03:00.000000001Z")) + "\",\"MAX\")]\n"),
+                                      "              intervals: [(\"" + (ColumnType.isTimestampMicro(leftTableTimestampType.getTimestampType()) ? (ColumnType.isTimestampMicro(rightTableTimestampType.getTimestampType()) ? "2023-01-01T09:03:00.000001Z" : "2023-01-01T09:03:00.000001000Z")
+                                                                         : (ColumnType.isTimestampMicro(rightTableTimestampType.getTimestampType()) ? "2023-01-01T09:03:00.000000Z" : "2023-01-01T09:03:00.000000001Z")) + "\",\"MAX\")]\n"),
                     "select t.sym, t.price, t.ts, sum(p.price) as window_price " +
                             "from trades t " +
                             "window join prices p " +

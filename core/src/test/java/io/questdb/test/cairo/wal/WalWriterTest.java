@@ -1808,6 +1808,8 @@ public class WalWriterTest extends AbstractCairoTest {
     @Test
     public void testDropIndex() throws Exception {
         assertMemoryLeak(() -> {
+            Rnd rnd = TestUtils.generateRandom(LOG);
+            node1.setProperty(PropertyKey.CAIRO_DEFAULT_SYMBOL_INDEX_TYPE, TestUtils.randomSymbolIndexTypeName(rnd));
             final String tableName = testName.getMethodName();
             TableToken tableToken = createTable(testName.getMethodName());
             execute("ALTER TABLE " + tableName + " ADD COLUMN sym SYMBOL INDEX");

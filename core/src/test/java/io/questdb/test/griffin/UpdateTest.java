@@ -24,6 +24,7 @@
 
 package io.questdb.test.griffin;
 
+import io.questdb.PropertyKey;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.PartitionBy;
@@ -94,6 +95,8 @@ public class UpdateTest extends AbstractCairoTest {
         ) {
         };
         circuitBreaker.setTimeout(DEFAULT_CIRCUIT_BREAKER_TIMEOUT);
+        Rnd rnd = TestUtils.generateRandom(LOG);
+        setProperty(PropertyKey.CAIRO_DEFAULT_SYMBOL_INDEX_TYPE, TestUtils.randomSymbolIndexTypeName(rnd));
         super.setUp();
     }
 
