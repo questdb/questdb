@@ -72,6 +72,11 @@ public abstract class AbstractPostingIndexReader implements IndexReader {
     protected final IntList sidecarColumnIndices = new IntList();
     protected final IntList sidecarColumnTypes = new IntList();
     protected final LongList sidecarCovTs = new LongList();
+    // Per-cover-column file extents picked from the chain entry. Slot c is
+    // the writer's published append offset in .pc{c}.<...>.<sealTxn> at the
+    // moment the picked entry was (re)published. Sized by openSidecarFilesIfPresent
+    // to coverCount; refreshed on each readIndexMetadataFromChain() success.
+    protected final LongList sidecarFileEndOffsets = new LongList();
     protected final ObjList<MemoryMR> sidecarMems = new ObjList<>();
     protected final MemoryMR valueMem = Vm.getCMRInstance();
     protected long columnTop;
@@ -257,6 +262,12 @@ public abstract class AbstractPostingIndexReader implements IndexReader {
                     -1
             );
 
+            // Discover coverCount from .pci before reading the chain entry
+            // — the entry's cover end-offset footer length is sized by
+            // coverCount, and PostingIndexChainPicker.pick() needs it to
+            // populate the snapshot's coverFileEndOffsets list.
+            openSidecarFilesIfPresent(path.trimTo(pLen), columnName, columnNameTxn);
+
             readIndexMetadataFromChain();
 
             if (headEntryOffset == PostingIndexUtils.V2_NO_HEAD || valueMemSize <= 0) {
@@ -264,12 +275,10 @@ public abstract class AbstractPostingIndexReader implements IndexReader {
                 // the value file — readers will treat the partition as empty.
                 // A subsequent reloadConditionally() will lazily map .pv if
                 // the writer publishes an entry while we're open.
-                openSidecarFilesIfPresent(path.trimTo(pLen), columnName, columnNameTxn);
                 return;
             }
 
             mapValueMem(path.trimTo(pLen), columnName, columnNameTxn);
-            openSidecarFilesIfPresent(path.trimTo(pLen), columnName, columnNameTxn);
         } catch (Throwable e) {
             close();
             throw e;
@@ -314,7 +323,8 @@ public abstract class AbstractPostingIndexReader implements IndexReader {
         if (valueMemSize <= 0) {
             return;
         }
-        if (valueFileTxn != prevValueFileTxn || valueMem.size() == 0) {
+        boolean sealTxnAdvanced = valueFileTxn != prevValueFileTxn;
+        if (sealTxnAdvanced || valueMem.size() == 0) {
             // sealTxn advanced (new .pv.{N} filename) or .pv was never opened
             // because the chain was previously empty. Close and reopen
             // against the new path / size.
@@ -325,6 +335,28 @@ public abstract class AbstractPostingIndexReader implements IndexReader {
             // the head entry but advances valueMemSize, so we must resize
             // valueMem here even though headEntryOffset is unchanged.
             ((MemoryCMR) this.valueMem).changeSize(valueMemSize);
+        }
+        // Refresh sidecar mappings to track .pcN file changes.
+        // sealTxn advance: drop existing mappings; the new sealTxn names
+        // different .pcN files (sealTxn is part of coverDataFileName), so
+        // ensureSidecarOpen() must lazy-remap on the next covering read.
+        // Same sealTxn, gen flushed: writeSidecarGenData() may have extended
+        // .pcN past the writer's previous extent; resize each mapping to the
+        // chain-published end offset so covered reads in the new gen stay
+        // in bounds.
+        for (int c = 0, n = sidecarMems.size(); c < n; c++) {
+            MemoryMR mem = sidecarMems.getQuick(c);
+            if (mem == null || mem.size() == 0) {
+                continue;
+            }
+            if (sealTxnAdvanced) {
+                mem.close();
+                continue;
+            }
+            long publishedEnd = c < sidecarFileEndOffsets.size() ? sidecarFileEndOffsets.getQuick(c) : 0L;
+            if (publishedEnd > mem.size()) {
+                ((MemoryCMR) mem).changeSize(publishedEnd);
+            }
         }
     }
 
@@ -517,6 +549,7 @@ public abstract class AbstractPostingIndexReader implements IndexReader {
         sidecarColumnIndices.clear();
         sidecarColumnTypes.clear();
         sidecarCovTs.clear();
+        sidecarFileEndOffsets.clear();
     }
 
     private int collectDenseGenKeys(long genFileOffset, int genKeyCount, DirectBitSet foundKeys) {
@@ -677,7 +710,7 @@ public abstract class AbstractPostingIndexReader implements IndexReader {
                     }
                 }
             }
-            int result = PostingIndexChainPicker.pick(keyMem, pinnedTableTxn, headerScratch, entryScratch);
+            int result = PostingIndexChainPicker.pick(keyMem, pinnedTableTxn, coverCount, headerScratch, entryScratch);
             if (result == PostingIndexChainPicker.RESULT_HEADER_UNREADABLE) {
                 if (clock.getTicks() > deadline) {
                     LOG.error().$(INDEX_CORRUPT).$(" [timeout=").$(spinLockTimeoutMs).$("ms]").$();
@@ -724,6 +757,15 @@ public abstract class AbstractPostingIndexReader implements IndexReader {
                 this.genCount = entryScratch.genCount;
                 this.valueFileTxn = entryScratch.sealTxn;
                 this.keyCountIncludingNulls = columnTop > 0 ? keyCount + 1 : keyCount;
+                // Promote the picked entry's per-cover end offsets into the
+                // active snapshot. Slots are zero-padded to coverCount so
+                // callers can read them by includeIdx without bounds checks.
+                sidecarFileEndOffsets.clear();
+                sidecarFileEndOffsets.setPos(coverCount);
+                int picked = entryScratch.coverFileEndOffsets.size();
+                for (int c = 0; c < coverCount; c++) {
+                    sidecarFileEndOffsets.setQuick(c, c < picked ? entryScratch.coverFileEndOffsets.getQuick(c) : 0L);
+                }
                 return;
             }
 
@@ -739,6 +781,11 @@ public abstract class AbstractPostingIndexReader implements IndexReader {
             this.genCount = 0;
             this.valueFileTxn = 0;
             this.keyCountIncludingNulls = columnTop > 0 ? 1 : 0;
+            sidecarFileEndOffsets.clear();
+            sidecarFileEndOffsets.setPos(coverCount);
+            for (int c = 0; c < coverCount; c++) {
+                sidecarFileEndOffsets.setQuick(c, 0L);
+            }
             // Reset gen lookup to an empty staging snapshot and promote it.
             genLookup.snapshotMetadata(keyMem, 0, 0L);
             genLookup.commitSnapshot();
@@ -851,6 +898,12 @@ public abstract class AbstractPostingIndexReader implements IndexReader {
 
     protected void ensureSidecarOpen(int c) {
         MemoryMR mem = sidecarMems.getQuick(c);
+        long publishedEnd = c < sidecarFileEndOffsets.size() ? sidecarFileEndOffsets.getQuick(c) : 0L;
+        if (publishedEnd <= 0) {
+            // Writer has not (yet) published any sidecar bytes for this slot.
+            // Nothing safe to map.
+            return;
+        }
         if (mem.size() > 0) {
             return;
         }
@@ -867,7 +920,11 @@ public abstract class AbstractPostingIndexReader implements IndexReader {
             if (!ff.exists(pcFile)) {
                 return;
             }
-            mem.of(ff, pcFile, ff.getMapPageSize(), -1, MemoryTag.MMAP_INDEX_READER, CairoConfiguration.O_NONE, -1);
+            // Use the chain-published end offset rather than ff.length(fd):
+            // the file may be page-pre-allocated past valid data, and the
+            // chain's value is the only authoritative upper bound that's
+            // ordered with the seqlock that brought us here.
+            mem.of(ff, pcFile, ff.getMapPageSize(), publishedEnd, MemoryTag.MMAP_INDEX_READER, CairoConfiguration.O_NONE, -1);
         } finally {
             sidecarBasePath.trimTo(pLen);
         }

@@ -69,9 +69,23 @@ public final class PostingIndexChainPicker {
      *       exhausted; caller should treat as I/O error.</li>
      * </ul>
      */
+    /**
+     * Convenience overload for callers that don't read covering. Equivalent
+     * to {@code pick(keyMem, pinnedTableTxn, 0, headerScratch, into)}.
+     */
     public static int pick(
             MemoryR keyMem,
             long pinnedTableTxn,
+            PostingIndexChainHeader.Snapshot headerScratch,
+            PostingIndexChainEntry.Snapshot into
+    ) {
+        return pick(keyMem, pinnedTableTxn, 0, headerScratch, into);
+    }
+
+    public static int pick(
+            MemoryR keyMem,
+            long pinnedTableTxn,
+            int coverCount,
             PostingIndexChainHeader.Snapshot headerScratch,
             PostingIndexChainEntry.Snapshot into
     ) {
@@ -114,10 +128,10 @@ public final class PostingIndexChainPicker {
                 return RESULT_HEADER_UNREADABLE;
             }
 
-            PostingIndexChainEntry.read(keyMem, entryOffset, into);
-            // The full entry (header + gen-dir payload) must fit inside
-            // the mapped region too. snapshotMetadata reads gen-dir
-            // entries at offsets up to entryOffset + into.len.
+            PostingIndexChainEntry.read(keyMem, entryOffset, coverCount, into);
+            // The full entry (header + gen-dir payload + cover end-offset
+            // footer) must fit inside the mapped region too. snapshotMetadata
+            // reads gen-dir entries at offsets up to entryOffset + into.len.
             if (into.len <= 0 || entryOffset + into.len > mappedLimit) {
                 return RESULT_HEADER_UNREADABLE;
             }
