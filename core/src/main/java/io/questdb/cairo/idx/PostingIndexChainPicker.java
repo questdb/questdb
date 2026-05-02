@@ -54,22 +54,6 @@ public final class PostingIndexChainPicker {
     }
 
     /**
-     * Walk the chain backwards from head and pick the first entry where
-     * {@code txnAtSeal <= pinnedTableTxn}. Populates {@code into} with the
-     * picked entry on success.
-     *
-     * @return one of the RESULT_* codes:
-     * <ul>
-     *   <li>{@code RESULT_OK} — entry was found and {@code into} is populated;</li>
-     *   <li>{@code RESULT_EMPTY_CHAIN} — chain has no entries at all;</li>
-     *   <li>{@code RESULT_NO_VISIBLE_ENTRY} — chain is non-empty but every
-     *       entry has {@code txnAtSeal > pinnedTableTxn} (only happens
-     *       immediately after a snapshot restore or pre-first-seal);</li>
-     *   <li>{@code RESULT_HEADER_UNREADABLE} — header seqlock retries
-     *       exhausted; caller should treat as I/O error.</li>
-     * </ul>
-     */
-    /**
      * Convenience overload for callers that don't read covering. Equivalent
      * to {@code pick(keyMem, pinnedTableTxn, 0, headerScratch, into)}.
      */
@@ -82,6 +66,25 @@ public final class PostingIndexChainPicker {
         return pick(keyMem, pinnedTableTxn, 0, headerScratch, into);
     }
 
+    /**
+     * Walk the chain backwards from head and pick the first entry where
+     * {@code txnAtSeal <= pinnedTableTxn}. Populates {@code into} with the
+     * picked entry on success.
+     *
+     * @param coverCount number of cover columns published in {@code .pci};
+     *                   the entry's per-cover end-offset footer is read in
+     *                   full when {@code coverCount > 0}.
+     * @return one of the RESULT_* codes:
+     * <ul>
+     *   <li>{@code RESULT_OK} — entry was found and {@code into} is populated;</li>
+     *   <li>{@code RESULT_EMPTY_CHAIN} — chain has no entries at all;</li>
+     *   <li>{@code RESULT_NO_VISIBLE_ENTRY} — chain is non-empty but every
+     *       entry has {@code txnAtSeal > pinnedTableTxn} (only happens
+     *       immediately after a snapshot restore or pre-first-seal);</li>
+     *   <li>{@code RESULT_HEADER_UNREADABLE} — header seqlock retries
+     *       exhausted; caller should treat as I/O error.</li>
+     * </ul>
+     */
     public static int pick(
             MemoryR keyMem,
             long pinnedTableTxn,

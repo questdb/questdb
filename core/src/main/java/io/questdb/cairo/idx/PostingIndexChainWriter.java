@@ -87,35 +87,6 @@ public final class PostingIndexChainWriter {
     }
 
     /**
-     * Append a new immutable chain entry at the current {@code regionLimit}
-     * and publish it as the new head. Caller must have already written the
-     * gen-dir bytes at {@code (returnedEntryOffset + V2_ENTRY_HEADER_SIZE)};
-     * otherwise readers will see uninitialised gen-dir bytes.
-     * <p>
-     * On return the {@code keyMem} is durable as far as user-space stores —
-     * the caller is still responsible for syncing the file if durability
-     * across power loss is required.
-     *
-     * @param keyMem         the .pk memory mapping (writable + readable)
-     * @param sealTxn        the suffix for {@code .pv.{sealTxn}} and
-     *                       {@code .pc{i}.{sealTxn}} files. Must be greater than
-     *                       the current {@link #getGenCounter()} so monotonicity
-     *                       is preserved across the chain.
-     * @param txnAtSeal      the table {@code _txn} value this entry takes
-     *                       effect at. Readers pin via the scoreboard before
-     *                       querying and pick the entry where
-     *                       {@code txnAtSeal <= pinned _txn}.
-     * @param valueMemSize   bytes in {@code .pv.{sealTxn}}.
-     * @param maxValue       highest row id covered by this entry.
-     * @param keyCount       distinct keys at this seal.
-     * @param genCount       number of gen-dir entries the caller has written
-     *                       starting at the entry's gen-dir region.
-     * @param blockCapacity  block capacity for this entry.
-     * @param coveringFormat reserved (currently 0). Lets sidecar formats
-     *                       evolve per-seal in future.
-     * @return the byte offset where the new entry starts.
-     */
-    /**
      * Convenience overload for callers without covering (e.g. chain-writer
      * tests). Equivalent to passing {@code coverEndOffsets = null}.
      */
@@ -134,6 +105,39 @@ public final class PostingIndexChainWriter {
                 genCount, blockCapacity, coveringFormat, null);
     }
 
+    /**
+     * Append a new immutable chain entry at the current {@code regionLimit}
+     * and publish it as the new head. Caller must have already written the
+     * gen-dir bytes at {@code (returnedEntryOffset + V2_ENTRY_HEADER_SIZE)};
+     * otherwise readers will see uninitialised gen-dir bytes.
+     * <p>
+     * On return the {@code keyMem} is durable as far as user-space stores —
+     * the caller is still responsible for syncing the file if durability
+     * across power loss is required.
+     *
+     * @param keyMem          the .pk memory mapping (writable + readable)
+     * @param sealTxn         the suffix for {@code .pv.{sealTxn}} and
+     *                        {@code .pc{i}.{sealTxn}} files. Must be greater than
+     *                        the current {@link #getGenCounter()} so monotonicity
+     *                        is preserved across the chain.
+     * @param txnAtSeal       the table {@code _txn} value this entry takes
+     *                        effect at. Readers pin via the scoreboard before
+     *                        querying and pick the entry where
+     *                        {@code txnAtSeal <= pinned _txn}.
+     * @param valueMemSize    bytes in {@code .pv.{sealTxn}}.
+     * @param maxValue        highest row id covered by this entry.
+     * @param keyCount        distinct keys at this seal.
+     * @param genCount        number of gen-dir entries the caller has written
+     *                        starting at the entry's gen-dir region.
+     * @param blockCapacity   block capacity for this entry.
+     * @param coveringFormat  reserved (currently 0). Lets sidecar formats
+     *                        evolve per-seal in future.
+     * @param coverEndOffsets per-cover-column authoritative valid-byte extent
+     *                        in {@code .pc{i}.{sealTxn}}, written into the
+     *                        entry's footer; {@code null} or empty means no
+     *                        covering (footer omitted).
+     * @return the byte offset where the new entry starts.
+     */
     public long appendNewEntry(
             MemoryARW keyMem,
             long sealTxn,
@@ -191,20 +195,6 @@ public final class PostingIndexChainWriter {
     }
 
     /**
-     * Extend the current head entry with a freshly-appended gen-dir entry.
-     * Caller must have already written the new gen-dir bytes at offset
-     * {@code (head + V2_ENTRY_HEADER_SIZE + currentGenCount * GEN_DIR_ENTRY_SIZE)}.
-     * <p>
-     * This bumps the head entry's GEN_COUNT, KEY_COUNT, LEN, VALUE_MEM_SIZE
-     * and MAX_VALUE in place, then republishes the header so readers see the
-     * new {@code regionLimit}. The fields are 4- or 8-byte aligned so single
-     * stores are atomic on x86 / aarch64; combined with the storeFence after
-     * the gen-dir bytes, this is the sparse-gen sub-protocol described in
-     * section 4.5 of POSTING_INDEX_CHAIN_DESIGN.md.
-     *
-     * @throws IllegalStateException if the chain is empty.
-     */
-    /**
      * Convenience overload for callers without covering. Equivalent to
      * passing {@code newCoverEndOffsets = null}.
      */
@@ -218,6 +208,24 @@ public final class PostingIndexChainWriter {
         extendHead(keyMem, newGenCount, newKeyCount, newValueMemSize, newMaxValue, null);
     }
 
+    /**
+     * Extend the current head entry with a freshly-appended gen-dir entry.
+     * Caller must have already written the new gen-dir bytes at offset
+     * {@code (head + V2_ENTRY_HEADER_SIZE + currentGenCount * GEN_DIR_ENTRY_SIZE)}.
+     * <p>
+     * This bumps the head entry's GEN_COUNT, KEY_COUNT, LEN, VALUE_MEM_SIZE
+     * and MAX_VALUE in place, then republishes the header so readers see the
+     * new {@code regionLimit}. The fields are 4- or 8-byte aligned so single
+     * stores are atomic on x86 / aarch64; combined with the storeFence after
+     * the gen-dir bytes, this is the sparse-gen sub-protocol described in
+     * section 4.5 of POSTING_INDEX_CHAIN_DESIGN.md.
+     *
+     * @param newCoverEndOffsets per-cover-column updated valid-byte extent in
+     *                           {@code .pc{i}.{sealTxn}}, written into the
+     *                           head entry's footer; {@code null} or empty
+     *                           leaves the existing footer untouched.
+     * @throws IllegalStateException if the chain is empty.
+     */
     public void extendHead(
             MemoryARW keyMem,
             int newGenCount,
