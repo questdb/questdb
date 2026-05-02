@@ -2289,6 +2289,145 @@ public class CoveringIndexTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testCoveringReloadRefreshesAllSidecarMmapsMultiColumn() throws Exception {
+        // Same scenario as the single-column reload test, but with three cover
+        // columns of different fixed widths (Long / Int / Double). Exercises
+        // includeIdx = 0, 1, 2 of sidecarMems / sidecarFileEndOffsets so the
+        // chain entry's per-cover-column footer is verified slot by slot.
+        //
+        // Each cover column gets its own column buffer; gen 1 forces every
+        // .pcN file past gen 0's mmap, and the post-reload reads must
+        // round-trip every value through every slot.
+        final long osPage = io.questdb.std.Files.PAGE_SIZE;
+        CairoConfiguration smallPageCfg = new CairoConfigurationWrapper(configuration) {
+            @Override
+            public long getDataIndexValueAppendPageSize() {
+                return osPage;
+            }
+        };
+        assertMemoryLeak(() -> {
+            try (Path path = new Path().of(configuration.getDbRoot())) {
+                String name = "stale_sidecar_red_multi";
+                int plen = path.size();
+                int rowsPerGen = (int) (osPage / 8);
+                int totalRows = rowsPerGen * 2;
+
+                // Cover column 0: LONG (8B), values 1000 + i.
+                // Cover column 1: INT  (4B), values 2_000_000 + i.
+                // Cover column 2: DOUBLE (8B), values 3.5 * (i + 1).
+                long longAddr = Unsafe.malloc((long) totalRows * Long.BYTES, MemoryTag.NATIVE_DEFAULT);
+                long intAddr = Unsafe.malloc((long) totalRows * Integer.BYTES, MemoryTag.NATIVE_DEFAULT);
+                long doubleAddr = Unsafe.malloc((long) totalRows * Double.BYTES, MemoryTag.NATIVE_DEFAULT);
+                try {
+                    for (int i = 0; i < totalRows; i++) {
+                        Unsafe.putLong(longAddr + (long) i * Long.BYTES, 1000L + i);
+                        Unsafe.putInt(intAddr + (long) i * Integer.BYTES, 2_000_000 + i);
+                        Unsafe.putDouble(doubleAddr + (long) i * Double.BYTES, 3.5d * (i + 1));
+                    }
+                    try (PostingIndexWriter writer = new PostingIndexWriter(smallPageCfg, path, name, COLUMN_NAME_TXN_NONE)) {
+                        writer.configureCovering(
+                                new long[]{longAddr, intAddr, doubleAddr},
+                                new long[]{0, 0, 0},
+                                new int[]{3, 2, 3},                              // shifts: LONG=8(2^3), INT=4(2^2), DOUBLE=8(2^3)
+                                new int[]{1, 2, 3},                              // covered column writer indices
+                                new int[]{ColumnType.LONG, ColumnType.INT, ColumnType.DOUBLE},
+                                3
+                        );
+
+                        // Gen 0: first half of rows for key 0.
+                        for (int i = 0; i < rowsPerGen; i++) writer.add(0, i);
+                        writer.setMaxValue(rowsPerGen - 1);
+                        writer.commit();
+
+                        try (PostingIndexFwdReader reader = new PostingIndexFwdReader(
+                                smallPageCfg, path.trimTo(plen), name, COLUMN_NAME_TXN_NONE, -1, 0,
+                                coveringMetadata(
+                                        new int[]{1, 2, 3},
+                                        new int[]{ColumnType.LONG, ColumnType.INT, ColumnType.DOUBLE}
+                                ),
+                                EMPTY_CVR, 0
+                        )) {
+                            // First read populates sidecarMems[0..2] via
+                            // ensureSidecarOpen(), each mmaped to the
+                            // chain-published gen-0 extent for its slot.
+                            CoveringRowCursor cc = (CoveringRowCursor) reader.getCursor(
+                                    0, 0, Long.MAX_VALUE, new int[]{0, 1, 2});
+                            assertTrue("slot 0 covered after gen0", cc.isCoveredAvailable(0));
+                            assertTrue("slot 1 covered after gen0", cc.isCoveredAvailable(1));
+                            assertTrue("slot 2 covered after gen0", cc.isCoveredAvailable(2));
+                            for (int i = 0; i < rowsPerGen; i++) {
+                                assertTrue("gen0 row " + i, cc.hasNext());
+                                assertEquals(i, cc.next());
+                                assertEquals("gen0 LONG @row " + i, 1000L + i, cc.getCoveredLong(0));
+                                assertEquals("gen0 INT @row " + i, 2_000_000 + i, cc.getCoveredInt(1));
+                                assertEquals("gen0 DOUBLE @row " + i, 3.5d * (i + 1), cc.getCoveredDouble(2), 1e-9);
+                            }
+                            assertFalse(cc.hasNext());
+                            Misc.free(cc);
+
+                            long[] gen0Sizes = new long[3];
+                            for (int slot = 0; slot < 3; slot++) {
+                                gen0Sizes[slot] = readSidecarMmapSize(reader, slot);
+                                assertTrue(
+                                        "sanity: slot " + slot + " mmap populated by first read",
+                                        gen0Sizes[slot] > 0
+                                );
+                            }
+
+                            // Gen 1: second half. Same writer, same sealTxn —
+                            // every .pcN extends past gen-0's mmap.
+                            for (int i = rowsPerGen; i < totalRows; i++) writer.add(0, i);
+                            writer.setMaxValue(totalRows - 1);
+                            writer.commit();
+
+                            for (int slot = 0; slot < 3; slot++) {
+                                long fileLen = sidecarFileLengthOnDisk(path.trimTo(plen), name, slot);
+                                assertTrue(
+                                        "sanity: slot " + slot + " .pcN must extend past gen-0 mmap" +
+                                                " [gen0Mmap=" + gen0Sizes[slot] +
+                                                ", fileLenGen1=" + fileLen + "]",
+                                        fileLen > gen0Sizes[slot]
+                                );
+                            }
+
+                            // Reload and read everything — every covered value
+                            // for every slot must round-trip.
+                            cc = (CoveringRowCursor) reader.getCursor(
+                                    0, 0, Long.MAX_VALUE, new int[]{0, 1, 2});
+                            assertTrue(cc.isCoveredAvailable(0));
+                            assertTrue(cc.isCoveredAvailable(1));
+                            assertTrue(cc.isCoveredAvailable(2));
+                            for (int i = 0; i < totalRows; i++) {
+                                assertTrue("post-reload row " + i, cc.hasNext());
+                                assertEquals(i, cc.next());
+                                assertEquals("post-reload LONG @row " + i, 1000L + i, cc.getCoveredLong(0));
+                                assertEquals("post-reload INT @row " + i, 2_000_000 + i, cc.getCoveredInt(1));
+                                assertEquals("post-reload DOUBLE @row " + i, 3.5d * (i + 1), cc.getCoveredDouble(2), 1e-9);
+                            }
+                            assertFalse(cc.hasNext());
+                            Misc.free(cc);
+
+                            for (int slot = 0; slot < 3; slot++) {
+                                long postReload = readSidecarMmapSize(reader, slot);
+                                assertTrue(
+                                        "reload must extend slot " + slot + " mmap past the gen-0 extent" +
+                                                " [gen0Mmap=" + gen0Sizes[slot] +
+                                                ", afterReload=" + postReload + "]",
+                                        postReload > gen0Sizes[slot]
+                                );
+                            }
+                        }
+                    }
+                } finally {
+                    Unsafe.free(longAddr, (long) totalRows * Long.BYTES, MemoryTag.NATIVE_DEFAULT);
+                    Unsafe.free(intAddr, (long) totalRows * Integer.BYTES, MemoryTag.NATIVE_DEFAULT);
+                    Unsafe.free(doubleAddr, (long) totalRows * Double.BYTES, MemoryTag.NATIVE_DEFAULT);
+                }
+            }
+        });
+    }
+
+    @Test
     public void testCoveringFileNaming() {
         try (Path path = new Path().of("/db/2024-01-01")) {
             int plen = path.size();
