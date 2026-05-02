@@ -117,7 +117,9 @@ public class AbstractQwpWebSocketTest extends AbstractCairoTest {
                 .build();
     }
 
-    /** TLS variant of {@link #connectWs(int)}; trusts everything (test only). */
+    /**
+     * TLS variant of {@link #connectWs(int)}; trusts everything (test only).
+     */
     protected static QwpWebSocketSender connectWss(int port) {
         return (QwpWebSocketSender) Sender.fromConfig(
                 "wss::addr=localhost:" + port + ";tls_verify=unsafe_off;");

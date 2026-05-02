@@ -1721,7 +1721,7 @@ public class QwpWebSocketSenderReceiverTest extends AbstractQwpWebSocketTest {
             // Fresh async sender: autoFlushRows=1 so each row is enqueued
             // immediately, window=8. The sender doesn't know the server-side
             // schema of "ws_async_multi_err", so it cannot detect the type mismatch.
-            // Server type-mismatch is WRITE_ERROR / DROP_AND_CONTINUE so flush()
+            // Server type-mismatch is SCHEMA_MISMATCH / DROP_AND_CONTINUE so flush()
             // does not throw — the rejection arrives asynchronously through the
             // error handler.
             CompletableFuture<SenderError> errorFut = new CompletableFuture<>();
@@ -1755,7 +1755,7 @@ public class QwpWebSocketSenderReceiverTest extends AbstractQwpWebSocketTest {
                 sender.flush();
 
                 SenderError err = errorFut.get(10, TimeUnit.SECONDS);
-                Assert.assertEquals(SenderError.Category.WRITE_ERROR, err.getCategory());
+                Assert.assertEquals(SenderError.Category.SCHEMA_MISMATCH, err.getCategory());
             }
             // The initial setup row (value=0) must be present
             assertSql(
@@ -2350,11 +2350,11 @@ public class QwpWebSocketSenderReceiverTest extends AbstractQwpWebSocketTest {
             drainWalQueue();
 
             // Second sender: fresh connection, no client-side column cache.
-            // Server-side type mismatch is classified as WRITE_ERROR which
-            // defaults to DROP_AND_CONTINUE, so flush() does not throw —
-            // the rejection arrives asynchronously through the error
-            // handler. Block on a CompletableFuture for deterministic
-            // delivery.
+            // Server-side string-to-numeric mismatch is classified as
+            // SCHEMA_MISMATCH which defaults to DROP_AND_CONTINUE, so
+            // flush() does not throw — the rejection arrives asynchronously
+            // through the error handler. Block on a CompletableFuture for
+            // deterministic delivery.
             CompletableFuture<SenderError> errorFut = new CompletableFuture<>();
             try (QwpWebSocketSender sender = connectWs(port,
                     QwpWebSocketSender.DEFAULT_AUTO_FLUSH_ROWS,

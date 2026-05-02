@@ -3181,16 +3181,20 @@ public class QwpSenderE2ETest extends AbstractQwpWebSocketTest {
             }
             drainWalQueue();
 
-            try (QwpWebSocketSender sender = QwpWebSocketSender.connect("localhost", port)) {
+            // SCHEMA_MISMATCH defaults to DROP_AND_CONTINUE, so flush() does
+            // not throw — the rejection arrives asynchronously through the
+            // error handler.
+            CompletableFuture<SenderError> errorFut = new CompletableFuture<>();
+            try (QwpWebSocketSender sender = connectWs(port, errorFut::complete)) {
                 sender.table(table)
                         .stringColumn("px", "not-a-double")
                         .at(2_000_000, ChronoUnit.MICROS);
                 sender.flush();
-                Assert.fail("Expected LineSenderException");
-            } catch (LineSenderException e) {
-                String msg = e.getMessage();
-                Assert.assertTrue("Expected SCHEMA_MISMATCH, got: " + msg, msg.contains("SCHEMA_MISMATCH"));
-                Assert.assertFalse("Expected deterministic value error, not WRITE_ERROR: " + msg, msg.contains("WRITE_ERROR"));
+
+                SenderError err = errorFut.get(10, TimeUnit.SECONDS);
+                Assert.assertEquals(SenderError.Category.SCHEMA_MISMATCH, err.getCategory());
+                String msg = err.getServerMessage();
+                Assert.assertNotNull("server message must not be null", msg);
                 Assert.assertTrue(
                         "Expected parse details, got: " + msg,
                         msg.contains("cannot parse DOUBLE from string")

@@ -64,7 +64,9 @@ public final class RestartableQwpServer implements AutoCloseable {
         this.port = port;
     }
 
-    /** Pick a free TCP port by binding port 0 and reading what the OS gave us. */
+    /**
+     * Pick a free TCP port by binding port 0 and reading what the OS gave us.
+     */
     public static int pickFreePort() throws Exception {
         try (ServerSocket s = new ServerSocket(0)) {
             s.setReuseAddress(true);
