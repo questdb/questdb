@@ -434,6 +434,8 @@ public abstract class AbstractIODispatcher<C extends IOContext<C>> extends Synch
             } catch (Throwable th) {
                 LOG.error().$("could not accept connection [fd=").$(fd).$(", e=").$(th).I$();
                 if (!closed && oomResponseBuf != 0 && CairoException.isCairoOomError(th)) {
+                    // best-effort send: peer may receive a truncated response if backpressured;
+                    // we close the fd next regardless.
                     nf.sendRaw(fd, oomResponseBuf, oomResponseBufLen);
                 }
                 nf.close(fd, LOG);
