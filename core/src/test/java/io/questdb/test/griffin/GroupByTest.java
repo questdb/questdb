@@ -1109,6 +1109,28 @@ public class GroupByTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testGroupByConstantsOnlyMultiKey() throws Exception {
+        // SqlOptimiser drops effectively-constant GROUP BY keys when at least one
+        // other group-by key remains, but used to leave the dropped entries in
+        // groupByModel.getGroupBy(). validateGroupByColumns then iterated the
+        // stale list and threw "group by column does not match any key column"
+        // for any all-constant explicit GROUP BY. Bind variables hid the bug
+        // because :bN::TYPE is a FUNCTION node and not effectively-constant.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (c2 STRING)");
+            execute("INSERT INTO t VALUES ('J'), ('K')");
+            String expected = """
+                    e0\te1\ta0
+                    true\tJ\t1
+                    """;
+            String body = "FROM (SELECT c2 AS k, count() AS cnt FROM t)\nWHERE k > 'A'\n";
+            assertSql(expected, "SELECT true AS e0, 'J' AS e1, max(cnt) AS a0\n" + body + "GROUP BY e0, e1");
+            assertSql(expected, "SELECT true AS e0, 'J' AS e1, max(cnt) AS a0\n" + body + "GROUP BY e0, 2");
+            assertSql(expected, "SELECT true AS e0, 'J' AS e1, max(cnt) AS a0\n" + body + "GROUP BY 1, 2");
+        });
+    }
+
+    @Test
     public void testGroupByDuplicateColumn() throws Exception {
         assertQuery(
                 """
@@ -1230,6 +1252,23 @@ public class GroupByTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testGroupByNonPartitioned() throws Exception {
+        assertQuery(
+                """
+                        k\tsum
+                        BBBE\t0.7453598685393461
+                        BBBI\t0.7394866029725212
+                        BBBK\t1.370328208214273
+                        """,
+                "SELECT k, sum(val) FROM tab ORDER BY k LIMIT 3;",
+                "CREATE TABLE tab AS (SELECT rnd_str(4, 4, 0) k, rnd_double() val FROM long_sequence(100000));",
+                null,
+                true,
+                true
+        );
+    }
+
+    @Test
     public void testGroupByNullLiteralKey() throws Exception {
         // Regression: a bare `null` literal in the SELECT list referenced from GROUP BY
         // used to blow up the map key sink codegen with
@@ -1254,23 +1293,6 @@ public class GroupByTest extends AbstractCairoTest {
                     "SELECT null AS e0, k, avg(v) AS a FROM t2 GROUP BY 1, k ORDER BY k"
             );
         });
-    }
-
-    @Test
-    public void testGroupByNonPartitioned() throws Exception {
-        assertQuery(
-                """
-                        k\tsum
-                        BBBE\t0.7453598685393461
-                        BBBI\t0.7394866029725212
-                        BBBK\t1.370328208214273
-                        """,
-                "SELECT k, sum(val) FROM tab ORDER BY k LIMIT 3;",
-                "CREATE TABLE tab AS (SELECT rnd_str(4, 4, 0) k, rnd_double() val FROM long_sequence(100000));",
-                null,
-                true,
-                true
-        );
     }
 
     @Test

@@ -9400,6 +9400,8 @@ public class SqlOptimiser implements Mutable {
                 addMissingTablePrefixesForGroupByQueries(node, baseModel, innerVirtualModel);
                 // ignore duplicates in group by
                 if (findColumnByAst(groupByNodes, groupByAliases, node) != null) {
+                    groupBy.remove(i--);
+                    n--;
                     continue;
                 }
 
@@ -9436,6 +9438,13 @@ public class SqlOptimiser implements Mutable {
                     groupByNodes.add(deepClone(expressionNodePool, node));
                     groupByAliases.add(qc.getAlias());
                     emitLiterals(qc.getAst(), translatingModel, innerVirtualModel, baseModel, false, false, false);
+                } else {
+                    // The constant is redundant when at least one other group by column will remain.
+                    // Drop it from the group by list so that downstream validation and the
+                    // tempBoolList/nonAggSelectCount accounting only see entries that the inner
+                    // model actually keys on.
+                    groupBy.remove(i--);
+                    n--;
                 }
             }
         }
