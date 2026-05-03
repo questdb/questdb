@@ -312,7 +312,7 @@ public class QwpEgressUpgradeProcessor implements HttpRequestProcessor, QuietClo
 
         String acceptKey = QwpWebSocketHttpProcessor.computeAcceptKey(wsKey);
         int requiredHandshakeSize = QwpWebSocketHttpProcessor.responseSize(
-                acceptKey, negotiatedVersion, contentEncodingHeader);
+                acceptKey, negotiatedVersion, contentEncodingHeader, false);
         // v2 appends a SERVER_INFO WebSocket frame right after the 101 response
         // bytes, in the same send buffer. Reserve an upper-bound for the frame so
         // a tiny send buffer that would fit the 101 response alone but not the
@@ -353,7 +353,7 @@ public class QwpEgressUpgradeProcessor implements HttpRequestProcessor, QuietClo
         state.setMaxBatchRows(effectiveMaxBatchRows);
 
         int bytesWritten = QwpWebSocketHttpProcessor.writeResponse(
-                bufferAddr, acceptKey, negotiatedVersion, contentEncodingHeader);
+                bufferAddr, acceptKey, negotiatedVersion, contentEncodingHeader, false);
         // For v2 and above, append an unsolicited SERVER_INFO WebSocket frame to
         // the same send buffer. The client reads it as the first frame after the
         // upgrade handshake completes, which lets it route reads to primary vs

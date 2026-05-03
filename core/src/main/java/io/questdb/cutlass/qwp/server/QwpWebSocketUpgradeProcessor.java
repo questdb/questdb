@@ -254,7 +254,20 @@ public class QwpWebSocketUpgradeProcessor implements HttpRequestProcessor {
         // Read QWP version negotiation headers
         int negotiatedVersion = negotiateQwpVersion(requestHeader, context.getFd());
         String acceptKey = QwpWebSocketHttpProcessor.computeAcceptKey(wsKey);
-        int requiredHandshakeSize = QwpWebSocketHttpProcessor.responseSize(acceptKey, negotiatedVersion);
+
+        // Resolve durable-ack opt-in before sizing the 101 response, since
+        // the X-QWP-Durable-Ack confirmation header affects the response size.
+        // The header is silently dropped when the engine has no durable-ack
+        // registry installed (OSS build or primary replication disabled), so
+        // opted-in clients on such servers receive a 101 without confirmation
+        // and fail at the client side.
+        Utf8Sequence durableAckHeader = requestHeader.getHeader(
+                QwpWebSocketHttpProcessor.HEADER_X_QWP_REQUEST_DURABLE_ACK);
+        boolean durableAckRequested = durableAckHeader != null
+                && Utf8s.equalsIgnoreCaseAscii(durableAckHeader, QwpWebSocketHttpProcessor.HEADER_VALUE_DURABLE_ACK_ENABLED);
+        boolean durableAckEnabled = durableAckRequested && engine.getDurableAckRegistry().isEnabled();
+
+        int requiredHandshakeSize = QwpWebSocketHttpProcessor.responseSize(acceptKey, negotiatedVersion, null, durableAckEnabled);
         if (requiredHandshakeSize > bufferSize) {
             throw responseDoesNotFitSendBuffer(context.getFd(), "101 handshake response", bufferSize, requiredHandshakeSize);
         }
@@ -275,18 +288,10 @@ public class QwpWebSocketUpgradeProcessor implements HttpRequestProcessor {
         }
         state.of(context.getFd(), context.getSecurityContext());
         state.setNegotiatedVersion((byte) negotiatedVersion);
-        // Opt-in flag for STATUS_DURABLE_ACK frames. Silently ignored when the
-        // engine has no durable-ack registry installed (OSS build or primary
-        // replication disabled), so opted-in clients on such servers simply
-        // never see durable acks.
-        Utf8Sequence durableAckHeader = requestHeader.getHeader(
-                QwpWebSocketHttpProcessor.HEADER_X_QWP_REQUEST_DURABLE_ACK);
-        boolean durableAckRequested = durableAckHeader != null
-                && Utf8s.equalsIgnoreCaseAscii(durableAckHeader, QwpWebSocketHttpProcessor.HEADER_VALUE_DURABLE_ACK_ENABLED);
-        state.setDurableAckEnabled(durableAckRequested && engine.getDurableAckRegistry().isEnabled());
+        state.setDurableAckEnabled(durableAckEnabled);
 
         // Write the 101 Switching Protocols response (reuse the pre-computed accept key)
-        int bytesWritten = QwpWebSocketHttpProcessor.writeResponse(bufferAddr, acceptKey, negotiatedVersion);
+        int bytesWritten = QwpWebSocketHttpProcessor.writeResponse(bufferAddr, acceptKey, negotiatedVersion, null, durableAckEnabled);
         if (bytesWritten <= 0) {
             throw responseDoesNotFitSendBuffer(context.getFd(), "101 handshake response", bufferSize, requiredHandshakeSize);
         }

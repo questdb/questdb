@@ -761,21 +761,59 @@ commit has reached the configured object store, a client includes
 `X-QWP-Request-Durable-Ack: true` (case-insensitive) in the WebSocket
 upgrade request.
 
-Behavior:
+#### Server Behaviour
 
-- Servers without primary replication enabled silently ignore the header and
-  never emit `STATUS_DURABLE_ACK` frames.
-- Servers with primary replication emit cumulative `STATUS_DURABLE_ACK` frames
-  as the upload watermark advances. Delivery is piggy-backed on connection
-  activity: frames are flushed whenever the connection next sends or receives
-  a message, a PING, or a CLOSE. Idle connections that need prompt
-  notification should send a WebSocket PING periodically.
+- Servers without primary replication enabled silently ignore the request
+  header and never emit `STATUS_DURABLE_ACK` frames.
+- Servers with primary replication that accept the opt-in echo
+  `X-QWP-Durable-Ack: enabled` in the 101 upgrade response. The presence
+  of this confirmation header is the only handshake-time signal that a
+  given connection will receive durable-ack frames -- absence means the
+  registry is not installed for this engine.
+- Confirming servers emit cumulative `STATUS_DURABLE_ACK` frames as the
+  upload watermark advances. Delivery is piggy-backed on connection
+  activity: frames are flushed whenever the connection next sends or
+  receives a message, a PING, or a CLOSE. Idle connections that need
+  prompt notification should send a WebSocket PING periodically.
 - The durable-ack watermark always trails the regular OK watermark.
-- There is no durable-failure status; persistent upload failures surface only
-  as absence of a durable-ack frame within an expected window.
+- There is no durable-failure status; persistent upload failures surface
+  only as absence of a durable-ack frame within an expected window.
 - Empty messages (those that produced no WAL commit, e.g. only referencing
-  materialized views) are trivially durable and their sequence advances the
-  durable watermark as soon as all preceding messages are durable.
+  materialized views) are trivially durable and their sequence advances
+  the durable watermark as soon as all preceding messages are durable.
+
+#### Client Behaviour
+
+- A client that opts in via the request header MUST verify the
+  `X-QWP-Durable-Ack: enabled` confirmation in the 101 response, and MUST
+  fail the connect attempt loudly when it is absent. Silently waiting for
+  durable-ack frames against a server that will never emit them lets the
+  client's store-and-forward log grow unbounded until disk fills.
+- A client that opted in MUST drive its store-and-forward trim from
+  `STATUS_DURABLE_ACK` frames only -- regular OK frames acknowledge that
+  the bytes are safely committed to the primary's WAL but not that they
+  are durable beyond it, so trimming on OK in this mode would lose data
+  on a primary failure. OK frames are still tracked (they identify the
+  per-table seqTxns later durable acks must cover) but they do not
+  advance the trim watermark.
+- A client that opted in does NOT participate in idle PING/PONG keep-alive
+  to flush durable acks. Producers send naturally; idle connections
+  accept the cumulative-frame lag.
+- Reconnects discard any in-flight durable-ack tracking. The new
+  connection re-OKs replayed batches and the server re-emits cumulative
+  durable-ack watermarks from scratch, so trim must restart against the
+  new connection's wire sequencing.
+
+#### Connect-string
+
+The QuestDB ILP client exposes the opt-in via the `request_durable_ack`
+parameter. Allowed values are `on` and `off` (default `off`); any other
+value is a configuration error. The parameter is meaningful only on the
+WebSocket transport.
+
+```
+ws::addr=host:9000;sf_dir=/var/lib/qwp;request_durable_ack=on;
+```
 
 ## 14. Protocol Limits
 
