@@ -71,9 +71,12 @@ public class HttpOomHandlingTest extends AbstractBootstrapTest {
                 // give the dispatcher time to accept and assign the context
                 Os.sleep(500);
 
-                // set a tight RSS limit so new context allocation fails
+                // set an RSS limit just above current usage so new context allocation fails.
+                // 16 KiB of slack absorbs incidental allocations (JIT, logging, GC bookkeeping)
+                // between the rss read and the probe connect; the per-context allocation is
+                // far larger than the slack, so the OOM path still fires.
                 long currentUsage = Unsafe.getRssMemUsed();
-                Unsafe.setRssMemLimit(currentUsage + 1024);
+                Unsafe.setRssMemLimit(currentUsage + 16_384);
                 try {
                     // open a second connection - pool is empty, context creation triggers OOM
                     // the dispatcher should send a pre-allocated HTTP 503 response

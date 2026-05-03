@@ -96,6 +96,13 @@ public interface IODispatcherConfiguration {
 
     NetworkFacade getNetworkFacade();
 
+    /**
+     * Returns a protocol-level response sent on a best-effort basis when the dispatcher
+     * fails to allocate a connection context due to OOM during accept(). The dispatcher
+     * pre-allocates this response at startup so it can be delivered without further
+     * allocation when memory is exhausted. Returning null disables the feature; only
+     * protocols with a meaningful textual error frame (e.g. HTTP 503) should override.
+     */
     default String getOomResponse() {
         return null;
     }
