@@ -2955,6 +2955,34 @@ public class GroupByTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testNestedFilterAcrossGroupByWithBindVariable() throws Exception {
+        // The optimiser splits a WHERE over a GROUP BY subquery into two
+        // model filters when one conjunct references the aggregated column
+        // and the other references no column at all (e.g. a bind variable
+        // comparison): the constant-only conjunct gets pushed past the
+        // aggregate while the agg-column conjunct stays at the outer
+        // level. The literal form folds the constant conjunct away so this
+        // never surfaced; the bind form keeps it opaque, so codegen wraps
+        // a FilteredRecordCursorFactory over another, which historically
+        // tripped a constructor-time assertion. The factory now collapses
+        // those into a single combined-filter wrapper.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (sym SYMBOL, ts TIMESTAMP) timestamp(ts) PARTITION BY DAY");
+            execute("INSERT INTO t VALUES ('A', '2024-01-01T00:00:00.000000Z')");
+
+            bindVariableService.clear();
+            bindVariableService.setStr("b0", "KNWL");
+
+            assertSql(
+                    "k\tcnt\n" +
+                            "A\t1\n",
+                    "SELECT * FROM (SELECT sym AS k, count() AS cnt FROM t)\n" +
+                            "WHERE (cnt IS NOT NULL) AND (:b0::VARCHAR != 'UX')"
+            );
+        });
+    }
+
+    @Test
     public void testNestedGroupByWithExplicitGroupByClause() throws Exception {
         String expected = """
                 url\tu_count\tcnt\tavg_m_sum
