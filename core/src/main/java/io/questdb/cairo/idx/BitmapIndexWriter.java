@@ -22,8 +22,13 @@
  *
  ******************************************************************************/
 
-package io.questdb.cairo;
+package io.questdb.cairo.idx;
 
+import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.CairoException;
+import io.questdb.cairo.CommitMode;
+import io.questdb.cairo.EmptyRowCursor;
+import io.questdb.cairo.IndexType;
 import io.questdb.cairo.sql.RowCursor;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryMA;
@@ -33,16 +38,13 @@ import io.questdb.log.LogFactory;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
-import io.questdb.std.Mutable;
 import io.questdb.std.Numbers;
 import io.questdb.std.Unsafe;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
 import org.jetbrains.annotations.TestOnly;
 
-import java.io.Closeable;
-
-public class BitmapIndexWriter implements Closeable, Mutable {
+public class BitmapIndexWriter implements IndexWriter {
     private static final Log LOG = LogFactory.getLog(BitmapIndexWriter.class);
     private static final long MAX_VALUE_OFFSET = 37L;
     private final CairoConfiguration configuration;
@@ -177,6 +179,11 @@ public class BitmapIndexWriter implements Closeable, Mutable {
         return EmptyRowCursor.INSTANCE;
     }
 
+    @Override
+    public byte getIndexType() {
+        return IndexType.BITMAP;
+    }
+
     public int getKeyCount() {
         return keyCount;
     }
@@ -275,10 +282,12 @@ public class BitmapIndexWriter implements Closeable, Mutable {
         }
     }
 
+    @Override
     public final void of(Path path, CharSequence name, long columnNameTxn) {
         of(path, name, columnNameTxn, 0);
     }
 
+    @Override
     public final void of(Path path, CharSequence name, long columnNameTxn, int indexBlockCapacity) {
         close();
         final int plen = path.size();

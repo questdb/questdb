@@ -83,15 +83,15 @@ public class TelemetryTest extends AbstractCairoTest {
 
             try (TelemetryJob ignore = new TelemetryJob(engine)) {
                 String expected = """
-                        column\ttype\tindexed\tindexBlockCapacity\tsymbolCached\tsymbolCapacity\tsymbolTableSize\tdesignated\tupsertKey
-                        id\tLONG256\tfalse\t0\tfalse\t0\t0\tfalse\tfalse
-                        enabled\tBOOLEAN\tfalse\t0\tfalse\t0\t0\tfalse\tfalse
-                        version\tSYMBOL\tfalse\t256\ttrue\t128\t2\tfalse\tfalse
-                        os\tSYMBOL\tfalse\t256\ttrue\t128\t2\tfalse\tfalse
-                        package\tSYMBOL\tfalse\t256\ttrue\t128\t1\tfalse\tfalse
-                        instance_name\tSYMBOL\tfalse\t256\ttrue\t128\t2\tfalse\tfalse
-                        instance_type\tSYMBOL\tfalse\t256\ttrue\t128\t2\tfalse\tfalse
-                        instance_desc\tSYMBOL\tfalse\t256\ttrue\t128\t2\tfalse\tfalse
+                        column\ttype\tindexed\tindexBlockCapacity\tsymbolCached\tsymbolCapacity\tsymbolTableSize\tdesignated\tupsertKey\tindexType\tindexInclude
+                        id\tLONG256\tfalse\t0\tfalse\t0\t0\tfalse\tfalse\t\t
+                        enabled\tBOOLEAN\tfalse\t0\tfalse\t0\t0\tfalse\tfalse\t\t
+                        version\tSYMBOL\tfalse\t256\ttrue\t128\t2\tfalse\tfalse\t\t
+                        os\tSYMBOL\tfalse\t256\ttrue\t128\t2\tfalse\tfalse\t\t
+                        package\tSYMBOL\tfalse\t256\ttrue\t128\t1\tfalse\tfalse\t\t
+                        instance_name\tSYMBOL\tfalse\t256\ttrue\t128\t2\tfalse\tfalse\t\t
+                        instance_type\tSYMBOL\tfalse\t256\ttrue\t128\t2\tfalse\tfalse\t\t
+                        instance_desc\tSYMBOL\tfalse\t256\ttrue\t128\t2\tfalse\tfalse\t\t
                         """;
                 assertSql(expected, "SHOW COLUMNS FROM " + TelemetryConfigLogger.TELEMETRY_CONFIG_TABLE_NAME);
                 expected = """

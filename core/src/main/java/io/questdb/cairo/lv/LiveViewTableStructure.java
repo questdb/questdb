@@ -25,6 +25,7 @@
 package io.questdb.cairo.lv;
 
 import io.questdb.cairo.GenericRecordMetadata;
+import io.questdb.cairo.IndexType;
 import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.TableStructure;
 
@@ -64,6 +65,11 @@ public class LiveViewTableStructure implements TableStructure {
     @Override
     public int getIndexBlockCapacity(int columnIndex) {
         return 0;
+    }
+
+    @Override
+    public byte getIndexType(int columnIndex) {
+        return IndexType.NONE;
     }
 
     @Override

@@ -24,11 +24,11 @@
 
 package io.questdb.cairo.lv;
 
-import io.questdb.cairo.BitmapIndexReader;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.ColumnTypeDriver;
 import io.questdb.cairo.TableToken;
+import io.questdb.cairo.idx.IndexReader;
 import io.questdb.cairo.sql.ColumnMapping;
 import io.questdb.cairo.sql.PageFrame;
 import io.questdb.cairo.sql.PageFrameCursor;
@@ -222,6 +222,21 @@ public class WalSegmentPageFrameCursor implements PageFrameCursor {
         return this;
     }
 
+    @Override
+    public long size() {
+        return rowHi - rowLo;
+    }
+
+    @Override
+    public boolean supportsSizeCalculation() {
+        return true;
+    }
+
+    @Override
+    public void toTop() {
+        consumed = false;
+    }
+
     /**
      * Consumes {@code txnDiffs} into {@link #txnSymbolDiffs}, clearing any overlay
      * entries left behind by the previous {@link #of} call. Each entry lands in the
@@ -256,21 +271,6 @@ public class WalSegmentPageFrameCursor implements PageFrameCursor {
             }
             diff = txnDiffs.nextSymbolMapDiff();
         }
-    }
-
-    @Override
-    public long size() {
-        return rowHi - rowLo;
-    }
-
-    @Override
-    public boolean supportsSizeCalculation() {
-        return true;
-    }
-
-    @Override
-    public void toTop() {
-        consumed = false;
     }
 
     private void computeFrame(RecordMetadata metadata) {
@@ -370,11 +370,11 @@ public class WalSegmentPageFrameCursor implements PageFrameCursor {
         private final DirectString scanView = new DirectString();
         private final DirectString viewA = new DirectString();
         private final DirectString viewB = new DirectString();
+        private WalReader reader;
         // Per-transaction overlay (key -> symbol) built from the current txn's
         // SymbolMapDiff. Null when the txn has no diff entries for this column;
         // resolution falls straight through to the reader.
         private DirectSymbolMap txnDiff;
-        private WalReader reader;
         private int walColumnIndex;
 
         @Override
@@ -458,11 +458,6 @@ public class WalSegmentPageFrameCursor implements PageFrameCursor {
         }
 
         @Override
-        public BitmapIndexReader getBitmapIndexReader(int columnIndex, int direction) {
-            throw new UnsupportedOperationException("bitmap indices are not available on WAL segments");
-        }
-
-        @Override
         public int getColumnCount() {
             return columnCount;
         }
@@ -470,6 +465,11 @@ public class WalSegmentPageFrameCursor implements PageFrameCursor {
         @Override
         public byte getFormat() {
             return PartitionFormat.NATIVE;
+        }
+
+        @Override
+        public IndexReader getIndexReader(int columnIndex, int direction) {
+            throw new UnsupportedOperationException("bitmap indices are not available on WAL segments");
         }
 
         @Override

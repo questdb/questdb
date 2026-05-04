@@ -106,6 +106,7 @@ public final class WhereClauseParser implements Mutable {
     private boolean allKeyExcludedValuesAreKnown = true;
     private boolean allKeyValuesAreKnown = true;
     private boolean isConstFunction;
+    private boolean noIndex;
     private CharSequence preferredKeyColumn;
     private CharSequence timestamp;
     private boolean useIndexedSymbolFilters = true;
@@ -145,12 +146,14 @@ public final class WhereClauseParser implements Mutable {
             @NotNull RecordMetadata metadata,
             @NotNull SqlExecutionContext executionContext,
             boolean latestByMultiColumn,
-            @NotNull TableReader reader
+            @NotNull TableReader reader,
+            boolean noIndex
     ) throws SqlException {
         clearKeys();
         clearExcludedKeys();
 
         this.timestamp = timestampIndex < 0 ? null : m.getColumnName(timestampIndex);
+        this.noIndex = noIndex;
         this.preferredKeyColumn = preferredKeyColumn;
         // Live view base SELECT compilation suppresses indexed-symbol key extraction so the
         // planner emits a plain FilteredRecordCursorFactory shape that the incremental refresh
@@ -1896,7 +1899,7 @@ public final class WhereClauseParser implements Mutable {
         return !latestByMultiColumn &&
                 (
                         Chars.equalsIgnoreCaseNc(columnName, preferredKeyColumn)
-                                || (useIndexedSymbolFilters && preferredKeyColumn == null && m.isColumnIndexed(m.getColumnIndex(columnName)))
+                                || (preferredKeyColumn == null && !noIndex && m.isColumnIndexed(m.getColumnIndex(columnName)))
                 );
     }
 
@@ -2383,50 +2386,6 @@ public final class WhereClauseParser implements Mutable {
         return true;
     }
 
-    /**
-     * Accumulates a timestamp function (like now()) into the OR interval model.
-     * For constant functions, evaluates immediately. For runtime constants, defers to runtime.
-     * Returns true on success, false if the function cannot be accumulated.
-     */
-    private boolean tryAccumulateTimestampFunction(
-            IntrinsicModel model,
-            ExpressionNode funcNode,
-            boolean isFirst,
-            FunctionParser functionParser,
-            RecordMetadata metadata,
-            SqlExecutionContext executionContext
-    ) throws SqlException {
-        Function func = functionParser.parseFunction(funcNode, metadata, executionContext);
-        try {
-            if (!ColumnType.isTimestamp(func.getType())) {
-                Misc.free(func);
-                return false;
-            }
-            if (func.isConstant()) {
-                long ts = func.getTimestamp(null);
-                Misc.free(func);
-                if (isFirst) {
-                    model.intersectIntervals(ts, ts);
-                } else {
-                    model.unionIntervals(ts, ts);
-                }
-            } else if (func.isRuntimeConstant()) {
-                if (isFirst) {
-                    model.intersectRuntimeTimestamp(func);
-                } else {
-                    model.unionRuntimeTimestamp(func);
-                }
-            } else {
-                Misc.free(func);
-                return false;
-            }
-            return true;
-        } catch (Throwable th) {
-            Misc.free(func);
-            throw th;
-        }
-    }
-
     private long parseFullOrPartialDate(
             TimestampDriver timestampDriver,
             boolean equalsTo,
@@ -2742,6 +2701,50 @@ public final class WhereClauseParser implements Mutable {
             }
         }
         return false;
+    }
+
+    /**
+     * Accumulates a timestamp function (like now()) into the OR interval model.
+     * For constant functions, evaluates immediately. For runtime constants, defers to runtime.
+     * Returns true on success, false if the function cannot be accumulated.
+     */
+    private boolean tryAccumulateTimestampFunction(
+            IntrinsicModel model,
+            ExpressionNode funcNode,
+            boolean isFirst,
+            FunctionParser functionParser,
+            RecordMetadata metadata,
+            SqlExecutionContext executionContext
+    ) throws SqlException {
+        Function func = functionParser.parseFunction(funcNode, metadata, executionContext);
+        try {
+            if (!ColumnType.isTimestamp(func.getType())) {
+                Misc.free(func);
+                return false;
+            }
+            if (func.isConstant()) {
+                long ts = func.getTimestamp(null);
+                Misc.free(func);
+                if (isFirst) {
+                    model.intersectIntervals(ts, ts);
+                } else {
+                    model.unionIntervals(ts, ts);
+                }
+            } else if (func.isRuntimeConstant()) {
+                if (isFirst) {
+                    model.intersectRuntimeTimestamp(func);
+                } else {
+                    model.unionRuntimeTimestamp(func);
+                }
+            } else {
+                Misc.free(func);
+                return false;
+            }
+            return true;
+        } catch (Throwable th) {
+            Misc.free(func);
+            throw th;
+        }
     }
 
     /**
