@@ -1149,6 +1149,106 @@ public class ParquetTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testIntOverflowConstantFilterOnByteColumn() throws Exception {
+        // Regression: ParquetRowGroupFilter prepared the filter value via
+        // (int) f.getLong(null) for BYTE/SHORT/INT columns, truncating any
+        // constant that FunctionParser had folded to LongConstant after
+        // detecting INT-arithmetic overflow. Native dispatch promotes
+        // BYTE > INT to <(LL) and reads the precise long, so the two stores
+        // diverged - here all rows pass on native, none on parquet.
+        // The filter now clamps long values into INT range while preserving
+        // null sentinels; out-of-range bounds still prune correctly.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (c BYTE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO t VALUES
+                      (10, '2024-01-01T00:00:00.000000Z'),
+                      (20, '2024-01-01T01:00:00.000000Z'),
+                      (30, '2024-01-01T02:00:00.000000Z')""");
+            execute("ALTER TABLE t CONVERT PARTITION TO PARQUET WHERE ts >= 0");
+            // (-286452 * (-952151 * -382988)) overflows INT (= 1_699_321_072) but
+            // is -104_458_275_863_816_976 in long, which is below every BYTE value.
+            assertSql(
+                    "c\tts\n10\t2024-01-01T00:00:00.000000Z\n20\t2024-01-01T01:00:00.000000Z\n30\t2024-01-01T02:00:00.000000Z\n",
+                    "SELECT * FROM t WHERE c > (-286452 * (-952151 * -382988))"
+            );
+            // Symmetric upper-bound case: huge positive constant prunes every group.
+            assertSql(
+                    "c\tts\n",
+                    "SELECT * FROM t WHERE c > (286452 * (952151 * 382988))"
+            );
+            // OP_LT with very-negative constant: c < -1e17 is false for every BYTE row.
+            assertSql(
+                    "c\tts\n",
+                    "SELECT * FROM t WHERE c < (-286452 * (-952151 * -382988))"
+            );
+            // OP_LT with very-positive constant: c < +1e17 is true for every BYTE row.
+            assertSql(
+                    "c\tts\n10\t2024-01-01T00:00:00.000000Z\n20\t2024-01-01T01:00:00.000000Z\n30\t2024-01-01T02:00:00.000000Z\n",
+                    "SELECT * FROM t WHERE c < (286452 * (952151 * 382988))"
+            );
+            // OP_EQ with out-of-INT-range constant: no BYTE row can equal it.
+            assertSql(
+                    "c\tts\n",
+                    "SELECT * FROM t WHERE c = (-286452 * (-952151 * -382988))"
+            );
+        });
+    }
+
+    @Test
+    public void testIntOverflowConstantFilterOnIntColumn() throws Exception {
+        // INT column path: LongConstant value (post-overflow fold) flows
+        // through the INT-or-LONG branch and clampLongToInt so out-of-range
+        // bounds saturate cleanly instead of wrapping. Native > on INT and
+        // LONG promotes to <(LL); pushdown stats are stored as INT.
+        // Companion JIT-side fix in CompiledFilterIRSerializer.serialize
+        // bails out of JIT compilation for predicates whose constant
+        // arithmetic subtree overflows INT, falling back to the Java filter
+        // that honours FunctionParser's LongConstant fold; both stores agree
+        // here regardless of JIT mode.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (c INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO t VALUES
+                      (-1, '2024-01-01T00:00:00.000000Z'),
+                      (0, '2024-01-01T01:00:00.000000Z'),
+                      (1, '2024-01-01T02:00:00.000000Z')""");
+            execute("ALTER TABLE t CONVERT PARTITION TO PARQUET WHERE ts >= 0");
+            assertSql(
+                    "c\tts\n-1\t2024-01-01T00:00:00.000000Z\n0\t2024-01-01T01:00:00.000000Z\n1\t2024-01-01T02:00:00.000000Z\n",
+                    "SELECT * FROM t WHERE c > (-286452 * (-952151 * -382988))"
+            );
+            assertSql(
+                    "c\tts\n",
+                    "SELECT * FROM t WHERE c > (286452 * (952151 * 382988))"
+            );
+        });
+    }
+
+    @Test
+    public void testIntOverflowConstantFilterOnShortColumn() throws Exception {
+        // SHORT column path: same shape as the BYTE/INT companions, exercising
+        // the SHORT branch.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (c SHORT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO t VALUES
+                      (-100, '2024-01-01T00:00:00.000000Z'),
+                      (0, '2024-01-01T01:00:00.000000Z'),
+                      (100, '2024-01-01T02:00:00.000000Z')""");
+            execute("ALTER TABLE t CONVERT PARTITION TO PARQUET WHERE ts >= 0");
+            assertSql(
+                    "c\tts\n-100\t2024-01-01T00:00:00.000000Z\n0\t2024-01-01T01:00:00.000000Z\n100\t2024-01-01T02:00:00.000000Z\n",
+                    "SELECT * FROM t WHERE c > (-286452 * (-952151 * -382988))"
+            );
+            assertSql(
+                    "c\tts\n",
+                    "SELECT * FROM t WHERE c > (286452 * (952151 * 382988))"
+            );
+        });
+    }
+
+    @Test
     public void testJitFilter() throws Exception {
         assertMemoryLeak(() -> {
             sqlExecutionContext.setJitMode(SqlJitMode.JIT_MODE_ENABLED);

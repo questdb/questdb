@@ -155,12 +155,14 @@ public final class ParquetRowGroupFilter {
                                     filterValues.putInt(f.getChar(null));
                                     break;
                                 case ColumnType.INT:
-                                    filterValues.putInt(f.getInt(null));
-                                    break;
                                 case ColumnType.LONG:
-                                    // Safe truncation: if long exceeds int range, the truncated
-                                    // value won't match any byte bloom filter entry.
-                                    filterValues.putInt((int) f.getLong(null));
+                                    // Read via getLong() so INT arithmetic (Mul/Add/Sub/Neg)
+                                    // returns the long-precise result that the native filter
+                                    // sees after BYTE-to-LONG comparison promotion. Clamp into
+                                    // INT range for the parquet stats slot; values outside that
+                                    // range cannot equal any BYTE row anyway, and the saturated
+                                    // bound preserves the GT/GE/LT/LE result against BYTE stats.
+                                    filterValues.putInt(clampLongToInt(f.getLong(null)));
                                     break;
                                 case ColumnType.FLOAT:
                                 case ColumnType.DOUBLE:
@@ -176,10 +178,8 @@ public final class ParquetRowGroupFilter {
                             Function f = valueFunctions.getQuick(j);
                             switch (f.getType()) {
                                 case ColumnType.INT:
-                                    filterValues.putInt(f.getInt(null));
-                                    break;
                                 case ColumnType.LONG:
-                                    filterValues.putInt((int) f.getLong(null));
+                                    filterValues.putInt(clampLongToInt(f.getLong(null)));
                                     break;
                                 case ColumnType.FLOAT:
                                 case ColumnType.DOUBLE:
@@ -198,9 +198,10 @@ public final class ParquetRowGroupFilter {
                     case ColumnType.INT:
                         for (int j = 0; j < valueCount; j++) {
                             Function f = valueFunctions.getQuick(j);
-                            if (f.getType() == ColumnType.LONG) {
-                                filterValues.putInt((int) f.getLong(null));
-                            } else if (f.getType() == ColumnType.FLOAT || f.getType() == ColumnType.DOUBLE) {
+                            int vType = f.getType();
+                            if (vType == ColumnType.INT || vType == ColumnType.LONG) {
+                                filterValues.putInt(clampLongToInt(f.getLong(null)));
+                            } else if (vType == ColumnType.FLOAT || vType == ColumnType.DOUBLE) {
                                 filterValues.putInt((int) f.getDouble(null));
                             } else {
                                 filterValues.putInt(f.getInt(null));
@@ -405,6 +406,21 @@ public final class ParquetRowGroupFilter {
     @TestOnly
     public static void resetRowGroupsSkipped() {
         rowGroupsSkipped.set(0);
+    }
+
+    private static int clampLongToInt(long v) {
+        if (v == Numbers.LONG_NULL) {
+            return Numbers.INT_NULL;
+        }
+        if (v > Integer.MAX_VALUE) {
+            return Integer.MAX_VALUE;
+        }
+        // Numbers.INT_NULL == Integer.MIN_VALUE, so a non-null value must not collapse
+        // onto the null sentinel after clamping.
+        if (v <= Integer.MIN_VALUE) {
+            return Integer.MIN_VALUE + 1;
+        }
+        return (int) v;
     }
 
     private static long encodeColumnCountAndOp(int columnIndex, int count, int op) {
