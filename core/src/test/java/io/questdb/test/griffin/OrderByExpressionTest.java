@@ -431,6 +431,24 @@ public class OrderByExpressionTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testOrderByPositionAfterCountDistinctRewrite() throws Exception {
+        // SqlOptimiser.rewriteCountDistinct lifts the count_distinct argument
+        // into an inner GROUP BY model whose alias comes from the AST token.
+        // For a CAST argument that token is "cast", which used to leak into
+        // positional ORDER BY resolution because rewriteOrderByPosition picked
+        // the inner GROUP BY's bottom-up columns. The optimiser now resolves
+        // positional refs against the outermost SELECT projection.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (c1 BOOLEAN)");
+            execute("INSERT INTO t VALUES (true)");
+            assertSql(
+                    "a0\n1\n",
+                    "SELECT count_distinct('M'::CHAR) AS a0 FROM t ORDER BY 1"
+            );
+        });
+    }
+
+    @Test
     public void testOrderByWithAmbiguousColumnOrdering() throws Exception {
         assertQuery("""
                         5\t1

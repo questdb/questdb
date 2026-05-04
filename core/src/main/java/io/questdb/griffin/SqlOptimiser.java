@@ -8014,7 +8014,11 @@ public class SqlOptimiser implements Mutable {
         ObjList<ExpressionNode> orderByNodes = base.getOrderBy();
         int sz = orderByNodes.size();
         if (sz > 0) {
-            final ObjList<QueryColumn> columns = baseParent.getBottomUpColumns();
+            // Positional ORDER BY refers to the outermost SELECT projection,
+            // not the deepest GROUP BY. The two diverge when an optimisation
+            // (e.g. rewriteCountDistinct) lifts an expression into an inner
+            // model under a synthetic alias.
+            final ObjList<QueryColumn> columns = model.getColumns();
             final int columnCount = columns.size();
             for (int i = 0; i < sz; i++) {
                 final ExpressionNode orderBy = orderByNodes.getQuick(i);
