@@ -349,6 +349,16 @@ public final class QueryRunner {
      *       function-lookup table is a planner-controlled choice driven by
      *       compile-time vs. bind-time type information, not a data
      *       divergence.</li>
+     *   <li>"decimal places but scale is limited to" - {@code FunctionParser}
+     *       routes a literal {@code DOUBLE/FLOAT::DECIMAL(p,s)} through
+     *       {@code DecimalUtil.parseDecimalConstant} with the strict {@code
+     *       DecimalParser.parse(..., lossy=false)} so that an over-scaled
+     *       constant is rejected at compile time to avoid silent precision
+     *       loss. The bind form runs the value through
+     *       {@code CastDoubleToDecimalFunctionFactory} which calls {@code
+     *       Numbers.doubleToDecimal(d, ..., lossy=true)} and silently
+     *       truncates excess decimal places. Same SQL, different policies on
+     *       the literal vs. runtime path; not a data divergence.</li>
      * </ul>
      */
     private static boolean isPlannerSensitivityAsymmetry(Outcome o) {
@@ -358,7 +368,8 @@ public final class QueryRunner {
         return o.exceptionMessage.contains("doesn't have ASC timestamp order")
                 || o.exceptionMessage.contains("column must appear in GROUP BY clause")
                 || o.exceptionMessage.contains("constant expected")
-                || o.exceptionMessage.contains("there is no matching function");
+                || o.exceptionMessage.contains("there is no matching function")
+                || o.exceptionMessage.contains("decimal places but scale is limited to");
     }
 
     /**
