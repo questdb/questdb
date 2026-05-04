@@ -4604,14 +4604,25 @@ public class SqlOptimiser implements Mutable {
     private boolean isEffectivelyConstantExpression(ExpressionNode node) {
         sqlNodeStack.clear();
         while (node != null) {
+            // Cast over a constant or bind variable is itself constant per query,
+            // so accept BIND_VARIABLE leaves and the "cast" FUNCTION token. The
+            // recursive walk verifies every child resolves to a constant /
+            // bind / runtime-constant function, so cast over a column is still
+            // correctly rejected.
             if (node.type != OPERATION
                     && node.type != CONSTANT
-                    && !(node.type == FUNCTION && functionParser.getFunctionFactoryCache().isRuntimeConstant(node.token))) {
+                    && node.type != BIND_VARIABLE
+                    && !(node.type == FUNCTION && (
+                            functionParser.getFunctionFactoryCache().isRuntimeConstant(node.token)
+                                    || SqlKeywords.isCastKeyword(node.token)))) {
                 return false;
             }
 
             if (node.lhs != null) {
                 sqlNodeStack.push(node.lhs);
+            }
+            for (int i = 0, n = node.args.size(); i < n; i++) {
+                sqlNodeStack.push(node.args.getQuick(i));
             }
 
             if (node.rhs != null) {
@@ -9581,7 +9592,12 @@ public class SqlOptimiser implements Mutable {
                     }
                     break;
                 case BIND_VARIABLE:
-                    if (explicitGroupBy) {
+                    // A bind variable is constant per query, so it has no place
+                    // in the inner GROUP BY model's key set. Lift it to the
+                    // outer projection both when the user wrote GROUP BY
+                    // explicitly and when an aggregate elsewhere in the SELECT
+                    // forces a GROUP BY model implicitly.
+                    if (explicitGroupBy || (rewriteStatus & REWRITE_STATUS_USE_GROUP_BY_MODEL) != 0) {
                         rewriteStatus |= REWRITE_STATUS_USE_OUTER_MODEL;
                         rewriteStatus &= ~REWRITE_STATUS_OUTER_VIRTUAL_IS_SELECT_CHOOSE;
                         outerVirtualModel.addBottomUpColumn(qc);

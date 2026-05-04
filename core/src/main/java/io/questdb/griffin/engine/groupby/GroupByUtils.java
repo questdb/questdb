@@ -619,14 +619,19 @@ public class GroupByUtils {
                             throw SqlException.$(key.position, "group by column does not match any key column is select statement");
                         }
                         QueryColumn qc = model.getAliasToColumnMap().valueAt(refColumn);
-                        if (qc.getAst().type != ExpressionNode.LITERAL && qc.getAst().type != ExpressionNode.CONSTANT
-                                && qc.getAst().type != ExpressionNode.FUNCTION && qc.getAst().type != ExpressionNode.OPERATION) {
+                        if (qc.getAst().type != ExpressionNode.LITERAL
+                                && qc.getAst().type != ExpressionNode.CONSTANT
+                                && qc.getAst().type != ExpressionNode.BIND_VARIABLE
+                                && qc.getAst().type != ExpressionNode.FUNCTION
+                                && qc.getAst().type != ExpressionNode.OPERATION) {
                             throw SqlException.$(key.position, "group by column references aggregate expression");
                         }
                     }
                     break;
                 case ExpressionNode.BIND_VARIABLE:
-                    throw SqlException.$(key.position, "bind variable is not allowed here");
+                    // a bind variable is constant per query, so GROUP BY by one
+                    // collapses to a single bucket - same semantics as a CONSTANT key.
+                    break;
                 case ExpressionNode.FUNCTION:
                 case ExpressionNode.OPERATION:
                     ObjList<QueryColumn> availableColumns = model.getBottomUpColumns();

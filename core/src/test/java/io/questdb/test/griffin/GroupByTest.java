@@ -981,6 +981,27 @@ public class GroupByTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testGroupByCastOverColumnStaysKey() throws Exception {
+        // Regression: the recursive walk in isEffectivelyConstantExpression
+        // must reject cast over a real column. (x)::STRING contains a LITERAL
+        // child that fails the type check, so the cast is not lifted into the
+        // outer projection and the column stays a real GROUP BY key.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (x INT)");
+            execute("INSERT INTO t VALUES (1), (2), (3)");
+            assertSql(
+                    """
+                            e0\ta0
+                            1\t1
+                            2\t1
+                            3\t1
+                            """,
+                    "SELECT (x)::STRING AS e0, count() AS a0 FROM t GROUP BY 1 ORDER BY 1"
+            );
+        });
+    }
+
+    @Test
     public void testGroupByColumnIdx1() throws Exception {
         assertQuery(
                 """
@@ -1249,6 +1270,27 @@ public class GroupByTest extends AbstractCairoTest {
                 69,
                 "Invalid date"
         );
+    }
+
+    @Test
+    public void testGroupByMixedRealKeyAndConstantBind() throws Exception {
+        // Real column key plus constant bind projection: the bind goes to
+        // the outer virtual projection while the real column stays in the
+        // inner GROUP BY key set. Both keyed and non-empty input flow.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (c STRING)");
+            execute("INSERT INTO t VALUES ('A'), ('A'), ('B')");
+            bindVariableService.clear();
+            bindVariableService.setStr("b0", "X");
+            assertSql(
+                    """
+                            e0\tc\ta0
+                            X\tA\t2
+                            X\tB\t1
+                            """,
+                    "SELECT :b0 AS e0, c, count() AS a0 FROM t GROUP BY c ORDER BY c"
+            );
+        });
     }
 
     @Test
@@ -3055,6 +3097,85 @@ public class GroupByTest extends AbstractCairoTest {
                         FROM x_sample
                         GROUP BY url"""
         );
+    }
+
+    @Test
+    public void testNonKeyedAggOverArithmeticBind() throws Exception {
+        // OPERATION (+) over a BIND_VARIABLE leaf is effectively-constant via
+        // the recursive walk in isEffectivelyConstantExpression, so it lifts
+        // to the outer projection in a non-keyed aggregate.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (x INT)");
+            execute("INSERT INTO t VALUES (1), (2), (3)");
+            bindVariableService.clear();
+            bindVariableService.setStr("b0", "5");
+            assertSql(
+                    "e0\ta0\n6\t3\n",
+                    "SELECT :b0::LONG + 1 AS e0, count() AS a0 FROM t"
+            );
+        });
+    }
+
+    @Test
+    public void testNonKeyedAggOverConstantCastNonEmpty() throws Exception {
+        // Sanity check: cast and bind projections render correctly when
+        // WHERE doesn't filter everything out, so the non-keyed aggregate
+        // sees real rows and the lifted projection still resolves to its
+        // bind / constant value at row time.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (c2 STRING)");
+            execute("INSERT INTO t VALUES ('A'), ('B'), ('C')");
+            String expected = "e0\ta0\nX\t3\n";
+            assertSql(expected, "SELECT 'X'::CHAR AS e0, count() AS a0 FROM t");
+            bindVariableService.clear();
+            bindVariableService.setStr("b0", "X");
+            assertSql(expected, "SELECT :b0::CHAR AS e0, count() AS a0 FROM t");
+            bindVariableService.clear();
+            bindVariableService.setStr("b0", "X");
+            assertSql(expected, "SELECT :b0 AS e0, count() AS a0 FROM t");
+        });
+    }
+
+    @Test
+    public void testNonKeyedAggOverConstantCastProjection() throws Exception {
+        // Regression: a SELECT projection like 'X'::CHAR or :b0::CHAR is
+        // semantically constant per query, but isEffectivelyConstantExpression
+        // rejected FUNCTION nodes whose factory wasn't registered as runtime-
+        // constant. The optimiser then routed the projection through the
+        // keyed GROUP BY path, so a WHERE that filtered out every row produced
+        // an empty result instead of the single default-aggregate row a
+        // non-keyed aggregate is supposed to emit. Casts over constants and
+        // bind variables are now treated as effectively-constant.
+        //
+        // Without an explicit GROUP BY clause QuestDB returns the aggregate
+        // default row (the rule); explicit GROUP BY by a constant key still
+        // returns no rows on empty input (the documented exception).
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (c2 STRING)");
+            execute("INSERT INTO t VALUES ('A')");
+            String expected = """
+                    e0\ta0
+                    X\t0
+                    """;
+            assertSql(expected, "SELECT 'X'::CHAR AS e0, count() AS a0 FROM t WHERE 1=0");
+            bindVariableService.clear();
+            bindVariableService.setStr("b0", "X");
+            assertSql(expected, "SELECT :b0::CHAR AS e0, count() AS a0 FROM t WHERE 1=0");
+            bindVariableService.clear();
+            bindVariableService.setStr("b0", "X");
+            assertSql(expected, "SELECT :b0 AS e0, count() AS a0 FROM t WHERE 1=0");
+            // Explicit GROUP BY by a constant-equivalent key keeps the empty-result exception.
+            // The grammar accepts column references / aliases / position numbers in GROUP
+            // BY, so route the bind cases through their projection alias.
+            String expectedEmpty = "e0\ta0\n";
+            assertSql(expectedEmpty, "SELECT 'X'::CHAR AS e0, count() AS a0 FROM t WHERE 1=0 GROUP BY 'X'::CHAR");
+            bindVariableService.clear();
+            bindVariableService.setStr("b0", "X");
+            assertSql(expectedEmpty, "SELECT :b0::CHAR AS e0, count() AS a0 FROM t WHERE 1=0 GROUP BY e0");
+            bindVariableService.clear();
+            bindVariableService.setStr("b0", "X");
+            assertSql(expectedEmpty, "SELECT :b0 AS e0, count() AS a0 FROM t WHERE 1=0 GROUP BY e0");
+        });
     }
 
     @Test
