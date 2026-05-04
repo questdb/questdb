@@ -30,13 +30,19 @@ import io.questdb.cairo.SecurityContext;
 import io.questdb.cairo.UpdateOperator;
 import io.questdb.cairo.wal.MetadataService;
 import io.questdb.std.LongList;
+import io.questdb.std.ObjList;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
 public interface MetadataServiceStub extends MetadataService {
 
     @Override
-    default void addIndex(@NotNull CharSequence columnName, int indexValueBlockSize) {
+    default void addIndex(@NotNull CharSequence columnName, int indexValueBlockSize, byte indexType) {
+        throw CairoException.critical(0).put("add index does not update sequencer metadata");
+    }
+
+    @Override
+    default void addIndex(@NotNull CharSequence columnName, int indexValueBlockSize, byte indexType, @Nullable ObjList<CharSequence> coveringColumnNames) {
         throw CairoException.critical(0).put("add index does not update sequencer metadata");
     }
 
