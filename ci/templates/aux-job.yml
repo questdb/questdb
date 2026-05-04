@@ -4,8 +4,7 @@ jobs:
     strategy:
       matrix:
         linux-jdk25:
-          imageName: "ubuntu-latest"
-          poolName: "Azure Pipelines"
+          poolName: hetzner-incus
           os: Linux
           jdk: "1.25"
     pool:
