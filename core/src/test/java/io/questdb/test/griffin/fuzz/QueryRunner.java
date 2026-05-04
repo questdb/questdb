@@ -287,6 +287,21 @@ public final class QueryRunner {
     }
 
     /**
+     * One outcome threw an allowlisted cast/numeric error, the other succeeded.
+     * Without checking row count or access path. Caller restricts when to apply
+     * this -- see the bind-axis use site for rationale.
+     */
+    private static boolean isFoldOrderAsymmetry(Outcome a, Outcome b) {
+        Outcome erroring = a.failure != null ? a : b;
+        Outcome succeeding = a.failure != null ? b : a;
+        if (erroring.failure == null || succeeding.failure != null) {
+            return false;
+        }
+        return erroring.failure instanceof ImplicitCastException
+                || erroring.failure instanceof NumericException;
+    }
+
+    /**
      * Erroring side threw a per-row runtime cast or numeric overflow,
      * succeeding side reached the index-driven access path. An index probe
      * filters rows out before they reach the residual filter, so a row that
@@ -641,6 +656,18 @@ public final class QueryRunner {
         // not a data divergence.
         if (isUnsatisfiableShortCircuitAsymmetry(a, b) || isUnsatisfiableShortCircuitAsymmetry(b, a)) {
             return Result.skipped("unsatisfiable-shortcircuit " + exceptionClass);
+        }
+        // Same fold-order asymmetry as above, but on the bind axis where the
+        // two sides are guaranteed semantically identical (literal vs the same
+        // value bound as a parameter). The factory for the bound form takes
+        // the runtime-constant branch, which defers cast decoding to init();
+        // the optimizer can then elide the offending subtree (e.g. when it
+        // sits behind an OR with a tautology) before init() ever runs. The
+        // literal form has no such defer and throws on the constant fold.
+        // Both forms agree on the query semantics; only the fold order of an
+        // elidable constant subtree differs.
+        if (diffName.contains("bind variable") && isFoldOrderAsymmetry(a, b)) {
+            return Result.skipped("bind-fold-order " + exceptionClass);
         }
         // Anything else: divergence (one succeeded, one threw a non-skip
         // error; or both threw different exception classes).
