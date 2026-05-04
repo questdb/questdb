@@ -24,11 +24,13 @@
 
 package io.questdb.test.griffin;
 
+import io.questdb.PropertyKey;
 import io.questdb.cairo.AttachDetachStatus;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.FullFwdPartitionFrameCursor;
+import io.questdb.cairo.IndexType;
 import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableToken;
@@ -42,6 +44,7 @@ import io.questdb.std.FilesFacade;
 import io.questdb.std.FilesFacadeImpl;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.NumericException;
+import io.questdb.std.Rnd;
 import io.questdb.std.Unsafe;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Utf8s;
@@ -75,6 +78,13 @@ public class AlterTableAttachPartitionTest extends AbstractAlterTableAttachParti
         return Arrays.asList(new Object[][]{
                 {TestTimestampType.MICRO}, {TestTimestampType.NANO}
         });
+    }
+
+    @Override
+    public void setUp() {
+        Rnd rnd = TestUtils.generateRandom(LOG);
+        setProperty(PropertyKey.CAIRO_DEFAULT_SYMBOL_INDEX_TYPE, TestUtils.randomSymbolIndexTypeName(rnd));
+        super.setUp();
     }
 
     @Test
@@ -661,8 +671,13 @@ public class AlterTableAttachPartitionTest extends AbstractAlterTableAttachParti
 
                     // Extra columns not deleted
                     Assert.assertTrue(Files.exists(path.concat("s.d").$()));
-                    Assert.assertTrue(Files.exists(path.trimTo(pathLen).concat("s.k").$()));
-                    Assert.assertTrue(Files.exists(path.trimTo(pathLen).concat("s.v").$()));
+                    if (configuration.getDefaultSymbolIndexType() == IndexType.BITMAP) {
+                        Assert.assertTrue(Files.exists(path.trimTo(pathLen).concat("s.k").$()));
+                        Assert.assertTrue(Files.exists(path.trimTo(pathLen).concat("s.v").$()));
+                    } else {
+                        Assert.assertTrue(Files.exists(path.trimTo(pathLen).concat("s.pk").$()));
+                        Assert.assertTrue(Files.exists(path.trimTo(pathLen).concat("s.pv.0").$()));
+                    }
                     Assert.assertTrue(Files.exists(path.trimTo(pathLen).concat("l.d").$()));
                     Assert.assertTrue(Files.exists(path.trimTo(pathLen).concat("vch.d").$()));
                     Assert.assertTrue(Files.exists(path.trimTo(pathLen).concat("vch.i").$()));
@@ -917,7 +932,7 @@ public class AlterTableAttachPartitionTest extends AbstractAlterTableAttachParti
                         Assert.fail();
                     } catch (CairoException e) {
                         TestUtils.assertContains(e.getFlyweightMessage(),
-                                "Symbol index value file does not exist"
+                                "Index key file does not exist"
                         );
                     }
                 }
@@ -952,16 +967,17 @@ public class AlterTableAttachPartitionTest extends AbstractAlterTableAttachParti
 
                     execute("alter table " + dst.getName() + " drop partition list '2022-08-09'");
 
-                    // remove .k
+                    // remove the index key file
                     engine.clear();
                     TableToken tableToken = engine.verifyTableName(src.getName());
-                    path.of(configuration.getDbRoot()).concat(tableToken).concat("2022-08-09").concat("s.k").$();
+                    String keyFile = configuration.getDefaultSymbolIndexType() == IndexType.BITMAP ? "s.k" : "s.pk";
+                    path.of(configuration.getDbRoot()).concat(tableToken).concat("2022-08-09").concat(keyFile).$();
                     Assert.assertTrue(TestUtils.remove(path.$()));
                     try {
                         attachFromSrcIntoDst(src, dst, "2022-08-09");
                         Assert.fail();
                     } catch (CairoException e) {
-                        TestUtils.assertContains(e.getFlyweightMessage(), "Symbol index key file does not exist");
+                        TestUtils.assertContains(e.getFlyweightMessage(), "Index key file does not exist");
                     }
                 }
         );
