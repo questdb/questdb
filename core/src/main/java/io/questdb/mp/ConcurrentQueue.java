@@ -26,6 +26,8 @@ package io.questdb.mp;
 
 import io.questdb.std.ObjectFactory;
 
+import java.util.concurrent.atomic.AtomicInteger;
+
 // This is stripped down version taken from the .NET Core source code at
 // https://github.com/dotnet/runtime/blob/main/src/libraries/System.Private.CoreLib/src/System/Collections/Concurrent/ConcurrentQueue.cs
 // Licensed to the .NET Foundation under one or more agreements.
@@ -67,6 +69,7 @@ public class ConcurrentQueue<T> implements Queue<T> {
     private final ConcurrentSegmentManipulator<T> queueManipulator;
     // The current head segment.
     private volatile ConcurrentQueueSegment<T> head;
+    private final AtomicInteger length = new AtomicInteger();
     // The current tail segment.
     private volatile ConcurrentQueueSegment<T> tail;
 
@@ -136,6 +139,11 @@ public class ConcurrentQueue<T> implements Queue<T> {
             // try to add a new tail segment.
             enqueueSlow(item);
         }
+        length.incrementAndGet();
+    }
+
+    public int sizeDirty() {
+        return length.get();
     }
 
     /**
@@ -156,7 +164,11 @@ public class ConcurrentQueue<T> implements Queue<T> {
      */
     public boolean tryDequeue(T target) {
         T val = tryDequeueValue(target);
-        return val != null;
+        if (val != null) {
+            length.decrementAndGet();
+            return true;
+        }
+        return false;
     }
 
     /**
@@ -182,6 +194,7 @@ public class ConcurrentQueue<T> implements Queue<T> {
         // Try to take. If we're successful, we're done.
         T val = head.tryDequeue(maybeTarget);
         if (val != null) {
+            length.decrementAndGet();
             return val;
         }
 

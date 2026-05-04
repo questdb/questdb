@@ -82,6 +82,11 @@ public final class TimerCont implements DelayedFireable {
             throw new IllegalStateException("TimerCont.scheduleAfter requires a mounted WorkerContinuation");
         }
         TimerCont t = new TimerCont(cont, System.currentTimeMillis() + afterMillis);
+        System.out.println("TIMER scheduleAfter [timerId=" + System.identityHashCode(t)
+                + ", contId=" + System.identityHashCode(cont)
+                + ", afterMs=" + afterMillis
+                + ", carrier=" + Thread.currentThread().getName()
+                + "]");
         shards.register(t);
         return t;
     }
@@ -93,7 +98,13 @@ public final class TimerCont implements DelayedFireable {
      * Mirrors {@code TxnWaiter.abortContinuation}.
      */
     public void abortContinuation() {
-        if (!Unsafe.cas(this, STATE_OFFSET, STATE_PENDING, STATE_CANCELLED)) {
+        boolean cas = Unsafe.cas(this, STATE_OFFSET, STATE_PENDING, STATE_CANCELLED);
+        System.out.println("TIMER abortContinuation [timerId=" + System.identityHashCode(this)
+                + ", contId=" + System.identityHashCode(cont)
+                + ", casWon=" + cas
+                + ", carrier=" + Thread.currentThread().getName()
+                + "]");
+        if (!cas) {
             cont.markParkRefused();
         }
     }
@@ -104,15 +115,21 @@ public final class TimerCont implements DelayedFireable {
     }
 
     /**
-     * Timer-shard pop. CAS PENDING -> FIRED, then resume the bound cont. Skips
-     * the resume if the cont has already completed via another path (e.g. its
-     * loopBody returned because the worker's lifecycle transitioned to HALTED
-     * while a parallel wake raced ahead). Narrows the TOCTOU window before
-     * {@link ContinuationQueue} catches the residual race.
+     * Timer-shard pop. CAS PENDING -> FIRED, then resume the bound cont. The
+     * resume is unconditional: even if the cont raced ahead to done state via
+     * another path, {@link ContinuationQueue#run} silently drops it on dequeue,
+     * so we never strand a body that is still parked.
      */
     @Override
     public void expire() {
-        if (Unsafe.cas(this, STATE_OFFSET, STATE_PENDING, STATE_FIRED) && !cont.isDone()) {
+        boolean cas = Unsafe.cas(this, STATE_OFFSET, STATE_PENDING, STATE_FIRED);
+        System.out.println("TIMER expire [timerId=" + System.identityHashCode(this)
+                + ", contId=" + System.identityHashCode(cont)
+                + ", casWon=" + cas
+                + ", contDone=" + cont.isDone()
+                + ", carrier=" + Thread.currentThread().getName()
+                + "]");
+        if (cas) {
             cont.scheduleResume();
         }
     }
@@ -137,16 +154,19 @@ public final class TimerCont implements DelayedFireable {
      * cont remounts and observes the flag. Subject to the usual CAS no-op rule: if
      * another path already moved this entry to a terminal state, only the shutdown
      * flag is set; the pending dequeue carries the body to the close-aware exit.
-     *
-     * <p>If the cont has already completed via another path between CAS and resume,
-     * skip the {@code scheduleResume} so {@link ContinuationQueue} never dequeues a
-     * done cont. The check narrows but does not fully close the TOCTOU window; the
-     * queue side has a final guard against a done cont that slipped through.
+     * If the cont has already completed via another path, the queue-side
+     * {@link ContinuationQueue#run} guard silently drops it on dequeue.
      */
     @Override
     public void shutdown() {
         cont.shutdown();
-        if (Unsafe.cas(this, STATE_OFFSET, STATE_PENDING, STATE_CANCELLED) && !cont.isDone()) {
+        boolean cas = Unsafe.cas(this, STATE_OFFSET, STATE_PENDING, STATE_CANCELLED);
+        System.out.println("TIMER shutdown [timerId=" + System.identityHashCode(this)
+                + ", contId=" + System.identityHashCode(cont)
+                + ", casWon=" + cas
+                + ", carrier=" + Thread.currentThread().getName()
+                + "]");
+        if (cas) {
             cont.scheduleResume();
         }
     }

@@ -170,12 +170,33 @@ public class Worker extends Thread {
                 // a specific Worker instance.
                 outer:
                 while (lifecycle.get() == Lifecycle.RUNNING) {
-                    WorkerContinuation cont = new WorkerContinuation(this::loopBody, continuationQueue);
+                    WorkerContinuation own = new WorkerContinuation(this::loopBody, continuationQueue);
+                    WorkerContinuation cont = own;
                     cont.run();
                     while (true) {
                         if (cont.isDone()) {
-                            // Body returned because lifecycle observed HALTED. Exit.
-                            break outer;
+                            // Differentiate own vs. foreign:
+                            //   - own done: our loopBody returned, which only
+                            //     happens when this worker observed lifecycle
+                            //     HALTED. Exit the pool.
+                            //   - foreign done: a handed-off cont (someone
+                            //     else's old loopBody, or a body that already
+                            //     unwound on a peer carrier) finished. End the
+                            //     handoff chain but keep this worker alive --
+                            //     the authoritative exit signal is the outer
+                            //     while's lifecycle check, NOT a foreign
+                            //     cont's done state. Tying worker exit to any
+                            //     done cont would deplete the pool whenever a
+                            //     stale or shutdown-race cont surfaces, and
+                            //     leave parked queries with no remounter.
+                            if (cont == own) {
+                                System.out.println("worker exit: own loopBody returned [name=" + getName()
+                                        + ", lifecycle=" + lifecycle.get() + "]");
+                                break outer;
+                            }
+                            System.out.println("worker continuing past foreign cont done [name=" + getName()
+                                    + ", lifecycle=" + lifecycle.get() + "]");
+                            break;
                         }
                         WorkerContinuation handoff = cont.takeHandoff();
                         if (handoff == null) {
@@ -187,17 +208,23 @@ public class Worker extends Thread {
                         }
                         // Remount the dequeued cont here. continuationQueue.run()
                         // spins through any IllegalStateException window where the
-                        // cont's previous carrier has not yet finished unmounting.
-                        // Reassign cont so the loop re-checks done/handoff against
-                        // the cont we actually just ran.
+                        // cont's previous carrier has not yet finished unmounting,
+                        // and silently returns if the foreign cont has already
+                        // completed via another path. Reassign cont so the loop
+                        // re-checks done/handoff against the cont we actually just
+                        // ran -- but now isDone-vs-own discriminates correctly.
                         cont = handoff;
                         continuationQueue.run(cont);
                     }
                 }
+                System.out.println("worker exit: lifecycle != RUNNING [name=" + getName()
+                        + ", lifecycle=" + lifecycle.get() + "]");
             }
         } catch (Throwable e) {
             ex = e;
             stdErrCritical(e);
+            System.out.println("worker exit: uncaught throwable [name=" + getName()
+                    + ", lifecycle=" + lifecycle.get() + ", error=" + e + "]");
         } finally {
             if (onHaltAction != null) {
                 try {

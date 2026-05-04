@@ -267,35 +267,21 @@ public class SeqTxnTracker {
      * whose table has become suspended/dropped. Non-ready waiters are re-enqueued. Fired
      * waiters are CAS'd PENDING -> FIRED and the winning thread enqueues the continuation
      * on the waiter's resume job.
-     *
-     * <p>Streaming algorithm: dequeue one waiter at a time, fire-or-reenqueue, and remember
-     * the first waiter we put back. When we encounter that sentinel a second time, we have
-     * made one full pass without firing anything more in the tail -- put the sentinel back
-     * and stop. Zero allocation; tolerates concurrent drains because each thread carries
-     * its own sentinel and the {@code TxnWaiter.state} CAS makes double-firing impossible.
      */
     private void fireWaiters() {
         WaiterHolder holder = HOLDER.get();
         long wtxn = this.writerTxn;
         boolean terminal = isSuspended() || dropped;
-        TxnWaiter sentinel = null;
-        while (waiters.tryDequeue(holder)) {
+        int size = waiters.sizeDirty();
+        for (int i = 0; i < size && waiters.tryDequeue(holder); i++) {
             TxnWaiter w = holder.waiter;
             holder.waiter = null;
             if (w == null) {
                 continue;
             }
-            if (w == sentinel) {
-                // Completed one full pass with no further fireable waiters; put w back and stop.
-                enqueueHolder(holder, w);
-                return;
-            }
             if (terminal || wtxn >= w.targetWriterTxn) {
                 w.tryFire();
             } else {
-                if (sentinel == null) {
-                    sentinel = w;
-                }
                 enqueueHolder(holder, w);
             }
         }

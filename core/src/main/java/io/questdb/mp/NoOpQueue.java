@@ -11,6 +11,11 @@ public class NoOpQueue<T> implements Queue<T> {
     }
 
     @Override
+    public int sizeDirty() {
+        return 0;
+    }
+
+    @Override
     public boolean tryDequeue(T result) {
         return false;
     }

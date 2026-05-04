@@ -105,10 +105,16 @@ public final class TimerShards {
      */
     public void register(@NotNull DelayedFireable entry) {
         if (!running) {
+            System.out.println("TIMER register late (shards halted, calling shutdown) [timerId=" + System.identityHashCode(entry)
+                    + ", caller=" + Thread.currentThread().getName() + "]");
             entry.shutdown();
             return;
         }
-        shards[shardFor(entry)].offer(entry);
+        int shard = shardFor(entry);
+        System.out.println("TIMER register [timerId=" + System.identityHashCode(entry)
+                + ", shard=" + shard
+                + ", caller=" + Thread.currentThread().getName() + "]");
+        shards[shard].offer(entry);
     }
 
     /**
@@ -197,8 +203,11 @@ public final class TimerShards {
             try {
                 DelayedFireable e = shard.take();
                 if (e == PoisonSentinel.INSTANCE || !running) {
+                    System.out.println("TIMER shard exiting (poison or !running) [thread=" + Thread.currentThread().getName() + "]");
                     return;
                 }
+                System.out.println("TIMER shard popped entry [timerId=" + System.identityHashCode(e)
+                        + ", thread=" + Thread.currentThread().getName() + "]");
                 e.expire();
             } catch (InterruptedException ie) {
                 Thread.currentThread().interrupt();
@@ -206,6 +215,7 @@ public final class TimerShards {
                     return;
                 }
             } catch (Throwable t) {
+                System.out.println("TIMER shard expire threw [thread=" + Thread.currentThread().getName() + ", err=" + t + "]");
                 log.critical().$("timer shard expire failed [error=").$(t).I$();
             }
         }

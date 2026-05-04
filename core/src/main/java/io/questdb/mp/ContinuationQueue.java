@@ -48,6 +48,10 @@ public final class ContinuationQueue implements ContinuationSink {
 
     @Override
     public void put(WorkerContinuation cont) {
+        System.out.println("QUEUE put [contId=" + System.identityHashCode(cont)
+                + ", producer=" + Thread.currentThread().getName()
+                + ", done=" + cont.isDone()
+                + "]");
         ResumeTask t = producerScratch.get();
         t.cont = cont;
         queue.enqueue(t);
@@ -73,6 +77,10 @@ public final class ContinuationQueue implements ContinuationSink {
         }
         WorkerContinuation cont = scratch.cont;
         scratch.cont = null;
+        System.out.println("QUEUE dequeued [contId=" + System.identityHashCode(cont)
+                + ", consumer=" + Thread.currentThread().getName()
+                + ", done=" + cont.isDone()
+                + "]");
         return cont;
     }
 
@@ -116,19 +124,44 @@ public final class ContinuationQueue implements ContinuationSink {
      * only be in the mounted-elsewhere state.
      */
     public void run(WorkerContinuation cont) {
-        if (cont.consumeParkRefused() || cont.isDone()) {
+        if (cont.consumeParkRefused()) {
+            System.out.println("QUEUE run skipped (parkRefused) [contId=" + System.identityHashCode(cont)
+                    + ", carrier=" + Thread.currentThread().getName() + "]");
             return;
         }
+        if (cont.isDone()) {
+            System.out.println("QUEUE run skipped (done) [contId=" + System.identityHashCode(cont)
+                    + ", carrier=" + Thread.currentThread().getName() + "]");
+            return;
+        }
+        int spinCount = 0;
         while (true) {
             try {
                 cont.run();
+                if (spinCount > 0) {
+                    System.out.println("QUEUE run completed after spin [contId=" + System.identityHashCode(cont)
+                            + ", carrier=" + Thread.currentThread().getName()
+                            + ", spins=" + spinCount + "]");
+                }
                 return;
             } catch (IllegalStateException e) {
                 if (cont.isDone()) {
+                    System.out.println("QUEUE run dropped (done after ISE) [contId=" + System.identityHashCode(cont)
+                            + ", carrier=" + Thread.currentThread().getName()
+                            + ", spins=" + spinCount + "]");
                     return;
                 }
                 if (cont.consumeParkRefused()) {
+                    System.out.println("QUEUE run dropped (parkRefused after ISE) [contId=" + System.identityHashCode(cont)
+                            + ", carrier=" + Thread.currentThread().getName()
+                            + ", spins=" + spinCount + "]");
                     return;
+                }
+                spinCount++;
+                if ((spinCount & 0xFFFF) == 0) {
+                    System.out.println("QUEUE run spinning on mount race [contId=" + System.identityHashCode(cont)
+                            + ", carrier=" + Thread.currentThread().getName()
+                            + ", spins=" + spinCount + "]");
                 }
                 Os.pause();
             }

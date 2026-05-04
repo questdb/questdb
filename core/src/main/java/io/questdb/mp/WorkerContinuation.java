@@ -152,9 +152,17 @@ public final class WorkerContinuation {
     public void run() {
         WorkerContinuation prev = CURRENT.get();
         CURRENT.set(this);
+        System.out.println("CONT mount [id=" + System.identityHashCode(this)
+                + ", carrier=" + Thread.currentThread().getName()
+                + ", prev=" + (prev == null ? "null" : System.identityHashCode(prev))
+                + "]");
         try {
             cont.run();
         } finally {
+            System.out.println("CONT unmount [id=" + System.identityHashCode(this)
+                    + ", carrier=" + Thread.currentThread().getName()
+                    + ", done=" + cont.isDone()
+                    + "]");
             CURRENT.set(prev);
         }
     }
@@ -167,6 +175,10 @@ public final class WorkerContinuation {
      * {@code TxnWaiter.tryFire} / {@code tryCancel}).
      */
     public void scheduleResume() {
+        System.out.println("CONT scheduleResume [id=" + System.identityHashCode(this)
+                + ", caller=" + Thread.currentThread().getName()
+                + ", done=" + cont.isDone()
+                + "]");
         resumeSink.put(this);
     }
 
@@ -188,6 +200,9 @@ public final class WorkerContinuation {
      * guarantees the body unwinds and the parked native stack is released.
      */
     public void shutdown() {
+        System.out.println("CONT shutdown flag set [id=" + System.identityHashCode(this)
+                + ", caller=" + Thread.currentThread().getName()
+                + "]");
         this.shutdown = true;
     }
 
