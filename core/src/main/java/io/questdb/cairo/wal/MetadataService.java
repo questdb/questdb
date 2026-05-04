@@ -26,11 +26,13 @@ package io.questdb.cairo.wal;
 
 import io.questdb.cairo.AttachDetachStatus;
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.IndexType;
 import io.questdb.cairo.SecurityContext;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.UpdateOperator;
 import io.questdb.cairo.sql.TableRecordMetadata;
 import io.questdb.std.LongList;
+import io.questdb.std.ObjList;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 import org.jetbrains.annotations.TestOnly;
@@ -63,7 +65,7 @@ public interface MetadataService {
      *                                value badly wrong will cause performance degradation. Must be power of 2
      * @param symbolCacheFlag         when set to true, symbol values will be cached on Java heap.
      * @param columnType              {@link ColumnType}
-     * @param isIndexed               configures column to be indexed or not
+     * @param indexType               column index type, see {@link IndexType}
      * @param indexValueBlockCapacity approximation of number of rows for single index key, must be power of 2
      * @param isSequential            for columns that contain sequential values query optimiser can make assumptions on range searches (future feature)
      * @param isDedupKey              when set to true, column will be used as deduplication key
@@ -73,14 +75,49 @@ public interface MetadataService {
             int columnType,
             int symbolCapacity,
             boolean symbolCacheFlag,
-            boolean isIndexed,
+            byte indexType,
             int indexValueBlockCapacity,
             boolean isSequential,
             boolean isDedupKey,
             SecurityContext securityContext
     );
 
-    void addIndex(@NotNull CharSequence columnName, int indexValueBlockSize);
+    default void addColumn(
+            CharSequence columnName,
+            int columnType,
+            int symbolCapacity,
+            boolean symbolCacheFlag,
+            byte indexType,
+            int indexValueBlockCapacity,
+            boolean isSequential,
+            boolean isDedupKey
+    ) {
+        addColumn(
+                columnName,
+                columnType,
+                symbolCapacity,
+                symbolCacheFlag,
+                indexType,
+                indexValueBlockCapacity,
+                isSequential,
+                isDedupKey,
+                null
+        );
+    }
+
+    void addIndex(@NotNull CharSequence columnName, int indexValueBlockSize, byte indexType);
+
+    /**
+     * Add an index with optional INCLUDE (covering) column list. POSTING
+     * indexes use this list to build sidecar files; BITMAP ignores it.
+     * <p>
+     * No default — every implementation must explicitly choose to honor or
+     * ignore the covering list. A delegating default would silently drop
+     * the parameter for any implementation that only overrides the 3-arg
+     * variant, which has historically led to subtle metadata-staleness
+     * bugs (see PR #6861 review M1).
+     */
+    void addIndex(@NotNull CharSequence columnName, int indexValueBlockSize, byte indexType, @Nullable ObjList<CharSequence> coveringColumnNames);
 
     AttachDetachStatus attachPartition(long partitionTimestamp);
 
@@ -91,7 +128,7 @@ public interface MetadataService {
             int newType,
             int symbolCapacity,
             boolean symbolCacheFlag,
-            boolean isIndexed,
+            byte indexType,
             int indexValueBlockCapacity,
             boolean isSequential,
             SecurityContext securityContext

@@ -25,7 +25,6 @@
 package io.questdb.test.griffin.engine.table;
 
 import io.questdb.PropertyKey;
-import io.questdb.cairo.BitmapIndexReader;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.FullPartitionFrameCursorFactory;
@@ -36,6 +35,7 @@ import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.TableWriter;
+import io.questdb.cairo.idx.IndexReader;
 import io.questdb.cairo.security.AllowAllSecurityContext;
 import io.questdb.cairo.sql.PageFrame;
 import io.questdb.cairo.sql.PageFrameCursor;
@@ -66,6 +66,12 @@ import static io.questdb.cairo.sql.PartitionFrameCursorFactory.ORDER_ASC;
 import static io.questdb.cairo.sql.PartitionFrameCursorFactory.ORDER_DESC;
 
 public class PageFrameRecordCursorImplFactoryTest extends AbstractCairoTest {
+    @Override
+    public void setUp() {
+        Rnd rnd = TestUtils.generateRandom(LOG);
+        setProperty(PropertyKey.CAIRO_DEFAULT_SYMBOL_INDEX_TYPE, TestUtils.randomSymbolIndexTypeName(rnd));
+        super.setUp();
+    }
 
     @Test
     public void testFactory_FullPartitionFrameCursorFactory() throws Exception {
@@ -116,11 +122,10 @@ public class PageFrameRecordCursorImplFactoryTest extends AbstractCairoTest {
                     symbolKey = reader.getSymbolMapReader(columnIndex).keyOf(value);
                     metadata = GenericRecordMetadata.copyOf(reader.getMetadata());
                 }
-                SymbolIndexRowCursorFactory symbolIndexRowCursorFactory = new SymbolIndexRowCursorFactory(
+                RowCursorFactory symbolIndexRowCursorFactory = new SymbolIndexRowCursorFactory(
                         columnIndex,
                         symbolKey,
-                        true,
-                        BitmapIndexReader.DIR_FORWARD,
+                        IndexReader.DIR_FORWARD,
                         null
                 );
                 try (FullPartitionFrameCursorFactory frameFactory = new FullPartitionFrameCursorFactory(tableToken, TableUtils.ANY_TABLE_VERSION, metadata, ORDER_ASC, null, 0, false)) {
@@ -1016,11 +1021,10 @@ public class PageFrameRecordCursorImplFactoryTest extends AbstractCairoTest {
                     symbolKey = reader.getSymbolMapReader(columnIndex).keyOf(value);
                     metadata = GenericRecordMetadata.copyOf(reader.getMetadata());
                 }
-                SymbolIndexRowCursorFactory symbolIndexRowCursorFactory = new SymbolIndexRowCursorFactory(
+                RowCursorFactory symbolIndexRowCursorFactory = new SymbolIndexRowCursorFactory(
                         columnIndex,
                         symbolKey,
-                        true,
-                        BitmapIndexReader.DIR_FORWARD,
+                        IndexReader.DIR_FORWARD,
                         null
                 );
                 try (FullPartitionFrameCursorFactory frameFactory = new FullPartitionFrameCursorFactory(tableToken, TableUtils.ANY_TABLE_VERSION, metadata, ORDER_ASC, null, 0, false)) {
