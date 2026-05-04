@@ -10289,7 +10289,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                     """
                             SelectedRecord
                                 Encode sort
-                                  keys: [column desc, sum, berlin_ts desc]
+                                  keys: [column desc, a0, berlin_ts desc]
                                     VirtualRecord
                                       functions: [ts,to_utc(ts),a0,sum,10*a0]
                                         Async Window Join workers: 1
