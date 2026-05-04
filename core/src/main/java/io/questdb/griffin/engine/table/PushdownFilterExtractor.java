@@ -126,11 +126,17 @@ public class PushdownFilterExtractor implements Mutable {
                     // against parquet row group min/max statistics. For that to be
                     // correct the literal must share the column's storage tag and
                     // scale. Rescale the constant to match when possible; abandon
-                    // the condition only when rescale would lose precision or
-                    // overflow the column's storage range.
+                    // the condition when rescale would lose precision, overflow the
+                    // column's storage range, or when the value is only a runtime
+                    // constant (bind variable) whose raw bytes aren't known at
+                    // compile time - reading it through DecimalUtil.load would call
+                    // getDecimal<N>(null) on an unbound NamedParameterLinkFunction
+                    // and trip its assertion.
                     final int colType = condition.getColumnType();
                     if (ColumnType.isDecimal(colType) && ColumnType.isDecimal(f.getType())) {
-                        Function rescaled = rescaleDecimalForPushdown(f, colType, executionContext);
+                        Function rescaled = f.isConstant()
+                                ? rescaleDecimalForPushdown(f, colType, executionContext)
+                                : null;
                         if (rescaled == null) {
                             condition.addValueFunction(f);
                             allConstant = false;

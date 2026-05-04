@@ -702,6 +702,27 @@ public class ParquetTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testDecimalFilterWithBindVariableSkipsPushdown() throws Exception {
+        // Regression: PushdownFilterExtractor.rescaleDecimalForPushdown
+        // called DecimalUtil.load(... null) which evaluates the function. For
+        // a bind variable wrapped in a chained ::BYTE::DECIMAL cast, the
+        // unbound NamedParameterLinkFunction.getBase() asserted at compile
+        // time. Pushdown now skips runtime-constants - they aren't known at
+        // compile time, can't drive parquet row group statistics, and the
+        // regular row-time filter handles them correctly.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (c0 DECIMAL(38, 1), ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO t VALUES ('10.5'::DECIMAL(38, 1), '2024-01-01T00:00:00.000000Z')");
+            bindVariableService.clear();
+            bindVariableService.setStr("b0", "5");
+            assertSql(
+                    "c0\tts\n10.5\t2024-01-01T00:00:00.000000Z\n",
+                    "SELECT c0, ts FROM t WHERE NOT ((:b0::BYTE)::DECIMAL(38, 1) >= c0)"
+            );
+        });
+    }
+
+    @Test
     public void testDedupFixedKeys() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table x (x int, ts timestamp) timestamp(ts) partition by day wal DEDUP UPSERT KEYS(ts, x) ;");
