@@ -148,4 +148,29 @@ public class InSymbolTest extends AbstractCairoTest {
 
         assertSql("test where a in ($1,$2,$3)", tuples);
     }
+
+    @Test
+    public void testBindVarTypedCastInList() throws Exception {
+        // Regression: a bind variable wrapped in a non-STRING/VARCHAR cast
+        // (e.g. ::SYMBOL or ::CHAR) inside the IN list used to fall through
+        // to the SYMBOL/NULL/CHAR branches that read the value at compile
+        // time, tripping NamedParameterLinkFunction.getBase()'s assertion
+        // before the variable was bound. The deferred path now covers all
+        // accepted types.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (s SYMBOL)");
+            execute("INSERT INTO t VALUES ('A'), ('B'), ('C')");
+            bindVariableService.clear();
+            bindVariableService.setStr("b0", "B");
+            bindVariableService.setStr("b1", "C");
+            assertSql(
+                    "s\nA\nB\n",
+                    "SELECT s FROM t WHERE s IN ('A', :b0::SYMBOL) ORDER BY 1"
+            );
+            assertSql(
+                    "s\nA\nC\n",
+                    "SELECT s FROM t WHERE s IN ('A', :b1::CHAR) ORDER BY 1"
+            );
+        });
+    }
 }
