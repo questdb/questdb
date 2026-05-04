@@ -4612,9 +4612,7 @@ public class SqlOptimiser implements Mutable {
             if (node.type != OPERATION
                     && node.type != CONSTANT
                     && node.type != BIND_VARIABLE
-                    && !(node.type == FUNCTION && (
-                            functionParser.getFunctionFactoryCache().isRuntimeConstant(node.token)
-                                    || SqlKeywords.isCastKeyword(node.token)))) {
+                    && !(node.type == FUNCTION && (functionParser.getFunctionFactoryCache().isRuntimeConstant(node.token) || SqlKeywords.isCastKeyword(node.token)))) {
                 return false;
             }
 

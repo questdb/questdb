@@ -37,7 +37,7 @@ import io.questdb.test.griffin.fuzz.expr.FuzzExpr;
 
 /**
  * Single-table {@code SELECT expr[, expr]* FROM t [WHERE p]
- *   [ORDER BY key[, key]* [ASC|DESC]] [LIMIT N]}. Projection entries are
+ * [ORDER BY key[, key]* [ASC|DESC]] [LIMIT N]}. Projection entries are
  * typed expressions produced by {@link ExpressionGenerator}. A
  * {@code SELECT *} shape is still emitted occasionally for wildcard
  * coverage. ORDER BY prefers projection aliases when they exist; when

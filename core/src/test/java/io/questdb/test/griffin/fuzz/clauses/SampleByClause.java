@@ -38,7 +38,7 @@ import io.questdb.test.griffin.fuzz.types.ColumnKind;
 
 /**
  * SELECT [keyExpr,] aggExpr, ts FROM t [WHERE p]
- *   SAMPLE BY N[s|m|h|d] [FILL(mode)] [ALIGN TO CALENDAR | FIRST OBSERVATION]
+ * SAMPLE BY N[s|m|h|d] [FILL(mode)] [ALIGN TO CALENDAR | FIRST OBSERVATION]
  * <p>
  * Key slot and aggregate argument are {@link FuzzExpr}s. Table alias is
  * skipped here because SAMPLE BY interacts oddly with a qualified

@@ -38,7 +38,7 @@ import io.questdb.test.griffin.fuzz.types.ColumnKind;
 
 /**
  * {@code SELECT keyExpr [, keyExpr2], aggExpr FROM t [WHERE p]
- *   [GROUP BY ...] [LIMIT N]}.
+ * [GROUP BY ...] [LIMIT N]}.
  * <p>
  * Key slots are {@link FuzzExpr}s of a groupable kind; the aggregate
  * operates on an expression of a kind compatible with the chosen
