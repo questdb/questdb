@@ -26,6 +26,7 @@ package io.questdb.cutlass.http.processors;
 
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoException;
+import io.questdb.cairo.CommitMode;
 import io.questdb.cairo.ErrorTag;
 import io.questdb.cairo.SecurityContext;
 import io.questdb.cutlass.http.HttpChunkedResponse;
@@ -67,12 +68,22 @@ public class WarningsProcessor implements HttpRequestProcessor, HttpRequestHandl
             try (Path path = new Path()) {
                 final long fsStatus = ff.getFileSystemStatus(path.of(rootDir).$());
                 final boolean macSpecial = fsStatus == 0 && Os.type == Os.DARWIN && Os.arch == Os.ARCH_AARCH64;
-                if (!Files.isMmapSafe(fsStatus) && !macSpecial) {
-                    sink.putAscii('{').putQuoted(TAG).putAscii(':').putQuoted(UNSUPPORTED_FILE_SYSTEM.text())
-                            .putAscii(',').putQuoted(WARNING).putAscii(":\"")
-                            .putAscii("Unsupported file system [dir=").put(rootDir).putAscii(", magic=0x");
-                    Numbers.appendHex(sink, fsStatus & 0xFFFFFFFFL, false);
-                    sink.putAscii("]\"}");
+                if (!macSpecial) {
+                    if (!Files.isSupported(fsStatus)) {
+                        sink.putAscii('{').putQuoted(TAG).putAscii(':').putQuoted(UNSUPPORTED_FILE_SYSTEM.text())
+                                .putAscii(',').putQuoted(WARNING).putAscii(":\"")
+                                .putAscii("Unsupported file system [dir=").put(rootDir).putAscii(", magic=0x");
+                        Numbers.appendHex(sink, fsStatus & 0xFFFFFFFFL, false);
+                        sink.putAscii("]\"}");
+                    } else if (!Files.isMmapSafe(fsStatus) && configuration.getCommitMode() != CommitMode.SYNC) {
+                        // Bootstrap allows this only via the commit.mode=! override; mirror its DURABILITY WARNING.
+                        sink.putAscii('{').putQuoted(TAG).putAscii(':').putQuoted(FILE_SYSTEM_REQUIRES_SYNC.text())
+                                .putAscii(',').putQuoted(WARNING).putAscii(":\"")
+                                .putAscii("Filesystem is not mmap-safe and commit.mode is not sync; ")
+                                .putAscii("data loss or silent corruption is possible [dir=").put(rootDir).putAscii(", magic=0x");
+                        Numbers.appendHex(sink, fsStatus & 0xFFFFFFFFL, false);
+                        sink.putAscii("]\"}");
+                    }
                 }
             }
 
@@ -117,7 +128,7 @@ public class WarningsProcessor implements HttpRequestProcessor, HttpRequestHandl
             if (tag.isEmpty()) {
                 sink.putAscii("[]");
             } else {
-                if (current.length() == 0) {
+                if (current.isEmpty()) {
                     sink.putAscii('[');
                 } else {
                     sink.put(current.subSequence(0, current.length() - 1));

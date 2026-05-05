@@ -47,6 +47,7 @@ import io.questdb.test.cairo.DefaultTestCairoConfiguration;
 import io.questdb.test.std.TestFilesFacadeImpl;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
+import org.junit.Assume;
 import org.junit.Test;
 
 import java.io.File;
@@ -127,6 +128,16 @@ public class BootstrapTest extends AbstractBootstrapTest {
         Bootstrap.checkMmapSafeOrSync(ext4, "ext4", CommitMode.ASYNC, false, "/some/path", "db");
         Bootstrap.checkMmapSafeOrSync(ext4, "ext4", CommitMode.NOSYNC, false, "/some/path", "db");
         Bootstrap.checkMmapSafeOrSync(ext4, "ext4", CommitMode.SYNC, false, "/some/path", "db");
+    }
+
+    @Test
+    public void testCheckMmapSafeAllowsMacAarch64ZeroStatfs() {
+        // Some macOS-aarch64 hosted runners surface fsStatus=0 from statfs() even though
+        // the filesystem is APFS. verifyFileSystem treats that as SUPPORTED for logging,
+        // so the gate must agree -- otherwise startup logs "SUPPORTED" and then throws
+        // "Unsupported Filesystem Configuration" immediately after.
+        Assume.assumeTrue(Os.type == Os.DARWIN && Os.arch == Os.ARCH_AARCH64);
+        Bootstrap.checkMmapSafeOrSync(0L, "apfs", CommitMode.NOSYNC, false, "/db", "db");
     }
 
     @Test

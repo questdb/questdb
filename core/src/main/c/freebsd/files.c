@@ -261,7 +261,10 @@ JNIEXPORT jlong JNICALL Java_io_questdb_std_Files_getFileSystemStatus
             || (n[0]=='o' && n[1]=='s' && n[2]=='x' && n[3]=='f' && n[4]=='u' && n[5]=='s' && n[6]=='e' && n[7]==0)) {
         return magic | FLAG_FS_SUPPORTED;
     }
-    return magic;
+    // statfs() returned a real f_fstypename we don't have a special case for.
+    // Treat it as supported-but-not-mmap-safe so the gate requires commit.mode=sync,
+    // matching the Linux "recognised but unclassified" path.
+    return magic | FLAG_FS_SUPPORTED;
 }
 
 #else
@@ -323,7 +326,10 @@ JNIEXPORT jlong JNICALL Java_io_questdb_std_Files_getFileSystemStatus
     }
     const jlong magic = (jlong) sb.f_type;
     const char *name;
-    jlong flags = 0;
+    // Start from FLAG_FS_SUPPORTED: any case below that names the filesystem is, by
+    // definition, recognised by name. mmap-safe and hard-fail cases override with
+    // their full flag combos. The truly-unknown default branch clears this back to 0.
+    jlong flags = FLAG_FS_SUPPORTED;
     switch (sb.f_type) {
         // mmap-safe whitelist for FreeBSD
         case 0x35:
@@ -432,7 +438,11 @@ JNIEXPORT jlong JNICALL Java_io_questdb_std_Files_getFileSystemStatus
         case 0x58465342: name = "XFS";          break;
         case 0xEF53:    name = "ext4";          break;
         default:
+            // Magic not in our table: we genuinely cannot name this filesystem.
+            // Strip FLAG_FS_SUPPORTED so the startup log and /warnings surface
+            // it as UNSUPPORTED rather than implying we know what it is.
             name = "unknown";
+            flags = 0;
             break;
     }
     strcpy((char *) lpszName, name);

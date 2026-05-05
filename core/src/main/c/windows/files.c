@@ -581,11 +581,19 @@ JNIEXPORT jlong JNICALL Java_io_questdb_std_Files_getFileSystemStatus(JNIEnv *e,
             fileSystemName,
             MAX_PATH)) {
         SaveLastError();
-        // Treat completely unidentifiable network drives as hard-fail; everything
-        // else (e.g. transient ENOENT on a removable) is left to the caller.
+        // GetVolumeInformation against a DRIVE_REMOTE round-trips through the SMB
+        // redirector and can fail transiently (redirector reconnect, Kerberos
+        // ticket renewal, brief server unavailability, lazy reconnect of a mapped
+        // drive still completing its first round-trip at startup). We can't tell
+        // a transient failure from a permanently broken share, so we don't hard
+        // fail: a truly broken share will surface a precise I/O error on the
+        // next CreateFile/WriteFile anyway. Surface this as "supported but not
+        // mmap-safe" so the gate requires commit.mode=sync and the operator can
+        // override with commit.mode=!nosync, matching the treatment of identified
+        // SMB and the Linux statfs-failure path.
         if (isRemote) {
             strcpy((char *) lpszName, "REMOTE");
-            return MAGIC_REMOTE_UNREAD | FLAG_FS_SUPPORTED | FLAG_FS_HARD_FAIL;
+            return MAGIC_REMOTE_UNREAD | FLAG_FS_SUPPORTED;
         }
         return 0;
     }
@@ -624,8 +632,13 @@ JNIEXPORT jlong JNICALL Java_io_questdb_std_Files_getFileSystemStatus(JNIEnv *e,
         // FAT family is local but not mmap-safe; require commit.mode=sync.
         return MAGIC_FAT_LOCAL | FLAG_FS_SUPPORTED;
     }
-    // Unknown local FS - caller decides via the gate.
-    return MAGIC_LOCAL_UNKNOWN;
+    // Local volume with a real filesystem name we don't recognise (e.g. a
+    // third-party driver). Treat it as supported-but-not-mmap-safe so the gate
+    // requires commit.mode=sync, matching the Linux "recognised but unclassified"
+    // path. Without FLAG_FS_SUPPORTED, the startup log would say "UNSUPPORTED"
+    // and /warnings would tag UNSUPPORTED FILE SYSTEM, even though the gate
+    // accepts the volume with commit.mode=sync.
+    return MAGIC_LOCAL_UNKNOWN | FLAG_FS_SUPPORTED;
 }
 
 JNIEXPORT jint JNICALL Java_io_questdb_std_Files_openRO(JNIEnv *e, jclass cl, jlong lpszName) {

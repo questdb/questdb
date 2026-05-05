@@ -63,7 +63,7 @@ public class FilesFacadeImpl implements FilesFacade {
             long fsStatus = Files.getFileSystemStatus(path.$());
             path.seekZ(); // useful for debugging
             // allow mixed I/O for all supported FSes except ZFS
-            return fsStatus < 0 && Math.abs(fsStatus) != ZFS_MAGIC_NUMBER;
+            return Files.isSupported(fsStatus) && (fsStatus & 0xFFFFFFFFL) != ZFS_MAGIC_NUMBER;
         }
     }
 

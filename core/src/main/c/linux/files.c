@@ -170,7 +170,10 @@ JNIEXPORT jlong JNICALL Java_io_questdb_std_Files_getFileSystemStatus
     }
     const jlong magic = (jlong) sb.f_type;
     const char *name;
-    jlong flags = 0;
+    // Start from FLAG_FS_SUPPORTED: any case below that names the filesystem is, by
+    // definition, recognised by name. mmap-safe and hard-fail cases override with
+    // their full flag combos. The truly-unknown default branch clears this back to 0.
+    jlong flags = FLAG_FS_SUPPORTED;
     switch (sb.f_type) {
         // mmap-safe whitelist for Linux
         case 0xEF53: // ext2, ext3, ext4
@@ -207,6 +210,13 @@ JNIEXPORT jlong JNICALL Java_io_questdb_std_Files_getFileSystemStatus
         case 0x65735546:
             // Generic FUSE — durability is driver-dependent (sshfs is unsafe).
             name = "FUSE";
+            flags = FLAG_FS_SUPPORTED;
+            break;
+        case 0x6a656a63:
+            // VirtIO-FS (Docker Desktop on macOS, lima, podman): mmap'd writes
+            // are buffered in the client page cache and require msync/sync to
+            // reach the underlying file. Same shape as 9p on WSL2.
+            name = "virtiofs";
             flags = FLAG_FS_SUPPORTED;
             break;
         case 0xff534d42:
@@ -285,7 +295,11 @@ JNIEXPORT jlong JNICALL Java_io_questdb_std_Files_getFileSystemStatus
         case 0xabba1974: name = "XENFS";        break;
         case 0x012ff7b4: name = "XENIX";        break;
         default:
+            // Magic not in our table: we genuinely cannot name this filesystem.
+            // Strip FLAG_FS_SUPPORTED so the startup log and /warnings surface
+            // it as UNSUPPORTED rather than implying we know what it is.
             name = "unknown";
+            flags = 0;
             break;
     }
     strcpy((char *) lpszName, name);
