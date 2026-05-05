@@ -2,17 +2,33 @@ steps:
   - bash: python3 find_unterminated_logs.py core/src --exclude=LogParanoiaTest.java
     displayName: "Check for unterminated log statements"
   - bash: |
-      wget "https://download.jetbrains.com/product?code=IIU&latest&distribution=linux" -O intellij.tar.gz
-      mkdir -p /opt/intellij
-      tar xvz -C /opt/intellij -f intellij.tar.gz
-      rm intellij.tar.gz
-      cd /opt/intellij
-      ln -s idea-* idea
+      set -eux
+      if [ -x /opt/intellij/idea/bin/idea.sh ]; then
+        IDEA_HOME=/opt/intellij/idea
+      else
+        IDEA_ROOT="$(Build.SourcesDirectory)/.ci/intellij"
+        rm -rf "$IDEA_ROOT"
+        mkdir -p "$IDEA_ROOT"
+        wget "https://download.jetbrains.com/product?code=IIU&latest&distribution=linux" -O intellij.tar.gz
+        tar xzf intellij.tar.gz -C "$IDEA_ROOT"
+        rm intellij.tar.gz
+        cd "$IDEA_ROOT"
+        ln -s idea-* idea
+        IDEA_HOME="$IDEA_ROOT/idea"
+      fi
+      echo "IDEA_HOME: $IDEA_HOME"
       echo "JAVA_HOME: $JAVA_HOME"
       echo "java --version"
-      java --version
+      "$JAVA_HOME/bin/java" --version
     displayName: "Install IntelliJ"
-  - bash: /opt/intellij/idea/bin/idea.sh format -s .idea/codeStyles/Project.xml -m "*.java" -r .
+  - bash: |
+      set -eux
+      if [ -x /opt/intellij/idea/bin/idea.sh ]; then
+        IDEA_BIN=/opt/intellij/idea/bin/idea.sh
+      else
+        IDEA_BIN="$(Build.SourcesDirectory)/.ci/intellij/idea/bin/idea.sh"
+      fi
+      "$IDEA_BIN" format -s .idea/codeStyles/Project.xml -m "*.java" -r .
     displayName: "Applying formatting"
   - bash: git submodule foreach --quiet 'git checkout -- . 2>/dev/null; git clean -fd 2>/dev/null' || true
     displayName: "Reset submodules after formatting"
