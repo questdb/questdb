@@ -4,8 +4,7 @@ jobs:
     strategy:
       matrix:
         linux-jdk25:
-          imageName: "ubuntu-latest"
-          poolName: "Azure Pipelines"
+          poolName: hetzner-incus
           os: Linux
           jdk: "1.25"
     pool:
@@ -23,6 +22,12 @@ jobs:
         fetchDepth: 1
         lfs: false
         submodules: false
+      - bash: |
+          JAVA_PATH="/usr/lib/jvm/java-25-openjdk-amd64"
+          echo "##vso[task.setvariable variable=JAVA_HOME]$JAVA_PATH"
+          echo "##vso[task.setvariable variable=JAVA_HOME_25_X64]$JAVA_PATH"
+          echo "JAVA_HOME will be set to: $JAVA_PATH"
+        displayName: "Activate JDK 25 (openjdk amd64)"
       - template: detect-local-client.yml
 
       - template: java-lint.yml
