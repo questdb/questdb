@@ -220,25 +220,25 @@ public class CumeDistFunctionFactory extends AbstractWindowFunctionFactory {
                 }
             }
             lastRecordOffset = recordOffset;
-            Unsafe.getUnsafe().putLong(spi.getAddress(recordOffset, columnIndex), rank);
+            Unsafe.putLong(spi.getAddress(recordOffset, columnIndex), rank);
             count++;
         }
 
         @Override
         public void pass2(Record record, long recordOffset, WindowSPI spi) {
-            long storedRank = Unsafe.getUnsafe().getLong(spi.getAddress(recordOffset, columnIndex));
+            long storedRank = Unsafe.getLong(spi.getAddress(recordOffset, columnIndex));
 
             if (prevRank != 0 && storedRank != prevRank) {
                 // Peer group boundary: flush all deferred rows with (storedRank - 1) / totalRows
                 double cumeDist = (double) (storedRank - 1) / (double) totalRows;
                 for (long i = 0; i < deferredSize; i++) {
                     long offset = deferredOffsets.getLong(i * Long.BYTES);
-                    Unsafe.getUnsafe().putDouble(spi.getAddress(offset, columnIndex), cumeDist);
+                    Unsafe.putDouble(spi.getAddress(offset, columnIndex), cumeDist);
                 }
                 deferredSize = 0;
             }
 
-            Unsafe.getUnsafe().putDouble(spi.getAddress(recordOffset, columnIndex), 1.0);
+            Unsafe.putDouble(spi.getAddress(recordOffset, columnIndex), 1.0);
             deferredOffsets.putLong(deferredSize * Long.BYTES, recordOffset);
             deferredSize++;
             prevRank = storedRank;
@@ -348,7 +348,7 @@ public class CumeDistFunctionFactory extends AbstractWindowFunctionFactory {
 
         @Override
         public void pass1(Record record, long recordOffset, WindowSPI spi) {
-            Unsafe.getUnsafe().putDouble(spi.getAddress(recordOffset, columnIndex), CUME_DIST_CONST);
+            Unsafe.putDouble(spi.getAddress(recordOffset, columnIndex), CUME_DIST_CONST);
         }
 
         @Override
@@ -475,11 +475,13 @@ public class CumeDistFunctionFactory extends AbstractWindowFunctionFactory {
             if (mapValue.isNew()) {
                 rank = 1;
                 count = 1;
-                long startOffset = deferredOffsets.appendAddressFor((long) initialBufferSize * Long.BYTES)
-                        - deferredOffsets.getPageAddress(0);
-                mapValue.putLong(3, startOffset);
+                // Initialise the deferred-slice descriptor (startOffset / size / capacity) to 0.
+                // Pass2 treats capacity == 0 as a lazy-alloc sentinel and reserves the slice
+                // there on the first write, which keeps pass1 from pre-reserving native buffer
+                // space that pass1 itself never touches.
+                mapValue.putLong(3, 0L);
                 mapValue.putLong(4, 0L);
-                mapValue.putLong(5, initialBufferSize);
+                mapValue.putLong(5, 0L);
             } else {
                 long lastOffset = mapValue.getLong(0);
                 rank = mapValue.getLong(1);
@@ -493,7 +495,7 @@ public class CumeDistFunctionFactory extends AbstractWindowFunctionFactory {
             mapValue.putLong(0, recordOffset);
             mapValue.putLong(1, rank);
             mapValue.putLong(2, count + 1);
-            Unsafe.getUnsafe().putLong(spi.getAddress(recordOffset, columnIndex), rank);
+            Unsafe.putLong(spi.getAddress(recordOffset, columnIndex), rank);
         }
 
         @Override
@@ -504,7 +506,7 @@ public class CumeDistFunctionFactory extends AbstractWindowFunctionFactory {
             MapValue mapValue = key.findValue();
             assert mapValue != null;
 
-            long storedRank = Unsafe.getUnsafe().getLong(spi.getAddress(recordOffset, columnIndex));
+            long storedRank = Unsafe.getLong(spi.getAddress(recordOffset, columnIndex));
             long totalRows = mapValue.getLong(2) - 1;
             long prevRank = mapValue.getLong(1);
             long startOffset = mapValue.getLong(3);
@@ -516,14 +518,22 @@ public class CumeDistFunctionFactory extends AbstractWindowFunctionFactory {
                 double cumeDist = (double) (storedRank - 1) / (double) totalRows;
                 for (long i = 0; i < size; i++) {
                     long offset = deferredOffsets.getLong(startOffset + i * Long.BYTES);
-                    Unsafe.getUnsafe().putDouble(spi.getAddress(offset, columnIndex), cumeDist);
+                    Unsafe.putDouble(spi.getAddress(offset, columnIndex), cumeDist);
                 }
                 size = 0;
             }
 
-            // Grow the slice if it is full. expandRingBuffer doubles capacity and returns the
-            // new slice via memoryDesc; the previous slice is recycled through freeList.
-            if (size == capacity) {
+            if (capacity == 0) {
+                // First write into this partition's deferred slice: allocate it now rather than
+                // pre-reserving in pass1, where the slice would have stayed unused. Skipping the
+                // pass1 reservation avoids initialBufferSize * Long.BYTES of pre-committed native
+                // memory per partition (256 bytes per partition by default).
+                capacity = initialBufferSize;
+                startOffset = deferredOffsets.appendAddressFor(capacity * Long.BYTES)
+                        - deferredOffsets.getPageAddress(0);
+            } else if (size == capacity) {
+                // Grow the slice if it is full. expandRingBuffer doubles capacity and returns the
+                // new slice via memoryDesc; the previous slice is recycled through freeList.
                 memoryDesc.reset(capacity, startOffset, size, 0, freeList);
                 expandRingBuffer(deferredOffsets, memoryDesc, Long.BYTES);
                 capacity = memoryDesc.capacity;
@@ -532,7 +542,7 @@ public class CumeDistFunctionFactory extends AbstractWindowFunctionFactory {
 
             deferredOffsets.putLong(startOffset + size * Long.BYTES, recordOffset);
             size++;
-            Unsafe.getUnsafe().putDouble(spi.getAddress(recordOffset, columnIndex), 1.0);
+            Unsafe.putDouble(spi.getAddress(recordOffset, columnIndex), 1.0);
             mapValue.putLong(1, storedRank);
             mapValue.putLong(3, startOffset);
             mapValue.putLong(4, size);
@@ -541,15 +551,14 @@ public class CumeDistFunctionFactory extends AbstractWindowFunctionFactory {
 
         @Override
         public void preparePass2() {
-            // Reset column 1 (rank) to 0 for use as prevRank in pass2, and reset each partition's
-            // deferred slice size to 0 (capacity and startOffset remain so that pass2 reuses the
-            // already-allocated native slice).
+            // Reset column 1 (rank) to 0 so pass2 can reuse it as prevRank. Columns 3, 4 and 5
+            // (startOffset, size, capacity) stay at their pass1 defaults of 0; pass2 allocates
+            // the deferred slice lazily on the first write into each partition.
             MapRecordCursor cursor = map.getCursor();
             MapRecord record = map.getRecord();
             while (cursor.hasNext()) {
                 MapValue value = record.getValue();
                 value.putLong(1, 0);
-                value.putLong(4, 0L);
             }
         }
 

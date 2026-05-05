@@ -189,15 +189,15 @@ public class NtileFunctionFactory extends AbstractWindowFunctionFactory {
 
         @Override
         public void pass1(Record record, long recordOffset, WindowSPI spi) {
-            Unsafe.getUnsafe().putLong(spi.getAddress(recordOffset, columnIndex), count);
+            Unsafe.putLong(spi.getAddress(recordOffset, columnIndex), count);
             count++;
         }
 
         @Override
         public void pass2(Record record, long recordOffset, WindowSPI spi) {
-            long rowNumber = Unsafe.getUnsafe().getLong(spi.getAddress(recordOffset, columnIndex));
+            long rowNumber = Unsafe.getLong(spi.getAddress(recordOffset, columnIndex));
             long bucket = computeNtile(rowNumber, totalRows, bucketCount);
-            Unsafe.getUnsafe().putLong(spi.getAddress(recordOffset, columnIndex), bucket);
+            Unsafe.putLong(spi.getAddress(recordOffset, columnIndex), bucket);
         }
 
         @Override
@@ -311,7 +311,7 @@ public class NtileFunctionFactory extends AbstractWindowFunctionFactory {
                 rowNumber = mapValue.getLong(0) + 1;
             }
             mapValue.putLong(0, rowNumber);
-            Unsafe.getUnsafe().putLong(spi.getAddress(recordOffset, columnIndex), rowNumber);
+            Unsafe.putLong(spi.getAddress(recordOffset, columnIndex), rowNumber);
         }
 
         @Override
@@ -321,10 +321,10 @@ public class NtileFunctionFactory extends AbstractWindowFunctionFactory {
             key.put(partitionByRecord, partitionBySink);
             MapValue mapValue = key.findValue();
 
-            long rowNumber = Unsafe.getUnsafe().getLong(spi.getAddress(recordOffset, columnIndex));
+            long rowNumber = Unsafe.getLong(spi.getAddress(recordOffset, columnIndex));
             long totalRows = mapValue.getLong(0);
             long bucket = computeNtile(rowNumber, totalRows, bucketCount);
-            Unsafe.getUnsafe().putLong(spi.getAddress(recordOffset, columnIndex), bucket);
+            Unsafe.putLong(spi.getAddress(recordOffset, columnIndex), bucket);
         }
 
         @Override
