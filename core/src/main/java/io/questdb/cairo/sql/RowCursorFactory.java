@@ -28,8 +28,9 @@ import io.questdb.griffin.Plannable;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.ObjList;
+import io.questdb.std.QuietCloseable;
 
-public interface RowCursorFactory extends Plannable {
+public interface RowCursorFactory extends Plannable, QuietCloseable {
 
     static void init(
             ObjList<? extends RowCursorFactory> factories,
@@ -45,6 +46,10 @@ public interface RowCursorFactory extends Plannable {
         for (int i = 0, n = factories.size(); i < n; i++) {
             factories.getQuick(i).prepareCursor(pageFrameCursor);
         }
+    }
+
+    @Override
+    default void close() {
     }
 
     RowCursor getCursor(PageFrame pageFrame, PageFrameMemory pageFrameMemory);

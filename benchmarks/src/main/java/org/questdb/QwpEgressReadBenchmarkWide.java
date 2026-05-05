@@ -377,14 +377,14 @@ public class QwpEgressReadBenchmarkWide {
                             int[] d4Idx = batch.nonNullIndex(8);
                             int[] d5Idx = batch.nonNullIndex(9);
                             for (int r = 0; r < n; r++) {
-                                long ts = io.questdb.client.std.Unsafe.getUnsafe().getLong(tsBase + 8L * tsIdx[r]);
-                                long id = io.questdb.client.std.Unsafe.getUnsafe().getLong(idBase + 8L * idIdx[r]);
-                                long priceBits = io.questdb.client.std.Unsafe.getUnsafe().getLong(priceBase + 8L * priceIdx[r]);
-                                long d1 = io.questdb.client.std.Unsafe.getUnsafe().getLong(d1Base + 8L * d1Idx[r]);
-                                long d2 = io.questdb.client.std.Unsafe.getUnsafe().getLong(d2Base + 8L * d2Idx[r]);
-                                long d3 = io.questdb.client.std.Unsafe.getUnsafe().getLong(d3Base + 8L * d3Idx[r]);
-                                long d4 = io.questdb.client.std.Unsafe.getUnsafe().getLong(d4Base + 8L * d4Idx[r]);
-                                long d5 = io.questdb.client.std.Unsafe.getUnsafe().getLong(d5Base + 8L * d5Idx[r]);
+                                long ts = io.questdb.std.Unsafe.getLong(tsBase + 8L * tsIdx[r]);
+                                long id = io.questdb.std.Unsafe.getLong(idBase + 8L * idIdx[r]);
+                                long priceBits = io.questdb.std.Unsafe.getLong(priceBase + 8L * priceIdx[r]);
+                                long d1 = io.questdb.std.Unsafe.getLong(d1Base + 8L * d1Idx[r]);
+                                long d2 = io.questdb.std.Unsafe.getLong(d2Base + 8L * d2Idx[r]);
+                                long d3 = io.questdb.std.Unsafe.getLong(d3Base + 8L * d3Idx[r]);
+                                long d4 = io.questdb.std.Unsafe.getLong(d4Base + 8L * d4Idx[r]);
+                                long d5 = io.questdb.std.Unsafe.getLong(d5Base + 8L * d5Idx[r]);
                                 DirectUtf8Sequence sym = batch.getStrA(3, r);
                                 DirectUtf8Sequence note = batch.getStrB(4, r);
                                 DirectUtf8Sequence s1 = batch.getStrA(10, r);
@@ -430,16 +430,7 @@ public class QwpEgressReadBenchmarkWide {
     // Helpers
     // ------------------------------------------------------------------
 
-    private static final class Result {
-        final long bytes;
-        final long elapsedNanos;
-        final long rows;
-
-        Result(long elapsedNanos, long rows, long bytes) {
-            this.elapsedNanos = elapsedNanos;
-            this.rows = rows;
-            this.bytes = bytes;
-        }
+    private record Result(long elapsedNanos, long rows, long bytes) {
     }
 
     static {

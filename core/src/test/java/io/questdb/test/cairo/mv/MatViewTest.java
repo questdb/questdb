@@ -3053,6 +3053,8 @@ public class MatViewTest extends AbstractCairoTest {
     @Test
     public void testHugeSampleByInterval() throws Exception {
         assertMemoryLeak(() -> {
+            Rnd rnd = TestUtils.generateRandom(LOG);
+            setProperty(PropertyKey.CAIRO_DEFAULT_SYMBOL_INDEX_TYPE, TestUtils.randomSymbolIndexTypeName(rnd));
             execute(
                     "CREATE TABLE Samples (" +
                             "  Time TIMESTAMP," +
@@ -3949,6 +3951,8 @@ public class MatViewTest extends AbstractCairoTest {
     @Test
     public void testLargeSampleByInterval() throws Exception {
         assertMemoryLeak(() -> {
+            Rnd rnd = TestUtils.generateRandom(LOG);
+            setProperty(PropertyKey.CAIRO_DEFAULT_SYMBOL_INDEX_TYPE, TestUtils.randomSymbolIndexTypeName(rnd));
             execute(
                     "CREATE TABLE Samples (" +
                             "  Time TIMESTAMP," +
@@ -6364,6 +6368,8 @@ public class MatViewTest extends AbstractCairoTest {
         // Verify that the detached base table reader used by the refresh job
         // can be safely used in the mat view query multiple times.
         assertMemoryLeak(() -> {
+            Rnd rnd = TestUtils.generateRandom(LOG);
+            setProperty(PropertyKey.CAIRO_DEFAULT_SYMBOL_INDEX_TYPE, TestUtils.randomSymbolIndexTypeName(rnd));
             executeWithRewriteTimestamp(
                     "create table base_price (" +
                             "sym symbol index, sym2 symbol, price double, ts #TIMESTAMP, extra_col long" +
