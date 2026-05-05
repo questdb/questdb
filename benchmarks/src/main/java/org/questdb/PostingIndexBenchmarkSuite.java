@@ -458,8 +458,11 @@ public class PostingIndexBenchmarkSuite {
             if (lastDot <= pcAt) continue;
             String prefix = n.substring(0, lastDot);
             long sealTxn;
-            try { sealTxn = Long.parseLong(n.substring(lastDot + 1)); }
-            catch (NumberFormatException e) { continue; }
+            try {
+                sealTxn = Long.parseLong(n.substring(lastDot + 1));
+            } catch (NumberFormatException e) {
+                continue;
+            }
             maxSeal.merge(prefix, sealTxn, Math::max);
         }
         for (File f : files) {
@@ -470,8 +473,11 @@ public class PostingIndexBenchmarkSuite {
             if (lastDot <= pcAt) continue;
             String prefix = n.substring(0, lastDot);
             long sealTxn;
-            try { sealTxn = Long.parseLong(n.substring(lastDot + 1)); }
-            catch (NumberFormatException e) { continue; }
+            try {
+                sealTxn = Long.parseLong(n.substring(lastDot + 1));
+            } catch (NumberFormatException e) {
+                continue;
+            }
             Long max = maxSeal.get(prefix);
             if (max != null && sealTxn < max) {
                 f.delete();
