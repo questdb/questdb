@@ -30,6 +30,7 @@ pub extern crate jni;
 pub mod allocator;
 pub mod files;
 pub mod parquet;
+pub mod parquet_metadata;
 pub mod parquet_read;
 pub mod parquet_write;
 pub mod qwp_zstd;
