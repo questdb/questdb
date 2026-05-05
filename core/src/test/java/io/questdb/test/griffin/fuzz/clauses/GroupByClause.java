@@ -98,18 +98,33 @@ public final class GroupByClause {
         // exercised.
         if (keys.size() > 0 && rnd.nextBoolean()) {
             sql.put(" GROUP BY ");
+            StringSink keySink = new StringSink();
             for (int i = 0, n = keys.size(); i < n; i++) {
                 if (i > 0) {
                     sql.put(", ");
                 }
                 int mode = rnd.nextInt(3);
+                if (mode == 2) {
+                    keySink.clear();
+                    keys.getQuick(i).appendSql(keySink, ctx);
+                    // SqlOptimiser interprets a bare integer literal in GROUP BY
+                    // as a 1-based positional reference into the select list.
+                    // The bind variant rewrites the same literal as :bN::INT,
+                    // which is a function call rather than a CONSTANT and so
+                    // never triggers positional lookup. Fall back to the alias
+                    // mode so the literal and bind forms agree on grouping.
+                    if (isBareIntegerLiteral(keySink)) {
+                        mode = 0;
+                    } else {
+                        sql.put(keySink);
+                        continue;
+                    }
+                }
                 if (mode == 0) {
                     sql.put('e').put(i);
-                } else if (mode == 1) {
+                } else {
                     // positional: keys occupy positions 1..n; aggregate is n+1.
                     sql.put(i + 1);
-                } else {
-                    keys.getQuick(i).appendSql(sql, ctx);
                 }
             }
         }
@@ -156,6 +171,24 @@ public final class GroupByClause {
                 sink.put(rnd.nextBoolean() ? " ASC" : " DESC");
             }
         }
+    }
+
+    private static boolean isBareIntegerLiteral(CharSequence s) {
+        int n = s.length();
+        if (n == 0) {
+            return false;
+        }
+        int i = s.charAt(0) == '-' ? 1 : 0;
+        if (i == n) {
+            return false;
+        }
+        for (; i < n; i++) {
+            char c = s.charAt(i);
+            if ((c < '0' || c > '9') && c != '_') {
+                return false;
+            }
+        }
+        return true;
     }
 
     private static Aggregate pickAggregate(Rnd rnd, ExpressionGenerator gen) {
