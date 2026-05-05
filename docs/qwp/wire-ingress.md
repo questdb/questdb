@@ -796,9 +796,19 @@ upgrade request.
   on a primary failure. OK frames are still tracked (they identify the
   per-table seqTxns later durable acks must cover) but they do not
   advance the trim watermark.
-- A client that opted in does NOT participate in idle PING/PONG keep-alive
-  to flush durable acks. Producers send naturally; idle connections
-  accept the cumulative-frame lag.
+- A client that opted in SHOULD send a WebSocket PING periodically
+  while there are pending durable confirmations and there is no
+  organic outbound traffic. The OSS server has no background flush
+  queue for durable-ack frames; it only flushes them when the
+  connection's file descriptor wakes on inbound activity (binary
+  message, PING, or CLOSE). An idle connection that has finished
+  publishing would otherwise never see the watermark advance and its
+  store-and-forward log would not trim. Organic frames count as
+  inbound activity and suppress the PING; the PING is a filler, not a
+  fixed-cadence keepalive. The reference Java client sends a 2-byte
+  PING every `durable_ack_keepalive_interval_millis` (default 200 ms)
+  while `pendingDurable` is non-empty AND no other frame has been sent
+  in the interval; see `sf-client.md` §11.
 - Reconnects discard any in-flight durable-ack tracking. The new
   connection re-OKs replayed batches and the server re-emits cumulative
   durable-ack watermarks from scratch, so trim must restart against the
