@@ -393,6 +393,87 @@ public class SampleByFillPrevTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testFillPrevCrossColumnDecimalScaleMismatch() throws Exception {
+        // Sibling of testFillPrevCrossColumnDecimalPrecisionMismatch: source
+        // and target share precision 10 but their scales differ (2 vs 4). Both
+        // happen to land on the DECIMAL64 physical width, so a tag-only check
+        // (DECIMAL == DECIMAL) would silently accept and feed scale-2 longs
+        // into a scale-4 target -- a 100x value drift. needsExactTypeMatch
+        // demands targetType == sourceType so the scale carried in the type's
+        // high bits is part of the comparison; the rejection fires here.
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE t (
+                        ts TIMESTAMP,
+                        a DECIMAL(10, 2),
+                        b DECIMAL(10, 4)
+                    ) TIMESTAMP(ts) PARTITION BY DAY""");
+            execute("""
+                    INSERT INTO t VALUES
+                        ('2024-01-01T00:00:00.000000Z', 12.34::DECIMAL(10,2), 56.7890::DECIMAL(10,4))""");
+            String sql = "SELECT ts, first(a) a, first(b) b FROM t SAMPLE BY 1h FILL(PREV, PREV(a)) ALIGN TO CALENDAR";
+            int prevArgPos = sql.indexOf("a", sql.indexOf("PREV(a)") + 5);
+            assertExceptionNoLeakCheck(sql, prevArgPos, "cannot fill target column of type DECIMAL(10,4)");
+            assertExceptionNoLeakCheck(sql, prevArgPos, "source type DECIMAL(10,2)");
+        });
+    }
+
+    @Test
+    public void testFillPrevCrossColumnIntervalUnitMismatchUnreachable() throws Exception {
+        // Sibling-of-record for testFillPrevCrossColumnTimestampUnitMismatch.
+        // generateFill's needsExactTypeMatch arm includes
+        // targetTag == ColumnType.INTERVAL alongside TIMESTAMP, so a future
+        // INTERVAL_MICRO -> INTERVAL_NANO cross-col PREV would reject up front.
+        // The arm is currently defensive: there is no INTERVAL aggregate
+        // factory (FirstIntervalGroupByFunction etc.), and INTERVAL outputs
+        // produced by interval(lo, hi) live as GROUP BY keys, which auto-route
+        // through FILL_KEY without consulting the cross-col rejection check.
+        // This test pins down both halves of that architectural state:
+        //   1. mixed-unit INTERVAL keys coexist under FILL(PREV) without
+        //      rejection, because both columns are FILL_KEY;
+        //   2. first(interval(...)) currently produces STRING, not INTERVAL,
+        //      so the cross-col PREV rejection arm cannot be reached through
+        //      current SQL grammar. If a real INTERVAL aggregate ever lands,
+        //      the second assertion will start failing and prompt a paired
+        //      cross-unit rejection test mirroring the TIMESTAMP variant.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (loA TIMESTAMP, hiA TIMESTAMP, loB TIMESTAMP_NS, hiB TIMESTAMP_NS, v DOUBLE, ts TIMESTAMP) " +
+                    "TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO t VALUES " +
+                    "('2020-01-01T00:00:00.000000Z', '2020-02-01T00:00:00.000000Z', " +
+                    " '2021-03-01T00:00:00.000000000Z'::TIMESTAMP_NS, '2021-04-01T00:00:00.000000000Z'::TIMESTAMP_NS, " +
+                    " 10.0, '2024-01-01T00:00:00.000000Z')," +
+                    "('2020-01-01T00:00:00.000000Z', '2020-02-01T00:00:00.000000Z', " +
+                    " '2021-03-01T00:00:00.000000000Z'::TIMESTAMP_NS, '2021-04-01T00:00:00.000000000Z'::TIMESTAMP_NS, " +
+                    " 30.0, '2024-01-01T02:00:00.000000Z')");
+            // (1) mixed-unit INTERVAL keys coexist under FILL(PREV).
+            assertQueryNoLeakCheck(
+                    """
+                            ts\tkA\tkB\tfv
+                            2024-01-01T00:00:00.000000Z\t('2020-01-01T00:00:00.000Z', '2020-02-01T00:00:00.000Z')\t('2021-03-01T00:00:00.000Z', '2021-04-01T00:00:00.000Z')\t10.0
+                            2024-01-01T01:00:00.000000Z\t('2020-01-01T00:00:00.000Z', '2020-02-01T00:00:00.000Z')\t('2021-03-01T00:00:00.000Z', '2021-04-01T00:00:00.000Z')\t10.0
+                            2024-01-01T02:00:00.000000Z\t('2020-01-01T00:00:00.000Z', '2020-02-01T00:00:00.000Z')\t('2021-03-01T00:00:00.000Z', '2021-04-01T00:00:00.000Z')\t30.0
+                            """,
+                    "SELECT ts, interval(loA, hiA) kA, interval(loB, hiB) kB, first(v) fv FROM t " +
+                            "SAMPLE BY 1h FILL(PREV) ALIGN TO CALENDAR",
+                    "ts", false, false
+            );
+            // (2) first(interval(...)) currently produces STRING -- no real
+            //     INTERVAL aggregate is registered, so the grammar path that
+            //     would reach the INTERVAL needsExactTypeMatch arm is closed.
+            try (RecordCursorFactory factory = select(
+                    "SELECT ts, first(interval(loA, hiA)) a, first(interval(loB, hiB)) b FROM t " +
+                            "SAMPLE BY 1h ALIGN TO CALENDAR")) {
+                final io.questdb.cairo.sql.RecordMetadata meta = factory.getMetadata();
+                Assert.assertEquals("first(interval(...)) is expected to produce STRING until a real INTERVAL aggregate lands",
+                        io.questdb.cairo.ColumnType.STRING, meta.getColumnType(meta.getColumnIndex("a")));
+                Assert.assertEquals("first(interval(...)) is expected to produce STRING until a real INTERVAL aggregate lands",
+                        io.questdb.cairo.ColumnType.STRING, meta.getColumnType(meta.getColumnIndex("b")));
+            }
+        });
+    }
+
+    @Test
     public void testFillPrevCrossColumnGeoHashWidthMismatch() throws Exception {
         assertMemoryLeak(() -> {
             execute("""

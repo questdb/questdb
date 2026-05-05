@@ -1082,6 +1082,128 @@ public class SampleByFillTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testFillKeyedWithParallelWorkersConstantValue() throws Exception {
+        // Parallel-workers companion to testFillKeyedWithParallelWorkers for the
+        // FILL(<value>) constant-fill path. Each gap row routes through
+        // DISPATCH_CONSTANT, which dispatches to the per-column constant fill
+        // function. AsyncGroupBy hash-merge order is independent of fill mode,
+        // so an outer ORDER BY ts, city pins the assertion to stable
+        // semantics under sharedQueryWorkerCount > 1.
+        assertMemoryLeak(() -> {
+            final WorkerPool pool = new WorkerPool(() -> 4);
+            TestUtils.execute(
+                    pool,
+                    (engine, compiler, sqlExecutionContext) -> {
+                        engine.execute(
+                                "CREATE TABLE weather (city SYMBOL, temp DOUBLE, ts TIMESTAMP) " +
+                                        "TIMESTAMP(ts) PARTITION BY DAY",
+                                sqlExecutionContext
+                        );
+                        engine.execute(
+                                "INSERT INTO weather VALUES " +
+                                        "('London', 10.0, '2024-01-01T00:00:00.000000Z')," +
+                                        "('Paris', 20.0, '2024-01-01T00:00:00.000000Z')," +
+                                        "('Berlin', 5.0, '2024-01-01T00:00:00.000000Z')," +
+                                        "('Paris', 21.0, '2024-01-01T01:00:00.000000Z')," +
+                                        "('London', 11.0, '2024-01-01T02:00:00.000000Z')," +
+                                        "('Berlin', 6.0, '2024-01-01T02:00:00.000000Z')",
+                                sqlExecutionContext
+                        );
+                        assertQueryNoLeakCheck(
+                                compiler,
+                                """
+                                        ts\tcity\tavg
+                                        2024-01-01T00:00:00.000000Z\tBerlin\t5.0
+                                        2024-01-01T00:00:00.000000Z\tLondon\t10.0
+                                        2024-01-01T00:00:00.000000Z\tParis\t20.0
+                                        2024-01-01T01:00:00.000000Z\tBerlin\t-1.0
+                                        2024-01-01T01:00:00.000000Z\tLondon\t-1.0
+                                        2024-01-01T01:00:00.000000Z\tParis\t21.0
+                                        2024-01-01T02:00:00.000000Z\tBerlin\t6.0
+                                        2024-01-01T02:00:00.000000Z\tLondon\t11.0
+                                        2024-01-01T02:00:00.000000Z\tParis\t-1.0
+                                        """,
+                                "SELECT ts, city, avg(temp) FROM weather " +
+                                        "SAMPLE BY 1h FILL(-1.0) ALIGN TO CALENDAR " +
+                                        "ORDER BY ts, city",
+                                "ts",
+                                true,
+                                sqlExecutionContext,
+                                false
+                        );
+                    },
+                    configuration,
+                    LOG
+            );
+        });
+    }
+
+    @Test
+    public void testFillKeyedWithParallelWorkersCrossColumnPrev() throws Exception {
+        // Parallel-workers companion to testFillKeyedWithParallelWorkers for the
+        // FILL(PREV(col)) cross-column path. Each gap row's mirror column
+        // routes via DISPATCH_KEY_SLOT (when source is a key) or
+        // DISPATCH_PREV_CACHE_SLOT / DISPATCH_PREV_SLOT (when source is an
+        // aggregate). The per-key MapValue snapshot underpinning these arms
+        // must produce identical results regardless of how AsyncGroupBy
+        // distributes data rows across workers; a regression in the
+        // worker>1 hash-merge or per-key snapshot ordering would surface here.
+        // ORDER BY ts, city makes the assertion independent of intra-bucket
+        // emission order.
+        assertMemoryLeak(() -> {
+            final WorkerPool pool = new WorkerPool(() -> 4);
+            TestUtils.execute(
+                    pool,
+                    (engine, compiler, sqlExecutionContext) -> {
+                        engine.execute(
+                                "CREATE TABLE weather (city SYMBOL, temp DOUBLE, humidity DOUBLE, ts TIMESTAMP) " +
+                                        "TIMESTAMP(ts) PARTITION BY DAY",
+                                sqlExecutionContext
+                        );
+                        engine.execute(
+                                "INSERT INTO weather VALUES " +
+                                        "('London', 10.0, 60.0, '2024-01-01T00:00:00.000000Z')," +
+                                        "('Paris',  20.0, 65.0, '2024-01-01T00:00:00.000000Z')," +
+                                        "('Berlin', 5.0,  70.0, '2024-01-01T00:00:00.000000Z')," +
+                                        "('Paris',  21.0, 66.0, '2024-01-01T01:00:00.000000Z')," +
+                                        "('London', 11.0, 61.0, '2024-01-01T02:00:00.000000Z')," +
+                                        "('Berlin', 6.0,  71.0, '2024-01-01T02:00:00.000000Z')",
+                                sqlExecutionContext
+                        );
+                        // FILL(PREV, PREV(t)) -- gap rows of `h` mirror `t`'s
+                        // most recent value per key. At 01:00 London/Berlin
+                        // gap rows pull t and h values from 00:00; at 02:00
+                        // Paris's gap row pulls from 01:00.
+                        assertQueryNoLeakCheck(
+                                compiler,
+                                """
+                                        ts\tcity\tt\th
+                                        2024-01-01T00:00:00.000000Z\tBerlin\t5.0\t70.0
+                                        2024-01-01T00:00:00.000000Z\tLondon\t10.0\t60.0
+                                        2024-01-01T00:00:00.000000Z\tParis\t20.0\t65.0
+                                        2024-01-01T01:00:00.000000Z\tBerlin\t5.0\t5.0
+                                        2024-01-01T01:00:00.000000Z\tLondon\t10.0\t10.0
+                                        2024-01-01T01:00:00.000000Z\tParis\t21.0\t66.0
+                                        2024-01-01T02:00:00.000000Z\tBerlin\t6.0\t71.0
+                                        2024-01-01T02:00:00.000000Z\tLondon\t11.0\t61.0
+                                        2024-01-01T02:00:00.000000Z\tParis\t21.0\t21.0
+                                        """,
+                                "SELECT ts, city, last(temp) t, last(humidity) h FROM weather " +
+                                        "SAMPLE BY 1h FILL(PREV, PREV(t)) ALIGN TO CALENDAR " +
+                                        "ORDER BY ts, city",
+                                "ts",
+                                true,
+                                sqlExecutionContext,
+                                false
+                        );
+                    },
+                    configuration,
+                    LOG
+            );
+        });
+    }
+
+    @Test
     public void testFillKeyedAsOfJoinConsumesFillCursor() throws Exception {
         // SAMPLE BY ... FILL(PREV) inside an ASOF JOIN. The fill factory now
         // exposes recordCursorSupportsRandomAccess=false, a behaviour change

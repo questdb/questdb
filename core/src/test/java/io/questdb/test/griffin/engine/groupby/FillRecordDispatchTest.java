@@ -1644,6 +1644,30 @@ public class FillRecordDispatchTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testGetLongDispatchFillConstant() throws Exception {
+        // LONG FILL_CONSTANT branch -- 01:00 gap row reads the fill constant
+        // through FillRecord.getLong's DISPATCH_CONSTANT arm. Distinct from
+        // the DISPATCH_TIMESTAMP_FILL arm covered by
+        // testGetLongOnTimestampDuringGapReturnsBucketTs.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (l LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO x VALUES " +
+                    "(1_111_111_111, '2024-01-01T00:00:00.000000Z')," +
+                    "(3_333_333_333, '2024-01-01T02:00:00.000000Z')");
+            assertQueryNoLeakCheck(
+                    """
+                            ts\tfl
+                            2024-01-01T00:00:00.000000Z\t1111111111
+                            2024-01-01T01:00:00.000000Z\t9999999999
+                            2024-01-01T02:00:00.000000Z\t3333333333
+                            """,
+                    "SELECT ts, first(l) fl FROM x SAMPLE BY 1h FILL(9_999_999_999) ALIGN TO CALENDAR",
+                    "ts", false, false
+            );
+        });
+    }
+
+    @Test
     public void testGetLongOnTimestampDuringGapReturnsBucketTs() throws Exception {
         // The TIMESTAMP column is a 64-bit long internally, so Record.getLong(timestampIndex)
         // is a valid call from any caller that doesn't route through getTimestamp(). Without
@@ -1707,6 +1731,29 @@ public class FillRecordDispatchTest extends AbstractCairoTest {
                             2024-01-01T02:00:00.000000Z\t17
                             """,
                     "SELECT ts, first(s) fs FROM x SAMPLE BY 1h FILL(PREV) ALIGN TO CALENDAR",
+                    "ts", false, false
+            );
+        });
+    }
+
+    @Test
+    public void testGetShortDispatchFillConstant() throws Exception {
+        // SHORT FILL_CONSTANT branch -- 01:00 gap row reads the fill constant
+        // through FillRecord.getShort's DISPATCH_CONSTANT arm. Narrow-integer
+        // Function convention: short fills come through getInt() -> (short) cast.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (s SHORT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO x VALUES " +
+                    "(17::SHORT, '2024-01-01T00:00:00.000000Z')," +
+                    "(33::SHORT, '2024-01-01T02:00:00.000000Z')");
+            assertQueryNoLeakCheck(
+                    """
+                            ts\tfs
+                            2024-01-01T00:00:00.000000Z\t17
+                            2024-01-01T01:00:00.000000Z\t777
+                            2024-01-01T02:00:00.000000Z\t33
+                            """,
+                    "SELECT ts, first(s) fs FROM x SAMPLE BY 1h FILL(777) ALIGN TO CALENDAR",
                     "ts", false, false
             );
         });
@@ -1777,6 +1824,31 @@ public class FillRecordDispatchTest extends AbstractCairoTest {
                             2024-01-01T02:00:00.000000Z\t3.0
                             """,
                     "SELECT ts, first(v) fv FROM x SAMPLE BY 1h FILL(PREV) ALIGN TO CALENDAR",
+                    "ts", false, false
+            );
+        });
+    }
+
+    @Test
+    public void testGetTimestampDispatchFillConstant() throws Exception {
+        // TIMESTAMP FILL_CONSTANT branch -- 01:00 gap row reads the parsed
+        // quoted-literal fill constant through FillRecord.getTimestamp's
+        // DISPATCH_CONSTANT arm. Per the parser, TIMESTAMP fill values must
+        // be quoted literals so that SqlCodeGenerator can re-parse with the
+        // target driver and produce a unit-correct TimestampConstant.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (t TIMESTAMP, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO x VALUES " +
+                    "('2024-02-01T00:00:00.000000Z', '2024-01-01T00:00:00.000000Z')," +
+                    "('2024-04-01T00:00:00.000000Z', '2024-01-01T02:00:00.000000Z')");
+            assertQueryNoLeakCheck(
+                    """
+                            ts\tft
+                            2024-01-01T00:00:00.000000Z\t2024-02-01T00:00:00.000000Z
+                            2024-01-01T01:00:00.000000Z\t2024-06-15T12:00:00.000000Z
+                            2024-01-01T02:00:00.000000Z\t2024-04-01T00:00:00.000000Z
+                            """,
+                    "SELECT ts, first(t) ft FROM x SAMPLE BY 1h FILL('2024-06-15T12:00:00.000000Z') ALIGN TO CALENDAR",
                     "ts", false, false
             );
         });
