@@ -55,6 +55,7 @@ import io.questdb.griffin.engine.functions.SymbolFunction;
 import io.questdb.griffin.engine.functions.TimestampFunction;
 import io.questdb.griffin.engine.functions.constants.NullConstant;
 import io.questdb.std.BinarySequence;
+import io.questdb.std.BitSet;
 import io.questdb.std.Decimal128;
 import io.questdb.std.Decimal256;
 import io.questdb.std.Decimals;
@@ -341,7 +342,7 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
         // False lets emitNextFillRow skip baseCursor.recordAt entirely.
         private final boolean isPrevPositioningNeeded;
         private int keyCount;
-        private boolean[] keyPresent;
+        private BitSet keyPresent;
         private final RecordSink keySink;
         private final Map keysMap;
         private MapRecordCursor keysMapCursor;
@@ -516,7 +517,7 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
                         // A null hit would mean internal corruption of a direct dependency.
                         assert value != null : "key discovered in pass 1 must exist in keysMap";
                         int keyIdx = (int) value.getLong(KEY_INDEX_SLOT);
-                        keyPresent[keyIdx] = true;
+                        keyPresent.set(keyIdx);
                         toEmitCnt--;
                         if (hasPrevFill) {
                             updateKeyPrevRowId(value, baseRecord);
@@ -536,7 +537,7 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
                     if (hasDataForCurrentBucket && keysMap != null) {
                         // Dense bucket fast-path: skip the inner key-scan if every key already had data.
                         if (toEmitCnt == 0) {
-                            Arrays.fill(keyPresent, 0, keyCount, false);
+                            keyPresent.clear();
                             toEmitCnt = keyCount;
                             nextBucketTimestamp = timestampSampler.nextTimestamp(nextBucketTimestamp);
                             hasDataForCurrentBucket = false;
@@ -554,7 +555,7 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
                         // This bucket has NO data at all -- emit fills for all keys
                         isEmittingFills = true;
                         keysMapCursor.toTop();
-                        Arrays.fill(keyPresent, 0, keyCount, false);
+                        keyPresent.clear();
                         toEmitCnt = keyCount;
                         if (emitNextFillRow()) {
                             return true;
@@ -682,7 +683,7 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
                 // MapValue offsets, so no per-row getValue() rebind is needed.
                 while (keysMapCursor.hasNext()) {
                     int keyIdx = (int) keysMapRecord.getLong(KEY_INDEX_SLOT);
-                    if (!keyPresent[keyIdx]) {
+                    if (!keyPresent.get(keyIdx)) {
                         currentDispatchCode = fillDispatchCode;
                         fillTimestampFunc.value = nextBucketTimestamp;
                         // PREV_CACHE_SLOT slots are pre-filled with null sentinels in
@@ -699,7 +700,7 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
                     }
                 }
                 // Bucket exhausted -- advance
-                Arrays.fill(keyPresent, 0, keyCount, false);
+                keyPresent.clear();
                 toEmitCnt = keyCount;
                 nextBucketTimestamp = timestampSampler.nextTimestamp(nextBucketTimestamp);
                 hasDataForCurrentBucket = false;
@@ -797,10 +798,10 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
                     nextBucketTimestamp = Long.MAX_VALUE;
                     return;
                 }
-                if (keyPresent == null || keyPresent.length < keyCount) {
-                    keyPresent = new boolean[Math.max(keyCount, 1)];
+                if (keyPresent == null || keyPresent.capacity() < keyCount) {
+                    keyPresent = new BitSet(Math.max(keyCount, 1));
                 } else {
-                    Arrays.fill(keyPresent, 0, keyCount, false);
+                    keyPresent.clear();
                 }
                 toEmitCnt = keyCount;
                 baseCursor.toTop();
@@ -810,8 +811,10 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
             } else {
                 // Non-keyed: degenerate case with 1 "empty" key
                 keyCount = 1;
-                if (keyPresent == null || keyPresent.length < 1) {
-                    keyPresent = new boolean[1];
+                if (keyPresent == null || keyPresent.capacity() < 1) {
+                    keyPresent = new BitSet(1);
+                } else {
+                    keyPresent.clear();
                 }
                 toEmitCnt = 1;
             }
