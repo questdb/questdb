@@ -280,6 +280,156 @@ public class ServerMainWaitWalTableTest extends AbstractBootstrapTest {
     }
 
     @Test
+    public void testWaitWalTableSeqTxnFastPath() throws Exception {
+        // Two-arg overload: wait_wal_table('foo', N) where N <= current writerTxn.
+        // The fast path in getBool() must return true immediately without parking
+        // a continuation or registering a waiter.
+        try (final ServerMain serverMain = ServerMain.create(root, new HashMap<>() {{
+            // WAL apply enabled here: we want writerTxn to actually advance so the
+            // request seqTxn is already met by the time wait_wal_table runs.
+            put(PropertyKey.QUERY_TIMEOUT.getEnvVarName(), "30s");
+        }})) {
+            serverMain.start();
+
+            try (
+                    Connection conn = DriverManager.getConnection(PG_CONNECTION_URI, PG_CONNECTION_PROPERTIES);
+                    Statement stmt = conn.createStatement()
+            ) {
+                stmt.execute("CREATE TABLE foo (ts TIMESTAMP, v INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+                stmt.execute("INSERT INTO foo VALUES ('2024-01-01T00:00:00.000000Z', 1)");
+                // Make sure the writer has applied at least one txn.
+                try (ResultSet rs = stmt.executeQuery("SELECT wait_wal_table('foo')")) {
+                    Assert.assertTrue(rs.next());
+                    Assert.assertTrue(rs.getBoolean(1));
+                }
+                long initialWaiters = serverMain.getEngine().getTableSequencerAPI()
+                        .getTxnTracker(serverMain.getEngine().verifyTableName("foo"))
+                        .getWaiterRegistrationCount();
+
+                long t0 = System.currentTimeMillis();
+                try (ResultSet rs = stmt.executeQuery("SELECT wait_wal_table('foo', 1)")) {
+                    Assert.assertTrue(rs.next());
+                    Assert.assertTrue(rs.getBoolean(1));
+                }
+                long elapsed = System.currentTimeMillis() - t0;
+                Assert.assertTrue(
+                        "fast path took too long: " + elapsed + " ms (expected immediate return)",
+                        elapsed < 1_000
+                );
+
+                long finalWaiters = serverMain.getEngine().getTableSequencerAPI()
+                        .getTxnTracker(serverMain.getEngine().verifyTableName("foo"))
+                        .getWaiterRegistrationCount();
+                Assert.assertEquals(
+                        "fast path must not register a waiter",
+                        initialWaiters,
+                        finalWaiters
+                );
+            }
+        }
+    }
+
+    @Test
+    public void testWaitWalTableSeqTxnSucceedsAfterManualApply() throws Exception {
+        // Two-arg overload: wait_wal_table('foo', 2) parks until writerTxn >= 2.
+        // WAL apply is disabled, so the wait must park its continuation; the
+        // test thread drives a manual drain that advances writerTxn and fires
+        // the parked waiter.
+        try (final ServerMain serverMain = ServerMain.create(root, new HashMap<>() {{
+            put(PropertyKey.CAIRO_WAL_APPLY_ENABLED.getEnvVarName(), "false");
+            put(PropertyKey.QUERY_TIMEOUT.getEnvVarName(), "30s");
+        }})) {
+            serverMain.start();
+
+            try (
+                    Connection setupConn = DriverManager.getConnection(PG_CONNECTION_URI, PG_CONNECTION_PROPERTIES);
+                    Statement stmt = setupConn.createStatement()
+            ) {
+                stmt.execute("CREATE TABLE foo (ts TIMESTAMP, v INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+                stmt.execute("INSERT INTO foo VALUES ('2024-01-01T00:00:00.000000Z', 1)");
+                stmt.execute("INSERT INTO foo VALUES ('2024-01-01T00:00:01.000000Z', 2)");
+            }
+
+            CountDownLatch waitStarted = new CountDownLatch(1);
+            AtomicReference<Boolean> result = new AtomicReference<>();
+            AtomicReference<Throwable> failure = new AtomicReference<>();
+            Thread waiter = new Thread(() -> {
+                try (
+                        Connection conn = DriverManager.getConnection(PG_CONNECTION_URI, PG_CONNECTION_PROPERTIES);
+                        Statement stmt = conn.createStatement()
+                ) {
+                    waitStarted.countDown();
+                    try (ResultSet rs = stmt.executeQuery("SELECT wait_wal_table('foo', 2)")) {
+                        Assert.assertTrue(rs.next());
+                        result.set(rs.getBoolean(1));
+                    }
+                } catch (Throwable t) {
+                    failure.set(t);
+                }
+            }, "wait-wal-table-seqtxn-waiter");
+            waiter.setDaemon(true);
+            waiter.start();
+
+            Assert.assertTrue("waiter thread did not start", waitStarted.await(5, TimeUnit.SECONDS));
+            awaitWaiterRegistered(serverMain, "foo");
+
+            TestUtils.drainWalQueue(serverMain.getEngine());
+
+            waiter.join(5_000);
+            if (failure.get() != null) {
+                throw new AssertionError("wait_wal_table(seqTxn) failed", failure.get());
+            }
+            Assert.assertEquals(Boolean.TRUE, result.get());
+        }
+    }
+
+    @Test
+    public void testWaitWalTableSeqTxnTimesOutWhenSeqTxnUnreachable() throws Exception {
+        // Two-arg overload with a seqTxn that the writer can never reach (no
+        // matching insert was made). The function must park, then time out via
+        // the circuit breaker on the wake-recheck probe.
+        try (final ServerMain serverMain = ServerMain.create(root, new HashMap<>() {{
+            put(PropertyKey.QUERY_TIMEOUT.getEnvVarName(), "200ms");
+        }})) {
+            serverMain.start();
+
+            try (
+                    Connection setupConn = DriverManager.getConnection(PG_CONNECTION_URI, PG_CONNECTION_PROPERTIES);
+                    Statement stmt = setupConn.createStatement()
+            ) {
+                stmt.execute("CREATE TABLE foo (ts TIMESTAMP, v INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+                stmt.execute("INSERT INTO foo VALUES ('2024-01-01T00:00:00.000000Z', 1)");
+            }
+
+            AtomicReference<Throwable> waitOutcome = new AtomicReference<>();
+            AtomicReference<Long> waitElapsed = new AtomicReference<>();
+            long t0 = System.currentTimeMillis();
+            try (
+                    Connection conn = DriverManager.getConnection(PG_CONNECTION_URI, PG_CONNECTION_PROPERTIES);
+                    Statement stmt = conn.createStatement()
+            ) {
+                // 1_000 is far beyond any seqTxn this table will ever see.
+                stmt.executeQuery("SELECT wait_wal_table('foo', 1000)");
+                waitOutcome.set(new AssertionError("expected query timeout exception"));
+            } catch (PSQLException expected) {
+                // good -- breaker tripped on the wake-recheck probe
+            } catch (Throwable t) {
+                waitOutcome.set(t);
+            } finally {
+                waitElapsed.set(System.currentTimeMillis() - t0);
+            }
+
+            if (waitOutcome.get() != null) {
+                throw new AssertionError("wait_wal_table(seqTxn) outcome unexpected", waitOutcome.get());
+            }
+            Long elapsed = waitElapsed.get();
+            Assert.assertNotNull(elapsed);
+            Assert.assertTrue("wait returned too quickly: " + elapsed + " ms", elapsed >= 150);
+            Assert.assertTrue("wait returned too slowly: " + elapsed + " ms", elapsed < 5_000);
+        }
+    }
+
+    @Test
     public void testWaitWalTableTimesOut() throws Exception {
         // Single-worker network pool. The whole point of suspending in
         // wait_wal_table is that the worker is freed while the query is parked,

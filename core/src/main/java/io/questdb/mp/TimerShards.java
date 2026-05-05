@@ -240,7 +240,7 @@ public final class TimerShards {
 
         @Override
         public long getDelay(@NotNull TimeUnit unit) {
-            return unit.convert(-1, TimeUnit.MILLISECONDS);
+            return unit.convert(Long.MIN_VALUE / 2, TimeUnit.NANOSECONDS);
         }
 
         @Override

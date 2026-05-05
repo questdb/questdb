@@ -31,15 +31,15 @@ import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
 
-public class WaitWalTableFunctionFactory implements FunctionFactory {
+public class WaitWalTableSeqTxnFunctionFactory implements FunctionFactory {
     @Override
     public String getSignature() {
-        return "wait_wal_table(s)";
+        return "wait_wal_table(sl)";
     }
 
     @Override
     public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) {
         final CharSequence tableName = args.getQuick(0).getStrA(null);
-        return new WaitWalFunction(tableName, null);
+        return new WaitWalFunction(tableName, args.getQuick(1));
     }
 }
