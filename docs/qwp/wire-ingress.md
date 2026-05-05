@@ -839,6 +839,14 @@ the server to reject the message with `PARSE_ERROR`.
 
 ## 15. Client Operation
 
+This section describes the high-level batching and registry behaviour every
+client implements. The full client-side substrate — on-disk Store-and-Forward
+storage, frame-sequence-number model, ACK-driven trim, durable-ack handshake,
+keepalive PING, reconnect/replay semantics, error categories and policies — is
+specified separately in [`sf-client.md`](sf-client.md). Cross-language client
+implementers should treat that document as normative for SF-mode behaviour;
+this section is a sketch.
+
 ### Double-Buffered Async I/O
 
 The client uses double-buffered microbatches:

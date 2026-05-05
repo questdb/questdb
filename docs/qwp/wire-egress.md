@@ -2,7 +2,7 @@
 
 This document specifies QWP's egress mode: SQL queries in, columnar query
 results out, over a dedicated WebSocket endpoint. It extends the ingress
-specification ([`QWP_SPECIFICATION.md`](QWP_SPECIFICATION.md)) by reusing the
+specification ([`wire-ingress.md`](wire-ingress.md)) by reusing the
 header, type system, and column encodings unchanged. The deltas are limited to:
 
 - a new endpoint and version namespace,
@@ -235,7 +235,7 @@ The server rejects any second `QUERY_REQUEST` that arrives before the active
 query has terminated (`RESULT_END`, `EXEC_DONE`, or `QUERY_ERROR`) with a
 `QUERY_ERROR` carrying `STATUS_PARSE_ERROR` and a message naming the
 limitation. Multi-query multiplexing requires a fair scheduler on the server
-and is tracked in the [Phase 2 backlog](QWP_EGRESS_PHASE2_BACKLOG.md). SDK authors targeting Phase 1 should
+and is tracked in the [Phase 2 backlog](design/egress-phase2-backlog.md). SDK authors targeting Phase 1 should
 serialise queries on a per-connection basis or open additional connections.
 
 ## 7. RESULT_BATCH (0x11)

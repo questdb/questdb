@@ -27,7 +27,7 @@ package io.questdb.cutlass.qwp.codec;
 /**
  * QWP egress message-kind discriminator. The first byte of every egress payload
  * identifies which of the egress message types it carries. See
- * {@code docs/QWP_EGRESS_EXTENSION.md} sec 5 for the authoritative list.
+ * {@code docs/qwp/wire-egress.md} sec 5 for the authoritative list.
  */
 public final class QwpEgressMsgKind {
     /**
@@ -36,7 +36,7 @@ public final class QwpEgressMsgKind {
      * Sent between result boundaries when a cache reaches its configured
      * soft cap. Recipient clears the indicated caches; subsequent RESULT_BATCH
      * and schema-reference frames assume a fresh starting state. See
-     * {@code docs/QWP_EGRESS_EXTENSION.md} sec 12.
+     * {@code docs/qwp/wire-egress.md} sec 12.
      */
     public static final byte CACHE_RESET = 0x17;
     public static final byte CANCEL = 0x14;
