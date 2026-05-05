@@ -18963,6 +18963,56 @@ public class WindowFunctionTest extends AbstractCairoTest {
         });
     }
 
+    @Test
+    public void testNthValuePass1ViaMixedWindowPlan() throws Exception {
+        // Forces every ZERO_PASS nth_value variant onto the pass1() path.
+        //
+        // SqlCodeGenerator picks the streaming WindowRecordCursorFactory only when every
+        // window column is ZERO_PASS and no extra ordering is needed. That cursor calls
+        // computeNext()/getDouble() and never invokes pass1(). The moment a non-ZERO_PASS
+        // function joins the SELECT (here: cume_dist over ORDER BY, which is TWO_PASS),
+        // the planner falls back to CachedWindowRecordCursorFactory, which materialises
+        // the row chain and walks it calling pass1() on every function -- including the
+        // ZERO_PASS ones. Without this scenario the pass1() bodies of the eight
+        // ZERO_PASS nth_value variants are dead in coverage terms even though they are
+        // load-bearing in any real mixed-window query.
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, i long, val double) timestamp(ts)", timestampType.getTypeName());
+            execute("insert into tab values (1, 1, 10.0), (2, 1, 20.0), (3, 1, 30.0), (4, 2, 40.0), (5, 2, 50.0), (6, 2, 60.0)");
+
+            // cd_no is the partitioned-no-ORDER variant (CumeDistNoOrderFunction, ZERO_PASS).
+            // Without the cume_dist OVER (ORDER BY ts) column, this query would route to the
+            // streaming Window plan and the no-ORDER variant's pass1() would also be skipped;
+            // pinning both cume_dist shapes in one SELECT exercises both pass1 paths.
+            assertQueryNoLeakCheck(
+                    replaceTimestampSuffix1("""
+                            ts\tcd\tcd_no\tnv1\tnv2\tnv3\tnv4\tnv5\tnv6\tnv7\tnv8
+                            1970-01-01T00:00:00.000001Z\t0.16666666666666666\t1.0\t10.0\tnull\tnull\tnull\tnull\tnull\tnull\tnull
+                            1970-01-01T00:00:00.000002Z\t0.3333333333333333\t1.0\t20.0\t20.0\t20.0\t10.0\t20.0\t20.0\tnull\t20.0
+                            1970-01-01T00:00:00.000003Z\t0.5\t1.0\t30.0\t20.0\t20.0\t10.0\t20.0\t20.0\t20.0\t20.0
+                            1970-01-01T00:00:00.000004Z\t0.6666666666666666\t1.0\t40.0\tnull\tnull\tnull\t20.0\t30.0\t20.0\tnull
+                            1970-01-01T00:00:00.000005Z\t0.8333333333333334\t1.0\t50.0\t50.0\t50.0\t40.0\t20.0\t40.0\t20.0\t50.0
+                            1970-01-01T00:00:00.000006Z\t1.0\t1.0\t60.0\t50.0\t50.0\t40.0\t20.0\t50.0\t20.0\t50.0
+                            """),
+                    "select ts, " +
+                            "cume_dist() over (order by ts) cd, " +
+                            "cume_dist() over (partition by i) cd_no, " +
+                            "nth_value(val, 1) over (order by ts rows between current row and current row) nv1, " +
+                            "nth_value(val, 2) over (partition by i order by ts range between 1 second preceding and current row) nv2, " +
+                            "nth_value(val, 2) over (partition by i order by ts rows between 2 preceding and current row) nv3, " +
+                            "nth_value(val, 1) over (partition by i order by ts rows between unbounded preceding and 1 preceding) nv4, " +
+                            "nth_value(val, 2) over (order by ts range between 1 second preceding and current row) nv5, " +
+                            "nth_value(val, 2) over (order by ts rows between 2 preceding and current row) nv6, " +
+                            "nth_value(val, 2) over (order by ts rows between unbounded preceding and 1 preceding) nv7, " +
+                            "nth_value(val, 2) over (partition by i order by ts) nv8 " +
+                            "from tab",
+                    "ts",
+                    true,
+                    true
+            );
+        });
+    }
+
     private static void normalizeSuffix(List<String> values) {
         int maxLength = 0;
         for (int i = 0, n = values.size(); i < n; i++) {
