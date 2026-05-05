@@ -1602,6 +1602,82 @@ public class ParquetTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testDecimal128LateMaterializationOverParquet() throws Exception {
+        // Sibling of testLong256LateMaterializationOverParquet that exercises the 16-byte
+        // late-materialization path through PageFrameFilteredMemoryRecord.getDecimal128.
+        // Keeps the LONG256 fix honest: any future regression that drops the getRowIndex
+        // routing for getDecimal128 (or the wider DECIMAL128 family) will surface here as
+        // a native-vs-parquet divergence on the GROUP BY key column.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (k DECIMAL(38, 5), c1 TIMESTAMP, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("INSERT INTO x SELECT " +
+                    "rnd_decimal(38, 5, 0) AS k, " +
+                    "case when x % 3 = 0 then null else 0::TIMESTAMP end AS c1, " +
+                    "(timestamp_sequence('2024-01-01', 60_000_000)) AS ts " +
+                    "FROM long_sequence(10)");
+            drainWalQueue();
+            execute("CREATE TABLE x_native (k DECIMAL(38, 5), c1 TIMESTAMP, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("INSERT INTO x_native SELECT * FROM x");
+            drainWalQueue();
+            execute("ALTER TABLE x CONVERT PARTITION TO PARQUET LIST '2024-01-01'");
+            drainWalQueue();
+            TestUtils.assertSqlCursors(engine, sqlExecutionContext,
+                    "SELECT k, count() FROM x_native WHERE c1 IS NOT NULL ORDER BY k",
+                    "SELECT k, count() FROM x WHERE c1 IS NOT NULL ORDER BY k",
+                    LOG);
+        });
+    }
+
+    @Test
+    public void testDecimal256LateMaterializationOverParquet() throws Exception {
+        // Sibling of testLong256LateMaterializationOverParquet for the 32-byte
+        // DECIMAL256 family (PageFrameFilteredMemoryRecord.getDecimal256).
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (k DECIMAL(76, 10), c1 TIMESTAMP, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("INSERT INTO x SELECT " +
+                    "rnd_decimal(76, 10, 0) AS k, " +
+                    "case when x % 3 = 0 then null else 0::TIMESTAMP end AS c1, " +
+                    "(timestamp_sequence('2024-01-01', 60_000_000)) AS ts " +
+                    "FROM long_sequence(10)");
+            drainWalQueue();
+            execute("CREATE TABLE x_native (k DECIMAL(76, 10), c1 TIMESTAMP, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("INSERT INTO x_native SELECT * FROM x");
+            drainWalQueue();
+            execute("ALTER TABLE x CONVERT PARTITION TO PARQUET LIST '2024-01-01'");
+            drainWalQueue();
+            TestUtils.assertSqlCursors(engine, sqlExecutionContext,
+                    "SELECT k, count() FROM x_native WHERE c1 IS NOT NULL ORDER BY k",
+                    "SELECT k, count() FROM x WHERE c1 IS NOT NULL ORDER BY k",
+                    LOG);
+        });
+    }
+
+    @Test
+    public void testLong128UuidLateMaterializationOverParquet() throws Exception {
+        // Sibling of testLong256LateMaterializationOverParquet for the 16-byte UUID
+        // family, which routes through PageFrameFilteredMemoryRecord.getLong128Lo /
+        // getLong128Hi at row time.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (k UUID, c1 TIMESTAMP, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("INSERT INTO x SELECT " +
+                    "rnd_uuid4() AS k, " +
+                    "case when x % 3 = 0 then null else 0::TIMESTAMP end AS c1, " +
+                    "(timestamp_sequence('2024-01-01', 60_000_000)) AS ts " +
+                    "FROM long_sequence(10)");
+            drainWalQueue();
+            execute("CREATE TABLE x_native (k UUID, c1 TIMESTAMP, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("INSERT INTO x_native SELECT * FROM x");
+            drainWalQueue();
+            execute("ALTER TABLE x CONVERT PARTITION TO PARQUET LIST '2024-01-01'");
+            drainWalQueue();
+            TestUtils.assertSqlCursors(engine, sqlExecutionContext,
+                    "SELECT k, count() FROM x_native WHERE c1 IS NOT NULL ORDER BY k",
+                    "SELECT k, count() FROM x WHERE c1 IS NOT NULL ORDER BY k",
+                    LOG);
+        });
+    }
+
+    @Test
     public void testLong256LateMaterializationOverParquet() throws Exception {
         // PageFrameFilteredMemoryRecord routes column reads through getRowIndex(columnIndex), which
         // returns the absolute row index for filter columns and the compacted index for late-
@@ -1651,6 +1727,31 @@ public class ParquetTest extends AbstractCairoTest {
             assertSql(
                     "key\tn\nnull\t1\n1\t1\n4\t1\n",
                     "SELECT (abs(t0.k) * t0.k) AS key, count() AS n FROM x t0 ORDER BY key"
+            );
+        });
+    }
+
+    @Test
+    public void testProjectionTriplyRepeatedColumnAggregateOverParquet() throws Exception {
+        // Sibling of testProjectionRepeatedColumnAggregateOverParquet that exercises three
+        // (and the qualifying-aggregate case, four) references to the same parquet column from
+        // a single SelectedRecord projection. PageFrameMemoryPool must fan one decoded buffer
+        // out to every output slot whose writer index resolves to that parquet column - if any
+        // slot was missed, that slot's pageAddress would stay zero and the consumer would read
+        // NULL for every row.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (k INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("INSERT INTO x VALUES (1, '2024-01-01T00:00:00.000000Z'), (2, '2024-01-01T01:00:00.000000Z'), (null, '2024-01-02T00:00:00.000000Z')");
+            drainWalQueue();
+            execute("ALTER TABLE x CONVERT PARTITION TO PARQUET LIST '2024-01-01'");
+            drainWalQueue();
+            // Four references to t0.k in the projection: three forming the key
+            // (abs(k) * k * k), one feeding the aggregate (sum(k)). Without the
+            // fan-out fix, only one slot would be wired to the decoded buffer and
+            // both non-null rows would collapse into the NULL group with sum=null.
+            assertSql(
+                    "key\ts\tn\nnull\tnull\t1\n1\t1\t1\n8\t2\t1\n",
+                    "SELECT (abs(t0.k) * t0.k * t0.k) AS key, sum(t0.k) AS s, count() AS n FROM x t0 ORDER BY key"
             );
         });
     }

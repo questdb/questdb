@@ -1470,6 +1470,50 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testParallelGroupByCorrelationOverNonParallelArg() throws Exception {
+        // Audit-driven regression for the supportsParallelism-delegation fix that
+        // covered corr / covar_samp / covar_pop / regr_slope / regr_intercept /
+        // twap / last(ARRAY) / mode(BOOLEAN) / sparkline. Each of these aggregates
+        // used to return supportsParallelism()=true unconditionally and would
+        // share a single Function instance across workers when the planner picked
+        // the parallel path. The fix delegates to BinaryFunction.super (AND of
+        // left and right) so a non-parallel argument forces the serial path.
+        // (a)::SYMBOL::DOUBLE has supportsParallelism=false on the SYMBOL leg
+        // (SymbolFunction's per-instance cache); the AND with b's true collapses
+        // to false and the GROUP BY runs serially.
+        assertMemoryLeak(() -> {
+            final WorkerPool pool = new WorkerPool(() -> 4);
+            TestUtils.execute(
+                    pool,
+                    (engine, compiler, sqlExecutionContext) -> {
+                        execute(
+                                compiler,
+                                "CREATE TABLE x (ts TIMESTAMP, a DOUBLE, b DOUBLE) timestamp(ts) PARTITION BY DAY",
+                                sqlExecutionContext
+                        );
+                        execute(
+                                compiler,
+                                "INSERT INTO x SELECT x::timestamp, x::double, (" + ROW_COUNT + " - x)::double FROM long_sequence(" + ROW_COUNT + ")",
+                                sqlExecutionContext
+                        );
+                        // a and b are perfectly anti-correlated, so corr is -1.0 regardless
+                        // of which path the planner takes; what matters is that the planner
+                        // picks the serial path (no race on the per-instance cache) and
+                        // returns a deterministic result run after run.
+                        assertQueries(
+                                engine,
+                                sqlExecutionContext,
+                                "SELECT round(corr((a)::SYMBOL::DOUBLE, b), 14) FROM x",
+                                "round\n-1.0\n"
+                        );
+                    },
+                    configuration,
+                    LOG
+            );
+        });
+    }
+
+    @Test
     public void testParallelGroupByCovariance() throws Exception {
         Assume.assumeTrue(enableParallelGroupBy);
         testParallelGroupByAllTypes(

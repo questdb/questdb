@@ -4592,6 +4592,29 @@ public class CastTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testIntToSymbolHandlesNegativeOneAsKey() throws Exception {
+        // AbstractCastToSymbolFunction.symbolTableShortcut keys live in an IntIntHashMap
+        // whose default empty-slot sentinel is -1. A real -1 key (the value length()
+        // returns for a null symbol/string, also a perfectly legal INT input) used to
+        // collide with the empty slot and trip an AssertionError when GROUP BY exercised
+        // the symbol-table shortcut. The map now uses Numbers.INT_NULL as the sentinel.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (ts TIMESTAMP, n INT) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO t VALUES " +
+                    "('2024-01-01T00:00:00.000000Z', -1), " +
+                    "('2024-01-01T01:00:00.000000Z', -1), " +
+                    "('2024-01-01T02:00:00.000000Z', 5)");
+            assertQueryNoLeakCheck(
+                    "s\tc\n-1\t2\n5\t1\n",
+                    "SELECT (n)::SYMBOL AS s, count() AS c FROM t ORDER BY s",
+                    null,
+                    true,
+                    true
+            );
+        });
+    }
+
+    @Test
     public void testIntToSymbolIndexBehaviour() throws Exception {
         assertQuery(
                 """
