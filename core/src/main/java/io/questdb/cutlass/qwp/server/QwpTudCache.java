@@ -510,6 +510,11 @@ public class QwpTudCache implements QuietCloseable {
         }
 
         @Override
+        public byte getIndexType(int columnIndex) {
+            return 0;
+        }
+
+        @Override
         public int getMaxUncommittedRows() {
             return configuration.getMaxUncommittedRows();
         }

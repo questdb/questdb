@@ -36,11 +36,11 @@ public class ViewsFunctionTest extends AbstractViewTest {
             createView("test", query, TABLE1);
             assertQueryNoLeakCheck(
                     """
-                            column\ttype\tindexed\tindexBlockCapacity\tsymbolCached\tsymbolCapacity\tsymbolTableSize\tdesignated\tupsertKey
-                            ts\tTIMESTAMP\tfalse\t0\tfalse\t0\t0\ttrue\tfalse
-                            k\tSYMBOL\tfalse\t0\tfalse\t0\t0\tfalse\tfalse
-                            doubleV\tLONG\tfalse\t0\tfalse\t0\t0\tfalse\tfalse
-                            avg\tDOUBLE\tfalse\t0\tfalse\t0\t0\tfalse\tfalse
+                            column\ttype\tindexed\tindexBlockCapacity\tsymbolCached\tsymbolCapacity\tsymbolTableSize\tdesignated\tupsertKey\tindexType\tindexInclude
+                            ts\tTIMESTAMP\tfalse\t0\tfalse\t0\t0\ttrue\tfalse\t\t
+                            k\tSYMBOL\tfalse\t0\tfalse\t0\t0\tfalse\tfalse\t\t
+                            doubleV\tLONG\tfalse\t0\tfalse\t0\t0\tfalse\tfalse\t\t
+                            avg\tDOUBLE\tfalse\t0\tfalse\t0\t0\tfalse\tfalse\t\t
                             """,
                     "show columns from test",
                     null,
