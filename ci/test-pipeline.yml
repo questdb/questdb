@@ -12,6 +12,9 @@ variables:
   DIFF_COVER_THRESHOLD_PCT: 50
   excludeTests: ""
   includeTests: "%regex[.*[^o].class]"
+  # Empty default; the windows-refs-bootstrap matrix entry overrides this in the
+  # "Mount ReFS volume" step to steer JUnit's TemporaryFolder onto R:\tmp.
+  JAVA_TMPDIR_OPT: ""
   MAVEN_CACHE_FOLDER: $(HOME)/.m2/repository
   MAVEN_OPTS: "-Dmaven.repo.local=$(MAVEN_CACHE_FOLDER) -Xmx3g -XX:+UseParallelGC"
   MAVEN_RUN_OPTS: "-Dmaven.repo.local=$(MAVEN_CACHE_FOLDER) -Dmaven.resolver.transport=wagon -Dmaven.wagon.httpconnectionManager.ttlSeconds=30 "
