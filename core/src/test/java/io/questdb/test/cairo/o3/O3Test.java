@@ -27,6 +27,7 @@ package io.questdb.test.cairo.o3;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.IndexType;
 import io.questdb.cairo.MicrosTimestampDriver;
 import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.TableWriter;
@@ -8704,10 +8705,11 @@ public class O3Test extends AbstractO3Test {
     ) throws SqlException, NumericException {
         CairoConfiguration configuration = engine.getConfiguration();
         TableModel tableModel = new TableModel(configuration, "x", PartitionBy.DAY);
+        Rnd rnd = TestUtils.generateRandom(LOG);
         tableModel
                 .col("id", ColumnType.LONG)
                 .col("str", ColumnType.STRING)
-                .col("sym", ColumnType.SYMBOL).indexed(true, 2)
+                .col("sym", ColumnType.SYMBOL).indexed(true, 2, rnd.nextBoolean() ? IndexType.POSTING : IndexType.POSTING)
                 .timestamp("ts", ColumnType.typeOf(timestampTypeName));
 
         TestUtils.createPopulateTable(

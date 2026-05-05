@@ -150,18 +150,30 @@ public abstract class BasePlanSink implements PlanSink {
 
     @Override
     public PlanSink putBaseColumnName(int columnIndex) {
-        return val(factoryStack.peek().getBaseColumnName(columnIndex));
+        RecordCursorFactory factory = factoryStack.peek();
+        if (factory != null) {
+            return val(factory.getBaseColumnName(columnIndex));
+        }
+        // Fallback: no parent factory on stack (root-level toPlan call)
+        return putColumnName(columnIndex);
     }
 
     @Override
     public PlanSink putColumnName(int columnIndex) {
         if (useBaseMetadata) {
-            putBaseColumnName(columnIndex);
+            RecordCursorFactory factory = factoryStack.peek();
+            if (factory != null) {
+                return val(factory.getBaseColumnName(columnIndex));
+            }
+        }
+        if (metadata != null) {
+            val(metadata.getColumnName(columnIndex));
         } else {
-            if (metadata != null) {
-                val(metadata.getColumnName(columnIndex));
+            RecordCursorFactory factory = factoryStack.peek();
+            if (factory != null) {
+                val(factory.getMetadata().getColumnName(columnIndex));
             } else {
-                val(factoryStack.peek().getMetadata().getColumnName(columnIndex));
+                val("[column ").val(columnIndex).val(']');
             }
         }
         return this;
@@ -202,14 +214,11 @@ public abstract class BasePlanSink implements PlanSink {
                 sink.put(',');
             }
             Object obj = list.getQuick(i);
-            if (obj instanceof Plannable) {
-                ((Plannable) obj).toPlan(this);
-            } else if (obj instanceof Sinkable) {
-                sink.put((Sinkable) obj);
-            } else if (obj == null) {
-                sink.put("null");
-            } else {
-                sink.put(obj.toString());
+            switch (obj) {
+                case Plannable plannable -> plannable.toPlan(this);
+                case Sinkable sinkable -> sink.put(sinkable);
+                case null -> sink.put("null");
+                default -> sink.put(obj.toString());
             }
         }
         sink.put(']');

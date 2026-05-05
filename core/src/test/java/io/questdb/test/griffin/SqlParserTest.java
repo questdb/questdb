@@ -3159,6 +3159,205 @@ public class SqlParserTest extends AbstractSqlParserTest {
     }
 
     @Test
+    public void testCreateTableInPlaceIndexTypePosting() throws SqlException {
+        assertCreateTable(
+                "create atomic table x (" +
+                        "t TIMESTAMP," +
+                        " x SYMBOL capacity 128 cache index type POSTING) timestamp(t)",
+                "create table x (" +
+                        "t TIMESTAMP, " +
+                        "x SYMBOL index type posting) " +
+                        "timestamp(t)"
+        );
+    }
+
+    @Test
+    public void testCreateTableInPlaceIndexTypeBitmap() throws SqlException {
+        assertCreateTable(
+                "create atomic table x (" +
+                        "t TIMESTAMP," +
+                        " x SYMBOL capacity 128 cache index capacity 256) timestamp(t)",
+                "create table x (" +
+                        "t TIMESTAMP, " +
+                        "x SYMBOL index type bitmap) " +
+                        "timestamp(t)"
+        );
+    }
+
+    @Test
+    public void testCreateTableInPlaceIndexTypeBitmapWithCapacity() throws SqlException {
+        assertCreateTable(
+                "create atomic table x (" +
+                        "t TIMESTAMP," +
+                        " x SYMBOL capacity 128 cache index capacity 64) timestamp(t)",
+                "create table x (" +
+                        "t TIMESTAMP, " +
+                        "x SYMBOL index type bitmap capacity 64) " +
+                        "timestamp(t)"
+        );
+    }
+
+    @Test
+    public void testCreateTableInPlaceIndexTypePostingWithCapacityFails() throws Exception {
+        assertSyntaxError(
+                "create table x (" +
+                        "t TIMESTAMP, " +
+                        "x SYMBOL index type posting capacity 64) " +
+                        "timestamp(t)",
+                57,
+                "CAPACITY is only supported for BITMAP index type"
+        );
+    }
+
+    @Test
+    public void testCreateTableInPlaceIndexTypeUnknown() throws Exception {
+        assertSyntaxError(
+                "create table x (" +
+                        "t TIMESTAMP, " +
+                        "x SYMBOL index type foo) " +
+                        "timestamp(t)",
+                49,
+                "unknown index type: foo"
+        );
+    }
+
+    @Test
+    public void testCreateTableInPlaceIndexTypePostingDelta() throws SqlException {
+        assertCreateTable(
+                "create atomic table x (" +
+                        "t TIMESTAMP," +
+                        " x SYMBOL capacity 128 cache index type POSTING DELTA) timestamp(t)",
+                "create table x (" +
+                        "t TIMESTAMP, " +
+                        "x SYMBOL index type posting delta) " +
+                        "timestamp(t)"
+        );
+    }
+
+    @Test
+    public void testCreateTableInPlaceIndexTypePostingEf() throws SqlException {
+        assertCreateTable(
+                "create atomic table x (" +
+                        "t TIMESTAMP," +
+                        " x SYMBOL capacity 128 cache index type POSTING EF) timestamp(t)",
+                "create table x (" +
+                        "t TIMESTAMP, " +
+                        "x SYMBOL index type posting ef) " +
+                        "timestamp(t)"
+        );
+    }
+
+    @Test
+    public void testCreateTableInPlaceIndexTypePostingDeltaWithCapacityFails() throws Exception {
+        assertSyntaxError(
+                "create table x (" +
+                        "t TIMESTAMP, " +
+                        "x SYMBOL index type posting delta capacity 64) " +
+                        "timestamp(t)",
+                63,
+                "CAPACITY is only supported for BITMAP index type"
+        );
+    }
+
+    @Test
+    public void testCreateTableInPlaceIndexTypePostingEfWithCapacityFails() throws Exception {
+        assertSyntaxError(
+                "create table x (" +
+                        "t TIMESTAMP, " +
+                        "x SYMBOL index type posting ef capacity 64) " +
+                        "timestamp(t)",
+                60,
+                "CAPACITY is only supported for BITMAP index type"
+        );
+    }
+
+    @Test
+    public void testCreateTableInPlaceIndexIncludeInfersPosting() throws SqlException {
+        assertCreateTable(
+                "create atomic table x (" +
+                        "t TIMESTAMP," +
+                        " p DOUBLE," +
+                        " x SYMBOL capacity 128 cache index type POSTING) timestamp(t)",
+                "create table x (" +
+                        "t TIMESTAMP, " +
+                        "p DOUBLE, " +
+                        "x SYMBOL index include (p)) " +
+                        "timestamp(t)"
+        );
+    }
+
+    @Test
+    public void testCreateTableInPlaceIndexTypePostingInclude() throws SqlException {
+        assertCreateTable(
+                "create atomic table x (" +
+                        "t TIMESTAMP," +
+                        " p DOUBLE," +
+                        " x SYMBOL capacity 128 cache index type POSTING) timestamp(t)",
+                "create table x (" +
+                        "t TIMESTAMP, " +
+                        "p DOUBLE, " +
+                        "x SYMBOL index type posting include (p)) " +
+                        "timestamp(t)"
+        );
+    }
+
+    @Test
+    public void testCreateTableInPlaceIndexTypePostingEfInclude() throws SqlException {
+        assertCreateTable(
+                "create atomic table x (" +
+                        "t TIMESTAMP," +
+                        " p DOUBLE," +
+                        " x SYMBOL capacity 128 cache index type POSTING EF) timestamp(t)",
+                "create table x (" +
+                        "t TIMESTAMP, " +
+                        "p DOUBLE, " +
+                        "x SYMBOL index type posting ef include (p)) " +
+                        "timestamp(t)"
+        );
+    }
+
+    @Test
+    public void testCreateTableInPlaceIndexTypeBitmapIncludeFails() throws Exception {
+        assertSyntaxError(
+                "create table x (" +
+                        "t TIMESTAMP, " +
+                        "p DOUBLE, " +
+                        "x SYMBOL index type bitmap include (p)) " +
+                        "timestamp(t)",
+                66,
+                "INCLUDE is only supported for POSTING index type"
+        );
+    }
+
+    @Test
+    public void testCreateTableOutOfLineIndexTypePostingDelta() throws SqlException {
+        assertCreateTable(
+                "create atomic table x (" +
+                        "t TIMESTAMP," +
+                        " x SYMBOL capacity 128 cache index type POSTING DELTA) timestamp(t)",
+                "create table x (" +
+                        "t TIMESTAMP, " +
+                        "x SYMBOL), " +
+                        "index(x type posting delta) " +
+                        "timestamp(t)"
+        );
+    }
+
+    @Test
+    public void testCreateTableOutOfLineIndexTypePostingEf() throws SqlException {
+        assertCreateTable(
+                "create atomic table x (" +
+                        "t TIMESTAMP," +
+                        " x SYMBOL capacity 128 cache index type POSTING EF) timestamp(t)",
+                "create table x (" +
+                        "t TIMESTAMP, " +
+                        "x SYMBOL), " +
+                        "index(x type posting ef) " +
+                        "timestamp(t)"
+        );
+    }
+
+    @Test
     public void testCreateTableInPlaceIndexCapacityHigh() throws Exception {
         assertSyntaxError(
                 "create table x (" +
@@ -8249,6 +8448,28 @@ public class SqlParserTest extends AbstractSqlParserTest {
     }
 
     @Test
+    public void testLeftOuterJoinSlaveOnlyPredicateInOnPreserved() throws Exception {
+        // Regression: when a LEFT OUTER ON clause contains a predicate whose
+        // both sides reference only the slave table (e.g. y.a = y.b), the
+        // join optimiser used to drop the predicate silently. With it dropped,
+        // y.id=1 would match both y(1,1,1) AND y(1,1,2). The predicate must
+        // be preserved as an outer-join post predicate so that y(1,1,2) is
+        // excluded.
+        assertMemoryLeak(() -> {
+            execute("create table x (id int)");
+            execute("insert into x values (1), (2)");
+            execute("create table y (id int, a int, b int)");
+            execute("insert into y values (1, 1, 1), (1, 1, 2)");
+            assertSql(
+                    "id\tid1\ta\tb\n" +
+                            "1\t1\t1\t1\n" +
+                            "2\tnull\tnull\tnull\n",
+                    "select x.id, y.id, y.a, y.b from x left join y on x.id = y.id and y.a = y.b order by x.id"
+            );
+        });
+    }
+
+    @Test
     public void testLexerReset() throws Exception {
         assertMemoryLeak(() -> {
             for (int i = 0; i < 10; i++) {
@@ -8807,6 +9028,26 @@ public class SqlParserTest extends AbstractSqlParserTest {
                 "select-choose a, b from (select [a, b] from tab where a < b)",
                 "select a, b from tab where not (a >= b)",
                 modelOf("tab")
+                        .col("a", ColumnType.INT)
+                        .col("b", ColumnType.INT)
+        );
+    }
+
+    @Test
+    public void testOptimiseNotInUnionAll() throws SqlException {
+        // optimiseBooleanNot must descend into the union branch so that NOT(a > b)
+        // is rewritten to (a <= b) on BOTH sides of the union.
+        assertQuery(
+                "select-choose a, b from (select [a, b] from t1 where a <= b) " +
+                        "union all " +
+                        "select-choose a, b from (select [a, b] from t2 where a <= b)",
+                "select a, b from t1 where not (a > b) " +
+                        "union all " +
+                        "select a, b from t2 where not (a > b)",
+                modelOf("t1")
+                        .col("a", ColumnType.INT)
+                        .col("b", ColumnType.INT),
+                modelOf("t2")
                         .col("a", ColumnType.INT)
                         .col("b", ColumnType.INT)
         );
@@ -14744,6 +14985,51 @@ public class SqlParserTest extends AbstractSqlParserTest {
                         .col("symbol", ColumnType.SYMBOL)
                         .col("price", ColumnType.DOUBLE)
         );
+    }
+
+    @Test
+    public void testBetweenAndSeparatorRespectsScopeDepth() throws Exception {
+        // AND inside a sub-expression that opens a new scope must NOT be claimed as
+        // BETWEEN's separator; only an AND at the same scope depth as BETWEEN is the
+        // separator. Covers every scope kind on scopeStack: PAREN, BRACKET, ARRAY,
+        // CASE, CAST/CAST_AS.
+
+        // PAREN
+        assertQuery(
+                "select-virtual 1 between (0 and 2, 3) column from (long_sequence(1))",
+                "SELECT 1 BETWEEN (0 AND 2) AND 3"
+        );
+
+        // ARRAY constructor
+        assertQuery(
+                "select-virtual 1 between (ARRAY[0 and 1], 3) column from (long_sequence(1))",
+                "SELECT 1 BETWEEN ARRAY[0 AND 1] AND 3"
+        );
+
+        // BRACKET (array indexing)
+        assertQuery(
+                "select-virtual 1 between (ARRAY[10, 20, 30][1 and 1], 3) column from (long_sequence(1))",
+                "SELECT 1 BETWEEN (ARRAY[10, 20, 30])[1 AND 1] AND 3"
+        );
+
+        // CASE
+        assertQuery(
+                "select-virtual 1 between (case when 1 = 1 and 2 = 2 then 0 else 0 end, 3) column from (long_sequence(1))",
+                "SELECT 1 BETWEEN CASE WHEN 1=1 AND 2=2 THEN 0 ELSE 0 END AND 3"
+        );
+
+        // CAST (and CAST_AS)
+        assertQuery(
+                "select-virtual 1 between ((0 and 1)::INT, 3) column from (long_sequence(1))",
+                "SELECT 1 BETWEEN CAST(0 AND 1 AS INT) AND 3"
+        );
+    }
+
+    @Test
+    public void testBetweenIssue6534() throws Exception {
+        // https://github.com/questdb/questdb/issues/6534
+        // Malformed SQL must throw SqlException, not AssertionError.
+        assertSyntaxError("SELECT fun(col BETWEEN (0 AND 1, col), col;", 42, "dangling literal");
     }
 
     private void assertCreateTable(String expected, String ddl, TableModel... tableModels) throws SqlException {

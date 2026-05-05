@@ -25,7 +25,6 @@
 package io.questdb.test.cairo;
 
 import io.questdb.PropertyKey;
-import io.questdb.cairo.BitmapIndexReader;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoError;
 import io.questdb.cairo.CairoException;
@@ -35,6 +34,7 @@ import io.questdb.cairo.DefaultCairoConfiguration;
 import io.questdb.cairo.EntryUnavailableException;
 import io.questdb.cairo.GeoHashes;
 import io.questdb.cairo.ImplicitCastException;
+import io.questdb.cairo.IndexType;
 import io.questdb.cairo.MicrosTimestampDriver;
 import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.SymbolMapReader;
@@ -44,6 +44,7 @@ import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.TimestampDriver;
 import io.questdb.cairo.TxWriter;
+import io.questdb.cairo.idx.IndexReader;
 import io.questdb.cairo.security.AllowAllSecurityContext;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordMetadata;
@@ -108,6 +109,7 @@ public class TableWriterTest extends AbstractCairoTest {
 
     @Before
     public void setUp() {
+        setProperty(PropertyKey.CAIRO_DEFAULT_SYMBOL_INDEX_TYPE, TestUtils.randomSymbolIndexTypeName(rnd));
         super.setUp();
         PRODUCT_FS = PRODUCT;
         if (configuration.mangleTableDirNames()) {
@@ -115,6 +117,7 @@ public class TableWriterTest extends AbstractCairoTest {
         }
         timestampType = rnd.nextBoolean() ? ColumnType.TIMESTAMP_MICRO : ColumnType.TIMESTAMP_NANO;
         this.timestampDriver = ColumnType.getTimestampDriver(timestampType);
+        super.setUp();
     }
 
     @Test
@@ -287,7 +290,7 @@ public class TableWriterTest extends AbstractCairoTest {
                         String columnName = "col" + i;
                         alterOperationBuilder
                                 .ofAddColumn(0, token, tableId)
-                                .ofAddColumn(columnName, 5, ColumnType.INT, 0, false, false, 0);
+                                .ofAddColumn(columnName, 5, ColumnType.INT, 0, false, IndexType.NONE, 0);
                         AlterOperation alterOp = alterOperationBuilder.build();
                         alterOp.withSecurityContext(AllowAllSecurityContext.INSTANCE);
                         try (TableWriter writer = engine.getWriterOrPublishCommand(token, alterOp)) {
@@ -713,7 +716,7 @@ public class TableWriterTest extends AbstractCairoTest {
                 writer.commit();
 
                 try {
-                    writer.addColumn("c", ColumnType.STRING, 0, false, true, 1024, false, AllowAllSecurityContext.INSTANCE);
+                    writer.addColumn("c", ColumnType.STRING, 0, false, IndexType.BITMAP, 1024, false, AllowAllSecurityContext.INSTANCE);
                     Assert.fail();
                 } catch (CairoException e) {
                     TestUtils.assertContains(e.getFlyweightMessage(), "only supported");
@@ -728,7 +731,7 @@ public class TableWriterTest extends AbstractCairoTest {
                 writer.commit();
 
                 // re-add column  with index flag switched off
-                writer.addColumn("c", ColumnType.STRING, 0, false, false, 0, false, AllowAllSecurityContext.INSTANCE);
+                writer.addColumn("c", ColumnType.STRING, 0, false, IndexType.NONE, 0, false, AllowAllSecurityContext.INSTANCE);
             }
         });
     }
@@ -754,7 +757,7 @@ public class TableWriterTest extends AbstractCairoTest {
                 writer.commit();
 
                 try {
-                    writer.addColumn("c", ColumnType.SYMBOL, 0, false, true, 0, false, AllowAllSecurityContext.INSTANCE);
+                    writer.addColumn("c", ColumnType.SYMBOL, 0, false, IndexType.BITMAP, 0, false, AllowAllSecurityContext.INSTANCE);
                     Assert.fail();
                 } catch (CairoException e) {
                     TestUtils.assertContains(e.getFlyweightMessage(), "invalid index value block capacity");
@@ -769,7 +772,7 @@ public class TableWriterTest extends AbstractCairoTest {
                 writer.commit();
 
                 // re-add column  with index flag switched off
-                writer.addColumn("c", ColumnType.STRING, 0, false, false, 0, false, AllowAllSecurityContext.INSTANCE);
+                writer.addColumn("c", ColumnType.STRING, 0, false, IndexType.NONE, 0, false, AllowAllSecurityContext.INSTANCE);
             }
         });
     }
@@ -1996,8 +1999,8 @@ public class TableWriterTest extends AbstractCairoTest {
             w.truncate();
 
             // add a couple of indexes
-            w.addIndex("sym1", 1024);
-            w.addIndex("sym2", 1024);
+            w.addIndex("sym1", 1024, IndexType.BITMAP);
+            w.addIndex("sym2", 1024, IndexType.BITMAP);
 
             Assert.assertTrue(w.getMetadata().isColumnIndexed(0));
             Assert.assertTrue(w.getMetadata().isColumnIndexed(1));
@@ -3340,18 +3343,19 @@ public class TableWriterTest extends AbstractCairoTest {
     private void assertIndex(TableReader reader, TestTableReaderRecord record, int columnIndex) {
         final int partitionIndex = 0;
         reader.openPartition(partitionIndex);
-        final BitmapIndexReader indexReader = reader.getBitmapIndexReader(partitionIndex, columnIndex, BitmapIndexReader.DIR_FORWARD);
+        final IndexReader indexReader = reader.getIndexReader(partitionIndex, columnIndex, IndexReader.DIR_FORWARD);
         final SymbolMapReader r = reader.getSymbolMapReader(columnIndex);
         final int symbolCount = r.getSymbolCount();
 
         long calculatedRowCount = 0;
         for (int i = 0; i < symbolCount; i++) {
-            final RowCursor rowCursor = indexReader.getCursor(true, i + 1, 0, Long.MAX_VALUE);
+            final RowCursor rowCursor = indexReader.getCursor(i + 1, 0, Long.MAX_VALUE);
             while (rowCursor.hasNext()) {
                 record.setRecordIndex(Rows.toRowID(partitionIndex, rowCursor.next()));
                 Assert.assertEquals(i, record.getInt(columnIndex));
                 calculatedRowCount++;
             }
+            Misc.free(rowCursor);
         }
         Assert.assertEquals(reader.size(), calculatedRowCount);
     }
@@ -3683,7 +3687,7 @@ public class TableWriterTest extends AbstractCairoTest {
             }
 
             try (TableWriter writer = newOffPoolWriter(configuration, PRODUCT)) {
-                writer.addIndex("supplier", configuration.getIndexValueBlockSize());
+                writer.addIndex("supplier", configuration.getIndexValueBlockSize(), IndexType.BITMAP);
                 Assert.fail();
             } catch (CairoException ignored) {
             }
@@ -3704,7 +3708,7 @@ public class TableWriterTest extends AbstractCairoTest {
 
             // another attempt to create index
             try (TableWriter writer = newOffPoolWriter(configuration, PRODUCT)) {
-                writer.addIndex("supplier", configuration.getIndexValueBlockSize());
+                writer.addIndex("supplier", configuration.getIndexValueBlockSize(), IndexType.BITMAP);
             }
         });
     }
@@ -4162,8 +4166,8 @@ public class TableWriterTest extends AbstractCairoTest {
             w.truncate();
 
             // add a couple of indexes
-            w.addIndex("sym1", 1024);
-            w.addIndex("sym2", 1024);
+            w.addIndex("sym1", 1024, IndexType.BITMAP);
+            w.addIndex("sym2", 1024, IndexType.BITMAP);
 
             Assert.assertTrue(w.getMetadata().isColumnIndexed(0));
             Assert.assertTrue(w.getMetadata().isColumnIndexed(1));

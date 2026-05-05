@@ -31,6 +31,7 @@ import io.questdb.FactoryProvider;
 import io.questdb.Metrics;
 import io.questdb.TelemetryConfiguration;
 import io.questdb.VolumeDefinitions;
+import io.questdb.cairo.idx.PostingIndexUtils;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreakerConfiguration;
 import io.questdb.cutlass.text.TextConfiguration;
 import io.questdb.std.FilesFacade;
@@ -255,6 +256,8 @@ public interface CairoConfiguration {
     boolean getDefaultSymbolCacheFlag();
 
     int getDefaultSymbolCapacity();
+
+    byte getDefaultSymbolIndexType();
 
     int getDetachedMkDirMode();
 
@@ -491,6 +494,32 @@ public interface CairoConfiguration {
     int getPivotColumnPoolCapacity();
 
     int getPoolSegmentSize();
+
+    default double getPostingIndexAlignedBitWidthThreshold() {
+        return 0.0;
+    }
+
+    default byte getPostingIndexRowIdEncoding() {
+        return PostingIndexUtils.ENCODING_ADAPTIVE;
+    }
+
+    /**
+     * Hard cap on the per-writer in-memory outbox of superseded posting-seal
+     * generations awaiting publish to the global purge queue. When the cap
+     * is reached the writer evicts the oldest entry and emits a critical
+     * log message — the file the entry pointed at is recovered later by the
+     * writer-open orphan scan.
+     * <p>
+     * Sized for steady-state operation where the purge queue is healthy. If
+     * the queue is saturated for an extended period (e.g. background job
+     * disabled) the outbox saturates, oldest entries are dropped, and the
+     * orphan scan picks up the slack on the next reopen.
+     */
+    default int getPostingSealPurgeOutboxMax() {
+        return 8192;
+    }
+
+    int getPostingSealGenThreshold();
 
     int getPreferencesStringPoolCapacity();
 
@@ -878,6 +907,8 @@ public interface CairoConfiguration {
     boolean isPartitionEncoderParquetStatisticsEnabled();
 
     boolean isPartitionO3OverwriteControlEnabled();
+
+    boolean isPostingIndexAutoIncludeTimestamp();
 
     boolean isQueryTracingEnabled();
 
