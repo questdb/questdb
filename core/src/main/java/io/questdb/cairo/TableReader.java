@@ -1369,20 +1369,17 @@ public class TableReader implements Closeable, SymbolTableSource {
         path.trimTo(rootLen);
         pathGenParquetPartitionMetadata(partitionIndex, partitionNameTxn);
 
-        final long parquetMetaFileSize = ParquetMetaFileReader.readParquetMetaFileSize(ff, path.$());
-        if (parquetMetaFileSize <= 0) {
-            throw CairoException.critical(0).put("missing or invalid _pm sidecar file [path=").put(path).put(']');
-        }
-
-        MemoryCMR parquetMetaMem = parquetMetadataPartitions.getQuick(partitionIndex);
-        if (parquetMetaMem != null && parquetMetaMem != NullMemoryCMR.INSTANCE) {
-            parquetMetaMem.of(ff, path.$(), parquetMetaFileSize, parquetMetaFileSize, MemoryTag.MMAP_PARQUET_METADATA_READER);
+        MemoryCMRDetachedImpl parquetMetaMem;
+        final MemoryCMR existing = parquetMetadataPartitions.getQuick(partitionIndex);
+        if (existing != null && existing != NullMemoryCMR.INSTANCE) {
+            parquetMetaMem = (MemoryCMRDetachedImpl) existing;
         } else {
-            parquetMetaMem = new MemoryCMRDetachedImpl(ff, path.$(), parquetMetaFileSize, MemoryTag.MMAP_PARQUET_METADATA_READER, false);
+            parquetMetaMem = new MemoryCMRDetachedImpl();
             parquetMetadataPartitions.setQuick(partitionIndex, parquetMetaMem);
         }
+        parquetMetaMem.ofWithSizeFromHeader(ff, path.$(), MemoryTag.MMAP_PARQUET_METADATA_READER);
 
-        parquetMetaReader.of(parquetMetaMem.addressOf(0), parquetMetaFileSize);
+        parquetMetaReader.of(parquetMetaMem.addressOf(0), parquetMetaMem.size());
         if (!parquetMetaReader.resolveFooter(parquetFileSize)) {
             throw CairoException.critical(0).put("invalid _pm file: failed to resolve footer [path=").put(path).put(']');
         }
