@@ -1759,6 +1759,19 @@ public class JoinTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testAsofJoinWithComplexConditionFails4() throws Exception {
+        // Same-table equality on the slave side (l2 = m2) is now routed to the
+        // outer-join expression clause and surfaced as an unsupported-expression
+        // error, instead of being silently dropped.
+        assertMemoryLeak(() -> {
+            execute("create table t1 (l1 long, ts1 timestamp) timestamp(ts1) partition by year");
+            execute("create table t2 (l2 long, m2 long, ts2 timestamp) timestamp(ts2) partition by year");
+
+            assertFailure("select * from t1 asof join t2 on l1=l2 and l2=m2", "unsupported ASOF join expression [expr='l2 = m2']", 45);
+        });
+    }
+
+    @Test
     public void testCrossJoinAllTypes() throws Exception {
         assertMemoryLeak(() -> {
             final String expected = """
@@ -5208,6 +5221,98 @@ public class JoinTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testLeftJoinOnPredicateMasterOnly() throws Exception {
+        // Same-table equality on the master side (x.a = x.b) inside a LEFT/RIGHT/FULL OUTER ON
+        // clause must be honoured: rows where x.a != x.b cannot match any slave row.
+        // The optimiser previously dropped the predicate silently, joining all x rows.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (id INT, a INT, b INT)");
+            execute("INSERT INTO x VALUES (1, 1, 1), (2, 1, 2)");
+            execute("CREATE TABLE y (id INT)");
+            execute("INSERT INTO y VALUES (1), (2)");
+
+            assertQueryNoLeakCheck(
+                    """
+                            id\ta\tb\tid1
+                            1\t1\t1\t1
+                            2\t1\t2\tnull
+                            """,
+                    "SELECT x.id, x.a, x.b, y.id FROM x LEFT JOIN y ON x.id = y.id AND x.a = x.b ORDER BY x.id",
+                    null,
+                    true
+            );
+            assertQueryNoLeakCheck(
+                    """
+                            id\ta\tb\tid1
+                            1\t1\t1\t1
+                            null\tnull\tnull\t2
+                            """,
+                    "SELECT x.id, x.a, x.b, y.id FROM x RIGHT JOIN y ON x.id = y.id AND x.a = x.b ORDER BY y.id",
+                    null,
+                    true
+            );
+            assertQueryNoLeakCheck(
+                    """
+                            id\ta\tb\tid1
+                            null\tnull\tnull\t2
+                            1\t1\t1\t1
+                            2\t1\t2\tnull
+                            """,
+                    "SELECT x.id, x.a, x.b, y.id FROM x FULL JOIN y ON x.id = y.id AND x.a = x.b ORDER BY x.id, y.id",
+                    null,
+                    true
+            );
+        });
+    }
+
+    @Test
+    public void testLeftJoinOnPredicateSlaveOnly() throws Exception {
+        // Same-table equality on the slave side (y.a = y.b) inside a LEFT/RIGHT/FULL OUTER ON
+        // clause must be honoured: slave rows where y.a != y.b cannot match the master.
+        // The optimiser previously dropped the predicate silently, leaving every y row eligible.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (id INT)");
+            execute("INSERT INTO x VALUES (1), (2)");
+            execute("CREATE TABLE y (id INT, a INT, b INT)");
+            execute("INSERT INTO y VALUES (1, 1, 1), (1, 1, 2), (3, 5, 5)");
+
+            assertQueryNoLeakCheck(
+                    """
+                            id\tid1\ta\tb
+                            1\t1\t1\t1
+                            2\tnull\tnull\tnull
+                            """,
+                    "SELECT x.id, y.id, y.a, y.b FROM x LEFT JOIN y ON x.id = y.id AND y.a = y.b ORDER BY x.id",
+                    null,
+                    true
+            );
+            assertQueryNoLeakCheck(
+                    """
+                            id\tid1\ta\tb
+                            null\t1\t1\t2
+                            null\t3\t5\t5
+                            1\t1\t1\t1
+                            """,
+                    "SELECT x.id, y.id, y.a, y.b FROM x RIGHT JOIN y ON x.id = y.id AND y.a = y.b ORDER BY x.id, y.id, y.a, y.b",
+                    null,
+                    true
+            );
+            assertQueryNoLeakCheck(
+                    """
+                            id\tid1\ta\tb
+                            null\t1\t1\t2
+                            null\t3\t5\t5
+                            1\t1\t1\t1
+                            2\tnull\tnull\tnull
+                            """,
+                    "SELECT x.id, y.id, y.a, y.b FROM x FULL JOIN y ON x.id = y.id AND y.a = y.b ORDER BY x.id, y.id",
+                    null,
+                    true
+            );
+        });
+    }
+
+    @Test
     public void testLeftJoinWithConstantFalseFilter() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table t1 as (select x i from long_sequence(3))");
@@ -5488,6 +5593,19 @@ public class JoinTest extends AbstractCairoTest {
             execute("create table t2 (l2 long, ts2 timestamp) timestamp(ts2) partition by year");
 
             assertFailure("select * from t1 lt join t2 on l1=abs(l2)", "unsupported LT join expression [expr='l1 = abs(l2)']", 33);
+        });
+    }
+
+    @Test
+    public void testLtJoinWithComplexConditionFails4() throws Exception {
+        // Same-table equality on the slave side (l2 = m2) is now routed to the
+        // outer-join expression clause and surfaced as an unsupported-expression
+        // error, instead of being silently dropped.
+        assertMemoryLeak(() -> {
+            execute("create table t1 (l1 long, ts1 timestamp) timestamp(ts1) partition by year");
+            execute("create table t2 (l2 long, m2 long, ts2 timestamp) timestamp(ts2) partition by year");
+
+            assertFailure("select * from t1 lt join t2 on l1=l2 and l2=m2", "unsupported LT join expression [expr='l2 = m2']", 43);
         });
     }
 
@@ -6541,6 +6659,19 @@ public class JoinTest extends AbstractCairoTest {
             execute("create table t2 (l2 long, ts2 timestamp) timestamp(ts2) partition by year");
 
             assertFailure("select * from t1 splice join t2 on l1=abs(l2)", "unsupported SPLICE join expression [expr='l1 = abs(l2)']", 37);
+        });
+    }
+
+    @Test
+    public void testSpliceJoinWithComplexConditionFails4() throws Exception {
+        // Same-table equality on the slave side (l2 = m2) is now routed to the
+        // outer-join expression clause and surfaced as an unsupported-expression
+        // error, instead of being silently dropped.
+        assertMemoryLeak(() -> {
+            execute("create table t1 (l1 long, ts1 timestamp) timestamp(ts1) partition by year");
+            execute("create table t2 (l2 long, m2 long, ts2 timestamp) timestamp(ts2) partition by year");
+
+            assertFailure("select * from t1 splice join t2 on l1=l2 and l2=m2", "unsupported SPLICE join expression [expr='l2 = m2']", 47);
         });
     }
 

@@ -1,7 +1,7 @@
 ---
 name: review-pr
 description: Review a GitHub pull request against QuestDB coding standards
-argument-hint: [PR number or URL]
+argument-hint: [PR number or URL] [--level=0..3]
 allowed-tools: Bash(gh *), Read, Grep, Glob, Agent
 ---
 
@@ -28,14 +28,30 @@ You are a senior QuestDB engineer performing a blocking code review. QuestDB is 
   that should never occur in a non-corrupt database. Only flag an `assert` if the condition can plausibly be triggered
   by normal (non-corrupt) user operations.
 
+## Review level
+
+Parse `$ARGUMENTS` for a level token: `--level=N`, `-lN`, or a bare single digit `0`-`3`. **If no level is given, default to 0.** Strip the level token before feeding the remainder (PR number or URL) to `gh` commands.
+
+The level controls how much of the review below actually runs. Lower levels keep the same review *spirit* — adversarial, blocking, no praise — but cut the breadth of the analysis. Higher levels have significantly higher token cost; reserve level 3 for high-stakes PRs (replication, JNI boundary changes, on-disk format, public API, security/ACL).
+
+| Level | What runs |
+|-------|-----------|
+| **0 (default)** | Steps 1, 2, 4. Skip Step 2.5. Skip Step 3 — no agent spawn; review the diff inline in the main loop, using Read/Grep on demand to resolve ambiguities. Skip Step 3b — verify each finding inline as you write it. Single-pass review covering correctness, NULL handling, tests, and QuestDB standards on the diff itself. |
+| **1** | Adds Step 2.5a (semantic delta only — skip 2.5b/2.5c/2.5d). In Step 3, launch only Agent 1 (correctness), Agent 5 (tests), and Agent 6 (code quality) in parallel. Skip all other agents. Skip Step 3b — verify findings inline as you draft the report. |
+| **2** | Full Step 2.5, but in 2.5b restrict the callsite inventory to `public`/`protected` symbols (skip package-private and `pub(crate)`). In Step 3, launch Agents 1-7, plus Agent 8 if `.rs` files are present. Skip Agent 9 (cross-context) and Agent 10 (adversarial fresh-context). Step 3b uses a single batched verification agent for all findings instead of one per finding. |
+| **3** | Every step below as written, all 10 agents, per-finding verification. The full mission-critical pass. |
+
+State the chosen level in one line at the start of the review so the user knows what they're getting (e.g., "Reviewing PR #1234 at level 2"). If the level was defaulted, mention that level 3 exists for full review.
+
 ## Step 1: Gather PR context
 
-Fetch PR metadata, diff, and any review comments:
+Capture the PR identifier in `$PR` (the part of `$ARGUMENTS` left after stripping the level token), then fetch metadata, diff, and review comments in a single bash call so `$PR` is in scope for all three `gh` invocations:
 
 ```bash
-gh pr view $ARGUMENTS --json number,title,body,labels,state
-gh pr diff $ARGUMENTS
-gh pr view $ARGUMENTS --comments
+PR='<PR number or URL from $ARGUMENTS, with any --level=N / -lN / bare-digit level token removed>'
+gh pr view "$PR" --json number,title,body,labels,state
+gh pr diff "$PR"
+gh pr view "$PR" --comments
 ```
 
 ## Step 2: PR title and description

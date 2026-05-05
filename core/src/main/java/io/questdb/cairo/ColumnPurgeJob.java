@@ -283,8 +283,18 @@ public class ColumnPurgeJob extends SynchronizedJob implements Closeable {
                             continue;
                         }
                         int timestampType;
-                        try (TableMetadata metadata = engine.getTableMetadata(tableToken)) {
+                        byte indexType = IndexType.BITMAP; // default to BITMAP for backward compatibility
+                        // Read metadata from the user table being purged, not from the
+                        // purge-log table (this.tableToken). Reading the wrong token
+                        // makes timestampType and indexType reflect the log table's
+                        // schema, which silently breaks POSTING file cleanup after
+                        // a restart that replays in-flight purge tasks.
+                        try (TableMetadata metadata = engine.getTableMetadata(token)) {
                             timestampType = metadata.getTimestampType();
+                            int columnIndex = metadata.getColumnIndexQuiet(columnName);
+                            if (columnIndex > -1) {
+                                indexType = metadata.getColumnIndexType(columnIndex);
+                            }
                         }
 
                         taskInitialized = true;
@@ -294,6 +304,7 @@ public class ColumnPurgeJob extends SynchronizedJob implements Closeable {
                                 tableId,
                                 truncateVersion,
                                 columnType,
+                                indexType,
                                 timestampType,
                                 partitionBy,
                                 updateTxn,
@@ -437,13 +448,14 @@ public class ColumnPurgeJob extends SynchronizedJob implements Closeable {
                 int tableId,
                 long truncateVersion,
                 int columnType,
+                byte indexType,
                 int timestampType,
                 int partitionBy,
                 long updateTxn,
                 long retryDelay,
                 long microTime
         ) {
-            super.of(tableName, columnName, tableId, truncateVersion, columnType, timestampType, partitionBy, updateTxn);
+            super.of(tableName, columnName, tableId, truncateVersion, columnType, indexType, timestampType, partitionBy, updateTxn);
             this.retryDelay = retryDelay;
             nextRunTimestamp = microTime;
         }
