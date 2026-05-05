@@ -208,6 +208,21 @@ public class InSymbolFunctionFactory implements FunctionFactory {
         }
 
         @Override
+        public boolean isConstant() {
+            if (!arg.isConstant()) {
+                return false;
+            }
+            if (deferredValues != null) {
+                for (int i = 0, n = deferredValues.size(); i < n; i++) {
+                    if (!deferredValues.getQuick(i).isConstant()) {
+                        return false;
+                    }
+                }
+            }
+            return true;
+        }
+
+        @Override
         public void toPlan(PlanSink sink) {
             sink.val(arg);
             boolean hasLiterals = set != null && set.size() > 0;
