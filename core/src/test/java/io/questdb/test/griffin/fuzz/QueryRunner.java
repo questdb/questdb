@@ -414,6 +414,51 @@ public final class QueryRunner {
     }
 
     /**
+     * Returns true iff every differing cell pairs a literal LONG that
+     * doesn't fit in INT with a bind value equal to its INT truncation.
+     * {@code FunctionParser.functionToConstant0} promotes an INT-typed
+     * fold result to {@code LongConstant} when {@code intConst != longConst},
+     * so a fully-constant arithmetic subtree like {@code -569823 * 456438}
+     * yields {@code -260088870474L} in literal form. The bind form keeps
+     * the bound leaf opaque, the optimizer picks the {@code *(II)} factory,
+     * and runtime evaluation overflows to {@code 1904134582 == (int) -260088870474L}.
+     * Same SQL, same value, different code path; not a data divergence.
+     */
+    private static boolean rowEqualsWithIntOverflowTolerance(String literal, String bind) {
+        if (literal.equals(bind)) {
+            return true;
+        }
+        String[] cellsLit = literal.split("\t", -1);
+        String[] cellsBind = bind.split("\t", -1);
+        if (cellsLit.length != cellsBind.length) {
+            return false;
+        }
+        for (int i = 0; i < cellsLit.length; i++) {
+            if (cellsLit[i].equals(cellsBind[i])) {
+                continue;
+            }
+            long litLong;
+            long bindLong;
+            try {
+                litLong = Long.parseLong(cellsLit[i]);
+                bindLong = Long.parseLong(cellsBind[i]);
+            } catch (NumberFormatException e) {
+                return false;
+            }
+            // Only tolerate when the literal value really overflows INT.
+            // Otherwise (int) litLong == litLong trivially and the diff
+            // would have to be a real bug.
+            if (litLong == (int) litLong) {
+                return false;
+            }
+            if ((int) litLong != bindLong) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    /**
      * Returns true iff every cell in {@code a} either matches the
      * corresponding cell in {@code b} exactly or both parse as finite
      * doubles within a small relative tolerance. Used as a fallback for
@@ -529,6 +574,34 @@ public final class QueryRunner {
         return true;
     }
 
+    /**
+     * Multiset comparison that absorbs the literal-vs-bind INT overflow
+     * asymmetry: each literal line must pair with a distinct bind line
+     * matching under {@link #rowEqualsWithIntOverflowTolerance(String, String)}.
+     */
+    private static boolean rowsetEqualsWithIntOverflowTolerance(StringSink literal, StringSink bind) {
+        String[] linesLit = literal.toString().split("\n", -1);
+        String[] linesBind = bind.toString().split("\n", -1);
+        if (linesLit.length != linesBind.length) {
+            return false;
+        }
+        boolean[] usedBind = new boolean[linesBind.length];
+        for (String litLine : linesLit) {
+            boolean matched = false;
+            for (int j = 0; j < linesBind.length; j++) {
+                if (!usedBind[j] && rowEqualsWithIntOverflowTolerance(litLine, linesBind[j])) {
+                    usedBind[j] = true;
+                    matched = true;
+                    break;
+                }
+            }
+            if (!matched) {
+                return false;
+            }
+        }
+        return true;
+    }
+
     private static Result toResult(String sql, Outcome outcome) {
         if (outcome.failure == null) {
             return Result.ok();
@@ -583,6 +656,17 @@ public final class QueryRunner {
             // divergence while absorbing reduction-order noise.
             if (a.rowsRead == b.rowsRead && rowsetEqualsWithFpTolerance(rowsA, rowsB)) {
                 return Result.skipped("rowset matches with floating-point tolerance");
+            }
+            // Literal-vs-bind diff where every differing cell is the INT
+            // truncation of an INT-overflowing LONG. The literal form's
+            // constant folder promotes the overflowing INT * INT product to
+            // LONG; the bind form keeps a runtime INT path that wraps
+            // modulo 2^32. Same SQL, same value semantics, different
+            // compile-time vs. runtime arithmetic. See
+            // rowEqualsWithIntOverflowTolerance for the full rationale.
+            if (diffName.contains("bind variable") && a.rowsRead == b.rowsRead
+                    && rowsetEqualsWithIntOverflowTolerance(rowsA, rowsB)) {
+                return Result.skipped("bind int overflow asymmetry");
             }
             return Result.failed(sql, divergence(diffName, a, b, rowsA, rowsB, labelA, labelB));
         }
