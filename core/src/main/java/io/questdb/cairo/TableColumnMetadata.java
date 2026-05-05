@@ -73,7 +73,7 @@ public class TableColumnMetadata implements Plannable {
         this(
                 columnName,
                 columnType,
-                false,
+                IndexType.NONE,
                 0,
                 symbolTableStatic,
                 metadata,
