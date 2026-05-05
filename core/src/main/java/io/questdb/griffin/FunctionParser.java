@@ -1202,8 +1202,6 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
                 args.setQuick(k, new CastUuidToStrFunctionFactory.Func(arg));
             } else if (argTypeTag == ColumnType.IPv4 && sigArgTypeTag == ColumnType.STRING) {
                 args.setQuick(k, new CastIPv4ToStrFunctionFactory.Func(arg));
-            } else if (argTypeTag == ColumnType.IPv4 && sigArgTypeTag == ColumnType.VARCHAR) {
-                args.setQuick(k, new CastIPv4ToVarcharFunctionFactory.Func(arg));
             } else if (argTypeTag == ColumnType.INTERVAL && sigArgTypeTag == ColumnType.STRING) {
                 args.setQuick(k, new CastIntervalToStrFunctionFactory.Func(arg));
             } else if (argTypeTag == ColumnType.INT && sigArgTypeTag == ColumnType.DECIMAL) {
