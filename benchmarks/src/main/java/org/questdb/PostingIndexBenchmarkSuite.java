@@ -81,6 +81,7 @@ public class PostingIndexBenchmarkSuite {
 
     private static final double CLOUD_US_PER_PAGE = 1_000;
     private static final long COL_TXN = COLUMN_NAME_TXN_NONE;
+    private static final int[] COVER_REQ_0 = new int[]{0};
     private static final double HDD_US_PER_PAGE = 4_000;
     private static final boolean IS_DELTA = "delta".equals(System.getProperty("questdb.posting.format", "ef"));
     private static final double NVME_US_PER_PAGE = 80;
@@ -205,13 +206,15 @@ public class PostingIndexBenchmarkSuite {
     @Benchmark
     public long sidecarRead(SidecarState s) {
         long sum = 0;
+        boolean covering = "covering".equals(s.mode);
+        int[] requiredCovers = covering ? COVER_REQ_0 : null;
         try (Path path = new Path().of(s.dir)) {
             try (PostingIndexFwdReader reader = new PostingIndexFwdReader(
                     s.config, path, "test", COLUMN_NAME_TXN_NONE, 0, 0,
                     s.coverMetadata, s.cvr, 0)) {
                 for (int key : s.readKeys) {
-                    try (RowCursor cursor = reader.getCursor(key, 0, Long.MAX_VALUE)) {
-                        if ("covering".equals(s.mode) && cursor instanceof CoveringRowCursor crc && crc.isCoveredAvailable(0)) {
+                    try (RowCursor cursor = reader.getCursor(key, 0, Long.MAX_VALUE, requiredCovers)) {
+                        if (covering && cursor instanceof CoveringRowCursor crc && crc.isCoveredAvailable(0)) {
                             while (crc.hasNext()) {
                                 crc.next();
                                 sum += switch (s.columnType) {
@@ -386,10 +389,13 @@ public class PostingIndexBenchmarkSuite {
     }
 
     private static void doCovCoveringRead(CairoConfiguration config, String dir, int[] keys, CoverType ct) {
-        try (Path path = new Path().of(dir)) {
-            try (PostingIndexFwdReader reader = new PostingIndexFwdReader(config, path, "test", COL_TXN, 0, 0)) {
+        GenericRecordMetadata meta = buildCoverMetadata(ct.columnType);
+        try (ColumnVersionReader cvr = new ColumnVersionReader();
+             Path path = new Path().of(dir)) {
+            try (PostingIndexFwdReader reader = new PostingIndexFwdReader(
+                    config, path, "test", COL_TXN, 0, 0, meta, cvr, 0)) {
                 for (int key : keys) {
-                    try (RowCursor cursor = reader.getCursor(key, 0, Long.MAX_VALUE)) {
+                    try (RowCursor cursor = reader.getCursor(key, 0, Long.MAX_VALUE, COVER_REQ_0)) {
                         if (cursor instanceof CoveringRowCursor crc && crc.isCoveredAvailable(0)) {
                             while (crc.hasNext()) {
                                 crc.next();
@@ -409,6 +415,15 @@ public class PostingIndexBenchmarkSuite {
         }
     }
 
+    private static GenericRecordMetadata buildCoverMetadata(int colType) {
+        GenericRecordMetadata meta = new GenericRecordMetadata();
+        for (int i = 0; i <= 2; i++) {
+            int t = (i == 2) ? colType : ColumnType.LONG;
+            meta.add(new TableColumnMetadata("c" + i, t, IndexType.NONE, 0, false, null, i, false));
+        }
+        return meta;
+    }
+
     // ==================================================================================
     // Shared utilities
     // ==================================================================================
@@ -419,6 +434,48 @@ public class PostingIndexBenchmarkSuite {
         File[] files = dir.listFiles();
         if (files != null) for (File f : files) size += f.length();
         return size;
+    }
+
+    /**
+     * Sidecar files are named {@code <name>.pc<idx>.<colTxn>.<sealTxn>}. Each seal
+     * publishes a new file at a higher sealTxn, but the previous one is normally
+     * removed by a message-bus purge job that this bare-bones benchmark setup does
+     * not run. Call this after {@code writer.seal()} so {@code getDirectorySize}
+     * reflects only the live sidecar.
+     */
+    private static void purgeStaleSidecars(String dir) {
+        File d = new File(dir);
+        File[] files = d.listFiles();
+        if (files == null) return;
+        // group by "<name>.pc<idx>.<colTxn>" prefix; track max sealTxn per group.
+        Map<String, Long> maxSeal = new LinkedHashMap<>();
+        for (File f : files) {
+            String n = f.getName();
+            int pcAt = n.indexOf(".pc");
+            if (pcAt < 0 || n.contains(".pci")) continue;
+            int lastDot = n.lastIndexOf('.');
+            if (lastDot <= pcAt) continue;
+            String prefix = n.substring(0, lastDot);
+            long sealTxn;
+            try { sealTxn = Long.parseLong(n.substring(lastDot + 1)); }
+            catch (NumberFormatException e) { continue; }
+            maxSeal.merge(prefix, sealTxn, Math::max);
+        }
+        for (File f : files) {
+            String n = f.getName();
+            int pcAt = n.indexOf(".pc");
+            if (pcAt < 0 || n.contains(".pci")) continue;
+            int lastDot = n.lastIndexOf('.');
+            if (lastDot <= pcAt) continue;
+            String prefix = n.substring(0, lastDot);
+            long sealTxn;
+            try { sealTxn = Long.parseLong(n.substring(lastDot + 1)); }
+            catch (NumberFormatException e) { continue; }
+            Long max = maxSeal.get(prefix);
+            if (max != null && sealTxn < max) {
+                f.delete();
+            }
+        }
     }
 
     private static void initPosting(CairoConfiguration config, String dir) {
@@ -706,8 +763,10 @@ public class PostingIndexBenchmarkSuite {
                     writer.add(keyAssignment[rowId], rowId);
                 }
                 writer.setMaxValue(keyAssignment.length - 1);
+                writer.seal();
             }
         }
+        purgeStaleSidecars(dir);
     }
 
     enum CoverType {
@@ -1083,8 +1142,10 @@ public class PostingIndexBenchmarkSuite {
                     }
                     for (int i = 0; i < ROWS; i++) writer.add(keyAssignment[i], i);
                     writer.setMaxValue(ROWS - 1);
+                    writer.seal();
                 }
             }
+            purgeStaleSidecars(dir);
         }
 
         @TearDown(Level.Trial)
