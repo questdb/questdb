@@ -39,17 +39,21 @@ import java.util.concurrent.TimeUnit;
  * the tracker's {@code writerTxn} to reach {@link #targetWriterTxn}.
  *
  * <p>Allocated once per {@code wait_wal_table} call and reused across the wake/sleep
- * loop via {@link #reset(long, long)}: a fresh instance binds the carrier's
+ * loop via {@link #reset(long)}: a fresh instance binds the carrier's
  * {@link WorkerContinuation} via {@link #tryBindCurrent}, then each iteration calls
- * reset to clear {@link #state} back to PENDING and publish a new target/delay
+ * reset to flip {@link #state} from FIRED back to PENDING and publish a new target
  * before re-registering. The waiter is not pooled across calls; the cost is one
  * allocation per active wait.
  *
- * <p>The {@link #state} field is a CAS'd 3-way marker. Only one concurrent thread wins
- * the CAS from PENDING to FIRED or CANCELLED, so {@code cont.scheduleResume()} is invoked
- * at most once per wait.
+ * <p>The {@link #state} field is a CAS'd 2-way marker (PENDING / FIRED). Every wakeup
+ * path - tryFire (data arrived or table terminal), expire (timer pop), shutdown
+ * (engine close), tryCancel (carrier-pinned abort) - races the same CAS from PENDING
+ * to FIRED and the winner schedules the resume. So {@code cont.scheduleResume()} is
+ * invoked at most once per wait cycle. The body distinguishes wake causes from its
+ * own exit checks ({@code writerTxn}, {@code isSuspended}, {@code isDropped},
+ * {@code isShuttingDown}), not from the state value.
  *
- * <p>The continuation knows its origin pool's resume sink at construction; firing/cancelling
+ * <p>The continuation knows its origin pool's resume sink at construction; firing
  * therefore does not need to thread a resume job through the waiter.
  */
 public final class TxnWaiter implements DelayedFireable {
@@ -58,35 +62,39 @@ public final class TxnWaiter implements DelayedFireable {
     public static final int STATE_FIRED = 1;
     public static final int STATE_PENDING = 0;
     static final long STATE_OFFSET = Unsafe.getFieldOffset(TxnWaiter.class, "state");
+    final long targetWriterTxn;
     private final TimerShards timerShards;
-    volatile long deadlineMillis = NO_DELAY;
+    private final long waitIntervalMillis;
+    volatile long registeredAtMillis;
     volatile int state = STATE_PENDING;
-    long targetWriterTxn;
     private WorkerContinuation cont;
 
-    public TxnWaiter() {
-        this(null);
-    }
-
-    public TxnWaiter(@Nullable TimerShards timerShards) {
+    public TxnWaiter(@Nullable TimerShards timerShards, long waitIntervalMillis, long targetWriterTxn) {
         this.timerShards = timerShards;
+        this.waitIntervalMillis = waitIntervalMillis;
+        this.targetWriterTxn = targetWriterTxn;
     }
 
     public TxnWaiter(long targetWriterTxn, WorkerContinuation cont) {
         this.timerShards = null;
+        this.waitIntervalMillis = NO_DELAY;
         this.targetWriterTxn = targetWriterTxn;
         this.cont = cont;
     }
 
     public void abortContinuation() {
-        // Try to cancel the waiter first: if PENDING -> CANCELLED
-        // wins, no scheduleResume happens and there is no phantom queue
-        // entry. If tryCancel loses (waiter already FIRED, or the timeout
-        // job got there first), a scheduleResume has pushed this cont onto
-        // the resume queue while the cont is still mounted here -- mark
-        // parkRefused so ContinuationQueue.run drops the phantom dequeue
-        // instead of burning a peer carrier for the duration of the legacy
-        // polling fallback below.
+        // The only true cancellation path: the body is bailing to legacy
+        // polling because suspend was refused, NOT being resumed. Use
+        // STATE_CANCELLED so the state value reflects "this waiter will not
+        // see another reset()": every other terminal path (tryFire / expire /
+        // shutdown) is a wakeup that the body's reset() flips back to PENDING,
+        // but a cancelled waiter stays terminal. If the CAS wins, no
+        // scheduleResume has happened and there is no phantom queue entry.
+        // If we lose (someone already fired this waiter), a scheduleResume
+        // has pushed this cont onto the resume queue while the cont is still
+        // mounted here -- mark parkRefused so ContinuationQueue.run drops the
+        // phantom dequeue instead of burning a peer carrier for the duration
+        // of the legacy polling fallback below.
         if (!Unsafe.cas(this, STATE_OFFSET, STATE_PENDING, STATE_CANCELLED)) {
             cont.markParkRefused();
         }
@@ -98,22 +106,23 @@ public final class TxnWaiter implements DelayedFireable {
     }
 
     /**
-     * Timer-shard pop. State-driven: if PENDING, CAS to CANCELLED and resume the body
-     * so the loop top observes the timeout. Never reads {@link #deadlineMillis}; a stale
-     * heap entry from a previous {@link #reset(long, long)} cycle finds either a fresh
-     * PENDING (cancels it; the new wait was on the same waiter and is now timed out),
+     * Timer-shard pop. State-driven: if PENDING, CAS to FIRED and resume the body
+     * so the loop top observes the timeout. Never reads {@link #registeredAtMillis}; a
+     * stale heap entry from a previous {@link #reset(long)} cycle finds either a fresh
+     * PENDING (fires it; the new wait was on the same waiter and is now timed out),
      * or a terminal state (no-op).
      */
     @Override
     public void expire() {
-        if (Unsafe.cas(this, STATE_OFFSET, STATE_PENDING, STATE_CANCELLED)) {
+        if (Unsafe.cas(this, STATE_OFFSET, STATE_PENDING, STATE_FIRED)) {
             cont.scheduleResume();
         }
     }
 
     @Override
     public long getDelay(@NotNull TimeUnit unit) {
-        return unit.convert(deadlineMillis - System.currentTimeMillis(), TimeUnit.MILLISECONDS);
+        long elapsed = System.currentTimeMillis() - registeredAtMillis;
+        return unit.convert(waitIntervalMillis - elapsed, TimeUnit.MILLISECONDS);
     }
 
     public boolean isCancelled() {
@@ -135,29 +144,26 @@ public final class TxnWaiter implements DelayedFireable {
 
     /**
      * Resets this waiter for reuse across the wake/sleep loop, keeping the bound
-     * continuation. Publishes the new fields and clears {@link #state} back to PENDING;
-     * the volatile write on {@code state} synchronizes the reset so any observer that
-     * reads state == PENDING sees the refreshed fields.
+     * continuation. Stamps {@link #registeredAtMillis} for the {@link Delayed} contract
+     * and CASes {@link #state} back to PENDING from FIRED; returns {@code true} if the
+     * CAS won, meaning the waiter was woken by a previous wakeup path (tryFire / expire
+     * / shutdown / abort) and needs the caller to re-register on the tracker queue.
+     * Returns {@code false} on the very first reset of a fresh waiter (state already
+     * PENDING) - the caller is expected to register unconditionally on the first pass.
      *
-     * <p>The {@code delayMillis} argument is relative: it is added to
-     * {@link System#currentTimeMillis()} to form the absolute deadline used by the
-     * {@link Delayed} contract. Pass {@link #NO_DELAY} to opt out of timer-shard
-     * registration entirely.
-     *
-     * <p>If a {@link TimerShards} reference is bound and the delay is finite, also
-     * registers this waiter into a timer shard. A previous cycle may have left a stale
-     * entry in the heap (its {@code tryFire} won, leaving the entry sorted by an older
-     * deadline). That stale entry is harmless: {@link #expire()} is state-driven, never
-     * consults {@code deadlineMillis}, and the per-instance CAS makes a double-fire
-     * impossible.
+     * <p>If a {@link TimerShards} reference is bound, also registers this waiter into a
+     * timer shard. A previous cycle may have left a stale entry in the heap (its
+     * CAS-to-FIRED won, leaving the entry sorted by an older deadline). That stale
+     * entry is harmless: {@link #expire()} is state-driven, never consults the
+     * registration timestamp, and the per-instance CAS makes a double-fire impossible.
      */
-    public void reset(long targetWriterTxn, long delayMillis) {
-        this.targetWriterTxn = targetWriterTxn;
-        this.deadlineMillis = delayMillis == NO_DELAY ? NO_DELAY : System.currentTimeMillis() + delayMillis;
-        this.state = STATE_PENDING;
-        if (timerShards != null && delayMillis != NO_DELAY) {
+    public boolean reset() {
+        this.registeredAtMillis = System.currentTimeMillis();
+        boolean resumed = Unsafe.cas(this, STATE_OFFSET, STATE_FIRED, STATE_PENDING);
+        if (timerShards != null) {
             timerShards.register(this);
         }
+        return resumed;
     }
 
     public void scheduleResume() {

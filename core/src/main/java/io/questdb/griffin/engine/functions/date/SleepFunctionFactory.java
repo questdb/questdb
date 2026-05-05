@@ -58,6 +58,7 @@ import io.questdb.std.datetime.millitime.MillisecondClock;
  * {@code isShuttingDown()}, and unwinds.
  */
 public class SleepFunctionFactory implements FunctionFactory {
+    private static final long MAX_SLEEP_MILLIS = 24L * 60 * 60 * 1_000;
     private static final String SIGNATURE = "sleep(D)";
 
     @Override
@@ -101,7 +102,12 @@ public class SleepFunctionFactory implements FunctionFactory {
                 throw CairoException.nonCritical().position(argPosition)
                         .put("sleep duration must be a finite non-negative number of seconds [value=").put(seconds).put(']');
             }
-            final long sleepMillis = (long) (seconds * 1_000d);
+            final double millisD = seconds * 1_000d;
+            if (millisD > MAX_SLEEP_MILLIS) {
+                throw CairoException.nonCritical().position(argPosition)
+                        .put("sleep duration exceeds 24 hour maximum [value=").put(seconds).put(']');
+            }
+            final long sleepMillis = (long) millisD;
             if (sleepMillis <= 0) {
                 return executionContext.getMicrosecondTimestamp();
             }

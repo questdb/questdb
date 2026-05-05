@@ -91,9 +91,13 @@ public class WaitWalTableFunctionFactory implements FunctionFactory {
             // can safely flip state back to PENDING for the next park. Stale
             // shard entries from a prior cycle are harmless: expire() is purely
             // state-driven, never reads deadlineMillis.
-            TxnWaiter waiter = new TxnWaiter(executionContext.getCairoEngine().getTimerShards());
+            TxnWaiter waiter = new TxnWaiter(
+                    executionContext.getCairoEngine().getTimerShards(),
+                    executionContext.getCairoEngine().getConfiguration().getQueryContinuationWakeIntervalMillis(),
+                    seqTxn
+            );
+            boolean firstRegister = true;
             if (waiter.tryBindCurrent()) {
-                CairoConfiguration configuration = executionContext.getCairoEngine().getConfiguration();
                 while (seqTxnTracker.getWriterTxn() < seqTxn) {
                     // Owning context is closing: do not re-park. Throwing unwinds the
                     // body all the way to the continuation loop's tail suspend, which is
@@ -102,17 +106,15 @@ public class WaitWalTableFunctionFactory implements FunctionFactory {
                         throw CairoException.nonCritical().put("wait_wal_table aborted, connection closing [tableName=").put(tableName).put("]");
                     }
                     // Probe before re-parking: detects timeout, cancellation, broken
-                    // connection. If tripped, this throws and the wait ends.
-                    // Use NoThrottle: the wake interval already paces these checks;
-                    // the throttled variant skips most calls and would let a tripped
-                    // breaker go undetected for many wake cycles.
+                    // connection, shutdown.
                     executionContext.getCircuitBreaker().statefulThrowExceptionIfTrippedNoThrottle();
                     throwIfTerminated();
-                    // Re-read on every iteration so a runtime config reload of
-                    // griffin.query.continuation.wake.interval takes effect on
-                    // the next park without restarting the wait.
-                    waiter.reset(seqTxn, configuration.getQueryContinuationWakeIntervalMillis());
-                    seqTxnTracker.registerWaiter(waiter);
+
+                    boolean resumed = waiter.reset();
+                    if (firstRegister || resumed) {
+                        seqTxnTracker.registerWaiter(waiter);
+                        firstRegister = false;
+                    }
                     if (!waiter.suspend()) {
                         // The JDK refused to yield because the carrier is pinned (a
                         // synchronized or native frame sits above this call). The body

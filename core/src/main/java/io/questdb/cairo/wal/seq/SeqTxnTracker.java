@@ -281,7 +281,7 @@ public class SeqTxnTracker {
             }
             if (terminal || wtxn >= w.targetWriterTxn) {
                 w.tryFire();
-            } else {
+            } else if (w.state == TxnWaiter.STATE_PENDING) {
                 enqueueHolder(holder, w);
             }
         }

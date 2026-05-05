@@ -1343,7 +1343,7 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
 
     @Override
     public int getTimerShardCount() {
-        return Math.min(4, Math.max(2, Runtime.getRuntime().availableProcessors() / 4));
+        return Math.min(4, Math.max(1, Runtime.getRuntime().availableProcessors() / 4));
     }
 
     @Override
