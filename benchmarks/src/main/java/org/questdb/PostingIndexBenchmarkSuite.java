@@ -131,7 +131,8 @@ public class PostingIndexBenchmarkSuite {
                     writer.setMaxValue(rowId - 1);
                     writer.commit();
                 }
-                writer.close(); // seal
+                writer.seal();
+                writer.close();
             }
         } finally {
             deleteDir(dir);
@@ -954,7 +955,8 @@ public class PostingIndexBenchmarkSuite {
                         writer.setMaxValue(rowIdBase + totalRows - 1);
                         writer.commit();
                     }
-                    writer.close(); // seal
+                    writer.seal();
+                    writer.close();
                 }
             } else {
                 int blockCap = Math.max(8, Numbers.ceilPow2(totalRows / Math.max(keyCount, 1)));
@@ -1014,6 +1016,7 @@ public class PostingIndexBenchmarkSuite {
                         writer.setMaxValue(rowId - 1);
                         writer.commit();
                     }
+                    writer.seal();
                     writer.close();
                 }
             } else {
