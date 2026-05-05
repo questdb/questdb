@@ -287,13 +287,11 @@ Offset       Size           Type    Field        Description
 overflowing length is treated as a torn-tail boundary by the recovery
 scanner.
 
-The CRC32C polynomial is **Castagnoli (0x1EDC6F41)** (NOT the IEEE
-0x04C11DB7). It is computed over `payloadLen` bytes (4 bytes,
-little-endian) followed by the payload bytes, in that order, with the
-initial value `0` (not `0xFFFFFFFF`) and **without** the standard
-post-processing XOR. The reference implementation uses the slice-by-8
-software algorithm; any compatible implementation will produce identical
-checksums.
+The CRC is **standard CRC-32C (Castagnoli)**: polynomial 0x1EDC6F41,
+reflected in/out, init `0xFFFFFFFF`, final XOR `0xFFFFFFFF` (same
+variant as iSCSI/SCTP/Btrfs). It covers `payloadLen` (4 bytes,
+little-endian) followed by the payload bytes, in that order. Any
+off-the-shelf CRC-32C library will produce identical checksums.
 
 The payload is the complete QWP message including its 12-byte QWP1 header
 (magic `QWP1`, version, flags, table count, payload length). See
