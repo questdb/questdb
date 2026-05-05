@@ -531,6 +531,112 @@ public class PropServerConfigurationTest {
     }
 
     @Test
+    public void testCommitModeBangAsync() throws Exception {
+        Properties properties = new Properties();
+        properties.setProperty("cairo.commit.mode", "!async");
+        PropServerConfiguration configuration = newPropServerConfiguration(properties);
+        Assert.assertEquals(CommitMode.ASYNC, configuration.getCairoConfiguration().getCommitMode());
+        Assert.assertTrue(configuration.getCairoConfiguration().isCommitModeForced());
+    }
+
+    @Test
+    public void testCommitModeBangAsyncMixedCase() throws Exception {
+        Properties properties = new Properties();
+        properties.setProperty("cairo.commit.mode", "!AsYnC");
+        PropServerConfiguration configuration = newPropServerConfiguration(properties);
+        Assert.assertEquals(CommitMode.ASYNC, configuration.getCairoConfiguration().getCommitMode());
+        Assert.assertTrue(configuration.getCairoConfiguration().isCommitModeForced());
+    }
+
+    @Test
+    public void testCommitModeBangNosync() throws Exception {
+        Properties properties = new Properties();
+        properties.setProperty("cairo.commit.mode", "!nosync");
+        PropServerConfiguration configuration = newPropServerConfiguration(properties);
+        Assert.assertEquals(CommitMode.NOSYNC, configuration.getCairoConfiguration().getCommitMode());
+        Assert.assertTrue(configuration.getCairoConfiguration().isCommitModeForced());
+    }
+
+    @Test
+    public void testCommitModeBangOnlyTreatedAsForcedDefault() throws Exception {
+        // A bare "!" sets forced=true but the mode after is empty -> falls through to default NOSYNC.
+        // This exists primarily to lock down the parser's behaviour on a degenerate input;
+        // operators are not expected to set it this way.
+        Properties properties = new Properties();
+        properties.setProperty("cairo.commit.mode", "!");
+        PropServerConfiguration configuration = newPropServerConfiguration(properties);
+        Assert.assertEquals(CommitMode.NOSYNC, configuration.getCairoConfiguration().getCommitMode());
+        Assert.assertTrue(configuration.getCairoConfiguration().isCommitModeForced());
+    }
+
+    @Test
+    public void testCommitModeBangSync() throws Exception {
+        // !sync is benign (sync is always safe) but exercising it confirms the parser
+        // still strips the bang and reports forced=true.
+        Properties properties = new Properties();
+        properties.setProperty("cairo.commit.mode", "!sync");
+        PropServerConfiguration configuration = newPropServerConfiguration(properties);
+        Assert.assertEquals(CommitMode.SYNC, configuration.getCairoConfiguration().getCommitMode());
+        Assert.assertTrue(configuration.getCairoConfiguration().isCommitModeForced());
+    }
+
+    @Test
+    public void testCommitModeBangUnknown() throws Exception {
+        // !typo: forced=true, mode falls through to NOSYNC default (with a warning logged
+        // by getCommitMode -- not asserted here, but the parsed values are stable).
+        Properties properties = new Properties();
+        properties.setProperty("cairo.commit.mode", "!nosyc");
+        PropServerConfiguration configuration = newPropServerConfiguration(properties);
+        Assert.assertEquals(CommitMode.NOSYNC, configuration.getCairoConfiguration().getCommitMode());
+        Assert.assertTrue(configuration.getCairoConfiguration().isCommitModeForced());
+    }
+
+    @Test
+    public void testCommitModeDefault() throws Exception {
+        Properties properties = new Properties();
+        PropServerConfiguration configuration = newPropServerConfiguration(properties);
+        Assert.assertEquals(CommitMode.NOSYNC, configuration.getCairoConfiguration().getCommitMode());
+        Assert.assertFalse(configuration.getCairoConfiguration().isCommitModeForced());
+    }
+
+    @Test
+    public void testCommitModeExplicitAsync() throws Exception {
+        Properties properties = new Properties();
+        properties.setProperty("cairo.commit.mode", "async");
+        PropServerConfiguration configuration = newPropServerConfiguration(properties);
+        Assert.assertEquals(CommitMode.ASYNC, configuration.getCairoConfiguration().getCommitMode());
+        Assert.assertFalse(configuration.getCairoConfiguration().isCommitModeForced());
+    }
+
+    @Test
+    public void testCommitModeExplicitNosync() throws Exception {
+        Properties properties = new Properties();
+        properties.setProperty("cairo.commit.mode", "nosync");
+        PropServerConfiguration configuration = newPropServerConfiguration(properties);
+        Assert.assertEquals(CommitMode.NOSYNC, configuration.getCairoConfiguration().getCommitMode());
+        Assert.assertFalse(configuration.getCairoConfiguration().isCommitModeForced());
+    }
+
+    @Test
+    public void testCommitModeExplicitSync() throws Exception {
+        Properties properties = new Properties();
+        properties.setProperty("cairo.commit.mode", "sync");
+        PropServerConfiguration configuration = newPropServerConfiguration(properties);
+        Assert.assertEquals(CommitMode.SYNC, configuration.getCairoConfiguration().getCommitMode());
+        Assert.assertFalse(configuration.getCairoConfiguration().isCommitModeForced());
+    }
+
+    @Test
+    public void testCommitModeUnknownFallsBackToDefault() throws Exception {
+        // typo without bang prefix: not forced, mode falls through to NOSYNC default.
+        Properties properties = new Properties();
+        properties.setProperty("cairo.commit.mode", "nosyc");
+        PropServerConfiguration configuration = newPropServerConfiguration(properties);
+        Assert.assertEquals(CommitMode.NOSYNC, configuration.getCairoConfiguration().getCommitMode());
+        Assert.assertFalse(configuration.getCairoConfiguration().isCommitModeForced());
+    }
+
+    @Test
     public void testCommitIntervalDefault() throws Exception {
         Properties properties = new Properties();
         properties.setProperty("line.tcp.commit.interval.default", "0");

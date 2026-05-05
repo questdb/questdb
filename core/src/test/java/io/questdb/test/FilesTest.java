@@ -73,6 +73,88 @@ public class FilesTest {
     public final TemporaryFolder temporaryFolder = new TemporaryFolder();
 
     @Test
+    public void testFsFlagsAreDistinctSingleBits() {
+        // The native side ORs these into the high half of a jlong return; they must not
+        // overlap with each other or with the low 32 bits used for the raw magic.
+        Assert.assertEquals("FLAG_FS_SUPPORTED must be a single bit",
+                Long.bitCount(Files.FLAG_FS_SUPPORTED), 1);
+        Assert.assertEquals("FLAG_FS_MMAP_SAFE must be a single bit",
+                Long.bitCount(Files.FLAG_FS_MMAP_SAFE), 1);
+        Assert.assertEquals("FLAG_FS_HARD_FAIL must be a single bit",
+                Long.bitCount(Files.FLAG_FS_HARD_FAIL), 1);
+        Assert.assertEquals(0, Files.FLAG_FS_SUPPORTED & Files.FLAG_FS_MMAP_SAFE);
+        Assert.assertEquals(0, Files.FLAG_FS_SUPPORTED & Files.FLAG_FS_HARD_FAIL);
+        Assert.assertEquals(0, Files.FLAG_FS_MMAP_SAFE & Files.FLAG_FS_HARD_FAIL);
+        // Flag bits live above bit 31 so they cannot collide with a 32-bit f_type magic.
+        Assert.assertEquals(0, Files.FLAG_FS_SUPPORTED & 0xFFFFFFFFL);
+        Assert.assertEquals(0, Files.FLAG_FS_MMAP_SAFE & 0xFFFFFFFFL);
+        Assert.assertEquals(0, Files.FLAG_FS_HARD_FAIL & 0xFFFFFFFFL);
+    }
+
+    @Test
+    public void testFsHelpersAreIndependent() {
+        // Each helper must read only its own bit, regardless of which other bits are set.
+        long onlySupported = Files.FLAG_FS_SUPPORTED;
+        Assert.assertTrue(Files.isSupported(onlySupported));
+        Assert.assertFalse(Files.isMmapSafe(onlySupported));
+        Assert.assertFalse(Files.isHardFail(onlySupported));
+
+        long onlyMmapSafe = Files.FLAG_FS_MMAP_SAFE;
+        Assert.assertFalse(Files.isSupported(onlyMmapSafe));
+        Assert.assertTrue(Files.isMmapSafe(onlyMmapSafe));
+        Assert.assertFalse(Files.isHardFail(onlyMmapSafe));
+
+        long onlyHardFail = Files.FLAG_FS_HARD_FAIL;
+        Assert.assertFalse(Files.isSupported(onlyHardFail));
+        Assert.assertFalse(Files.isMmapSafe(onlyHardFail));
+        Assert.assertTrue(Files.isHardFail(onlyHardFail));
+    }
+
+    @Test
+    public void testFsHelpersOnRealMagicValue() {
+        // A typical native return for ext4: magic + supported + mmap-safe.
+        long ext4 = 0xEF53L | Files.FLAG_FS_SUPPORTED | Files.FLAG_FS_MMAP_SAFE;
+        Assert.assertTrue(Files.isSupported(ext4));
+        Assert.assertTrue(Files.isMmapSafe(ext4));
+        Assert.assertFalse(Files.isHardFail(ext4));
+        Assert.assertEquals(0xEF53L, ext4 & 0xFFFFFFFFL);
+
+        // Typical native return for NFS: magic + supported + hard-fail (no mmap-safe).
+        long nfs = (long) Files.NFS_MAGIC | Files.FLAG_FS_SUPPORTED | Files.FLAG_FS_HARD_FAIL;
+        Assert.assertTrue(Files.isSupported(nfs));
+        Assert.assertFalse(Files.isMmapSafe(nfs));
+        Assert.assertTrue(Files.isHardFail(nfs));
+    }
+
+    @Test
+    public void testFsHelpersOnZero() {
+        // statfs() failure returns 0; no flag bits must be set.
+        Assert.assertFalse(Files.isSupported(0));
+        Assert.assertFalse(Files.isMmapSafe(0));
+        Assert.assertFalse(Files.isHardFail(0));
+    }
+
+    @Test
+    public void testGetFileSystemStatusOnTmpfsLinux() throws IOException {
+        // Sanity-check the native filesystem detection against a path we know exists.
+        // On Linux CI runners /tmp is typically tmpfs (FLAG_FS_SUPPORTED|FLAG_FS_MMAP_SAFE),
+        // but on hetzner-incus runners it can be ZFS instead. Either way the path must
+        // resolve to a recognised, mmap-safe filesystem.
+        Assume.assumeTrue("Linux only", Os.isLinux());
+        File f = temporaryFolder.newFolder();
+        try (Path path = new Path().of(f.getAbsolutePath())) {
+            long status = Files.getFileSystemStatus(path.$());
+            Assert.assertNotEquals("statfs() must succeed on a directory we just created", 0, status);
+            Assert.assertTrue("temp folder should be on a recognised filesystem [status=0x"
+                    + Long.toHexString(status) + "]", Files.isSupported(status));
+            Assert.assertTrue("temp folder should be on an mmap-safe filesystem [status=0x"
+                    + Long.toHexString(status) + "]", Files.isMmapSafe(status));
+            Assert.assertFalse("temp folder must not be in the hard-fail bucket",
+                    Files.isHardFail(status));
+        }
+    }
+
+    @Test
     public void testAllocate() throws Exception {
         assertMemoryLeak(() -> {
             File temp = temporaryFolder.newFile();

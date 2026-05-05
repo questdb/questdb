@@ -197,6 +197,46 @@ public class BootstrapTest extends AbstractBootstrapTest {
     }
 
     @Test
+    public void testCheckMmapSafeBangIsNoOpOnSafeFs() {
+        // The bang override must not throw or have side-effects when the FS is already
+        // on the mmap-safe whitelist; the warning path must not be reached.
+        long ext4 = 0xEF53L | Files.FLAG_FS_SUPPORTED | Files.FLAG_FS_MMAP_SAFE;
+        Bootstrap.checkMmapSafeOrSync(ext4, "ext4", CommitMode.NOSYNC, true, "/path", "db");
+        Bootstrap.checkMmapSafeOrSync(ext4, "ext4", CommitMode.ASYNC, true, "/path", "db");
+        Bootstrap.checkMmapSafeOrSync(ext4, "ext4", CommitMode.SYNC, true, "/path", "db");
+    }
+
+    @Test
+    public void testCheckMmapSafePropagatesKindIntoVolumeError() {
+        // Volume errors carry an alias-decorated kind like "create table allowed volume [vol1]";
+        // the message must surface that verbatim so operators know which volume is at fault.
+        long virtiofs = 0x12345678L | Files.FLAG_FS_SUPPORTED;
+        try {
+            Bootstrap.checkMmapSafeOrSync(virtiofs, "virtiofs", CommitMode.NOSYNC, false,
+                    "/mnt/vol1", "create table allowed volume [vol1]");
+            Assert.fail("expected BootstrapException");
+        } catch (Bootstrap.BootstrapException e) {
+            TestUtils.assertContains(e.getMessage(), "create table allowed volume [vol1]");
+            TestUtils.assertContains(e.getMessage(), "/mnt/vol1");
+            TestUtils.assertContains(e.getMessage(), "fs=virtiofs");
+        }
+    }
+
+    @Test
+    public void testCheckMmapSafeRejectsHardFailWithoutSupportedBit() {
+        // The HARD_FAIL bit alone is enough to block startup; SUPPORTED is informational
+        // and must not be required for the hard-fail branch to fire.
+        long mystery = 0x99L | Files.FLAG_FS_HARD_FAIL;
+        try {
+            Bootstrap.checkMmapSafeOrSync(mystery, "REMOTE", CommitMode.SYNC, false, "/x", "db");
+            Assert.fail("expected BootstrapException");
+        } catch (Bootstrap.BootstrapException e) {
+            TestUtils.assertContains(e.getMessage(), "fundamentally incompatible");
+            TestUtils.assertContains(e.getMessage(), "fs=REMOTE");
+        }
+    }
+
+    @Test
     public void testCheckMmapSafeRejectsUnknownFsAsync() {
         // No FLAG_FS_SUPPORTED bit set -- the gate must still fire (default: require sync).
         long unknown = 0xdeadbeefL;
