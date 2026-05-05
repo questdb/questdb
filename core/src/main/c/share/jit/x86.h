@@ -110,9 +110,12 @@ namespace questdb::x86 {
 
     jit_value_t
     read_vars_mem(Compiler &c, data_type_t type, int32_t idx, const Gp &vars_ptr) {
+        // Bind-variable slots are a fixed 16-byte stride so UUID (i128)
+        // values fit alongside narrower types. Java-side layout in
+        // AsyncFilterUtils.writeBindVarFunction must match.
         auto shift = type_shift(type);
         auto type_size = 1 << shift;
-        return {Mem(vars_ptr, 8 * idx, type_size), type, data_kind_t::kMemory};
+        return {Mem(vars_ptr, 16 * idx, type_size), type, data_kind_t::kMemory};
     }
 
     // Reads length of variable size column with header stored in data vector (string, binary).
