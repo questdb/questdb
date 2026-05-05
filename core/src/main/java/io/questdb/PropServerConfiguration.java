@@ -59,6 +59,7 @@ import io.questdb.griffin.engine.table.parquet.ParquetCompression;
 import io.questdb.griffin.engine.table.parquet.ParquetVersion;
 import io.questdb.griffin.engine.table.parquet.PartitionEncoder;
 import io.questdb.log.Log;
+import io.questdb.log.LogFactory;
 import io.questdb.metrics.Counter;
 import io.questdb.metrics.LongGauge;
 import io.questdb.metrics.MetricsConfiguration;
@@ -204,6 +205,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final double columnPurgeRetryDelayMultiplier;
     private final int columnPurgeTaskPoolCapacity;
     private final int commitMode;
+    private final boolean commitModeForced;
     private final String confRoot;
     private final boolean configReloadEnabled;
     private final boolean copierChunkedEnabled;
@@ -1480,7 +1482,10 @@ public class PropServerConfiguration implements ServerConfiguration {
             this.exportWorkerSleepTimeout = getMillis(properties, env, PropertyKey.EXPORT_WORKER_SLEEP_TIMEOUT, 10);
             this.exportWorkerYieldThreshold = getLong(properties, env, PropertyKey.EXPORT_WORKER_YIELD_THRESHOLD, 1000);
 
-            this.commitMode = getCommitMode(properties, env, PropertyKey.CAIRO_COMMIT_MODE);
+            final String rawCommitMode = getString(properties, env, PropertyKey.CAIRO_COMMIT_MODE, "nosync");
+            // Leading '!' opts out of the startup mmap-safety gate (e.g. commit.mode=!nosync).
+            this.commitModeForced = !rawCommitMode.isEmpty() && rawCommitMode.charAt(0) == '!';
+            this.commitMode = getCommitMode(commitModeForced ? rawCommitMode.substring(1) : rawCommitMode);
             this.createAsSelectRetryCount = getInt(properties, env, PropertyKey.CAIRO_CREATE_AS_SELECT_RETRY_COUNT, 5);
             this.defaultSymbolCacheFlag = getBoolean(properties, env, PropertyKey.CAIRO_DEFAULT_SYMBOL_CACHE_FLAG, true);
             this.defaultSymbolCapacity = getInt(properties, env, PropertyKey.CAIRO_DEFAULT_SYMBOL_CAPACITY, 256);
@@ -1763,7 +1768,7 @@ public class PropServerConfiguration implements ServerConfiguration {
             this.lineUdpOwnThreadAffinity = getInt(properties, env, PropertyKey.LINE_UDP_OWN_THREAD_AFFINITY, -1);
             this.lineUdpOwnThread = getBoolean(properties, env, PropertyKey.LINE_UDP_OWN_THREAD, false);
             this.lineUdpUnicast = getBoolean(properties, env, PropertyKey.LINE_UDP_UNICAST, false);
-            this.lineUdpCommitMode = getCommitMode(properties, env, PropertyKey.LINE_UDP_COMMIT_MODE);
+            this.lineUdpCommitMode = getCommitMode(getString(properties, env, PropertyKey.LINE_UDP_COMMIT_MODE, "nosync"));
             this.lineUdpTimestampUnit = getLineTimestampUnit(properties, env, PropertyKey.LINE_UDP_TIMESTAMP);
             String defaultUdpPartitionByProperty = getString(properties, env, PropertyKey.LINE_DEFAULT_PARTITION_BY, "DAY");
             this.lineUdpDefaultPartitionBy = PartitionBy.fromString(defaultUdpPartitionByProperty);
@@ -2329,24 +2334,21 @@ public class PropServerConfiguration implements ServerConfiguration {
         return poolConfiguration.sharedWorkerCount;
     }
 
-    private int getCommitMode(Properties properties, @Nullable Map<String, String> env, ConfigPropertyKey key) {
-        final String commitMode = getString(properties, env, key, "nosync");
-
-        // must not be null because we provided non-null default value
-        assert commitMode != null;
-
+    private int getCommitMode(String commitMode) {
+        if (commitMode == null || commitMode.isEmpty()) {
+            return CommitMode.NOSYNC;
+        }
         if (Chars.equalsLowerCaseAscii(commitMode, "nosync")) {
             return CommitMode.NOSYNC;
         }
-
         if (Chars.equalsLowerCaseAscii(commitMode, "async")) {
             return CommitMode.ASYNC;
         }
-
         if (Chars.equalsLowerCaseAscii(commitMode, "sync")) {
             return CommitMode.SYNC;
         }
-
+        LogFactory.getLog("server-main").advisoryW()
+                .$("unknown commit.mode value, falling back to nosync [value=").$(commitMode).I$();
         return CommitMode.NOSYNC;
     }
 
@@ -4794,6 +4796,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public boolean isColumnAliasExpressionEnabled() {
             return cairoSqlColumnAliasExpressionEnabled;
+        }
+
+        @Override
+        public boolean isCommitModeForced() {
+            return commitModeForced;
         }
 
         @Override

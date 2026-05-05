@@ -207,7 +207,7 @@ public class FilesFacadeImpl implements FilesFacade {
     }
 
     @Override
-    public int getFileSystemStatus(LPSZ lpszName) {
+    public long getFileSystemStatus(LPSZ lpszName) {
         return Files.getFileSystemStatus(lpszName);
     }
 

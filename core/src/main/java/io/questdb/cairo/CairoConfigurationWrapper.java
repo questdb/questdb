@@ -1492,6 +1492,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
+    public boolean isCommitModeForced() {
+        return getDelegate().isCommitModeForced();
+    }
+
+    @Override
     public boolean isCopierChunkedEnabled() {
         return getDelegate().isCopierChunkedEnabled();
     }

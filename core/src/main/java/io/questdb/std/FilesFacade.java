@@ -78,7 +78,7 @@ public interface FilesFacade {
 
     long getFileLimit();
 
-    int getFileSystemStatus(LPSZ lpszName);
+    long getFileSystemStatus(LPSZ lpszName);
 
     long getLastModified(LPSZ path);
 

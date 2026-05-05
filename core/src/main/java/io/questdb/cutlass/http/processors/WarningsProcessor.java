@@ -35,6 +35,7 @@ import io.questdb.cutlass.http.HttpRequestHeader;
 import io.questdb.cutlass.http.HttpRequestProcessor;
 import io.questdb.network.PeerDisconnectedException;
 import io.questdb.network.PeerIsSlowToReadException;
+import io.questdb.std.Files;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.Numbers;
 import io.questdb.std.Os;
@@ -65,11 +66,12 @@ public class WarningsProcessor implements HttpRequestProcessor, HttpRequestHandl
             final String rootDir = configuration.getDbRoot();
             try (Path path = new Path()) {
                 final long fsStatus = ff.getFileSystemStatus(path.of(rootDir).$());
-                if (fsStatus >= 0 && !(fsStatus == 0 && Os.type == Os.DARWIN && Os.arch == Os.ARCH_AARCH64)) {
+                final boolean macSpecial = fsStatus == 0 && Os.type == Os.DARWIN && Os.arch == Os.ARCH_AARCH64;
+                if (!Files.isMmapSafe(fsStatus) && !macSpecial) {
                     sink.putAscii('{').putQuoted(TAG).putAscii(':').putQuoted(UNSUPPORTED_FILE_SYSTEM.text())
                             .putAscii(',').putQuoted(WARNING).putAscii(":\"")
                             .putAscii("Unsupported file system [dir=").put(rootDir).putAscii(", magic=0x");
-                    Numbers.appendHex(sink, fsStatus, false);
+                    Numbers.appendHex(sink, fsStatus & 0xFFFFFFFFL, false);
                     sink.putAscii("]\"}");
                 }
             }

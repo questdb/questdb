@@ -1544,7 +1544,7 @@ public class FilesTest {
         if (!Os.isLinux()) {
             return;
         }
-        if (Files.getFileSystemStatus(Path.getThreadLocal(path).$()) == Files.TMPFS_MAGIC) {
+        if ((Files.getFileSystemStatus(Path.getThreadLocal(path).$()) & 0xFFFFFFFFL) == Files.TMPFS_MAGIC) {
             throw new AssumptionViolatedException("Path is on tmpfs: " + path);
         }
     }

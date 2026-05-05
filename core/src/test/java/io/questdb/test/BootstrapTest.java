@@ -121,64 +121,90 @@ public class BootstrapTest extends AbstractBootstrapTest {
     }
 
     @Test
-    public void testV9fsCommitModeAllowsExt4Async() {
-        // ext4 magic - not 9p, must not throw regardless of commit.mode
-        final long ext4Magic = 0xEF53;
-        Bootstrap.checkV9fsCommitMode(ext4Magic, CommitMode.ASYNC, "/some/path", "db");
-        Bootstrap.checkV9fsCommitMode(ext4Magic, CommitMode.NOSYNC, "/some/path", "db");
-        Bootstrap.checkV9fsCommitMode(ext4Magic, CommitMode.SYNC, "/some/path", "db");
+    public void testCheckMmapSafeAllowsMmapSafeFs() {
+        // ext4 with the mmap-safe bit set must pass for any commit mode.
+        long ext4 = 0xEF53L | Files.FLAG_FS_SUPPORTED | Files.FLAG_FS_MMAP_SAFE;
+        Bootstrap.checkMmapSafeOrSync(ext4, "ext4", CommitMode.ASYNC, false, "/some/path", "db");
+        Bootstrap.checkMmapSafeOrSync(ext4, "ext4", CommitMode.NOSYNC, false, "/some/path", "db");
+        Bootstrap.checkMmapSafeOrSync(ext4, "ext4", CommitMode.SYNC, false, "/some/path", "db");
     }
 
     @Test
-    public void testV9fsCommitModeAllowsSupportedFs() {
-        // SUPPORTED filesystems are reported as -fsStatus from Files.getFileSystemStatus.
-        // The 9p check uses Math.abs(fsStatus) so it must trigger on a SUPPORTED 9p too —
-        // but it must NOT trigger on a SUPPORTED ext4 (negative ext4 magic).
-        Bootstrap.checkV9fsCommitMode(-0xEF53L, CommitMode.NOSYNC, "/some/path", "db");
-        Bootstrap.checkV9fsCommitMode(-0xEF53L, CommitMode.ASYNC, "/some/path", "db");
+    public void testCheckMmapSafeAllowsSyncOnUnsafeFs() {
+        // 9p, virtiofs, FUSE, SMB etc. are recognised but not mmap-safe. SYNC always passes.
+        long v9fs = 0x01021997L | Files.FLAG_FS_SUPPORTED;
+        Bootstrap.checkMmapSafeOrSync(v9fs, "V9FS", CommitMode.SYNC, false, "/9p/mount", "db");
+        long virtiofs = 0x12345678L | Files.FLAG_FS_SUPPORTED;
+        Bootstrap.checkMmapSafeOrSync(virtiofs, "virtiofs", CommitMode.SYNC, false, "/virtio/mount", "db");
     }
 
     @Test
-    public void testV9fsCommitModeAllowsSyncOn9p() {
-        // 9p filesystem with commit.mode=sync is the supported config; must not throw.
-        Bootstrap.checkV9fsCommitMode(Files.V9FS_MAGIC, CommitMode.SYNC, "/9p/mount", "db");
-        // also UNSUPPORTED-listed 9p (positive magic) must be allowed in sync mode
-        Bootstrap.checkV9fsCommitMode(-((long) Files.V9FS_MAGIC), CommitMode.SYNC, "/9p/mount", "db");
+    public void testCheckMmapSafeBangOverrideBypassesGate() {
+        long v9fs = 0x01021997L | Files.FLAG_FS_SUPPORTED;
+        // commitModeForced=true must allow nosync/async on a non-mmap-safe FS without throwing.
+        Bootstrap.checkMmapSafeOrSync(v9fs, "V9FS", CommitMode.NOSYNC, true, "/9p/mount", "db");
+        Bootstrap.checkMmapSafeOrSync(v9fs, "V9FS", CommitMode.ASYNC, true, "/9p/mount", "db");
     }
 
     @Test
-    public void testV9fsCommitModeRejects9pAsync() {
+    public void testCheckMmapSafeBangOverrideCannotBypassHardFail() {
+        long nfs = (long) Files.NFS_MAGIC | Files.FLAG_FS_SUPPORTED | Files.FLAG_FS_HARD_FAIL;
         try {
-            Bootstrap.checkV9fsCommitMode(Files.V9FS_MAGIC, CommitMode.ASYNC, "/9p/mount", "db");
+            Bootstrap.checkMmapSafeOrSync(nfs, "NFS", CommitMode.SYNC, true, "/nfs/mount", "db");
             Assert.fail("expected BootstrapException");
         } catch (Bootstrap.BootstrapException e) {
-            TestUtils.assertContains(e.getMessage(), "9p filesystem");
+            TestUtils.assertContains(e.getMessage(), "fundamentally incompatible");
+            TestUtils.assertContains(e.getMessage(), "fs=NFS");
+        }
+    }
+
+    @Test
+    public void testCheckMmapSafeRejectsHardFailFs() {
+        long nfs = (long) Files.NFS_MAGIC | Files.FLAG_FS_SUPPORTED | Files.FLAG_FS_HARD_FAIL;
+        try {
+            Bootstrap.checkMmapSafeOrSync(nfs, "NFS", CommitMode.SYNC, false, "/nfs/mount", "db");
+            Assert.fail("expected BootstrapException");
+        } catch (Bootstrap.BootstrapException e) {
+            TestUtils.assertContains(e.getMessage(), "fundamentally incompatible");
+            TestUtils.assertContains(e.getMessage(), "fs=NFS");
+        }
+    }
+
+    @Test
+    public void testCheckMmapSafeRejectsUnsafeFsAsync() {
+        long v9fs = 0x01021997L | Files.FLAG_FS_SUPPORTED;
+        try {
+            Bootstrap.checkMmapSafeOrSync(v9fs, "V9FS", CommitMode.ASYNC, false, "/9p/mount", "db");
+            Assert.fail("expected BootstrapException");
+        } catch (Bootstrap.BootstrapException e) {
+            TestUtils.assertContains(e.getMessage(), "not on the mmap-safe whitelist");
             TestUtils.assertContains(e.getMessage(), "cairo.commit.mode");
             TestUtils.assertContains(e.getMessage(), "fs=V9FS");
         }
     }
 
     @Test
-    public void testV9fsCommitModeRejects9pNosync() {
+    public void testCheckMmapSafeRejectsUnsafeFsNosync() {
+        long virtiofs = 0x12345678L | Files.FLAG_FS_SUPPORTED;
         try {
-            Bootstrap.checkV9fsCommitMode(Files.V9FS_MAGIC, CommitMode.NOSYNC, "/9p/mount", "checkpoint");
+            Bootstrap.checkMmapSafeOrSync(virtiofs, "virtiofs", CommitMode.NOSYNC, false, "/virtio/mount", "checkpoint");
             Assert.fail("expected BootstrapException");
         } catch (Bootstrap.BootstrapException e) {
-            TestUtils.assertContains(e.getMessage(), "9p filesystem");
+            TestUtils.assertContains(e.getMessage(), "not on the mmap-safe whitelist");
             TestUtils.assertContains(e.getMessage(), "checkpoint");
+            TestUtils.assertContains(e.getMessage(), "fs=virtiofs");
         }
     }
 
     @Test
-    public void testV9fsCommitModeRejectsSupported9pAsync() {
-        // Negative magic = "SUPPORTED" branch in verifyFileSystem. The 9p detector must
-        // still trip via Math.abs() — otherwise a future Files.getFileSystemStatus()
-        // change to mark 9p SUPPORTED would bypass the check.
+    public void testCheckMmapSafeRejectsUnknownFsAsync() {
+        // No FLAG_FS_SUPPORTED bit set -- the gate must still fire (default: require sync).
+        long unknown = 0xdeadbeefL;
         try {
-            Bootstrap.checkV9fsCommitMode(-((long) Files.V9FS_MAGIC), CommitMode.ASYNC, "/9p/mount", "db");
+            Bootstrap.checkMmapSafeOrSync(unknown, "unknown", CommitMode.NOSYNC, false, "/path", "db");
             Assert.fail("expected BootstrapException");
         } catch (Bootstrap.BootstrapException e) {
-            TestUtils.assertContains(e.getMessage(), "fs=V9FS");
+            TestUtils.assertContains(e.getMessage(), "not on the mmap-safe whitelist");
         }
     }
 
