@@ -361,6 +361,11 @@ public abstract class AbstractPostingIndexReader implements IndexReader {
     }
 
     @TestOnly
+    public int getGenCount() {
+        return genCount;
+    }
+
+    @TestOnly
     public void setGenLookupCacheBudget(long budget) {
         genLookup.setCacheMemoryBudget(budget);
     }
