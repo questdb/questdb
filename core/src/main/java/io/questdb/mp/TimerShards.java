@@ -199,25 +199,48 @@ public final class TimerShards {
     }
 
     private void runShard(DelayQueue<DelayedFireable> shard) {
-        while (running) {
-            try {
-                DelayedFireable e = shard.take();
-                if (e == PoisonSentinel.INSTANCE || !running) {
-                    System.out.println("TIMER shard exiting (poison or !running) [thread=" + Thread.currentThread().getName() + "]");
-                    return;
+        final String threadName = Thread.currentThread().getName();
+        System.out.println("TIMER shard runShard entered [thread=" + threadName + "]");
+        try {
+            while (running) {
+                try {
+                    System.out.println("TIMER shard before take [thread=" + threadName + "]");
+                    DelayedFireable e = shard.take();
+                    System.out.println("TIMER shard after take [thread=" + threadName
+                            + ", entryId=" + System.identityHashCode(e) + "]");
+                    if (e == PoisonSentinel.INSTANCE || !running) {
+                        System.out.println("TIMER shard exiting (poison or !running) [thread=" + threadName
+                                + ", poison=" + (e == PoisonSentinel.INSTANCE)
+                                + ", running=" + running + "]");
+                        return;
+                    }
+                    System.out.println("TIMER shard popped entry [timerId=" + System.identityHashCode(e)
+                            + ", thread=" + threadName + "]");
+                    System.out.println("TIMER shard before expire [timerId=" + System.identityHashCode(e)
+                            + ", thread=" + threadName + "]");
+                    e.expire();
+                    System.out.println("TIMER shard after expire [timerId=" + System.identityHashCode(e)
+                            + ", thread=" + threadName + "]");
+                } catch (InterruptedException ie) {
+                    System.out.println("TIMER shard InterruptedException [thread=" + threadName
+                            + ", running=" + running + "]");
+                    Thread.currentThread().interrupt();
+                    if (!running) {
+                        System.out.println("TIMER shard exiting via interrupt path [thread=" + threadName + "]");
+                        return;
+                    }
+                } catch (Throwable t) {
+                    System.out.println("TIMER shard expire threw [thread=" + threadName + ", err=" + t + "]");
+                    log.critical().$("timer shard expire failed [error=").$(t).I$();
                 }
-                System.out.println("TIMER shard popped entry [timerId=" + System.identityHashCode(e)
-                        + ", thread=" + Thread.currentThread().getName() + "]");
-                e.expire();
-            } catch (InterruptedException ie) {
-                Thread.currentThread().interrupt();
-                if (!running) {
-                    return;
-                }
-            } catch (Throwable t) {
-                System.out.println("TIMER shard expire threw [thread=" + Thread.currentThread().getName() + ", err=" + t + "]");
-                log.critical().$("timer shard expire failed [error=").$(t).I$();
             }
+            System.out.println("TIMER shard exiting via while-loop (running=false) [thread=" + threadName + "]");
+        } catch (Throwable fatal) {
+            System.out.println("TIMER shard FATAL exit [thread=" + threadName + ", err=" + fatal + "]");
+            fatal.printStackTrace(System.out);
+            throw fatal;
+        } finally {
+            System.out.println("TIMER shard runShard finally (thread terminating) [thread=" + threadName + "]");
         }
     }
 

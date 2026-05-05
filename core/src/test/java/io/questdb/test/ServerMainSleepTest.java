@@ -113,7 +113,7 @@ public class ServerMainSleepTest extends AbstractBootstrapTest {
             CountDownLatch sleepStarted = new CountDownLatch(1);
             AtomicReference<Connection> sleepConnRef = new AtomicReference<>();
             AtomicReference<Throwable> sleepOutcome = new AtomicReference<>();
-            Thread sleeper = Thread.ofVirtual().name("sleep-conn-drop").unstarted(() -> {
+            Thread sleeper = new Thread(() -> {
                 try {
                     Connection conn = DriverManager.getConnection(PG_CONNECTION_URI, PG_CONNECTION_PROPERTIES);
                     sleepConnRef.set(conn);
@@ -124,7 +124,8 @@ public class ServerMainSleepTest extends AbstractBootstrapTest {
                 } catch (Throwable t) {
                     sleepOutcome.set(t);
                 }
-            });
+            }, "sleep-conn-drop");
+            sleeper.setDaemon(true);
             sleeper.start();
 
             Assert.assertTrue("sleep thread did not start", sleepStarted.await(5, TimeUnit.SECONDS));
@@ -213,7 +214,7 @@ public class ServerMainSleepTest extends AbstractBootstrapTest {
             ) {
                 CountDownLatch sleepStarted = new CountDownLatch(1);
                 AtomicReference<Throwable> outcome = new AtomicReference<>();
-                Thread sleeper = Thread.ofVirtual().name("sleep-stmt-cancel").unstarted(() -> {
+                Thread sleeper = new Thread(() -> {
                     try {
                         sleepStarted.countDown();
                         stmt.executeQuery("SELECT sleep(60)");
@@ -223,7 +224,8 @@ public class ServerMainSleepTest extends AbstractBootstrapTest {
                     } catch (Throwable t) {
                         outcome.set(t);
                     }
-                });
+                }, "sleep-stmt-cancel");
+                sleeper.setDaemon(true);
                 sleeper.start();
 
                 Assert.assertTrue("sleep did not start", sleepStarted.await(5, TimeUnit.SECONDS));
@@ -259,7 +261,7 @@ public class ServerMainSleepTest extends AbstractBootstrapTest {
 
             CountDownLatch sleepStarted = new CountDownLatch(1);
             AtomicReference<Throwable> sleepOutcome = new AtomicReference<>();
-            Thread sleeper = Thread.ofVirtual().name("sleep-park").unstarted(() -> {
+            Thread sleeper = new Thread(() -> {
                 try (
                         Connection conn = DriverManager.getConnection(PG_CONNECTION_URI, PG_CONNECTION_PROPERTIES);
                         Statement stmt = conn.createStatement()
@@ -272,7 +274,8 @@ public class ServerMainSleepTest extends AbstractBootstrapTest {
                 } catch (Throwable t) {
                     sleepOutcome.set(t);
                 }
-            });
+            }, "sleep-park");
+            sleeper.setDaemon(true);
             sleeper.start();
 
             Assert.assertTrue("sleep did not start", sleepStarted.await(5, TimeUnit.SECONDS));
@@ -431,6 +434,44 @@ public class ServerMainSleepTest extends AbstractBootstrapTest {
             // Sanity: server bootstrapped the requested number of timer shards.
             Assert.assertNotNull(serverMain.getEngine().getTimerShards());
 
+            // Periodic thread-dumper modelled on TestListener.dumpThreadStacks:
+            // a platform daemon thread that uses ThreadMXBean to capture full
+            // stacks every 5s while the fuzz runs. If a timer thread goes silent
+            // mid-test, the dump reveals exactly where it is parked
+            // (DelayQueue.take, ConcurrentQueue.enqueue, runShard while, etc.)
+            // and lets us distinguish "stuck in JDK code" from "stuck in QuestDB
+            // code" from "thread already exited" -- the printed thread set
+            // includes everything alive, so a missing timer thread proves an
+            // earlier silent exit, while a present-but-parked one proves a hang.
+            final java.util.concurrent.atomic.AtomicBoolean dumperStop = new java.util.concurrent.atomic.AtomicBoolean();
+            Thread dumper = new Thread(() -> {
+                final java.lang.management.ThreadMXBean tmx = java.lang.management.ManagementFactory.getThreadMXBean();
+                while (!dumperStop.get()) {
+                    try {
+                        Thread.sleep(5_000);
+                    } catch (InterruptedException ie) {
+                        Thread.currentThread().interrupt();
+                        return;
+                    }
+                    if (dumperStop.get()) return;
+                    StringBuilder s = new StringBuilder();
+                    s.append("=== STACK DUMP @ ").append(System.currentTimeMillis()).append(" ===");
+                    java.lang.management.ThreadInfo[] infos = tmx.getThreadInfo(tmx.getAllThreadIds(), 32);
+                    for (java.lang.management.ThreadInfo ti : infos) {
+                        if (ti == null) continue;
+                        s.append('\n').append('\'').append(ti.getThreadName()).append("\': ").append(ti.getThreadState());
+                        for (StackTraceElement f : ti.getStackTrace()) {
+                            s.append("\n\t\tat ").append(f);
+                        }
+                        s.append('\n');
+                    }
+                    s.append("=== END STACK DUMP ===");
+                    System.out.println(s);
+                }
+            }, "timer-stack-dumper");
+            dumper.setDaemon(true);
+            dumper.start();
+
             final CyclicBarrier startGate = new CyclicBarrier(clientThreads);
             final CountDownLatch doneLatch = new CountDownLatch(clientThreads);
             final AtomicInteger happyCount = new AtomicInteger();
@@ -449,7 +490,7 @@ public class ServerMainSleepTest extends AbstractBootstrapTest {
                 final long threadSeed1 = rnd.nextLong();
                 final long threadSeed2 = rnd.nextLong();
                 final int threadId = i;
-                Thread t = Thread.ofVirtual().name("sleep-fuzz-" + threadId).unstarted(() -> {
+                Thread t = new Thread(() -> {
                     Rnd tr = new Rnd(threadSeed1, threadSeed2);
                     try {
                         startGate.await();
@@ -474,7 +515,7 @@ public class ServerMainSleepTest extends AbstractBootstrapTest {
                                         runHappyPgSleep(0.25 + tr.nextDouble() * 0.25, happyCount, totalSleptMillis);
                                         break;
                                     case 4:
-//                                        runStatementCancelFuzz(tr, cancelledCount);
+                                        runStatementCancelFuzz(tr, cancelledCount);
                                         break;
                                     case 5:
                                         runConnectionDropFuzz(tr, droppedCount);
@@ -499,20 +540,26 @@ public class ServerMainSleepTest extends AbstractBootstrapTest {
                     } finally {
                         doneLatch.countDown();
                     }
-                });
-                // Virtual threads: each client spends most of its time blocked
-                // in PG socket I/O, which is the canonical "park on a JDK
-                // syscall" workload that scales cheaply with virtual threads.
-                // Lets us spin up clientThreads >> platform-thread-count without
-                // a measurable carrier-pool footprint.
+                }, "sleep-fuzz-" + threadId);
+                // Platform threads (not virtual): isolates the framework under
+                // test from JEP 491 / virtual-thread monitor-handoff
+                // interactions, so any stall surfaces against the worker/timer
+                // hot paths and is not contaminated by carrier-pool semantics
+                // on the client side.
+                t.setDaemon(true);
                 t.start();
             }
 
             // Hard upper bound: 12 threads * 25 iters * worst-case ~600ms = ~3 min.
             // Allow plenty of headroom; the test timeout still bounds the run.
+            boolean completed = doneLatch.await(150, TimeUnit.SECONDS);
+            // Stop the dumper before final assertions so the post-load logs
+            // aren't interleaved with another stack dump.
+            dumperStop.set(true);
+            dumper.interrupt();
             Assert.assertTrue(
                     "fuzz did not complete in time, seeds=" + seed0 + "L, " + seed1 + "L",
-                    doneLatch.await(150, TimeUnit.SECONDS)
+                    completed
             );
             long busyEndMillis = System.currentTimeMillis();
             long busyWallMillis = busyEndMillis - busyStartMillis.get();
@@ -558,7 +605,7 @@ public class ServerMainSleepTest extends AbstractBootstrapTest {
             // Did we actually exercise each path? Probabilistic but at 12*25=300
             // iterations with 8 buckets we should hit each at least a few times.
             Assert.assertTrue("no happy sleeps ran (seeds=" + seed0 + "L, " + seed1 + "L)", happyCount.get() > 0);
-//            Assert.assertTrue("no cancelled sleeps ran (seeds=" + seed0 + "L, " + seed1 + "L)", cancelledCount.get() > 0);
+            Assert.assertTrue("no cancelled sleeps ran (seeds=" + seed0 + "L, " + seed1 + "L)", cancelledCount.get() > 0);
             Assert.assertTrue("no dropped sleeps ran (seeds=" + seed0 + "L, " + seed1 + "L)", droppedCount.get() > 0);
 
             // Parallelism check: sum of all completed-sleep durations must exceed
@@ -599,7 +646,7 @@ public class ServerMainSleepTest extends AbstractBootstrapTest {
         Connection conn = DriverManager.getConnection(PG_CONNECTION_URI, PG_CONNECTION_PROPERTIES);
         AtomicReference<Throwable> outcome = new AtomicReference<>();
         CountDownLatch started = new CountDownLatch(1);
-        Thread runner = Thread.ofVirtual().name("sleep-fuzz-drop-runner").unstarted(() -> {
+        Thread runner = new Thread(() -> {
             try (Statement stmt = conn.createStatement()) {
                 started.countDown();
                 // Short fuse: PG breaker doesn't proactively detect FD closure
@@ -616,7 +663,8 @@ public class ServerMainSleepTest extends AbstractBootstrapTest {
             } catch (Throwable t) {
                 outcome.set(t);
             }
-        });
+        }, "sleep-fuzz-drop-runner");
+        runner.setDaemon(true);
         runner.start();
         Assert.assertTrue(started.await(5, TimeUnit.SECONDS));
         // Random delay before drop so we land in different points of the chunked
@@ -629,12 +677,16 @@ public class ServerMainSleepTest extends AbstractBootstrapTest {
         // any executor, the close() side waits forever until the runner releases
         // the monitor, which only happens when the socket read returns. The reliable
         // unblock signal is socket closure, so we ask the driver to schedule close()
-        // on a separate virtual thread (it's allowed to block there) and let the
+        // on a separate platform thread (it's allowed to block there) and let the
         // outer thread proceed; the socket teardown inside close() will eventually
         // wake the runner regardless.
         System.out.println("sleep-fuzz-drop: about to abort conn [thread=" + Thread.currentThread().getName() + "]");
         try {
-            conn.abort(r -> Thread.ofVirtual().name("sleep-fuzz-drop-abort").start(r));
+            conn.abort(r -> {
+                Thread t = new Thread(r, "sleep-fuzz-drop-abort");
+                t.setDaemon(true);
+                t.start();
+            });
         } catch (SQLException ignored) {
         }
         System.out.println("sleep-fuzz-drop: abort returned, joining runner [thread=" + Thread.currentThread().getName() + "]");
@@ -707,7 +759,7 @@ public class ServerMainSleepTest extends AbstractBootstrapTest {
         ) {
             CountDownLatch started = new CountDownLatch(1);
             AtomicReference<Throwable> outcome = new AtomicReference<>();
-            Thread runner = Thread.ofVirtual().name("sleep-fuzz-cancel-runner").unstarted(() -> {
+            Thread runner = new Thread(() -> {
                 try {
                     started.countDown();
                     // Long enough that stmt.cancel() (sent ~50-300 ms in)
@@ -728,7 +780,8 @@ public class ServerMainSleepTest extends AbstractBootstrapTest {
                 } catch (Throwable t) {
                     outcome.set(t);
                 }
-            });
+            }, "sleep-fuzz-cancel-runner");
+            runner.setDaemon(true);
             runner.start();
             Assert.assertTrue(started.await(5, TimeUnit.SECONDS));
             Thread.sleep(50 + tr.nextInt(300));
