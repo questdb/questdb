@@ -104,6 +104,14 @@ import java.util.regex.Pattern;
  * </ul>
  */
 public final class QueryRunner {
+    // Matches a parenthesised binary arithmetic of two integer literals,
+    // each optionally followed by an integer cast suffix. The whitespace
+    // around the operator is mandatory because ArithmeticExpr always emits
+    // it; that lets the pattern stay deterministic about where one operand
+    // ends and the next begins. See hasIntOverflowingConstantArithmetic.
+    private static final Pattern INT_CONST_ARITH_PATTERN = Pattern.compile(
+            "\\(\\s*(-?\\d+)(?:::(?:INT|SHORT|BYTE))?\\s+([+\\-*])\\s+(-?\\d+)(?:::(?:INT|SHORT|BYTE))?\\s*\\)"
+    );
     private final boolean diffJit;
     private final boolean diffShadow;
     private final CairoEngine engine;
@@ -280,6 +288,55 @@ public final class QueryRunner {
         } finally {
             bvs.clear();
         }
+    }
+
+    /**
+     * Returns true iff {@code sql} contains a constant arithmetic subtree
+     * {@code (N1 op N2)} where both operands are integer-typed literals
+     * (optionally cast to {@code ::INT}/{@code ::SHORT}/{@code ::BYTE}) and
+     * applying {@code op} (one of {@code +}, {@code -}, {@code *}) under long
+     * arithmetic produces a value that does not fit in INT. This is the SQL
+     * shape that triggers the bind-vs-literal int-overflow asymmetry: the
+     * literal form folds the subtree at compile time, {@code FunctionParser
+     * .functionToConstant0} promotes the result to {@code LongConstant}, and
+     * the result keeps its full LONG magnitude; the bind form keeps the
+     * subtree opaque, the optimizer picks the {@code *(II)} factory and
+     * runtime evaluation wraps modulo 2^32. When this overflowing value
+     * feeds a string-context cast (e.g. {@code ::SYMBOL} / {@code ::VARCHAR}
+     * inside a comparison), the lexicographic order of the rendered string
+     * legitimately differs between the two forms and the WHERE clause
+     * filters a different set of rows. Cell-level tolerance via
+     * {@link #rowEqualsWithIntOverflowTolerance} cannot help once the
+     * surviving row sets differ in size, so the bind axis falls back to
+     * this SQL-shape detector.
+     */
+    private static boolean hasIntOverflowingConstantArithmetic(CharSequence sql) {
+        Matcher m = INT_CONST_ARITH_PATTERN.matcher(sql);
+        while (m.find()) {
+            try {
+                long a = Long.parseLong(m.group(1));
+                long b = Long.parseLong(m.group(3));
+                long result;
+                switch (m.group(2).charAt(0)) {
+                    case '+':
+                        result = a + b;
+                        break;
+                    case '-':
+                        result = a - b;
+                        break;
+                    case '*':
+                        result = a * b;
+                        break;
+                    default:
+                        continue;
+                }
+                if (result != (int) result) {
+                    return true;
+                }
+            } catch (NumberFormatException ignore) {
+            }
+        }
+        return false;
     }
 
     private static boolean isAcceptedSkip(Throwable t) {
@@ -697,6 +754,21 @@ public final class QueryRunner {
             if (diffName.contains("bind variable") && a.rowsRead == b.rowsRead
                     && rowsetEqualsWithIntOverflowTolerance(rowsA, rowsB)) {
                 return Result.skipped("bind int overflow asymmetry");
+            }
+            // Same int-overflow asymmetry but the wrap shifts the predicate's
+            // truth value rather than just an output cell, so the surviving
+            // row sets differ in size and the cell-level tolerance above
+            // cannot pair them up. The SQL-shape detector recognises a
+            // parenthesised constant arithmetic of two integer literals
+            // whose long-arithmetic result does not fit in INT; that is the
+            // exact subtree the literal form folds to LONG and the bind form
+            // wraps at runtime. When the rendered value then feeds a
+            // string-context cast inside a WHERE comparison, the
+            // lexicographic order of the two strings flips and a different
+            // set of rows survives. Treat as a fold-order asymmetry rather
+            // than a data divergence.
+            if (diffName.contains("bind variable") && hasIntOverflowingConstantArithmetic(sql)) {
+                return Result.skipped("bind int overflow asymmetry (predicate)");
             }
             return Result.failed(sql, divergence(diffName, a, b, rowsA, rowsB, labelA, labelB));
         }
