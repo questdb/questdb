@@ -379,6 +379,39 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
         };
     }
 
+    /**
+     * Returns {@link #F4_TYPE} or {@link #F8_TYPE} when {@code token} is the
+     * lexical form of a FLOAT or DOUBLE constant, {@link #UNDEFINED_CODE}
+     * otherwise. Recognises a trailing {@code 'f'/'F'} suffix as FLOAT, and
+     * a {@code '.'}, {@code 'e'} or {@code 'E'} character anywhere in the
+     * token as DOUBLE; quoted, prefixed and bind-variable-shaped tokens
+     * return {@code UNDEFINED_CODE} so {@link NarrowI64WidenDetector}
+     * doesn't mistake a date string or geo-hash literal for a numeric
+     * constant. Used by the narrow-widen pre-pass to suppress widening when
+     * the predicate has a FLOAT/DOUBLE source.
+     */
+    private static int floatConstantTypeCode(CharSequence token) {
+        int len = token.length();
+        if (len == 0) {
+            return UNDEFINED_CODE;
+        }
+        char first = token.charAt(0);
+        if (first == '\'' || first == '"' || first == '`' || first == '#' || first == ':') {
+            return UNDEFINED_CODE;
+        }
+        char last = token.charAt(len - 1);
+        if ((last == 'f' || last == 'F') && len > 1) {
+            return F4_TYPE;
+        }
+        for (int i = 0; i < len; i++) {
+            char c = token.charAt(i);
+            if (c == '.' || c == 'e' || c == 'E') {
+                return F8_TYPE;
+            }
+        }
+        return UNDEFINED_CODE;
+    }
+
     private static boolean isArithmeticOperation(ExpressionNode node) {
         final CharSequence token = node.token;
         if (node.paramCount < 2) {
@@ -1657,6 +1690,10 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
             return UNDEFINED_CODE;
         }
 
+        public boolean hasFloat() {
+            return sizes[F4_INDEX] != 0 || sizes[F8_INDEX] != 0;
+        }
+
         public boolean hasI4() {
             return sizes[I4_INDEX] != 0;
         }
@@ -1761,6 +1798,15 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
      * convert() promote the value to i64 before mul / add / sub / div
      * dispatches to int64_*. This matches the Java filter's
      * MulInt.getLong / AddInt.getLong, which compute via ((long) l) OP r.
+     * <p>
+     * A FLOAT or DOUBLE operand anywhere in the predicate suppresses the
+     * widening: in that case the int-arithmetic subtree gets consumed by a
+     * CastInt[T]oDouble / CastInt[T]oFloat that calls
+     * {@link io.questdb.cairo.sql.Function#getInt}, so the Java filter
+     * computes at int32 width and wraps modulo 2^32 on overflow. Widening
+     * here would let the JIT preserve the full long product and diverge
+     * from the Java filter -- the inverse of the bug the pre-pass was
+     * introduced to fix.
      */
     private class NarrowI64WidenDetector implements PostOrderTreeTraversalAlgo.Visitor, Mutable {
         private final TypesObserver typesObserver = new TypesObserver();
@@ -1798,6 +1844,17 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
                     }
                     break;
                 }
+                case ExpressionNode.CONSTANT: {
+                    // Observe FLOAT / DOUBLE numeric constants so a predicate
+                    // whose only float source is a literal (e.g. c7 + 0.5)
+                    // suppresses narrow-int widening, matching the Java
+                    // filter's CastInt[T]oDouble path that wraps at int32.
+                    int typeCode = floatConstantTypeCode(node.token);
+                    if (typeCode != UNDEFINED_CODE) {
+                        typesObserver.observe(typeCode);
+                    }
+                    break;
+                }
                 case ExpressionNode.OPERATION:
                     hasArithmetic |= isArithmeticOperation(node);
                     // Pure-constant integer arithmetic subtree whose long
@@ -1818,7 +1875,8 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
         }
 
         boolean shouldWiden() {
-            return hasArithmetic && typesObserver.hasI4() && typesObserver.hasI8();
+            return hasArithmetic && typesObserver.hasI4() && typesObserver.hasI8()
+                    && !typesObserver.hasFloat();
         }
     }
 

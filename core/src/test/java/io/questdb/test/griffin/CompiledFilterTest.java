@@ -491,6 +491,37 @@ public class CompiledFilterTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testIntColumnArithmeticStaysAtIntWidthWhenFloatSuppressesWidening() throws Exception {
+        assertMemoryLeak(() -> {
+            // Inverse of testIntColumnArithmeticWidenedToLongInLongContext:
+            // when the predicate also has a FLOAT/DOUBLE source, the int-
+            // arithmetic subtree is consumed by CastIntToDouble.getDouble,
+            // which calls IntFunction.getInt() and wraps modulo 2^32. The
+            // IR emitter must suppress widening when any F operand appears,
+            // including lexical float CONSTANT tokens like 0.5.
+            execute("CREATE TABLE x (a INT, b INT, l LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO x VALUES " +
+                    "(46341, 46341, 0, '2024-01-01T00:00:00.000000Z')," +
+                    " (10, 5, 0, '2024-01-01T00:00:00.000001Z')");
+
+            // 46341 * 46341 = 2_147_488_281L; wraps to -2_147_479_015 at
+            // int32, so row 1's 0.5 * (a*b) is negative and only row 2
+            // matches. Without the suppression the JIT keeps the long
+            // product and the count would be 2.
+            String sql = "SELECT count(*) FROM x WHERE ((l + 0.5) * (a * b)) > 0";
+
+            sqlExecutionContext.setJitMode(SqlJitMode.JIT_MODE_DISABLED);
+            assertSql("count\n1\n", sql);
+            sqlExecutionContext.setJitMode(SqlJitMode.JIT_MODE_ENABLED);
+            assertSql("count\n1\n", sql);
+
+            try (RecordCursorFactory factory = select(sql)) {
+                Assert.assertTrue("predicate must still JIT", factory.usesCompiledFilter());
+            }
+        });
+    }
+
+    @Test
     public void testIntColumnArithmeticWidenedToLongInLongContext() throws Exception {
         assertMemoryLeak(() -> {
             // INT-INT arithmetic compared to a LONG column would compute at int32
