@@ -388,6 +388,27 @@ public final class QueryRunner {
     }
 
     /**
+     * Parses {@code s} either as a plain long literal or as a finite double
+     * inside the long range, rounded to the nearest long. Used by
+     * {@link #rowEqualsWithIntOverflowTolerance(String, String)} so the
+     * predicate can match cells that travelled through {@code ::DOUBLE} (or
+     * any other DOUBLE-promoting op) and surfaced in scientific notation,
+     * with the rounding absorbing low-ulp FP drift introduced by
+     * {@code FILL(LINEAR)} or parallel-reduction order.
+     */
+    private static long parseLongOrIntegerDouble(String s) {
+        try {
+            return Long.parseLong(s);
+        } catch (NumberFormatException ignored) {
+        }
+        double d = Double.parseDouble(s);
+        if (!Double.isFinite(d) || d < Long.MIN_VALUE || d > Long.MAX_VALUE) {
+            throw new NumberFormatException(s);
+        }
+        return Math.round(d);
+    }
+
+    /**
      * Detects whether a rendered plan uses an index-driven access path.
      * Markers come from the {@code sink.type(...)} calls in QuestDB's
      * cursor factories: "Index forward scan" / "Index backward scan",
@@ -423,6 +444,15 @@ public final class QueryRunner {
      * the bound leaf opaque, the optimizer picks the {@code *(II)} factory,
      * and runtime evaluation overflows to {@code 1904134582 == (int) -260088870474L}.
      * Same SQL, same value, different code path; not a data divergence.
+     * <p>
+     * Cells are accepted as plain long literals or as finite doubles inside
+     * the long range, rounded to the nearest long. The rounding lets the
+     * predicate cover values that flowed through {@code ::DOUBLE} (or any
+     * other DOUBLE-promoting op) and surfaced in scientific notation, and
+     * absorbs low-ulp drift introduced by {@code FILL(LINEAR)} or
+     * parallel-reduction order. Aggregations of N>1 rows are not covered:
+     * literal sums {@code v * N}, bind sums {@code (int)v * N}, and the
+     * truncation relation no longer holds at the aggregate level.
      */
     private static boolean rowEqualsWithIntOverflowTolerance(String literal, String bind) {
         if (literal.equals(bind)) {
@@ -440,8 +470,8 @@ public final class QueryRunner {
             long litLong;
             long bindLong;
             try {
-                litLong = Long.parseLong(cellsLit[i]);
-                bindLong = Long.parseLong(cellsBind[i]);
+                litLong = parseLongOrIntegerDouble(cellsLit[i]);
+                bindLong = parseLongOrIntegerDouble(cellsBind[i]);
             } catch (NumberFormatException e) {
                 return false;
             }
