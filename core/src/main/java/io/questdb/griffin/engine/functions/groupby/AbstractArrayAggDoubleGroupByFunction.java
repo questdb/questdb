@@ -60,18 +60,24 @@ import org.jetbrains.annotations.NotNull;
  * rowId, so intra-row element order is preserved by the stable dest-first
  * tie-breaking in the merge step.
  * <p>
- * Buffer layout in native memory (managed by {@link GroupByAllocator}):
+ * Build buffer layout in native memory (managed by {@link GroupByAllocator}):
  * <pre>
  * | count: INT (4 bytes) | capacity: INT (4 bytes) | (rowId: LONG, value: DOUBLE) * N |
  * </pre>
- * {@code capacity} is repurposed as a compaction sentinel: the first call to
- * {@link #getArray} compacts the pair buffer in-place (stripping rowIds) and
- * writes {@code -1} to the capacity slot so subsequent calls skip the step.
+ * {@link #getArray} produces a fresh allocator-backed flat {@code DOUBLE[]}
+ * buffer the first time a group is rendered and caches the
+ * {@code (srcPtr -> renderPtr)} mapping per instance. The build buffer is
+ * never written to during render, so the read path is safe to call from a
+ * shared cursor's GroupByFunction whose {@code initSharedFrom} hands back a
+ * read-only flyweight over the same {@link MapValue}.
  * <p>
- * The count field at offset 0 doubles as the shape descriptor for
- * {@link io.questdb.cairo.arr.BorrowedArray}.
+ * The count field at offset 0 of the build buffer doubles as the shape
+ * descriptor for {@link io.questdb.cairo.arr.BorrowedArray}, and
+ * {@link #getArray} passes it as the shape address while pointing the value
+ * address at the rendered flat buffer.
  * <p>
- * A single LONG slot in the map value stores the buffer pointer (0 = null/empty group).
+ * A single LONG slot in the map value stores the build buffer pointer
+ * (0 = null/empty group).
  */
 public abstract class AbstractArrayAggDoubleGroupByFunction extends ArrayFunction implements GroupByFunction, UnaryFunction {
     // Element count must fit in int when multiplied by Double.BYTES because
@@ -87,12 +93,32 @@ public abstract class AbstractArrayAggDoubleGroupByFunction extends ArrayFunctio
     protected final BorrowedArray borrowedArray = new BorrowedArray();
     protected final int maxArrayElementCount;
     protected GroupByAllocator allocator;
+    // Per-instance render cache. The first getArray() call for a given build
+    // buffer copies the values into a fresh flat buffer in the allocator and
+    // remembers the mapping. The build buffer itself is never touched, so a
+    // shared cursor's read-only flyweight (via initSharedFrom) is safe.
+    protected long cachedRenderPtr;
+    protected long cachedSrcPtr;
+    // Primary instance for read-only shared instances. The shared instance does
+    // not receive its own setAllocator() call, so it dereferences the primary's
+    // allocator at render time. Null on the primary itself.
+    protected AbstractArrayAggDoubleGroupByFunction primary;
     protected int valueIndex;
 
     protected AbstractArrayAggDoubleGroupByFunction(@NotNull Function arg, int maxArrayElementCount) {
         this.arg = arg;
         this.type = ColumnType.encodeArrayType(ColumnType.DOUBLE, 1);
         this.maxArrayElementCount = Math.min(maxArrayElementCount, BYTE_SAFE_ELEMENT_LIMIT);
+    }
+
+    @Override
+    public void clear() {
+        // Render cache holds native pointers into the GroupByAllocator. When
+        // the enclosing factory is reused across cursor runs, the allocator is
+        // reset and the same addresses may be handed out again - stale cache
+        // entries would then point at freed memory.
+        cachedRenderPtr = 0;
+        cachedSrcPtr = 0;
     }
 
     @Override
@@ -115,22 +141,26 @@ public abstract class AbstractArrayAggDoubleGroupByFunction extends ArrayFunctio
         if (count == 0) {
             return ArrayConstant.NULL;
         }
-        if (Unsafe.getUnsafe().getInt(ptr + CAPACITY_OFFSET) != -1) {
-            // First render: compact pairs in-place by moving each value over its rowId slot.
-            // Write offset i*8 <= read offset i*16+8 for all i>=0, so the forward pass is safe.
+        if (ptr != cachedSrcPtr) {
+            // Render: copy values from the (rowId, value) pair layout into a
+            // fresh flat buffer in the allocator. The build buffer is never
+            // written to, so the read path is safe to invoke concurrently
+            // from a shared cursor's read-only flyweight. Shared instances do
+            // not receive their own setAllocator() call - they dereference the
+            // primary's allocator, which the engine wires up before the cursor
+            // opens.
+            GroupByAllocator alloc = (primary != null) ? primary.allocator : allocator;
+            long renderPtr = alloc.malloc((long) count * Double.BYTES);
             for (int i = 0; i < count; i++) {
                 double v = Unsafe.getUnsafe().getDouble(ptr + HEADER_SIZE + (long) i * ENTRY_SIZE + VALUE_OFFSET);
-                Unsafe.getUnsafe().putDouble(ptr + HEADER_SIZE + (long) i * Double.BYTES, v);
+                Unsafe.getUnsafe().putDouble(renderPtr + (long) i * Double.BYTES, v);
             }
-            // -1 marks the buffer as compacted. The sentinel is load-bearing for correctness,
-            // not just a performance optimization: re-running compaction would read post-compaction
-            // values from offset i*16+8 (now garbage) and write them over already-compacted slots.
-            // toTop() rewinds the cursor without rebuilding the map, so subsequent renders MUST
-            // hit this skip path. computeFirst/computeNext/merge after compaction would also
-            // corrupt the buffer; the asserts in those methods guard against pipeline misuse.
-            Unsafe.getUnsafe().putInt(ptr + CAPACITY_OFFSET, -1);
+            cachedRenderPtr = renderPtr;
+            cachedSrcPtr = ptr;
         }
-        return borrowedArray.of(type, ptr, ptr + HEADER_SIZE, (int) ((long) count * Double.BYTES));
+        // Reuse the build buffer's count int (at offset 0) as the 1D shape
+        // descriptor; the value bytes live in the rendered flat buffer.
+        return borrowedArray.of(type, ptr, cachedRenderPtr, (int) ((long) count * Double.BYTES));
     }
 
     @Override
@@ -146,6 +176,18 @@ public abstract class AbstractArrayAggDoubleGroupByFunction extends ArrayFunctio
     @Override
     public int getValueIndex() {
         return valueIndex;
+    }
+
+    @Override
+    public void initSharedFrom(GroupByFunction primary) {
+        // The shared instance reads from the same MapValue slot as the
+        // primary, so it can render groups without performing computeFirst /
+        // computeNext / merge itself. The engine calls setAllocator() on the
+        // primary AFTER assembleGroupByFunctions() wires this method, so we
+        // hold a reference to the primary and dereference its allocator at
+        // render time when it has been populated.
+        this.valueIndex = primary.getValueIndex();
+        this.primary = (AbstractArrayAggDoubleGroupByFunction) primary;
     }
 
     @Override
@@ -190,8 +232,6 @@ public abstract class AbstractArrayAggDoubleGroupByFunction extends ArrayFunctio
         if (srcCount == 0) {
             return;
         }
-        assert Unsafe.getUnsafe().getInt(srcPtr + CAPACITY_OFFSET) != -1
-                : "array_agg: merge called on already-rendered src buffer";
 
         long destPtr = destValue.getLong(valueIndex);
         if (destPtr == 0 || Unsafe.getUnsafe().getInt(destPtr) == 0) {
@@ -205,8 +245,6 @@ public abstract class AbstractArrayAggDoubleGroupByFunction extends ArrayFunctio
             destValue.putLong(valueIndex, newPtr);
             return;
         }
-        assert Unsafe.getUnsafe().getInt(destPtr + CAPACITY_OFFSET) != -1
-                : "array_agg: merge called on already-rendered dest buffer";
 
         int destCount = Unsafe.getUnsafe().getInt(destPtr);
         int mergedCount = destCount + srcCount;

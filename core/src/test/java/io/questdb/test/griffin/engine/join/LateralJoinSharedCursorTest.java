@@ -678,6 +678,94 @@ public class LateralJoinSharedCursorTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testSharedArrayAgg() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE items (val DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE rates (min_count INT, rate DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO items VALUES
+                    (1.0, '2024-01-01T00:00:00.000000Z'),
+                    (2.0, '2024-01-01T01:00:00.000000Z'),
+                    (3.0, '2024-01-01T02:00:00.000000Z')
+                    """);
+            execute("""
+                    INSERT INTO rates VALUES
+                    (1, 0.1, '2024-01-01T00:00:00.000000Z'),
+                    (3, 0.2, '2024-01-01T00:00:01.000000Z')
+                    """);
+            // The outer query reads o.arr both for projection and through
+            // array_count(o.arr) in the lateral filter. The lateral subquery
+            // runs as a SharedRecordCursorFactory backed by the inner Group By,
+            // so the read-only shared GroupByFunction instance must render the
+            // array without mutating the build buffer or the MapValue.
+            assertQueryNoLeakCheck(
+                    """
+                            arr\trate
+                            [1.0,2.0,3.0]\t0.1
+                            [1.0,2.0,3.0]\t0.2
+                            """,
+                    """
+                            SELECT o.arr, sub.rate
+                            FROM (SELECT array_agg(val) AS arr FROM items) o
+                            JOIN LATERAL (
+                                SELECT rate FROM rates WHERE min_count <= array_count(o.arr)
+                            ) sub
+                            ORDER BY sub.rate
+                            """,
+                    null, true, true
+            );
+        });
+    }
+
+    @Test
+    public void testSharedArrayAggKeyed() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE items (category SYMBOL, val DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE rates (min_count INT, rate DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO items VALUES
+                    ('A',  1.0, '2024-01-01T00:00:00.000000Z'),
+                    ('A',  2.0, '2024-01-01T01:00:00.000000Z'),
+                    ('A',  3.0, '2024-01-01T02:00:00.000000Z'),
+                    ('B', 10.0, '2024-01-01T03:00:00.000000Z'),
+                    ('B', 20.0, '2024-01-01T04:00:00.000000Z')
+                    """);
+            execute("""
+                    INSERT INTO rates VALUES
+                    (2, 0.1, '2024-01-01T00:00:00.000000Z'),
+                    (3, 0.2, '2024-01-01T00:00:01.000000Z')
+                    """);
+            // Keyed variant: each group's array is rendered through the shared
+            // cursor's read-only GroupByFunction, then re-read in the lateral
+            // subquery's filter. The per-instance render cache holds one slot,
+            // so iterating across categories cache-misses on every group and
+            // verifies that each render is computed correctly from a clean
+            // build buffer.
+            assertQueryNoLeakCheck(
+                    """
+                            category\tarr\trate
+                            A\t[1.0,2.0,3.0]\t0.1
+                            A\t[1.0,2.0,3.0]\t0.2
+                            B\t[10.0,20.0]\t0.1
+                            """,
+                    """
+                            SELECT o.category, o.arr, sub.rate
+                            FROM (
+                                SELECT category, array_agg(val) AS arr
+                                FROM items
+                                GROUP BY category
+                            ) o
+                            JOIN LATERAL (
+                                SELECT rate FROM rates WHERE min_count <= array_count(o.arr)
+                            ) sub
+                            ORDER BY o.category, sub.rate
+                            """,
+                    null, true, true
+            );
+        });
+    }
+
+    @Test
     public void testSharedCountDistinct() throws Exception {
         Assume.assumeFalse(enableParallelGroupBy);
         assertMemoryLeak(() -> {

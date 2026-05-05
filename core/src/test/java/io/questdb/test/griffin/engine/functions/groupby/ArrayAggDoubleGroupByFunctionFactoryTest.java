@@ -91,11 +91,12 @@ public class ArrayAggDoubleGroupByFunctionFactoryTest extends AbstractCairoTest 
     }
 
     @Test
-    public void testCompactionSentinelSkipPath() throws Exception {
-        // The getArray() compaction step writes -1 into the capacity slot so subsequent
-        // calls on the same group skip re-compaction. Project the aggregate alongside a
-        // derivation so the outer expression reads it more than once on the same group,
-        // forcing the second call to traverse the already-compacted buffer.
+    public void testRenderCacheReuseOnRepeatedGetArray() throws Exception {
+        // getArray() renders a fresh allocator-backed flat buffer the first time
+        // a given group is read and caches the (srcPtr -> renderPtr) mapping per
+        // instance. Project the aggregate alongside derivations so the outer
+        // expression reads it more than once on the same group, exercising the
+        // cache-hit path for the second and third reads.
         assertMemoryLeak(() -> {
             execute("CREATE TABLE tab (grp SYMBOL, val DOUBLE)");
             execute("""
