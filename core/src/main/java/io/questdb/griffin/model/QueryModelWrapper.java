@@ -214,12 +214,12 @@ public class QueryModelWrapper implements IQueryModel {
     }
 
     @Override
-    public void copyDeclsFrom(IQueryModel model, boolean overrideDeclares) throws SqlException {
+    public void copyDeclsFrom(IQueryModel model, boolean overrideDeclares) {
         throw new UnsupportedOperationException();
     }
 
     @Override
-    public void copyDeclsFrom(LowerCaseCharSequenceObjHashMap<ExpressionNode> decls, boolean overrideDeclares) throws SqlException {
+    public void copyDeclsFrom(LowerCaseCharSequenceObjHashMap<ExpressionNode> decls, boolean overrideDeclares) {
         throw new UnsupportedOperationException();
     }
 

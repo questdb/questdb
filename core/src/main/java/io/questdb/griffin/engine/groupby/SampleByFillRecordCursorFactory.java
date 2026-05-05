@@ -675,12 +675,20 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
         }
 
         private boolean emitNextFillRow() {
+            int skipCount = 0;
             while (true) {
                 circuitBreaker.statefulThrowExceptionIfTripped();
                 // Scan remaining keys in current bucket. Reads go through
                 // keysMapRecord directly; OrderedMap value slots share the
                 // MapValue offsets, so no per-row getValue() rebind is needed.
                 while (keysMapCursor.hasNext()) {
+                    // High-cardinality buckets where most keys had data force
+                    // this loop to skip thousands of present keys before
+                    // finding an absent one to fill. Poll the breaker on a
+                    // 1024-iteration stride so cancellation does not stall.
+                    if ((++skipCount & 0x3FF) == 0) {
+                        circuitBreaker.statefulThrowExceptionIfTrippedNoThrottle();
+                    }
                     int keyIdx = (int) keysMapRecord.getLong(KEY_INDEX_SLOT);
                     if (!keyPresent[keyIdx]) {
                         currentDispatchCode = fillDispatchCode;

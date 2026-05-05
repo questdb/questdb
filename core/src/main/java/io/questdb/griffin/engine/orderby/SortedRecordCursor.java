@@ -131,10 +131,6 @@ class SortedRecordCursor implements DelegatingRecordCursor {
         final Record record = baseCursor.getRecord();
         while (baseCursor.hasNext()) {
             circuitBreaker.statefulThrowExceptionIfTripped();
-            // Tree chain is liable to re-position record to
-            // other rows to do record comparison. We must use our
-            // own record instance in case base cursor keeps
-            // state in the record it returns.
             chain.put(record);
         }
         toTop();
