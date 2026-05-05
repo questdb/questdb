@@ -155,6 +155,10 @@ public class ConcurrentQueueFuzzTest {
             threads.getQuick(i).join();
         }
 
+        Assert.assertEquals("queue length must be zero after all elements drained", 0, queue.sizeDirty());
+        Assert.assertFalse("queue must be empty after all elements drained", queue.tryDequeue(new IntHolderQueue()));
+        Assert.assertEquals("queue length must remain zero after a no-op tryDequeue", 0, queue.sizeDirty());
+
         if (!errors.isEmpty()) {
             Assert.assertTrue(errors.toString(), errors.isEmpty());
         }

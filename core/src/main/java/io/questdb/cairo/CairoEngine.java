@@ -116,12 +116,12 @@ import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.log.LogRecord;
 import io.questdb.mp.ConcurrentQueue;
-import io.questdb.mp.TimerShards;
 import io.questdb.mp.NoOpQueue;
 import io.questdb.mp.Queue;
 import io.questdb.mp.SCSequence;
 import io.questdb.mp.Sequence;
 import io.questdb.mp.SimpleWaitingLock;
+import io.questdb.mp.TimerShards;
 import io.questdb.preferences.SettingsStore;
 import io.questdb.std.Chars;
 import io.questdb.std.ConcurrentHashMap;
@@ -196,11 +196,11 @@ public class CairoEngine implements Closeable, WriterSource {
     private final Telemetry<TelemetryTask> telemetry;
     private final Telemetry<TelemetryMatViewTask> telemetryMatView;
     private final Telemetry<TelemetryWalTask> telemetryWal;
+    private final TimerShards timerShards;
     // initial value of unpublishedWalTxnCount is 1 because we want to scan for non-applied WAL transactions on startup
     private final AtomicLong unpublishedWalTxnCount = new AtomicLong(1);
     private final ViewGraph viewGraph;
     private final ViewWalWriterPool viewWalWriterPool;
-    private final TimerShards timerShards;
     private final SimpleWaitingLock walPurgeJobLock = new SimpleWaitingLock();
     private final WalWriterPool walWriterPool;
     private final WriterPool writerPool;
@@ -855,6 +855,10 @@ public class CairoEngine implements Closeable, WriterSource {
         return tableFlagResolver.isSystem(tableName) ? DefaultDdlListener.INSTANCE : ddlListener;
     }
 
+    public @NotNull DurableAckRegistry getDurableAckRegistry() {
+        return durableAckRegistry;
+    }
+
     public FrameFactory getFrameFactory() {
         return frameFactory;
     }
@@ -1188,6 +1192,17 @@ public class CairoEngine implements Closeable, WriterSource {
         return telemetryWal;
     }
 
+    /**
+     * Returns the periodic sweep that cancels {@link TxnWaiter}
+     * instances whose deadline has elapsed. Without this job assigned, parked
+     * suspending-function calls (e.g. {@code wait_wal_table}) cannot be cleaned up
+     * after a client disconnect or on idle tables, so it MUST be assigned to a worker
+     * pool for the SQL-suspend feature to be safe in production.
+     */
+    public TimerShards getTimerShards() {
+        return timerShards;
+    }
+
     public TxnScoreboard getTxnScoreboard(@NotNull TableToken tableToken) {
         return scoreboardPool.getTxnScoreboard(tableToken);
     }
@@ -1228,21 +1243,6 @@ public class CairoEngine implements Closeable, WriterSource {
             }
             throw e;
         }
-    }
-
-    public @NotNull DurableAckRegistry getDurableAckRegistry() {
-        return durableAckRegistry;
-    }
-
-    /**
-     * Returns the periodic sweep that cancels {@link TxnWaiter}
-     * instances whose deadline has elapsed. Without this job assigned, parked
-     * suspending-function calls (e.g. {@code wait_wal_table}) cannot be cleaned up
-     * after a client disconnect or on idle tables, so it MUST be assigned to a worker
-     * pool for the SQL-suspend feature to be safe in production.
-     */
-    public TimerShards getTimerShards() {
-        return timerShards;
     }
 
     public @NotNull WalDirectoryPolicy getWalDirectoryPolicy() {
@@ -1794,6 +1794,10 @@ public class CairoEngine implements Closeable, WriterSource {
         this.ddlListener = ddlListener;
     }
 
+    public void setDurableAckRegistry(@NotNull DurableAckRegistry durableAckRegistry) {
+        this.durableAckRegistry = durableAckRegistry;
+    }
+
     @TestOnly
     public void setPoolListener(PoolListener poolListener) {
         this.tableMetadataPool.setPoolListener(poolListener);
@@ -1822,10 +1826,6 @@ public class CairoEngine implements Closeable, WriterSource {
 
     @TestOnly
     public void setUp() {
-    }
-
-    public void setDurableAckRegistry(@NotNull DurableAckRegistry durableAckRegistry) {
-        this.durableAckRegistry = durableAckRegistry;
     }
 
     public void setWalDirectoryPolicy(@NotNull WalDirectoryPolicy walDirectoryPolicy) {

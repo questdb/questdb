@@ -164,11 +164,7 @@ public class ConcurrentQueue<T> implements Queue<T> {
      */
     public boolean tryDequeue(T target) {
         T val = tryDequeueValue(target);
-        if (val != null) {
-            length.decrementAndGet();
-            return true;
-        }
-        return false;
+        return val != null;
     }
 
     /**
@@ -249,6 +245,7 @@ public class ConcurrentQueue<T> implements Queue<T> {
             // Try to take. If we're successful, we're done.
             T val = head.tryDequeue(container);
             if (val != null) {
+                length.decrementAndGet();
                 return val;
             }
 
@@ -266,6 +263,7 @@ public class ConcurrentQueue<T> implements Queue<T> {
             assert head.frozenForEnqueues;
             val = head.tryDequeue(container);
             if (val != null) {
+                length.decrementAndGet();
                 return val;
             }
 

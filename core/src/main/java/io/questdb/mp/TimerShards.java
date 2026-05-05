@@ -24,6 +24,7 @@
 
 package io.questdb.mp;
 
+import io.questdb.cairo.CairoException;
 import io.questdb.log.Log;
 import org.jetbrains.annotations.NotNull;
 
@@ -98,16 +99,20 @@ public final class TimerShards {
     }
 
     /**
-     * Inserts an entry into the appropriate shard. If {@link #shutdown()} has already
-     * run, the entry's {@link DelayedFireable#shutdown()} is invoked instead so a
-     * late-registering caller is unblocked and the entry never sits orphaned in a
-     * drained shard.
+     * Inserts an entry into the appropriate shard. Throws
+     * {@link CairoException#queryCancelled()} if {@link #shutdown()} has run or
+     * races with this call between the offer and the post-check, so the caller
+     * unwinds before parking on an entry that no shard thread will ever fire.
      */
     public void register(@NotNull DelayedFireable entry) {
         if (!running) {entry.shutdown();
             return;
         }
-        shards[shardFor(entry)].offer(entry);
+        final DelayQueue<DelayedFireable> shard = shards[shardFor(entry)];
+        shard.offer(entry);
+        if (!running) {
+            throw CairoException.queryCancelled();
+        }
     }
 
     /**
