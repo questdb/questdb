@@ -320,6 +320,7 @@ public class NtileFunctionFactory extends AbstractWindowFunctionFactory {
             MapKey key = map.withKey();
             key.put(partitionByRecord, partitionBySink);
             MapValue mapValue = key.findValue();
+            assert mapValue != null;
 
             long rowNumber = Unsafe.getUnsafe().getLong(spi.getAddress(recordOffset, columnIndex));
             long totalRows = mapValue.getLong(0);
