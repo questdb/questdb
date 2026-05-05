@@ -13606,6 +13606,46 @@ public class WindowFunctionTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testNthValuePartitionedRangeUnboundedBufferExpansion() throws Exception {
+        // Forces NthValueOverPartitionRangeFrameFunction.computeNext to grow its per-partition
+        // ring buffer past the default initial capacity (32). RANGE between K microseconds
+        // PRECEDING and CURRENT ROW with K large enough that every prior row in the partition
+        // stays inside the frame, so size grows by one per row and triggers expandRingBuffer
+        // when size hits 32. n is large enough that the locked-value optimisation in the
+        // unbounded-preceding sibling (NthValueOverPartitionRangeFrameFunction's frame-size
+        // shortcut) stays out of the picture; the bounded-lo branch keeps walking the buffer.
+        // 80 rows per partition forces three doublings (32 -> 64 -> 128 ... up to capacity for
+        // the partition size).
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, i long, val double) timestamp(ts)", timestampType.getTypeName());
+            // 160 rows, 80 per partition, spaced 1 second apart so the 1000-second window
+            // admits every prior row in the partition.
+            execute("insert into tab select (x * 1000000)::timestamp, x % 2, x::double from long_sequence(160)");
+
+            // Sanity check: every row but the first 49 of each partition (< n=50 preceding rows
+            // available) emits a non-null nth_value. Partition 0 (even x: 2,4,...,160) has its
+            // 50th row at x=100, so nth_value(val,50) for any subsequent row equals row-50's val,
+            // which is x=100 -> 100.0. Partition 1 (odd x) -> row-50 value = x=99 -> 99.0.
+            // 49 NaNs per partition + 31 locked-value rows per partition = 98 NaNs and 62 hits.
+            assertQueryNoLeakCheck(
+                    """
+                            nv\tcnt
+                            99.0\t31
+                            100.0\t31
+                            null\t98
+                            """,
+                    "select nv, count(*) cnt from (" +
+                            "select nth_value(val, 50) over (" +
+                            "partition by i order by ts range between 1000 second preceding and current row) nv from tab" +
+                            ") group by nv order by nv",
+                    null,
+                    true,
+                    true
+            );
+        });
+    }
+
+    @Test
     public void testNthValuePartitionedRowsUnboundedLockedIn() throws Exception {
         // Partitioned ROWS frame with rowsLo=MIN_VALUE (unbounded preceding) and rowsHi=-1 (1
         // preceding). Routes to NthValueOverPartitionRowsFrameUnboundedFunction (bufferSize=1,
@@ -13848,6 +13888,52 @@ public class WindowFunctionTest extends AbstractCairoTest {
                     """
                             Window
                               functions: [nth_value(val,1) over (partition by [i] rows between unbounded preceding and 1 preceding)]
+                                PageFrame
+                                    Row forward scan
+                                    Frame forward scan on: tab
+                            """
+            );
+            // NthValueOverRangeFrameFunction with frameLoBounded=false, minDiff>0
+            // (range between unbounded preceding and K preceding). Hits both toPlan branches:
+            // "unbounded preceding" for the lo bound and "<minDiff> preceding" for the hi bound.
+            assertPlanNoLeakCheck(
+                    "select ts, nth_value(val, 2) over (order by ts range between unbounded preceding and 5 microseconds preceding) from tab",
+                    "Window\n" +
+                            "  functions: [nth_value(val,2) over (range between unbounded preceding and " +
+                            (timestampType == TestTimestampType.MICRO ? "5" : "5000") + " preceding)]\n" +
+                            "    PageFrame\n" +
+                            "        Row forward scan\n" +
+                            "        Frame forward scan on: tab\n"
+            );
+            // NthValueOverPartitionRangeFrameFunction with frameLoBounded=false, minDiff>0.
+            assertPlanNoLeakCheck(
+                    "select ts, i, nth_value(val, 2) over (partition by i order by ts range between unbounded preceding and 5 microseconds preceding) from tab",
+                    "Window\n" +
+                            "  functions: [nth_value(val,2) over (partition by [i] range between unbounded preceding and " +
+                            (timestampType == TestTimestampType.MICRO ? "5" : "5000") + " preceding)]\n" +
+                            "    PageFrame\n" +
+                            "        Row forward scan\n" +
+                            "        Frame forward scan on: tab\n"
+            );
+            // NthValueOverRowsFrameFunction with frameIncludesCurrentValue=false, excludeCount>0
+            // (rows between K preceding and M preceding, K > M > 0). Exercises the "<excludeCount>
+            // preceding" toPlan branch that the "current row" hi-bound case skips.
+            assertPlanNoLeakCheck(
+                    "select ts, nth_value(val, 2) over (order by ts rows between 3 preceding and 1 preceding) from tab",
+                    """
+                            Window
+                              functions: [nth_value(val,2) over ( rows between 3 preceding and 1 preceding)]
+                                PageFrame
+                                    Row forward scan
+                                    Frame forward scan on: tab
+                            """
+            );
+            // NthValueOverPartitionRowsFrameFunction with frameIncludesCurrentValue=false, excludeCount>0.
+            assertPlanNoLeakCheck(
+                    "select ts, i, nth_value(val, 2) over (partition by i order by ts rows between 3 preceding and 1 preceding) from tab",
+                    """
+                            Window
+                              functions: [nth_value(val,2) over (partition by [i] rows between 3 preceding and 1 preceding)]
                                 PageFrame
                                     Row forward scan
                                     Frame forward scan on: tab
