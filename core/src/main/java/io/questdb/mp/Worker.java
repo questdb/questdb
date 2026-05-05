@@ -190,12 +190,8 @@ public class Worker extends Thread {
                             //     stale or shutdown-race cont surfaces, and
                             //     leave parked queries with no remounter.
                             if (cont == own) {
-                                System.out.println("worker exit: own loopBody returned [name=" + getName()
-                                        + ", lifecycle=" + lifecycle.get() + "]");
                                 break outer;
                             }
-                            System.out.println("worker continuing past foreign cont done [name=" + getName()
-                                    + ", lifecycle=" + lifecycle.get() + "]");
                             break;
                         }
                         WorkerContinuation handoff = cont.takeHandoff();
@@ -217,14 +213,10 @@ public class Worker extends Thread {
                         continuationQueue.run(cont);
                     }
                 }
-                System.out.println("worker exit: lifecycle != RUNNING [name=" + getName()
-                        + ", lifecycle=" + lifecycle.get() + "]");
             }
         } catch (Throwable e) {
             ex = e;
             stdErrCritical(e);
-            System.out.println("worker exit: uncaught throwable [name=" + getName()
-                    + ", lifecycle=" + lifecycle.get() + ", error=" + e + "]");
         } finally {
             if (onHaltAction != null) {
                 try {

@@ -434,44 +434,6 @@ public class ServerMainSleepTest extends AbstractBootstrapTest {
             // Sanity: server bootstrapped the requested number of timer shards.
             Assert.assertNotNull(serverMain.getEngine().getTimerShards());
 
-            // Periodic thread-dumper modelled on TestListener.dumpThreadStacks:
-            // a platform daemon thread that uses ThreadMXBean to capture full
-            // stacks every 5s while the fuzz runs. If a timer thread goes silent
-            // mid-test, the dump reveals exactly where it is parked
-            // (DelayQueue.take, ConcurrentQueue.enqueue, runShard while, etc.)
-            // and lets us distinguish "stuck in JDK code" from "stuck in QuestDB
-            // code" from "thread already exited" -- the printed thread set
-            // includes everything alive, so a missing timer thread proves an
-            // earlier silent exit, while a present-but-parked one proves a hang.
-            final java.util.concurrent.atomic.AtomicBoolean dumperStop = new java.util.concurrent.atomic.AtomicBoolean();
-            Thread dumper = new Thread(() -> {
-                final java.lang.management.ThreadMXBean tmx = java.lang.management.ManagementFactory.getThreadMXBean();
-                while (!dumperStop.get()) {
-                    try {
-                        Thread.sleep(5_000);
-                    } catch (InterruptedException ie) {
-                        Thread.currentThread().interrupt();
-                        return;
-                    }
-                    if (dumperStop.get()) return;
-                    StringBuilder s = new StringBuilder();
-                    s.append("=== STACK DUMP @ ").append(System.currentTimeMillis()).append(" ===");
-                    java.lang.management.ThreadInfo[] infos = tmx.getThreadInfo(tmx.getAllThreadIds(), 32);
-                    for (java.lang.management.ThreadInfo ti : infos) {
-                        if (ti == null) continue;
-                        s.append('\n').append('\'').append(ti.getThreadName()).append("\': ").append(ti.getThreadState());
-                        for (StackTraceElement f : ti.getStackTrace()) {
-                            s.append("\n\t\tat ").append(f);
-                        }
-                        s.append('\n');
-                    }
-                    s.append("=== END STACK DUMP ===");
-                    System.out.println(s);
-                }
-            }, "timer-stack-dumper");
-            dumper.setDaemon(true);
-            dumper.start();
-
             final CyclicBarrier startGate = new CyclicBarrier(clientThreads);
             final CountDownLatch doneLatch = new CountDownLatch(clientThreads);
             final AtomicInteger happyCount = new AtomicInteger();
@@ -552,14 +514,9 @@ public class ServerMainSleepTest extends AbstractBootstrapTest {
 
             // Hard upper bound: 12 threads * 25 iters * worst-case ~600ms = ~3 min.
             // Allow plenty of headroom; the test timeout still bounds the run.
-            boolean completed = doneLatch.await(150, TimeUnit.SECONDS);
-            // Stop the dumper before final assertions so the post-load logs
-            // aren't interleaved with another stack dump.
-            dumperStop.set(true);
-            dumper.interrupt();
             Assert.assertTrue(
                     "fuzz did not complete in time, seeds=" + seed0 + "L, " + seed1 + "L",
-                    completed
+                    doneLatch.await(150, TimeUnit.SECONDS)
             );
             long busyEndMillis = System.currentTimeMillis();
             long busyWallMillis = busyEndMillis - busyStartMillis.get();
@@ -680,7 +637,6 @@ public class ServerMainSleepTest extends AbstractBootstrapTest {
         // on a separate platform thread (it's allowed to block there) and let the
         // outer thread proceed; the socket teardown inside close() will eventually
         // wake the runner regardless.
-        System.out.println("sleep-fuzz-drop: about to abort conn [thread=" + Thread.currentThread().getName() + "]");
         try {
             conn.abort(r -> {
                 Thread t = new Thread(r, "sleep-fuzz-drop-abort");
@@ -689,9 +645,7 @@ public class ServerMainSleepTest extends AbstractBootstrapTest {
             });
         } catch (SQLException ignored) {
         }
-        System.out.println("sleep-fuzz-drop: abort returned, joining runner [thread=" + Thread.currentThread().getName() + "]");
         runner.join(10_000);
-        System.out.println("sleep-fuzz-drop: runner.join returned [thread=" + Thread.currentThread().getName() + ", runnerAlive=" + runner.isAlive() + "]");
         Assert.assertFalse("dropped sleep runner did not exit", runner.isAlive());
         counter.incrementAndGet();
     }
@@ -785,17 +739,13 @@ public class ServerMainSleepTest extends AbstractBootstrapTest {
             runner.start();
             Assert.assertTrue(started.await(5, TimeUnit.SECONDS));
             Thread.sleep(50 + tr.nextInt(300));
-            System.out.println("sleep-fuzz-cancel: about to cancel stmt [thread=" + Thread.currentThread().getName() + "]");
             stmt.cancel();
-            System.out.println("sleep-fuzz-cancel: cancel returned, joining runner [thread=" + Thread.currentThread().getName() + "]");
             runner.join(10_000);
-            System.out.println("sleep-fuzz-cancel: runner.join returned [thread=" + Thread.currentThread().getName() + ", runnerAlive=" + runner.isAlive() + "]");
             Assert.assertFalse("cancelled sleep runner did not exit", runner.isAlive());
             if (outcome.get() != null) {
                 throw new AssertionError("statement cancel scenario failed", outcome.get());
             }
         }
-        System.out.println("sleep-fuzz-cancel: try-with-resources closing conn [thread=" + Thread.currentThread().getName() + "]");
         counter.incrementAndGet();
     }
 

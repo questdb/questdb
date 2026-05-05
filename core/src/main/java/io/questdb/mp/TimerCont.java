@@ -82,11 +82,6 @@ public final class TimerCont implements DelayedFireable {
             throw new IllegalStateException("TimerCont.scheduleAfter requires a mounted WorkerContinuation");
         }
         TimerCont t = new TimerCont(cont, System.currentTimeMillis() + afterMillis);
-        System.out.println("TIMER scheduleAfter [timerId=" + System.identityHashCode(t)
-                + ", contId=" + System.identityHashCode(cont)
-                + ", afterMs=" + afterMillis
-                + ", carrier=" + Thread.currentThread().getName()
-                + "]");
         shards.register(t);
         return t;
     }
@@ -98,13 +93,7 @@ public final class TimerCont implements DelayedFireable {
      * Mirrors {@code TxnWaiter.abortContinuation}.
      */
     public void abortContinuation() {
-        boolean cas = Unsafe.cas(this, STATE_OFFSET, STATE_PENDING, STATE_CANCELLED);
-        System.out.println("TIMER abortContinuation [timerId=" + System.identityHashCode(this)
-                + ", contId=" + System.identityHashCode(cont)
-                + ", casWon=" + cas
-                + ", carrier=" + Thread.currentThread().getName()
-                + "]");
-        if (!cas) {
+        if (!Unsafe.cas(this, STATE_OFFSET, STATE_PENDING, STATE_CANCELLED)) {
             cont.markParkRefused();
         }
     }
@@ -122,14 +111,7 @@ public final class TimerCont implements DelayedFireable {
      */
     @Override
     public void expire() {
-        boolean cas = Unsafe.cas(this, STATE_OFFSET, STATE_PENDING, STATE_FIRED);
-        System.out.println("TIMER expire [timerId=" + System.identityHashCode(this)
-                + ", contId=" + System.identityHashCode(cont)
-                + ", casWon=" + cas
-                + ", contDone=" + cont.isDone()
-                + ", carrier=" + Thread.currentThread().getName()
-                + "]");
-        if (cas) {
+        if (Unsafe.cas(this, STATE_OFFSET, STATE_PENDING, STATE_FIRED)) {
             cont.scheduleResume();
         }
     }
@@ -160,13 +142,7 @@ public final class TimerCont implements DelayedFireable {
     @Override
     public void shutdown() {
         cont.shutdown();
-        boolean cas = Unsafe.cas(this, STATE_OFFSET, STATE_PENDING, STATE_CANCELLED);
-        System.out.println("TIMER shutdown [timerId=" + System.identityHashCode(this)
-                + ", contId=" + System.identityHashCode(cont)
-                + ", casWon=" + cas
-                + ", carrier=" + Thread.currentThread().getName()
-                + "]");
-        if (cas) {
+        if (Unsafe.cas(this, STATE_OFFSET, STATE_PENDING, STATE_CANCELLED)) {
             cont.scheduleResume();
         }
     }
