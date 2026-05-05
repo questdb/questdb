@@ -25,6 +25,7 @@
 package io.questdb.cairo.wal;
 
 import io.questdb.cairo.AbstractRecordMetadata;
+import io.questdb.cairo.IndexType;
 import io.questdb.cairo.TableColumnMetadata;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableUtils;
@@ -117,7 +118,7 @@ public class WalWriterMetadata extends AbstractRecordMetadata implements TableRe
     public void addColumn(
             String columnName,
             int columnType,
-            boolean columnIndexed,
+            byte indexType,
             int indexValueBlockCapacity,
             boolean symbolTableStatic,
             int writerIndex,
@@ -156,7 +157,7 @@ public class WalWriterMetadata extends AbstractRecordMetadata implements TableRe
             int columnType,
             int symbolCapacity,
             boolean symbolCacheFlag,
-            boolean isIndexed,
+            byte indexType,
             int indexValueBlockCapacity
     ) {
         TableUtils.changeColumnTypeInMetadata(
@@ -164,7 +165,7 @@ public class WalWriterMetadata extends AbstractRecordMetadata implements TableRe
                 columnType,
                 symbolCapacity,
                 symbolCacheFlag,
-                isIndexed,
+                indexType,
                 indexValueBlockCapacity,
                 columnNameIndexMap,
                 columnMetadata
@@ -273,7 +274,7 @@ public class WalWriterMetadata extends AbstractRecordMetadata implements TableRe
                 new TableColumnMetadata(
                         name,
                         columnType,
-                        false,
+                        IndexType.NONE,
                         0,
                         false,
                         null,

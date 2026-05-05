@@ -25,14 +25,14 @@
 package io.questdb.griffin.engine.groupby;
 
 import io.questdb.cairo.AbstractRecordCursorFactory;
-import io.questdb.cairo.BitmapIndexReader;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.GenericRecordMetadata;
 import io.questdb.cairo.GeoHashes;
-import io.questdb.cairo.IndexFrame;
 import io.questdb.cairo.IndexFrameCursor;
 import io.questdb.cairo.SymbolMapReader;
+import io.questdb.cairo.idx.IndexFrame;
+import io.questdb.cairo.idx.IndexReader;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.PageFrame;
 import io.questdb.cairo.sql.PageFrameAddressCache;
@@ -520,7 +520,7 @@ public class SampleByFirstLastRecordCursorFactory extends AbstractRecordCursorFa
                         frameHi = frame.getPartitionHi();
 
                         // Re-fetch index cursor to correctly position it to frameNextRowId
-                        BitmapIndexReader symbolIndexReader = frame.getBitmapIndexReader(groupBySymbolColIndex, BitmapIndexReader.DIR_FORWARD);
+                        IndexReader symbolIndexReader = frame.getIndexReader(groupBySymbolColIndex, IndexReader.DIR_FORWARD);
                         indexCursor = symbolIndexReader.getFrameCursor(groupBySymbolKey, frameLo, frameHi);
 
                         // Fall through to STATE_FETCH_NEXT_INDEX_FRAME;
