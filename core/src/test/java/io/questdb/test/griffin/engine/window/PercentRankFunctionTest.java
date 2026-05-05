@@ -175,6 +175,31 @@ public class PercentRankFunctionTest extends AbstractCairoTest {
                             """,
                     "explain select ts, percent_rank() over (partition by s order by ts) from tab"
             );
+
+            // ORDER BY non-timestamp column routes through the dismissOrder=false branch in
+            // SqlCodeGenerator. Before the fix that passes ac.getOrderBy() to
+            // initRecordComparator, PercentRankFunction.toPlan / PercentRankOverPartitionFunction.toPlan
+            // dereferenced a null orderBy field and crashed any EXPLAIN over a non-designated-timestamp ORDER BY.
+            assertPlanNoLeakCheck(
+                    "SELECT ts, percent_rank() OVER (ORDER BY i) FROM tab",
+                    """
+                            CachedWindow
+                              orderedFunctions: [[i] => [percent_rank() over (order by [i])]]
+                                PageFrame
+                                    Row forward scan
+                                    Frame forward scan on: tab
+                            """
+            );
+            assertPlanNoLeakCheck(
+                    "SELECT ts, percent_rank() OVER (PARTITION BY s ORDER BY i) FROM tab",
+                    """
+                            CachedWindow
+                              orderedFunctions: [[i] => [percent_rank() over (partition by [s] order by [i])]]
+                                PageFrame
+                                    Row forward scan
+                                    Frame forward scan on: tab
+                            """
+            );
         });
     }
 
