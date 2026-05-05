@@ -10916,17 +10916,20 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 continue;
             }
             IntList coveringCols = metadata.getColumnMetadata(colIdx).getCoveringColumnIndices();
-            if (coveringCols != null && coveringCols.size() > 0) {
-                // Covering POSTING indexes need the full reseal in
-                // sealPostingIndexForPartition (covering-file remap +
-                // rebuildSidecars). The fast-lag commit path is followed by
-                // a full O3 commit when more transactions accumulate, which
-                // catches the covering reseal then. Non-covering POSTING is
-                // the only path that has no later sweep.
-                continue;
-            }
+            boolean isCovering = coveringCols != null && coveringCols.size() > 0;
             indexer.getWriter().setNextTxnAtSeal(txWriter.getTxn());
-            indexer.seal();
+            if (isCovering) {
+                // Covering POSTING reseal is expensive (sidecar rebuild via
+                // sealPostingIndexForPartition with covering-file remap), so
+                // it normally waits for the next O3 commit. With pure in-order
+                // ingestion (no O3, no partition rollover), gens accumulate
+                // without bound and per-key cursor probes turn into walks
+                // over every gen. The threshold caps unsealed gen count;
+                // sealIfMultiGen is a no-op below the threshold.
+                indexer.getWriter().sealIfMultiGen(configuration.getPostingSealGenThreshold());
+            } else {
+                indexer.seal();
+            }
             indexer.publishPendingPurges(messageBus, tableToken, partitionBy, timestampType, txWriter.getTxn());
         }
     }
