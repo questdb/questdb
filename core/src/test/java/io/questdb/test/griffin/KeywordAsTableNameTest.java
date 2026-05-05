@@ -38,17 +38,17 @@ public class KeywordAsTableNameTest extends AbstractCairoTest {
             assertExceptionNoLeakCheck("alter table table add column b float", 12, "table and column names that are SQL keywords have to be enclosed in double quotes, such as \"table\"");
             assertSql(
                     """
-                            column\ttype\tindexed\tindexBlockCapacity\tsymbolCached\tsymbolCapacity\tsymbolTableSize\tdesignated\tupsertKey
-                            a\tINT\tfalse\t0\tfalse\t0\t0\tfalse\tfalse
+                            column\ttype\tindexed\tindexBlockCapacity\tsymbolCached\tsymbolCapacity\tsymbolTableSize\tdesignated\tupsertKey\tindexType\tindexInclude
+                            a\tINT\tfalse\t0\tfalse\t0\t0\tfalse\tfalse\t\t
                             """,
                     "table_columns('table')"
             );
             execute("alter table \"table\" add column b float");
             assertSql(
                     """
-                            column\ttype\tindexed\tindexBlockCapacity\tsymbolCached\tsymbolCapacity\tsymbolTableSize\tdesignated\tupsertKey
-                            a\tINT\tfalse\t0\tfalse\t0\t0\tfalse\tfalse
-                            b\tFLOAT\tfalse\t256\tfalse\t0\t0\tfalse\tfalse
+                            column\ttype\tindexed\tindexBlockCapacity\tsymbolCached\tsymbolCapacity\tsymbolTableSize\tdesignated\tupsertKey\tindexType\tindexInclude
+                            a\tINT\tfalse\t0\tfalse\t0\t0\tfalse\tfalse\t\t
+                            b\tFLOAT\tfalse\t256\tfalse\t0\t0\tfalse\tfalse\t\t
                             """,
                     "table_columns('table')"
             );
@@ -62,8 +62,8 @@ public class KeywordAsTableNameTest extends AbstractCairoTest {
             execute("create table \"from\" (a int)");
             assertSql(
                     """
-                            column\ttype\tindexed\tindexBlockCapacity\tsymbolCached\tsymbolCapacity\tsymbolTableSize\tdesignated\tupsertKey
-                            a\tINT\tfalse\t0\tfalse\t0\t0\tfalse\tfalse
+                            column\ttype\tindexed\tindexBlockCapacity\tsymbolCached\tsymbolCapacity\tsymbolTableSize\tdesignated\tupsertKey\tindexType\tindexInclude
+                            a\tINT\tfalse\t0\tfalse\t0\t0\tfalse\tfalse\t\t
                             """,
                     "table_columns('from')"
             );
@@ -77,8 +77,8 @@ public class KeywordAsTableNameTest extends AbstractCairoTest {
             execute("create table a (\"from\" int)");
             assertSql(
                     """
-                            column\ttype\tindexed\tindexBlockCapacity\tsymbolCached\tsymbolCapacity\tsymbolTableSize\tdesignated\tupsertKey
-                            from\tINT\tfalse\t0\tfalse\t0\t0\tfalse\tfalse
+                            column\ttype\tindexed\tindexBlockCapacity\tsymbolCached\tsymbolCapacity\tsymbolTableSize\tdesignated\tupsertKey\tindexType\tindexInclude
+                            from\tINT\tfalse\t0\tfalse\t0\t0\tfalse\tfalse\t\t
                             """,
                     "table_columns('a')"
             );

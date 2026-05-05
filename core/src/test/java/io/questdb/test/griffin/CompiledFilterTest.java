@@ -580,6 +580,40 @@ public class CompiledFilterTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testUuidBindFollowedByOtherBinds() throws Exception {
+        // Reproduces the case where a UUID bind variable precedes other bind
+        // variables in the same JIT-compiled filter. The bind-var memory layout
+        // has a 16-byte UUID slot, but the JIT addresses every slot at idx*8,
+        // so subsequent bind variables would be read from the wrong offset.
+        assertMemoryLeak(() -> {
+            execute("""
+                    create table x (\
+                        u UUID, sym SYMBOL, ts TIMESTAMP\
+                    ) timestamp(ts) partition by day""");
+
+            Uuid uuid = new Uuid();
+            uuid.of("10bb226e-b424-4e36-83b9-1ec970b04e78");
+
+            execute("insert into x values ('10bb226e-b424-4e36-83b9-1ec970b04e78', '1m', '2023-01-01T00:00:00.000Z')");
+
+            bindVariableService.clear();
+            bindVariableService.setUuid(0, uuid.getLo(), uuid.getHi());
+            bindVariableService.setStr(1, "1m");
+            bindVariableService.setTimestamp(2, 0L);
+            bindVariableService.setTimestamp(3, Long.MAX_VALUE);
+
+            final String query = "select u from x where u = $1 and sym = $2 and ts >= $3 and ts <= $4";
+            final String expected = """
+                    u
+                    10bb226e-b424-4e36-83b9-1ec970b04e78
+                    """;
+
+            assertSql(expected, query);
+            assertSqlRunWithJit(query);
+        });
+    }
+
+    @Test
     public void testUuid() throws Exception {
         assertMemoryLeak(() -> {
             execute("""

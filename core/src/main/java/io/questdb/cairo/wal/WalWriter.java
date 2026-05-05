@@ -28,7 +28,6 @@ import io.questdb.Metrics;
 import io.questdb.Telemetry;
 import io.questdb.TelemetryEvent;
 import io.questdb.cairo.AlterTableContextException;
-import io.questdb.cairo.BitmapIndexUtils;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
@@ -38,6 +37,7 @@ import io.questdb.cairo.CommitMode;
 import io.questdb.cairo.DdlListener;
 import io.questdb.cairo.EmptySymbolMapReader;
 import io.questdb.cairo.GeoHashes;
+import io.questdb.cairo.IndexType;
 import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.SecurityContext;
 import io.questdb.cairo.SymbolMapReader;
@@ -51,6 +51,7 @@ import io.questdb.cairo.TxReader;
 import io.questdb.cairo.VarcharTypeDriver;
 import io.questdb.cairo.arr.ArrayTypeDriver;
 import io.questdb.cairo.arr.ArrayView;
+import io.questdb.cairo.idx.IndexFactory;
 import io.questdb.cairo.pool.RecentWriteTracker;
 import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.cairo.sql.TableRecordMetadata;
@@ -217,7 +218,7 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
                 columnType,
                 configuration.getDefaultSymbolCapacity(),
                 configuration.getDefaultSymbolCacheFlag(),
-                false,
+                IndexType.NONE,
                 configuration.getIndexValueBlockSize(),
                 false,
                 securityContext
@@ -230,7 +231,7 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
             int columnType,
             int symbolCapacity,
             boolean symbolCacheFlag,
-            boolean isIndexed,
+            byte indexType,
             int indexValueBlockCapacity,
             boolean isDedupKey,
             SecurityContext securityContext
@@ -245,7 +246,7 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
                 columnType,
                 symbolCapacity,
                 symbolCacheFlag,
-                isIndexed,
+                indexType,
                 indexValueBlockCapacity,
                 isDedupKey
         );
@@ -1073,8 +1074,9 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
 
         tempPath.trimTo(tempPathTripLen);
         path.trimTo(pathSize);
-        BitmapIndexUtils.keyFileName(tempPath, columnName, columnNameTxn);
-        BitmapIndexUtils.keyFileName(path, columnName, COLUMN_NAME_TXN_NONE);
+        // Symbol map files always use SYMBOL format (.k/.v)
+        IndexFactory.keyFileName(IndexType.BITMAP, tempPath, columnName, columnNameTxn);
+        IndexFactory.keyFileName(IndexType.BITMAP, path, columnName, COLUMN_NAME_TXN_NONE);
         if (-1 == ff.hardLink(tempPath.$(), path.$())) {
             // This is fine, Table Writer can rename or drop the column.
             LOG.info().$("failed to link key file [from=").$(tempPath)
@@ -1088,8 +1090,9 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
 
         tempPath.trimTo(tempPathTripLen);
         path.trimTo(pathSize);
-        BitmapIndexUtils.valueFileName(tempPath, columnName, columnNameTxn);
-        BitmapIndexUtils.valueFileName(path, columnName, COLUMN_NAME_TXN_NONE);
+        // Symbol map files always use SYMBOL format (.k/.v); sealTxn is BITMAP-ignored.
+        IndexFactory.valueFileName(IndexType.BITMAP, tempPath, columnName, columnNameTxn, -1L);
+        IndexFactory.valueFileName(IndexType.BITMAP, path, columnName, COLUMN_NAME_TXN_NONE, -1L);
         if (-1 == ff.hardLink(tempPath.$(), path.$())) {
             // This is fine, Table Writer can rename or drop the column.
             LOG.info().$("failed to link value file [from=").$(tempPath)
@@ -1541,12 +1544,13 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
         // ACCESS_DENIED error, caused by the fact hard link destination file is open.
         // For those reasons we do not put maximum effort into removing the files here.
 
+        // Symbol map files always use SYMBOL format (.k/.v); sealTxn is BITMAP-ignored.
         path.trimTo(rootLen);
-        BitmapIndexUtils.valueFileName(path, columnName, COLUMN_NAME_TXN_NONE);
+        IndexFactory.valueFileName(IndexType.BITMAP, path, columnName, COLUMN_NAME_TXN_NONE, -1L);
         ff.removeQuiet(path.$());
 
         path.trimTo(rootLen);
-        BitmapIndexUtils.keyFileName(path, columnName, COLUMN_NAME_TXN_NONE);
+        IndexFactory.keyFileName(IndexType.BITMAP, path, columnName, COLUMN_NAME_TXN_NONE);
         ff.removeQuiet(path.$());
 
         path.trimTo(rootLen);
@@ -2141,12 +2145,29 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
         public long structureVersion;
 
         @Override
+        public void addIndex(@NotNull CharSequence columnName, int indexValueBlockSize, byte indexType) {
+            if (metadata.getColumnIndexQuiet(columnName) < 0) {
+                throw CairoException.nonCritical().put("column does not exist [name=").put(columnName).put(']');
+            }
+            structureVersion++;
+        }
+
+        @Override
+        public void addIndex(@NotNull CharSequence columnName, int indexValueBlockSize, byte indexType, @Nullable ObjList<CharSequence> coveringColumnNames) {
+            // Validation only checks the indexed column exists. INCLUDE
+            // column validity (existence, no self-reference, no duplicates)
+            // is enforced at SQL compile time in
+            // SqlCompilerImpl.validateAndAddCoveringColumns.
+            addIndex(columnName, indexValueBlockSize, indexType);
+        }
+
+        @Override
         public void addColumn(
                 CharSequence columnName,
                 int columnType,
                 int symbolCapacity,
                 boolean symbolCacheFlag,
-                boolean isIndexed,
+                byte indexType,
                 int indexValueBlockCapacity,
                 boolean isSequential,
                 boolean isDedupKey,
@@ -2158,7 +2179,7 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
         }
 
         @Override
-        public void changeColumnType(CharSequence columnName, int newType, int symbolCapacity, boolean symbolCacheFlag, boolean isIndexed, int indexValueBlockCapacity, boolean isSequential, SecurityContext securityContext) {
+        public void changeColumnType(CharSequence columnName, int newType, int symbolCapacity, boolean symbolCacheFlag, byte indexType, int indexValueBlockCapacity, boolean isSequential, SecurityContext securityContext) {
             int columnIndex = validateExistingColumnName(columnName, "cannot change type");
             validateNewColumnType(newType);
             int existingType = metadata.getColumnType(columnIndex);
@@ -2269,12 +2290,27 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
     private class MetadataWriterService implements MetadataServiceStub {
 
         @Override
+        public void addIndex(@NotNull CharSequence columnName, int indexValueBlockSize, byte indexType) {
+            // WAL writer accepts add-index without local changes — the sequencer
+            // metadata is updated when the WAL transaction is applied.
+        }
+
+        @Override
+        public void addIndex(@NotNull CharSequence columnName, int indexValueBlockSize, byte indexType, @Nullable ObjList<CharSequence> coveringColumnNames) {
+            // ADD INDEX (with or without INCLUDE) is non-structural for the
+            // WAL writer's local metadata — see comment on the 3-arg
+            // override. Sequencer metadata captures the INCLUDE list via
+            // SequencerMetadataService.addIndex's 4-arg override.
+            addIndex(columnName, indexValueBlockSize, indexType);
+        }
+
+        @Override
         public void addColumn(
                 CharSequence columnName,
                 int columnType,
                 int symbolCapacity,
                 boolean symbolCacheFlag,
-                boolean isIndexed,
+                byte indexType,
                 int indexValueBlockCapacity,
                 boolean isSequential,
                 boolean isDedupKey,
@@ -2373,7 +2409,7 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
                 int newType,
                 int symbolCapacity,
                 boolean symbolCacheFlag,
-                boolean isIndexed,
+                byte indexType,
                 int indexValueBlockCapacity,
                 boolean isSequential,
                 SecurityContext securityContext
@@ -2402,7 +2438,7 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
                                     newType,
                                     symbolCapacity,
                                     symbolCacheFlag,
-                                    isIndexed,
+                                    indexType,
                                     indexValueBlockCapacity
                             );
                             path.trimTo(pathSize).slash().put(segmentId);
