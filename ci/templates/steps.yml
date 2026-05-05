@@ -153,9 +153,9 @@ steps:
   - powershell: |
       $vhd = Join-Path $env:AGENT_TEMPDIRECTORY 'refs.vhdx'
       $script = Join-Path $env:AGENT_TEMPDIRECTORY 'refs-mount.diskpart'
-      Write-Host "Creating ReFS-formatted VHDX at $vhd (256 MiB sparse)"
+      Write-Host "Creating ReFS-formatted VHDX at $vhd (2 GiB sparse)"
       @(
-          "create vdisk file=$vhd maximum=256 type=expandable",
+          "create vdisk file=$vhd maximum=2048 type=expandable",
           "select vdisk file=$vhd",
           "attach vdisk",
           "create partition primary",
