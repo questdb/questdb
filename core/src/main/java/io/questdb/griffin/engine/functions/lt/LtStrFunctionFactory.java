@@ -33,7 +33,6 @@ import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.BinaryFunction;
 import io.questdb.griffin.engine.functions.NegatableBooleanFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
-import io.questdb.griffin.engine.functions.constants.BooleanConstant;
 import io.questdb.std.Chars;
 import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
@@ -63,14 +62,14 @@ public class LtStrFunctionFactory implements FunctionFactory {
         if (a.isConstant() && !b.isConstant()) {
             CharSequence constValue = a.getStrA(null);
             if (constValue == null) {
-                return BooleanConstant.FALSE;
+                return new NullSideFunc(b, true);
             }
             return new ConstOnLeftFunc(constValue, b);
         }
         if (!a.isConstant() && b.isConstant()) {
             CharSequence constValue = b.getStrA(null);
             if (constValue == null) {
-                return BooleanConstant.FALSE;
+                return new NullSideFunc(a, false);
             }
             return new ConstOnRightFunc(a, constValue);
         }
@@ -214,6 +213,49 @@ public class LtStrFunctionFactory implements FunctionFactory {
                 sink.val('<');
             }
             sink.val(right);
+        }
+    }
+
+    /**
+     * Always-false comparison used when one operand is a NULL constant. Returning
+     * {@link io.questdb.griffin.engine.functions.constants.BooleanConstant#FALSE}
+     * directly would let the wrapping {@code NegatingFunctionFactory} (which builds
+     * {@code <=} and {@code >=} from {@code <} and {@code >}) flip the result to
+     * TRUE. As a {@link NegatableBooleanFunction}, this class swallows the negation
+     * flag and stays at FALSE, matching QuestDB's "null comparisons are always
+     * false" convention used by the runtime {@code Chars.lessThan} path.
+     */
+    static final class NullSideFunc extends NegatableBooleanFunction implements UnaryFunction {
+        private final Function arg;
+        private final boolean nullOnLeft;
+
+        NullSideFunc(Function arg, boolean nullOnLeft) {
+            this.arg = arg;
+            this.nullOnLeft = nullOnLeft;
+        }
+
+        @Override
+        public Function getArg() {
+            return arg;
+        }
+
+        @Override
+        public boolean getBool(Record rec) {
+            return false;
+        }
+
+        @Override
+        public String getName() {
+            return negated ? ">=" : "<";
+        }
+
+        @Override
+        public void toPlan(PlanSink sink) {
+            if (nullOnLeft) {
+                sink.val("null").val(getName()).val(arg);
+            } else {
+                sink.val(arg).val(getName()).val("null");
+            }
         }
     }
 }
