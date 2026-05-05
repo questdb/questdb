@@ -45,12 +45,13 @@ State the chosen level in one line at the start of the review so the user knows 
 
 ## Step 1: Gather PR context
 
-Fetch PR metadata, diff, and any review comments:
+Capture the PR identifier in `$PR` (the part of `$ARGUMENTS` left after stripping the level token), then fetch metadata, diff, and review comments in a single bash call so `$PR` is in scope for all three `gh` invocations:
 
 ```bash
-gh pr view $ARGUMENTS --json number,title,body,labels,state
-gh pr diff $ARGUMENTS
-gh pr view $ARGUMENTS --comments
+PR='<PR number or URL from $ARGUMENTS, with any --level=N / -lN / bare-digit level token removed>'
+gh pr view "$PR" --json number,title,body,labels,state
+gh pr diff "$PR"
+gh pr view "$PR" --comments
 ```
 
 ## Step 2: PR title and description
