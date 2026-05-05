@@ -343,6 +343,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
+    public byte getDefaultSymbolIndexType() {
+        return IndexType.BITMAP;
+    }
+
+    @Override
     public int getDetachedMkDirMode() {
         return 509;
     }
@@ -812,6 +817,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     @Override
     public int getPoolSegmentSize() {
         return 32;
+    }
+
+    @Override
+    public int getPostingSealGenThreshold() {
+        return 16;
     }
 
     @Override
@@ -1578,6 +1588,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     @Override
     public boolean isPartitionO3OverwriteControlEnabled() {
         return false;
+    }
+
+    @Override
+    public boolean isPostingIndexAutoIncludeTimestamp() {
+        return true;
     }
 
     @Override

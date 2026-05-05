@@ -24,7 +24,7 @@
 
 package io.questdb.test.cairo;
 
-import io.questdb.cairo.BitmapIndexReader;
+import io.questdb.PropertyKey;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.GenericRecordMetadata;
 import io.questdb.cairo.IntervalFwdPartitionFrameCursor;
@@ -33,6 +33,7 @@ import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableWriter;
+import io.questdb.cairo.idx.IndexReader;
 import io.questdb.cairo.sql.PartitionFormat;
 import io.questdb.cairo.sql.PartitionFrame;
 import io.questdb.cairo.sql.PartitionFrameCursor;
@@ -47,6 +48,7 @@ import io.questdb.std.DirectIntList;
 import io.questdb.std.IntList;
 import io.questdb.std.LongList;
 import io.questdb.std.MemoryTag;
+import io.questdb.std.Misc;
 import io.questdb.std.Rnd;
 import io.questdb.std.Unsafe;
 import io.questdb.test.AbstractCairoTest;
@@ -83,6 +85,13 @@ public class IntervalFwdPartitionFrameCursorTest extends AbstractCairoTest {
                 {false, TestTimestampType.MICRO},
                 {false, TestTimestampType.NANO},
         });
+    }
+
+    @Override
+    public void setUp() {
+        Rnd rnd = TestUtils.generateRandom(LOG);
+        setProperty(PropertyKey.CAIRO_DEFAULT_SYMBOL_INDEX_TYPE, TestUtils.randomSymbolIndexTypeName(rnd));
+        super.setUp();
     }
 
     @Test
@@ -659,14 +668,14 @@ public class IntervalFwdPartitionFrameCursorTest extends AbstractCairoTest {
 
             // BitmapIndex is always at partition frame scope, each table can have more than one.
             // we have to get BitmapIndexReader instance once for each frame.
-            BitmapIndexReader indexReader = record.getReader().getBitmapIndexReader(frame.getPartitionIndex(), columnIndex, BitmapIndexReader.DIR_BACKWARD);
+            IndexReader indexReader = record.getReader().getIndexReader(frame.getPartitionIndex(), columnIndex, IndexReader.DIR_BACKWARD);
 
             // because out Symbol column 0 is indexed, frame has to have index.
             Assert.assertNotNull(indexReader);
 
             int keyCount = indexReader.getKeyCount();
             for (int i = 0; i < keyCount; i++) {
-                RowCursor ic = indexReader.getCursor(true, i, low, limit - 1);
+                RowCursor ic = indexReader.getCursor(i, low, limit - 1);
                 CharSequence expected = symbolTable.valueOf((int) (i - low - 1));
                 while (ic.hasNext()) {
                     long row = ic.next();
@@ -674,6 +683,7 @@ public class IntervalFwdPartitionFrameCursorTest extends AbstractCairoTest {
                     TestUtils.assertEquals(expected, record.getSymA(columnIndex));
                     rowCount++;
                 }
+                Misc.free(ic);
             }
         }
         if (allNative) {
