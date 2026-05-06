@@ -35,6 +35,7 @@ import io.questdb.griffin.SqlCompilerImpl;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.SqlExecutionContextImpl;
+import io.questdb.griffin.engine.groupby.SampleByFillPrevNotKeyedRecordCursorFactory;
 import io.questdb.griffin.engine.groupby.SampleByFillPrevRecordCursorFactory;
 import io.questdb.griffin.engine.groupby.SampleByFillRecordCursorFactory;
 import io.questdb.mp.WorkerPool;
@@ -74,10 +75,32 @@ import java.util.concurrent.TimeUnit;
  * Params:
  * <ul>
  *   <li>{@code path}: {@code FAST_PATH} or {@code LEGACY}.</li>
- *   <li>{@code scenario}: {@code WORST_CASE} (50k sparse keys, fast path
- *       pays two-pass overhead per gap), {@code POSITIVE_CASE} (1k dense
- *       keys, aggregation dominates), {@code BEST_CASE} (high R, low K,
- *       fixed bucket span -- aggregated set A = K * B stays constant).</li>
+ *   <li>{@code isKeyed}: {@code false} (default; non-keyed SAMPLE BY,
+ *       legacy uses {@link SampleByFillPrevNotKeyedRecordCursorFactory})
+ *       or {@code true} (keyed SAMPLE BY on {@code sym1}, legacy uses
+ *       {@link SampleByFillPrevRecordCursorFactory}). The fast path
+ *       routes through {@link SampleByFillRecordCursorFactory} in both
+ *       cases. Pass {@code -p isKeyed=true} to enable keyed runs.</li>
+ *   <li>{@code scenario}: shared name across modes but distinct data
+ *       shapes per mode. The non-keyed shapes are tuned so each scenario
+ *       still exercises the property its name implies (gap-heavy worst
+ *       case, agg-heavy positive case, fixed-span best case) once the
+ *       per-key dimension collapses.
+ *       <ul>
+ *         <li>{@code WORST_CASE} keyed: K=50k keys scattered by a coprime
+ *             multiplier; dense buckets but most keys missing per bucket
+ *             -> many per-(key,bucket) PREV fills.</li>
+ *         <li>{@code WORST_CASE} non-keyed: 5m row step so 4/5 of buckets
+ *             are empty and each contributes one PREV fill. Output rows
+ *             ~ 5R.</li>
+ *         <li>{@code POSITIVE_CASE} keyed: K=1k dense keys, every key in
+ *             every bucket; aggregation cost dominates, no gaps.</li>
+ *         <li>{@code POSITIVE_CASE} non-keyed: 60ms step, ~1k rows per
+ *             bucket; bucket count scales with R, no gaps.</li>
+ *         <li>{@code BEST_CASE}: fixed 1-day span (B=1440 buckets); step
+ *             shrinks with R, density scales but the output set stays
+ *             small. K=100 keyed, K=1 non-keyed.</li>
+ *       </ul></li>
  *   <li>{@code rowCount}: base cursor row count.</li>
  *   <li>{@code workers}: query worker pool size; >1 enables Async GroupBy.</li>
  *   <li>{@code aggFunc}: aggregation function applied per bucket.</li>
@@ -102,10 +125,19 @@ public class SampleByFillPrevPathBenchmark {
     // buckets * 1m), so step = (B * 1m) / R. As R grows, step shrinks but B
     // and A stay constant. With B=1440 (1 day @ 1m) and K=100, A=144_000
     // regardless of R. Resolution is fine down to R~5*10^10 (step ~1.7us).
+    // In non-keyed mode K=1 so A=B=1440 -- still small, scales agg-only work
+    // with R while output stays bounded.
     private static final long BEST_CASE_BUCKET_MICROS = 60_000_000L; // 1m
     private static final int BEST_CASE_UNIQUE_KEYS = 100;
     private static final String BUCKET = "1m";
-    private static final int POSITIVE_CASE_STEP_MICROS = 6_000;
+    // Keyed POSITIVE_CASE: dense buckets where every one of K=1000 keys
+    // appears -> aggregation dominates, no gaps. Output rows = K * B.
+    private static final int POSITIVE_CASE_KEYED_STEP_MICROS = 6_000;
+    // Non-keyed POSITIVE_CASE: ~1000 rows/bucket so bucket count scales with
+    // R (R/1000 buckets) while keeping enough rows per bucket for agg work
+    // to be measurable. Still no gaps -> exercises the fast path's no-fill
+    // branch. 60ms produces 1 bucket per ~60ms span = 1000 rows/bucket.
+    private static final int POSITIVE_CASE_NONKEYED_STEP_MICROS = 60_000;
     private static final int POSITIVE_CASE_UNIQUE_KEYS = 1_000;
     private static final String START_TS = "2024-01-01T00:00:00.000000Z";
     // 2 * max(WORST_CASE_UNIQUE_KEYS, POSITIVE_CASE_UNIQUE_KEYS,
@@ -117,11 +149,26 @@ public class SampleByFillPrevPathBenchmark {
     // Coprime to WORST_CASE_UNIQUE_KEYS so keys scatter across buckets without
     // structured alignment.
     private static final int WORST_CASE_KEY_MULTIPLIER = 7_919;
-    private static final int WORST_CASE_STEP_MICROS = 120_000;
+    // Keyed WORST_CASE: dense buckets but K=50k keys scattered so most are
+    // missing per bucket -> fast path emits many per-(key,bucket) PREV fills.
+    private static final int WORST_CASE_KEYED_STEP_MICROS = 120_000;
+    // Non-keyed WORST_CASE: 5-minute step means 4 of every 5 buckets are
+    // empty and contribute one PREV fill each -> output row count = ~5R, of
+    // which 80% are gap fills. Stresses per-gap fill emission and the
+    // timestamp loop in the fast path. Output scales linearly with R; for
+    // rowCount=5M expect ~25M output rows so size sort caps accordingly.
+    private static final int WORST_CASE_NONKEYED_STEP_MICROS = 300_000_000;
     private static final int WORST_CASE_UNIQUE_KEYS = 50_000;
 
     @Param({"avg"})
     public String aggFunc;
+
+    // Default false: a plain JMH run benchmarks non-keyed SAMPLE BY 1m FILL(PREV).
+    // Pass -p isKeyed=true (or -p isKeyed=true,false) to opt into keyed runs.
+    // Keyed runs use sym1 as the key; non-keyed runs omit it from the projection
+    // even though the column still exists in the seed table.
+    @Param({"false"})
+    public boolean isKeyed;
 
     @Param({"LEGACY", "FAST_PATH"})
     public String path;
@@ -185,10 +232,17 @@ public class SampleByFillPrevPathBenchmark {
     public void run(Blackhole bh) throws SqlException {
         try (RecordCursor cursor = factory.getCursor(ctx)) {
             final Record record = cursor.getRecord();
-            while (cursor.hasNext()) {
-                bh.consume(record.getSymA(0));
-                bh.consume(record.getDouble(1));
-                bh.consume(record.getTimestamp(2));
+            if (isKeyed) {
+                while (cursor.hasNext()) {
+                    bh.consume(record.getSymA(0));
+                    bh.consume(record.getDouble(1));
+                    bh.consume(record.getTimestamp(2));
+                }
+            } else {
+                while (cursor.hasNext()) {
+                    bh.consume(record.getDouble(0));
+                    bh.consume(record.getTimestamp(1));
+                }
             }
         }
     }
@@ -275,9 +329,14 @@ public class SampleByFillPrevPathBenchmark {
     }
 
     private void assertRouting(RecordCursorFactory root) {
-        final Class<?> expected = "FAST_PATH".equals(path)
-                ? SampleByFillRecordCursorFactory.class
-                : SampleByFillPrevRecordCursorFactory.class;
+        final Class<?> expected;
+        if ("FAST_PATH".equals(path)) {
+            expected = SampleByFillRecordCursorFactory.class;
+        } else {
+            expected = isKeyed
+                    ? SampleByFillPrevRecordCursorFactory.class
+                    : SampleByFillPrevNotKeyedRecordCursorFactory.class;
+        }
         RecordCursorFactory cur = root;
         while (cur != null) {
             if (expected.isInstance(cur)) {
@@ -293,6 +352,7 @@ public class SampleByFillPrevPathBenchmark {
         throw new IllegalStateException(
                 "routing drift: expected " + expected.getSimpleName()
                         + " in factory chain but did not find it. path=" + path
+                        + " isKeyed=" + isKeyed
                         + " scenario=" + scenario
                         + " root=" + root.getClass().getSimpleName()
         );
@@ -300,7 +360,10 @@ public class SampleByFillPrevPathBenchmark {
 
     private String buildSql() {
         final String alignment = "FAST_PATH".equals(path) ? "CALENDAR" : "FIRST OBSERVATION";
-        return "SELECT sym1, " + aggFunc + "(d), ts FROM tab SAMPLE BY " + BUCKET + " FILL(PREV) ALIGN TO " + alignment;
+        final String projection = isKeyed
+                ? "sym1, " + aggFunc + "(d), ts"
+                : aggFunc + "(d), ts";
+        return "SELECT " + projection + " FROM tab SAMPLE BY " + BUCKET + " FILL(PREV) ALIGN TO " + alignment;
     }
 
     private int resolveWorkerCount() {
@@ -318,23 +381,30 @@ public class SampleByFillPrevPathBenchmark {
         );
         final String insert;
         if ("WORST_CASE".equals(scenario)) {
-            // High-cardinality sparse data: key chosen by a coprime multiplier
-            // so keys scatter across buckets without structured alignment. At
-            // the default rowCount (100_000) each bucket sees only a small
-            // fraction of keys -> most keys missing per bucket -> fast path
-            // emits many PREV fill rows per gap. Stresses keysMap build +
-            // per-gap fill emission.
+            // Keyed: high-cardinality sparse keys. Step=120ms, every bucket
+            // dense in rows but K=50k keys scattered by a coprime multiplier
+            // so each bucket sees only a small slice of K -> most keys missing
+            // per bucket -> fast path emits many per-(key,bucket) PREV fills.
+            // Stresses keysMap build + per-gap fill emission.
+            //
+            // Non-keyed: bucket-level gaps. Step=5m so 4 of every 5 buckets
+            // are empty and contribute one PREV fill each. Output rows ~ 5R.
+            // Stresses per-gap fill emission and the timestamp loop in the
+            // fast path. K dimension collapses, K=1.
+            final int step = isKeyed ? WORST_CASE_KEYED_STEP_MICROS : WORST_CASE_NONKEYED_STEP_MICROS;
             insert = "INSERT INTO tab "
                     + "SELECT "
                     + "((x * " + WORST_CASE_KEY_MULTIPLIER + ") % " + WORST_CASE_UNIQUE_KEYS + ")::SYMBOL AS sym1, "
                     + "rnd_double() AS d, "
-                    + "timestamp_sequence('" + START_TS + "'::timestamp, " + WORST_CASE_STEP_MICROS + ") AS ts "
+                    + "timestamp_sequence('" + START_TS + "'::timestamp, " + step + ") AS ts "
                     + "FROM long_sequence(" + rowCount + ")";
         } else if ("BEST_CASE".equals(scenario)) {
             // Best case for parallel-aggregation paths: high R, low K, low B.
             // Span fixed at BEST_CASE_BUCKET_COUNT * 1m so that A = K*B stays
             // constant regardless of R. Step shrinks inversely with R but
-            // stays in microseconds (1.7us at R=5*10^10).
+            // stays in microseconds (1.7us at R=5*10^10). Works for both keyed
+            // (K=100, A=144_000) and non-keyed (K=1, A=B=1440); in both modes
+            // every bucket has rows, so no fills are emitted.
             final long stepMicros = (BEST_CASE_BUCKET_COUNT * BEST_CASE_BUCKET_MICROS) / rowCount;
             insert = "INSERT INTO tab "
                     + "SELECT "
@@ -343,16 +413,23 @@ public class SampleByFillPrevPathBenchmark {
                     + "timestamp_sequence('" + START_TS + "'::timestamp, " + stepMicros + ") AS ts "
                     + "FROM long_sequence(" + rowCount + ")";
         } else {
-            // Low-cardinality dense data: every key appears in every bucket so
-            // aggregation cost dominates and async GroupBy has enough work to
-            // dispatch across workers. Few fill gaps -> per-gap iteration over
-            // the keysMap is cheap. Scale rowCount up (e.g. 5_000_000) to give
-            // parallelism room to breathe.
+            // Keyed POSITIVE_CASE: low-cardinality dense data; every key
+            // appears in every bucket so aggregation cost dominates and async
+            // GroupBy has enough work to dispatch across workers. Few fill
+            // gaps -> per-gap iteration over the keysMap is cheap. Scale
+            // rowCount up (e.g. 5_000_000) to give parallelism room to breathe.
+            //
+            // Non-keyed POSITIVE_CASE: 60ms step gives ~1000 rows/bucket; the
+            // bucket count scales with R (R/1000 buckets). No gaps, so the
+            // fast path's no-fill emit branch is exercised. Bumping the step
+            // 10x vs the keyed case avoids degenerate single-bucket runs at
+            // small R, since non-keyed produces only 1 output row per bucket.
+            final int step = isKeyed ? POSITIVE_CASE_KEYED_STEP_MICROS : POSITIVE_CASE_NONKEYED_STEP_MICROS;
             insert = "INSERT INTO tab "
                     + "SELECT "
                     + "(x % " + POSITIVE_CASE_UNIQUE_KEYS + ")::SYMBOL AS sym1, "
                     + "rnd_double() AS d, "
-                    + "timestamp_sequence('" + START_TS + "'::timestamp, " + POSITIVE_CASE_STEP_MICROS + ") AS ts "
+                    + "timestamp_sequence('" + START_TS + "'::timestamp, " + step + ") AS ts "
                     + "FROM long_sequence(" + rowCount + ")";
         }
         engine.execute(insert, ctx);
