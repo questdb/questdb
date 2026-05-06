@@ -111,6 +111,7 @@ public class QwpEgressCoveringBenchmark {
         if (!SKIP_POPULATE) {
             recreateTable();
             ingestRows();
+            addCoveringIndex();
         } else {
             System.out.println("skip.populate=true, re-using existing " + TABLE_NAME);
         }
@@ -257,18 +258,43 @@ public class QwpEgressCoveringBenchmark {
                 label, TimeUnit.NANOSECONDS.toMillis(r.elapsedNanos), rowsPerSec, mibPerSec);
     }
 
+    private static void addCoveringIndex() throws Exception {
+        // Build the posting+covering index after ingest is complete. Doing it
+        // up-front (declared on CREATE TABLE) makes every WAL commit pay for
+        // sealPostingIndexesForLastPartitionFastLag, which rebuilds the active
+        // partition's sidecars on each commit -- crippling ingest throughput
+        // for DAY-sized partitions. Building once after ingest lets the WAL
+        // apply path stay cheap, then incurs a single rebuild over all rows.
+        System.out.println("Building posting+covering index on sym ...");
+        long start = System.nanoTime();
+        try (Connection c = createPgConnection(); Statement st = c.createStatement()) {
+            st.execute("ALTER TABLE " + TABLE_NAME
+                    + " ALTER COLUMN sym ADD INDEX TYPE POSTING INCLUDE"
+                    + " (price, qty, d1, d2, d3, id, seq, size, venue, note)");
+            // ALTER for WAL tables is async; wait_wal_table blocks until the
+            // writer's applied txn catches up to the sequencer's, i.e. the
+            // index build has finished.
+            try (ResultSet rs = st.executeQuery(
+                    "SELECT wait_wal_table('" + TABLE_NAME + "')")) {
+                rs.next();
+                rs.getBoolean(1);
+            }
+        }
+        long ms = TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - start);
+        System.out.printf("  index build complete (%,d ms)%n", ms);
+    }
+
     private static void recreateTable() throws Exception {
         try (Connection c = createPgConnection(); Statement st = c.createStatement()) {
             st.execute("DROP TABLE IF EXISTS " + TABLE_NAME);
-            // sym is the indexed dimension; INCLUDE materialises every other projected
-            // column into the index sidecar so the read path can be served end-to-end
-            // from the index without touching main column files. Partitioned by HOUR
-            // because covering data lives in sealed partitions -- larger partitions
-            // would mean more rows in the active (unsealed) partition during the read.
+            // No index at create time -- index is added via ALTER after ingest
+            // (see addCoveringIndex). Partitioned by DAY: per-partition setup
+            // cost dominates posting+covering reads, and DAY keeps the count
+            // small without forcing a tiny ts range. The sym INCLUDE list lives
+            // in the ALTER, not here.
             st.execute("CREATE TABLE " + TABLE_NAME + " ("
                     + " ts TIMESTAMP,"
-                    + " sym SYMBOL CAPACITY 256 INDEX TYPE POSTING INCLUDE"
-                    + "   (price, qty, d1, d2, d3, id, seq, size, venue, note),"
+                    + " sym SYMBOL CAPACITY 256,"
                     + " price DOUBLE, qty DOUBLE, d1 DOUBLE, d2 DOUBLE, d3 DOUBLE,"
                     + " id LONG, seq LONG, size LONG,"
                     + " venue VARCHAR, note VARCHAR"
