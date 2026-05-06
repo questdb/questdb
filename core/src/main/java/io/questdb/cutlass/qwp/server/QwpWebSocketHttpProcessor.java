@@ -99,7 +99,13 @@ public class QwpWebSocketHttpProcessor implements HttpRequestHandler {
     // Response template
     private static final byte[] RESPONSE_PREFIX =
             "HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Accept: ".getBytes(StandardCharsets.US_ASCII);
+    private static final byte[] RESPONSE_ROLE_PREFIX = "\r\nX-QuestDB-Role: ".getBytes(StandardCharsets.US_ASCII);
     private static final byte[] RESPONSE_SUFFIX = "\r\n\r\n".getBytes(StandardCharsets.US_ASCII);
+    private static final byte[] SERVICE_UNAVAILABLE_PREFIX =
+            ("HTTP/1.1 503 Service Unavailable\r\n"
+                    + "Connection: close\r\n"
+                    + "Content-Length: 0\r\n"
+                    + "X-QuestDB-Role: ").getBytes(StandardCharsets.US_ASCII);
     private static final int SHA1_BASE64_SIZE = 28;
     private static final ThreadLocal<byte[]> BASE64_SCRATCH = ThreadLocal.withInitial(() -> new byte[SHA1_BASE64_SIZE]);
     // Thread-local SHA-1 digest for computing Sec-WebSocket-Accept
@@ -258,7 +264,7 @@ public class QwpWebSocketHttpProcessor implements HttpRequestHandler {
      * @return the total response size in bytes
      */
     public static int responseSize(String acceptKey, int qwpVersion) {
-        return responseSize(acceptKey, qwpVersion, null);
+        return responseSize(acceptKey, qwpVersion, null, null);
     }
 
     /**
@@ -267,13 +273,24 @@ public class QwpWebSocketHttpProcessor implements HttpRequestHandler {
      * the server chose during negotiation. Pass {@code null} for no header.
      */
     public static int responseSize(String acceptKey, int qwpVersion, String contentEncoding) {
+        return responseSize(acceptKey, qwpVersion, contentEncoding, null);
+    }
+
+    public static int responseSize(String acceptKey, int qwpVersion, String contentEncoding, String role) {
         int size = RESPONSE_PREFIX.length + acceptKey.length()
                 + RESPONSE_AFTER_ACCEPT.length + digitCount(qwpVersion)
                 + RESPONSE_SUFFIX.length;
         if (contentEncoding != null) {
             size += RESPONSE_CONTENT_ENCODING_PREFIX.length + contentEncoding.length();
         }
+        if (role != null) {
+            size += RESPONSE_ROLE_PREFIX.length + role.length();
+        }
         return size;
+    }
+
+    public static int serviceUnavailableWithRoleSize(String role) {
+        return SERVICE_UNAVAILABLE_PREFIX.length + role.length() + RESPONSE_SUFFIX.length;
     }
 
     /**
@@ -338,7 +355,7 @@ public class QwpWebSocketHttpProcessor implements HttpRequestHandler {
      * @return the number of bytes written
      */
     public static int writeResponse(long buf, String acceptKey, int qwpVersion) {
-        return writeResponse(buf, acceptKey, qwpVersion, null);
+        return writeResponse(buf, acceptKey, qwpVersion, null, null);
     }
 
     /**
@@ -347,20 +364,21 @@ public class QwpWebSocketHttpProcessor implements HttpRequestHandler {
      * codec (e.g. {@code zstd;level=3}). Pass {@code null} for no header.
      */
     public static int writeResponse(long buf, String acceptKey, int qwpVersion, String contentEncoding) {
+        return writeResponse(buf, acceptKey, qwpVersion, contentEncoding, null);
+    }
+
+    public static int writeResponse(long buf, String acceptKey, int qwpVersion, String contentEncoding, String role) {
         int offset = 0;
 
-        // Write prefix
         for (byte b : RESPONSE_PREFIX) {
             Unsafe.putByte(buf + offset++, b);
         }
 
-        // Write accept key
         byte[] acceptBytes = acceptKey.getBytes(StandardCharsets.US_ASCII);
         for (byte b : acceptBytes) {
             Unsafe.putByte(buf + offset++, b);
         }
 
-        // Write X-QWP-Version header
         for (byte b : RESPONSE_AFTER_ACCEPT) {
             Unsafe.putByte(buf + offset++, b);
         }
@@ -369,10 +387,6 @@ public class QwpWebSocketHttpProcessor implements HttpRequestHandler {
             Unsafe.putByte(buf + offset++, b);
         }
 
-        // Optional X-QWP-Content-Encoding header. Emitted only when the
-        // handshake negotiated a compression codec; omitted entirely when the
-        // wire stays raw so clients that ignore the header see the same bytes
-        // as before.
         if (contentEncoding != null) {
             for (byte b : RESPONSE_CONTENT_ENCODING_PREFIX) {
                 Unsafe.putByte(buf + offset++, b);
@@ -383,11 +397,39 @@ public class QwpWebSocketHttpProcessor implements HttpRequestHandler {
             }
         }
 
-        // Write suffix
+        if (role != null) {
+            for (byte b : RESPONSE_ROLE_PREFIX) {
+                Unsafe.putByte(buf + offset++, b);
+            }
+            byte[] roleBytes = role.getBytes(StandardCharsets.US_ASCII);
+            for (byte b : roleBytes) {
+                Unsafe.putByte(buf + offset++, b);
+            }
+        }
+
         for (byte b : RESPONSE_SUFFIX) {
             Unsafe.putByte(buf + offset++, b);
         }
 
+        return offset;
+    }
+
+    public static int writeServiceUnavailableWithRole(long buf, int bufferSize, String role) {
+        int needed = serviceUnavailableWithRoleSize(role);
+        if (needed > bufferSize) {
+            return -1;
+        }
+        int offset = 0;
+        for (byte b : SERVICE_UNAVAILABLE_PREFIX) {
+            Unsafe.putByte(buf + offset++, b);
+        }
+        byte[] roleBytes = role.getBytes(StandardCharsets.US_ASCII);
+        for (byte b : roleBytes) {
+            Unsafe.putByte(buf + offset++, b);
+        }
+        for (byte b : RESPONSE_SUFFIX) {
+            Unsafe.putByte(buf + offset++, b);
+        }
         return offset;
     }
 

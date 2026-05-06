@@ -135,6 +135,21 @@ public class QwpEgressUpgradeProcessor implements HttpRequestProcessor, QuietClo
      * into no-ops.
      */
     public static final int MAX_ROWS_PER_BATCH = 16_384;
+    private static final Log LOG = LogFactory.getLog(QwpEgressUpgradeProcessor.class);
+    private static final LocalValue<QwpEgressProcessorState> LV = new LocalValue<>();
+    private static final NoOpAssociativeCache<RecordCursorFactory> NO_OP_SELECT_CACHE = new NoOpAssociativeCache<>();
+    /**
+     * Upper bound for the SERVER_INFO body: 26 bytes fixed fields plus 65535
+     * bytes for each of cluster_id and node_id. The frame writer truncates each
+     * id at the u16 wire cap, so the bound is tight rather than defensive.
+     */
+    private static final int SERVER_INFO_BODY_MAX_BYTES = 26 + 0xFFFF + 0xFFFF;
+    /**
+     * Largest WebSocket frame header the server emits for its own frames:
+     * 2-byte base + 8-byte extended length (no masking on server-to-client).
+     * Used as a fit check when reserving space in the handshake send buffer.
+     */
+    private static final int WS_HEADER_MAX_BYTES = 10;
     /**
      * Test-only. When {@code > 0}, the next entry into {@link #resumeSend} (or
      * {@link #handleCredit} on the credit-suspended resume path) throws a
@@ -162,21 +177,6 @@ public class QwpEgressUpgradeProcessor implements HttpRequestProcessor, QuietClo
      * per batch, no effect on production streams.
      */
     public static volatile int DEBUG_FORCE_TRANSPORT_FAILURE_AFTER_BATCHES = 0;
-    private static final Log LOG = LogFactory.getLog(QwpEgressUpgradeProcessor.class);
-    private static final LocalValue<QwpEgressProcessorState> LV = new LocalValue<>();
-    private static final NoOpAssociativeCache<RecordCursorFactory> NO_OP_SELECT_CACHE = new NoOpAssociativeCache<>();
-    /**
-     * Upper bound for the SERVER_INFO body: 26 bytes fixed fields plus 65535
-     * bytes for each of cluster_id and node_id. The frame writer truncates each
-     * id at the u16 wire cap, so the bound is tight rather than defensive.
-     */
-    private static final int SERVER_INFO_BODY_MAX_BYTES = 26 + 0xFFFF + 0xFFFF;
-    /**
-     * Largest WebSocket frame header the server emits for its own frames:
-     * 2-byte base + 8-byte extended length (no masking on server-to-client).
-     * Used as a fit check when reserving space in the handshake send buffer.
-     */
-    private static final int WS_HEADER_MAX_BYTES = 10;
     private final CairoEngine engine;
     private final int forceRecvFragmentationChunkSize;
     private final WebSocketFrameParser frameParser = new WebSocketFrameParser();
@@ -369,7 +369,7 @@ public class QwpEgressUpgradeProcessor implements HttpRequestProcessor, QuietClo
                     bufferAddr + bytesWritten,
                     bufferSize - bytesWritten,
                     (byte) negotiatedVersion,
-                    engine.getConfiguration().getQwpServerInfoProvider(),
+                    engine.getQwpServerInfoProvider(),
                     serverWallNs
             );
             if (frameBytes < 0) {
@@ -609,7 +609,7 @@ public class QwpEgressUpgradeProcessor implements HttpRequestProcessor, QuietClo
         long bodyEnd = QwpEgressFrameWriter.writeServerInfo(
                 bodyStart,
                 bodyCap,
-                provider.getRole(),
+                provider.role(),
                 provider.getEpoch(),
                 provider.getCapabilities(),
                 serverWallNs,
@@ -1167,6 +1167,51 @@ public class QwpEgressUpgradeProcessor implements HttpRequestProcessor, QuietClo
         }
     }
 
+    /**
+     * Checks whether any connection-scoped cache has exceeded its soft cap and,
+     * if so, emits a {@code CACHE_RESET} frame and applies the matching server-
+     * side reset so both peers stay in lockstep. Called at query-completion
+     * boundaries (after {@code RESULT_END}, {@code EXEC_DONE}, or
+     * {@code QUERY_ERROR}) -- never mid-stream, because resetting the dict or
+     * the schema cache mid-stream would invalidate ids referenced by in-flight
+     * RESULT_BATCH frames.
+     */
+    private void maybeEmitCacheReset(
+            HttpConnectionContext context,
+            QwpEgressProcessorState state
+    ) throws PeerDisconnectedException, PeerIsSlowToReadException {
+        byte resetMask = state.computeCacheResetMask();
+        if (resetMask == 0) {
+            return;
+        }
+        HttpRawSocket rawSocket = context.getRawResponseSocket();
+        long bufAddr = rawSocket.getBufferAddress();
+        long qwpStart = bufAddr + QwpEgressFrameWriter.WS_HEADER_RESERVATION;
+        long bodyStart = QwpEgressFrameWriter.writeMessageHeader(
+                qwpStart, state.getNegotiatedVersion(), (byte) 0, 0, 0 /* payload len patched */);
+        long bodyEnd = QwpEgressFrameWriter.writeCacheReset(bodyStart, resetMask);
+        int qwpSize = (int) (bodyEnd - qwpStart);
+        int qwpPayloadLen = qwpSize - QwpConstants.HEADER_SIZE;
+        QwpEgressFrameWriter.patchPayloadLength(qwpStart, qwpPayloadLen);
+        // Apply the local reset BEFORE sending. rawSocket.send commits bytes
+        // to the response sink before it attempts the flush that may throw
+        // PeerIsSlowToReadException; bytes queued that way flush on resume,
+        // so the client is guaranteed to see the CACHE_RESET frame once the
+        // connection drains. Applying the reset first keeps server and client
+        // views aligned even on the parked-send path.
+        state.applyCacheReset(resetMask);
+        if ((resetMask & QwpEgressMsgKind.RESET_MASK_DICT) != 0) {
+            metrics.markCacheResetDict();
+        }
+        if ((resetMask & QwpEgressMsgKind.RESET_MASK_SCHEMAS) != 0) {
+            metrics.markCacheResetSchemas();
+        }
+        LOG.debug().$("Egress cache reset [fd=").$(context.getFd())
+                .$(", mask=0x").$(Integer.toHexString(resetMask & 0xFF))
+                .I$();
+        sendFrame(rawSocket, bufAddr, qwpStart, qwpSize);
+    }
+
     private int negotiateQwpVersion(HttpRequestHeader requestHeader, long fd) {
         int clientMaxVersion = parseClientMaxVersion(requestHeader);
         int negotiated = Math.min(clientMaxVersion, QwpConstants.MAX_SUPPORTED_VERSION);
@@ -1183,6 +1228,8 @@ public class QwpEgressUpgradeProcessor implements HttpRequestProcessor, QuietClo
         }
         return negotiated;
     }
+
+    // Outbound frame serialisation
 
     private void processWebSocketFrames(HttpConnectionContext context, QwpEgressProcessorState state, long buffer, int bufferLen)
             throws ServerDisconnectException, PeerDisconnectedException, PeerIsSlowToReadException {
@@ -1228,53 +1275,6 @@ public class QwpEgressUpgradeProcessor implements HttpRequestProcessor, QuietClo
             }
             state.setRecvBufferLen(remaining);
         }
-    }
-
-    // Outbound frame serialisation
-
-    /**
-     * Checks whether any connection-scoped cache has exceeded its soft cap and,
-     * if so, emits a {@code CACHE_RESET} frame and applies the matching server-
-     * side reset so both peers stay in lockstep. Called at query-completion
-     * boundaries (after {@code RESULT_END}, {@code EXEC_DONE}, or
-     * {@code QUERY_ERROR}) -- never mid-stream, because resetting the dict or
-     * the schema cache mid-stream would invalidate ids referenced by in-flight
-     * RESULT_BATCH frames.
-     */
-    private void maybeEmitCacheReset(
-            HttpConnectionContext context,
-            QwpEgressProcessorState state
-    ) throws PeerDisconnectedException, PeerIsSlowToReadException {
-        byte resetMask = state.computeCacheResetMask();
-        if (resetMask == 0) {
-            return;
-        }
-        HttpRawSocket rawSocket = context.getRawResponseSocket();
-        long bufAddr = rawSocket.getBufferAddress();
-        long qwpStart = bufAddr + QwpEgressFrameWriter.WS_HEADER_RESERVATION;
-        long bodyStart = QwpEgressFrameWriter.writeMessageHeader(
-                qwpStart, state.getNegotiatedVersion(), (byte) 0, 0, 0 /* payload len patched */);
-        long bodyEnd = QwpEgressFrameWriter.writeCacheReset(bodyStart, resetMask);
-        int qwpSize = (int) (bodyEnd - qwpStart);
-        int qwpPayloadLen = qwpSize - QwpConstants.HEADER_SIZE;
-        QwpEgressFrameWriter.patchPayloadLength(qwpStart, qwpPayloadLen);
-        // Apply the local reset BEFORE sending. rawSocket.send commits bytes
-        // to the response sink before it attempts the flush that may throw
-        // PeerIsSlowToReadException; bytes queued that way flush on resume,
-        // so the client is guaranteed to see the CACHE_RESET frame once the
-        // connection drains. Applying the reset first keeps server and client
-        // views aligned even on the parked-send path.
-        state.applyCacheReset(resetMask);
-        if ((resetMask & QwpEgressMsgKind.RESET_MASK_DICT) != 0) {
-            metrics.markCacheResetDict();
-        }
-        if ((resetMask & QwpEgressMsgKind.RESET_MASK_SCHEMAS) != 0) {
-            metrics.markCacheResetSchemas();
-        }
-        LOG.debug().$("Egress cache reset [fd=").$(context.getFd())
-                .$(", mask=0x").$(Integer.toHexString(resetMask & 0xFF))
-                .I$();
-        sendFrame(rawSocket, bufAddr, qwpStart, qwpSize);
     }
 
     /**

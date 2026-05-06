@@ -106,4 +106,14 @@ public final class QwpEgressMsgKind {
 
     private QwpEgressMsgKind() {
     }
+
+    public static String roleName(byte role) {
+        return switch (role) {
+            case ROLE_STANDALONE -> "STANDALONE";
+            case ROLE_PRIMARY -> "PRIMARY";
+            case ROLE_REPLICA -> "REPLICA";
+            case ROLE_PRIMARY_CATCHUP -> "PRIMARY_CATCHUP";
+            default -> "UNKNOWN";
+        };
+    }
 }

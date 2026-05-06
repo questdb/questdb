@@ -33,6 +33,8 @@ import io.questdb.cutlass.http.HttpFullFatServerConfiguration;
 import io.questdb.cutlass.http.HttpRawSocket;
 import io.questdb.cutlass.http.HttpRequestHeader;
 import io.questdb.cutlass.http.LocalValue;
+import io.questdb.cutlass.qwp.codec.QwpEgressMsgKind;
+import io.questdb.cutlass.qwp.codec.QwpServerInfoProvider;
 import io.questdb.cutlass.qwp.server.QwpProcessorState;
 import io.questdb.cutlass.qwp.server.QwpWebSocketUpgradeProcessor;
 import io.questdb.network.PeerDisconnectedException;
@@ -56,6 +58,26 @@ import java.nio.charset.StandardCharsets;
 public class QwpWebSocketUpgradeProcessorOnHeadersReadyTest extends AbstractCairoTest {
     private static final int HANDSHAKE_BUFFER_SIZE = 1024;
     private static final int TINY_BUFFER_SIZE = 64;
+
+    @Test
+    public void testOnHeadersReadyAcceptsPrimaryRole() throws Exception {
+        assertMemoryLeak(() -> assertHandshakeAcceptedForRole(QwpEgressMsgKind.ROLE_PRIMARY, "PRIMARY"));
+    }
+
+    @Test
+    public void testOnHeadersReadyAcceptsStandaloneRole() throws Exception {
+        assertMemoryLeak(() -> assertHandshakeAcceptedForRole(QwpEgressMsgKind.ROLE_STANDALONE, "STANDALONE"));
+    }
+
+    @Test
+    public void testOnHeadersReadyDoesNotEnableDurableAckWhenHeaderAbsent() throws Exception {
+        assertMemoryLeak(() -> assertDurableAckStateAfterHandshake(null, new FakeEnabledDurableAckRegistry(), false));
+    }
+
+    @Test
+    public void testOnHeadersReadyEnablesDurableAckWhenHeaderTrueAndRegistryEnabled() throws Exception {
+        assertMemoryLeak(() -> assertDurableAckStateAfterHandshake("true", new FakeEnabledDurableAckRegistry(), true));
+    }
 
     @Test
     public void testOnHeadersReadyFailsHardWhenBadRequestResponseDoesNotFitBuffer() throws Exception {
@@ -113,6 +135,37 @@ public class QwpWebSocketUpgradeProcessorOnHeadersReadyTest extends AbstractCair
     }
 
     @Test
+    public void testOnHeadersReadyFailsHardWhenServiceUnavailableResponseDoesNotFitBuffer() throws Exception {
+        assertMemoryLeak(() -> {
+            QwpServerInfoProvider previous = engine.getQwpServerInfoProvider();
+            engine.setQwpServerInfoProvider(new FakeRoleProvider(QwpEgressMsgKind.ROLE_REPLICA));
+            HttpFullFatServerConfiguration httpConfig = new DefaultHttpServerConfiguration(configuration);
+            QwpWebSocketUpgradeProcessor processor = new QwpWebSocketUpgradeProcessor(engine, httpConfig);
+            LocalValue<QwpProcessorState> lv = getLV();
+
+            long bufferAddr = Unsafe.malloc(TINY_BUFFER_SIZE, MemoryTag.NATIVE_DEFAULT);
+            try (
+                    MockHttpRequestHeader header = new MockHttpRequestHeader();
+                    TestableContext context = new TestableContext(httpConfig, header, new MockRawSocket(bufferAddr, TINY_BUFFER_SIZE))
+            ) {
+                header.setHeader("Upgrade", "websocket");
+                header.setHeader("Connection", "Upgrade");
+                header.setHeader("Sec-WebSocket-Key", "dGhlIHNhbXBsZSBub25jZQ==");
+                header.setHeader("Sec-WebSocket-Version", "13");
+
+                assertBufferTooSmallFailure(processor, context, "503 ingress role-reject response");
+
+                Assert.assertEquals(0, context.getMockRawSocket().sentSize);
+                Assert.assertFalse(context.isSwitchProtocolCalled());
+                Assert.assertNull(lv.get(context));
+            } finally {
+                Unsafe.free(bufferAddr, TINY_BUFFER_SIZE, MemoryTag.NATIVE_DEFAULT);
+                engine.setQwpServerInfoProvider(previous);
+            }
+        });
+    }
+
+    @Test
     public void testOnHeadersReadyFailsHardWhenUpgradeRequiredResponseDoesNotFitBuffer() throws Exception {
         assertMemoryLeak(() -> {
             HttpFullFatServerConfiguration httpConfig = new DefaultHttpServerConfiguration(configuration);
@@ -138,6 +191,40 @@ public class QwpWebSocketUpgradeProcessorOnHeadersReadyTest extends AbstractCair
                 Unsafe.free(bufferAddr, TINY_BUFFER_SIZE, MemoryTag.NATIVE_DEFAULT);
             }
         });
+    }
+
+    @Test
+    public void testOnHeadersReadyHeaderValueIsCaseInsensitive() throws Exception {
+        assertMemoryLeak(() -> {
+            assertDurableAckStateAfterHandshake("TRUE", new FakeEnabledDurableAckRegistry(), true);
+            assertDurableAckStateAfterHandshake("TrUe", new FakeEnabledDurableAckRegistry(), true);
+        });
+    }
+
+    @Test
+    public void testOnHeadersReadyIgnoresDurableAckWhenRegistryDisabled() throws Exception {
+        // Default OSS behavior: DefaultDurableAckRegistry.isEnabled() returns false,
+        // so even when the client requests durable ack, the state stays disabled.
+        assertMemoryLeak(() -> assertDurableAckStateAfterHandshake("true", DefaultDurableAckRegistry.INSTANCE, false));
+    }
+
+    @Test
+    public void testOnHeadersReadyIgnoresNonTrueHeaderValue() throws Exception {
+        assertMemoryLeak(() -> {
+            assertDurableAckStateAfterHandshake("false", new FakeEnabledDurableAckRegistry(), false);
+            assertDurableAckStateAfterHandshake("", new FakeEnabledDurableAckRegistry(), false);
+            assertDurableAckStateAfterHandshake("yes", new FakeEnabledDurableAckRegistry(), false);
+        });
+    }
+
+    @Test
+    public void testOnHeadersReadyRejectsPrimaryCatchupRole() throws Exception {
+        assertMemoryLeak(() -> assertHandshakeRejectedForRole(QwpEgressMsgKind.ROLE_PRIMARY_CATCHUP, "PRIMARY_CATCHUP"));
+    }
+
+    @Test
+    public void testOnHeadersReadyRejectsReplicaRole() throws Exception {
+        assertMemoryLeak(() -> assertHandshakeRejectedForRole(QwpEgressMsgKind.ROLE_REPLICA, "REPLICA"));
     }
 
     @Test
@@ -167,38 +254,19 @@ public class QwpWebSocketUpgradeProcessorOnHeadersReadyTest extends AbstractCair
         });
     }
 
-    @Test
-    public void testOnHeadersReadyDoesNotEnableDurableAckWhenHeaderAbsent() throws Exception {
-        assertMemoryLeak(() -> assertDurableAckStateAfterHandshake(null, new FakeEnabledDurableAckRegistry(), false));
-    }
-
-    @Test
-    public void testOnHeadersReadyEnablesDurableAckWhenHeaderTrueAndRegistryEnabled() throws Exception {
-        assertMemoryLeak(() -> assertDurableAckStateAfterHandshake("true", new FakeEnabledDurableAckRegistry(), true));
-    }
-
-    @Test
-    public void testOnHeadersReadyHeaderValueIsCaseInsensitive() throws Exception {
-        assertMemoryLeak(() -> {
-            assertDurableAckStateAfterHandshake("TRUE", new FakeEnabledDurableAckRegistry(), true);
-            assertDurableAckStateAfterHandshake("TrUe", new FakeEnabledDurableAckRegistry(), true);
-        });
-    }
-
-    @Test
-    public void testOnHeadersReadyIgnoresDurableAckWhenRegistryDisabled() throws Exception {
-        // Default OSS behavior: DefaultDurableAckRegistry.isEnabled() returns false,
-        // so even when the client requests durable ack, the state stays disabled.
-        assertMemoryLeak(() -> assertDurableAckStateAfterHandshake("true", DefaultDurableAckRegistry.INSTANCE, false));
-    }
-
-    @Test
-    public void testOnHeadersReadyIgnoresNonTrueHeaderValue() throws Exception {
-        assertMemoryLeak(() -> {
-            assertDurableAckStateAfterHandshake("false", new FakeEnabledDurableAckRegistry(), false);
-            assertDurableAckStateAfterHandshake("", new FakeEnabledDurableAckRegistry(), false);
-            assertDurableAckStateAfterHandshake("yes", new FakeEnabledDurableAckRegistry(), false);
-        });
+    private static void assertBufferTooSmallFailure(
+            QwpWebSocketUpgradeProcessor processor,
+            TestableContext context,
+            CharSequence expectedResponseType
+    )
+            throws PeerDisconnectedException {
+        try {
+            processor.onHeadersReady(context);
+            Assert.fail("Expected HttpException");
+        } catch (HttpException e) {
+            TestUtils.assertContains(e.getFlyweightMessage(), expectedResponseType);
+            TestUtils.assertContains(e.getFlyweightMessage(), "does not fit send buffer");
+        }
     }
 
     private static void assertDurableAckStateAfterHandshake(
@@ -237,18 +305,69 @@ public class QwpWebSocketUpgradeProcessorOnHeadersReadyTest extends AbstractCair
         }
     }
 
-    private static void assertBufferTooSmallFailure(
-            QwpWebSocketUpgradeProcessor processor,
-            TestableContext context,
-            CharSequence expectedResponseType
-    )
-            throws PeerDisconnectedException {
-        try {
+    private static void assertHandshakeAcceptedForRole(byte role, String expectedRoleName) throws Exception {
+        QwpServerInfoProvider previous = engine.getQwpServerInfoProvider();
+        engine.setQwpServerInfoProvider(new FakeRoleProvider(role));
+        HttpFullFatServerConfiguration httpConfig = new DefaultHttpServerConfiguration(configuration);
+        QwpWebSocketUpgradeProcessor processor = new QwpWebSocketUpgradeProcessor(engine, httpConfig);
+        LocalValue<QwpProcessorState> lv = getLV();
+
+        long bufferAddr = Unsafe.malloc(HANDSHAKE_BUFFER_SIZE, MemoryTag.NATIVE_DEFAULT);
+        try (
+                MockHttpRequestHeader header = new MockHttpRequestHeader();
+                TestableContext context = new TestableContext(httpConfig, header, new MockRawSocket(bufferAddr, HANDSHAKE_BUFFER_SIZE))
+        ) {
+            header.setHeader("Upgrade", "websocket");
+            header.setHeader("Connection", "Upgrade");
+            header.setHeader("Sec-WebSocket-Key", "dGhlIHNhbXBsZSBub25jZQ==");
+            header.setHeader("Sec-WebSocket-Version", "13");
+
             processor.onHeadersReady(context);
-            Assert.fail("Expected HttpException");
-        } catch (HttpException e) {
-            TestUtils.assertContains(e.getFlyweightMessage(), expectedResponseType);
-            TestUtils.assertContains(e.getFlyweightMessage(), "does not fit send buffer");
+
+            Assert.assertTrue("handshake must have switched protocol", context.isSwitchProtocolCalled());
+            Assert.assertNotNull("state must be populated after successful handshake", lv.get(context));
+
+            String response = readResponse(bufferAddr, context.getMockRawSocket().sentSize);
+            Assert.assertTrue("response must start with 101: " + response,
+                    response.startsWith("HTTP/1.1 101 Switching Protocols\r\n"));
+            Assert.assertTrue("response must carry X-QuestDB-Role: " + expectedRoleName + ", got: " + response,
+                    response.contains("\r\nX-QuestDB-Role: " + expectedRoleName + "\r\n"));
+        } finally {
+            Unsafe.free(bufferAddr, HANDSHAKE_BUFFER_SIZE, MemoryTag.NATIVE_DEFAULT);
+            engine.setQwpServerInfoProvider(previous);
+        }
+    }
+
+    private static void assertHandshakeRejectedForRole(byte role, String expectedRoleName) throws Exception {
+        QwpServerInfoProvider previous = engine.getQwpServerInfoProvider();
+        engine.setQwpServerInfoProvider(new FakeRoleProvider(role));
+        HttpFullFatServerConfiguration httpConfig = new DefaultHttpServerConfiguration(configuration);
+        QwpWebSocketUpgradeProcessor processor = new QwpWebSocketUpgradeProcessor(engine, httpConfig);
+        LocalValue<QwpProcessorState> lv = getLV();
+
+        long bufferAddr = Unsafe.malloc(HANDSHAKE_BUFFER_SIZE, MemoryTag.NATIVE_DEFAULT);
+        try (
+                MockHttpRequestHeader header = new MockHttpRequestHeader();
+                TestableContext context = new TestableContext(httpConfig, header, new MockRawSocket(bufferAddr, HANDSHAKE_BUFFER_SIZE))
+        ) {
+            header.setHeader("Upgrade", "websocket");
+            header.setHeader("Connection", "Upgrade");
+            header.setHeader("Sec-WebSocket-Key", "dGhlIHNhbXBsZSBub25jZQ==");
+            header.setHeader("Sec-WebSocket-Version", "13");
+
+            processor.onHeadersReady(context);
+
+            Assert.assertFalse("rejected handshake must not switch protocol", context.isSwitchProtocolCalled());
+            Assert.assertNull("rejected handshake must not allocate processor state", lv.get(context));
+
+            String response = readResponse(bufferAddr, context.getMockRawSocket().sentSize);
+            Assert.assertTrue("response must be 503: " + response,
+                    response.startsWith("HTTP/1.1 503 Service Unavailable\r\n"));
+            Assert.assertTrue("response must carry X-QuestDB-Role: " + expectedRoleName + ", got: " + response,
+                    response.contains("\r\nX-QuestDB-Role: " + expectedRoleName + "\r\n"));
+        } finally {
+            Unsafe.free(bufferAddr, HANDSHAKE_BUFFER_SIZE, MemoryTag.NATIVE_DEFAULT);
+            engine.setQwpServerInfoProvider(previous);
         }
     }
 
@@ -257,6 +376,49 @@ public class QwpWebSocketUpgradeProcessorOnHeadersReadyTest extends AbstractCair
         Field lvField = QwpWebSocketUpgradeProcessor.class.getDeclaredField("LV");
         lvField.setAccessible(true);
         return (LocalValue<QwpProcessorState>) lvField.get(null);
+    }
+
+    private static String readResponse(long bufferAddr, int size) {
+        byte[] bytes = new byte[size];
+        for (int i = 0; i < size; i++) {
+            bytes[i] = Unsafe.getUnsafe().getByte(bufferAddr + i);
+        }
+        return new String(bytes, StandardCharsets.US_ASCII);
+    }
+
+    private static final class FakeEnabledDurableAckRegistry implements DurableAckRegistry {
+        @Override
+        public long getDurablyUploadedSeqTxn(CharSequence tableDirName) {
+            return -1L;
+        }
+
+        @Override
+        public boolean isEnabled() {
+            return true;
+        }
+    }
+
+    private record FakeRoleProvider(byte role) implements QwpServerInfoProvider {
+
+        @Override
+        public int getCapabilities() {
+            return 0;
+        }
+
+        @Override
+        public CharSequence getClusterId() {
+            return "";
+        }
+
+        @Override
+        public long getEpoch() {
+            return 0L;
+        }
+
+        @Override
+        public CharSequence getNodeId() {
+            return "";
+        }
     }
 
     private static class MockHttpRequestHeader implements HttpRequestHeader, AutoCloseable {
@@ -454,18 +616,6 @@ public class QwpWebSocketUpgradeProcessorOnHeadersReadyTest extends AbstractCair
 
         boolean isSwitchProtocolCalled() {
             return switchProtocolCalled;
-        }
-    }
-
-    private static final class FakeEnabledDurableAckRegistry implements DurableAckRegistry {
-        @Override
-        public long getDurablyUploadedSeqTxn(CharSequence tableDirName) {
-            return -1L;
-        }
-
-        @Override
-        public boolean isEnabled() {
-            return true;
         }
     }
 }
