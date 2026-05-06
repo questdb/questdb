@@ -4816,7 +4816,28 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         try {
             keyFileName(indexType, path.trimTo(plen), columnName, columnNameTxn);
 
-            if (!force && ff.exists(path.$())) {
+            if (IndexType.isPosting(indexType)) {
+                // POSTING preserves chain history across the partition's
+                // lifecycle: the genCounter in the .pk header is the
+                // high-water sealTxn that pending orphan purges may target.
+                // Wiping and reinitialising the .pk would reset genCounter to
+                // -1, so the writer's next appendNewEntry would reuse
+                // sealTxn=0 and recreate .pv.0 at a path that an outstanding
+                // orphan purge for sealTxn=0 would then delete out from under
+                // the live writer. Skip the recreate when the .pk already
+                // exists with a published seqlock header; the writer's
+                // recovery walk drops abandoned chain entries on reopen,
+                // which is the right cleanup for POSTING. A .pk that is
+                // missing, truncated, or has zeroed seqlock pages is a
+                // leftover from an earlier init that failed before
+                // publishing Page A (e.g. mmap failure mid-write); it
+                // carries no chain history worth preserving and would crash
+                // the next reader, so wipe it and recreate from scratch.
+                if (PostingIndexUtils.hasInitialisedKeyFileHeader(ff, path.$())) {
+                    return;
+                }
+                ff.removeQuiet(path.$());
+            } else if (!force && ff.exists(path.$())) {
                 return;
             } else {
                 ff.removeQuiet(path.$());
