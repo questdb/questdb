@@ -33,7 +33,7 @@ import jdk.internal.vm.ContinuationScope;
  * that can be unmounted from one thread (via {@link #suspend()}) and remounted on a
  * different thread (via a subsequent {@link #run()} call from that thread).
  *
- * <p>Requires {@code --add-opens java.base/jdk.internal.vm=ALL-UNNAMED} on the JVM
+ * <p>Requires {@code --add-exports java.base/jdk.internal.vm=io.questdb} on the JVM
  * command line.
  */
 public final class WorkerContinuation {
