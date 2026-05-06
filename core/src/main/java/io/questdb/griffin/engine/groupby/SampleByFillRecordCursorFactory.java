@@ -87,16 +87,18 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
     public static final int FILL_CONSTANT = -1;
     public static final int FILL_KEY = -3;
     public static final int FILL_PREV_SELF = -2;
-    private static final int HAS_PREV_SLOT = 1;
     // Per-key generational stamp: holds the bucket timestamp at which the key
     // last received a data row, or LONG_NULL before any data arrives. Presence
     // in the current bucket is `lastKnownTs == nextBucketTimestamp` -- bucket
     // transitions flip every key's flag in O(1) by advancing nextBucketTimestamp.
+    // During emit, lastKnownTs != nextBucketTimestamp by construction, so
+    // hasPrev for the gap collapses to `lastKnownTs != LONG_NULL` -- no separate
+    // HAS_PREV slot is needed.
     private static final int LAST_KNOWN_TS_SLOT = 0;
     // Key columns in MapRecord start at KEY_POS_OFFSET, after the fixed-width
-    // value header (LAST_KNOWN_TS, HAS_PREV, PREV_ROWID).
-    private static final int KEY_POS_OFFSET = 3;
-    private static final int PREV_ROWID_SLOT = 2;
+    // value header (LAST_KNOWN_TS, PREV_ROWID).
+    private static final int KEY_POS_OFFSET = 2;
+    private static final int PREV_ROWID_SLOT = 1;
 
     private final RecordCursorFactory base;
     private final ObjList<Function> constantFills;
@@ -116,12 +118,11 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
     private final Function tzFunc;
 
     /**
-     * Appends the fixed-width value header (LAST_KNOWN_TS_SLOT, HAS_PREV_SLOT,
-     * PREV_ROWID_SLOT - three LONGs) the cursor expects on every key entry.
-     * External map builders must call this so slot indices stay authoritative.
+     * Appends the fixed-width value header (LAST_KNOWN_TS_SLOT, PREV_ROWID_SLOT
+     * - two LONGs) the cursor expects on every key entry. External map builders
+     * must call this so slot indices stay authoritative.
      */
     public static void populateMapValueTypes(ArrayColumnTypes mapValueTypes) {
-        mapValueTypes.add(ColumnType.LONG);
         mapValueTypes.add(ColumnType.LONG);
         mapValueTypes.add(ColumnType.LONG);
     }
@@ -700,7 +701,10 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
                         // initialize(), so HAS_PREV / hasPrevForCurrentGap matter only
                         // for the variable-width PREV_SLOT path.
                         if (isPrevPositioningNeeded) {
-                            boolean hasPrev = keysMapRecord.getLong(HAS_PREV_SLOT) != 0;
+                            // During emit lastKnownTs != nextBucketTimestamp by
+                            // construction; non-null stamp <=> a prior data row
+                            // exists for this key.
+                            boolean hasPrev = lastKnownTs != Numbers.LONG_NULL;
                             hasPrevForCurrentGap = hasPrev;
                             if (hasPrev) {
                                 baseCursor.recordAt(prevRecord, keysMapRecord.getLong(PREV_ROWID_SLOT));
@@ -765,9 +769,9 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
                     if (value.isNew()) {
                         keyIdx++;
                         // LONG_NULL is the absence sentinel: it can never equal
-                        // any bucket timestamp produced by TimestampSampler.
+                        // any bucket timestamp produced by TimestampSampler, and
+                        // doubles as the "no prev" marker in the emit path.
                         value.putLong(LAST_KNOWN_TS_SLOT, Numbers.LONG_NULL);
-                        value.putLong(HAS_PREV_SLOT, 0L);
                         // Pre-fill cached PREV slots with per-type null sentinels
                         // so PREV_CACHE_SLOT getters can read unconditionally
                         // -- no hasPrev branch needed in the hot path.
@@ -1005,7 +1009,9 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
         }
 
         private void updateKeyPrevRowId(MapValue value, Record record) {
-            value.putLong(HAS_PREV_SLOT, 1L);
+            // The data-row arrival path already wrote LAST_KNOWN_TS_SLOT to the
+            // current bucket timestamp; that doubles as the "has prev" marker
+            // for subsequent gap buckets, so no separate flag write is needed.
             value.putLong(PREV_ROWID_SLOT, record.getRowId());
             // Copy fixed-size FILL_PREV values into cached MapValue slots --
             // amortises a recordAt+RecordChain per read into N small writes.
