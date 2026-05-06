@@ -170,26 +170,26 @@ final class UnorderedVarcharMapRecord implements MapRecord {
 
     @Override
     public byte getByte(int columnIndex) {
-        return Unsafe.getUnsafe().getByte(addressOfColumn(columnIndex));
+        return Unsafe.getByte(addressOfColumn(columnIndex));
     }
 
     @Override
     public char getChar(int columnIndex) {
-        return Unsafe.getUnsafe().getChar(addressOfColumn(columnIndex));
+        return Unsafe.getChar(addressOfColumn(columnIndex));
     }
 
     @Override
     public void getDecimal128(int col, Decimal128 sink) {
         final long addr = addressOfColumn(col);
         sink.ofRaw(
-                Unsafe.getUnsafe().getLong(addr),
-                Unsafe.getUnsafe().getLong(addr + 8L)
+                Unsafe.getLong(addr),
+                Unsafe.getLong(addr + 8L)
         );
     }
 
     @Override
     public short getDecimal16(int col) {
-        return Unsafe.getUnsafe().getShort(addressOfColumn(col));
+        return Unsafe.getShort(addressOfColumn(col));
     }
 
     @Override
@@ -199,27 +199,27 @@ final class UnorderedVarcharMapRecord implements MapRecord {
 
     @Override
     public int getDecimal32(int col) {
-        return Unsafe.getUnsafe().getInt(addressOfColumn(col));
+        return Unsafe.getInt(addressOfColumn(col));
     }
 
     @Override
     public long getDecimal64(int col) {
-        return Unsafe.getUnsafe().getLong(addressOfColumn(col));
+        return Unsafe.getLong(addressOfColumn(col));
     }
 
     @Override
     public byte getDecimal8(int col) {
-        return Unsafe.getUnsafe().getByte(addressOfColumn(col));
+        return Unsafe.getByte(addressOfColumn(col));
     }
 
     @Override
     public double getDouble(int columnIndex) {
-        return Unsafe.getUnsafe().getDouble(addressOfColumn(columnIndex));
+        return Unsafe.getDouble(addressOfColumn(columnIndex));
     }
 
     @Override
     public float getFloat(int columnIndex) {
-        return Unsafe.getUnsafe().getFloat(addressOfColumn(columnIndex));
+        return Unsafe.getFloat(addressOfColumn(columnIndex));
     }
 
     @Override
@@ -244,27 +244,27 @@ final class UnorderedVarcharMapRecord implements MapRecord {
 
     @Override
     public int getIPv4(int columnIndex) {
-        return Unsafe.getUnsafe().getInt(addressOfColumn(columnIndex));
+        return Unsafe.getInt(addressOfColumn(columnIndex));
     }
 
     @Override
     public int getInt(int columnIndex) {
-        return Unsafe.getUnsafe().getInt(addressOfColumn(columnIndex));
+        return Unsafe.getInt(addressOfColumn(columnIndex));
     }
 
     @Override
     public long getLong(int columnIndex) {
-        return Unsafe.getUnsafe().getLong(addressOfColumn(columnIndex));
+        return Unsafe.getLong(addressOfColumn(columnIndex));
     }
 
     @Override
     public long getLong128Hi(int columnIndex) {
-        return Unsafe.getUnsafe().getLong(addressOfColumn(columnIndex) + Long.BYTES);
+        return Unsafe.getLong(addressOfColumn(columnIndex) + Long.BYTES);
     }
 
     @Override
     public long getLong128Lo(int columnIndex) {
-        return Unsafe.getUnsafe().getLong(addressOfColumn(columnIndex));
+        return Unsafe.getLong(addressOfColumn(columnIndex));
     }
 
     @Override
@@ -291,7 +291,7 @@ final class UnorderedVarcharMapRecord implements MapRecord {
 
     @Override
     public short getShort(int columnIndex) {
-        return Unsafe.getUnsafe().getShort(addressOfColumn(columnIndex));
+        return Unsafe.getShort(addressOfColumn(columnIndex));
     }
 
     @Override
@@ -322,7 +322,7 @@ final class UnorderedVarcharMapRecord implements MapRecord {
     @Override
     public int getVarcharSize(int col) {
         long address = addressOfColumn(col);
-        int sizeWithFlags = Unsafe.getUnsafe().getInt(address + 4);
+        int sizeWithFlags = Unsafe.getInt(address + 4);
         boolean isNull = UnorderedVarcharMap.isSizeNull(sizeWithFlags);
         if (isNull) {
             return -1;
@@ -332,8 +332,8 @@ final class UnorderedVarcharMapRecord implements MapRecord {
 
     @Override
     public long keyHashCode() {
-        int lenAndFlags = Unsafe.getUnsafe().getInt(startAddress + 4);
-        long ptr = Unsafe.getUnsafe().getLong(startAddress + 8) & UnorderedVarcharMap.PTR_MASK;
+        int lenAndFlags = Unsafe.getInt(startAddress + 4);
+        long ptr = Unsafe.getLong(startAddress + 8) & UnorderedVarcharMap.PTR_MASK;
 
         int size = lenAndFlags & UnorderedVarcharMap.MASK_FLAGS_FROM_SIZE;
         if (size > 0) {
@@ -368,14 +368,14 @@ final class UnorderedVarcharMapRecord implements MapRecord {
 
     private DirectUtf8String getVarchar0(int col, DirectUtf8String us) {
         long address = addressOfColumn(col);
-        long packedHashSizeFlags = Unsafe.getUnsafe().getLong(address);
+        long packedHashSizeFlags = Unsafe.getLong(address);
         byte flags = UnorderedVarcharMap.unpackFlags(packedHashSizeFlags);
         if (UnorderedVarcharMap.isNull(flags)) {
             return null;
         }
         boolean isAscii = UnorderedVarcharMap.isAscii(flags);
         long size = UnorderedVarcharMap.unpackSize(packedHashSizeFlags);
-        long ptrWithUnstableFlag = Unsafe.getUnsafe().getLong(address + Long.BYTES);
+        long ptrWithUnstableFlag = Unsafe.getLong(address + Long.BYTES);
         long ptr = ptrWithUnstableFlag & UnorderedVarcharMap.PTR_MASK;
         return us.of(ptr, ptr + size, isAscii);
     }

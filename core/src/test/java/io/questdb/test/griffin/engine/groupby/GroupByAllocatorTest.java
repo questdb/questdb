@@ -93,7 +93,7 @@ public class GroupByAllocatorTest extends AbstractCairoTest {
                 long ptr = allocator.malloc(N);
                 for (int i = 0; i < N; i++) {
                     // Touch the memory to make sure it's allocated.
-                    Unsafe.getUnsafe().putByte(ptr + i, (byte) i);
+                    Unsafe.putByte(ptr + i, (byte) i);
                 }
 
                 allocator.clear();
@@ -101,7 +101,7 @@ public class GroupByAllocatorTest extends AbstractCairoTest {
                 ptr = allocator.malloc(N);
                 for (int i = 0; i < N; i++) {
                     // Touch the memory to make sure it's allocated.
-                    Unsafe.getUnsafe().putByte(ptr + i, (byte) i);
+                    Unsafe.putByte(ptr + i, (byte) i);
                 }
             }
         });
@@ -121,7 +121,7 @@ public class GroupByAllocatorTest extends AbstractCairoTest {
                 long ptr = allocator.malloc(N);
                 for (int i = 0; i < N; i++) {
                     // Touch the memory to make sure it's allocated.
-                    Unsafe.getUnsafe().putByte(ptr + i, (byte) i);
+                    Unsafe.putByte(ptr + i, (byte) i);
                 }
 
                 allocator.close();
@@ -130,7 +130,7 @@ public class GroupByAllocatorTest extends AbstractCairoTest {
                 ptr = allocator.malloc(N);
                 for (int i = 0; i < N; i++) {
                     // Touch the memory to make sure it's allocated.
-                    Unsafe.getUnsafe().putByte(ptr + i, (byte) i);
+                    Unsafe.putByte(ptr + i, (byte) i);
                 }
             }
         });
@@ -150,7 +150,7 @@ public class GroupByAllocatorTest extends AbstractCairoTest {
             try (GroupByAllocator allocator = createAllocator(config)) {
                 long ptr = allocator.malloc(minChunkSize / 4);
                 // Touch the first byte to make sure the memory is allocated.
-                Unsafe.getUnsafe().putByte(ptr, (byte) 42);
+                Unsafe.putByte(ptr, (byte) 42);
                 Assert.assertEquals(minChunkSize, allocator.allocated());
 
                 // This call should be ignored since the size is smaller than the min chunk size.
@@ -162,7 +162,7 @@ public class GroupByAllocatorTest extends AbstractCairoTest {
 
                 ptr = allocator.malloc(2 * minChunkSize);
                 // Touch the first byte to make sure the memory is allocated.
-                Unsafe.getUnsafe().putByte(ptr, (byte) 42);
+                Unsafe.putByte(ptr, (byte) 42);
                 Assert.assertEquals(2 * minChunkSize, allocator.allocated());
 
                 // This call should be ignored since the pointer is not at the beginning of the chunk.
@@ -175,7 +175,7 @@ public class GroupByAllocatorTest extends AbstractCairoTest {
                 for (int i = 0; i < N; i++) {
                     ptr = allocator.malloc(minChunkSize + i);
                     // Touch the first byte to make sure the memory is allocated.
-                    Unsafe.getUnsafe().putByte(ptr, (byte) 42);
+                    Unsafe.putByte(ptr, (byte) 42);
                     Assert.assertEquals(minChunkSize + i, allocator.allocated());
 
                     allocator.free(ptr, minChunkSize + i);
@@ -200,7 +200,7 @@ public class GroupByAllocatorTest extends AbstractCairoTest {
                     long ptr = allocator.malloc(i + 1);
                     for (int j = 0; j < i + 1; j++) {
                         // Touch the memory to make sure it's allocated.
-                        Unsafe.getUnsafe().putByte(ptr + j, (byte) j);
+                        Unsafe.putByte(ptr + j, (byte) j);
                     }
                 }
             }
@@ -223,9 +223,9 @@ public class GroupByAllocatorTest extends AbstractCairoTest {
                 int size = M;
                 long ptr = allocator.malloc(size);
                 // Touch the first byte to make sure the memory is allocated.
-                Unsafe.getUnsafe().putByte(ptr, (byte) 42);
+                Unsafe.putByte(ptr, (byte) 42);
                 ptr = allocator.malloc(size);
-                Unsafe.getUnsafe().putByte(ptr, (byte) 42);
+                Unsafe.putByte(ptr, (byte) 42);
                 Assert.assertEquals(minChunkSize, allocator.allocated());
 
                 // This should be no-op.
@@ -233,7 +233,7 @@ public class GroupByAllocatorTest extends AbstractCairoTest {
 
                 // This call should lead to slow path (malloc + memcpy).
                 ptr = allocator.realloc(ptr, size, size + minChunkSize);
-                Unsafe.getUnsafe().putByte(ptr, (byte) 42);
+                Unsafe.putByte(ptr, (byte) 42);
                 Assert.assertEquals(2 * minChunkSize + size, allocator.allocated());
 
                 allocator.close();
@@ -241,17 +241,17 @@ public class GroupByAllocatorTest extends AbstractCairoTest {
 
                 ptr = allocator.malloc(size);
                 for (int i = 0; i < size; i++) {
-                    Unsafe.getUnsafe().putByte(ptr + i, (byte) 42);
+                    Unsafe.putByte(ptr + i, (byte) 42);
                 }
 
                 for (int i = 0; i < N; i++) {
                     ptr = allocator.realloc(ptr, size, ++size);
                     for (int j = 0; j < M; j++) {
-                        Assert.assertEquals(42, Unsafe.getUnsafe().getByte(ptr + j));
+                        Assert.assertEquals(42, Unsafe.getByte(ptr + j));
                     }
                     for (int j = M; j < size; j++) {
                         // Touch the tail part of the memory to make sure it's allocated.
-                        Unsafe.getUnsafe().putByte(ptr + j, (byte) j);
+                        Unsafe.putByte(ptr + j, (byte) j);
                     }
                 }
             }

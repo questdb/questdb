@@ -74,9 +74,9 @@ class TxFileStruct {
     }
 
     static class AttachedPartition {
-        long DATA_TX;
         long MASK;
         long NAME_TX;
+        long PM_FILE_SIZE;
         long SIZE;
         long TS;
 
@@ -87,7 +87,7 @@ class TxFileStruct {
                     ", MASK=" + MASK +
                     ", SIZE=" + SIZE +
                     ", NAME_TX=" + NAME_TX +
-                    ", DATA_TX=" + DATA_TX +
+                    ", PM_FILE_SIZE=" + PM_FILE_SIZE +
                     '}';
         }
     }

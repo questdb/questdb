@@ -29,10 +29,10 @@ import io.questdb.std.str.DirectUtf8Sequence;
 import io.questdb.std.str.DirectUtf8String;
 import io.questdb.std.str.Utf8s;
 
-import static io.questdb.cutlass.qwp.protocol.QwpConstants.TYPE_STRING;
+import static io.questdb.cutlass.qwp.protocol.QwpConstants.TYPE_VARCHAR;
 
 /**
- * Streaming cursor for STRING and VARCHAR columns.
+ * Streaming cursor for VARCHAR columns.
  * <p>
  * Wire format:
  * <pre>
@@ -74,8 +74,8 @@ public final class QwpStringColumnCursor implements QwpColumnCursor {
         }
 
         // Read string bounds from offset array
-        int startOffset = Unsafe.getUnsafe().getInt(offsetArrayAddress + (long) currentValueIndex * 4);
-        int endOffset = Unsafe.getUnsafe().getInt(offsetArrayAddress + (long) (currentValueIndex + 1) * 4);
+        int startOffset = Unsafe.getInt(offsetArrayAddress + (long) currentValueIndex * 4);
+        int endOffset = Unsafe.getInt(offsetArrayAddress + (long) (currentValueIndex + 1) * 4);
 
         if (startOffset < 0 || endOffset < startOffset || endOffset > stringDataLength) {
             throw QwpParseException.instance(QwpParseException.ErrorCode.INVALID_OFFSET_ARRAY)
@@ -99,7 +99,7 @@ public final class QwpStringColumnCursor implements QwpColumnCursor {
     @Override
     public void clear() {
         valueUtf8.clear();
-        typeCode = TYPE_STRING;
+        typeCode = TYPE_VARCHAR;
         nullBitmapAddress = 0;
         offsetArrayAddress = 0;
         stringDataAddress = 0;
@@ -135,7 +135,7 @@ public final class QwpStringColumnCursor implements QwpColumnCursor {
      * @param dataAddress address of column data
      * @param dataLength  available bytes from dataAddress
      * @param rowCount    number of rows
-     * @param typeCode    column type code (TYPE_STRING or TYPE_VARCHAR)
+     * @param typeCode    column type code (TYPE_VARCHAR)
      * @return bytes consumed from dataAddress
      * @throws QwpParseException if data is truncated
      */
@@ -152,7 +152,7 @@ public final class QwpStringColumnCursor implements QwpColumnCursor {
             );
         }
         int nullCount;
-        if (Unsafe.getUnsafe().getByte(dataAddress + offset) != 0) {
+        if (Unsafe.getByte(dataAddress + offset) != 0) {
             offset++;
             int bitmapSize = QwpNullBitmap.sizeInBytes(rowCount);
             if (offset + bitmapSize > dataLength) {
@@ -181,7 +181,7 @@ public final class QwpStringColumnCursor implements QwpColumnCursor {
         this.offsetArrayAddress = dataAddress + offset;
         offset += (int) offsetArraySize;
 
-        int firstOffset = Unsafe.getUnsafe().getInt(offsetArrayAddress);
+        int firstOffset = Unsafe.getInt(offsetArrayAddress);
         if (firstOffset != 0) {
             throw QwpParseException.create(
                     QwpParseException.ErrorCode.INVALID_OFFSET_ARRAY,
@@ -190,7 +190,7 @@ public final class QwpStringColumnCursor implements QwpColumnCursor {
         }
 
         // Calculate total string data size from offset array
-        int lastOffset = Unsafe.getUnsafe().getInt(offsetArrayAddress + (long) valueCount * 4);
+        int lastOffset = Unsafe.getInt(offsetArrayAddress + (long) valueCount * 4);
         long availableStringData = (long) dataLength - offset;
         if (lastOffset < 0 || (long) lastOffset > availableStringData) {
             throw QwpParseException.create(

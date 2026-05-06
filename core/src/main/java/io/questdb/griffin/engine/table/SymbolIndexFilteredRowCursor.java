@@ -25,10 +25,15 @@
 package io.questdb.griffin.engine.table;
 
 import io.questdb.cairo.TableUtils;
-import io.questdb.cairo.sql.*;
+import io.questdb.cairo.sql.Function;
+import io.questdb.cairo.sql.PageFrame;
+import io.questdb.cairo.sql.PageFrameCursor;
+import io.questdb.cairo.sql.PageFrameMemory;
+import io.questdb.cairo.sql.PageFrameMemoryRecord;
+import io.questdb.cairo.sql.RowCursor;
+import io.questdb.std.Misc;
 
 class SymbolIndexFilteredRowCursor implements RowCursor {
-    private final boolean cachedIndexReaderCursor;
     private final int columnIndex;
     private final Function filter;
     private final int indexDirection;
@@ -41,24 +46,26 @@ class SymbolIndexFilteredRowCursor implements RowCursor {
             int columnIndex,
             int symbolKey,
             Function filter,
-            boolean cachedIndexReaderCursor,
             int indexDirection
     ) {
-        this(columnIndex, filter, cachedIndexReaderCursor, indexDirection);
+        this(columnIndex, filter, indexDirection);
         of(symbolKey);
     }
 
     public SymbolIndexFilteredRowCursor(
             int columnIndex,
             Function filter,
-            boolean cachedIndexReaderCursor,
             int indexDirection
     ) {
         this.columnIndex = columnIndex;
         this.filter = filter;
-        this.cachedIndexReaderCursor = cachedIndexReaderCursor;
         this.indexDirection = indexDirection;
         this.record = new PageFrameMemoryRecord(PageFrameMemoryRecord.RECORD_A_LETTER);
+    }
+
+    @Override
+    public void close() {
+        rowCursor = Misc.free(rowCursor);
     }
 
     @Override
@@ -84,9 +91,12 @@ class SymbolIndexFilteredRowCursor implements RowCursor {
     }
 
     public SymbolIndexFilteredRowCursor of(PageFrame pageFrame, PageFrameMemory pageFrameMemory) {
+        if (rowCursor != null) {
+            rowCursor.close();
+        }
         this.rowCursor = pageFrame
-                .getBitmapIndexReader(columnIndex, indexDirection)
-                .getCursor(cachedIndexReaderCursor, symbolKey, pageFrame.getPartitionLo(), pageFrame.getPartitionHi() - 1);
+                .getIndexReader(columnIndex, indexDirection)
+                .getCursor(symbolKey, pageFrame.getPartitionLo(), pageFrame.getPartitionHi() - 1);
         record.init(pageFrameMemory);
         record.setRowIndex(0);
         return this;

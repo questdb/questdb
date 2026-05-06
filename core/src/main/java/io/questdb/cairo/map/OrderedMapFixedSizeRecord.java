@@ -222,26 +222,26 @@ final class OrderedMapFixedSizeRecord implements OrderedMapRecord {
 
     @Override
     public byte getByte(int columnIndex) {
-        return Unsafe.getUnsafe().getByte(addressOfColumn(columnIndex));
+        return Unsafe.getByte(addressOfColumn(columnIndex));
     }
 
     @Override
     public char getChar(int columnIndex) {
-        return Unsafe.getUnsafe().getChar(addressOfColumn(columnIndex));
+        return Unsafe.getChar(addressOfColumn(columnIndex));
     }
 
     @Override
     public void getDecimal128(int col, Decimal128 sink) {
         long addr = addressOfColumn(col);
         sink.ofRaw(
-                Unsafe.getUnsafe().getLong(addr),
-                Unsafe.getUnsafe().getLong(addr + 8L)
+                Unsafe.getLong(addr),
+                Unsafe.getLong(addr + 8L)
         );
     }
 
     @Override
     public short getDecimal16(int columnIndex) {
-        return Unsafe.getUnsafe().getShort(addressOfColumn(columnIndex));
+        return Unsafe.getShort(addressOfColumn(columnIndex));
     }
 
     @Override
@@ -251,27 +251,27 @@ final class OrderedMapFixedSizeRecord implements OrderedMapRecord {
 
     @Override
     public int getDecimal32(int columnIndex) {
-        return Unsafe.getUnsafe().getInt(addressOfColumn(columnIndex));
+        return Unsafe.getInt(addressOfColumn(columnIndex));
     }
 
     @Override
     public long getDecimal64(int columnIndex) {
-        return Unsafe.getUnsafe().getLong(addressOfColumn(columnIndex));
+        return Unsafe.getLong(addressOfColumn(columnIndex));
     }
 
     @Override
     public byte getDecimal8(int columnIndex) {
-        return Unsafe.getUnsafe().getByte(addressOfColumn(columnIndex));
+        return Unsafe.getByte(addressOfColumn(columnIndex));
     }
 
     @Override
     public double getDouble(int columnIndex) {
-        return Unsafe.getUnsafe().getDouble(addressOfColumn(columnIndex));
+        return Unsafe.getDouble(addressOfColumn(columnIndex));
     }
 
     @Override
     public float getFloat(int columnIndex) {
-        return Unsafe.getUnsafe().getFloat(addressOfColumn(columnIndex));
+        return Unsafe.getFloat(addressOfColumn(columnIndex));
     }
 
     @Override
@@ -296,36 +296,36 @@ final class OrderedMapFixedSizeRecord implements OrderedMapRecord {
 
     @Override
     public int getIPv4(int columnIndex) {
-        return Unsafe.getUnsafe().getInt(addressOfColumn(columnIndex));
+        return Unsafe.getInt(addressOfColumn(columnIndex));
     }
 
     @Override
     public int getInt(int columnIndex) {
-        return Unsafe.getUnsafe().getInt(addressOfColumn(columnIndex));
+        return Unsafe.getInt(addressOfColumn(columnIndex));
     }
 
     @Override
     public Interval getInterval(int columnIndex) {
         long address = addressOfColumn(columnIndex);
-        long lo = Unsafe.getUnsafe().getLong(address);
-        long hi = Unsafe.getUnsafe().getLong(address + Long.BYTES);
+        long lo = Unsafe.getLong(address);
+        long hi = Unsafe.getLong(address + Long.BYTES);
         Interval interval = this.intervals[columnIndex];
         return interval.of(lo, hi);
     }
 
     @Override
     public long getLong(int columnIndex) {
-        return Unsafe.getUnsafe().getLong(addressOfColumn(columnIndex));
+        return Unsafe.getLong(addressOfColumn(columnIndex));
     }
 
     @Override
     public long getLong128Hi(int columnIndex) {
-        return Unsafe.getUnsafe().getLong(addressOfColumn(columnIndex) + Long.BYTES);
+        return Unsafe.getLong(addressOfColumn(columnIndex) + Long.BYTES);
     }
 
     @Override
     public long getLong128Lo(int columnIndex) {
-        return Unsafe.getUnsafe().getLong(addressOfColumn(columnIndex));
+        return Unsafe.getLong(addressOfColumn(columnIndex));
     }
 
     @Override
@@ -352,7 +352,7 @@ final class OrderedMapFixedSizeRecord implements OrderedMapRecord {
 
     @Override
     public short getShort(int columnIndex) {
-        return Unsafe.getUnsafe().getShort(addressOfColumn(columnIndex));
+        return Unsafe.getShort(addressOfColumn(columnIndex));
     }
 
     @Override

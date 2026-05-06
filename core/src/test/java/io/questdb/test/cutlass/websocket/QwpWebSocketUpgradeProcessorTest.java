@@ -54,7 +54,7 @@ public class QwpWebSocketUpgradeProcessorTest extends AbstractWebSocketTest {
 
                 byte[] responseBytes = new byte[written];
                 for (int i = 0; i < written; i++) {
-                    responseBytes[i] = Unsafe.getUnsafe().getByte(buffer + i);
+                    responseBytes[i] = Unsafe.getByte(buffer + i);
                 }
                 String response = new String(responseBytes, StandardCharsets.US_ASCII);
 
@@ -85,7 +85,7 @@ public class QwpWebSocketUpgradeProcessorTest extends AbstractWebSocketTest {
                 // Verify the response content
                 byte[] responseBytes = new byte[written];
                 for (int i = 0; i < written; i++) {
-                    responseBytes[i] = Unsafe.getUnsafe().getByte(buffer + i);
+                    responseBytes[i] = Unsafe.getByte(buffer + i);
                 }
                 String response = new String(responseBytes, StandardCharsets.US_ASCII);
 
@@ -142,7 +142,7 @@ public class QwpWebSocketUpgradeProcessorTest extends AbstractWebSocketTest {
 
                     byte[] responseBytes = new byte[written];
                     for (int i = 0; i < written; i++) {
-                        responseBytes[i] = Unsafe.getUnsafe().getByte(buffer + i);
+                        responseBytes[i] = Unsafe.getByte(buffer + i);
                     }
                     String response = new String(responseBytes, StandardCharsets.US_ASCII);
 
@@ -193,7 +193,7 @@ public class QwpWebSocketUpgradeProcessorTest extends AbstractWebSocketTest {
 
                 byte[] responseBytes = new byte[written];
                 for (int i = 0; i < written; i++) {
-                    responseBytes[i] = Unsafe.getUnsafe().getByte(buffer + i);
+                    responseBytes[i] = Unsafe.getByte(buffer + i);
                 }
                 String response = new String(responseBytes, StandardCharsets.US_ASCII);
 
@@ -217,7 +217,7 @@ public class QwpWebSocketUpgradeProcessorTest extends AbstractWebSocketTest {
 
                 byte[] responseBytes = new byte[written];
                 for (int i = 0; i < written; i++) {
-                    responseBytes[i] = Unsafe.getUnsafe().getByte(buffer + i);
+                    responseBytes[i] = Unsafe.getByte(buffer + i);
                 }
                 String response = new String(responseBytes, StandardCharsets.US_ASCII);
 

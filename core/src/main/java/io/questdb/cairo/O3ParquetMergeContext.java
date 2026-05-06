@@ -25,11 +25,10 @@
 package io.questdb.cairo;
 
 import io.questdb.griffin.engine.table.parquet.OwnedMemoryPartitionDescriptor;
-import io.questdb.griffin.engine.table.parquet.PartitionDecoder;
+import io.questdb.griffin.engine.table.parquet.ParquetPartitionDecoder;
 import io.questdb.griffin.engine.table.parquet.PartitionDescriptor;
 import io.questdb.griffin.engine.table.parquet.PartitionUpdater;
 import io.questdb.griffin.engine.table.parquet.RowGroupBuffers;
-import io.questdb.griffin.engine.table.parquet.RowGroupStatBuffers;
 import io.questdb.std.DirectIntList;
 import io.questdb.std.IntIntHashMap;
 import io.questdb.std.IntList;
@@ -50,13 +49,13 @@ public class O3ParquetMergeContext implements Closeable {
     private LongList nullBufs;
     private IntIntHashMap parquetColIdToIdx;
     private DirectIntList parquetColumns;
-    private PartitionDecoder partitionDecoder;
+    private ParquetMetaFileReader parquetMetaReader;
+    private ParquetPartitionDecoder partitionDecoder;
     private OwnedMemoryPartitionDescriptor partitionDescriptor;
     private PartitionUpdater partitionUpdater;
     private LongList rgO3Ranges;
     private LongList rowGroupBounds;
     private RowGroupBuffers rowGroupBuffers;
-    private RowGroupStatBuffers rowGroupStatBuffers;
     private LongList srcPtrs;
     private IntList tableToParquetIdx;
 
@@ -70,13 +69,13 @@ public class O3ParquetMergeContext implements Closeable {
         nullBufs = new LongList();
         parquetColumns = new DirectIntList(64, MemoryTag.NATIVE_O3);
         parquetColIdToIdx = new IntIntHashMap();
-        partitionDecoder = new PartitionDecoder();
+        parquetMetaReader = new ParquetMetaFileReader();
+        partitionDecoder = new ParquetPartitionDecoder();
         partitionDescriptor = new OwnedMemoryPartitionDescriptor();
         partitionUpdater = new PartitionUpdater();
         rgO3Ranges = new LongList();
         rowGroupBuffers = new RowGroupBuffers(MemoryTag.NATIVE_PARQUET_PARTITION_UPDATER);
         rowGroupBounds = new LongList();
-        rowGroupStatBuffers = new RowGroupStatBuffers(MemoryTag.NATIVE_PARQUET_PARTITION_UPDATER);
         srcPtrs = new LongList();
         tableToParquetIdx = new IntList();
     }
@@ -90,6 +89,7 @@ public class O3ParquetMergeContext implements Closeable {
         nullBufs.clear();
         parquetColIdToIdx.clear();
         parquetColumns.clear();
+        parquetMetaReader.clear();
         partitionDescriptor.clear();
         rgO3Ranges.clear();
         rowGroupBounds.clear();
@@ -108,13 +108,18 @@ public class O3ParquetMergeContext implements Closeable {
         nullBufs = null;
         parquetColIdToIdx = null;
         parquetColumns = Misc.free(parquetColumns);
+        if (parquetMetaReader != null) {
+            // Reader does not own its mmap; clear() releases the lazily
+            // allocated native handle and zeros all fields.
+            parquetMetaReader.clear();
+            parquetMetaReader = null;
+        }
         partitionDecoder = Misc.free(partitionDecoder);
         partitionDescriptor = Misc.free(partitionDescriptor);
         partitionUpdater = Misc.free(partitionUpdater);
         rgO3Ranges = null;
         rowGroupBuffers = Misc.free(rowGroupBuffers);
         rowGroupBounds = null;
-        rowGroupStatBuffers = Misc.free(rowGroupStatBuffers);
         srcPtrs = null;
         tableToParquetIdx = null;
     }
@@ -164,7 +169,11 @@ public class O3ParquetMergeContext implements Closeable {
         return parquetColumns;
     }
 
-    public PartitionDecoder getPartitionDecoder() {
+    public ParquetMetaFileReader getParquetMetaReader() {
+        return parquetMetaReader;
+    }
+
+    public ParquetPartitionDecoder getPartitionDecoder() {
         return partitionDecoder;
     }
 
@@ -188,10 +197,6 @@ public class O3ParquetMergeContext implements Closeable {
         return rowGroupBuffers;
     }
 
-    public RowGroupStatBuffers getRowGroupStatBuffers() {
-        return rowGroupStatBuffers;
-    }
-
     public LongList getSrcPtrs(int colCount) {
         final int requiredLen = colCount * 2;
         srcPtrs.setPos(requiredLen);
@@ -205,9 +210,14 @@ public class O3ParquetMergeContext implements Closeable {
     }
 
     /**
-     * Releases expensive native resources (file descriptors) held by the context
-     * while keeping the context pooled for reuse. Call this after each
-     * processParquetPartition() invocation to avoid lingering fds.
+     * Releases the Rust-owned partition updater (file descriptors) held by
+     * the context while keeping it pooled for reuse. Call after each
+     * processParquetPartition() invocation.
+     * <p>
+     * Does not touch {@link ParquetMetaFileReader}: the caller owns the
+     * {@code _pm} mapping and is responsible for the {@code clear() + munmap}
+     * pair on the reader. See the lifecycle contract on
+     * {@link ParquetMetaFileReader}.
      */
     public void releaseResources() {
         partitionUpdater.close();

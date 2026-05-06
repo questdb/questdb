@@ -81,7 +81,7 @@ public final class QwpArrayColumnCursor implements QwpColumnCursor {
 
         // Read shape
         for (int d = 0; d < currentNDims; d++) {
-            currentShape[d] = Unsafe.getUnsafe().getInt(rowAddr);
+            currentShape[d] = Unsafe.getInt(rowAddr);
             rowAddr += 4;
         }
 
@@ -182,7 +182,7 @@ public final class QwpArrayColumnCursor implements QwpColumnCursor {
                     "array column data truncated: expected null bitmap flag"
             );
         }
-        if (Unsafe.getUnsafe().getByte(dataAddress + offset) != 0) {
+        if (Unsafe.getByte(dataAddress + offset) != 0) {
             offset++;
             int bitmapSize = QwpNullBitmap.sizeInBytes(rowCount);
             if (offset + (long) bitmapSize > dataLength) {
@@ -220,7 +220,7 @@ public final class QwpArrayColumnCursor implements QwpColumnCursor {
                 }
 
                 // Read nDims and validate bounds
-                int nDims = Unsafe.getUnsafe().getByte(scanAddr) & 0xFF;
+                int nDims = Unsafe.getByte(scanAddr) & 0xFF;
                 if (nDims == 0 || nDims > MAX_DIMS) {
                     throw QwpParseException.create(
                             QwpParseException.ErrorCode.INSUFFICIENT_DATA,
@@ -242,7 +242,7 @@ public final class QwpArrayColumnCursor implements QwpColumnCursor {
                 // Read shape and calculate element count (with overflow check)
                 int elementCount = 1;
                 for (int d = 0; d < nDims; d++) {
-                    int dimSize = Unsafe.getUnsafe().getInt(scanAddr);
+                    int dimSize = Unsafe.getInt(scanAddr);
                     scanAddr += 4;
                     if (dimSize < 0) {
                         throw QwpParseException.create(

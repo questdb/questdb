@@ -62,11 +62,13 @@ public class CreateTableDedupTest extends AbstractCairoTest {
             }
 
             assertSql(
-                    "column\ttype\tindexed\tindexBlockCapacity\tsymbolCached\tsymbolCapacity\tsymbolTableSize\tdesignated\tupsertKey\n" +
-                            "ts\tTIMESTAMP\tfalse\t0\tfalse\t0\t0\ttrue\ttrue\n" +
-                            "x\tLONG\tfalse\t0\tfalse\t0\t0\tfalse\tfalse\n" +
-                            "s\tSYMBOL\ttrue\t256\ttrue\t128\t0\tfalse\ttrue\n" +
-                            "i\tINT\tfalse\t0\tfalse\t0\t0\tfalse\ttrue\n",
+                    """
+                            column\ttype\tindexed\tindexBlockCapacity\tsymbolCached\tsymbolCapacity\tsymbolTableSize\tdesignated\tupsertKey\tindexType\tindexInclude
+                            ts\tTIMESTAMP\tfalse\t0\tfalse\t0\t0\ttrue\ttrue\t\t
+                            x\tLONG\tfalse\t0\tfalse\t0\t0\tfalse\tfalse\t\t
+                            s\tSYMBOL\ttrue\t256\ttrue\t128\t0\tfalse\ttrue\tBITMAP\t
+                            i\tINT\tfalse\t0\tfalse\t0\t0\tfalse\ttrue\t\t
+                            """,
                     "SHOW COLUMNS FROM " + tableName
             );
 
@@ -81,11 +83,13 @@ public class CreateTableDedupTest extends AbstractCairoTest {
             }
 
             assertSql(
-                    "column\ttype\tindexed\tindexBlockCapacity\tsymbolCached\tsymbolCapacity\tsymbolTableSize\tdesignated\tupsertKey\n" +
-                            "ts\tTIMESTAMP\tfalse\t0\tfalse\t0\t0\ttrue\ttrue\n" +
-                            "x\tLONG\tfalse\t0\tfalse\t0\t0\tfalse\tfalse\n" +
-                            "s\tSYMBOL\tfalse\t256\ttrue\t128\t0\tfalse\ttrue\n" +
-                            "i\tINT\tfalse\t0\tfalse\t0\t0\tfalse\ttrue\n",
+                    """
+                            column\ttype\tindexed\tindexBlockCapacity\tsymbolCached\tsymbolCapacity\tsymbolTableSize\tdesignated\tupsertKey\tindexType\tindexInclude
+                            ts\tTIMESTAMP\tfalse\t0\tfalse\t0\t0\ttrue\ttrue\t\t
+                            x\tLONG\tfalse\t0\tfalse\t0\t0\tfalse\tfalse\t\t
+                            s\tSYMBOL\tfalse\t256\ttrue\t128\t0\tfalse\ttrue\t\t
+                            i\tINT\tfalse\t0\tfalse\t0\t0\tfalse\ttrue\t\t
+                            """,
                     "SHOW COLUMNS FROM " + tableName
             );
         });
@@ -223,18 +227,22 @@ public class CreateTableDedupTest extends AbstractCairoTest {
                 Assert.assertTrue(writer.getMetadata().isDedupKey(1));
             }
             assertSql(
-                    "column\ttype\tindexed\tindexBlockCapacity\tsymbolCached\tsymbolCapacity\tsymbolTableSize\tdesignated\tupsertKey\n" +
-                            "Status\tSYMBOL\tfalse\t256\ttrue\t16\t0\tfalse\tfalse\n" +
-                            "Reported time\tTIMESTAMP\tfalse\t0\tfalse\t0\t0\ttrue\ttrue\n",
+                    """
+                            column\ttype\tindexed\tindexBlockCapacity\tsymbolCached\tsymbolCapacity\tsymbolTableSize\tdesignated\tupsertKey\tindexType\tindexInclude
+                            Status\tSYMBOL\tfalse\t256\ttrue\t16\t0\tfalse\tfalse\t\t
+                            Reported time\tTIMESTAMP\tfalse\t0\tfalse\t0\t0\ttrue\ttrue\t\t
+                            """,
                     "SHOW COLUMNS FROM '" + tableName + '\''
             );
             execute("alter table '" + tableName + "' DEDUP DISABLE;");
             execute("alter table '" + tableName + "' DEDUP ENABLE UPSERT KEYS(\"Reported time\");");
             drainWalQueue();
             assertSql(
-                    "column\ttype\tindexed\tindexBlockCapacity\tsymbolCached\tsymbolCapacity\tsymbolTableSize\tdesignated\tupsertKey\n" +
-                            "Status\tSYMBOL\tfalse\t256\ttrue\t16\t0\tfalse\tfalse\n" +
-                            "Reported time\tTIMESTAMP\tfalse\t0\tfalse\t0\t0\ttrue\ttrue\n",
+                    """
+                            column\ttype\tindexed\tindexBlockCapacity\tsymbolCached\tsymbolCapacity\tsymbolTableSize\tdesignated\tupsertKey\tindexType\tindexInclude
+                            Status\tSYMBOL\tfalse\t256\ttrue\t16\t0\tfalse\tfalse\t\t
+                            Reported time\tTIMESTAMP\tfalse\t0\tfalse\t0\t0\ttrue\ttrue\t\t
+                            """,
                     "SHOW COLUMNS FROM '" + tableName + '\''
             );
         });
@@ -285,11 +293,13 @@ public class CreateTableDedupTest extends AbstractCairoTest {
             drainWalQueue();
 
             assertSql(
-                    "ts\tamount\tdescription\n" +
-                            "2024-01-01T00:00:00.000000Z\t100.00\tduplicate1\n" +
-                            "2024-01-01T00:00:00.000000Z\t100.00\tduplicate2\n" +
-                            "2024-01-01T00:00:00.000000Z\t100.00\tduplicate3\n" +
-                            "2024-01-01T00:00:00.000000Z\t200.00\tnew2\n",
+                    """
+                            ts\tamount\tdescription
+                            2024-01-01T00:00:00.000000Z\t100.00\tduplicate1
+                            2024-01-01T00:00:00.000000Z\t100.00\tduplicate2
+                            2024-01-01T00:00:00.000000Z\t100.00\tduplicate3
+                            2024-01-01T00:00:00.000000Z\t200.00\tnew2
+                            """,
                     "SELECT * FROM " + tableName + " ORDER BY amount, description"
             );
         });
@@ -315,10 +325,12 @@ public class CreateTableDedupTest extends AbstractCairoTest {
 
             // Should have 3 unique measurement values
             assertSql(
-                    "ts\tmeasurement\tsensor_id\n" +
-                            "2024-01-01T00:00:00.000000Z\t123456789012345.123456789012344\t4\n" +
-                            "2024-01-01T00:00:00.000000Z\t123456789012345.123456789012345\t2\n" +
-                            "2024-01-01T00:00:00.000000Z\t123456789012345.123456789012346\t3\n",
+                    """
+                            ts\tmeasurement\tsensor_id
+                            2024-01-01T00:00:00.000000Z\t123456789012345.123456789012344\t4
+                            2024-01-01T00:00:00.000000Z\t123456789012345.123456789012345\t2
+                            2024-01-01T00:00:00.000000Z\t123456789012345.123456789012346\t3
+                            """,
                     "SELECT * FROM " + tableName + " ORDER BY measurement"
             );
         });
@@ -345,10 +357,12 @@ public class CreateTableDedupTest extends AbstractCairoTest {
 
             // Should have 3 unique combinations
             assertSql(
-                    "ts\tsymbol\tprice\tvolume\tactive\n" +
-                            "2024-01-01T00:00:00.000000Z\tAAPL\t150.50\t2000\tfalse\n" +
-                            "2024-01-01T00:00:00.000000Z\tAAPL\t150.51\t3000\ttrue\n" +
-                            "2024-01-01T00:00:00.000000Z\tGOOGL\t150.50\t5000\tfalse\n",
+                    """
+                            ts\tsymbol\tprice\tvolume\tactive
+                            2024-01-01T00:00:00.000000Z\tAAPL\t150.50\t2000\tfalse
+                            2024-01-01T00:00:00.000000Z\tAAPL\t150.51\t3000\ttrue
+                            2024-01-01T00:00:00.000000Z\tGOOGL\t150.50\t5000\tfalse
+                            """,
                     "SELECT * FROM " + tableName + " ORDER BY symbol, price"
             );
         });
@@ -386,11 +400,13 @@ public class CreateTableDedupTest extends AbstractCairoTest {
 
             // Should have 4 rows (unique combinations of dedup keys)
             assertSql(
-                    "ts\tprice\ttax\tdiscount\tnotes\n" +
-                            "2024-01-01T00:00:00.000000Z\t100.00\t8.250\t5.00\tthird\n" +
-                            "2024-01-01T00:00:00.000000Z\t100.00\t8.250\t5.01\tdifferent discount\n" +
-                            "2024-01-01T00:00:00.000000Z\t100.00\t8.251\t5.00\tdifferent tax\n" +
-                            "2024-01-01T00:00:00.000000Z\t100.01\t8.250\t5.00\tdifferent price\n",
+                    """
+                            ts\tprice\ttax\tdiscount\tnotes
+                            2024-01-01T00:00:00.000000Z\t100.00\t8.250\t5.00\tthird
+                            2024-01-01T00:00:00.000000Z\t100.00\t8.250\t5.01\tdifferent discount
+                            2024-01-01T00:00:00.000000Z\t100.00\t8.251\t5.00\tdifferent tax
+                            2024-01-01T00:00:00.000000Z\t100.01\t8.250\t5.00\tdifferent price
+                            """,
                     "SELECT * FROM " + tableName + " ORDER BY price, tax, discount"
             );
         });
@@ -424,9 +440,11 @@ public class CreateTableDedupTest extends AbstractCairoTest {
 
             // Should have only 2 rows (one for each unique ts+price combination)
             assertSql(
-                    "ts\tprice\tquantity\n" +
-                            "2024-01-01T00:00:00.000000Z\t99.99\t30\n" +
-                            "2024-01-01T00:00:00.000000Z\t100.00\t40\n",
+                    """
+                            ts\tprice\tquantity
+                            2024-01-01T00:00:00.000000Z\t99.99\t30
+                            2024-01-01T00:00:00.000000Z\t100.00\t40
+                            """,
                     "SELECT * FROM " + tableName + " ORDER BY price"
             );
         });
@@ -453,10 +471,12 @@ public class CreateTableDedupTest extends AbstractCairoTest {
 
             // Nulls should be treated as distinct values for deduplication
             assertSql(
-                    "ts\tprice\tnotes\n" +
-                            "2024-01-01T00:00:00.000000Z\t\tnull price 2\n" +
-                            "2024-01-01T00:00:00.000000Z\t0.00\tzero price\n" +
-                            "2024-01-01T00:00:00.000000Z\t99.99\tduplicate\n",
+                    """
+                            ts\tprice\tnotes
+                            2024-01-01T00:00:00.000000Z\t\tnull price 2
+                            2024-01-01T00:00:00.000000Z\t0.00\tzero price
+                            2024-01-01T00:00:00.000000Z\t99.99\tduplicate
+                            """,
                     "SELECT * FROM " + tableName + " ORDER BY price"
             );
         });
@@ -508,11 +528,13 @@ public class CreateTableDedupTest extends AbstractCairoTest {
             }
 
             assertSql(
-                    "column\ttype\tindexed\tindexBlockCapacity\tsymbolCached\tsymbolCapacity\tsymbolTableSize\tdesignated\tupsertKey\n" +
-                            "ts\tTIMESTAMP\tfalse\t0\tfalse\t0\t0\ttrue\ttrue\n" +
-                            "x\tLONG\tfalse\t0\tfalse\t0\t0\tfalse\tfalse\n" +
-                            "s\tSYMBOL\tfalse\t256\ttrue\t128\t0\tfalse\ttrue\n" +
-                            "i\tINT\tfalse\t0\tfalse\t0\t0\tfalse\ttrue\n",
+                    """
+                            column\ttype\tindexed\tindexBlockCapacity\tsymbolCached\tsymbolCapacity\tsymbolTableSize\tdesignated\tupsertKey\tindexType\tindexInclude
+                            ts\tTIMESTAMP\tfalse\t0\tfalse\t0\t0\ttrue\ttrue\t\t
+                            x\tLONG\tfalse\t0\tfalse\t0\t0\tfalse\tfalse\t\t
+                            s\tSYMBOL\tfalse\t256\ttrue\t128\t0\tfalse\ttrue\t\t
+                            i\tINT\tfalse\t0\tfalse\t0\t0\tfalse\ttrue\t\t
+                            """,
                     "SHOW COLUMNS FROM " + tableName
             );
         });
@@ -567,10 +589,12 @@ public class CreateTableDedupTest extends AbstractCairoTest {
             }
 
             assertSql(
-                    "column\ttype\tindexed\tindexBlockCapacity\tsymbolCached\tsymbolCapacity\tsymbolTableSize\tdesignated\tupsertKey\n" +
-                            "ts\tTIMESTAMP\tfalse\t0\tfalse\t0\t0\ttrue\ttrue\n" +
-                            "x\tLONG\tfalse\t0\tfalse\t0\t0\tfalse\tfalse\n" +
-                            "s\tSYMBOL\tfalse\t256\ttrue\t128\t0\tfalse\ttrue\n",
+                    """
+                            column\ttype\tindexed\tindexBlockCapacity\tsymbolCached\tsymbolCapacity\tsymbolTableSize\tdesignated\tupsertKey\tindexType\tindexInclude
+                            ts\tTIMESTAMP\tfalse\t0\tfalse\t0\t0\ttrue\ttrue\t\t
+                            x\tLONG\tfalse\t0\tfalse\t0\t0\tfalse\tfalse\t\t
+                            s\tSYMBOL\tfalse\t256\ttrue\t128\t0\tfalse\ttrue\t\t
+                            """,
                     "SHOW COLUMNS FROM " + tableName
             );
 
@@ -585,10 +609,12 @@ public class CreateTableDedupTest extends AbstractCairoTest {
             }
 
             assertSql(
-                    "column\ttype\tindexed\tindexBlockCapacity\tsymbolCached\tsymbolCapacity\tsymbolTableSize\tdesignated\tupsertKey\n" +
-                            "ts\tTIMESTAMP\tfalse\t0\tfalse\t0\t0\ttrue\tfalse\n" +
-                            "x\tLONG\tfalse\t0\tfalse\t0\t0\tfalse\tfalse\n" +
-                            "s\tSYMBOL\tfalse\t256\ttrue\t128\t0\tfalse\tfalse\n",
+                    """
+                            column\ttype\tindexed\tindexBlockCapacity\tsymbolCached\tsymbolCapacity\tsymbolTableSize\tdesignated\tupsertKey\tindexType\tindexInclude
+                            ts\tTIMESTAMP\tfalse\t0\tfalse\t0\t0\ttrue\tfalse\t\t
+                            x\tLONG\tfalse\t0\tfalse\t0\t0\tfalse\tfalse\t\t
+                            s\tSYMBOL\tfalse\t256\ttrue\t128\t0\tfalse\tfalse\t\t
+                            """,
                     "SHOW COLUMNS FROM " + tableName
             );
 
@@ -603,10 +629,12 @@ public class CreateTableDedupTest extends AbstractCairoTest {
             }
 
             assertSql(
-                    "column\ttype\tindexed\tindexBlockCapacity\tsymbolCached\tsymbolCapacity\tsymbolTableSize\tdesignated\tupsertKey\n" +
-                            "ts\tTIMESTAMP\tfalse\t0\tfalse\t0\t0\ttrue\ttrue\n" +
-                            "x\tLONG\tfalse\t0\tfalse\t0\t0\tfalse\tfalse\n" +
-                            "s\tSYMBOL\tfalse\t256\ttrue\t128\t0\tfalse\tfalse\n",
+                    """
+                            column\ttype\tindexed\tindexBlockCapacity\tsymbolCached\tsymbolCapacity\tsymbolTableSize\tdesignated\tupsertKey\tindexType\tindexInclude
+                            ts\tTIMESTAMP\tfalse\t0\tfalse\t0\t0\ttrue\ttrue\t\t
+                            x\tLONG\tfalse\t0\tfalse\t0\t0\tfalse\tfalse\t\t
+                            s\tSYMBOL\tfalse\t256\ttrue\t128\t0\tfalse\tfalse\t\t
+                            """,
                     "SHOW COLUMNS FROM " + tableName
             );
 
@@ -623,9 +651,11 @@ public class CreateTableDedupTest extends AbstractCairoTest {
             }
 
             assertSql(
-                    "column\ttype\tindexed\tindexBlockCapacity\tsymbolCached\tsymbolCapacity\tsymbolTableSize\tdesignated\tupsertKey\n" +
-                            "ts\tTIMESTAMP\tfalse\t0\tfalse\t0\t0\ttrue\ttrue\n" +
-                            "s\tSYMBOL\tfalse\t256\ttrue\t128\t0\tfalse\ttrue\n",
+                    """
+                            column\ttype\tindexed\tindexBlockCapacity\tsymbolCached\tsymbolCapacity\tsymbolTableSize\tdesignated\tupsertKey\tindexType\tindexInclude
+                            ts\tTIMESTAMP\tfalse\t0\tfalse\t0\t0\ttrue\ttrue\t\t
+                            s\tSYMBOL\tfalse\t256\ttrue\t128\t0\tfalse\ttrue\t\t
+                            """,
                     "SHOW COLUMNS FROM " + tableName
             );
 
@@ -656,37 +686,47 @@ public class CreateTableDedupTest extends AbstractCairoTest {
                         " PARTITION BY DAY WAL DEDUP UPSERT KEYS(ts,s)"
         );
         assertSql(
-                "table_name\tdedup\n" +
-                        "testEnableDedup\ttrue\n",
+                """
+                        table_name\tdedup
+                        testEnableDedup\ttrue
+                        """,
                 "select table_name, dedup from tables() where table_name ='" + tableName + "'"
         );
         assertSql(
-                "column\ttype\tindexed\tindexBlockCapacity\tsymbolCached\tsymbolCapacity\tsymbolTableSize\tdesignated\tupsertKey\n" +
-                        "ts\tTIMESTAMP\tfalse\t0\tfalse\t0\t0\ttrue\ttrue\n" +
-                        "x\tLONG\tfalse\t0\tfalse\t0\t0\tfalse\tfalse\n" +
-                        "s\tSYMBOL\tfalse\t256\ttrue\t128\t0\tfalse\ttrue\n",
+                """
+                        column\ttype\tindexed\tindexBlockCapacity\tsymbolCached\tsymbolCapacity\tsymbolTableSize\tdesignated\tupsertKey\tindexType\tindexInclude
+                        ts\tTIMESTAMP\tfalse\t0\tfalse\t0\t0\ttrue\ttrue\t\t
+                        x\tLONG\tfalse\t0\tfalse\t0\t0\tfalse\tfalse\t\t
+                        s\tSYMBOL\tfalse\t256\ttrue\t128\t0\tfalse\ttrue\t\t
+                        """,
                 "show columns from '" + tableName + "'"
         );
         execute("alter table " + tableName + " dedup disable");
         drainWalQueue();
         assertSql(
-                "table_name\tdedup\n" +
-                        "testEnableDedup\tfalse\n",
+                """
+                        table_name\tdedup
+                        testEnableDedup\tfalse
+                        """,
                 "select table_name, dedup from tables() where table_name ='" + tableName + "'"
         );
 
         execute("alter table " + tableName + " dedup enable upsert keys(ts)");
         drainWalQueue();
         assertSql(
-                "table_name\tdedup\n" +
-                        "testEnableDedup\ttrue\n",
+                """
+                        table_name\tdedup
+                        testEnableDedup\ttrue
+                        """,
                 "select table_name, dedup from tables() where table_name ='" + tableName + "'"
         );
         assertSql(
-                "column\ttype\tindexed\tindexBlockCapacity\tsymbolCached\tsymbolCapacity\tsymbolTableSize\tdesignated\tupsertKey\n" +
-                        "ts\tTIMESTAMP\tfalse\t0\tfalse\t0\t0\ttrue\ttrue\n" +
-                        "x\tLONG\tfalse\t0\tfalse\t0\t0\tfalse\tfalse\n" +
-                        "s\tSYMBOL\tfalse\t256\ttrue\t128\t0\tfalse\tfalse\n",
+                """
+                        column\ttype\tindexed\tindexBlockCapacity\tsymbolCached\tsymbolCapacity\tsymbolTableSize\tdesignated\tupsertKey\tindexType\tindexInclude
+                        ts\tTIMESTAMP\tfalse\t0\tfalse\t0\t0\ttrue\ttrue\t\t
+                        x\tLONG\tfalse\t0\tfalse\t0\t0\tfalse\tfalse\t\t
+                        s\tSYMBOL\tfalse\t256\ttrue\t128\t0\tfalse\tfalse\t\t
+                        """,
                 "show columns from '" + tableName + "'"
         );
     }

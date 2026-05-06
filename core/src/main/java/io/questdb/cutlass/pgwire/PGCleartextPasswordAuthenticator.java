@@ -254,7 +254,7 @@ public class PGCleartextPasswordAuthenticator implements SocketAuthenticator {
     }
 
     private static int getIntUnsafe(long address) {
-        return Numbers.bswap(Unsafe.getUnsafe().getInt(address));
+        return Numbers.bswap(Unsafe.getInt(address));
     }
 
     private int availableToRead() {
@@ -417,7 +417,7 @@ public class PGCleartextPasswordAuthenticator implements SocketAuthenticator {
         if (availableToRead < 1 + Integer.BYTES) { // msgType + msgLen
             return SocketAuthenticator.NEEDS_READ;
         }
-        byte msgType = Unsafe.getUnsafe().getByte(recvBufReadPos);
+        byte msgType = Unsafe.getByte(recvBufReadPos);
         assert msgType == MESSAGE_TYPE_PASSWORD_MESSAGE;
 
         int msgLen = getIntUnsafe(recvBufReadPos + 1);
@@ -552,19 +552,19 @@ public class PGCleartextPasswordAuthenticator implements SocketAuthenticator {
         @Override
         public Utf8Sink put(byte b) {
             checkCapacity(Byte.BYTES);
-            Unsafe.getUnsafe().putByte(sendBufWritePos++, b);
+            Unsafe.putByte(sendBufWritePos++, b);
             return this;
         }
 
         public void putInt(int i) {
             checkCapacity(Integer.BYTES);
-            Unsafe.getUnsafe().putInt(sendBufWritePos, Numbers.bswap(i));
+            Unsafe.putInt(sendBufWritePos, Numbers.bswap(i));
             sendBufWritePos += Integer.BYTES;
         }
 
         public void putLen(long start) {
             int len = (int) (sendBufWritePos - start);
-            Unsafe.getUnsafe().putInt(start, Numbers.bswap(len));
+            Unsafe.putInt(start, Numbers.bswap(len));
         }
 
         @Override

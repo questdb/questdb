@@ -161,8 +161,8 @@ public final class DataID implements Sinkable {
             }
 
             // Read back the big-endian bytes and reverse them
-            final long hi = Long.reverseBytes(Unsafe.getUnsafe().getLong(buf));
-            final long lo = Long.reverseBytes(Unsafe.getUnsafe().getLong(buf + Long.BYTES));
+            final long hi = Long.reverseBytes(Unsafe.getLong(buf));
+            final long lo = Long.reverseBytes(Unsafe.getLong(buf + Long.BYTES));
 
             result.of(lo, hi);
             return result;
@@ -195,8 +195,8 @@ public final class DataID implements Sinkable {
             }
 
             buf = Unsafe.malloc(FILE_SIZE, MemoryTag.NATIVE_DEFAULT);
-            Unsafe.getUnsafe().putLong(buf, Long.reverseBytes(hi));
-            Unsafe.getUnsafe().putLong(buf + Long.BYTES, Long.reverseBytes(lo));
+            Unsafe.putLong(buf, Long.reverseBytes(hi));
+            Unsafe.putLong(buf + Long.BYTES, Long.reverseBytes(lo));
 
             // One-shot, no partial-write loop since the file is tiny and significantly smaller than any OS file
             // buffers, which would be at least one page.

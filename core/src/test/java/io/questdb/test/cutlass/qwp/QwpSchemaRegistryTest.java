@@ -142,7 +142,7 @@ public class QwpSchemaRegistryTest {
 
         QwpSchema schema0 = createTestSchema("col_a", QwpConstants.TYPE_INT);
         QwpSchema schema1 = createTestSchema("col_b", QwpConstants.TYPE_DOUBLE);
-        QwpSchema schema2 = createTestSchema("col_c", QwpConstants.TYPE_STRING);
+        QwpSchema schema2 = createTestSchema("col_c", QwpConstants.TYPE_VARCHAR);
 
         registry.put(0, schema0);
         registry.put(1, schema1);

@@ -274,6 +274,7 @@ public class SQLSerialParquetExporter extends BaseParquetExporter implements Clo
                                     bloomFilterCount,
                                     bloomFilterFpp,
                                     0.0,
+                                    -1,
                                     -1L
                             );
                             long parquetFileSize = ff.length(tempPath.$());
@@ -437,7 +438,11 @@ public class SQLSerialParquetExporter extends BaseParquetExporter implements Clo
                 exporter.setUp(streamBuffers.getAdjustedMetadata(), pfc, streamBuffers.getBaseColumnMap());
             } else {
                 cursor = factory.getCursor(sqlExecutionContext);
-                streamBuffers.setUp(factory.getMetadata());
+                if (factory instanceof VirtualRecordCursorFactory vf) {
+                    streamBuffers.setUpCursorBacked(vf);
+                } else {
+                    streamBuffers.setUp(factory.getMetadata());
+                }
                 exporter.setUp(streamBuffers.getAdjustedMetadata());
             }
 

@@ -55,7 +55,7 @@ public interface MemoryCR extends MemoryC, MemoryR {
 
     default BinarySequence getBin(long offset, DirectByteSequenceView view) {
         final long addr = addressOf(offset);
-        final long len = Unsafe.getUnsafe().getLong(addr);
+        final long len = Unsafe.getLong(addr);
         if (len > -1) {
             return view.of(addr + Long.BYTES, len);
         }
@@ -75,21 +75,21 @@ public interface MemoryCR extends MemoryC, MemoryR {
     @Override
     default byte getByte(long offset) {
         assert addressOf(offset + Byte.BYTES) > 0;
-        return Unsafe.getUnsafe().getByte(addressOf(offset));
+        return Unsafe.getByte(addressOf(offset));
     }
 
     @Override
     default char getChar(long offset) {
         assert addressOf(offset + Character.BYTES) > 0;
-        return Unsafe.getUnsafe().getChar(addressOf(offset));
+        return Unsafe.getChar(addressOf(offset));
     }
 
     @Override
     default void getDecimal128(long offset, Decimal128 sink) {
         final long addr = addressOf(offset + 16L);
         sink.ofRaw(
-                Unsafe.getUnsafe().getLong(addr - 16L),
-                Unsafe.getUnsafe().getLong(addr - 8L)
+                Unsafe.getLong(addr - 16L),
+                Unsafe.getLong(addr - 8L)
         );
     }
 
@@ -122,7 +122,7 @@ public interface MemoryCR extends MemoryC, MemoryR {
     @Override
     default double getDouble(long offset) {
         assert addressOf(offset + Double.BYTES) > 0;
-        return Unsafe.getUnsafe().getDouble(addressOf(offset));
+        return Unsafe.getDouble(addressOf(offset));
     }
 
     long getFd();
@@ -130,7 +130,7 @@ public interface MemoryCR extends MemoryC, MemoryR {
     @Override
     default float getFloat(long offset) {
         assert addressOf(offset + Float.BYTES) > 0;
-        return Unsafe.getUnsafe().getFloat(addressOf(offset));
+        return Unsafe.getFloat(addressOf(offset));
     }
 
     @Override
@@ -141,13 +141,13 @@ public interface MemoryCR extends MemoryC, MemoryR {
     @Override
     default int getInt(long offset) {
         assert addressOf(offset + Integer.BYTES) > 0;
-        return Unsafe.getUnsafe().getInt(addressOf(offset));
+        return Unsafe.getInt(addressOf(offset));
     }
 
     @Override
     default long getLong(long offset) {
         assert offset > -1 && addressOf(offset + Long.BYTES) > 0;
-        return Unsafe.getUnsafe().getLong(addressOf(offset));
+        return Unsafe.getLong(addressOf(offset));
     }
 
     @Override
@@ -163,7 +163,7 @@ public interface MemoryCR extends MemoryC, MemoryR {
 
     @Override
     default short getShort(long offset) {
-        return Unsafe.getUnsafe().getShort(addressOf(offset));
+        return Unsafe.getShort(addressOf(offset));
     }
 
     default DirectString getStr(long offset, DirectString view) {
@@ -178,7 +178,7 @@ public interface MemoryCR extends MemoryC, MemoryR {
                     .put(']');
         }
 
-        final int len = Unsafe.getUnsafe().getInt(addr);
+        final int len = Unsafe.getInt(addr);
         if (len != TableUtils.NULL_LEN) {
             if (checkOffsetMapped(Vm.getStorageLength(len) + offset)) {
                 return view.of(addr + Vm.STRING_LENGTH_BYTES, len);

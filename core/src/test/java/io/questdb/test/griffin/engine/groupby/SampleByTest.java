@@ -31,6 +31,7 @@ import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.CursorPrinter;
 import io.questdb.cairo.GenericRecordMetadata;
+import io.questdb.cairo.IndexType;
 import io.questdb.cairo.MicrosTimestampDriver;
 import io.questdb.cairo.TableColumnMetadata;
 import io.questdb.cairo.TableWriter;
@@ -6497,10 +6498,10 @@ public class SampleByTest extends AbstractCairoTest {
     public void testSampleByFirstLastRecordCursorFactoryInvalidColumns() {
         try {
             GenericRecordMetadata groupByMeta = new GenericRecordMetadata();
-            groupByMeta.add(new TableColumnMetadata("col1", ColumnType.STRING, false, 0, false, null));
+            groupByMeta.add(new TableColumnMetadata("col1", ColumnType.STRING, IndexType.NONE, 0, false, null));
 
             GenericRecordMetadata meta = new GenericRecordMetadata();
-            meta.add(new TableColumnMetadata("col1", ColumnType.LONG, false, 0, false, null));
+            meta.add(new TableColumnMetadata("col1", ColumnType.LONG, IndexType.NONE, 0, false, null));
 
             ObjList<QueryColumn> columns = new ObjList<>();
             ExpressionNode first = ExpressionNode.FACTORY.newInstance().of(ColumnType.LONG, "first", 0, 0);
@@ -6509,7 +6510,6 @@ public class SampleByTest extends AbstractCairoTest {
             columns.add(col);
 
             new SampleByFirstLastRecordCursorFactory(
-                    configuration,
                     null,
                     new SimpleTimestampSampler(100L, ColumnType.TIMESTAMP_MICRO),
                     groupByMeta,
@@ -6537,7 +6537,7 @@ public class SampleByTest extends AbstractCairoTest {
     public void testSampleByFirstLastRecordCursorFactoryInvalidNotFirstLast() {
         try {
             GenericRecordMetadata groupByMeta = new GenericRecordMetadata();
-            TableColumnMetadata column = new TableColumnMetadata("col1", ColumnType.LONG, false, 0, false, null);
+            TableColumnMetadata column = new TableColumnMetadata("col1", ColumnType.LONG, IndexType.NONE, 0, false, null);
             groupByMeta.add(column);
 
             GenericRecordMetadata meta = new GenericRecordMetadata();
@@ -6550,7 +6550,6 @@ public class SampleByTest extends AbstractCairoTest {
             columns.add(col);
 
             new SampleByFirstLastRecordCursorFactory(
-                    configuration,
                     null,
                     new SimpleTimestampSampler(100L, ColumnType.TIMESTAMP_MICRO),
                     groupByMeta,
@@ -18084,7 +18083,7 @@ public class SampleByTest extends AbstractCairoTest {
         try (WorkerPool pool = new WorkerPool(() -> workerCount)) {
             assertMemoryLeak(() -> TestUtils.execute(
                     pool,
-                    (engine, compiler, sqlExecutionContext) -> {
+                    (engine, _, sqlExecutionContext) -> {
                         engine.execute(
                                 "create table x (d1 double, d2 double, s symbol index, kms long, k timestamp) timestamp(k) partition by day;",
                                 sqlExecutionContext

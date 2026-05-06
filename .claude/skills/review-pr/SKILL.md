@@ -1,7 +1,7 @@
 ---
 name: review-pr
 description: Review a GitHub pull request against QuestDB coding standards
-argument-hint: [PR number or URL]
+argument-hint: [PR number or URL] [--level=0..3]
 allowed-tools: Bash(gh *), Read, Grep, Glob, Agent
 ---
 
@@ -12,6 +12,7 @@ Review the pull request `$ARGUMENTS`.
 You are a senior QuestDB engineer performing a blocking code review. QuestDB is mission-critical software deployed on spacecraft — bugs can cause data loss or system failures that cannot be patched after deployment. There is zero tolerance for correctness issues, resource leaks, or undefined behavior. Be critical, thorough, and opinionated. Your job is to catch problems before they ship, not to be nice.
 
 - **Assume nothing is correct until you've verified it.** Read surrounding code to understand context — don't just look at the diff in isolation.
+- **The diff is a hint, not the boundary of the review.** The highest-value bugs almost always live at callsites outside the diff that depend on contracts the diff quietly changed. Treat the diff as the entry point, not the scope.
 - **Flag every issue you find**, no matter how small. Do not soften language or hedge. Say "this is wrong" not "this might be an issue".
 - **Do not praise the code.** Skip "looks good", "nice work", "clever approach". Focus entirely on problems and risks.
 - **Think adversarially.** For each change, ask: what inputs break this? What happens under concurrent access? What if this runs on a 10-billion-row table? What if the column is NULL? What if the partition is empty?
@@ -27,14 +28,30 @@ You are a senior QuestDB engineer performing a blocking code review. QuestDB is 
   that should never occur in a non-corrupt database. Only flag an `assert` if the condition can plausibly be triggered
   by normal (non-corrupt) user operations.
 
+## Review level
+
+Parse `$ARGUMENTS` for a level token: `--level=N`, `-lN`, or a bare single digit `0`-`3`. **If no level is given, default to 0.** Strip the level token before feeding the remainder (PR number or URL) to `gh` commands.
+
+The level controls how much of the review below actually runs. Lower levels keep the same review *spirit* — adversarial, blocking, no praise — but cut the breadth of the analysis. Higher levels have significantly higher token cost; reserve level 3 for high-stakes PRs (replication, JNI boundary changes, on-disk format, public API, security/ACL).
+
+| Level | What runs |
+|-------|-----------|
+| **0 (default)** | Steps 1, 2, 4. Skip Step 2.5. Skip Step 3 — no agent spawn; review the diff inline in the main loop, using Read/Grep on demand to resolve ambiguities. Skip Step 3b — verify each finding inline as you write it. Single-pass review covering correctness, NULL handling, tests, and QuestDB standards on the diff itself. |
+| **1** | Adds Step 2.5a (semantic delta only — skip 2.5b/2.5c/2.5d). In Step 3, launch only Agent 1 (correctness), Agent 5 (tests), and Agent 6 (code quality) in parallel. Skip all other agents. Skip Step 3b — verify findings inline as you draft the report. |
+| **2** | Full Step 2.5, but in 2.5b restrict the callsite inventory to `public`/`protected` symbols (skip package-private and `pub(crate)`). In Step 3, launch Agents 1-7, plus Agent 8 if `.rs` files are present. Skip Agent 9 (cross-context) and Agent 10 (adversarial fresh-context). Step 3b uses a single batched verification agent for all findings instead of one per finding. |
+| **3** | Every step below as written, all 10 agents, per-finding verification. The full mission-critical pass. |
+
+State the chosen level in one line at the start of the review so the user knows what they're getting (e.g., "Reviewing PR #1234 at level 2"). If the level was defaulted, mention that level 3 exists for full review.
+
 ## Step 1: Gather PR context
 
-Fetch PR metadata, diff, and any review comments:
+Capture the PR identifier in `$PR` (the part of `$ARGUMENTS` left after stripping the level token), then fetch metadata, diff, and review comments in a single bash call so `$PR` is in scope for all three `gh` invocations:
 
 ```bash
-gh pr view $ARGUMENTS --json number,title,body,labels,state
-gh pr diff $ARGUMENTS
-gh pr view $ARGUMENTS --comments
+PR='<PR number or URL from $ARGUMENTS, with any --level=N / -lN / bare-digit level token removed>'
+gh pr view "$PR" --json number,title,body,labels,state
+gh pr diff "$PR"
+gh pr view "$PR" --comments
 ```
 
 ## Step 2: PR title and description
@@ -47,19 +64,87 @@ Check against CLAUDE.md conventions:
 - Tone is level-headed and analytical, no superlatives or bold emphasis on numbers
 - Labels match the PR scope (SQL, Performance, Core, etc.)
 
+## Step 2.5: Map the change surface
+
+Before launching review agents, produce a structured change surface map. This step is mandatory and must use Grep/Glob — do not reason about callsites from memory. The output of this step is required input for every agent in Step 3.
+
+### 2.5a Semantic delta per changed symbol
+
+For every modified or added function, method, trait, struct field, SQL operator/function, or public constant, write:
+
+- **Symbol:** fully-qualified name
+- **Before:** signature, return type, error/exception behavior, panic behavior, mutation (`&self` vs `&mut self`, `final` vs not), ordering/idempotency guarantees, allocation behavior, thread-safety
+- **After:** same fields
+- **Delta:** one line stating what semantically changed
+
+"Refactored", "cleaned up", "improved", "simplified" are not acceptable deltas. State the actual behavioral difference. If nothing semantically changed, write "no behavioral change" — but only after checking, not as a default.
+
+### 2.5b Callsite inventory
+
+For every changed symbol that is `public`, `protected`, package-private, or exported (`pub` / `pub(crate)` in Rust), run Grep across the entire repository to find every callsite, implementation, override, or reference outside the diff.
+
+Produce a list grouped by file. For Java, also search for:
+- subclasses that override the method
+- interfaces that declare it
+- reflection-based callers (`getMethod`, `getDeclaredField`, `Class.forName`)
+- SQL function/operator registrations (`FunctionFactory`, `OperatorRegistry`)
+- service loader entries
+
+For Rust, also search for:
+- trait impls
+- macro expansions
+- JNI exports and their Java callers
+- `extern "C"` boundaries
+
+A changed `pub`/`protected`/package-private symbol with zero recorded Grep calls in the trace is a skill violation. The model is not allowed to assert "this is only used here" without showing the search.
+
+### 2.5c Implicit contract list
+
+For each changed symbol, walk this checklist and write one line per item, stating before vs after:
+
+- Panics or throws on which inputs
+- Error variants returned and which `?`/`throws` chains propagate them
+- Iteration order, sort stability, NULL ordering
+- Idempotency and re-entrancy
+- Lock acquisition order and which locks are held on return
+- Allocation on hot vs compile-time path
+- `Send`/`Sync`, thread-affinity, JFR/JNI thread attachment requirements
+- Whether `null` and sentinel-NULL (`Numbers.LONG_NULL`, `Numbers.INT_NULL`, etc.) are still distinguished
+- Cancellation/drop behavior (Rust) and finally/close behavior (Java)
+- SQL: does the symbol now appear in new clauses (WHERE, GROUP BY, JOIN ON, ORDER BY, window frames, partition predicates, materialized view definitions) where it didn't before? List which.
+
+### 2.5d Cross-context exposure list
+
+End this step with an explicit list of "places this change is visible from but the diff does not touch". This is the highest-priority input for the bug-hunting agents in Step 3.
+
+The list groups the callsites from 2.5b by execution context: hot data paths, SQL compilation, async runtime, JNI boundary, replication, materialized views, parallel execution workers, etc. Every entry on this list must be reviewed in Step 3.
+
 ## Step 3: Parallel review
 
-Launch the following agents in parallel. Each agent receives the full PR diff and should read surrounding source files as needed for context.
+Every agent receives:
+1. The PR diff
+2. The full change surface map from Step 2.5 (semantic deltas, callsite inventory, implicit contracts, cross-context exposure list)
 
-**Agent 1 — Correctness & bugs:** NULL handling, edge cases, logic errors, off-by-one, operator precedence, error paths.
+### Anti-anchoring directive (applies to all agents)
 
-**Agent 2 — Concurrency:** Race conditions, shared mutable state, missing volatile, lock ordering, thread-safety of data structures.
+- **Bugs at callsites outside the diff outrank bugs inside the diff.** A confirmed bug in a file the PR did not touch but that calls a changed symbol is a P0 finding.
+- **"Looks correct in isolation" is not a valid conclusion.** Before clearing a changed symbol, the agent must walk the callsite inventory from 2.5b and explicitly state, per callsite, whether the new behavior is still correct there.
+- **The diff is the entry point, not the scope.** If the change surface map shows the symbol is reachable from N other files, the review covers N+1 files.
+- A single finding of the form "in `FooReader.java` the new behavior of `Bar.x()` causes Y" is worth more than five findings inside the diff.
 
-**Agent 3 — Performance & allocations:** Regressions, zero-GC violations, `java.util.*` collections vs `io.questdb.std`, string creation/concatenation on hot paths, SIMD opportunities. Algorithmic complexity: for each new loop, traversal, or data structure, analyze how it scales with data size (row count, partition count, join fan-out). Flag any O(n^2) or worse patterns that could regress on large tables (1M+ rows, 1000+ partitions). Check whether new code paths are compile-time-only or data-path — compile-time allocations are acceptable, data-path allocations are not.
+### Agents
 
-**Agent 4 — Resource management:** Leaks on all code paths (especially errors), try-with-resources, native memory, pool management.
+Launch the following agents in parallel.
 
-**Agent 5 — Test review & coverage:** Coverage gaps, error path tests, NULL tests, boundary conditions, regression tests, test quality, `assertMemoryLeak()` usage.
+**Agent 1 — Correctness & bugs:** NULL handling, edge cases, logic errors, off-by-one, operator precedence, error paths. Cross-reference every changed symbol against its callsite inventory and verify the new behavior is correct at each callsite.
+
+**Agent 2 — Concurrency:** Race conditions, shared mutable state, missing volatile, lock ordering, thread-safety of data structures. Use the implicit contract list (lock order, thread-affinity) and check every callsite from 2.5b for violations of the new contract.
+
+**Agent 3 — Performance & allocations:** Regressions, zero-GC violations, `java.util.*` collections vs `io.questdb.std`, string creation/concatenation on hot paths, SIMD opportunities. Algorithmic complexity: for each new loop, traversal, or data structure, analyze how it scales with data size (row count, partition count, join fan-out). Flag any O(n^2) or worse patterns that could regress on large tables (1M+ rows, 1000+ partitions). Check whether new code paths are compile-time-only or data-path — compile-time allocations are acceptable, data-path allocations are not. For changed symbols now reachable from new contexts (per 2.5d), check whether any of those new contexts is a hot path.
+
+**Agent 4 — Resource management:** Leaks on all code paths (especially errors), try-with-resources, native memory, pool management. Walk every callsite from 2.5b that constructs, owns, or transfers ownership of changed types and verify cleanup on all paths.
+
+**Agent 5 — Test review & coverage:** Coverage gaps, error path tests, NULL tests, boundary conditions, regression tests, test quality, `assertMemoryLeak()` usage. Cross-reference 2.5d: every cross-context exposure should have a test that exercises the changed symbol from that context. Missing tests for cross-context callsites is a high-priority finding.
 
 **Agent 6 — Code quality & standards:** Code smell, member ordering, naming conventions, modern Java features, dead code, third-party dependencies.
 
@@ -71,11 +156,36 @@ mode, `slice::from_raw_parts` with invalid inputs. In mission-critical software 
 will abort the entire JVM process with no recovery. Every fallible operation must use `Result`/`Option` with proper
 error propagation. Flag every potential panic site.
 
+**Agent 9 — Cross-context caller impact:** Walk the callsite inventory from 2.5b. For every callsite, fetch the surrounding code (the calling function plus its callers up two levels) and answer:
+
+- Does this caller pass inputs the new behavior handles incorrectly?
+- Does this caller depend on a contract from the implicit contract list (2.5c) that the change broke?
+- Is this caller in a context (WHERE clause, async runtime, JNI thread, holding lock X, error path, hot loop, parallel worker, replication path, materialized view refresh) where the new behavior misbehaves even if the inputs are valid?
+- For SQL functions/operators: is the symbol now resolvable in clauses where it didn't compile before (WHERE on indexed column, JOIN ON, GROUP BY key, ORDER BY, window frame, materialized view definition), and does it actually work there end to end?
+- For changed Java methods overridden by subclasses: do all overrides still satisfy the new contract?
+- For changed Rust types with trait impls: do all impls still satisfy the new invariants?
+- For changed JNI signatures: do all Java callers pass the right types and lifetimes?
+
+This agent's output is structured per callsite, not per failure mode. Each callsite gets a verdict: SAFE / BROKEN / NEEDS VERIFICATION. Every BROKEN entry is a P0 finding regardless of whether the file is in the diff.
+
+This agent is not optional even when the diff is small. Small diffs to widely-used symbols have the largest blast radius.
+
+**Agent 10 — Fresh-context adversarial:** Dispatched separately from agents 1-9 to escape checklist anchoring. This agent operates under different rules from the rest:
+
+- It receives ONLY the PR diff and the names of the changed files. It does NOT receive the change surface map from Step 2.5, the implicit contract list, the cross-context exposure list, or any of the review checklists below.
+- Its sole instruction: "find ways this code is wrong". No category list, no failure-mode taxonomy, no QuestDB-specific style guide.
+- It is free to use Read, Grep, and Glob to explore the repository however it wants.
+- Findings are not pre-classified by category. Each finding states: what's wrong, why it's wrong, and the code path that demonstrates it.
+
+The point of this agent is to surface bugs the structured agents cannot see because they are reasoning inside the same frame. A finding here that none of agents 1-9 produced is high signal — it means the structured review missed it. A finding here that overlaps with agents 1-9 is corroboration.
+
+Run this agent in parallel with agents 1-9. It is mandatory regardless of diff size.
+
 Combine all agent findings into a single deduplicated **draft** report. Do NOT present this draft to the user yet — it goes straight into verification.
 
 ## Step 3b: Verify every finding against source code
 
-The parallel review agents work from the diff alone and frequently produce false positives — especially around memory ownership, polymorphic dispatch, Rust control-flow guarantees, and JNI lifecycle conventions. Every finding MUST be verified before it is reported.
+The parallel review agents work from the diff plus the change surface map and frequently produce false positives — especially around memory ownership, polymorphic dispatch, Rust control-flow guarantees, and JNI lifecycle conventions. Every finding MUST be verified before it is reported.
 
 For each finding in the draft report:
 
@@ -95,8 +205,10 @@ For each finding in the draft report:
 8. **For performance claims**: check whether the cost is measurable in a realistic scenario. Downgrade to a nit if the
    saving is negligible relative to the surrounding work. Exception: GC allocations on a hot path are always worth
    flagging, even a single one.
-9. **Classify each finding** as:
-    - **CONFIRMED** — the bug is real and reproducible via the traced code path
+9. **For cross-context findings (Agent 9)**: re-read the callsite in full, including its callers up two levels, and confirm the broken behavior is reachable from production code paths. Cross-context findings are high-value but also the easiest to overstate — verify carefully.
+10. **Classify each finding** as:
+    - **CONFIRMED in-diff** — the bug is real and inside the diff
+    - **CONFIRMED at out-of-diff callsite** — the bug is in an unchanged file because the changed symbol is used there in a way that's now broken (cite the file and the contract from 2.5c that was violated)
     - **FALSE POSITIVE** — the code is actually correct (explain why)
     - **CONFIRMED with nuance** — the issue exists but is less severe than stated (explain)
 
@@ -113,11 +225,13 @@ Review the diff for:
 - Edge cases and error paths
 - SqlException positions point at the offending character, not the expression start
 - Logic errors, off-by-one, incorrect bounds, wrong operator precedence
+- **Reachability expansion:** for each changed symbol, list the SQL clauses, async contexts, error paths, parallel workers, and lock-held states it can now appear in but didn't before. Verify it works in each.
 
 ### Concurrency
 - Race conditions: unsynchronized shared mutable state, missing volatile, unsafe publication
 - Lock ordering issues that could cause deadlocks
 - Thread-safety of data structures used across threads
+- For every changed symbol, check whether it is now called from a thread or context (per 2.5d) where the previous concurrency assumptions don't hold
 
 ### Performance
 - Performance regressions: changes that make hot paths slower or increase complexity
@@ -163,6 +277,7 @@ Review the diff for:
 
 ### Test review
 - **Coverage gaps:** For every new or changed code path, verify a corresponding test exists. If not, flag it explicitly as "missing test for X".
+- **Cross-context coverage:** For every entry in the cross-context exposure list (2.5d), verify a test exercises the changed symbol from that context. Missing cross-context tests are high-priority findings.
 - **Error path coverage:** Are failure cases, exceptions, and edge conditions tested — not just the happy path?
 - **NULL tests:** Are NULL inputs, NULL columns, and NULL expression results tested?
 - **Boundary conditions:** Empty tables, empty partitions, single-row tables, max-value inputs, zero-length strings.
@@ -189,8 +304,10 @@ Present ONLY verified findings (false positives are excluded). Structure as:
 
 ### Critical
 Issues that must be fixed before merge. Each must include:
-- Exact file path and line numbers
+- Exact file path and line numbers (including out-of-diff files)
+- Whether the finding is **in-diff** or **out-of-diff**
 - Code path trace showing why the bug is real
+- For out-of-diff findings: the contract from 2.5c that was violated and the callsite that triggers it
 - Suggested fix
 
 ### Moderate
@@ -208,3 +325,4 @@ Findings from the initial review that were dismissed after source code verificat
 - One-line verdict: approve, request changes, or needs discussion
 - Highlight any regressions or tradeoffs
 - State how many draft findings were verified vs dropped as false positives (e.g., "8 findings verified, 4 false positives removed")
+- State the in-diff vs out-of-diff split (e.g., "5 findings in-diff, 3 findings out-of-diff"). If the diff is non-trivial and out-of-diff is zero, the cross-context pass likely underran — re-invoke Agent 9 with a wider grep before finalizing.

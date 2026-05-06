@@ -110,7 +110,7 @@ public class QwpWalAppender implements QuietCloseable {
             case TYPE_LONG -> ColumnType.LONG;
             case TYPE_FLOAT -> ColumnType.FLOAT;
             case TYPE_DOUBLE -> ColumnType.DOUBLE;
-            case TYPE_STRING, TYPE_VARCHAR -> ColumnType.VARCHAR;
+            case TYPE_VARCHAR -> ColumnType.VARCHAR;
             case TYPE_SYMBOL -> ColumnType.SYMBOL;
             case TYPE_TIMESTAMP -> ColumnType.TIMESTAMP;
             case TYPE_TIMESTAMP_NANOS -> ColumnType.TIMESTAMP_NANO;

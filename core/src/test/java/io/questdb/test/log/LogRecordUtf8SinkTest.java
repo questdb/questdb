@@ -321,7 +321,7 @@ public class LogRecordUtf8SinkTest {
     }
 
     @FunctionalInterface
-    interface ScenarioConsumer {
+    public interface ScenarioConsumer {
         void accept(String msg, int utf8ByteLen, long sinkMaxLen, long expectedLen);
     }
 
@@ -336,7 +336,7 @@ public class LogRecordUtf8SinkTest {
             final byte[] buf = msg.getBytes(Files.UTF_8);
             lo = Unsafe.malloc(buf.length, MemoryTag.NATIVE_DEFAULT);
             hi = lo + buf.length;
-            Unsafe.getUnsafe().copyMemory(buf, Unsafe.BYTE_OFFSET, null, lo, buf.length);
+            Unsafe.copyMemory(buf, Unsafe.BYTE_OFFSET, null, lo, buf.length);
         }
 
         @Override
