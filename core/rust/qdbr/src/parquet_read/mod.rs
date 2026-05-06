@@ -3,10 +3,12 @@ use qdb_core::col_type::ColumnType;
 
 pub mod column_sink;
 pub mod decode;
+pub mod decode_column;
 pub mod decoders;
 pub mod jni;
 pub mod meta;
 pub mod page;
+pub mod parquet_meta_decode;
 pub mod row_groups;
 pub mod slicer;
 
@@ -104,12 +106,6 @@ pub struct ColumnMeta {
     pub name_vec: AcVec<u16>,
 }
 
-#[repr(C)]
-pub struct RowGroupStatBuffers {
-    column_chunk_stats_ptr: *const ColumnChunkStats,
-    column_chunk_stats: AcVec<ColumnChunkStats>,
-}
-
 /// QuestDB-format Column Data
 ///
 /// The memory is owned by the Rust code, read by Java.
@@ -127,16 +123,6 @@ pub struct ColumnChunkBuffers {
     pub aux_vec: AcVec<u8>,
 
     pub page_buffers: Vec<Vec<u8>>,
-}
-
-#[repr(C)]
-pub struct ColumnChunkStats {
-    pub min_value_ptr: *mut u8,
-    pub min_value_size: usize,
-    pub min_value: AcVec<u8>,
-    pub max_value_ptr: *mut u8,
-    pub max_value_size: usize,
-    pub max_value: AcVec<u8>,
 }
 
 #[cfg(test)]
@@ -1425,5 +1411,74 @@ mod tests {
         assert!(!decoder.can_skip_row_group(0, &buf, &filters, u64::MAX)?);
 
         Ok(())
+    }
+
+    // ── Group 5: bloom filter read_from_slice_at_offset tests ───────
+
+    #[test]
+    fn bloom_at_offset_matches_column_metadata_path() -> ParquetResult<()> {
+        use parquet2::bloom_filter::{read_from_slice, read_from_slice_at_offset};
+        use parquet2::read::read_metadata_with_size;
+
+        let data: Vec<i64> = (100..200).collect();
+        let buf = gen_i64_parquet_with_bloom(&data)?;
+
+        // Read metadata via parquet2.
+        let mut cursor = Cursor::new(&buf);
+        let metadata = read_metadata_with_size(&mut cursor, buf.len() as u64)
+            .map_err(|e| crate::parquet::error::fmt_err!(Unsupported, "metadata: {}", e))?;
+
+        let chunk_meta = &metadata.row_groups[0].columns()[0];
+
+        // Path A: read bloom via column metadata reference.
+        let bitset_a = read_from_slice(chunk_meta, &buf)
+            .map_err(|e| crate::parquet::error::fmt_err!(Unsupported, "bloom read: {}", e))?;
+
+        // Path B: read bloom at raw offset (the _pm path).
+        let offset = chunk_meta
+            .metadata()
+            .bloom_filter_offset
+            .expect("bloom filter offset should be present");
+        let bitset_b = read_from_slice_at_offset(offset as u64, &buf).map_err(|e| {
+            crate::parquet::error::fmt_err!(Unsupported, "bloom offset read: {}", e)
+        })?;
+
+        assert!(
+            !bitset_a.is_empty(),
+            "bloom filter bitset should not be empty"
+        );
+        assert_eq!(
+            bitset_a, bitset_b,
+            "read_from_slice and read_from_slice_at_offset should return identical bitsets"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn bloom_at_offset_out_of_bounds() {
+        use parquet2::bloom_filter::read_from_slice_at_offset;
+        let data = vec![0u8; 100];
+        let result = read_from_slice_at_offset(200, &data);
+        assert!(result.is_err(), "should error on out-of-bounds offset");
+        let err_msg = result.unwrap_err().to_string();
+        assert!(
+            err_msg.contains("exceeds"),
+            "error should mention 'exceeds': {err_msg}"
+        );
+    }
+
+    #[test]
+    fn bloom_at_offset_truncated_data() {
+        use parquet2::bloom_filter::read_from_slice_at_offset;
+        // A valid bloom filter header but truncated data (only 10 bytes total,
+        // not enough for header + bitset).
+        let data = vec![0u8; 10];
+        let result = read_from_slice_at_offset(0, &data);
+        // Should error or return empty because the data is too short to parse
+        // a valid bloom filter header + bitset.
+        assert!(
+            result.is_err() || result.unwrap().is_empty(),
+            "should error or return empty on truncated data"
+        );
     }
 }

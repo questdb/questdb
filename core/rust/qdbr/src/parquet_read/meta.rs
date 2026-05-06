@@ -33,6 +33,108 @@ pub(crate) fn extract_qdb_meta(file_metadata: &FileMetaData) -> ParquetResult<Op
     Ok(Some(qdb_meta))
 }
 
+/// Infers a QuestDB `ColumnType` from a parquet `ColumnDescriptor`'s
+/// physical type, logical type, and converted type.
+///
+/// Used when QuestDB-specific metadata (`QdbMeta`) is absent — i.e. for
+/// external parquet files not written by QuestDB.
+pub fn infer_column_type(column: &ColumnDescriptor) -> Option<ColumnType> {
+    match (
+        column.descriptor.primitive_type.physical_type,
+        column.descriptor.primitive_type.logical_type,
+        column.descriptor.primitive_type.converted_type,
+    ) {
+        (
+            PhysicalType::Int64,
+            Some(Timestamp {
+                unit: TimeUnit::Microseconds,
+                is_adjusted_to_utc: _,
+            }),
+            _,
+        ) => Some(ColumnType::new(ColumnTypeTag::Timestamp, 0)),
+        (
+            PhysicalType::Int64,
+            Some(Timestamp { unit: TimeUnit::Nanoseconds, is_adjusted_to_utc: _ }),
+            _,
+        ) => Some(ColumnType::new(
+            ColumnTypeTag::Timestamp,
+            QDB_TIMESTAMP_NS_COLUMN_TYPE_FLAG,
+        )),
+        (
+            PhysicalType::Int64,
+            Some(Timestamp {
+                unit: TimeUnit::Milliseconds,
+                is_adjusted_to_utc: _,
+            }),
+            _,
+        ) => Some(ColumnType::new(ColumnTypeTag::Date, 0)),
+        (PhysicalType::Int64, Some(PrimitiveLogicalType::Decimal(precision, scale)), _)
+        | (PhysicalType::Int64, _, Some(PrimitiveConvertedType::Decimal(precision, scale))) => {
+            ColumnType::new_decimal(precision as u8, scale as u8)
+        }
+        (PhysicalType::Int64, _, _) => Some(ColumnType::new(ColumnTypeTag::Long, 0)),
+        (PhysicalType::Int32, Some(PrimitiveLogicalType::Integer(IntegerType::Int32)), _) => {
+            Some(ColumnType::new(ColumnTypeTag::Int, 0))
+        }
+        (PhysicalType::Int32, Some(PrimitiveLogicalType::Decimal(precision, scale)), _)
+        | (PhysicalType::Int32, _, Some(PrimitiveConvertedType::Decimal(precision, scale))) => {
+            ColumnType::new_decimal(precision as u8, scale as u8)
+        }
+        (PhysicalType::Int32, Some(PrimitiveLogicalType::Integer(IntegerType::Int16)), _)
+        | (PhysicalType::Int32, _, Some(PrimitiveConvertedType::Int16)) => {
+            Some(ColumnType::new(ColumnTypeTag::Short, 0))
+        }
+        (PhysicalType::Int32, Some(PrimitiveLogicalType::Integer(IntegerType::Int8)), _)
+        | (PhysicalType::Int32, _, Some(PrimitiveConvertedType::Int8)) => {
+            Some(ColumnType::new(ColumnTypeTag::Byte, 0))
+        }
+        (PhysicalType::Int32, Some(PrimitiveLogicalType::Date), _)
+        | (PhysicalType::Int32, _, Some(PrimitiveConvertedType::Date)) => {
+            Some(ColumnType::new(ColumnTypeTag::Date, 0))
+        }
+        (PhysicalType::Int32, _, _) => Some(ColumnType::new(ColumnTypeTag::Int, 0)),
+        (PhysicalType::Boolean, _, _) => Some(ColumnType::new(ColumnTypeTag::Boolean, 0)),
+        (PhysicalType::Double, _, _) => match array_column_type(&column.base_type) {
+            Some(array_type) => Some(array_type),
+            None => Some(ColumnType::new(ColumnTypeTag::Double, 0)),
+        },
+        (PhysicalType::Float, _, _) => Some(ColumnType::new(ColumnTypeTag::Float, 0)),
+        (
+            PhysicalType::FixedLenByteArray(_),
+            Some(PrimitiveLogicalType::Decimal(precision, scale)),
+            _,
+        )
+        | (
+            PhysicalType::FixedLenByteArray(_),
+            _,
+            Some(PrimitiveConvertedType::Decimal(precision, scale)),
+        ) => ColumnType::new_decimal(precision as u8, scale as u8),
+        (PhysicalType::ByteArray, Some(PrimitiveLogicalType::Decimal(precision, scale)), _)
+        | (PhysicalType::ByteArray, _, Some(PrimitiveConvertedType::Decimal(precision, scale))) => {
+            ColumnType::new_decimal(precision as u8, scale as u8)
+        }
+        (PhysicalType::FixedLenByteArray(16), Some(Uuid), _) => {
+            Some(ColumnType::new(ColumnTypeTag::Uuid, 0))
+        }
+        (PhysicalType::FixedLenByteArray(16), _, _) => {
+            Some(ColumnType::new(ColumnTypeTag::Long128, 0))
+        }
+        (PhysicalType::FixedLenByteArray(32), _, _) => {
+            Some(ColumnType::new(ColumnTypeTag::Long256, 0))
+        }
+        (PhysicalType::ByteArray, Some(PrimitiveLogicalType::String), _)
+        | (PhysicalType::ByteArray, _, Some(PrimitiveConvertedType::Utf8)) => {
+            Some(ColumnType::new(ColumnTypeTag::Varchar, 0))
+        }
+        (PhysicalType::ByteArray, _, _) => Some(ColumnType::new(ColumnTypeTag::Binary, 0)),
+        (PhysicalType::Int96, _, None) => Some(ColumnType::new(
+            ColumnTypeTag::Timestamp,
+            QDB_TIMESTAMP_NS_COLUMN_TYPE_FLAG,
+        )),
+        (_, _, _) => None,
+    }
+}
+
 impl ParquetDecoder {
     pub fn read<R: Read + Seek>(
         allocator: QdbAllocator,
@@ -190,103 +292,7 @@ impl ParquetDecoder {
         if let Some(col_type) = Self::extract_column_type_from_qdb_meta(qdb_meta, column_index) {
             return Some(col_type);
         }
-
-        match (
-            column.descriptor.primitive_type.physical_type,
-            column.descriptor.primitive_type.logical_type,
-            column.descriptor.primitive_type.converted_type,
-        ) {
-            (
-                PhysicalType::Int64,
-                Some(Timestamp {
-                    unit: TimeUnit::Microseconds,
-                    is_adjusted_to_utc: _,
-                }),
-                _,
-            ) => Some(ColumnType::new(ColumnTypeTag::Timestamp, 0)),
-            (
-                PhysicalType::Int64,
-                Some(Timestamp { unit: TimeUnit::Nanoseconds, is_adjusted_to_utc: _ }),
-                _,
-            ) => Some(ColumnType::new(
-                ColumnTypeTag::Timestamp,
-                QDB_TIMESTAMP_NS_COLUMN_TYPE_FLAG,
-            )),
-            (
-                PhysicalType::Int64,
-                Some(Timestamp {
-                    unit: TimeUnit::Milliseconds,
-                    is_adjusted_to_utc: _,
-                }),
-                _,
-            ) => Some(ColumnType::new(ColumnTypeTag::Date, 0)),
-            (PhysicalType::Int64, Some(PrimitiveLogicalType::Decimal(precision, scale)), _)
-            | (PhysicalType::Int64, _, Some(PrimitiveConvertedType::Decimal(precision, scale))) => {
-                ColumnType::new_decimal(precision as u8, scale as u8)
-            }
-            (PhysicalType::Int64, _, _) => Some(ColumnType::new(ColumnTypeTag::Long, 0)),
-            (PhysicalType::Int32, Some(PrimitiveLogicalType::Integer(IntegerType::Int32)), _) => {
-                Some(ColumnType::new(ColumnTypeTag::Int, 0))
-            }
-            (PhysicalType::Int32, Some(PrimitiveLogicalType::Decimal(precision, scale)), _)
-            | (PhysicalType::Int32, _, Some(PrimitiveConvertedType::Decimal(precision, scale))) => {
-                ColumnType::new_decimal(precision as u8, scale as u8)
-            }
-            (PhysicalType::Int32, Some(PrimitiveLogicalType::Integer(IntegerType::Int16)), _)
-            | (PhysicalType::Int32, _, Some(PrimitiveConvertedType::Int16)) => {
-                Some(ColumnType::new(ColumnTypeTag::Short, 0))
-            }
-            (PhysicalType::Int32, Some(PrimitiveLogicalType::Integer(IntegerType::Int8)), _)
-            | (PhysicalType::Int32, _, Some(PrimitiveConvertedType::Int8)) => {
-                Some(ColumnType::new(ColumnTypeTag::Byte, 0))
-            }
-            (PhysicalType::Int32, Some(PrimitiveLogicalType::Date), _)
-            | (PhysicalType::Int32, _, Some(PrimitiveConvertedType::Date)) => {
-                Some(ColumnType::new(ColumnTypeTag::Date, 0))
-            }
-            (PhysicalType::Int32, _, _) => Some(ColumnType::new(ColumnTypeTag::Int, 0)),
-            (PhysicalType::Boolean, _, _) => Some(ColumnType::new(ColumnTypeTag::Boolean, 0)),
-            (PhysicalType::Double, _, _) => match array_column_type(&column.base_type) {
-                Some(array_type) => Some(array_type),
-                None => Some(ColumnType::new(ColumnTypeTag::Double, 0)),
-            },
-            (PhysicalType::Float, _, _) => Some(ColumnType::new(ColumnTypeTag::Float, 0)),
-            (
-                PhysicalType::FixedLenByteArray(_),
-                Some(PrimitiveLogicalType::Decimal(precision, scale)),
-                _,
-            )
-            | (
-                PhysicalType::FixedLenByteArray(_),
-                _,
-                Some(PrimitiveConvertedType::Decimal(precision, scale)),
-            ) => ColumnType::new_decimal(precision as u8, scale as u8),
-            (PhysicalType::ByteArray, Some(PrimitiveLogicalType::Decimal(precision, scale)), _)
-            | (
-                PhysicalType::ByteArray,
-                _,
-                Some(PrimitiveConvertedType::Decimal(precision, scale)),
-            ) => ColumnType::new_decimal(precision as u8, scale as u8),
-            (PhysicalType::FixedLenByteArray(16), Some(Uuid), _) => {
-                Some(ColumnType::new(ColumnTypeTag::Uuid, 0))
-            }
-            (PhysicalType::FixedLenByteArray(16), _, _) => {
-                Some(ColumnType::new(ColumnTypeTag::Long128, 0))
-            }
-            (PhysicalType::FixedLenByteArray(32), _, _) => {
-                Some(ColumnType::new(ColumnTypeTag::Long256, 0))
-            }
-            (PhysicalType::ByteArray, Some(PrimitiveLogicalType::String), _)
-            | (PhysicalType::ByteArray, _, Some(PrimitiveConvertedType::Utf8)) => {
-                Some(ColumnType::new(ColumnTypeTag::Varchar, 0))
-            }
-            (PhysicalType::ByteArray, _, _) => Some(ColumnType::new(ColumnTypeTag::Binary, 0)),
-            (PhysicalType::Int96, _, None) => Some(ColumnType::new(
-                ColumnTypeTag::Timestamp,
-                QDB_TIMESTAMP_NS_COLUMN_TYPE_FLAG,
-            )),
-            (_, _, _) => None,
-        }
+        infer_column_type(column)
     }
 }
 

@@ -135,6 +135,7 @@ public final class TableUtils {
     // 24-byte header left empty for possible future use
     // in case we decide to support ALTER MAT VIEW, and modify mat view metadata
     public static final int NULL_LEN = -1;
+    public static final String PARQUET_METADATA_FILE_NAME = "_pm";
     public static final String PARQUET_PARTITION_NAME = "data.parquet";
     public static final String PARTITION_LAST_SQUASH_TIMESTAMP_FILE = ".squash_ts";
     public static final String RESTORE_FROM_CHECKPOINT_TRIGGER_FILE_NAME = "_restore";
@@ -1755,6 +1756,7 @@ public final class TableUtils {
 
         LOG.info().$("producing parquet for native partition [path=").$substr(pathRootSize, path).I$();
         final int memoryTag = MemoryTag.MMAP_PARQUET_PARTITION_CONVERTER;
+        long parquetMetaFd = -1;
         try {
             try (PartitionDescriptor partitionDescriptor = new MappedMemoryPartitionDescriptor(ff)) {
                 final int readerTimestampIndex = metadata.getTimestampIndex();
@@ -1901,6 +1903,10 @@ public final class TableUtils {
                 int bloomFilterColumnCount = 0;
                 double fpp = Double.isNaN(bloomFilterFpp) ? configuration.getPartitionEncoderParquetBloomFilterFpp() : bloomFilterFpp;
 
+                // Open _pm file for the Rust encoder to write simultaneously.
+                setPathForParquetPartitionMetadata(other.trimTo(pathSize), timestampType, partitionBy, partitionTimestamp, parquetNameTxn);
+                parquetMetaFd = TableUtils.openRW(ff, other.$(), LOG, configuration.getWriterFileOpenOpts());
+
                 bloomFilterIndexes.clear();
                 if (useMetadataBloomFilters) {
                     // Derive bloom filter columns from per-column metadata flags
@@ -1924,6 +1930,9 @@ public final class TableUtils {
                     bloomFilterColumnCount = (int) bloomFilterIndexes.size();
                 }
 
+                // Restore parquet file path for encoding.
+                setPathForParquetPartition(other.trimTo(pathSize), timestampType, partitionBy, partitionTimestamp, parquetNameTxn);
+
                 PartitionEncoder.encodeWithOptions(
                         partitionDescriptor,
                         other,
@@ -1937,8 +1946,27 @@ public final class TableUtils {
                         bloomFilterColumnCount,
                         fpp,
                         minCompressionRatio,
+                        Files.toOsFd(parquetMetaFd),
                         squashTracker
                 );
+                // Persist _pm before the caller commits _txn. _txn field 3 will reference
+                // a parquet_meta_file_size that resolves only if the _pm bytes survive a
+                // crash. fsync the parent dir too because _pm is a brand-new file in a
+                // brand-new partition directory.
+                final int commitMode = configuration.getCommitMode();
+                if (commitMode != CommitMode.NOSYNC) {
+                    ff.fsync(parquetMetaFd);
+                    if (!Os.isWindows()) {
+                        setPathForParquetPartitionMetadata(other.trimTo(pathSize), timestampType, partitionBy, partitionTimestamp, parquetNameTxn);
+                        // Drop the trailing /_pm component to fsync the partition dir itself.
+                        other.parent();
+                        final long dirFd = TableUtils.openRONoCache(ff, other.$(), LOG);
+                        if (dirFd != -1) {
+                            ff.fsyncAndClose(dirFd);
+                        }
+                    }
+                }
+                setPathForParquetPartition(other.trimTo(pathSize), timestampType, partitionBy, partitionTimestamp, parquetNameTxn);
                 return ff.length(other.$());
             }
         } catch (CairoException e) {
@@ -1956,6 +1984,9 @@ public final class TableUtils {
         } finally {
             path.trimTo(pathSize);
             other.trimTo(pathSize);
+            if (parquetMetaFd > -1) {
+                ff.close(parquetMetaFd);
+            }
         }
     }
 
@@ -2295,6 +2326,21 @@ public final class TableUtils {
     public static void setPathForParquetPartition(Path path, int timestampType, int partitionBy, long timestamp, long nameTxn) {
         setSinkForNativePartition(path.slash(), timestampType, partitionBy, timestamp, nameTxn);
         path.concat(PARQUET_PARTITION_NAME);
+    }
+
+    /**
+     * Sets the path to the metadata file of a Parquet partition taking into account the timestamp, the partitioning
+     * scheme and the partition version.
+     *
+     * @param path          Set to the root directory for a table, this will be updated to the metadata file of the partition
+     * @param timestampType type (resolution) of the timestamp column
+     * @param partitionBy   Partitioning scheme
+     * @param timestamp     A timestamp in the partition
+     * @param nameTxn       Partition txn suffix
+     */
+    public static void setPathForParquetPartitionMetadata(Path path, int timestampType, int partitionBy, long timestamp, long nameTxn) {
+        setSinkForNativePartition(path.slash(), timestampType, partitionBy, timestamp, nameTxn);
+        path.concat(PARQUET_METADATA_FILE_NAME);
     }
 
     /**

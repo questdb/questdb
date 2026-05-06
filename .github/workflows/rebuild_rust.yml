@@ -25,7 +25,7 @@ jobs:
       - name: Build Rust Library
         run: |
           cd core/rust/qdbr
-          cargo build --release
+          cargo build --release --lib
       - name: Copy Rust Library to the final directory
         run: |
           cp core/rust/qdbr/target/release/questdbr.dll core/src/main/resources/io/questdb/bin/windows-x86-64/
@@ -53,7 +53,7 @@ jobs:
           export MACOSX_DEPLOYMENT_TARGET=13.0
           cd core/rust/qdbr
           cargo clean
-          cargo build --release
+          cargo build --release --lib
       - name: Copy darwin-aarch64 Rust Library to the final directory
         if: ${{ matrix.os == 'macos-14' }}
         run: |
@@ -115,7 +115,7 @@ jobs:
         run: |
           cd core/rust/qdbr
           cargo clean
-          cargo build --release
+          cargo build --release --lib
           mkdir -p ../../src/main/resources/io/questdb/bin/linux-x86-64/
           cp target/release/libquestdbr.so ../../src/main/resources/io/questdb/bin/linux-x86-64/
       - name: Save linux-x86-64 Libraries to Cache
@@ -145,7 +145,7 @@ jobs:
         run: |
           cd core/rust/qdbr
           cargo clean
-          cargo build --release
+          cargo build --release --lib
           mkdir -p ../../src/main/resources/io/questdb/bin/linux-aarch64/
           cp target/release/libquestdbr.so ../../src/main/resources/io/questdb/bin/linux-aarch64/
       - name: Check git status
