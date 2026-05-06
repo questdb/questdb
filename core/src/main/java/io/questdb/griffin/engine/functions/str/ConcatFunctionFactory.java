@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -261,6 +261,11 @@ public class ConcatFunctionFactory implements FunctionFactory {
         @Override
         public ObjList<Function> args() {
             return functions;
+        }
+
+        @Override
+        public int getComplexity() {
+            return Function.addComplexity(COMPLEXITY_STRING_OP, MultiArgFunction.super.getComplexity());
         }
 
         @Override

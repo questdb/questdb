@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -311,6 +311,11 @@ public interface Utf8Sink extends CharSink<Utf8Sink> {
     @Override
     default Utf8Sink putQuoted(@NotNull CharSequence cs) {
         putAscii('\"').put(cs).putAscii('\"');
+        return this;
+    }
+
+    default Utf8Sink putQuotedEscapedStr(@NotNull CharSequence cs) {
+        putAscii('"').escapeJsonStr(cs).putAscii('"');
         return this;
     }
 

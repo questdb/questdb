@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -143,13 +143,17 @@ public final class Dates {
         }
 
         int y = getYear(millis);
-        int m;
         boolean leap1 = isLeapYear(y);
         boolean leap2 = isLeapYear(y + years);
-
+        int m = getMonthOfYear(millis, y, leap1);
+        int d = getDayOfMonth(millis, y, m, leap1);
+        int maxDay = getDaysPerMonth(m, leap2);
+        if (d > maxDay) {
+            d = maxDay;
+        }
         return yearMillis(y + years, leap2)
-                + monthOfYearMillis(m = getMonthOfYear(millis, y, leap1), leap2)
-                + (getDayOfMonth(millis, y, m, leap1) - 1) * DAY_MILLIS
+                + monthOfYearMillis(m, leap2)
+                + (d - 1) * DAY_MILLIS
                 + getTime(millis)
                 + (millis < 0 ? 1 : 0);
 
@@ -374,19 +378,19 @@ public final class Dates {
         int i = (int) ((millis - yearMillis(year, leap)) >> 10);
         return leap
                 ? ((i < 182 * 84375)
-                ? ((i < 91 * 84375)
-                ? ((i < 31 * 84375) ? 1 : (i < 60 * 84375) ? 2 : 3)
-                : ((i < 121 * 84375) ? 4 : (i < 152 * 84375) ? 5 : 6))
-                : ((i < 274 * 84375)
-                ? ((i < 213 * 84375) ? 7 : (i < 244 * 84375) ? 8 : 9)
-                : ((i < 305 * 84375) ? 10 : (i < 335 * 84375) ? 11 : 12)))
+                   ? ((i < 91 * 84375)
+                      ? ((i < 31 * 84375) ? 1 : (i < 60 * 84375) ? 2 : 3)
+                      : ((i < 121 * 84375) ? 4 : (i < 152 * 84375) ? 5 : 6))
+                   : ((i < 274 * 84375)
+                      ? ((i < 213 * 84375) ? 7 : (i < 244 * 84375) ? 8 : 9)
+                      : ((i < 305 * 84375) ? 10 : (i < 335 * 84375) ? 11 : 12)))
                 : ((i < 181 * 84375)
-                ? ((i < 90 * 84375)
-                ? ((i < 31 * 84375) ? 1 : (i < 59 * 84375) ? 2 : 3)
-                : ((i < 120 * 84375) ? 4 : (i < 151 * 84375) ? 5 : 6))
-                : ((i < 273 * 84375)
-                ? ((i < 212 * 84375) ? 7 : (i < 243 * 84375) ? 8 : 9)
-                : ((i < 304 * 84375) ? 10 : (i < 334 * 84375) ? 11 : 12)));
+                   ? ((i < 90 * 84375)
+                      ? ((i < 31 * 84375) ? 1 : (i < 59 * 84375) ? 2 : 3)
+                      : ((i < 120 * 84375) ? 4 : (i < 151 * 84375) ? 5 : 6))
+                   : ((i < 273 * 84375)
+                      ? ((i < 212 * 84375) ? 7 : (i < 243 * 84375) ? 8 : 9)
+                      : ((i < 304 * 84375) ? 10 : (i < 334 * 84375) ? 11 : 12)));
     }
 
     public static long getMonthsBetween(long a, long b) {

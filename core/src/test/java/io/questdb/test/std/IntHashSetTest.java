@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -60,37 +60,6 @@ public class IntHashSetTest {
         for (int i = 0; i < N; i++) {
             Assert.assertTrue(set.contains(rnd.nextPositiveInt()));
         }
-    }
-
-    @Test
-    public void testEqualsAndHashCode() {
-        final int items = 100;
-
-        final IntHashSet setA = new IntHashSet();
-        final IntHashSet setB = new IntHashSet();
-
-        Assert.assertEquals(setA, setB);
-        Assert.assertEquals(setA.hashCode(), setB.hashCode());
-
-        for (int i = 0; i < items; i++) {
-            setA.add(i);
-        }
-
-        Assert.assertNotEquals(setA, setB);
-
-        // Reverse the addition order, so that the elements of the underlying arrays aren't 1-to-1 between the sets.
-        for (int i = items - 1; i > -1; i--) {
-            setB.add(i);
-        }
-
-        Assert.assertEquals(setA, setB);
-        Assert.assertEquals(setA.hashCode(), setB.hashCode());
-
-        setA.clear();
-        setB.clear();
-
-        Assert.assertEquals(setA, setB);
-        Assert.assertEquals(setA.hashCode(), setB.hashCode());
     }
 
     @Test

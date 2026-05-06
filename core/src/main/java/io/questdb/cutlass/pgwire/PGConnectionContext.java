@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -56,8 +56,6 @@ import io.questdb.network.NoSpaceLeftInResponseBufferException;
 import io.questdb.network.PeerDisconnectedException;
 import io.questdb.network.PeerIsSlowToReadException;
 import io.questdb.network.PeerIsSlowToWriteException;
-import io.questdb.network.QueryPausedException;
-import io.questdb.network.SuspendEvent;
 import io.questdb.network.TlsSessionInitFailedException;
 import io.questdb.std.AssociativeCache;
 import io.questdb.std.BinarySequence;
@@ -195,7 +193,6 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
     private long sendBufferLimit;
     private long sendBufferPtr;
     private int sendBufferSize;
-    private SuspendEvent suspendEvent;
     // insert 'statements' are cached only for the duration of user session
     private SimpleAssociativeCache<TypesAndInsert> taiCache;
     private final PGResumeCallback msgFlushRef = this::msgFlush0;
@@ -262,13 +259,13 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
     }
 
     public static long getLongUnsafe(long address) {
-        return Numbers.bswap(Unsafe.getUnsafe().getLong(address));
+        return Numbers.bswap(Unsafe.getLong(address));
     }
 
     public static long getStringLengthTedious(long x, long limit) {
         // calculate length
         for (long i = x; i < limit; i++) {
-            if (Unsafe.getUnsafe().getByte(i) == 0) {
+            if (Unsafe.getByte(i) == 0) {
                 return i;
             }
         }
@@ -276,7 +273,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
     }
 
     public static long getUtf8StrSize(long x, long limit, CharSequence errorMessage, @Nullable PGPipelineEntry pe) throws PGMessageProcessingException {
-        long len = Unsafe.getUnsafe().getByte(x) == 0 ? x : getStringLengthTedious(x, limit);
+        long len = Unsafe.getByte(x) == 0 ? x : getStringLengthTedious(x, limit);
         if (len > -1) {
             return len;
         }
@@ -291,15 +288,15 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
     }
 
     public static void putInt(long address, int value) {
-        Unsafe.getUnsafe().putInt(address, Numbers.bswap(value));
+        Unsafe.putInt(address, Numbers.bswap(value));
     }
 
     public static void putLong(long address, long value) {
-        Unsafe.getUnsafe().putLong(address, Numbers.bswap(value));
+        Unsafe.putLong(address, Numbers.bswap(value));
     }
 
     public static void putShort(long address, short value) {
-        Unsafe.getUnsafe().putShort(address, Numbers.bswap(value));
+        Unsafe.putShort(address, Numbers.bswap(value));
     }
 
     @Override
@@ -339,17 +336,11 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
         bufferRemainingSize = 0;
         freezeRecvBuffer = false;
         resumeCallback = null;
-        suspendEvent = null;
         tlsSessionStarting = false;
         totalReceived = 0;
         transactionState = IMPLICIT_TRANSACTION;
         entryPool.resetCapacity();
         bindingServiceConfiguredFor = null;
-    }
-
-    @Override
-    public void clearSuspendEvent() {
-        suspendEvent = Misc.free(suspendEvent);
     }
 
     public void clearWriters() {
@@ -372,11 +363,6 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
         // assert is intentionally commented out. uncomment if you suspect a PGPipelineEntry leak and run all tests
         // do not forget to remove entryPool.clear() from clear()
         // assert entryPool.getPos() == 0 : "possible resource leak detected, not all entries were returned to pool [pos=" + entryPool.getPos() + ']';
-    }
-
-    @Override
-    public SuspendEvent getSuspendEvent() {
-        return suspendEvent;
     }
 
     @Override
@@ -483,10 +469,6 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
         if (sqlTimeout > 0) {
             circuitBreaker.setTimeout(sqlTimeout);
         }
-    }
-
-    public void setSuspendEvent(SuspendEvent suspendEvent) {
-        this.suspendEvent = suspendEvent;
     }
 
     private static void sendErrorResponseAndReset(PGResponseSink sink, CharSequence message) throws PeerIsSlowToReadException, PeerDisconnectedException {
@@ -601,19 +583,19 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
         }
         int r;
         try {
-            r = authenticator.handleIO();
-            if (r == SocketAuthenticator.OK) {
-                try {
+            try {
+                r = authenticator.handleIO();
+                if (r == SocketAuthenticator.OK) {
                     final SecurityContext securityContext = securityContextFactory.getInstance(
                             authenticator, SecurityContextFactory.PGWIRE
                     );
                     sqlExecutionContext.with(securityContext, bindVariableService, rnd, getFd(), circuitBreaker);
                     securityContext.checkEntityEnabled();
                     r = authenticator.loginOK();
-                } catch (CairoException e) {
-                    LOG.error().$("failed to authenticate [error=").$safe(e.getFlyweightMessage()).I$();
-                    r = authenticator.denyAccess(e.getFlyweightMessage());
                 }
+            } catch (CairoException e) {
+                LOG.error().$("failed to authenticate [error=").$safe(e.getFlyweightMessage()).I$();
+                r = authenticator.denyAccess(e.getFlyweightMessage());
             }
         } catch (AuthenticatorException e) {
             throw PeerDisconnectedException.INSTANCE;
@@ -714,6 +696,10 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
             return;
         }
 
+        if (pipelineCurrentEntry != null && pipelineCurrentEntry.isSuspended()) {
+            // client abandoned the suspended cursor by starting a new query
+            pipelineCurrentEntry.closeSuspendedCursor();
+        }
         if (pipelineCurrentEntry != null && (pipelineCurrentEntry.isStateExec() || pipelineCurrentEntry.isStateClosed())) {
             // this is the sequence of B/E/B/E where B starts a new pipeline entry
             pipeline.add(pipelineCurrentEntry);
@@ -844,7 +830,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
     private void msgClose(long lo, long msgLimit) throws PGMessageProcessingException {
         // 'close' message can either:
         // - close the named entity, portal or statement
-        final byte type = Unsafe.getUnsafe().getByte(lo);
+        final byte type = Unsafe.getByte(lo);
         PGPipelineEntry lookedUpPipelineEntry;
         boolean isStatementClose = false;
         switch (type) {
@@ -895,7 +881,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
         // 'S' = statement name
         // 'P' = portal name
         // followed by the name, which can be NULL, typically with 'P'
-        boolean isPortal = Unsafe.getUnsafe().getByte(lo) == 'P';
+        boolean isPortal = Unsafe.getByte(lo) == 'P';
         final long hi = getUtf8StrSize(lo + 1, msgLimit, "bad prepared statement name length (describe)", pipelineCurrentEntry);
         if (isPortal) {
             lookupPipelineEntryForNamedPortal(getUtf8NamedPortal(lo + 1, hi));
@@ -945,7 +931,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
         );
     }
 
-    private void msgFlush() throws PeerIsSlowToReadException, PeerDisconnectedException, QueryPausedException {
+    private void msgFlush() throws PeerIsSlowToReadException, PeerDisconnectedException {
         addPipelineEntry();
         // "The Flush message does not cause any specific output to be generated, but forces the backend to deliver any data pending in its output buffers.
         //  A Flush must be sent after any extended-query command except Sync, if the frontend wishes to examine the results of that command before issuing more commands.
@@ -958,7 +944,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
         msgFlush0();
     }
 
-    private void msgFlush0() throws PeerIsSlowToReadException, PeerDisconnectedException, QueryPausedException {
+    private void msgFlush0() throws PeerIsSlowToReadException, PeerDisconnectedException {
         syncPipeline();
         resumeCallback = null;
         responseUtf8Sink.sendBufferAndReset();
@@ -981,6 +967,10 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
 
         // Parse message typically starts a new pipeline entry. So if there is existing one in flight
         // we have to add it to the pipeline
+        if (pipelineCurrentEntry != null && pipelineCurrentEntry.isSuspended()) {
+            // client abandoned the suspended cursor by starting a new query
+            pipelineCurrentEntry.closeSuspendedCursor();
+        }
         addPipelineEntry();
 
         pipelineCurrentEntry = entryPool.next();
@@ -1102,7 +1092,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
     }
 
     // processes one or more queries (batch/script). "Simple Query" in PostgreSQL docs.
-    private void msgQuery(long lo, long limit) throws PGMessageProcessingException, PeerIsSlowToReadException, QueryPausedException, PeerDisconnectedException {
+    private void msgQuery(long lo, long limit) throws PGMessageProcessingException, PeerIsSlowToReadException, PeerDisconnectedException {
         if (pipelineCurrentEntry != null && pipelineCurrentEntry.isError()) {
             return;
         }
@@ -1130,7 +1120,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
         }
     }
 
-    private void msgSync() throws PeerIsSlowToReadException, PeerDisconnectedException, QueryPausedException {
+    private void msgSync() throws PeerIsSlowToReadException, PeerDisconnectedException {
         if (transactionState == IMPLICIT_TRANSACTION) {
             // implicit transactions must be committed on SYNC
             try {
@@ -1156,7 +1146,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
         msgSync0();
     }
 
-    private void msgSync0() throws PeerIsSlowToReadException, PeerDisconnectedException, QueryPausedException {
+    private void msgSync0() throws PeerIsSlowToReadException, PeerDisconnectedException {
         syncPipeline();
 
         // flush the buffer in case response message does not fit the buffer
@@ -1190,15 +1180,17 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
      * in the buffer they need to be passed again in parse function along with
      * any additional bytes received
      */
-    private void parseMessage(long address, int len)
-            throws PGMessageProcessingException, PeerIsSlowToReadException, PeerDisconnectedException, QueryPausedException {
+    private void parseMessage(
+            long address,
+            int len
+    ) throws PGMessageProcessingException, PeerIsSlowToReadException, PeerDisconnectedException {
         // we will wait until we receive the entire header
         if (len < PREFIXED_MESSAGE_HEADER_LEN) {
             // we need to be able to read header and length
             return;
         }
 
-        final byte type = Unsafe.getUnsafe().getByte(address);
+        final byte type = Unsafe.getByte(address);
         final int msgLen = getIntUnsafe(address + 1);
         LOG.debug().$("received msg [type=").$((char) type).$(", len=").$(msgLen).I$();
         if (msgLen < 1) {
@@ -1388,7 +1380,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
     }
 
     // Send responses from the pipeline entries we have accumulated so far.
-    private void syncPipeline() throws PeerIsSlowToReadException, QueryPausedException, PeerDisconnectedException {
+    private void syncPipeline() throws PeerIsSlowToReadException, PeerDisconnectedException {
         while (pipelineCurrentEntry != null || (pipelineCurrentEntry = pipeline.poll()) != null) {
             // we need to store stateExec flag now
             // because syncing the entry will clear the flag
@@ -1452,6 +1444,20 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
                 if (bindingServiceConfiguredFor == pipelineCurrentEntry) {
                     bindingServiceConfiguredFor = null;
                 }
+                // check suspension before cacheIfPossible(), which frees the cursor
+                if (pipelineCurrentEntry.isSuspended()
+                        && nextEntry == null
+                        && !isClosed
+                        && !isError) {
+                    // portal is suspended with more rows to send, retain the entry
+                    // so the next Execute can resume the cursor
+                    break;
+                }
+                if (pipelineCurrentEntry.isSuspended()) {
+                    // cursor is suspended but we cannot retain (closed, error,
+                    // or more entries in pipeline), free cursor before release
+                    pipelineCurrentEntry.closeSuspendedCursor();
+                }
                 if (!isError) {
                     pipelineCurrentEntry.cacheIfPossible(tasCache, taiCache);
                 }
@@ -1477,11 +1483,11 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
     }
 
     static int getIntUnsafe(long address) {
-        return Numbers.bswap(Unsafe.getUnsafe().getInt(address));
+        return Numbers.bswap(Unsafe.getInt(address));
     }
 
     static short getShortUnsafe(long address) {
-        return Numbers.bswap(Unsafe.getUnsafe().getShort(address));
+        return Numbers.bswap(Unsafe.getShort(address));
     }
 
     @Override
@@ -1703,7 +1709,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
         @Override
         public Utf8Sink put(byte b) {
             checkCapacity(Byte.BYTES);
-            Unsafe.getUnsafe().putByte(sendBufferPtr++, b);
+            Unsafe.putByte(sendBufferPtr++, b);
             return this;
         }
 
@@ -1719,7 +1725,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
                 putInt(sendBufferPtr, (int) len);
                 sendBufferPtr += Integer.BYTES;
                 for (long x = 0; x < len; x++) {
-                    Unsafe.getUnsafe().putByte(sendBufferPtr + x, sequence.byteAt(x));
+                    Unsafe.putByte(sendBufferPtr + x, sequence.byteAt(x));
                 }
                 sendBufferPtr += len;
             }
@@ -1728,14 +1734,14 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
         @Override
         public void putDirectInt(int xValue) {
             checkCapacity(Integer.BYTES);
-            Unsafe.getUnsafe().putInt(sendBufferPtr, xValue);
+            Unsafe.putInt(sendBufferPtr, xValue);
             sendBufferPtr += Integer.BYTES;
         }
 
         @Override
         public void putDirectShort(short xValue) {
             checkCapacity(Short.BYTES);
-            Unsafe.getUnsafe().putShort(sendBufferPtr, xValue);
+            Unsafe.putShort(sendBufferPtr, xValue);
             sendBufferPtr += Short.BYTES;
         }
 
@@ -1748,7 +1754,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
 
         @Override
         public void putIntUnsafe(long offset, int value) {
-            Unsafe.getUnsafe().putInt(sendBufferPtr + offset, value);
+            Unsafe.putInt(sendBufferPtr + offset, value);
         }
 
         @Override
@@ -1764,14 +1770,14 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
         @Override
         public void putNetworkDouble(double value) {
             checkCapacity(Double.BYTES);
-            Unsafe.getUnsafe().putDouble(sendBufferPtr, Double.longBitsToDouble(Numbers.bswap(Double.doubleToLongBits(value))));
+            Unsafe.putDouble(sendBufferPtr, Double.longBitsToDouble(Numbers.bswap(Double.doubleToLongBits(value))));
             sendBufferPtr += Double.BYTES;
         }
 
         @Override
         public void putNetworkFloat(float value) {
             checkCapacity(Float.BYTES);
-            Unsafe.getUnsafe().putFloat(sendBufferPtr, Float.intBitsToFloat(Numbers.bswap(Float.floatToIntBits(value))));
+            Unsafe.putFloat(sendBufferPtr, Float.intBitsToFloat(Numbers.bswap(Float.floatToIntBits(value))));
             sendBufferPtr += Float.BYTES;
         }
 
@@ -1829,7 +1835,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
             int toWrite = (int) Math.min(length, Math.max(0, available));
             if (toWrite > 0) {
                 for (int i = 0; i < toWrite; i++) {
-                    Unsafe.getUnsafe().putByte(sendBufferPtr + i, us.byteAt(offset + i));
+                    Unsafe.putByte(sendBufferPtr + i, us.byteAt(offset + i));
                 }
                 sendBufferPtr += toWrite;
             }
@@ -1840,7 +1846,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
         public void putZ(CharSequence value) {
             put(value);
             checkCapacity(Byte.BYTES);
-            Unsafe.getUnsafe().putByte(sendBufferPtr++, (byte) 0);
+            Unsafe.putByte(sendBufferPtr++, (byte) 0);
         }
 
         @Override

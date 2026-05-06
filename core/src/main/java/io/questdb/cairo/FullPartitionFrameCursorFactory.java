@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -63,6 +63,7 @@ public class FullPartitionFrameCursorFactory extends AbstractPartitionFrameCurso
         authorizeSelect(executionContext, columnIndexes);
         final TableReader reader = getReader(executionContext);
         try {
+            reader.setActiveColumns(columnIndexes);
             if (order == ORDER_ASC || ((order == ORDER_ANY || order < 0) && baseOrder != ORDER_DESC)) {
                 if (fwdCursor == null) {
                     fwdCursor = new FullFwdPartitionFrameCursor();

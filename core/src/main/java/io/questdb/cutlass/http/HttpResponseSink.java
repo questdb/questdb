@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -62,6 +62,7 @@ import static java.net.HttpURLConnection.*;
 
 public class HttpResponseSink implements Closeable, Mutable {
     public static final int HTTP_MISDIRECTED_REQUEST = 421;
+    public static final int HTTP_SERVICE_UNAVAILABLE = 503;
     public static final int HTTP_TOO_MANY_REQUESTS = 429;
     private static final Utf8String EMPTY_JSON = new Utf8String("{}");
     private static final int HTTP_RANGE_NOT_SATISFIABLE = 416;
@@ -238,8 +239,8 @@ public class HttpResponseSink implements Closeable, Mutable {
         boolean finished = chunkedRequestDone && ret == Zip.Z_STREAM_END;
         if (finished) {
             long p = compressOutBuffer.getWriteAddress(0);
-            Unsafe.getUnsafe().putInt(p, crc); // crc
-            Unsafe.getUnsafe().putInt(p + 4, (int) total); // total
+            Unsafe.putInt(p, crc); // crc
+            Unsafe.putInt(p + 4, (int) total); // total
             compressOutBuffer.onWrite(8);
             compressionComplete = true;
         }
@@ -300,7 +301,7 @@ public class HttpResponseSink implements Closeable, Mutable {
                 nSend -= n;
                 totalBytesSent += n;
             } else {
-                // This branch is for tests only
+                totalBytesSent += n;
                 sendBuf.onRead(n);
                 throw PeerIsSlowToReadException.INSTANCE;
             }
@@ -362,7 +363,7 @@ public class HttpResponseSink implements Closeable, Mutable {
 
         @Override
         public Utf8Sink put(byte b) {
-            Unsafe.getUnsafe().putByte(getWriteAddress(1), b);
+            Unsafe.putByte(getWriteAddress(1), b);
             onWrite(1);
             return this;
         }
@@ -437,27 +438,39 @@ public class HttpResponseSink implements Closeable, Mutable {
         void prepareToReadFromBuffer(boolean addChunkHeader, boolean addEofChunk) {
             if (addChunkHeader) {
                 int len = (int) (_wptr - bufStartOfData);
-                int padding = len == 0 ? 6 : (Integer.numberOfLeadingZeros(len) >> 3) << 1;
-                long tmp = _wptr;
-                _rptr = _wptr = bufStart + padding;
-                putEOL();
-                Numbers.appendHex(this, len);
-                putEOL();
-                _wptr = tmp;
+                // When len=0 and addEofChunk=true, skip writing zero-length chunk header to avoid
+                // duplicate: \r\n00\r\n (header) + \r\n00\r\n\r\n (EOF) = \r\n00\r\n\r\n00\r\n\r\n
+                // If this 14-byte sequence is split across packets (e.g., 10 bytes + 4 bytes), the client
+                // may see \r\n00\r\n\r\n as a complete termination and stop reading, leaving the remaining
+                // 00\r\n\r\n in the socket buffer, which pollutes the next HTTP request.
+                // The EOF chunk already contains the complete termination sequence.
+                if (len > 0 || !addEofChunk) {
+                    int padding = len == 0 ? 6 : (Integer.numberOfLeadingZeros(len) >> 3) << 1;
+                    long tmp = _wptr;
+                    _rptr = _wptr = bufStart + padding;
+                    putEOL();
+                    Numbers.appendHex(this, len);
+                    putEOL();
+                    _wptr = tmp;
+                } else {
+                    // len=0 && addEofChunk=true: skip chunk header, set read pointer to data start
+                    // where EOF chunk will be written
+                    _rptr = bufStartOfData;
+                }
             }
             if (addEofChunk) {
                 // safety: unchecked store, but we reserve space for the last chunk -> this is sound as long as all
                 //         other writes use getWriteAddress() which does not allow anyone else to use the space reserved
                 //         for the last chunk.
-                Unsafe.getUnsafe().putLong(_wptr, EOF_CHUNK_LONG_BE);
+                Unsafe.putLong(_wptr, EOF_CHUNK_LONG_BE);
                 _wptr += Long.BYTES;
                 LOG.debug().$("end chunk sent [fd=").$(getFd()).I$();
             }
         }
 
         void write64BitZeroPadding() {
-            Unsafe.getUnsafe().putLong(bufStartOfData - 8, 0);
-            Unsafe.getUnsafe().putLong(_wptr, 0);
+            Unsafe.putLong(bufStartOfData - 8, 0);
+            Unsafe.putLong(_wptr, 0);
         }
     }
 
@@ -583,7 +596,7 @@ public class HttpResponseSink implements Closeable, Mutable {
 
         @Override
         public Utf8Sink put(byte b) {
-            Unsafe.getUnsafe().putByte(buffer.getWriteAddress(1), b);
+            Unsafe.putByte(buffer.getWriteAddress(1), b);
             buffer.onWrite(1);
             return this;
         }
@@ -886,6 +899,7 @@ public class HttpResponseSink implements Closeable, Mutable {
         httpStatusMap.put(HTTP_REQUEST_HEADER_FIELDS_TOO_LARGE, new Utf8String("Headers too large"));
         httpStatusMap.put(HTTP_INTERNAL_ERROR, new Utf8String("Internal server error"));
         httpStatusMap.put(HTTP_MISDIRECTED_REQUEST, new Utf8String("Misdirected Request"));
+        httpStatusMap.put(HTTP_SERVICE_UNAVAILABLE, new Utf8String("Service Unavailable"));
         httpStatusMap.put(HTTP_TOO_MANY_REQUESTS, new Utf8String("Too Many Requests"));
     }
 

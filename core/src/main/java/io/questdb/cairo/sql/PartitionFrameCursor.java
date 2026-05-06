@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -45,8 +45,17 @@ public interface PartitionFrameCursor extends QuietCloseable, SymbolTableSource 
     TableReader getTableReader();
 
     /**
+     * Returns true if this cursor applies interval filtering to partitions.
+     * When true, the cursor may produce narrowed row ranges per partition
+     * and skip partitions entirely, making page frame counts unpredictable
+     * from metadata alone.
+     */
+    default boolean hasIntervalFilter() {
+        return false;
+    }
+
+    /**
      * @return the next element in the partition frame
-     * @throws io.questdb.cairo.DataUnavailableException when the queried partition is in cold storage
      */
     default @Nullable PartitionFrame next() {
         return next(0);
@@ -74,6 +83,18 @@ public interface PartitionFrameCursor extends QuietCloseable, SymbolTableSource 
      */
     default boolean supportsSizeCalculation() {
         return false;
+    }
+
+    /**
+     * Positions the cursor at the given partition index. The next call to
+     * {@link #next(long)} will return the frame for this partition. Iteration
+     * is limited to this single partition — subsequent {@link #next(long)}
+     * calls return {@code null} once the partition is exhausted.
+     *
+     * @param partitionIndex the target partition index
+     */
+    default void toPartition(int partitionIndex) {
+        throw new UnsupportedOperationException();
     }
 
     /**

@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -72,6 +72,8 @@ public class ColumnVersionReader implements Closeable, Mutable {
         if (ownMem) {
             mem.close();
         }
+        cachedColumnVersionList.clear();
+        version = -1;
     }
 
     @Override
@@ -287,7 +289,7 @@ public class ColumnVersionReader implements Closeable, Mutable {
         if (version == this.version) {
             return true;
         }
-        Unsafe.getUnsafe().loadFence();
+        Unsafe.loadFence();
 
         final long offset;
         final long size;
@@ -301,12 +303,12 @@ public class ColumnVersionReader implements Closeable, Mutable {
             size = mem.getLong(OFFSET_SIZE_B_64);
         }
 
-        Unsafe.getUnsafe().loadFence();
+        Unsafe.loadFence();
         if (version == unsafeGetVersion()) {
             mem.resize(offset + size);
             readUnsafe(offset, size, cachedColumnVersionList, mem);
 
-            Unsafe.getUnsafe().loadFence();
+            Unsafe.loadFence();
             if (version == unsafeGetVersion()) {
                 this.version = version;
                 LOG.debug().$("read clean version ").$(version).$(", offset ").$(offset).$(", size ").$(size).$();

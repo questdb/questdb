@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -45,7 +45,7 @@ import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.window.WindowContext;
 import io.questdb.griffin.engine.window.WindowFunction;
-import io.questdb.griffin.model.WindowColumn;
+import io.questdb.griffin.model.WindowExpression;
 import io.questdb.std.IntList;
 import io.questdb.std.LongList;
 import io.questdb.std.MemoryTag;
@@ -115,13 +115,13 @@ public class MaxTimestampWindowFunctionFactory extends AbstractWindowFunctionFac
                     NAME,
                     rowsLo,
                     rowsHi,
-                    framingMode == WindowColumn.FRAMING_RANGE,
+                    framingMode == WindowExpression.FRAMING_RANGE,
                     partitionByRecord,
                     Numbers.LONG_NULL);
         }
 
         if (partitionByRecord != null) {
-            if (framingMode == WindowColumn.FRAMING_RANGE) {
+            if (framingMode == WindowExpression.FRAMING_RANGE) {
                 // moving max over whole partition (no order by, default frame) or (order by, unbounded preceding to unbounded following)
                 if (windowContext.isDefaultFrame() && (!windowContext.isOrdered() || windowContext.getRowsHi() == Long.MAX_VALUE)) {
                     Map map = MapFactory.createUnorderedMap(
@@ -206,7 +206,7 @@ public class MaxTimestampWindowFunctionFactory extends AbstractWindowFunctionFac
                         throw th;
                     }
                 }
-            } else if (framingMode == WindowColumn.FRAMING_ROWS) {
+            } else if (framingMode == WindowExpression.FRAMING_ROWS) {
                 // between unbounded preceding and current row
                 if (rowsLo == Long.MIN_VALUE && rowsHi == 0) {
                     Map map = MapFactory.createUnorderedMap(
@@ -289,7 +289,7 @@ public class MaxTimestampWindowFunctionFactory extends AbstractWindowFunctionFac
                 }
             }
         } else { // no partition key
-            if (framingMode == WindowColumn.FRAMING_RANGE) {
+            if (framingMode == WindowExpression.FRAMING_RANGE) {
                 // if there's no order by then all elements are equal in range mode, thus calculation is done on whole result set
                 if (!windowContext.isOrdered() && windowContext.isDefaultFrame()) {
                     return new MaxMinOverWholeResultSetFunction(args.get(0), GREATER_THAN, NAME);
@@ -337,7 +337,7 @@ public class MaxTimestampWindowFunctionFactory extends AbstractWindowFunctionFac
                         throw th;
                     }
                 }
-            } else if (framingMode == WindowColumn.FRAMING_ROWS) {
+            } else if (framingMode == WindowExpression.FRAMING_ROWS) {
                 // between unbounded preceding and current row
                 if (rowsLo == Long.MIN_VALUE && rowsHi == 0) {
                     return new MaxMinOverUnboundedRowsFrameFunction(args.get(0), GREATER_THAN, NAME);
@@ -467,7 +467,7 @@ public class MaxTimestampWindowFunctionFactory extends AbstractWindowFunctionFac
         @Override
         public void pass1(Record record, long recordOffset, WindowSPI spi) {
             computeNext(record);
-            Unsafe.getUnsafe().putLong(spi.getAddress(recordOffset, columnIndex), value);
+            Unsafe.putLong(spi.getAddress(recordOffset, columnIndex), value);
         }
     }
 
@@ -572,7 +572,7 @@ public class MaxTimestampWindowFunctionFactory extends AbstractWindowFunctionFac
 
             long val = value != null ? value.getTimestamp(0) : Numbers.LONG_NULL;
 
-            Unsafe.getUnsafe().putLong(spi.getAddress(recordOffset, columnIndex), val);
+            Unsafe.putLong(spi.getAddress(recordOffset, columnIndex), val);
         }
     }
 
@@ -915,7 +915,7 @@ public class MaxTimestampWindowFunctionFactory extends AbstractWindowFunctionFac
         @Override
         public void pass1(Record record, long recordOffset, WindowSPI spi) {
             computeNext(record);
-            Unsafe.getUnsafe().putLong(spi.getAddress(recordOffset, columnIndex), maxMin);
+            Unsafe.putLong(spi.getAddress(recordOffset, columnIndex), maxMin);
         }
 
         /**
@@ -1246,7 +1246,7 @@ public class MaxTimestampWindowFunctionFactory extends AbstractWindowFunctionFac
         @Override
         public void pass1(Record record, long recordOffset, WindowSPI spi) {
             computeNext(record);
-            Unsafe.getUnsafe().putLong(spi.getAddress(recordOffset, columnIndex), maxMin);
+            Unsafe.putLong(spi.getAddress(recordOffset, columnIndex), maxMin);
         }
 
         /**
@@ -1616,7 +1616,7 @@ public class MaxTimestampWindowFunctionFactory extends AbstractWindowFunctionFac
         @Override
         public void pass1(Record record, long recordOffset, WindowSPI spi) {
             computeNext(record);
-            Unsafe.getUnsafe().putLong(spi.getAddress(recordOffset, columnIndex), maxMin);
+            Unsafe.putLong(spi.getAddress(recordOffset, columnIndex), maxMin);
         }
 
         /**
@@ -1926,7 +1926,7 @@ public class MaxTimestampWindowFunctionFactory extends AbstractWindowFunctionFac
         @Override
         public void pass1(Record record, long recordOffset, WindowSPI spi) {
             computeNext(record);
-            Unsafe.getUnsafe().putLong(spi.getAddress(recordOffset, columnIndex), maxMin);
+            Unsafe.putLong(spi.getAddress(recordOffset, columnIndex), maxMin);
         }
 
         /**
@@ -2145,7 +2145,7 @@ public class MaxTimestampWindowFunctionFactory extends AbstractWindowFunctionFac
         @Override
         public void pass1(Record record, long recordOffset, WindowSPI spi) {
             computeNext(record);
-            Unsafe.getUnsafe().putLong(spi.getAddress(recordOffset, columnIndex), maxMin);
+            Unsafe.putLong(spi.getAddress(recordOffset, columnIndex), maxMin);
         }
 
         /**
@@ -2258,7 +2258,7 @@ public class MaxTimestampWindowFunctionFactory extends AbstractWindowFunctionFac
         @Override
         public void pass1(Record record, long recordOffset, WindowSPI spi) {
             computeNext(record);
-            Unsafe.getUnsafe().putLong(spi.getAddress(recordOffset, columnIndex), maxMin);
+            Unsafe.putLong(spi.getAddress(recordOffset, columnIndex), maxMin);
         }
 
         /**
@@ -2366,7 +2366,7 @@ public class MaxTimestampWindowFunctionFactory extends AbstractWindowFunctionFac
          */
         @Override
         public void pass2(Record record, long recordOffset, WindowSPI spi) {
-            Unsafe.getUnsafe().putLong(spi.getAddress(recordOffset, columnIndex), maxMin);
+            Unsafe.putLong(spi.getAddress(recordOffset, columnIndex), maxMin);
         }
 
         /**

@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -31,17 +31,15 @@ import io.questdb.std.ObjectFactory;
 import org.jetbrains.annotations.Nullable;
 
 public class WithClauseModel implements Mutable {
-
     public static final ObjectFactory<WithClauseModel> FACTORY = WithClauseModel::new;
-    private QueryModel model;
+    private IQueryModel model;
     private LowerCaseCharSequenceObjHashMap<WithClauseModel> originalWithClauses;
-
-    /* Size of withClauses at time of `of()` method call . We need to maintain the 'snapshot' because
-       map can grow and subsequent WITH clause can override table used by current one, leading to stack overflow on re-evaluation .*/
-    private int originalWithClausesSize;
+    // Size of withClauses at time of `of()` method call. We need to maintain the 'snapshot' because
+    // map can grow and subsequent WITH clause can override table used by current one,
+    // leading to stack overflow on re-evaluation.
+    private int originalWithClausesSize = -1;
     private int position;
     private LowerCaseCharSequenceObjHashMap<WithClauseModel> withClauses;
-
     private boolean withClausesInitialized;
 
     private WithClauseModel() {
@@ -69,15 +67,15 @@ public class WithClauseModel implements Mutable {
         return withClauses;
     }
 
-    public void of(int position, LowerCaseCharSequenceObjHashMap<WithClauseModel> withClauses, QueryModel model) {
+    public void of(int position, LowerCaseCharSequenceObjHashMap<WithClauseModel> withClauses, IQueryModel model) {
         this.position = position;
         this.model = model;
         this.originalWithClauses = withClauses;
         this.originalWithClausesSize = withClauses.size();
     }
 
-    public QueryModel popModel() {
-        QueryModel m = model;
+    public IQueryModel popModel() {
+        IQueryModel m = model;
         model = null;
         return m;
     }
@@ -87,7 +85,6 @@ public class WithClauseModel implements Mutable {
         if (originalWithClausesSize == 0) {
             return null;
         } else {
-
             LowerCaseCharSequenceObjHashMap<WithClauseModel> subMap = new LowerCaseCharSequenceObjHashMap<>();
             ObjList<CharSequence> keys = originalWithClauses.keys();
             for (int i = 0; i < originalWithClausesSize; i++) {

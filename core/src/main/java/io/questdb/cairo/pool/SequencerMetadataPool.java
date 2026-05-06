@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -99,7 +99,7 @@ public class SequencerMetadataPool extends AbstractMultiTenantPool<SequencerMeta
         public void addColumn(
                 String columnName,
                 int columnType,
-                boolean columnIndexed,
+                byte indexType,
                 int indexValueBlockCapacity,
                 boolean symbolTableStatic,
                 int writerIndex,
@@ -112,7 +112,7 @@ public class SequencerMetadataPool extends AbstractMultiTenantPool<SequencerMeta
                         new TableColumnMetadata(
                                 columnName,
                                 columnType,
-                                columnIndexed,
+                                indexType,
                                 indexValueBlockCapacity,
                                 symbolTableStatic,
                                 null,

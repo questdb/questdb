@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -82,12 +82,12 @@ public class LatestByTest extends AbstractCairoTest {
             assertQuery(
                     """
                             x\tohoh
+                            7\t25
+                            9\t29
                             15\t29
                             17\t26
-                            9\t29
-                            7\t25
                             """,
-                    "select a+b*c x, sum(z)+25 ohoh from zyzy where a in (x,y) and b = 3 latest on ts partition by x;",
+                    "select a+b*c x, sum(z)+25 ohoh from zyzy where a in (x,y) and b = 3 latest on ts partition by x order by x;",
                     true
             );
         });
@@ -266,6 +266,51 @@ public class LatestByTest extends AbstractCairoTest {
                     "select ts, s from t " +
                             "where s in ('a', 'b') " +
                             "latest on ts partition by s",
+                    "ts",
+                    true,
+                    true
+            );
+        });
+    }
+
+    @Test
+    public void testLatestByInsertNullSymbols() throws Exception {
+        assertMemoryLeak(() -> {
+            Assume.assumeTrue(ColumnType.isTimestampMicro(timestampType.getTimestampType()));
+            execute("create table t (ts timestamp, s symbol, s2 symbol) timestamp (ts) partition by month");
+            execute("insert into t(ts) values ('2025-01-01'),('2025-01-02'),('2025-01-03')");
+            execute("insert into t values ('2025-01-04', 'symSA', 'symS2A')");
+            assertQuery(
+                    """
+                            ts\ts2\ts
+                            2025-01-03T00:00:00.000000Z\t\t
+                            2025-01-04T00:00:00.000000Z\tsymS2A\tsymSA
+                            """,
+                    "select ts, s2, s from t " +
+                            "latest on ts partition by s, s2",
+                    "ts",
+                    true,
+                    true
+            );
+        });
+    }
+
+    @Test
+    public void testLatestByInsertNullSymbolsOnWal() throws Exception {
+        assertMemoryLeak(() -> {
+            Assume.assumeTrue(ColumnType.isTimestampMicro(timestampType.getTimestampType()));
+            execute("create table t (ts timestamp, s symbol, s2 symbol) timestamp (ts) partition by month wal");
+            execute("insert into t(ts) values ('2025-01-01'),('2025-01-02'),('2025-01-03')");
+            execute("insert into t values ('2025-01-04', 'symSA', 'symS2A')");
+            drainWalQueue();
+            assertQuery(
+                    """
+                            ts\ts2\ts
+                            2025-01-03T00:00:00.000000Z\t\t
+                            2025-01-04T00:00:00.000000Z\tsymS2A\tsymSA
+                            """,
+                    "select ts, s2, s from t " +
+                            "latest on ts partition by s, s2",
                     "ts",
                     true,
                     true

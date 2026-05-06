@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -45,7 +45,7 @@ import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.window.WindowContext;
 import io.questdb.griffin.engine.window.WindowFunction;
-import io.questdb.griffin.model.WindowColumn;
+import io.questdb.griffin.model.WindowExpression;
 import io.questdb.std.IntList;
 import io.questdb.std.LongList;
 import io.questdb.std.MemoryTag;
@@ -83,7 +83,7 @@ public class FirstValueDoubleWindowFunctionFactory extends AbstractWindowFunctio
                     NAME,
                     rowsLo,
                     rowsHi,
-                    windowContext.getFramingMode() == WindowColumn.FRAMING_RANGE,
+                    windowContext.getFramingMode() == WindowExpression.FRAMING_RANGE,
                     windowContext.getPartitionByRecord());
         }
 
@@ -105,7 +105,7 @@ public class FirstValueDoubleWindowFunctionFactory extends AbstractWindowFunctio
         long rowsLo = windowContext.getRowsLo();
         long rowsHi = windowContext.getRowsHi();
         if (partitionByRecord != null) {
-            if (framingMode == WindowColumn.FRAMING_RANGE) {
+            if (framingMode == WindowExpression.FRAMING_RANGE) {
                 // moving first_value() ignore nulls over whole partition (no order by, default frame) or (order by, unbounded preceding to unbounded following)
                 if (windowContext.isDefaultFrame() && (!windowContext.isOrdered() || windowContext.getRowsHi() == Long.MAX_VALUE)) {
                     Map map = MapFactory.createUnorderedMap(
@@ -175,7 +175,7 @@ public class FirstValueDoubleWindowFunctionFactory extends AbstractWindowFunctio
                             timestampIndex
                     );
                 }
-            } else if (framingMode == WindowColumn.FRAMING_ROWS) {
+            } else if (framingMode == WindowExpression.FRAMING_ROWS) {
                 //between unbounded preceding and current row
                 if (rowsLo == Long.MIN_VALUE && rowsHi == 0) {
                     Map map = MapFactory.createUnorderedMap(
@@ -241,7 +241,7 @@ public class FirstValueDoubleWindowFunctionFactory extends AbstractWindowFunctio
                 }
             }
         } else { // no partition key
-            if (framingMode == WindowColumn.FRAMING_RANGE) {
+            if (framingMode == WindowExpression.FRAMING_RANGE) {
                 // if there's no order by then all elements are equal in range mode, thus calculation is done on whole result set
                 if (!windowContext.isOrdered() && windowContext.isDefaultFrame()) {
                     return new FirstNotNullValueOverWholeResultSetFunction(args.get(0));
@@ -267,7 +267,7 @@ public class FirstValueDoubleWindowFunctionFactory extends AbstractWindowFunctio
                             timestampIndex
                     );
                 }
-            } else if (framingMode == WindowColumn.FRAMING_ROWS) {
+            } else if (framingMode == WindowExpression.FRAMING_ROWS) {
                 // between unbounded preceding and [current row | unbounded following]
                 if (rowsLo == Long.MIN_VALUE && (rowsHi == 0 || rowsHi == Long.MAX_VALUE)) {
                     return new FirstNotNullValueOverWholeResultSetFunction(args.get(0));
@@ -309,7 +309,7 @@ public class FirstValueDoubleWindowFunctionFactory extends AbstractWindowFunctio
         long rowsLo = windowContext.getRowsLo();
         long rowsHi = windowContext.getRowsHi();
         if (partitionByRecord != null) {
-            if (framingMode == WindowColumn.FRAMING_RANGE) {
+            if (framingMode == WindowExpression.FRAMING_RANGE) {
                 // moving average over whole partition (no order by, default frame) or (order by, unbounded preceding to unbounded following)
                 if (windowContext.isDefaultFrame() && (!windowContext.isOrdered() || windowContext.getRowsHi() == Long.MAX_VALUE)) {
                     Map map = MapFactory.createUnorderedMap(
@@ -380,7 +380,7 @@ public class FirstValueDoubleWindowFunctionFactory extends AbstractWindowFunctio
                             timestampIndex
                     );
                 }
-            } else if (framingMode == WindowColumn.FRAMING_ROWS) {
+            } else if (framingMode == WindowExpression.FRAMING_ROWS) {
                 //between unbounded preceding and current row
                 if (rowsLo == Long.MIN_VALUE && rowsHi == 0) {
                     Map map = MapFactory.createUnorderedMap(
@@ -445,7 +445,7 @@ public class FirstValueDoubleWindowFunctionFactory extends AbstractWindowFunctio
                 }
             }
         } else { // no partition key
-            if (framingMode == WindowColumn.FRAMING_RANGE) {
+            if (framingMode == WindowExpression.FRAMING_RANGE) {
                 // if there's no order by then all elements are equal in range mode, thus calculation is done on whole result set
                 if (!windowContext.isOrdered() && windowContext.isDefaultFrame()) {
                     return new FirstValueOverWholeResultSetFunction(args.get(0));
@@ -471,7 +471,7 @@ public class FirstValueDoubleWindowFunctionFactory extends AbstractWindowFunctio
                             timestampIndex
                     );
                 }
-            } else if (framingMode == WindowColumn.FRAMING_ROWS) {
+            } else if (framingMode == WindowExpression.FRAMING_ROWS) {
                 // between unbounded preceding and [current row | unbounded following]
                 if (rowsLo == Long.MIN_VALUE && (rowsHi == 0 || rowsHi == Long.MAX_VALUE)) {
                     return new FirstValueOverWholeResultSetFunction(args.get(0));
@@ -549,7 +549,7 @@ public class FirstValueDoubleWindowFunctionFactory extends AbstractWindowFunctio
             key.put(partitionByRecord, partitionBySink);
             MapValue value = key.findValue();
             double val = value != null ? value.getDouble(0) : Double.NaN;
-            Unsafe.getUnsafe().putDouble(spi.getAddress(recordOffset, columnIndex), val);
+            Unsafe.putDouble(spi.getAddress(recordOffset, columnIndex), val);
         }
     }
 
@@ -1033,7 +1033,7 @@ public class FirstValueDoubleWindowFunctionFactory extends AbstractWindowFunctio
 
         @Override
         public void pass2(Record record, long recordOffset, WindowSPI spi) {
-            Unsafe.getUnsafe().putDouble(spi.getAddress(recordOffset, columnIndex), value);
+            Unsafe.putDouble(spi.getAddress(recordOffset, columnIndex), value);
         }
 
         @Override
@@ -1091,7 +1091,7 @@ public class FirstValueDoubleWindowFunctionFactory extends AbstractWindowFunctio
         @Override
         public void pass1(Record record, long recordOffset, WindowSPI spi) {
             computeNext(record);
-            Unsafe.getUnsafe().putDouble(spi.getAddress(recordOffset, columnIndex), value);
+            Unsafe.putDouble(spi.getAddress(recordOffset, columnIndex), value);
         }
     }
 
@@ -1139,7 +1139,7 @@ public class FirstValueDoubleWindowFunctionFactory extends AbstractWindowFunctio
         @Override
         public void pass1(Record record, long recordOffset, WindowSPI spi) {
             computeNext(record);
-            Unsafe.getUnsafe().putDouble(spi.getAddress(recordOffset, columnIndex), firstValue);
+            Unsafe.putDouble(spi.getAddress(recordOffset, columnIndex), firstValue);
         }
     }
 
@@ -1335,7 +1335,7 @@ public class FirstValueDoubleWindowFunctionFactory extends AbstractWindowFunctio
         @Override
         public void pass1(Record record, long recordOffset, WindowSPI spi) {
             computeNext(record);
-            Unsafe.getUnsafe().putDouble(spi.getAddress(recordOffset, columnIndex), firstValue);
+            Unsafe.putDouble(spi.getAddress(recordOffset, columnIndex), firstValue);
         }
 
         @Override
@@ -1492,7 +1492,7 @@ public class FirstValueDoubleWindowFunctionFactory extends AbstractWindowFunctio
         @Override
         public void pass1(Record record, long recordOffset, WindowSPI spi) {
             computeNext(record);
-            Unsafe.getUnsafe().putDouble(spi.getAddress(recordOffset, columnIndex), firstValue);
+            Unsafe.putDouble(spi.getAddress(recordOffset, columnIndex), firstValue);
         }
 
         @Override
@@ -1693,7 +1693,7 @@ public class FirstValueDoubleWindowFunctionFactory extends AbstractWindowFunctio
         @Override
         public void pass1(Record record, long recordOffset, WindowSPI spi) {
             computeNext(record);
-            Unsafe.getUnsafe().putDouble(spi.getAddress(recordOffset, columnIndex), firstValue);
+            Unsafe.putDouble(spi.getAddress(recordOffset, columnIndex), firstValue);
         }
 
         @Override
@@ -1825,7 +1825,7 @@ public class FirstValueDoubleWindowFunctionFactory extends AbstractWindowFunctio
         @Override
         public void pass1(Record record, long recordOffset, WindowSPI spi) {
             computeNext(record);
-            Unsafe.getUnsafe().putDouble(spi.getAddress(recordOffset, columnIndex), firstValue);
+            Unsafe.putDouble(spi.getAddress(recordOffset, columnIndex), firstValue);
         }
 
         @Override
@@ -1926,7 +1926,7 @@ public class FirstValueDoubleWindowFunctionFactory extends AbstractWindowFunctio
         @Override
         public void pass1(Record record, long recordOffset, WindowSPI spi) {
             computeNext(record);
-            Unsafe.getUnsafe().putDouble(spi.getAddress(recordOffset, columnIndex), value);
+            Unsafe.putDouble(spi.getAddress(recordOffset, columnIndex), value);
         }
 
         @Override
@@ -1981,7 +1981,7 @@ public class FirstValueDoubleWindowFunctionFactory extends AbstractWindowFunctio
         @Override
         public void pass1(Record record, long recordOffset, WindowSPI spi) {
             computeNext(record);
-            Unsafe.getUnsafe().putDouble(spi.getAddress(recordOffset, columnIndex), value);
+            Unsafe.putDouble(spi.getAddress(recordOffset, columnIndex), value);
         }
 
         @Override

@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -112,7 +112,13 @@ public class SqlJitCompilerScalarBenchmark {
     @Setup(Level.Iteration)
     public void setup() throws Exception {
         engine = new CairoEngine(configuration);
-        ctx = new SqlExecutionContextImpl(engine, 1);
+        ctx = new SqlExecutionContextImpl(engine, 1).with(
+                configuration.getFactoryProvider().getSecurityContextFactory().getRootContext(),
+                null,
+                null,
+                -1,
+                null
+        );
         compiler = new SqlCompilerImpl(engine);
 
         boolean jitShouldBeEnabled = false;

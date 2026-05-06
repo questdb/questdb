@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -31,7 +31,7 @@ import io.questdb.griffin.engine.functions.AbstractUnaryDateFunction;
 /**
  * Abstract base class for functions that cast values to date.
  */
-public abstract class AbstractCastToDateFunction extends AbstractUnaryDateFunction {
+public abstract class AbstractCastToDateFunction extends AbstractUnaryDateFunction implements CastFunction {
 
     /**
      * Constructs a new cast to date function.

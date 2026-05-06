@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -1759,6 +1759,19 @@ public class JoinTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testAsofJoinWithComplexConditionFails4() throws Exception {
+        // Same-table equality on the slave side (l2 = m2) is now routed to the
+        // outer-join expression clause and surfaced as an unsupported-expression
+        // error, instead of being silently dropped.
+        assertMemoryLeak(() -> {
+            execute("create table t1 (l1 long, ts1 timestamp) timestamp(ts1) partition by year");
+            execute("create table t2 (l2 long, m2 long, ts2 timestamp) timestamp(ts2) partition by year");
+
+            assertFailure("select * from t1 asof join t2 on l1=l2 and l2=m2", "unsupported ASOF join expression [expr='l2 = m2']", 45);
+        });
+    }
+
+    @Test
     public void testCrossJoinAllTypes() throws Exception {
         assertMemoryLeak(() -> {
             final String expected = """
@@ -2004,6 +2017,29 @@ public class JoinTest extends AbstractCairoTest {
 
             // filter is applied to final join result
             assertQueryNoLeakCheck(expected, "select * from x cross join y", "k", false, true);
+        });
+    }
+
+    @Test
+    public void testCrossJoinWithMultiColumnQualifiedJoinKeys() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (event INT, origin INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO t VALUES (1, 1, '2024-01-01T00:00:00.000000Z'), (2, 2, '2024-01-02T00:00:00.000000Z')");
+            assertQueryNoLeakCheck(
+                    """
+                            origin\tcount
+                            1\t4
+                            2\t4
+                            """,
+                    "SELECT T1.origin, count(*) " +
+                            "FROM t T1 " +
+                            "CROSS JOIN t T2 " +
+                            "CROSS JOIN t T3 " +
+                            "JOIN t T4 ON T3.event = T4.event AND T3.origin = T4.origin " +
+                            "GROUP BY T1.origin " +
+                            "ORDER BY T1.origin",
+                    null, true, true
+            );
         });
     }
 
@@ -2781,6 +2817,95 @@ public class JoinTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testJoinInnerPostJoinAndConstFilter() throws Exception {
+        // Regression test for https://github.com/questdb/questdb/issues/6762
+        // When WHERE has both a column-referencing condition (postJoinWhereClause)
+        // and a non-column, non-constant condition (constWhereClause like NOW() = NOW()),
+        // the optimizer merges them into a single postJoinWhereClause so the code
+        // generator applies one filter instead of nesting FilteredRecordCursorFactory.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (val INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO t VALUES
+                    (1, '2024-01-01T00:00:00.000000Z'),
+                    (2, '2024-01-02T00:00:00.000000Z'),
+                    (3, '2024-01-03T00:00:00.000000Z')
+                    """);
+            assertQueryNoLeakCheck(
+                    """
+                            val\tval1
+                            1\t2
+                            1\t3
+                            2\t3
+                            """,
+                    "SELECT T1.val, T2.val FROM t T1 " +
+                            "INNER JOIN t T2 ON T1.ts < T2.ts " +
+                            "WHERE T1.val > 0 AND NOW() = NOW()",
+                    null, false, false
+            );
+        });
+    }
+
+    @Test
+    public void testJoinInnerPostJoinAndMixedConstFilter() throws Exception {
+        // When constWhereClause mixes compile-time and non-compile-time terms
+        // (e.g. false AND NOW() = NOW()), the optimizer splits them: false stays
+        // as constWhereClause and the code generator folds it to EmptyTableRecordCursorFactory.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (val INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO t VALUES (1, '2024-01-01T00:00:00.000000Z')");
+            assertQueryNoLeakCheck(
+                    "val\tval1\n",
+                    "SELECT T1.val, T2.val FROM t T1 " +
+                            "INNER JOIN t T2 ON T1.ts < T2.ts " +
+                            "WHERE T1.val > 0 AND 1 > 10 AND NOW() = NOW()",
+                    null, false, true
+            );
+        });
+    }
+
+    @Test
+    public void testJoinInnerPostJoinAndMixedConstTrueFilter() throws Exception {
+        // When constWhereClause has true AND NOW() = NOW(), the optimizer merges
+        // NOW() = NOW() into postJoinWhereClause and the code generator folds
+        // the remaining constant true away.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (val INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO t VALUES
+                    (1, '2024-01-01T00:00:00.000000Z'),
+                    (2, '2024-01-02T00:00:00.000000Z')
+                    """);
+            String query = "SELECT T1.val, T2.val FROM t T1 " +
+                    "INNER JOIN t T2 ON T1.ts < T2.ts " +
+                    "WHERE T1.val > 0 AND 1 < 10 AND NOW() = NOW()";
+            assertQueryNoLeakCheck(
+                    """
+                            val\tval1
+                            1\t2
+                            """,
+                    query,
+                    null, false, false
+            );
+            // Verify: no Empty table (1 < 10 folded as constant true), and
+            // now()=now() merged from constWhereClause into a post-join filter.
+            assertPlanNoLeakCheck(query, """
+                    SelectedRecord
+                        Filter filter: (T1.ts<T2.ts and now()=now())
+                            Cross Join
+                                Async JIT Filter workers: 1
+                                  filter: 0<val
+                                    PageFrame
+                                        Row forward scan
+                                        Frame forward scan on: t
+                                PageFrame
+                                    Row forward scan
+                                    Frame forward scan on: t
+                    """);
+        });
+    }
+
+    @Test
     public void testJoinInnerPostJoinFilter() throws Exception {
         assertMemoryLeak(() -> {
             final String expected = """
@@ -2841,6 +2966,46 @@ public class JoinTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testJoinInnerPostJoinMultipleJoinsFilter() throws Exception {
+        // Tests multi-way join with post-join WHERE conditions referencing
+        // columns from different join pairs.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t1 (val INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE t2 (val INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE t3 (val INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO t1 VALUES
+                    (1, '2024-01-01T00:00:00.000000Z'),
+                    (2, '2024-01-02T00:00:00.000000Z')
+                    """);
+            execute("""
+                    INSERT INTO t2 VALUES
+                    (10, '2024-01-02T00:00:00.000000Z'),
+                    (20, '2024-01-03T00:00:00.000000Z')
+                    """);
+            execute("""
+                    INSERT INTO t3 VALUES
+                    (100, '2024-01-03T00:00:00.000000Z'),
+                    (200, '2024-01-04T00:00:00.000000Z')
+                    """);
+            assertQueryNoLeakCheck(
+                    """
+                            val\tval1\tval2
+                            1\t10\t100
+                            1\t10\t200
+                            1\t20\t200
+                            2\t20\t200
+                            """,
+                    "SELECT a.val, b.val, c.val FROM t1 a " +
+                            "INNER JOIN t2 b ON a.ts < b.ts " +
+                            "INNER JOIN t3 c ON b.ts < c.ts " +
+                            "WHERE a.val + b.val > 5 AND b.val + c.val > 50",
+                    null, false, false
+            );
+        });
+    }
+
+    @Test
     public void testJoinInnerTimestamp() throws Exception {
         assertMemoryLeak(() -> {
             final String expected = """
@@ -2897,6 +3062,32 @@ public class JoinTest extends AbstractCairoTest {
                     null,
                     true,
                     false
+            );
+        });
+    }
+
+    @Test
+    public void testJoinMultiLevelViewWithDifferentColumnNames() throws Exception {
+        // reproducer for: InvalidColumnException when joining a table with a
+        // multi-level view where the ON clause uses different column names on
+        // each side (t.c1 = v.max). Requires: (1) multi-level view chain with
+        // a JOIN inside, (2) different column names in the outer join ON clause,
+        // and (3) a WHERE clause on the master table's join column.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (c1 INT, c2 INT)");
+            execute("INSERT INTO t VALUES (1, 10), (2, 20), (3, 30)");
+            execute("CREATE VIEW v1 AS (SELECT c2, max(c1) FROM t GROUP BY c2)");
+            execute("CREATE VIEW v2 AS (SELECT v1.max, v1.c2 FROM t t0 LEFT JOIN v1 ON t0.c1 = v1.max)");
+
+            assertQueryNoLeakCheck(
+                    """
+                            c2
+                            10
+                            """,
+                    "SELECT v2.c2 FROM t t0 JOIN v2 ON t0.c1 = v2.max WHERE t0.c1 = 1",
+                    null,
+                    false,
+                    true
             );
         });
     }
@@ -3562,24 +3753,22 @@ public class JoinTest extends AbstractCairoTest {
 
     @Test
     public void testJoiningSubqueryWithDotInColumnName() throws Exception {
-        assertMemoryLeak(() -> {
-            assertQueryNoLeakCheck(
-                    """
-                            "foo.bar"	1
-                            1	1
-                            2	1
-                            3	1
-                            4	1
-                            5	1
-                            """,
-                    """
-                            SELECT * FROM (SELECT x as "foo.bar" FROM long_sequence(5))
-                            LEFT JOIN (select 1) ON true;
-                            """,
-                    null,
-                    false
-            );
-        });
+        assertMemoryLeak(() -> assertQueryNoLeakCheck(
+                """
+                        "foo.bar"	1
+                        1	1
+                        2	1
+                        3	1
+                        4	1
+                        5	1
+                        """,
+                """
+                        SELECT * FROM (SELECT x as "foo.bar" FROM long_sequence(5))
+                        LEFT JOIN (select 1) ON true;
+                        """,
+                null,
+                false
+        ));
     }
 
     @Test
@@ -3601,29 +3790,29 @@ public class JoinTest extends AbstractCairoTest {
                             5\t5
                             """
             );
-            assertHashJoinSql(
-                    "select t1.*, t2.* from t2 right join t1 on i = j and abs(i) > 3",
+            assertHashJoinSqlWithRandomAccess(
+                    "select t1.*, t2.* from t2 right join t1 on i = j and abs(i) > 3 order by i, j",
                     """
                             i\tj
-                            5\t5
-                            4\t4
                             1\tnull
-                            3\tnull
                             2\tnull
+                            3\tnull
+                            4\t4
+                            5\t5
                             """
             );
-            assertHashJoinSql(
-                    "select * from t1 full join t2 on i = j and abs(i) > 3",
+            assertHashJoinSqlWithRandomAccess(
+                    "select * from t1 full join t2 on i = j and abs(i) > 3 order by i, j",
                     """
                             i\tj
+                            null\t1
+                            null\t2
+                            null\t3
                             1\tnull
                             2\tnull
                             3\tnull
                             4\t4
                             5\t5
-                            null\t1
-                            null\t3
-                            null\t2
                             """
             );
         });
@@ -3692,29 +3881,29 @@ public class JoinTest extends AbstractCairoTest {
                             5\te\tnull\t
                             """
             );
-            assertHashJoinSql(
-                    "select t1.*, t2.* from t2 right join t1 on j = i and (s1 ~ 'a' or s2 ~ 'c')",
+            assertHashJoinSqlWithRandomAccess(
+                    "select t1.*, t2.* from t2 right join t1 on j = i and (s1 ~ 'a' or s2 ~ 'c') order by i, s1, j, s2",
                     """
                             i\ts1\tj\ts2
                             1\ta\t1\ta
-                            3\tc\t3\tc
                             2\tb\tnull\t
+                            3\tc\t3\tc
                             4\td\tnull\t
                             5\te\tnull\t
                             """
             );
-            assertHashJoinSql(
-                    "select * from t1 full join t2 on j = i and (s1 ~ 'a' or s2 ~ 'c')",
+            assertHashJoinSqlWithRandomAccess(
+                    "select * from t1 full join t2 on j = i and (s1 ~ 'a' or s2 ~ 'c') order by i, s1, j, s2",
                     """
                             i\ts1\tj\ts2
+                            null\t\t2\tb
+                            null\t\t4\td
+                            null\t\t5\te
                             1\ta\t1\ta
                             2\tb\tnull\t
                             3\tc\t3\tc
                             4\td\tnull\t
                             5\te\tnull\t
-                            null\t\t2\tb
-                            null\t\t5\te
-                            null\t\t4\td
                             """
             );
         });
@@ -3738,13 +3927,13 @@ public class JoinTest extends AbstractCairoTest {
                             5\te\tnull\t
                             """
             );
-            assertHashJoinSql(
-                    "select t1.*, t2.* from t2 right join t1 on j = i and (s1 ~ '[abde]')",
+            assertHashJoinSqlWithRandomAccess(
+                    "select t1.*, t2.* from t2 right join t1 on j = i and (s1 ~ '[abde]') order by i, s1, j, s2",
                     """
                             i\ts1\tj\ts2
                             1\ta\tnull\t
-                            3\tc\tnull\t
                             2\tb\tnull\t
+                            3\tc\tnull\t
                             4\td\tnull\t
                             5\te\tnull\t
                             """
@@ -3932,33 +4121,33 @@ public class JoinTest extends AbstractCairoTest {
                     false
             );
             assertHashJoinSql(
-                    "select * from t1 right join t2 on j = i and (s1 ~ 'a' or s2 ~ 'c')",
+                    "select * from t1 right join t2 on j = i and (s1 ~ 'a' or s2 ~ 'c') order by i, s1, j, s2",
                     """
                             i\ts1\tj\ts2
+                            null\t\t2\tb
+                            null\t\t4\td
+                            null\t\t5\te
                             1\ta\t1\ta
                             3\tc\t3\tc
-                            null\t\t2\tb
-                            null\t\t5\te
-                            null\t\t4\td
                             """,
                     null,
-                    false
+                    true
             );
             assertHashJoinSql(
-                    "select * from t1 full join t2 on j = i and (s1 ~ 'a' or s2 ~ 'c')",
+                    "select * from t1 full join t2 on j = i and (s1 ~ 'a' or s2 ~ 'c') order by i, s1, j, s2",
                     """
                             i\ts1\tj\ts2
+                            null\t\t2\tb
+                            null\t\t4\td
+                            null\t\t5\te
                             1\ta\t1\ta
                             2\tb\tnull\t
                             3\tc\t3\tc
                             4\td\tnull\t
                             5\te\tnull\t
-                            null\t\t2\tb
-                            null\t\t5\te
-                            null\t\t4\td
                             """,
                     null,
-                    false
+                    true
             );
         });
     }
@@ -3982,31 +4171,31 @@ public class JoinTest extends AbstractCairoTest {
                             5\tnull
                             """
             );
-            assertHashJoinSql(
-                    "select * from t1 right join t2 on i = j and abs(i) > 5",
+            assertHashJoinSqlWithRandomAccess(
+                    "select * from t1 right join t2 on i = j and abs(i) > 5 order by i, j",
                     """
                             i\tj
                             null\t1
-                            null\t3
                             null\t2
-                            null\t5
+                            null\t3
                             null\t4
+                            null\t5
                             """
             );
-            assertHashJoinSql(
-                    "select * from t1 full join t2 on i = j and abs(i) > 5",
+            assertHashJoinSqlWithRandomAccess(
+                    "select * from t1 full join t2 on i = j and abs(i) > 5 order by i, j",
                     """
                             i\tj
+                            null\t1
+                            null\t2
+                            null\t3
+                            null\t4
+                            null\t5
                             1\tnull
                             2\tnull
                             3\tnull
                             4\tnull
                             5\tnull
-                            null\t1
-                            null\t3
-                            null\t2
-                            null\t5
-                            null\t4
                             """
             );
         });
@@ -4031,30 +4220,30 @@ public class JoinTest extends AbstractCairoTest {
                             5\tnull
                             """
             );
-            assertHashJoinSql(
-                    "select * from t1 right join t2 on i = j and abs(i) = 3",
+            assertHashJoinSqlWithRandomAccess(
+                    "select * from t1 right join t2 on i = j and abs(i) = 3 order by i, j",
                     """
                             i\tj
-                            3\t3
                             null\t1
                             null\t2
-                            null\t5
                             null\t4
+                            null\t5
+                            3\t3
                             """
             );
-            assertHashJoinSql(
-                    "select * from t1 full join t2 on i = j and abs(i) = 3",
+            assertHashJoinSqlWithRandomAccess(
+                    "select * from t1 full join t2 on i = j and abs(i) = 3 order by i, j",
                     """
                             i\tj
+                            null\t1
+                            null\t2
+                            null\t4
+                            null\t5
                             1\tnull
                             2\tnull
                             3\t3
                             4\tnull
                             5\tnull
-                            null\t1
-                            null\t2
-                            null\t5
-                            null\t4
                             """
             );
         });
@@ -4079,31 +4268,31 @@ public class JoinTest extends AbstractCairoTest {
                             5\tnull
                             """
             );
-            assertHashJoinSql(
-                    "select * from t1 right join t2 on i = j and abs(i) <= 0",
+            assertHashJoinSqlWithRandomAccess(
+                    "select * from t1 right join t2 on i = j and abs(i) <= 0 order by i, j",
                     """
                             i\tj
                             null\t1
-                            null\t3
                             null\t2
-                            null\t5
+                            null\t3
                             null\t4
+                            null\t5
                             """
             );
-            assertHashJoinSql(
-                    "select * from t1 full join t2 on i = j and abs(i) <= 0",
+            assertHashJoinSqlWithRandomAccess(
+                    "select * from t1 full join t2 on i = j and abs(i) <= 0 order by i, j",
                     """
                             i\tj
+                            null\t1
+                            null\t2
+                            null\t3
+                            null\t4
+                            null\t5
                             1\tnull
                             2\tnull
                             3\tnull
                             4\tnull
                             5\tnull
-                            null\t1
-                            null\t3
-                            null\t2
-                            null\t5
-                            null\t4
                             """
             );
         });
@@ -4128,29 +4317,29 @@ public class JoinTest extends AbstractCairoTest {
                             5\tnull
                             """
             );
-            assertHashJoinSql(
-                    "select * from t1 right join t2 on j = i and abs(i)*abs(j) >= 4 and i*j <= 9",
+            assertHashJoinSqlWithRandomAccess(
+                    "select * from t1 right join t2 on j = i and abs(i)*abs(j) >= 4 and i*j <= 9 order by i, j",
                     """
                             i\tj
+                            null\t1
+                            null\t4
+                            null\t5
                             2\t2
                             3\t3
-                            null\t1
-                            null\t5
-                            null\t4
                             """
             );
-            assertHashJoinSql(
-                    "select * from t1 full join t2 on j = i and abs(i)*abs(j) >= 4 and i*j <= 9",
+            assertHashJoinSqlWithRandomAccess(
+                    "select * from t1 full join t2 on j = i and abs(i)*abs(j) >= 4 and i*j <= 9 order by i, j",
                     """
                             i\tj
+                            null\t1
+                            null\t4
+                            null\t5
                             1\tnull
                             2\t2
                             3\t3
                             4\tnull
                             5\tnull
-                            null\t1
-                            null\t5
-                            null\t4
                             """
             );
         });
@@ -4175,29 +4364,29 @@ public class JoinTest extends AbstractCairoTest {
                             5\tnull
                             """
             );
-            assertHashJoinSql(
-                    "select * from t1 right join t2 on j = i and (j = 2 or i = 4)",
+            assertHashJoinSqlWithRandomAccess(
+                    "select * from t1 right join t2 on j = i and (j = 2 or i = 4) order by i, j",
                     """
                             i\tj
-                            2\t2
-                            4\t4
                             null\t1
                             null\t3
                             null\t5
+                            2\t2
+                            4\t4
                             """
             );
-            assertHashJoinSql(
-                    "select * from t1 full join t2 on j = i and (j = 2 or i = 4)",
+            assertHashJoinSqlWithRandomAccess(
+                    "select * from t1 full join t2 on j = i and (j = 2 or i = 4) order by i, j",
                     """
                             i\tj
+                            null\t1
+                            null\t3
+                            null\t5
                             1\tnull
                             2\t2
                             3\tnull
                             4\t4
                             5\tnull
-                            null\t1
-                            null\t3
-                            null\t5
                             """
             );
         });
@@ -4222,30 +4411,30 @@ public class JoinTest extends AbstractCairoTest {
                             5\tnull
                             """
             );
-            assertHashJoinSql(
-                    "select * from t1 right join t2 on j = i and (abs(j) = 2 or abs(i) = 4)",
+            assertHashJoinSqlWithRandomAccess(
+                    "select * from t1 right join t2 on j = i and (abs(j) = 2 or abs(i) = 4) order by i, j",
                     """
                             i\tj
-                            -4\t-4
-                            null\t1
                             null\t-2
+                            null\t1
                             null\t3
                             null\t5
+                            -4\t-4
                             """
             );
-            assertHashJoinSql(
-                    "select * from t1 full join t2 on j = i and (abs(j) = 2 or abs(i) = 4)",
+            assertHashJoinSqlWithRandomAccess(
+                    "select * from t1 full join t2 on j = i and (abs(j) = 2 or abs(i) = 4) order by i, j",
                     """
                             i\tj
+                            null\t-2
+                            null\t1
+                            null\t3
+                            null\t5
+                            -4\t-4
                             1\tnull
                             2\tnull
                             3\tnull
-                            -4\t-4
                             5\tnull
-                            null\t1
-                            null\t-2
-                            null\t3
-                            null\t5
                             """
             );
         });
@@ -4270,30 +4459,30 @@ public class JoinTest extends AbstractCairoTest {
                             5\tnull\t
                             """
             );
-            assertHashJoinSql(
-                    "select * from t1 right join t2 on j = i and s2 = 'a'",
+            assertHashJoinSqlWithRandomAccess(
+                    "select * from t1 right join t2 on j = i and s2 = 'a' order by i, j, s2",
                     """
                             i\tj\ts2
-                            1\t1\ta
                             null\t-2\tb
                             null\t3\tc
-                            null\t5\te
                             null\t4\td
+                            null\t5\te
+                            1\t1\ta
                             """
             );
-            assertHashJoinSql(
-                    "select * from t1 full join t2 on j = i and s2 = 'a'",
+            assertHashJoinSqlWithRandomAccess(
+                    "select * from t1 full join t2 on j = i and s2 = 'a' order by i, j, s2",
                     """
                             i\tj\ts2
+                            null\t-2\tb
+                            null\t3\tc
+                            null\t4\td
+                            null\t5\te
                             1\t1\ta
                             2\tnull\t
                             3\tnull\t
                             4\tnull\t
                             5\tnull\t
-                            null\t-2\tb
-                            null\t3\tc
-                            null\t5\te
-                            null\t4\td
                             """
             );
         });
@@ -4318,29 +4507,29 @@ public class JoinTest extends AbstractCairoTest {
                             5\tnull\t
                             """
             );
-            assertHashJoinSql(
-                    "select * from t1 right join t2 on j = i and s2 ~ '[ad]'",
+            assertHashJoinSqlWithRandomAccess(
+                    "select * from t1 right join t2 on j = i and s2 ~ '[ad]' order by i, j, s2",
                     """
                             i\tj\ts2
-                            1\t1\ta
-                            4\t4\td
                             null\t-2\tb
                             null\t3\tc
                             null\t5\te
+                            1\t1\ta
+                            4\t4\td
                             """
             );
-            assertHashJoinSql(
-                    "select * from t1 full join t2 on j = i and s2 ~ '[ad]'",
+            assertHashJoinSqlWithRandomAccess(
+                    "select * from t1 full join t2 on j = i and s2 ~ '[ad]' order by i, j, s2",
                     """
                             i\tj\ts2
+                            null\t-2\tb
+                            null\t3\tc
+                            null\t5\te
                             1\t1\ta
                             2\tnull\t
                             3\tnull\t
                             4\t4\td
                             5\tnull\t
-                            null\t-2\tb
-                            null\t3\tc
-                            null\t5\te
                             """
             );
         });
@@ -4438,31 +4627,31 @@ public class JoinTest extends AbstractCairoTest {
                             """
             );
 
-            assertHashJoinSql(
-                    "select * from t1 right join t2 on j = i and i = 1 where 1 = 1",
+            assertHashJoinSqlWithRandomAccess(
+                    "select * from t1 right join t2 on j = i and i = 1 where 1 = 1 order by i, s1, j, s2",
                     """
                             i\ts1\tj\ts2
-                            1\ta\t1\ta
-                            null\t\t3\tc
                             null\t\t2\tb
-                            null\t\t5\te
+                            null\t\t3\tc
                             null\t\t4\td
+                            null\t\t5\te
+                            1\ta\t1\ta
                             """
             );
 
-            assertHashJoinSql(
-                    "select * from t1 full join t2 on j = i and i = 1 where 1 = 1",
+            assertHashJoinSqlWithRandomAccess(
+                    "select * from t1 full join t2 on j = i and i = 1 where 1 = 1 order by i, s1, j, s2",
                     """
                             i\ts1\tj\ts2
+                            null\t\t2\tb
+                            null\t\t3\tc
+                            null\t\t4\td
+                            null\t\t5\te
                             1\ta\t1\ta
                             2\tb\tnull\t
                             3\tc\tnull\t
                             4\td\tnull\t
                             5\te\tnull\t
-                            null\t\t3\tc
-                            null\t\t2\tb
-                            null\t\t5\te
-                            null\t\t4\td
                             """
             );
         });
@@ -4487,30 +4676,30 @@ public class JoinTest extends AbstractCairoTest {
                             5\te\tnull\t
                             """
             );
-            assertHashJoinSql(
-                    "select * from t1 right join t2 on j = i and j = 1 where 1 = 1",
+            assertHashJoinSqlWithRandomAccess(
+                    "select * from t1 right join t2 on j = i and j = 1 where 1 = 1 order by i, s1, j, s2",
                     """
                             i\ts1\tj\ts2
-                            1\ta\t1\ta
-                            null\t\t3\tc
                             null\t\t2\tb
-                            null\t\t5\te
+                            null\t\t3\tc
                             null\t\t4\td
+                            null\t\t5\te
+                            1\ta\t1\ta
                             """
             );
-            assertHashJoinSql(
-                    "select * from t1 full join t2 on j = i and j = 1 where 1 = 1",
+            assertHashJoinSqlWithRandomAccess(
+                    "select * from t1 full join t2 on j = i and j = 1 where 1 = 1 order by i, s1, j, s2",
                     """
                             i\ts1\tj\ts2
+                            null\t\t2\tb
+                            null\t\t3\tc
+                            null\t\t4\td
+                            null\t\t5\te
                             1\ta\t1\ta
                             2\tb\tnull\t
                             3\tc\tnull\t
                             4\td\tnull\t
                             5\te\tnull\t
-                            null\t\t3\tc
-                            null\t\t2\tb
-                            null\t\t5\te
-                            null\t\t4\td
                             """
             );
         });
@@ -5032,6 +5221,98 @@ public class JoinTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testLeftJoinOnPredicateMasterOnly() throws Exception {
+        // Same-table equality on the master side (x.a = x.b) inside a LEFT/RIGHT/FULL OUTER ON
+        // clause must be honoured: rows where x.a != x.b cannot match any slave row.
+        // The optimiser previously dropped the predicate silently, joining all x rows.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (id INT, a INT, b INT)");
+            execute("INSERT INTO x VALUES (1, 1, 1), (2, 1, 2)");
+            execute("CREATE TABLE y (id INT)");
+            execute("INSERT INTO y VALUES (1), (2)");
+
+            assertQueryNoLeakCheck(
+                    """
+                            id\ta\tb\tid1
+                            1\t1\t1\t1
+                            2\t1\t2\tnull
+                            """,
+                    "SELECT x.id, x.a, x.b, y.id FROM x LEFT JOIN y ON x.id = y.id AND x.a = x.b ORDER BY x.id",
+                    null,
+                    true
+            );
+            assertQueryNoLeakCheck(
+                    """
+                            id\ta\tb\tid1
+                            1\t1\t1\t1
+                            null\tnull\tnull\t2
+                            """,
+                    "SELECT x.id, x.a, x.b, y.id FROM x RIGHT JOIN y ON x.id = y.id AND x.a = x.b ORDER BY y.id",
+                    null,
+                    true
+            );
+            assertQueryNoLeakCheck(
+                    """
+                            id\ta\tb\tid1
+                            null\tnull\tnull\t2
+                            1\t1\t1\t1
+                            2\t1\t2\tnull
+                            """,
+                    "SELECT x.id, x.a, x.b, y.id FROM x FULL JOIN y ON x.id = y.id AND x.a = x.b ORDER BY x.id, y.id",
+                    null,
+                    true
+            );
+        });
+    }
+
+    @Test
+    public void testLeftJoinOnPredicateSlaveOnly() throws Exception {
+        // Same-table equality on the slave side (y.a = y.b) inside a LEFT/RIGHT/FULL OUTER ON
+        // clause must be honoured: slave rows where y.a != y.b cannot match the master.
+        // The optimiser previously dropped the predicate silently, leaving every y row eligible.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (id INT)");
+            execute("INSERT INTO x VALUES (1), (2)");
+            execute("CREATE TABLE y (id INT, a INT, b INT)");
+            execute("INSERT INTO y VALUES (1, 1, 1), (1, 1, 2), (3, 5, 5)");
+
+            assertQueryNoLeakCheck(
+                    """
+                            id\tid1\ta\tb
+                            1\t1\t1\t1
+                            2\tnull\tnull\tnull
+                            """,
+                    "SELECT x.id, y.id, y.a, y.b FROM x LEFT JOIN y ON x.id = y.id AND y.a = y.b ORDER BY x.id",
+                    null,
+                    true
+            );
+            assertQueryNoLeakCheck(
+                    """
+                            id\tid1\ta\tb
+                            null\t1\t1\t2
+                            null\t3\t5\t5
+                            1\t1\t1\t1
+                            """,
+                    "SELECT x.id, y.id, y.a, y.b FROM x RIGHT JOIN y ON x.id = y.id AND y.a = y.b ORDER BY x.id, y.id, y.a, y.b",
+                    null,
+                    true
+            );
+            assertQueryNoLeakCheck(
+                    """
+                            id\tid1\ta\tb
+                            null\t1\t1\t2
+                            null\t3\t5\t5
+                            1\t1\t1\t1
+                            2\tnull\tnull\tnull
+                            """,
+                    "SELECT x.id, y.id, y.a, y.b FROM x FULL JOIN y ON x.id = y.id AND y.a = y.b ORDER BY x.id, y.id",
+                    null,
+                    true
+            );
+        });
+    }
+
+    @Test
     public void testLeftJoinWithConstantFalseFilter() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table t1 as (select x i from long_sequence(3))");
@@ -5039,7 +5320,8 @@ public class JoinTest extends AbstractCairoTest {
 
             assertQueryNoLeakCheck(
                     "i\tj\n",
-                    "select * from t1 join t2 on i=j and abs(1) = 0");
+                    "select * from t1 join t2 on i=j and abs(1) = 0"
+            );
             assertQueryNoLeakCheck(
                     """
                             i\tj
@@ -5047,26 +5329,33 @@ public class JoinTest extends AbstractCairoTest {
                             2\tnull
                             3\tnull
                             """,
-                    "select * from t1 left join t2 on i=j and abs(1) = 0");
+                    "select * from t1 left join t2 on i=j and abs(1) = 0"
+            );
             assertQueryNoLeakCheck(
                     """
                             i\tj
-                            null\t12
                             null\t11
+                            null\t12
                             null\t13
                             """,
-                    "select * from t1 right join t2 on i=j and abs(1) = 0");
+                    "select * from t1 right join t2 on i=j and abs(1) = 0 order by i, j",
+                    null,
+                    true
+            );
             assertQueryNoLeakCheck(
                     """
                             i\tj
+                            null\t11
+                            null\t12
+                            null\t13
                             1\tnull
                             2\tnull
                             3\tnull
-                            null\t12
-                            null\t11
-                            null\t13
                             """,
-                    "select * from t1 full join t2 on i=j and abs(1) = 0");
+                    "select * from t1 full join t2 on i=j and abs(1) = 0 order by i, j",
+                    null,
+                    true
+            );
         });
     }
 
@@ -5304,6 +5593,19 @@ public class JoinTest extends AbstractCairoTest {
             execute("create table t2 (l2 long, ts2 timestamp) timestamp(ts2) partition by year");
 
             assertFailure("select * from t1 lt join t2 on l1=abs(l2)", "unsupported LT join expression [expr='l1 = abs(l2)']", 33);
+        });
+    }
+
+    @Test
+    public void testLtJoinWithComplexConditionFails4() throws Exception {
+        // Same-table equality on the slave side (l2 = m2) is now routed to the
+        // outer-join expression clause and surfaced as an unsupported-expression
+        // error, instead of being silently dropped.
+        assertMemoryLeak(() -> {
+            execute("create table t1 (l1 long, ts1 timestamp) timestamp(ts1) partition by year");
+            execute("create table t2 (l2 long, m2 long, ts2 timestamp) timestamp(ts2) partition by year");
+
+            assertFailure("select * from t1 lt join t2 on l1=l2 and l2=m2", "unsupported LT join expression [expr='l2 = m2']", 43);
         });
     }
 
@@ -6361,6 +6663,19 @@ public class JoinTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testSpliceJoinWithComplexConditionFails4() throws Exception {
+        // Same-table equality on the slave side (l2 = m2) is now routed to the
+        // outer-join expression clause and surfaced as an unsupported-expression
+        // error, instead of being silently dropped.
+        assertMemoryLeak(() -> {
+            execute("create table t1 (l1 long, ts1 timestamp) timestamp(ts1) partition by year");
+            execute("create table t2 (l2 long, m2 long, ts2 timestamp) timestamp(ts2) partition by year");
+
+            assertFailure("select * from t1 splice join t2 on l1=l2 and l2=m2", "unsupported SPLICE join expression [expr='l2 = m2']", 47);
+        });
+    }
+
+    @Test
     public void testSpliceOfJoinAliasDuplication() throws Exception {
         assertMemoryLeak(() -> {
             // ASKS
@@ -7312,11 +7627,11 @@ public class JoinTest extends AbstractCairoTest {
                 FROM
                 (
                   SELECT *
-                  FROM trades b\s
-                  #JOIN_TYPE#\s
+                  FROM trades b
+                  #JOIN_TYPE#
                   (
-                    SELECT *\s
-                    FROM trades\s
+                    SELECT *
+                    FROM trades
                     WHERE price > 1
                       AND symbol = 'ETH-USD'
                   ) a ON #JOIN_CLAUSE#
@@ -7328,7 +7643,9 @@ public class JoinTest extends AbstractCairoTest {
         assertQueryNoLeakCheck(expected, query.replace("#JOIN_CLAUSE#", "symbol"), null, false, false);
         assertQueryNoLeakCheck(expected, query.replace("#JOIN_CLAUSE#", "a.symbol = b.symbol"), null, false, false);
         assertQueryNoLeakCheck(expected, query.replace("#JOIN_CLAUSE#", "a.symbol = b.symbol and a.price = b.price"), null, false, false);
-        assertQueryNoLeakCheck(expected, query.replace("#JOIN_CLAUSE#", "b.symbol = a.symbol and a.timestamp = b.timestamp"), null, false, false);
+        if (!joinType.contains("LT") && !joinType.contains("ASOF")) {
+            assertQueryNoLeakCheck(expected, query.replace("#JOIN_CLAUSE#", "b.symbol = a.symbol and a.timestamp = b.timestamp"), null, false, false);
+        }
     }
 
     private void testJoinConstantFalse0(boolean fullFatJoin) throws Exception {
@@ -7392,7 +7709,9 @@ public class JoinTest extends AbstractCairoTest {
 
                 @Override
                 public long openRO(LPSZ name) {
-                    if (Utf8s.endsWithAscii(name, Files.SEPARATOR + "ts.d") && counter.incrementAndGet() == 1) {
+                    // x.d is the first column file opened because the active columns
+                    // optimization skips ts.d when it is not in the query's column set
+                    if (Utf8s.endsWithAscii(name, Files.SEPARATOR + "x.d") && counter.incrementAndGet() == 1) {
                         return -1;
                     }
                     return TestFilesFacadeImpl.INSTANCE.openRO(name);
@@ -7408,7 +7727,7 @@ public class JoinTest extends AbstractCairoTest {
                 assertExceptionNoLeakCheck(sql, sqlExecutionContext, fullFatJoins);
             } catch (CairoException ex) {
                 TestUtils.assertContains(ex.getFlyweightMessage(), "could not open read-only");
-                TestUtils.assertContains(ex.getFlyweightMessage(), "ts.d");
+                TestUtils.assertContains(ex.getFlyweightMessage(), "x.d");
             }
         });
     }

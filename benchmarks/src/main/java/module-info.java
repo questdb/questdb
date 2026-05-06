@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -30,6 +30,7 @@ module io.questdb.benchmarks {
     requires simpleclient.common;
     requires org.jetbrains.annotations;
     requires java.sql;
+    requires io.questdb.client;
 
     exports org.questdb.jmh_generated;
 }

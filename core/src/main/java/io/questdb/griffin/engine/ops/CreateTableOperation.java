@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -47,6 +47,8 @@ public interface CreateTableOperation extends TableStructure, Operation {
     int getLikeTableNamePosition();
 
     OperationFuture getOperationFuture();
+
+    int getSelectSqlScanDirection();
 
     String getSelectText();
 

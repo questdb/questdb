@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -25,15 +25,19 @@
 package io.questdb.griffin.engine.ops;
 
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.IndexType;
 import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableUtils;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.engine.table.parquet.ParquetCompression;
+import io.questdb.griffin.engine.table.parquet.ParquetEncoding;
+import io.questdb.griffin.engine.table.ShowCreateTableRecordCursorFactory;
 import io.questdb.griffin.model.CreateTableColumnModel;
 import io.questdb.griffin.model.ExpressionNode;
-import io.questdb.griffin.model.QueryModel;
+import io.questdb.griffin.model.IQueryModel;
 import io.questdb.std.Chars;
 import io.questdb.std.IntList;
 import io.questdb.std.LowerCaseCharSequenceIntHashMap;
@@ -41,10 +45,9 @@ import io.questdb.std.LowerCaseCharSequenceObjHashMap;
 import io.questdb.std.Mutable;
 import io.questdb.std.ObjList;
 import io.questdb.std.str.CharSink;
+import io.questdb.std.str.Sinkable;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
-
-import static io.questdb.griffin.engine.table.ShowCreateTableRecordCursorFactory.ttlToSink;
 
 public class CreateTableOperationBuilderImpl implements CreateTableOperationBuilder, Mutable {
     private static final IntList castGroups = new IntList();
@@ -59,8 +62,9 @@ public class CreateTableOperationBuilderImpl implements CreateTableOperationBuil
     private int maxUncommittedRows;
     private long o3MaxLag = -1;
     private ExpressionNode partitionByExpr;
+    private Sinkable ttlToSinkOverride;
     // transient field, unoptimized AS SELECT model, used in toSink()
-    private QueryModel selectModel;
+    private IQueryModel selectModel;
     private CharSequence selectText;
     private int selectTextPosition;
     private int tableKind = TableUtils.TABLE_KIND_REGULAR_TABLE;
@@ -87,6 +91,7 @@ public class CreateTableOperationBuilderImpl implements CreateTableOperationBuil
             SqlExecutionContext sqlExecutionContext,
             CharSequence sqlText
     ) throws SqlException {
+        boolean autoIncludeTs = compiler.getEngine().getConfiguration().isPostingIndexAutoIncludeTimestamp();
         if (selectText != null) {
             return new CreateTableOperationImpl(
                     Chars.toString(sqlText),
@@ -110,7 +115,8 @@ public class CreateTableOperationBuilderImpl implements CreateTableOperationBuil
                     columnModels,
                     batchSize,
                     batchO3MaxLag,
-                    tableKind
+                    tableKind,
+                    autoIncludeTs
             );
         }
 
@@ -149,7 +155,8 @@ public class CreateTableOperationBuilderImpl implements CreateTableOperationBuil
                 maxUncommittedRows,
                 ttlHoursOrMonths,
                 ttlPosition,
-                walEnabled
+                walEnabled,
+                autoIncludeTs
         );
     }
 
@@ -166,6 +173,7 @@ public class CreateTableOperationBuilderImpl implements CreateTableOperationBuil
         maxUncommittedRows = 0;
         o3MaxLag = -1;
         partitionByExpr = null;
+        ttlToSinkOverride = null;
         tableNameExpr = null;
         timestampExpr = null;
         selectText = null;
@@ -200,7 +208,7 @@ public class CreateTableOperationBuilderImpl implements CreateTableOperationBuil
     }
 
     @Override
-    public QueryModel getQueryModel() {
+    public IQueryModel getQueryModel() {
         return selectModel;
     }
 
@@ -242,6 +250,14 @@ public class CreateTableOperationBuilderImpl implements CreateTableOperationBuil
         return walEnabled;
     }
 
+    void ttlToSink(CharSink<?> sink) {
+        if (ttlToSinkOverride != null) {
+            ttlToSinkOverride.toSink(sink);
+        } else {
+            ShowCreateTableRecordCursorFactory.ttlToSink(ttlHoursOrMonths, sink);
+        }
+    }
+
     public void setBatchO3MaxLag(long batchO3MaxLag) {
         this.batchO3MaxLag = batchO3MaxLag;
     }
@@ -274,8 +290,12 @@ public class CreateTableOperationBuilderImpl implements CreateTableOperationBuil
         this.partitionByExpr = partitionByExpr;
     }
 
+    public void setTtlToSinkOverride(Sinkable ttlToSinkOverride) {
+        this.ttlToSinkOverride = ttlToSinkOverride;
+    }
+
     @Override
-    public void setSelectModel(QueryModel selectModel) {
+    public void setSelectModel(IQueryModel selectModel) {
         this.selectModel = selectModel;
     }
 
@@ -371,6 +391,7 @@ public class CreateTableOperationBuilderImpl implements CreateTableOperationBuil
                     if (ColumnType.isSymbol(model.getColumnType())) {
                         symbolClauseToSink(sink, model);
                     }
+                    parquetClauseToSink(sink, model);
                 }
             }
             sink.putAscii(')');
@@ -382,11 +403,11 @@ public class CreateTableOperationBuilderImpl implements CreateTableOperationBuil
         }
         if (partitionByExpr != null) {
             sink.putAscii(" partition by ").put(partitionByExpr.token);
+            ttlToSink(sink);
             if (walEnabled) {
                 sink.putAscii(" wal");
             }
         }
-        ttlToSink(ttlHoursOrMonths, sink);
         if (volumeAlias != null) {
             sink.putAscii(" in volume '").put(volumeAlias).putAscii('\'');
         }
@@ -394,6 +415,31 @@ public class CreateTableOperationBuilderImpl implements CreateTableOperationBuil
 
     private static boolean isIPv4Cast(int from, int to) {
         return (from == ColumnType.STRING && to == ColumnType.IPv4) || (from == ColumnType.VARCHAR && to == ColumnType.IPv4);
+    }
+
+    private static void parquetClauseToSink(@NotNull CharSink<?> sink, CreateTableColumnModel model) {
+        int encoding = model.getParquetEncoding();
+        int compression = model.getParquetCompression();
+        if (encoding < 0 && compression < 0) {
+            return;
+        }
+        sink.putAscii(" parquet(");
+        if (encoding >= 0) {
+            sink.put(ParquetEncoding.getEncodingName(encoding));
+        } else {
+            sink.putAscii("default");
+        }
+        if (compression >= 0) {
+            sink.putAscii(", ");
+            sink.put(ParquetCompression.getCompressionName(compression));
+            int level = model.getParquetCompressionLevel();
+            if (level >= 0) {
+                sink.putAscii('(');
+                sink.put(level);
+                sink.putAscii(')');
+            }
+        }
+        sink.putAscii(')');
     }
 
     private static void symbolClauseToSink(@NotNull CharSink<?> sink, CreateTableColumnModel model) {
@@ -405,8 +451,15 @@ public class CreateTableOperationBuilderImpl implements CreateTableOperationBuil
             sink.putAscii(" nocache");
         }
         if (model.isIndexed()) {
-            sink.putAscii(" index capacity ");
-            sink.put(model.getIndexValueBlockSize());
+            sink.putAscii(" index");
+            byte indexType = model.getIndexType();
+            if (indexType != IndexType.BITMAP) {
+                sink.putAscii(" type ");
+                IndexType.putName(sink, indexType);
+            } else {
+                sink.putAscii(" capacity ");
+                sink.put(model.getIndexValueBlockSize());
+            }
         }
     }
 

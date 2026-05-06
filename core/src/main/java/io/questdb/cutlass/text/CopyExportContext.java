@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -209,6 +209,7 @@ public class CopyExportContext {
                 entry.fileName.put(e.fileName);
                 entry.phase = e.phase;
                 entry.populatedRowCount = e.populatedRowCount;
+                entry.streamingSendRowCount = e.streamingSendRowCount;
                 entry.startTime = e.startTime;
                 entry.workerId = e.workerId;
                 entry.finishedPartitionCount = e.finishedPartitionCount;
@@ -286,10 +287,8 @@ public class CopyExportContext {
             @Nullable final CharSequence msg,
             long errors,
             String tableName,
-            long copyID,
-            CopyExportResult result
+            long copyID
     ) {
-
         Throwable error = null;
         synchronized (this) {
             if (!initialized) {
@@ -345,10 +344,6 @@ public class CopyExportContext {
                     .$(", errors=").$(errors)
                     .I$();
         }
-
-        if (result != null) {
-            result.report(phase, status, msg);
-        }
     }
 
     public CreateTableOperation validateAndCreateParquetExportTableOp(
@@ -357,7 +352,9 @@ public class CopyExportContext {
             int partitionBy,
             String tableName,
             String sqlText,
-            int tableOrSelectTextPos
+            int tableOrSelectTextPos,
+            @Nullable CharSequence bloomFilterColumns,
+            int bloomFilterColumnsPosition
     ) throws SqlException {
         CreateTableOperationImpl createOp = null;
         final CairoEngine engine = executionContext.getCairoEngine();
@@ -382,7 +379,9 @@ public class CopyExportContext {
                         false
                 );
                 createOp.setTableKind(TableUtils.TABLE_KIND_TEMP_PARQUET_EXPORT);
+                createOp.setBatchSize(engine.getConfiguration().getParquetExportBatchSize());
                 createOp.validateAndUpdateMetadataFromSelect(rcf.getMetadata(), rcf.getScanDirection());
+                CopyExportRequestTask.validateBloomFilterColumns(bloomFilterColumns, rcf.getMetadata(), bloomFilterColumnsPosition - tableOrSelectTextPos);
             }
         } catch (SqlException ex) {
             ex.setPosition(ex.getPosition() + tableOrSelectTextPos);
@@ -420,6 +419,7 @@ public class CopyExportContext {
         private CopyExportRequestTask.Phase phase;
         private long populatedRowCount = 0;
         private long startTime;
+        private long streamingSendRowCount = 0;
         private int totalPartitionCount = 0;
         private long totalRowCount = 0;
         private CharSequence trigger;
@@ -457,6 +457,10 @@ public class CopyExportContext {
             return startTime;
         }
 
+        public long getStreamingSendRowCount() {
+            return streamingSendRowCount;
+        }
+
         public int getTotalPartitionCount() {
             return totalPartitionCount;
         }
@@ -485,6 +489,7 @@ public class CopyExportContext {
         SqlExecutionCircuitBreaker realCircuitBreaker;
         SecurityContext securityContext;
         long startTime = Numbers.LONG_NULL;
+        long streamingSendRowCount = 0;
         int totalPartitionCount = 0;
         long totalRowCount = 0;
         CopyTrigger trigger = CopyTrigger.NONE;
@@ -508,6 +513,7 @@ public class CopyExportContext {
             this.totalPartitionCount = 0;
             this.totalRowCount = 0;
             this.trigger = CopyTrigger.NONE;
+            this.streamingSendRowCount = 0;
         }
 
         public SqlExecutionCircuitBreaker getCircuitBreaker() {
@@ -565,6 +571,10 @@ public class CopyExportContext {
         public void setStartTime(long startTime, int workerId) {
             this.startTime = startTime;
             this.workerId = workerId;
+        }
+
+        public void setStreamingSendRowCount(long streamingSendRowCount) {
+            this.streamingSendRowCount = streamingSendRowCount;
         }
 
         public void setTotalPartitionCount(int totalPartitionCount) {

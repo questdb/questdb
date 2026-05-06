@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -45,7 +45,6 @@ import io.questdb.std.str.Utf16Sink;
 import java.io.Closeable;
 
 public class JoinRecordMetadata extends AbstractRecordMetadata implements Closeable {
-
     private static final ColumnTypes keyTypes;
     private static final ColumnTypes valueTypes;
     private final Map map;
@@ -66,11 +65,13 @@ public class JoinRecordMetadata extends AbstractRecordMetadata implements Closea
         this.refCount = 1;
     }
 
+    // This overload does not propagate parquetEncodingConfig because it is only
+    // used for synthetic horizon join pseudo-columns that never carry encoding overrides.
     public void add(
             CharSequence tableAlias,
             CharSequence columnName,
             int columnType,
-            boolean indexFlag,
+            byte indexType,
             int indexValueBlockCapacity,
             boolean symbolTableStatic,
             RecordMetadata metadata
@@ -82,7 +83,7 @@ public class JoinRecordMetadata extends AbstractRecordMetadata implements Closea
             cm = new TableColumnMetadata(
                     b.put(tableAlias).put('.').put(columnName).toString(),
                     columnType,
-                    indexFlag,
+                    indexType,
                     indexValueBlockCapacity,
                     symbolTableStatic,
                     metadata
@@ -91,7 +92,7 @@ public class JoinRecordMetadata extends AbstractRecordMetadata implements Closea
             cm = new TableColumnMetadata(
                     Chars.toString(columnName),
                     columnType,
-                    indexFlag,
+                    indexType,
                     indexValueBlockCapacity,
                     symbolTableStatic,
                     metadata
@@ -109,11 +110,12 @@ public class JoinRecordMetadata extends AbstractRecordMetadata implements Closea
             cm = new TableColumnMetadata(
                     b.put(tableAlias).put('.').put(columnName).toString(),
                     m.getColumnType(),
-                    m.isSymbolIndexFlag(),
+                    m.getIndexType(),
                     m.getIndexValueBlockCapacity(),
                     m.isSymbolTableStatic(),
                     m.getMetadata()
             );
+            cm.setParquetEncodingConfig(m.getParquetEncodingConfig());
         } else {
             cm = m;
         }

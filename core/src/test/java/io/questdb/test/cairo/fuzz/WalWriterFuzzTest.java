@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -111,6 +111,8 @@ public class WalWriterFuzzTest extends AbstractFuzzTest {
                 1.0,
                 0.01,
                 0.01,
+                0.0,
+                0.0,
                 0.1,
                 0.0,
                 0.8,
@@ -156,6 +158,37 @@ public class WalWriterFuzzTest extends AbstractFuzzTest {
     }
 
     @Test
+    public void testConvertPartitionToParquet() throws Exception {
+        Rnd rnd = generateRandom(LOG);
+        setTestParams(rnd);
+
+        setFuzzProbabilities(
+                0.01,
+                0.01,
+                0.01,
+                0.1,
+                0.05,
+                0.05,
+                0.1,
+                0.0,
+                1.0,
+                0.01,
+                0.01,
+                0.5,
+                0.5,
+                0.1,
+                0.0,
+                0.8,
+                0.00,
+                0,
+                0.01,
+                0.1
+        );
+        setFuzzCounts(rnd.nextBoolean(), 10_000, 300, 20, 10, 1000, 100, 3);
+        runFuzz(rnd);
+    }
+
+    @Test
     public void testChunkedSequencerWriting() throws Exception {
         Rnd rnd = generateRandom(LOG);
         setTestParams(rnd);
@@ -195,6 +228,8 @@ public class WalWriterFuzzTest extends AbstractFuzzTest {
                 1.0,
                 0.01,
                 0.1,
+                0.0,
+                0.0,
                 0.01,
                 0.01,
                 0.8,
@@ -202,8 +237,8 @@ public class WalWriterFuzzTest extends AbstractFuzzTest {
                 0,
                 0.01
         );
-        setFuzzCounts(rnd.nextBoolean(), rnd.nextInt(10_000_000),
-                rnd.nextInt(1500), 20, 10, 200, 0, 1
+        setFuzzCounts(rnd.nextBoolean(), rnd.nextInt(1_000_000),
+                rnd.nextInt(500), 20, 10, 200, 0, 1
         );
         runFuzz(rnd);
     }
@@ -225,6 +260,8 @@ public class WalWriterFuzzTest extends AbstractFuzzTest {
                 1.0,
                 0.01,
                 0.01,
+                0.0,
+                0.0,
                 0.05,
                 1.0,
                 0.8,
@@ -251,6 +288,8 @@ public class WalWriterFuzzTest extends AbstractFuzzTest {
                 1.0,
                 0.01,
                 0.01,
+                0.0,
+                0.0,
                 0.01,
                 0.0,
                 0.8,
@@ -258,7 +297,7 @@ public class WalWriterFuzzTest extends AbstractFuzzTest {
                 0,
                 0.01
         );
-        setFuzzCounts(false, 1_000_000, 500, 20, 1000, 20, 0, 10);
+        setFuzzCounts(false, 1_000_000, 300, 20, 1000, 20, 0, 10);
         runFuzz(generateRandom(LOG));
     }
 
@@ -279,6 +318,8 @@ public class WalWriterFuzzTest extends AbstractFuzzTest {
                 1.0,
                 0.01,
                 0.01,
+                0.0,
+                0.0,
                 0.05,
                 0.005,
                 0.8,
@@ -318,6 +359,8 @@ public class WalWriterFuzzTest extends AbstractFuzzTest {
                 1.0,
                 0.01,
                 0.01,
+                0.0,
+                0.0,
                 0.01,
                 0.005,
                 0.1,
@@ -347,6 +390,8 @@ public class WalWriterFuzzTest extends AbstractFuzzTest {
                 1.0,
                 0.01,
                 0.01,
+                0.0,
+                0.0,
                 0.01,
                 0.0,
                 0.8,
@@ -378,6 +423,8 @@ public class WalWriterFuzzTest extends AbstractFuzzTest {
                 1.0,
                 0.01,
                 0.01,
+                0.0,
+                0.0,
                 0.01,
                 0.02,
                 0.8,
@@ -427,6 +474,8 @@ public class WalWriterFuzzTest extends AbstractFuzzTest {
                 1,
                 0.5,
                 0.01,
+                0.0,
+                0.0,
                 0,
                 0.0,
                 0.8,
@@ -486,6 +535,8 @@ public class WalWriterFuzzTest extends AbstractFuzzTest {
                 1,
                 0.01,
                 0.01,
+                0.0,
+                0.0,
                 0,
                 0.0,
                 0.8,
@@ -527,6 +578,8 @@ public class WalWriterFuzzTest extends AbstractFuzzTest {
                 1,
                 0.01,
                 0.01,
+                0.0,
+                0.0,
                 0.001,
                 0.0,
                 0.8,
@@ -555,6 +608,8 @@ public class WalWriterFuzzTest extends AbstractFuzzTest {
                 1.0,
                 0.01,
                 0.01,
+                0.0,
+                0.0,
                 0.01,
                 0.0,
                 0.8,
@@ -583,6 +638,8 @@ public class WalWriterFuzzTest extends AbstractFuzzTest {
                 1.0,
                 0.01,
                 0.01,
+                0.0,
+                0.0,
                 0.15,
                 0.0,
                 0.8,
@@ -612,6 +669,8 @@ public class WalWriterFuzzTest extends AbstractFuzzTest {
                 1.0,
                 0.01,
                 0.01,
+                0.0,
+                0.0,
                 0.01,
                 0.0,
                 0.8,
@@ -640,6 +699,8 @@ public class WalWriterFuzzTest extends AbstractFuzzTest {
                 1.0,
                 0.01,
                 0.01,
+                0.0,
+                0.0,
                 0.01,
                 0.0,
                 0.8,

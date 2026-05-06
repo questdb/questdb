@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -154,6 +154,12 @@ public class Telemetry<T extends AbstractTelemetryTask> implements Closeable {
                     shouldDropTable = true;
                 } else if (ttlWeeks > 0 && ttl > 0 && ttl != ttlWeeks * 24 * 7) {
                     shouldAlterTtl = true;
+                }
+                // Drop and recreate when schema changes (safe for short-TTL telemetry tables).
+                // Note: uses != rather than <, so a rollback to older code will also re-drop.
+                int expectedColumnCount = telemetryType.getExpectedColumnCount();
+                if (expectedColumnCount > 0 && meta.getColumnCount() != expectedColumnCount) {
+                    shouldDropTable = true;
                 }
             }
         } catch (CairoException e) {
@@ -372,6 +378,10 @@ public class Telemetry<T extends AbstractTelemetryTask> implements Closeable {
 
     public interface TelemetryType<T extends AbstractTelemetryTask> {
         QueryBuilder getCreateSql(QueryBuilder builder, int ttlWeeks);
+
+        default int getExpectedColumnCount() {
+            return -1;
+        }
 
         String getName();
 

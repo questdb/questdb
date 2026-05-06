@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -30,6 +30,7 @@ import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.DebugUtils;
 import io.questdb.cairo.MicrosTimestampDriver;
+import io.questdb.cairo.O3PartitionJob;
 import io.questdb.cairo.O3PartitionPurgeJob;
 import io.questdb.cairo.SymbolMapReader;
 import io.questdb.cairo.TableReader;
@@ -107,11 +108,14 @@ public class FuzzRunner {
     private double nullSetProb;
     private int parallelWalCount;
     private double partitionDropProb;
+    private double partitionToNativeProb;
+    private double partitionToParquetProb;
     private double queryProb;
     private double replaceInsertProb;
     private double rollbackProb;
     private long s0;
     private long s1;
+    private double setParquetEncodingProb;
     private double setTtlProb;
     private SqlExecutionContext sqlExecutionContext;
     private int strLen;
@@ -488,6 +492,8 @@ public class FuzzRunner {
                 dataAddProb,
                 equalTsRowsProb,
                 partitionDropProb,
+                partitionToParquetProb,
+                partitionToNativeProb,
                 truncateProb,
                 tableDropProb,
                 setTtlProb,
@@ -496,7 +502,8 @@ public class FuzzRunner {
                 queryProb,
                 strLen,
                 generateSymbols(rnd, rnd.nextInt(Math.max(1, symbolCountMax - 5)) + 5, symbolStrLenMax, tableName),
-                (int) sequencerMetadata.getMetadataVersion()
+                (int) sequencerMetadata.getMetadataVersion(),
+                setParquetEncodingProb
         );
     }
 
@@ -619,6 +626,8 @@ public class FuzzRunner {
                 dataAddProb,
                 equalTsRowsProb,
                 partitionDropProb,
+                0.0,
+                0.0,
                 truncateProb,
                 tableDropProb,
                 setTtlProb,
@@ -640,12 +649,60 @@ public class FuzzRunner {
             double dataAddProb,
             double equalTsRowsProb,
             double partitionDropProb,
+            double partitionToParquetProb,
+            double partitionToNativeProb,
             double truncateProb,
             double tableDropProb,
             double setTtlProb,
             double replaceInsertProb,
             double symbolAccessValidationProb,
             double queryProb
+    ) {
+        setFuzzProbabilities(
+                cancelRowsProb,
+                notSetProb,
+                nullSetProb,
+                rollbackProb,
+                colAddProb,
+                colRemoveProb,
+                colRenameProb,
+                colTypeChangeProb,
+                dataAddProb,
+                equalTsRowsProb,
+                partitionDropProb,
+                partitionToParquetProb,
+                partitionToNativeProb,
+                truncateProb,
+                tableDropProb,
+                setTtlProb,
+                replaceInsertProb,
+                symbolAccessValidationProb,
+                queryProb,
+                0.0
+        );
+    }
+
+    public void setFuzzProbabilities(
+            double cancelRowsProb,
+            double notSetProb,
+            double nullSetProb,
+            double rollbackProb,
+            double colAddProb,
+            double colRemoveProb,
+            double colRenameProb,
+            double colTypeChangeProb,
+            double dataAddProb,
+            double equalTsRowsProb,
+            double partitionDropProb,
+            double partitionToParquetProb,
+            double partitionToNativeProb,
+            double truncateProb,
+            double tableDropProb,
+            double setTtlProb,
+            double replaceInsertProb,
+            double symbolAccessValidationProb,
+            double queryProb,
+            double setParquetEncodingProb
     ) {
         this.cancelRowsProb = cancelRowsProb;
         this.notSetProb = notSetProb;
@@ -658,12 +715,15 @@ public class FuzzRunner {
         this.dataAddProb = dataAddProb;
         this.equalTsRowsProb = equalTsRowsProb;
         this.partitionDropProb = partitionDropProb;
+        this.partitionToParquetProb = partitionToParquetProb;
+        this.partitionToNativeProb = partitionToNativeProb;
         this.truncateProb = truncateProb;
         this.tableDropProb = tableDropProb;
         this.setTtlProb = setTtlProb;
         this.replaceInsertProb = replaceInsertProb;
         this.symbolAccessValidationProb = symbolAccessValidationProb;
         this.queryProb = queryProb;
+        this.setParquetEncodingProb = setParquetEncodingProb;
     }
 
     public void withDb(CairoEngine engine, SqlExecutionContext sqlExecutionContext) {
@@ -769,7 +829,7 @@ public class FuzzRunner {
             String randomValue = sink.length() > prefix.length() + 2 ? sink.subSequence(prefix.length(), sink.length() - 1).toString() : null;
             String indexedWhereClause = " where \"" + symbolColumnName + "\" = " + (randomValue == null ? "null" : "'" + randomValue + "'");
             LOG.info().$("checking random index with filter: ").$(indexedWhereClause).I$();
-            String limit = ""; // For debugging
+            String limit = ""; // for debugging, e.g. " limit 100"
             TestUtils.assertSqlCursors(compiler, sqlExecutionContext, expectedTableName + indexedWhereClause + limit, actualTableName + indexedWhereClause + limit, LOG);
             // Now let's do backward order assertion
             String orderBy = " order by " + tsColumnName + " desc";
@@ -811,12 +871,12 @@ public class FuzzRunner {
                 }
             }
 
-            sink.put("), index(sym2) timestamp(ts) partition by DAY BYPASS WAL");
+            sink.put("), index(sym2 ").put(randomIndexTypeClause()).put(") timestamp(ts) partition by DAY BYPASS WAL");
             engine.execute(sink, sqlExecutionContext);
             // force few column tops
             engine.execute("alter table " + tableName + " add column long_top long", sqlExecutionContext);
             engine.execute("alter table " + tableName + " add column str_top long", sqlExecutionContext);
-            engine.execute("alter table " + tableName + " add column sym_top symbol index", sqlExecutionContext);
+            engine.execute("alter table " + tableName + " add column sym_top symbol index " + randomIndexTypeClause(), sqlExecutionContext);
             engine.execute("alter table " + tableName + " add column ip4 ipv4", sqlExecutionContext);
             engine.execute("alter table " + tableName + " add column var_top varchar", sqlExecutionContext);
         }
@@ -849,13 +909,13 @@ public class FuzzRunner {
             engine.execute(
                     "create atomic table " + tableName + " as (" +
                             "select * from data_temp" +
-                            "), index(sym2) timestamp(ts) partition by DAY " + (isWal ? "WAL" : "BYPASS WAL"),
+                            "), index(sym2 " + randomIndexTypeClause() + ") timestamp(ts) partition by DAY " + (isWal ? "WAL" : "BYPASS WAL"),
                     sqlExecutionContext
             );
             // force few column tops
             engine.execute("alter table " + tableName + " add column long_top long", sqlExecutionContext);
             engine.execute("alter table " + tableName + " add column str_top long", sqlExecutionContext);
-            engine.execute("alter table " + tableName + " add column sym_top symbol index", sqlExecutionContext);
+            engine.execute("alter table " + tableName + " add column sym_top symbol index " + randomIndexTypeClause(), sqlExecutionContext);
             engine.execute("alter table " + tableName + " add column ip4 ipv4", sqlExecutionContext);
             engine.execute("alter table " + tableName + " add column var_top varchar", sqlExecutionContext);
         }
@@ -888,17 +948,41 @@ public class FuzzRunner {
             engine.execute(
                     "create atomic table " + tableName + " as (" +
                             "select * from data_temp" +
-                            "), index(sym2) timestamp(ts) partition by DAY WAL",
+                            "), index(sym2 " + randomIndexTypeClause() + ") timestamp(ts) partition by DAY WAL",
                     sqlExecutionContext
             );
             // force few column tops
             engine.execute("alter table " + tableName + " add column long_top long", sqlExecutionContext);
             engine.execute("alter table " + tableName + " add column str_top long", sqlExecutionContext);
-            engine.execute("alter table " + tableName + " add column sym_top symbol index", sqlExecutionContext);
+            engine.execute("alter table " + tableName + " add column sym_top symbol index " + randomIndexTypeClause(), sqlExecutionContext);
             engine.execute("alter table " + tableName + " add column ip4 ipv4", sqlExecutionContext);
             engine.execute("alter table " + tableName + " add column var_top varchar", sqlExecutionContext);
         }
         engine.verifyTableName(tableName);
+    }
+
+    /**
+     * Picks an index type clause for fuzz table creation. Returns either
+     * an empty string (BITMAP — the default), or one of the POSTING
+     * variants. Uses {@link SharedRandom} so the choice tracks the existing
+     * fuzz seed.
+     */
+    private String randomIndexTypeClause() {
+        Rnd rnd = SharedRandom.RANDOM.get();
+        if (rnd == null) {
+            return "";
+        }
+        double pick = rnd.nextDouble();
+        if (pick < 0.5) {
+            return ""; // BITMAP (the default for the existing INDEX clause)
+        }
+        if (pick < 0.7) {
+            return "TYPE POSTING";
+        }
+        if (pick < 0.85) {
+            return "TYPE POSTING DELTA";
+        }
+        return "TYPE POSTING EF";
     }
 
     @NotNull
@@ -1018,7 +1102,7 @@ public class FuzzRunner {
                     engine.releaseInactiveTableSequencers();
                 }
             } catch (Throwable e) {
-                e.printStackTrace();
+                e.printStackTrace(System.out);
                 errors.add(e);
             } finally {
                 Path.clearThreadLocals();
@@ -1053,6 +1137,7 @@ public class FuzzRunner {
     }
 
     private TableReader getReaderHandleTableDropped(String tableNameWal) {
+        int metadataTimeoutRetries = 10;
         while (true) {
             try {
                 return getReader(tableNameWal);
@@ -1062,6 +1147,12 @@ public class FuzzRunner {
                         || e instanceof EntryLockedException) {
                     LOG.error().$((Throwable) e).$();
                     Os.sleep(10);
+                } else if (Chars.contains(e.getFlyweightMessage(), "Metadata read timeout")) {
+                    if (--metadataTimeoutRetries < 0) {
+                        throw e;
+                    }
+                    LOG.error().$("metadata read timeout, retrying [remainingRetries=").$(metadataTimeoutRetries).$("]").$((Throwable) e).$();
+                    Os.sleep(100);
                 } else {
                     throw e;
                 }
@@ -1076,7 +1167,7 @@ public class FuzzRunner {
             CheckWalTransactionsJob checkJob = new CheckWalTransactionsJob(engine);
             try (ApplyWal2TableJob job = new ApplyWal2TableJob(engine, 0)) {
                 while (done.get() == 0 && errors.isEmpty()) {
-                    Unsafe.getUnsafe().loadFence();
+                    Unsafe.loadFence();
                     while (job.run(0) || checkJob.run(0)) {
                         // Sometimes WAL Apply Job does not finish table in one go and return TableWriter to the pool
                         // where it can be fully closed before continuing the WAL application Test TableWriter closures.
@@ -1096,6 +1187,7 @@ public class FuzzRunner {
             errors.add(e);
         } finally {
             Path.clearThreadLocals();
+            Misc.free(O3PartitionJob.THREAD_LOCAL_CLEANER);
         }
     }
 
@@ -1299,6 +1391,8 @@ public class FuzzRunner {
                             rnd.nextDouble(),
                             rnd.nextDouble(),
                             0.01,
+                            0.0,
+                            0.0,
                             0.0,
                             0.1 * rnd.nextDouble(),
                             rnd.nextDouble(),

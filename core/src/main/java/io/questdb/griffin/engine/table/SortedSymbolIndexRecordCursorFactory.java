@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -49,7 +49,7 @@ public class SortedSymbolIndexRecordCursorFactory extends AbstractPageFrameRecor
             @NotNull IntList columnIndexes,
             @NotNull IntList columnSizeShifts
     ) {
-        super(configuration, metadata, partitionFrameCursorFactory, columnIndexes, columnSizeShifts);
+        super(metadata, partitionFrameCursorFactory, columnIndexes, columnSizeShifts);
 
         cursor = new PageFrameRecordCursorImpl(
                 configuration,

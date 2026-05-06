@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -96,7 +96,7 @@ public final class FilteredAsOfJoinNoKeyFastRecordCursorFactory extends Abstract
                 configuration.getSqlAsOfJoinLookAhead()
         );
         if (slaveColumnCrossIndex != null && SelectedRecordCursorFactory.isCrossedIndex(slaveColumnCrossIndex)) {
-            this.selectedTimeFrameCursor = new SelectedRecordCursorFactory.SelectedTimeFrameCursor(slaveColumnCrossIndex, slaveFactory.recordCursorSupportsRandomAccess());
+            this.selectedTimeFrameCursor = new SelectedRecordCursorFactory.SelectedTimeFrameCursor(slaveColumnCrossIndex, slaveFactory.recordCursorSupportsRandomAccess(), slaveTimestampIndex);
         } else {
             this.selectedTimeFrameCursor = null;
         }
@@ -173,11 +173,7 @@ public final class FilteredAsOfJoinNoKeyFastRecordCursorFactory extends Abstract
 
         @Override
         public boolean hasNext() {
-            if (isMasterHasNextPending) {
-                masterHasNext = masterCursor.hasNext();
-                isMasterHasNextPending = false;
-            }
-            if (!masterHasNext) {
+            if (!masterCursor.hasNext()) {
                 return false;
             }
 
@@ -198,10 +194,6 @@ public final class FilteredAsOfJoinNoKeyFastRecordCursorFactory extends Abstract
                 unfilteredCursorFrameIndex = timeFrame.getFrameIndex();
             }
 
-            // we have to set the `isMasterHasNextPending` only now since `nextSlave()` may throw DataUnavailableException
-            // and in such case we do not want to call `masterCursor.hasNext()` during the next call to `this.hasNext()`.
-            // if we are here then it's clear nextSlave() did not throw DataUnavailableException.
-            isMasterHasNextPending = true;
             if (!record.hasSlave()) {
                 // the non-filtering algo did not find a matching record in the slave table.
                 // this means the slave table does not have a single record with a timestamp that is less than or equal

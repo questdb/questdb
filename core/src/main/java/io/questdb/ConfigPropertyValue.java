@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -28,6 +28,7 @@ public interface ConfigPropertyValue {
     int VALUE_SOURCE_CONF = 1;
     int VALUE_SOURCE_DEFAULT = 0;
     int VALUE_SOURCE_ENV = 2;
+    int VALUE_SOURCE_FILE = 3;
 
     String getValue();
 

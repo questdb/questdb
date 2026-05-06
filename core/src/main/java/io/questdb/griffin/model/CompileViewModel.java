@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -32,7 +32,7 @@ import org.jetbrains.annotations.NotNull;
 
 public class CompileViewModel implements ExecutionModel, Mutable, Sinkable {
     public static final ObjectFactory<CompileViewModel> FACTORY = CompileViewModel::new;
-    private QueryModel queryModel;
+    private IQueryModel queryModel;
     private ExpressionNode viewExpr;
 
     @Override
@@ -47,13 +47,12 @@ public class CompileViewModel implements ExecutionModel, Mutable, Sinkable {
     }
 
     @Override
-    public QueryModel getQueryModel() {
+    public IQueryModel getQueryModel() {
         return queryModel;
     }
 
     @Override
     public CharSequence getTableName() {
-        assert viewExpr != null;
         return viewExpr.token;
     }
 
@@ -62,7 +61,7 @@ public class CompileViewModel implements ExecutionModel, Mutable, Sinkable {
         return viewExpr;
     }
 
-    public void setQueryModel(QueryModel queryModel) {
+    public void setQueryModel(IQueryModel queryModel) {
         this.queryModel = queryModel;
     }
 
@@ -72,7 +71,6 @@ public class CompileViewModel implements ExecutionModel, Mutable, Sinkable {
 
     @Override
     public void toSink(@NotNull CharSink<?> sink) {
-        assert viewExpr != null;
         sink.putAscii("compile view ");
         sink.put(viewExpr.token);
     }

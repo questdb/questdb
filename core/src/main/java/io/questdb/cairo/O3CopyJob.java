@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -25,6 +25,7 @@
 package io.questdb.cairo;
 
 import io.questdb.MessageBus;
+import io.questdb.cairo.idx.IndexWriter;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.mp.AbstractQueueConsumerJob;
@@ -99,7 +100,7 @@ public class O3CopyJob extends AbstractQueueConsumerJob<O3CopyTask> {
             long srcDataOldPartitionSize,
             long o3SplitPartitionSize,
             TableWriter tableWriter,
-            BitmapIndexWriter indexWriter,
+            IndexWriter indexWriter,
             long partitionUpdateSinkAddr
     ) {
         final boolean mixedIOFlag = tableWriter.allowMixedIO();
@@ -313,7 +314,7 @@ public class O3CopyJob extends AbstractQueueConsumerJob<O3CopyTask> {
         final long srcDataOldPartitionSize = task.getSrcDataOldPartitionSize();
         final long o3SplitPartitionSize = task.getO3SplitPartitionSize();
         final TableWriter tableWriter = task.getTableWriter();
-        final BitmapIndexWriter indexWriter = task.getIndexWriter();
+        final IndexWriter indexWriter = task.getIndexWriter();
         final long partitionUpdateSinkAddr = task.getPartitionUpdateSinkAddr();
 
         subSeq.done(cursor);
@@ -610,7 +611,7 @@ public class O3CopyJob extends AbstractQueueConsumerJob<O3CopyTask> {
             long srcDataOldPartitionSize,
             long o3SplitPartitionSize,
             TableWriter tableWriter,
-            BitmapIndexWriter indexWriter,
+            IndexWriter indexWriter,
             long partitionUpdateSinkAddr
     ) {
         if (partCounter == null || partCounter.decrementAndGet() == 0) {
@@ -802,7 +803,7 @@ public class O3CopyJob extends AbstractQueueConsumerJob<O3CopyTask> {
             long srcTimestampAddr,
             long srcTimestampSize,
             TableWriter tableWriter,
-            BitmapIndexWriter indexWriter,
+            IndexWriter indexWriter,
             int indexBlockCapacity
     ) {
         // dstKFd & dstVFd are closed by the indexer
@@ -853,13 +854,14 @@ public class O3CopyJob extends AbstractQueueConsumerJob<O3CopyTask> {
         }
     }
 
-    private static void updateIndex(long dstFixAddr, long dstFixSize, BitmapIndexWriter w, long row, long rowAdjust) {
+    private static void updateIndex(long dstFixAddr, long dstFixSize, IndexWriter w, long row, long rowAdjust) {
         w.rollbackConditionally(row + rowAdjust);
         final long count = dstFixSize / Integer.BYTES;
         for (; row < count; row++) {
-            w.add(TableUtils.toIndexKey(Unsafe.getUnsafe().getInt(dstFixAddr + row * Integer.BYTES)), row + rowAdjust);
+            w.add(TableUtils.toIndexKey(Unsafe.getInt(dstFixAddr + row * Integer.BYTES)), row + rowAdjust);
         }
-        w.setMaxValue(row + rowAdjust);
+        // The bitmap index header stores the inclusive(!) max row id.
+        w.setMaxValue(row + rowAdjust - 1);
     }
 
     // lowest timestamp of partition where data is headed
@@ -1016,13 +1018,13 @@ public class O3CopyJob extends AbstractQueueConsumerJob<O3CopyTask> {
             final long o3SplitPartitionSize,
             boolean partitionMutates
     ) {
-        Unsafe.getUnsafe().putLong(partitionUpdateSinkAddr, partitionTimestamp);
-        Unsafe.getUnsafe().putLong(partitionUpdateSinkAddr + Long.BYTES, timestampMin);
-        Unsafe.getUnsafe().putLong(partitionUpdateSinkAddr + 2 * Long.BYTES, srcDataNewPartitionSize);
-        Unsafe.getUnsafe().putLong(partitionUpdateSinkAddr + 3 * Long.BYTES, srcDataOldPartitionSize);
-        Unsafe.getUnsafe().putLong(partitionUpdateSinkAddr + 4 * Long.BYTES, partitionMutates ? 1 : 0);
-        Unsafe.getUnsafe().putLong(partitionUpdateSinkAddr + 5 * Long.BYTES, o3SplitPartitionSize);
-        Unsafe.getUnsafe().putLong(partitionUpdateSinkAddr + 7 * Long.BYTES, -1); // parquet partition file size
+        Unsafe.putLong(partitionUpdateSinkAddr, partitionTimestamp);
+        Unsafe.putLong(partitionUpdateSinkAddr + Long.BYTES, timestampMin);
+        Unsafe.putLong(partitionUpdateSinkAddr + 2 * Long.BYTES, srcDataNewPartitionSize);
+        Unsafe.putLong(partitionUpdateSinkAddr + 3 * Long.BYTES, srcDataOldPartitionSize);
+        Unsafe.putLong(partitionUpdateSinkAddr + 4 * Long.BYTES, partitionMutates ? 1 : 0);
+        Unsafe.putLong(partitionUpdateSinkAddr + 5 * Long.BYTES, o3SplitPartitionSize);
+        Unsafe.putLong(partitionUpdateSinkAddr + 7 * Long.BYTES, -1); // parquet partition file size
 
         TimestampDriver driver = ColumnType.getTimestampDriver(tableWriter.getTimestampType());
         LOG.debug()

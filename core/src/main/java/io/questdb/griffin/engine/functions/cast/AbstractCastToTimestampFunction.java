@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -31,7 +31,7 @@ import io.questdb.griffin.engine.functions.AbstractUnaryTimestampFunction;
 /**
  * Abstract base class for functions that cast values to timestamp.
  */
-public abstract class AbstractCastToTimestampFunction extends AbstractUnaryTimestampFunction {
+public abstract class AbstractCastToTimestampFunction extends AbstractUnaryTimestampFunction implements CastFunction {
 
     /**
      * Constructs a new cast to timestamp function.

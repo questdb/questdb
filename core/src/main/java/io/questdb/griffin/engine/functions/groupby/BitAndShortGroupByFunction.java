@@ -1,0 +1,158 @@
+/*+*****************************************************************************
+ *     ___                  _   ____  ____
+ *    / _ \ _   _  ___  ___| |_|  _ \| __ )
+ *   | | | | | | |/ _ \/ __| __| | | |  _ \
+ *   | |_| | |_| |  __/\__ \ |_| |_| | |_) |
+ *    \__\_\\__,_|\___||___/\__|____/|____/
+ *
+ *  Copyright (c) 2014-2019 Appsicle
+ *  Copyright (c) 2019-2026 QuestDB
+ *
+ *  Licensed under the Apache License, Version 2.0 (the "License");
+ *  you may not use this file except in compliance with the License.
+ *  You may obtain a copy of the License at
+ *
+ *  http://www.apache.org/licenses/LICENSE-2.0
+ *
+ *  Unless required by applicable law or agreed to in writing, software
+ *  distributed under the License is distributed on an "AS IS" BASIS,
+ *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ *  See the License for the specific language governing permissions and
+ *  limitations under the License.
+ *
+ ******************************************************************************/
+
+package io.questdb.griffin.engine.functions.groupby;
+
+import io.questdb.cairo.ArrayColumnTypes;
+import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.map.Map;
+import io.questdb.cairo.map.MapValue;
+import io.questdb.cairo.sql.Function;
+import io.questdb.cairo.sql.PageFrameMemoryRecord;
+import io.questdb.cairo.sql.Record;
+import io.questdb.griffin.engine.functions.GroupByFunction;
+import io.questdb.griffin.engine.functions.ShortFunction;
+import io.questdb.griffin.engine.functions.UnaryFunction;
+import io.questdb.griffin.engine.groupby.FlyweightPackedMapValue;
+import io.questdb.griffin.engine.groupby.GroupByUtils;
+import io.questdb.std.Unsafe;
+import org.jetbrains.annotations.NotNull;
+
+public class BitAndShortGroupByFunction extends ShortFunction implements GroupByFunction, UnaryFunction {
+    private final Function arg;
+    private final int argColumnIndex;
+    private int valueIndex;
+
+    public BitAndShortGroupByFunction(@NotNull Function arg) {
+        this.arg = arg;
+        this.argColumnIndex = GroupByUtils.directArgColumnIndex(arg, ColumnType.SHORT);
+    }
+
+    @Override
+    public void computeFirst(MapValue mapValue, Record record, long rowId) {
+        mapValue.putShort(valueIndex, arg.getShort(record));
+    }
+
+    @Override
+    public void computeKeyedBatch(
+            PageFrameMemoryRecord record,
+            FlyweightPackedMapValue mapValue,
+            long baseValueAddr,
+            long batchAddr,
+            long rowCount,
+            long baseRowId
+    ) {
+        // bit_and has no short NULL sentinel and its identity element is all-ones,
+        // so the etalon (all-zeros) is not a usable seed value. We dispatch on isNew
+        // to set the first row's value directly and bit-AND for every subsequent row.
+        final long valueColumnOffset = mapValue.getOffset(valueIndex);
+        // Fast path: arg is a direct short column with data on the current frame.
+        // Zero page address means a column top; fall through to the record-based path.
+        final long argAddr = argColumnIndex >= 0 ? record.getPageAddress(argColumnIndex) : 0;
+        if (argAddr != 0) {
+            for (long i = 0; i < rowCount; i++) {
+                final long encoded = Unsafe.getLong(batchAddr + (i << 3));
+                final long rowIndex = Map.decodeBatchRowIndex(encoded);
+                final short value = Unsafe.getShort(argAddr + (rowIndex << 1));
+                final long addr = baseValueAddr + Map.decodeBatchOffset(encoded) + valueColumnOffset;
+                final short current = Unsafe.getShort(addr);
+                Unsafe.putShort(addr, Map.isNewBatchEntry(encoded) ? value : (short) (current & value));
+            }
+        } else {
+            for (long i = 0; i < rowCount; i++) {
+                final long encoded = Unsafe.getLong(batchAddr + (i << 3));
+                record.setRowIndex(Map.decodeBatchRowIndex(encoded));
+                final short value = arg.getShort(record);
+                final long addr = baseValueAddr + Map.decodeBatchOffset(encoded) + valueColumnOffset;
+                final short current = Unsafe.getShort(addr);
+                Unsafe.putShort(addr, Map.isNewBatchEntry(encoded) ? value : (short) (current & value));
+            }
+        }
+    }
+
+    @Override
+    public void computeNext(MapValue mapValue, Record record, long rowId) {
+        final short value = arg.getShort(record);
+        final short current = mapValue.getShort(valueIndex);
+        mapValue.putShort(valueIndex, (short) (current & value));
+    }
+
+    @Override
+    public Function getArg() {
+        return arg;
+    }
+
+    @Override
+    public String getName() {
+        return "bit_and";
+    }
+
+    @Override
+    public short getShort(Record rec) {
+        return rec.getShort(valueIndex);
+    }
+
+    @Override
+    public int getValueIndex() {
+        return valueIndex;
+    }
+
+    @Override
+    public void initValueIndex(int valueIndex) {
+        this.valueIndex = valueIndex;
+    }
+
+    @Override
+    public void initValueTypes(ArrayColumnTypes columnTypes) {
+        this.valueIndex = columnTypes.getColumnCount();
+        columnTypes.add(ColumnType.SHORT);
+    }
+
+    @Override
+    public boolean isConstant() {
+        return false;
+    }
+
+    @Override
+    public boolean isThreadSafe() {
+        return UnaryFunction.super.isThreadSafe();
+    }
+
+    @Override
+    public void merge(MapValue destValue, MapValue srcValue) {
+        final short srcVal = srcValue.getShort(valueIndex);
+        final short destVal = destValue.getShort(valueIndex);
+        destValue.putShort(valueIndex, (short) (destVal & srcVal));
+    }
+
+    @Override
+    public void setNull(MapValue mapValue) {
+        mapValue.putShort(valueIndex, (short) 0);
+    }
+
+    @Override
+    public boolean supportsParallelism() {
+        return UnaryFunction.super.supportsParallelism();
+    }
+}

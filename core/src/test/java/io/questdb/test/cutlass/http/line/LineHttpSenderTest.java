@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -24,7 +24,8 @@
 
 package io.questdb.test.cutlass.http.line;
 
-import io.questdb.DefaultHttpClientConfiguration;
+import io.questdb.Bootstrap;
+import io.questdb.DefaultBootstrapConfiguration;
 import io.questdb.PropertyKey;
 import io.questdb.ServerMain;
 import io.questdb.cairo.CairoEngine;
@@ -35,27 +36,32 @@ import io.questdb.cairo.NanosTimestampDriver;
 import io.questdb.cairo.SecurityContext;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.sql.TableMetadata;
+import io.questdb.client.DefaultHttpClientConfiguration;
 import io.questdb.client.Sender;
-import io.questdb.cutlass.line.LineSenderException;
-import io.questdb.cutlass.line.array.DoubleArray;
-import io.questdb.cutlass.line.array.LongArray;
-import io.questdb.cutlass.line.http.AbstractLineHttpSender;
-import io.questdb.cutlass.line.http.LineHttpSenderV2;
+import io.questdb.client.cutlass.line.LineSenderException;
+import io.questdb.client.cutlass.line.array.DoubleArray;
+import io.questdb.client.cutlass.line.array.LongArray;
+import io.questdb.client.cutlass.line.http.AbstractLineHttpSender;
+import io.questdb.client.cutlass.line.http.LineHttpSenderV2;
+import io.questdb.client.std.Decimal256;
+import io.questdb.client.std.Numbers;
+import io.questdb.client.std.NumericException;
+import io.questdb.client.std.str.DirectUtf8Sink;
 import io.questdb.griffin.SqlException;
 import io.questdb.std.Chars;
-import io.questdb.std.Decimal256;
+import io.questdb.std.FilesFacade;
 import io.questdb.std.Misc;
-import io.questdb.std.Numbers;
-import io.questdb.std.NumericException;
 import io.questdb.std.Os;
 import io.questdb.std.Rnd;
 import io.questdb.std.datetime.CommonUtils;
 import io.questdb.std.datetime.DateFormat;
 import io.questdb.std.datetime.microtime.MicrosFormatCompiler;
-import io.questdb.std.str.DirectUtf8Sink;
+import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.StringSink;
+import io.questdb.std.str.Utf8s;
 import io.questdb.test.AbstractBootstrapTest;
 import io.questdb.test.TestServerMain;
+import io.questdb.test.std.TestFilesFacadeImpl;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Before;
@@ -65,7 +71,12 @@ import org.junit.Test;
 import java.lang.reflect.Array;
 import java.time.Instant;
 import java.time.temporal.ChronoUnit;
+import java.util.HashMap;
+import java.util.Map;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicReference;
 
 import static io.questdb.PropertyKey.DEBUG_FORCE_RECV_FRAGMENTATION_CHUNK_SIZE;
 import static io.questdb.PropertyKey.LINE_HTTP_ENABLED;
@@ -710,7 +721,7 @@ public class LineHttpSenderTest extends AbstractBootstrapTest {
 
                 int totalCount = 50_000;
                 int autoFlushRows = 1000;
-                try (AbstractLineHttpSender sender = new LineHttpSenderV2("localhost", httpPort, DefaultHttpClientConfiguration.INSTANCE, null, autoFlushRows, null, null, null, 127, 0, 1_000, 0, Long.MAX_VALUE)) {
+                try (AbstractLineHttpSender sender = new LineHttpSenderV2("localhost", httpPort, io.questdb.client.DefaultHttpClientConfiguration.INSTANCE, null, autoFlushRows, null, null, null, 127, 0, 1_000, 0, Long.MAX_VALUE)) {
                     for (int i = 0; i < totalCount; i++) {
                         if (i != 0 && i % autoFlushRows == 0) {
                             serverMain.awaitTable("table with space");
@@ -821,6 +832,178 @@ public class LineHttpSenderTest extends AbstractBootstrapTest {
     }
 
     @Test
+    public void testConcurrentRenameWhileProcessingLargeBatch() throws Exception {
+        // This test verifies that when a table is renamed WHILE the server is processing
+        // a large batch (mid-request), the server correctly detects the rename and rejects
+        // the entire batch with a retryable 503 error. No partial data should be committed.
+        TestUtils.assertMemoryLeak(() -> {
+            String tableName = "concurrent_data";
+            String renamedTableName = "concurrent_data_old";
+            int batchSize = 500_000;
+
+            // Latch to detect when the server starts processing the large batch.
+            // We set WAL segment rollover row count to 1, so after the init flush
+            // commits (1 row), the WalWriter schedules a segment roll. When the
+            // large batch's first row triggers newRow(), it rolls to a new segment,
+            // opening new column files via ff.openRW(). We intercept that to know
+            // the server has started processing and then trigger the rename.
+            CountDownLatch walSegmentRolled = new CountDownLatch(1);
+            AtomicBoolean trackOpens = new AtomicBoolean(false);
+
+            FilesFacade ff = new TestFilesFacadeImpl() {
+                @Override
+                public long openRW(LPSZ name, int opts) {
+                    long fd = super.openRW(name, opts);
+                    if (trackOpens.get()
+                            && Utf8s.containsAscii(name, tableName)
+                            && Utf8s.containsAscii(name, "wal")
+                            && Utf8s.endsWithAscii(name, ".d")) {
+                        walSegmentRolled.countDown();
+                    }
+                    return fd;
+                }
+            };
+
+            Map<String, String> env = new HashMap<>(System.getenv());
+            env.put(PropertyKey.CAIRO_SQL_COLUMN_ALIAS_EXPRESSION_ENABLED.getEnvVarName(), "false");
+            // Force segment roll after the init flush so that the large batch
+            // triggers openRW for new segment column files.
+            env.put(PropertyKey.CAIRO_WAL_SEGMENT_ROLLOVER_ROW_COUNT.getEnvVarName(), "1");
+
+            Bootstrap bootstrap = new Bootstrap(new DefaultBootstrapConfiguration() {
+                @Override
+                public Map<String, String> getEnv() {
+                    return env;
+                }
+
+                @Override
+                public FilesFacade getFilesFacade() {
+                    return ff;
+                }
+            }, Bootstrap.getServerMainArgs(root));
+
+            try (final TestServerMain serverMain = new TestServerMain(bootstrap)) {
+                serverMain.start();
+
+                // Create the initial table
+                serverMain.execute("CREATE TABLE " + tableName + " (" +
+                        "sensor symbol, " +
+                        "temperature double, " +
+                        "ts timestamp" +
+                        ") TIMESTAMP(ts) PARTITION BY DAY WAL");
+
+                int port = serverMain.getHttpServerPort();
+
+                AtomicReference<Throwable> senderError = new AtomicReference<>();
+
+                // Sender thread: builds and sends a large batch with auto-flush disabled
+                Thread senderThread = new Thread(() -> {
+                    try (Sender sender = Sender.builder(Sender.Transport.HTTP)
+                            .address("localhost:" + port)
+                            .disableAutoFlush()
+                            .retryTimeoutMillis(0)
+                            .build()
+                    ) {
+                        // First flush to populate the TUD cache and trigger segment rollover
+                        sender.table(tableName)
+                                .symbol("sensor", "init")
+                                .doubleColumn("temperature", 0.0)
+                                .at(1L, ChronoUnit.NANOS);
+                        sender.flush();
+
+                        // Enable tracking after init flush so we only detect the large batch
+                        trackOpens.set(true);
+
+                        // Build a large batch entirely in memory (no auto-flush)
+                        for (int i = 0; i < batchSize; i++) {
+                            sender.table(tableName)
+                                    .symbol("sensor", "sensor_" + (i % 100))
+                                    .doubleColumn("temperature", 20.0 + (i % 30))
+                                    .at(1_000_000_000L + i, ChronoUnit.NANOS);
+                        }
+
+                        // Send the entire batch
+                        sender.flush();
+
+                        // If we get here without error, the test should fail
+                        senderError.set(new AssertionError("Expected LineSenderException due to table rename"));
+                    } catch (LineSenderException e) {
+                        // Expected: server returns 503 when table rename is detected
+                        if (!e.getMessage().contains("retry") && !e.getMessage().contains("503")
+                                && !e.getMessage().contains("Service Unavailable")) {
+                            senderError.set(new AssertionError("Unexpected error: " + e.getMessage(), e));
+                        }
+                        // Success - we got the expected error
+                    } catch (Throwable e) {
+                        senderError.set(e);
+                    }
+                });
+
+                senderThread.start();
+
+                // Wait until the server starts processing the large batch (segment roll
+                // triggers openRW for new column files). This guarantees the WalWriter
+                // has started appending rows with the old table token.
+                Assert.assertTrue("Timed out waiting for WAL segment roll",
+                        walSegmentRolled.await(60, TimeUnit.SECONDS));
+
+                // Rename the table while the server is processing the large batch
+                serverMain.execute("RENAME TABLE " + tableName + " TO " + renamedTableName);
+
+                // Create a new table with the original name
+                serverMain.execute("CREATE TABLE " + tableName + " (" +
+                        "sensor symbol, " +
+                        "temperature double, " +
+                        "ts timestamp" +
+                        ") TIMESTAMP(ts) PARTITION BY DAY WAL");
+
+                // Wait for sender thread to complete
+                senderThread.join(60_000);
+                Assert.assertFalse("Sender thread timed out", senderThread.isAlive());
+
+                // Check for errors
+                Throwable error = senderError.get();
+                if (error != null) {
+                    if (error instanceof Exception) {
+                        throw (Exception) error;
+                    }
+                    throw new RuntimeException(error);
+                }
+
+                // Wait for WAL to apply
+                serverMain.awaitTable(renamedTableName);
+
+                // The renamed table should only have the initial row (1 row)
+                // The large batch should have been rolled back entirely
+                serverMain.assertSql("SELECT count() FROM " + renamedTableName, "count\n1\n");
+
+                // The new table should be empty (large batch was rejected)
+                serverMain.assertSql("SELECT count() FROM " + tableName, "count\n0\n");
+
+                // Now retry with a new sender - should succeed
+                try (Sender sender = Sender.builder(Sender.Transport.HTTP)
+                        .address("localhost:" + port)
+                        .build()
+                ) {
+                    for (int i = 0; i < 10; i++) {
+                        sender.table(tableName)
+                                .symbol("sensor", "retry_sensor")
+                                .doubleColumn("temperature", 25.0)
+                                .at(2_000_000_000L + i, ChronoUnit.NANOS);
+                    }
+                    sender.flush();
+                }
+
+                // Wait for WAL to apply
+                serverMain.awaitTable(tableName);
+
+                // Verify the retry succeeded
+                serverMain.assertSql("SELECT count() FROM " + tableName, "count\n10\n");
+            }
+        });
+    }
+
+    @Test
     public void testCreateTimestampColumnsWithDesignatedInstantV1() throws Exception {
         testCreateTimestampColumns(NanosTimestampDriver.floor("2025-11-20T10:55:24.123123123Z"), null, PROTOCOL_VERSION_V1,
                 new int[]{ColumnType.TIMESTAMP, ColumnType.TIMESTAMP, ColumnType.TIMESTAMP},
@@ -894,7 +1077,7 @@ public class LineHttpSenderTest extends AbstractBootstrapTest {
                             // assert that the table is not available to others for reading yet
                             Assert.assertNull(engine.getTableTokenIfExists("tab"));
 
-                            // assert that others competing to create the same table, cannot lock the table name 
+                            // assert that others competing to create the same table, cannot lock the table name
                             Assert.assertNull(engine.lockTableName("tab", tableId, false, false, true));
                         } catch (Throwable th) {
                             th.printStackTrace(System.out);
@@ -1319,18 +1502,14 @@ public class LineHttpSenderTest extends AbstractBootstrapTest {
                             if (i % 2 == 0) {
                                 Numbers.append(sink, v);
                             } else {
-                                sink.put('=');
-                                sink.putAny((byte) 16);
-                                sink.putDouble(v);
+                                putDouble(sink, v);
                             }
                             double a2 = 2 + i;
                             sink.put(",y=\"ystr\",a1=");
                             if (i % 2 != 0) {
                                 Numbers.append(sink, a2);
                             } else {
-                                sink.put('=');
-                                sink.putAny((byte) 16);
-                                sink.putDouble(a2);
+                                putDouble(sink, a2);
                             }
                             long ts = 100000000002000L + i * 1000;
                             sink.put(" ").put(ts).put('\n');
@@ -2378,6 +2557,76 @@ public class LineHttpSenderTest extends AbstractBootstrapTest {
     }
 
     @Test
+    public void testLargeBatchWriteToNewTableAfterRename() throws Exception {
+        // This test verifies that when a table is renamed after the ILP cache
+        // is populated (via an initial flush), subsequent large batch flushes
+        // on the same connection write to the new table.
+        TestUtils.assertMemoryLeak(() -> {
+            try (final TestServerMain serverMain = startWithEnvVariables()) {
+                String tableName = "batch_data";
+                String renamedTableName = "batch_data_old";
+                int batchSize = 100_000;
+
+                // Create the initial table
+                serverMain.execute("CREATE TABLE " + tableName + " (" +
+                        "sensor symbol, " +
+                        "temperature double, " +
+                        "ts timestamp" +
+                        ") TIMESTAMP(ts) PARTITION BY DAY WAL");
+
+                int port = serverMain.getHttpServerPort();
+
+                try (Sender sender = Sender.builder(Sender.Transport.HTTP)
+                        .address("localhost:" + port)
+                        .retryTimeoutMillis(0) // Disable automatic retries
+                        .build()
+                ) {
+                    // First flush to populate the cache
+                    sender.table(tableName)
+                            .symbol("sensor", "init")
+                            .doubleColumn("temperature", 0.0)
+                            .at(1L, ChronoUnit.NANOS);
+                    sender.flush();
+
+                    // Wait for initial data to be committed
+                    serverMain.awaitTable(tableName);
+                    serverMain.assertSql("SELECT count() FROM " + tableName, "count\n1\n");
+
+                    // Now rename the table
+                    serverMain.execute("RENAME TABLE " + tableName + " TO " + renamedTableName);
+
+                    // Create a new table with the original name
+                    serverMain.execute("CREATE TABLE " + tableName + " (" +
+                            "sensor symbol, " +
+                            "temperature double, " +
+                            "ts timestamp" +
+                            ") TIMESTAMP(ts) PARTITION BY DAY WAL");
+
+                    // Build a large batch and flush. The error can occur either during
+                    // batch building (auto-flush when buffer fills) or during explicit flush.
+                    for (int i = 0; i < batchSize; i++) {
+                        sender.table(tableName)
+                                .symbol("sensor", "sensor_" + (i % 100))
+                                .doubleColumn("temperature", 20.0 + (i % 30))
+                                .at(1000000000L + i, ChronoUnit.NANOS);
+                    }
+                    sender.flush();
+                }
+
+                // The renamed table should only have the initial row (1 row)
+                // The large batch should have been rejected entirely
+                serverMain.assertSql("SELECT count() FROM " + renamedTableName, "count\n1\n");
+
+                // Wait for WAL to apply
+                serverMain.awaitTable(tableName);
+
+                // Verify the retry succeeded with all rows
+                serverMain.assertSql("SELECT count() FROM " + tableName, "count\n" + batchSize + "\n");
+            }
+        });
+    }
+
+    @Test
     public void testLineHttpDisabled() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             try (final TestServerMain serverMain = startWithEnvVariables(
@@ -2506,6 +2755,87 @@ public class LineHttpSenderTest extends AbstractBootstrapTest {
                             "error in line 1: table: ex_tbl2; table does not exist, creating new tables is disabled"
                     );
                 }
+            }
+        });
+    }
+
+    /**
+     * Verifies that after renaming a table and creating a new table with the original name,
+     * an existing Sender instance correctly writes to the NEW table (not the renamed one).
+     * <p>
+     * The LineHttpTudCache validates cached TableTokens on each lookup and invalidates
+     * stale entries, allowing the sender to discover and use the new table.
+     * <p>
+     * Scenario:
+     * 1. Create table "sensor_data"
+     * 2. Sender starts sending to "sensor_data" (caches TableToken with id=X)
+     * 3. Rename "sensor_data" to "sensor_data_old"
+     * 4. Create new "sensor_data" table (gets new TableToken with id=Y)
+     * 5. Same Sender sends to "sensor_data"
+     * 6. Cache detects stale token, invalidates it, and resolves new table
+     * 7. Data correctly goes to new "sensor_data" table
+     */
+    @Test
+    public void testSenderWritesToCorrectTableAfterRenameAndRecreate() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try (final TestServerMain serverMain = startWithEnvVariables()) {
+                String tableName = "sensor_data";
+                String renamedTableName = "sensor_data_old";
+
+                // Create the initial table
+                serverMain.execute("CREATE TABLE " + tableName + " (" +
+                        "sensor symbol, " +
+                        "temperature double, " +
+                        "ts timestamp" +
+                        ") TIMESTAMP(ts) PARTITION BY DAY WAL");
+
+                int port = serverMain.getHttpServerPort();
+                // Use a single sender instance to test persistent connection behavior.
+                // When a rename happens while a connection is active, the server should
+                // detect the stale cache and return a retryable error (HTTP 503).
+                try (Sender sender = Sender.builder(Sender.Transport.HTTP)
+                        .address("localhost:" + port)
+                        .retryTimeoutMillis(0) // Disable automatic retries
+                        .build()
+                ) {
+                    // Send initial data - this caches the TableToken in LineHttpTudCache
+                    sender.table(tableName)
+                            .symbol("sensor", "temp_1")
+                            .doubleColumn("temperature", 25.5)
+                            .at(1000000000L, ChronoUnit.NANOS);
+                    sender.flush();
+
+                    serverMain.awaitTable(tableName);
+                    serverMain.assertSql("SELECT count() FROM " + tableName, "count\n1\n");
+
+                    // Rename the table - this increments the generation counter
+                    serverMain.execute("RENAME TABLE " + tableName + " TO " + renamedTableName);
+
+                    // Create a new table with the original name - gets a NEW TableToken
+                    serverMain.execute("CREATE TABLE " + tableName + " (" +
+                            "sensor symbol, " +
+                            "temperature double, " +
+                            "ts timestamp" +
+                            ") TIMESTAMP(ts) PARTITION BY DAY WAL");
+
+                    // Now send more data with the SAME sender instance (same HTTP connection).
+                    // The server should detect that the generation counter changed and return 503.
+                    sender.table(tableName)
+                            .symbol("sensor", "temp_2")
+                            .doubleColumn("temperature", 30.0)
+                            .at(2000000000L, ChronoUnit.NANOS);
+                    sender.flush();
+                }
+
+                // Wait for WAL to apply
+                serverMain.awaitTable(tableName);
+                serverMain.awaitTable(renamedTableName);
+
+                // The renamed table should only have 1 row (the original data)
+                serverMain.assertSql("SELECT count() FROM " + renamedTableName, "count\n1\n");
+
+                // The new table should have 1 row (the retry succeeded)
+                serverMain.assertSql("SELECT count() FROM " + tableName, "count\n1\n");
             }
         });
     }
@@ -2876,6 +3206,20 @@ public class LineHttpSenderTest extends AbstractBootstrapTest {
         }
     }
 
+    private static void putDouble(DirectUtf8Sink sink, double value) {
+        sink.put('=');
+        sink.putAny((byte) 16);
+        long raw = Double.doubleToRawLongBits(value);
+        sink.putAny((byte) (raw & 0xFF));
+        sink.putAny((byte) ((raw >> 8) & 0xFF));
+        sink.putAny((byte) ((raw >> 16) & 0xFF));
+        sink.putAny((byte) ((raw >> 24) & 0xFF));
+        sink.putAny((byte) ((raw >> 32) & 0xFF));
+        sink.putAny((byte) ((raw >> 40) & 0xFF));
+        sink.putAny((byte) ((raw >> 48) & 0xFF));
+        sink.putAny((byte) ((raw >> 56) & 0xFF));
+    }
+
     private static void sendIlp(String tableName, int count, ServerMain serverMain) throws NumericException {
         long timestamp = MicrosTimestampDriver.floor("2023-11-27T18:53:24.834Z");
         int i = 0;
@@ -3047,7 +3391,11 @@ public class LineHttpSenderTest extends AbstractBootstrapTest {
                         }
                     } catch (LineSenderException | ArithmeticException e) {
                         if (expected2 == null) {
-                            TestUtils.assertContains(e.getMessage(), "long overflow");
+                            // V1 overflows client-side (ArithmeticException from Math.multiplyExact),
+                            // V2 sends micros as-is and the server rejects the nanos overflow (LineSenderException)
+                            if (e instanceof LineSenderException) {
+                                TestUtils.assertContains(e.getMessage(), "long overflow");
+                            }
                         } else {
                             throw e;
                         }
@@ -3068,7 +3416,9 @@ public class LineHttpSenderTest extends AbstractBootstrapTest {
                         }
                     } catch (LineSenderException | ArithmeticException e) {
                         if (expected2 == null) {
-                            TestUtils.assertContains(e.getMessage(), "long overflow");
+                            if (e instanceof LineSenderException) {
+                                TestUtils.assertContains(e.getMessage(), "long overflow");
+                            }
                         } else {
                             throw e;
                         }

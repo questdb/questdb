@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -25,29 +25,35 @@
 package io.questdb.test.fuzz;
 
 import io.questdb.cairo.CairoEngine;
+import io.questdb.cairo.IndexType;
 import io.questdb.cairo.TableWriterAPI;
+import io.questdb.cairo.security.AllowAllSecurityContext;
 import io.questdb.std.LongList;
 import io.questdb.std.Rnd;
 
 public class FuzzAddColumnOperation implements FuzzTransactionOperation {
 
-    private final boolean indexFlag;
+    private final byte indexType;
     private final int indexValueBlockCapacity;
     private final String newColName;
     private final int newType;
     private final boolean symbolTableStatic;
 
     public FuzzAddColumnOperation(String newColName, int newType, boolean indexFlag, int indexValueBlockCapacity, boolean symbolTableStatic) {
+        this(newColName, newType, indexFlag ? IndexType.BITMAP : IndexType.NONE, indexValueBlockCapacity, symbolTableStatic);
+    }
+
+    public FuzzAddColumnOperation(String newColName, int newType, byte indexType, int indexValueBlockCapacity, boolean symbolTableStatic) {
         this.newColName = newColName;
         this.newType = newType;
-        this.indexFlag = indexFlag;
+        this.indexType = indexType;
         this.indexValueBlockCapacity = indexValueBlockCapacity;
         this.symbolTableStatic = symbolTableStatic;
     }
 
     @Override
     public boolean apply(Rnd tempRnd, CairoEngine engine, TableWriterAPI wApi, int virtualTimestampIndex, LongList excludedTsIntervals) {
-        wApi.addColumn(newColName, newType, 256, symbolTableStatic, indexFlag, indexValueBlockCapacity, false);
+        wApi.addColumn(newColName, newType, 256, symbolTableStatic, indexType, indexValueBlockCapacity, false, AllowAllSecurityContext.INSTANCE);
         return true;
     }
 }

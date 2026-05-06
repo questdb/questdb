@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -65,15 +65,22 @@ public class FirstNotNullIPv4GroupByFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public void computeBatch(MapValue mapValue, long ptr, int count) {
-            if (count > 0) {
-                final long hi = ptr + count * 4L;
-                for (; ptr < hi; ptr += 4L) {
-                    int value = Unsafe.getUnsafe().getInt(ptr);
+        public void computeBatch(MapValue mapValue, long dataAddr, int rowCount, long startRowId) {
+            if (rowCount > 0) {
+                final long hi = dataAddr + rowCount * 4L;
+                long offset = 0;
+                for (; dataAddr < hi; dataAddr += 4L) {
+                    int value = Unsafe.getInt(dataAddr);
                     if (value != Numbers.IPv4_NULL) {
-                        mapValue.putInt(valueIndex + 1, value);
+                        long rowId = startRowId + offset;
+                        long existingRowId = mapValue.getLong(valueIndex);
+                        if (rowId < existingRowId || existingRowId == Numbers.LONG_NULL || mapValue.getIPv4(valueIndex + 1) == Numbers.IPv4_NULL) {
+                            mapValue.putLong(valueIndex, rowId);
+                            mapValue.putInt(valueIndex + 1, value);
+                        }
                         break;
                     }
+                    offset++;
                 }
             }
         }
@@ -99,7 +106,7 @@ public class FirstNotNullIPv4GroupByFunctionFactory implements FunctionFactory {
             long srcRowId = srcValue.getLong(valueIndex);
             long destRowId = destValue.getLong(valueIndex);
             // srcRowId is non-null at this point since we know that the value is non-null
-            if (srcRowId < destRowId || destRowId == Numbers.LONG_NULL) {
+            if (srcRowId < destRowId || destRowId == Numbers.LONG_NULL || destValue.getIPv4(valueIndex + 1) == Numbers.IPv4_NULL) {
                 destValue.putLong(valueIndex, srcRowId);
                 destValue.putInt(valueIndex + 1, srcVal);
             }

@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -49,6 +49,20 @@ public interface AsyncWriterCommand extends TableMetadataChange, Closeable {
     long getTableVersion();
 
     boolean isStructural();
+
+    /**
+     * Returns a fresh consumer-side instance for commands whose state fully
+     * round-trips through {@link TableWriterTask#getData()} via
+     * {@link #serialize(TableWriterTask)}/{@link #deserialize(TableWriterTask)}.
+     * When non-null, the writer caches the returned instance by command type
+     * and deserializes subsequent tasks into it, allowing the producer to
+     * reuse its own instance immediately after publishing. The default
+     * returns {@code null}, meaning the writer keeps using the producer's
+     * instance reference from the task (no caching).
+     */
+    default AsyncWriterCommand newInstance() {
+        return null;
+    }
 
     void serialize(TableWriterTask task);
 

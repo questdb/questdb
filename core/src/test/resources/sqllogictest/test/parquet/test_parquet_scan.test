@@ -97,11 +97,11 @@ SELECT * FROM parquet_scan('data/parquet-testing/arrow/alltypes_dictionary.parqu
 
 # this file was created with spark using the data-types.py script
 # data-types.parquet
-query IIIIRRITTTTI
+query IIIIRRTTTTTI
 SELECT * FROM parquet_scan('data/parquet-testing/data-types.parquet')
 ----
 0	0	NULL	NULL	NULL	NULL	NULL	NULL	NULL	false	NULL	NULL
-42	43	44	45	4.600000	4.700000	4.800000	49	50	true	2019-11-26 20:11:42.501	2020-01-10 00:00:00
+42	43	44	45	4.600000	4.700000	4.80	49	50	true	2019-11-26 20:11:42.501	2020-01-10 00:00:00
 -127	-32767	-2147483647	-9223372036854775807	-4.600000	-4.700000	NULL	NULL	NULL	false	NULL	NULL
 127	32767	2147483647	9223372036854775807	NULL	NULL	NULL	NULL	NULL	false	NULL	NULL
 0	0	NULL	NULL	NULL	NULL	NULL	NULL	NULL	false	NULL	NULL

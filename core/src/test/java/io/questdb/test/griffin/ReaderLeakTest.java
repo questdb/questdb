@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -25,7 +25,6 @@
 package io.questdb.test.griffin;
 
 import io.questdb.cairo.ColumnType;
-import io.questdb.cairo.DataUnavailableException;
 import io.questdb.cairo.FullPartitionFrameCursorFactory;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableUtils;
@@ -165,7 +164,7 @@ public class ReaderLeakTest extends AbstractCairoTest {
         }
 
         @Override
-        public boolean hasNext() throws DataUnavailableException {
+        public boolean hasNext() {
             return base.hasNext();
         }
 
@@ -185,7 +184,7 @@ public class ReaderLeakTest extends AbstractCairoTest {
         }
 
         @Override
-        public long size() throws DataUnavailableException {
+        public long size() {
             return base.size();
         }
 

@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -115,8 +115,9 @@ public class AsOfJoinFuzzTest extends AbstractCairoTest {
             return false;
         }
 
-        // Known bug: ASOF/LT JOIN with timestamp in ON clause causes AssertionError in createFullFatJoin().
-        // See testLtJoinWithTimestampInOnClauseCrash() in AsOfJoinTest for the reproducer.
+        // ASOF/LT JOIN cannot use the designated timestamp as a join key: SqlCodeGenerator
+        // rejects it with a clear SqlException (see testJoinOnTimestampAndSomethingElseNotAllowed
+        // in AsOfJoinTest). Skip here so the fuzz test only exercises supported permutations.
         if (joinKeyType == JoinKeyType.SYMBOL_AND_TIMESTAMP) {
             return false;
         }

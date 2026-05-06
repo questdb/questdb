@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -30,6 +30,7 @@ import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableReaderMetadata;
 import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.TimestampDriver;
+import io.questdb.cairo.security.AllowAllSecurityContext;
 import io.questdb.cairo.sql.TableRecordMetadata;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
@@ -103,7 +104,7 @@ public class TableReaderReloadFuzzTest extends AbstractCairoTest {
                 engine.print(tableName, sink, sqlExecutionContext);
 
                 for (int i = 0; i < 64; i++) {
-                    writer.addColumn("col" + i, ColumnType.INT);
+                    writer.addColumn("col" + i, ColumnType.INT, AllowAllSecurityContext.INSTANCE);
                     row = writer.newRow(timestampDriver.fromDays(i));
                     row.append();
                 }
@@ -148,7 +149,7 @@ public class TableReaderReloadFuzzTest extends AbstractCairoTest {
             switch (structureChangeType) {
                 case ADD:
                     final int columnType = random.nextInt(12) + 1;
-                    writer.addColumn("col" + columnNameGen.incrementAndGet(), columnType);
+                    writer.addColumn("col" + columnNameGen.incrementAndGet(), columnType, AllowAllSecurityContext.INSTANCE);
                     break;
                 case REMOVE:
                     final int removeIndex = selectColumn(writerMetadata);
@@ -173,9 +174,9 @@ public class TableReaderReloadFuzzTest extends AbstractCairoTest {
                         if (isParquet) {
                             writer.convertPartitionParquetToNative(timestamp);
                         } else {
-                            writer.convertPartitionNativeToParquet(timestamp);
+                            writer.convertPartitionNativeToParquet(timestamp, null, Double.NaN);
                             if (delete) {
-                                writer.convertPartitionNativeToParquet(writer.getPartitionTimestamp(1));
+                                writer.convertPartitionNativeToParquet(writer.getPartitionTimestamp(1), null, Double.NaN);
                                 writer.removePartition(writer.getPartitionTimestamp(0));
                             }
                         }

@@ -1,0 +1,22 @@
+name: Gitleaks
+
+on:
+  pull_request:
+  push:
+    branches:
+      - master
+
+jobs:
+  gitleaks:
+    runs-on: ubuntu-latest
+    env:
+      HAS_GITLEAKS_LICENSE: ${{ secrets.GITLEAKS_LICENSE != '' }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: gitleaks/gitleaks-action@ff98106e4c7b2bc287b24eaf42907196329070c7
+        if: ${{ env.HAS_GITLEAKS_LICENSE == 'true' }}
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITLEAKS_LICENSE: ${{ secrets.GITLEAKS_LICENSE }}

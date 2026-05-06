@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -31,6 +31,7 @@ import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.ColumnVersionReader;
 import io.questdb.cairo.CommitFailedException;
 import io.questdb.cairo.GenericRecordMetadata;
+import io.questdb.cairo.IndexType;
 import io.questdb.cairo.SecurityContext;
 import io.questdb.cairo.TableColumnMetadata;
 import io.questdb.cairo.TableReader;
@@ -71,7 +72,7 @@ import static io.questdb.cairo.TableUtils.TXN_FILE_NAME;
 
 public class TableUpdateDetails implements Closeable {
     private static final Log LOG = LogFactory.getLog(TableUpdateDetails.class);
-    private static final DirectUtf8SymbolLookup NOT_FOUND_LOOKUP = value -> SymbolTable.VALUE_NOT_FOUND;
+    private static final DirectUtf8SymbolLookup NOT_FOUND_LOOKUP = _ -> SymbolTable.VALUE_NOT_FOUND;
     private final long commitInterval;
     private final boolean commitOnClose;
     private final DefaultColumnTypes defaultColumnTypes;
@@ -106,7 +107,7 @@ public class TableUpdateDetails implements Closeable {
             @Nullable SecurityContext ownSecurityContext,
             TableWriterAPI writer,
             int writerThreadId,
-            NetworkIOJob[] netIoJobs,
+            ObjList<NetworkIOJob> netIoJobs,
             DefaultColumnTypes defaultColumnTypes,
             Utf8String tableNameUtf8
     ) {
@@ -126,11 +127,11 @@ public class TableUpdateDetails implements Closeable {
         this.commitInterval = configuration.getCommitInterval();
         this.nextCommitTime = millisecondClock.getTicks() + commitInterval;
 
-        final int n = netIoJobs.length;
+        final int n = netIoJobs.size();
         this.localDetailsArray = new ThreadLocalDetails[n];
         for (int i = 0; i < n; i++) {
             //noinspection resource
-            this.localDetailsArray[i] = new ThreadLocalDetails(netIoJobs[i].getSymbolCachePool());
+            this.localDetailsArray[i] = new ThreadLocalDetails(netIoJobs.getQuick(i).getSymbolCachePool());
         }
         this.tableNameUtf8 = tableNameUtf8;
         this.commitOnClose = true;
@@ -164,6 +165,7 @@ public class TableUpdateDetails implements Closeable {
         this.metadataService = writer.supportsMultipleWriters() ? null : (MetadataService) writer;
         this.commitInterval = commitInterval;
         this.nextCommitTime = millisecondClock.getTicks() + this.commitInterval;
+        //noinspection resource
         this.localDetailsArray = new ThreadLocalDetails[]{new ThreadLocalDetails(symbolCachePool)};
         this.tableNameUtf8 = tableNameUtf8;
     }
@@ -251,12 +253,32 @@ public class TableUpdateDetails implements Closeable {
         return lastMeasurementMillis;
     }
 
+    /**
+     * Returns the sequencer txn assigned to the most recent commit on the
+     * underlying writer, or -1 if none.
+     */
+    public long getLastSeqTxn() {
+        return writerAPI != null ? writerAPI.getLastSeqTxn() : -1L;
+    }
+
+    public int getSegmentId() {
+        return writerAPI != null ? writerAPI.getSegmentId() : -1;
+    }
+
+    public int getWalId() {
+        return writerAPI != null ? writerAPI.getWalId() : -1;
+    }
+
     public MillisecondClock getMillisecondClock() {
         return millisecondClock;
     }
 
     public int getNetworkIOOwnerCount() {
         return networkIOOwnerCount;
+    }
+
+    public long getNextCommitTime() {
+        return nextCommitTime;
     }
 
     public String getTableNameUtf16() {
@@ -269,6 +291,10 @@ public class TableUpdateDetails implements Closeable {
 
     public TableToken getTableToken() {
         return tableToken;
+    }
+
+    public TableWriterAPI getWriter() {
+        return writerAPI;
     }
 
     public int getWriterThreadId() {
@@ -287,12 +313,26 @@ public class TableUpdateDetails implements Closeable {
         return this.isDropped;
     }
 
+    public boolean isFirstRow() {
+        return writerAPI.getUncommittedRowCount() == 0;
+    }
+
+    public boolean isTableRenamed() {
+        var currentTableToken = writerAPI.getTableToken();
+        var newTableToken = engine.getUpdatedTableToken(currentTableToken);
+        return newTableToken != currentTableToken;
+    }
+
     public boolean isWal() {
         return tableToken.isWal();
     }
 
     public boolean isWriterInError() {
         return writerInError;
+    }
+
+    public void markMeasurement() {
+        lastMeasurementMillis = millisecondClock.getTicks();
     }
 
     public void removeReference(int workerId) {
@@ -352,7 +392,7 @@ public class TableUpdateDetails implements Closeable {
         }
     }
 
-    long commitIfIntervalElapsed(long wallClockMillis) throws CommitFailedException {
+    public long commitIfIntervalElapsed(long wallClockMillis) throws CommitFailedException {
         if (wallClockMillis < nextCommitTime) {
             return nextCommitTime;
         }
@@ -370,7 +410,7 @@ public class TableUpdateDetails implements Closeable {
         return nextCommitTime;
     }
 
-    void commitIfMaxUncommittedRowsCountReached() throws CommitFailedException {
+    public void commitIfMaxUncommittedRowsCountReached() throws CommitFailedException {
         final long rowsSinceCommit = writerAPI.getUncommittedRowCount();
         if (rowsSinceCommit < getMetaMaxUncommittedRows()) {
             if ((rowsSinceCommit & writerTickRowsCountMod) == 0) {
@@ -412,10 +452,6 @@ public class TableUpdateDetails implements Closeable {
 
     int getTimestampIndex() {
         return timestampIndex;
-    }
-
-    TableWriterAPI getWriter() {
-        return writerAPI;
     }
 
     void releaseWriter(boolean commit) {
@@ -483,7 +519,7 @@ public class TableUpdateDetails implements Closeable {
                         new TableColumnMetadata(
                                 columnNameUtf16,
                                 columnType,
-                                false,
+                                IndexType.NONE,
                                 0,
                                 false,
                                 null,
@@ -553,7 +589,7 @@ public class TableUpdateDetails implements Closeable {
                             new TableColumnMetadata(
                                     that.getColumnName(i),
                                     that.getColumnType(i),
-                                    that.isColumnIndexed(i),
+                                    that.getColumnIndexType(i),
                                     that.getIndexValueBlockCapacity(i),
                                     that.isSymbolTableStatic(i),
                                     that.getMetadata(i),

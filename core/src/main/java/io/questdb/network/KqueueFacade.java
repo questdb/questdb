@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -25,15 +25,10 @@
 package io.questdb.network;
 
 public interface KqueueFacade {
+
     NetworkFacade getNetworkFacade();
 
     int kevent(long kq, long changeList, int nChanges, long eventList, int nEvents, int timeout);
 
     int kqueue();
-
-    long pipe();
-
-    int readPipe(long fd);
-
-    int writePipe(long fd);
 }

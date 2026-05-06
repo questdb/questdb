@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -187,7 +187,7 @@ public class DirectUtf8StringList implements Mutable, QuietCloseable, Reopenable
 
         @Override
         public byte byteAt(int index) {
-            return Unsafe.getUnsafe().getByte(lo + index);
+            return Unsafe.getByte(lo + index);
         }
 
         @Override

@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -34,9 +34,15 @@ import io.questdb.std.str.LPSZ;
 public class MemoryCMRDetachedImpl extends MemoryCMRImpl {
     private static final Log LOG = LogFactory.getLog(MemoryCMRDetachedImpl.class);
 
+    public MemoryCMRDetachedImpl() {
+    }
+
     public MemoryCMRDetachedImpl(FilesFacade ff, LPSZ name, long size, int memoryTag, boolean keepFdOpen) {
-        super();
-        of(ff, name, 0, size, memoryTag, 0, -1, keepFdOpen);
+        this(ff, name, size, memoryTag, keepFdOpen, -1);
+    }
+
+    public MemoryCMRDetachedImpl(FilesFacade ff, LPSZ name, long size, int memoryTag, boolean keepFdOpen, int madviseOpts) {
+        of(ff, name, 0, size, memoryTag, 0, madviseOpts, keepFdOpen);
     }
 
     @Override
@@ -62,6 +68,15 @@ public class MemoryCMRDetachedImpl extends MemoryCMRImpl {
     public void of(FilesFacade ff, LPSZ name, long extendSegmentSize, long size, int memoryTag, int opts, int madviseOpts, boolean keepFdOpen) {
         super.of(ff, name, extendSegmentSize, size, memoryTag, opts, madviseOpts);
         if (!keepFdOpen && ff != null && ff.close(fd)) {
+            LOG.debug().$("closing [fd=").$(fd).I$();
+            fd = -1;
+        }
+    }
+
+    @Override
+    public void ofWithSizeFromHeader(FilesFacade ff, LPSZ name, int memoryTag) {
+        super.ofWithSizeFromHeader(ff, name, memoryTag);
+        if (ff != null && ff.close(fd)) {
             LOG.debug().$("closing [fd=").$(fd).I$();
             fd = -1;
         }

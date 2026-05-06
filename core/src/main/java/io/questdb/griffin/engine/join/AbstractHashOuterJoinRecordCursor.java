@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -92,14 +92,15 @@ public abstract class AbstractHashOuterJoinRecordCursor extends AbstractJoinCurs
             RecordCursor cursor,
             Map map,
             RecordSink recordSink,
-            RecordChain chain
+            RecordChain chain,
+            Record keyRecord
     ) {
         final Record record = cursor.getRecord();
         while (cursor.hasNext()) {
             circuitBreaker.statefulThrowExceptionIfTripped();
 
             MapKey key = map.withKey();
-            key.put(record, recordSink);
+            key.put(keyRecord, recordSink);
             MapValue value = key.createValue();
             if (value.isNew()) {
                 long offset = chain.put(record, -1);
@@ -118,14 +119,15 @@ public abstract class AbstractHashOuterJoinRecordCursor extends AbstractJoinCurs
             RecordCursor cursor,
             Map map,
             RecordSink recordSink,
-            RecordChain chain
+            RecordChain chain,
+            Record keyRecord
     ) {
         final Record record = cursor.getRecord();
         while (cursor.hasNext()) {
             circuitBreaker.statefulThrowExceptionIfTripped();
 
             MapKey key = map.withKey();
-            key.put(record, recordSink);
+            key.put(keyRecord, recordSink);
             MapValue value = key.createValue();
             if (value.isNew()) {
                 long offset = chain.put(record, -1);

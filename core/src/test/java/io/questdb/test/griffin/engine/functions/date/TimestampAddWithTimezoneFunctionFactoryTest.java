@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -377,7 +377,7 @@ public class TimestampAddWithTimezoneFunctionFactoryTest extends AbstractFunctio
                 """
                         QUERY PLAN
                         VirtualRecord
-                          functions: [dateadd('y',1587275359886758000L::timestamp_ns,case([x::int,null,x]),'03:00')]
+                          functions: [dateadd('y',2020-04-19T05:49:19.886758000Z,case([x::int,null,x]),'03:00')]
                             long_sequence count: 2
                         """,
                 "explain select dateadd('y', case when x = 1 then cast(x as int) else null end, 1587275359886758000L::timestamp_ns, '03:00') from long_sequence(2)"

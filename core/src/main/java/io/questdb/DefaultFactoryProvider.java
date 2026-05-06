@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -24,7 +24,9 @@
 
 package io.questdb;
 
+import io.questdb.cairo.DefaultTickCalendarServiceFactory;
 import io.questdb.cairo.DefaultWalJobFactory;
+import io.questdb.cairo.TickCalendarServiceFactory;
 import io.questdb.cairo.WalJobFactory;
 import io.questdb.cairo.security.AllowAllSecurityContextFactory;
 import io.questdb.cairo.security.SecurityContextFactory;
@@ -46,6 +48,11 @@ import org.jetbrains.annotations.NotNull;
 
 public class DefaultFactoryProvider implements FactoryProvider {
     public static final DefaultFactoryProvider INSTANCE = new DefaultFactoryProvider();
+
+    @Override
+    public @NotNull TickCalendarServiceFactory getTickCalendarServiceFactory() {
+        return DefaultTickCalendarServiceFactory.INSTANCE;
+    }
 
     @Override
     public @NotNull HttpAuthenticatorFactory getHttpAuthenticatorFactory() {

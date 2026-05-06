@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -168,6 +168,8 @@ public final class TlsProxy {
         }
 
         private void shutDown() {
+            closeQuietly(frontend);
+            closeQuietly(backend);
             frontendToBackend.shutdown();
             backendToFrontend.shutdown();
         }

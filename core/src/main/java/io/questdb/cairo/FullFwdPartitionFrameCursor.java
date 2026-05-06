@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -33,7 +33,7 @@ public class FullFwdPartitionFrameCursor extends AbstractFullPartitionFrameCurso
 
     @Override
     public void calculateSize(RecordCursor.Counter counter) {
-        while (partitionIndex < partitionHi) {
+        while (partitionIndex < partitionScanHi) {
             final long hi = reader.openPartition(partitionIndex);
             if (hi > 0) {
                 counter.add(hi);
@@ -44,7 +44,7 @@ public class FullFwdPartitionFrameCursor extends AbstractFullPartitionFrameCurso
 
     @Override
     public @Nullable PartitionFrame next(long skipTarget) {
-        while (partitionIndex < partitionHi) {
+        while (partitionIndex < partitionScanHi) {
             final long hi = reader.getPartitionRowCountFromMetadata(partitionIndex);
             if (hi < 1) {
                 // this partition is missing, skip
@@ -71,6 +71,7 @@ public class FullFwdPartitionFrameCursor extends AbstractFullPartitionFrameCurso
     @Override
     public void toTop() {
         partitionIndex = 0;
+        partitionScanHi = partitionHi;
     }
 
     private FullTablePartitionFrame nextSlow() {
@@ -80,15 +81,15 @@ public class FullFwdPartitionFrameCursor extends AbstractFullPartitionFrameCurso
         partitionIndex++;
         final byte format = reader.getPartitionFormat(frame.partitionIndex);
         if (format == PartitionFormat.PARQUET) {
-            frame.parquetDecoder = reader.getAndInitParquetPartitionDecoders(frame.partitionIndex);
-            assert frame.parquetDecoder.getFileAddr() != 0 : "parquet decoder is not initialized";
+            frame.parquetMetaDecoder = reader.getAndInitParquetPartitionDecoder(frame.partitionIndex);
+            assert frame.parquetMetaDecoder.getFileAddr() != 0 : "parquet decoder is not initialized";
             frame.format = PartitionFormat.PARQUET;
             return frame;
         }
 
         assert format == PartitionFormat.NATIVE;
         frame.format = PartitionFormat.NATIVE;
-        frame.parquetDecoder = null;
+        frame.parquetMetaDecoder = null;
         return frame;
     }
 }

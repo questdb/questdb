@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -70,7 +70,6 @@ import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.rnd.SharedRandom;
-import io.questdb.griffin.engine.functions.test.TestDataUnavailableFunctionFactory;
 import io.questdb.griffin.engine.functions.test.TestLatchedCounterFunctionFactory;
 import io.questdb.jit.JitUtil;
 import io.questdb.log.Log;
@@ -99,7 +98,6 @@ import io.questdb.network.PeerIsSlowToReadException;
 import io.questdb.network.PeerIsSlowToWriteException;
 import io.questdb.network.PlainSocketFactory;
 import io.questdb.network.ServerDisconnectException;
-import io.questdb.network.SuspendEvent;
 import io.questdb.std.CharSequenceObjHashMap;
 import io.questdb.std.Chars;
 import io.questdb.std.Files;
@@ -124,7 +122,6 @@ import io.questdb.std.str.AbstractCharSequence;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
 import io.questdb.std.str.Utf8Sequence;
-import io.questdb.std.str.Utf8StringSink;
 import io.questdb.std.str.Utf8s;
 import io.questdb.tasks.TelemetryTask;
 import io.questdb.test.AbstractTest;
@@ -134,8 +131,6 @@ import io.questdb.test.cairo.TableModel;
 import io.questdb.test.cairo.TestRecord;
 import io.questdb.test.cairo.TestTableReaderRecordCursor;
 import io.questdb.test.cutlass.NetUtils;
-import io.questdb.test.cutlass.suspend.TestCase;
-import io.questdb.test.cutlass.suspend.TestCases;
 import io.questdb.test.mp.TestWorkerPool;
 import io.questdb.test.std.TestFilesFacadeImpl;
 import io.questdb.test.tools.TestMicroClock;
@@ -207,7 +202,7 @@ public class IODispatcherTest extends AbstractTest {
             00\r
             \r
             """;
-    private static final RescheduleContext emptyRescheduleContext = (retry) -> {
+    private static final RescheduleContext emptyRescheduleContext = (_) -> {
     };
     private static CairoConfiguration configuration;
     private static TestHttpClient testHttpClient;
@@ -240,15 +235,9 @@ public class IODispatcherTest extends AbstractTest {
         Metrics.ENABLED.clear();
     }
 
-    @Override
-    public void tearDown() throws Exception {
-        super.tearDown();
-        TestDataUnavailableFunctionFactory.eventCallback = null;
-    }
-
     @Test
     public void testBadImplicitStrToLongCast() throws Exception {
-        getSimpleTester().run((engine, sqlExecutionContext) -> {
+        getSimpleTester().run((_, _) -> {
             testHttpClient.assertGet("{\"ddl\":\"OK\"}", "create table tab (value int, when long, ts timestamp) timestamp(ts) partition by day bypass wal;");
             testHttpClient.assertGet("{\"dml\":\"OK\"}", "insert into tab values(1, now(), now());");
             testHttpClient.assertGet("{\"query\":\"select * from tab where when = '2023-10-17';\",\"error\":\"inconvertible value: `2023-10-17` [STRING -> LONG]\",\"position\":0}", "select * from tab where when = '2023-10-17';");
@@ -454,6 +443,11 @@ public class IODispatcherTest extends AbstractTest {
                     public HttpRequestProcessor select(HttpRequestHeader requestHeader) {
                         return null;
                     }
+
+                    @Override
+                    public HttpRequestProcessor resolveProcessorById(int handlerId, HttpRequestHeader header) {
+                        return select(header);
+                    }
                 };
 
                 AtomicBoolean serverRunning = new AtomicBoolean(true);
@@ -566,7 +560,7 @@ public class IODispatcherTest extends AbstractTest {
 
     @Test
     public void testEmptyQuotedString() throws Exception {
-        testJsonQuery0(1, (engine, sqlExecutionContext) -> sendAndReceive(NetworkFacadeImpl.INSTANCE,
+        testJsonQuery0(1, (_, _) -> sendAndReceive(NetworkFacadeImpl.INSTANCE,
                 // select '' from long_sequence(1)
                 """
                         GET /exec?query=select%20%27%27%20from%20long_sequence%281%29 HTTP/1.1
@@ -606,7 +600,7 @@ public class IODispatcherTest extends AbstractTest {
         }
         sink.put("[]");
 
-        getSimpleTester().run((engine, sqlExecutionContext) -> testHttpClient.assertGet("{" + "\"query\":\"select simulate_crash('P') \\n\\rfrom\\tlong_sequence(" + (numOfRows + 5) + ")\"," + "\"columns\":[{\"name\":\"simulate_crash\",\"type\":\"BOOLEAN\"}]," + "\"timestamp\":-1," + "\"dataset\":[" + sink + "]," + "\"count\":" + (numOfRows + 1) + "," + "\"error\":\"simulated cairo exception\", " + "\"errorPos\":222" + "}", "select simulate_crash('P') \n\rfrom\tlong_sequence(" + (numOfRows + 5) + ")"));
+        getSimpleTester().run((_, _) -> testHttpClient.assertGet("{" + "\"query\":\"select simulate_crash('P') \\n\\rfrom\\tlong_sequence(" + (numOfRows + 5) + ")\"," + "\"columns\":[{\"name\":\"simulate_crash\",\"type\":\"BOOLEAN\"}]," + "\"timestamp\":-1," + "\"dataset\":[" + sink + "]," + "\"count\":" + (numOfRows + 1) + "," + "\"error\":\"simulated cairo exception\", " + "\"errorPos\":222" + "}", "select simulate_crash('P') \n\rfrom\tlong_sequence(" + (numOfRows + 5) + ")"));
     }
 
     @Test
@@ -618,7 +612,7 @@ public class IODispatcherTest extends AbstractTest {
 
     @Test
     public void testExceptionAuthorization() throws Exception {
-        getSimpleTester().run((engine, sqlExecutionContext) -> {
+        getSimpleTester().run((engine, _) -> {
             testHttpClient.assertGet("{" + "\"query\":\"select simulate_crash('A') from long_sequence(5)\"," + "\"columns\":[{\"name\":\"simulate_crash\",\"type\":\"BOOLEAN\"}]," + "\"timestamp\":-1," + "\"dataset\":[[]]," + "\"count\":1," + "\"error\":\"simulated authorization exception\", " + "\"errorPos\":0" + "}", "select simulate_crash('A') from long_sequence(5)");
             Assert.assertEquals(0, engine.getMetrics().healthMetrics().unhandledErrorsCount());
         });
@@ -987,7 +981,7 @@ public class IODispatcherTest extends AbstractTest {
 
     @Test
     public void testHttpClientSupportsConnectionReuse() throws Exception {
-        getSimpleTester().run((engine, sqlExecutionContext) -> {
+        getSimpleTester().run((_, _) -> {
             testHttpClient.setKeepConnection(true);
             testHttpClient.assertGet("{\"query\":\"SELECT 'foo'\",\"columns\":[{\"name\":\"foo\",\"type\":\"STRING\"}],\"timestamp\":-1,\"dataset\":[[\"foo\"]],\"count\":1}", "SELECT 'foo'");
             // This time it's fine to disconnect after the request.
@@ -998,7 +992,7 @@ public class IODispatcherTest extends AbstractTest {
 
     @Test
     public void testHttpEscapesErrorMessage() throws Exception {
-        getSimpleTester().run((engine, sqlExecutionContext) -> testHttpClient.assertGet("{\"query\":\"into into testlike2 select ('foo', 'bar') from long_sequence(1);\",\"error\":\"table and column names that are SQL keywords have to be enclosed in double quotes, such as \\\"into\\\"\",\"position\":0}", "into into testlike2 select ('foo', 'bar') from long_sequence(1);"));
+        getSimpleTester().run((_, _) -> testHttpClient.assertGet("{\"query\":\"into into testlike2 select ('foo', 'bar') from long_sequence(1);\",\"error\":\"table and column names that are SQL keywords have to be enclosed in double quotes, such as \\\"into\\\"\",\"position\":0}", "into into testlike2 select ('foo', 'bar') from long_sequence(1);"));
     }
 
     @Test
@@ -1153,7 +1147,7 @@ public class IODispatcherTest extends AbstractTest {
 
     @Test
     public void testIPv4JSON() throws Exception {
-        getSimpleTester().run((engine, sqlExecutionContext) -> {
+        getSimpleTester().run((_, _) -> {
             // select 1 as "select"
             // with select being the column name to check double quote parsing
             testHttpClient.assertGet("{\"query\":\"select rnd_int(1,5,0)::ipv4, cast(null as ipv4) ip2, timestamp_sequence(0, 100000000) from long_sequence(10, 33, 55)\",\"columns\":[{\"name\":\"cast\",\"type\":\"IPv4\"},{\"name\":\"ip2\",\"type\":\"IPv4\"},{\"name\":\"timestamp_sequence\",\"type\":\"TIMESTAMP\"}],\"timestamp\":-1,\"dataset\":[[\"0.0.0.3\",null,\"1970-01-01T00:00:00.000000Z\"],[\"0.0.0.5\",null,\"1970-01-01T00:01:40.000000Z\"],[\"0.0.0.3\",null,\"1970-01-01T00:03:20.000000Z\"],[\"0.0.0.4\",null,\"1970-01-01T00:05:00.000000Z\"],[\"0.0.0.2\",null,\"1970-01-01T00:06:40.000000Z\"],[\"0.0.0.1\",null,\"1970-01-01T00:08:20.000000Z\"],[\"0.0.0.5\",null,\"1970-01-01T00:10:00.000000Z\"],[\"0.0.0.4\",null,\"1970-01-01T00:11:40.000000Z\"],[\"0.0.0.1\",null,\"1970-01-01T00:13:20.000000Z\"],[\"0.0.0.4\",null,\"1970-01-01T00:15:00.000000Z\"]],\"count\":10}", "select rnd_int(1,5,0)::ipv4, cast(null as ipv4) ip2, timestamp_sequence(0, 100000000) from long_sequence(10, 33, 55)");
@@ -1162,7 +1156,7 @@ public class IODispatcherTest extends AbstractTest {
 
     @Test
     public void testImplicitUuidCastOnInsert() throws Exception {
-        testJsonQuery0(1, (engine, sqlExecutionContext) -> {
+        testJsonQuery0(1, (_, _) -> {
             // create table
             sendAndReceive(NetworkFacadeImpl.INSTANCE, """
                     GET /query?query=create+table+xx+(value+uuid,+ts+timestamp)+timestamp(ts)&count=true HTTP/1.1\r
@@ -1224,7 +1218,7 @@ public class IODispatcherTest extends AbstractTest {
     }
 
     public void testImport(String response, String request, NetworkFacade nf, boolean expectReceiveDisconnect, int requestCount) throws Exception {
-        testImport(response, request, nf, null, expectReceiveDisconnect, requestCount, (engine, sqlExecutionContext) -> {
+        testImport(response, request, nf, null, expectReceiveDisconnect, requestCount, (_, _) -> {
         });
     }
 
@@ -1237,7 +1231,7 @@ public class IODispatcherTest extends AbstractTest {
 
     @Test
     public void testImportAfterColumnWasDropped() throws Exception {
-        new HttpQueryTestBuilder().withTempFolder(root).withWorkerCount(2).withHttpServerConfigBuilder(new HttpServerConfigurationBuilder().withNetwork(NetworkFacadeImpl.INSTANCE).withDumpingTraffic(false).withAllowDeflateBeforeSend(false).withHttpProtocolVersion("HTTP/1.1 ").withServerKeepAlive(true)).run((engine, sqlExecutionContext) -> {
+        new HttpQueryTestBuilder().withTempFolder(root).withWorkerCount(2).withHttpServerConfigBuilder(new HttpServerConfigurationBuilder().withNetwork(NetworkFacadeImpl.INSTANCE).withDumpingTraffic(false).withAllowDeflateBeforeSend(false).withHttpProtocolVersion("HTTP/1.1 ").withServerKeepAlive(true)).run((engine, _) -> {
             try (SqlExecutionContext executionContext = TestUtils.createSqlExecutionCtx(engine)) {
                 engine.execute("create table test (col_a int, col_b long, ts timestamp) timestamp(ts) partition by week", executionContext);
                 engine.execute("alter table test drop column col_b", executionContext);
@@ -1295,7 +1289,7 @@ public class IODispatcherTest extends AbstractTest {
 
     @Test
     public void testImportAfterColumnWasRecreated() throws Exception {
-        new HttpQueryTestBuilder().withTempFolder(root).withWorkerCount(2).withHttpServerConfigBuilder(new HttpServerConfigurationBuilder().withNetwork(NetworkFacadeImpl.INSTANCE).withDumpingTraffic(false).withAllowDeflateBeforeSend(false).withHttpProtocolVersion("HTTP/1.1 ").withServerKeepAlive(true)).run((engine, sqlExecutionContext) -> {
+        new HttpQueryTestBuilder().withTempFolder(root).withWorkerCount(2).withHttpServerConfigBuilder(new HttpServerConfigurationBuilder().withNetwork(NetworkFacadeImpl.INSTANCE).withDumpingTraffic(false).withAllowDeflateBeforeSend(false).withHttpProtocolVersion("HTTP/1.1 ").withServerKeepAlive(true)).run((engine, _) -> {
             try (SqlExecutionContext executionContext = TestUtils.createSqlExecutionCtx(engine)) {
                 engine.execute("create table test (col_a int, col_b long)", executionContext);
                 engine.execute("alter table test drop column col_a", executionContext);
@@ -1653,7 +1647,7 @@ public class IODispatcherTest extends AbstractTest {
 
     @Test
     public void testImportEpochTimestamp() throws Exception {
-        new HttpQueryTestBuilder().withTempFolder(root).withWorkerCount(2).withHttpServerConfigBuilder(new HttpServerConfigurationBuilder().withNetwork(NetworkFacadeImpl.INSTANCE).withDumpingTraffic(false).withAllowDeflateBeforeSend(false).withHttpProtocolVersion("HTTP/1.1 ").withServerKeepAlive(true)).run((engine, sqlExecutionContext) -> {
+        new HttpQueryTestBuilder().withTempFolder(root).withWorkerCount(2).withHttpServerConfigBuilder(new HttpServerConfigurationBuilder().withNetwork(NetworkFacadeImpl.INSTANCE).withDumpingTraffic(false).withAllowDeflateBeforeSend(false).withHttpProtocolVersion("HTTP/1.1 ").withServerKeepAlive(true)).run((engine, _) -> {
             try (SqlExecutionContext executionContext = TestUtils.createSqlExecutionCtx(engine)) {
                 engine.execute("create table test (ts timestamp, value int) timestamp(ts) partition by DAY", executionContext);
 
@@ -1849,7 +1843,7 @@ public class IODispatcherTest extends AbstractTest {
 
     @Test
     public void testImportGeoHashesForExistingTable() throws Exception {
-        new HttpQueryTestBuilder().withTempFolder(root).withWorkerCount(2).withHttpServerConfigBuilder(new HttpServerConfigurationBuilder().withNetwork(NetworkFacadeImpl.INSTANCE).withDumpingTraffic(false).withAllowDeflateBeforeSend(false).withHttpProtocolVersion("HTTP/1.1 ").withServerKeepAlive(true)).run((engine, sqlExecutionContext) -> {
+        new HttpQueryTestBuilder().withTempFolder(root).withWorkerCount(2).withHttpServerConfigBuilder(new HttpServerConfigurationBuilder().withNetwork(NetworkFacadeImpl.INSTANCE).withDumpingTraffic(false).withAllowDeflateBeforeSend(false).withHttpProtocolVersion("HTTP/1.1 ").withServerKeepAlive(true)).run((engine, _) -> {
             try (SqlExecutionContext executionContext = TestUtils.createSqlExecutionCtx(engine)) {
                 engine.execute("create table test (geo1 geohash(1c), geo2 geohash(3c), geo4 geohash(6c), geo8 geohash(12c), geo2b geohash(2b))", executionContext);
 
@@ -1909,7 +1903,7 @@ public class IODispatcherTest extends AbstractTest {
 
     @Test
     public void testImportGeoHashesForNewTable() throws Exception {
-        new HttpQueryTestBuilder().withTempFolder(root).withWorkerCount(2).withHttpServerConfigBuilder(new HttpServerConfigurationBuilder().withNetwork(NetworkFacadeImpl.INSTANCE).withDumpingTraffic(false).withAllowDeflateBeforeSend(false).withHttpProtocolVersion("HTTP/1.1 ").withServerKeepAlive(true)).run((engine, sqlExecutionContext) -> {
+        new HttpQueryTestBuilder().withTempFolder(root).withWorkerCount(2).withHttpServerConfigBuilder(new HttpServerConfigurationBuilder().withNetwork(NetworkFacadeImpl.INSTANCE).withDumpingTraffic(false).withAllowDeflateBeforeSend(false).withHttpProtocolVersion("HTTP/1.1 ").withServerKeepAlive(true)).run((engine, _) -> {
             try (SqlCompiler compiler = engine.getSqlCompiler(); SqlExecutionContext executionContext = TestUtils.createSqlExecutionCtx(engine)) {
                 sendAndReceive(NetworkFacadeImpl.INSTANCE, """
                         POST /upload?name=test&forceHeader=true HTTP/1.1\r
@@ -1977,7 +1971,7 @@ public class IODispatcherTest extends AbstractTest {
 
     @Test
     public void testImportIPv4() throws Exception {
-        new HttpQueryTestBuilder().withTempFolder(root).withWorkerCount(2).withHttpServerConfigBuilder(new HttpServerConfigurationBuilder().withNetwork(NetworkFacadeImpl.INSTANCE).withDumpingTraffic(false).withAllowDeflateBeforeSend(false).withHttpProtocolVersion("HTTP/1.1 ").withServerKeepAlive(true)).run((engine, sqlExecutionContext) -> {
+        new HttpQueryTestBuilder().withTempFolder(root).withWorkerCount(2).withHttpServerConfigBuilder(new HttpServerConfigurationBuilder().withNetwork(NetworkFacadeImpl.INSTANCE).withDumpingTraffic(false).withAllowDeflateBeforeSend(false).withHttpProtocolVersion("HTTP/1.1 ").withServerKeepAlive(true)).run((engine, _) -> {
             try (SqlExecutionContext executionContext = TestUtils.createSqlExecutionCtx(engine)) {
                 engine.execute("create table test (ip1 ipv4, ip2 ipv4)", executionContext);
 
@@ -2038,7 +2032,7 @@ public class IODispatcherTest extends AbstractTest {
 
     @Test
     public void testImportMiscDateFormats() throws Exception {
-        new HttpQueryTestBuilder().withTempFolder(root).withWorkerCount(2).withHttpServerConfigBuilder(new HttpServerConfigurationBuilder().withNetwork(NetworkFacadeImpl.INSTANCE).withDumpingTraffic(false).withAllowDeflateBeforeSend(false).withHttpProtocolVersion("HTTP/1.1 ").withServerKeepAlive(true)).run((engine, sqlExecutionContext) -> {
+        new HttpQueryTestBuilder().withTempFolder(root).withWorkerCount(2).withHttpServerConfigBuilder(new HttpServerConfigurationBuilder().withNetwork(NetworkFacadeImpl.INSTANCE).withDumpingTraffic(false).withAllowDeflateBeforeSend(false).withHttpProtocolVersion("HTTP/1.1 ").withServerKeepAlive(true)).run((engine, _) -> {
             try (SqlExecutionContext executionContext = TestUtils.createSqlExecutionCtx(engine)) {
                 engine.execute("create table test (d1 date, d2 date, d3 date)", executionContext);
 
@@ -2287,7 +2281,7 @@ public class IODispatcherTest extends AbstractTest {
             }
         };
 
-        new HttpQueryTestBuilder().withTempFolder(root).withWorkerCount(2).withHttpServerConfigBuilder(new HttpServerConfigurationBuilder().withNetwork(nf).withDumpingTraffic(false).withAllowDeflateBeforeSend(false).withHttpProtocolVersion("HTTP/1.1 ").withServerKeepAlive(true)).withTelemetry(false).withQueryTimeout(100).run((engine, sqlExecutionContext) -> {
+        new HttpQueryTestBuilder().withTempFolder(root).withWorkerCount(2).withHttpServerConfigBuilder(new HttpServerConfigurationBuilder().withNetwork(nf).withDumpingTraffic(false).withAllowDeflateBeforeSend(false).withHttpProtocolVersion("HTTP/1.1 ").withServerKeepAlive(true)).withTelemetry(false).withQueryTimeout(100).run((_, _) -> {
             final long fd = nf.socketTcp(true);
             try {
                 final long sockAddrInfo = nf.getAddrInfo("127.0.0.1", 9001);
@@ -2744,7 +2738,7 @@ public class IODispatcherTest extends AbstractTest {
 
     @Test
     public void testInsertNoMemLeak() throws Exception {
-        getSimpleTester().run((engine, sqlExecutionContext) -> {
+        getSimpleTester().run((_, _) -> {
             testHttpClient.assertGet("{\"ddl\":\"OK\"}", "CREATE TABLE test(id LONG);");
             testHttpClient.assertGet("{\"dml\":\"OK\"}", "INSERT INTO test values(alloc(42));");
             testHttpClient.assertGet("{\"query\":\"test;\",\"columns\":[{\"name\":\"id\",\"type\":\"LONG\"}],\"timestamp\":-1,\"dataset\":[[42]],\"count\":1}", "test;");
@@ -2770,7 +2764,7 @@ public class IODispatcherTest extends AbstractTest {
 
     @Test
     public void testInvalidRequestIsHandled() throws Exception {
-        new HttpQueryTestBuilder().withTempFolder(root).withWorkerCount(2).withHttpServerConfigBuilder(new HttpServerConfigurationBuilder()).withTelemetry(false).run((engine, sqlExecutionContext) -> {
+        new HttpQueryTestBuilder().withTempFolder(root).withWorkerCount(2).withHttpServerConfigBuilder(new HttpServerConfigurationBuilder()).withTelemetry(false).run((_, _) -> {
             final String request = """
                      /query?query=drop%20table%20x HTTP/1.1\r
                     Host: localhost:9001\r
@@ -2800,7 +2794,7 @@ public class IODispatcherTest extends AbstractTest {
 
     @Test
     public void testJsonFloatClipping() throws Exception {
-        getSimpleTester().run((engine, sqlExecutionContext) -> {
+        getSimpleTester().run((_, _) -> {
             testHttpClient.assertGet("{\"ddl\":\"OK\"}", "CREATE TABLE t0(f FLOAT, d DOUBLE);");
 
             testHttpClient.assertGet("{\"dml\":\"OK\"}", "INSERT INTO t0 VALUES (54321, 54321);");
@@ -3202,7 +3196,7 @@ public class IODispatcherTest extends AbstractTest {
         // Disable the test on ARM64.
         Assume.assumeTrue(JitUtil.isJitSupported());
 
-        getSimpleTester().run((engine, sqlExecutionContext) -> {
+        getSimpleTester().run((engine, _) -> {
             createTableX(engine, 1000);
             testHttpClient.assertGet("{\"query\":\"x where d = 1332121950604084704\",\"columns\":[{\"name\":\"a\",\"type\":\"BYTE\"},{\"name\":\"b\",\"type\":\"SHORT\"},{\"name\":\"c\",\"type\":\"INT\"},{\"name\":\"d\",\"type\":\"LONG\"},{\"name\":\"e\",\"type\":\"DATE\"},{\"name\":\"f\",\"type\":\"TIMESTAMP\"},{\"name\":\"g\",\"type\":\"FLOAT\"},{\"name\":\"h\",\"type\":\"DOUBLE\"},{\"name\":\"i\",\"type\":\"STRING\"},{\"name\":\"j\",\"type\":\"SYMBOL\"},{\"name\":\"k\",\"type\":\"BOOLEAN\"},{\"name\":\"l\",\"type\":\"BINARY\"},{\"name\":\"m\",\"type\":\"UUID\"},{\"name\":\"n\",\"type\":\"VARCHAR\"},{\"name\":\"o\",\"type\":\"DECIMAL(2,0)\"},{\"name\":\"p\",\"type\":\"DECIMAL(4,0)\"},{\"name\":\"q\",\"type\":\"DECIMAL(9,0)\"},{\"name\":\"r\",\"type\":\"DECIMAL(18,0)\"},{\"name\":\"s\",\"type\":\"DECIMAL(38,0)\"},{\"name\":\"t\",\"type\":\"DECIMAL(76,0)\"}],\"timestamp\":-1,\"dataset\":[[16,28668,233670179,1332121950604084704,\"165655748-03-31T12:05:13.604Z\",\"174595-05-14T05:21:17.886439Z\",0.5929912,null,\"QSQJG\",\"IHH\",false,[],\"60447c12-3295-174a-b464-0e48e7e7adb2\",\"\uD9A6\uDD42\uDB48\uDC78{ϸ\uD9F4\uDFB9\",\"-98\",\"-6774\",null,null,\"71220628197013168435194612379584452975\",\"5425614538527953932523138465150926130640343441613005161485220609918944482202\"]],\"count\":1,\"explain\":{\"jitCompiled\":true}}", "x where d = 1332121950604084704", new CharSequenceObjHashMap<>() {{
                 put("explain", "true");
@@ -3240,7 +3234,7 @@ public class IODispatcherTest extends AbstractTest {
 
     @Test
     public void testJsonQueryCreateInsertNull() throws Exception {
-        testJsonQuery0(1, (engine, sqlExecutionContext) -> {
+        testJsonQuery0(1, (_, _) -> {
             // create table
             sendAndReceive(NetworkFacadeImpl.INSTANCE, """
                     GET /query?query=create+table+xx+(value+long256,+ts+timestamp)+timestamp(ts)&count=true HTTP/1.1\r
@@ -3303,7 +3297,7 @@ public class IODispatcherTest extends AbstractTest {
 
     @Test
     public void testJsonQueryCreateInsertStringifiedJson() throws Exception {
-        testJsonQuery0(1, (engine, sqlExecutionContext) -> {
+        testJsonQuery0(1, (_, _) -> {
             // create table
             sendAndReceive(NetworkFacadeImpl.INSTANCE, """
                     GET /query?limit=0%2C1000&count=true&src=con&query=%0D%0Acreate%20table%20data(s%20string)&timings=true HTTP/1.1\r
@@ -3368,7 +3362,7 @@ public class IODispatcherTest extends AbstractTest {
 
     @Test
     public void testJsonQueryCreateInsertTruncateAndDrop() throws Exception {
-        testJsonQuery0(1, (engine, sqlExecutionContext) -> {
+        testJsonQuery0(1, (_, _) -> {
             // create table
             sendAndReceive(NetworkFacadeImpl.INSTANCE, """
                     GET /query?query=%0A%0A%0Acreate+table+balances_x+(%0A%09cust_id+int%2C+%0A%09balance_ccy+symbol%2C+%0A%09balance+double%2C+%0A%09status+byte%2C+%0A%09timestamp+timestamp%0A)%20timestamp%28timestamp%29&limit=0%2C1000&count=true HTTP/1.1\r
@@ -3494,35 +3488,6 @@ public class IODispatcherTest extends AbstractTest {
     }
 
     @Test
-    public void testJsonQueryDataUnavailableClientDisconnectsBeforeEventFired() throws Exception {
-        new HttpQueryTestBuilder().withTempFolder(root).withWorkerCount(2).withHttpServerConfigBuilder(new HttpServerConfigurationBuilder()).withTelemetry(false).withQueryTimeout(60_000) // use a large value for query timeout
-                .run((engine, sqlExecutionContext) -> {
-                    AtomicReference<SuspendEvent> eventRef = new AtomicReference<>();
-                    TestDataUnavailableFunctionFactory.eventCallback = eventRef::set;
-
-                    final String query = "select * from test_data_unavailable(1, 10)";
-                    final String request = "GET /query?query=" + urlEncodeQuery(query) + "&count=true HTTP/1.1\r\n" + SendAndReceiveRequestBuilder.RequestHeaders;
-
-                    final NetworkFacade nf = NetworkFacadeImpl.INSTANCE;
-                    long fd = -1;
-                    try {
-                        fd = new SendAndReceiveRequestBuilder().connectAndSendRequest(request);
-                        assertEventually(() -> Assert.assertNotNull(eventRef.get()), 10);
-                        nf.close(fd);
-                        fd = -1;
-                        // Check that I/O dispatcher closes the event once it detects the disconnect.
-                        assertEventually(() -> assertTrue(eventRef.get().isClosedByAtLeastOneSide()), 10);
-                    } finally {
-                        if (fd > -1) {
-                            nf.close(fd);
-                        }
-                        // Make sure to close the event on the producer side.
-                        Misc.free(eventRef.get());
-                    }
-                });
-    }
-
-    @Test
     public void testJsonQueryDropTable() throws Exception {
         testJsonQuery(20, """
                 GET /query?query=drop%20table%20x HTTP/1.1\r
@@ -3622,13 +3587,6 @@ public class IODispatcherTest extends AbstractTest {
     }
 
     @Test
-    public void testJsonQueryErrorOnDataUnavailableEventNeverFired() throws Exception {
-        TestDataUnavailableFunctionFactory.eventCallback = SuspendEvent::close;
-        new HttpQueryTestBuilder().withTempFolder(root).withWorkerCount(1).withHttpServerConfigBuilder(new HttpServerConfigurationBuilder()).withTelemetry(false).withQueryTimeout(100).run((engine, sqlExecutionContext) -> testHttpClient.assertGetRegexp("/query", "\\{\"query\":\"select \\* from test_data_unavailable\\(1, 10\\)\",\"error\":\"timeout, query aborted \\[fd=\\d+, runtime=\\d+ms, timeout=\\d+ms\\]\",\"position\":0\\}", "select * from test_data_unavailable(1, 10)", null, null, null, null, "400" // Request Timeout
-        ));
-    }
-
-    @Test
     public void testJsonQueryGeoHashColumnChars() throws Exception {
         testHttpQueryGeoHashColumnChars("{\"query\":\"SELECT * FROM y\",\"columns\":[{\"name\":\"geo1\",\"type\":\"GEOHASH(1c)\"},{\"name\":\"geo2\",\"type\":\"GEOHASH(3c)\"},{\"name\":\"geo4\",\"type\":\"GEOHASH(6c)\"},{\"name\":\"geo8\",\"type\":\"GEOHASH(12c)\"},{\"name\":\"geo01\",\"type\":\"GEOHASH(1b)\"}],\"timestamp\":-1,\"dataset\":[[null,null,\"questd\",\"u10m99dd3pbj\",\"1\"],[\"u\",\"u10\",\"questd\",null,\"1\"],[\"q\",\"u10\",\"questd\",\"questdb12345\",\"1\"]],\"count\":3}", "/query");
     }
@@ -3720,7 +3678,7 @@ public class IODispatcherTest extends AbstractTest {
 
     @Test
     public void testJsonQueryJsonEncodeZeroCharacter() throws Exception {
-        testJsonQuery0(2, (engine, sqlExecutionContext) -> {
+        testJsonQuery0(2, (engine, _) -> {
             // create table with all column types
             createTestTable(engine);
             sendAndReceive(NetworkFacadeImpl.INSTANCE, """
@@ -3872,7 +3830,7 @@ public class IODispatcherTest extends AbstractTest {
         final int threadCount = 4;
         final int requestsPerThread = 500;
         final String[][] requests = {{"xyz where sym = 'UDEYY'", "{\"query\":\"xyz where sym = 'UDEYY'\",\"columns\":[{\"name\":\"sym\",\"type\":\"SYMBOL\"},{\"name\":\"d\",\"type\":\"DOUBLE\"}],\"timestamp\":-1,\"dataset\":[[\"UDEYY\",0.15786635599554755],[\"UDEYY\",0.8445258177211064],[\"UDEYY\",0.5778947915182423]],\"count\":3}"}, {"xyz where sym = 'QEHBH'", "{\"query\":\"xyz where sym = 'QEHBH'\",\"columns\":[{\"name\":\"sym\",\"type\":\"SYMBOL\"},{\"name\":\"d\",\"type\":\"DOUBLE\"}],\"timestamp\":-1,\"dataset\":[[\"QEHBH\",0.4022810626779558],[\"QEHBH\",0.9038068796506872],[\"QEHBH\",0.05048190020054388],[\"QEHBH\",0.4149517697653501],[\"QEHBH\",0.44804689668613573]],\"count\":5}"}, {"xyz where sym = 'SXUXI'", "{\"query\":\"xyz where sym = 'SXUXI'\",\"columns\":[{\"name\":\"sym\",\"type\":\"SYMBOL\"},{\"name\":\"d\",\"type\":\"DOUBLE\"}],\"timestamp\":-1,\"dataset\":[[\"SXUXI\",0.6761934857077543],[\"SXUXI\",0.38642336707855873],[\"SXUXI\",0.48558682958070665]],\"count\":3}"}, {"xyz where sym = 'VTJWC'", "{\"query\":\"xyz where sym = 'VTJWC'\",\"columns\":[{\"name\":\"sym\",\"type\":\"SYMBOL\"},{\"name\":\"d\",\"type\":\"DOUBLE\"}],\"timestamp\":-1,\"dataset\":[[\"VTJWC\",0.3435685332942956],[\"VTJWC\",0.8258367614088108],[\"VTJWC\",0.437176959518218],[\"VTJWC\",0.7176053468281931]],\"count\":4}"}};
-        new HttpQueryTestBuilder().withTempFolder(root).withWorkerCount(threadCount).withHttpServerConfigBuilder(new HttpServerConfigurationBuilder()).withTelemetry(false).run((engine, sqlExecutionContext) -> {
+        new HttpQueryTestBuilder().withTempFolder(root).withWorkerCount(threadCount).withHttpServerConfigBuilder(new HttpServerConfigurationBuilder()).withTelemetry(false).run((engine, _) -> {
             try (SqlExecutionContext executionContext = TestUtils.createSqlExecutionCtx(engine)) {
                 engine.execute("create table xyz as (select rnd_symbol(10, 5, 5, 0) sym, rnd_double() d from long_sequence(30)), index(sym)", executionContext);
 
@@ -4137,7 +4095,7 @@ public class IODispatcherTest extends AbstractTest {
 
     @Test
     public void testJsonQueryQuotedColumnNames() throws Exception {
-        getSimpleTester().run((engine, sqlExecutionContext) -> testHttpClient.assertGet("{\"query\":\"select 1 \\\"a\\\", 2 \\\"b,c\\\", 3 \\\"d,e\\\", 4 '\\\"f,g\\\"'\",\"columns\":[{\"name\":\"a\",\"type\":\"INT\"},{\"name\":\"b,c\",\"type\":\"INT\"},{\"name\":\"d,e\",\"type\":\"INT\"},{\"name\":\"\\\"f,g\\\"\",\"type\":\"INT\"}],\"timestamp\":-1,\"dataset\":[[1,2,3,4]],\"count\":1}", "select 1 \"a\", 2 \"b,c\", 3 \"d,e\", 4 '\"f,g\"'", new CharSequenceObjHashMap<>() {{
+        getSimpleTester().run((_, _) -> testHttpClient.assertGet("{\"query\":\"select 1 \\\"a\\\", 2 \\\"b,c\\\", 3 \\\"d,e\\\", 4 '\\\"f,g\\\"'\",\"columns\":[{\"name\":\"a\",\"type\":\"INT\"},{\"name\":\"b,c\",\"type\":\"INT\"},{\"name\":\"d,e\",\"type\":\"INT\"},{\"name\":\"\\\"f,g\\\"\",\"type\":\"INT\"}],\"timestamp\":-1,\"dataset\":[[1,2,3,4]],\"count\":1}", "select 1 \"a\", 2 \"b,c\", 3 \"d,e\", 4 '\"f,g\"'", new CharSequenceObjHashMap<>() {{
                     put("cols", "\"a\",\"b,c\",d\\,e,\"\\\"f\\,g\\\"\"");
                 }}
 
@@ -4146,7 +4104,7 @@ public class IODispatcherTest extends AbstractTest {
 
     @Test
     public void testJsonQueryRenameTable() throws Exception {
-        testJsonQuery0(2, (engine, sqlExecutionContext) -> {
+        testJsonQuery0(2, (engine, _) -> {
             // create table with all column types
             createTableX(engine, 20);
 
@@ -4263,7 +4221,7 @@ public class IODispatcherTest extends AbstractTest {
 
     @Test
     public void testJsonQuerySelectAlterSelect() throws Exception {
-        testJsonQuery0(1, (engine, sqlExecutionContext) -> {
+        testJsonQuery0(1, (_, _) -> {
 
             // create table
             sendAndReceive(NetworkFacadeImpl.INSTANCE, """
@@ -4481,17 +4439,6 @@ public class IODispatcherTest extends AbstractTest {
         assertTelemetryEventAndOrigin(expected);
     }
 
-    /**
-     * Cold storage may lead to the initiation of suspend events when data is inaccessible to the local database instance.
-     * This disruption affects both the state machine's flow and the factory's data provision process. This test
-     * replicates a suspend event, comparing the query output after resumption with the output of a query that
-     * hasn't been suspended.
-     */
-    @Test
-    public void testJsonQuerySuspend() throws Exception {
-        testSuspend("/query");
-    }
-
     @Test
     public void testJsonQuerySyntaxError() throws Exception {
         assertMemoryLeak(() -> {
@@ -4520,7 +4467,7 @@ public class IODispatcherTest extends AbstractTest {
 
     @Test
     public void testJsonQueryTimeout() throws Exception {
-        new HttpQueryTestBuilder().withTempFolder(root).withWorkerCount(1).withHttpServerConfigBuilder(new HttpServerConfigurationBuilder()).withTelemetry(false).withQueryTimeout(SqlExecutionCircuitBreaker.TIMEOUT_FAIL_ON_FIRST_CHECK).run((engine, sqlExecutionContext) -> {
+        new HttpQueryTestBuilder().withTempFolder(root).withWorkerCount(1).withHttpServerConfigBuilder(new HttpServerConfigurationBuilder()).withTelemetry(false).withQueryTimeout(SqlExecutionCircuitBreaker.TIMEOUT_FAIL_ON_FIRST_CHECK).run((engine, _) -> {
             try (SqlExecutionContext executionContext = TestUtils.createSqlExecutionCtx(engine)) {
                 engine.execute(QUERY_TIMEOUT_TABLE_DDL, executionContext);
                 // we use regexp, because the fd is different every time
@@ -4533,7 +4480,7 @@ public class IODispatcherTest extends AbstractTest {
     public void testJsonQueryTimeoutResetOnEachQuery() throws Exception {
         final int timeout = 500;
         final int iterations = 3;
-        new HttpQueryTestBuilder().withTempFolder(root).withWorkerCount(1).withHttpServerConfigBuilder(new HttpServerConfigurationBuilder()).withTelemetry(false).withQueryTimeout(timeout).run((engine, sqlExecutionContext) -> {
+        new HttpQueryTestBuilder().withTempFolder(root).withWorkerCount(1).withHttpServerConfigBuilder(new HttpServerConfigurationBuilder()).withTelemetry(false).withQueryTimeout(timeout).run((engine, _) -> {
             try (SqlExecutionContext executionContext = TestUtils.createSqlExecutionCtx(engine)) {
                 engine.execute(QUERY_TIMEOUT_TABLE_DDL, executionContext);
                 for (int i = 0; i < iterations; i++) {
@@ -4609,7 +4556,7 @@ public class IODispatcherTest extends AbstractTest {
 
     @Test
     public void testJsonQueryTopLimitHttp1() throws Exception {
-        testJsonQuery0(2, (engine, sqlExecutionContext) -> {
+        testJsonQuery0(2, (engine, _) -> {
             // create table with all column types
             createTableX(engine, 20);
             sendAndReceive(NetworkFacadeImpl.INSTANCE, """
@@ -4641,7 +4588,7 @@ public class IODispatcherTest extends AbstractTest {
 
     @Test
     public void testJsonQueryVacuumTable() throws Exception {
-        testJsonQuery0(2, (engine, sqlExecutionContext) -> {
+        testJsonQuery0(2, (engine, _) -> {
             createTableX(engine, 20);
 
             final String vacuumQuery = "vacuum table x";
@@ -4911,7 +4858,7 @@ public class IODispatcherTest extends AbstractTest {
 
     @Test
     public void testJsonTableReferenceOutOfDate() throws Exception {
-        getSimpleTester().run((engine, sqlExecutionContext) -> testHttpClient.assertGet("{\"query\":\"select * from test_table_reference_out_of_date();\",\"error\":\"cached query plan cannot be used because table schema has changed [table=test_table_reference_out_of_date]\",\"position\":0}", "select * from test_table_reference_out_of_date();"));
+        getSimpleTester().run((_, _) -> testHttpClient.assertGet("{\"query\":\"select * from test_table_reference_out_of_date();\",\"error\":\"cached query plan cannot be used because table schema has changed [table=test_table_reference_out_of_date]\",\"position\":0}", "select * from test_table_reference_out_of_date();"));
     }
 
     @Test
@@ -5055,6 +5002,11 @@ public class IODispatcherTest extends AbstractTest {
                     public HttpRequestProcessor select(HttpRequestHeader requestHeader) {
                         return null;
                     }
+
+                    @Override
+                    public HttpRequestProcessor resolveProcessorById(int handlerId, HttpRequestHeader header) {
+                        return select(header);
+                    }
                 }) {
 
                     AtomicBoolean serverRunning = new AtomicBoolean(true);
@@ -5185,7 +5137,7 @@ public class IODispatcherTest extends AbstractTest {
 
     @Test
     public void testMissingURL() throws Exception {
-        testJsonQuery0(2, (engine, sqlExecutionContext) -> {
+        testJsonQuery0(2, (_, _) -> {
             long fd = Net.socketTcp(true);
             try {
                 long sockAddrInfo = Net.getAddrInfo("127.0.0.1", 9001);
@@ -5248,10 +5200,10 @@ public class IODispatcherTest extends AbstractTest {
         Assume.assumeFalse(Os.isWindows());
         assertMemoryLeak(() -> {
             HttpFullFatServerConfiguration httpServerConfiguration = new DefaultHttpServerConfiguration(configuration);
-            try (IODispatcher<HttpConnectionContext> ignored1 = IODispatchers.create(DefaultIODispatcherConfiguration.INSTANCE, fd -> new HttpConnectionContext(httpServerConfiguration, PlainSocketFactory.INSTANCE))) {
+            try (IODispatcher<HttpConnectionContext> ignored1 = IODispatchers.create(DefaultIODispatcherConfiguration.INSTANCE, _ -> new HttpConnectionContext(httpServerConfiguration, PlainSocketFactory.INSTANCE))) {
                 // Simulate a scenario where the socket cannot be bound
                 try {
-                    try (IODispatcher<HttpConnectionContext> ignored2 = IODispatchers.create(DefaultIODispatcherConfiguration.INSTANCE, fd -> new HttpConnectionContext(httpServerConfiguration, PlainSocketFactory.INSTANCE))) {
+                    try (IODispatcher<HttpConnectionContext> ignored2 = IODispatchers.create(DefaultIODispatcherConfiguration.INSTANCE, _ -> new HttpConnectionContext(httpServerConfiguration, PlainSocketFactory.INSTANCE))) {
                         Assert.fail("ignored2 should not have been created as the socket binding failed");
                     }
                 } catch (NetworkError e) {
@@ -5263,7 +5215,7 @@ public class IODispatcherTest extends AbstractTest {
 
     @Test
     public void testNoMetadataInTextExport() throws Exception {
-        new HttpQueryTestBuilder().withTempFolder(root).withWorkerCount(2).withHttpServerConfigBuilder(new HttpServerConfigurationBuilder()).withTelemetry(false).run((engine, sqlExecutionContext) -> {
+        new HttpQueryTestBuilder().withTempFolder(root).withWorkerCount(2).withHttpServerConfigBuilder(new HttpServerConfigurationBuilder()).withTelemetry(false).run((_, _) -> {
             CharSequenceObjHashMap<String> queryParams = new CharSequenceObjHashMap<>();
             queryParams.put("nm", "true");
             queryParams.put("query", "select 42 from long_sequence(1);");
@@ -5289,7 +5241,7 @@ public class IODispatcherTest extends AbstractTest {
                 }
             };
 
-            try (IODispatcher<HttpConnectionContext> dispatcher = IODispatchers.create(configuration, fd -> {
+            try (IODispatcher<HttpConnectionContext> dispatcher = IODispatchers.create(configuration, _ -> {
                 // Throw out of memory exception when we reach the limit
                 throw CairoException.nonCritical().setOutOfMemory(true).put("global RSS memory limit exceeded [usage=test]");
             })) {
@@ -5398,81 +5350,8 @@ public class IODispatcherTest extends AbstractTest {
     }
 
     @Test
-    public void testQueryEventuallySucceedsOnDataUnavailableChunkedResponse() throws Exception {
-        new HttpQueryTestBuilder().withTempFolder(root).withWorkerCount(2).withHttpServerConfigBuilder(new HttpServerConfigurationBuilder().withSendBufferSize(256)).withTelemetry(false).run((engine, sqlExecutionContext) -> {
-            int totalRows = 32;
-            int backoffCount = 10;
-
-            final AtomicInteger totalEvents = new AtomicInteger();
-            TestDataUnavailableFunctionFactory.eventCallback = event -> {
-                event.trigger();
-                event.close();
-                totalEvents.incrementAndGet();
-            };
-
-            final String query = "select * from test_data_unavailable(" + totalRows + ", " + backoffCount + ")";
-            new SendAndReceiveRequestBuilder().executeWithStandardHeaders("GET /query?query=" + urlEncodeQuery(query) + "&count=true HTTP/1.1\r\n", """
-                    0100\r
-                    {"query":"select * from test_data_unavailable(32, 10)","columns":[{"name":"x","type":"LONG"},{"name":"y","type":"LONG"},{"name":"z","type":"LONG"}],"timestamp":-1,"dataset":[[1,1,1],[2,2,2],[3,3,3],[4,4,4],[5,5,5],[6,6,6],[7,7,7],[8,8,8],[9,9,9],[10,10,10]\r
-                    ff\r
-                    ,[11,11,11],[12,12,12],[13,13,13],[14,14,14],[15,15,15],[16,16,16],[17,17,17],[18,18,18],[19,19,19],[20,20,20],[21,21,21],[22,22,22],[23,23,23],[24,24,24],[25,25,25],[26,26,26],[27,27,27],[28,28,28],[29,29,29],[30,30,30],[31,31,31],[32,32,32]],"count":32}\r
-                    00\r
-                    \r
-                    """);
-
-            Assert.assertEquals(totalRows * backoffCount, totalEvents.get());
-        });
-    }
-
-    @Test
-    public void testQueryEventuallySucceedsOnDataUnavailableEventTriggeredAfterDelay() throws Exception {
-        new HttpQueryTestBuilder().withTempFolder(root).withWorkerCount(2).withHttpServerConfigBuilder(new HttpServerConfigurationBuilder()).withTelemetry(false).run((engine, sqlExecutionContext) -> {
-            int totalRows = 3;
-            int backoffCount = 3;
-
-            final AtomicInteger totalEvents = new AtomicInteger();
-            final AtomicReference<SuspendEvent> eventRef = new AtomicReference<>();
-            final AtomicBoolean stopDelayThread = new AtomicBoolean();
-
-            final Thread delayThread = createDelayThread(stopDelayThread, eventRef, totalEvents);
-
-            TestDataUnavailableFunctionFactory.eventCallback = eventRef::set;
-            testHttpClient.assertGet("{\"query\":\"select * from test_data_unavailable(3, 3)\",\"columns\":[{\"name\":\"x\",\"type\":\"LONG\"},{\"name\":\"y\",\"type\":\"LONG\"},{\"name\":\"z\",\"type\":\"LONG\"}],\"timestamp\":-1,\"dataset\":[[1,1,1],[2,2,2],[3,3,3]],\"count\":3}", "select * from test_data_unavailable(" + totalRows + ", " + backoffCount + ")");
-            stopDelayThread.set(true);
-            delayThread.join();
-
-            Assert.assertEquals(totalRows * backoffCount, totalEvents.get());
-        });
-    }
-
-    @Test
-    public void testQueryEventuallySucceedsOnDataUnavailableEventTriggeredImmediately() throws Exception {
-        new HttpQueryTestBuilder().withTempFolder(root).withWorkerCount(2).withHttpServerConfigBuilder(new HttpServerConfigurationBuilder()).withTelemetry(false).run((engine, sqlExecutionContext) -> {
-            int totalRows = 3;
-            int backoffCount = 10;
-
-            final AtomicInteger totalEvents = new AtomicInteger();
-            TestDataUnavailableFunctionFactory.eventCallback = event -> {
-                event.trigger();
-                event.close();
-                totalEvents.incrementAndGet();
-            };
-
-            final String query = "select * from test_data_unavailable(" + totalRows + ", " + backoffCount + ")";
-            new SendAndReceiveRequestBuilder().executeWithStandardHeaders("GET /query?query=" + urlEncodeQuery(query) + "&count=true HTTP/1.1\r\n", """
-                    d0\r
-                    {"query":"select * from test_data_unavailable(3, 10)","columns":[{"name":"x","type":"LONG"},{"name":"y","type":"LONG"},{"name":"z","type":"LONG"}],"timestamp":-1,"dataset":[[1,1,1],[2,2,2],[3,3,3]],"count":3}\r
-                    00\r
-                    \r
-                    """);
-
-            Assert.assertEquals(totalRows * backoffCount, totalEvents.get());
-        });
-    }
-
-    @Test
     public void testQueryImplicitCastExceptionInWindowFunctionFirstRecord() throws Exception {
-        getSimpleTester().run((engine, sqlExecutionContext) -> {
+        getSimpleTester().run((engine, _) -> {
             try (SqlExecutionContext executionContext = TestUtils.createSqlExecutionCtx(engine)) {
                 engine.execute("CREATE TABLE 'trades' ( " + " symbol SYMBOL, " + " side SYMBOL, " + " price DOUBLE, " + " amount DOUBLE, " + " timestamp TIMESTAMP " + ") timestamp(timestamp) PARTITION BY DAY;", executionContext);
                 engine.execute("INSERT INTO trades VALUES ('ETH-USD', 'sell', 2615.54, 0.00044, '2022-03-08T18:03:57.609765Z');", executionContext);
@@ -5489,7 +5368,7 @@ public class IODispatcherTest extends AbstractTest {
 
     @Test
     public void testQueryReturnsEncodedNonPrintableCharacters() throws Exception {
-        new HttpQueryTestBuilder().withTempFolder(root).withWorkerCount(1).withHttpServerConfigBuilder(new HttpServerConfigurationBuilder()).withTelemetry(false).run((engine, sqlExecutionContext) -> new SendAndReceiveRequestBuilder().executeWithStandardHeaders("GET /query?query=selecT%20%27NH%1C%27%3B%20 HTTP/1.1\r\n", """
+        new HttpQueryTestBuilder().withTempFolder(root).withWorkerCount(1).withHttpServerConfigBuilder(new HttpServerConfigurationBuilder()).withTelemetry(false).run((_, _) -> new SendAndReceiveRequestBuilder().executeWithStandardHeaders("GET /query?query=selecT%20%27NH%1C%27%3B%20 HTTP/1.1\r\n", """
                 81\r
                 {"query":"selecT 'NH\\u001c'; ","columns":[{"name":"NH\\u001c","type":"STRING"}],"timestamp":-1,"dataset":[["NH\\u001c"]],"count":1}\r
                 00\r
@@ -5499,7 +5378,7 @@ public class IODispatcherTest extends AbstractTest {
 
     @Test
     public void testQueryWithDoubleQuotesParsedCorrectly() throws Exception {
-        getSimpleTester().run((engine, sqlExecutionContext) -> {
+        getSimpleTester().run((_, _) -> {
             // select 1 as "select"
             // with select being the column name to check double quote parsing
             testHttpClient.assertGet("{\"query\":\"SELECT 1 as \\\"select\\\"\",\"columns\":[{\"name\":\"select\",\"type\":\"INT\"}],\"timestamp\":-1,\"dataset\":[[1]],\"count\":1}", "SELECT 1 as \"select\"");
@@ -5934,6 +5813,11 @@ public class IODispatcherTest extends AbstractTest {
                             }
                         };
                     }
+
+                    @Override
+                    public HttpRequestProcessor resolveProcessorById(int handlerId, HttpRequestHeader header) {
+                        return select(header);
+                    }
                 };
 
                 AtomicBoolean serverRunning = new AtomicBoolean(true);
@@ -6105,6 +5989,11 @@ public class IODispatcherTest extends AbstractTest {
                             }
                         };
                     }
+
+                    @Override
+                    public HttpRequestProcessor resolveProcessorById(int handlerId, HttpRequestHeader header) {
+                        return select(header);
+                    }
                 };
 
                 AtomicBoolean serverRunning = new AtomicBoolean(true);
@@ -6142,7 +6031,7 @@ public class IODispatcherTest extends AbstractTest {
                                 assertTrue(n > 0);
 
                                 for (int i = 0; i < n; i++) {
-                                    sink2.put((char) Unsafe.getUnsafe().getByte(buffer + i));
+                                    sink2.put((char) Unsafe.getByte(buffer + i));
                                 }
                                 // copy response bytes to sink
                                 read += n;
@@ -6253,6 +6142,11 @@ public class IODispatcherTest extends AbstractTest {
                             }
                         };
                     }
+
+                    @Override
+                    public HttpRequestProcessor resolveProcessorById(int handlerId, HttpRequestHeader header) {
+                        return select(header);
+                    }
                 };
 
                 AtomicBoolean serverRunning = new AtomicBoolean(true);
@@ -6316,161 +6210,9 @@ public class IODispatcherTest extends AbstractTest {
     }
 
     @Test
-    public void testTextExportDisconnectOnDataUnavailableEventNeverFired() throws Exception {
-        getSimpleTester().withWorkerCount(2).withQueryTimeout(100).run((engine, sqlExecutionContext) -> {
-            AtomicReference<SuspendEvent> eventRef = new AtomicReference<>();
-            TestDataUnavailableFunctionFactory.eventCallback = eventRef::set;
-            try {
-                testHttpClient.assertGetRegexp("/query", ".*timeout, query aborted.*", "select * from test_data_unavailable(1, 10)", null, null, "400");
-            } finally {
-                Misc.free(eventRef.get());
-            }
-        });
-    }
-
-    @Test
-    public void testTextExportEventuallySucceedsOnDataUnavailableChunkedResponse() throws Exception {
-        new HttpQueryTestBuilder().withTempFolder(root).withWorkerCount(2).withHttpServerConfigBuilder(new HttpServerConfigurationBuilder().withSendBufferSize(256)).withTelemetry(false).run((engine, sqlExecutionContext) -> {
-            TestDataUnavailableFunctionFactory.eventCallback = event -> {
-                event.trigger();
-                event.close();
-            };
-
-            final String select = "select * from test_data_unavailable(32, 10)";
-            new SendAndReceiveRequestBuilder().executeWithStandardRequestHeaders("GET /exp?query=" + urlEncodeQuery(select) + "&count=true HTTP/1.1\r\n", """
-                    HTTP/1.1 200 OK\r
-                    Server: questDB/1.0\r
-                    Date: Thu, 1 Jan 1970 00:00:00 GMT\r
-                    Transfer-Encoding: chunked\r
-                    Content-Type: text/csv; charset=utf-8\r
-                    Content-Disposition: attachment; filename="questdb-query-0.csv"\r
-                    Keep-Alive: timeout=5, max=10000\r
-                    \r
-                    0100\r
-                    "x","y","z"\r
-                    1,1,1\r
-                    2,2,2\r
-                    3,3,3\r
-                    4,4,4\r
-                    5,5,5\r
-                    6,6,6\r
-                    7,7,7\r
-                    8,8,8\r
-                    9,9,9\r
-                    10,10,10\r
-                    11,11,11\r
-                    12,12,12\r
-                    13,13,13\r
-                    14,14,14\r
-                    15,15,15\r
-                    16,16,16\r
-                    17,17,17\r
-                    18,18,18\r
-                    19,19,19\r
-                    20,20,20\r
-                    21,21,21\r
-                    22,22,22\r
-                    23,23,23\r
-                    24,24,24\r
-                    25,25,25\r
-                    26,26,26\r
-                    27,27,27\r
-                    \r
-                    32\r
-                    28,28,28\r
-                    29,29,29\r
-                    30,30,30\r
-                    31,31,31\r
-                    32,32,32\r
-                    \r
-                    00\r
-                    \r
-                    """);
-        });
-    }
-
-    @Test
-    public void testTextExportEventuallySucceedsOnDataUnavailableEventTriggeredAfterDelay() throws Exception {
-        new HttpQueryTestBuilder().withTempFolder(root).withWorkerCount(2).withHttpServerConfigBuilder(new HttpServerConfigurationBuilder()).withTelemetry(false).run((engine, sqlExecutionContext) -> {
-            int totalRows = 3;
-            int backoffCount = 3;
-
-            final AtomicInteger totalEvents = new AtomicInteger();
-            final AtomicReference<SuspendEvent> eventRef = new AtomicReference<>();
-            final AtomicBoolean stopDelayThread = new AtomicBoolean();
-
-            final Thread delayThread = createDelayThread(stopDelayThread, eventRef, totalEvents);
-
-            TestDataUnavailableFunctionFactory.eventCallback = eventRef::set;
-
-            final String query = "select * from test_data_unavailable(" + totalRows + ", " + backoffCount + ")";
-            new SendAndReceiveRequestBuilder().executeWithStandardRequestHeaders("GET /exp?query=" + urlEncodeQuery(query) + "&count=true HTTP/1.1\r\n", """
-                    HTTP/1.1 200 OK\r
-                    Server: questDB/1.0\r
-                    Date: Thu, 1 Jan 1970 00:00:00 GMT\r
-                    Transfer-Encoding: chunked\r
-                    Content-Type: text/csv; charset=utf-8\r
-                    Content-Disposition: attachment; filename="questdb-query-0.csv"\r
-                    Keep-Alive: timeout=5, max=10000\r
-                    \r
-                    22\r
-                    "x","y","z"\r
-                    1,1,1\r
-                    2,2,2\r
-                    3,3,3\r
-                    \r
-                    00\r
-                    \r
-                    """);
-
-            stopDelayThread.set(true);
-            delayThread.join();
-
-            Assert.assertEquals(totalRows * backoffCount, totalEvents.get());
-        });
-    }
-
-    @Test
-    public void testTextExportEventuallySucceedsOnDataUnavailableEventTriggeredImmediately() throws Exception {
-        new HttpQueryTestBuilder().withTempFolder(root).withWorkerCount(2).withHttpServerConfigBuilder(new HttpServerConfigurationBuilder()).withTelemetry(false).run((engine, sqlExecutionContext) -> {
-            int totalRows = 3;
-            int backoffCount = 10;
-
-            final AtomicInteger totalEvents = new AtomicInteger();
-            TestDataUnavailableFunctionFactory.eventCallback = event -> {
-                event.trigger();
-                event.close();
-                totalEvents.incrementAndGet();
-            };
-
-            final String query = "select * from test_data_unavailable(" + totalRows + ", " + backoffCount + ")";
-            new SendAndReceiveRequestBuilder().executeWithStandardRequestHeaders("GET /exp?query=" + urlEncodeQuery(query) + "&count=true HTTP/1.1\r\n", """
-                    HTTP/1.1 200 OK\r
-                    Server: questDB/1.0\r
-                    Date: Thu, 1 Jan 1970 00:00:00 GMT\r
-                    Transfer-Encoding: chunked\r
-                    Content-Type: text/csv; charset=utf-8\r
-                    Content-Disposition: attachment; filename="questdb-query-0.csv"\r
-                    Keep-Alive: timeout=5, max=10000\r
-                    \r
-                    22\r
-                    "x","y","z"\r
-                    1,1,1\r
-                    2,2,2\r
-                    3,3,3\r
-                    \r
-                    00\r
-                    \r
-                    """);
-
-            Assert.assertEquals(totalRows * backoffCount, totalEvents.get());
-        });
-    }
-
-    @Test
     public void testTextQueryCopyFrom() throws Exception {
         String copyInputRoot = TestUtils.getCsvRoot();
-        new HttpQueryTestBuilder().withTempFolder(root).withCopyInputRoot(copyInputRoot).withMicrosecondClock(new TestMicroClock(0, 0)).withWorkerCount(1).withHttpServerConfigBuilder(new HttpServerConfigurationBuilder()).run((engine, sqlExecutionContext) -> {
+        new HttpQueryTestBuilder().withTempFolder(root).withCopyInputRoot(copyInputRoot).withMicrosecondClock(new TestMicroClock(0, 0)).withWorkerCount(1).withHttpServerConfigBuilder(new HttpServerConfigurationBuilder()).run((_, _) -> {
             final String copyQuery = "copy test from 'test-numeric-headers.csv' with header true";
             sendAndReceive(NetworkFacadeImpl.INSTANCE, "GET /query?query=" + urlEncodeQuery(copyQuery) + "&count=true HTTP/1.1\r\n" + "Host: localhost:9000\r\n" + "Connection: keep-alive\r\n" + "Accept: */*\r\n" + "X-Requested-With: XMLHttpRequest\r\n" + "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/78.0.3904.87 Safari/537.36\r\n" + "Sec-Fetch-Site: same-origin\r\n" + "Sec-Fetch-Mode: cors\r\n" + "Referer: http://localhost:9000/index.html\r\n" + "Accept-Encoding: gzip, deflate, br\r\n" + "Accept-Language: en-GB,en-US;q=0.9,en;q=0.8\r\n" + "\r\n", """
                     HTTP/1.1 200 OK\r
@@ -6520,7 +6262,7 @@ public class IODispatcherTest extends AbstractTest {
 
     @Test
     public void testTextQueryCorrectQuoting() throws Exception {
-        new HttpQueryTestBuilder().withTempFolder(root).withMicrosecondClock(new TestMicroClock(0, 0)).withWorkerCount(1).withHttpServerConfigBuilder(new HttpServerConfigurationBuilder()).run((engine, sqlExecutionContext) -> sendAndReceive(NetworkFacadeImpl.INSTANCE, "GET /exp?query=" + urlEncodeQuery("SELECT '{\"filed1\":1, \"filed2\":1, \"filed3\":\"admin\", \"filed4\":1}' as foo") + " HTTP/1.1\r\n" + "Host: localhost:9000\r\n" + "Connection: keep-alive\r\n" + "Cache-Control: max-age=0\r\n" + "Upgrade-Insecure-Requests: 1\r\n" + "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/74.0.3729.169 Safari/537.36\r\n" + "Accept: */*\r\n" + "Accept-Encoding: gzip, deflate, br\r\n" + "Accept-Language: en-GB,en-US;q=0.9,en;q=0.8\r\n" + "\r\n", """
+        new HttpQueryTestBuilder().withTempFolder(root).withMicrosecondClock(new TestMicroClock(0, 0)).withWorkerCount(1).withHttpServerConfigBuilder(new HttpServerConfigurationBuilder()).run((_, _) -> sendAndReceive(NetworkFacadeImpl.INSTANCE, "GET /exp?query=" + urlEncodeQuery("SELECT '{\"filed1\":1, \"filed2\":1, \"filed3\":\"admin\", \"filed4\":1}' as foo") + " HTTP/1.1\r\n" + "Host: localhost:9000\r\n" + "Connection: keep-alive\r\n" + "Cache-Control: max-age=0\r\n" + "Upgrade-Insecure-Requests: 1\r\n" + "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/74.0.3729.169 Safari/537.36\r\n" + "Accept: */*\r\n" + "Accept-Encoding: gzip, deflate, br\r\n" + "Accept-Language: en-GB,en-US;q=0.9,en;q=0.8\r\n" + "\r\n", """
                 HTTP/1.1 200 OK\r
                 Server: questDB/1.0\r
                 Date: Thu, 1 Jan 1970 00:00:00 GMT\r
@@ -6539,7 +6281,7 @@ public class IODispatcherTest extends AbstractTest {
 
     @Test
     public void testTextQueryCorrectQuotingOfHeader() throws Exception {
-        new HttpQueryTestBuilder().withTempFolder(root).withMicrosecondClock(new TestMicroClock(0, 0)).withWorkerCount(1).withHttpServerConfigBuilder(new HttpServerConfigurationBuilder()).run((engine, sqlExecutionContext) -> sendAndReceive(NetworkFacadeImpl.INSTANCE, "GET /exp?query=" + urlEncodeQuery("SELECT 5 as '\"foo\"'") + " HTTP/1.1\r\n" + "Host: localhost:9000\r\n" + "Connection: keep-alive\r\n" + "Cache-Control: max-age=0\r\n" + "Upgrade-Insecure-Requests: 1\r\n" + "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/74.0.3729.169 Safari/537.36\r\n" + "Accept: */*\r\n" + "Accept-Encoding: gzip, deflate, br\r\n" + "Accept-Language: en-GB,en-US;q=0.9,en;q=0.8\r\n" + "\r\n", """
+        new HttpQueryTestBuilder().withTempFolder(root).withMicrosecondClock(new TestMicroClock(0, 0)).withWorkerCount(1).withHttpServerConfigBuilder(new HttpServerConfigurationBuilder()).run((_, _) -> sendAndReceive(NetworkFacadeImpl.INSTANCE, "GET /exp?query=" + urlEncodeQuery("SELECT 5 as '\"foo\"'") + " HTTP/1.1\r\n" + "Host: localhost:9000\r\n" + "Connection: keep-alive\r\n" + "Cache-Control: max-age=0\r\n" + "Upgrade-Insecure-Requests: 1\r\n" + "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/74.0.3729.169 Safari/537.36\r\n" + "Accept: */*\r\n" + "Accept-Encoding: gzip, deflate, br\r\n" + "Accept-Language: en-GB,en-US;q=0.9,en;q=0.8\r\n" + "\r\n", """
                 HTTP/1.1 200 OK\r
                 Server: questDB/1.0\r
                 Date: Thu, 1 Jan 1970 00:00:00 GMT\r
@@ -6558,7 +6300,7 @@ public class IODispatcherTest extends AbstractTest {
 
     @Test
     public void testTextQueryCorrectQuotingWithSpecialChars() throws Exception {
-        new HttpQueryTestBuilder().withTempFolder(root).withMicrosecondClock(new TestMicroClock(0, 0)).withWorkerCount(1).withHttpServerConfigBuilder(new HttpServerConfigurationBuilder()).run((engine, sqlExecutionContext) -> sendAndReceive(NetworkFacadeImpl.INSTANCE, "GET /exp?query=" + urlEncodeQuery("select 'foo\\foo\uD83D\uDC27' as foo") + " HTTP/1.1\r\n" + "Host: localhost:9000\r\n" + "Connection: keep-alive\r\n" + "Cache-Control: max-age=0\r\n" + "Upgrade-Insecure-Requests: 1\r\n" + "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/74.0.3729.169 Safari/537.36\r\n" + "Accept: */*\r\n" + "Accept-Encoding: gzip, deflate, br\r\n" + "Accept-Language: en-GB,en-US;q=0.9,en;q=0.8\r\n" + "\r\n", """
+        new HttpQueryTestBuilder().withTempFolder(root).withMicrosecondClock(new TestMicroClock(0, 0)).withWorkerCount(1).withHttpServerConfigBuilder(new HttpServerConfigurationBuilder()).run((_, _) -> sendAndReceive(NetworkFacadeImpl.INSTANCE, "GET /exp?query=" + urlEncodeQuery("select 'foo\\foo\uD83D\uDC27' as foo") + " HTTP/1.1\r\n" + "Host: localhost:9000\r\n" + "Connection: keep-alive\r\n" + "Cache-Control: max-age=0\r\n" + "Upgrade-Insecure-Requests: 1\r\n" + "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/74.0.3729.169 Safari/537.36\r\n" + "Accept: */*\r\n" + "Accept-Encoding: gzip, deflate, br\r\n" + "Accept-Language: en-GB,en-US;q=0.9,en;q=0.8\r\n" + "\r\n", """
                 HTTP/1.1 200 OK\r
                 Server: questDB/1.0\r
                 Date: Thu, 1 Jan 1970 00:00:00 GMT\r
@@ -6618,7 +6360,7 @@ public class IODispatcherTest extends AbstractTest {
 
     @Test
     public void testTextQueryImplicitCastExceptionInWindowFunctionFirstRecord() throws Exception {
-        getSimpleTester().run((engine, sqlExecutionContext) -> {
+        getSimpleTester().run((engine, _) -> {
             try (SqlExecutionContext executionContext = TestUtils.createSqlExecutionCtx(engine)) {
                 engine.execute("CREATE TABLE 'trades' ( " + " symbol SYMBOL, " + " side SYMBOL, " + " price DOUBLE, " + " amount DOUBLE, " + " timestamp TIMESTAMP " + ") timestamp(timestamp) PARTITION BY DAY;", executionContext);
                 engine.execute("INSERT INTO trades VALUES ('ETH-USD', 'sell', 2615.54, 0.00044, '2022-03-08T18:03:57.609765Z');", executionContext);
@@ -6638,7 +6380,7 @@ public class IODispatcherTest extends AbstractTest {
 
     @Test
     public void testTextQueryInsertViaWrongEndpoint() throws Exception {
-        new HttpQueryTestBuilder().withTempFolder(root).withWorkerCount(2).withHttpServerConfigBuilder(new HttpServerConfigurationBuilder().withNetwork(NetworkFacadeImpl.INSTANCE).withDumpingTraffic(false).withAllowDeflateBeforeSend(false).withHttpProtocolVersion("HTTP/1.1 ").withServerKeepAlive(true)).run((engine, sqlExecutionContext) -> {
+        new HttpQueryTestBuilder().withTempFolder(root).withWorkerCount(2).withHttpServerConfigBuilder(new HttpServerConfigurationBuilder().withNetwork(NetworkFacadeImpl.INSTANCE).withDumpingTraffic(false).withAllowDeflateBeforeSend(false).withHttpProtocolVersion("HTTP/1.1 ").withServerKeepAlive(true)).run((_, _) -> {
             sendAndReceive(NetworkFacadeImpl.INSTANCE, """
                     GET /exec?query=create%20table%20tab%20(x%20int) HTTP/1.1\r
                     Host: localhost:9000\r
@@ -6759,7 +6501,7 @@ public class IODispatcherTest extends AbstractTest {
 
     @Test
     public void testTextQueryShowColumnsOnDroppedTable() throws Exception {
-        new HttpQueryTestBuilder().withTempFolder(root).withWorkerCount(1).withHttpServerConfigBuilder(new HttpServerConfigurationBuilder()).run((engine, sqlExecutionContext) -> {
+        new HttpQueryTestBuilder().withTempFolder(root).withWorkerCount(1).withHttpServerConfigBuilder(new HttpServerConfigurationBuilder()).run((_, _) -> {
             final String createTableDdl = "create table balances(cust_id int, ccy symbol, balance double)";
             sendAndReceive(NetworkFacadeImpl.INSTANCE, "GET /query?query=" + urlEncodeQuery(createTableDdl) + "&count=true HTTP/1.1\r\n" + "Host: localhost:9000\r\n" + "Connection: keep-alive\r\n" + "Accept: */*\r\n" + "X-Requested-With: XMLHttpRequest\r\n" + "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/78.0.3904.87 Safari/537.36\r\n" + "Sec-Fetch-Site: same-origin\r\n" + "Sec-Fetch-Mode: cors\r\n" + "Referer: http://localhost:9000/index.html\r\n" + "Accept-Encoding: gzip, deflate, br\r\n" + "Accept-Language: en-GB,en-US;q=0.9,en;q=0.8\r\n" + "\r\n", "HTTP/1.1 200 OK\r\n" + "Server: questDB/1.0\r\n" + "Date: Thu, 1 Jan 1970 00:00:00 GMT\r\n" + "Transfer-Encoding: chunked\r\n" + "Content-Type: application/json; charset=utf-8\r\n" + "Keep-Alive: timeout=5, max=10000\r\n" + "\r\n" + JSON_DDL_RESPONSE, 1, 0, false);
 
@@ -6772,8 +6514,8 @@ public class IODispatcherTest extends AbstractTest {
                     Content-Type: application/json; charset=utf-8\r
                     Keep-Alive: timeout=5, max=10000\r
                     \r
-                    0242\r
-                    {"query":"show columns from balances","columns":[{"name":"column","type":"STRING"},{"name":"type","type":"STRING"},{"name":"indexed","type":"BOOLEAN"},{"name":"indexBlockCapacity","type":"INT"},{"name":"symbolCached","type":"BOOLEAN"},{"name":"symbolCapacity","type":"INT"},{"name":"symbolTableSize","type":"INT"},{"name":"designated","type":"BOOLEAN"},{"name":"upsertKey","type":"BOOLEAN"}],"timestamp":-1,"dataset":[["cust_id","INT",false,0,false,0,0,false,false],["ccy","SYMBOL",false,256,true,128,0,false,false],["balance","DOUBLE",false,0,false,0,0,false,false]],"count":3}\r
+                    02a1\r
+                    {"query":"show columns from balances","columns":[{"name":"column","type":"STRING"},{"name":"type","type":"STRING"},{"name":"indexed","type":"BOOLEAN"},{"name":"indexBlockCapacity","type":"INT"},{"name":"symbolCached","type":"BOOLEAN"},{"name":"symbolCapacity","type":"INT"},{"name":"symbolTableSize","type":"INT"},{"name":"designated","type":"BOOLEAN"},{"name":"upsertKey","type":"BOOLEAN"},{"name":"indexType","type":"STRING"},{"name":"indexInclude","type":"STRING"}],"timestamp":-1,"dataset":[["cust_id","INT",false,0,false,0,0,false,false,"",""],["ccy","SYMBOL",false,256,true,128,0,false,false,"",""],["balance","DOUBLE",false,0,false,0,0,false,false,"",""]],"count":3}\r
                     00\r
                     \r
                     """, 1, 0, false);
@@ -6798,20 +6540,9 @@ public class IODispatcherTest extends AbstractTest {
         });
     }
 
-    /**
-     * Cold storage may lead to the initiation of suspend events when data is inaccessible to the local database instance.
-     * This disruption affects both the state machine's flow and the factory's data provision process. This test
-     * replicates a suspend event, comparing the query output after resumption with the output of a query that
-     * hasn't been suspended.
-     */
-    @Test
-    public void testTextQuerySuspend() throws Exception {
-        testSuspend("/exp");
-    }
-
     @Test
     public void testTextQueryTimeout() throws Exception {
-        new HttpQueryTestBuilder().withTempFolder(root).withWorkerCount(1).withHttpServerConfigBuilder(new HttpServerConfigurationBuilder()).withTelemetry(false).withQueryTimeout(SqlExecutionCircuitBreaker.TIMEOUT_FAIL_ON_FIRST_CHECK).run((engine, sqlExecutionContext) -> {
+        new HttpQueryTestBuilder().withTempFolder(root).withWorkerCount(1).withHttpServerConfigBuilder(new HttpServerConfigurationBuilder()).withTelemetry(false).withQueryTimeout(SqlExecutionCircuitBreaker.TIMEOUT_FAIL_ON_FIRST_CHECK).run((engine, _) -> {
             try (SqlExecutionContext executionContext = TestUtils.createSqlExecutionCtx(engine)) {
                 engine.execute(QUERY_TIMEOUT_TABLE_DDL, executionContext);
                 testHttpClient.assertGetRegexp("/exp", "\\{\"query\":\"select i, avg\\(l\\), max\\(l\\) from t group by i order by i asc limit 3\",\"error\":\"\\[-1\\] timeout, query aborted \\[fd=\\d+, runtime=\\d+ms, timeout=-100ms\\]\",\"position\":0\\}", QUERY_TIMEOUT_SELECT, null, null, null, null, "400");
@@ -6823,7 +6554,7 @@ public class IODispatcherTest extends AbstractTest {
     public void testTextQueryTimeoutResetOnEachQuery() throws Exception {
         final int timeout = 500;
         final int iterations = 3;
-        new HttpQueryTestBuilder().withTempFolder(root).withWorkerCount(1).withHttpServerConfigBuilder(new HttpServerConfigurationBuilder()).withTelemetry(false).withQueryTimeout(timeout).run((engine, sqlExecutionContext) -> {
+        new HttpQueryTestBuilder().withTempFolder(root).withWorkerCount(1).withHttpServerConfigBuilder(new HttpServerConfigurationBuilder()).withTelemetry(false).withQueryTimeout(timeout).run((engine, _) -> {
             try (SqlExecutionContext executionContext = TestUtils.createSqlExecutionCtx(engine)) {
                 engine.execute(QUERY_TIMEOUT_TABLE_DDL, executionContext);
                 for (int i = 0; i < iterations; i++) {
@@ -6936,7 +6667,7 @@ public class IODispatcherTest extends AbstractTest {
 
     @Test
     public void testTextTableReferenceOutOfDate() throws Exception {
-        getSimpleTester().run((engine, sqlExecutionContext) -> testHttpClient.assertGet("/exp", "{\"query\":\"select * from test_table_reference_out_of_date();\",\"error\":\"cached query plan cannot be used because table schema has changed [table=test_table_reference_out_of_date]\",\"position\":0}", "select * from test_table_reference_out_of_date();"));
+        getSimpleTester().run((_, _) -> testHttpClient.assertGet("/exp", "{\"query\":\"select * from test_table_reference_out_of_date();\",\"error\":\"cached query plan cannot be used because table schema has changed [table=test_table_reference_out_of_date]\",\"position\":0}", "select * from test_table_reference_out_of_date();"));
     }
 
     @Test
@@ -6970,7 +6701,7 @@ public class IODispatcherTest extends AbstractTest {
 
     @Test
     public void testTriggerInternalCairoError() throws Exception {
-        getSimpleTester().run((engine, sqlExecutionContext) -> {
+        getSimpleTester().run((engine, _) -> {
             testHttpClient.assertGet("{" + "\"query\":\"select simulate_crash('E')\"," + "\"columns\":[{\"name\":\"simulate_crash\",\"type\":\"BOOLEAN\"}]," + "\"timestamp\":-1," + "\"dataset\":[[]]," + "\"count\":1," + "\"error\":\"simulated cairo error\", " + "\"errorPos\":0" + "}", "select simulate_crash('E')");
             Assert.assertEquals(1, engine.getMetrics().healthMetrics().unhandledErrorsCount());
         });
@@ -6978,7 +6709,7 @@ public class IODispatcherTest extends AbstractTest {
 
     @Test
     public void testTriggerInternalCriticalCairoException() throws Exception {
-        getSimpleTester().run((engine, sqlExecutionContext) -> {
+        getSimpleTester().run((engine, _) -> {
             testHttpClient.assertGet("{" + "\"query\":\"select simulate_crash('0')\"," + "\"columns\":[{\"name\":\"simulate_crash\",\"type\":\"BOOLEAN\"}]," + "\"timestamp\":-1," + "\"dataset\":[[]]," + "\"count\":1," + "\"error\":\"simulated cairo exception\", " + "\"errorPos\":222" + "}", "select simulate_crash('0')");
             Assert.assertEquals(0, engine.getMetrics().healthMetrics().unhandledErrorsCount());
         });
@@ -6986,7 +6717,7 @@ public class IODispatcherTest extends AbstractTest {
 
     @Test
     public void testTriggerNPE() throws Exception {
-        getSimpleTester().run((engine, sqlExecutionContext) -> {
+        getSimpleTester().run((engine, _) -> {
             testHttpClient.assertGet("{" + "\"query\":\"select npe()\"," + "\"columns\":[{\"name\":\"npe\",\"type\":\"BOOLEAN\"}]," + "\"timestamp\":-1," + "\"dataset\":[[]]," + "\"count\":1," + "\"error\":\"Internal server error\", " + "\"errorPos\":0" + "}", "select npe()");
             Assert.assertEquals(1, engine.getMetrics().healthMetrics().unhandledErrorsCount());
         });
@@ -7054,7 +6785,7 @@ public class IODispatcherTest extends AbstractTest {
                         new Thread(() -> {
                             final StringSink sink = new StringSink();
                             final long responseBuf = Unsafe.malloc(32, MemoryTag.NATIVE_DEFAULT);
-                            Unsafe.getUnsafe().putByte(responseBuf, (byte) 'A');
+                            Unsafe.putByte(responseBuf, (byte) 'A');
 
                             final HttpRequestProcessor processor = new HttpRequestProcessor() {
                                 @Override
@@ -7104,6 +6835,11 @@ public class IODispatcherTest extends AbstractTest {
                                 public HttpRequestProcessor select(HttpRequestHeader requestHeader) {
                                     return processor;
                                 }
+
+                                @Override
+                                public HttpRequestProcessor resolveProcessorById(int handlerId, HttpRequestHeader header) {
+                                    return processor;
+                                }
                             }) {
 
                                 try {
@@ -7135,7 +6871,7 @@ public class IODispatcherTest extends AbstractTest {
                                             Assert.assertEquals(len, Net.send(fd, buffer, len));
                                             Assert.assertEquals("fd=" + fd + ", i=" + i, 1, Net.recv(fd, buffer, 1));
                                             LOG.info().$("i=").$(i).$(", j=").$(k).$();
-                                            Assert.assertEquals('A', Unsafe.getUnsafe().getByte(buffer));
+                                            Assert.assertEquals('A', Unsafe.getByte(buffer));
                                         } finally {
                                             Unsafe.free(buffer, len, MemoryTag.NATIVE_DEFAULT);
                                         }
@@ -7196,7 +6932,7 @@ public class IODispatcherTest extends AbstractTest {
         SOCountDownLatch stopped = new SOCountDownLatch(1);
         AtomicReference<Throwable> queryError = new AtomicReference<>();
 
-        new HttpQueryTestBuilder().withTempFolder(root).withWorkerCount(2).withHttpServerConfigBuilder(new HttpServerConfigurationBuilder().withNetwork(NetworkFacadeImpl.INSTANCE).withDumpingTraffic(false).withAllowDeflateBeforeSend(false).withHttpProtocolVersion("HTTP/1.1 ").withServerKeepAlive(true)).run((engine, sqlExecutionContext) -> {
+        new HttpQueryTestBuilder().withTempFolder(root).withWorkerCount(2).withHttpServerConfigBuilder(new HttpServerConfigurationBuilder().withNetwork(NetworkFacadeImpl.INSTANCE).withDumpingTraffic(false).withAllowDeflateBeforeSend(false).withHttpProtocolVersion("HTTP/1.1 ").withServerKeepAlive(true)).run((engine, _) -> {
             DelayedWALListener registryListener = new DelayedWALListener();
             try (SqlExecutionContext executionContext = TestUtils.createSqlExecutionCtx(engine)) {
                 engine.getQueryRegistry().setListener(registryListener);
@@ -7434,7 +7170,7 @@ public class IODispatcherTest extends AbstractTest {
             if (n > 0) {
                 if (headerCheckRemaining > 0) {
                     for (int i = 0; i < n && headerCheckRemaining > 0; i++) {
-                        if (expectedResponseHeader.charAt(expectedHeaderLen - headerCheckRemaining) != (char) Unsafe.getUnsafe().getByte(buffer + i)) {
+                        if (expectedResponseHeader.charAt(expectedHeaderLen - headerCheckRemaining) != (char) Unsafe.getByte(buffer + i)) {
                             Assert.fail("at " + (expectedHeaderLen - headerCheckRemaining));
                         }
                         headerCheckRemaining--;
@@ -7448,7 +7184,7 @@ public class IODispatcherTest extends AbstractTest {
                             contentRemaining = 1048576;
                             rnd.reset();
                         }
-                        Assert.assertEquals(rnd.nextByte(), Unsafe.getUnsafe().getByte(buffer + i));
+                        Assert.assertEquals(rnd.nextByte(), Unsafe.getByte(buffer + i));
                         contentRemaining--;
                     }
 
@@ -7456,29 +7192,6 @@ public class IODispatcherTest extends AbstractTest {
                 downloadedSoFar += n;
             }
         }
-    }
-
-    @NotNull
-    private static Thread createDelayThread(AtomicBoolean stopDelayThread, AtomicReference<SuspendEvent> eventRef, AtomicInteger totalEvents) {
-        final Thread delayThread = new Thread(() -> {
-            while (!stopDelayThread.get()) {
-                SuspendEvent event = eventRef.getAndSet(null);
-                if (event != null) {
-                    Os.sleep(1);
-                    try {
-                        event.trigger();
-                        event.close();
-                        totalEvents.incrementAndGet();
-                    } catch (Exception e) {
-                        LOG.critical().$(e).$();
-                    }
-                } else {
-                    Os.pause();
-                }
-            }
-        });
-        delayThread.start();
-        return delayThread;
     }
 
     private static HttpServer createHttpServer(ServerConfiguration serverConfiguration, CairoEngine cairoEngine, WorkerPool workerPool) {
@@ -7532,37 +7245,6 @@ public class IODispatcherTest extends AbstractTest {
         final int requestLen = request.length();
         Utf8s.strCpyAscii(request, requestLen, buffer);
         Assert.assertEquals(requestLen, Net.send(fd, buffer, requestLen));
-    }
-
-    private static void testSuspend(String url) throws Exception {
-        new HttpQueryTestBuilder().withTempFolder(root).withWorkerCount(1).withHttpServerConfigBuilder(new HttpServerConfigurationBuilder()).withTelemetry(false).run((engine, sqlExecutionContext) -> {
-            Utf8StringSink expected = new Utf8StringSink();
-            Utf8StringSink actual = new Utf8StringSink();
-            final TestCases testCases = new TestCases();
-
-            // create tables
-            testHttpClient.assertGet("{\"ddl\":\"OK\"}", testCases.getDdlX());
-            testHttpClient.assertGet("{\"ddl\":\"OK\"}", testCases.getDdlY());
-
-            for (int i = 0, n = testCases.size(); i < n; i++) {
-                TestCase testCase = testCases.getQuick(i);
-                // http does not support bind variables yet
-                if (testCase.getBindVariableValues().length == 0) {
-                    engine.releaseAllReaders();
-                    engine.setReaderListener(null);
-
-                    expected.clear();
-                    testHttpClient.toSink(url, testCase.getQuery(), expected);
-
-                    engine.releaseAllReaders();
-                    engine.setReaderListener(testCases.getSuspendingListener());
-
-                    actual.clear();
-                    testHttpClient.toSink(url, testCase.getQuery(), actual);
-                    TestUtils.assertEquals(expected, actual);
-                }
-            }
-        });
     }
 
     private void assertMetadataAndData(String tableName, long expectedO3MaxLag, int expectedMaxUncommittedRows, int expectedImportedRows, String expectedData, boolean mangleTableDirNames) {
@@ -7663,7 +7345,7 @@ public class IODispatcherTest extends AbstractTest {
 
         String expectedMetadata = "{\"status\":\"OK\"," + "\"location\":\"" + tableName + "\"," + "\"rowsRejected\":0," + "\"rowsImported\":1," + "\"header\":true," + "\"partitionBy\":\"" + PartitionBy.toString(partitionBy) + "\"," + "\"timestamp\":\"ts\"," + "\"columns\":[" + "{\"name\":\"ts\",\"type\":\"TIMESTAMP\",\"size\":8,\"errors\":0}," + "{\"name\":\"int\",\"type\":\"INT\",\"size\":4,\"errors\":0}" + "]}\r\n";
 
-        testImport("HTTP/1.1 200 OK\r\n" + "Server: questDB/1.0\r\n" + "Date: Thu, 1 Jan 1970 00:00:00 GMT\r\n" + "Transfer-Encoding: chunked\r\n" + "Content-Type: application/json; charset=utf-8\r\n" + "\r\n" + (partitionBy == PartitionBy.DAY ? "ed\r\n" : "ee\r\n") + expectedMetadata + "00\r\n" + "\r\n", command + "Host: localhost:9001\r\n" + "Connection: keep-alive\r\n" + "Content-Length: 832\r\n" + "Accept: */*\r\n" + "Origin: http://localhost:9000\r\n" + "X-Requested-With: XMLHttpRequest\r\n" + "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/77.0.3865.120 Safari/537.36\r\n" + "Sec-Fetch-Mode: cors\r\n" + "Content-Type: multipart/form-data; boundary=----WebKitFormBoundaryOsOAD9cPKyHuxyBV\r\n" + "Sec-Fetch-Site: same-origin\r\n" + "Referer: http://localhost:9000/index.html\r\n" + "\r\n" + "------WebKitFormBoundaryOsOAD9cPKyHuxyBV\r\n" + "Content-Disposition: form-data; name=\"schema\"\r\n" + "\r\n" + "[{\"name\":\"ts\",\"type\":\"TIMESTAMP\", \"pattern\": \"yyyy-MM-dd HH:mm:ss\"}," + "{\"name\":\"int\",\"type\":\"INT\"}]\r\n" + "------WebKitFormBoundaryOsOAD9cPKyHuxyBV\r\n" + "Content-Disposition: form-data; name=\"data\"\r\n" + "\r\n" + "ts,int\r\n" + "2021-01-01 00:01:00,1\r\n" + "\r\n" + "------WebKitFormBoundaryOsOAD9cPKyHuxyBV--", NetworkFacadeImpl.INSTANCE, configuration, false, 1, (engine, sqlExecutionContext) -> {
+        testImport("HTTP/1.1 200 OK\r\n" + "Server: questDB/1.0\r\n" + "Date: Thu, 1 Jan 1970 00:00:00 GMT\r\n" + "Transfer-Encoding: chunked\r\n" + "Content-Type: application/json; charset=utf-8\r\n" + "\r\n" + (partitionBy == PartitionBy.DAY ? "ed\r\n" : "ee\r\n") + expectedMetadata + "00\r\n" + "\r\n", command + "Host: localhost:9001\r\n" + "Connection: keep-alive\r\n" + "Content-Length: 832\r\n" + "Accept: */*\r\n" + "Origin: http://localhost:9000\r\n" + "X-Requested-With: XMLHttpRequest\r\n" + "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/77.0.3865.120 Safari/537.36\r\n" + "Sec-Fetch-Mode: cors\r\n" + "Content-Type: multipart/form-data; boundary=----WebKitFormBoundaryOsOAD9cPKyHuxyBV\r\n" + "Sec-Fetch-Site: same-origin\r\n" + "Referer: http://localhost:9000/index.html\r\n" + "\r\n" + "------WebKitFormBoundaryOsOAD9cPKyHuxyBV\r\n" + "Content-Disposition: form-data; name=\"schema\"\r\n" + "\r\n" + "[{\"name\":\"ts\",\"type\":\"TIMESTAMP\", \"pattern\": \"yyyy-MM-dd HH:mm:ss\"}," + "{\"name\":\"int\",\"type\":\"INT\"}]\r\n" + "------WebKitFormBoundaryOsOAD9cPKyHuxyBV\r\n" + "Content-Disposition: form-data; name=\"data\"\r\n" + "\r\n" + "ts,int\r\n" + "2021-01-01 00:01:00,1\r\n" + "\r\n" + "------WebKitFormBoundaryOsOAD9cPKyHuxyBV--", NetworkFacadeImpl.INSTANCE, configuration, false, 1, (engine, _) -> {
             TableModel model = new TableModel(configuration, tableName, partitionBy).timestamp("ts").col("int", ColumnType.INT);
             TestUtils.createTable(engine, model);
         });
@@ -7706,7 +7388,7 @@ public class IODispatcherTest extends AbstractTest {
     }
 
     private void testExceptionAfterHeader(int numOfRows, String rows) throws Exception {
-        getSimpleTester().run((engine, sqlExecutionContext) -> {
+        getSimpleTester().run((engine, _) -> {
             testHttpClient.assertGet("{" + "\"query\":\"select simulate_crash('" + numOfRows + "') from long_sequence(5)\"," + "\"columns\":[{\"name\":\"simulate_crash\",\"type\":\"BOOLEAN\"}]," + "\"timestamp\":-1," + "\"dataset\":[" + rows + "]," + "\"count\":" + (numOfRows + 1) + "," + "\"error\":\"simulated cairo exception\", " + "\"errorPos\":222" + "}", "select simulate_crash('" + numOfRows + "') from long_sequence(5)");
             Assert.assertEquals(0, engine.getMetrics().healthMetrics().unhandledErrorsCount());
         });
@@ -7749,7 +7431,7 @@ public class IODispatcherTest extends AbstractTest {
         SOCountDownLatch stopped = new SOCountDownLatch(1);
         AtomicReference<Throwable> queryError = new AtomicReference<>();
 
-        new HttpQueryTestBuilder().withTempFolder(root).withWorkerCount(2).withHttpServerConfigBuilder(new HttpServerConfigurationBuilder().withNetwork(NetworkFacadeImpl.INSTANCE).withDumpingTraffic(false).withAllowDeflateBeforeSend(false).withHttpProtocolVersion("HTTP/1.1 ").withServerKeepAlive(true)).run((engine, sqlExecutionContext) -> {
+        new HttpQueryTestBuilder().withTempFolder(root).withWorkerCount(2).withHttpServerConfigBuilder(new HttpServerConfigurationBuilder().withNetwork(NetworkFacadeImpl.INSTANCE).withDumpingTraffic(false).withAllowDeflateBeforeSend(false).withHttpProtocolVersion("HTTP/1.1 ").withServerKeepAlive(true)).run((engine, _) -> {
             DelayedListener registryListener = new DelayedListener();
             engine.getQueryRegistry().setListener(registryListener);
 
@@ -7870,7 +7552,7 @@ public class IODispatcherTest extends AbstractTest {
     }
 
     private void testHttpQueryGeoHashColumnChars(String expectedResponse, String url) throws Exception {
-        new HttpQueryTestBuilder().withWorkerCount(1).withHttpServerConfigBuilder(new HttpServerConfigurationBuilder().withSendBufferSize(16 * 1024).withConfiguredMaxQueryResponseRowLimit(configuredMaxQueryResponseRowLimit)).withTempFolder(root).run((engine, sqlExecutionContext) -> {
+        new HttpQueryTestBuilder().withWorkerCount(1).withHttpServerConfigBuilder(new HttpServerConfigurationBuilder().withSendBufferSize(16 * 1024).withConfiguredMaxQueryResponseRowLimit(configuredMaxQueryResponseRowLimit)).withTempFolder(root).run((engine, _) -> {
             try (SqlExecutionContext executionContext = TestUtils.createSqlExecutionCtx(engine)) {
                 engine.execute("""
                         create table y as (
@@ -7888,7 +7570,7 @@ public class IODispatcherTest extends AbstractTest {
     }
 
     private void testJsonQuery(int recordCount, String request, String expectedResponse, int requestCount, boolean telemetry) throws Exception {
-        testJsonQuery0(2, (engine, sqlExecutionContext) -> {
+        testJsonQuery0(2, (engine, _) -> {
             // create table with all column types
             createTableX(engine, recordCount);
             sendAndReceive(NetworkFacadeImpl.INSTANCE, request, expectedResponse, requestCount, 0, false);
@@ -8204,7 +7886,7 @@ public class IODispatcherTest extends AbstractTest {
 
         long buf = Unsafe.malloc(1048576, MemoryTag.NATIVE_DEFAULT); // 1Mb buffer
         for (int i = 0; i < 1048576; i++) {
-            Unsafe.getUnsafe().putByte(buf + i, rnd.nextByte());
+            Unsafe.putByte(buf + i, rnd.nextByte());
         }
 
         for (int i = 0; i < 20; i++) {

@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -426,6 +426,11 @@ public class NanosFormatCompilerTest {
     }
 
     @Test
+    public void testFormatOptionalNano9Zero() throws NumericException {
+        assertFormat("2026-03-31T09:02:28.000000000", "yyyy-MM-ddTHH:mm:ss.N+", "2026-03-31T09:02:28.000000000Z");
+    }
+
+    @Test
     public void testFormatNano9Three() throws NumericException {
         assertFormat("2022-02-02 02:02:02.000812000", "y-MM-dd HH:mm:ss.N+", "2022-02-02T02:02:02.000812000Z");
     }
@@ -784,6 +789,46 @@ public class NanosFormatCompilerTest {
     }
 
     @Test
+    public void testNanosGreedySingleN() throws NumericException {
+        // Combined pattern: .SSSUUUN - single N followed by end-of-string should pad to 3 digits
+        // Input "7" should become 700 nanoseconds
+        assertNanos("y-MM-dd HH:mm:ss.SSSUUUN", "2014-04-03T04:32:49.123456700Z", "2014-04-03 04:32:49.1234567");
+
+        // Single digit: 1 -> 100
+        assertNanos("y-MM-dd HH:mm:ss.SSSUUUN", "2014-04-03T04:32:49.123456100Z", "2014-04-03 04:32:49.1234561");
+
+        // Two digits: 12 -> 120
+        assertNanos("y-MM-dd HH:mm:ss.SSSUUUN", "2014-04-03T04:32:49.123456120Z", "2014-04-03 04:32:49.12345612");
+
+        // Three digits: 123 -> 123 (no padding needed)
+        assertNanos("y-MM-dd HH:mm:ss.SSSUUUN", "2014-04-03T04:32:49.123456123Z", "2014-04-03 04:32:49.123456123");
+    }
+
+    @Test
+    public void testNanosGreedySingleNEmptyFraction() throws NumericException {
+        assertException("y-MM-dd HH:mm:ss.N", "2014-04-03 04:32:49.");
+    }
+
+    @Test
+    public void testNanosGreedySingleNNonDigitBoundary() throws NumericException {
+        // N = nanos, up to 3 digits
+        assertNanos("y-MM-dd HH:mm:ss.Nz", "2014-04-03T04:32:49.000000999Z", "2014-04-03 04:32:49.999Z");
+
+        // N = nanos, up to 9 digits
+        assertNanos("y-MM-dd HH:mm:ss.N+z", "2014-04-03T04:32:49.999000000Z", "2014-04-03 04:32:49.999Z");
+    }
+
+    @Test
+    public void testNanosGreedySingleNOverflow() throws NumericException {
+        assertException("y-MM-dd HH:mm:ss.N", "2014-04-03 04:32:49.1234");
+    }
+
+    @Test
+    public void testNanosGreedySingleNZero() throws NumericException {
+        assertNanos("y-MM-dd HH:mm:ss.N", "2014-04-03T04:32:49.000000000Z", "2014-04-03 04:32:49.0");
+    }
+
+    @Test
     public void testOperationUniqueness() {
 
         Assert.assertTrue(MicrosFormatCompiler.getOpCount() > 0);
@@ -849,6 +894,41 @@ public class NanosFormatCompilerTest {
     }
 
     @Test
+    public void testParseOptionalNanos9Absent() throws NumericException {
+        assertNanos("yyyy-MM-dd'T'HH:mm:ss.N+'Z'", "2026-03-31T09:02:28.000000000Z", "2026-03-31T09:02:28Z");
+    }
+
+    @Test
+    public void testParseOptionalNanos9Present() throws NumericException {
+        assertNanos("yyyy-MM-dd'T'HH:mm:ss.N+'Z'", "2026-03-31T09:02:28.123456789Z", "2026-03-31T09:02:28.123456789Z");
+    }
+
+    @Test
+    public void testParseOptionalNanos9RejectsBareDot() {
+        assertException("yyyy-MM-dd'T'HH:mm:ss.N+'Z'", "2026-03-31T09:02:28.Z");
+    }
+
+    @Test
+    public void testParseOptionalNanos9AbsentAtEnd() throws NumericException {
+        assertNanos("yyyy-MM-dd'T'HH:mm:ss.N+", "2026-03-31T09:02:28.000000000Z", "2026-03-31T09:02:28");
+    }
+
+    @Test
+    public void testParseOptionalNanos9RejectsBareDotAtEnd() {
+        assertException("yyyy-MM-dd'T'HH:mm:ss.N+", "2026-03-31T09:02:28.");
+    }
+
+    @Test
+    public void testParseOptionalNanos9LeavesDotForLiteral() throws NumericException {
+        assertNanos(".N+.", "1970-01-01T00:00:00.000000000Z", ".");
+    }
+
+    @Test
+    public void testParseOptionalNanos9LeavesDotForLiteralWhenFollowedByNonDigit() throws NumericException {
+        assertNanos(".N+..", "1970-01-01T00:00:00.000000000Z", "..");
+    }
+
+    @Test
     public void testParseUtc() {
         assertThat(CommonUtils.UTC_PATTERN, "2011-10-03T00:00:00.000000000Z", "2011-10-03T00:00:00.000Z");
     }
@@ -895,12 +975,12 @@ public class NanosFormatCompilerTest {
 
     @Test
     public void testTimeZone4() {
-        assertThat("dd-MM-yy HH:m z", "2003-10-23T04:01:00.000000000Z", "23-10-03 06:01 Hora de verano de Sudáfrica", "es-PA");
+        assertThat("dd-MM-yy HH:m z", "2003-10-23T04:01:00.000000000Z", "23-10-03 06:01 hora de verano de Johannesburgo", "es-PA");
     }
 
     @Test
     public void testTimeZone5() {
-        assertThat("dd-MM-yy HH:m [z]", "2010-09-03T21:01:00.000000000Z", "03-09-10 23:01 [Hora de verano de Sudáfrica]", "es-PA");
+        assertThat("dd-MM-yy HH:m [z]", "2010-09-03T21:01:00.000000000Z", "03-09-10 23:01 [hora de verano de Johannesburgo]", "es-PA");
     }
 
     @Test
@@ -969,7 +1049,7 @@ public class NanosFormatCompilerTest {
     private static void assertException(String pattern, String input) {
         DateFormat format = get(pattern);
         try {
-            format.parse(pattern, DateLocaleFactory.EN_LOCALE);
+            format.parse(input, DateLocaleFactory.EN_LOCALE);
             Assert.fail();
         } catch (NumericException ignored) {
         }
@@ -1005,6 +1085,7 @@ public class NanosFormatCompilerTest {
 
         sink.clear();
         REFERENCE.format(compiler.compile(pattern).parse(input, DateLocaleFactory.EN_LOCALE), DateLocaleFactory.EN_LOCALE, "Z", sink);
+        TestUtils.assertEquals(expected, sink);
     }
 
     private void assertThat(String pattern, String expected, String input, CharSequence localeId) throws NumericException {

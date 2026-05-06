@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -27,11 +27,10 @@ package io.questdb.griffin.engine.functions.conditional;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.engine.functions.GeoLongFunction;
-import io.questdb.griffin.engine.functions.MultiArgFunction;
 import io.questdb.std.ObjList;
 
 @SuppressWarnings("resource")
-public class GeoLongCaseFunction extends GeoLongFunction implements MultiArgFunction {
+public class GeoLongCaseFunction extends GeoLongFunction implements CaseFunction {
     private final ObjList<Function> args;
     private final CaseFunctionPicker picker;
 

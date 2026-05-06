@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -25,20 +25,20 @@
 package io.questdb.test.cairo.wal;
 
 import io.questdb.PropertyKey;
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.MicrosTimestampDriver;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableWriter;
+import io.questdb.cairo.security.AllowAllSecurityContext;
 import io.questdb.cairo.wal.DefaultWalDirectoryPolicy;
 import io.questdb.cairo.wal.WalPurgeJob;
 import io.questdb.cairo.wal.WalUtils;
 import io.questdb.cairo.wal.WalWriter;
-import io.questdb.mp.SimpleWaitingLock;
 import io.questdb.std.Chars;
 import io.questdb.std.Files;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.FindVisitor;
-import io.questdb.std.LongList;
 import io.questdb.std.ObjList;
 import io.questdb.std.str.DirectUtf8StringZ;
 import io.questdb.std.str.LPSZ;
@@ -53,10 +53,12 @@ import org.junit.Test;
 
 import java.io.File;
 import java.util.Objects;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 
+import static io.questdb.cairo.TableUtils.META_FILE_NAME;
 import static io.questdb.cairo.TableUtils.TXN_FILE_NAME;
 import static io.questdb.cairo.wal.WalUtils.SEQ_DIR;
 
@@ -148,15 +150,13 @@ public class WalPurgeJobTest extends AbstractCairoTest {
             assertWalExistence(true, tableName, 1);
             assertSegmentExistence(true, tableName, 1, 0);
             assertSegmentExistence(true, tableName, 1, 1);
-            assertWalLockEngagement(true, tableName, 1);
-            assertSegmentLockEngagement(false, tableName, 1, 0);  // Old segment is unlocked.
-            assertSegmentLockEngagement(true, tableName, 1, 1);
+            assertWalLocked(tableName, 1);
+            // Current segment (1) is locked by the writer
+            assertSegmentLocked(tableName, 1, 1);
 
             // Release WAL and segments.
             engine.releaseInactive();
-            assertWalLockEngagement(false, tableName, 1);
-            assertSegmentLockEngagement(false, tableName, 1, 0);
-            assertSegmentLockEngagement(false, tableName, 1, 1);
+            assertWalNotLocked(tableName, 1);
 
             // The segments are not going to be cleaned up despite being both unlocked.
             drainPurgeJob();
@@ -174,16 +174,15 @@ public class WalPurgeJobTest extends AbstractCairoTest {
 
             // After draining, it's all deleted.
             drainWalQueue();
-            assertSql("x\tts\ts1\n" +
-                    "1\t2022-02-24T00:00:00.000000Z\t\n" +
-                    "2\t2022-02-24T00:00:01.000000Z\tx\n", tableName);
+            assertSql("""
+                    x\tts\ts1
+                    1\t2022-02-24T00:00:00.000000Z\t
+                    2\t2022-02-24T00:00:01.000000Z\tx
+                    """, tableName);
             drainPurgeJob();
             assertWalExistence(false, tableName, 1);
-            assertWalLockExistence(false, tableName, 1);
             assertSegmentExistence(false, tableName, 1, 0);
-            assertSegmentLockExistence(false, tableName, 1, 0);
             assertSegmentExistence(false, tableName, 1, 1);
-            assertSegmentLockExistence(false, tableName, 1, 1);
         });
     }
 
@@ -235,7 +234,7 @@ public class WalPurgeJobTest extends AbstractCairoTest {
                 assertWalExistence(false, tableName, 2);
                 assertSegmentExistence(true, tableName, 1, 0);
                 assertSegmentExistence(false, tableName, 1, 1);
-                assertSegmentLockEngagement(true, tableName, 1, 0);
+                assertSegmentLocked(tableName, 1, 0);
 
                 addColumn(walWriter1, "i1");
                 TableWriter.Row row2 = walWriter1.newRow(MicrosTimestampDriver.floor("2022-02-25"));
@@ -246,8 +245,8 @@ public class WalPurgeJobTest extends AbstractCairoTest {
                 // We assert that we've created a new segment.
                 assertSegmentExistence(true, tableName, 1, 0);
                 assertSegmentExistence(true, tableName, 1, 1);
-                assertSegmentLockEngagement(false, tableName, 1, 0);
-                assertSegmentLockEngagement(true, tableName, 1, 1);
+                // Current segment (1) is locked
+                assertSegmentLocked(tableName, 1, 1);
 
                 // We commit the segment to the sequencer.
                 walWriter1.commit();
@@ -273,39 +272,39 @@ public class WalPurgeJobTest extends AbstractCairoTest {
 
                     assertSegmentExistence(true, tableName, 2, 0);
                     assertSegmentExistence(true, tableName, 2, 1);
-                    assertSegmentLockEngagement(false, tableName, 2, 0);
-                    assertSegmentLockEngagement(true, tableName, 2, 1);
+                    // Current segment (1) is locked
+                    assertSegmentLocked(tableName, 2, 1);
 
                     walWriter2.commit();
 
                     drainWalQueue();
 
-                    assertSql("x\tts\ti1\ti2\n" +
-                            "1\t2022-02-24T00:00:00.000000Z\tnull\tnull\n" +
-                            "2\t2022-02-25T00:00:00.000000Z\t2\tnull\n" +
-                            "3\t2022-02-26T00:00:00.000000Z\t3\tnull\n" +
-                            "4\t2022-02-27T00:00:00.000000Z\t4\t4\n", tableName);
+                    assertSql("""
+                            x\tts\ti1\ti2
+                            1\t2022-02-24T00:00:00.000000Z\tnull\tnull
+                            2\t2022-02-25T00:00:00.000000Z\t2\tnull
+                            3\t2022-02-26T00:00:00.000000Z\t3\tnull
+                            4\t2022-02-27T00:00:00.000000Z\t4\t4
+                            """, tableName);
 
                     assertWalExistence(true, tableName, 1);
                     assertSegmentExistence(true, tableName, 1, 0);
-                    assertSegmentLockEngagement(false, tableName, 1, 0);
                     assertSegmentExistence(true, tableName, 1, 1);
-                    assertSegmentLockEngagement(true, tableName, 1, 1);  // wal1/1 locked
+                    assertSegmentLocked(tableName, 1, 1);  // wal1/1 locked
                     assertWalExistence(true, tableName, 2);
                     assertSegmentExistence(true, tableName, 2, 0);
-                    assertSegmentLockEngagement(false, tableName, 2, 0);
                     assertSegmentExistence(true, tableName, 2, 1);
-                    assertSegmentLockEngagement(true, tableName, 2, 1);  // wal2/1 locked
+                    assertSegmentLocked(tableName, 2, 1);  // wal2/1 locked
                     TestUtils.drainPurgeJob(engine, testFF);
-                    assertSegmentLockEngagement(true, tableName, 1, 1);
+                    assertSegmentLocked(tableName, 1, 1);
                     assertWalExistence(true, tableName, 1);
                     assertSegmentExistence(false, tableName, 1, 0);  // DELETED
                     assertSegmentExistence(true, tableName, 1, 1);  // wal1/1 kept
-                    assertSegmentLockEngagement(true, tableName, 1, 1);  // wal1/1 locked
+                    assertSegmentLocked(tableName, 1, 1);  // wal1/1 locked
                     assertWalExistence(true, tableName, 2);
-                    assertSegmentExistence(false, tableName, 2, 0);  // Segment wal2/0 is applied and inactive (unlocked)
+                    assertSegmentExistence(false, tableName, 2, 0);  // DELETED
                     assertSegmentExistence(true, tableName, 2, 1);  // wal2/1 kept
-                    assertSegmentLockEngagement(true, tableName, 2, 1);  // wal2/1 locked
+                    assertSegmentLocked(tableName, 2, 1);  // wal2/1 locked
                 }
             }
         });
@@ -342,6 +341,152 @@ public class WalPurgeJobTest extends AbstractCairoTest {
             removePendingFile(tableToken);
             drainPurgeJob();
             assertExistence(false, tableToken);
+        });
+    }
+
+    @Test
+    public void testGetTableMetadataNpeForDroppedTable() throws Exception {
+        // Regression test for a race where WalPurgeJob calls getTableMetadata()
+        // for a table that is concurrently dropped. A concurrent drop can close
+        // the metadata pool tenant's txFile during refresh, causing NPE rather
+        // than CairoException. fetchSequencerPairs() must catch NPE for dropped
+        // tables and return gracefully.
+        //
+        // We simulate this by clearing the metadata pool cache and intercepting
+        // FilesFacade.openRO: when the pool tries to re-create the metadata
+        // tenant, we drop the table and throw NPE.
+        String tableDirName = testName.getMethodName() + "~1";
+        AtomicBoolean shouldFail = new AtomicBoolean(false);
+        FilesFacade testFf = new TestFilesFacadeImpl() {
+            @Override
+            public long openRO(LPSZ path) {
+                if (shouldFail.compareAndSet(true, false)
+                        && Utf8s.containsAscii(path, tableDirName)
+                        && Utf8s.endsWithAscii(path, META_FILE_NAME)) {
+                    // Simulate concurrent drop: drop the table, then throw NPE
+                    // like what happens when the metadata pool tenant's txFile
+                    // is closed during a concurrent drop's notifyDropped().
+                    try {
+                        execute("drop table " + testName.getMethodName());
+                    } catch (Exception ignored) {
+                    }
+                    throw new NullPointerException("simulated: txFile is null during concurrent drop");
+                }
+                return super.openRO(path);
+            }
+        };
+
+        assertMemoryLeak(testFf, () -> {
+            String tableName = testName.getMethodName();
+            execute("create table " + tableName + " as (" +
+                    "select x, " +
+                    " timestamp_sequence('2022-02-24', 1000000L) ts " +
+                    " from long_sequence(5)" +
+                    ") timestamp(ts) partition by DAY WAL");
+
+            drainWalQueue();
+
+            // Clear metadata pool so next getTableMetadata() creates a fresh tenant,
+            // which goes through FilesFacade (openRO for _meta file) where we intercept.
+            engine.releaseAllReaders();
+
+            shouldFail.set(true);
+
+            // This should not throw despite the NPE during metadata access:
+            // fetchSequencerPairs catches NPE, detects the table is dropped, and returns.
+            drainPurgeJob();
+            drainWalQueue();
+            engine.releaseAllWalWriters();
+            drainPurgeJob();
+        });
+    }
+
+    @Test
+    public void testGetTableMetadataNpeForNonDroppedTableRethrows() throws Exception {
+        // When getTableMetadata() throws NPE and the table is NOT dropped,
+        // fetchSequencerPairs() re-throws. NPE bypasses the CairoException
+        // catch in forAllWalTables(), so it propagates to the caller.
+        String tableDirName = testName.getMethodName() + "~1";
+        AtomicBoolean shouldFail = new AtomicBoolean(false);
+        FilesFacade testFf = new TestFilesFacadeImpl() {
+            @Override
+            public long openRO(LPSZ path) {
+                if (shouldFail.compareAndSet(true, false)
+                        && Utf8s.containsAscii(path, tableDirName)
+                        && Utf8s.endsWithAscii(path, META_FILE_NAME)) {
+                    throw new NullPointerException("simulated: non-drop-related NPE");
+                }
+                return super.openRO(path);
+            }
+        };
+
+        assertMemoryLeak(testFf, () -> {
+            String tableName = testName.getMethodName();
+            execute("create table " + tableName + " as (" +
+                    "select x, " +
+                    " timestamp_sequence('2022-02-24', 1000000L) ts " +
+                    " from long_sequence(5)" +
+                    ") timestamp(ts) partition by DAY WAL");
+
+            drainWalQueue();
+            engine.releaseAllReaders();
+            shouldFail.set(true);
+
+            // NPE must propagate because the table is not dropped.
+            try {
+                drainPurgeJob();
+                Assert.fail("Expected NullPointerException to propagate");
+            } catch (NullPointerException e) {
+                TestUtils.assertContains(e.getMessage(), "simulated");
+            }
+        });
+    }
+
+    @Test
+    public void testGetTableMetadataPoolSlotReleasedAfterNpe() throws Exception {
+        // When newTenant() in AbstractMultiTenantPool.get0() throws a
+        // non-CairoException, the pool slot must be released so subsequent
+        // getTableMetadata() calls can succeed.
+        String tableDirName = testName.getMethodName() + "~1";
+        AtomicBoolean shouldThrowNpe = new AtomicBoolean(false);
+        FilesFacade testFf = new TestFilesFacadeImpl() {
+            @Override
+            public long openRO(LPSZ path) {
+                if (shouldThrowNpe.compareAndSet(true, false)
+                        && Utf8s.containsAscii(path, tableDirName)
+                        && Utf8s.endsWithAscii(path, META_FILE_NAME)) {
+                    throw new NullPointerException("simulated: pool slot leak test");
+                }
+                return super.openRO(path);
+            }
+        };
+
+        assertMemoryLeak(testFf, () -> {
+            String tableName = testName.getMethodName();
+            execute("create table " + tableName + " as (" +
+                    "select x, " +
+                    " timestamp_sequence('2022-02-24', 1000000L) ts " +
+                    " from long_sequence(5)" +
+                    ") timestamp(ts) partition by DAY WAL");
+
+            drainWalQueue();
+            engine.releaseAllReaders();
+            shouldThrowNpe.set(true);
+
+            // First call throws NPE during tenant creation in get0().
+            TableToken tableToken = engine.verifyTableName(tableName);
+            try {
+                engine.getTableMetadata(tableToken).close();
+                Assert.fail("Expected NullPointerException");
+            } catch (NullPointerException e) {
+                Assert.assertTrue(e.getMessage().contains("simulated"));
+            }
+
+            // Second call must succeed, proving the pool slot was released
+            // by the Throwable catch in get0() and not permanently leaked.
+            try (var metadata = engine.getTableMetadata(tableToken)) {
+                Assert.assertTrue(metadata.getColumnCount() > 0);
+            }
         });
     }
 
@@ -393,45 +538,65 @@ public class WalPurgeJobTest extends AbstractCairoTest {
     @Test
     public void testLastSegmentUnlockedPrevLocked() {
         /*
-          discovered=[
-              (1,1),(1,2),(1,3),(1,4),(1,5),(1,6:locked),(1,7),(wal1:locked),
-              (2,0),(2,1),(2,2),(2,3),(2,4:locked),(wal2:locked),
-              (3,0),(3,1),(3,2),(3,3:locked),(wal3:locked),
-              (4,0),(4,1),(4,2),(4,3),(4,4),(4,5),(4,6:locked),(wal4:locked)],
-          nextToApply=[
-              (1,1),(2,0),(3,0),(4,0)]
+          Test WAL purge logic when a writer is active (isLocked=false).
+
+          isLocked=false means either:
+          - A writer is present (lockPurge returned maxSegmentLocked != SEG_NONE_ID), OR
+          - Some segments have pending tasks
+
+          WAL 1: segments 1-7, writer active at segment 6, maxSegmentLocked = 5
+          WAL 2: segments 0-4, writer active at segment 4, maxSegmentLocked = 3
+          WAL 3: segments 0-3, writer active at segment 3, maxSegmentLocked = 2
+          WAL 4: segments 0-6, writer active at segment 6, maxSegmentLocked = 5
+
+          nextToApply: (1,1), (2,0), (3,0), (4,0)
+
+          Nothing should be deleted since nextToApply matches the first segment of each WAL.
          */
         TestDeleter deleter = new TestDeleter();
         WalPurgeJob.Logic logic = new WalPurgeJob.Logic(deleter, 0);
         TableToken tableToken = new TableToken("test", "test~1", null, 42, true, false, false);
         logic.reset(tableToken);
-        logic.trackDiscoveredSegment(1, 1, 1);
-        logic.trackDiscoveredSegment(1, 2, 2);
-        logic.trackDiscoveredSegment(1, 3, 3);
-        logic.trackDiscoveredSegment(1, 4, 4);
-        logic.trackDiscoveredSegment(1, 5, 5);
-        logic.trackDiscoveredSegment(1, 6, -1);
-        logic.trackDiscoveredSegment(1, 7, 6);
-        logic.trackDiscoveredWal(1, -1);
-        logic.trackDiscoveredSegment(2, 0, 7);
-        logic.trackDiscoveredSegment(2, 1, 8);
-        logic.trackDiscoveredSegment(2, 2, 9);
-        logic.trackDiscoveredSegment(2, 3, 10);
-        logic.trackDiscoveredSegment(2, 4, -1);
-        logic.trackDiscoveredWal(2, -1);
-        logic.trackDiscoveredSegment(3, 0, 11);
-        logic.trackDiscoveredSegment(3, 1, 12);
-        logic.trackDiscoveredSegment(3, 2, 13);
-        logic.trackDiscoveredSegment(3, 3, -1);
-        logic.trackDiscoveredWal(3, -1);
-        logic.trackDiscoveredSegment(4, 0, 14);
-        logic.trackDiscoveredSegment(4, 1, 15);
-        logic.trackDiscoveredSegment(4, 2, 16);
-        logic.trackDiscoveredSegment(4, 3, 17);
-        logic.trackDiscoveredSegment(4, 4, 18);
-        logic.trackDiscoveredSegment(4, 5, 19);
-        logic.trackDiscoveredSegment(4, 6, -1);
-        logic.trackDiscoveredWal(4, -1);
+
+        // WAL 1: segments 1-7, writer active, maxSegmentLocked = 5
+        int idx1 = logic.trackDiscoveredWal(1);
+        logic.trackDiscoveredSegment(1, true);   // purgeable
+        logic.trackDiscoveredSegment(2, true);   // purgeable
+        logic.trackDiscoveredSegment(3, true);   // purgeable
+        logic.trackDiscoveredSegment(4, true);   // purgeable
+        logic.trackDiscoveredSegment(5, true);   // purgeable
+        logic.trackDiscoveredSegment(6, false);  // writer active here
+        logic.trackDiscoveredSegment(7, false);  // writer active here
+        logic.endWalTracking(idx1, 5, false);    // isLocked=false: writer is active
+
+        // WAL 2: segments 0-4, writer active, maxSegmentLocked = 3
+        int idx2 = logic.trackDiscoveredWal(2);
+        logic.trackDiscoveredSegment(0, true);   // purgeable
+        logic.trackDiscoveredSegment(1, true);   // purgeable
+        logic.trackDiscoveredSegment(2, true);   // purgeable
+        logic.trackDiscoveredSegment(3, true);   // purgeable
+        logic.trackDiscoveredSegment(4, false);  // writer active here
+        logic.endWalTracking(idx2, 3, false);    // isLocked=false: writer is active
+
+        // WAL 3: segments 0-3, writer active, maxSegmentLocked = 2
+        int idx3 = logic.trackDiscoveredWal(3);
+        logic.trackDiscoveredSegment(0, true);   // purgeable
+        logic.trackDiscoveredSegment(1, true);   // purgeable
+        logic.trackDiscoveredSegment(2, true);   // purgeable
+        logic.trackDiscoveredSegment(3, false);  // writer active here
+        logic.endWalTracking(idx3, 2, false);    // isLocked=false: writer is active
+
+        // WAL 4: segments 0-6, writer active, maxSegmentLocked = 5
+        int idx4 = logic.trackDiscoveredWal(4);
+        logic.trackDiscoveredSegment(0, true);   // purgeable
+        logic.trackDiscoveredSegment(1, true);   // purgeable
+        logic.trackDiscoveredSegment(2, true);   // purgeable
+        logic.trackDiscoveredSegment(3, true);   // purgeable
+        logic.trackDiscoveredSegment(4, true);   // purgeable
+        logic.trackDiscoveredSegment(5, true);   // purgeable
+        logic.trackDiscoveredSegment(6, false);  // writer active here
+        logic.endWalTracking(idx4, 5, false);    // isLocked=false: writer is active
+
         logic.trackNextToApplySegment(1, 1);
         logic.trackNextToApplySegment(2, 0);
         logic.trackNextToApplySegment(3, 0);
@@ -445,22 +610,32 @@ public class WalPurgeJobTest extends AbstractCairoTest {
     @Test
     public void testLastSegmentUnlockedPrevLocked2() {
         /*
-          discovered=[
-              (1,1),(1,2:locked),(1,3),(wal1:locked),
-              (2,0:locked),(wal2:locked)],
-          nextToApply=[
-              (1,1),(2,0)]
+          Test WAL purge logic when a writer is active (isLocked=false).
+
+          WAL 1: segments 1-3, writer active at segment 2, maxSegmentLocked = 1
+          WAL 2: segment 0 only, writer active at segment 0, maxSegmentLocked = -1 (nothing purgeable)
+
+          nextToApply: (1,1), (2,0)
+
+          Nothing should be deleted since nextToApply matches the first segment of each WAL.
          */
         TestDeleter deleter = new TestDeleter();
         WalPurgeJob.Logic logic = new WalPurgeJob.Logic(deleter, 0);
         TableToken tableToken = new TableToken("test", "test~1", null, 42, true, false, false);
         logic.reset(tableToken);
-        logic.trackDiscoveredSegment(1, 1, 1);
-        logic.trackDiscoveredSegment(1, 2, -1);
-        logic.trackDiscoveredSegment(1, 3, 2);
-        logic.trackDiscoveredWal(1, -1);
-        logic.trackDiscoveredSegment(2, 0, -1);
-        logic.trackDiscoveredWal(2, -1);
+
+        // WAL 1: segments 1-3, writer active, maxSegmentLocked = 1
+        int idx1 = logic.trackDiscoveredWal(1);
+        logic.trackDiscoveredSegment(1, true);   // purgeable
+        logic.trackDiscoveredSegment(2, false);  // writer active here
+        logic.trackDiscoveredSegment(3, false);  // writer active here
+        logic.endWalTracking(idx1, 1, false);   // isLocked=false: writer is active
+
+        // WAL 2: segment 0, writer active at segment 0, maxSegmentLocked = -1
+        int idx2 = logic.trackDiscoveredWal(2);
+        logic.trackDiscoveredSegment(0, false);  // writer active here
+        logic.endWalTracking(idx2, -1, false);   // isLocked=false: writer is active, nothing purgeable
+
         logic.trackNextToApplySegment(1, 1);
         logic.trackNextToApplySegment(2, 0);
         logic.run();
@@ -486,12 +661,14 @@ public class WalPurgeJobTest extends AbstractCairoTest {
 
             assertWalExistence(true, tableName, 1);
 
-            assertSql("x\tts\n" +
-                    "1\t2022-02-24T00:00:00.000000Z\n" +
-                    "2\t2022-02-24T00:00:01.000000Z\n" +
-                    "3\t2022-02-24T00:00:02.000000Z\n" +
-                    "4\t2022-02-24T00:00:03.000000Z\n" +
-                    "5\t2022-02-24T00:00:04.000000Z\n", tableName);
+            assertSql("""
+                    x\tts
+                    1\t2022-02-24T00:00:00.000000Z
+                    2\t2022-02-24T00:00:01.000000Z
+                    3\t2022-02-24T00:00:02.000000Z
+                    4\t2022-02-24T00:00:03.000000Z
+                    5\t2022-02-24T00:00:04.000000Z
+                    """, tableName);
 
             drainPurgeJob();
 
@@ -518,11 +695,10 @@ public class WalPurgeJobTest extends AbstractCairoTest {
                     " from long_sequence(5)" +
                     ") timestamp(ts) partition by DAY WAL");
             assertWalExistence(true, tableName, 1);
-            assertWalLockExistence(true, tableName, 1);
+            assertWalLocked(tableName, 1);
             assertSegmentExistence(true, tableName, 1, 0);
-            assertSegmentLockExistence(true, tableName, 1, 0);
+            assertSegmentLocked(tableName, 1, 0);
             assertSegmentExistence(false, tableName, 1, 1);
-            assertSegmentLockExistence(false, tableName, 1, 1);
 
             // Create a second segment.
             execute("alter table " + tableName + " add column sss string");
@@ -531,7 +707,7 @@ public class WalPurgeJobTest extends AbstractCairoTest {
             assertSegmentExistence(true, tableName, 1, 0);
             final File segment1DirPath = assertSegmentExistence(true, tableName, 1, 1);
             assertSegmentExistence(false, tableName, 1, 2);
-            assertSegmentLockExistence(false, tableName, 1, 2);
+            assertSegmentLocked(tableName, 1, 1);
 
             // We write a marker file to prevent the second segment "wal1/1" from being reaped.
             final File pendingDirPath = new File(segment1DirPath, WalUtils.WAL_PENDING_FS_MARKER);
@@ -552,7 +728,7 @@ public class WalPurgeJobTest extends AbstractCairoTest {
             engine.releaseInactive();
 
             assertWalExistence(true, tableName, 1);
-            assertWalLockEngagement(false, tableName, 1);
+            assertWalNotLocked(tableName, 1);
             assertSegmentExistence(true, tableName, 1, 0);
             assertSegmentExistence(true, tableName, 1, 1);
             assertSegmentExistence(true, tableName, 1, 2);
@@ -586,11 +762,10 @@ public class WalPurgeJobTest extends AbstractCairoTest {
                     ") timestamp(ts) partition by DAY WAL");
             TableToken tableToken = engine.verifyTableName(tableName);
             assertWalExistence(true, tableName, 1);
-            assertWalLockExistence(true, tableName, 1);
+            assertWalLocked(tableName, 1);
             final File segment0DirPath = assertSegmentExistence(true, tableName, 1, 0);
-            assertSegmentLockExistence(true, tableName, 1, 0);
+            assertSegmentLocked(tableName, 1, 0);
             assertSegmentExistence(false, tableName, 1, 1);
-            assertSegmentLockExistence(false, tableName, 1, 1);
 
             // We write a marker file to prevent the segment "wal1/0" from being reaped.
             final File pendingDirPath = new File(segment0DirPath, WalUtils.WAL_PENDING_FS_MARKER);
@@ -607,9 +782,8 @@ public class WalPurgeJobTest extends AbstractCairoTest {
             // The table, wal and the segment are intact, but unlocked.
             assertTableExistence(true, tableToken);
             assertWalExistence(true, tableToken, 1);
-            assertWalLockEngagement(false, tableToken, 1);
+            assertWalNotLocked(tableToken, 1);
             assertSegmentExistence(true, tableToken, 1, 0);
-            assertSegmentLockEngagement(false, tableToken, 1, 0);
 
             // We remove the marker file to allow the segment directory, wal and the whole table dir to be reaped.
             Assert.assertTrue(pendingFilePath.delete());
@@ -732,8 +906,10 @@ public class WalPurgeJobTest extends AbstractCairoTest {
         drainWalQueue();
         engine.releaseInactive();
         drainPurgeJob();
-        assertSql("x\tts\ti1\n" +
-                "1\t2022-02-24T00:00:00.000000Z\tnull\n", tableName);
+        assertSql("""
+                x\tts\ti1
+                1\t2022-02-24T00:00:00.000000Z\tnull
+                """, tableName);
         assertWalExistence(false, tableName, 1);
     }
 
@@ -751,19 +927,16 @@ public class WalPurgeJobTest extends AbstractCairoTest {
 
             drainWalQueue();
             assertWalExistence(true, tableName, 1);
-            assertWalLockExistence(true, tableName, 1);
             assertSegmentExistence(true, tableName, 1, 0);
-            assertSegmentLockExistence(true, tableName, 1, 0);
-            assertSegmentLockEngagement(true, tableName, 1, 0);  // Segment 0 is locked.
-            assertWalLockEngagement(true, tableName, 1);
+            assertWalLocked(tableName, 1);
+            assertSegmentLocked(tableName, 1, 0);  // Segment 0 is locked.
 
             execute("alter table " + tableName + " add column s1 string");
             execute("insert into " + tableName + " values (2, '2022-02-24T00:00:01.000000Z', 'x')");
-            assertWalLockEngagement(true, tableName, 1);
+            assertWalLocked(tableName, 1);
             assertSegmentExistence(true, tableName, 1, 1);
-            assertSegmentLockExistence(true, tableName, 1, 1);
-            assertSegmentLockEngagement(false, tableName, 1, 0);  // Segment 0 is unlocked.
-            assertSegmentLockEngagement(true, tableName, 1, 1);  // Segment 1 is locked.
+            // Current segment (1) is locked
+            assertSegmentLocked(tableName, 1, 1);
 
             CharSequence root = engine.getConfiguration().getDbRoot();
             try (Path path = new Path()) {
@@ -773,7 +946,8 @@ public class WalPurgeJobTest extends AbstractCairoTest {
                 Assert.assertTrue(path.toString(), ff.exists(path.$()));
 
                 drainPurgeJob();
-                assertSegmentLockExistence(false, tableName, 1, 0);
+                // Segment 0 was purged/deleted
+                assertSegmentExistence(false, tableName, 1, 0);
 
                 // "stuff" is untouched.
                 Assert.assertTrue(path.toString(), ff.exists(path.$()));
@@ -844,10 +1018,12 @@ public class WalPurgeJobTest extends AbstractCairoTest {
 
                 drainWalQueue();
 
-                assertSql("x\tts\ti1\n" +
-                        "1\t2022-02-24T00:00:00.000000Z\tnull\n" +
-                        "11\t2022-02-24T00:00:00.000000Z\tnull\n" +
-                        "2\t2022-02-25T00:00:00.000000Z\t2\n", tableName);
+                assertSql("""
+                        x\tts\ti1
+                        1\t2022-02-24T00:00:00.000000Z\tnull
+                        11\t2022-02-24T00:00:00.000000Z\tnull
+                        2\t2022-02-25T00:00:00.000000Z\t2
+                        """, tableName);
 
 
                 // All applied, all segments can be deleted.
@@ -917,10 +1093,12 @@ public class WalPurgeJobTest extends AbstractCairoTest {
 
                 drainWalQueue();
 
-                assertSql("x\tts\ti1\ti2\n" +
-                        "1\t2022-02-24T00:00:00.000000Z\tnull\tnull\n" +
-                        "2\t2022-02-25T00:00:00.000000Z\t2\tnull\n" +
-                        "2\t2022-02-25T00:00:00.000000Z\t2\tnull\n", tableName);
+                assertSql("""
+                        x\tts\ti1\ti2
+                        1\t2022-02-24T00:00:00.000000Z\tnull\tnull
+                        2\t2022-02-25T00:00:00.000000Z\t2\tnull
+                        2\t2022-02-25T00:00:00.000000Z\t2\tnull
+                        """, tableName);
 
 
                 // All applied, all segments can be deleted.
@@ -948,11 +1126,10 @@ public class WalPurgeJobTest extends AbstractCairoTest {
                     " from long_sequence(5)" +
                     ") timestamp(ts) partition by DAY WAL");
             assertWalExistence(true, tableName, 1);
-            assertWalLockExistence(true, tableName, 1);
+            assertWalLocked(tableName, 1);
             assertSegmentExistence(true, tableName, 1, 0);
-            assertSegmentLockExistence(true, tableName, 1, 0);
+            assertSegmentLocked(tableName, 1, 0);
             assertSegmentExistence(false, tableName, 1, 1);
-            assertSegmentLockExistence(false, tableName, 1, 1);
 
             // Altering the table doesn't create a new segment yet.
             execute("alter table " + tableName + " add column sss string");
@@ -972,13 +1149,15 @@ public class WalPurgeJobTest extends AbstractCairoTest {
 
             // After draining the wal queue, all the WAL data is still there.
             drainWalQueue();
-            assertSql("x\tts\tsss\n" +
-                    "1\t2022-02-24T00:00:00.000000Z\t\n" +
-                    "2\t2022-02-24T00:00:01.000000Z\t\n" +
-                    "3\t2022-02-24T00:00:02.000000Z\t\n" +
-                    "4\t2022-02-24T00:00:03.000000Z\t\n" +
-                    "5\t2022-02-24T00:00:04.000000Z\t\n" +
-                    "6\t2022-02-24T00:00:05.000000Z\tx\n", tableName);
+            assertSql("""
+                    x\tts\tsss
+                    1\t2022-02-24T00:00:00.000000Z\t
+                    2\t2022-02-24T00:00:01.000000Z\t
+                    3\t2022-02-24T00:00:02.000000Z\t
+                    4\t2022-02-24T00:00:03.000000Z\t
+                    5\t2022-02-24T00:00:04.000000Z\t
+                    6\t2022-02-24T00:00:05.000000Z\tx
+                    """, tableName);
             assertWalExistence(true, tableName, 1);
             assertSegmentExistence(true, tableName, 1, 0);
             assertSegmentExistence(true, tableName, 1, 1);
@@ -986,17 +1165,16 @@ public class WalPurgeJobTest extends AbstractCairoTest {
             // Purging will now clean up the inactive segmentId==0, but leave segmentId==1
             drainPurgeJob();
             assertWalExistence(true, tableName, 1);
-            assertWalLockExistence(true, tableName, 1);
+            assertWalLocked(tableName, 1);
             assertSegmentExistence(false, tableName, 1, 0);
-            assertSegmentLockExistence(false, tableName, 1, 0);
             assertSegmentExistence(true, tableName, 1, 1);
-            assertSegmentLockExistence(true, tableName, 1, 1);
+            assertSegmentLocked(tableName, 1, 1);
 
             // Releasing inactive writers and purging will also delete the wal directory.
             engine.releaseInactive();
             drainPurgeJob();
             assertWalExistence(false, tableName, 1);
-            assertWalLockExistence(false, tableName, 1);
+            assertWalNotLocked(tableName, 1);
         });
     }
 
@@ -1013,7 +1191,7 @@ public class WalPurgeJobTest extends AbstractCairoTest {
             getTableWriterAPI(tableName).close();
 
             assertWalExistence(true, tableName, 1);
-            assertWalLockExistence(true, tableName, 1);
+            assertWalLocked(tableName, 1);
             assertSegmentExistence(true, tableName, 1, 0);
 
             // Released before committing anything to the sequencer.
@@ -1021,7 +1199,7 @@ public class WalPurgeJobTest extends AbstractCairoTest {
 
             drainPurgeJob();
             assertWalExistence(false, tableName, 1);
-            assertWalLockExistence(false, tableName, 1);
+            assertWalNotLocked(tableName, 1);
         });
     }
 
@@ -1084,24 +1262,25 @@ public class WalPurgeJobTest extends AbstractCairoTest {
 
             assertWalExistence(true, tableName, 1);
 
-            assertSql("x\tts\n" +
-                    "1\t2022-02-24T00:00:00.000000Z\n" +
-                    "2\t2022-02-24T00:00:01.000000Z\n" +
-                    "3\t2022-02-24T00:00:02.000000Z\n" +
-                    "4\t2022-02-24T00:00:03.000000Z\n" +
-                    "5\t2022-02-24T00:00:04.000000Z\n", tableName);
+            assertSql("""
+                    x\tts
+                    1\t2022-02-24T00:00:00.000000Z
+                    2\t2022-02-24T00:00:01.000000Z
+                    3\t2022-02-24T00:00:02.000000Z
+                    4\t2022-02-24T00:00:03.000000Z
+                    5\t2022-02-24T00:00:04.000000Z
+                    """, tableName);
 
             engine.releaseInactive();
 
             final long interval = engine.getConfiguration().getWalPurgeInterval() * 1000;  // ms to us.
             setCurrentMicros(interval + 1);  // Set to some point in time that's not 0.
             try (WalPurgeJob job = new WalPurgeJob(engine)) {
-                final SimpleWaitingLock lock = job.getRunLock();
                 try {
-                    lock.lock();
+                    Assert.assertTrue(engine.tryLockWalPurgeJob(0, TimeUnit.SECONDS));
                     job.drain(0);
                 } finally {
-                    lock.unlock();
+                    engine.unlockWalPurgeJob();
                     assertSegmentExistence(true, tableName, 1, 0);
                     assertWalExistence(true, tableName, 1);
                 }
@@ -1131,12 +1310,14 @@ public class WalPurgeJobTest extends AbstractCairoTest {
 
             assertWalExistence(true, tableName, 1);
 
-            assertSql("x\tts\n" +
-                    "1\t2022-02-24T00:00:00.000000Z\n" +
-                    "2\t2022-02-24T00:00:01.000000Z\n" +
-                    "3\t2022-02-24T00:00:02.000000Z\n" +
-                    "4\t2022-02-24T00:00:03.000000Z\n" +
-                    "5\t2022-02-24T00:00:04.000000Z\n", tableName);
+            assertSql("""
+                    x\tts
+                    1\t2022-02-24T00:00:00.000000Z
+                    2\t2022-02-24T00:00:01.000000Z
+                    3\t2022-02-24T00:00:02.000000Z
+                    4\t2022-02-24T00:00:03.000000Z
+                    5\t2022-02-24T00:00:04.000000Z
+                    """, tableName);
 
             engine.releaseInactive();
 
@@ -1202,7 +1383,7 @@ public class WalPurgeJobTest extends AbstractCairoTest {
     }
 
     static void addColumn(WalWriter writer, String columnName) {
-        writer.addColumn(columnName, ColumnType.INT);
+        writer.addColumn(columnName, ColumnType.INT, AllowAllSecurityContext.INSTANCE);
     }
 
     private static class DeletionEvent {
@@ -1221,8 +1402,7 @@ public class WalPurgeJobTest extends AbstractCairoTest {
 
         @Override
         public boolean equals(Object obj) {
-            if (obj instanceof DeletionEvent) {
-                DeletionEvent other = (DeletionEvent) obj;
+            if (obj instanceof DeletionEvent other) {
                 return walId == other.walId && Objects.equals(segmentId, other.segmentId);
             }
             return false;
@@ -1239,29 +1419,25 @@ public class WalPurgeJobTest extends AbstractCairoTest {
     }
 
     private static class TestDeleter implements WalPurgeJob.Deleter {
-        public final LongList closedFds = new LongList();
         public final ObjList<DeletionEvent> events = new ObjList<>();
 
         @Override
-        public void deleteSegmentDirectory(int walId, int segmentId, long lockFd) {
+        public void deleteSegmentDirectory(int walId, int segmentId) {
             events.add(new DeletionEvent(walId, segmentId));
         }
 
         @Override
-        public void deleteSequencerPart(int seqPart) {
-            assert false;
+        public void deleteSequencerPart(long seqPart) {
+            Assert.fail();
         }
 
         @Override
-        public void deleteWalDirectory(int walId, long lockFd) {
+        public void deleteWalDirectory(int walId) {
             events.add(new DeletionEvent(walId));
         }
 
         @Override
-        public void unlock(long lockFd) {
-            if (lockFd > -1) {
-                closedFds.add(lockFd);
-            }
+        public void unlock(int walId) {
         }
     }
 }

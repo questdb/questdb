@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -37,7 +37,7 @@ import io.questdb.std.str.LPSZ;
 
 import static io.questdb.ParanoiaState.VM_PARANOIA_MODE;
 
-//contiguous mapped readable 
+//contiguous mapped readable
 public class MemoryCMRImpl extends AbstractMemoryCR implements MemoryCMR {
     private static final Log LOG = LogFactory.getLog(MemoryCMRImpl.class);
     private final boolean bypassFdCache;
@@ -136,6 +136,33 @@ public class MemoryCMRImpl extends AbstractMemoryCR implements MemoryCMR {
         }
     }
 
+    // Single-open variant used for files whose committed mapping size is stored
+    // as a u64 at offset 0 (e.g. the _pm parquet sidecar). Opens the file once,
+    // reads the size from the fd it just opened, validates it against the
+    // actual file length to prevent SIGBUS on an over-large mapping, then maps.
+    public void ofWithSizeFromHeader(FilesFacade ff, LPSZ name, int memoryTag) {
+        this.memoryTag = memoryTag;
+        this.madviseOpts = -1;
+        try {
+            openFile(ff, name);
+            final long newSize = ff.readNonNegativeLong(fd, 0);
+            if (newSize <= 0) {
+                throw CairoException.critical(0).put("invalid size header [path=").put(name).put(']');
+            }
+            final long actualLength = ff.length(fd);
+            if (newSize > actualLength) {
+                throw CairoException.critical(0)
+                        .put("size header exceeds file length [size=").put(newSize)
+                        .put(", fileLength=").put(actualLength)
+                        .put(", path=").put(name).put(']');
+            }
+            map(ff, name, newSize);
+        } catch (Throwable e) {
+            close();
+            throw e;
+        }
+    }
+
     @Override
     public void smallFile(FilesFacade ff, LPSZ name, int memoryTag) {
         // Override default implementation to defer ff.length() call to use fd instead of path
@@ -153,11 +180,22 @@ public class MemoryCMRImpl extends AbstractMemoryCR implements MemoryCMR {
     }
 
     private void setSize0(long newSize) {
+        // When madvise options are set (e.g., MADV_DONTNEED for streaming), bypass the
+        // MmapCache so each mapping is independent and can release page cache
+        final boolean bypassMmapCache = madviseOpts != -1;
         if (size > 0) {
-            pageAddress = TableUtils.mremap(ff, fd, pageAddress, size, newSize, Files.MAP_RO, memoryTag);
+            if (bypassMmapCache) {
+                pageAddress = TableUtils.mremapNoCache(ff, fd, pageAddress, size, newSize, Files.MAP_RO, memoryTag);
+            } else {
+                pageAddress = TableUtils.mremap(ff, fd, pageAddress, size, newSize, Files.MAP_RO, memoryTag);
+            }
         } else {
             assert pageAddress == 0;
-            pageAddress = TableUtils.mapRO(ff, fd, newSize, memoryTag);
+            if (bypassMmapCache) {
+                pageAddress = TableUtils.mapRONoCache(ff, fd, newSize, memoryTag);
+            } else {
+                pageAddress = TableUtils.mapRO(ff, fd, newSize, memoryTag);
+            }
         }
         size = newSize;
         ff.madvise(pageAddress, size, madviseOpts);
@@ -167,7 +205,13 @@ public class MemoryCMRImpl extends AbstractMemoryCR implements MemoryCMR {
         this.size = size;
         if (size > 0) {
             try {
-                this.pageAddress = TableUtils.mapRO(ff, fd, size, memoryTag);
+                // When madvise options are set (e.g., MADV_DONTNEED for streaming), bypass the
+                // MmapCache so each mapping is independent and can release page cache
+                if (madviseOpts != -1) {
+                    this.pageAddress = TableUtils.mapRONoCache(ff, fd, size, memoryTag);
+                } else {
+                    this.pageAddress = TableUtils.mapRO(ff, fd, size, memoryTag);
+                }
                 ff.madvise(pageAddress, size, madviseOpts);
             } catch (Throwable e) {
                 close();

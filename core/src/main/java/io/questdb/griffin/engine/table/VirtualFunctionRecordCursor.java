@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -25,7 +25,6 @@
 package io.questdb.griffin.engine.table;
 
 import io.questdb.cairo.ColumnType;
-import io.questdb.cairo.DataUnavailableException;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
@@ -174,7 +173,7 @@ public class VirtualFunctionRecordCursor implements RecordCursor {
     }
 
     @Override
-    public void skipRows(Counter rowCount) throws DataUnavailableException {
+    public void skipRows(Counter rowCount) {
         assert baseCursor != null;
         baseCursor.skipRows(rowCount);
     }

@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -24,6 +24,7 @@
 
 package io.questdb.griffin.engine.groupby;
 
+import io.questdb.cairo.arr.ArrayView;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.engine.functions.groupby.InterpolationGroupByFunction;
@@ -52,6 +53,11 @@ public class SampleByFillRecord implements Record {
                 interpolations.add((InterpolationGroupByFunction) f);
             }
         }
+    }
+
+    @Override
+    public ArrayView getArray(int col, int columnType) {
+        return getFunction(col).getArray(base);
     }
 
     @Override

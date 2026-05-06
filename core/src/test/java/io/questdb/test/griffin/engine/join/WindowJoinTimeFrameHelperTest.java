@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -124,6 +124,54 @@ public class WindowJoinTimeFrameHelperTest {
 
         Assert.assertEquals(0, helper.binarySearch(7, 9, 0, false));
         Assert.assertEquals(Long.MIN_VALUE, helper.binarySearch(5, 6, 0, true));
+    }
+
+    @Test
+    public void testFindRowLoBookmarkResetOnBackwardTimestampLo() {
+        // Verifies bookmark resets when timestampLo jumps backward (non-monotonic dynamic bounds).
+        long[] timestamps = new long[10];
+        for (int i = 0; i < 10; i++) {
+            timestamps[i] = (i + 1) * 10;
+        }
+        MockTimeFrameCursor cursor = new MockTimeFrameCursor(List.of(frame(timestamps, 10, 100)), 0);
+        WindowJoinTimeFrameHelper helper = new WindowJoinTimeFrameHelper(2, 1);
+        helper.of(cursor);
+
+        long row = helper.findRowLo(50, 70);
+        Assert.assertEquals(4, row);
+        Assert.assertEquals(50, helper.getRecord().getTimestamp(0));
+
+        row = helper.findRowLo(80, 90);
+        Assert.assertEquals(7, row);
+        Assert.assertEquals(80, helper.getRecord().getTimestamp(0));
+
+        // Backward jump: timestampLo < bookmarkedTimestampLo
+        row = helper.findRowLo(30, 60);
+        Assert.assertEquals(2, row);
+        Assert.assertEquals(30, helper.getRecord().getTimestamp(0));
+    }
+
+    @Test
+    public void testFindRowLoBookmarkResetOnBackwardTimestampLoMultiFrame() {
+        FrameData frame1 = frame(new long[]{10, 20, 30}, 10, 30);
+        FrameData frame2 = frame(new long[]{40, 50, 60}, 40, 60);
+        FrameData frame3 = frame(new long[]{70, 80, 90}, 70, 90);
+        MockTimeFrameCursor cursor = new MockTimeFrameCursor(Arrays.asList(frame1, frame2, frame3), 0);
+        WindowJoinTimeFrameHelper helper = new WindowJoinTimeFrameHelper(2, 1);
+        helper.of(cursor);
+
+        long row = helper.findRowLo(25, 35);
+        Assert.assertEquals(2, row);
+        Assert.assertEquals(30, helper.getRecord().getTimestamp(0));
+
+        row = helper.findRowLo(75, 85);
+        Assert.assertEquals(1, row);
+        Assert.assertEquals(80, helper.getRecord().getTimestamp(0));
+
+        // Backward jump across frames
+        row = helper.findRowLo(35, 55);
+        Assert.assertEquals(0, row);
+        Assert.assertEquals(40, helper.getRecord().getTimestamp(0));
     }
 
     @Test
@@ -433,6 +481,56 @@ public class WindowJoinTimeFrameHelperTest {
 
         Assert.assertEquals(55, row);
         Assert.assertEquals(550, helper.getRecord().getTimestamp(0));
+    }
+
+    @Test
+    public void testFindRowLoWithPrevailingBookmarkResetOnBackwardTimestampLo() {
+        long[] timestamps = new long[10];
+        for (int i = 0; i < 10; i++) {
+            timestamps[i] = (i + 1) * 10;
+        }
+        MockTimeFrameCursor cursor = new MockTimeFrameCursor(List.of(frame(timestamps, 10, 100)), 0);
+        WindowJoinTimeFrameHelper helper = new WindowJoinTimeFrameHelper(2, 1);
+        helper.of(cursor);
+
+        long row = helper.findRowLoWithPrevailing(50, 70);
+        helper.recordAtRowIndex(row);
+        Assert.assertEquals(4, row);
+        Assert.assertEquals(50, helper.getRecord().getTimestamp(0));
+
+        row = helper.findRowLoWithPrevailing(80, 90);
+        helper.recordAtRowIndex(row);
+        Assert.assertEquals(7, row);
+        Assert.assertEquals(80, helper.getRecord().getTimestamp(0));
+
+        // Backward jump: timestampLo < bookmarkedTimestampLo
+        row = helper.findRowLoWithPrevailing(35, 60);
+        helper.recordAtRowIndex(row);
+        Assert.assertEquals(2, row);
+        Assert.assertEquals(30, helper.getRecord().getTimestamp(0));
+    }
+
+    @Test
+    public void testFindRowLoWithPrevailingBookmarkResetOnBackwardTimestampLoMultiFrame() {
+        FrameData frame1 = frame(new long[]{10, 20, 30}, 10, 30);
+        FrameData frame2 = frame(new long[]{40, 50, 60}, 40, 60);
+        FrameData frame3 = frame(new long[]{70, 80, 90}, 70, 90);
+        MockTimeFrameCursor cursor = new MockTimeFrameCursor(Arrays.asList(frame1, frame2, frame3), 0);
+        WindowJoinTimeFrameHelper helper = new WindowJoinTimeFrameHelper(2, 1);
+        helper.of(cursor);
+
+        long row = helper.findRowLoWithPrevailing(50, 70);
+        helper.recordAtRowIndex(row);
+        Assert.assertEquals(50, helper.getRecord().getTimestamp(0));
+
+        row = helper.findRowLoWithPrevailing(80, 90);
+        helper.recordAtRowIndex(row);
+        Assert.assertEquals(80, helper.getRecord().getTimestamp(0));
+
+        // Backward jump across frames
+        row = helper.findRowLoWithPrevailing(35, 55);
+        helper.recordAtRowIndex(row);
+        Assert.assertEquals(30, helper.getRecord().getTimestamp(0));
     }
 
     @Test
@@ -872,12 +970,45 @@ public class WindowJoinTimeFrameHelperTest {
         }
 
         @Override
+        public void recordAt(Record record, int frameIndex, long rowIndex) {
+            currentFrame = frameIndex;
+            loadEstimate(frameIndex);
+            FrameData data = frames.get(frameIndex);
+            timeFrame.ofOpen(data.actualLo, data.actualHi, 0, data.timestamps.length);
+            ((MockRecord) record).position(frameIndex, (int) rowIndex);
+        }
+
+        @Override
         public void recordAtRowIndex(Record record, long rowIndex) {
             int frameIndex = currentFrame >= 0 ? currentFrame : timeFrame.getFrameIndex();
             ((MockRecord) record).position(frameIndex, (int) rowIndex);
         }
 
         @Override
+        public void seekEstimate(long timestamp) {
+            if (frames.isEmpty()) {
+                timeFrame.ofEstimate(-1, Long.MIN_VALUE, Long.MIN_VALUE);
+                return;
+            }
+            int lo = 0, hi = frames.size() - 1, result = -1;
+            while (lo <= hi) {
+                int mid = (lo + hi) >>> 1;
+                if (frames.get(mid).estimateHi <= timestamp) {
+                    result = mid;
+                    lo = mid + 1;
+                } else {
+                    hi = mid - 1;
+                }
+            }
+            if (result >= 0) {
+                currentFrame = result;
+                loadEstimate(result);
+            } else {
+                currentFrame = -1;
+                timeFrame.ofEstimate(-1, Long.MIN_VALUE, Long.MIN_VALUE);
+            }
+        }
+
         public void toTop() {
             timeFrame.clear();
             currentFrame = -1;

@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -35,6 +35,8 @@ import io.questdb.cutlass.http.processors.StaticContentProcessorFactory;
 import io.questdb.cutlass.http.processors.TableStatusCheckProcessor;
 import io.questdb.cutlass.http.processors.TextImportProcessor;
 import io.questdb.cutlass.http.processors.WarningsProcessor;
+import io.questdb.cutlass.qwp.server.QwpWebSocketHttpProcessor;
+import io.questdb.cutlass.qwp.server.egress.QwpEgressHttpProcessor;
 import io.questdb.mp.Job;
 import io.questdb.mp.WorkerPool;
 import io.questdb.network.HeartBeatException;
@@ -72,6 +74,7 @@ public class HttpServer implements Closeable {
     private final AssociativeCache<RecordCursorFactory> selectCache;
     private final ObjList<HttpRequestProcessorSelectorImpl> selectors;
     private final int workerCount;
+    private int nextHandlerId = 0;
 
     public HttpServer(
             HttpServerConfiguration configuration,
@@ -164,6 +167,32 @@ public class HttpServer implements Closeable {
                 @Override
                 public HttpRequestHandler newInstance() {
                     return pingProcessor;
+                }
+            });
+
+            // QWP v1 endpoint (WebSocket only)
+            server.bind(new HttpRequestHandlerFactory() {
+                @Override
+                public ObjHashSet<String> getUrls() {
+                    return httpServerConfiguration.getContextPathQWP();
+                }
+
+                @Override
+                public HttpRequestHandler newInstance() {
+                    return new QwpWebSocketHttpProcessor(cairoEngine, httpServerConfiguration);
+                }
+            });
+
+            // QWP egress endpoint (query results, WebSocket only)
+            server.bind(new HttpRequestHandlerFactory() {
+                @Override
+                public ObjHashSet<String> getUrls() {
+                    return httpServerConfiguration.getContextPathQWPRead();
+                }
+
+                @Override
+                public HttpRequestHandler newInstance() {
+                    return new QwpEgressHttpProcessor(cairoEngine, httpServerConfiguration, sharedQueryWorkerCount);
                 }
             });
         }
@@ -278,7 +307,7 @@ public class HttpServer implements Closeable {
                 lastSlash = false;
             }
             if (shift > 0) {
-                Unsafe.getUnsafe().putByte(p + i - shift, b);
+                Unsafe.putByte(p + i - shift, b);
             }
         }
         url.squeezeHi(shift);
@@ -294,19 +323,31 @@ public class HttpServer implements Closeable {
         assert urls != null;
         for (int j = 0, n = urls.size(); j < n; j++) {
             final String url = urls.get(j);
+            int handlerId = -1; // assigned on first worker that actually registers
             for (int i = 0; i < workerCount; i++) {
                 HttpRequestProcessorSelectorImpl selector = selectors.getQuick(i);
                 if (HttpFullFatServerConfiguration.DEFAULT_PROCESSOR_URL.equals(url)) {
-                    selector.defaultRequestProcessor = factory.newInstance().getDefaultProcessor();
+                    if (handlerId < 0) {
+                        handlerId = nextHandlerId++;
+                    }
+                    final HttpRequestHandler handler = factory.newInstance();
+                    selector.defaultRequestProcessor = handler.getDefaultProcessor();
+                    selector.defaultProcessorId = handlerId;
+                    selector.handlersByIdList.extendAndSet(handlerId, handler);
                 } else {
                     final Utf8String key = new Utf8String(url);
                     int keyIndex = selector.requestHandlerMap.keyIndex(key);
                     if (keyIndex > -1) {
+                        if (handlerId < 0) {
+                            handlerId = nextHandlerId++;
+                        }
                         final HttpRequestHandler requestHandler = factory.newInstance();
-                        selector.requestHandlerMap.putAt(keyIndex, key, requestHandler);
+                        selector.requestHandlerMap.putAt(keyIndex, key, new IndexedHandler(requestHandler, handlerId));
                         if (useAsDefault) {
                             selector.defaultRequestProcessor = requestHandler.getDefaultProcessor();
+                            selector.defaultProcessorId = handlerId;
                         }
+                        selector.handlersByIdList.extendAndSet(handlerId, requestHandler);
                     }
                 }
             }
@@ -382,23 +423,59 @@ public class HttpServer implements Closeable {
 
     private static class HttpRequestProcessorSelectorImpl implements HttpRequestProcessorSelector {
 
-        private final Utf8SequenceObjHashMap<HttpRequestHandler> requestHandlerMap = new Utf8SequenceObjHashMap<>();
+        private final ObjList<HttpRequestHandler> handlersByIdList = new ObjList<>();
+        private final Utf8SequenceObjHashMap<IndexedHandler> requestHandlerMap = new Utf8SequenceObjHashMap<>();
+        private int defaultProcessorId = REJECT_PROCESSOR_ID;
         private HttpRequestProcessor defaultRequestProcessor = null;
+        private int lastSelectedHandlerId = REJECT_PROCESSOR_ID;
 
         @Override
         public void close() {
-            Misc.freeIfCloseable(defaultRequestProcessor);
-            ObjList<Utf8String> requestHandlerKeys = requestHandlerMap.keys();
-            for (int i = 0, n = requestHandlerKeys.size(); i < n; i++) {
-                Misc.freeIfCloseable(requestHandlerMap.get(requestHandlerKeys.getQuick(i)));
+            ObjHashSet<Object> dedup = new ObjHashSet<>();
+            if (defaultRequestProcessor != null) {
+                dedup.add(defaultRequestProcessor);
+                Misc.freeIfCloseable(defaultRequestProcessor);
             }
+
+            for (int i = 0, n = handlersByIdList.size(); i < n; i++) {
+                HttpRequestHandler handler = handlersByIdList.getQuick(i);
+                if (handler != null && dedup.add(handler)) {
+                    Misc.freeIfCloseable(handler);
+                }
+            }
+
+            // invariant: every handler in requestHandlerMap is also included in handlersByIdList
+            // thus we can close just handlers in handlersByIdList, no need to iterate over requestHandlerMap
+        }
+
+        @Override
+        public int getLastSelectedHandlerId() {
+            return lastSelectedHandlerId;
+        }
+
+        @Override
+        public HttpRequestProcessor resolveProcessorById(int handlerId, HttpRequestHeader header) {
+            // handlerId is always produced internally by bind() (sequential non-negative int)
+            // and the REJECT_PROCESSOR_ID sentinel (-1) is filtered out by the caller.
+            // No bounds check: a bad ID here means a bug that should surface immediately.
+            HttpRequestHandler handler = handlersByIdList.getQuick(handlerId);
+            return handler != null ? handler.getProcessor(header) : null;
         }
 
         @Override
         public HttpRequestProcessor select(HttpRequestHeader requestHeader) {
             final Utf8Sequence normalizedUrl = normalizeUrl(requestHeader.getUrl());
-            final HttpRequestHandler requestHandler = requestHandlerMap.get(normalizedUrl);
-            return requestHandler != null ? requestHandler.getProcessor(requestHeader) : defaultRequestProcessor;
+            final int keyIndex = requestHandlerMap.keyIndex(normalizedUrl);
+            if (keyIndex < 0) {
+                IndexedHandler entry = requestHandlerMap.valueAt(keyIndex);
+                lastSelectedHandlerId = entry.handlerId();
+                return entry.handler().getProcessor(requestHeader);
+            }
+            lastSelectedHandlerId = defaultProcessorId;
+            return defaultRequestProcessor;
         }
+    }
+
+    private record IndexedHandler(HttpRequestHandler handler, int handlerId) {
     }
 }

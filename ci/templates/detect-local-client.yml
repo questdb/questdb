@@ -1,0 +1,16 @@
+# Shared step: detect whether the java-questdb-client submodule should be built
+# locally (SNAPSHOT version) or fetched from Maven Central (release version).
+# Sets the CLIENT_PROFILE pipeline variable.
+steps:
+  - bash: |
+      CLIENT_VERSION=$(sed -n 's/.*<questdb.client.version>\(.*\)<\/questdb.client.version>.*/\1/p' core/pom.xml)
+      echo "questdb.client.version=$CLIENT_VERSION"
+      if echo "$CLIENT_VERSION" | grep -q '\-SNAPSHOT$'; then
+        echo "SNAPSHOT version detected, activating local-client profile"
+        git submodule update --init java-questdb-client
+        echo "##vso[task.setvariable variable=CLIENT_PROFILE]-P local-client"
+      else
+        echo "Release version detected, using Maven Central"
+        echo "##vso[task.setvariable variable=CLIENT_PROFILE]"
+      fi
+    displayName: "Detect local client profile"

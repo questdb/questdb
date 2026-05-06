@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -33,6 +33,7 @@ import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.TableWriter;
+import io.questdb.cairo.security.AllowAllSecurityContext;
 import io.questdb.cairo.sql.OperationFuture;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
@@ -46,7 +47,6 @@ import io.questdb.griffin.QueryRegistry;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.SqlExecutionContextImpl;
-import io.questdb.griffin.engine.functions.test.TestDataUnavailableFunctionFactory;
 import io.questdb.griffin.engine.table.parquet.PartitionDescriptor;
 import io.questdb.griffin.engine.table.parquet.PartitionEncoder;
 import io.questdb.log.Log;
@@ -55,7 +55,6 @@ import io.questdb.mp.SOCountDownLatch;
 import io.questdb.mp.WorkerPool;
 import io.questdb.network.NetworkFacade;
 import io.questdb.network.NetworkFacadeImpl;
-import io.questdb.network.SuspendEvent;
 import io.questdb.std.CharSequenceObjHashMap;
 import io.questdb.std.Chars;
 import io.questdb.std.Files;
@@ -133,10 +132,9 @@ import java.util.stream.Stream;
 import static io.questdb.PropertyKey.CAIRO_WRITER_ALTER_BUSY_WAIT_TIMEOUT;
 import static io.questdb.PropertyKey.CAIRO_WRITER_ALTER_MAX_WAIT_TIMEOUT;
 import static io.questdb.cairo.sql.SqlExecutionCircuitBreaker.TIMEOUT_FAIL_ON_FIRST_CHECK;
-import static io.questdb.test.tools.TestUtils.*;
-import static io.questdb.test.tools.TestUtils.assertEquals;
+import static io.questdb.test.tools.TestUtils.assertContains;
+import static io.questdb.test.tools.TestUtils.createTimestamp;
 import static org.junit.Assert.*;
-import static org.junit.Assert.assertEquals;
 
 /**
  * This class contains tests which replay PGWIRE traffic.
@@ -1605,6 +1603,32 @@ if __name__ == "__main__":
     }
 
     @Test
+    public void testBadInitMessageLengthNegative() throws Exception {
+        // first message msgLen is 0xFFFFFFFF (-1); server must reject before any pointer arithmetic
+        // and close the connection.
+        assertHexScript("""
+                >ffffffff00030000
+                <!!""");
+    }
+
+    @Test
+    public void testBadInitMessageLengthTooLarge() throws Exception {
+        // msgLen=0x00200000 (2 MB) exceeds the 1 MB default receive buffer. The server
+        // must reject before pointer arithmetic can walk outside the buffer.
+        assertHexScript("""
+                >0020000000030000
+                <!!""");
+    }
+
+    @Test
+    public void testBadInitMessageLengthTooSmall() throws Exception {
+        // msgLen=4 is below the 8-byte protocol minimum (size + protocol fields).
+        assertHexScript("""
+                >0000000400030000
+                <!!""");
+    }
+
+    @Test
     public void testBadMessageLength() throws Exception {
         final String script =
                 """
@@ -1628,6 +1652,36 @@ if __name__ == "__main__":
                         >0000007500030000757365720061646d696e006461746162617365006e6162755f61707000636c69656e745f656e636f64696e67005554463800446174655374796c650049534f0054696d655a6f6e65004575726f70652f4c6f6e646f6e0065787472615f666c6f61745f64696769747300320000
                         <520000000800000003
                         >700000000464756e6e6f00
+                        <!!"""
+        );
+    }
+
+    @Test
+    public void testBadPasswordLengthNegative() throws Exception {
+        // PasswordMessage with msgLen 0xFFFFFFFF (-1); server must reject before
+        // computing msgLimit = recvBufReadPos + msgLen + 1.
+        assertHexScript(
+                """
+                        >0000000804d2162f
+                        <4e
+                        >0000007500030000757365720061646d696e006461746162617365006e6162755f61707000636c69656e745f656e636f64696e67005554463800446174655374796c650049534f0054696d655a6f6e65004575726f70652f4c6f6e646f6e0065787472615f666c6f61745f64696769747300320000
+                        <520000000800000003
+                        >70ffffffff
+                        <!!"""
+        );
+    }
+
+    @Test
+    public void testBadPasswordLengthTooLarge() throws Exception {
+        // PasswordMessage with msgLen 0x00200000 (2 MB) exceeds the 1 MB default receive buffer.
+        // Server must reject before computing msgLimit = recvBufReadPos + msgLen + 1.
+        assertHexScript(
+                """
+                        >0000000804d2162f
+                        <4e
+                        >0000007500030000757365720061646d696e006461746162617365006e6162755f61707000636c69656e745f656e636f64696e67005554463800446174655374796c650049534f0054696d655a6f6e65004575726f70652f4c6f6e646f6e0065787472615f666c6f61745f64696769747300320000
+                        <520000000800000003
+                        >7000200000
                         <!!"""
         );
     }
@@ -2205,6 +2259,172 @@ if __name__ == "__main__":
             ResultSet rs4 = statement4.executeQuery("select * from anothertab");
             assertResultSet(expected, sink, rs4);
         });
+    }
+
+    @Test
+    public void testBindBinaryArrayDimensionHeaderTruncated() throws Exception {
+        // Pins the up-front `valueSize < dimensions * 2 * Integer.BYTES` guard in
+        // setBindVariableAsArray: the Bind declares dims=2 but the value only carries
+        // enough bytes for dim[0]'s 8-byte header. After reading dims/hasNull/
+        // componentOid the parser has decremented valueSize to 8, below the 16 bytes
+        // required for two dimension headers, so the guard fires before any per-dim
+        // read runs. Without the guard, the per-dim reads would consume bytes from
+        // the following Execute message.
+        //
+        // Hex script = same handshake as testBindBinaryArrayFlatLengthOverflow
+        // (startup user=admin db=nabu_app -> AuthRequest(cleartext) -> PasswordMessage
+        // "quest" -> AuthOK + parameter messages + BackendKeyData + RFQ('I')),
+        // followed by:
+        //
+        //   Parse "P" len=0x2b=43: stmt="", SQL="select $1 from long_sequence(1)\0",
+        //                          1 param type, OID=0x000003fe (1022, _float8)
+        //   Bind  "B" len=0x26=38: portal="", stmt="", 1 format=binary(0x0001),
+        //                          1 value, valueSize=0x14 (20 bytes):
+        //                             00000002  dims         = 2  (declared)
+        //                             00000000  hasNull      = 0
+        //                             000002bd  componentOid = 701 (PG_FLOAT8)
+        //                             00000001  dim[0].size  = 1
+        //                             00000001  dim[0].lower = 1
+        //                             -- dim[1] header absent; valueSize = 8 when the
+        //                                up-front guard runs, short of 2*2*4 = 16 --
+        //                          0 result format codes
+        //   Execute "E" len=9 (portal="", maxRows=0) + Sync "S" len=4:
+        //                          450000000900000000005300000004
+        //
+        // Expected reply: ErrorResponse "E" len=0x55=85 with fields
+        //   C="00000",
+        //   M="malformed array dimension headers [dimensions=2, valueSize=8]",
+        //   S="ERROR", P="1", then ReadyForQuery "Z" len=5 state='I'.
+        assertHexScript(
+                """
+                        >0000006b00030000757365720061646d696e006461746162617365006e6162755f61707000636c69656e745f656e636f64696e67005554463800446174655374796c650049534f0054696d655a6f6e6500474d540065787472615f666c6f61745f64696769747300320000
+                        <520000000800000003
+                        >700000000a717565737400
+                        <520000000800000000530000001154696d655a6f6e6500474d5400530000001d6170706c69636174696f6e5f6e616d6500517565737444420053000000187365727665725f76657273696f6e0031312e33005300000019696e74656765725f6461746574696d6573006f6e005300000019636c69656e745f656e636f64696e670055544638004b0000000c0000003fbb8b96505a0000000549
+                        >500000002b0073656c6563742024312066726f6d206c6f6e675f73657175656e6365283129000001000003fe42000000260000000100010001000000140000000200000000000002bd00000001000000010000450000000900000000005300000004
+                        <4500000055433030303030004d6d616c666f726d65642061727261792064696d656e73696f6e2068656164657273205b64696d656e73696f6e733d322c2076616c756553697a653d385d00534552524f5200503100005a0000000549"""
+        );
+    }
+
+    @Test
+    public void testBindBinaryArrayDimensionSizeNegative() throws Exception {
+        // Regression for a negative dimension size (0xFFFFFFFF) in a binary array BIND value.
+        // Without the dimensionSize < 0 guard, a negative size would feed into flat-length
+        // multiplication and pointer arithmetic in setPtrAndCalculateStrides. The server must
+        // reject cleanly and remain usable.
+        //
+        // Wire sequence mirrors testBindBinaryArrayFlatLengthOverflow, except the Bind value
+        // carries dims=1 with dim[0]=-1.
+        assertHexScript(
+                """
+                        >0000006b00030000757365720061646d696e006461746162617365006e6162755f61707000636c69656e745f656e636f64696e67005554463800446174655374796c650049534f0054696d655a6f6e6500474d540065787472615f666c6f61745f64696769747300320000
+                        <520000000800000003
+                        >700000000a717565737400
+                        <520000000800000000530000001154696d655a6f6e6500474d5400530000001d6170706c69636174696f6e5f6e616d6500517565737444420053000000187365727665725f76657273696f6e0031312e33005300000019696e74656765725f6461746574696d6573006f6e005300000019636c69656e745f656e636f64696e670055544638004b0000000c0000003fbb8b96505a0000000549
+                        >500000002b0073656c6563742024312066726f6d206c6f6e675f73657175656e6365283129000001000003fe42000000260000000100010001000000140000000100000000000002bdffffffff000000010000450000000900000000005300000004
+                        <450000005b433030303030004d61727261792064696d656e73696f6e2073697a652063616e6e6f74206265206e65676174697665205b64696d656e73696f6e496e6465783d302c2073697a653d2d315d00534552524f5200503100005a0000000549"""
+        );
+    }
+
+    @Test
+    public void testBindBinaryArrayFlatLengthOverflow() throws Exception {
+        // Regression for the [65537, 65537] flat-length overflow: without Math.multiplyExact
+        // flatViewLength wraps to 131_073 while shape claims ~4.3B elements, which later
+        // feeds into pointer arithmetic in setPtrAndCalculateStrides. The server must reject
+        // the BIND with "array size overflow" and keep the connection usable (RFQ afterwards).
+        //
+        // Wire sequence:
+        //   startup (admin/quest) -> cleartext auth -> password "quest"
+        //   Parse  "select $1 from long_sequence(1)" with parameter OID 1022 (float8[])
+        //   Bind   1 param, binary format, dims=2 [65537, 65537], component OID 701
+        //   Execute + Sync
+        // Expected response: ErrorResponse("array size overflow") + ReadyForQuery('I')
+        assertHexScript(
+                """
+                        >0000006b00030000757365720061646d696e006461746162617365006e6162755f61707000636c69656e745f656e636f64696e67005554463800446174655374796c650049534f0054696d655a6f6e6500474d540065787472615f666c6f61745f64696769747300320000
+                        <520000000800000003
+                        >700000000a717565737400
+                        <520000000800000000530000001154696d655a6f6e6500474d5400530000001d6170706c69636174696f6e5f6e616d6500517565737444420053000000187365727665725f76657273696f6e0031312e33005300000019696e74656765725f6461746574696d6573006f6e005300000019636c69656e745f656e636f64696e670055544638004b0000000c0000003fbb8b96505a0000000549
+                        >500000002b0073656c6563742024312066726f6d206c6f6e675f73657175656e6365283129000001000003fe420000002e00000001000100010000001c0000000200000000000002bd000100010000000100010001000000010000450000000900000000005300000004
+                        <450000002b433030303030004d61727261792073697a65206f766572666c6f7700534552524f5200503100005a0000000549"""
+        );
+    }
+
+    @Test
+    public void testBindVarcharArrayDimensionSizeNegative() throws Exception {
+        // Pins the `dimensionSize < 0` guard in setBindVariableAsVarcharArray. Bind
+        // declares a 1-D varchar array with dim[0].size = -1 (0xFFFFFFFF). Without
+        // the guard, setPtrAndBuildOffsetIndex would walk the element offset index
+        // past the value buffer.
+        //
+        // Hex script = same handshake as testBindBinaryArrayFlatLengthOverflow,
+        // followed by:
+        //
+        //   Parse "P" len=0x2b=43: stmt="", SQL="select $1 from long_sequence(1)\0",
+        //                          1 param type, OID=0x000003f7 (1015, _varchar)
+        //   Bind  "B" len=0x26=38: portal="", stmt="", 1 format=binary(0x0001),
+        //                          1 value, valueSize=0x14 (20 bytes):
+        //                             00000001  dims         = 1
+        //                             00000000  hasNull      = 0
+        //                             00000413  componentOid = 1043 (PG_VARCHAR)
+        //                             ffffffff  dim[0].size  = -1  <-- the test
+        //                             00000001  dim[0].lower = 1
+        //                          0 result format codes
+        //   Execute "E" len=9 (portal="", maxRows=0) + Sync "S" len=4:
+        //                          450000000900000000005300000004
+        //
+        // Expected reply: ErrorResponse "E" len=0x49=73 with fields
+        //   C="00000", M="array dimension size cannot be negative [size=-1]",
+        //   S="ERROR", P="1", then ReadyForQuery "Z" len=5 state='I'.
+        // Note: the varchar branch omits `dimensionIndex=` from the error text
+        // (the binary branch includes it).
+        assertHexScript(
+                """
+                        >0000006b00030000757365720061646d696e006461746162617365006e6162755f61707000636c69656e745f656e636f64696e67005554463800446174655374796c650049534f0054696d655a6f6e6500474d540065787472615f666c6f61745f64696769747300320000
+                        <520000000800000003
+                        >700000000a717565737400
+                        <520000000800000000530000001154696d655a6f6e6500474d5400530000001d6170706c69636174696f6e5f6e616d6500517565737444420053000000187365727665725f76657273696f6e0031312e33005300000019696e74656765725f6461746574696d6573006f6e005300000019636c69656e745f656e636f64696e670055544638004b0000000c0000003fbb8b96505a0000000549
+                        >500000002b0073656c6563742024312066726f6d206c6f6e675f73657175656e6365283129000001000003f74200000026000000010001000100000014000000010000000000000413ffffffff000000010000450000000900000000005300000004
+                        <4500000049433030303030004d61727261792064696d656e73696f6e2073697a652063616e6e6f74206265206e65676174697665205b73697a653d2d315d00534552524f5200503100005a0000000549"""
+        );
+    }
+
+    @Test
+    public void testBindVarcharArrayHeaderTruncated() throws Exception {
+        // Pins the up-front `valueSize < 5 * Integer.BYTES` guard in
+        // setBindVariableAsVarcharArray. The Bind value is 16 bytes, one int short of
+        // the 20-byte minimum (dims + hasNull + componentOid + dim[0].size +
+        // dim[0].lower). Without the guard, the parser would synthesise dim[0] from
+        // bytes that belong to subsequent fields.
+        //
+        // Hex script = same handshake as testBindBinaryArrayFlatLengthOverflow,
+        // followed by:
+        //
+        //   Parse "P" len=0x2b=43: stmt="", SQL="select $1 from long_sequence(1)\0",
+        //                          1 param type, OID=0x000003f7 (1015, _varchar)
+        //   Bind  "B" len=0x22=34: portal="", stmt="", 1 format=binary(0x0001),
+        //                          1 value, valueSize=0x10 (16 bytes):
+        //                             00000001  dims         = 1
+        //                             00000000  hasNull      = 0
+        //                             00000413  componentOid = 1043 (PG_VARCHAR)
+        //                             00000000  padding -- the 5th int is absent;
+        //                                       the guard fires before any field is read
+        //                          0 result format codes
+        //   Execute "E" len=9 (portal="", maxRows=0) + Sync "S" len=4:
+        //                          450000000900000000005300000004
+        //
+        // Expected reply: ErrorResponse "E" len=0x45=69 with fields
+        //   C="00000", M="malformed varchar array header [valueSize=16]",
+        //   S="ERROR", P="1", then ReadyForQuery "Z" len=5 state='I'.
+        assertHexScript(
+                """
+                        >0000006b00030000757365720061646d696e006461746162617365006e6162755f61707000636c69656e745f656e636f64696e67005554463800446174655374796c650049534f0054696d655a6f6e6500474d540065787472615f666c6f61745f64696769747300320000
+                        <520000000800000003
+                        >700000000a717565737400
+                        <520000000800000000530000001154696d655a6f6e6500474d5400530000001d6170706c69636174696f6e5f6e616d6500517565737444420053000000187365727665725f76657273696f6e0031312e33005300000019696e74656765725f6461746574696d6573006f6e005300000019636c69656e745f656e636f64696e670055544638004b0000000c0000003fbb8b96505a0000000549
+                        >500000002b0073656c6563742024312066726f6d206c6f6e675f73657175656e6365283129000001000003f74200000022000000010001000100000010000000010000000000000413000000000000450000000900000000005300000004
+                        <4500000045433030303030004d6d616c666f726d6564207661726368617220617272617920686561646572205b76616c756553697a653d31365d00534552524f5200503100005a0000000549"""
+        );
     }
 
     @Test
@@ -3604,8 +3824,8 @@ if __name__ == "__main__":
                 {"drop table exists doesnt", "ERROR: table and column names that are SQL keywords have to be enclosed in double quotes, such as \"exists\""},
                 {"drop table if exists", "ERROR: table name expected"},
                 {"drop table if exists;", "ERROR: table name expected"},
-                {"drop all table if exists;", "ERROR: ';' or 'tables' expected"},
-                {"drop all tables if exists;", "ERROR: ';' or 'tables' expected"},
+                {"drop all table if exists;", "ERROR: unexpected token [table]"},
+                {"drop all tables if exists;", "ERROR: unexpected token [if]"},
                 {"drop database ;", "ERROR: 'table' or 'view' or 'materialized view' or 'all' expected"}
         };
         assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
@@ -3801,11 +4021,7 @@ if __name__ == "__main__":
 
                                         try (PreparedStatement stmt = conn.prepareStatement(command)) {
                                             if (command.startsWith("select")) {
-                                                try (ResultSet result = stmt.executeQuery()) {
-                                                    while (result.next()) {
-                                                        // ignore
-                                                    }
-                                                }
+                                                consume(stmt.executeQuery());
                                             } else {
                                                 stmt.executeUpdate();
                                             }
@@ -3980,9 +4196,9 @@ if __name__ == "__main__":
                     connection,
                     "show columns from tab",
                     """
-                            column[VARCHAR],type[VARCHAR],indexed[BIT],indexBlockCapacity[INTEGER],symbolCached[BIT],symbolCapacity[INTEGER],symbolTableSize[INTEGER],designated[BIT],upsertKey[BIT]
-                            a,INT,false,0,false,0,0,false,false
-                            b,LONG,false,0,false,0,0,false,false
+                            column[VARCHAR],type[VARCHAR],indexed[BIT],indexBlockCapacity[INTEGER],symbolCached[BIT],symbolCapacity[INTEGER],symbolTableSize[INTEGER],designated[BIT],upsertKey[BIT],indexType[VARCHAR],indexInclude[VARCHAR]
+                            a,INT,false,0,false,0,0,false,false,,
+                            b,LONG,false,0,false,0,0,false,false,,
                             """,
                     2
             );
@@ -3992,10 +4208,10 @@ if __name__ == "__main__":
                     connection,
                     "show columns from tab",
                     """
-                            column[VARCHAR],type[VARCHAR],indexed[BIT],indexBlockCapacity[INTEGER],symbolCached[BIT],symbolCapacity[INTEGER],symbolTableSize[INTEGER],designated[BIT],upsertKey[BIT]
-                            a,INT,false,0,false,0,0,false,false
-                            b,LONG,false,0,false,0,0,false,false
-                            ts,TIMESTAMP,false,0,false,0,0,false,false
+                            column[VARCHAR],type[VARCHAR],indexed[BIT],indexBlockCapacity[INTEGER],symbolCached[BIT],symbolCapacity[INTEGER],symbolTableSize[INTEGER],designated[BIT],upsertKey[BIT],indexType[VARCHAR],indexInclude[VARCHAR]
+                            a,INT,false,0,false,0,0,false,false,,
+                            b,LONG,false,0,false,0,0,false,false,,
+                            ts,TIMESTAMP,false,0,false,0,0,false,false,,
                             """,
                     6
             );
@@ -4069,7 +4285,7 @@ if __name__ == "__main__":
                                 expectedResult.put("QUERY PLAN[VARCHAR]\n" +
                                         "Async Filter workers: 2\n" +
                                         "  limit: 10\n" +
-                                        "  filter: ('" + i + "'::long<x and x<'" + (i + 1) * 10 + ".0'::double)\n" +
+                                        "  filter: (" + i + "L<x and x<" + (i + 1) * 10 + ".0)\n" +
                                         "    PageFrame\n" +
                                         "        Row forward scan\n" +
                                         "        Frame forward scan on: xx\n");
@@ -7250,7 +7466,7 @@ nodejs code:
                     final PreparedStatement copy = connection.prepareStatement("copy x from '/test-numeric-headers.csv' with header true");
                     final ResultSet ignore = copy.executeQuery()
             ) {
-                assertEventually(() -> {
+                TestUtils.assertEventually(() -> {
                     try (
                             final PreparedStatement select = connection.prepareStatement("select * from x");
                             final ResultSet rs = select.executeQuery()
@@ -7498,7 +7714,7 @@ nodejs code:
             try (PreparedStatement pstmt = connection.prepareStatement("begin")) {
                 pstmt.execute();
             }
-            try (PreparedStatement pstmt = connection.prepareStatement("set")) {
+            try (PreparedStatement pstmt = connection.prepareStatement("set a = b")) {
                 pstmt.execute();
             }
             try (PreparedStatement pstmt = connection.prepareStatement("commit")) {
@@ -7626,11 +7842,7 @@ nodejs code:
                     // since PG JDBC does use phantom references to track statement instances
                     // and close them when they are GCed
                     statements.add(stmt);
-                    try (ResultSet ignore = stmt.executeQuery("select * from x")) {
-                        while (ignore.next()) {
-                            // ignore
-                        }
-                    }
+                    consume(stmt.executeQuery("select * from x"));
                 }
                 Assert.fail("Expected exception");
             } catch (PSQLException e) {
@@ -8993,170 +9205,6 @@ nodejs code:
                     && descCount == descLimitCount && descCount == ascCount && descCount == ascLimitCount;
 
             Assert.assertTrue(message, allEqual);
-        });
-    }
-
-    @Test
-    public void testQueryEventuallySucceedsOnDataUnavailableEventNeverFired() throws Exception {
-        maxQueryTime = 100;
-        assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
-            AtomicReference<SuspendEvent> eventRef = new AtomicReference<>();
-            TestDataUnavailableFunctionFactory.eventCallback = eventRef::set;
-            try {
-                String query = "select * from test_data_unavailable(1, 10)";
-                String expected = """
-                        x[BIGINT],y[BIGINT],z[BIGINT]
-                        1,1,1
-                        """;
-                try (ResultSet resultSet = connection.prepareStatement(query).executeQuery()) {
-                    sink.clear();
-                    assertResultSet(expected, sink, resultSet);
-                    Assert.fail();
-                } catch (SQLException e) {
-                    TestUtils.assertContains(e.getMessage(), "timeout, query aborted ");
-                }
-            } finally {
-                // Make sure to close the event on the producer side.
-                Misc.free(eventRef.get());
-            }
-        });
-    }
-
-    @Test
-    public void testQueryEventuallySucceedsOnDataUnavailableEventTriggeredAfterDelay() throws Exception {
-        assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
-            int totalRows = 3;
-            int backoffCount = 3;
-
-            final AtomicInteger totalEvents = new AtomicInteger();
-            final AtomicReference<SuspendEvent> eventRef = new AtomicReference<>();
-            final AtomicBoolean stopDelayThread = new AtomicBoolean();
-            final AtomicInteger errorCount = new AtomicInteger();
-
-            final Thread delayThread = new Thread(() -> {
-                while (!stopDelayThread.get()) {
-                    SuspendEvent event = eventRef.getAndSet(null);
-                    if (event != null) {
-                        Os.sleep(1);
-                        try {
-                            event.trigger();
-                            event.close();
-                            totalEvents.incrementAndGet();
-                        } catch (Exception e) {
-                            errorCount.incrementAndGet();
-                        }
-                    } else {
-                        Os.pause();
-                    }
-                }
-            });
-            delayThread.start();
-
-            TestDataUnavailableFunctionFactory.eventCallback = eventRef::set;
-
-            String query = "select * from test_data_unavailable(" + totalRows + ", " + backoffCount + ")";
-            String expected = """
-                    x[BIGINT],y[BIGINT],z[BIGINT]
-                    1,1,1
-                    2,2,2
-                    3,3,3
-                    """;
-            try (ResultSet resultSet = connection.prepareStatement(query).executeQuery()) {
-                sink.clear();
-                assertResultSet(expected, sink, resultSet);
-            }
-            stopDelayThread.set(true);
-
-            delayThread.join();
-            Assert.assertEquals(totalRows * backoffCount, totalEvents.get());
-            Assert.assertEquals(0, errorCount.get());
-        });
-    }
-
-    @Test
-    public void testQueryEventuallySucceedsOnDataUnavailableEventTriggeredImmediately() throws Exception {
-        assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
-            int totalRows = 3;
-            int backoffCount = 10;
-
-            final AtomicInteger totalEvents = new AtomicInteger();
-            TestDataUnavailableFunctionFactory.eventCallback = event -> {
-                event.trigger();
-                event.close();
-                totalEvents.incrementAndGet();
-            };
-
-            String query = "select * from test_data_unavailable(" + totalRows + ", " + backoffCount + ")";
-            String expected = """
-                    x[BIGINT],y[BIGINT],z[BIGINT]
-                    1,1,1
-                    2,2,2
-                    3,3,3
-                    """;
-            try (ResultSet resultSet = connection.prepareStatement(query).executeQuery()) {
-                sink.clear();
-                assertResultSet(expected, sink, resultSet);
-            }
-
-            Assert.assertEquals(totalRows * backoffCount, totalEvents.get());
-        });
-    }
-
-    @Test
-    public void testQueryEventuallySucceedsOnDataUnavailableSmallSendBuffer() throws Exception {
-        assertMemoryLeak(() -> {
-            PGConfiguration configuration = new Port0PGConfiguration() {
-                @Override
-                public int getSendBufferSize() {
-                    return 192;
-                }
-            };
-
-            try (
-                    PGServer server = createPGServer(configuration);
-                    WorkerPool workerPool = server.getWorkerPool()
-            ) {
-                workerPool.start(LOG);
-                int port = server.getPort();
-                try (Connection connection = getConnection(Mode.EXTENDED, port, true)) {
-                    int totalRows = 16;
-                    int backoffCount = 3;
-
-                    final AtomicInteger totalEvents = new AtomicInteger();
-                    TestDataUnavailableFunctionFactory.eventCallback = event -> {
-                        event.trigger();
-                        event.close();
-                        totalEvents.incrementAndGet();
-                    };
-
-                    String query = "select * from test_data_unavailable(" + totalRows + ", " + backoffCount + ")";
-                    String expected = """
-                            x[BIGINT],y[BIGINT],z[BIGINT]
-                            1,1,1
-                            2,2,2
-                            3,3,3
-                            4,4,4
-                            5,5,5
-                            6,6,6
-                            7,7,7
-                            8,8,8
-                            9,9,9
-                            10,10,10
-                            11,11,11
-                            12,12,12
-                            13,13,13
-                            14,14,14
-                            15,15,15
-                            16,16,16
-                            """;
-                    try (ResultSet resultSet = connection.prepareStatement(query).executeQuery()) {
-                        sink.clear();
-                        assertResultSet(expected, sink, resultSet);
-                    }
-
-                    Assert.assertEquals(totalRows * backoffCount, totalEvents.get());
-                }
-            }
         });
     }
 
@@ -11563,6 +11611,101 @@ create table tab as (
     }
 
     @Test
+    public void testUnnamedPortalCursorAbandon() throws Exception {
+        // Tests that abandoning a suspended unnamed portal cursor by starting a new
+        // query properly frees resources without leaking.
+        //
+        // Protocol flow:
+        //   Parse + Describe(S) + Bind('') + Execute('', maxRows=2) + Flush  <- suspend
+        //   Parse(new query) + Describe(S) + Bind('') + Execute('', maxRows=0) + Sync  <- new query
+        assertHexScript("""
+                >0000003600030000757365720061646d696e0064617461626173650071646200636c69656e745f656e636f64696e6700555446380000
+                <520000000800000003
+                >700000000a717565737400
+                <520000000800000000530000001154696d655a6f6e6500474d5400530000001d6170706c69636174696f6e5f6e616d6500517565737444420053000000187365727665725f76657273696f6e0031312e33005300000019696e74656765725f6461746574696d6573006f6e005300000019636c69656e745f656e636f64696e670055544638004b0000000c0000003fbb8b96505a0000000549
+                >50000000260053454c45435420782046524f4d206c6f6e675f73657175656e636528352900000044000000065300420000000c0000000000000000450000000900000000024800000004
+                <3100000004320000000474000000060000540000001a00017800000000000001000000140008ffffffff0000440000000b00010000000131440000000b000100000001327300000004
+                >50000000260053454c45435420782046524f4d206c6f6e675f73657175656e636528322900000044000000065300420000000c0000000000000000450000000900000000005300000004
+                <3100000004320000000474000000060000540000001a00017800000000000001000000140008ffffffff0000440000000b00010000000131440000000b00010000000132430000000d53454c4543542032005a0000000549
+                >5800000004
+                """);
+    }
+
+    @Test
+    public void testUnnamedPortalCursorClose() throws Exception {
+        // Tests that closing a suspended unnamed portal cursor works correctly.
+        //
+        // Protocol flow:
+        //   Parse + Describe(S) + Bind('') + Execute('', maxRows=2) + Flush  <- suspend
+        //   Close(portal '') + Sync  <- close the suspended portal
+        assertHexScript("""
+                >0000003600030000757365720061646d696e0064617461626173650071646200636c69656e745f656e636f64696e6700555446380000
+                <520000000800000003
+                >700000000a717565737400
+                <520000000800000000530000001154696d655a6f6e6500474d5400530000001d6170706c69636174696f6e5f6e616d6500517565737444420053000000187365727665725f76657273696f6e0031312e33005300000019696e74656765725f6461746574696d6573006f6e005300000019636c69656e745f656e636f64696e670055544638004b0000000c0000003fbb8b96505a0000000549
+                >50000000260053454c45435420782046524f4d206c6f6e675f73657175656e636528352900000044000000065300420000000c0000000000000000450000000900000000024800000004
+                <3100000004320000000474000000060000540000001a00017800000000000001000000140008ffffffff0000440000000b00010000000131440000000b000100000001327300000004
+                >430000000650005300000004
+                <33000000045a0000000549
+                >5800000004
+                """);
+    }
+
+    @Test
+    public void testUnnamedPortalCursorWithFlush() throws Exception {
+        // Regression test for https://github.com/questdb/questdb/issues/6737
+        // postgres.js cursor iteration uses unnamed portals with Flush between batches.
+        // Previously, QuestDB freed the cursor and released the pipeline entry after the
+        // first Flush, causing the second Execute to fail with "spurious execute message".
+        //
+        // Protocol flow (exact postgres.js cursor pattern):
+        //   Parse + Describe(S) + Bind('') + Execute('', maxRows=2) + Flush
+        //   Execute('', maxRows=2) + Flush
+        //   Execute('', maxRows=2) + Flush  (1 row left + CommandComplete)
+        //   Sync
+        assertHexScript("""
+                >0000003600030000757365720061646d696e0064617461626173650071646200636c69656e745f656e636f64696e6700555446380000
+                <520000000800000003
+                >700000000a717565737400
+                <520000000800000000530000001154696d655a6f6e6500474d5400530000001d6170706c69636174696f6e5f6e616d6500517565737444420053000000187365727665725f76657273696f6e0031312e33005300000019696e74656765725f6461746574696d6573006f6e005300000019636c69656e745f656e636f64696e670055544638004b0000000c0000003fbb8b96505a0000000549
+                >50000000260053454c45435420782046524f4d206c6f6e675f73657175656e636528352900000044000000065300420000000c0000000000000000450000000900000000024800000004
+                <3100000004320000000474000000060000540000001a00017800000000000001000000140008ffffffff0000440000000b00010000000131440000000b000100000001327300000004
+                >450000000900000000024800000004
+                <440000000b00010000000133440000000b000100000001347300000004
+                >450000000900000000024800000004
+                <440000000b00010000000135430000000d53454c454354203100
+                >5300000004
+                <5a0000000549
+                >5800000004
+                """);
+    }
+
+    @Test
+    public void testUnnamedPortalCursorWithSync() throws Exception {
+        // Same as testUnnamedPortalCursorWithFlush but uses Sync instead of Flush
+        // between cursor batches. This is an alternative protocol flow that some
+        // drivers may use.
+        //
+        // Protocol flow:
+        //   Parse + Describe(S) + Bind('') + Execute('', maxRows=2) + Sync
+        //   Execute('', maxRows=2) + Sync
+        //   Execute('', maxRows=2) + Sync  (1 row left + CommandComplete)
+        assertHexScript("""
+                >0000003600030000757365720061646d696e0064617461626173650071646200636c69656e745f656e636f64696e6700555446380000
+                <520000000800000003
+                >700000000a717565737400
+                <520000000800000000530000001154696d655a6f6e6500474d5400530000001d6170706c69636174696f6e5f6e616d6500517565737444420053000000187365727665725f76657273696f6e0031312e33005300000019696e74656765725f6461746574696d6573006f6e005300000019636c69656e745f656e636f64696e670055544638004b0000000c0000003fbb8b96505a0000000549
+                >50000000260053454c45435420782046524f4d206c6f6e675f73657175656e636528352900000044000000065300420000000c0000000000000000450000000900000000025300000004
+                <3100000004320000000474000000060000540000001a00017800000000000001000000140008ffffffff0000440000000b00010000000131440000000b0001000000013273000000045a0000000549
+                >450000000900000000025300000004
+                <440000000b00010000000133440000000b0001000000013473000000045a0000000549
+                >450000000900000000025300000004
+                <440000000b00010000000135430000000d53454c4543542031005a0000000549
+                >5800000004
+                """);
+    }
+
+    @Test
     public void testUnsupportedParameterType() throws Exception {
         assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
             try (final PreparedStatement statement = connection.prepareStatement("select x, ? y from long_sequence(5)")) {
@@ -11663,7 +11806,7 @@ create table tab as (
                             // adding a new column before calling writer.tick() will result in ReaderOutOfDateException
                             // thrown from UpdateOperator as this changes table structure
                             // recompile should be successful so the UPDATE completes
-                            writer.addColumn("newCol", ColumnType.INT);
+                            writer.addColumn("newCol", ColumnType.INT, AllowAllSecurityContext.INSTANCE);
                             first = false;
                         }
                     }
@@ -12628,6 +12771,17 @@ create table tab as (
         });
     }
 
+    private static void consume(ResultSet stmt) throws SQLException {
+        int count = 0;
+        try (ResultSet ignore = stmt) {
+            while (ignore.next()) {
+                // ignore
+                count++;
+            }
+        }
+        Assert.assertTrue(count > 0);
+    }
+
     private static int executeAndCancelQuery(PgConnection connection) throws SQLException, InterruptedException {
         int backendPid;
         AtomicBoolean isCancelled = new AtomicBoolean(false);
@@ -13462,7 +13616,7 @@ create table tab as (
                         stmt.executeQuery();
                         Assert.fail("Exception is not thrown");
                     } catch (PSQLException ex) {
-                        ex.printStackTrace();
+                        ex.printStackTrace(System.out);
                         // expected
                         Assert.assertNotNull(ex);
                     }

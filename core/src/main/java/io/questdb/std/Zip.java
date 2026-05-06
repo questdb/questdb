@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -78,8 +78,8 @@ public final class Zip {
         Os.init();
         gzipHeader = Unsafe.calloc(Numbers.ceilPow2(gzipHeaderLen), MemoryTag.NATIVE_DEFAULT);
         long p = gzipHeader;
-        Unsafe.getUnsafe().putByte(p++, (byte) GZIP_MAGIC);
-        Unsafe.getUnsafe().putByte(p++, (byte) (GZIP_MAGIC >> 8));
-        Unsafe.getUnsafe().putByte(p, (byte) 8); // compression method
+        Unsafe.putByte(p++, (byte) GZIP_MAGIC);
+        Unsafe.putByte(p++, (byte) (GZIP_MAGIC >> 8));
+        Unsafe.putByte(p, (byte) 8); // compression method
     }
 }

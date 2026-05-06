@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -38,11 +38,11 @@ public final class OperatorExpression {
                 add(new OperatorExpression(Operator.Dot, 1, false, BINARY));
                 add(new OperatorExpression(Operator.DoubleColon, 2, true, BINARY));
                 // arithmetic operators, UnaryMinus and UnaryComplement defined above are strongest from this block
-                add(new OperatorExpression(Operator.Multiplication, 3, true, BINARY));
+                add(new OperatorExpression(Operator.Multiplication, 3, true, BINARY, true, true, true));
                 add(new OperatorExpression(Operator.Division, 3, true, BINARY));
                 add(new OperatorExpression(Operator.Modulo, 3, true, BINARY));
 
-                add(new OperatorExpression(Operator.Plus, 4, true, BINARY));
+                add(new OperatorExpression(Operator.Plus, 4, true, BINARY, true, true, true));
                 add(new OperatorExpression(Operator.Minus, 4, true, BINARY));
                 // IP operators
                 add(new OperatorExpression(Operator.IpContainsStrictLeft, 4, true, BINARY));
@@ -50,11 +50,11 @@ public final class OperatorExpression {
                 add(new OperatorExpression(Operator.IpContainsLeft, 4, true, BINARY));
                 add(new OperatorExpression(Operator.IpContainsRight, 4, true, BINARY));
                 // concatenation
-                add(new OperatorExpression(Operator.Concatenation, 5, true, BINARY));
+                add(new OperatorExpression(Operator.Concatenation, 5, true, BINARY, true, true, false));
                 // bitwise operators
-                add(new OperatorExpression(Operator.BitAnd, 8, true, BINARY));
-                add(new OperatorExpression(Operator.BitXor, 9, true, BINARY));
-                add(new OperatorExpression(Operator.BitOr, 10, true, BINARY));
+                add(new OperatorExpression(Operator.BitAnd, 8, true, BINARY, true, true, true));
+                add(new OperatorExpression(Operator.BitXor, 9, true, BINARY, true, true, true));
+                add(new OperatorExpression(Operator.BitOr, 10, true, BINARY, true, true, true));
                 // set operators
                 add(new OperatorExpression(Operator.In, 7, true, SET, false));
                 add(new OperatorExpression(Operator.Between, 7, true, SET, false)); // ternary operator
@@ -73,8 +73,8 @@ public final class OperatorExpression {
                 add(new OperatorExpression(Operator.ILikeSqlStyle, 7, true, BINARY, false));
                 // logical operators
                 add(new OperatorExpression(Operator.BinaryNot, 11, true, UNARY, false));
-                add(new OperatorExpression(Operator.BinaryAnd, 11, true, BINARY, false));
-                add(new OperatorExpression(Operator.BinaryOr, 11, true, BINARY, false));
+                add(new OperatorExpression(Operator.BinaryAnd, 11, true, BINARY, false, true, true));
+                add(new OperatorExpression(Operator.BinaryOr, 11, true, BINARY, false, true, true));
             }});
     private static final OperatorRegistry registry = new OperatorRegistry(
             new ObjList<>() {{
@@ -85,10 +85,10 @@ public final class OperatorExpression {
                 add(new OperatorExpression(Operator.Dot, 1, false, BINARY));
                 add(new OperatorExpression(Operator.DoubleColon, 2, true, BINARY));
                 // arithmetic operators, UnaryMinus and UnaryComplement defined above are strongest from this block
-                add(new OperatorExpression(Operator.Multiplication, 4, true, BINARY));
+                add(new OperatorExpression(Operator.Multiplication, 4, true, BINARY, true, true, true));
                 add(new OperatorExpression(Operator.Division, 4, true, BINARY));
                 add(new OperatorExpression(Operator.Modulo, 4, true, BINARY));
-                add(new OperatorExpression(Operator.Plus, 5, true, BINARY));
+                add(new OperatorExpression(Operator.Plus, 5, true, BINARY, true, true, true));
                 add(new OperatorExpression(Operator.Minus, 5, true, BINARY));
                 // IP operators
                 add(new OperatorExpression(Operator.IpContainsStrictLeft, 6, true, BINARY));
@@ -96,11 +96,11 @@ public final class OperatorExpression {
                 add(new OperatorExpression(Operator.IpContainsLeft, 6, true, BINARY));
                 add(new OperatorExpression(Operator.IpContainsRight, 6, true, BINARY));
                 // concatenation
-                add(new OperatorExpression(Operator.Concatenation, 7, true, BINARY));
+                add(new OperatorExpression(Operator.Concatenation, 7, true, BINARY, true, true, false));
                 // bitwise operators
-                add(new OperatorExpression(Operator.BitAnd, 8, true, BINARY));
-                add(new OperatorExpression(Operator.BitXor, 9, true, BINARY));
-                add(new OperatorExpression(Operator.BitOr, 10, true, BINARY));
+                add(new OperatorExpression(Operator.BitAnd, 8, true, BINARY, true, true, true));
+                add(new OperatorExpression(Operator.BitXor, 9, true, BINARY, true, true, true));
+                add(new OperatorExpression(Operator.BitOr, 10, true, BINARY, true, true, true));
                 // set operators
                 add(new OperatorExpression(Operator.In, 11, false, SET, false));
                 add(new OperatorExpression(Operator.Between, 11, false, SET, false)); // ternary operator
@@ -119,10 +119,12 @@ public final class OperatorExpression {
                 add(new OperatorExpression(Operator.ILikeSqlStyle, 13, true, BINARY, false));
                 // logical operators
                 add(new OperatorExpression(Operator.BinaryNot, 14, false, UNARY, false));
-                add(new OperatorExpression(Operator.BinaryAnd, 15, true, BINARY, false));
-                add(new OperatorExpression(Operator.BinaryOr, 16, true, BINARY, false));
+                add(new OperatorExpression(Operator.BinaryAnd, 15, true, BINARY, false, true, true));
+                add(new OperatorExpression(Operator.BinaryOr, 16, true, BINARY, false, true, true));
                 add(new OperatorExpression(Operator.Colon, 17, false, BINARY));
             }});
+    final boolean associative;
+    final boolean commutative;
     final boolean leftAssociative;
     final OperatorExpression.Operator operator;
     final int precedence;
@@ -130,19 +132,21 @@ public final class OperatorExpression {
     final int type;
 
     private OperatorExpression(OperatorExpression.Operator operator, int precedence, boolean leftAssociative, int type, boolean symbol) {
+        this(operator, precedence, leftAssociative, type, symbol, false, false);
+    }
+
+    private OperatorExpression(OperatorExpression.Operator operator, int precedence, boolean leftAssociative, int type) {
+        this(operator, precedence, leftAssociative, type, true, false, false);
+    }
+
+    private OperatorExpression(OperatorExpression.Operator operator, int precedence, boolean leftAssociative, int type, boolean symbol, boolean associative, boolean commutative) {
         this.operator = operator;
         this.precedence = precedence;
         this.leftAssociative = leftAssociative;
         this.type = type;
         this.symbol = symbol;
-    }
-
-    private OperatorExpression(OperatorExpression.Operator operator, int precedence, boolean leftAssociative, int type) {
-        this.operator = operator;
-        this.precedence = precedence;
-        this.leftAssociative = leftAssociative;
-        this.type = type;
-        this.symbol = true;
+        this.associative = associative;
+        this.commutative = commutative;
     }
 
     public static OperatorRegistry chooseRegistry(boolean cairoSqlLegacyOperatorPrecedence) {
@@ -157,12 +161,20 @@ public final class OperatorExpression {
         return registry;
     }
 
+    public String getToken() {
+        return operator.token;
+    }
+
     public int getType() {
         return type;
     }
 
-    public String getToken() {
-        return operator.token;
+    public boolean isAssociative() {
+        return associative;
+    }
+
+    public boolean isCommutative() {
+        return commutative;
     }
 
     public boolean greaterPrecedence(int otherPrecedence) {

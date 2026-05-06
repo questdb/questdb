@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -67,7 +67,19 @@ public class FirstStrGroupByFunction extends StrFunction implements GroupByFunct
 
     @Override
     public void computeNext(MapValue mapValue, Record record, long rowId) {
-        // empty
+        if (rowId < mapValue.getLong(valueIndex)) {
+            mapValue.putLong(valueIndex, rowId);
+            final CharSequence val = arg.getStrA(record);
+            if (val == null) {
+                mapValue.putLong(valueIndex + 1, 0);
+                mapValue.putBool(valueIndex + 2, true);
+            } else {
+                long ptr = mapValue.getLong(valueIndex + 1);
+                sink.of(ptr).clearAndSet(val);
+                mapValue.putLong(valueIndex + 1, sink.colouredPtr());
+                mapValue.putBool(valueIndex + 2, false);
+            }
+        }
     }
 
     @Override

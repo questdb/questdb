@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -315,6 +315,22 @@ public class MicrosFormatUtils {
             }
         }
         throw NumericException.instance();
+    }
+
+    public static long parseOptionalMicrosGreedy(CharSequence sequence, final int p, int lim) throws NumericException {
+        if (CommonUtils.isOptionalFractionStart(sequence, p, lim)) {
+            final long parsed = Numbers.parseLong000000Greedy(sequence, p + 1, lim);
+            return Numbers.encodeLowHighInts(Numbers.decodeLowInt(parsed), Numbers.decodeHighInt(parsed) + 1);
+        }
+        return Numbers.encodeLowHighInts(0, 0);
+    }
+
+    public static long parseOptionalNanosAsMicrosGreedy(CharSequence sequence, final int p, int lim) throws NumericException {
+        if (CommonUtils.isOptionalFractionStart(sequence, p, lim)) {
+            final long parsed = Micros.parseNanosAsMicrosGreedy(sequence, p + 1, lim);
+            return Numbers.encodeLowHighInts(Numbers.decodeLowInt(parsed), Numbers.decodeHighInt(parsed) + 1);
+        }
+        return Numbers.encodeLowHighInts(0, 0);
     }
 
     // YYYY-MM-DDThh:mm:ss.mmmZ

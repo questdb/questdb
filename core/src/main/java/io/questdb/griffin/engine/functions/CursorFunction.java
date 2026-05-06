@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -49,6 +49,11 @@ public class CursorFunction implements Function {
     @Override
     public void close() {
         factory.close();
+    }
+
+    @Override
+    public int getComplexity() {
+        return COMPLEXITY_SUBQUERY;
     }
 
     @Override

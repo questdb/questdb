@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -60,6 +60,124 @@ public class ParallelWindowJoinFuzzTest extends AbstractCairoTest {
         setProperty(PropertyKey.CAIRO_PAGE_FRAME_REDUCE_QUEUE_CAPACITY, PAGE_FRAME_COUNT);
         setProperty(PropertyKey.CAIRO_SQL_PARALLEL_WINDOW_JOIN_ENABLED, String.valueOf(enableParallelWindowJoin));
         super.setUp();
+    }
+
+    @Test
+    public void testParallelWindowJoinDynamic() throws Exception {
+        // Uses a column with constant value as the dynamic bound to validate
+        // that the dynamic bound code path produces the same result as static bounds.
+        testParallelWindowJoinDynamic(
+                "SELECT avg(price) avg_price, max(max_bid) max_bid, min(min_bid) min_bid " +
+                        "FROM (" +
+                        "  SELECT t.price price, max(p.bid) max_bid, min(p.bid) min_bid " +
+                        "  FROM trades t " +
+                        "  WINDOW JOIN prices p " +
+                        "  RANGE BETWEEN wndBound seconds PRECEDING AND wndBound seconds FOLLOWING " +
+                        ")",
+                """
+                        avg_price\tmax_bid\tmin_bid
+                        19.958398885587915\t14.982510448352535\t5.010953919128168
+                        """,
+                "SELECT avg(price) avg_price, max(max_bid) max_bid, min(min_bid) min_bid " +
+                        "FROM (" +
+                        "  SELECT t.price price, max(p.bid) max_bid, min(p.bid) min_bid " +
+                        "  FROM trades t " +
+                        "  WINDOW JOIN prices p " +
+                        "  RANGE BETWEEN wndBound seconds PRECEDING AND wndBound seconds FOLLOWING EXCLUDE PREVAILING " +
+                        ")",
+                """
+                        avg_price\tmax_bid\tmin_bid
+                        19.958398885587915\t14.982510448352535\t5.010953919128168
+                        """
+        );
+    }
+
+    @Test
+    public void testParallelWindowJoinDynamicOnSymbol() throws Exception {
+        testParallelWindowJoinDynamic(
+                "SELECT avg(price) avg_price, max(max_bid) max_bid, min(min_bid) min_bid " +
+                        "FROM (" +
+                        "  SELECT t.price price, max(p.bid) max_bid, min(p.bid) min_bid " +
+                        "  FROM trades t " +
+                        "  WINDOW JOIN prices p ON t.sym = p.sym " +
+                        "  RANGE BETWEEN wndBound seconds PRECEDING AND wndBound seconds FOLLOWING " +
+                        ")",
+                """
+                        avg_price\tmax_bid\tmin_bid
+                        19.958398885587915\t14.982510448352535\t5.010953919128168
+                        """,
+                "SELECT avg(price) avg_price, max(max_bid) max_bid, min(min_bid) min_bid " +
+                        "FROM (" +
+                        "  SELECT t.price price, max(p.bid) max_bid, min(p.bid) min_bid " +
+                        "  FROM trades t " +
+                        "  WINDOW JOIN prices p ON t.sym = p.sym " +
+                        "  RANGE BETWEEN wndBound seconds PRECEDING AND wndBound seconds FOLLOWING EXCLUDE PREVAILING " +
+                        ")",
+                """
+                        avg_price\tmax_bid\tmin_bid
+                        19.958398885587915\t14.982510448352535\t5.010953919128168
+                        """
+        );
+    }
+
+    @Test
+    public void testParallelWindowJoinDynamicThreadUnsafe() throws Exception {
+        // Uses wndBoundStr::long (varchar-to-long cast) as the dynamic bound.
+        // The cast function is not thread-safe, so this exercises the per-worker
+        // function copy path in compileWorkerFunctionsConditionally.
+        testParallelWindowJoinDynamic(
+                "SELECT avg(price) avg_price, max(max_bid) max_bid, min(min_bid) min_bid " +
+                        "FROM (" +
+                        "  SELECT t.price price, max(p.bid) max_bid, min(p.bid) min_bid " +
+                        "  FROM trades t " +
+                        "  WINDOW JOIN prices p " +
+                        "  RANGE BETWEEN wndBoundStr::long seconds PRECEDING AND wndBoundStr::long seconds FOLLOWING " +
+                        ")",
+                """
+                        avg_price\tmax_bid\tmin_bid
+                        19.958398885587915\t14.982510448352535\t5.010953919128168
+                        """,
+                "SELECT avg(price) avg_price, max(max_bid) max_bid, min(min_bid) min_bid " +
+                        "FROM (" +
+                        "  SELECT t.price price, max(p.bid) max_bid, min(p.bid) min_bid " +
+                        "  FROM trades t " +
+                        "  WINDOW JOIN prices p " +
+                        "  RANGE BETWEEN wndBoundStr::long seconds PRECEDING AND wndBoundStr::long seconds FOLLOWING EXCLUDE PREVAILING " +
+                        ")",
+                """
+                        avg_price\tmax_bid\tmin_bid
+                        19.958398885587915\t14.982510448352535\t5.010953919128168
+                        """
+        );
+    }
+
+    @Test
+    public void testParallelWindowJoinDynamicThreadUnsafeOnSymbol() throws Exception {
+        // Same as testParallelWindowJoinDynamicThreadUnsafe but with a symbol ON key.
+        testParallelWindowJoinDynamic(
+                "SELECT avg(price) avg_price, max(max_bid) max_bid, min(min_bid) min_bid " +
+                        "FROM (" +
+                        "  SELECT t.price price, max(p.bid) max_bid, min(p.bid) min_bid " +
+                        "  FROM trades t " +
+                        "  WINDOW JOIN prices p ON t.sym = p.sym " +
+                        "  RANGE BETWEEN wndBoundStr::long seconds PRECEDING AND wndBoundStr::long seconds FOLLOWING " +
+                        ")",
+                """
+                        avg_price\tmax_bid\tmin_bid
+                        19.958398885587915\t14.982510448352535\t5.010953919128168
+                        """,
+                "SELECT avg(price) avg_price, max(max_bid) max_bid, min(min_bid) min_bid " +
+                        "FROM (" +
+                        "  SELECT t.price price, max(p.bid) max_bid, min(p.bid) min_bid " +
+                        "  FROM trades t " +
+                        "  WINDOW JOIN prices p ON t.sym = p.sym " +
+                        "  RANGE BETWEEN wndBoundStr::long seconds PRECEDING AND wndBoundStr::long seconds FOLLOWING EXCLUDE PREVAILING " +
+                        ")",
+                """
+                        avg_price\tmax_bid\tmin_bid
+                        19.958398885587915\t14.982510448352535\t5.010953919128168
+                        """
+        );
     }
 
     @Test
@@ -433,6 +551,69 @@ public class ParallelWindowJoinFuzzTest extends AbstractCairoTest {
 
     private void testParallelWindowJoin(String... queriesAndExpectedResults) throws Exception {
         testParallelWindowJoin(null, queriesAndExpectedResults);
+    }
+
+    private void testParallelWindowJoinDynamic(String... queriesAndExpectedResults) throws Exception {
+        assertMemoryLeak(() -> {
+            final WorkerPool pool = new WorkerPool(() -> 4);
+            TestUtils.execute(
+                    pool,
+                    (engine, compiler, sqlExecutionContext) -> {
+                        engine.execute(
+                                """
+                                        CREATE TABLE IF NOT EXISTS trades (
+                                                ts TIMESTAMP,
+                                                sym SYMBOL CAPACITY 2048,
+                                                side SYMBOL CAPACITY 4,
+                                                price DOUBLE,
+                                                amount DOUBLE,
+                                                wndBound INT,
+                                                wndBoundStr VARCHAR
+                                        ) TIMESTAMP(ts) PARTITION BY DAY;
+                                        """,
+                                sqlExecutionContext
+                        );
+                        engine.execute(
+                                "INSERT INTO trades" +
+                                        "  SELECT " +
+                                        "      '2020-01-01T00:05'::timestamp + (10000*x) + rnd_long(-200, 200, 0) as ts, " +
+                                        "      rnd_symbol_zipf(100, 2.0) AS sym, " +
+                                        "      rnd_symbol('buy', 'sell') as side, " +
+                                        "      rnd_double() * 20 + 10 AS price, " +
+                                        "      rnd_double() * 20 + 10 AS amount, " +
+                                        "      1 as wndBound, " +
+                                        "      '1'::varchar as wndBoundStr " +
+                                        "  FROM long_sequence(" + ROW_COUNT + ");",
+                                sqlExecutionContext
+                        );
+                        engine.execute(
+                                """
+                                        CREATE TABLE prices (
+                                            ts TIMESTAMP,
+                                            sym SYMBOL CAPACITY 1024,
+                                            bid DOUBLE,
+                                            ask DOUBLE
+                                        ) TIMESTAMP(ts) PARTITION BY DAY;
+                                        """,
+                                sqlExecutionContext
+                        );
+                        engine.execute(
+                                "INSERT INTO prices " +
+                                        "  SELECT " +
+                                        "      '2020-01-01'::timestamp + (60000*x) + rnd_long(-200, 200, 0) as ts, " +
+                                        "      rnd_symbol_zipf(100, 2.0) as sym, " +
+                                        "      rnd_double() * 10.0 + 5.0 as bid, " +
+                                        "      rnd_double() * 10.0 + 5.0 as ask " +
+                                        "  FROM long_sequence(" + 10 * ROW_COUNT + ");",
+                                sqlExecutionContext
+                        );
+
+                        assertQueries(engine, sqlExecutionContext, queriesAndExpectedResults);
+                    },
+                    configuration,
+                    LOG
+            );
+        });
     }
 
     private void testParallelWindowJoin(BindVariablesInitializer initializer, String... queriesAndExpectedResults) throws Exception {

@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -24,6 +24,8 @@
 
 package io.questdb.griffin.model;
 
+import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.TimestampDriver;
 import io.questdb.cairo.sql.Function;
 import io.questdb.griffin.SqlException;
 import io.questdb.std.LongList;
@@ -49,7 +51,7 @@ public class IntrinsicModel implements Mutable {
     // Indexed symbol column used as the initial "efficient" filter for the query.
     public CharSequence keyColumn;
     public ObjList<ExpressionNode> keyExcludedNodes = new ObjList<>();
-    public QueryModel keySubQuery;
+    public IQueryModel keySubQuery;
 
     public RuntimeIntrinsicIntervalModel buildIntervalModel() {
         return runtimeIntervalBuilder.build();
@@ -130,8 +132,16 @@ public class IntrinsicModel implements Mutable {
         runtimeIntervalBuilder.merge(model, loOffset, hiOffset);
     }
 
-    public void of(int timestampType, int partitionBy) {
-        this.runtimeIntervalBuilder.of(timestampType, partitionBy);
+    /**
+     * Merges intervals from another IntrinsicModel with calendar-aware offset adjustment.
+     * This avoids allocating an intermediate RuntimeIntervalModel.
+     */
+    public void mergeIntervalModelWithAddMethod(IntrinsicModel other, TimestampDriver.TimestampAddMethod addMethod, int offset) throws SqlException {
+        runtimeIntervalBuilder.mergeWithAddMethod(other.runtimeIntervalBuilder, addMethod, offset);
+    }
+
+    public void of(int timestampType, int partitionBy, CairoConfiguration configuration) {
+        this.runtimeIntervalBuilder.of(timestampType, partitionBy, configuration);
     }
 
     public void setBetweenBoundary(long timestamp) {
@@ -185,6 +195,14 @@ public class IntrinsicModel implements Mutable {
 
     public void unionIntervals(long lo, long hi) {
         runtimeIntervalBuilder.union(lo, hi);
+    }
+
+    public void unionIntervals(CharSequence seq, int lo, int lim, int position) throws SqlException {
+        runtimeIntervalBuilder.unionIntervals(seq, lo, lim, position);
+    }
+
+    public void unionRuntimeTimestamp(Function function) {
+        runtimeIntervalBuilder.unionRuntimeTimestamp(function);
     }
 
     static {

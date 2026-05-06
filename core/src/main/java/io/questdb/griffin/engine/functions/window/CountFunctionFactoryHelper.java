@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -45,7 +45,7 @@ import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.window.WindowContext;
 import io.questdb.griffin.engine.window.WindowFunction;
-import io.questdb.griffin.model.WindowColumn;
+import io.questdb.griffin.model.WindowExpression;
 import io.questdb.std.LongList;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
@@ -78,13 +78,13 @@ public class CountFunctionFactoryHelper {
                     CountFunctionFactoryHelper.COUNT_NAME,
                     rowsLo,
                     rowsHi,
-                    framingMode == WindowColumn.FRAMING_RANGE,
+                    framingMode == WindowExpression.FRAMING_RANGE,
                     partitionByRecord,
                     0);
         }
 
         if (partitionByRecord != null) {
-            if (framingMode == WindowColumn.FRAMING_RANGE) {
+            if (framingMode == WindowExpression.FRAMING_RANGE) {
                 if (windowContext.isDefaultFrame() && (!windowContext.isOrdered() || windowContext.getRowsHi() == Long.MAX_VALUE)) {
                     Map map = MapFactory.createUnorderedMap(
                             configuration,
@@ -156,7 +156,7 @@ public class CountFunctionFactoryHelper {
                         throw th;
                     }
                 }
-            } else if (framingMode == WindowColumn.FRAMING_ROWS) {
+            } else if (framingMode == WindowExpression.FRAMING_ROWS) {
                 // between unbounded preceding and current row
                 if (rowsLo == Long.MIN_VALUE && rowsHi == 0) {
                     Map map = MapFactory.createUnorderedMap(
@@ -223,7 +223,7 @@ public class CountFunctionFactoryHelper {
                 }
             }
         } else { // no partition key
-            if (framingMode == WindowColumn.FRAMING_RANGE) {
+            if (framingMode == WindowExpression.FRAMING_RANGE) {
                 // if there's no order by then all elements are equal in range mode, thus calculation is done on whole result set
                 if (!windowContext.isOrdered() && windowContext.isDefaultFrame()) {
                     return new CountOverWholeResultSetFunction(args.get(0), isRecordNotNull);
@@ -249,7 +249,7 @@ public class CountFunctionFactoryHelper {
                             isRecordNotNull
                     );
                 }
-            } else if (framingMode == WindowColumn.FRAMING_ROWS) {
+            } else if (framingMode == WindowExpression.FRAMING_ROWS) {
                 // between unbounded preceding and current row
                 if (rowsLo == Long.MIN_VALUE && rowsHi == 0) {
                     return new CountOverUnboundedRowsFrameFunction(args.get(0), isRecordNotNull);
@@ -313,7 +313,7 @@ public class CountFunctionFactoryHelper {
 
         @Override
         public void pass1(Record record, long recordOffset, WindowSPI spi) {
-            Unsafe.getUnsafe().putLong(spi.getAddress(recordOffset, columnIndex), isNotNullFunc.isNotNull(arg, record) ? VALUE_ONE : VALUE_ZERO);
+            Unsafe.putLong(spi.getAddress(recordOffset, columnIndex), isNotNullFunc.isNotNull(arg, record) ? VALUE_ONE : VALUE_ZERO);
         }
     }
 
@@ -364,7 +364,7 @@ public class CountFunctionFactoryHelper {
             key.put(partitionByRecord, partitionBySink);
             MapValue value = key.findValue();
             long val = value != null ? value.getLong(0) : 0;
-            Unsafe.getUnsafe().putLong(spi.getAddress(recordOffset, columnIndex), val);
+            Unsafe.putLong(spi.getAddress(recordOffset, columnIndex), val);
         }
     }
 
@@ -552,7 +552,7 @@ public class CountFunctionFactoryHelper {
         @Override
         public void pass1(Record record, long recordOffset, WindowSPI spi) {
             computeNext(record);
-            Unsafe.getUnsafe().putLong(spi.getAddress(recordOffset, columnIndex), count);
+            Unsafe.putLong(spi.getAddress(recordOffset, columnIndex), count);
         }
 
         @Override
@@ -720,7 +720,7 @@ public class CountFunctionFactoryHelper {
         @Override
         public void pass1(Record record, long recordOffset, WindowSPI spi) {
             computeNext(record);
-            Unsafe.getUnsafe().putLong(spi.getAddress(recordOffset, columnIndex), count);
+            Unsafe.putLong(spi.getAddress(recordOffset, columnIndex), count);
         }
 
         @Override
@@ -918,7 +918,7 @@ public class CountFunctionFactoryHelper {
         @Override
         public void pass1(Record record, long recordOffset, WindowSPI spi) {
             computeNext(record);
-            Unsafe.getUnsafe().putLong(spi.getAddress(recordOffset, columnIndex), count);
+            Unsafe.putLong(spi.getAddress(recordOffset, columnIndex), count);
         }
 
         @Override
@@ -1056,7 +1056,7 @@ public class CountFunctionFactoryHelper {
         @Override
         public void pass1(Record record, long recordOffset, WindowSPI spi) {
             computeNext(record);
-            Unsafe.getUnsafe().putLong(spi.getAddress(recordOffset, columnIndex), count);
+            Unsafe.putLong(spi.getAddress(recordOffset, columnIndex), count);
         }
 
         @Override
@@ -1164,7 +1164,7 @@ public class CountFunctionFactoryHelper {
         @Override
         public void pass1(Record record, long recordOffset, WindowSPI spi) {
             computeNext(record);
-            Unsafe.getUnsafe().putLong(spi.getAddress(recordOffset, columnIndex), count);
+            Unsafe.putLong(spi.getAddress(recordOffset, columnIndex), count);
         }
 
         @Override
@@ -1219,7 +1219,7 @@ public class CountFunctionFactoryHelper {
         @Override
         public void pass1(Record record, long recordOffset, WindowSPI spi) {
             computeNext(record);
-            Unsafe.getUnsafe().putLong(spi.getAddress(recordOffset, columnIndex), count);
+            Unsafe.putLong(spi.getAddress(recordOffset, columnIndex), count);
         }
 
         @Override
@@ -1276,7 +1276,7 @@ public class CountFunctionFactoryHelper {
 
         @Override
         public void pass2(Record record, long recordOffset, WindowSPI spi) {
-            Unsafe.getUnsafe().putLong(spi.getAddress(recordOffset, columnIndex), count);
+            Unsafe.putLong(spi.getAddress(recordOffset, columnIndex), count);
         }
 
         @Override

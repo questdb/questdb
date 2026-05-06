@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -145,6 +145,11 @@ public class WaitProcessorTest {
 
             @Override
             public HttpRequestProcessor select(HttpRequestHeader header) {
+                return null;
+            }
+
+            @Override
+            public HttpRequestProcessor resolveProcessorById(int handlerId, HttpRequestHeader header) {
                 return null;
             }
         };

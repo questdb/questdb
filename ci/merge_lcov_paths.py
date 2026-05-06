@@ -13,9 +13,8 @@ class LcovMerger:
         self.files = {}  # normalized_path -> file data
 
     def normalize_path(self, path):
-        """Remove CI-specific path prefixes"""
-        # Remove /azp/_work/N/s/ prefix
-        path = re.sub(r'/azp/_work/\d+/s/', '', path)
+        """Remove CI-specific path prefixes (Azure Pipelines agent work dirs)"""
+        path = re.sub(r'.*/(_work|work)/\d+/s/', '', path)
         return path
 
     def parse_and_merge_lcov(self, filepath):

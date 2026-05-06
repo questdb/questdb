@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -33,37 +33,6 @@ import org.junit.Test;
 import java.util.HashSet;
 
 public class LowerCaseCharSequenceHashSetTest {
-
-    @Test
-    public void testEqualsAndHashCode() {
-        final int items = 1000;
-
-        final LowerCaseCharSequenceHashSet setA = new LowerCaseCharSequenceHashSet();
-        final LowerCaseCharSequenceHashSet setB = new LowerCaseCharSequenceHashSet();
-
-        Assert.assertEquals(setA, setB);
-        Assert.assertEquals(setA.hashCode(), setB.hashCode());
-
-        for (int i = 0; i < items; i++) {
-            setA.add(Integer.toString(i));
-        }
-
-        Assert.assertNotEquals(setA, setB);
-
-        // Reverse the addition order, so that the elements of the underlying arrays aren't 1-to-1 between the sets.
-        for (int i = items - 1; i > -1; i--) {
-            setB.add(Integer.toString(i));
-        }
-
-        Assert.assertEquals(setA, setB);
-        Assert.assertEquals(setA.hashCode(), setB.hashCode());
-
-        setA.clear();
-        setB.clear();
-
-        Assert.assertEquals(setA, setB);
-        Assert.assertEquals(setA.hashCode(), setB.hashCode());
-    }
 
     @Test
     public void testSaturation() {

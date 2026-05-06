@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -85,7 +85,7 @@ namespace questdb::x86 {
                     case data_type_t::f64: {
                         double value = instr.dpayload;
                         Vec dummy;
-                        if (!cache.findFloat(value, dummy)) {
+                        if (!cache.findFloat(value, type, dummy)) {
                             Vec reg;
                             if (type == data_type_t::f32) {
                                 reg = c.new_xmm_ss("const_f_%f", value);
@@ -96,7 +96,7 @@ namespace questdb::x86 {
                                 Mem mem = c.new_double_const(ConstPoolScope::kLocal, value);
                                 c.movsd(reg, mem);
                             }
-                            cache.addFloat(value, reg);
+                            cache.addFloat(value, type, reg);
                         }
                         break;
                     }
@@ -110,9 +110,12 @@ namespace questdb::x86 {
 
     jit_value_t
     read_vars_mem(Compiler &c, data_type_t type, int32_t idx, const Gp &vars_ptr) {
+        // Bind-variable slots are a fixed 16-byte stride so UUID (i128)
+        // values fit alongside narrower types. Java-side layout in
+        // AsyncFilterUtils.writeBindVarFunction must match.
         auto shift = type_shift(type);
         auto type_size = 1 << shift;
-        return {Mem(vars_ptr, 8 * idx, type_size), type, data_kind_t::kMemory};
+        return {Mem(vars_ptr, 16 * idx, type_size), type, data_kind_t::kMemory};
     }
 
     // Reads length of variable size column with header stored in data vector (string, binary).
@@ -358,7 +361,7 @@ namespace questdb::x86 {
             case data_type_t::f64: {
                 // Check if constant is already in a register
                 Vec reg;
-                if (cache.findFloat(instr.dpayload, reg)) {
+                if (cache.findFloat(instr.dpayload, type, reg)) {
                     return {reg, type, data_kind_t::kConst};
                 }
                 return {imm(instr.dpayload), type, data_kind_t::kConst};
@@ -373,7 +376,7 @@ namespace questdb::x86 {
     }
 
     bool is_float(double x) {
-        return x >= std::numeric_limits<float>::min() && x <= std::numeric_limits<float>::max();
+        return x >= -std::numeric_limits<float>::max() && x <= std::numeric_limits<float>::max();
     }
 
     jit_value_t imm2reg(Compiler &c, data_type_t dst_type, const jit_value_t &v) {

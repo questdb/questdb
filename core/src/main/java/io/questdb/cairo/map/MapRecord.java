@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -37,6 +37,13 @@ public interface MapRecord extends Record {
     MapValue getValue();
 
     long keyHashCode();
+
+    /**
+     * Positions this record at the given entry start address. Used by callers
+     * that hold a {@link MapValue} and want the associated {@link MapRecord}
+     * to expose the entry's key/value columns.
+     */
+    void of(long address);
 
     void setSymbolTableResolver(RecordCursor resolver, IntList symbolTableIndex);
 }

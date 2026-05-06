@@ -1,0 +1,1394 @@
+statement ok
+CREATE TABLE students (id INT, name STRING, major STRING, year INT, ts TIMESTAMP) TIMESTAMP(ts) 
+
+statement ok
+INSERT INTO students VALUES
+(1, 'Mark', 'CS', 2017, '2024-01-01T00:00:00.000000Z'),
+(2, 'Dirk', 'CS', 2017, '2024-01-01T01:00:00.000000Z')
+
+statement ok
+CREATE TABLE exams (sid INT, course STRING, curriculum STRING, grade INT, year INT, ts TIMESTAMP) TIMESTAMP(ts) 
+
+statement ok
+INSERT INTO exams VALUES
+(1, 'Database Systems', 'CS', 10, 2015, '2024-01-01T00:10:00.000000Z'),
+(1, 'Graphics', 'CS', 9, 2016, '2024-01-01T00:20:00.000000Z'),
+(2, 'Database Systems', 'CS', 7, 2015, '2024-01-01T01:10:00.000000Z'),
+(2, 'Graphics', 'CS', 7, 2016, '2024-01-01T01:20:00.000000Z')
+
+# Lateral join with explicit LATERAL — SUM aggregate correlated
+query IR nosort
+SELECT name, total FROM students JOIN LATERAL (SELECT SUM(grade) AS total FROM exams WHERE exams.sid = students.id) grades ORDER BY total DESC
+----
+Mark 19
+Dirk 14
+
+# ============================================================
+# Lateral join chain (multiple lateral joins)
+# Adapted from: lateral_join_chain.test
+# ============================================================
+
+statement ok
+CREATE TABLE chain_t1 (id INT, val INT, ts TIMESTAMP) TIMESTAMP(ts) 
+
+statement ok
+INSERT INTO chain_t1 VALUES
+(1, 10, '2024-01-01T00:00:00.000000Z'),
+(2, 20, '2024-01-01T01:00:00.000000Z'),
+(3, 30, '2024-01-01T02:00:00.000000Z')
+
+statement ok
+CREATE TABLE chain_t2 (t1_id INT, x INT, ts TIMESTAMP) TIMESTAMP(ts) 
+
+statement ok
+INSERT INTO chain_t2 VALUES
+(1, 100, '2024-01-01T00:10:00.000000Z'),
+(1, 200, '2024-01-01T00:20:00.000000Z'),
+(2, 300, '2024-01-01T01:10:00.000000Z')
+
+statement ok
+CREATE TABLE chain_t3 (t2_x INT, label STRING, ts TIMESTAMP) TIMESTAMP(ts) 
+
+statement ok
+INSERT INTO chain_t3 VALUES
+(100, 'alpha', '2024-01-01T00:10:00.000000Z'),
+(200, 'beta', '2024-01-01T00:20:00.000000Z'),
+(300, 'gamma', '2024-01-01T01:10:00.000000Z')
+
+# Two chained lateral joins
+query IIT nosort
+SELECT c.id, s1.x, s2.label
+FROM chain_t1 c
+JOIN LATERAL (SELECT x FROM chain_t2 WHERE t1_id = c.id) s1
+JOIN LATERAL (SELECT label FROM chain_t3 WHERE t2_x = s1.x) s2
+ORDER BY c.id, s1.x
+----
+1 100 alpha
+1 200 beta
+2 300 gamma
+
+# ============================================================
+# Correlated lateral join — basic scan, INNER
+# ============================================================
+
+statement ok
+CREATE TABLE orders (id INT, customer STRING, min_qty DOUBLE, priority INT, ts TIMESTAMP) TIMESTAMP(ts) 
+
+statement ok
+CREATE TABLE trades (id INT, order_id INT, qty DOUBLE, category STRING, ts TIMESTAMP) TIMESTAMP(ts) 
+
+statement ok
+INSERT INTO orders VALUES
+(1, 'Alice', 15.0, 2, '2024-01-01T00:00:00.000000Z'),
+(2, 'Bob', 25.0, 1, '2024-01-01T01:00:00.000000Z'),
+(3, 'Charlie', 35.0, 3, '2024-01-01T02:00:00.000000Z')
+
+statement ok
+INSERT INTO trades VALUES
+(1, 1, 10.0, 'A', '2024-01-01T00:10:00.000000Z'),
+(2, 1, 20.0, 'A', '2024-01-01T00:20:00.000000Z'),
+(3, 1, 30.0, 'B', '2024-01-01T00:30:00.000000Z'),
+(4, 2, 30.0, 'C', '2024-01-01T01:10:00.000000Z'),
+(5, 3, 40.0, 'A', '2024-01-01T02:10:00.000000Z'),
+(6, 3, 50.0, 'B', '2024-01-01T02:20:00.000000Z')
+
+# Basic correlated inner lateral join
+query ITR nosort
+SELECT o.id, o.customer, t.qty
+FROM orders o
+JOIN LATERAL (SELECT qty FROM trades WHERE order_id = o.id) t
+ORDER BY o.id, t.qty
+----
+1 Alice 10.000000
+1 Alice 20.000000
+1 Alice 30.000000
+2 Bob 30.000000
+3 Charlie 40.000000
+3 Charlie 50.000000
+
+# CROSS JOIN LATERAL — same behavior as implicit lateral
+query IR nosort
+SELECT o.id, t.qty
+FROM orders o
+CROSS JOIN LATERAL (SELECT qty FROM trades WHERE order_id = o.id) t
+ORDER BY o.id, t.qty
+----
+1 10.000000
+1 20.000000
+1 30.000000
+2 30.000000
+3 40.000000
+3 50.000000
+
+# ============================================================
+# Aggregates inside lateral
+# ============================================================
+
+# SUM aggregate inside lateral
+query ITR nosort
+SELECT o.id, o.customer, t.total_qty
+FROM orders o
+JOIN LATERAL (SELECT SUM(qty) AS total_qty FROM trades WHERE order_id = o.id) t
+ORDER BY o.id
+----
+1 Alice 60.000000
+2 Bob 30.000000
+3 Charlie 90.000000
+
+# COUNT aggregate inside lateral with LEFT JOIN — unmatched outer row
+statement ok
+CREATE TABLE orders2 (id INT, ts TIMESTAMP) TIMESTAMP(ts) 
+
+statement ok
+INSERT INTO orders2 VALUES
+(1, '2024-01-01T00:00:00.000000Z'),
+(2, '2024-01-01T01:00:00.000000Z'),
+(3, '2024-01-01T02:00:00.000000Z')
+
+statement ok
+CREATE TABLE trades2 (id INT, order_id INT, qty DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) 
+
+statement ok
+INSERT INTO trades2 VALUES
+(1, 1, 10.0, '2024-01-01T00:10:00.000000Z'),
+(2, 1, 20.0, '2024-01-01T00:20:00.000000Z'),
+(3, 2, 30.0, '2024-01-01T01:10:00.000000Z')
+
+query II nosort
+SELECT o.id, t.cnt
+FROM orders2 o
+LEFT JOIN LATERAL (SELECT COUNT(*) AS cnt FROM trades2 WHERE order_id = o.id) t
+ORDER BY o.id
+----
+1 2
+2 1
+3 0
+
+# MAX aggregate inside lateral
+query IR nosort
+SELECT o.id, t.max_qty
+FROM orders2 o
+JOIN LATERAL (SELECT MAX(qty) AS max_qty FROM trades2 WHERE order_id = o.id) t
+ORDER BY o.id
+----
+1 20.000000
+2 30.000000
+
+# ============================================================
+# LEFT JOIN LATERAL — NULL fill for unmatched rows
+# ============================================================
+
+statement ok
+CREATE TABLE orders_left (id INT, customer STRING, ts TIMESTAMP) TIMESTAMP(ts) 
+
+statement ok
+INSERT INTO orders_left VALUES
+(1, 'Alice', '2024-01-01T00:00:00.000000Z'),
+(2, 'Bob', '2024-01-01T01:00:00.000000Z'),
+(3, 'Charlie', '2024-01-01T02:00:00.000000Z')
+
+statement ok
+CREATE TABLE trades_left (id INT, order_id INT, qty DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) 
+
+statement ok
+INSERT INTO trades_left VALUES
+(1, 1, 10.0, '2024-01-01T00:30:00.000000Z'),
+(2, 1, 20.0, '2024-01-01T00:45:00.000000Z')
+
+# LEFT JOIN LATERAL: orders 2 and 3 have no trades -> NULL fill
+query ITR nosort
+SELECT o.id, o.customer, t.qty
+FROM orders_left o
+LEFT JOIN LATERAL (SELECT qty FROM trades_left WHERE order_id = o.id) t
+ORDER BY o.id, t.qty
+----
+1 Alice 10.000000
+1 Alice 20.000000
+2 Bob NULL
+3 Charlie NULL
+
+# ============================================================
+# Empty result set — LEFT JOIN preserves outer rows with NULLs
+# ============================================================
+
+statement ok
+CREATE TABLE orders_empty (id INT, ts TIMESTAMP) TIMESTAMP(ts) 
+
+statement ok
+INSERT INTO orders_empty VALUES
+(1, '2024-01-01T00:00:00.000000Z'),
+(2, '2024-01-01T01:00:00.000000Z')
+
+statement ok
+CREATE TABLE trades_empty (id INT, order_id INT, qty DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) 
+
+# No trades at all — LEFT JOIN fills NULLs
+query IR nosort
+SELECT o.id, t.qty
+FROM orders_empty o
+LEFT JOIN LATERAL (SELECT qty FROM trades_empty WHERE order_id = o.id) t
+ORDER BY o.id
+----
+1 NULL
+2 NULL
+
+# ============================================================
+# LIMIT inside lateral
+# ============================================================
+
+statement ok
+CREATE TABLE orders_limit (id INT, customer STRING, ts TIMESTAMP) TIMESTAMP(ts) 
+
+statement ok
+INSERT INTO orders_limit VALUES
+(1, 'Alice', '2024-01-01T00:00:00.000000Z'),
+(2, 'Bob', '2024-01-01T01:00:00.000000Z')
+
+statement ok
+CREATE TABLE trades_limit (id INT, order_id INT, qty DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) 
+
+statement ok
+INSERT INTO trades_limit VALUES
+(1, 1, 10.0, '2024-01-01T00:10:00.000000Z'),
+(2, 1, 20.0, '2024-01-01T00:20:00.000000Z'),
+(3, 1, 30.0, '2024-01-01T00:30:00.000000Z'),
+(4, 2, 40.0, '2024-01-01T01:10:00.000000Z'),
+(5, 2, 50.0, '2024-01-01T01:20:00.000000Z'),
+(6, 2, 60.0, '2024-01-01T01:30:00.000000Z')
+
+# ORDER BY + LIMIT inside lateral — top 2 per order
+query ITR nosort
+SELECT o.id, o.customer, t.qty
+FROM orders_limit o
+JOIN LATERAL (SELECT qty FROM trades_limit WHERE order_id = o.id ORDER BY qty DESC LIMIT 2) t
+ORDER BY o.id, t.qty DESC
+----
+1 Alice 30.000000
+1 Alice 20.000000
+2 Bob 60.000000
+2 Bob 50.000000
+
+# ============================================================
+# DISTINCT inside lateral
+# ============================================================
+
+statement ok
+CREATE TABLE orders_dist (id INT, ts TIMESTAMP) TIMESTAMP(ts) 
+
+statement ok
+INSERT INTO orders_dist VALUES
+(1, '2024-01-01T00:00:00.000000Z'),
+(2, '2024-01-01T01:00:00.000000Z')
+
+statement ok
+CREATE TABLE trades_dist (id INT, order_id INT, category STRING, ts TIMESTAMP) TIMESTAMP(ts) 
+
+statement ok
+INSERT INTO trades_dist VALUES
+(1, 1, 'A', '2024-01-01T00:10:00.000000Z'),
+(2, 1, 'A', '2024-01-01T00:20:00.000000Z'),
+(3, 1, 'B', '2024-01-01T00:30:00.000000Z'),
+(4, 2, 'C', '2024-01-01T01:10:00.000000Z'),
+(5, 2, 'C', '2024-01-01T01:20:00.000000Z')
+
+# DISTINCT inside lateral subquery
+query IT nosort
+SELECT o.id, t.category
+FROM orders_dist o
+JOIN LATERAL (SELECT DISTINCT category FROM trades_dist WHERE order_id = o.id) t
+ORDER BY o.id, t.category
+----
+1 A
+1 B
+2 C
+
+# ============================================================
+# UNION ALL inside lateral
+# ============================================================
+
+statement ok
+CREATE TABLE orders_union (id INT, ts TIMESTAMP) TIMESTAMP(ts) 
+
+statement ok
+INSERT INTO orders_union VALUES
+(1, '2024-01-01T00:00:00.000000Z'),
+(2, '2024-01-01T01:00:00.000000Z')
+
+statement ok
+CREATE TABLE trades_a (id INT, order_id INT, qty DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) 
+
+statement ok
+INSERT INTO trades_a VALUES
+(1, 1, 10.0, '2024-01-01T00:10:00.000000Z'),
+(2, 2, 20.0, '2024-01-01T01:10:00.000000Z')
+
+statement ok
+CREATE TABLE trades_b (id INT, order_id INT, qty DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) 
+
+statement ok
+INSERT INTO trades_b VALUES
+(1, 1, 30.0, '2024-01-01T00:20:00.000000Z'),
+(2, 2, 40.0, '2024-01-01T01:20:00.000000Z')
+
+# UNION ALL inside lateral
+query IR nosort
+SELECT o.id, t.qty
+FROM orders_union o
+JOIN LATERAL (
+    SELECT qty FROM trades_a WHERE order_id = o.id
+    UNION ALL
+    SELECT qty FROM trades_b WHERE order_id = o.id
+) t
+ORDER BY o.id, t.qty
+----
+1 10.000000
+1 30.000000
+2 20.000000
+2 40.000000
+
+# ============================================================
+# UNION (distinct) inside lateral
+# ============================================================
+
+statement ok
+CREATE TABLE trades_b2 (id INT, order_id INT, qty DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) 
+
+statement ok
+INSERT INTO trades_b2 VALUES
+(1, 1, 10.0, '2024-01-01T00:20:00.000000Z'),
+(2, 1, 30.0, '2024-01-01T00:21:00.000000Z'),
+(3, 2, 20.0, '2024-01-01T01:20:00.000000Z')
+
+# UNION (distinct) inside lateral — deduplication per outer row
+query IR nosort
+SELECT o.id, t.qty
+FROM orders_union o
+JOIN LATERAL (
+    SELECT qty FROM trades_a WHERE order_id = o.id
+    UNION
+    SELECT qty FROM trades_b2 WHERE order_id = o.id
+) t
+ORDER BY o.id, t.qty
+----
+1 10.000000
+1 30.000000
+2 20.000000
+
+# ============================================================
+# UNION with LIMIT inside lateral branches
+# ============================================================
+
+statement ok
+CREATE TABLE t_outer_ul (id INT, ts TIMESTAMP) TIMESTAMP(ts) 
+
+statement ok
+INSERT INTO t_outer_ul VALUES
+(1, '2024-01-01T00:00:00.000000Z'),
+(2, '2024-01-01T01:00:00.000000Z')
+
+statement ok
+CREATE TABLE t_data_ul (oid INT, val INT, src STRING, ts TIMESTAMP) TIMESTAMP(ts) 
+
+statement ok
+INSERT INTO t_data_ul VALUES
+(1, 10, 'A', '2024-01-01T00:10:00.000000Z'),
+(1, 20, 'A', '2024-01-01T00:20:00.000000Z'),
+(1, 30, 'A', '2024-01-01T00:30:00.000000Z'),
+(1, 40, 'B', '2024-01-01T00:40:00.000000Z'),
+(1, 50, 'B', '2024-01-01T00:50:00.000000Z'),
+(2, 60, 'A', '2024-01-01T01:10:00.000000Z'),
+(2, 70, 'B', '2024-01-01T01:20:00.000000Z'),
+(2, 80, 'B', '2024-01-01T01:30:00.000000Z')
+
+# UNION ALL with LIMIT in each branch
+query II nosort
+SELECT o.id, sub.val
+FROM t_outer_ul o
+JOIN LATERAL (
+    (SELECT val FROM t_data_ul WHERE oid = o.id AND src = 'A' ORDER BY val LIMIT 1)
+    UNION ALL
+    (SELECT val FROM t_data_ul WHERE oid = o.id AND src = 'B' ORDER BY val LIMIT 1)
+) sub ON true
+ORDER BY o.id, sub.val
+----
+1 10
+1 40
+2 60
+2 70
+
+# ============================================================
+# INTERSECT inside lateral
+# ============================================================
+
+statement ok
+CREATE TABLE orders_isect (id INT, ts TIMESTAMP) TIMESTAMP(ts) 
+
+statement ok
+INSERT INTO orders_isect VALUES
+(1, '2024-01-01T00:00:00.000000Z'),
+(2, '2024-01-01T01:00:00.000000Z')
+
+statement ok
+CREATE TABLE trades_ia (id INT, order_id INT, qty DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) 
+
+statement ok
+INSERT INTO trades_ia VALUES
+(1, 1, 10.0, '2024-01-01T00:10:00.000000Z'),
+(2, 1, 20.0, '2024-01-01T00:11:00.000000Z'),
+(3, 2, 30.0, '2024-01-01T01:10:00.000000Z')
+
+statement ok
+CREATE TABLE trades_ib (id INT, order_id INT, qty DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) 
+
+statement ok
+INSERT INTO trades_ib VALUES
+(1, 1, 10.0, '2024-01-01T00:20:00.000000Z'),
+(2, 1, 30.0, '2024-01-01T00:21:00.000000Z'),
+(3, 2, 30.0, '2024-01-01T01:20:00.000000Z')
+
+# INTERSECT inside lateral — per-group intersection
+# order 1: {10,20} intersect {10,30} = {10}
+# order 2: {30} intersect {30} = {30}
+query IR nosort
+SELECT o.id, t.qty
+FROM orders_isect o
+JOIN LATERAL (
+    SELECT qty FROM trades_ia WHERE order_id = o.id
+    INTERSECT
+    SELECT qty FROM trades_ib WHERE order_id = o.id
+) t
+ORDER BY o.id, t.qty
+----
+1 10.000000
+2 30.000000
+
+# ============================================================
+# Non-equality correlation (range predicate)
+# ============================================================
+
+# Trades with qty > outer min_qty
+query IR nosort
+SELECT o.id, t.qty
+FROM orders o
+JOIN LATERAL (
+    SELECT qty FROM trades
+    WHERE order_id = o.id AND qty > o.min_qty
+) t
+ORDER BY o.id, t.qty
+----
+1 20.000000
+1 30.000000
+2 30.000000
+3 40.000000
+3 50.000000
+
+# ============================================================
+# Multiple correlation columns
+# ============================================================
+
+statement ok
+CREATE TABLE master_mc (mm_id INT, symbol STRING, ts TIMESTAMP) TIMESTAMP(ts) 
+
+statement ok
+INSERT INTO master_mc VALUES
+(1, 'AAPL', '2024-01-01T00:00:00.000000Z'),
+(2, 'GOOG', '2024-01-01T01:00:00.000000Z'),
+(3, 'MSFT', '2024-01-01T02:00:00.000000Z')
+
+statement ok
+CREATE TABLE detail_mc (id INT, mm_id INT, symbol STRING, qty DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) 
+
+statement ok
+INSERT INTO detail_mc VALUES
+(1, 1, 'AAPL', 100.0, '2024-01-01T00:10:00.000000Z'),
+(2, 1, 'AAPL', 200.0, '2024-01-01T00:20:00.000000Z'),
+(3, 2, 'GOOG', 300.0, '2024-01-01T01:10:00.000000Z')
+
+# LEFT JOIN LATERAL with two correlation columns — MSFT gets NULL
+query ITR nosort
+SELECT m.mm_id, m.symbol, t.total
+FROM master_mc m
+LEFT JOIN LATERAL (
+    SELECT SUM(qty) AS total FROM detail_mc
+    WHERE mm_id = m.mm_id AND symbol = m.symbol
+) t
+ORDER BY m.mm_id
+----
+1 AAPL 300.000000
+2 GOOG 300.000000
+3 MSFT NULL
+
+# ============================================================
+# Window functions inside lateral
+# ============================================================
+
+statement ok
+CREATE TABLE orders_win (id INT, ts TIMESTAMP) TIMESTAMP(ts) 
+
+statement ok
+INSERT INTO orders_win VALUES
+(1, '2024-01-01T00:00:00.000000Z'),
+(2, '2024-01-01T01:00:00.000000Z')
+
+statement ok
+CREATE TABLE trades_win (id INT, order_id INT, qty DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) 
+
+statement ok
+INSERT INTO trades_win VALUES
+(1, 1, 10.0, '2024-01-01T00:10:00.000000Z'),
+(2, 1, 20.0, '2024-01-01T00:20:00.000000Z'),
+(3, 1, 30.0, '2024-01-01T00:30:00.000000Z'),
+(4, 2, 40.0, '2024-01-01T01:10:00.000000Z'),
+(5, 2, 50.0, '2024-01-01T01:20:00.000000Z')
+
+# Window function (running sum) inside lateral
+query IRR nosort
+SELECT o.id, t.qty, t.running_total
+FROM orders_win o
+JOIN LATERAL (
+    SELECT qty, SUM(qty) OVER (ORDER BY ts) AS running_total
+    FROM trades_win
+    WHERE order_id = o.id
+) t
+ORDER BY o.id, t.qty
+----
+1 10.000000 10.000000
+1 20.000000 30.000000
+1 30.000000 60.000000
+2 40.000000 40.000000
+2 50.000000 90.000000
+
+# Window + LIMIT + LEFT JOIN — order 3 has no trades -> NULL fill
+statement ok
+CREATE TABLE orders_wl (id INT, ts TIMESTAMP) TIMESTAMP(ts) 
+
+statement ok
+INSERT INTO orders_wl VALUES
+(1, '2024-01-01T00:00:00.000000Z'),
+(2, '2024-01-01T01:00:00.000000Z'),
+(3, '2024-01-01T02:00:00.000000Z')
+
+statement ok
+CREATE TABLE trades_wl (id INT, order_id INT, qty DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) 
+
+statement ok
+INSERT INTO trades_wl VALUES
+(1, 1, 10.0, '2024-01-01T00:10:00.000000Z'),
+(2, 1, 20.0, '2024-01-01T00:20:00.000000Z'),
+(3, 1, 30.0, '2024-01-01T00:30:00.000000Z'),
+(4, 2, 40.0, '2024-01-01T01:10:00.000000Z'),
+(5, 2, 50.0, '2024-01-01T01:20:00.000000Z')
+
+query IRR nosort
+SELECT o.id, t.qty, t.running_sum
+FROM orders_wl o
+LEFT JOIN LATERAL (
+    SELECT qty, SUM(qty) OVER (ORDER BY qty DESC) AS running_sum
+    FROM trades_wl
+    WHERE order_id = o.id
+    ORDER BY qty DESC
+    LIMIT 2
+) t
+ORDER BY o.id, t.qty DESC
+----
+1 30.000000 30.000000
+1 20.000000 50.000000
+2 50.000000 50.000000
+2 40.000000 90.000000
+3 NULL NULL
+
+# ============================================================
+# NULL handling — NULL join key
+# ============================================================
+
+statement ok
+CREATE TABLE orders_null (id INT, ts TIMESTAMP) TIMESTAMP(ts) 
+
+statement ok
+INSERT INTO orders_null VALUES
+(1, '2024-01-01T00:00:00.000000Z'),
+(NULL, '2024-01-01T01:00:00.000000Z'),
+(2, '2024-01-01T02:00:00.000000Z')
+
+statement ok
+CREATE TABLE trades_null (id INT, order_id INT, qty DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) 
+
+statement ok
+INSERT INTO trades_null VALUES
+(1, 1, 10.0, '2024-01-01T00:10:00.000000Z'),
+(2, NULL, 20.0, '2024-01-01T01:10:00.000000Z')
+
+# NULL join key INNER — QuestDB Hash Join matches NULL = NULL
+query IR nosort
+SELECT o.id, t.qty
+FROM orders_null o
+JOIN LATERAL (SELECT qty FROM trades_null WHERE order_id = o.id) t
+ORDER BY o.id
+----
+NULL 20.000000
+1 10.000000
+
+# NULL join key LEFT — order 2 has no trades -> NULL fill
+query IR nosort
+SELECT o.id, t.qty
+FROM orders_null o
+LEFT JOIN LATERAL (SELECT qty FROM trades_null WHERE order_id = o.id) t
+ORDER BY o.id
+----
+NULL 20.000000
+1 10.000000
+2 NULL
+
+# ============================================================
+# Uncorrelated lateral — degrades to CROSS JOIN
+# ============================================================
+
+statement ok
+CREATE TABLE orders_uncorr (id INT, ts TIMESTAMP) TIMESTAMP(ts) 
+
+statement ok
+INSERT INTO orders_uncorr VALUES
+(1, '2024-01-01T00:00:00.000000Z'),
+(2, '2024-01-01T01:00:00.000000Z')
+
+statement ok
+CREATE TABLE trades_uncorr (id INT, qty DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) 
+
+statement ok
+INSERT INTO trades_uncorr VALUES
+(1, 10.0, '2024-01-01T00:30:00.000000Z'),
+(2, 20.0, '2024-01-01T01:30:00.000000Z')
+
+# No correlation — every outer row paired with every inner row
+query IR nosort
+SELECT o.id, t.qty
+FROM orders_uncorr o
+LATERAL (SELECT qty FROM trades_uncorr) t
+ORDER BY o.id, t.qty
+----
+1 10.000000
+1 20.000000
+2 10.000000
+2 20.000000
+
+# ============================================================
+# Nested lateral joins
+# ============================================================
+
+statement ok
+CREATE TABLE n_t1 (id INT, ts TIMESTAMP) TIMESTAMP(ts) 
+
+statement ok
+INSERT INTO n_t1 VALUES (1, '2024-01-01T00:00:00.000000Z')
+
+statement ok
+CREATE TABLE n_t2 (id INT, t1_id INT, ts TIMESTAMP) TIMESTAMP(ts) 
+
+statement ok
+INSERT INTO n_t2 VALUES (1, 1, '2024-01-01T00:30:00.000000Z')
+
+statement ok
+CREATE TABLE n_t3 (id INT, t2_id INT, ts TIMESTAMP) TIMESTAMP(ts) 
+
+statement ok
+INSERT INTO n_t3 VALUES (1, 1, '2024-01-01T01:00:00.000000Z')
+
+# Nested lateral: outer -> lateral (middle -> lateral (inner))
+query IIIIIT nosort
+SELECT n_t1.id, sub1.id1, sub1.t1_id, sub1.id2, sub1.t2_id, sub1.ts2
+FROM n_t1
+JOIN LATERAL (
+    SELECT n_t2.id AS id1, n_t2.t1_id, sub2.id AS id2, sub2.t2_id, sub2.ts AS ts2
+    FROM n_t2
+    JOIN LATERAL (SELECT * FROM n_t3 WHERE n_t3.t2_id = n_t2.id) sub2 ON 1 = 1
+    WHERE n_t2.t1_id = n_t1.id
+) sub1
+----
+1 1 1 1 1 2024-01-01 01:00:00
+
+# ============================================================
+# Inner JOIN inside LATERAL
+# ============================================================
+
+statement ok
+CREATE TABLE orders_ij (id INT, ts TIMESTAMP) TIMESTAMP(ts) 
+
+statement ok
+INSERT INTO orders_ij VALUES
+(1, '2024-01-01T00:00:00.000000Z'),
+(2, '2024-01-01T01:00:00.000000Z')
+
+statement ok
+CREATE TABLE products (id INT, order_id INT, name STRING, ts TIMESTAMP) TIMESTAMP(ts) 
+
+statement ok
+INSERT INTO products VALUES
+(1, 1, 'Widget', '2024-01-01T00:10:00.000000Z'),
+(2, 2, 'Gadget', '2024-01-01T01:10:00.000000Z')
+
+statement ok
+CREATE TABLE prices (id INT, product_id INT, price DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) 
+
+statement ok
+INSERT INTO prices VALUES
+(1, 1, 9.99, '2024-01-01T00:20:00.000000Z'),
+(2, 2, 19.99, '2024-01-01T01:20:00.000000Z')
+
+# Inner JOIN inside lateral subquery
+query ITR nosort
+SELECT o.id, t.name, t.price
+FROM orders_ij o
+JOIN LATERAL (
+    SELECT p.name, pr.price
+    FROM products p
+    JOIN prices pr ON pr.product_id = p.id
+    WHERE p.order_id = o.id
+) t
+ORDER BY o.id
+----
+1 Widget 9.990000
+2 Gadget 19.990000
+
+# ============================================================
+# LEFT JOIN inside lateral with correlated ON criteria
+# ============================================================
+
+statement ok
+CREATE TABLE t_outer_lj (id INT, ts TIMESTAMP) TIMESTAMP(ts) 
+
+statement ok
+INSERT INTO t_outer_lj VALUES
+(1, '2024-01-01T00:00:00.000000Z'),
+(2, '2024-01-01T01:00:00.000000Z')
+
+statement ok
+CREATE TABLE t_left_lj (id INT, val INT, ts TIMESTAMP) TIMESTAMP(ts) 
+
+statement ok
+INSERT INTO t_left_lj VALUES
+(1, 10, '2024-01-01T00:10:00.000000Z'),
+(2, 20, '2024-01-01T01:10:00.000000Z'),
+(3, 30, '2024-01-01T02:10:00.000000Z')
+
+statement ok
+CREATE TABLE t_right_lj (id INT, ref_id INT, info STRING, ts TIMESTAMP) TIMESTAMP(ts) 
+
+statement ok
+INSERT INTO t_right_lj VALUES
+(1, 1, 'info_a', '2024-01-01T00:10:00.000000Z'),
+(2, 2, 'info_b', '2024-01-01T01:10:00.000000Z')
+
+query IIT nosort
+SELECT o.id, sub.val, sub.info
+FROM t_outer_lj o
+JOIN LATERAL (
+    SELECT l.val, r.info
+    FROM t_left_lj l
+    LEFT JOIN t_right_lj r ON l.id = r.ref_id AND r.id = o.id
+    WHERE l.id = o.id
+) sub ON true
+ORDER BY o.id
+----
+1 10 info_a
+2 20 info_b
+
+# ============================================================
+# Correlated subquery inside lateral with both CROSS JOIN models
+# ============================================================
+
+statement ok
+CREATE TABLE t_outer_cj (id INT, ts TIMESTAMP) TIMESTAMP(ts) 
+
+statement ok
+INSERT INTO t_outer_cj VALUES
+(1, '2024-01-01T00:00:00.000000Z'),
+(2, '2024-01-01T01:00:00.000000Z')
+
+statement ok
+CREATE TABLE t_a_cj (oid INT, val INT, ts TIMESTAMP) TIMESTAMP(ts) 
+
+statement ok
+INSERT INTO t_a_cj VALUES
+(1, 10, '2024-01-01T00:10:00.000000Z'),
+(1, 20, '2024-01-01T00:20:00.000000Z'),
+(2, 30, '2024-01-01T01:10:00.000000Z')
+
+statement ok
+CREATE TABLE t_b_cj (oid INT, qty INT, ts TIMESTAMP) TIMESTAMP(ts) 
+
+statement ok
+INSERT INTO t_b_cj VALUES
+(1, 100, '2024-01-01T00:10:00.000000Z'),
+(2, 200, '2024-01-01T01:10:00.000000Z')
+
+# Both sides of the JOIN inside lateral are correlated
+query III nosort
+SELECT o.id, sub.val, sub.qty
+FROM t_outer_cj o
+JOIN LATERAL (
+    SELECT a.val, b.qty
+    FROM (SELECT val FROM t_a_cj WHERE t_a_cj.oid = o.id) a
+    CROSS JOIN (SELECT qty FROM t_b_cj WHERE t_b_cj.oid = o.id) b
+) sub ON true
+ORDER BY o.id, sub.val
+----
+1 10 100
+1 20 100
+2 30 200
+
+# ============================================================
+# UNION with deep nesting inside lateral
+# ============================================================
+
+statement ok
+CREATE TABLE t1_deep (x INT, ts TIMESTAMP) TIMESTAMP(ts) 
+
+statement ok
+INSERT INTO t1_deep VALUES
+(1, '2024-01-01T00:00:00.000000Z'),
+(2, '2024-01-01T01:00:00.000000Z')
+
+statement ok
+CREATE TABLE t2_deep (x INT, a INT, ts TIMESTAMP) TIMESTAMP(ts) 
+
+statement ok
+INSERT INTO t2_deep VALUES
+(1, 10, '2024-01-01T00:10:00.000000Z'),
+(1, 20, '2024-01-01T00:20:00.000000Z'),
+(2, 30, '2024-01-01T01:10:00.000000Z')
+
+statement ok
+CREATE TABLE t3_deep (x INT, b INT, ts TIMESTAMP) TIMESTAMP(ts) 
+
+statement ok
+INSERT INTO t3_deep VALUES
+(1, 100, '2024-01-01T00:10:00.000000Z'),
+(2, 200, '2024-01-01T01:10:00.000000Z'),
+(2, 300, '2024-01-01T01:20:00.000000Z')
+
+# UNION with nested subquery inside branch
+query II nosort
+SELECT t1_deep.x, sub.val FROM t1_deep
+CROSS JOIN LATERAL (
+    SELECT SUM(a) AS val FROM t2_deep WHERE t2_deep.x = t1_deep.x
+    UNION ALL
+    SELECT s FROM (
+        SELECT SUM(b) AS s FROM t3_deep WHERE t3_deep.x = t1_deep.x
+    ) nested_sub
+) sub
+ORDER BY t1_deep.x, sub.val
+----
+1 30
+1 100
+2 30
+2 500
+
+# ============================================================
+# UNION on a non-join layer (wrapped in SELECT)
+# ============================================================
+
+statement ok
+CREATE TABLE t_outer_uw (id INT, ts TIMESTAMP) TIMESTAMP(ts) 
+
+statement ok
+INSERT INTO t_outer_uw VALUES
+(1, '2024-01-01T00:00:00.000000Z'),
+(2, '2024-01-01T01:00:00.000000Z')
+
+statement ok
+CREATE TABLE t_data_uw (oid INT, val INT, src STRING, ts TIMESTAMP) TIMESTAMP(ts) 
+
+statement ok
+INSERT INTO t_data_uw VALUES
+(1, 10, 'A', '2024-01-01T00:10:00.000000Z'),
+(1, 20, 'B', '2024-01-01T00:20:00.000000Z'),
+(2, 30, 'A', '2024-01-01T01:10:00.000000Z'),
+(2, 40, 'B', '2024-01-01T01:20:00.000000Z')
+
+# UNION wrapped inside an outer SELECT in the lateral subquery
+query II nosort
+SELECT o.id, sub.val
+FROM t_outer_uw o
+JOIN LATERAL (
+    SELECT val FROM (
+        SELECT val FROM t_data_uw WHERE oid = o.id AND src = 'A'
+        UNION ALL
+        SELECT val FROM t_data_uw WHERE oid = o.id AND src = 'B'
+    )
+) sub ON true
+ORDER BY o.id, sub.val
+----
+1 10
+1 20
+2 30
+2 40
+
+# ============================================================
+# UNION with deep aggregate in lateral
+# ============================================================
+
+statement ok
+CREATE TABLE t1_ua (x INT, ts TIMESTAMP) TIMESTAMP(ts) 
+
+statement ok
+INSERT INTO t1_ua VALUES
+(1, '2024-01-01T00:00:00.000000Z'),
+(2, '2024-01-01T01:00:00.000000Z')
+
+statement ok
+CREATE TABLE t2_ua (x INT, a INT, ts TIMESTAMP) TIMESTAMP(ts) 
+
+statement ok
+INSERT INTO t2_ua VALUES
+(1, 10, '2024-01-01T00:10:00.000000Z'),
+(2, 20, '2024-01-01T01:10:00.000000Z')
+
+statement ok
+CREATE TABLE t3_ua (x INT, b INT, cat STRING, ts TIMESTAMP) TIMESTAMP(ts) 
+
+statement ok
+INSERT INTO t3_ua VALUES
+(1, 100, 'A', '2024-01-01T00:10:00.000000Z'),
+(1, 200, 'B', '2024-01-01T00:20:00.000000Z'),
+(2, 300, 'A', '2024-01-01T01:10:00.000000Z'),
+(2, 400, 'A', '2024-01-01T01:20:00.000000Z')
+
+# UNION ALL with aggregate in second branch, filtered
+query II nosort
+SELECT t1_ua.x, sub.val FROM t1_ua
+CROSS JOIN LATERAL (
+    SELECT a AS val FROM t2_ua WHERE t2_ua.x = t1_ua.x
+    UNION ALL
+    SELECT total FROM (
+        SELECT SUM(b) AS total FROM t3_ua WHERE t3_ua.x = t1_ua.x GROUP BY cat
+    ) agg WHERE agg.total > 100
+) sub
+ORDER BY t1_ua.x, sub.val
+----
+1 10
+1 200
+2 20
+2 700
+
+# ============================================================
+# GROUP BY with outer reference in lateral
+# ============================================================
+
+statement ok
+CREATE TABLE orders_gb (id INT, category STRING, ts TIMESTAMP) TIMESTAMP(ts) 
+
+statement ok
+INSERT INTO orders_gb VALUES
+(1, 'X', '2024-01-01T00:00:00.000000Z'),
+(2, 'Y', '2024-01-01T01:00:00.000000Z')
+
+statement ok
+CREATE TABLE trades_gb (id INT, order_id INT, qty DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) 
+
+statement ok
+INSERT INTO trades_gb VALUES
+(1, 1, 10.0, '2024-01-01T00:10:00.000000Z'),
+(2, 1, 20.0, '2024-01-01T00:20:00.000000Z'),
+(3, 2, 30.0, '2024-01-01T01:10:00.000000Z')
+
+# GROUP BY includes outer ref o.category
+query ITR nosort
+SELECT o.id, t.cat, t.total
+FROM orders_gb o
+JOIN LATERAL (
+    SELECT o.category AS cat, SUM(qty) AS total
+    FROM trades_gb
+    WHERE order_id = o.id
+    GROUP BY o.category
+) t
+ORDER BY o.id
+----
+1 X 30.000000
+2 Y 30.000000
+
+# ============================================================
+# Outer reference in WHERE with OR condition
+# ============================================================
+
+statement ok
+CREATE TABLE t1_or (a INT, b INT, threshold INT, ts TIMESTAMP) TIMESTAMP(ts) 
+
+statement ok
+INSERT INTO t1_or VALUES
+(1, 100, 5, '2024-01-01T00:00:00.000000Z'),
+(2, 200, 25, '2024-01-01T01:00:00.000000Z')
+
+statement ok
+CREATE TABLE t2_or (t1_id INT, val INT, ts TIMESTAMP) TIMESTAMP(ts) 
+
+statement ok
+INSERT INTO t2_or VALUES
+(1, 3, '2024-01-01T00:10:00.000000Z'),
+(1, 10, '2024-01-01T00:20:00.000000Z'),
+(2, 20, '2024-01-01T01:10:00.000000Z'),
+(2, 30, '2024-01-01T01:20:00.000000Z')
+
+# WHERE with OR referencing outer column
+query II nosort
+SELECT t1_or.a, x.result
+FROM t1_or
+CROSS JOIN LATERAL (
+    SELECT val + t1_or.b AS result
+    FROM (
+        SELECT val FROM t2_or WHERE t2_or.t1_id = t1_or.a
+    )
+    WHERE val > t1_or.threshold OR val < 5
+) x
+ORDER BY t1_or.a, x.result
+----
+1 103
+1 110
+2 230
+
+# ============================================================
+# Outer reference lifted as pure outer column
+# ============================================================
+
+query II nosort
+SELECT t1_or.a, x.b
+FROM t1_or
+CROSS JOIN LATERAL (
+    SELECT t1_or.b AS b
+    FROM (
+        SELECT val FROM t2_or WHERE t2_or.t1_id = t1_or.a
+    )
+    WHERE val > t1_or.threshold OR val < 10
+) x
+ORDER BY t1_or.a
+----
+1 100
+1 100
+2 200
+
+# ============================================================
+# LATERAL requires a subquery — error on table reference
+# ============================================================
+
+statement ok
+CREATE TABLE orders_err (id INT, ts TIMESTAMP) TIMESTAMP(ts) 
+
+statement ok
+CREATE TABLE trades_err (id INT, ts TIMESTAMP) TIMESTAMP(ts) 
+
+statement error
+SELECT * FROM orders_err o JOIN LATERAL trades_err t
+----
+
+# ============================================================
+# Unsupported join type — RIGHT JOIN LATERAL
+# ============================================================
+
+statement error
+SELECT * FROM orders_err o RIGHT JOIN LATERAL (SELECT * FROM trades_err WHERE id = o.id) t
+----
+
+# ============================================================
+# pg_lateral.test adapted tests
+# ============================================================
+
+# -- INT4_TBL --
+statement ok
+CREATE TABLE int4_tbl (f1 INT, ts TIMESTAMP) TIMESTAMP(ts) 
+
+statement ok
+INSERT INTO int4_tbl VALUES
+(0, '2024-01-01T00:00:00.000000Z'),
+(123456, '2024-01-01T01:00:00.000000Z'),
+(-123456, '2024-01-01T02:00:00.000000Z'),
+(2147483647, '2024-01-01T03:00:00.000000Z'),
+(-2147483647, '2024-01-01T04:00:00.000000Z')
+
+# -- INT8_TBL --
+statement ok
+CREATE TABLE int8_tbl (q1 LONG, q2 LONG, ts TIMESTAMP) TIMESTAMP(ts) 
+
+statement ok
+INSERT INTO int8_tbl VALUES
+(123, 456, '2024-01-01T00:00:00.000000Z'),
+(123, 4567890123456789, '2024-01-01T01:00:00.000000Z'),
+(4567890123456789, 123, '2024-01-01T02:00:00.000000Z'),
+(4567890123456789, 4567890123456789, '2024-01-01T03:00:00.000000Z'),
+(4567890123456789, -4567890123456789, '2024-01-01T04:00:00.000000Z')
+
+# -- TEXT_TBL --
+statement ok
+CREATE TABLE text_tbl (f1 STRING, ts TIMESTAMP) TIMESTAMP(ts) 
+
+statement ok
+INSERT INTO text_tbl VALUES
+('doh!', '2024-01-01T00:00:00.000000Z'),
+('hi de ho neighbor', '2024-01-01T01:00:00.000000Z')
+
+# Lateral with left join producing NULLs
+query IIT nosort
+SELECT ss.unique2, x.f1, x.ts
+FROM int4_tbl x LEFT JOIN LATERAL (
+    SELECT 9998 AS unique2
+    FROM int4_tbl i2
+    WHERE i2.f1 = x.f1 AND i2.f1 = 0
+    LIMIT 1
+) ss ON true
+ORDER BY x.f1
+----
+NULL -2147483647 2024-01-01 04:00:00
+NULL -123456 2024-01-01 02:00:00
+9998 0 2024-01-01 00:00:00
+NULL 123456 2024-01-01 01:00:00
+NULL 2147483647 2024-01-01 03:00:00
+
+# ============================================================
+# Lateral with aggregate — cannot use bare aggregate from outer
+# ============================================================
+
+statement error
+SELECT 1 FROM int4_tbl a, LATERAL (SELECT MAX(a.f1) FROM int4_tbl b) ss
+----
+
+# ============================================================
+# Lateral with long_sequence — basic cross join
+# ============================================================
+
+query II nosort
+SELECT o.id, t.x
+FROM orders2 o
+JOIN LATERAL (SELECT o.id + x AS x FROM long_sequence(2)) t
+WHERE o.id <= 2
+ORDER BY o.id, t.x
+----
+1 2
+1 3
+2 3
+2 4
+
+# ============================================================
+# SAMPLE BY inside lateral (QuestDB-specific)
+# ============================================================
+
+statement ok
+CREATE TABLE orders_sb (id INT, ts TIMESTAMP) TIMESTAMP(ts) 
+
+statement ok
+INSERT INTO orders_sb VALUES
+(1, '2024-01-01T00:00:00.000000Z'),
+(2, '2024-01-01T01:00:00.000000Z')
+
+statement ok
+CREATE TABLE trades_sb (id INT, order_id INT, qty DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) 
+
+statement ok
+INSERT INTO trades_sb VALUES
+(1, 1, 10.0, '2024-01-01T00:10:00.000000Z'),
+(2, 1, 20.0, '2024-01-01T00:40:00.000000Z'),
+(3, 1, 30.0, '2024-01-01T01:10:00.000000Z'),
+(4, 2, 40.0, '2024-01-01T01:10:00.000000Z'),
+(5, 2, 50.0, '2024-01-01T01:40:00.000000Z')
+
+# SAMPLE BY inside lateral — time-bucketed aggregation per outer row
+query ITR nosort
+SELECT o.id, t.ts, t.total
+FROM orders_sb o
+JOIN LATERAL (
+    SELECT ts, SUM(qty) AS total
+    FROM trades_sb
+    WHERE order_id = o.id
+    SAMPLE BY 30m
+) t
+ORDER BY o.id, t.ts
+----
+1 2024-01-01 00:00:00 10.000000
+1 2024-01-01 00:30:00 20.000000
+1 2024-01-01 01:00:00 30.000000
+2 2024-01-01 01:00:00 40.000000
+2 2024-01-01 01:30:00 50.000000
+
+# SAMPLE BY + LEFT JOIN — order 3 has no trades -> NULL fill
+statement ok
+CREATE TABLE orders_sb2 (id INT, ts TIMESTAMP) TIMESTAMP(ts) 
+
+statement ok
+INSERT INTO orders_sb2 VALUES
+(1, '2024-01-01T00:00:00.000000Z'),
+(2, '2024-01-01T01:00:00.000000Z'),
+(3, '2024-01-01T02:00:00.000000Z')
+
+statement ok
+CREATE TABLE trades_sb2 (id INT, order_id INT, qty DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) 
+
+statement ok
+INSERT INTO trades_sb2 VALUES
+(1, 1, 10.0, '2024-01-01T00:10:00.000000Z'),
+(2, 1, 20.0, '2024-01-01T00:40:00.000000Z'),
+(3, 2, 30.0, '2024-01-01T01:10:00.000000Z')
+
+query ITR nosort
+SELECT o.id, t.ts, t.total
+FROM orders_sb2 o
+LEFT JOIN LATERAL (
+    SELECT ts, SUM(qty) AS total
+    FROM trades_sb2
+    WHERE order_id = o.id
+    SAMPLE BY 30m
+) t
+ORDER BY o.id, t.ts
+----
+1 2024-01-01 00:00:00 10.000000
+1 2024-01-01 00:30:00 20.000000
+2 2024-01-01 01:00:00 30.000000
+3 NULL NULL
+
+# ============================================================
+# LATEST ON inside lateral (QuestDB-specific)
+# ============================================================
+
+statement ok
+CREATE TABLE orders_lt (id INT, ts TIMESTAMP) TIMESTAMP(ts) 
+
+statement ok
+INSERT INTO orders_lt VALUES
+(1, '2024-01-01T00:00:00.000000Z'),
+(2, '2024-01-01T01:00:00.000000Z')
+
+statement ok
+CREATE TABLE trades_lt (id INT, order_id INT, category SYMBOL, qty DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) 
+
+statement ok
+INSERT INTO trades_lt VALUES
+(1, 1, 'A', 10.0, '2024-01-01T00:10:00.000000Z'),
+(2, 1, 'A', 20.0, '2024-01-01T00:20:00.000000Z'),
+(3, 1, 'B', 30.0, '2024-01-01T00:30:00.000000Z'),
+(4, 2, 'A', 40.0, '2024-01-01T01:10:00.000000Z'),
+(5, 2, 'B', 50.0, '2024-01-01T01:20:00.000000Z'),
+(6, 2, 'B', 60.0, '2024-01-01T01:30:00.000000Z')
+
+# LATEST ON inside lateral — latest trade per category per order
+query ISR nosort
+SELECT o.id, t.category, t.qty
+FROM orders_lt o
+JOIN LATERAL (
+    SELECT category, qty FROM trades_lt
+    WHERE order_id = o.id
+    LATEST ON ts PARTITION BY category
+) t
+ORDER BY o.id, t.category
+----
+1 A 20.000000
+1 B 30.000000
+2 A 40.000000
+2 B 60.000000
+
+# ============================================================
+# PIVOT inside lateral (QuestDB-specific)
+# ============================================================
+
+statement ok
+CREATE TABLE orders_pv (id INT, ts TIMESTAMP) TIMESTAMP(ts) 
+
+statement ok
+INSERT INTO orders_pv VALUES
+(1, '2024-01-01T00:00:00.000000Z'),
+(2, '2024-01-01T01:00:00.000000Z')
+
+statement ok
+CREATE TABLE trades_pv (id INT, order_id INT, side SYMBOL, qty DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) 
+
+statement ok
+INSERT INTO trades_pv VALUES
+(1, 1, 'buy', 10.0, '2024-01-01T00:10:00.000000Z'),
+(2, 1, 'sell', 20.0, '2024-01-01T00:20:00.000000Z'),
+(3, 1, 'buy', 30.0, '2024-01-01T00:30:00.000000Z'),
+(4, 2, 'sell', 40.0, '2024-01-01T01:10:00.000000Z')
+
+# PIVOT inside lateral — buy/sell totals per order
+query IRR nosort
+SELECT o.id, t.buy, t.sell
+FROM orders_pv o
+JOIN LATERAL (
+    SELECT * FROM (
+        SELECT side, SUM(qty) AS total
+        FROM trades_pv
+        WHERE order_id = o.id
+        GROUP BY side
+    ) PIVOT (SUM(total) FOR side IN ('buy', 'sell'))
+) t
+ORDER BY o.id
+----
+1 40.000000 20.000000
+2 NULL 40.000000
+
+# PIVOT + LEFT JOIN — order 3 has no trades -> NULL fill
+statement ok
+CREATE TABLE orders_pv2 (id INT, ts TIMESTAMP) TIMESTAMP(ts) 
+
+statement ok
+INSERT INTO orders_pv2 VALUES
+(1, '2024-01-01T00:00:00.000000Z'),
+(2, '2024-01-01T01:00:00.000000Z'),
+(3, '2024-01-01T02:00:00.000000Z')
+
+statement ok
+CREATE TABLE trades_pv2 (id INT, order_id INT, side SYMBOL, qty DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) 
+
+statement ok
+INSERT INTO trades_pv2 VALUES
+(1, 1, 'buy', 10.0, '2024-01-01T00:10:00.000000Z'),
+(2, 1, 'sell', 20.0, '2024-01-01T00:20:00.000000Z'),
+(3, 2, 'buy', 30.0, '2024-01-01T01:10:00.000000Z')
+
+query IRR nosort
+SELECT o.id, t.buy, t.sell
+FROM orders_pv2 o
+LEFT JOIN LATERAL (
+    SELECT * FROM (
+        SELECT side, SUM(qty) AS total
+        FROM trades_pv2
+        WHERE order_id = o.id
+        GROUP BY side
+    ) PIVOT (SUM(total) FOR side IN ('buy', 'sell'))
+) t
+ORDER BY o.id
+----
+1 10.000000 20.000000
+2 30.000000 NULL
+3 NULL NULL
+
+# ============================================================
+# Outer reference expression lifted into lateral subquery
+# ============================================================
+
+query II nosort
+SELECT t1_or.a, x.result
+FROM t1_or
+CROSS JOIN LATERAL (
+    SELECT val + t1_or.b AS result
+    FROM (
+        SELECT val FROM t2_or WHERE t2_or.t1_id = t1_or.a
+    )
+    WHERE val > t1_or.threshold
+) x
+ORDER BY t1_or.a, x.result
+----
+1 110
+2 230
+
+# ============================================================
+# Intermediate WHERE with outer ref
+# ============================================================
+
+query IR nosort
+SELECT t1_or.a, x.total
+FROM t1_or
+JOIN LATERAL (
+    SELECT SUM(val) AS total
+    FROM (SELECT val, t1_id FROM t2_or WHERE t2_or.t1_id = t1_or.a)
+    WHERE t1_id = t1_or.a
+    GROUP BY t1_or.a
+) x
+ORDER BY t1_or.a
+----
+1 13
+2 50

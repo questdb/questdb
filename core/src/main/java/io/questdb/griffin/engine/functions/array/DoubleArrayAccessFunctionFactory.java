@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -39,6 +39,7 @@ import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.DoubleFunction;
 import io.questdb.griffin.engine.functions.MultiArgFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
+import io.questdb.griffin.engine.functions.columns.ColumnFunction;
 import io.questdb.griffin.engine.functions.constants.DoubleConstant;
 import io.questdb.std.IntList;
 import io.questdb.std.Interval;
@@ -109,36 +110,57 @@ public class DoubleArrayAccessFunctionFactory implements FunctionFactory {
                     .put(']');
         }
         int resultNDims = nDims;
+        boolean indexArgsAreConstant = true;
         for (int i = 1, n = argsCopy.size(); i < n; i++) {
-            final int argType = argsCopy.getQuick(i).getType();
+            Function arg = argsCopy.getQuick(i);
+            final int argType = arg.getType();
             if (isIndexArg(argType)) {
                 resultNDims--;
+                if (!arg.isConstant()) {
+                    indexArgsAreConstant = false;
+                }
             }
         }
-        if (resultNDims == 0) {
-            boolean indexArgsAreConstant = true;
-            for (int i = 1, n = argsCopy.size(); i < n; i++) {
-                if (!argsCopy.getQuick(i).isConstant()) {
-                    indexArgsAreConstant = false;
-                    break;
-                }
-            }
-            if (indexArgsAreConstant) {
-                IntList indexArgs = new IntList(argsCopy.size() - 1);
-                for (int i = 1, n = argsCopy.size(); i < n; i++) {
-                    long index = argsCopy.getQuick(i).getLong(null);
-                    if (index == Numbers.LONG_NULL) {
-                        return DoubleConstant.NULL;
-                    }
-                    indexArgs.add((int) index);
-                    Misc.free(argsCopy.getQuick(i));
-                }
-                argPositionsCopy.removeIndex(0); // remove arrayArg's position
-                return new AccessDoubleArrayConstantIndexFunction(arrayArg, indexArgs, argPositionsCopy);
-            }
+        if (resultNDims != 0) {
+            return new SliceDoubleArrayFunction(arrayArg, resultNDims, argsCopy, argPositionsCopy);
+        }
+        if (!indexArgsAreConstant) {
             return new AccessDoubleArrayFunction(arrayArg, argsCopy, argPositionsCopy);
         }
-        return new SliceDoubleArrayFunction(arrayArg, resultNDims, argsCopy, argPositionsCopy);
+
+        // result is scalar, all args are constant index args
+        final IntList indexArgs = new IntList(argsCopy.size() - 1);
+        boolean isFirstElement = true;
+        for (int i = 1, n = argsCopy.size(); i < n; i++) {
+            long index;
+            try (Function arg = argsCopy.getQuick(i)) {
+                index = arg.getLong(null);
+            }
+            if (index == Numbers.LONG_NULL) {
+                for (int j = i + 1; j < n; j++) {
+                    Misc.free(argsCopy.getQuick(j));
+                }
+                return DoubleConstant.NULL;
+            }
+            indexArgs.add((int) index);
+            if (index != 1) {
+                isFirstElement = false;
+            }
+        }
+        if (isFirstElement) {
+            return new AccessDoubleArrayFirstElementFunction(arrayArg, indexArgs.size());
+        }
+        argPositionsCopy.removeIndex(0); // remove arrayArg's position
+        return new AccessDoubleArrayConstantIndexFunction(arrayArg, indexArgs, argPositionsCopy);
+    }
+
+    private static boolean allPositive(IntList indices) {
+        for (int i = 0, n = indices.size(); i < n; i++) {
+            if (indices.getQuick(i) <= 0) {
+                return false;
+            }
+        }
+        return true;
     }
 
     private static int flatIndexDelta(ArrayView array, int dim, int pgIndexAtDim) {
@@ -201,6 +223,10 @@ public class DoubleArrayAccessFunctionFactory implements FunctionFactory {
 
     private static class AccessDoubleArrayConstantIndexFunction extends DoubleFunction implements UnaryFunction {
         private final Function arrayArg;
+        private final int columnIndex;
+        private final int columnType;
+        private final int idx0;
+        private final int idx1;
         private final IntList indexArgPositions;
         private final IntList indexArgs;
 
@@ -208,6 +234,18 @@ public class DoubleArrayAccessFunctionFactory implements FunctionFactory {
             this.arrayArg = arrayArg;
             this.indexArgs = indexArgs;
             this.indexArgPositions = indexArgPositions;
+            if (arrayArg instanceof ColumnFunction cf && indexArgs.size() <= 2 && allPositive(indexArgs)) {
+                // column fast path: 1D or 2D, all positive indices
+                this.columnIndex = cf.getColumnIndex();
+                this.columnType = arrayArg.getType();
+                this.idx0 = indexArgs.getQuick(0) - 1;
+                this.idx1 = indexArgs.size() == 2 ? indexArgs.getQuick(1) - 1 : 0;
+            } else {
+                this.columnIndex = -1;
+                this.columnType = 0;
+                this.idx0 = -1;
+                this.idx1 = -1;
+            }
         }
 
         @Override
@@ -217,6 +255,9 @@ public class DoubleArrayAccessFunctionFactory implements FunctionFactory {
 
         @Override
         public double getDouble(Record rec) {
+            if (columnIndex >= 0) {
+                return rec.getArrayDouble1d2d(columnIndex, columnType, idx0, idx1);
+            }
             ArrayView array = arrayArg.getArray(rec);
             if (array.isNull()) {
                 return Double.NaN;
@@ -247,6 +288,60 @@ public class DoubleArrayAccessFunctionFactory implements FunctionFactory {
             for (int n = indexArgs.size(), i = 0; i < n; i++) {
                 sink.val(comma).val(indexArgs.getQuick(i));
                 comma = ",";
+            }
+            sink.val(']');
+        }
+    }
+
+    /**
+     * Optimized function to access the first element of an array (all indices are 1).
+     * When the array argument is a column and the array is 1D or 2D, bypasses full
+     * <code>ArrayView</code> construction and reads directly from the AUX/data pages
+     * via {@link Record#getArrayDouble1d2d}.
+     */
+    private static class AccessDoubleArrayFirstElementFunction extends DoubleFunction implements UnaryFunction {
+        private final Function arrayArg;
+        private final int columnIndex;
+        private final int columnType;
+        private final int nDims;
+
+        private AccessDoubleArrayFirstElementFunction(Function arrayArg, int nDims) {
+            this.arrayArg = arrayArg;
+            this.nDims = nDims;
+            if (nDims <= 2 && arrayArg instanceof ColumnFunction cf) {
+                this.columnIndex = cf.getColumnIndex();
+                this.columnType = arrayArg.getType();
+            } else {
+                this.columnIndex = -1;
+                this.columnType = 0;
+            }
+        }
+
+        @Override
+        public Function getArg() {
+            return arrayArg;
+        }
+
+        @Override
+        public double getDouble(Record rec) {
+            if (columnIndex >= 0) {
+                return rec.getArrayDouble1d2d(columnIndex, columnType, 0, 0);
+            }
+            ArrayView array = arrayArg.getArray(rec);
+            if (array.isNull() || array.isEmpty()) {
+                return Double.NaN;
+            }
+            return array.getDouble(0);
+        }
+
+        @Override
+        public void toPlan(PlanSink sink) {
+            sink.val(arrayArg).val('[');
+            for (int i = 0; i < nDims; i++) {
+                if (i > 0) {
+                    sink.val(',');
+                }
+                sink.val(1);
             }
             sink.val(']');
         }

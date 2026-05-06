@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -232,7 +232,7 @@ public abstract class AbstractChunkedResponse implements Response, Fragment {
         assert addr != 0;
         assert addr >= bufLo;
         assert addr < bufHi;
-        return Unsafe.getUnsafe().getByte(addr);
+        return Unsafe.getByte(addr);
     }
 
     /**

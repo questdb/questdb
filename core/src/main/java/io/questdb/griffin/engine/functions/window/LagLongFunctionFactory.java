@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -105,7 +105,7 @@ public class LagLongFunctionFactory extends AbstractWindowFunctionFactory {
         @Override
         public void pass1(Record record, long recordOffset, WindowSPI spi) {
             computeNext(record);
-            Unsafe.getUnsafe().putLong(spi.getAddress(recordOffset, columnIndex), lagValue);
+            Unsafe.putLong(spi.getAddress(recordOffset, columnIndex), lagValue);
         }
     }
 
@@ -133,7 +133,7 @@ public class LagLongFunctionFactory extends AbstractWindowFunctionFactory {
         @Override
         public void pass1(Record record, long recordOffset, WindowSPI spi) {
             computeNext(record);
-            Unsafe.getUnsafe().putLong(spi.getAddress(recordOffset, columnIndex), lagValue);
+            Unsafe.putLong(spi.getAddress(recordOffset, columnIndex), lagValue);
         }
 
         @Override
@@ -173,7 +173,7 @@ public class LagLongFunctionFactory extends AbstractWindowFunctionFactory {
         @Override
         public void pass1(Record record, long recordOffset, WindowSPI spi) {
             computeNext(record);
-            Unsafe.getUnsafe().putLong(spi.getAddress(recordOffset, columnIndex), value);
+            Unsafe.putLong(spi.getAddress(recordOffset, columnIndex), value);
         }
     }
 }

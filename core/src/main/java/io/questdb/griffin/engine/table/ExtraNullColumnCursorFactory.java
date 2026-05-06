@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -25,13 +25,15 @@
 package io.questdb.griffin.engine.table;
 
 import io.questdb.cairo.AbstractRecordCursorFactory;
-import io.questdb.cairo.BitmapIndexReader;
-import io.questdb.cairo.DataUnavailableException;
 import io.questdb.cairo.EmptySymbolMapReader;
+import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableToken;
+import io.questdb.cairo.idx.IndexReader;
+import io.questdb.cairo.sql.ColumnMapping;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.PageFrame;
 import io.questdb.cairo.sql.PageFrameCursor;
+import io.questdb.cairo.sql.PartitionFrameCursor;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
@@ -44,15 +46,13 @@ import io.questdb.cairo.vm.api.MemoryCARW;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.griffin.engine.table.parquet.PartitionDecoder;
+import io.questdb.griffin.engine.table.parquet.ParquetDecoder;
 import io.questdb.jit.CompiledFilter;
-import io.questdb.std.IntList;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 import org.jetbrains.annotations.Nullable;
 
 public final class ExtraNullColumnCursorFactory extends AbstractRecordCursorFactory {
-
     private final RecordCursorFactory base;
     private final int columnSplit;
     private final ExtraNullColumnRecordCursor cursor;
@@ -64,11 +64,6 @@ public final class ExtraNullColumnCursorFactory extends AbstractRecordCursorFact
         this.base = base;
         this.columnSplit = columnSplit;
         this.cursor = new ExtraNullColumnRecordCursor(columnSplit, base.recordCursorSupportsRandomAccess());
-    }
-
-    @Override
-    public void changePageFrameSizes(int minRows, int maxRows) {
-        base.changePageFrameSizes(minRows, maxRows);
     }
 
     @Override
@@ -119,7 +114,7 @@ public final class ExtraNullColumnCursorFactory extends AbstractRecordCursorFact
         if (pageFrameCursor == null) {
             pageFrameCursor = new ExtraNullColumnPageFrameCursor(columnSplit, getMetadata().getColumnCount());
         }
-        return pageFrameCursor.of(baseCursor);
+        return pageFrameCursor.of((TablePageFrameCursor) baseCursor);
     }
 
     @Override
@@ -131,7 +126,7 @@ public final class ExtraNullColumnCursorFactory extends AbstractRecordCursorFact
     public TimeFrameCursor getTimeFrameCursor(SqlExecutionContext executionContext) throws SqlException {
         TimeFrameCursor baseCursor = base.getTimeFrameCursor(executionContext);
         if (timeFrameCursor == null) {
-            timeFrameCursor = new ExtraNullColumnTimeFrameCursor(columnSplit, base.recordCursorSupportsRandomAccess());
+            timeFrameCursor = new ExtraNullColumnTimeFrameCursor(columnSplit, base.recordCursorSupportsRandomAccess(), getMetadata().getTimestampIndex());
         }
         return timeFrameCursor.of(baseCursor);
     }
@@ -149,6 +144,15 @@ public final class ExtraNullColumnCursorFactory extends AbstractRecordCursorFact
     @Override
     public boolean isProjection() {
         return true;
+    }
+
+    @Override
+    public ConcurrentTimeFrameCursor newTimeFrameCursor() {
+        ConcurrentTimeFrameCursor baseCursor = base.newTimeFrameCursor();
+        if (baseCursor == null) {
+            return null;
+        }
+        return new ExtraNullColumnConcurrentTimeFrameCursor(baseCursor, columnSplit, getMetadata().getTimestampIndex());
     }
 
     @Override
@@ -197,6 +201,110 @@ public final class ExtraNullColumnCursorFactory extends AbstractRecordCursorFact
         base.close();
     }
 
+    static final class ExtraNullColumnConcurrentTimeFrameCursor implements ConcurrentTimeFrameCursor {
+        private final int columnSplit;
+        private final ConcurrentTimeFrameCursor delegate;
+        private final ExtraNullColumnRecord extraNullColumnRecord;
+        private final int selectedTimestampIndex;
+
+        ExtraNullColumnConcurrentTimeFrameCursor(
+                ConcurrentTimeFrameCursor delegate,
+                int columnSplit,
+                int selectedTimestampIndex
+        ) {
+            this.delegate = delegate;
+            this.columnSplit = columnSplit;
+            this.selectedTimestampIndex = selectedTimestampIndex;
+            this.extraNullColumnRecord = new ExtraNullColumnRecord(columnSplit);
+        }
+
+        @Override
+        public void close() {
+            delegate.close();
+        }
+
+        @Override
+        public Record getRecord() {
+            return extraNullColumnRecord;
+        }
+
+        @Override
+        public StaticSymbolTable getSymbolTable(int columnIndex) {
+            return columnIndex < columnSplit ? delegate.getSymbolTable(columnIndex) : EmptySymbolMapReader.INSTANCE;
+        }
+
+        @Override
+        public TimeFrame getTimeFrame() {
+            return delegate.getTimeFrame();
+        }
+
+        @Override
+        public int getTimestampIndex() {
+            return selectedTimestampIndex;
+        }
+
+        @Override
+        public void jumpTo(int frameIndex) {
+            delegate.jumpTo(frameIndex);
+        }
+
+        @Override
+        public SymbolTable newSymbolTable(int columnIndex) {
+            return columnIndex < columnSplit ? delegate.newSymbolTable(columnIndex) : EmptySymbolMapReader.INSTANCE;
+        }
+
+        @Override
+        public boolean next() {
+            return delegate.next();
+        }
+
+        @Override
+        public ConcurrentTimeFrameCursor of(
+                ConcurrentTimeFrameState sharedState,
+                TablePageFrameCursor frameCursor,
+                int timestampIndex
+        ) {
+            delegate.of(sharedState, frameCursor, selectedTimestampIndex);
+            extraNullColumnRecord.of(delegate.getRecord());
+            return this;
+        }
+
+        @Override
+        public long open() {
+            return delegate.open();
+        }
+
+        @Override
+        public boolean prev() {
+            return delegate.prev();
+        }
+
+        @Override
+        public void recordAt(Record record, long rowId) {
+            delegate.recordAt(((ExtraNullColumnRecord) record).getBaseRecord(), rowId);
+        }
+
+        @Override
+        public void recordAt(Record record, int frameIndex, long rowIndex) {
+            delegate.recordAt(((ExtraNullColumnRecord) record).getBaseRecord(), frameIndex, rowIndex);
+        }
+
+        @Override
+        public void recordAtRowIndex(Record record, long rowIndex) {
+            delegate.recordAtRowIndex(((ExtraNullColumnRecord) record).getBaseRecord(), rowIndex);
+        }
+
+        @Override
+        public void seekEstimate(long timestamp) {
+            delegate.seekEstimate(timestamp);
+        }
+
+        @Override
+        public void toTop() {
+            delegate.toTop();
+        }
+    }
+
     private static class ExtraNullColumnPageFrame implements PageFrame {
         private final int columnCount;
         private final int columnSplit;
@@ -218,11 +326,6 @@ public final class ExtraNullColumnCursorFactory extends AbstractRecordCursorFact
         }
 
         @Override
-        public BitmapIndexReader getBitmapIndexReader(int columnIndex, int direction) {
-            return columnIndex < columnSplit ? baseFrame.getBitmapIndexReader(columnIndex, direction) : null;
-        }
-
-        @Override
         public int getColumnCount() {
             return columnCount;
         }
@@ -230,6 +333,11 @@ public final class ExtraNullColumnCursorFactory extends AbstractRecordCursorFact
         @Override
         public byte getFormat() {
             return baseFrame.getFormat();
+        }
+
+        @Override
+        public IndexReader getIndexReader(int columnIndex, int direction) {
+            return columnIndex < columnSplit ? baseFrame.getIndexReader(columnIndex, direction) : null;
         }
 
         @Override
@@ -243,8 +351,8 @@ public final class ExtraNullColumnCursorFactory extends AbstractRecordCursorFact
         }
 
         @Override
-        public PartitionDecoder getParquetPartitionDecoder() {
-            return baseFrame.getParquetPartitionDecoder();
+        public ParquetDecoder getParquetDecoder() {
+            return baseFrame.getParquetDecoder();
         }
 
         @Override
@@ -283,10 +391,10 @@ public final class ExtraNullColumnCursorFactory extends AbstractRecordCursorFact
         }
     }
 
-    private static class ExtraNullColumnPageFrameCursor implements PageFrameCursor {
+    private static class ExtraNullColumnPageFrameCursor implements TablePageFrameCursor {
         private final int columnSplit;
         private final ExtraNullColumnPageFrame pageFrame;
-        private PageFrameCursor baseCursor;
+        private TablePageFrameCursor baseCursor;
 
         private ExtraNullColumnPageFrameCursor(int columnSplit, int columnCount) {
             this.pageFrame = new ExtraNullColumnPageFrame(columnSplit, columnCount);
@@ -304,8 +412,8 @@ public final class ExtraNullColumnCursorFactory extends AbstractRecordCursorFact
         }
 
         @Override
-        public IntList getColumnIndexes() {
-            return baseCursor.getColumnIndexes();
+        public ColumnMapping getColumnMapping() {
+            return baseCursor.getColumnMapping();
         }
 
         @Override
@@ -316,6 +424,16 @@ public final class ExtraNullColumnCursorFactory extends AbstractRecordCursorFact
         @Override
         public StaticSymbolTable getSymbolTable(int columnIndex) {
             return columnIndex < columnSplit ? baseCursor.getSymbolTable(columnIndex) : EmptySymbolMapReader.INSTANCE;
+        }
+
+        @Override
+        public TableReader getTableReader() {
+            return baseCursor.getTableReader();
+        }
+
+        @Override
+        public boolean hasIntervalFilter() {
+            return baseCursor.hasIntervalFilter();
         }
 
         @Override
@@ -334,9 +452,27 @@ public final class ExtraNullColumnCursorFactory extends AbstractRecordCursorFact
             return baseFrame != null ? pageFrame.of(baseFrame) : null;
         }
 
-        public ExtraNullColumnPageFrameCursor of(PageFrameCursor baseCursor) {
+        public ExtraNullColumnPageFrameCursor of(TablePageFrameCursor baseCursor) {
             this.baseCursor = baseCursor;
             return this;
+        }
+
+        // This wrapper is initialized via of(TablePageFrameCursor), not via of(PartitionFrameCursor, ...).
+        // The base factory's getPageFrameCursor() handles partition-level initialization internally,
+        // then we wrap the already-initialized result.
+        @Override
+        public TablePageFrameCursor of(SqlExecutionContext executionContext, PartitionFrameCursor partitionFrameCursor) {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public void releaseOpenPartitions() {
+            baseCursor.releaseOpenPartitions();
+        }
+
+        @Override
+        public void setStreamingMode(boolean enabled) {
+            baseCursor.setStreamingMode(enabled);
         }
 
         @Override
@@ -350,6 +486,11 @@ public final class ExtraNullColumnCursorFactory extends AbstractRecordCursorFact
         }
 
         @Override
+        public void toPartition(int partitionIndex) {
+            baseCursor.toPartition(partitionIndex);
+        }
+
+        @Override
         public void toTop() {
             baseCursor.toTop();
         }
@@ -359,9 +500,11 @@ public final class ExtraNullColumnCursorFactory extends AbstractRecordCursorFact
         private final int columnSplit;
         private final ExtraNullColumnRecord recordA;
         private final ExtraNullColumnRecord recordB;
+        private final int selectedTimestampIndex;
         private TimeFrameCursor baseCursor;
 
-        public ExtraNullColumnTimeFrameCursor(int columnSplit, boolean supportsRandomAccess) {
+        public ExtraNullColumnTimeFrameCursor(int columnSplit, boolean supportsRandomAccess, int selectedTimestampIndex) {
+            this.selectedTimestampIndex = selectedTimestampIndex;
             this.recordA = new ExtraNullColumnRecord(columnSplit);
             if (supportsRandomAccess) {
                 this.recordB = new ExtraNullColumnRecord(columnSplit);
@@ -377,7 +520,7 @@ public final class ExtraNullColumnCursorFactory extends AbstractRecordCursorFact
         }
 
         @Override
-        public BitmapIndexReader getIndexReaderForCurrentFrame(int columnIndex, int direction) {
+        public IndexReader getIndexReaderForCurrentFrame(int columnIndex, int direction) {
             return columnIndex < columnSplit ? baseCursor.getIndexReaderForCurrentFrame(columnIndex, direction) : null;
         }
 
@@ -406,7 +549,7 @@ public final class ExtraNullColumnCursorFactory extends AbstractRecordCursorFact
 
         @Override
         public int getTimestampIndex() {
-            return 0;
+            return selectedTimestampIndex;
         }
 
         @Override
@@ -434,7 +577,7 @@ public final class ExtraNullColumnCursorFactory extends AbstractRecordCursorFact
         }
 
         @Override
-        public long open() throws DataUnavailableException {
+        public long open() {
             return baseCursor.open();
         }
 
@@ -450,9 +593,20 @@ public final class ExtraNullColumnCursorFactory extends AbstractRecordCursorFact
         }
 
         @Override
+        public void recordAt(Record record, int frameIndex, long rowIndex) {
+            record = ((ExtraNullColumnRecord) record).getBaseRecord();
+            baseCursor.recordAt(record, frameIndex, rowIndex);
+        }
+
+        @Override
         public void recordAtRowIndex(Record record, long rowIndex) {
             record = ((ExtraNullColumnRecord) record).getBaseRecord();
             baseCursor.recordAtRowIndex(record, rowIndex);
+        }
+
+        @Override
+        public void seekEstimate(long timestamp) {
+            baseCursor.seekEstimate(timestamp);
         }
 
         @Override

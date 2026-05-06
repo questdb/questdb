@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -28,7 +28,6 @@ import io.questdb.TelemetryOrigin;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
-import io.questdb.cairo.DataUnavailableException;
 import io.questdb.cairo.GeoHashes;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableWriterAPI;
@@ -53,14 +52,12 @@ import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.bind.ArrayBindVariable;
-import io.questdb.griffin.engine.ops.AlterOperation;
 import io.questdb.griffin.engine.ops.Operation;
 import io.questdb.griffin.engine.ops.UpdateOperation;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.mp.SCSequence;
 import io.questdb.network.NoSpaceLeftInResponseBufferException;
-import io.questdb.network.QueryPausedException;
 import io.questdb.std.AssociativeCache;
 import io.questdb.std.BinarySequence;
 import io.questdb.std.BitSet;
@@ -206,6 +203,7 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
     private boolean stateClosed;
     private int stateDesc;
     private boolean stateExec = false;
+    private boolean stateSuspended = false;
     // boolean state, bitset?
     private boolean stateParse;
     private boolean stateParseExecuted = false;
@@ -347,6 +345,7 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
         stateDesc = SYNC_DESC_NONE;
         stateExec = false;
         stateParse = false;
+        stateSuspended = false;
         stateParseExecuted = false;
         stateSync = SYNC_PARSE;
         tas = null;
@@ -354,6 +353,11 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
         varcharArrayViewPool.clear();
         utf8StringSink.clear();
         selectIsCacheable = true;
+    }
+
+    public void closeSuspendedCursor() {
+        cursor = Misc.free(cursor);
+        stateSuspended = false;
     }
 
     public void commit(ObjObjHashMap<TableToken, TableWriterAPI> pendingWriters) throws PGMessageProcessingException {
@@ -494,6 +498,10 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
         return namedStatement != null;
     }
 
+    public boolean isSuspended() {
+        return stateSuspended;
+    }
+
     public boolean isStateClosed() {
         return stateClosed;
     }
@@ -581,7 +589,10 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
         // result set. They are only applicable to the result set and SQLs that compile into a factory.
         msgBindSelectFormatCodes.clear();
         msgBindSelectFormatCodeCount = selectFormatCodeCount;
-        if (factory != null && selectFormatCodeCount > 0) {
+        // Note: use hasResultSet() instead of "factory != null" because when a prepared statement
+        // is reused via copyIfExecuted(), the new entry has factory=null (copyOf doesn't copy it),
+        // but sqlType is copied correctly. The factory will be set later during execution.
+        if (hasResultSet() && selectFormatCodeCount > 0) {
             for (int i = 0; i < selectFormatCodeCount; i++) {
                 if (getShortUnsafe(lo) == 1) {
                     msgBindSelectFormatCodes.set(i);
@@ -718,7 +729,7 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
     public void msgParseCopyParameterTypesFromMsg(long lo, short parameterTypeCount) {
         msgParseParameterTypeOIDs.setPos(parameterTypeCount);
         for (int i = 0; i < parameterTypeCount; i++) {
-            msgParseParameterTypeOIDs.setQuick(i, Unsafe.getUnsafe().getInt(lo + i * 4L));
+            msgParseParameterTypeOIDs.setQuick(i, Unsafe.getInt(lo + i * 4L));
         }
     }
 
@@ -734,12 +745,6 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
      * @param pendingWriters      per connection write cache to be used by "insert" SQL. This is also part of the
      *                            optional "execute"
      * @param utf8Sink            the response buffer
-     * @throws QueryPausedException                 exception is thrown by SQL fetch, which could be in the middle of the fetch.
-     *                                              The exception indicates that SQL engine has to wait for the data to be retrieved
-     *                                              from cold storage, and it might take a while. The convention is to enqueue the
-     *                                              connection (fd) with the IODispatcher and deque this connection when data is ready.
-     *                                              When connection is dequeued the sync process should be resumed. Which is done by
-     *                                              calling this method again.
      * @throws NoSpaceLeftInResponseBufferException exception is thrown when sync runs out of space in the
      *                                              response buffer. When this happens the caller has to flush the buffer
      *                                              and call sync again, unless the flush was ineffective (had 0 bytes to flush).
@@ -750,7 +755,7 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
             SqlExecutionContext sqlExecutionContext,
             ObjObjHashMap<TableToken, TableWriterAPI> pendingWriters,
             PGResponseSink utf8Sink
-    ) throws QueryPausedException, NoSpaceLeftInResponseBufferException {
+    ) throws NoSpaceLeftInResponseBufferException {
         if (isError()) {
             outError(utf8Sink, pendingWriters);
         } else {
@@ -847,15 +852,16 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
             switch (stateSync) {
                 case SYNC_DATA_EXHAUSTED:
                     cursor = Misc.free(cursor);
+                    stateSuspended = false;
                     outCommandComplete(utf8Sink, sqlReturnRowCount);
                     break;
                 case SYNC_DATA_SUSPENDED:
                     outPortalSuspended(utf8Sink);
-                    if (!portal) {
-                        // if this is not a named portal
-                        // then we have to close the cursor even if we didn't fully exhaust it
-                        cursor = Misc.free(cursor);
-                    }
+                    // Keep cursor alive for both named and unnamed portals so the
+                    // client can send another Execute to fetch the next batch.
+                    // The cursor is freed when data is exhausted, the portal is
+                    // explicitly closed, or a new Bind/Parse replaces it.
+                    stateSuspended = true;
                     break;
             }
 
@@ -1317,6 +1323,12 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
             return (msgBindSelectFormatCodeCount > 1 ? msgBindSelectFormatCodes.get(columnIndex) : msgBindSelectFormatCodes.get(0)) ? (short) 1 : 0;
         }
         return 1;
+    }
+
+    private boolean hasResultSet() {
+        return sqlType == CompiledQuery.SELECT
+                || sqlType == CompiledQuery.EXPLAIN
+                || sqlType == CompiledQuery.PSEUDO_SELECT;
     }
 
     private boolean isTextFormat() {
@@ -2360,8 +2372,7 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
         }
     }
 
-    private void outCursor(SqlExecutionContext sqlExecutionContext, PGResponseSink utf8Sink)
-            throws QueryPausedException {
+    private void outCursor(SqlExecutionContext sqlExecutionContext, PGResponseSink utf8Sink) {
         if (pgResultSetColumnTypes.size() == 0) {
             copyPgResultSetColumnTypesAndNames();
         }
@@ -2379,11 +2390,7 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
         }
     }
 
-    private void outCursor(
-            SqlExecutionContext sqlExecutionContext,
-            PGResponseSink utf8Sink,
-            int columnCount
-    ) throws QueryPausedException {
+    private void outCursor(SqlExecutionContext sqlExecutionContext, PGResponseSink utf8Sink, int columnCount) {
         if (!sqlExecutionContext.getCircuitBreaker().isTimerSet()) {
             sqlExecutionContext.getCircuitBreaker().resetTimer();
         }
@@ -2402,9 +2409,6 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
                 outRecord(sqlExecutionContext, utf8Sink, record, columnCount);
                 recordStartAddress = utf8Sink.getSendBufferPtr();
             }
-        } catch (DataUnavailableException e) {
-            utf8Sink.resetToBookmark();
-            throw QueryPausedException.instance(e.getEvent(), sqlExecutionContext.getCircuitBreaker());
         } catch (NoSpaceLeftInResponseBufferException e) {
             throw e;
         } catch (Throwable th) {
@@ -2865,11 +2869,14 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
     }
 
     private void setBindVariableAsArray(int i, long lo, int valueSize, long msgLimit, BindVariableService bindVariableService) throws SqlException, PGMessageProcessingException {
+        if (valueSize < 3 * Integer.BYTES) {
+            throw kaput().put("malformed array header [valueSize=").put(valueSize).put(']');
+        }
         int dimensions = getInt(lo, msgLimit, "malformed array dimensions");
         lo += Integer.BYTES;
         valueSize -= Integer.BYTES;
-        if (dimensions == 0) {
-            throw kaput().put("array dimensions cannot be zero");
+        if (dimensions <= 0) {
+            throw kaput().put("array dimensions must be positive [dimensions=").put(dimensions).put(']');
         }
         if (dimensions > ColumnType.ARRAY_NDIMS_LIMIT) {
             throw kaput().put("array dimensions cannot be greater than maximum array dimensions [dimensions=").put(dimensions).put(", max=").put(ColumnType.ARRAY_NDIMS_LIMIT).put(']');
@@ -2885,10 +2892,21 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
         lo += Integer.BYTES;
         valueSize -= Integer.BYTES;
 
+        if (valueSize < dimensions * 2 * Integer.BYTES) {
+            throw kaput().put("malformed array dimension headers [dimensions=").put(dimensions).put(", valueSize=").put(valueSize).put(']');
+        }
+
         PGNonNullBinaryArrayView arrayView = arrayViewPool.next();
         for (int j = 0; j < dimensions; j++) {
             int dimensionSize = getInt(lo, msgLimit, "malformed array dimension size");
-            arrayView.addDimLen(dimensionSize);
+            if (dimensionSize < 0) {
+                throw kaput().put("array dimension size cannot be negative [dimensionIndex=").put(j).put(", size=").put(dimensionSize).put(']');
+            }
+            try {
+                arrayView.addDimLen(dimensionSize);
+            } catch (ArithmeticException e) {
+                throw kaput().put("array size overflow");
+            }
             lo += Integer.BYTES;
             valueSize -= Integer.BYTES;
 
@@ -2906,7 +2924,7 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
             BindVariableService bindVariableService
     ) throws SqlException, PGMessageProcessingException {
         ensureValueLength(variableIndex, Byte.BYTES, valueSize);
-        byte val = Unsafe.getUnsafe().getByte(valueAddr);
+        byte val = Unsafe.getByte(valueAddr);
         bindVariableService.setBoolean(variableIndex, val == 1);
     }
 
@@ -3068,6 +3086,9 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
     }
 
     private void setBindVariableAsVarcharArray(int i, long lo, int valueSize, long msgLimit, BindVariableService bindVariableService) throws SqlException, PGMessageProcessingException {
+        if (valueSize < 5 * Integer.BYTES) {
+            throw kaput().put("malformed varchar array header [valueSize=").put(valueSize).put(']');
+        }
         int dimensions = getInt(lo, msgLimit, "malformed array dimensions");
         lo += Integer.BYTES;
         valueSize -= Integer.BYTES;
@@ -3091,7 +3112,14 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
 
         // dimensions == 1
         int dimensionSize = getInt(lo, msgLimit, "malformed array dimension size");
-        arrayView.addDimLen(dimensionSize);
+        if (dimensionSize < 0) {
+            throw kaput().put("array dimension size cannot be negative [size=").put(dimensionSize).put(']');
+        }
+        try {
+            arrayView.addDimLen(dimensionSize);
+        } catch (ArithmeticException e) {
+            throw kaput().put("array size overflow");
+        }
         lo += Integer.BYTES;
         valueSize -= Integer.BYTES;
 
@@ -3284,7 +3312,7 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
             case CompiledQuery.ALTER:
                 // future-proofing ALTER execution
                 ensureCompiledQuery();
-                compiledQuery.ofAlter(AlterOperation.deepCloneOf(cq.getAlterOperation()));
+                compiledQuery.ofAlter(cq.getAlterOperation().deepClone());
                 compiledQuery.withSqlText(cq.getSqlText());
                 sqlTag = TAG_OK;
                 break;
@@ -3555,27 +3583,28 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
         return msgParseReconcileParameterTypes((short) msgParseParameterTypeOIDs.size(), typeContainer);
     }
 
-    boolean populateBindingServiceForExec(SqlExecutionContext sqlExecutionContext,
-                                          CharacterStore bindVariableCharacterStore,
-                                          @Transient DirectUtf8String directUtf8String,
-                                          @Transient ObjectPool<DirectBinarySequence> binarySequenceParamsPool) throws PGMessageProcessingException, SqlException {
+    void populateBindingServiceForExec(
+            SqlExecutionContext sqlExecutionContext,
+            CharacterStore bindVariableCharacterStore,
+            @Transient DirectUtf8String directUtf8String,
+            @Transient ObjectPool<DirectBinarySequence> binarySequenceParamsPool
+    ) throws PGMessageProcessingException, SqlException {
         if (isError()) {
-            return false;
+            return;
         }
-        return switch (sqlType) {
+        switch (sqlType) {
             // these query types use binding variables at the EXEC time
             case CompiledQuery.EXPLAIN, CompiledQuery.SELECT, CompiledQuery.PSEUDO_SELECT, CompiledQuery.INSERT,
-                 CompiledQuery.INSERT_AS_SELECT, CompiledQuery.UPDATE, CompiledQuery.ALTER -> {
-                copyParameterValuesToBindVariableService(
-                        sqlExecutionContext,
-                        bindVariableCharacterStore,
-                        directUtf8String,
-                        binarySequenceParamsPool
-                );
-                yield true;
+                 CompiledQuery.INSERT_AS_SELECT, CompiledQuery.UPDATE, CompiledQuery.ALTER ->
+                    copyParameterValuesToBindVariableService(
+                            sqlExecutionContext,
+                            bindVariableCharacterStore,
+                            directUtf8String,
+                            binarySequenceParamsPool
+                    );
+            default -> {
             }
-            default -> false;
-        };
+        }
     }
 
     boolean populateBindingServiceForSync(SqlExecutionContext sqlExecutionContext,
@@ -3590,7 +3619,7 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
         //    See: https://github.com/questdb/questdb/issues/6123 and CheckBindVarsInBatchedQueriesAreConsistent C# test in the Compat module
 
         // INSERTs, UPDATE, ALTER, etc. use binding variables at the EXEC time only -> we don't have to populate it before SYNC
-        if (cursor == null || isError()) {
+        if (!hasResultSet() || isError()) {
             return false;
         }
         copyParameterValuesToBindVariableService(

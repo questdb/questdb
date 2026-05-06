@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -94,6 +94,42 @@ public class AsOfJoinNoKeyTest extends AbstractCairoTest {
             execute("INSERT INTO t1 values ('2000-02-09T15:00:00.000000Z', 12, 't2_5');");
             execute("INSERT INTO t1 values ('2000-02-09T20:00:00.000000Z', 13, 't2_6');");
             execute("INSERT INTO t1 values ('2000-02-10T16:00:00.000000Z', 14, 't2_7');");
+
+            assertResultSetsMatch("t1", "t2");
+        });
+    }
+
+    @Test
+    public void testMultipleSlavePartitions() throws Exception {
+        assertMemoryLeak(() -> {
+            // Master starts from day 3, forcing seekEstimate to skip slave's day 1-2 partitions.
+            executeWithRewriteTimestamp(
+                    "CREATE TABLE t1 (ts #TIMESTAMP, i INT, s SYMBOL) timestamp(ts) partition by day bypass wal",
+                    leftTableTimestampType.getTypeName()
+            );
+            execute(
+                    """
+                            INSERT INTO t1 VALUES
+                                ('2024-01-03T12:00:00.000000Z', 0, 'a'),
+                                ('2024-01-03T18:00:00.000000Z', 1, 'b')
+                            """
+            );
+
+            executeWithRewriteTimestamp(
+                    "CREATE TABLE t2 (ts #TIMESTAMP, i INT, s SYMBOL) timestamp(ts) partition by day bypass wal",
+                    rightTableTimestampType.getTypeName()
+            );
+            execute(
+                    """
+                            INSERT INTO t2 VALUES
+                                ('2024-01-01T06:00:00.000000Z', 10, 'x'),
+                                ('2024-01-01T18:00:00.000000Z', 11, 'y'),
+                                ('2024-01-02T06:00:00.000000Z', 12, 'z'),
+                                ('2024-01-02T18:00:00.000000Z', 13, 'w'),
+                                ('2024-01-03T06:00:00.000000Z', 14, 'v'),
+                                ('2024-01-03T18:00:00.000000Z', 15, 'u')
+                            """
+            );
 
             assertResultSetsMatch("t1", "t2");
         });

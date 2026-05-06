@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -556,20 +556,20 @@ public class Bootstrap {
         final String pgReadOnlyHint = pgEnabled && pgReadOnly ? " [read-only]" : "";
         final CairoConfiguration cairoConfig = config.getCairoConfiguration();
 
-        log.advisoryW().$("Config:").$();
-        log.advisoryW().$(" - http.enabled : ").$(httpEnabled).$(httpReadOnlyHint).$();
+        log.advisoryW().$("OS: ").$(System.getProperty("os.name")).$(' ').$(System.getProperty("os.version"))
+                .$(", JDK: ").$(System.getProperty("java.vendor")).$(' ').$(System.getProperty("java.version")).$();
+
         boolean enabled = config.getLineTcpReceiverConfiguration().isEnabled();
-        log.advisoryW().$(" - tcp.enabled  : ").$(enabled).$();
-        log.advisoryW().$(" - pg.enabled   : ").$(pgEnabled).$(pgReadOnlyHint).$();
+        log.advisoryW().$("Config: http.enabled:").$(httpEnabled).$(httpReadOnlyHint)
+                .$(", tcp.enabled:").$(enabled)
+                .$(", pg.enabled:").$(pgEnabled).$(pgReadOnlyHint).$();
         if (cairoConfig != null) {
-            log.advisoryW().$(" - attach partition suffix: ").$(cairoConfig.getAttachPartitionSuffix()).$();
             log.advisoryW().$(" - open database [").$uuid(cairoConfig.getDatabaseIdLo(), cairoConfig.getDatabaseIdHi()).I$();
             if (cairoConfig.isReadOnlyInstance()) {
                 log.advisoryW().$(" - THIS IS READ ONLY INSTANCE").$();
             }
             try (Path path = new Path()) {
                 verifyFileSystem(path, cairoConfig.getDbRoot(), "db", true, true);
-                verifyFileSystem(path, cairoConfig.getBackupRoot(), "backup", false, false);
                 verifyFileSystem(path, cairoConfig.getCheckpointRoot(), TableUtils.CHECKPOINT_DIRECTORY, true, false);
                 verifyFileSystem(path, cairoConfig.getLegacyCheckpointRoot(), TableUtils.LEGACY_CHECKPOINT_DIRECTORY, false, false);
                 verifyFileSystem(path, cairoConfig.getSqlCopyInputRoot(), "sql copy input", false, false);

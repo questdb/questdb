@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -46,7 +46,7 @@ public class MemoryConfigurationImpl implements MemoryConfiguration {
         long limitByPercent = (totalSystemMemory != -1) ? totalSystemMemory / 100 * configuredLimitPercent : 0;
         return (configuredLimitBytes == 0) ? limitByPercent
                 : (limitByPercent == 0) ? configuredLimitBytes
-                : Math.min(configuredLimitBytes, limitByPercent);
+                  : Math.min(configuredLimitBytes, limitByPercent);
     }
 
     @Override

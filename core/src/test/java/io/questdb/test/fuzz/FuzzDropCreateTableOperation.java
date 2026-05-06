@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -137,7 +137,7 @@ public class FuzzDropCreateTableOperation implements FuzzTransactionOperation {
                         new TableColumnMetadata(
                                 Chars.toString(name),
                                 type,
-                                metadata.isColumnIndexed(i),
+                                metadata.getColumnIndexType(i),
                                 metadata.getIndexValueBlockCapacity(i),
                                 true,
                                 null,

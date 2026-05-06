@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -43,6 +43,7 @@ import io.questdb.std.str.Utf8s;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.fuzz.FuzzTransaction;
 import io.questdb.test.mp.TestWorkerPool;
+import io.questdb.test.tools.TestUtils;
 import org.junit.After;
 import org.junit.Before;
 import org.junit.BeforeClass;
@@ -54,6 +55,7 @@ public class AbstractFuzzTest extends AbstractCairoTest {
     public final static int MAX_WAL_APPLY_O3_SPLIT_PARTITION_MIN = 200;
     protected final FuzzRunner fuzzer = new FuzzRunner();
     protected final WorkerPool sharedWorkerPool = new TestWorkerPool(4, node1.getMetrics());
+    private final Rnd setUpRnd = TestUtils.generateRandom(LOG);
 
     public static int getRndO3PartitionSplit(Rnd rnd) {
         return MAX_WAL_APPLY_O3_SPLIT_PARTITION_MIN + rnd.nextInt(MAX_WAL_APPLY_O3_SPLIT_PARTITION_CEIL - MAX_WAL_APPLY_O3_SPLIT_PARTITION_MIN);
@@ -93,6 +95,7 @@ public class AbstractFuzzTest extends AbstractCairoTest {
 
     @Before
     public void setUp() {
+        setProperty(PropertyKey.CAIRO_DEFAULT_SYMBOL_INDEX_TYPE, TestUtils.randomSymbolIndexTypeName(setUpRnd));
         super.setUp();
         fuzzer.withDb(engine, sqlExecutionContext);
         fuzzer.clearSeeds();
@@ -122,6 +125,8 @@ public class AbstractFuzzTest extends AbstractCairoTest {
                 rnd.nextDouble(),
                 0.01,
                 rnd.nextDouble(),
+                0.0,
+                0.0,
                 0.1 * rnd.nextDouble(),
                 rnd.nextDouble(),
                 rnd.nextDouble(),
@@ -276,6 +281,8 @@ public class AbstractFuzzTest extends AbstractCairoTest {
             double dataAddProb,
             double equalTsRowsProb,
             double partitionDropProb,
+            double partitionToParquetProb,
+            double partitionToNativeProb,
             double truncateProb,
             double tableDropProb,
             double setTtlProb,
@@ -286,8 +293,38 @@ public class AbstractFuzzTest extends AbstractCairoTest {
         fuzzer.setFuzzProbabilities(
                 cancelRowsProb, notSetProb, nullSetProb, rollbackProb,
                 colAddProb, colRemoveProb, colRenameProb, colTypeChangeProb, dataAddProb,
-                equalTsRowsProb, partitionDropProb, truncateProb, tableDropProb, setTtlProb,
+                equalTsRowsProb, partitionDropProb, partitionToParquetProb, partitionToNativeProb, truncateProb, tableDropProb, setTtlProb,
                 replaceProb, symbolAccessProb, queryProb
+        );
+    }
+
+    protected void setFuzzProbabilities(
+            double cancelRowsProb,
+            double notSetProb,
+            double nullSetProb,
+            double rollbackProb,
+            double colAddProb,
+            double colRemoveProb,
+            double colRenameProb,
+            double colTypeChangeProb,
+            double dataAddProb,
+            double equalTsRowsProb,
+            double partitionDropProb,
+            double partitionToParquetProb,
+            double partitionToNativeProb,
+            double truncateProb,
+            double tableDropProb,
+            double setTtlProb,
+            double replaceProb,
+            double symbolAccessProb,
+            double queryProb,
+            double setParquetEncodingProb
+    ) {
+        fuzzer.setFuzzProbabilities(
+                cancelRowsProb, notSetProb, nullSetProb, rollbackProb,
+                colAddProb, colRemoveProb, colRenameProb, colTypeChangeProb, dataAddProb,
+                equalTsRowsProb, partitionDropProb, partitionToParquetProb, partitionToNativeProb, truncateProb, tableDropProb, setTtlProb,
+                replaceProb, symbolAccessProb, queryProb, setParquetEncodingProb
         );
     }
 

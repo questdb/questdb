@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -24,7 +24,7 @@
 
 package org.questdb;
 
-import io.questdb.cutlass.line.LineUdpSender;
+import io.questdb.client.cutlass.line.LineUdpSender;
 import io.questdb.network.Net;
 import io.questdb.std.Os;
 import io.questdb.std.Rnd;

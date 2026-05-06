@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -90,31 +90,31 @@ public class AlterTableAddColumnTest extends AbstractCairoTest {
                     drainWalQueue();
 
                     final String originalColumns = """
-                            column\ttype\tindexed\tindexBlockCapacity\tsymbolCached\tsymbolCapacity\tsymbolTableSize\tdesignated\tupsertKey
-                            i\tINT\tfalse\t0\tfalse\t0\t0\tfalse\tfalse
-                            sym\tSYMBOL\tfalse\t0\ttrue\t128\t3\tfalse\tfalse
-                            amt\tDOUBLE\tfalse\t0\tfalse\t0\t0\tfalse\tfalse
-                            timestamp\tTIMESTAMP\tfalse\t0\tfalse\t0\t0\ttrue\tfalse
-                            b\tBOOLEAN\tfalse\t0\tfalse\t0\t0\tfalse\tfalse
-                            c\tSTRING\tfalse\t0\tfalse\t0\t0\tfalse\tfalse
-                            d\tDOUBLE\tfalse\t0\tfalse\t0\t0\tfalse\tfalse
-                            e\tFLOAT\tfalse\t0\tfalse\t0\t0\tfalse\tfalse
-                            f\tSHORT\tfalse\t0\tfalse\t0\t0\tfalse\tfalse
-                            g\tDATE\tfalse\t0\tfalse\t0\t0\tfalse\tfalse
-                            ik\tSYMBOL\tfalse\t0\ttrue\t128\t4\tfalse\tfalse
-                            j\tLONG\tfalse\t0\tfalse\t0\t0\tfalse\tfalse
-                            k\tTIMESTAMP\tfalse\t0\tfalse\t0\t0\tfalse\tfalse
-                            l\tBYTE\tfalse\t0\tfalse\t0\t0\tfalse\tfalse
-                            m\tBINARY\tfalse\t0\tfalse\t0\t0\tfalse\tfalse
-                            n\tSTRING\tfalse\t0\tfalse\t0\t0\tfalse\tfalse
+                            column\ttype\tindexed\tindexBlockCapacity\tsymbolCached\tsymbolCapacity\tsymbolTableSize\tdesignated\tupsertKey\tindexType\tindexInclude
+                            i\tINT\tfalse\t0\tfalse\t0\t0\tfalse\tfalse\t\t
+                            sym\tSYMBOL\tfalse\t0\ttrue\t128\t3\tfalse\tfalse\t\t
+                            amt\tDOUBLE\tfalse\t0\tfalse\t0\t0\tfalse\tfalse\t\t
+                            timestamp\tTIMESTAMP\tfalse\t0\tfalse\t0\t0\ttrue\tfalse\t\t
+                            b\tBOOLEAN\tfalse\t0\tfalse\t0\t0\tfalse\tfalse\t\t
+                            c\tSTRING\tfalse\t0\tfalse\t0\t0\tfalse\tfalse\t\t
+                            d\tDOUBLE\tfalse\t0\tfalse\t0\t0\tfalse\tfalse\t\t
+                            e\tFLOAT\tfalse\t0\tfalse\t0\t0\tfalse\tfalse\t\t
+                            f\tSHORT\tfalse\t0\tfalse\t0\t0\tfalse\tfalse\t\t
+                            g\tDATE\tfalse\t0\tfalse\t0\t0\tfalse\tfalse\t\t
+                            ik\tSYMBOL\tfalse\t0\ttrue\t128\t4\tfalse\tfalse\t\t
+                            j\tLONG\tfalse\t0\tfalse\t0\t0\tfalse\tfalse\t\t
+                            k\tTIMESTAMP\tfalse\t0\tfalse\t0\t0\tfalse\tfalse\t\t
+                            l\tBYTE\tfalse\t0\tfalse\t0\t0\tfalse\tfalse\t\t
+                            m\tBINARY\tfalse\t0\tfalse\t0\t0\tfalse\tfalse\t\t
+                            n\tSTRING\tfalse\t0\tfalse\t0\t0\tfalse\tfalse\t\t
                             """;
 
                     assertQueryNoLeakCheck(
                             isWal
                                     ? originalColumns
                                     : originalColumns +
-                                    "mycol\tINT\tfalse\t256\tfalse\t0\t0\tfalse\tfalse\n" +
-                                    "mycol2\tINT\tfalse\t256\tfalse\t0\t0\tfalse\tfalse\n",
+                                      "mycol\tINT\tfalse\t256\tfalse\t0\t0\tfalse\tfalse\t\t\n" +
+                                      "mycol2\tINT\tfalse\t256\tfalse\t0\t0\tfalse\tfalse\t\t\n",
                             "show columns from x",
                             null,
                             false
@@ -520,8 +520,146 @@ public class AlterTableAddColumnTest extends AbstractCairoTest {
         execute("alter table x add column a int");
         execute("alter table x add column if not exists a int");
 
-        assertException("alter table x add column if not exists a hohoho", 41, "unrecognized column type: hohoho");
+        assertException("alter table x add column if not exists a hohoho", 41, "unsupported column type: hohoho");
         assertException("alter table x add column if not exists a long", 41, "column already exists with a different column type [current type=INT, requested type=LONG]");
+    }
+
+    @Test
+    public void testAddDuplicateColumnIfNotExistsArray() throws Exception {
+        createX();
+        execute("alter table x add column arr_col double[]");
+        // same type — should be a no-op
+        execute("alter table x add column if not exists arr_col double[]");
+
+        // different dimensionality — should fail
+        assertException(
+                "alter table x add column if not exists arr_col double[][]",
+                47,
+                "column already exists with a different column type"
+        );
+    }
+
+    @Test
+    public void testAddDuplicateColumnIfNotExistsArrayUnsupportedElement() throws Exception {
+        createX();
+        execute("alter table x add column int_col int");
+        // INT[] is not a supported array type — should fail with the same error as normal ADD COLUMN
+        assertException(
+                "alter table x add column if not exists int_col int[]",
+                47,
+                "unsupported array element type [type=INT]"
+        );
+    }
+
+    @Test
+    public void testAddDuplicateColumnIfNotExistsDecimal() throws Exception {
+        createX();
+        execute("alter table x add column dec_col decimal(48, 18)");
+        // same type — should be a no-op
+        execute("alter table x add column if not exists dec_col decimal(48, 18)");
+
+        // different precision/scale — should fail
+        assertException(
+                "alter table x add column if not exists dec_col decimal(18, 3)",
+                47,
+                "column already exists with a different column type"
+        );
+    }
+
+    @Test
+    public void testAddDuplicateColumnIfNotExistsDecimalDefault() throws Exception {
+        createX();
+        // bare DECIMAL defaults to (18,3)
+        execute("alter table x add column dec_col decimal");
+        execute("alter table x add column if not exists dec_col decimal");
+    }
+
+    @Test
+    public void testAddDuplicateColumnIfNotExistsGeohash() throws Exception {
+        createX();
+        execute("alter table x add column geo_col geohash(5c)");
+        // same type — should be a no-op
+        execute("alter table x add column if not exists geo_col geohash(5c)");
+
+        // different precision — should fail
+        assertException(
+                "alter table x add column if not exists geo_col geohash(3c)",
+                47,
+                "column already exists with a different column type"
+        );
+    }
+
+    @Test
+    public void testAddDuplicateColumnIfNotExistsUnmatchedBracket() throws Exception {
+        createX();
+        execute("alter table x add column d_col double");
+        assertException(
+                "alter table x add column if not exists d_col double]",
+                45,
+                "has an unmatched `]` - were you trying to define an array?"
+        );
+    }
+
+    @Test
+    public void testAddDuplicateColumnIfNotExistsMultiColumn() throws Exception {
+        assertMemoryLeak(() -> {
+            createX();
+            execute("alter table x add column a_col int");
+            // 'a_col' already exists — should be skipped; 'b_col' should be added
+            execute("alter table x add column if not exists a_col int, b_col long");
+            drainWalQueue();
+            assertSql(
+                    """
+                            column\ttype\tindexed\tindexBlockCapacity\tsymbolCached\tsymbolCapacity\tsymbolTableSize\tdesignated\tupsertKey\tindexType\tindexInclude
+                            b_col\tLONG\tfalse\t256\tfalse\t0\t0\tfalse\tfalse\t\t
+                            """,
+                    "table_columns('x') where column = 'b_col'"
+            );
+        });
+    }
+
+    @Test
+    public void testAddDuplicateColumnIfNotExistsSymbol() throws Exception {
+        assertMemoryLeak(() -> {
+            createX();
+            execute("alter table x add column sym_col symbol capacity 512 cache index");
+            // same column with trailing SYMBOL options — should succeed silently
+            execute("alter table x add column if not exists sym_col symbol capacity 512 cache index");
+        });
+    }
+
+    @Test
+    public void testAddDuplicateColumnIfNotExistsTrailingGarbage() throws Exception {
+        assertMemoryLeak(() -> {
+            createX();
+            execute("alter table x add column a_col int");
+            // trailing garbage after the type should be rejected, not silently consumed
+            assertExceptionNoLeakCheck(
+                    "alter table x add column if not exists a_col int FOOBAR",
+                    49,
+                    "',' expected"
+            );
+        });
+    }
+
+    @Test
+    public void testAddDuplicateColumnQuoted() throws Exception {
+        assertFailure("alter table x add column \"d\" int", 25, "column 'd' already exists");
+    }
+
+    @Test
+    public void testAddDuplicateColumnQuotedIfNotExists() throws Exception {
+        assertMemoryLeak(() -> {
+            createX();
+            // same type — should be a no-op
+            execute("alter table x add column if not exists \"d\" double");
+            // different type — should fail
+            assertExceptionNoLeakCheck(
+                    "alter table x add column if not exists \"d\" int",
+                    43,
+                    "column already exists with a different column type [current type=DOUBLE, requested type=INT]"
+            );
+        });
     }
 
     @Test
@@ -866,31 +1004,31 @@ public class AlterTableAddColumnTest extends AbstractCairoTest {
                     drainWalQueue();
 
                     final String originalColumns = """
-                            column\ttype\tindexed\tindexBlockCapacity\tsymbolCached\tsymbolCapacity\tsymbolTableSize\tdesignated\tupsertKey
-                            i\tINT\tfalse\t0\tfalse\t0\t0\tfalse\tfalse
-                            sym\tSYMBOL\tfalse\t0\ttrue\t128\t3\tfalse\tfalse
-                            amt\tDOUBLE\tfalse\t0\tfalse\t0\t0\tfalse\tfalse
-                            timestamp\tTIMESTAMP\tfalse\t0\tfalse\t0\t0\ttrue\tfalse
-                            b\tBOOLEAN\tfalse\t0\tfalse\t0\t0\tfalse\tfalse
-                            c\tSTRING\tfalse\t0\tfalse\t0\t0\tfalse\tfalse
-                            d\tDOUBLE\tfalse\t0\tfalse\t0\t0\tfalse\tfalse
-                            e\tFLOAT\tfalse\t0\tfalse\t0\t0\tfalse\tfalse
-                            f\tSHORT\tfalse\t0\tfalse\t0\t0\tfalse\tfalse
-                            g\tDATE\tfalse\t0\tfalse\t0\t0\tfalse\tfalse
-                            ik\tSYMBOL\tfalse\t0\ttrue\t128\t4\tfalse\tfalse
-                            j\tLONG\tfalse\t0\tfalse\t0\t0\tfalse\tfalse
-                            k\tTIMESTAMP\tfalse\t0\tfalse\t0\t0\tfalse\tfalse
-                            l\tBYTE\tfalse\t0\tfalse\t0\t0\tfalse\tfalse
-                            m\tBINARY\tfalse\t0\tfalse\t0\t0\tfalse\tfalse
-                            n\tSTRING\tfalse\t0\tfalse\t0\t0\tfalse\tfalse
+                            column\ttype\tindexed\tindexBlockCapacity\tsymbolCached\tsymbolCapacity\tsymbolTableSize\tdesignated\tupsertKey\tindexType\tindexInclude
+                            i\tINT\tfalse\t0\tfalse\t0\t0\tfalse\tfalse\t\t
+                            sym\tSYMBOL\tfalse\t0\ttrue\t128\t3\tfalse\tfalse\t\t
+                            amt\tDOUBLE\tfalse\t0\tfalse\t0\t0\tfalse\tfalse\t\t
+                            timestamp\tTIMESTAMP\tfalse\t0\tfalse\t0\t0\ttrue\tfalse\t\t
+                            b\tBOOLEAN\tfalse\t0\tfalse\t0\t0\tfalse\tfalse\t\t
+                            c\tSTRING\tfalse\t0\tfalse\t0\t0\tfalse\tfalse\t\t
+                            d\tDOUBLE\tfalse\t0\tfalse\t0\t0\tfalse\tfalse\t\t
+                            e\tFLOAT\tfalse\t0\tfalse\t0\t0\tfalse\tfalse\t\t
+                            f\tSHORT\tfalse\t0\tfalse\t0\t0\tfalse\tfalse\t\t
+                            g\tDATE\tfalse\t0\tfalse\t0\t0\tfalse\tfalse\t\t
+                            ik\tSYMBOL\tfalse\t0\ttrue\t128\t4\tfalse\tfalse\t\t
+                            j\tLONG\tfalse\t0\tfalse\t0\t0\tfalse\tfalse\t\t
+                            k\tTIMESTAMP\tfalse\t0\tfalse\t0\t0\tfalse\tfalse\t\t
+                            l\tBYTE\tfalse\t0\tfalse\t0\t0\tfalse\tfalse\t\t
+                            m\tBINARY\tfalse\t0\tfalse\t0\t0\tfalse\tfalse\t\t
+                            n\tSTRING\tfalse\t0\tfalse\t0\t0\tfalse\tfalse\t\t
                             """;
 
                     assertQueryNoLeakCheck(
                             isWal
                                     ? originalColumns
                                     : originalColumns +
-                                    "mycol\tINT\tfalse\t256\tfalse\t0\t0\tfalse\tfalse\n" +
-                                    "second\tSYMBOL\tfalse\t256\ttrue\t128\t1\tfalse\tfalse\n",
+                                      "mycol\tINT\tfalse\t256\tfalse\t0\t0\tfalse\tfalse\t\t\n" +
+                                      "second\tSYMBOL\tfalse\t256\ttrue\t128\t1\tfalse\tfalse\t\t\n",
                             "show columns from x",
                             null,
                             false

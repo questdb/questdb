@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -42,20 +42,5 @@ public class KqueueFacadeImpl implements KqueueFacade {
     @Override
     public int kqueue() {
         return KqueueAccessor.kqueue();
-    }
-
-    @Override
-    public long pipe() {
-        return KqueueAccessor.pipe();
-    }
-
-    @Override
-    public int readPipe(long fd) {
-        return KqueueAccessor.readPipe(fd);
-    }
-
-    @Override
-    public int writePipe(long fd) {
-        return KqueueAccessor.writePipe(fd);
     }
 }

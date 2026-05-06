@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -24,9 +24,12 @@
 
 package io.questdb.griffin.engine.functions.groupby;
 
+import io.questdb.cairo.map.Map;
 import io.questdb.cairo.map.MapValue;
 import io.questdb.cairo.sql.Function;
+import io.questdb.cairo.sql.PageFrameMemoryRecord;
 import io.questdb.cairo.sql.Record;
+import io.questdb.griffin.engine.groupby.FlyweightPackedMapValue;
 import io.questdb.std.Numbers;
 import io.questdb.std.Unsafe;
 import org.jetbrains.annotations.NotNull;
@@ -38,14 +41,75 @@ public class FirstNotNullDateGroupByFunction extends FirstDateGroupByFunction {
     }
 
     @Override
-    public void computeBatch(MapValue mapValue, long ptr, int count) {
-        if (count > 0) {
-            final long hi = ptr + count * (long) Long.BYTES;
-            for (; ptr < hi; ptr += Long.BYTES) {
-                long value = Unsafe.getUnsafe().getLong(ptr);
+    public void computeBatch(MapValue mapValue, long dataAddr, int rowCount, long startRowId) {
+        if (rowCount > 0) {
+            final long hi = dataAddr + rowCount * (long) Long.BYTES;
+            long offset = 0;
+            for (; dataAddr < hi; dataAddr += Long.BYTES) {
+                long value = Unsafe.getLong(dataAddr);
                 if (value != Numbers.LONG_NULL) {
-                    mapValue.putDate(valueIndex + 1, value);
+                    long rowId = startRowId + offset;
+                    long existingRowId = mapValue.getLong(valueIndex);
+                    if (rowId < existingRowId || existingRowId == Numbers.LONG_NULL || mapValue.getDate(valueIndex + 1) == Numbers.LONG_NULL) {
+                        mapValue.putLong(valueIndex, rowId);
+                        mapValue.putDate(valueIndex + 1, value);
+                    }
                     break;
+                }
+                offset++;
+            }
+        }
+    }
+
+    @Override
+    public void computeKeyedBatch(
+            PageFrameMemoryRecord record,
+            FlyweightPackedMapValue mapValue,
+            long baseValueAddr,
+            long batchAddr,
+            long rowCount,
+            long baseRowId
+    ) {
+        // setEmpty pre-seeds both slots to LONG_NULL. Null input is skipped; non-null
+        // input wins when the stored value is still null or has a later rowId.
+        final long rowIdOffset = mapValue.getOffset(valueIndex);
+        final long valueColumnOffset = mapValue.getOffset(valueIndex + 1);
+        // Fast path: arg is a direct date column with data on the current frame.
+        // Zero page address means a column top; fall through to the record-based path.
+        final long argAddr = argColumnIndex >= 0 ? record.getPageAddress(argColumnIndex) : 0;
+        if (argAddr != 0) {
+            for (long i = 0; i < rowCount; i++) {
+                final long encoded = Unsafe.getLong(batchAddr + (i << 3));
+                final long rowIndex = Map.decodeBatchRowIndex(encoded);
+                final long value = Unsafe.getLong(argAddr + (rowIndex << 3));
+                // Mirror computeFirst semantics on new entries (write through even for
+                // null values) so the state matches what the per-row path produces.
+                if (value != Numbers.LONG_NULL || Map.isNewBatchEntry(encoded)) {
+                    final long entryBase = baseValueAddr + Map.decodeBatchOffset(encoded);
+                    final long rowId = baseRowId + rowIndex;
+                    final long existingValue = Unsafe.getLong(entryBase + valueColumnOffset);
+                    if (existingValue == Numbers.LONG_NULL || rowId < Unsafe.getLong(entryBase + rowIdOffset)) {
+                        Unsafe.putLong(entryBase + rowIdOffset, rowId);
+                        Unsafe.putLong(entryBase + valueColumnOffset, value);
+                    }
+                }
+            }
+        } else {
+            for (long i = 0; i < rowCount; i++) {
+                final long encoded = Unsafe.getLong(batchAddr + (i << 3));
+                final long rowIndex = Map.decodeBatchRowIndex(encoded);
+                record.setRowIndex(rowIndex);
+                final long value = arg.getDate(record);
+                // Mirror computeFirst semantics on new entries (write through even for
+                // null values) so the state matches what the per-row path produces.
+                if (value != Numbers.LONG_NULL || Map.isNewBatchEntry(encoded)) {
+                    final long entryBase = baseValueAddr + Map.decodeBatchOffset(encoded);
+                    final long rowId = baseRowId + rowIndex;
+                    final long existingValue = Unsafe.getLong(entryBase + valueColumnOffset);
+                    if (existingValue == Numbers.LONG_NULL || rowId < Unsafe.getLong(entryBase + rowIdOffset)) {
+                        Unsafe.putLong(entryBase + rowIdOffset, rowId);
+                        Unsafe.putLong(entryBase + valueColumnOffset, value);
+                    }
                 }
             }
         }
@@ -53,8 +117,12 @@ public class FirstNotNullDateGroupByFunction extends FirstDateGroupByFunction {
 
     @Override
     public void computeNext(MapValue mapValue, Record record, long rowId) {
-        if (mapValue.getDate(valueIndex + 1) == Numbers.LONG_NULL) {
-            computeFirst(mapValue, record, rowId);
+        long val = arg.getDate(record);
+        if (val != Numbers.LONG_NULL) {
+            if (mapValue.getDate(valueIndex + 1) == Numbers.LONG_NULL || rowId < mapValue.getLong(valueIndex)) {
+                mapValue.putLong(valueIndex, rowId);
+                mapValue.putDate(valueIndex + 1, val);
+            }
         }
     }
 
@@ -72,7 +140,7 @@ public class FirstNotNullDateGroupByFunction extends FirstDateGroupByFunction {
         long srcRowId = srcValue.getLong(valueIndex);
         long destRowId = destValue.getLong(valueIndex);
         // srcRowId is non-null at this point since we know that the value is non-null
-        if (srcRowId < destRowId || destRowId == Numbers.LONG_NULL) {
+        if (srcRowId < destRowId || destRowId == Numbers.LONG_NULL || destValue.getDate(valueIndex + 1) == Numbers.LONG_NULL) {
             destValue.putLong(valueIndex, srcRowId);
             destValue.putDate(valueIndex + 1, srcVal);
         }

@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -235,13 +235,13 @@ public class TablesFunctionFactoryTest extends AbstractCairoTest {
             RecentWriteTracker tracker = engine.getRecentWriteTracker();
             tracker.clear();
 
-            // Before any writes, table_row_count and table_max_timestamp should be null
+            // Before any writes, table_row_count and table_last_write_timestamp should be null
             assertSql(
                     """
-                            table_name\ttable_row_count\ttable_max_timestamp
+                            table_name\ttable_row_count\ttable_last_write_timestamp
                             test_writes\tnull\t
                             """,
-                    "select table_name, table_row_count, table_max_timestamp from tables() where table_name = 'test_writes'"
+                    "select table_name, table_row_count, table_last_write_timestamp from tables() where table_name = 'test_writes'"
             );
 
             // Insert rows and drain WAL
@@ -265,7 +265,7 @@ public class TablesFunctionFactoryTest extends AbstractCairoTest {
                     "select table_name, table_row_count from tables() where table_name = 'test_writes'"
             );
 
-            // Verify table_max_timestamp is within expected range
+            // Verify table_last_write_timestamp is within expected range
             long lastWriteTimestamp = tracker.getWriteTimestamp(tableToken);
             Assert.assertTrue("Timestamp should be >= beforeWrite", lastWriteTimestamp >= beforeWrite);
             Assert.assertTrue("Timestamp should be <= afterWrite", lastWriteTimestamp <= afterWrite);
@@ -334,6 +334,50 @@ public class TablesFunctionFactoryTest extends AbstractCairoTest {
                             """,
                     "select table_name, table_suspended from tables() where table_name = 'test_non_wal_suspended'"
             );
+        });
+    }
+
+    @Test
+    public void testTimestampColumnsWithTimestampNs() throws Exception {
+        // Regression test for https://github.com/questdb/questdb/issues/6677
+        // Verifies that timestamp columns are correctly converted to microseconds
+        // when the table uses TIMESTAMP_NS as the designated timestamp type
+        assertMemoryLeak(() -> {
+            // Create a WAL table with TIMESTAMP_NS
+            execute("CREATE TABLE test_ts_ns (ts TIMESTAMP_NS, value INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+
+            RecentWriteTracker tracker = engine.getRecentWriteTracker();
+            tracker.clear();
+
+            // Insert rows and drain WAL
+            execute("INSERT INTO test_ts_ns VALUES ('2024-01-01T00:00:00.000000Z', 1)");
+            execute("INSERT INTO test_ts_ns VALUES ('2024-01-02T00:00:00.000000Z', 2)");
+            drainWalQueue();
+
+            // Query via tables() function
+            // The key assertion is that years should be in the 2024 range, not 57000+ (bug symptom)
+            assertSql(
+                    """
+                            table_name\ttable_min_timestamp\ttable_max_timestamp
+                            test_ts_ns\t2024-01-01T00:00:00.000000Z\t2024-01-02T00:00:00.000000Z
+                            """,
+                    "select table_name, table_min_timestamp, table_max_timestamp from tables() where table_name = 'test_ts_ns'"
+            );
+
+            // Also verify wal_max_timestamp is correctly converted
+            TableToken tableToken = engine.verifyTableName("test_ts_ns");
+            RecentWriteTracker.WriteStats stats = tracker.getWriteStats(tableToken);
+            Assert.assertNotNull("WriteStats should exist", stats);
+            // The raw wal timestamp is in nanoseconds, but when accessed via tables() it should be converted to micros
+            long walMaxTs = stats.getLastWalTimestamp();
+            Assert.assertTrue("wal_max_timestamp should be in nanoseconds (large value)", walMaxTs > 1_000_000_000_000_000L);
+
+            // Via the tables() function, year should be 2024, not 1970 or 57000+
+            assertSql("""
+                            yr
+                            2024
+                            """,
+                    "select year(wal_max_timestamp) as yr from tables() where table_name = 'test_ts_ns'");
         });
     }
 

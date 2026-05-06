@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -91,6 +91,11 @@ public class MatchStrFunctionFactory implements FunctionFactory {
         }
 
         @Override
+        public int getComplexity() {
+            return Function.addComplexity(COMPLEXITY_REGEX, UnaryFunction.super.getComplexity());
+        }
+
+        @Override
         public boolean isConstant() {
             return UnaryFunction.super.isConstant();
         }
@@ -130,6 +135,11 @@ public class MatchStrFunctionFactory implements FunctionFactory {
                 return cs != null && matcher.reset(cs).find();
             }
             return false;
+        }
+
+        @Override
+        public int getComplexity() {
+            return Function.addComplexity(COMPLEXITY_REGEX, UnaryFunction.super.getComplexity());
         }
 
         @Override

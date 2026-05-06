@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -87,6 +87,22 @@ public class MicrosTest {
         long micros = MicrosFormatUtils.parseTimestamp("2014-01-01T00:00:00.000000Z");
         MicrosFormatUtils.appendDateTimeUSec(sink, Micros.addYears(micros, 1));
         TestUtils.assertEquals("2015-01-01T00:00:00.000000Z", sink);
+    }
+
+    @Test
+    public void testAddYearsLeapFeb29Forward() {
+        // Feb 29 in leap year + 1y clamps to Feb 28 in non-leap year
+        long micros = MicrosFormatUtils.parseTimestamp("2024-02-29T12:30:00.000000Z");
+        MicrosFormatUtils.appendDateTimeUSec(sink, Micros.addYears(micros, 1));
+        TestUtils.assertEquals("2025-02-28T12:30:00.000000Z", sink);
+    }
+
+    @Test
+    public void testAddYearsLeapFeb29Backward() {
+        // Feb 29 in leap year - 1y clamps to Feb 28 in non-leap year
+        long micros = MicrosFormatUtils.parseTimestamp("2024-02-29T12:30:00.000000Z");
+        MicrosFormatUtils.appendDateTimeUSec(sink, Micros.addYears(micros, -1));
+        TestUtils.assertEquals("2023-02-28T12:30:00.000000Z", sink);
     }
 
     @Test

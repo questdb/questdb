@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -46,9 +46,13 @@ public class FirstGeoHashGroupByFunctionShort extends GeoByteFunction implements
     }
 
     @Override
-    public void computeBatch(MapValue mapValue, long ptr, int count) {
-        if (count > 0) {
-            mapValue.putShort(valueIndex + 1, Unsafe.getUnsafe().getShort(ptr));
+    public void computeBatch(MapValue mapValue, long dataAddr, int rowCount, long startRowId) {
+        if (rowCount > 0) {
+            long existingRowId = mapValue.getLong(valueIndex);
+            if (startRowId < existingRowId || existingRowId == Numbers.LONG_NULL) {
+                mapValue.putLong(valueIndex, startRowId);
+                mapValue.putShort(valueIndex + 1, Unsafe.getShort(dataAddr));
+            }
         }
     }
 

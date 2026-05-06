@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -112,7 +112,7 @@ public class CairoException extends RuntimeException implements Sinkable, Flywei
 
     @SuppressWarnings("unused")
     public static CairoException entityIsDisabled(CharSequence entityName) {
-        return nonCritical().put("entity is disabled [name=").put(entityName).put(']');
+        return authorization().put("entity is disabled [name=").put(entityName).put(']');
     }
 
     public static CairoException fileNotFound() {
@@ -390,7 +390,7 @@ public class CairoException extends RuntimeException implements Sinkable, Flywei
     }
 
     // N.B.: Change the API with care! This method is called from native code via JNI.
-    // See `struct CairoException` in the `qdbr` Rust crate.
+    // See `struct CairoException` in the `qdb-core` Rust crate.
     @SuppressWarnings("unused")
     private static CairoException paramInstance(
             int errno, // pass `NON_CRITICAL` (-1) to create a non-critical exception

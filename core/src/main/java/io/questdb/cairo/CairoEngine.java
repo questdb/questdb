@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -63,6 +63,7 @@ import io.questdb.cairo.sql.OperationFuture;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.RecordMetadata;
+import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.cairo.sql.TableMetadata;
 import io.questdb.cairo.sql.TableRecordMetadata;
 import io.questdb.cairo.sql.TableReferenceOutOfDateException;
@@ -77,12 +78,16 @@ import io.questdb.cairo.view.ViewStateStoreImpl;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryCMR;
 import io.questdb.cairo.vm.api.MemoryMARW;
+import io.questdb.cairo.wal.DefaultDurableAckRegistry;
 import io.questdb.cairo.wal.DefaultWalDirectoryPolicy;
 import io.questdb.cairo.wal.DefaultWalListener;
+import io.questdb.cairo.wal.DurableAckRegistry;
+import io.questdb.cairo.wal.QdbrWalLocker;
 import io.questdb.cairo.wal.ViewWalWriter;
 import io.questdb.cairo.wal.WalDirectoryPolicy;
 import io.questdb.cairo.wal.WalEventReader;
 import io.questdb.cairo.wal.WalListener;
+import io.questdb.cairo.wal.WalLocker;
 import io.questdb.cairo.wal.WalReader;
 import io.questdb.cairo.wal.WalUtils;
 import io.questdb.cairo.wal.WalWriter;
@@ -127,6 +132,7 @@ import io.questdb.std.Numbers;
 import io.questdb.std.ObjHashSet;
 import io.questdb.std.ObjList;
 import io.questdb.std.Os;
+import io.questdb.std.Rnd;
 import io.questdb.std.ThreadLocal;
 import io.questdb.std.Transient;
 import io.questdb.std.str.MutableCharSink;
@@ -158,6 +164,7 @@ public class CairoEngine implements Closeable, WriterSource {
     private static final ThreadLocal<MatViewRefreshTask> tlMatViewRefreshTask = new ThreadLocal<>(MatViewRefreshTask::new);
     protected final CairoConfiguration configuration;
     private final AtomicLong asyncCommandCorrelationId = new AtomicLong();
+    private final BackupSeqPartLock backupSeqPartLock = new BackupSeqPartLock();
     private final DatabaseCheckpointAgent checkpointAgent;
     private final CopyExportContext copyExportContext;
     private final CopyImportContext copyImportContext;
@@ -191,20 +198,43 @@ public class CairoEngine implements Closeable, WriterSource {
     private final AtomicLong unpublishedWalTxnCount = new AtomicLong(1);
     private final ViewGraph viewGraph;
     private final ViewWalWriterPool viewWalWriterPool;
+    private final SimpleWaitingLock walPurgeJobLock = new SimpleWaitingLock();
     private final WalWriterPool walWriterPool;
     private final WriterPool writerPool;
     private volatile boolean closing;
-    private @NotNull ConfigReloader configReloader = () -> false; // no-op
+    private @NotNull ConfigReloader configReloader = new ConfigReloader() {
+        @Override
+        public boolean reload() {
+            return false;
+        }
+
+        @Override
+        public void unwatch(long watchId) {
+
+        }
+
+        @Override
+        public long watch(Listener listener) {
+            return WatchRegistry.UNREGISTERED;
+        }
+    }; // no-op
     private @NotNull DdlListener ddlListener = DefaultDdlListener.INSTANCE;
+    private volatile @NotNull DurableAckRegistry durableAckRegistry = DefaultDurableAckRegistry.INSTANCE;
     private FrameFactory frameFactory;
     private @NotNull MatViewStateStore matViewStateStore = NoOpMatViewStateStore.INSTANCE;
     private volatile Runnable recentWriteTrackerHydrationCallback;
     private @NotNull ViewStateStore viewStateStore = NoOpViewStateStore.INSTANCE;
     private @NotNull WalDirectoryPolicy walDirectoryPolicy = DefaultWalDirectoryPolicy.INSTANCE;
     private @NotNull WalListener walListener = DefaultWalListener.INSTANCE;
+    private @NotNull WalLocker walLocker;
 
     public CairoEngine(CairoConfiguration configuration) {
+        this(configuration, new QdbrWalLocker());
+    }
+
+    public CairoEngine(CairoConfiguration configuration, @NotNull WalLocker walLocker) {
         try {
+            this.walLocker = walLocker;
             this.ffCache = new FunctionFactoryCache(configuration, getFunctionFactories());
             this.tableFlagResolver = newTableFlagResolver(configuration);
             this.configuration = configuration;
@@ -225,28 +255,40 @@ public class CairoEngine implements Closeable, WriterSource {
             this.telemetry = createTelemetry(TelemetryTask.TELEMETRY, configuration);
             this.telemetryWal = createTelemetry(TelemetryWalTask.WAL_TELEMETRY, configuration);
             this.telemetryMatView = createTelemetry(TelemetryMatViewTask.MAT_VIEW_TELEMETRY, configuration);
-            this.telemetries = new ObjList<>(telemetry, telemetryWal, telemetryMatView);
+            this.telemetries = new ObjList<>(telemetryWal, telemetryMatView);
+            if (configuration.getTelemetryConfiguration().getEnabled()) {
+                // This is the only one that can be switched off by the configuration
+                telemetries.add(telemetry);
+            }
             this.tableIdGenerator = IDGeneratorFactory.newIDGenerator(configuration, TableUtils.TAB_INDEX_FILE_NAME, 1);
             this.checkpointAgent = new DatabaseCheckpointAgent(this);
             this.queryRegistry = new QueryRegistry(configuration);
             this.rootExecutionContext = createRootExecutionContext();
             this.matViewTimerQueue = createMatViewTimerQueue();
-            this.matViewGraph = new MatViewGraph();
-            this.viewGraph = new ViewGraph();
+            this.matViewGraph = createMatViewGraph();
+            this.viewGraph = createViewGraph();
             this.frameFactory = new FrameFactory(configuration);
             this.dataID = DataID.open(configuration);
 
+            // IMPORTANT: Do not reorder statements!
+            // The backup recovery process needs the `dataID` (since it will set it),
+            // but it's important that's not initialized yet.
+            // The `recoverBackup()` logic also needs to run before any table registry loading.
+            restoreBackup();
+
+            initDataID();
+
             settingsStore = new SettingsStore(configuration);
-            settingsStore.init();
 
             tableIdGenerator.open();
             checkpointRecover();
 
+            // Initialize settings store after checkpoint recovery so it reads the restored file
+            settingsStore.init();
+
             // Migrate database files.
             EngineMigration.migrateEngineTo(this, ColumnType.VERSION, ColumnType.MIGRATION_VERSION, false);
-            tableNameRegistry = configuration.isReadOnlyInstance()
-                    ? new TableNameRegistryRO(this, tableFlagResolver)
-                    : new TableNameRegistryRW(this, tableFlagResolver);
+            tableNameRegistry = createTableNameRegistry(configuration, tableFlagResolver);
             tableNameRegistry.reload();
 
             this.sqlCompilerPool = new SqlCompilerPool(this);
@@ -300,6 +342,9 @@ public class CairoEngine implements Closeable, WriterSource {
     }
 
     public void applyTableRename(TableToken token, TableToken updatedTableToken) {
+        if (updatedTableToken.isMatView() && matViewGraph.getViewDefinition(updatedTableToken) == null) {
+            throw CairoException.nonCritical().put("materialized view has not been registered yet [name=").put(updatedTableToken.getTableName()).put(']');
+        }
         tableNameRegistry.rename(token.getTableName(), updatedTableToken.getTableName(), token);
         if (token.isWal()) {
             tableSequencerAPI.applyRename(updatedTableToken);
@@ -488,8 +533,8 @@ public class CairoEngine implements Closeable, WriterSource {
         }
     }
 
-    public void checkpointCreate(SqlExecutionContext executionContext) throws SqlException {
-        checkpointAgent.checkpointCreate(executionContext, false);
+    public void checkpointCreate(SqlExecutionCircuitBreaker circuitBreaker, boolean isIncrementalBackup) throws SqlException {
+        checkpointAgent.checkpointCreate(circuitBreaker, false, isIncrementalBackup);
     }
 
     /**
@@ -511,7 +556,6 @@ public class CairoEngine implements Closeable, WriterSource {
             w.clearCache();
         }
         viewGraph.clear();
-        viewStateStore.clear();
         matViewGraph.clear();
         matViewStateStore.clear();
         matViewTimerQueue.clear();
@@ -556,6 +600,7 @@ public class CairoEngine implements Closeable, WriterSource {
         Misc.free(matViewStateStore);
         Misc.free(settingsStore);
         Misc.free(frameFactory);
+        Misc.free(walLocker);
     }
 
     @TestOnly
@@ -573,13 +618,13 @@ public class CairoEngine implements Closeable, WriterSource {
             BlockFileWriter blockFileWriter,
             Path path,
             boolean ifNotExists,
-            CreateMatViewOperation struct,
+            CreateMatViewOperation operation,
             boolean keepLock,
             boolean inVolume
     ) {
         securityContext.authorizeMatViewCreate();
-        final TableToken matViewToken = createTableOrViewOrMatViewUnsecure(securityContext, mem, blockFileWriter, path, ifNotExists, struct, keepLock, inVolume, TableUtils.TABLE_KIND_REGULAR_TABLE);
-        final MatViewDefinition matViewDefinition = struct.getMatViewDefinition();
+        final TableToken matViewToken = createTableOrViewOrMatViewUnsecure(securityContext, mem, blockFileWriter, path, ifNotExists, operation, keepLock, inVolume, TableUtils.TABLE_KIND_REGULAR_TABLE);
+        final MatViewDefinition matViewDefinition = operation.getMatViewDefinition();
         try {
             if (matViewGraph.addView(matViewDefinition)) {
                 matViewStateStore.createViewState(matViewDefinition);
@@ -604,7 +649,6 @@ public class CairoEngine implements Closeable, WriterSource {
     ) {
         return createTable(securityContext, mem, path, ifNotExists, struct, keepLock, false, TableUtils.TABLE_KIND_REGULAR_TABLE);
     }
-
 
     public @NotNull TableToken createTable(
             SecurityContext securityContext,
@@ -643,12 +687,12 @@ public class CairoEngine implements Closeable, WriterSource {
             BlockFileWriter blockFileWriter,
             Path path,
             boolean ifNotExists,
-            CreateViewOperation struct,
+            CreateViewOperation operation,
             @Nullable RecordMetadata metadata
     ) {
         securityContext.authorizeViewCreate();
-        final TableToken viewToken = createTableOrViewOrMatViewUnsecure(securityContext, mem, blockFileWriter, path, ifNotExists, struct, false, false, TableUtils.TABLE_KIND_REGULAR_TABLE);
-        final ViewDefinition viewDefinition = struct.getViewDefinition();
+        final TableToken viewToken = createTableOrViewOrMatViewUnsecure(securityContext, mem, blockFileWriter, path, ifNotExists, operation, false, false, TableUtils.TABLE_KIND_REGULAR_TABLE);
+        final ViewDefinition viewDefinition = operation.getViewDefinition();
         try {
             if (viewGraph.addView(viewDefinition)) {
                 viewStateStore.createViewState(viewDefinition, metadata);
@@ -673,6 +717,7 @@ public class CairoEngine implements Closeable, WriterSource {
         verifyTableToken(tableToken);
         if (tableToken.isWal()) {
             if (notifyDropped(tableToken)) {
+                durableAckRegistry.onTableDropped(tableToken);
                 tableSequencerAPI.dropTable(tableToken, false);
                 notifyViewStoresAboutDrop(tableToken);
                 matViewStateStore.removeViewState(tableToken);
@@ -737,20 +782,8 @@ public class CairoEngine implements Closeable, WriterSource {
         }
     }
 
-    public TableWriter getBackupWriter(TableToken tableToken, CharSequence backupDirName) {
-        verifyTableToken(tableToken);
-        // There is no point in pooling/caching these writers since they are only used once, backups are not incremental
-        return new TableWriter(
-                configuration,
-                tableToken,
-                messageBus,
-                null,
-                true,
-                DefaultLifecycleManager.INSTANCE,
-                backupDirName,
-                getDdlListener(tableToken),
-                this
-        );
+    public BackupSeqPartLock getBackupSeqPartLock() {
+        return backupSeqPartLock;
     }
 
     @TestOnly
@@ -761,6 +794,10 @@ public class CairoEngine implements Closeable, WriterSource {
     @TestOnly
     public int getBusyWriterCount() {
         return writerPool.getBusyCount();
+    }
+
+    public @NotNull CheckpointListener getCheckpointListener() {
+        return configuration.getCheckpointListener();
     }
 
     public DatabaseCheckpointStatus getCheckpointStatus() {
@@ -787,12 +824,16 @@ public class CairoEngine implements Closeable, WriterSource {
         return copyImportContext;
     }
 
-    public DataID getDataID() {
+    public @NotNull DataID getDataID() {
         return dataID;
     }
 
     public @NotNull DdlListener getDdlListener(TableToken tableToken) {
-        return tableFlagResolver.isSystem(tableToken.getTableName()) ? DefaultDdlListener.INSTANCE : ddlListener;
+        return getDdlListener(tableToken.getTableName());
+    }
+
+    public @NotNull DdlListener getDdlListener(String tableName) {
+        return tableFlagResolver.isSystem(tableName) ? DefaultDdlListener.INSTANCE : ddlListener;
     }
 
     public FrameFactory getFrameFactory() {
@@ -1066,7 +1107,7 @@ public class CairoEngine implements Closeable, WriterSource {
         return getTableStatus(Path.getThreadLocal(configuration.getDbRoot()), tableName);
     }
 
-    public TableToken getTableTokenByDirName(CharSequence dirName) {
+    public @Nullable TableToken getTableTokenByDirName(CharSequence dirName) {
         return tableNameRegistry.getTableTokenByDirName(dirName);
     }
 
@@ -1170,12 +1211,20 @@ public class CairoEngine implements Closeable, WriterSource {
         }
     }
 
+    public @NotNull DurableAckRegistry getDurableAckRegistry() {
+        return durableAckRegistry;
+    }
+
     public @NotNull WalDirectoryPolicy getWalDirectoryPolicy() {
         return walDirectoryPolicy;
     }
 
     public @NotNull WalListener getWalListener() {
         return walListener;
+    }
+
+    public @NotNull WalLocker getWalLocker() {
+        return walLocker;
     }
 
     // For testing only
@@ -1253,6 +1302,7 @@ public class CairoEngine implements Closeable, WriterSource {
                         txReader.ofRO(path.$(), metadata.getTimestampType(), metadata.getPartitionBy());
                         TableUtils.safeReadTxn(txReader, configuration.getMillisecondClock(), configuration.getSpinLockTimeout());
 
+                        long minTimestamp = txReader.getMinTimestamp();
                         long maxTimestamp = txReader.getMaxTimestamp();
                         long rowCount = txReader.getRowCount();
                         long writerTxn = txReader.getSeqTxn();
@@ -1272,7 +1322,16 @@ public class CairoEngine implements Closeable, WriterSource {
                         }
 
                         // Use CAS insert - writer data always wins over hydrated data
-                        if (recentWriteTracker.recordWriteIfAbsent(tableToken, maxTimestamp, rowCount, writerTxn, sequencerTxn, walTimestamp)) {
+                        if (recentWriteTracker.recordWriteIfAbsent(
+                                tableToken,
+                                maxTimestamp,
+                                rowCount,
+                                writerTxn,
+                                sequencerTxn,
+                                walTimestamp,
+                                minTimestamp == Long.MAX_VALUE ? Numbers.LONG_NULL : minTimestamp,
+                                maxTimestamp
+                        )) {
                             hydratedCount++;
                         }
                     }
@@ -1300,6 +1359,11 @@ public class CairoEngine implements Closeable, WriterSource {
 
     public boolean isTableDropped(TableToken tableToken) {
         return tableNameRegistry.isTableDropped(tableToken);
+    }
+
+    @TestOnly
+    public boolean isWalPurgeJobLocked() {
+        return walPurgeJobLock.isLocked();
     }
 
     public boolean isWalTable(TableToken tableToken) {
@@ -1555,6 +1619,7 @@ public class CairoEngine implements Closeable, WriterSource {
                     (short) 0
             );
         }
+        walLocker.clearTable(tableToken);
     }
 
     public void removeThreadLocalReaderPoolSupervisor() {
@@ -1587,7 +1652,7 @@ public class CairoEngine implements Closeable, WriterSource {
                     boolean renamed = false;
                     try {
                         try (WalWriter walWriter = getWalWriter(fromTableToken)) {
-                            long seqTxn = walWriter.renameTable(fromTableName, toTableNameStr);
+                            long seqTxn = walWriter.renameTable(fromTableName, toTableNameStr, securityContext);
                             LOG.info().$("renaming table [from='").$safe(fromTableName)
                                     .$("', to='").$safe(toTableName)
                                     .$("', wal=").$(walWriter.getWalId())
@@ -1651,7 +1716,7 @@ public class CairoEngine implements Closeable, WriterSource {
 
             enqueueCompileView(fromTableToken);
             enqueueCompileView(toTableToken);
-            getDdlListener(fromTableToken).onTableRenamed(securityContext, fromTableToken, toTableToken);
+            getDdlListener(fromTableToken).onTableRenamed(fromTableToken, toTableToken);
 
             return toTableToken;
         } else {
@@ -1695,7 +1760,6 @@ public class CairoEngine implements Closeable, WriterSource {
         this.configReloader = configReloader;
     }
 
-    @SuppressWarnings("unused")
     public void setDdlListener(@NotNull DdlListener ddlListener) {
         this.ddlListener = ddlListener;
     }
@@ -1730,6 +1794,10 @@ public class CairoEngine implements Closeable, WriterSource {
     public void setUp() {
     }
 
+    public void setDurableAckRegistry(@NotNull DurableAckRegistry durableAckRegistry) {
+        this.durableAckRegistry = durableAckRegistry;
+    }
+
     public void setWalDirectoryPolicy(@NotNull WalDirectoryPolicy walDirectoryPolicy) {
         this.walDirectoryPolicy = walDirectoryPolicy;
     }
@@ -1738,16 +1806,25 @@ public class CairoEngine implements Closeable, WriterSource {
         this.walListener = walListener;
     }
 
-    public void setWalPurgeJobRunLock(@Nullable SimpleWaitingLock walPurgeJobRunLock) {
-        this.checkpointAgent.setWalPurgeJobRunLock(walPurgeJobRunLock);
+    @TestOnly
+    public void setWalLocker(@NotNull WalLocker walLocker) {
+        this.walLocker = walLocker;
     }
 
     public void signalClose() {
         closing = true;
     }
 
-    public void snapshotCreate(SqlExecutionContext executionContext) throws SqlException {
-        checkpointAgent.checkpointCreate(executionContext, true);
+    public void snapshotCreate(SqlExecutionCircuitBreaker circuitBreaker) throws SqlException {
+        checkpointAgent.checkpointCreate(circuitBreaker, true, false);
+    }
+
+    public boolean tryLockWalPurgeJob(long timeout, TimeUnit timeUnit) {
+        boolean isLocked = tryLockWalPurgeJob0(timeout, timeUnit);
+        if (isLocked) {
+            backupSeqPartLock.onLocked();
+        }
+        return isLocked;
     }
 
     public void unlock(
@@ -1777,6 +1854,10 @@ public class CairoEngine implements Closeable, WriterSource {
 
     public void unlockTableName(TableToken tableToken) {
         tableNameRegistry.unlockTableName(tableToken);
+    }
+
+    public void unlockWalPurgeJob() {
+        walPurgeJobLock.unlock();
     }
 
     public void unlockWalWriters(TableToken tableToken) {
@@ -1987,6 +2068,7 @@ public class CairoEngine implements Closeable, WriterSource {
             while (!lockTableCreate(tableToken)) {
                 Os.pause();
             }
+            boolean filesystemCreated = false;
             try {
                 String lockedReason = lockAll(tableToken, "createTable", true);
                 boolean locked = true;
@@ -1997,6 +2079,7 @@ public class CairoEngine implements Closeable, WriterSource {
                         } else {
                             createTableOrViewOrMatViewUnsafe(mem, blockFileWriter, path, struct, tableToken);
                         }
+                        filesystemCreated = true;
 
                         if (struct.isWalEnabled()) {
                             tableSequencerAPI.registerTable(tableToken.getTableId(), struct, tableToken);
@@ -2010,7 +2093,7 @@ public class CairoEngine implements Closeable, WriterSource {
                             locked = false;
                             LOG.info().$("unlocked [table=").$(tableToken).$("]").$();
                         }
-                        getDdlListener(tableToken).onTableOrViewOrMatViewCreated(securityContext, tableToken, tableKind);
+                        onTableOrViewOrMatViewCreated(securityContext, struct, tableToken, tableKind);
                         tableNameRegistry.registerName(tableToken);
                     } catch (Throwable e) {
                         keepLock = false;
@@ -2030,6 +2113,29 @@ public class CairoEngine implements Closeable, WriterSource {
                 if (struct.isWalEnabled()) {
                     // tableToken.getLoggingName() === tableName, table cannot be renamed while creation hasn't finished
                     tableSequencerAPI.dropTable(tableToken, true);
+                } else if (filesystemCreated) {
+                    final FilesFacade ff = configuration.getFilesFacade();
+                    try {
+                        path.of(configuration.getDbRoot()).concat(tableToken).$();
+                        Path volumeTarget = null;
+                        if (ff.isSoftLink(path.$())) {
+                            volumeTarget = Path.getThreadLocal2("");
+                            if (!ff.readLink(path, volumeTarget)) {
+                                volumeTarget = null;
+                            }
+                        }
+                        if (!ff.unlinkOrRemove(path, LOG)) {
+                            LOG.error().$("could not clean up partial table after failed create [table=").$(tableToken)
+                                    .$(", errno=").$(ff.errno()).I$();
+                        }
+                        if (volumeTarget != null && !ff.unlinkOrRemove(volumeTarget, LOG)) {
+                            LOG.error().$("could not clean up partial table in volume [table=").$(tableToken)
+                                    .$(", errno=").$(ff.errno()).I$();
+                        }
+                    } catch (Throwable cleanupEx) {
+                        LOG.error().$("cleanup after failed create threw [table=").$(tableToken)
+                                .$(", err=").$(cleanupEx).I$();
+                    }
                 }
                 throw th;
             } finally {
@@ -2043,7 +2149,7 @@ public class CairoEngine implements Closeable, WriterSource {
     }
 
     private @NotNull ViewMetadata getViewMetadata(TableToken tableToken) {
-        final ViewState state = getViewStateStore().getViewState(tableToken);
+        final ViewState state = viewStateStore.getViewState(tableToken);
         if (state == null) {
             throw CairoException.viewDoesNotExist(tableToken.getTableName());
         }
@@ -2056,6 +2162,26 @@ public class CairoEngine implements Closeable, WriterSource {
 
         // this event will result in recompiling of dependent views, and updating their state
         enqueueCompileView(droppedToken);
+    }
+
+    private void onTableOrViewOrMatViewCreated(
+            SecurityContext securityContext,
+            TableStructure struct,
+            TableToken tableToken,
+            int tableKind
+    ) {
+        final DdlListener ddlListener = getDdlListener(tableToken);
+        ddlListener.onTableOrViewOrMatViewCreated(securityContext, tableToken, tableKind);
+        try {
+            struct.onCreated(this, tableToken);
+        } catch (Throwable th) {
+            try {
+                ddlListener.onTableOrViewOrMatViewDropped(tableToken);
+            } catch (Throwable rollbackEx) {
+                th.addSuppressed(rollbackEx);
+            }
+            throw th;
+        }
     }
 
     private TableToken rename0(Path fromPath, TableToken fromTableToken, Path toPath, CharSequence toTableName) {
@@ -2101,6 +2227,13 @@ public class CairoEngine implements Closeable, WriterSource {
             tableNameRegistry.unlockTableName(toTableToken);
             unlockTableCreate(toTableToken);
         }
+    }
+
+    private boolean tryLockWalPurgeJob0(long timeout, TimeUnit timeUnit) {
+        if (timeout == 0) {
+            return walPurgeJobLock.tryLock();
+        }
+        return walPurgeJobLock.tryLock(timeout, timeUnit);
     }
 
     private void tryRepairTable(TableToken tableToken, CairoException rethrow) {
@@ -2162,6 +2295,14 @@ public class CairoEngine implements Closeable, WriterSource {
         return token;
     }
 
+    protected void clearDdlListener() {
+        ddlListener.clear();
+    }
+
+    protected @NotNull MatViewGraph createMatViewGraph() {
+        return new MatViewGraph();
+    }
+
     // used in ent
     protected MatViewStateStore createMatViewStateStore() {
         return configuration.isMatViewEnabled() ? new MatViewStateStoreImpl(this) : NoOpMatViewStateStore.INSTANCE;
@@ -2176,6 +2317,12 @@ public class CairoEngine implements Closeable, WriterSource {
         return new SqlExecutionContextImpl(this, 0).with(AllowAllSecurityContext.INSTANCE);
     }
 
+    protected @NotNull TableNameRegistry createTableNameRegistry(CairoConfiguration configuration, TableFlagResolver tableFlagResolver) {
+        return configuration.isReadOnlyInstance()
+                ? new TableNameRegistryRO(this, tableFlagResolver)
+                : new TableNameRegistryRW(this, tableFlagResolver);
+    }
+
     protected @NotNull <T extends AbstractTelemetryTask> Telemetry<T> createTelemetry(
             Telemetry.TelemetryTypeBuilder<T> builder,
             CairoConfiguration configuration
@@ -2183,11 +2330,26 @@ public class CairoEngine implements Closeable, WriterSource {
         return new Telemetry<>(builder, configuration);
     }
 
+    protected @NotNull ViewGraph createViewGraph() {
+        return new ViewGraph();
+    }
+
     protected Iterable<FunctionFactory> getFunctionFactories() {
         return new FunctionFactoryCacheBuilder().scan(LOG).build();
     }
 
+    protected void initDataID() {
+        if (!getConfiguration().isReadOnlyInstance() && !this.dataID.isInitialized()) {
+            final Rnd rnd = configuration.getRandom();
+            this.dataID.initialize(rnd.nextLong(), rnd.nextLong());
+        }
+    }
+
     protected TableFlagResolver newTableFlagResolver(CairoConfiguration configuration) {
         return new TableFlagResolverImpl(configuration.getSystemTableNamePrefix().toString());
+    }
+
+    protected void restoreBackup() {
+        // Hook for backup functionality. See enterprise subclass.
     }
 }

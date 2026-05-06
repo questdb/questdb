@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -24,7 +24,10 @@
 
 package io.questdb.cairo;
 
+import io.questdb.griffin.engine.table.parquet.ParquetCompression;
+import io.questdb.griffin.engine.table.parquet.ParquetEncoding;
 import io.questdb.log.Log;
+import io.questdb.std.IntList;
 import io.questdb.log.LogFactory;
 import io.questdb.std.str.CharSink;
 import io.questdb.std.str.Sinkable;
@@ -32,12 +35,14 @@ import org.jetbrains.annotations.NotNull;
 
 public class CairoColumn implements Sinkable {
     public static final Log LOG = LogFactory.getLog(CairoEngine.class);
+    private IntList coveringColumnIndices;
     private boolean dedupKey;
     private boolean designated;
     private int indexBlockCapacity;
-    private boolean indexed;
+    private byte indexType;
     private long metadataVersion;
     private CharSequence name;
+    private int parquetEncodingConfig;
     private int position;
     private boolean symbolCached;
     private int symbolCapacity;
@@ -49,12 +54,14 @@ public class CairoColumn implements Sinkable {
     }
 
     public void copyTo(@NotNull CairoColumn target) {
+        target.coveringColumnIndices = this.coveringColumnIndices;
         target.designated = this.designated;
         target.indexBlockCapacity = this.indexBlockCapacity;
         target.dedupKey = this.dedupKey;
-        target.indexed = this.indexed;
+        target.indexType = this.indexType;
         target.symbolTableStatic = this.symbolTableStatic;
         target.name = this.name;
+        target.parquetEncodingConfig = this.parquetEncodingConfig;
         target.position = this.position;
         target.symbolCached = this.symbolCached;
         target.symbolCapacity = this.symbolCapacity;
@@ -63,12 +70,24 @@ public class CairoColumn implements Sinkable {
         target.metadataVersion = this.metadataVersion;
     }
 
+    public IntList getCoveringColumnIndices() {
+        return coveringColumnIndices;
+    }
+
     public int getIndexBlockCapacity() {
         return indexBlockCapacity;
     }
 
+    public byte getIndexType() {
+        return indexType;
+    }
+
     public CharSequence getName() {
         return name;
+    }
+
+    public int getParquetEncodingConfig() {
+        return parquetEncodingConfig;
     }
 
     public int getPosition() {
@@ -96,7 +115,7 @@ public class CairoColumn implements Sinkable {
     }
 
     public boolean isIndexed() {
-        return indexed;
+        return IndexType.isIndexed(indexType);
     }
 
     public boolean isSymbolCached() {
@@ -105,6 +124,10 @@ public class CairoColumn implements Sinkable {
 
     public boolean isSymbolTableStatic() {
         return symbolTableStatic;
+    }
+
+    public void setCoveringColumnIndices(IntList coveringColumnIndices) {
+        this.coveringColumnIndices = coveringColumnIndices;
     }
 
     public void setDedupKeyFlag(boolean dedupKey) {
@@ -119,12 +142,16 @@ public class CairoColumn implements Sinkable {
         this.indexBlockCapacity = indexBlockCapacity;
     }
 
-    public void setIndexedFlag(boolean indexed) {
-        this.indexed = indexed;
+    public void setIndexType(byte indexType) {
+        this.indexType = indexType;
     }
 
     public void setName(CharSequence name) {
         this.name = name;
+    }
+
+    public void setParquetEncodingConfig(int parquetEncodingConfig) {
+        this.parquetEncodingConfig = parquetEncodingConfig;
     }
 
     public void setPosition(int position) {
@@ -162,8 +189,30 @@ public class CairoColumn implements Sinkable {
         sink.put("isSymbolTableStatic=").put(isSymbolTableStatic()).put(", ");
         sink.put("symbolCached=").put(isSymbolCached()).put(", ");
         sink.put("symbolCapacity=").put(getSymbolCapacity()).put(", ");
-        sink.put("isIndexed=").put(isIndexed()).put(", ");
+        sink.put("indexType=");
+        IndexType.putName(sink, getIndexType());
+        sink.put(", ");
         sink.put("indexBlockCapacity=").put(getIndexBlockCapacity()).put(", ");
+        int config = getParquetEncodingConfig();
+        if (config == 0) {
+            sink.put("parquetEncoding=Default, parquetCompression=Default, ");
+        } else {
+            int encoding = TableUtils.getParquetConfigEncoding(config);
+            int compression = TableUtils.getParquetConfigCompression(config);
+            int level = TableUtils.getParquetConfigCompressionLevel(config);
+            sink.put("parquetEncoding=");
+            sink.put(encoding == 0 ? "Default" : ParquetEncoding.getEncodingName(encoding));
+            sink.put(", parquetCompression=");
+            if (compression == 0) {
+                sink.put("Default");
+            } else {
+                sink.put(ParquetCompression.getCompressionName(compression - 1));
+                if (level > 0) {
+                    sink.put(' ').put(level - 1);
+                }
+            }
+            sink.put(", ");
+        }
         sink.put("writerIndex=").put(getWriterIndex()).put("]");
     }
 }

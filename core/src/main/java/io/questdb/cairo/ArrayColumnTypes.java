@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -46,6 +46,7 @@ public class ArrayColumnTypes implements ColumnTypes, Mutable {
         return this;
     }
 
+    @Override
     public void clear() {
         types.clear();
     }
@@ -58,5 +59,9 @@ public class ArrayColumnTypes implements ColumnTypes, Mutable {
     @Override
     public int getColumnType(int columnIndex) {
         return types.getQuick(columnIndex);
+    }
+
+    public void set(int index, int type) {
+        types.setQuick(index, type);
     }
 }

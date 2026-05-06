@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -172,16 +172,6 @@ public class AbstractTest {
         if (checkWalTransactionsJob.run(0)) {
             while (walApplyJob.run(0)) ;
         }
-    }
-
-    protected static HttpQueryTestBuilder getExportTester() {
-        return new HttpQueryTestBuilder()
-                .withTempFolder(root)
-                .withWorkerCount(1)
-                .withHttpServerConfigBuilder(new HttpServerConfigurationBuilder())
-                .withTelemetry(false)
-                .withCopyExportRoot(root + "/export")
-                .withCopyInputRoot(root + "/export");
     }
 
     protected static String[] getServerMainArgs(CharSequence root) {

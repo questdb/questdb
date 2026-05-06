@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2026 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -25,6 +25,7 @@
 package io.questdb.griffin.engine.ops;
 
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.IndexType;
 import io.questdb.cairo.OperationCodes;
 import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.TableColumnMetadata;
@@ -37,8 +38,8 @@ import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.model.CreateTableColumnModel;
+import io.questdb.griffin.model.IQueryModel;
 import io.questdb.griffin.model.QueryColumn;
-import io.questdb.griffin.model.QueryModel;
 import io.questdb.mp.SCSequence;
 import io.questdb.std.Chars;
 import io.questdb.std.LowerCaseCharSequenceHashSet;
@@ -190,8 +191,8 @@ public class CreateViewOperationImpl implements CreateViewOperation {
     }
 
     @Override
-    public boolean isIndexed(int index) {
-        return false;
+    public byte getIndexType(int index) {
+        return IndexType.NONE;
     }
 
     @Override
@@ -219,7 +220,7 @@ public class CreateViewOperationImpl implements CreateViewOperation {
     public void validateAndUpdateMetadataFromModel(
             SqlExecutionContext sqlExecutionContext,
             FunctionFactoryCache functionFactoryCache,
-            QueryModel queryModel
+            IQueryModel queryModel
     ) throws SqlException {
         // Create view columns based on query.
         final ObjList<QueryColumn> columns = queryModel.getBottomUpColumns();
@@ -238,8 +239,8 @@ public class CreateViewOperationImpl implements CreateViewOperation {
             model.setColumnType(ColumnType.UNDEFINED);
             // Copy index() definitions from create table op, so that we don't lose them.
             TableColumnMetadata augColumnMetadata = augColumnMetadataMap.get(columnName);
-            if (augColumnMetadata != null && augColumnMetadata.isSymbolIndexFlag()) {
-                model.setIndexed(true, qc.getAst().position, augColumnMetadata.getIndexValueBlockCapacity());
+            if (augColumnMetadata != null && augColumnMetadata.isIndexed()) {
+                model.setIndexType(augColumnMetadata.getIndexType(), qc.getAst().position, augColumnMetadata.getIndexValueBlockCapacity());
             }
             createColumnModelMap.put(columnName, model);
         }

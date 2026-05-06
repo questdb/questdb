@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -30,12 +30,14 @@ import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.EntryUnavailableException;
 import io.questdb.cairo.O3PartitionPurgeJob;
+import io.questdb.cairo.ParquetMetaFileReader;
 import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.TimestampDriver;
+import io.questdb.cairo.security.AllowAllSecurityContext;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryCMARW;
 import io.questdb.cairo.vm.api.MemoryMARW;
@@ -108,6 +110,13 @@ public class AlterTableDetachPartitionTest extends AbstractAlterTableAttachParti
         return Arrays.asList(new Object[][]{
                 {TestTimestampType.MICRO}, {TestTimestampType.NANO}
         });
+    }
+
+    @Override
+    public void setUp() {
+        Rnd rnd = TestUtils.generateRandom(LOG);
+        setProperty(PropertyKey.CAIRO_DEFAULT_SYMBOL_INDEX_TYPE, TestUtils.randomSymbolIndexTypeName(rnd));
+        super.setUp();
     }
 
     @Test
@@ -451,7 +460,7 @@ public class AlterTableDetachPartitionTest extends AbstractAlterTableAttachParti
             TimestampDriver driver = timestampType.getDriver();
             try (TableWriter writer = getWriter(tableName)) {
                 // structural change
-                writer.addColumn("new_column", ColumnType.INT);
+                writer.addColumn("new_column", ColumnType.INT, AllowAllSecurityContext.INSTANCE);
 
                 TableWriter.Row row = writer.newRow(driver.parseFloorLiteral("2022-06-03T12:00:00.000000Z"));
                 row.putLong(0, 33L);
@@ -501,7 +510,7 @@ public class AlterTableDetachPartitionTest extends AbstractAlterTableAttachParti
             long timestamp = driver.parseFloorLiteral(timestampDay + "T22:00:00.000000Z");
             try (TableWriter writer = getWriter(tableName)) {
                 // structural change
-                writer.addColumn("new_column", ColumnType.INT);
+                writer.addColumn("new_column", ColumnType.INT, AllowAllSecurityContext.INSTANCE);
 
                 TableWriter.Row row = writer.newRow(timestamp);
                 row.putLong(0, 33L);
@@ -1002,6 +1011,105 @@ public class AlterTableDetachPartitionTest extends AbstractAlterTableAttachParti
     }
 
     @Test
+    public void testDetachAttachParquetPartitionAfterRoundTrip() throws Exception {
+        // Reattach a parquet partition, then round-trip it through native and
+        // back to parquet. Both writes rewrite the _pm; the test asserts the
+        // final _pm resolves cleanly against the post-rewrite txn-encoded
+        // parquet file size and that the row content is preserved end-to-end.
+        assertMemoryLeak(() -> {
+            String tableName = "tab";
+            TableModel tab = new TableModel(configuration, tableName, PartitionBy.DAY);
+            createPopulateTable(
+                    1,
+                    tab.timestamp("ts", timestampType.getTimestampType())
+                            .col("i", ColumnType.INT)
+                            .col("l", ColumnType.LONG),
+                    10,
+                    "2022-06-01",
+                    2
+            );
+            execute("ALTER TABLE " + tableName + " CONVERT PARTITION TO PARQUET LIST '2022-06-01'", sqlExecutionContext);
+            execute("ALTER TABLE " + tableName + " DETACH PARTITION LIST '2022-06-01'", sqlExecutionContext);
+            renameDetachedToAttachable(tableName, "2022-06-01");
+            execute("ALTER TABLE " + tableName + " ATTACH PARTITION LIST '2022-06-01'", sqlExecutionContext);
+
+            // Edit step: convert back to native and forward to parquet again.
+            execute("ALTER TABLE " + tableName + " CONVERT PARTITION TO NATIVE LIST '2022-06-01'", sqlExecutionContext);
+            execute("ALTER TABLE " + tableName + " CONVERT PARTITION TO PARQUET LIST '2022-06-01'", sqlExecutionContext);
+
+            assertParquetPmResolvesAgainstTxn(tableName);
+
+            assertSql("count\n10\n", "select count() from " + tableName);
+        });
+    }
+
+    @Test
+    public void testDetachAttachParquetPartitionResolvesFooterAgainstTxn() throws Exception {
+        // The basic detach/reattach survival check is at testDetachAttachParquetPartition;
+        // this one tightens the contract by opening the post-attach _pm
+        // through the production JNI path and calling resolveFooter with the
+        // exact parquet file size encoded in the post-attach _txn (not
+        // Long.MAX_VALUE). A regression that mishandles the MVCC chain across
+        // detach would surface here as a failed match rather than a row-count
+        // mismatch.
+        assertMemoryLeak(() -> {
+            String tableName = "tab";
+            TableModel tab = new TableModel(configuration, tableName, PartitionBy.DAY);
+            createPopulateTable(
+                    1,
+                    tab.timestamp("ts", timestampType.getTimestampType())
+                            .col("i", ColumnType.INT)
+                            .col("l", ColumnType.LONG),
+                    10,
+                    "2022-06-01",
+                    2
+            );
+            execute("ALTER TABLE " + tableName + " CONVERT PARTITION TO PARQUET LIST '2022-06-01'", sqlExecutionContext);
+            execute("ALTER TABLE " + tableName + " DETACH PARTITION LIST '2022-06-01'", sqlExecutionContext);
+            renameDetachedToAttachable(tableName, "2022-06-01");
+            execute("ALTER TABLE " + tableName + " ATTACH PARTITION LIST '2022-06-01'", sqlExecutionContext);
+
+            assertParquetPmResolvesAgainstTxn(tableName);
+        });
+    }
+
+    @Test
+    public void testDetachAttachParquetPartitionWithMvccChain() throws Exception {
+        // After conversion to parquet, append O3 rows into the converted
+        // partition to extend the _pm MVCC chain (the writer appends a new
+        // footer rather than rewriting the file in place). Detach and
+        // reattach; the resolveFooter call against the latest txn-encoded
+        // parquet size must still succeed, proving the entire chain travels
+        // with the partition directory.
+        assertMemoryLeak(() -> {
+            String tableName = "tab";
+            TableModel tab = new TableModel(configuration, tableName, PartitionBy.DAY);
+            createPopulateTable(
+                    1,
+                    tab.timestamp("ts", timestampType.getTimestampType())
+                            .col("i", ColumnType.INT)
+                            .col("l", ColumnType.LONG),
+                    20,
+                    "2022-06-01",
+                    2
+            );
+            execute("ALTER TABLE " + tableName + " CONVERT PARTITION TO PARQUET LIST '2022-06-01'", sqlExecutionContext);
+
+            // O3 insert into the parquet partition forces a chain extension.
+            execute("INSERT INTO " + tableName + "(ts, i, l) VALUES('2022-06-01T00:00:00.000000Z', 999, 999)", sqlExecutionContext);
+
+            execute("ALTER TABLE " + tableName + " DETACH PARTITION LIST '2022-06-01'", sqlExecutionContext);
+            renameDetachedToAttachable(tableName, "2022-06-01");
+            execute("ALTER TABLE " + tableName + " ATTACH PARTITION LIST '2022-06-01'", sqlExecutionContext);
+
+            assertParquetPmResolvesAgainstTxn(tableName);
+
+            // Row content survived chain + detach + reattach.
+            assertSql("count\n21\n", "select count() from " + tableName);
+        });
+    }
+
+    @Test
     public void testDetachAttachPartition() throws Exception {
         assertMemoryLeak(
                 () -> {
@@ -1469,7 +1577,7 @@ public class AlterTableDetachPartitionTest extends AbstractAlterTableAttachParti
             String timestampDay = "2022-06-02";
             try (TableWriter writer = getWriter(tableName)) {
                 // structural change
-                writer.addColumn("new_column", ColumnType.INT);
+                writer.addColumn("new_column", ColumnType.INT, AllowAllSecurityContext.INSTANCE);
 
                 TableWriter.Row row = writer.newRow(driver.parseFloorLiteral("2022-05-03T12:00:00.000000Z"));
                 row.putLong(0, 33L);
@@ -1856,7 +1964,7 @@ public class AlterTableDetachPartitionTest extends AbstractAlterTableAttachParti
             utf8sink.put("33");
             try (TableWriter writer = getWriter(tableName)) {
                 // structural change
-                writer.addColumn("new_column", ColumnType.INT);
+                writer.addColumn("new_column", ColumnType.INT, AllowAllSecurityContext.INSTANCE);
 
                 TableWriter.Row row = writer.newRow(timestamp);
                 row.putLong(0, 33L);
@@ -2063,7 +2171,7 @@ public class AlterTableDetachPartitionTest extends AbstractAlterTableAttachParti
             long timestamp = driver.parseFloorLiteral(timestampDay + "T00:00:00.000000Z");
             try (TableWriter writer = getWriter(tableName)) {
                 // structural change
-                writer.addColumn("new_column", ColumnType.INT);
+                writer.addColumn("new_column", ColumnType.INT, AllowAllSecurityContext.INSTANCE);
                 writer.detachPartition(timestamp);
                 Assert.assertEquals(9, writer.size());
             }
@@ -2130,7 +2238,7 @@ public class AlterTableDetachPartitionTest extends AbstractAlterTableAttachParti
             try (TableWriter writer = getWriter(tableName)) {
                 writer.detachPartition(timestamp);
                 // structural change
-                writer.addColumn("new_column", ColumnType.INT);
+                writer.addColumn("new_column", ColumnType.INT, AllowAllSecurityContext.INSTANCE);
                 Assert.assertEquals(9, writer.size());
             }
 
@@ -2195,7 +2303,7 @@ public class AlterTableDetachPartitionTest extends AbstractAlterTableAttachParti
             long timestamp = driver.parseFloorLiteral(timestampDay + "T00:00:00.000000Z");
             try (TableWriter writer = getWriter(tableName)) {
                 // structural change
-                writer.addColumn("new_column", ColumnType.INT);
+                writer.addColumn("new_column", ColumnType.INT, AllowAllSecurityContext.INSTANCE);
                 TableWriter.Row row = writer.newRow(timestamp);
                 row.putLong(0, 33L);
                 row.putInt(1, 33);
@@ -2269,7 +2377,7 @@ public class AlterTableDetachPartitionTest extends AbstractAlterTableAttachParti
                 writer.detachPartition(timestamp);
 
                 // structural change
-                writer.addColumn("new_column", ColumnType.INT);
+                writer.addColumn("new_column", ColumnType.INT, AllowAllSecurityContext.INSTANCE);
 
                 TableWriter.Row row = writer.newRow(driver.parseFloorLiteral("2022-06-02T00:00:00.000000Z"));
                 row.putLong(0, 33L);
@@ -2852,6 +2960,62 @@ public class AlterTableDetachPartitionTest extends AbstractAlterTableAttachParti
         }
     }
 
+    private void assertParquetPmResolvesAgainstTxn(String tableName) {
+        final FilesFacade ff = configuration.getFilesFacade();
+        final TableToken token = engine.verifyTableName(tableName);
+
+        // Snapshot every parquet partition's identity + the txn-encoded
+        // parquet file size up front, then drop the reader so the _pm files
+        // are not held by the engine when we open them directly below.
+        long[] timestamps;
+        long[] nameTxns;
+        long[] parquetFileSizes;
+        try (TableReader reader = engine.getReader(token)) {
+            int parquetCount = 0;
+            for (int i = 0, n = reader.getPartitionCount(); i < n; i++) {
+                if (reader.getTxFile().isPartitionParquet(i)) {
+                    parquetCount++;
+                }
+            }
+            Assert.assertTrue("table has at least one parquet partition", parquetCount > 0);
+            timestamps = new long[parquetCount];
+            nameTxns = new long[parquetCount];
+            parquetFileSizes = new long[parquetCount];
+            int idx = 0;
+            for (int i = 0, n = reader.getPartitionCount(); i < n; i++) {
+                if (reader.getTxFile().isPartitionParquet(i)) {
+                    timestamps[idx] = reader.getTxFile().getPartitionTimestampByIndex(i);
+                    nameTxns[idx] = reader.getTxFile().getPartitionNameTxn(i);
+                    parquetFileSizes[idx] = reader.getTxFile().getPartitionParquetFileSize(i);
+                    idx++;
+                }
+            }
+        }
+        engine.releaseAllReaders();
+        engine.releaseAllWriters();
+        engine.releaseInactive();
+
+        for (int i = 0; i < timestamps.length; i++) {
+            try (Path p = new Path()) {
+                p.of(configuration.getDbRoot()).concat(token);
+                TableUtils.setPathForParquetPartitionMetadata(p, timestampType.getTimestampType(), PartitionBy.DAY, timestamps[i], nameTxns[i]);
+                ParquetMetaFileReader pmReader = new ParquetMetaFileReader();
+                long addr = ParquetMetaFileReader.openAndMapRO(ff, p.$(), pmReader);
+                Assert.assertNotEquals("openAndMapRO on " + p, 0L, addr);
+                long size = pmReader.getFileSize();
+                try {
+                    Assert.assertTrue(
+                            "resolveFooter against txn parquetFileSize=" + parquetFileSizes[i] + " for " + p,
+                            pmReader.resolveFooter(parquetFileSizes[i])
+                    );
+                } finally {
+                    pmReader.clear();
+                    ff.munmap(addr, size, MemoryTag.MMAP_PARQUET_METADATA_READER);
+                }
+            }
+        }
+    }
+
     private void dropCurrentVersionOfPartition(String tableName, String partitionName) throws SqlException {
         engine.clear();
         // hide the detached partition
@@ -2899,7 +3063,7 @@ public class AlterTableDetachPartitionTest extends AbstractAlterTableAttachParti
     }
 
     private String replaceTimestampSuffix(String expected) {
-        return ColumnType.isTimestampNano(timestampType.getTimestampType()) ? expected.replaceAll("Z\t", "000Z\t").replaceAll("Z\n", "000Z\n") : expected;
+        return ColumnType.isTimestampNano(timestampType.getTimestampType()) ? expected.replace("Z\t", "000Z\t").replace("Z\n", "000Z\n") : expected;
     }
 
     private void runPartitionPurgeJobs() {

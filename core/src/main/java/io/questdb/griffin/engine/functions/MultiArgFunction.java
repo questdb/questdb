@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -40,6 +40,16 @@ public interface MultiArgFunction extends Function {
     @Override
     default void close() {
         Misc.freeObjList(args());
+    }
+
+    @Override
+    default int getComplexity() {
+        final ObjList<Function> args = args();
+        int total = 0;
+        for (int i = 0, n = args.size(); i < n; i++) {
+            total = Function.addComplexity(total, args.getQuick(i).getComplexity());
+        }
+        return total;
     }
 
     @Override

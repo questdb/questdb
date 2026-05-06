@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -38,7 +38,6 @@ import org.jetbrains.annotations.Nullable;
 import static io.questdb.griffin.engine.table.parquet.ParquetCompression.*;
 
 public class ExportModel implements ExecutionModel, Mutable, Sinkable {
-
     public static final int COPY_FORMAT_CSV = 1;
     public static final int COPY_FORMAT_PARQUET = 2;
     public static final int COPY_FORMAT_UNKNOWN = 0;
@@ -53,6 +52,8 @@ public class ExportModel implements ExecutionModel, Mutable, Sinkable {
     public static final int COPY_OPTION_STATISTICS_ENABLED = COPY_OPTION_DATA_PAGE_SIZE + 1; // 7
     public static final int COPY_OPTION_PARQUET_VERSION = COPY_OPTION_STATISTICS_ENABLED + 1; // 8
     public static final int COPY_OPTION_RAW_ARRAY_ENCODING = COPY_OPTION_PARQUET_VERSION + 1; // 9
+    public static final int COPY_OPTION_BLOOM_FILTER_COLUMNS = COPY_OPTION_RAW_ARRAY_ENCODING + 1; // 10
+    public static final int COPY_OPTION_BLOOM_FILTER_FPP = COPY_OPTION_BLOOM_FILTER_COLUMNS + 1; // 11
     public static final int COPY_TYPE_FROM = 1;
     public static final int COPY_TYPE_TO = 2;
     public static final int COPY_TYPE_UNKNOWN = 0;
@@ -60,26 +61,30 @@ public class ExportModel implements ExecutionModel, Mutable, Sinkable {
     public static final int PARQUET_VERSION_V1 = 1;
     public static final int PARQUET_VERSION_V2 = 2;
     private static final LowerCaseCharSequenceIntHashMap copyOptionsNameToEnumMap = new LowerCaseCharSequenceIntHashMap();
-    private int atomicity;
+    private int atomicity = -1;
+    @Nullable
+    private CharSequence bloomFilterColumns;
+    private int bloomFilterColumnsPosition = -1;
+    private double bloomFilterFpp = Double.NaN;
     private boolean cancel;
-    private int compressionCodec;
-    private int compressionLevel;
+    private int compressionCodec = -1;
+    private int compressionLevel = -1;
     private int compressionLevelPos;
     private boolean compressionLevelSet;
-    private int dataPageSize;
-    private byte delimiter;
+    private int dataPageSize = -1;
+    private byte delimiter = -1;
     private ExpressionNode fileName;
     private int format;
     private boolean header;
     private boolean noDelay;
-    private int parquetVersion;
-    private int partitionBy;
+    private int parquetVersion = -1;
+    private int partitionBy = -1;
     private boolean rawArrayEncoding;
-    private int rowGroupSize;
+    private int rowGroupSize = -1;
     private int selectStartPos;
     @Nullable
     private CharSequence selectText;
-    private boolean statisticsEnabled;
+    private boolean statisticsEnabled = true;
     private ExpressionNode target; // holds table name (new import) or import id (cancel model)
     private CharSequence timestampColumnName;
     private CharSequence timestampFormat;
@@ -117,10 +122,26 @@ public class ExportModel implements ExecutionModel, Mutable, Sinkable {
         rawArrayEncoding = false;
         compressionLevelPos = 0;
         noDelay = false;
+        bloomFilterColumns = null;
+        bloomFilterColumnsPosition = -1;
+        bloomFilterFpp = Double.NaN;
     }
 
     public int getAtomicity() {
         return atomicity;
+    }
+
+    @Nullable
+    public CharSequence getBloomFilterColumns() {
+        return bloomFilterColumns;
+    }
+
+    public int getBloomFilterColumnsPosition() {
+        return bloomFilterColumnsPosition;
+    }
+
+    public double getBloomFilterFpp() {
+        return bloomFilterFpp;
     }
 
     public int getCompressionCodec() {
@@ -167,10 +188,6 @@ public class ExportModel implements ExecutionModel, Mutable, Sinkable {
 
     public int getSelectTextStartPos() {
         return selectStartPos;
-    }
-
-    public boolean isNoDelay() {
-        return noDelay;
     }
 
     @Override
@@ -225,6 +242,10 @@ public class ExportModel implements ExecutionModel, Mutable, Sinkable {
         return header;
     }
 
+    public boolean isNoDelay() {
+        return noDelay;
+    }
+
     public boolean isParquetFormat() {
         return format == COPY_FORMAT_PARQUET;
     }
@@ -239,6 +260,15 @@ public class ExportModel implements ExecutionModel, Mutable, Sinkable {
 
     public void setAtomicity(int atomicity) {
         this.atomicity = atomicity;
+    }
+
+    public void setBloomFilterColumns(@Nullable CharSequence bloomFilterColumns, int position) {
+        this.bloomFilterColumns = bloomFilterColumns;
+        this.bloomFilterColumnsPosition = position;
+    }
+
+    public void setBloomFilterFpp(double bloomFilterFpp) {
+        this.bloomFilterFpp = bloomFilterFpp;
     }
 
     public void setCancel(boolean cancel) {
@@ -287,6 +317,7 @@ public class ExportModel implements ExecutionModel, Mutable, Sinkable {
         statisticsEnabled = configuration.isParquetExportStatisticsEnabled();
         parquetVersion = configuration.getParquetExportVersion();
         rawArrayEncoding = configuration.isParquetExportRawArrayEncoding();
+        bloomFilterFpp = configuration.getParquetExportBloomFilterFpp();
         partitionBy = -1;
         compressionLevelSet = false;
     }
@@ -342,31 +373,7 @@ public class ExportModel implements ExecutionModel, Mutable, Sinkable {
             return;
         }
         if (format == COPY_FORMAT_PARQUET && compressionCodec >= 0) {
-            switch (compressionCodec) {
-                case COMPRESSION_UNCOMPRESSED:
-                case COMPRESSION_SNAPPY:
-                case COMPRESSION_LZ4_RAW:
-                    // These codecs don't use compression level
-                    break;
-                case COMPRESSION_GZIP:
-                    // GZIP actually uses levels 0-9, where 0=fastest, 9=best compression
-                    if (compressionLevel < GZIP_MIN_COMPRESSION_LEVEL || compressionLevel > GZIP_MAX_COMPRESSION_LEVEL) {
-                        throw SqlException.$(compressionLevelPos, "GZIP compression level must be between 0 and 9");
-                    }
-                    break;
-                case COMPRESSION_BROTLI:
-                    if (compressionLevel < BROTLI_MIN_COMPRESSION_LEVEL || compressionLevel > BROTLI_MAX_COMPRESSION_LEVEL) {
-                        throw SqlException.$(compressionLevelPos, "Brotli compression level must be between 0 and 11");
-                    }
-                    break;
-                case COMPRESSION_ZSTD:
-                    if (compressionLevel != -1 && (compressionLevel < ZSTD_MIN_COMPRESSION_LEVEL || compressionLevel > ZSTD_MAX_COMPRESSION_LEVEL)) {
-                        throw SqlException.$(compressionLevelPos, "ZSTD compression level must be between 1 and 22");
-                    }
-                    break;
-                default:
-                    throw SqlException.$(compressionLevelPos, "Unsupported compression codec ").put(compressionCodec);
-            }
+            ParquetCompression.validateCompressionLevel(compressionCodec, compressionLevel, compressionLevelPos);
         }
     }
 
@@ -381,5 +388,7 @@ public class ExportModel implements ExecutionModel, Mutable, Sinkable {
         copyOptionsNameToEnumMap.put("statistics_enabled", COPY_OPTION_STATISTICS_ENABLED);
         copyOptionsNameToEnumMap.put("parquet_version", COPY_OPTION_PARQUET_VERSION);
         copyOptionsNameToEnumMap.put("raw_array_encoding", COPY_OPTION_RAW_ARRAY_ENCODING);
+        copyOptionsNameToEnumMap.put("bloom_filter_columns", COPY_OPTION_BLOOM_FILTER_COLUMNS);
+        copyOptionsNameToEnumMap.put("bloom_filter_fpp", COPY_OPTION_BLOOM_FILTER_FPP);
     }
 }

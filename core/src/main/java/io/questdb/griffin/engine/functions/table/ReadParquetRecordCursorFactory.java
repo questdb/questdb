@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -24,15 +24,19 @@
 
 package io.questdb.griffin.engine.functions.table;
 
+import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.ProjectableRecordCursorFactory;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.engine.table.PushdownFilterExtractor;
 import io.questdb.std.Misc;
+import io.questdb.std.ObjList;
 import io.questdb.std.Transient;
 import io.questdb.std.str.Path;
+import org.jetbrains.annotations.Nullable;
 
 /**
  * Factory for single-threaded read_parquet() SQL function.
@@ -40,6 +44,7 @@ import io.questdb.std.str.Path;
 public class ReadParquetRecordCursorFactory extends ProjectableRecordCursorFactory {
     private ReadParquetRecordCursor cursor;
     private Path path;
+    private @Nullable ObjList<PushdownFilterExtractor.PushdownFilterCondition> pushdownFilterConditions;
 
     public ReadParquetRecordCursorFactory(@Transient Path path, RecordMetadata metadata) {
         super(metadata);
@@ -48,16 +53,32 @@ public class ReadParquetRecordCursorFactory extends ProjectableRecordCursorFacto
 
     @Override
     public RecordCursor getCursor(SqlExecutionContext executionContext) throws SqlException {
-        if (this.cursor == null) {
-            this.cursor = new ReadParquetRecordCursor(executionContext.getCairoEngine().getConfiguration().getFilesFacade(), getMetadata());
+        if (cursor == null) {
+            final CairoConfiguration configuration = executionContext.getCairoEngine().getConfiguration();
+            cursor = new ReadParquetRecordCursor(configuration.getFilesFacade(), getMetadata(), pushdownFilterConditions);
         }
-        cursor.of(path.$());
-        return cursor;
+        try {
+            cursor.of(path.$(), executionContext);
+            return cursor;
+        } catch (Throwable th) {
+            cursor.close();
+            throw th;
+        }
+    }
+
+    @Override
+    public boolean mayHaveParquetPartitions(SqlExecutionContext executionContext) {
+        return true;
     }
 
     @Override
     public boolean recordCursorSupportsRandomAccess() {
         return false;
+    }
+
+    @Override
+    public void setPushdownFilterCondition(ObjList<PushdownFilterExtractor.PushdownFilterCondition> pushdownFilterConditions) {
+        this.pushdownFilterConditions = pushdownFilterConditions;
     }
 
     @Override
@@ -70,5 +91,6 @@ public class ReadParquetRecordCursorFactory extends ProjectableRecordCursorFacto
     protected void _close() {
         cursor = Misc.free(cursor);
         path = Misc.free(path);
+        Misc.freeObjListAndClear(pushdownFilterConditions);
     }
 }

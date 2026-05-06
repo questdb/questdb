@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -30,7 +30,6 @@ import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.griffin.model.RuntimeIntrinsicIntervalModel;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
-import io.questdb.std.Misc;
 
 public class IntervalBwdPartitionFrameCursor extends AbstractIntervalPartitionFrameCursor {
     private static final Log LOG = LogFactory.getLog(IntervalBwdPartitionFrameCursor.class);
@@ -60,15 +59,7 @@ public class IntervalBwdPartitionFrameCursor extends AbstractIntervalPartitionFr
         while (intervalsLo1 < intervalsHi1 && partitionLo1 < partitionHi1) {
             // We don't need to worry about column tops and null column because we
             // are working with timestamp. Timestamp column cannot be added to existing table.
-            long rowCount;
-            try {
-                rowCount = reader.getPartitionRowCountFromMetadata(partitionHi1);
-            } catch (DataUnavailableException e) {
-                // The data is in cold storage, close the event and give up on size calculation.
-                Misc.free(e.getEvent());
-                return;
-            }
-
+            final long rowCount = reader.getPartitionRowCountFromMetadata(partitionHi1);
             if (rowCount > 0) {
                 final TimestampFinder timestampFinder = initTimestampFinder(partitionHi1, rowCount);
 
@@ -238,12 +229,12 @@ public class IntervalBwdPartitionFrameCursor extends AbstractIntervalPartitionFr
                     final byte format = reader.getPartitionFormat(currentPartition);
                     if (format == PartitionFormat.PARQUET) {
                         frame.format = PartitionFormat.PARQUET;
-                        frame.parquetDecoder = reader.getAndInitParquetPartitionDecoders(currentPartition);
-                        assert frame.parquetDecoder.getFileAddr() != 0 : "parquet decoder is not initialized";
+                        frame.parquetMetaDecoder = reader.getAndInitParquetPartitionDecoder(currentPartition);
+                        assert frame.parquetMetaDecoder.getFileAddr() != 0 : "parquet decoder is not initialized";
                     } else {
                         assert format == PartitionFormat.NATIVE;
                         frame.format = PartitionFormat.NATIVE;
-                        frame.parquetDecoder = null;
+                        frame.parquetMetaDecoder = null;
                     }
 
                     return frame;

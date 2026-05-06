@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -32,19 +32,39 @@ import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.TimestampDriver;
-import io.questdb.griffin.engine.table.parquet.PartitionDecoder;
+import io.questdb.griffin.engine.table.parquet.ParquetPartitionDecoder;
 import io.questdb.std.Rnd;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
+import org.junit.runner.RunWith;
+import org.junit.runners.Parameterized;
 
+import java.util.Arrays;
+import java.util.Collection;
+
+@RunWith(Parameterized.class)
 public class TimestampFinderTest extends AbstractCairoTest {
+    private final boolean enableParquetStatistics;
+
+    public TimestampFinderTest(boolean enableParquetStatistics) {
+        this.enableParquetStatistics = enableParquetStatistics;
+    }
+
+    @Parameterized.Parameters(name = "enableParquetStatistics={0}")
+    public static Collection<Object[]> data() {
+        return Arrays.asList(new Object[][]{
+                {true},
+                {false},
+        });
+    }
 
     @Override
     public void setUp() {
         super.setUp();
         node1.setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_ROW_GROUP_SIZE, 100);
+        node1.setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_STATISTICS_ENABLED, enableParquetStatistics);
     }
 
     @Test
@@ -113,7 +133,7 @@ public class TimestampFinderTest extends AbstractCairoTest {
             try (
                     TableReader oracleReader = newOffPoolReader(configuration, "oracle");
                     TableReader reader = newOffPoolReader(configuration, "x");
-                    PartitionDecoder partitionDecoder = new PartitionDecoder();
+                    ParquetPartitionDecoder partitionDecoder = new ParquetPartitionDecoder();
                     ParquetTimestampFinder finder = new ParquetTimestampFinder(partitionDecoder)
             ) {
                 Assert.assertEquals(2, oracleReader.getPartitionCount());

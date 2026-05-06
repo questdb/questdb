@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -45,7 +45,7 @@ public class OooCppBenchmarkSetMemoryVanilla {
     }
 
     public void mallocBuffer() {
-        buffer = Unsafe.getUnsafe().allocateMemory(BUFFER_MAX_SIZE);
+        buffer = Unsafe.allocateMemory(BUFFER_MAX_SIZE);
     }
 
     private static double runDoubleKs(int iterations, int i) {

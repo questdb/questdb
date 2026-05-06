@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -29,7 +29,7 @@ import io.questdb.griffin.SqlException;
 import io.questdb.std.BinarySequence;
 import io.questdb.std.Long256;
 import io.questdb.std.Mutable;
-import io.questdb.std.ObjList;
+import io.questdb.std.ReadOnlyObjList;
 import io.questdb.std.Transient;
 import io.questdb.std.str.Utf8Sequence;
 
@@ -57,7 +57,7 @@ public interface BindVariableService extends Mutable {
     /**
      * @return list of named variables in a query
      */
-    ObjList<CharSequence> getNamedVariables();
+    ReadOnlyObjList<CharSequence> getNamedVariables();
 
     void setArray(int i, ArrayView ab) throws SqlException;
 

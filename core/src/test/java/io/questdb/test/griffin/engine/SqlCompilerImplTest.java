@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -37,6 +37,7 @@ import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.TableWriter;
+import io.questdb.cairo.security.AllowAllSecurityContext;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.TableMetadata;
 import io.questdb.griffin.SqlCompiler;
@@ -48,9 +49,8 @@ import io.questdb.griffin.engine.ops.AlterOperationBuilder;
 import io.questdb.griffin.engine.ops.CreateMatViewOperationBuilder;
 import io.questdb.griffin.engine.ops.CreateTableOperationBuilder;
 import io.questdb.griffin.engine.ops.CreateViewOperationBuilder;
-import io.questdb.griffin.engine.ops.GenericDropOperationBuilder;
 import io.questdb.griffin.model.ExpressionNode;
-import io.questdb.griffin.model.QueryModel;
+import io.questdb.griffin.model.IQueryModel;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.Chars;
@@ -89,7 +89,7 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 
-import static io.questdb.griffin.CompiledQuery.SET;
+import static io.questdb.griffin.CompiledQuery.*;
 
 public class SqlCompilerImplTest extends AbstractCairoTest {
     private static final Log LOG = LogFactory.getLog(SqlCompilerImplTest.class);
@@ -171,17 +171,17 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
             for (String frameType : Arrays.asList("rows ", "range")) {
                 String queryPrefix = prefix + frameType;
 
-                assertExceptionNoLeakCheck(queryPrefix + " between preceding and current row)  from trips", 60, "integer expression expected");
+                assertExceptionNoLeakCheck(queryPrefix + " between preceding and current row)  from trips", 60, "frame bound value expected before 'preceding'");
 
-                assertExceptionNoLeakCheck(queryPrefix + " between 10 preceding and preceding)  from trips", 77, "integer expression expected");
+                assertExceptionNoLeakCheck(queryPrefix + " between 10 preceding and preceding)  from trips", 77, "frame bound value expected before 'preceding'");
 
-                assertExceptionNoLeakCheck(queryPrefix + " between 10 preceding and following)  from trips", 77, "integer expression expected");
+                assertExceptionNoLeakCheck(queryPrefix + " between 10 preceding and following)  from trips", 77, "frame bound value expected before 'following'");
 
-                assertExceptionNoLeakCheck(queryPrefix + " preceding)  from trips", 52, "integer expression expected");
+                assertExceptionNoLeakCheck(queryPrefix + " preceding)  from trips", 52, "frame bound value expected before 'preceding'");
 
-                assertExceptionNoLeakCheck(queryPrefix + " following)  from trips", 52, "integer expression expected");
+                assertExceptionNoLeakCheck(queryPrefix + " following)  from trips", 52, "frame bound value expected before 'following'");
 
-                assertExceptionNoLeakCheck(queryPrefix + " between)  from trips", 59, "Expression expected");
+                assertExceptionNoLeakCheck(queryPrefix + " between)  from trips", 59, "'preceding' or 'following' expected");
 
                 assertExceptionNoLeakCheck(queryPrefix + " between '' preceding and current row)  from trips", 60, "integer expression expected");
 
@@ -219,6 +219,145 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
                 "alter table x alter column a type interval",
                 34,
                 "non-persisted type: interval"
+        );
+    }
+
+    @Test
+    public void testAlterTableAddIndexBitmapIncludeFails() throws Exception {
+        execute("create table t_idx (ts TIMESTAMP, sym SYMBOL, p DOUBLE) timestamp(ts) PARTITION BY DAY BYPASS WAL");
+        assertException(
+                "alter table t_idx alter column sym add index type bitmap include (p)",
+                57,
+                "INCLUDE is only supported for POSTING index type"
+        );
+    }
+
+    @Test
+    public void testAlterTableAddIndexCapacityInfersBitmap() throws Exception {
+        addIndexAndAssertType("alter table t_idx alter column sym add index capacity 256", "BITMAP");
+    }
+
+    @Test
+    public void testAlterTableAddIndexDefault() throws Exception {
+        addIndexAndAssertType("alter table t_idx alter column sym add index", "BITMAP");
+    }
+
+    @Test
+    public void testAlterTableAddIndexIncludeInfersPosting() throws Exception {
+        addIndexAndAssertType("alter table t_idx alter column sym add index include (p)", "POSTING");
+    }
+
+    @Test
+    public void testAlterTableAddIndexPosting() throws Exception {
+        addIndexAndAssertType("alter table t_idx alter column sym add index type posting", "POSTING");
+    }
+
+    @Test
+    public void testAlterTableAddColumnIndexBitmapCapacity() throws Exception {
+        addColumnAndAssertType("alter table t_idx add column sym SYMBOL INDEX TYPE BITMAP CAPACITY 256", "BITMAP");
+    }
+
+    @Test
+    public void testAlterTableAddColumnIndexCapacityInfersBitmap() throws Exception {
+        addColumnAndAssertType("alter table t_idx add column sym SYMBOL INDEX CAPACITY 256", "BITMAP");
+    }
+
+    @Test
+    public void testAlterTableAddColumnIndexDefault() throws Exception {
+        addColumnAndAssertType("alter table t_idx add column sym SYMBOL INDEX", "BITMAP");
+    }
+
+    @Test
+    public void testAlterTableAddColumnIndexPosting() throws Exception {
+        addColumnAndAssertType("alter table t_idx add column sym SYMBOL INDEX TYPE POSTING", "POSTING");
+    }
+
+    @Test
+    public void testAlterTableAddColumnIndexPostingDelta() throws Exception {
+        addColumnAndAssertType("alter table t_idx add column sym SYMBOL INDEX TYPE POSTING DELTA", "POSTING DELTA");
+    }
+
+    @Test
+    public void testAlterTableAddColumnIndexPostingEf() throws Exception {
+        addColumnAndAssertType("alter table t_idx add column sym SYMBOL INDEX TYPE POSTING EF", "POSTING EF");
+    }
+
+    @Test
+    public void testAlterTableAddColumnPostingCapacityFails() throws Exception {
+        execute("create table t_idx (ts TIMESTAMP) timestamp(ts) PARTITION BY DAY BYPASS WAL");
+        assertException(
+                "alter table t_idx add column sym SYMBOL INDEX TYPE POSTING CAPACITY 256",
+                59,
+                "CAPACITY is only supported for BITMAP index type"
+        );
+    }
+
+    @Test
+    public void testAlterTableAddColumnPostingDeltaCapacityFails() throws Exception {
+        execute("create table t_idx (ts TIMESTAMP) timestamp(ts) PARTITION BY DAY BYPASS WAL");
+        assertException(
+                "alter table t_idx add column sym SYMBOL INDEX TYPE POSTING DELTA CAPACITY 256",
+                65,
+                "CAPACITY is only supported for BITMAP index type"
+        );
+    }
+
+    @Test
+    public void testAlterTableAddColumnPostingEfCapacityFails() throws Exception {
+        execute("create table t_idx (ts TIMESTAMP) timestamp(ts) PARTITION BY DAY BYPASS WAL");
+        assertException(
+                "alter table t_idx add column sym SYMBOL INDEX TYPE POSTING EF CAPACITY 256",
+                62,
+                "CAPACITY is only supported for BITMAP index type"
+        );
+    }
+
+    private void addColumnAndAssertType(String alterSql, String expectedIndexType) throws Exception {
+        execute("create table t_idx (ts TIMESTAMP) timestamp(ts) PARTITION BY DAY BYPASS WAL");
+        execute(alterSql);
+        assertSql(
+                "indexType\n" + expectedIndexType + "\n",
+                "SELECT indexType FROM (SHOW COLUMNS FROM t_idx) WHERE column = 'sym'"
+        );
+    }
+
+    @Test
+    public void testAlterTableAddIndexPostingCapacityFails() throws Exception {
+        execute("create table t_idx (ts TIMESTAMP, sym SYMBOL, p DOUBLE) timestamp(ts) PARTITION BY DAY BYPASS WAL");
+        assertException(
+                "alter table t_idx alter column sym add index type posting capacity 256",
+                58,
+                "CAPACITY is only supported for BITMAP index type"
+        );
+    }
+
+    @Test
+    public void testAlterTableAddIndexPostingDelta() throws Exception {
+        addIndexAndAssertType("alter table t_idx alter column sym add index type posting delta", "POSTING DELTA");
+    }
+
+    @Test
+    public void testAlterTableAddIndexPostingEf() throws Exception {
+        addIndexAndAssertType("alter table t_idx alter column sym add index type posting ef", "POSTING EF");
+    }
+
+    @Test
+    public void testAlterTableAddIndexPostingEfInclude() throws Exception {
+        addIndexAndAssertType("alter table t_idx alter column sym add index type posting ef include (p)", "POSTING EF");
+    }
+
+    @Test
+    public void testAlterTableAddIndexPostingInclude() throws Exception {
+        addIndexAndAssertType("alter table t_idx alter column sym add index type posting include (p)", "POSTING");
+    }
+
+    private void addIndexAndAssertType(String alterSql, String expectedIndexType) throws Exception {
+        execute("create table t_idx (ts TIMESTAMP, sym SYMBOL, p DOUBLE) timestamp(ts) PARTITION BY DAY BYPASS WAL");
+        execute("insert into t_idx values ('2024-01-01T00:00:00', 'A', 1.0)");
+        execute(alterSql);
+        assertSql(
+                "indexType\n" + expectedIndexType + "\n",
+                "SELECT indexType FROM (SHOW COLUMNS FROM t_idx) WHERE column = 'sym'"
         );
     }
 
@@ -518,26 +657,26 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
         assertCastDate(
                 """
                         a
-                        1.42629719E12
+                        1.4262972E12
                         null
-                        1.44608107E12
-                        1.43483417E12
+                        1.4460811E12
+                        1.4348342E12
                         null
-                        1.43973981E12
-                        1.44395783E12
-                        1.44028022E12
+                        1.4397398E12
+                        1.4439578E12
+                        1.4402802E12
                         null
-                        1.44318385E12
+                        1.4431839E12
                         null
-                        1.43529856E12
+                        1.4352986E12
                         null
-                        1.44718168E12
-                        1.44236151E12
-                        1.42816523E12
+                        1.4471817E12
+                        1.4423615E12
+                        1.4281652E12
                         null
-                        1.43499959E12
+                        1.4349996E12
                         1.4237367E12
-                        1.42656641E12
+                        1.4265664E12
                         """,
                 ColumnType.FLOAT
         );
@@ -1938,26 +2077,26 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
         assertCastTimestamp(
                 """
                         a
-                        1.45120261E15
+                        1.4512026E15
                         null
-                        1.44721768E15
-                        1.45086451E15
+                        1.4472177E15
+                        1.4508645E15
                         null
-                        1.42523054E15
-                        1.43926824E15
-                        1.44667571E15
+                        1.4252305E15
+                        1.4392682E15
+                        1.4466757E15
                         null
-                        1.43270808E15
+                        1.4327081E15
                         null
-                        1.44679678E15
+                        1.4467968E15
                         null
-                        1.43687487E15
-                        1.44081201E15
-                        1.44089254E15
+                        1.4368749E15
+                        1.440812E15
+                        1.4408925E15
                         null
-                        1.44058384E15
-                        1.44391553E15
-                        1.44839638E15
+                        1.4405838E15
+                        1.4439155E15
+                        1.4483964E15
                         """,
                 ColumnType.FLOAT
         );
@@ -2102,6 +2241,16 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
                 engine.clear();
             }
         });
+    }
+
+    @Test
+    public void testCloseMissingArgRejected() throws Exception {
+        assertException("CLOSE", 5, "argument expected");
+    }
+
+    @Test
+    public void testCloseSemicolonNotAcceptedAsArg() throws Exception {
+        assertException("CLOSE;", 5, "argument expected");
     }
 
     @Test
@@ -2572,6 +2721,15 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
         });
     }
 
+    @Test
+    public void testCompileBeginTransaction() throws Exception {
+        assertMemoryLeak(() -> {
+            try (SqlCompiler compiler = engine.getSqlCompiler()) {
+                Assert.assertEquals(BEGIN, compiler.compile("BEGIN TRANSACTION", sqlExecutionContext).getType());
+            }
+        });
+    }
+
     // close command is a no-op in qdb
     @Test
     public void testCompileCloseDoesNothing() throws Exception {
@@ -2579,6 +2737,15 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             try (SqlCompiler compiler = engine.getSqlCompiler()) {
                 Assert.assertEquals(SET, compiler.compile(query, sqlExecutionContext).getType());
+            }
+        });
+    }
+
+    @Test
+    public void testCompileCommitTransaction() throws Exception {
+        assertMemoryLeak(() -> {
+            try (SqlCompiler compiler = engine.getSqlCompiler()) {
+                Assert.assertEquals(COMMIT, compiler.compile("COMMIT TRANSACTION", sqlExecutionContext).getType());
             }
         });
     }
@@ -2595,11 +2762,108 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testCompileRollbackTransaction() throws Exception {
+        assertMemoryLeak(() -> {
+            try (SqlCompiler compiler = engine.getSqlCompiler()) {
+                Assert.assertEquals(ROLLBACK, compiler.compile("ROLLBACK TRANSACTION", sqlExecutionContext).getType());
+            }
+        });
+    }
+
+    @Test
     public void testCompileSet() throws Exception {
         String query = "SET x = y";
         assertMemoryLeak(() -> {
             try (SqlCompiler compiler = engine.getSqlCompiler()) {
                 Assert.assertEquals(SET, compiler.compile(query, sqlExecutionContext).getType());
+            }
+        });
+    }
+
+    @Test
+    public void testCompileSetDanglingComma() throws Exception {
+        assertException("SET x = y,", 10, "value expected");
+    }
+
+    @Test
+    public void testCompileSetMissingName() throws Exception {
+        assertException("SET", 3, "parameter name expected");
+    }
+
+    @Test
+    public void testCompileSetMissingNameSemicolon() throws Exception {
+        assertException("SET;", 3, "parameter name expected");
+    }
+
+    @Test
+    public void testCompileSetMissingOperator() throws Exception {
+        assertException("SET x", 5, "'=' or 'TO' expected");
+    }
+
+    @Test
+    public void testCompileSetMissingValue() throws Exception {
+        assertException("SET x =", 7, "value expected");
+    }
+
+    @Test
+    public void testCompileSetMultipleValues() throws Exception {
+        assertMemoryLeak(() -> {
+            try (SqlCompiler compiler = engine.getSqlCompiler()) {
+                Assert.assertEquals(SET, compiler.compile("SET x TO y, z", sqlExecutionContext).getType());
+            }
+        });
+    }
+
+    @Test
+    public void testCompileSetNonStandardForm() throws Exception {
+        assertMemoryLeak(() -> {
+            try (SqlCompiler compiler = engine.getSqlCompiler()) {
+                Assert.assertEquals(SET, compiler.compile("SET x GARBAGE y", sqlExecutionContext).getType());
+            }
+        });
+    }
+
+    @Test
+    public void testCompileSetQuotedValue() throws Exception {
+        assertMemoryLeak(() -> {
+            try (SqlCompiler compiler = engine.getSqlCompiler()) {
+                Assert.assertEquals(SET, compiler.compile("SET x = 'quoted'", sqlExecutionContext).getType());
+            }
+        });
+    }
+
+    @Test
+    public void testCompileSetTimeZone() throws Exception {
+        assertMemoryLeak(() -> {
+            try (SqlCompiler compiler = engine.getSqlCompiler()) {
+                Assert.assertEquals(SET, compiler.compile("SET TIME ZONE 'UTC'", sqlExecutionContext).getType());
+            }
+        });
+    }
+
+    @Test
+    public void testCompileSetWithLocal() throws Exception {
+        assertMemoryLeak(() -> {
+            try (SqlCompiler compiler = engine.getSqlCompiler()) {
+                Assert.assertEquals(SET, compiler.compile("SET LOCAL x = y", sqlExecutionContext).getType());
+            }
+        });
+    }
+
+    @Test
+    public void testCompileSetWithSession() throws Exception {
+        assertMemoryLeak(() -> {
+            try (SqlCompiler compiler = engine.getSqlCompiler()) {
+                Assert.assertEquals(SET, compiler.compile("SET SESSION x = y", sqlExecutionContext).getType());
+            }
+        });
+    }
+
+    @Test
+    public void testCompileSetWithTo() throws Exception {
+        assertMemoryLeak(() -> {
+            try (SqlCompiler compiler = engine.getSqlCompiler()) {
+                Assert.assertEquals(SET, compiler.compile("SET x TO y", sqlExecutionContext).getType());
             }
         });
     }
@@ -2865,7 +3129,7 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
                                         } else {
                                             writer.removeColumn("b" + (state - 1));
                                         }
-                                        writer.addColumn("b" + state, ColumnType.INT);
+                                        writer.addColumn("b" + state, ColumnType.INT, AllowAllSecurityContext.INSTANCE);
                                     }
                                 }
                             }
@@ -3434,7 +3698,7 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
                             // remove column from table X
                             try (TableWriter writer = getWriter("X")) {
                                 writer.removeColumn("a");
-                                writer.addColumn("c", ColumnType.FLOAT);
+                                writer.addColumn("c", ColumnType.FLOAT, AllowAllSecurityContext.INSTANCE);
                             }
                         }
                     }
@@ -3463,7 +3727,7 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
                                     // remove column from table X
                                     try (TableWriter writer = getWriter("X")) {
                                         writer.removeColumn("t");
-                                        writer.addColumn("t", ColumnType.FLOAT);
+                                        writer.addColumn("t", ColumnType.FLOAT, AllowAllSecurityContext.INSTANCE);
                                     }
                                 }
                             }
@@ -3831,6 +4095,16 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testCursorFunctionCannotBeUsedAsColumnFreesParsedFunction() throws Exception {
+        assertException(
+                "SELECT pg_attrdef() AS c FROM long_sequence(1)",
+                7,
+                "cursor function cannot be used as a column [column=c]",
+                sqlExecutionContext
+        );
+    }
+
+    @Test
     public void testDeallocateMissingStatementName() throws Exception {
         assertMemoryLeak(() -> {
             try {
@@ -3868,6 +4142,16 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
 
             assertExceptionNoLeakCheck("select x1 as a, a as a from t", 18, "Duplicate column [name=a]");
         });
+    }
+
+    @Test
+    public void testDiscardMissingArgRejected() throws Exception {
+        assertException("DISCARD", 7, "argument expected");
+    }
+
+    @Test
+    public void testDiscardSemicolonNotAcceptedAsArg() throws Exception {
+        assertException("DISCARD;", 7, "argument expected");
     }
 
     @Test
@@ -3967,7 +4251,11 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute("create table test(time TIMESTAMP, symbol STRING);");
 
-            assertExceptionNoLeakCheck("SELECT test.time AS ref0, test.symbol AS ref1 FROM test GROUP BY test.time, test.symbol ORDER BY SUM(1, -1)", 97, "there is no matching function `SUM` with the argument types: (INT, INT)");
+            assertExceptionNoLeakCheck(
+                    "SELECT test.time AS ref0, test.symbol AS ref1 FROM test GROUP BY test.time, test.symbol ORDER BY SUM(1, -1)",
+                    97,
+                    "there is no matching function `SUM` with the argument types: (INT, INT)"
+            );
         });
     }
 
@@ -5058,7 +5346,7 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
                     // remove column from table X
                     try (TableWriter writer = TestUtils.getWriter(engine, "y")) {
                         writer.removeColumn("int1");
-                        writer.addColumn("c", ColumnType.INT);
+                        writer.addColumn("c", ColumnType.INT, AllowAllSecurityContext.INSTANCE);
                     }
                 }
             }
@@ -6288,7 +6576,7 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
                     Assert.assertEquals(2, writer.getMetadata().getTimestampIndex());
                     writer.removeColumn("t");
                     Assert.assertEquals(-1, writer.getMetadata().getTimestampIndex());
-                    writer.addColumn("t", ColumnType.TIMESTAMP);
+                    writer.addColumn("t", ColumnType.TIMESTAMP, AllowAllSecurityContext.INSTANCE);
                     Assert.assertEquals(-1, writer.getMetadata().getTimestampIndex());
                 }
 
@@ -6330,6 +6618,16 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
                 }
             }
         });
+    }
+
+    @Test
+    public void testResetMissingArgRejected() throws Exception {
+        assertException("RESET", 5, "argument expected");
+    }
+
+    @Test
+    public void testResetSemicolonNotAcceptedAsArg() throws Exception {
+        assertException("RESET;", 5, "argument expected");
     }
 
     @Test
@@ -7166,6 +7464,114 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testTrailingContentAfterBeginRejected() throws Exception {
+        assertException("BEGIN extra_token", 6, "unexpected token [extra_token]");
+    }
+
+    @Test
+    public void testTrailingContentAfterBeginTransactionRejected() throws Exception {
+        assertException("BEGIN TRANSACTION extra_token", 18, "unexpected token [extra_token]");
+    }
+
+    @Test
+    public void testTrailingContentAfterCloseRejected() throws Exception {
+        assertException("CLOSE ALL extra", 10, "unexpected token [extra]");
+    }
+
+    @Test
+    public void testTrailingContentAfterCommitRejected() throws Exception {
+        assertException("COMMIT extra_token", 7, "unexpected token [extra_token]");
+    }
+
+    @Test
+    public void testTrailingContentAfterDdlRejected() throws Exception {
+        assertException(
+                "create table tab (x int) select",
+                25,
+                "unexpected token [select]"
+        );
+    }
+
+    @Test
+    public void testTrailingContentAfterDiscardRejected() throws Exception {
+        assertException("DISCARD ALL extra", 12, "unexpected token [extra]");
+    }
+
+    @Test
+    public void testTrailingContentAfterNoOpRejected() throws Exception {
+        assertException(
+                "RESET ALL extra",
+                10,
+                "unexpected token [extra]"
+        );
+    }
+
+    @Test
+    public void testTrailingContentAfterRollbackRejected() throws Exception {
+        assertException("ROLLBACK extra_token", 9, "unexpected token [extra_token]");
+    }
+
+    @Test
+    public void testTrailingContentAfterSelectRejected() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table tab (x int)");
+            assertExceptionNoLeakCheck(
+                    "select x from tab limit 10 extra_token",
+                    27,
+                    "unexpected token [extra_token]"
+            );
+        });
+    }
+
+    @Test
+    public void testTrailingContentAfterSemicolonRejected() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table tab (x int)");
+            assertExceptionNoLeakCheck(
+                    "select x from tab; select x from tab",
+                    19,
+                    "unexpected token [select]"
+            );
+        });
+    }
+
+    @Test
+    public void testTrailingContentAfterSetRejected() throws Exception {
+        assertException(
+                "SET x = y extra_token",
+                10,
+                "unexpected token [extra_token]"
+        );
+    }
+
+    @Test
+    public void testTrailingContentAfterUnlistenRejected() throws Exception {
+        assertException("UNLISTEN * extra", 11, "unexpected token [extra]");
+    }
+
+    @Test
+    public void testTrailingSemicolonAllowed() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table tab (x int)");
+            // trailing semicolon should not cause an error
+            assertQuery("x\n",
+                    "select x from tab;",
+                    "", true, true);
+        });
+    }
+
+    @Test
+    public void testTrailingTokenAbsentIsOk() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table tab (x int)");
+            // no trailing content should not cause an error
+            assertQuery("x\n",
+                    "select x from tab",
+                    "", true, true);
+        });
+    }
+
+    @Test
     public void testUnionAllWithFirstSubQueryUsingDistinct() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table ict ( event int );");
@@ -7176,9 +7582,7 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
                             avg
                             500.5
                             """,
-                    "union",
-                    "select avg(event) from ict ",
-                    "select distinct avg(event) from ict"
+                    "union"
             );
 
             assertWithReorder(
@@ -7187,9 +7591,7 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
                             500.5
                             500.5
                             """,
-                    "union all",
-                    "select avg(event) from ict ",
-                    "select distinct avg(event) from ict"
+                    "union all"
             );
 
             assertWithReorder(
@@ -7197,18 +7599,24 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
                             avg
                             500.5
                             """,
-                    "intersect",
-                    "select avg(event) from ict ",
-                    "select distinct avg(event) from ict"
+                    "intersect"
             );
 
             assertWithReorder(
                     "avg\n",
-                    "except",
-                    "select avg(event) from ict ",
-                    "select distinct avg(event) from ict"
+                    "except"
             );
         });
+    }
+
+    @Test
+    public void testUnlistenMissingArgRejected() throws Exception {
+        assertException("UNLISTEN", 8, "argument expected");
+    }
+
+    @Test
+    public void testUnlistenSemicolonNotAcceptedAsArg() throws Exception {
+        assertException("UNLISTEN;", 8, "argument expected");
     }
 
     @Test
@@ -7227,15 +7635,6 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
                     Assert.fail();
                 } catch (Exception e) {
                     Assert.assertTrue(compiler.parseShowSqlCalled);
-                }
-
-                execute(compiler, "create table ka(a int)", sqlExecutionContext);
-                try {
-                    execute(compiler, "drop table ka boom zoom", sqlExecutionContext);
-                    Assert.fail();
-                } catch (Exception e) {
-                    Assert.assertTrue(compiler.compileDropTableExtCalled);
-                    compiler.compileDropTableExtCalled = false;
                 }
 
                 try {
@@ -7264,14 +7663,6 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
 
                 try {
                     execute(compiler, "create table tab (i int)", sqlExecutionContext);
-                    compiler.compile("alter table tab drop column i boom zoom", sqlExecutionContext);
-                    Assert.fail();
-                } catch (Exception e) {
-                    Assert.assertTrue(compiler.unknownDropColumnSuffixCalled);
-                }
-
-                try {
-                    execute(compiler, "create table tab2 (i int)", sqlExecutionContext);
                     compiler.compile("alter table tab add column i2 int zoom boom", sqlExecutionContext);
                     Assert.fail();
                 } catch (Exception e) {
@@ -7549,9 +7940,9 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
         );
     }
 
-    private void assertWithReorder(String expected, String setOperation, String... subqueries) throws Exception {
-        assertSql(expected, subqueries[0] + " " + setOperation + " " + subqueries[1]);
-        assertSql(expected, subqueries[1] + " " + setOperation + " " + subqueries[0]);
+    private void assertWithReorder(String expected, String setOperation) throws Exception {
+        assertSql(expected, "select avg(event) from ict " + " " + setOperation + " " + "select distinct avg(event) from ict");
+        assertSql(expected, "select distinct avg(event) from ict" + " " + setOperation + " " + "select avg(event) from ict ");
     }
 
     private void selectDoubleInListWithBindVariable() throws Exception {
@@ -7636,14 +8027,12 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
     static class SqlCompilerWrapper extends SqlCompilerImpl {
         boolean addColumnSuffixCalled;
         boolean compileDropOtherCalled;
-        boolean compileDropTableExtCalled;
         boolean createMatViewSuffixCalled;
         boolean createTableSuffixCalled;
         boolean createViewSuffixCalled;
         boolean dropTableCalled;
         boolean parseShowSqlCalled;
         boolean unknownAlterStatementCalled;
-        boolean unknownDropColumnSuffixCalled;
 
         SqlCompilerWrapper(CairoEngine engine) {
             super(engine);
@@ -7683,7 +8072,7 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
         }
 
         @Override
-        public int parseShowSql(GenericLexer lexer, QueryModel model, CharSequence tok, ObjectPool<ExpressionNode> expressionNodePool) throws SqlException {
+        public int parseShowSql(GenericLexer lexer, IQueryModel model, CharSequence tok, ObjectPool<ExpressionNode> expressionNodePool) throws SqlException {
             parseShowSqlCalled = true;
             return super.parseShowSql(lexer, model, tok, expressionNodePool);
         }
@@ -7706,26 +8095,9 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
         }
 
         @Override
-        protected void compileDropExt(
-                @NotNull SqlExecutionContext executionContext,
-                @NotNull GenericDropOperationBuilder opBuilder,
-                @NotNull CharSequence tok,
-                int position
-        ) throws SqlException {
-            compileDropTableExtCalled = true;
-            super.compileDropExt(executionContext, opBuilder, tok, position);
-        }
-
-        @Override
         protected void compileDropOther(@NotNull SqlExecutionContext executionContext, @NotNull CharSequence tok, int position) throws SqlException {
             compileDropOtherCalled = true;
             super.compileDropOther(executionContext, tok, position);
-        }
-
-        @Override
-        protected void unknownDropColumnSuffix(SecurityContext securityContext, CharSequence tok, TableToken tableToken, AlterOperationBuilder dropColumnStatement) throws SqlException {
-            unknownDropColumnSuffixCalled = true;
-            super.unknownDropColumnSuffix(securityContext, tok, tableToken, dropColumnStatement);
         }
     }
 }

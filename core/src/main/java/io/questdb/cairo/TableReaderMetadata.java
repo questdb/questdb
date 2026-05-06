@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -37,14 +37,13 @@ import io.questdb.std.IntList;
 import io.questdb.std.LowerCaseCharSequenceIntHashMap;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
-import io.questdb.std.Mutable;
 import io.questdb.std.datetime.millitime.MillisecondClock;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
 
 import static io.questdb.cairo.TableUtils.validationException;
 
-public class TableReaderMetadata extends AbstractRecordMetadata implements TableMetadata, Mutable {
+public class TableReaderMetadata extends AbstractRecordMetadata implements TableMetadata {
     protected final CairoConfiguration configuration;
     private final IntList columnOrderList = new IntList();
     private final FilesFacade ff;
@@ -65,6 +64,7 @@ public class TableReaderMetadata extends AbstractRecordMetadata implements Table
     private MemoryMR transitionMeta;
     private int ttlHoursOrMonths;
     private boolean walEnabled;
+    private int writerColumnCount;
 
     public TableReaderMetadata(CairoConfiguration configuration, TableToken tableToken) {
         try {
@@ -120,6 +120,14 @@ public class TableReaderMetadata extends AbstractRecordMetadata implements Table
         Misc.free(metaCopyMem);
         Misc.free(transitionMeta);
         isCopy = false;
+        partitionBy = 0;
+        walEnabled = false;
+        metadataVersion = 0;
+        tableId = 0;
+        maxUncommittedRows = 0;
+        o3MaxLag = 0;
+        ttlHoursOrMonths = 0;
+        writerColumnCount = 0;
     }
 
     @Override
@@ -154,6 +162,11 @@ public class TableReaderMetadata extends AbstractRecordMetadata implements Table
     }
 
     @Override
+    public byte getIndexType(int columnIndex) {
+        return getColumnMetadata(columnIndex).getIndexType();
+    }
+
+    @Override
     public int getMaxUncommittedRows() {
         return maxUncommittedRows;
     }
@@ -175,7 +188,7 @@ public class TableReaderMetadata extends AbstractRecordMetadata implements Table
 
     @Override
     public boolean getSymbolCacheFlag(int columnIndex) {
-        return getColumnMetadata(columnIndex).isSymbolIndexFlag();
+        return getColumnMetadata(columnIndex).isSymbolCacheFlag();
     }
 
     @Override
@@ -203,9 +216,8 @@ public class TableReaderMetadata extends AbstractRecordMetadata implements Table
         return ttlHoursOrMonths;
     }
 
-    @Override
-    public boolean isIndexed(int columnIndex) {
-        return getColumnMetadata(columnIndex).isSymbolIndexFlag();
+    public int getWriterColumnCount() {
+        return writerColumnCount;
     }
 
     public boolean isSoftLink() {
@@ -215,6 +227,21 @@ public class TableReaderMetadata extends AbstractRecordMetadata implements Table
     @Override
     public boolean isWalEnabled() {
         return walEnabled;
+    }
+
+    public void loadFrom(TableReaderMetadata srcMeta) {
+        assert tableToken.equals(srcMeta.tableToken);
+        // Copy src meta memory.
+        copyMemFrom(srcMeta);
+        // Now, read it.
+        try {
+            isCopy = true;
+            Misc.free(metaMem);
+            readFromMem(metaCopyMem);
+        } catch (Throwable e) {
+            clear();
+            throw e;
+        }
     }
 
     public void loadMetadata(LPSZ path) {
@@ -254,21 +281,6 @@ public class TableReaderMetadata extends AbstractRecordMetadata implements Table
         }
     }
 
-    public void loadFrom(TableReaderMetadata srcMeta) {
-        assert tableToken.equals(srcMeta.tableToken);
-        // Copy src meta memory.
-        copyMemFrom(srcMeta);
-        // Now, read it.
-        try {
-            isCopy = true;
-            Misc.free(metaMem);
-            readFromMem(metaCopyMem);
-        } catch (Throwable e) {
-            clear();
-            throw e;
-        }
-    }
-
     public boolean prepareTransition(long txnMetadataVersion) {
         if (transitionMeta == null) {
             transitionMeta = Vm.getCMRInstance();
@@ -289,6 +301,7 @@ public class TableReaderMetadata extends AbstractRecordMetadata implements Table
 
     public void readFromMem(MemoryR mem) {
         int columnCount = mem.getInt(TableUtils.META_OFFSET_COUNT);
+        this.writerColumnCount = columnCount;
         int timestampIndex = mem.getInt(TableUtils.META_OFFSET_TIMESTAMP_INDEX);
         this.partitionBy = mem.getInt(TableUtils.META_OFFSET_PARTITION_BY);
         this.tableId = mem.getInt(TableUtils.META_OFFSET_TABLE_ID);
@@ -317,22 +330,22 @@ public class TableReaderMetadata extends AbstractRecordMetadata implements Table
 
             if (columnType > -1) {
                 String colName = Chars.toString(name);
-                columnMetadata.add(
-                        new TableReaderMetadataColumn(
-                                colName,
-                                columnType,
-                                TableUtils.isColumnIndexed(mem, writerIndex),
-                                TableUtils.getIndexBlockCapacity(mem, writerIndex),
-                                true,
-                                null,
-                                writerIndex,
-                                TableUtils.isColumnDedupKey(mem, writerIndex),
-                                denseSymbolIndex,
-                                stableIndex,
-                                TableUtils.isSymbolCached(mem, writerIndex),
-                                TableUtils.getSymbolCapacity(mem, writerIndex)
-                        )
+                TableReaderMetadataColumn colMeta = new TableReaderMetadataColumn(
+                        colName,
+                        columnType,
+                        TableUtils.getColumnIndexType(mem, writerIndex),
+                        TableUtils.getIndexBlockCapacity(mem, writerIndex),
+                        true,
+                        null,
+                        writerIndex,
+                        TableUtils.isColumnDedupKey(mem, writerIndex),
+                        denseSymbolIndex,
+                        stableIndex,
+                        TableUtils.isSymbolCached(mem, writerIndex),
+                        TableUtils.getSymbolCapacity(mem, writerIndex)
                 );
+                colMeta.setParquetEncodingConfig(TableUtils.getParquetEncodingConfig(mem, writerIndex));
+                columnMetadata.add(colMeta);
                 int denseIndex = columnMetadata.size() - 1;
                 if (!columnNameIndexMap.put(colName, denseIndex)) {
                     throw validationException(mem).put("Duplicate column [name=").put(name).put("] at ").put(i);
@@ -343,6 +356,7 @@ public class TableReaderMetadata extends AbstractRecordMetadata implements Table
             }
         }
         this.columnCount = columnMetadata.size();
+        readCoveringColumnData(mem, columnCount);
     }
 
     public void updateTableToken(TableToken tableToken) {
@@ -353,6 +367,7 @@ public class TableReaderMetadata extends AbstractRecordMetadata implements Table
         columnNameIndexMap.clear();
 
         int columnCount = newMetaMem.getInt(TableUtils.META_OFFSET_COUNT);
+        this.writerColumnCount = columnCount;
         assert columnCount >= existingColumnCount;
         columnMetadata.setPos(columnCount);
         int timestampIndex = newMetaMem.getInt(TableUtils.META_OFFSET_TIMESTAMP_INDEX);
@@ -385,7 +400,7 @@ public class TableReaderMetadata extends AbstractRecordMetadata implements Table
             int denseSymbolIndex = columnOrderList.get(i + 2);
             int newColumnType = TableUtils.getColumnType(newMetaMem, writerIndex);
             int columnType = TableUtils.getColumnType(newMetaMem, writerIndex);
-            boolean isIndexed = TableUtils.isColumnIndexed(newMetaMem, writerIndex);
+            byte indexType = TableUtils.getColumnIndexType(newMetaMem, writerIndex);
             boolean isDedupKey = TableUtils.isColumnDedupKey(newMetaMem, writerIndex);
             int indexBlockCapacity = TableUtils.getIndexBlockCapacity(newMetaMem, writerIndex);
             boolean symbolIsCached = TableUtils.isSymbolCached(newMetaMem, writerIndex);
@@ -422,7 +437,7 @@ public class TableReaderMetadata extends AbstractRecordMetadata implements Table
                 if (rename
                         || existing == null
                         || existing.getWriterIndex() != writerIndex
-                        || existing.isSymbolIndexFlag() != isIndexed
+                        || existing.getIndexType() != indexType
                         || existing.getIndexValueBlockCapacity() != indexBlockCapacity
                         || existing.isDedupKeyFlag() != isDedupKey
                         || existing.getDenseSymbolIndex() != denseSymbolIndex
@@ -434,7 +449,7 @@ public class TableReaderMetadata extends AbstractRecordMetadata implements Table
                             new TableReaderMetadataColumn(
                                     newName,
                                     columnType,
-                                    isIndexed,
+                                    indexType,
                                     indexBlockCapacity,
                                     true,
                                     null,
@@ -474,6 +489,7 @@ public class TableReaderMetadata extends AbstractRecordMetadata implements Table
             this.timestampIndex = timestampIndex;
         }
 
+        readCoveringColumnData(newMetaMem, newColumnCount);
         return transitionIndex;
     }
 
@@ -488,5 +504,49 @@ public class TableReaderMetadata extends AbstractRecordMetadata implements Table
 
     private MemoryR getMetaMem() {
         return !isCopy ? metaMem : metaCopyMem;
+    }
+
+    private void readCoveringColumnData(MemoryR mem, int columnCount) {
+        long memSize = mem.size();
+        // Compute offset past all column names
+        long offset = TableUtils.getColumnNameOffset(columnCount);
+        for (int i = 0; i < columnCount; i++) {
+            if (offset + Integer.BYTES > memSize) {
+                return;
+            }
+            int strLen = mem.getInt(offset);
+            offset += Vm.getStorageLength(strLen);
+        }
+        if (offset >= memSize) {
+            return;
+        }
+
+        // Read covering column indices for each column that has the covering flag
+        for (int i = 0; i < columnCount; i++) {
+            boolean isCovering = TableUtils.isColumnCovering(mem, i);
+            if (isCovering) {
+                if (offset + Integer.BYTES > mem.size()) {
+                    break;
+                }
+                int includeCount = mem.getInt(offset);
+                offset += Integer.BYTES;
+                if (includeCount > 0 && offset + (long) includeCount * Integer.BYTES <= mem.size()) {
+                    IntList indices = new IntList(includeCount);
+                    for (int j = 0; j < includeCount; j++) {
+                        indices.add(mem.getInt(offset));
+                        offset += Integer.BYTES;
+                    }
+                    // Find the corresponding TableColumnMetadata for writerIndex i
+                    for (int k = 0, n = columnMetadata.size(); k < n; k++) {
+                        if (columnMetadata.getQuick(k).getWriterIndex() == i) {
+                            columnMetadata.getQuick(k).setCoveringColumnIndices(indices);
+                            break;
+                        }
+                    }
+                } else if (includeCount > 0) {
+                    break;
+                }
+            }
+        }
     }
 }

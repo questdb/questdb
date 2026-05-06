@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -182,6 +182,15 @@ public class IntList implements Mutable, Sinkable {
     }
 
     /**
+     * Volatile read with acquire semantics at the given index.
+     */
+    public int getVolatile(int index) {
+        assert index >= 0 : "negative index";
+        assert index < pos : String.format("index %,d out of bounds for list size %,d", index, pos);
+        return Unsafe.arrayGetVolatile(data, index);
+    }
+
+    /**
      * {@inheritDoc}
      */
     @Override
@@ -310,6 +319,15 @@ public class IntList implements Mutable, Sinkable {
         pos = position;
     }
 
+    /**
+     * Ordered store with release semantics at the given index.
+     */
+    public void setOrdered(int index, int value) {
+        assert index >= 0 : "negative index";
+        assert index < pos : String.format("index %,d out of bounds for list size %,d", index, pos);
+        Unsafe.arrayPutOrdered(data, index, value);
+    }
+
     public void setQuick(int index, int value) {
         assert index < pos;
         data[index] = value;
@@ -317,6 +335,12 @@ public class IntList implements Mutable, Sinkable {
 
     public int size() {
         return pos;
+    }
+
+    public int[] toArray() {
+        int[] result = new int[pos];
+        System.arraycopy(data, 0, result, 0, pos);
+        return result;
     }
 
     /**

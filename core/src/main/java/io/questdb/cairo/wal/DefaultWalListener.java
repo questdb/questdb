@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -51,5 +51,9 @@ public class DefaultWalListener implements WalListener {
 
     @Override
     public void tableRenamed(TableToken tableToken, long txn, long timestamp, TableToken oldTableToken) {
+    }
+
+    @Override
+    public void walClosed(TableToken tableToken, long txn, int walId) {
     }
 }

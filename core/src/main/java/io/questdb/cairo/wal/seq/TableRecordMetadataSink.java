@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -34,7 +34,7 @@ public interface TableRecordMetadataSink extends Mutable {
     void addColumn(
             String columnName,
             int columnType,
-            boolean columnIndexed,
+            byte indexType,
             int indexValueBlockCapacity,
             boolean symbolTableStatic,
             int writerIndex,

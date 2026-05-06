@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -29,15 +29,23 @@ import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.TimestampDriver;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
+import io.questdb.cairo.sql.StaticSymbolTable;
+import io.questdb.cairo.sql.SymbolTable;
+import io.questdb.cairo.sql.SymbolTableSource;
 import io.questdb.griffin.FunctionFactory;
+import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.engine.functions.IntFunction;
+import io.questdb.griffin.engine.functions.SymbolFunction;
 import io.questdb.griffin.engine.functions.constants.Constants;
 import io.questdb.std.CharSequenceObjHashMap;
+import io.questdb.std.Chars;
 import io.questdb.std.IntList;
 import io.questdb.std.IntObjHashMap;
 import io.questdb.std.LongObjHashMap;
 import io.questdb.std.ObjList;
+import org.jetbrains.annotations.NotNull;
 
 public class SwitchFunctionFactory implements FunctionFactory {
     private static final IntMethod GET_BYTE = SwitchFunctionFactory::getByte;
@@ -63,14 +71,6 @@ public class SwitchFunctionFactory implements FunctionFactory {
         int n = args.size();
         final Function keyFunction = args.getQuick(0);
         final int keyType = keyFunction.getType();
-
-        // key function type must be defined, which makes
-        // case $1
-        /// when ...
-        // an unsupported use case
-        if (keyType == ColumnType.UNDEFINED) {
-            throw SqlException.$(argPositions.getQuick(0), "bind variable is not supported here, please use column instead");
-        }
 
         Function elseBranch;
         final int elseBranchPosition;
@@ -160,9 +160,15 @@ public class SwitchFunctionFactory implements FunctionFactory {
                     getTimestampKeyedFunction(args, argPositions, position, n, keyFunction, returnType, elseBranch, keyType);
             case ColumnType.BOOLEAN ->
                     getIfElseFunction(args, argPositions, position, n, keyFunction, returnType, elseBranch);
-            case ColumnType.STRING, ColumnType.SYMBOL,
+            case ColumnType.STRING,
                  ColumnType.VARCHAR -> // varchar is treated as char sequence, this works, but it's suboptimal
                     getCharSequenceKeyedFunction(args, argPositions, position, n, keyFunction, returnType, elseBranch);
+            case ColumnType.SYMBOL -> {
+                if (keyFunction instanceof SymbolFunction symFunc && symFunc.isSymbolTableStatic()) {
+                    yield getSymbolKeyedFunction(args, argPositions, position, n, symFunc, returnType, elseBranch);
+                }
+                yield getCharSequenceKeyedFunction(args, argPositions, position, n, keyFunction, returnType, elseBranch);
+            }
             default -> throw SqlException.
                     $(argPositions.getQuick(0), "type ")
                     .put(ColumnType.nameOf(keyType))
@@ -483,6 +489,81 @@ public class SwitchFunctionFactory implements FunctionFactory {
         return CaseCommon.getCaseFunction(position, valueType, picker, argsToPoke);
     }
 
+    private Function getSymbolKeyedFunction(
+            ObjList<Function> args,
+            IntList argPositions,
+            int position,
+            int n,
+            SymbolFunction keyFunction,
+            int valueType,
+            Function elseBranch
+    ) throws SqlException {
+        final ObjList<String> strKeys = new ObjList<>();
+        final ObjList<Function> keyBranches = new ObjList<>();
+        final ObjList<Function> argsToPoke = new ObjList<>();
+        Function nullFunc = null;
+        for (int i = 1; i < n; i += 2) {
+            final Function fun = args.getQuick(i);
+            final CharSequence key = getString(fun, null);
+            if (key == null) {
+                nullFunc = args.getQuick(i + 1);
+            } else {
+                for (int j = 0, m = strKeys.size(); j < m; j++) {
+                    if (Chars.equals(strKeys.getQuick(j), key)) {
+                        throw SqlException.$(argPositions.getQuick(i), "duplicate branch");
+                    }
+                }
+                strKeys.add(key.toString());
+                keyBranches.add(args.getQuick(i + 1));
+                argsToPoke.add(args.getQuick(i + 1));
+            }
+        }
+
+        final Function elseB = getElseFunction(valueType, elseBranch);
+        final int branchCount = strKeys.size();
+
+        // When there's a single WHEN branch, no NULL branch, INT return type, and
+        // both THEN/ELSE are constants, compile into a direct int comparison.
+        // Example: CASE sym WHEN 'buy' THEN 1 ELSE -1 END
+        if (branchCount == 1
+                && nullFunc == null
+                && ColumnType.tagOf(valueType) == ColumnType.INT
+                && keyBranches.getQuick(0).isConstant()
+                && elseB.isConstant()
+        ) {
+            return new SymbolSwitchConstIntFunction(
+                    keyFunction,
+                    strKeys.getQuick(0),
+                    keyBranches.getQuick(0).getInt(null),
+                    elseB.getInt(null)
+            );
+        }
+
+        final SymbolPicker picker;
+        if (branchCount == 1) {
+            picker = new SymbolSwitchSinglePicker(
+                    keyFunction, strKeys.getQuick(0), keyBranches.getQuick(0), nullFunc, elseB
+            );
+        } else if (branchCount == 2) {
+            picker = new SymbolSwitchDualPicker(
+                    keyFunction,
+                    strKeys.getQuick(0), keyBranches.getQuick(0),
+                    strKeys.getQuick(1), keyBranches.getQuick(1),
+                    nullFunc, elseB
+            );
+        } else {
+            picker = new SymbolSwitchPicker(keyFunction, strKeys, keyBranches, nullFunc, elseB);
+        }
+        if (nullFunc != null) {
+            argsToPoke.add(nullFunc);
+        }
+        argsToPoke.add(elseB);
+        argsToPoke.add(keyFunction);
+        // picker must be last so its init() runs after keyFunction is initialized
+        argsToPoke.add(picker);
+        return CaseCommon.getCaseFunction(position, valueType, picker, argsToPoke);
+    }
+
     private Function getTimestampKeyedFunction(
             ObjList<Function> args,
             IntList argPositions,
@@ -531,5 +612,279 @@ public class SwitchFunctionFactory implements FunctionFactory {
     @FunctionalInterface
     private interface LongMethod {
         long getKey(Function function, Record record);
+    }
+
+    /**
+     * Base class for symbol CASE pickers that resolve string constants to int keys at
+     * init time and compare by int at runtime. Extends IntFunction so the picker can
+     * participate in the MultiArgFunction.init() lifecycle when added to the CaseFunction's
+     * args list.
+     */
+    private abstract static class SymbolPicker extends IntFunction implements CaseFunctionPicker {
+        protected final Function elseFunc;
+        protected final SymbolFunction keyFunction;
+        protected final Function nullFunc;
+
+        SymbolPicker(SymbolFunction keyFunction, Function nullFunc, Function elseFunc) {
+            this.keyFunction = keyFunction;
+            this.nullFunc = nullFunc;
+            this.elseFunc = elseFunc;
+        }
+
+        @Override
+        public int getInt(Record rec) {
+            throw new UnsupportedOperationException();
+        }
+
+        protected Function pickNull() {
+            return nullFunc != null ? nullFunc : elseFunc;
+        }
+
+        protected void toPlanSwitchPrefix(PlanSink sink) {
+            sink.val("switch(").val(keyFunction).val(',');
+        }
+
+        protected void toPlanSwitchSuffix(PlanSink sink) {
+            if (nullFunc != null) {
+                sink.val(",null,").val(nullFunc);
+            }
+            sink.val(',').val(elseFunc).val(')');
+        }
+    }
+
+    /**
+     * Inlined CASE for symbol-keyed single-branch switch with constant int results.
+     * Compiles {@code CASE symbol WHEN 'value' THEN int_const ELSE int_const END}
+     * into a direct int comparison without picker/CaseFunction virtual dispatch.
+     * <p>
+     * NULL key handling: {@code SymbolTable.VALUE_IS_NULL} (INT_NULL) never equals
+     * a valid resolved key (>= 0) or VALUE_NOT_FOUND (-2), so NULL naturally maps
+     * to the else value without an explicit check.
+     */
+    private static class SymbolSwitchConstIntFunction extends IntFunction {
+        private final double doubleElseValue;
+        private final double doubleThenValue;
+        private final int elseValue;
+        private final SymbolFunction keyFunction;
+        private final String strKey;
+        private final int thenValue;
+        private int resolvedKey;
+
+        SymbolSwitchConstIntFunction(
+                SymbolFunction keyFunction,
+                String strKey,
+                int thenValue,
+                int elseValue
+        ) {
+            this.keyFunction = keyFunction;
+            this.strKey = strKey;
+            this.thenValue = thenValue;
+            this.elseValue = elseValue;
+            this.doubleThenValue = thenValue;
+            this.doubleElseValue = elseValue;
+        }
+
+        @Override
+        public double getDouble(Record rec) {
+            return keyFunction.getInt(rec) == resolvedKey ? doubleThenValue : doubleElseValue;
+        }
+
+        @Override
+        public int getInt(Record rec) {
+            return keyFunction.getInt(rec) == resolvedKey ? thenValue : elseValue;
+        }
+
+        @Override
+        public long getLong(Record rec) {
+            return keyFunction.getInt(rec) == resolvedKey ? thenValue : elseValue;
+        }
+
+        @Override
+        public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
+            keyFunction.init(symbolTableSource, executionContext);
+            final StaticSymbolTable symbolTable = keyFunction.getStaticSymbolTable();
+            assert symbolTable != null;
+            resolvedKey = symbolTable.keyOf(strKey);
+        }
+
+        @Override
+        public boolean supportsParallelism() {
+            return keyFunction.supportsParallelism();
+        }
+
+        @Override
+        public boolean supportsRandomAccess() {
+            return keyFunction.supportsRandomAccess();
+        }
+
+        @Override
+        public void toPlan(PlanSink sink) {
+            sink.val("switch(").val(keyFunction)
+                    .val(",'").val(strKey).val("',").val(thenValue)
+                    .val(',').val(elseValue).val(')');
+        }
+    }
+
+    /**
+     * Two-branch specialization: two direct int comparisons, no hash map.
+     */
+    private static class SymbolSwitchDualPicker extends SymbolPicker {
+        private final Function branch1;
+        private final Function branch2;
+        private final String strKey1;
+        private final String strKey2;
+        private int resolvedKey1;
+        private int resolvedKey2;
+
+        SymbolSwitchDualPicker(
+                SymbolFunction keyFunction,
+                String strKey1, Function branch1,
+                String strKey2, Function branch2,
+                Function nullFunc,
+                Function elseFunc
+        ) {
+            super(keyFunction, nullFunc, elseFunc);
+            this.strKey1 = strKey1;
+            this.branch1 = branch1;
+            this.strKey2 = strKey2;
+            this.branch2 = branch2;
+        }
+
+        @Override
+        public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) {
+            final StaticSymbolTable symbolTable = keyFunction.getStaticSymbolTable();
+            assert symbolTable != null;
+            resolvedKey1 = symbolTable.keyOf(strKey1);
+            resolvedKey2 = symbolTable.keyOf(strKey2);
+        }
+
+        @Override
+        public @NotNull Function pick(Record record) {
+            final int symbolKey = keyFunction.getInt(record);
+            if (symbolKey == SymbolTable.VALUE_IS_NULL) {
+                return pickNull();
+            }
+            if (symbolKey == resolvedKey1) {
+                return branch1;
+            }
+            if (symbolKey == resolvedKey2) {
+                return branch2;
+            }
+            return elseFunc;
+        }
+
+        @Override
+        public void toPlan(PlanSink sink) {
+            toPlanSwitchPrefix(sink);
+            sink.val('\'').val(strKey1).val("',").val(branch1);
+            sink.val(",'").val(strKey2).val("',").val(branch2);
+            toPlanSwitchSuffix(sink);
+        }
+    }
+
+    /**
+     * General multi-branch picker: resolves keys into IntObjHashMap for O(1) lookup.
+     */
+    private static class SymbolSwitchPicker extends SymbolPicker {
+        private final IntObjHashMap<Function> intMap = new IntObjHashMap<>();
+        private final ObjList<Function> keyBranches;
+        private final ObjList<String> strKeys;
+
+        SymbolSwitchPicker(
+                SymbolFunction keyFunction,
+                ObjList<String> strKeys,
+                ObjList<Function> keyBranches,
+                Function nullFunc,
+                Function elseFunc
+        ) {
+            super(keyFunction, nullFunc, elseFunc);
+            this.strKeys = strKeys;
+            this.keyBranches = keyBranches;
+        }
+
+        @Override
+        public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) {
+            intMap.clear();
+            final StaticSymbolTable symbolTable = keyFunction.getStaticSymbolTable();
+            assert symbolTable != null;
+            for (int i = 0, n = strKeys.size(); i < n; i++) {
+                final int symbolKey = symbolTable.keyOf(strKeys.getQuick(i));
+                if (symbolKey != SymbolTable.VALUE_NOT_FOUND) {
+                    intMap.put(symbolKey, keyBranches.getQuick(i));
+                }
+            }
+        }
+
+        @Override
+        public @NotNull Function pick(Record record) {
+            final int symbolKey = keyFunction.getInt(record);
+            if (symbolKey == SymbolTable.VALUE_IS_NULL) {
+                return pickNull();
+            }
+            final int index = intMap.keyIndex(symbolKey);
+            if (index < 0) {
+                return intMap.valueAtQuick(index);
+            }
+            return elseFunc;
+        }
+
+        @Override
+        public void toPlan(PlanSink sink) {
+            toPlanSwitchPrefix(sink);
+            for (int i = 0, n = strKeys.size(); i < n; i++) {
+                if (i > 0) {
+                    sink.val(',');
+                }
+                sink.val('\'').val(strKeys.getQuick(i)).val("',").val(keyBranches.getQuick(i));
+            }
+            toPlanSwitchSuffix(sink);
+        }
+    }
+
+    /**
+     * Single-branch specialization: one direct int comparison, no hash map.
+     */
+    private static class SymbolSwitchSinglePicker extends SymbolPicker {
+        private final Function branch;
+        private final String strKey;
+        private int resolvedKey;
+
+        SymbolSwitchSinglePicker(
+                SymbolFunction keyFunction,
+                String strKey,
+                Function branch,
+                Function nullFunc,
+                Function elseFunc
+        ) {
+            super(keyFunction, nullFunc, elseFunc);
+            this.strKey = strKey;
+            this.branch = branch;
+        }
+
+        @Override
+        public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) {
+            final StaticSymbolTable symbolTable = keyFunction.getStaticSymbolTable();
+            assert symbolTable != null;
+            resolvedKey = symbolTable.keyOf(strKey);
+        }
+
+        @Override
+        public @NotNull Function pick(Record record) {
+            final int symbolKey = keyFunction.getInt(record);
+            if (symbolKey == SymbolTable.VALUE_IS_NULL) {
+                return pickNull();
+            }
+            if (symbolKey == resolvedKey) {
+                return branch;
+            }
+            return elseFunc;
+        }
+
+        @Override
+        public void toPlan(PlanSink sink) {
+            toPlanSwitchPrefix(sink);
+            sink.val('\'').val(strKey).val("',").val(branch);
+            toPlanSwitchSuffix(sink);
+        }
     }
 }

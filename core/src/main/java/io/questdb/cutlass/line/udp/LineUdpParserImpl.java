@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -28,6 +28,7 @@ import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.IndexType;
 import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.TableStructure;
 import io.questdb.cairo.TableToken;
@@ -59,11 +60,11 @@ import static io.questdb.cutlass.line.LineUtils.from;
 
 public class LineUdpParserImpl implements LineUdpParser, Closeable {
     private final static Log LOG = LogFactory.getLog(LineUdpParserImpl.class);
-    private static final FieldNameParser NOOP_FIELD_NAME = name -> {
+    private static final FieldNameParser NOOP_FIELD_NAME = _ -> {
     };
-    private static final FieldValueParser NOOP_FIELD_VALUE = (value, cache) -> {
+    private static final FieldValueParser NOOP_FIELD_VALUE = (_, _) -> {
     };
-    private static final LineEndParser NOOP_LINE_END = cache -> {
+    private static final LineEndParser NOOP_LINE_END = _ -> {
     };
     private static final String WRITER_LOCK_REASON = "ilpUdp";
     private final boolean autoCreateNewColumns;
@@ -88,7 +89,7 @@ public class LineUdpParserImpl implements LineUdpParser, Closeable {
     private final CharSequenceObjHashMap<CacheEntry> writerCache = new CharSequenceObjHashMap<>();
     // state
     // cache entry index is always a negative value
-    private int cacheEntryIndex = 0;
+    private int cacheEntryIndex = Integer.MIN_VALUE;
     private int columnIndex;
     private long columnName;
     private int columnType;
@@ -454,7 +455,8 @@ public class LineUdpParserImpl implements LineUdpParser, Closeable {
         } else {
             CharSequence colNameAsChars = cache.get(columnName);
             if (autoCreateNewColumns && TableUtils.isValidColumnName(colNameAsChars, udpConfiguration.getMaxFileNameLength())) {
-                writer.addColumn(colNameAsChars, valueType);
+                // Using AllowAllSecurityContext, currently there is no authentication on the UDP interface
+                writer.addColumn(colNameAsChars, valueType, AllowAllSecurityContext.INSTANCE);
                 // Writer index can be different from column count, it keeps deleted columns in metadata
                 int columnIndex = writer.getColumnIndex(colNameAsChars);
                 columnIndexAndType.add(Numbers.encodeLowHighInts(columnIndex, valueType));
@@ -505,7 +507,7 @@ public class LineUdpParserImpl implements LineUdpParser, Closeable {
     }
 
     private void switchTable(CachedCharSequence tableName, int entryIndex) {
-        if (this.cacheEntryIndex != 0) {
+        if (this.cacheEntryIndex != Integer.MIN_VALUE) {
             // add previous writer to commit list
             CacheEntry e = writerCache.valueAtQuick(cacheEntryIndex);
             if (e.writer != null) {
@@ -633,8 +635,8 @@ public class LineUdpParserImpl implements LineUdpParser, Closeable {
         }
 
         @Override
-        public boolean isIndexed(int columnIndex) {
-            return false;
+        public byte getIndexType(int columnIndex) {
+            return IndexType.NONE;
         }
 
         @Override

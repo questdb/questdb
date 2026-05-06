@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -56,7 +56,6 @@ import io.questdb.test.tools.TestUtils;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 import org.junit.Assert;
-import org.junit.Assume;
 import org.junit.Before;
 import org.junit.Test;
 
@@ -305,7 +304,7 @@ public class AggregateTest extends AbstractCairoTest {
 
             assertPlanNoLeakCheck(
                     query,
-                    "Sort light\n" +
+                    "Encode sort light\n" +
                             "  keys: [account_uuid]\n" +
                             "    GroupBy vectorized: false\n" +
                             "      keys: [account_uuid]\n" +
@@ -357,7 +356,7 @@ public class AggregateTest extends AbstractCairoTest {
             if (enableParallelGroupBy) {
                 assertPlanNoLeakCheck(
                         query,
-                        "Sort light\n" +
+                        "Encode sort light\n" +
                                 "  keys: [account_uuid]\n" +
                                 "    GroupBy vectorized: true workers: 1\n" +
                                 "      keys: [account_uuid]\n" +
@@ -409,7 +408,7 @@ public class AggregateTest extends AbstractCairoTest {
 
             final String plan;
             if (enableParallelGroupBy) {
-                plan = "Sort light\n" +
+                plan = "Encode sort light\n" +
                         "  keys: [org_uuid]\n" +
                         "    Async Group By workers: 1\n" +
                         "      keys: [org_uuid,account_uuid]\n" +
@@ -422,7 +421,7 @@ public class AggregateTest extends AbstractCairoTest {
                                 "              intervals: [(\"2023-02-01T00:00:00.000001Z\",\"2023-02-01T23:59:59.999999Z\")]\n"
                                 : "              intervals: [(\"2023-02-01T00:00:00.000000001Z\",\"2023-02-01T23:59:59.999999999Z\")]\n");
             } else {
-                plan = "Sort light\n" +
+                plan = "Encode sort light\n" +
                         "  keys: [org_uuid]\n" +
                         "    GroupBy vectorized: false\n" +
                         "      keys: [org_uuid,account_uuid]\n" +
@@ -1082,15 +1081,13 @@ public class AggregateTest extends AbstractCairoTest {
 
     @Test
     public void testIntSymbolResolution() throws Exception {
-        // Fractional part is slightly different between parallel and non-parallel factories.
-        Assume.assumeTrue(enableParallelGroupBy);
         assertQuery(
                 """
-                        s2\tsum
-                        \t104119.88094816262
-                        a1\t103804.6224230062
-                        a2\t104433.68659571264
-                        a3\t104341.2885251736
+                        s2	sum
+                        	104119.880948161
+                        a1	103804.62242300605
+                        a2	104433.68659571148
+                        a3	104341.28852517322
                         """,
                 "select s2, sum(val) from tab order by s2",
                 "create table tab as (select rnd_symbol('s1','s2','s3', null) s1, rnd_symbol('a1','a2','a3', null) s2, rnd_double(2) val from long_sequence(1000000))",
@@ -1342,7 +1339,7 @@ public class AggregateTest extends AbstractCairoTest {
         String[] aggregateFunctions = {"min"};
         TypeVal[] aggregateColTypes = {
                 new TypeVal(ColumnType.BYTE, "0:INT", "0:INT"),
-                new TypeVal(ColumnType.CHAR, ":CHAR", ":CHAR"),
+                new TypeVal(ColumnType.CHAR, ":CHAR", "a:CHAR"),
                 new TypeVal(ColumnType.SHORT, "0:INT", "0:INT"),
                 new TypeVal(ColumnType.INT, "null:INT", "1:INT"),
                 new TypeVal(ColumnType.LONG, "null:LONG", "1:LONG"),

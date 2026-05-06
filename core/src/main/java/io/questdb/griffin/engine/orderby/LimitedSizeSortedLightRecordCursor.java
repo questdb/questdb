@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -31,7 +31,9 @@ import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.RecordComparator;
+import io.questdb.std.DirectIntList;
 import io.questdb.std.Misc;
+import io.questdb.std.ObjList;
 
 /**
  * SortedLightRecordCursor which implements LIMIT clause.
@@ -40,6 +42,7 @@ public class LimitedSizeSortedLightRecordCursor implements DelegatingRecordCurso
     private final LimitedSizeLongTreeChain chain;
     private final LimitedSizeLongTreeChain.TreeCursor chainCursor;
     private final RecordComparator comparator;
+    private final ObjList<DirectIntList> rankMaps;
     private RecordCursor baseCursor;
     private Record baseRecord;
     private SqlExecutionCircuitBreaker circuitBreaker;
@@ -52,17 +55,20 @@ public class LimitedSizeSortedLightRecordCursor implements DelegatingRecordCurso
 
     public LimitedSizeSortedLightRecordCursor(
             LimitedSizeLongTreeChain chain,
-            RecordComparator comparator
+            RecordComparator comparator,
+            ObjList<DirectIntList> rankMaps
     ) {
         this.chain = chain;
         this.comparator = comparator;
         this.chainCursor = chain.getCursor();
         this.isOpen = true;
+        this.rankMaps = rankMaps;
     }
 
     @Override
     public void close() {
         if (isOpen) {
+            Misc.freeObjListAndKeepObjects(rankMaps);
             baseCursor = Misc.free(baseCursor);
             Misc.free(chain);
             isOpen = false;
@@ -110,6 +116,7 @@ public class LimitedSizeSortedLightRecordCursor implements DelegatingRecordCurso
             isOpen = true;
             chain.reopen();
         }
+        SortKeyEncoder.buildRankMaps(baseCursor, rankMaps, comparator);
         circuitBreaker = executionContext.getCircuitBreaker();
         isChainBuilt = false;
         chain.clear();

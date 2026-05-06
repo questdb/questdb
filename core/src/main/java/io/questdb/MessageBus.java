@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -26,6 +26,7 @@ package io.questdb;
 
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.sql.async.PageFrameReduceTask;
+import io.questdb.cairo.sql.async.UnorderedPageFrameReduceTask;
 import io.questdb.cutlass.parquet.CopyExportRequestTask;
 import io.questdb.cutlass.text.CopyImportRequestTask;
 import io.questdb.cutlass.text.CopyImportTask;
@@ -47,6 +48,7 @@ import io.questdb.tasks.O3CopyTask;
 import io.questdb.tasks.O3OpenColumnTask;
 import io.questdb.tasks.O3PartitionPurgeTask;
 import io.questdb.tasks.O3PartitionTask;
+import io.questdb.tasks.PostingSealPurgeTask;
 import io.questdb.tasks.TableWriterTask;
 import io.questdb.tasks.VectorAggregateTask;
 import io.questdb.tasks.WalTxnNotificationTask;
@@ -147,6 +149,12 @@ public interface MessageBus extends Closeable {
 
     MCSequence getPageFrameReduceSubSeq(int shard);
 
+    MPSequence getPostingSealPurgePubSeq();
+
+    RingQueue<PostingSealPurgeTask> getPostingSealPurgeQueue();
+
+    SCSequence getPostingSealPurgeSubSeq();
+
     MPSequence getQueryCacheEventPubSeq();
 
     MCSequence getQueryCacheEventSubSeq();
@@ -158,6 +166,12 @@ public interface MessageBus extends Closeable {
     MPSequence getTableWriterEventPubSeq();
 
     RingQueue<TableWriterTask> getTableWriterEventQueue();
+
+    MPSequence getUnorderedPageFrameReducePubSeq();
+
+    RingQueue<UnorderedPageFrameReduceTask> getUnorderedPageFrameReduceQueue();
+
+    MCSequence getUnorderedPageFrameReduceSubSeq();
 
     MPSequence getVectorAggregatePubSeq();
 

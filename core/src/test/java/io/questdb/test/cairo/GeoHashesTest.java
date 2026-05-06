@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -691,7 +691,7 @@ public class GeoHashesTest {
         final long hi = lo + len;
         try {
             for (long p = lo; p < hi; p++) {
-                Unsafe.getUnsafe().putByte(p, (byte) token.charAt((int) (p - lo)));
+                Unsafe.putByte(p, (byte) token.charAt((int) (p - lo)));
             }
             code.apply(lo, hi);
         } finally {
