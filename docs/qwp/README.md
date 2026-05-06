@@ -14,6 +14,7 @@ docs/qwp/
 ├── wire-udp.md                        UDP-specific deviations from wire-ingress
 ├── wire-egress.md                     egress (query result streaming) wire format
 ├── sf-client.md                       client-side Store-and-Forward substrate spec
+├── failover.md                        multi-host failover semantics (ingress + ingress-SF + egress)
 └── design/                            non-normative working notes (decision logs, backlogs)
     └── egress-phase2-backlog.md
 ```
@@ -22,12 +23,13 @@ docs/qwp/
 
 | You are writing… | Read |
 |------------------|------|
-| A new ingest client (any language), no on-disk durability | `wire-ingress.md` |
-| A new ingest client with durability across restarts | `wire-ingress.md` + `sf-client.md` |
+| A new ingest client (any language), no on-disk durability | `wire-ingress.md` (+ `failover.md` if it accepts multi-host `addr=`) |
+| A new ingest client with durability across restarts | `wire-ingress.md` + `sf-client.md` + `failover.md` |
 | A UDP-only ingest client (e.g. metrics collector) | `wire-ingress.md` + `wire-udp.md` |
-| A new query client (SELECT, DDL, EXEC) | `wire-egress.md` (which references `wire-ingress.md` for the shared header / type system) |
+| A new query client (SELECT, DDL, EXEC) | `wire-egress.md` + `failover.md` (`wire-egress.md` references `wire-ingress.md` for the shared header / type system) |
 | A server-side change to ingest framing | `wire-ingress.md` (+ `wire-udp.md` if UDP, + `sf-client.md` if it touches ACKs, durable-ack, or close-codes) |
 | A server-side change to egress framing | `wire-egress.md` |
+| A server-side change to topology / role headers | `failover.md` §5–6 + `wire-egress.md` §11 |
 | A bug fix that doesn't change interop | none of the above; just the code |
 
 ## Spec layers
@@ -70,4 +72,5 @@ A short checklist for spec-affecting PRs:
 - UDP variant: [`wire-udp.md`](wire-udp.md)
 - Egress (query results): [`wire-egress.md`](wire-egress.md)
 - SF client (storage, FSN, ACKs, reconnect, errors, connect-string): [`sf-client.md`](sf-client.md)
+- Failover (multi-host selection, role filter, backoff): [`failover.md`](failover.md)
 - Egress Phase 2 backlog: [`design/egress-phase2-backlog.md`](design/egress-phase2-backlog.md)

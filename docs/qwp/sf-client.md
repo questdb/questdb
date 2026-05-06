@@ -899,11 +899,11 @@ Items intentionally out of scope today, tracked for future revisions:
    "not yet supported". The wire-level behaviour is unchanged; only the
    producer's flush path (and the `sf_append_deadline_millis` semantics)
    need new code.
-2. **Multi-host failover**: the connect-string parses
-   `addr=h1:p1,h2:p2` and stores all hosts, but `Sender.build()` uses only
-   the first host in every connect / reconnect / drainer attempt. The
-   failover semantics (round-robin, prefer-first, auth-failure
-   crosses-hosts-or-not) are not yet specified.
+2. **Multi-host failover**: see [`failover.md`](failover.md) for the
+   normative spec covering host-health states, selection priority,
+   backoff math, and the three context-specific loops (ingress non-SF
+   initial connect, ingress SF reconnect loop, egress per-Execute
+   loop).
 3. **Retryable errors**: the wire format has no retryable bit; transient
    server faults and permanent ones both surface as `INTERNAL_ERROR`. A
    future server change could split status bytes or add a 1-byte field;

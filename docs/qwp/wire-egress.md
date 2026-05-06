@@ -567,34 +567,28 @@ the "role unknown" path (equivalent to `STANDALONE` for routing purposes).
 
 ### Client routing (`target=` and `failover=`)
 
-Clients that support v2 accept a comma-separated list of endpoints and a
-`target=` filter on the connection string:
+Egress clients that support v2 accept a comma-separated list of endpoints
+and a `target=` role filter on the connection string:
 
 ```
 ws::addr=db-a:9000,db-b:9000,db-c:9000;target=primary;failover=on;
 ```
 
-| Target        | Accepted roles                                                                                 |
-|---------------|-----------------------------------------------------------------------------------------------|
-| `any` (default) | `STANDALONE`, `PRIMARY`, `PRIMARY_CATCHUP`, `REPLICA`                                         |
-| `primary`     | `STANDALONE`, `PRIMARY`, `PRIMARY_CATCHUP`                                                     |
-| `replica`     | `REPLICA`                                                                                      |
+The full normative specification of host selection, round semantics,
+role classification, backoff math, and per-Execute reconnect loop lives
+in [`failover.md`](failover.md). At the wire level `wire-egress.md` only
+fixes:
 
-On `connect()` the client walks the endpoint list in order, reads each
-endpoint's `SERVER_INFO`, and picks the first one whose role passes the
-filter. Endpoints that don't match are closed and skipped. When every
-endpoint is tried and none matches the filter, the client raises a
-role-mismatch error and attaches the most recent `SERVER_INFO` observed so
-callers can distinguish "no primary available" from "all endpoints
-unreachable".
+- The `Role` byte values inside `SERVER_INFO` (see §11.2 below) and
+  their mapping to the `target=` filter (see `failover.md` §5).
+- The `OnFailoverReset` handler callback contract: fired between a
+  successful reconnect and the first replayed batch on the new node.
+  `batch_seq` restarts at `0` after the callback returns.
+- The `421 + X-QuestDB-Role` upgrade-reject convention shared with
+  ingress (see `failover.md` §5).
 
-With `failover=on` (the default), a transport failure mid-query triggers a
-transparent reconnect to another endpoint that still matches the filter, and
-the client re-submits the in-flight `QUERY_REQUEST`. Accumulating handlers
-observe a `onFailoverReset` callback (in the Java client) just before
-replayed batches start arriving with `batch_seq` restarting at 0 on the new
-node. `failover=off` restores the pre-v2 behaviour where transport failures
-surface directly through `onError`.
+`failover=off` restores the pre-v2 behaviour where transport failures
+surface directly through `onError` (no automatic reconnect).
 
 ## 12. Schema and Symbol Dictionary Scope
 
