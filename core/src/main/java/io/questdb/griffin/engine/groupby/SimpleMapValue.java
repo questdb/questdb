@@ -48,7 +48,12 @@ public class SimpleMapValue implements MapValue, Mutable, QuietCloseable {
     private final int columnCount;
     private final Decimal128 decimal128 = new Decimal128();
     private final Decimal256 decimal256 = new Decimal256();
-    private final Long256Impl long256 = new Long256Impl();
+    // Two distinct Long256 holders so callers that compare A vs B (e.g.
+    // testStringsLong256AndBinary in tests, generic Record consumers that
+    // capture A before reading B) see independent instances backed by the
+    // same off-heap slot.
+    private final Long256Impl long256A = new Long256Impl();
+    private final Long256Impl long256B = new Long256Impl();
     private boolean isNew;
     private long ptr;
 
@@ -96,6 +101,11 @@ public class SimpleMapValue implements MapValue, Mutable, QuietCloseable {
         Unsafe.putLong(p + 8L, acc.getLong1());
         Unsafe.putLong(p + 16L, acc.getLong2());
         Unsafe.putLong(p + 24L, acc.getLong3());
+    }
+
+    public Long256 getLong256B(int index) {
+        long256B.fromAddress(getAddress(index));
+        return long256B;
     }
 
     @Override
@@ -240,8 +250,8 @@ public class SimpleMapValue implements MapValue, Mutable, QuietCloseable {
 
     @Override
     public Long256 getLong256A(int index) {
-        long256.fromAddress(getAddress(index));
-        return long256;
+        long256A.fromAddress(getAddress(index));
+        return long256A;
     }
 
     @Override

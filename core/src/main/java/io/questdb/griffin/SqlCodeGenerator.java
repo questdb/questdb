@@ -175,6 +175,7 @@ import io.questdb.griffin.engine.groupby.GroupByNotKeyedRecordCursorFactory;
 import io.questdb.griffin.engine.groupby.GroupByUtils;
 import io.questdb.griffin.engine.groupby.SampleByFillNoneNotKeyedRecordCursorFactory;
 import io.questdb.griffin.engine.groupby.SampleByFillNoneRecordCursorFactory;
+import io.questdb.griffin.engine.groupby.SampleByFillNotKeyedRecordCursorFactory;
 import io.questdb.griffin.engine.groupby.SampleByFillNullNotKeyedRecordCursorFactory;
 import io.questdb.griffin.engine.groupby.SampleByFillNullRecordCursorFactory;
 import io.questdb.griffin.engine.groupby.SampleByFillPrevNotKeyedRecordCursorFactory;
@@ -3827,9 +3828,11 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 prevValueSlot.add(-1);
             }
             boolean needsPrevPositioning = false;
-            // Slots live in the keysMap value section, so non-keyed queries skip
-            // this loop and take the simplePrevRowId + recordAt path below.
-            for (int col = 0; keyColIndices.size() > 0 && col < columnCount; col++) {
+            // Slot cache is shared by both factories: the keyed factory reads
+            // each slot off the per-key MapValue, the non-keyed factory off a
+            // single SimpleMapValue (one row, same slot offsets). The per-col
+            // FILL_KEY skip only matters when key columns exist.
+            for (int col = 0; col < columnCount; col++) {
                 int mode = fillModes.getQuick(col);
                 if (mode != SampleByFillRecordCursorFactory.FILL_PREV_SELF && mode < 0) {
                     continue;
@@ -3861,17 +3864,6 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     mapValueTypes.add(srcTag == ColumnType.SYMBOL ? ColumnType.INT : srcType);
                 }
                 prevValueSlot.setQuick(col, slot);
-            }
-            // Non-keyed FILL_PREV has no MapValue to cache, so force
-            // needsPrevPositioning on for the simplePrevRowId path.
-            if (keyColIndices.size() == 0) {
-                for (int col = 0; col < columnCount; col++) {
-                    int mode = fillModes.getQuick(col);
-                    if (mode == SampleByFillRecordCursorFactory.FILL_PREV_SELF || mode >= 0) {
-                        needsPrevPositioning = true;
-                        break;
-                    }
-                }
             }
 
             RecordSink keySink = null;
@@ -3986,6 +3978,31 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             // Transferred slots were nulled in the per-column branch; this frees
             // any residual non-transferred fill functions.
             Misc.freeObjList(fillValues);
+            if (keyColIndices.size() == 0) {
+                return new SampleByFillNotKeyedRecordCursorFactory(
+                        fillMetadata,
+                        groupByFactory,
+                        fillFromFunc,
+                        fillToFunc,
+                        fillTo != null ? fillTo.position : 0,
+                        samplingInterval,
+                        samplingIntervalUnit,
+                        timestampSampler,
+                        fillModes,
+                        constantFills,
+                        timestampIndex,
+                        timestampType,
+                        symbolTableColIndices,
+                        offsetFunc,
+                        offsetFuncPos,
+                        tzFunc,
+                        tzFuncPos,
+                        fixedPrevSrcCols,
+                        fixedPrevTypeTags,
+                        prevValueSlot,
+                        needsPrevPositioning
+                );
+            }
             return new SampleByFillRecordCursorFactory(
                     configuration,
                     fillMetadata,

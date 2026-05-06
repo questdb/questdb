@@ -35,6 +35,7 @@ import io.questdb.griffin.SqlCompilerImpl;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.SqlExecutionContextImpl;
+import io.questdb.griffin.engine.groupby.SampleByFillNotKeyedRecordCursorFactory;
 import io.questdb.griffin.engine.groupby.SampleByFillPrevNotKeyedRecordCursorFactory;
 import io.questdb.griffin.engine.groupby.SampleByFillPrevRecordCursorFactory;
 import io.questdb.griffin.engine.groupby.SampleByFillRecordCursorFactory;
@@ -76,11 +77,12 @@ import java.util.concurrent.TimeUnit;
  * <ul>
  *   <li>{@code path}: {@code FAST_PATH} or {@code LEGACY}.</li>
  *   <li>{@code isKeyed}: {@code false} (default; non-keyed SAMPLE BY,
- *       legacy uses {@link SampleByFillPrevNotKeyedRecordCursorFactory})
+ *       legacy uses {@link SampleByFillPrevNotKeyedRecordCursorFactory},
+ *       fast path uses {@link SampleByFillNotKeyedRecordCursorFactory})
  *       or {@code true} (keyed SAMPLE BY on {@code sym1}, legacy uses
- *       {@link SampleByFillPrevRecordCursorFactory}). The fast path
- *       routes through {@link SampleByFillRecordCursorFactory} in both
- *       cases. Pass {@code -p isKeyed=true} to enable keyed runs.</li>
+ *       {@link SampleByFillPrevRecordCursorFactory}, fast path uses
+ *       {@link SampleByFillRecordCursorFactory}). Pass {@code -p isKeyed=true}
+ *       to enable keyed runs.</li>
  *   <li>{@code scenario}: shared name across modes but distinct data
  *       shapes per mode. The non-keyed shapes are tuned so each scenario
  *       still exercises the property its name implies (gap-heavy worst
@@ -331,7 +333,9 @@ public class SampleByFillPrevPathBenchmark {
     private void assertRouting(RecordCursorFactory root) {
         final Class<?> expected;
         if ("FAST_PATH".equals(path)) {
-            expected = SampleByFillRecordCursorFactory.class;
+            expected = isKeyed
+                    ? SampleByFillRecordCursorFactory.class
+                    : SampleByFillNotKeyedRecordCursorFactory.class;
         } else {
             expected = isKeyed
                     ? SampleByFillPrevRecordCursorFactory.class
