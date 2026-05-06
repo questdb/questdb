@@ -411,6 +411,36 @@ public class SampleByTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testNonKeyedSampleByFillValuePassesValidation() throws Exception {
+        // Non-keyed SAMPLE BY with FILL(value) goes through SqlOptimiser.rewriteSampleBy,
+        // which converts SAMPLE BY into GROUP BY + FillRangeRecordCursorFactory and clears
+        // the inner sample-by clause. SqlCodeGenerator.findRewrittenSampleByFill walks the
+        // nested-model chain to recover the fill list and feeds it to
+        // GroupByUtils.assembleGroupByFunctions for fill-mode validation. This regression
+        // test guards against breakage where that recovery path could spuriously reject
+        // standard aggregates that legitimately support FILL(VALUE).
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE tab (ts TIMESTAMP, val INT) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO tab VALUES
+                    ('2024-01-01T00:00:00.000000Z', 10),
+                    ('2024-01-01T03:00:00.000000Z', 30)
+                    """);
+            assertQueryNoLeakCheck(
+                    "ts\tvalue\n" +
+                            "2024-01-01T00:00:00.000000Z\t10\n" +
+                            "2024-01-01T01:00:00.000000Z\t0\n" +
+                            "2024-01-01T02:00:00.000000Z\t0\n" +
+                            "2024-01-01T03:00:00.000000Z\t30\n",
+                    "SELECT ts, sum(val) value FROM tab SAMPLE BY 1h FILL(0)",
+                    "ts",
+                    true,
+                    false
+            );
+        });
+    }
+
+    @Test
     public void testFillPrevConsistency() throws Exception {
         Rnd rnd = TestUtils.generateRandom(LOG);
         setProperty(PropertyKey.DEBUG_CAIRO_COPIER_TYPE, rnd.nextInt(4));
