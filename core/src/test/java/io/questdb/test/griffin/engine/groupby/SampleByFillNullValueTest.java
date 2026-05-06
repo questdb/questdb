@@ -628,6 +628,40 @@ public class SampleByFillNullValueTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testFillNullEmptyBaseFromToWithCalendarOffset() throws Exception {
+        // Empty base + FROM/TO + non-zero OFFSET, no TIME ZONE. Drives the
+        // empty-base branch at SampleByFillRecordCursorFactory.java:873-885,
+        // which calls timestampSampler.setLocalAnchor(fromTs + calendarOffset)
+        // to align the bucket grid before the hasNext loop emits fills against
+        // an exhausted base. Existing empty-base tests
+        // (testFillNullDstNewYorkDayStrideWithFromEmptyBase,
+        //  testFillNullFixedOffsetDayStrideEmptyBaseFrom,
+        //  testFillNullDayStrideWithTimezoneAndOffsetEmptyBase,
+        //  testFillFromNegativeOffsetEqualsStrideEmptyBase) cover empty base
+        // + FROM/TO with TIME ZONE or zero offset; none combine empty base +
+        // non-zero OFFSET literal without TIME ZONE. With OFFSET '05:00',
+        // setLocalAnchor anchors the SimpleTimestampSampler grid at
+        // fromTs+5h, so the first bucket label is 2024-01-01T05:00 and
+        // subsequent buckets land on each day at 05:00. The 2024-01-04T05:00
+        // candidate is past maxTimestamp = 2024-01-04T00:00, so only 3
+        // buckets emit.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (val DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            assertQueryNoLeakCheck(
+                    """
+                            s\tts
+                            null\t2024-01-01T05:00:00.000000Z
+                            null\t2024-01-02T05:00:00.000000Z
+                            null\t2024-01-03T05:00:00.000000Z
+                            """,
+                    "SELECT sum(val) s, ts FROM x SAMPLE BY 1d FROM '2024-01-01' TO '2024-01-04' "
+                            + "FILL(NULL) ALIGN TO CALENDAR WITH OFFSET '05:00'",
+                    "ts", false, false
+            );
+        });
+    }
+
+    @Test
     public void testFillNullFixedOffsetDayStrideEmptyBaseFrom() throws Exception {
         // C2 mirror -- empty base + fixed-offset TZ + FROM/TO. Pre-fix
         // the cursor used baseSampler (no wrap) and setStart(fromTs)
@@ -1343,6 +1377,43 @@ public class SampleByFillNullValueTest extends AbstractCairoTest {
                             """,
                     "SELECT sum(val), ts FROM x SAMPLE BY 1h FILL(NULL) ALIGN TO CALENDAR",
                     "ts", false, false
+            );
+        });
+    }
+
+    @Test
+    public void testFillNullPlanRangeFromOnly() throws Exception {
+        // Pin the SampleByFillRecordCursorFactory.toPlan range attribute when
+        // only FROM is bound (no TO). The factory emits the "range" line
+        // whenever fromFunc OR toFunc is non-null
+        // (SampleByFillRecordCursorFactory.java:226-228), then renders both
+        // sides via val(fromFunc).val(',').val(toFunc). Existing plan tests
+        // cover both-sided (FROM..TO at testExplainFillRange) and bare
+        // (no-range tests like testExplainOuterOrderByAggregate); the
+        // single-sided variant takes the same code path but is not asserted.
+        // A future refactor of the val(',').val(toFunc) rendering could break
+        // single-sided plans without the suite catching it.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (val DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            assertPlanNoLeakCheck(
+                    "SELECT first(val), ts FROM x SAMPLE BY 1h FROM '2024-01-01' FILL(NULL) ALIGN TO CALENDAR",
+                    """
+                            Sample By Fill
+                              range: ('2024-01-01',)
+                              stride: '1h'
+                              fill: null
+                                Encode sort light
+                                  keys: [ts]
+                                    Async Group By workers: 1
+                                      keys: [ts]
+                                      keyFunctions: [timestamp_floor_utc('1h',ts,'2024-01-01T00:00:00.000Z')]
+                                      values: [first(val)]
+                                      filter: null
+                                        PageFrame
+                                            Row forward scan
+                                            Interval forward scan on: x
+                                              intervals: [("2024-01-01T00:00:00.000000Z","MAX")]
+                            """
             );
         });
     }

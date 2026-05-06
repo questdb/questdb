@@ -1423,6 +1423,108 @@ public class SampleByFillTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testFillReExecutionOffsetBindFlipMonthStride() throws Exception {
+        // Month-stride sibling of testFillReExecutionOffsetBindFlipZeroNonZero.
+        // Drives the same Branch-1 vs Branch-3 split in
+        // SampleByFillRecordCursor.initialize but with MonthTimestampMicrosSampler
+        // instead of SimpleTimestampSampler. The day-stride sibling cannot exercise
+        // the multi-field state (startDay, startMonth, dayMod) that Month and
+        // Year samplers carry. Even though the GROUP BY layer (timestamp_floor_utc)
+        // pre-floors firstTs to canonical month boundaries -- so setStart always
+        // anchors at startDay = 1 and the cursor never observes a non-canonical
+        // bucket label -- this test locks the re-execution path through the
+        // unified factory's setOffset call site at
+        // SampleByFillRecordCursorFactory.java:831 with a Month sampler in the
+        // chain. Three flips: 00:00 -> 05:00 -> 00:00.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE test (ts TIMESTAMP, value DOUBLE) TIMESTAMP(ts) PARTITION BY MONTH WAL");
+            execute("INSERT INTO test VALUES " +
+                    "('2024-05-20T12:00:00.000000Z', 1.0)," +
+                    "('2024-08-20T12:00:00.000000Z', 4.0)");
+            drainWalQueue();
+            // OFFSET = 0: GROUP BY floors data to canonical month start at
+            // 00:00. Branch-3 fires (calendarOffset == 0): setStart(firstTs)
+            // anchors at the floored value, round() returns it unchanged.
+            final String expectedZero = """
+                    ts\tavg
+                    2024-05-01T00:00:00.000000Z\t1.0
+                    2024-06-01T00:00:00.000000Z\tnull
+                    2024-07-01T00:00:00.000000Z\tnull
+                    2024-08-01T00:00:00.000000Z\t4.0
+                    """;
+            // OFFSET = 5h: GROUP BY floors data to canonical month start at
+            // 05:00. Branch-1 fires (calendarOffset != 0, no FROM):
+            // setOffset(5h) writes dayMod and -- with the in-flight fix --
+            // also clears startDay. round(firstTs) returns the canonical
+            // YYYY-MM-01T05:00 boundary that matches the floored data row.
+            final String expectedFive = """
+                    ts\tavg
+                    2024-05-01T05:00:00.000000Z\t1.0
+                    2024-06-01T05:00:00.000000Z\tnull
+                    2024-07-01T05:00:00.000000Z\tnull
+                    2024-08-01T05:00:00.000000Z\t4.0
+                    """;
+            bindVariableService.clear();
+            bindVariableService.setStr(0, "00:00");
+            try (RecordCursorFactory factory = select(
+                    "SELECT ts, avg(value) FROM test SAMPLE BY 1M FILL(NULL) ALIGN TO CALENDAR WITH OFFSET $1")) {
+                assertCursor(expectedZero, factory, false, false, false, sqlExecutionContext);
+                bindVariableService.setStr(0, "05:00");
+                assertCursor(expectedFive, factory, false, false, false, sqlExecutionContext);
+                bindVariableService.setStr(0, "00:00");
+                assertCursor(expectedZero, factory, false, false, false, sqlExecutionContext);
+            }
+        });
+    }
+
+    @Test
+    public void testFillReExecutionOffsetBindFlipYearStride() throws Exception {
+        // Year-stride sibling of testFillReExecutionOffsetBindFlipMonthStride.
+        // Drives YearTimestampMicrosSampler through the same re-execution path.
+        // Year sampler carries (startMonth, startDay, dayMod) -- a strictly
+        // larger state surface than the Month sampler -- and the GROUP BY
+        // pre-floor anchors firstTs at canonical year start so the cursor
+        // never observes a non-canonical bucket label. This test confirms the
+        // unified factory tolerates OFFSET re-execution against a year sampler
+        // and is the y-stride entry point on the matrix that the day-stride
+        // sibling cannot cover.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE test (ts TIMESTAMP, value DOUBLE) TIMESTAMP(ts) PARTITION BY YEAR WAL");
+            execute("INSERT INTO test VALUES " +
+                    "('2024-05-20T12:00:00.000000Z', 1.0)," +
+                    "('2026-05-20T12:00:00.000000Z', 4.0)");
+            drainWalQueue();
+            // OFFSET = 0: GROUP BY floors to canonical year start at 00:00.
+            final String expectedZero = """
+                    ts\tavg
+                    2024-01-01T00:00:00.000000Z\t1.0
+                    2025-01-01T00:00:00.000000Z\tnull
+                    2026-01-01T00:00:00.000000Z\t4.0
+                    """;
+            // OFFSET = 5h: GROUP BY floors to canonical year start at 05:00.
+            // Branch-1 fires; setOffset(5h) writes dayMod and -- with the
+            // in-flight fix -- also clears startMonth and startDay. round()
+            // returns the canonical YYYY-01-01T05:00 boundary.
+            final String expectedFive = """
+                    ts\tavg
+                    2024-01-01T05:00:00.000000Z\t1.0
+                    2025-01-01T05:00:00.000000Z\tnull
+                    2026-01-01T05:00:00.000000Z\t4.0
+                    """;
+            bindVariableService.clear();
+            bindVariableService.setStr(0, "00:00");
+            try (RecordCursorFactory factory = select(
+                    "SELECT ts, avg(value) FROM test SAMPLE BY 1y FILL(NULL) ALIGN TO CALENDAR WITH OFFSET $1")) {
+                assertCursor(expectedZero, factory, false, false, false, sqlExecutionContext);
+                bindVariableService.setStr(0, "05:00");
+                assertCursor(expectedFive, factory, false, false, false, sqlExecutionContext);
+                bindVariableService.setStr(0, "00:00");
+                assertCursor(expectedZero, factory, false, false, false, sqlExecutionContext);
+            }
+        });
+    }
+
+    @Test
     public void testFillReExecutionOffsetBindFlipZeroNonZero() throws Exception {
         // Re-execute the same compiled FILL factory with an OFFSET bind variable
         // flipping zero <-> non-zero across runs. Exercises Branch-1 vs Branch-3
