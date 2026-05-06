@@ -1218,6 +1218,28 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         return null;
     }
 
+    /**
+     * Walks the nested model chain to find the first non-empty {@code sampleByFill} list.
+     * Needed because {@link io.questdb.griffin.SqlOptimiser#rewriteSampleBy} converts
+     * non-keyed SAMPLE BY into GROUP BY + {@link FillRangeRecordCursorFactory} and clears
+     * {@code sampleBy}, so {@code rewriteSelectClause0.moveSampleByFrom} never propagates
+     * the fill list to {@code groupByModel}. Recovering it here lets
+     * {@link GroupByUtils#assembleGroupByFunctions} reject fill modes the aggregate's
+     * {@link GroupByFunction#getSampleByFlags()} does not advertise, instead of crashing
+     * at runtime in {@code FillRangeRecord.getArray()} on the parsed fill constant.
+     */
+    private static ObjList<ExpressionNode> findRewrittenSampleByFill(IQueryModel model) {
+        IQueryModel curr = model;
+        while (curr != null) {
+            final ObjList<ExpressionNode> fill = curr.getSampleByFill();
+            if (fill != null && fill.size() > 0) {
+                return fill;
+            }
+            curr = curr.getNestedModel();
+        }
+        return null;
+    }
+
     private static int getOrderByDirectionOrDefault(IQueryModel model, int index) {
         final IntList direction = model.getOrderByDirectionAdvice();
         return index >= direction.size() ? IQueryModel.ORDER_DIRECTION_ASCENDING : direction.getQuick(index);
@@ -7993,6 +8015,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 }
             }
 
+            final ObjList<ExpressionNode> rewrittenSampleByFill = findRewrittenSampleByFill(model);
+
             GroupByUtils.assembleGroupByFunctions(
                     functionParser,
                     sqlNodeStack,
@@ -8011,7 +8035,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     valueTypes,
                     keyTypes,
                     listColumnFilterA,
-                    null,
+                    rewrittenSampleByFill,
                     validateSampleByFillType,
                     model.getColumns(),
                     sharedOuterProjectionFunctions

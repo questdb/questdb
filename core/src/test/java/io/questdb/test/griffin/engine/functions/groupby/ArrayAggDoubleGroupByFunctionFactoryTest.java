@@ -706,6 +706,27 @@ public class ArrayAggDoubleGroupByFunctionFactoryTest extends AbstractCairoTest 
     }
 
     @Test
+    public void testSampleByFillValueRejectedNonKeyed() throws Exception {
+        // Non-keyed SAMPLE BY goes through SqlOptimiser.rewriteSampleBy which converts
+        // SAMPLE BY into GROUP BY + FillRangeRecordCursorFactory. The rewrite path must
+        // still validate that the aggregate supports VALUE fill, otherwise the query
+        // compiles and crashes at runtime when a gap triggers FillRangeRecord.getArray().
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE tab (ts TIMESTAMP, val DOUBLE) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO tab VALUES
+                    ('2024-01-01T00:00:00', 1.0),
+                    ('2024-01-01T02:00:00', 2.0)
+                    """);
+            assertExceptionNoLeakCheck(
+                    "SELECT ts, array_agg(val) arr FROM tab SAMPLE BY 1h FILL(42)",
+                    11,
+                    "support for VALUE fill is not yet implemented"
+            );
+        });
+    }
+
+    @Test
     public void testSingleRow() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE tab (val DOUBLE)");
