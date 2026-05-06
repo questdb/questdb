@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -28,10 +28,10 @@ public interface Long256Acceptor {
 
     default void fromAddress(long address) {
         setAll(
-                Unsafe.getUnsafe().getLong(address),
-                Unsafe.getUnsafe().getLong(address + Long.BYTES),
-                Unsafe.getUnsafe().getLong(address + Long.BYTES * 2),
-                Unsafe.getUnsafe().getLong(address + Long.BYTES * 3)
+                Unsafe.getLong(address),
+                Unsafe.getLong(address + Long.BYTES),
+                Unsafe.getLong(address + Long.BYTES * 2),
+                Unsafe.getLong(address + Long.BYTES * 3)
         );
     }
 

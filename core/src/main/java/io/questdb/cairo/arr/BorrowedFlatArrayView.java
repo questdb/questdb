@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -69,7 +69,7 @@ public final class BorrowedFlatArrayView implements FlatArrayView {
         assert ptr != 0;
         assert elemIndex >= 0 && elemIndex < length;
         final long addr = ptr + ((long) elemIndex * Double.BYTES);
-        return Unsafe.getUnsafe().getDouble(addr);
+        return Unsafe.getDouble(addr);
     }
 
     @Override
@@ -77,7 +77,7 @@ public final class BorrowedFlatArrayView implements FlatArrayView {
         assert ptr != 0;
         assert elemIndex >= 0 && elemIndex < length;
         final long addr = ptr + ((long) elemIndex * Long.BYTES);
-        return Unsafe.getUnsafe().getLong(addr);
+        return Unsafe.getLong(addr);
     }
 
     @Override

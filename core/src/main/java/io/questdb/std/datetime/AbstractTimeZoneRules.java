@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -43,6 +43,7 @@ public abstract class AbstractTimeZoneRules implements TimeZoneRules {
     private static final long SAVING_LOCAL_TRANSITIONS_OFFSET = Unsafe.getFieldOffset(ZoneRules.class, "savingsLocalTransitions");
     private static final long STANDARD_OFFSETS_OFFSET = Unsafe.getFieldOffset(ZoneRules.class, "standardOffsets");
     private static final long WALL_OFFSETS_OFFSET = Unsafe.getFieldOffset(ZoneRules.class, "wallOffsets");
+    private final long baseStandardOffset;
     private final IntFunction<Transition[]> computeTransitionsRef;
     private final long cutoffTransition;
     private final long firstWall;
@@ -64,10 +65,11 @@ public abstract class AbstractTimeZoneRules implements TimeZoneRules {
         this.multiplier = multiplier;
         this.computeTransitionsRef = this::computeTransitions;
 
-        final long[] savingsInstantTransitions = (long[]) Unsafe.getUnsafe().getObject(rules, SAVING_INSTANT_TRANSITIONS_OFFSET);
+        final long[] savingsInstantTransitions = (long[]) Unsafe.getObject(rules, SAVING_INSTANT_TRANSITIONS_OFFSET);
+        final ZoneOffset[] stdOffsets = (ZoneOffset[]) Unsafe.getObject(rules, STANDARD_OFFSETS_OFFSET);
+        baseStandardOffset = stdOffsets[stdOffsets.length - 1].getTotalSeconds() * multiplier;
         if (savingsInstantTransitions.length == 0) {
-            ZoneOffset[] standardOffsets = (ZoneOffset[]) Unsafe.getUnsafe().getObject(rules, STANDARD_OFFSETS_OFFSET);
-            standardOffset = standardOffsets[0].getTotalSeconds() * multiplier;
+            standardOffset = stdOffsets[0].getTotalSeconds() * multiplier;
         } else {
             standardOffset = Long.MIN_VALUE;
             for (int i = 0, n = savingsInstantTransitions.length; i < n; i++) {
@@ -76,22 +78,15 @@ public abstract class AbstractTimeZoneRules implements TimeZoneRules {
         }
         cutoffTransition = historicTransitions.getLast();
 
-        final ZoneOffsetTransitionRule[] lastRules = (ZoneOffsetTransitionRule[]) Unsafe.getUnsafe().getObject(rules, LAST_RULES_OFFSET);
+        final ZoneOffsetTransitionRule[] lastRules = (ZoneOffsetTransitionRule[]) Unsafe.getObject(rules, LAST_RULES_OFFSET);
         this.rules = new TransitionRule[lastRules.length];
         for (int i = 0, n = lastRules.length; i < n; i++) {
             final ZoneOffsetTransitionRule zr = lastRules[i];
-            final int timeDef;
-            switch (zr.getTimeDefinition()) {
-                case UTC:
-                    timeDef = TransitionRule.UTC;
-                    break;
-                case STANDARD:
-                    timeDef = TransitionRule.STANDARD;
-                    break;
-                default:
-                    timeDef = TransitionRule.WALL;
-                    break;
-            }
+            final int timeDef = switch (zr.getTimeDefinition()) {
+                case UTC -> TransitionRule.UTC;
+                case STANDARD -> TransitionRule.STANDARD;
+                default -> TransitionRule.WALL;
+            };
             final TransitionRule tr = new TransitionRule(
                     zr.getOffsetBefore().getTotalSeconds(),
                     zr.getOffsetAfter().getTotalSeconds(),
@@ -109,7 +104,7 @@ public abstract class AbstractTimeZoneRules implements TimeZoneRules {
         }
         this.ruleCount = lastRules.length;
 
-        final ZoneOffset[] wallOffsets = (ZoneOffset[]) Unsafe.getUnsafe().getObject(rules, WALL_OFFSETS_OFFSET);
+        final ZoneOffset[] wallOffsets = (ZoneOffset[]) Unsafe.getObject(rules, WALL_OFFSETS_OFFSET);
         this.wallOffsets = new int[wallOffsets.length];
         for (int i = 0, n = wallOffsets.length; i < n; i++) {
             this.wallOffsets[i] = wallOffsets[i].getTotalSeconds();
@@ -117,7 +112,7 @@ public abstract class AbstractTimeZoneRules implements TimeZoneRules {
         this.firstWall = this.wallOffsets[0] * multiplier;
         this.lastWall = this.wallOffsets[wallOffsets.length - 1] * multiplier;
 
-        final LocalDateTime[] savingsLocalTransitions = (LocalDateTime[]) Unsafe.getUnsafe().getObject(rules, SAVING_LOCAL_TRANSITIONS_OFFSET);
+        final LocalDateTime[] savingsLocalTransitions = (LocalDateTime[]) Unsafe.getObject(rules, SAVING_LOCAL_TRANSITIONS_OFFSET);
         for (int i = 0, n = savingsLocalTransitions.length; i < n; i++) {
             localHistoricTransitions.add(savingsLocalTransitions[i].toInstant(ZoneOffset.UTC).getEpochSecond() * multiplier);
         }
@@ -221,6 +216,11 @@ public abstract class AbstractTimeZoneRules implements TimeZoneRules {
     public long getOffset(long utcEpoch) {
         final int y = getYear(utcEpoch);
         return getOffset(utcEpoch, y);
+    }
+
+    @Override
+    public long getStandardOffset() {
+        return baseStandardOffset;
     }
 
     @Override

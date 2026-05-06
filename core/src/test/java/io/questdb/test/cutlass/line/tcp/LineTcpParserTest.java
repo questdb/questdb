@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -142,7 +142,7 @@ public class LineTcpParserTest extends BaseLineTcpContextTest {
                 long mem = Unsafe.malloc(bytes.length, MemoryTag.NATIVE_DEFAULT);
                 try {
                     for (int i = 0; i < bytes.length; i++) {
-                        Unsafe.getUnsafe().putByte(mem + i, bytes[i]);
+                        Unsafe.putByte(mem + i, bytes[i]);
                     }
                     lineTcpParser.of(mem);
                     Assert.assertEquals(expectedParseResult, lineTcpParser.parseMeasurement(mem + len));

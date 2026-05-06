@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -148,7 +148,7 @@ public class DistinctTest extends AbstractCairoTest {
                         """,
                 """
                         Limit value: 5 skip-rows: 0 take-rows: 5
-                            Sort
+                            Encode sort
                               keys: [sym]
                                 Distinct
                                   keys: sym,origin,lag

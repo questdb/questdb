@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -40,6 +40,8 @@ import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.test.TestMatchFunctionFactory;
 import io.questdb.griffin.engine.groupby.vect.GroupByVectorAggregateJob;
+import io.questdb.griffin.model.ExecutionModel;
+import io.questdb.griffin.model.IQueryModel;
 import io.questdb.mp.SOCountDownLatch;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.Misc;
@@ -779,6 +781,44 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
             try (TableReader reader = getReader("y")) {
                 Assert.assertFalse(reader.getSymbolMapReader(0).isCached());
             }
+        });
+    }
+
+    @Test
+    public void testCteWithDoubleParensAndTimestampClauseSampleBy() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE trades (timestamp TIMESTAMP, amount DOUBLE) TIMESTAMP(timestamp) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO trades VALUES
+                        ('2024-03-08T00:00:00.000000Z', 1.0),
+                        ('2024-03-08T12:00:00.000000Z', 2.0),
+                        ('2024-03-08T23:30:00.000000Z', 4.0),
+                        ('2024-03-09T00:00:00.000000Z', 100.0),
+                        ('2024-03-10T07:00:00.000000Z', 200.0),
+                        ('2024-03-10T08:00:00.000000Z', 8.0),
+                        ('2024-03-11T10:00:00.000000Z', 16.0),
+                        ('2024-03-11T23:00:00.000000Z', 32.0),
+                        ('2024-03-12T01:00:00.000000Z', 400.0)""");
+            assertSql(
+                    """
+                            ts\tsum
+                            2024-03-07T05:00:00.000000Z\t1.0
+                            2024-03-08T05:00:00.000000Z\t6.0
+                            2024-03-10T05:00:00.000000Z\t8.0
+                            2024-03-11T04:00:00.000000Z\t48.0
+                            """,
+                    """
+                            WITH Test AS ((
+                             SELECT timestamp AS ts, amount
+                            FROM (
+                             SELECT timestamp, amount
+                             FROM trades
+                             WHERE timestamp IN '2024-03-08'\s
+                             OR timestamp BETWEEN('2024-03-10T08:00:00Z', '2024-03-12')
+                            ) timestamp(timestamp))
+                            ) SELECT ts, sum(amount) FROM Test \
+                            SAMPLE BY 1d ALIGN TO CALENDAR TIME ZONE 'America/New_York'"""
+            );
         });
     }
 
@@ -2608,60 +2648,60 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                             98\t98
                             99\t99
                             100\t100
-                            null\t139
-                            null\t106
-                            null\t103
-                            null\t116
-                            null\t150
-                            null\t148
-                            null\t120
-                            null\t137
-                            null\t110
-                            null\t133
-                            null\t140
-                            null\t122
-                            null\t149
-                            null\t125
-                            null\t144
-                            null\t111
-                            null\t118
-                            null\t121
-                            null\t117
-                            null\t146
-                            null\t102
-                            null\t145
-                            null\t113
-                            null\t129
-                            null\t147
-                            null\t124
-                            null\t126
-                            null\t112
-                            null\t130
-                            null\t135
                             null\t101
-                            null\t127
-                            null\t123
-                            null\t107
-                            null\t119
-                            null\t136
-                            null\t131
-                            null\t143
-                            null\t138
-                            null\t105
-                            null\t109
-                            null\t115
-                            null\t128
-                            null\t134
-                            null\t132
-                            null\t141
-                            null\t114
-                            null\t108
+                            null\t102
+                            null\t103
                             null\t104
+                            null\t105
+                            null\t106
+                            null\t107
+                            null\t108
+                            null\t109
+                            null\t110
+                            null\t111
+                            null\t112
+                            null\t113
+                            null\t114
+                            null\t115
+                            null\t116
+                            null\t117
+                            null\t118
+                            null\t119
+                            null\t120
+                            null\t121
+                            null\t122
+                            null\t123
+                            null\t124
+                            null\t125
+                            null\t126
+                            null\t127
+                            null\t128
+                            null\t129
+                            null\t130
+                            null\t131
+                            null\t132
+                            null\t133
+                            null\t134
+                            null\t135
+                            null\t136
+                            null\t137
+                            null\t138
+                            null\t139
+                            null\t140
+                            null\t141
                             null\t142
+                            null\t143
+                            null\t144
+                            null\t145
+                            null\t146
+                            null\t147
+                            null\t148
+                            null\t149
+                            null\t150
                             """,
-                    "select x, y from l right join rr on l.x = rr.y and (y > 0 or y > 10)",
+                    "select x, y from l right join rr on l.x = rr.y and (y > 0 or y > 10) order by y",
                     null,
-                    false,
+                    true,
                     false,
                     false
             );
@@ -2757,7 +2797,8 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                     """
                             select x, y
                             from l right join rr on l.x = rr.y
-                            where y > 0 or y > 10""",
+                            where y > 0 or y > 10
+                            order by y""",
                     sink,
                     """
                             x\ty
@@ -2811,56 +2852,56 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                             98\t98
                             99\t99
                             100\t100
-                            null\t139
-                            null\t106
-                            null\t103
-                            null\t116
-                            null\t150
-                            null\t148
-                            null\t120
-                            null\t137
-                            null\t110
-                            null\t133
-                            null\t140
-                            null\t122
-                            null\t149
-                            null\t125
-                            null\t144
-                            null\t111
-                            null\t118
-                            null\t121
-                            null\t117
-                            null\t146
-                            null\t102
-                            null\t145
-                            null\t113
-                            null\t129
-                            null\t147
-                            null\t124
-                            null\t126
-                            null\t112
-                            null\t130
-                            null\t135
                             null\t101
-                            null\t127
-                            null\t123
-                            null\t107
-                            null\t119
-                            null\t136
-                            null\t131
-                            null\t143
-                            null\t138
-                            null\t105
-                            null\t109
-                            null\t115
-                            null\t128
-                            null\t134
-                            null\t132
-                            null\t141
-                            null\t114
-                            null\t108
+                            null\t102
+                            null\t103
                             null\t104
+                            null\t105
+                            null\t106
+                            null\t107
+                            null\t108
+                            null\t109
+                            null\t110
+                            null\t111
+                            null\t112
+                            null\t113
+                            null\t114
+                            null\t115
+                            null\t116
+                            null\t117
+                            null\t118
+                            null\t119
+                            null\t120
+                            null\t121
+                            null\t122
+                            null\t123
+                            null\t124
+                            null\t125
+                            null\t126
+                            null\t127
+                            null\t128
+                            null\t129
+                            null\t130
+                            null\t131
+                            null\t132
+                            null\t133
+                            null\t134
+                            null\t135
+                            null\t136
+                            null\t137
+                            null\t138
+                            null\t139
+                            null\t140
+                            null\t141
                             null\t142
+                            null\t143
+                            null\t144
+                            null\t145
+                            null\t146
+                            null\t147
+                            null\t148
+                            null\t149
+                            null\t150
                             """
             );
         });
@@ -8004,7 +8045,7 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
             assertPlanNoLeakCheck(
                     "select min(x), sym timestamp from test1 sample by 15s align to first observation order by min",
                     """
-                            Sort
+                            Encode sort
                               keys: [min]
                                 Sample By
                                   keys: [timestamp]
@@ -8020,10 +8061,11 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                     "select min(x), sym timestamp from test1 sample by 15s align to calendar order by min",
                     """
                             SelectedRecord
-                                Radix sort light
+                                Encode sort light
                                   keys: [min]
                                     Async Group By workers: 1
                                       keys: [timestamp,timestamp1]
+                                      keyFunctions: [timestamp_floor_utc('15s',timestamp1)]
                                       values: [min(x)]
                                       filter: null
                                         SelectedRecord
@@ -8347,7 +8389,8 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                         """,
                 "select distinct t1.id " +
                         "from  tab t1 " +
-                        "join (select x as id from long_sequence(2)) t2 on (t1.id=t2.id)",
+                        "join (select x as id from long_sequence(2)) t2 on (t1.id=t2.id) " +
+                        "order by id",
                 "create table tab as (select x as id from long_sequence(3))",
 
                 null,
@@ -8364,7 +8407,8 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                         2
                         """,
                 "select distinct t1.id " +
-                        "from  tab t1, tab t2",
+                        "from  tab t1, tab t2 " +
+                        "order by id",
                 "create table tab as (select x as id from long_sequence(2))",
                 null, true, true
         );
@@ -9025,10 +9069,10 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                             "show columns from 'привет от штиблет'",
                             sink,
                             """
-                                    column\ttype\tindexed\tindexBlockCapacity\tsymbolCached\tsymbolCapacity\tsymbolTableSize\tdesignated\tupsertKey
-                                    f0\tSTRING\tfalse\t0\tfalse\t0\t0\tfalse\tfalse
-                                    штиблет\tSTRING\tfalse\t0\tfalse\t0\t0\tfalse\tfalse
-                                    f2\tSTRING\tfalse\t0\tfalse\t0\t0\tfalse\tfalse
+                                    column\ttype\tindexed\tindexBlockCapacity\tsymbolCached\tsymbolCapacity\tsymbolTableSize\tdesignated\tupsertKey\tindexType\tindexInclude
+                                    f0\tSTRING\tfalse\t0\tfalse\t0\t0\tfalse\tfalse\t\t
+                                    штиблет\tSTRING\tfalse\t0\tfalse\t0\t0\tfalse\tfalse\t\t
+                                    f2\tSTRING\tfalse\t0\tfalse\t0\t0\tfalse\tfalse\t\t
                                     """
                     );
                 }
@@ -9173,6 +9217,31 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                 Assert.assertTrue(cursor.hasNext());
                 // First row: 2022-01-15T12:00:00 - 1h = 2022-01-15T11:00:00 = 1642244400000000 microseconds
                 Assert.assertEquals(100.0, record.getDouble(1), 0.001);
+            }
+        });
+    }
+
+    @Test
+    public void testVirtualColumnRejectsNonTimestampModelTimestampIndex() throws Exception {
+        assertMemoryLeak(() -> {
+            try (SqlCompiler compiler = engine.getSqlCompiler()) {
+                final String query = "SELECT x + 1 AS ts FROM long_sequence(1)";
+                final ExecutionModel executionModel = compiler.generateExecutionModel(query, sqlExecutionContext);
+                Assert.assertEquals(ExecutionModel.QUERY, executionModel.getModelType());
+
+                final IQueryModel model = (IQueryModel) executionModel;
+                model.setTimestampColumnIndex(0);
+
+                RecordCursorFactory factory = null;
+                try {
+                    factory = compiler.generateSelectWithRetries(model, null, sqlExecutionContext, false);
+                    Assert.fail("expected timestamp validation to reject non-TIMESTAMP column");
+                } catch (SqlException e) {
+                    TestUtils.assertContains(e.getFlyweightMessage(), "TIMESTAMP column is required but not provided");
+                    Assert.assertEquals(9, e.getPosition());
+                } finally {
+                    Misc.free(factory);
+                }
             }
         });
     }

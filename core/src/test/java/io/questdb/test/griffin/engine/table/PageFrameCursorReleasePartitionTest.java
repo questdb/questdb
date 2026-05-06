@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -70,11 +70,12 @@ public class PageFrameCursorReleasePartitionTest extends AbstractCairoTest {
             BwdTableReaderPageFrameCursor pageFrameCursor = new BwdTableReaderPageFrameCursor(
                     columnIndexes,
                     columnSizeShifts,
+                    null,
                     1
             );
 
             try (pageFrameCursor) {
-                pageFrameCursor.of(partitionFrameCursor, 1000, 1000000);
+                pageFrameCursor.of(sqlExecutionContext, partitionFrameCursor);
 
                 // First pass - iterate and release
                 while (pageFrameCursor.next() != null) {
@@ -132,11 +133,12 @@ public class PageFrameCursorReleasePartitionTest extends AbstractCairoTest {
             BwdTableReaderPageFrameCursor pageFrameCursor = new BwdTableReaderPageFrameCursor(
                     columnIndexes,
                     columnSizeShifts,
+                    null,
                     1
             );
 
             try (pageFrameCursor) {
-                pageFrameCursor.of(partitionFrameCursor, 1000, 1000000);
+                pageFrameCursor.of(sqlExecutionContext, partitionFrameCursor);
 
                 // Calling releaseOpenPartitions() before next() should be safe (no-op)
                 Assert.assertEquals("No partitions should be open initially", 0, reader.getOpenPartitionCount());
@@ -189,11 +191,12 @@ public class PageFrameCursorReleasePartitionTest extends AbstractCairoTest {
             BwdTableReaderPageFrameCursor pageFrameCursor = new BwdTableReaderPageFrameCursor(
                     columnIndexes,
                     columnSizeShifts,
+                    null,
                     1 // single-threaded
             );
 
             try (pageFrameCursor) {
-                pageFrameCursor.of(partitionFrameCursor, 1000, 1000000);
+                pageFrameCursor.of(sqlExecutionContext, partitionFrameCursor);
                 // Initially no partitions are open
                 Assert.assertEquals("No partitions should be open initially", 0, reader.getOpenPartitionCount());
 
@@ -254,11 +257,13 @@ public class PageFrameCursorReleasePartitionTest extends AbstractCairoTest {
             BwdTableReaderPageFrameCursor pageFrameCursor = new BwdTableReaderPageFrameCursor(
                     columnIndexes,
                     columnSizeShifts,
+                    null,
                     1 // single-threaded
             );
 
             try (pageFrameCursor) {
-                pageFrameCursor.of(partitionFrameCursor, 1000, 10000); // smaller max to force multiple frames
+                sqlExecutionContext.changePageFrameSizes(1000, 10000); // smaller max to force multiple frames
+                pageFrameCursor.of(sqlExecutionContext, partitionFrameCursor);
                 while (pageFrameCursor.next() != null) {
                     // Release after processing each frame
                     pageFrameCursor.releaseOpenPartitions();
@@ -310,11 +315,12 @@ public class PageFrameCursorReleasePartitionTest extends AbstractCairoTest {
             FwdTableReaderPageFrameCursor pageFrameCursor = new FwdTableReaderPageFrameCursor(
                     columnIndexes,
                     columnSizeShifts,
+                    null,
                     1 // single-threaded
             );
 
             try (pageFrameCursor) {
-                pageFrameCursor.of(partitionFrameCursor, 1000, 1000000);
+                pageFrameCursor.of(sqlExecutionContext, partitionFrameCursor);
                 // Do NOT call releaseOpenPartitions (default behavior)
                 // Initially no partitions are open
                 Assert.assertEquals("No partitions should be open initially", 0, reader.getOpenPartitionCount());
@@ -370,11 +376,12 @@ public class PageFrameCursorReleasePartitionTest extends AbstractCairoTest {
             FwdTableReaderPageFrameCursor pageFrameCursor = new FwdTableReaderPageFrameCursor(
                     columnIndexes,
                     columnSizeShifts,
+                    null,
                     1
             );
 
             try (pageFrameCursor) {
-                pageFrameCursor.of(partitionFrameCursor, 1000, 1000000);
+                pageFrameCursor.of(sqlExecutionContext, partitionFrameCursor);
 
                 // First pass - iterate and release
                 while (pageFrameCursor.next() != null) {
@@ -429,11 +436,12 @@ public class PageFrameCursorReleasePartitionTest extends AbstractCairoTest {
             FwdTableReaderPageFrameCursor pageFrameCursor = new FwdTableReaderPageFrameCursor(
                     columnIndexes,
                     columnSizeShifts,
+                    null,
                     1
             );
 
             try (pageFrameCursor) {
-                pageFrameCursor.of(partitionFrameCursor, 1000, 1000000);
+                pageFrameCursor.of(sqlExecutionContext, partitionFrameCursor);
 
                 // Calling releaseOpenPartitions() before next() should be safe (no-op)
                 Assert.assertEquals("No partitions should be open initially", 0, reader.getOpenPartitionCount());
@@ -486,11 +494,12 @@ public class PageFrameCursorReleasePartitionTest extends AbstractCairoTest {
             FwdTableReaderPageFrameCursor pageFrameCursor = new FwdTableReaderPageFrameCursor(
                     columnIndexes,
                     columnSizeShifts,
+                    null,
                     1 // single-threaded
             );
 
             try (pageFrameCursor) {
-                pageFrameCursor.of(partitionFrameCursor, 1000, 1000000);
+                pageFrameCursor.of(sqlExecutionContext, partitionFrameCursor);
                 // Initially no partitions are open
                 Assert.assertEquals("No partitions should be open initially", 0, reader.getOpenPartitionCount());
 
@@ -551,11 +560,13 @@ public class PageFrameCursorReleasePartitionTest extends AbstractCairoTest {
             FwdTableReaderPageFrameCursor pageFrameCursor = new FwdTableReaderPageFrameCursor(
                     columnIndexes,
                     columnSizeShifts,
+                    null,
                     1 // single-threaded
             );
 
             try (pageFrameCursor) {
-                pageFrameCursor.of(partitionFrameCursor, 1000, 10000); // smaller max to force multiple frames
+                sqlExecutionContext.changePageFrameSizes(1000, 10000); // smaller max to force multiple frames
+                pageFrameCursor.of(sqlExecutionContext, partitionFrameCursor);
                 while (pageFrameCursor.next() != null) {
                     // Release partitions after processing each frame
                     pageFrameCursor.releaseOpenPartitions();
@@ -604,11 +615,12 @@ public class PageFrameCursorReleasePartitionTest extends AbstractCairoTest {
             FwdTableReaderPageFrameCursor pageFrameCursor = new FwdTableReaderPageFrameCursor(
                     columnIndexes,
                     columnSizeShifts,
+                    null,
                     1 // single-threaded
             );
 
             try (pageFrameCursor) {
-                pageFrameCursor.of(partitionFrameCursor, 1000, 1000000);
+                pageFrameCursor.of(sqlExecutionContext, partitionFrameCursor);
                 // First pass - exhaust cursor with release
                 while (pageFrameCursor.next() != null) {
                     pageFrameCursor.releaseOpenPartitions();

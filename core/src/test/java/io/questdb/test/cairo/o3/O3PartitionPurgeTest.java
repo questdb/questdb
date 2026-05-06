@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -239,13 +239,189 @@ public class O3PartitionPurgeTest extends AbstractCairoTest {
                 // OOO insert
                 execute("insert into tbl select 4, '1970-01-10T08'");
                 runPartitionPurgeJobs();
-                testPartitionExist(path, len, true, false, true);
+                // .2 is also preserved: O3PartitionPurgeJob skips deletion during checkpoint
+                testPartitionExist(path, len, true, true, true);
 
                 engine.checkpointRelease();
                 runPartitionPurgeJobs();
                 testPartitionExist(path, len, false, false, true);
             }
             Assert.assertEquals("0 partition purge errors expected", 0, engine.getPartitionOverwriteControl().getErrorCount());
+        });
+    }
+
+    @Test
+    public void testCheckpointInProgressDefersPartitionRemoval() throws Exception {
+        Assume.assumeTrue(Os.type != Os.WINDOWS);
+
+        // Regression test: when a checkpoint is in progress but the TxnScoreboard has NOT been
+        // pinned for a specific table (e.g. the table was created after the checkpoint started,
+        // or the checkpoint hasn't iterated to this table yet), the writer must still defer old
+        // partition directory removal. Without this fix, a backup that reads partition data from
+        // the live db directory can find a partition version referenced by the checkpoint's _txn
+        // snapshot already deleted on disk.
+        assertMemoryLeak(() -> {
+            // Start a checkpoint on an empty database. This sets isInProgress() = true
+            // but does NOT pin the TxnScoreboard for any table.
+            engine.checkpointCreate(sqlExecutionContext.getCircuitBreaker(), false);
+
+            try (Path path = new Path()) {
+                // Create the table AFTER the checkpoint started. Its scoreboard is NOT pinned
+                // by the checkpoint — this simulates the race window.
+                execute("create table tbl as (select x, cast('1970-01-10T10' as "
+                        + timestampType.getTypeName() + ") ts from long_sequence(1)) "
+                        + "timestamp(ts) partition by DAY BYPASS WAL");
+
+                path.concat(engine.getConfiguration().getDbRoot())
+                        .concat(engine.verifyTableName("tbl"))
+                        .concat("1970-01-10");
+                int len = path.size();
+
+                // O3 insert → creates partition version .1 (old unversioned dir goes to
+                // partitionRemoveCandidates). processPartitionRemoveCandidates0 checks:
+                //   anyReadersBeforeCommittedTxn = false (no scoreboard pin for tbl)
+                //   checkpointInProgress = true  (checkpoint is active)
+                // With the fix, the removal is deferred. Without it, .0 would be deleted.
+                execute("insert into tbl select 4, '1970-01-10T09'");
+
+                // Version .1 is the current partition
+                testPartitionExist(path, len, true);
+
+                // Another O3 insert → creates .2, old .1 goes to remove candidates.
+                // Same logic: no scoreboard pin, but isInProgress() defers removal.
+                execute("insert into tbl select 5, '1970-01-10T08'");
+
+                // .1 must still exist (deferred by checkpoint), .2 is the current version
+                testPartitionExist(path, len, true, true);
+
+                // O3PartitionPurgeJob also skips deletion while checkpoint is in progress,
+                // so .1 is protected from both synchronous and async removal.
+            } finally {
+                engine.checkpointRelease();
+            }
+
+            // After checkpoint release, old versions can be cleaned up
+            runPartitionPurgeJobs();
+
+            try (Path path = new Path()) {
+                path.concat(engine.getConfiguration().getDbRoot())
+                        .concat(engine.verifyTableName("tbl"))
+                        .concat("1970-01-10");
+                int len = path.size();
+                // .1 should be purged now, .2 is the current version
+                testPartitionExist(path, len, false, true);
+            }
+            Assert.assertEquals("0 partition purge errors expected", 0,
+                    engine.getPartitionOverwriteControl().getErrorCount());
+        });
+    }
+
+    @Test
+    public void testCheckpointInProgressDefersPartitionRemovalWal() throws Exception {
+        Assume.assumeTrue(Os.type != Os.WINDOWS);
+
+        // Same as testCheckpointInProgressDefersPartitionRemoval but for WAL tables.
+        // WAL tables apply O3 inserts through the WAL apply job, which eventually calls
+        // processPartitionRemoveCandidates0 on the TableWriter — the same code path.
+        assertMemoryLeak(() -> {
+            engine.checkpointCreate(sqlExecutionContext.getCircuitBreaker(), false);
+
+            try (Path path = new Path()) {
+                execute("CREATE TABLE tbl AS (SELECT x, cast('1970-01-10T10' AS "
+                        + timestampType.getTypeName() + ") ts FROM long_sequence(1)) "
+                        + "TIMESTAMP(ts) PARTITION BY DAY WAL");
+
+                drainWalQueue();
+
+                path.concat(engine.getConfiguration().getDbRoot())
+                        .concat(engine.verifyTableName("tbl"))
+                        .concat("1970-01-10");
+                int len = path.size();
+
+                // O3 insert creates a new partition version; old version goes to remove candidates.
+                // With checkpoint active, removal is deferred.
+                execute("INSERT INTO tbl SELECT 4, '1970-01-10T09'");
+                drainWalQueue();
+
+                testPartitionExist(path, len, true);
+
+                // Another O3 insert creates yet another version.
+                execute("INSERT INTO tbl SELECT 5, '1970-01-10T08'");
+                drainWalQueue();
+
+                testPartitionExist(path, len, true, true);
+            } finally {
+                engine.checkpointRelease();
+            }
+
+            runPartitionPurgeJobs();
+
+            try (Path path = new Path()) {
+                path.concat(engine.getConfiguration().getDbRoot())
+                        .concat(engine.verifyTableName("tbl"))
+                        .concat("1970-01-10");
+                int len = path.size();
+                // .1 should be purged now, .2 is the current version
+                testPartitionExist(path, len, false, true);
+            }
+            Assert.assertEquals("0 partition purge errors expected", 0,
+                    engine.getPartitionOverwriteControl().getErrorCount());
+        });
+    }
+
+    @Test
+    public void testCheckpointDoesNotBlockRollbackOrphanCleanup() throws Exception {
+        Assume.assumeTrue(Os.type != Os.WINDOWS);
+
+        // Rollback orphan partitions (txn >= lastCommittedTxn) are not referenced by any
+        // reader or checkpoint snapshot, so they must be cleaned up immediately even when
+        // a checkpoint is in progress. This test creates a fake orphan directory (simulating
+        // a partition left behind by a rolled-back transaction), then forces a writer re-open
+        // which triggers purgeUnusedPartitions → removeNonAttachedPartitions →
+        // processPartitionRemoveCandidates0, verifying the orphan is cleaned up.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE tbl AS (SELECT x, cast('1970-01-10T10' AS "
+                    + timestampType.getTypeName() + ") ts FROM long_sequence(1)) "
+                    + "TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
+
+            // O3 insert → creates version .1 as the current partition
+            execute("INSERT INTO tbl SELECT 4, '1970-01-10T09'");
+
+            engine.checkpointCreate(sqlExecutionContext.getCircuitBreaker(), false);
+
+            try (Path path = new Path()) {
+                TableToken tableToken = engine.verifyTableName("tbl");
+                path.concat(engine.getConfiguration().getDbRoot())
+                        .concat(tableToken)
+                        .concat("1970-01-10");
+                int len = path.size();
+
+                // Create a fake orphan directory with a txn far exceeding the committed txn,
+                // simulating a partition left behind by a rolled-back transaction.
+                path.trimTo(len).put(".999").$();
+                Assert.assertEquals("failed to create orphan dir", 0, Files.mkdir(path.$(), 509));
+                Assert.assertTrue(Files.exists(path.$()));
+
+                // Release and re-acquire the writer. The writer constructor calls
+                // purgeUnusedPartitions → removeNonAttachedPartitions which scans directories.
+                // It finds .999 as non-attached and adds it to partitionRemoveCandidates.
+                // processPartitionRemoveCandidates0 sees txn=999 >= lastCommittedTxn → removes
+                // it despite checkpoint being active (rollback orphans are safe to delete).
+                engine.releaseAllWriters();
+                execute("INSERT INTO tbl SELECT 5, '1970-01-10T08'");
+
+                // .999 orphan should be cleaned up despite active checkpoint
+                path.trimTo(len).put(".999").$();
+                Assert.assertFalse("rollback orphan .999 should be removed during checkpoint",
+                        Files.exists(path.$()));
+
+                // .1 should still exist (deferred by checkpoint as a legitimate old version)
+                testPartitionExist(path, len, true, true);
+            } finally {
+                engine.checkpointRelease();
+            }
+            Assert.assertEquals("0 partition purge errors expected", 0,
+                    engine.getPartitionOverwriteControl().getErrorCount());
         });
     }
 

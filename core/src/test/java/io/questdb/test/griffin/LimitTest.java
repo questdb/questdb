@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -663,18 +663,18 @@ public class LimitTest extends AbstractCairoTest {
                     assertSql(
                             """
                                     QUERY PLAN
-                                    Sort
+                                    Encode sort
                                       keys: [ts, a]
                                         SelectedRecord
                                             AsOf Join
-                                                Sort light
+                                                Encode sort light
                                                   keys: [ts, a]
                                                     Sort light lo: 10 partiallySorted: true
                                                       keys: [ts desc, a desc]
                                                         PageFrame
                                                             Row backward scan
                                                             Frame backward scan on: y
-                                                Sort light
+                                                Encode sort light
                                                   keys: [ts, a desc]
                                                     Sort light lo: 4 partiallySorted: true
                                                       keys: [ts desc, a]
@@ -690,18 +690,18 @@ public class LimitTest extends AbstractCairoTest {
                     assertSql(
                             """
                                     QUERY PLAN
-                                    Sort
+                                    Encode sort
                                       keys: [ts, a]
                                         SelectedRecord
                                             Lt Join
-                                                Sort light
+                                                Encode sort light
                                                   keys: [ts, a]
                                                     Sort light lo: 10 partiallySorted: true
                                                       keys: [ts desc, a desc]
                                                         PageFrame
                                                             Row backward scan
                                                             Frame backward scan on: y
-                                                Sort light
+                                                Encode sort light
                                                   keys: [ts, a desc]
                                                     Sort light lo: 4 partiallySorted: true
                                                       keys: [ts desc, a]
@@ -720,14 +720,14 @@ public class LimitTest extends AbstractCairoTest {
                                     QUERY PLAN
                                     SelectedRecord
                                         AsOf Join
-                                            Sort light
+                                            Encode sort light
                                               keys: [ts, a]
                                                 Sort light lo: 10 partiallySorted: true
                                                   keys: [ts desc, a desc]
                                                     PageFrame
                                                         Row backward scan
                                                         Frame backward scan on: y
-                                            Sort light
+                                            Encode sort light
                                               keys: [ts, a desc]
                                                 Sort light lo: 4 partiallySorted: true
                                                   keys: [ts desc, a]
@@ -783,14 +783,14 @@ public class LimitTest extends AbstractCairoTest {
                             """
                                     QUERY PLAN
                                     Union All
-                                        Sort light
+                                        Encode sort light
                                           keys: [ts, a desc]
                                             Sort light lo: 4 partiallySorted: true
                                               keys: [ts desc, a]
                                                 PageFrame
                                                     Row backward scan
                                                     Frame backward scan on: x
-                                        Sort light
+                                        Encode sort light
                                           keys: [ts, a]
                                             Sort light lo: 10 partiallySorted: true
                                               keys: [ts desc, a desc]

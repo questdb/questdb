@@ -140,8 +140,8 @@ fn test_plain_var_slicer_empty_strings() {
 fn test_fixed_slicer_mixed_operations() {
     let data: Vec<u8> = (0u8..20).collect();
     let mut slicer = DataPageFixedSlicer::<2>::new(&data, 10);
-    assert_eq!(slicer.next(), &[0, 1]);
-    slicer.skip(2);
+    assert_eq!(slicer.next().unwrap(), &[0, 1]);
+    slicer.skip(2).unwrap();
     let mut sink = TestSink::new();
     slicer.next_into(&mut sink).unwrap();
     assert_eq!(sink.into_inner(), vec![6, 7]);
@@ -160,10 +160,10 @@ fn test_plain_var_slicer_mixed_operations() {
     }
 
     let mut slicer = PlainVarSlicer::new(&data, 5);
-    assert_eq!(slicer.next(), b"str0");
+    assert_eq!(slicer.next().unwrap(), b"str0");
 
     // skip
-    slicer.skip(1);
+    slicer.skip(1).unwrap();
 
     // next_into
     let mut sink = TestSink::new();
@@ -223,11 +223,11 @@ fn test_delta_length_array_slicer_skip() {
     );
 
     let mut slicer = DeltaLengthArraySlicer::try_new(&encoded, 5, 5).unwrap();
-    slicer.skip(2);
+    slicer.skip(2).unwrap();
     let mut sink = TestSink::new();
     slicer.next_into(&mut sink).unwrap();
     assert_eq!(sink.into_inner(), b"ccc");
-    slicer.skip(1);
+    slicer.skip(1).unwrap();
 
     let mut sink = TestSink::new();
     slicer.next_into(&mut sink).unwrap();
@@ -270,7 +270,7 @@ fn test_delta_bytes_array_slicer_skip() {
     let mut encoded = Vec::new();
     parquet2::encoding::delta_byte_array::encode(strings.clone().into_iter(), &mut encoded);
     let mut slicer = DeltaBytesArraySlicer::try_new(&encoded, 4, 4).unwrap();
-    slicer.skip(2);
+    slicer.skip(2).unwrap();
 
     let mut sink = TestSink::new();
     slicer.next_into(&mut sink).unwrap();
@@ -321,18 +321,16 @@ fn encode_rle_data(values: &[u32], num_bits: u8) -> Vec<u8> {
 fn test_rle_dictionary_slicer_skip_zero() {
     let dict = TestDictDecoder::new(vec![b"zero".to_vec(), b"one".to_vec(), b"two".to_vec()]);
     let encoded = encode_rle_data(&[0, 1, 2, 0, 1], 2);
-    let error_value = b"ERR";
 
-    let mut slicer = RleDictionarySlicer::try_new(&encoded, dict, 5, 5, error_value).unwrap();
-    slicer.skip(0);
-    assert_eq!(slicer.next(), b"zero");
+    let mut slicer = RleDictionarySlicer::try_new(&encoded, dict, 5, 5).unwrap();
+    slicer.skip(0).unwrap();
+    assert_eq!(slicer.next().unwrap(), b"zero");
 }
 
 #[test]
 fn test_rle_dictionary_slicer_skip_small() {
     let values: Vec<u32> = vec![0, 1, 2, 3, 4, 0, 1, 2, 3, 4];
     let encoded = encode_rle_data(&values, 3);
-    let error_value = b"ERR";
 
     for skip in 1..=4 {
         let dict = TestDictDecoder::new(vec![
@@ -342,10 +340,10 @@ fn test_rle_dictionary_slicer_skip_small() {
             b"d".to_vec(),
             b"e".to_vec(),
         ]);
-        let mut slicer = RleDictionarySlicer::try_new(&encoded, dict, 10, 10, error_value).unwrap();
-        slicer.skip(skip);
+        let mut slicer = RleDictionarySlicer::try_new(&encoded, dict, 10, 10).unwrap();
+        slicer.skip(skip).unwrap();
         let expected = [b"a", b"b", b"c", b"d", b"e"][skip % 5];
-        assert_eq!(slicer.next(), expected, "skip={}", skip);
+        assert_eq!(slicer.next().unwrap(), expected, "skip={}", skip);
     }
 }
 
@@ -354,15 +352,13 @@ fn test_rle_dictionary_slicer_skip_large() {
     let dict_values: Vec<Vec<u8>> = (0..10).map(|i| format!("val{}", i).into_bytes()).collect();
     let values: Vec<u32> = (0..100).map(|i| (i % 10) as u32).collect();
     let encoded = encode_rle_data(&values, 4);
-    let error_value = b"ERR";
 
     for skip in [5, 15, 33, 77, 99] {
         let dict = TestDictDecoder::new(dict_values.clone());
-        let mut slicer =
-            RleDictionarySlicer::try_new(&encoded, dict, 100, 100, error_value).unwrap();
-        slicer.skip(skip);
+        let mut slicer = RleDictionarySlicer::try_new(&encoded, dict, 100, 100).unwrap();
+        slicer.skip(skip).unwrap();
         let expected = &dict_values[skip % 10];
-        assert_eq!(slicer.next(), expected.as_slice(), "skip={}", skip);
+        assert_eq!(slicer.next().unwrap(), expected.as_slice(), "skip={}", skip);
     }
 }
 
@@ -377,15 +373,14 @@ fn test_rle_dictionary_slicer_skip_interleaved() {
     ]);
     let values: Vec<u32> = vec![0, 1, 2, 3, 4, 0, 1, 2, 3, 4];
     let encoded = encode_rle_data(&values, 3);
-    let error_value = b"ERR";
 
-    let mut slicer = RleDictionarySlicer::try_new(&encoded, dict, 10, 10, error_value).unwrap();
+    let mut slicer = RleDictionarySlicer::try_new(&encoded, dict, 10, 10).unwrap();
 
-    assert_eq!(slicer.next(), b"zero");
-    slicer.skip(2);
-    assert_eq!(slicer.next(), b"three");
-    slicer.skip(1);
-    assert_eq!(slicer.next(), b"zero");
+    assert_eq!(slicer.next().unwrap(), b"zero");
+    slicer.skip(2).unwrap();
+    assert_eq!(slicer.next().unwrap(), b"three");
+    slicer.skip(1).unwrap();
+    assert_eq!(slicer.next().unwrap(), b"zero");
     let mut sink = TestSink::new();
     slicer.next_slice_into(3, &mut sink).unwrap();
     assert_eq!(sink.into_inner(), b"onetwothree");
@@ -396,27 +391,25 @@ fn test_rle_dictionary_slicer_skip_repeated_values() {
     let dict = TestDictDecoder::new(vec![b"AAA".to_vec(), b"BBB".to_vec()]);
     let values: Vec<u32> = vec![0, 0, 0, 0, 0, 1, 1, 1, 1, 1];
     let encoded = encode_rle_data(&values, 1);
-    let error_value = b"ERR";
 
-    let mut slicer = RleDictionarySlicer::try_new(&encoded, dict, 10, 10, error_value).unwrap();
-    slicer.skip(2);
-    assert_eq!(slicer.next(), b"AAA");
-    slicer.skip(2);
-    assert_eq!(slicer.next(), b"BBB");
-    slicer.skip(3);
-    assert_eq!(slicer.next(), b"BBB");
+    let mut slicer = RleDictionarySlicer::try_new(&encoded, dict, 10, 10).unwrap();
+    slicer.skip(2).unwrap();
+    assert_eq!(slicer.next().unwrap(), b"AAA");
+    slicer.skip(2).unwrap();
+    assert_eq!(slicer.next().unwrap(), b"BBB");
+    slicer.skip(3).unwrap();
+    assert_eq!(slicer.next().unwrap(), b"BBB");
 }
 
 #[test]
 fn test_rle_dictionary_slicer_zero_bit_width() {
     let dict = TestDictDecoder::new(vec![b"only_value".to_vec()]);
     let buffer: Vec<u8> = vec![0];
-    let error_value = b"ERR";
 
-    let mut slicer = RleDictionarySlicer::try_new(&buffer, dict, 10, 10, error_value).unwrap();
-    slicer.skip(5);
-    assert_eq!(slicer.next(), b"only_value");
+    let mut slicer = RleDictionarySlicer::try_new(&buffer, dict, 10, 10).unwrap();
+    slicer.skip(5).unwrap();
+    assert_eq!(slicer.next().unwrap(), b"only_value");
 
-    slicer.skip(3);
-    assert_eq!(slicer.next(), b"only_value");
+    slicer.skip(3).unwrap();
+    assert_eq!(slicer.next().unwrap(), b"only_value");
 }

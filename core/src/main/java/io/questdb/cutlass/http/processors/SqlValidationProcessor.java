@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -336,6 +336,8 @@ public class SqlValidationProcessor implements HttpRequestProcessor, HttpRequest
                             sendConfirmation(state, configuration.getKeepAliveHeader(), "CREATE VIEW");
                     case CompiledQuery.ALTER_VIEW ->
                             sendConfirmation(state, configuration.getKeepAliveHeader(), "ALTER VIEW");
+                    case CompiledQuery.ALTER_STORAGE_POLICY ->
+                            sendConfirmation(state, configuration.getKeepAliveHeader(), "ALTER STORAGE POLICY");
                     default -> sendConfirmation(state, configuration.getKeepAliveHeader(), "UNKNOWN");
                 }
             } catch (TableReferenceOutOfDateException e) {

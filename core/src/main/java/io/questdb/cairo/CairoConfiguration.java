@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -31,6 +31,7 @@ import io.questdb.FactoryProvider;
 import io.questdb.Metrics;
 import io.questdb.TelemetryConfiguration;
 import io.questdb.VolumeDefinitions;
+import io.questdb.cairo.idx.PostingIndexUtils;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreakerConfiguration;
 import io.questdb.cutlass.text.TextConfiguration;
 import io.questdb.std.FilesFacade;
@@ -256,6 +257,8 @@ public interface CairoConfiguration {
 
     int getDefaultSymbolCapacity();
 
+    byte getDefaultSymbolIndexType();
+
     int getDetachedMkDirMode();
 
     default Map<String, String> getEnv() {
@@ -277,6 +280,8 @@ public interface CairoConfiguration {
     long getGroupByAllocatorDefaultChunkSize();
 
     long getGroupByAllocatorMaxChunkSize();
+
+    int getGroupByBatchSize();
 
     int getGroupByMapCapacity();
 
@@ -324,6 +329,8 @@ public interface CairoConfiguration {
      */
     @NotNull
     String getInstallRoot();
+
+    int getJsonUnnestMaxValueSize();
 
     int getLatestByQueueCapacity();
 
@@ -418,6 +425,8 @@ public interface CairoConfiguration {
 
     int getO3MemMaxPages();
 
+    int getO3MidPartitionMaxSplits();
+
     long getO3MinLag();
 
     int getO3OpenColumnQueueCapacity();
@@ -444,6 +453,8 @@ public interface CairoConfiguration {
 
     long getParquetExportBatchSize();
 
+    double getParquetExportBloomFilterFpp();
+
     int getParquetExportCompressionCodec();
 
     int getParquetExportCompressionLevel();
@@ -458,11 +469,19 @@ public interface CairoConfiguration {
 
     int getParquetExportVersion();
 
+    double getPartitionEncoderParquetBloomFilterFpp();
+
     int getPartitionEncoderParquetCompressionCodec();
 
     int getPartitionEncoderParquetCompressionLevel();
 
     int getPartitionEncoderParquetDataPageSize();
+
+    double getPartitionEncoderParquetMinCompressionRatio();
+
+    long getPartitionEncoderParquetO3RewriteUnusedMaxBytes();
+
+    double getPartitionEncoderParquetO3RewriteUnusedRatio();
 
     int getPartitionEncoderParquetRowGroupSize();
 
@@ -476,11 +495,48 @@ public interface CairoConfiguration {
 
     int getPoolSegmentSize();
 
+    default double getPostingIndexAlignedBitWidthThreshold() {
+        return 0.0;
+    }
+
+    default byte getPostingIndexRowIdEncoding() {
+        return PostingIndexUtils.ENCODING_ADAPTIVE;
+    }
+
+    /**
+     * Hard cap on the per-writer in-memory outbox of superseded posting-seal
+     * generations awaiting publish to the global purge queue. When the cap
+     * is reached the writer evicts the oldest entry and emits a critical
+     * log message — the file the entry pointed at is recovered later by the
+     * writer-open orphan scan.
+     * <p>
+     * Sized for steady-state operation where the purge queue is healthy. If
+     * the queue is saturated for an extended period (e.g. background job
+     * disabled) the outbox saturates, oldest entries are dropped, and the
+     * orphan scan picks up the slack on the next reopen.
+     */
+    default int getPostingSealPurgeOutboxMax() {
+        return 8192;
+    }
+
+    int getPostingSealGenThreshold();
+
     int getPreferencesStringPoolCapacity();
 
     int getQueryCacheEventQueueCapacity();
 
     int getQueryRegistryPoolSize();
+
+    /**
+     * Source of the role / cluster / node identity emitted in the QWP egress
+     * {@code SERVER_INFO} frame. Default is the standalone OSS provider; the
+     * Enterprise configuration overrides this with a provider backed by the
+     * live replication role so clients can route reads to primary vs replica.
+     */
+    @NotNull
+    default io.questdb.cutlass.qwp.codec.QwpServerInfoProvider getQwpServerInfoProvider() {
+        return io.questdb.cutlass.qwp.codec.DefaultQwpServerInfoProvider.INSTANCE;
+    }
 
     @NotNull
     default Rnd getRandom() {
@@ -578,6 +634,12 @@ public interface CairoConfiguration {
 
     int getSqlHashJoinValuePageSize();
 
+    long getSqlHorizonJoinBwdScanAbsoluteThreshold();
+
+    long getSqlHorizonJoinBwdScanMinGap();
+
+    long getSqlHorizonJoinBwdScanSwitchFactor();
+
     int getSqlHorizonJoinMaxOffsets();
 
     /**
@@ -632,8 +694,6 @@ public interface CairoConfiguration {
 
     int getSqlModelPoolCapacity();
 
-    int getSqlOrderByRadixSortThreshold();
-
     int getSqlPageFrameMaxRows();
 
     int getSqlPageFrameMinRows();
@@ -657,6 +717,8 @@ public interface CairoConfiguration {
     int getSqlSmallPageFrameMaxRows();
 
     int getSqlSmallPageFrameMinRows();
+
+    long getSqlSortEncodedParallelThreshold();
 
     int getSqlSortKeyMaterializationThreshold();
 
@@ -800,6 +862,8 @@ public interface CairoConfiguration {
 
     int getWriterTickRowsCountMod();
 
+    boolean isCairoMetadataCacheSnapshotOrdered();
+
     /**
      * A flag to enable/disable checkpoint recovery mechanism. Defaults to {@code true}.
      *
@@ -844,6 +908,8 @@ public interface CairoConfiguration {
 
     boolean isPartitionO3OverwriteControlEnabled();
 
+    boolean isPostingIndexAutoIncludeTimestamp();
+
     boolean isQueryTracingEnabled();
 
     boolean isReadOnlyInstance();
@@ -863,6 +929,8 @@ public interface CairoConfiguration {
     boolean isSqlParallelTopKEnabled();
 
     boolean isSqlParallelWindowJoinEnabled();
+
+    boolean isSqlParquetRowGroupPruningEnabled();
 
     boolean isTableTypeConversionEnabled();
 

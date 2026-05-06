@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -223,12 +223,12 @@ public class IntervalFwdPartitionFrameCursor extends AbstractIntervalPartitionFr
                     final byte format = reader.getPartitionFormat(partitionLo);
                     if (format == PartitionFormat.PARQUET) {
                         frame.format = PartitionFormat.PARQUET;
-                        frame.parquetDecoder = reader.getAndInitParquetPartitionDecoders(partitionLo);
-                        assert frame.parquetDecoder.getFileAddr() != 0 : "parquet decoder is not initialized";
+                        frame.parquetMetaDecoder = reader.getAndInitParquetPartitionDecoder(partitionLo);
+                        assert frame.parquetMetaDecoder.getFileAddr() != 0 : "parquet decoder is not initialized";
                     } else {
                         assert format == PartitionFormat.NATIVE;
                         frame.format = PartitionFormat.NATIVE;
-                        frame.parquetDecoder = null;
+                        frame.parquetMetaDecoder = null;
                     }
 
                     // we do have whole partition of fragment?

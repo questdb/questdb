@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -229,7 +229,7 @@ public class ProjectionReferenceTest extends AbstractCairoTest {
                         """,
                 """
                         QUERY PLAN
-                        Radix sort light
+                        Encode sort light
                           keys: [doubled]
                             VirtualRecord
                               functions: [name,memoize(json_extract()::byte),memoize(val*2)]
@@ -972,7 +972,7 @@ public class ProjectionReferenceTest extends AbstractCairoTest {
                         """,
                 """
                         QUERY PLAN
-                        Sort light
+                        Encode sort light
                           keys: [doubled]
                             VirtualRecord
                               functions: [name,memoize(json_extract()),memoize(val*2)]
@@ -999,7 +999,7 @@ public class ProjectionReferenceTest extends AbstractCairoTest {
                         """,
                 """
                         QUERY PLAN
-                        Radix sort light
+                        Encode sort light
                           keys: [doubled]
                             VirtualRecord
                               functions: [name,memoize(json_extract()),memoize(val*2)]

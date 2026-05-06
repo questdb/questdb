@@ -33,6 +33,10 @@
             <source>../LICENSE.txt</source>
             <outputDirectory>${runtime.name}/legal</outputDirectory>
         </file>
+        <file>
+            <source>../THIRD_PARTY_LICENSES.txt</source>
+            <outputDirectory>${runtime.name}/legal</outputDirectory>
+        </file>
     </files>
     <fileSets>
         <fileSet>

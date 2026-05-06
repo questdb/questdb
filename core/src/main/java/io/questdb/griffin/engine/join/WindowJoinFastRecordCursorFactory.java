@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -886,9 +886,9 @@ public class WindowJoinFastRecordCursorFactory extends AbstractRecordCursorFacto
                             final long typeSize = ColumnType.sizeOfTag((short) groupByFuncTypes.getQuick(mapIndex));
                             // in case of include prevailing column values are shifted by one slot, hence `rowLo + 1`
                             final long efficientRowLo = includePrevailing ? rowLo + 1 : rowLo;
-                            groupByFunctions.getQuick(i).computeBatch(value, columnSink.of(ptr).startAddress() + typeSize * efficientRowLo, (int) (rowHi - rowLo));
+                            groupByFunctions.getQuick(i).computeBatch(value, columnSink.of(ptr).startAddress() + typeSize * efficientRowLo, (int) (rowHi - rowLo), 0);
                         } else { // no-arg function, e.g. count()
-                            groupByFunctions.getQuick(i).computeBatch(value, 0, (int) (rowHi - rowLo));
+                            groupByFunctions.getQuick(i).computeBatch(value, 0, (int) (rowHi - rowLo), 0);
                         }
                     }
                 }
@@ -1315,7 +1315,7 @@ public class WindowJoinFastRecordCursorFactory extends AbstractRecordCursorFacto
                 long rowHi = Vect.binarySearch64Bit(slaveTimestamps.dataPtr(), masterTimestampHi, rowLo, slaveTimestamps.size() - 1, Vect.BIN_SEARCH_SCAN_DOWN);
                 rowHi = rowHi < 0 ? -rowHi - 1 : rowHi + 1;
 
-                if (rowLo >= rowHi || slaveTimestamps.get(rowLo) > masterTimestampHi) {
+                if (rowLo >= rowHi || slaveTimestamps.get(rowLo) > slaveTimestampLo) {
                     // No rows in the time window or the first row has timestamp higher than the low window boundary.
                     // In both cases we need to include the prevailing value.
                     if (rowLo > 0) {

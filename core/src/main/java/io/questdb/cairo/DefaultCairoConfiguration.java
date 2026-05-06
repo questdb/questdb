@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -39,6 +39,7 @@ import io.questdb.cutlass.text.TextConfiguration;
 import io.questdb.griffin.DefaultSqlExecutionCircuitBreakerConfiguration;
 import io.questdb.griffin.engine.table.parquet.ParquetCompression;
 import io.questdb.griffin.engine.table.parquet.ParquetVersion;
+import io.questdb.griffin.engine.table.parquet.PartitionEncoder;
 import io.questdb.std.Chars;
 import io.questdb.std.Files;
 import io.questdb.std.FilesFacade;
@@ -258,7 +259,7 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
 
     @Override
     public double getCountDistinctLoadFactor() {
-        return 0.5;
+        return 0.7;
     }
 
     @Override
@@ -342,6 +343,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
+    public byte getDefaultSymbolIndexType() {
+        return IndexType.BITMAP;
+    }
+
+    @Override
     public int getDetachedMkDirMode() {
         return 509;
     }
@@ -379,6 +385,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     @Override
     public long getGroupByAllocatorMaxChunkSize() {
         return Numbers.SIZE_1GB;
+    }
+
+    @Override
+    public int getGroupByBatchSize() {
+        return 2048;
     }
 
     @Override
@@ -477,6 +488,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
             throw new UnsupportedOperationException("installRoot was required in this test, but not set");
         }
         return installRoot;
+    }
+
+    @Override
+    public int getJsonUnnestMaxValueSize() {
+        return 4096;
     }
 
     @Override
@@ -641,6 +657,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
+    public int getO3MidPartitionMaxSplits() {
+        return 1;
+    }
+
+    @Override
     public long getO3MinLag() {
         return 1_000_000;
     }
@@ -691,6 +712,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
+    public double getParquetExportBloomFilterFpp() {
+        return PartitionEncoder.DEFAULT_BLOOM_FILTER_FPP;
+    }
+
+    @Override
     public int getParquetExportCompressionCodec() {
         return ParquetCompression.COMPRESSION_LZ4_RAW;
     }
@@ -729,6 +755,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
+    public double getPartitionEncoderParquetBloomFilterFpp() {
+        return PartitionEncoder.DEFAULT_BLOOM_FILTER_FPP;
+    }
+
+    @Override
     public int getPartitionEncoderParquetCompressionCodec() {
         return ParquetCompression.COMPRESSION_LZ4_RAW;
     }
@@ -741,6 +772,21 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     @Override
     public int getPartitionEncoderParquetDataPageSize() {
         return 0; // use default (1024*1024) bytes
+    }
+
+    @Override
+    public double getPartitionEncoderParquetMinCompressionRatio() {
+        return 0.0;
+    }
+
+    @Override
+    public long getPartitionEncoderParquetO3RewriteUnusedMaxBytes() {
+        return 1024 * 1024 * 1024L;
+    }
+
+    @Override
+    public double getPartitionEncoderParquetO3RewriteUnusedRatio() {
+        return 0.5;
     }
 
     @Override
@@ -771,6 +817,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     @Override
     public int getPoolSegmentSize() {
         return 32;
+    }
+
+    @Override
+    public int getPostingSealGenThreshold() {
+        return 16;
     }
 
     @Override
@@ -966,6 +1017,21 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
+    public long getSqlHorizonJoinBwdScanAbsoluteThreshold() {
+        return 131_072;
+    }
+
+    @Override
+    public long getSqlHorizonJoinBwdScanMinGap() {
+        return 1_024;
+    }
+
+    @Override
+    public long getSqlHorizonJoinBwdScanSwitchFactor() {
+        return 8;
+    }
+
+    @Override
     public int getSqlHorizonJoinMaxOffsets() {
         return 10_000;
     }
@@ -1061,11 +1127,6 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
-    public int getSqlOrderByRadixSortThreshold() {
-        return 600;
-    }
-
-    @Override
     public int getSqlPageFrameMaxRows() {
         return 1_000_000;
     }
@@ -1123,6 +1184,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     @Override
     public int getSqlSmallPageFrameMinRows() {
         return 5;
+    }
+
+    @Override
+    public long getSqlSortEncodedParallelThreshold() {
+        return 1_024_000;
     }
 
     @Override
@@ -1435,6 +1501,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
+    public boolean isCairoMetadataCacheSnapshotOrdered() {
+        return false;
+    }
+
+    @Override
     public boolean isCheckpointRecoveryEnabled() {
         return false;
     }
@@ -1520,6 +1591,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
+    public boolean isPostingIndexAutoIncludeTimestamp() {
+        return true;
+    }
+
+    @Override
     public boolean isQueryTracingEnabled() {
         return false;
     }
@@ -1550,6 +1626,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
+    public boolean isSqlParallelHorizonJoinEnabled() {
+        return true;
+    }
+
+    @Override
     public boolean isSqlParallelReadParquetEnabled() {
         return true;
     }
@@ -1560,12 +1641,12 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
-    public boolean isSqlParallelHorizonJoinEnabled() {
+    public boolean isSqlParallelWindowJoinEnabled() {
         return true;
     }
 
     @Override
-    public boolean isSqlParallelWindowJoinEnabled() {
+    public boolean isSqlParquetRowGroupPruningEnabled() {
         return true;
     }
 

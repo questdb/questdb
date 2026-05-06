@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -24,7 +24,7 @@
 
 package io.questdb;
 
-import io.questdb.cairo.IndexFrame;
+import io.questdb.cairo.idx.IndexFrame;
 import io.questdb.cairo.IndexFrameCursor;
 
 public class NullIndexFrameCursor implements IndexFrameCursor {

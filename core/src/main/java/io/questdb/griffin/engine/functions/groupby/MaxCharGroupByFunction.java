@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -44,17 +44,20 @@ public class MaxCharGroupByFunction extends CharFunction implements GroupByFunct
     }
 
     @Override
-    public void computeBatch(MapValue mapValue, long ptr, int count) {
-        if (count > 0) {
-            final long hi = ptr + count * (long) Character.BYTES;
+    public void computeBatch(MapValue mapValue, long dataAddr, int rowCount, long startRowId) {
+        if (rowCount > 0) {
+            final long hi = dataAddr + rowCount * (long) Character.BYTES;
             char max = 0;
-            for (; ptr < hi; ptr += Character.BYTES) {
-                char value = Unsafe.getUnsafe().getChar(ptr);
+            for (; dataAddr < hi; dataAddr += Character.BYTES) {
+                char value = Unsafe.getChar(dataAddr);
                 if (value > max) {
                     max = value;
                 }
             }
-            mapValue.putChar(valueIndex, max);
+            final char existing = mapValue.getChar(valueIndex);
+            if (max > existing || existing == 0) {
+                mapValue.putChar(valueIndex, max);
+            }
         }
     }
 

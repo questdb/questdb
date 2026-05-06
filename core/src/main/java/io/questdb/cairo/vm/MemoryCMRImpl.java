@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -129,6 +129,33 @@ public class MemoryCMRImpl extends AbstractMemoryCR implements MemoryCMR {
                 newSize = size;
             }
             assert !VM_PARANOIA_MODE || newSize <= ff.length(fd) || newSize <= ff.length(fd); // Some tests simulate ff.length() to be 0 once.
+            map(ff, name, newSize);
+        } catch (Throwable e) {
+            close();
+            throw e;
+        }
+    }
+
+    // Single-open variant used for files whose committed mapping size is stored
+    // as a u64 at offset 0 (e.g. the _pm parquet sidecar). Opens the file once,
+    // reads the size from the fd it just opened, validates it against the
+    // actual file length to prevent SIGBUS on an over-large mapping, then maps.
+    public void ofWithSizeFromHeader(FilesFacade ff, LPSZ name, int memoryTag) {
+        this.memoryTag = memoryTag;
+        this.madviseOpts = -1;
+        try {
+            openFile(ff, name);
+            final long newSize = ff.readNonNegativeLong(fd, 0);
+            if (newSize <= 0) {
+                throw CairoException.critical(0).put("invalid size header [path=").put(name).put(']');
+            }
+            final long actualLength = ff.length(fd);
+            if (newSize > actualLength) {
+                throw CairoException.critical(0)
+                        .put("size header exceeds file length [size=").put(newSize)
+                        .put(", fileLength=").put(actualLength)
+                        .put(", path=").put(name).put(']');
+            }
             map(ff, name, newSize);
         } catch (Throwable e) {
             close();

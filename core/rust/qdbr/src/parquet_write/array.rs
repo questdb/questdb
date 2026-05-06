@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -65,7 +65,11 @@ impl<'a> ArrayDataParser<'a> {
                 "Data corruption in ARRAY column"
             );
             let arr = &self.data[offset..][..size];
+            // SAFETY: Data originates from JNI/Java memory-mapped column data, which is page-aligned.
+            // The byte content represents valid values of the target type.
             let shape: &[i32] = unsafe { util::transmute_slice(&arr[..self.shape_size]) };
+            // SAFETY: Data originates from JNI/Java memory-mapped column data, which is page-aligned.
+            // The byte content represents valid values of the target type.
             let data: &[f64] = unsafe { util::transmute_slice(&arr[self.data_offset..]) };
             Some((shape, data))
         } else {
@@ -236,6 +240,8 @@ pub fn array_to_page(
     let mut buffer = vec![];
     let mut null_count = 0usize;
 
+    // SAFETY: `ArrayAuxEntry` is `#[repr(transparent)]` over `u128` and exactly 16 bytes (asserted above).
+    // `[u8; 16]` has alignment 1, which is always compatible.
     let aux: &[ArrayAuxEntry] = unsafe { mem::transmute(aux) };
 
     let shape_size = 4 * dim;
@@ -425,6 +431,8 @@ pub fn array_to_raw_page(
     let mut buffer = vec![];
     let mut null_count = 0usize;
 
+    // SAFETY: `ArrayAuxEntry` is `#[repr(transparent)]` over `u128` and exactly 16 bytes (asserted above).
+    // `[u8; 16]` has alignment 1, which is always compatible.
     let aux: &[ArrayAuxEntry] = unsafe { mem::transmute(aux) };
 
     let raw_parser = RawArrayDataParser { data };
@@ -857,6 +865,8 @@ pub fn append_array_nulls(
                 .ok_or_else(|| fmt_err!(Layout, "append_array_nulls overflow"))?;
 
             aux_mem.reserve(total_bytes)?;
+            // SAFETY: `reserve` guarantees capacity for `total_bytes`. `copy_nonoverlapping` initializes
+            // the memory before `set_len` makes it accessible.
             unsafe {
                 let ptr = aux_mem.as_mut_ptr().add(base);
                 for i in 0..count {

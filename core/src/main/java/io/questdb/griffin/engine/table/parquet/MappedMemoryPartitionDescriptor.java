@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -57,8 +57,8 @@ public class MappedMemoryPartitionDescriptor extends PartitionDescriptor {
             }
             final long symbolOffsetsAddr = columnData.get(rawIndex + SYMBOL_OFFSET_ADDR_OFFSET);
             if (symbolOffsetsAddr != 0) {
-                final long symbolOffsetsSize = columnData.get(rawIndex + SYMBOL_OFFSET_SIZE_OFFSET);
-                final long offsetsMemSize = SymbolMapWriter.keyToOffset((int) symbolOffsetsSize + 1);
+                final long symbolOffsetsCount = columnData.get(rawIndex + SYMBOL_OFFSET_COUNT_OFFSET);
+                final long offsetsMemSize = SymbolMapWriter.keyToOffset((int) symbolOffsetsCount + 1);
                 final long originalAddr = symbolOffsetsAddr - SymbolMapWriter.HEADER_SIZE;
                 ff.madvise(originalAddr, offsetsMemSize, Files.POSIX_MADV_DONTNEED);
                 ff.munmap(originalAddr, offsetsMemSize, MemoryTag.MMAP_PARQUET_PARTITION_CONVERTER);

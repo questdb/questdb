@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -51,7 +51,7 @@ public class IntrinsicModel implements Mutable {
     // Indexed symbol column used as the initial "efficient" filter for the query.
     public CharSequence keyColumn;
     public ObjList<ExpressionNode> keyExcludedNodes = new ObjList<>();
-    public QueryModel keySubQuery;
+    public IQueryModel keySubQuery;
 
     public RuntimeIntrinsicIntervalModel buildIntervalModel() {
         return runtimeIntervalBuilder.build();

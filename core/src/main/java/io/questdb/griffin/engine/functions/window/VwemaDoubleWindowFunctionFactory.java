@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -47,6 +47,7 @@ import io.questdb.griffin.engine.window.WindowFunction;
 import io.questdb.std.IntList;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
+import io.questdb.std.Unsafe;
 
 /**
  * Volume-Weighted Exponential Moving Average (VWEMA) window function.
@@ -361,7 +362,8 @@ public class VwemaDoubleWindowFunctionFactory extends AbstractWindowFunctionFact
 
         @Override
         public void pass1(Record record, long recordOffset, WindowSPI spi) {
-            throw new UnsupportedOperationException();
+            computeNext(record);
+            Unsafe.putDouble(spi.getAddress(recordOffset, columnIndex), vwema);
         }
 
         @Override
@@ -447,7 +449,8 @@ public class VwemaDoubleWindowFunctionFactory extends AbstractWindowFunctionFact
 
         @Override
         public void pass1(Record record, long recordOffset, WindowSPI spi) {
-            throw new UnsupportedOperationException();
+            computeNext(record);
+            Unsafe.putDouble(spi.getAddress(recordOffset, columnIndex), getDouble(record));
         }
 
         @Override
@@ -605,7 +608,8 @@ public class VwemaDoubleWindowFunctionFactory extends AbstractWindowFunctionFact
 
         @Override
         public void pass1(Record record, long recordOffset, WindowSPI spi) {
-            throw new UnsupportedOperationException();
+            computeNext(record);
+            Unsafe.putDouble(spi.getAddress(recordOffset, columnIndex), vwema);
         }
 
         @Override
@@ -705,7 +709,8 @@ public class VwemaDoubleWindowFunctionFactory extends AbstractWindowFunctionFact
 
         @Override
         public void pass1(Record record, long recordOffset, WindowSPI spi) {
-            throw new UnsupportedOperationException();
+            computeNext(record);
+            Unsafe.putDouble(spi.getAddress(recordOffset, columnIndex), getDouble(record));
         }
 
         @Override

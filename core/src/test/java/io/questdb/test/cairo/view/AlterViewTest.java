@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -117,6 +117,7 @@ public class AlterViewTest extends AbstractViewTest {
                             SelectedRecord
                                 Hash Join Light
                                   condition: t2.k=t1.k
+                                  symbolKeyJoin: true
                                     PageFrame
                                         Row forward scan
                                         Frame forward scan on: table1
@@ -250,6 +251,7 @@ public class AlterViewTest extends AbstractViewTest {
                             SelectedRecord
                                 Hash Join Light
                                   condition: t2.k=t1.k
+                                  symbolKeyJoin: true
                                     PageFrame
                                         Row forward scan
                                         Frame forward scan on: table1

@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -26,13 +26,16 @@ package io.questdb.cairo.wal;
 
 import io.questdb.cairo.AttachDetachStatus;
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.IndexType;
 import io.questdb.cairo.SecurityContext;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.UpdateOperator;
 import io.questdb.cairo.sql.TableRecordMetadata;
 import io.questdb.std.LongList;
+import io.questdb.std.ObjList;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
+import org.jetbrains.annotations.TestOnly;
 
 public interface MetadataService {
 
@@ -62,7 +65,7 @@ public interface MetadataService {
      *                                value badly wrong will cause performance degradation. Must be power of 2
      * @param symbolCacheFlag         when set to true, symbol values will be cached on Java heap.
      * @param columnType              {@link ColumnType}
-     * @param isIndexed               configures column to be indexed or not
+     * @param indexType               column index type, see {@link IndexType}
      * @param indexValueBlockCapacity approximation of number of rows for single index key, must be power of 2
      * @param isSequential            for columns that contain sequential values query optimiser can make assumptions on range searches (future feature)
      * @param isDedupKey              when set to true, column will be used as deduplication key
@@ -72,7 +75,7 @@ public interface MetadataService {
             int columnType,
             int symbolCapacity,
             boolean symbolCacheFlag,
-            boolean isIndexed,
+            byte indexType,
             int indexValueBlockCapacity,
             boolean isSequential,
             boolean isDedupKey,
@@ -84,7 +87,7 @@ public interface MetadataService {
             int columnType,
             int symbolCapacity,
             boolean symbolCacheFlag,
-            boolean isIndexed,
+            byte indexType,
             int indexValueBlockCapacity,
             boolean isSequential,
             boolean isDedupKey
@@ -94,7 +97,7 @@ public interface MetadataService {
                 columnType,
                 symbolCapacity,
                 symbolCacheFlag,
-                isIndexed,
+                indexType,
                 indexValueBlockCapacity,
                 isSequential,
                 isDedupKey,
@@ -102,7 +105,19 @@ public interface MetadataService {
         );
     }
 
-    void addIndex(@NotNull CharSequence columnName, int indexValueBlockSize);
+    void addIndex(@NotNull CharSequence columnName, int indexValueBlockSize, byte indexType);
+
+    /**
+     * Add an index with optional INCLUDE (covering) column list. POSTING
+     * indexes use this list to build sidecar files; BITMAP ignores it.
+     * <p>
+     * No default — every implementation must explicitly choose to honor or
+     * ignore the covering list. A delegating default would silently drop
+     * the parameter for any implementation that only overrides the 3-arg
+     * variant, which has historically led to subtle metadata-staleness
+     * bugs (see PR #6861 review M1).
+     */
+    void addIndex(@NotNull CharSequence columnName, int indexValueBlockSize, byte indexType, @Nullable ObjList<CharSequence> coveringColumnNames);
 
     AttachDetachStatus attachPartition(long partitionTimestamp);
 
@@ -113,7 +128,7 @@ public interface MetadataService {
             int newType,
             int symbolCapacity,
             boolean symbolCacheFlag,
-            boolean isIndexed,
+            byte indexType,
             int indexValueBlockCapacity,
             boolean isSequential,
             SecurityContext securityContext
@@ -125,7 +140,7 @@ public interface MetadataService {
             SecurityContext securityContext
     );
 
-    boolean convertPartitionNativeToParquet(long partitionTimestamp);
+    boolean convertPartitionNativeToParquet(long partitionTimestamp, @Nullable CharSequence bloomFilterColumns, double bloomFilterFpp);
 
     boolean convertPartitionParquetToNative(long partitionTimestamp);
 
@@ -154,14 +169,22 @@ public interface MetadataService {
 
     TableToken getTableToken();
 
+    int getTtlHoursOrMonths();
+
     int getTimestampType();
 
     UpdateOperator getUpdateOperator();
 
-    void removeColumn(@NotNull CharSequence columnName);
+    @TestOnly
+    default void removeColumn(@NotNull CharSequence columnName) {
+        removeColumn(columnName, null);
+    }
+
+    void removeColumn(@NotNull CharSequence columnName, SecurityContext securityContext);
 
     boolean removePartition(long partitionTimestamp);
 
+    @TestOnly
     default void renameColumn(@NotNull CharSequence columnName, @NotNull CharSequence newName) {
         renameColumn(columnName, newName, null);
     }
@@ -169,6 +192,18 @@ public interface MetadataService {
     void renameColumn(@NotNull CharSequence columnName, @NotNull CharSequence newName, SecurityContext securityContext);
 
     void renameTable(@NotNull CharSequence fromNameTable, @NotNull CharSequence toTableName);
+
+    /**
+     * Sets the per-column Parquet encoding configuration. The config is a packed
+     * 32-bit value produced by {@code TableUtils.packParquetConfig(encoding, compression, level)}
+     * with layout: bits 0-7 encoding id, bits 8-15 compression codec, bits 16-23
+     * compression level, bit 24 explicit flag. This method commits any pending
+     * transaction before modifying the column metadata.
+     *
+     * @param columnName            name of the column to configure
+     * @param parquetEncodingConfig packed encoding/compression config
+     */
+    void setColumnParquetEncoding(CharSequence columnName, int parquetEncodingConfig);
 
     /**
      * Sets refresh type and settings for materialized view.

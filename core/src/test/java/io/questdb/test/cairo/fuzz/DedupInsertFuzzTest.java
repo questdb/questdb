@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -24,6 +24,7 @@
 
 package io.questdb.test.cairo.fuzz;
 
+import io.questdb.PropertyKey;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.CursorPrinter;
 import io.questdb.cairo.LogRecordSinkAdapter;
@@ -257,8 +258,6 @@ public class DedupInsertFuzzTest extends AbstractFuzzTest {
 
     @Test
     public void testDedupWithRandomShiftWithColumnTop() throws Exception {
-        // TODO(eugene): Enable this test when adding columns after Parquet conversion is supported
-        Assume.assumeFalse(convertToParquet);
         assertMemoryLeak(() -> {
             String tableName = getTestName();
 
@@ -268,6 +267,7 @@ public class DedupInsertFuzzTest extends AbstractFuzzTest {
             Rnd rnd = generateRandomAndProps();
             long initialDelta = Micros.MINUTE_MICROS * 15;
             int initialCount = 2 * 24 * 5;
+            node1.setProperty(PropertyKey.CAIRO_DEFAULT_SYMBOL_INDEX_TYPE, TestUtils.randomSymbolIndexTypeName(rnd));
             generateInsertsTransactions(
                     transactions,
                     1,

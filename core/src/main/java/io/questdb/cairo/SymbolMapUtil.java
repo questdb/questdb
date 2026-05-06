@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -24,6 +24,7 @@
 
 package io.questdb.cairo;
 
+import io.questdb.cairo.idx.BitmapIndexWriter;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryCMOR;
 import io.questdb.cairo.vm.api.MemoryMARW;

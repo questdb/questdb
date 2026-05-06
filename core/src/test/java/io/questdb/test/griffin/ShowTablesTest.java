@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -24,14 +24,21 @@
 
 package io.questdb.test.griffin;
 
+import io.questdb.PropertyKey;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.griffin.CompiledQuery;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.test.AbstractCairoTest;
+import org.junit.Before;
 import org.junit.Test;
 
 public class ShowTablesTest extends AbstractCairoTest {
+
+    @Before
+    public void beforeAll() {
+        node1.setProperty(PropertyKey.CAIRO_METADATA_CACHE_SNAPSHOT_ORDERED, true);
+    }
 
     @Test
     public void testDropAndRecreateTable() throws Exception {
@@ -104,10 +111,10 @@ public class ShowTablesTest extends AbstractCairoTest {
             execute("insert into balances values (3, 'c', 3)");
             assertQueryNoLeakCheck(
                     """
-                            column\ttype\tindexed\tindexBlockCapacity\tsymbolCached\tsymbolCapacity\tsymbolTableSize\tdesignated\tupsertKey
-                            cust_id\tINT\tfalse\t0\tfalse\t0\t0\tfalse\tfalse
-                            ccy\tSYMBOL\tfalse\t256\ttrue\t128\t4\tfalse\tfalse
-                            balance\tDOUBLE\tfalse\t0\tfalse\t0\t0\tfalse\tfalse
+                            column\ttype\tindexed\tindexBlockCapacity\tsymbolCached\tsymbolCapacity\tsymbolTableSize\tdesignated\tupsertKey\tindexType\tindexInclude
+                            cust_id\tINT\tfalse\t0\tfalse\t0\t0\tfalse\tfalse\t\t
+                            ccy\tSYMBOL\tfalse\t256\ttrue\t128\t4\tfalse\tfalse\t\t
+                            balance\tDOUBLE\tfalse\t0\tfalse\t0\t0\tfalse\tfalse\t\t
                             """,
                     "select * from table_columns('balances')",
                     null,
@@ -149,11 +156,11 @@ public class ShowTablesTest extends AbstractCairoTest {
             execute("insert into balances values (2, 'foo', null, 2)");
             assertQueryNoLeakCheck(
                     """
-                            column\ttype\tindexed\tindexBlockCapacity\tsymbolCached\tsymbolCapacity\tsymbolTableSize\tdesignated\tupsertKey
-                            cust_id\tINT\tfalse\t0\tfalse\t0\t0\tfalse\tfalse
-                            ccx\tSYMBOL\tfalse\t256\ttrue\t128\t1\tfalse\tfalse
-                            ccy\tSYMBOL\tfalse\t256\ttrue\t128\t2\tfalse\tfalse
-                            balance\tDOUBLE\tfalse\t0\tfalse\t0\t0\tfalse\tfalse
+                            column\ttype\tindexed\tindexBlockCapacity\tsymbolCached\tsymbolCapacity\tsymbolTableSize\tdesignated\tupsertKey\tindexType\tindexInclude
+                            cust_id\tINT\tfalse\t0\tfalse\t0\t0\tfalse\tfalse\t\t
+                            ccx\tSYMBOL\tfalse\t256\ttrue\t128\t1\tfalse\tfalse\t\t
+                            ccy\tSYMBOL\tfalse\t256\ttrue\t128\t2\tfalse\tfalse\t\t
+                            balance\tDOUBLE\tfalse\t0\tfalse\t0\t0\tfalse\tfalse\t\t
                             """,
                     "show columns from balances",
                     null,
@@ -202,6 +209,56 @@ public class ShowTablesTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute("create table balances(cust_id int, ccy symbol, balance double)");
             assertSql("table_name\nbalances\n", "show tables");
+        });
+    }
+
+    @Test
+    public void testShowTablesReturnsOrderedList() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table deposits(account_no int, currency symbol, amount double)");
+            execute("create table balances(account_no int, currency symbol, amount double)");
+            execute("create table accounts(account_no int, currency symbol)");
+            execute("create table card_payments(account_from_no int, account_to_no int, currency symbol, amount double)");
+            assertSql("table_name\naccounts\nbalances\ncard_payments\ndeposits\n", "SHOW TABLES");
+        });
+    }
+
+    @Test
+    public void testShowTablesWithFunctionReturnsOrderedList() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table deposits(account_no int, currency symbol, amount double)");
+            execute("create table balances(account_no int, currency symbol, amount double)");
+            execute("create table accounts(account_no int, currency symbol)");
+            execute("create table card_payments(account_from_no int, account_to_no int, currency symbol, amount double)");
+            assertSql("table_name\naccounts\nbalances\ncard_payments\ndeposits\n", "select * from all_tables()");
+        });
+    }
+
+    @Test
+    public void testTablesOrderedAfterDropAndCreate() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table deposits(account_no int, currency symbol, amount double)");
+            execute("create table balances(account_no int, currency symbol, amount double)");
+            execute("create table accounts(account_no int, currency symbol)");
+            execute("create table card_payments(account_from_no int, account_to_no int, currency symbol, amount double)");
+            execute("drop table balances");
+            execute("create table businesses(name symbol)");
+            execute("create table balances2(account_no int, currency symbol, amount double)");
+            assertSql("table_name\naccounts\nbalances2\nbusinesses\ncard_payments\ndeposits\n", "select * from all_tables()");
+        });
+    }
+
+    @Test
+    public void testTablesOrderedAfterRename() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table deposits(account_no int, currency symbol, amount double)");
+            execute("create table balances(account_no int, currency symbol, amount double)");
+            execute("create table accounts(account_no int, currency symbol)");
+            execute("create table card_payments(account_from_no int, account_to_no int, currency symbol, amount double)");
+            execute("rename table balances to statement_balances");
+            execute("create table businesses(name symbol)");
+            execute("create table balances2(account_no int, currency symbol, amount double)");
+            assertSql("table_name\naccounts\nbalances2\nbusinesses\ncard_payments\ndeposits\nstatement_balances\n", "select * from all_tables()");
         });
     }
 
@@ -275,7 +332,7 @@ public class ShowTablesTest extends AbstractCairoTest {
                             2	balances_1h	ts	WEEK	true	false	0	HOUR	true	balances_1h~2	1000	-1	false	M	null				null	0	0	0.0	0.0	0.0	0.0	0	0	0	0	0	0	0	null		0	0	0	0	0	0	0	0	0	0	false
                             3	balances_view	ts	N/A	true	false	0	HOUR	false	balances_view~3	0	0	false	V	null				null	0	0	0.0	0.0	0.0	0.0	0	0	0	0	0	0	0	null		0	0	0	0	0	0	0	0	0	0	false
                             """,
-                    "tables() order by table_name"
+                    "tables()"
             );
         });
     }

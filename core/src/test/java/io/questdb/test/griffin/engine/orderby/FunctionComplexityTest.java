@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -58,14 +58,13 @@ public class FunctionComplexityTest extends AbstractCairoTest {
             assertPlanNoLeakCheck(
                     "SELECT a::DOUBLE AS x FROM t ORDER BY x",
                     """
-                            Sort light
+                            Encode sort light
                               keys: [x]
-                                Materialize sort keys
-                                    VirtualRecord
-                                      functions: [a::double]
-                                        PageFrame
-                                            Row forward scan
-                                            Frame forward scan on: t
+                                VirtualRecord
+                                  functions: [a::double]
+                                    PageFrame
+                                        Row forward scan
+                                        Frame forward scan on: t
                             """
             );
         });

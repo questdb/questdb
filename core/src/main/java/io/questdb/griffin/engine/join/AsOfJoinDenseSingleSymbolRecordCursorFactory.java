@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -39,7 +39,6 @@ import io.questdb.griffin.model.JoinContext;
 import io.questdb.std.Misc;
 
 public final class AsOfJoinDenseSingleSymbolRecordCursorFactory extends AsOfJoinDenseRecordCursorFactoryBase {
-
     private final SymbolJoinKeyMapping joinKeyMapping;
     private final int slaveSymbolColumnIndex;
 

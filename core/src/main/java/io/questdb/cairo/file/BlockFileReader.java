@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -161,7 +161,7 @@ public class BlockFileReader implements Closeable {
     }
 
     private long getVersionVolatile() {
-        return Unsafe.getUnsafe().getLongVolatile(null, file.getPageAddress(0) + HEADER_VERSION_OFFSET);
+        return Unsafe.getLongVolatile(file.getPageAddress(0) + HEADER_VERSION_OFFSET);
     }
 
     public class BlockCursor {

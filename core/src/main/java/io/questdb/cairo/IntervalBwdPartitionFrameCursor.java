@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -229,12 +229,12 @@ public class IntervalBwdPartitionFrameCursor extends AbstractIntervalPartitionFr
                     final byte format = reader.getPartitionFormat(currentPartition);
                     if (format == PartitionFormat.PARQUET) {
                         frame.format = PartitionFormat.PARQUET;
-                        frame.parquetDecoder = reader.getAndInitParquetPartitionDecoders(currentPartition);
-                        assert frame.parquetDecoder.getFileAddr() != 0 : "parquet decoder is not initialized";
+                        frame.parquetMetaDecoder = reader.getAndInitParquetPartitionDecoder(currentPartition);
+                        assert frame.parquetMetaDecoder.getFileAddr() != 0 : "parquet decoder is not initialized";
                     } else {
                         assert format == PartitionFormat.NATIVE;
                         frame.format = PartitionFormat.NATIVE;
-                        frame.parquetDecoder = null;
+                        frame.parquetMetaDecoder = null;
                     }
 
                     return frame;

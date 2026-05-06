@@ -33,6 +33,10 @@
             <source>../LICENSE.txt</source>
             <outputDirectory>questdb-${artifact.version}-no-jre-bin</outputDirectory>
         </file>
+        <file>
+            <source>../THIRD_PARTY_LICENSES.txt</source>
+            <outputDirectory>questdb-${artifact.version}-no-jre-bin</outputDirectory>
+        </file>
     </files>
     <dependencySets>
         <dependencySet>

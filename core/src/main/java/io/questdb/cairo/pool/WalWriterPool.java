@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -113,7 +113,7 @@ public class WalWriterPool extends AbstractMultiTenantPool<WalWriterPool.WalWrit
         @Override
         public void close() {
             if (isOpen()) {
-                rollback();
+                cleanupBeforeClose();
                 final AbstractMultiTenantPool<WalWriterTenant> pool = this.pool;
                 if (pool != null && entry != null) {
                     if (!isDistressed()) {

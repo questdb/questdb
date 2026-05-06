@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -128,11 +128,11 @@ public class SqlException extends Exception implements Sinkable, FlyweightMessag
                 SqlException.$(position, msg)
                 :
                 SqlException.$(position, "found [tok='")
-                        .put(tok)
-                        .put("', len=")
-                        .put(tok.length())
-                        .put("] ")
-                        .put(msg);
+                .put(tok)
+                .put("', len=")
+                .put(tok.length())
+                .put("] ")
+                .put(msg);
     }
 
     public static SqlException position(int position) {

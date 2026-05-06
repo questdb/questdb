@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -237,7 +237,7 @@ public class GlobFilesIntegrationTest extends AbstractCairoTest {
                     long mem = Unsafe.malloc(size, MemoryTag.NATIVE_DEFAULT);
                     try {
                         for (int i = 0; i < size; i++) {
-                            Unsafe.getUnsafe().putByte(mem + i, (byte) ('A' + (i % 26)));
+                            Unsafe.putByte(mem + i, (byte) ('A' + (i % 26)));
                         }
                         Files.write(fd, mem, size, 0);
                     } finally {

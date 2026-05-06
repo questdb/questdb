@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -25,13 +25,13 @@
 package io.questdb.griffin.engine.table;
 
 import io.questdb.cairo.AbstractRecordCursorFactory;
-import io.questdb.cairo.BitmapIndexReader;
 import io.questdb.cairo.EmptySymbolMapReader;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableToken;
+import io.questdb.cairo.idx.IndexReader;
+import io.questdb.cairo.sql.ColumnMapping;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.PageFrame;
-import io.questdb.cairo.sql.PageFrameAddressCache;
 import io.questdb.cairo.sql.PageFrameCursor;
 import io.questdb.cairo.sql.PartitionFrameCursor;
 import io.questdb.cairo.sql.Record;
@@ -46,11 +46,8 @@ import io.questdb.cairo.vm.api.MemoryCARW;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.griffin.engine.table.parquet.PartitionDecoder;
+import io.questdb.griffin.engine.table.parquet.ParquetDecoder;
 import io.questdb.jit.CompiledFilter;
-import io.questdb.std.DirectIntList;
-import io.questdb.std.IntList;
-import io.questdb.std.LongList;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 import org.jetbrains.annotations.Nullable;
@@ -263,16 +260,11 @@ public final class ExtraNullColumnCursorFactory extends AbstractRecordCursorFact
 
         @Override
         public ConcurrentTimeFrameCursor of(
+                ConcurrentTimeFrameState sharedState,
                 TablePageFrameCursor frameCursor,
-                PageFrameAddressCache frameAddressCache,
-                DirectIntList framePartitionIndexes,
-                LongList frameRowCounts,
-                LongList partitionTimestamps,
-                LongList partitionCeilings,
-                int frameCount,
                 int timestampIndex
         ) {
-            delegate.of(frameCursor, frameAddressCache, framePartitionIndexes, frameRowCounts, partitionTimestamps, partitionCeilings, frameCount, selectedTimestampIndex);
+            delegate.of(sharedState, frameCursor, selectedTimestampIndex);
             extraNullColumnRecord.of(delegate.getRecord());
             return this;
         }
@@ -334,11 +326,6 @@ public final class ExtraNullColumnCursorFactory extends AbstractRecordCursorFact
         }
 
         @Override
-        public BitmapIndexReader getBitmapIndexReader(int columnIndex, int direction) {
-            return columnIndex < columnSplit ? baseFrame.getBitmapIndexReader(columnIndex, direction) : null;
-        }
-
-        @Override
         public int getColumnCount() {
             return columnCount;
         }
@@ -346,6 +333,11 @@ public final class ExtraNullColumnCursorFactory extends AbstractRecordCursorFact
         @Override
         public byte getFormat() {
             return baseFrame.getFormat();
+        }
+
+        @Override
+        public IndexReader getIndexReader(int columnIndex, int direction) {
+            return columnIndex < columnSplit ? baseFrame.getIndexReader(columnIndex, direction) : null;
         }
 
         @Override
@@ -359,8 +351,8 @@ public final class ExtraNullColumnCursorFactory extends AbstractRecordCursorFact
         }
 
         @Override
-        public PartitionDecoder getParquetPartitionDecoder() {
-            return baseFrame.getParquetPartitionDecoder();
+        public ParquetDecoder getParquetDecoder() {
+            return baseFrame.getParquetDecoder();
         }
 
         @Override
@@ -420,8 +412,8 @@ public final class ExtraNullColumnCursorFactory extends AbstractRecordCursorFact
         }
 
         @Override
-        public IntList getColumnIndexes() {
-            return baseCursor.getColumnIndexes();
+        public ColumnMapping getColumnMapping() {
+            return baseCursor.getColumnMapping();
         }
 
         @Override
@@ -437,6 +429,11 @@ public final class ExtraNullColumnCursorFactory extends AbstractRecordCursorFact
         @Override
         public TableReader getTableReader() {
             return baseCursor.getTableReader();
+        }
+
+        @Override
+        public boolean hasIntervalFilter() {
+            return baseCursor.hasIntervalFilter();
         }
 
         @Override
@@ -464,7 +461,7 @@ public final class ExtraNullColumnCursorFactory extends AbstractRecordCursorFact
         // The base factory's getPageFrameCursor() handles partition-level initialization internally,
         // then we wrap the already-initialized result.
         @Override
-        public TablePageFrameCursor of(PartitionFrameCursor partitionFrameCursor, int pageFrameMinRows, int pageFrameMaxRows) {
+        public TablePageFrameCursor of(SqlExecutionContext executionContext, PartitionFrameCursor partitionFrameCursor) {
             throw new UnsupportedOperationException();
         }
 
@@ -486,6 +483,11 @@ public final class ExtraNullColumnCursorFactory extends AbstractRecordCursorFact
         @Override
         public boolean supportsSizeCalculation() {
             return baseCursor.supportsSizeCalculation();
+        }
+
+        @Override
+        public void toPartition(int partitionIndex) {
+            baseCursor.toPartition(partitionIndex);
         }
 
         @Override
@@ -518,7 +520,7 @@ public final class ExtraNullColumnCursorFactory extends AbstractRecordCursorFact
         }
 
         @Override
-        public BitmapIndexReader getIndexReaderForCurrentFrame(int columnIndex, int direction) {
+        public IndexReader getIndexReaderForCurrentFrame(int columnIndex, int direction) {
             return columnIndex < columnSplit ? baseCursor.getIndexReaderForCurrentFrame(columnIndex, direction) : null;
         }
 

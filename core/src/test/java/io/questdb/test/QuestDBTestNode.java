@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -191,6 +191,7 @@ public class QuestDBTestNode {
         public void tearDown(boolean removeDir) {
             engine.getTableIdGenerator().close();
             engine.clear();
+            engine.getViewStateStore().clear();
             engine.closeNameRegistry();
             engine.getMetrics().clear();
             if (removeDir && ownRoot) {

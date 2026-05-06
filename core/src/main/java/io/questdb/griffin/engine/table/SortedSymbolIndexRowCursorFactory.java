@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -24,9 +24,9 @@
 
 package io.questdb.griffin.engine.table;
 
-import io.questdb.cairo.BitmapIndexReader;
 import io.questdb.cairo.EmptyRowCursor;
 import io.questdb.cairo.TableUtils;
+import io.questdb.cairo.idx.IndexReader;
 import io.questdb.cairo.sql.PageFrame;
 import io.questdb.cairo.sql.PageFrameCursor;
 import io.questdb.cairo.sql.PageFrameMemory;
@@ -37,6 +37,7 @@ import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.griffin.PlanSink;
 import io.questdb.std.Chars;
 import io.questdb.std.IntList;
+import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 import io.questdb.std.ThreadLocal;
 
@@ -109,7 +110,7 @@ public class SortedSymbolIndexRowCursorFactory implements RowCursorFactory {
 
     @Override
     public void toPlan(PlanSink sink) {
-        sink.type("Index ").type(BitmapIndexReader.nameOf(indexDirection)).type(" scan").meta("on").putColumnName(columnIndex);
+        sink.type("Index ").type(IndexReader.nameOf(indexDirection)).type(" scan").meta("on").putColumnName(columnIndex);
         sink.attr("symbolOrder").val(columnOrderDirectionAsc ? "asc" : "desc");
     }
 
@@ -138,15 +139,15 @@ public class SortedSymbolIndexRowCursorFactory implements RowCursorFactory {
         private int compareAsc(SymbolTableEntry e1, SymbolTableEntry e2) {
             return (e1.value == null && e2.value == null) ? 0
                     : e1.value == null ? -1
-                    : e2.value == null ? 1
-                    : e1.value.compareTo(e2.value);
+                      : e2.value == null ? 1
+                        : e1.value.compareTo(e2.value);
         }
 
         private int compareDesc(SymbolTableEntry e1, SymbolTableEntry e2) {
             return (e1.value == null && e2.value == null) ? 0
                     : e1.value == null ? 1
-                    : e2.value == null ? -1
-                    : e2.value.compareTo(e1.value);
+                      : e2.value == null ? -1
+                        : e2.value.compareTo(e1.value);
         }
     }
 
@@ -162,6 +163,11 @@ public class SortedSymbolIndexRowCursorFactory implements RowCursorFactory {
         private PageFrame pageFrame;
 
         @Override
+        public void close() {
+            current = Misc.free(current);
+        }
+
+        @Override
         public boolean hasNext() {
             return current.hasNext() || fetchNext();
         }
@@ -173,10 +179,10 @@ public class SortedSymbolIndexRowCursorFactory implements RowCursorFactory {
 
         private boolean fetchNext() {
             while (index < symbolKeyLimit) {
+                Misc.free(current);
                 current = pageFrame
-                        .getBitmapIndexReader(columnIndex, indexDirection)
+                        .getIndexReader(columnIndex, indexDirection)
                         .getCursor(
-                                true,
                                 symbolKeys.getQuick(index++),
                                 pageFrame.getPartitionLo(),
                                 pageFrame.getPartitionHi() - 1
@@ -192,6 +198,7 @@ public class SortedSymbolIndexRowCursorFactory implements RowCursorFactory {
         private void of(PageFrame pageFrame) {
             this.pageFrame = pageFrame;
             this.index = 0;
+            Misc.free(current);
             this.current = EmptyRowCursor.INSTANCE;
         }
     }

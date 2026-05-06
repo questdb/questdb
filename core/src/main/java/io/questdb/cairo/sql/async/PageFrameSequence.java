@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -380,7 +380,7 @@ public class PageFrameSequence<T extends StatefulAtom> implements Closeable {
             // pass one to cache page addresses
             // this has to be separate pass to ensure there no cache reads
             // while cache might be resizing
-            frameAddressCache.of(base.getMetadata(), frameCursor.getColumnIndexes(), frameCursor.isExternal());
+            frameAddressCache.of(base.getMetadata(), frameCursor.getColumnMapping(), frameCursor.isExternal());
 
             this.collectSubSeq = collectSubSeq;
             id = ID_SEQ.incrementAndGet();

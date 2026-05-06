@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -32,6 +32,7 @@ import io.questdb.griffin.Plannable;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.table.ConcurrentTimeFrameCursor;
+import io.questdb.griffin.engine.table.PushdownFilterExtractor;
 import io.questdb.griffin.model.ExpressionNode;
 import io.questdb.jit.CompiledFilter;
 import io.questdb.mp.SCSequence;
@@ -204,6 +205,18 @@ public interface RecordCursorFactory extends Closeable, Sinkable, Plannable {
     }
 
     /**
+     * Returns an independent cursor for the given consumer ID. Idempotent —
+     * same sharedId always returns the same cursor instance.
+     *
+     * @param executionContext SQL execution context
+     * @param sharedId         unique consumer identifier (0-based)
+     * @return cursor for the given consumer
+     */
+    default RecordCursor getSharedCursor(SqlExecutionContext executionContext, int sharedId) throws SqlException {
+        throw new UnsupportedOperationException();
+    }
+
+    /**
      * Returns the original filter expression that can be stolen by parent factories.
      * When {@link #supportsFilterStealing()} returns true, this method should return
      * the original expression of the stolen filter.
@@ -268,6 +281,10 @@ public interface RecordCursorFactory extends Closeable, Sinkable, Plannable {
         return false;
     }
 
+    default boolean mayHaveParquetPartitions(SqlExecutionContext executionContext) {
+        return false;
+    }
+
     /**
      * Returns a new time frame cursor instance or null if time frames aren't supported by the factory.
      * The returned instance can be used by a worker thread, i.e. the underlying interaction with
@@ -303,6 +320,9 @@ public interface RecordCursorFactory extends Closeable, Sinkable, Plannable {
     default void revertFromSampleByIndexPageFrameCursorFactory() {
     }
 
+    default void setPushdownFilterCondition(ObjList<PushdownFilterExtractor.PushdownFilterCondition> pushdownFilterConditions) {
+    }
+
     /**
      * Returns true if the factory stands for nothing more but a filter, so that
      * the above factory (e.g. a parallel GROUP BY one) can steal the filter.
@@ -319,6 +339,16 @@ public interface RecordCursorFactory extends Closeable, Sinkable, Plannable {
      * @return true if page frame cursor is supported
      */
     default boolean supportsPageFrameCursor() {
+        return false;
+    }
+
+    /**
+     * Returns true if this factory supports multiple independent cursors
+     * over the same materialized data. When true,
+     * {@link #getSharedCursor(SqlExecutionContext, int)} can be called with
+     * different consumer IDs to obtain independent cursors.
+     */
+    default boolean supportsSharedCursors() {
         return false;
     }
 

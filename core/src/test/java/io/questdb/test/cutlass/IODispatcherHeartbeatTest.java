@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -101,7 +101,7 @@ public class IODispatcherHeartbeatTest {
 
                 long sockAddr = Net.sockaddr("127.0.0.1", 9001);
                 try {
-                    Unsafe.getUnsafe().putByte(buf, (byte) '.');
+                    Unsafe.putByte(buf, (byte) '.');
 
                     for (int i = 0; i < fds.length; i++) {
                         Net.connect(fds[i], sockAddr);

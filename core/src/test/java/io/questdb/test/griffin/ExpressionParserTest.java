@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -1289,12 +1289,12 @@ public class ExpressionParserTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testLambdaMiddleParameter() {
-        assertFail(
-                "f(1,2,select a,b,c,d from z, 4)",
-                29,
-                "dangling expression"
-        );
+    public void testLambdaMiddleParameter() throws SqlException {
+        // With comma in tableAliasStop (for UNNEST syntax), the comma after
+        // the FROM table terminates the lambda, and the remaining tokens are
+        // consumed by the function call parser. Use the braced form
+        // (testLambdaMiddleParameterBraced) for unambiguous behavior.
+        x("1 2  (select-choose a, b, c, d from (z)) f", "f(1,2,select a,b,c,d from z, 4)");
     }
 
     @Test

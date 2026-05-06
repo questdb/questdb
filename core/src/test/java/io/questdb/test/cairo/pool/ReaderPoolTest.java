@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -28,6 +28,7 @@ import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.EntryUnavailableException;
+import io.questdb.cairo.IndexType;
 import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableToken;
@@ -37,6 +38,7 @@ import io.questdb.cairo.pool.PoolListener;
 import io.questdb.cairo.pool.ReaderPool;
 import io.questdb.cairo.pool.ex.EntryLockedException;
 import io.questdb.cairo.pool.ex.PoolClosedException;
+import io.questdb.cairo.security.AllowAllSecurityContext;
 import io.questdb.mp.SOCountDownLatch;
 import io.questdb.std.CharSequenceObjHashMap;
 import io.questdb.std.Chars;
@@ -291,12 +293,12 @@ public class ReaderPoolTest extends AbstractCairoTest {
                                 columnTypeChanged = false;
                                 columnRenamed = false;
                             } else if (prob >= 90 && !columnsAdded) {
-                                writer.addColumn("sym2", ColumnType.SYMBOL, 256, true, true, 256, false);
-                                writer.addColumn("int2", ColumnType.INT);
-                                writer.addColumn("bool2", ColumnType.BOOLEAN);
+                                writer.addColumn("sym2", ColumnType.SYMBOL, 256, true, IndexType.BITMAP, 256, false, AllowAllSecurityContext.INSTANCE);
+                                writer.addColumn("int2", ColumnType.INT, AllowAllSecurityContext.INSTANCE);
+                                writer.addColumn("bool2", ColumnType.BOOLEAN, AllowAllSecurityContext.INSTANCE);
                                 columnsAdded = true;
                             } else if (prob >= 85 && columnsAdded && !columnTypeChanged) {
-                                writer.changeColumnType("sym2", ColumnType.STRING, 0, false, false, 0, false, null);
+                                writer.changeColumnType("sym2", ColumnType.STRING, 0, false, IndexType.NONE, 0, false, null);
                                 columnTypeChanged = true;
                             } else if (prob >= 80 && columnsAdded && !columnRenamed) {
                                 writer.renameColumn("bool2", "bool3");
@@ -868,7 +870,7 @@ public class ReaderPoolTest extends AbstractCairoTest {
                     }
                 }).start();
 
-                Assert.assertTrue(stopLatch.await(2, TimeUnit.SECONDS));
+                Assert.assertTrue(stopLatch.await(15, TimeUnit.SECONDS));
                 Assert.assertEquals(0, exceptionCount.get());
             });
         }

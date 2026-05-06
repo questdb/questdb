@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -260,7 +260,7 @@ public class LtJoinRecordCursorFactory extends AbstractJoinRecordCursorFactory {
                 key.put(masterRecord, masterKeySink);
                 value = key.findValue();
                 if (value != null) {
-                    value.setMapRecordHere();
+                    currentJoinKeyMap.getRecord().of(value.getStartAddress());
                     if (toleranceInterval == Numbers.LONG_NULL) {
                         record.hasSlave(true);
                     } else {

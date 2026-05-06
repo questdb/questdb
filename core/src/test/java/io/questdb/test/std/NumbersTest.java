@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -623,6 +623,167 @@ public class NumbersTest {
             String expected = Float.toString(f);
             assertEquals(Float.parseFloat(expected), Float.parseFloat(actual), 0.00001);
         }
+    }
+
+    @Test
+    public void testFormatFloat2() {
+        sink.clear();
+        Numbers.append(sink, 0.5f);
+        TestUtils.assertEquals("0.5", sink);
+    }
+
+    @Test
+    public void testFormatFloatExp() {
+        sink.clear();
+        Numbers.append(sink, 112334.0f);
+        TestUtils.assertEquals("112334.0", sink);
+    }
+
+    @Test
+    public void testFormatFloatExp10() {
+        sink.clear();
+        Numbers.append(sink, 1.23E3f);
+        TestUtils.assertEquals("1230.0", sink);
+    }
+
+    @Test
+    public void testFormatFloatExp100() {
+        sink.clear();
+        Numbers.append(sink, 1.23E20f);
+        TestUtils.assertEquals("1.23E20", sink);
+    }
+
+    @Test
+    public void testFormatFloatExpNeg() {
+        sink.clear();
+        Numbers.append(sink, -8892.5f);
+        TestUtils.assertEquals("-8892.5", sink);
+    }
+
+    @Test
+    public void testFormatFloatFast() {
+        sink.clear();
+        Numbers.append(sink, -5.9522651E18f);
+        TestUtils.assertEquals("-5.952265E18", sink);
+    }
+
+    @Test
+    public void testFormatFloatFastInteractive() {
+        sink.clear();
+        Numbers.append(sink, 0.872989f);
+        TestUtils.assertEquals("0.872989", sink);
+    }
+
+    @Test
+    public void testFormatFloatHugeZero() {
+        sink.clear();
+        Numbers.append(sink, -0.000000000000001f);
+        TestUtils.assertEquals("-1.0E-15", sink);
+    }
+
+    @Test
+    public void testFormatFloatInt() {
+        sink.clear();
+        Numbers.append(sink, 44556.0f);
+        TestUtils.assertEquals("44556.0", sink);
+    }
+
+    @Test
+    public void testFormatFloatLargeExp() {
+        sink.clear();
+        Numbers.append(sink, 3.4028235E38f);
+        TestUtils.assertEquals("3.4028235E38", sink);
+    }
+
+    @Test
+    public void testFormatFloatNegZero() {
+        sink.clear();
+        Numbers.append(sink, -0.0f);
+        TestUtils.assertEquals("-0.0", sink);
+    }
+
+    @Test
+    public void testFormatFloatNoExponent() {
+        sink.clear();
+        Numbers.append(sink, 0.22133f);
+        TestUtils.assertEquals("0.22133", sink);
+    }
+
+    @Test
+    public void testFormatFloatNoExponentNeg() {
+        sink.clear();
+        Numbers.append(sink, -0.22133f);
+        TestUtils.assertEquals("-0.22133", sink);
+    }
+
+    @Test
+    public void testFormatFloatRandom() {
+        Rnd rnd = TestUtils.generateRandom(null);
+        for (int i = 0; i < 1_000_000; i++) {
+            float f1 = rnd.nextFloat();
+            float f2 = rnd.nextFloat();
+            float f3 = rnd.nextFloat() * Float.MAX_VALUE;
+            sink.clear();
+            Numbers.append(sink, f1);
+            Assert.assertEquals(f1, Float.parseFloat(sink.toString()), 0);
+
+            sink.clear();
+            Numbers.append(sink, f2);
+            Assert.assertEquals(f2, Float.parseFloat(sink.toString()), 0);
+
+            sink.clear();
+            Numbers.append(sink, f3);
+            Assert.assertEquals(f3, Float.parseFloat(sink.toString()), 0);
+        }
+    }
+
+    @Test
+    public void testFormatFloatRound() {
+        sink.clear();
+        Numbers.append(sink, 4.455630E27f);
+        TestUtils.assertEquals("4.45563E27", sink);
+    }
+
+    @Test
+    public void testFormatFloatSubnormals() {
+        // Smallest subnormal
+        sink.clear();
+        Numbers.append(sink, Float.MIN_VALUE);
+        Assert.assertEquals(Float.MIN_VALUE, Float.parseFloat(sink.toString()), 0);
+
+        // Largest subnormal (just below Float.MIN_NORMAL)
+        sink.clear();
+        Numbers.append(sink, Math.nextDown(Float.MIN_NORMAL));
+        Assert.assertEquals(Math.nextDown(Float.MIN_NORMAL), Float.parseFloat(sink.toString()), 0);
+
+        // Negative subnormals
+        sink.clear();
+        Numbers.append(sink, -Float.MIN_VALUE);
+        Assert.assertEquals(-Float.MIN_VALUE, Float.parseFloat(sink.toString()), 0);
+
+        sink.clear();
+        Numbers.append(sink, -Math.nextDown(Float.MIN_NORMAL));
+        Assert.assertEquals(-Math.nextDown(Float.MIN_NORMAL), Float.parseFloat(sink.toString()), 0);
+
+        // A subnormal in the middle of the range
+        sink.clear();
+        float midSubnormal = Float.intBitsToFloat(0x0040_0000);
+        Numbers.append(sink, midSubnormal);
+        Assert.assertEquals(midSubnormal, Float.parseFloat(sink.toString()), 0);
+    }
+
+    @Test
+    public void testFormatFloatZero() {
+        sink.clear();
+        Numbers.append(sink, 0.0f);
+        TestUtils.assertEquals("0.0", sink);
+    }
+
+    @Test
+    public void testFormatFloatZeroExp() {
+        sink.clear();
+        Numbers.append(sink, -1.17549435E-38f);
+        TestUtils.assertEquals("-1.1754944E-38", sink);
     }
 
     @Test
@@ -1959,6 +2120,87 @@ public class NumbersTest {
         assertParseNanosException("_28989__");
         assertParseNanosException("90902__");
         assertParseNanosException("123_");
+    }
+
+    @Test
+    public void testParseNonNegativeIntQuietConsecutiveUnderscores() {
+        assertEquals(-1, Numbers.parseNonNegativeIntQuiet(new Utf8String("1__0")));
+    }
+
+    @Test
+    public void testParseNonNegativeIntQuietEmpty() {
+        assertEquals(-1, Numbers.parseNonNegativeIntQuiet(new Utf8String("")));
+    }
+
+    @Test
+    public void testParseNonNegativeIntQuietLeadingUnderscore() {
+        assertEquals(-1, Numbers.parseNonNegativeIntQuiet(new Utf8String("_100")));
+    }
+
+    @Test
+    public void testParseNonNegativeIntQuietMaxValue() {
+        assertEquals(Integer.MAX_VALUE, Numbers.parseNonNegativeIntQuiet(new Utf8String("2147483647")));
+    }
+
+    @Test
+    public void testParseNonNegativeIntQuietMaxValueWithUnderscores() {
+        assertEquals(Integer.MAX_VALUE, Numbers.parseNonNegativeIntQuiet(new Utf8String("2_147_483_647")));
+    }
+
+    @Test
+    public void testParseNonNegativeIntQuietMultiDigit() {
+        assertEquals(12345, Numbers.parseNonNegativeIntQuiet(new Utf8String("12345")));
+    }
+
+    @Test
+    public void testParseNonNegativeIntQuietNegativeSign() {
+        assertEquals(-1, Numbers.parseNonNegativeIntQuiet(new Utf8String("-1")));
+    }
+
+    @Test
+    public void testParseNonNegativeIntQuietNonDigit() {
+        assertEquals(-1, Numbers.parseNonNegativeIntQuiet(new Utf8String("abc")));
+        assertEquals(-1, Numbers.parseNonNegativeIntQuiet(new Utf8String("12x")));
+    }
+
+    @Test
+    public void testParseNonNegativeIntQuietNull() {
+        assertEquals(-1, Numbers.parseNonNegativeIntQuiet(null));
+    }
+
+    @Test
+    public void testParseNonNegativeIntQuietOnlyUnderscores() {
+        assertEquals(-1, Numbers.parseNonNegativeIntQuiet(new Utf8String("_")));
+        assertEquals(-1, Numbers.parseNonNegativeIntQuiet(new Utf8String("___")));
+    }
+
+    @Test
+    public void testParseNonNegativeIntQuietOverflowMultiply() {
+        // val > Integer.MAX_VALUE / 10
+        assertEquals(-1, Numbers.parseNonNegativeIntQuiet(new Utf8String("2147483650")));
+    }
+
+    @Test
+    public void testParseNonNegativeIntQuietOverflowWrap() {
+        // Integer.MAX_VALUE + 1 causes r < val
+        assertEquals(-1, Numbers.parseNonNegativeIntQuiet(new Utf8String("2147483648")));
+    }
+
+    @Test
+    public void testParseNonNegativeIntQuietSingleDigit() {
+        assertEquals(0, Numbers.parseNonNegativeIntQuiet(new Utf8String("0")));
+        assertEquals(5, Numbers.parseNonNegativeIntQuiet(new Utf8String("5")));
+    }
+
+    @Test
+    public void testParseNonNegativeIntQuietTrailingUnderscore() {
+        assertEquals(-1, Numbers.parseNonNegativeIntQuiet(new Utf8String("100_")));
+    }
+
+    @Test
+    public void testParseNonNegativeIntQuietUnderscore() {
+        assertEquals(1000, Numbers.parseNonNegativeIntQuiet(new Utf8String("1_000")));
+        assertEquals(1_000_000, Numbers.parseNonNegativeIntQuiet(new Utf8String("1_000_000")));
     }
 
     @Test

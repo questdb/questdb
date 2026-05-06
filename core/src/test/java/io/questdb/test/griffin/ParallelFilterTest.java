@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -717,7 +717,8 @@ public class ParallelFilterTest extends AbstractCairoTest {
                                 true,
                                 PAGE_FRAME_MAX_ROWS,
                                 0,
-                                ParquetVersion.PARQUET_VERSION_V1
+                                ParquetVersion.PARQUET_VERSION_V1,
+                                0.0
                         );
                         Assert.assertTrue(Files.exists(path.$()));
 

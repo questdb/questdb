@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -189,6 +189,28 @@ public class CharSequenceIntHashMapTest {
                 Assert.assertEquals(value1, map.get(cs));
             }
         }
+    }
+
+    @Test
+    public void testIncAddsKeyToList() {
+        CharSequenceIntHashMap map = new CharSequenceIntHashMap();
+        map.inc("a");
+        map.inc("b");
+        map.inc("c");
+
+        // inc on new keys should add them to keys() list
+        ObjList<CharSequence> keys = map.keys();
+        Assert.assertEquals(3, keys.size());
+
+        // valueQuick should work for inc-inserted keys
+        for (int i = 0, n = keys.size(); i < n; i++) {
+            Assert.assertEquals(1, map.valueQuick(i));
+        }
+
+        // inc existing key should not add duplicate to list
+        map.inc("a");
+        Assert.assertEquals(3, keys.size());
+        Assert.assertEquals(2, map.get("a"));
     }
 
     @Test

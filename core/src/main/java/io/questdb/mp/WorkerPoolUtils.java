@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -34,6 +34,7 @@ import io.questdb.cairo.O3CopyJob;
 import io.questdb.cairo.O3OpenColumnJob;
 import io.questdb.cairo.O3PartitionJob;
 import io.questdb.cairo.O3PartitionPurgeJob;
+import io.questdb.cairo.PostingSealPurgeJob;
 import io.questdb.cairo.sql.async.PageFrameReduceJob;
 import io.questdb.cairo.sql.async.UnorderedPageFrameReduceJob;
 import io.questdb.griffin.SqlException;
@@ -111,6 +112,10 @@ public class WorkerPoolUtils {
             final ColumnPurgeJob columnPurgeJob = new ColumnPurgeJob(cairoEngine);
             sharedPoolWrite.freeOnExit(columnPurgeJob);
             sharedPoolWrite.assign(columnPurgeJob);
+
+            final PostingSealPurgeJob postingSealPurgeJob = new PostingSealPurgeJob(cairoEngine);
+            sharedPoolWrite.freeOnExit(postingSealPurgeJob);
+            sharedPoolWrite.assign(postingSealPurgeJob);
         }
 
         sharedPoolWrite.assign(new ColumnIndexerJob(messageBus));

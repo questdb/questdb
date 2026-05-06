@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -47,7 +47,7 @@ public class PgAttributeFunctionFactoryTest extends AbstractCairoTest {
             assertPlanNoLeakCheck(query,
                     """
                             SelectedRecord
-                                Radix sort light
+                                Encode sort light
                                   keys: [b1]
                                     CachedWindow
                                       orderedFunctions: [[b desc] => [row_number() over (partition by [a1])]]

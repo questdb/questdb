@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -95,6 +95,12 @@ public class DeferredSingleSymbolFilterPageFrameRecordCursorFactory extends Page
     public SingleSymbolFilter convertToSampleByIndexPageFrameCursorFactory() {
         convertedToFrame = true;
         return symbolFilter;
+    }
+
+    @Override
+    protected void _close() {
+        super._close();
+        Misc.free(symbolFunc);
     }
 
     @Override

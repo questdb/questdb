@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -84,7 +84,7 @@ public class CountVectorAggregateFunction extends LongFunction implements Vector
 
     @Override
     public void initRosti(long pRosti) {
-        Unsafe.getUnsafe().putLong(Rosti.getInitialValueSlot(pRosti, valueOffset), 0);
+        Unsafe.putLong(Rosti.getInitialValueSlot(pRosti, valueOffset), 0);
     }
 
     @Override

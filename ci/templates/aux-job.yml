@@ -3,11 +3,10 @@ jobs:
     displayName: "on"
     strategy:
       matrix:
-        linux-jdk17:
-          imageName: "ubuntu-latest"
-          poolName: "Azure Pipelines"
+        linux-jdk25:
+          poolName: hetzner-incus
           os: Linux
-          jdk: "1.17"
+          jdk: "1.25"
     pool:
       vmImage: $(imageName)
       name: $(poolName)
@@ -23,6 +22,13 @@ jobs:
         fetchDepth: 1
         lfs: false
         submodules: false
+      - bash: |
+          JAVA_PATH="/usr/lib/jvm/java-25-openjdk-amd64"
+          echo "##vso[task.setvariable variable=JAVA_HOME]$JAVA_PATH"
+          echo "##vso[task.setvariable variable=JAVA_HOME_25_X64]$JAVA_PATH"
+          echo "JAVA_HOME will be set to: $JAVA_PATH"
+        displayName: "Activate JDK 25 (openjdk amd64)"
+      - template: detect-local-client.yml
 
       - template: java-lint.yml
 
@@ -43,7 +49,7 @@ jobs:
           mavenPomFile: "pom.xml"
           mavenOptions: "$(MAVEN_OPTS)"
           options:
-            "compile javadoc:javadoc -DskipTests -P javadoc -P qdbr-release $(MAVEN_RUN_OPTS)"
+            "compile javadoc:javadoc -DskipTests -P javadoc -P qdbr-release $(CLIENT_PROFILE) $(MAVEN_RUN_OPTS)"
           jdkVersionOption: $(jdk)
 
       # Check bytecode size

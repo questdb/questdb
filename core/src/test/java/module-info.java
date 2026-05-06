@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -30,12 +30,14 @@ open module io.questdb.test {
     requires static java.sql;
     requires static org.postgresql.jdbc;
     requires static java.management;
-    requires static io.questdb.client;
+    requires io.questdb.client;
     requires jdk.management;
+    requires java.net.http;
     requires org.checkerframework.checker.qual;
 
     uses io.questdb.griffin.FunctionFactory;
 
     exports io.questdb.test;
     exports io.questdb.test.cairo;
+    exports io.questdb.test.cairo.parquet;
 }

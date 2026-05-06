@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -92,12 +92,12 @@ public class SecurityTest extends AbstractCairoTest {
 
             @Override
             public int getSqlSortLightValueMaxPages() {
-                return 11;
+                return 1;
             }
 
             @Override
             public long getSqlSortLightValuePageSize() {
-                return 1024;
+                return 32;
             }
 
             @Override
@@ -557,7 +557,7 @@ public class SecurityTest extends AbstractCairoTest {
                 );
                 Assert.fail();
             } catch (Exception ex) {
-                Assert.assertTrue(ex.toString().contains("memory exceeded in LongTreeChain"));
+                Assert.assertTrue(ex.toString().contains("memory exceeded in EncodedSort"));
             }
         });
     }
@@ -806,7 +806,7 @@ public class SecurityTest extends AbstractCairoTest {
                 );
                 Assert.fail();
             } catch (Exception ex) {
-                Assert.assertTrue(ex.toString().contains("memory exceeded in RedBlackTree"));
+                Assert.assertTrue(ex.toString().contains("memory exceeded in EncodedSort"));
             }
         });
     }
@@ -1089,7 +1089,7 @@ public class SecurityTest extends AbstractCairoTest {
                 );
                 Assert.fail();
             } catch (Exception ex) {
-                Assert.assertTrue(ex.toString().contains("Maximum number of pages (2) breached"));
+                Assert.assertTrue(ex.toString().contains("memory exceeded in EncodedSort"));
             }
         });
     }
@@ -1145,7 +1145,7 @@ public class SecurityTest extends AbstractCairoTest {
                 assertQueryNoLeakCheck(
                         memoryRestrictedCompiler,
                         "TOO MUCH",
-                        "select sym1, count() from tb1 order by sym1",
+                        "select sym1, count() from tb1 order by sym1, count()",
                         null,
                         true,
                         readOnlyExecutionContext,
@@ -1153,7 +1153,7 @@ public class SecurityTest extends AbstractCairoTest {
                 );
                 Assert.fail();
             } catch (Exception ex) {
-                Assert.assertTrue(ex.toString().contains("memory exceeded in RedBlackTree"));
+                Assert.assertTrue(ex.toString().contains("memory exceeded in EncodedSort"));
             }
         });
     }

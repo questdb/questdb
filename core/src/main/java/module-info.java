@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -48,6 +48,11 @@ open module io.questdb {
     exports io.questdb.cutlass.line;
     exports io.questdb.cutlass.line.udp;
     exports io.questdb.cutlass.line.tcp;
+    exports io.questdb.cutlass.qwp.codec;
+    exports io.questdb.cutlass.qwp.protocol;
+    exports io.questdb.cutlass.qwp.server;
+    exports io.questdb.cutlass.qwp.server.egress;
+    exports io.questdb.cutlass.qwp.websocket;
     exports io.questdb.cutlass.pgwire;
     exports io.questdb.cutlass.text;
     exports io.questdb.cutlass.text.types;
@@ -126,4 +131,5 @@ open module io.questdb {
     exports io.questdb.griffin.engine.functions.decimal;
     exports io.questdb.cutlass.parquet;
     exports io.questdb.cairo.view;
+    exports io.questdb.cairo.idx;
 }

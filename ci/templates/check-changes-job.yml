@@ -1,8 +1,7 @@
 jobs:
   - job: CheckChanges
     displayName: "Check changes"
-    pool:
-      vmImage: "ubuntu-latest"
+    pool: hetzner-incus
     steps:
       - checkout: none
       - bash: |

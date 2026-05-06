@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -28,7 +28,11 @@
 #include "simd.h"
 #include "ooo_dispatch.h"
 #include <algorithm>
+#include <thread>
+#include <atomic>
+#include <vector>
 #include "ooo_radix.h"
+#include "pdqsort/pdqsort.h"
 
 #ifdef OOO_CPP_PROFILE_TIMING
 #include <atomic>
@@ -51,7 +55,8 @@ struct long_3x {
     uint64_t l2;
     uint64_t l3;
 
-    bool operator<=(const long_3x &other) const {
+    bool operator<=(const long_3x& other) const
+    {
         if (l1 > other.l1) return false;
         if (l1 == other.l1) {
             if (l2 > other.l2) return false;
@@ -1230,6 +1235,496 @@ Java_io_questdb_std_Vect_sort3LongAscInPlace(JNIEnv *env, jclass cl, jlong pLong
     quick_sort_long_index_asc_in_place<long_3x>(reinterpret_cast<long_3x *>(pLong), 0, count - 1);
 }
 
+}  // extern "C"
+
+// ---------------------------------------------------------------------------
+// Encoded sort: adaptive vergesort + MSD radix + comparison sort
+//
+// Template parameter:
+//   ENTRY_LONGS - total uint64_t words per entry (key words + 1 rowId word)
+//
+// For all key sizes (FIXED_8/16/24/32):
+//   1. vergesort detects natural ascending/descending runs via jump-sampling.
+//      O(log n) probes, each extending linearly up to n/log(n) elements.
+//   2. Unsorted sub-runs go through MSD radix sort across all words
+//      including rowId (American Flag Sort, in-place, one byte at a time
+//      from MSB to LSB, with uniform bytes skipped iteratively).
+//   3. Partitions smaller than 128 elements fall back to pdqsort at any
+//      radix stage.
+// ---------------------------------------------------------------------------
+
+// Entry structs for encoded sort. The last word in each entry is the rowId,
+// used as a tiebreaker to guarantee stable sort order.
+
+struct encoded_2x {
+    uint64_t k1;
+    uint64_t rowId;
+
+    bool operator<(const encoded_2x &other) const {
+        if (k1 != other.k1) return k1 < other.k1;
+        return rowId < other.rowId;
+    }
+};
+
+struct encoded_3x {
+    uint64_t k1;
+    uint64_t k2;
+    uint64_t rowId;
+
+    bool operator<(const encoded_3x &other) const {
+        if (k1 != other.k1) return k1 < other.k1;
+        if (k2 != other.k2) return k2 < other.k2;
+        return rowId < other.rowId;
+    }
+};
+
+struct encoded_4x {
+    uint64_t k1;
+    uint64_t k2;
+    uint64_t k3;
+    uint64_t rowId;
+
+    bool operator<(const encoded_4x &other) const {
+        if (k1 != other.k1) return k1 < other.k1;
+        if (k2 != other.k2) return k2 < other.k2;
+        if (k3 != other.k3) return k3 < other.k3;
+        return rowId < other.rowId;
+    }
+};
+
+struct encoded_5x {
+    uint64_t k1;
+    uint64_t k2;
+    uint64_t k3;
+    uint64_t k4;
+    uint64_t rowId;
+
+    bool operator<(const encoded_5x &other) const {
+        if (k1 != other.k1) return k1 < other.k1;
+        if (k2 != other.k2) return k2 < other.k2;
+        if (k3 != other.k3) return k3 < other.k3;
+        if (k4 != other.k4) return k4 < other.k4;
+        return rowId < other.rowId;
+    }
+};
+
+// Maps ENTRY_LONGS to the corresponding encoded entry type.
+template <int ENTRY_LONGS>
+struct entry_traits;
+template <>
+struct entry_traits<2> {
+    using type = encoded_2x;
+};
+template <>
+struct entry_traits<3> {
+    using type = encoded_3x;
+};
+template <>
+struct entry_traits<4> {
+    using type = encoded_4x;
+};
+template <>
+struct entry_traits<5> {
+    using type = encoded_5x;
+};
+
+// Returns the key word at the given index from an entry.
+template <typename T>
+inline uint64_t entry_word(const T &e, int wordIndex) {
+    return reinterpret_cast<const uint64_t *>(&e)[wordIndex];
+}
+
+struct encoded_less {
+    bool operator()(const encoded_2x &a, const encoded_2x &b) const {
+        return a < b;
+    }
+    bool operator()(const encoded_3x &a, const encoded_3x &b) const {
+        return a < b;
+    }
+    bool operator()(const encoded_4x &a, const encoded_4x &b) const {
+        return a < b;
+    }
+    bool operator()(const encoded_5x &a, const encoded_5x &b) const {
+        return a < b;
+    }
+};
+
+// MSD (Most Significant Digit) radix sort across multiple key words.
+//
+// Processes one byte at a time from MSB (shift=56) to LSB (shift=0) using
+// in-place American Flag Sort: count byte values, compute bucket offsets,
+// then cycle-sort elements into their target buckets without a scratch buffer.
+//
+// Progresses through key words sequentially: after fully partitioning the
+// current word (shift reaches 0), advances to the next key word (wordIndex++)
+// up to maxWordIndex (which includes the rowId word).
+//
+// For partitions smaller than 128 elements, delegates to pdqsort directly.
+template <typename T>
+void msd_radix_byte(T *arr, int64_t count, int shift, int wordIndex,
+                    int maxWordIndex) {
+    // Skip uniform bytes iteratively to avoid unnecessary stack frames.
+    // Only recurse when there are multiple buckets (genuine data splits).
+    int64_t counts[256];
+    for (;;) {
+        if (count < 128) {
+            pdqsort(arr, arr + count, encoded_less{});
+            return;
+        }
+
+        // Count occurrences of each byte value at the current position
+        memset(counts, 0, sizeof(counts));
+        for (int64_t i = 0; i < count; i++) {
+            counts[(entry_word(arr[i], wordIndex) >> shift) & 0xFF]++;
+        }
+
+        // Check if all elements share the same byte value
+        int sole_bucket = -1;
+        for (int v = 0; v < 256; v++) {
+            if (counts[v] > 0) {
+                if (sole_bucket >= 0) {
+                    sole_bucket = -1;
+                    break;
+                }
+                sole_bucket = v;
+            }
+        }
+
+        if (sole_bucket < 0) {
+            break;
+        }
+
+        // Single bucket: advance to next byte/word iteratively.
+        // When all words are exhausted, elements are byte-identical
+        // and no sorting is needed.
+        if (shift > 0) {
+            shift -= 8;
+        } else if (wordIndex < maxWordIndex) {
+            shift = 56;
+            wordIndex++;
+        } else {
+            return;
+        }
+    }
+
+    // Compute bucket start offsets (prefix sum) and end positions
+    int64_t offsets[256];
+    int64_t ends[256];
+    int64_t sum = 0;
+    for (int v = 0; v < 256; v++) {
+        offsets[v] = sum;
+        sum += counts[v];
+        ends[v] = sum;
+    }
+
+    // In-place cycle sort: for each bucket, follow swap cycles until
+    // every element lands in its target bucket (O(n)).
+    for (int v = 0; v < 256; v++) {
+        while (offsets[v] < ends[v]) {
+            auto bv = static_cast<uint8_t>(
+                (entry_word(arr[offsets[v]], wordIndex) >> shift) & 0xFF);
+            if (bv == v) {
+                offsets[v]++;
+                continue;
+            }
+            T elem = arr[offsets[v]];
+            do {
+                std::swap(elem, arr[offsets[bv]++]);
+                bv = static_cast<uint8_t>(
+                    (entry_word(elem, wordIndex) >> shift) & 0xFF);
+            } while (bv != v);
+            arr[offsets[v]++] = elem;
+        }
+    }
+
+    // Recurse into each non-trivial bucket
+    sum = 0;
+    for (int v = 0; v < 256; v++) {
+        if (counts[v] > 1) {
+            if (shift > 0) {
+                msd_radix_byte<T>(arr + sum, counts[v], shift - 8, wordIndex,
+                                  maxWordIndex);
+            } else if (wordIndex < maxWordIndex) {
+                // Current word fully partitioned; advance to the next key word
+                msd_radix_byte<T>(arr + sum, counts[v], 56, wordIndex + 1,
+                                  maxWordIndex);
+            }
+        }
+        sum += counts[v];
+    }
+}
+
+// ska_sort_entries: MSD radix sort entry point.
+// For large arrays (>= parallelThreshold), performs the first radix pass
+// single-threaded, then sorts each resulting bucket in parallel across
+// all available cores. This is safe because buckets occupy disjoint
+// memory regions. The threshold is configurable from Java via
+// cairo.sql.sort.encoded.parallel.threshold (default: 1,024,000).
+template <typename T>
+void ska_sort_entries(T *arr, int64_t count, int64_t parallelThreshold) {
+    constexpr int ENTRY_LONGS = static_cast<int>(sizeof(T) / sizeof(uint64_t));
+    constexpr int maxWordIndex = ENTRY_LONGS - 1;
+
+    if (count < parallelThreshold) {
+        msd_radix_byte<T>(arr, count, 56, 0, maxWordIndex);
+        return;
+    }
+
+    // --- First pass: count + cycle sort by MSB (single-threaded) ---
+    int64_t counts[256];
+    memset(counts, 0, sizeof(counts));
+    for (int64_t i = 0; i < count; i++) {
+        counts[(entry_word(arr[i], 0) >> 56) & 0xFF]++;
+    }
+
+    // Find first non-uniform byte position to partition on. Skip uniform
+    // bytes iteratively to reach a byte that actually splits the data.
+    int shift = 56;
+    int wordIndex = 0;
+    for (;;) {
+        int sole_bucket = -1;
+        for (int v = 0; v < 256; v++) {
+            if (counts[v] > 0) {
+                if (sole_bucket >= 0) { sole_bucket = -1; break; }
+                sole_bucket = v;
+            }
+        }
+        if (sole_bucket < 0) break; // found a byte that splits
+
+        // Uniform byte: advance to the next byte position
+        if (shift > 0) {
+            shift -= 8;
+        } else if (wordIndex < maxWordIndex) {
+            shift = 56;
+            wordIndex++;
+        } else {
+            return; // all bytes identical, nothing to sort
+        }
+        memset(counts, 0, sizeof(counts));
+        for (int64_t i = 0; i < count; i++) {
+            counts[(entry_word(arr[i], wordIndex) >> shift) & 0xFF]++;
+        }
+    }
+
+    // In-place cycle sort for the first non-uniform byte
+    int64_t offsets[256];
+    int64_t ends[256];
+    int64_t sum = 0;
+    for (int v = 0; v < 256; v++) {
+        offsets[v] = sum;
+        sum += counts[v];
+        ends[v] = sum;
+    }
+    for (int v = 0; v < 256; v++) {
+        while (offsets[v] < ends[v]) {
+            auto bv = static_cast<uint8_t>(
+                (entry_word(arr[offsets[v]], wordIndex) >> shift) & 0xFF);
+            if (bv == v) { offsets[v]++; continue; }
+            T elem = arr[offsets[v]];
+            do {
+                std::swap(elem, arr[offsets[bv]++]);
+                bv = static_cast<uint8_t>(
+                    (entry_word(elem, wordIndex) >> shift) & 0xFF);
+            } while (bv != v);
+            arr[offsets[v]++] = elem;
+        }
+    }
+
+    // Compute next shift/wordIndex for recursive sorts
+    int nextShift;
+    int nextWordIndex;
+    if (shift > 0) {
+        nextShift = shift - 8;
+        nextWordIndex = wordIndex;
+    } else if (wordIndex < maxWordIndex) {
+        nextShift = 56;
+        nextWordIndex = wordIndex + 1;
+    } else {
+        return; // last byte was the final one
+    }
+
+    // --- Parallel sort of buckets ---
+    // Collect non-trivial buckets (count > 1) with their positions.
+    struct Bucket { T *ptr; int64_t count; };
+    Bucket work[256];
+    int numWork = 0;
+    sum = 0;
+    for (int v = 0; v < 256; v++) {
+        if (counts[v] > 1) {
+            work[numWork++] = {arr + sum, counts[v]};
+        }
+        sum += counts[v];
+    }
+
+    if (numWork == 0) return;
+
+    static int cachedHw = [] {
+        unsigned hw = std::thread::hardware_concurrency();
+        return (hw > 2) ? static_cast<int>(hw) : 2;
+    }();
+    int numThreads = cachedHw;
+    if (numThreads > numWork) numThreads = numWork;
+
+    if (numThreads < 2) {
+        // Single bucket or single core: sort sequentially
+        for (int i = 0; i < numWork; i++) {
+            msd_radix_byte<T>(work[i].ptr, work[i].count,
+                              nextShift, nextWordIndex, maxWordIndex);
+        }
+        return;
+    }
+
+    std::atomic<int> nextIdx(0);
+    std::thread threads[256];
+    for (int t = 0; t < numThreads; t++) {
+        threads[t] = std::thread([&]() {
+            for (;;) {
+                int idx = nextIdx.fetch_add(1, std::memory_order_relaxed);
+                if (idx >= numWork) break;
+                msd_radix_byte<T>(work[idx].ptr, work[idx].count,
+                                  nextShift, nextWordIndex, maxWordIndex);
+            }
+        });
+    }
+    for (int t = 0; t < numThreads; t++) threads[t].join();
+}
+
+// vergesort_entries: adaptive sort with jump-sampling run detection.
+//
+// 1. For small arrays (< 128), delegates directly to ska_sort.
+// 2. Probes for natural runs by jumping unstable_limit positions at a time,
+//    then extending outward from the sample point. Random data triggers
+//    only ~log2(n) probes instead of scanning every element.
+//
+// O(n) for already-sorted data, O(n log n) for random data.
+template <typename T>
+void vergesort_entries(T *arr, int64_t count, int64_t parallelThreshold) {
+    if (count < 128) {
+        ska_sort_entries<T>(arr, count, parallelThreshold);
+        return;
+    }
+
+    int lg = 63 - clzll(count);
+    if (lg < 1) lg = 1;
+    int64_t unstable_limit = count / lg;
+
+    constexpr int MAX_BOUNDS = 256;
+    int64_t bounds[MAX_BOUNDS];
+    int numBounds = 0;
+
+    int64_t begin_unstable = -1;
+    int64_t pos = 0;
+    encoded_less cmp;
+
+    while (pos < count) {
+        int64_t begin_range = pos;
+
+        // Too few elements left to form a significant run.
+        if (count - pos <= unstable_limit) {
+            if (begin_unstable < 0) begin_unstable = begin_range;
+            break;
+        }
+
+        // Jump to sample point and probe direction.
+        int64_t probe = pos + unstable_limit;
+        int64_t lo = probe - 1;
+        int64_t hi = probe;
+
+        if (cmp(arr[probe], arr[probe - 1])) {
+            // Descending trend. Extend backward and forward.
+            while (lo > begin_range && cmp(arr[lo], arr[lo - 1])) --lo;
+            while (hi + 1 < count && cmp(arr[hi + 1], arr[hi])) ++hi;
+
+            if (hi - lo + 1 >= unstable_limit) {
+                std::reverse(arr + lo, arr + hi + 1);
+                if (lo > begin_range && begin_unstable < 0)
+                    begin_unstable = begin_range;
+                if (begin_unstable >= 0) {
+                    ska_sort_entries<T>(arr + begin_unstable,
+                                        lo - begin_unstable, parallelThreshold);
+                    if (numBounds < MAX_BOUNDS - 2)
+                        bounds[numBounds++] = begin_unstable;
+                    begin_unstable = -1;
+                }
+                if (numBounds < MAX_BOUNDS - 2) bounds[numBounds++] = lo;
+                pos = hi + 1;
+            } else {
+                if (begin_unstable < 0) begin_unstable = begin_range;
+                pos = hi + 1;
+            }
+        } else {
+            // Non-descending trend. Extend backward and forward.
+            while (lo > begin_range && !cmp(arr[lo], arr[lo - 1])) --lo;
+            while (hi + 1 < count && !cmp(arr[hi + 1], arr[hi])) ++hi;
+
+            if (hi - lo + 1 >= unstable_limit) {
+                if (lo > begin_range && begin_unstable < 0)
+                    begin_unstable = begin_range;
+                if (begin_unstable >= 0) {
+                    ska_sort_entries<T>(arr + begin_unstable,
+                                        lo - begin_unstable, parallelThreshold);
+                    if (numBounds < MAX_BOUNDS - 2)
+                        bounds[numBounds++] = begin_unstable;
+                    begin_unstable = -1;
+                }
+                if (numBounds < MAX_BOUNDS - 2) bounds[numBounds++] = lo;
+                pos = hi + 1;
+            } else {
+                if (begin_unstable < 0) begin_unstable = begin_range;
+                pos = hi + 1;
+            }
+        }
+    }
+
+    // Sort remaining unstable region
+    if (begin_unstable >= 0 && begin_unstable < count) {
+        ska_sort_entries<T>(arr + begin_unstable, count - begin_unstable, parallelThreshold);
+        if (numBounds == 0 || bounds[numBounds - 1] != begin_unstable)
+            bounds[numBounds++] = begin_unstable;
+    }
+    bounds[numBounds++] = count;
+
+    if (numBounds <= 2) return;
+
+    // Multiple sorted runs detected. Fall back to radix sort on the
+    // entire array instead of std::inplace_merge, which may heap-allocate.
+    ska_sort_entries<T>(arr, count, parallelThreshold);
+}
+
+template <int ENTRY_LONGS>
+void sort_encoded_impl(uint8_t *addr, int64_t count, int64_t parallelThreshold) {
+    if (count <= 1) return;
+
+    using T = typename entry_traits<ENTRY_LONGS>::type;
+    vergesort_entries<T>(reinterpret_cast<T *>(addr), count, parallelThreshold);
+}
+
+extern "C" {
+
+JNIEXPORT void JNICALL Java_io_questdb_std_Vect_sortEncodedEntries(
+    JNIEnv *env, jclass cl, jlong addr, jlong count, jint keyLongs,
+    jlong parallelThreshold) {
+    auto *base = reinterpret_cast<uint8_t *>(addr);
+
+    switch (keyLongs) {
+        case 1:
+            sort_encoded_impl<2>(base, count, parallelThreshold);
+            break;
+        case 2:
+            sort_encoded_impl<3>(base, count, parallelThreshold);
+            break;
+        case 3:
+            sort_encoded_impl<4>(base, count, parallelThreshold);
+            break;
+        case 4:
+            sort_encoded_impl<5>(base, count, parallelThreshold);
+            break;
+        default:
+            assert(false && "unsupported keyLongs");
+            break;  // Java side validates keyLongs
+    }
+}
+
 JNIEXPORT void JNICALL
 Java_io_questdb_std_Vect_mergeLongIndexesAscInner(JAVA_STATIC, jlong pIndexStructArray, jint cnt,
                                                   jlong mergedIndex) {
@@ -1835,6 +2330,5 @@ Java_io_questdb_std_Vect_sortArrayColumn(JNIEnv *env, jclass cl, jlong mergedTim
     }
     return __JLONG_REINTERPRET_CAST__(jlong, offset);
 }
-
 }
 // extern "C"

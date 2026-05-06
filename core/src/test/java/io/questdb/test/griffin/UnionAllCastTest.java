@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -1189,10 +1189,10 @@ public class UnionAllCastTest extends AbstractCairoTest {
                 """
                         a
                         -9.4826336E8
-                        1.32644723E9
+                        1.3264472E9
                         5.9285965E8
-                        1.86872371E9
-                        -8.4753107E8
+                        1.8687237E9
+                        -8.475311E8
                         0.66077775
                         0.80432236
                         0.22463012
@@ -1214,9 +1214,9 @@ public class UnionAllCastTest extends AbstractCairoTest {
                         0.08438319
                         0.20447439
                         0.93446046
-                        4.6895921E15
+                        4.689592E15
                         4.7299965E15
-                        7.7465361E18
+                        7.746536E18
                         -6.9459217E18
                         8.2601883E18
                         """,
@@ -1909,6 +1909,28 @@ public class UnionAllCastTest extends AbstractCairoTest {
                         """,
                 "create table x as (select x::decimal(19, 3) a from long_sequence(5))",
                 "create table y as (select 0::int a union select 3::int union select 5::int union select 9::int union select 8::int)",
+                false
+        );
+    }
+
+    @Test
+    public void testIntDecimalMultiColumn() throws Exception {
+        // Regression test: when casting INT -> DECIMAL in a UNION ALL, a missing
+        // break in generateCastFunctions caused fall-through from the DECIMAL case
+        // to BINARY, inserting a spurious BinColumn into the cast function list.
+        // With multiple columns, this shifts all subsequent cast function indices,
+        // causing column b to read from the wrong cast function.
+        testUnionAll(
+                """
+                        a\tb
+                        1.0\t10
+                        2.0\t20
+                        3.0\t30
+                        100.0\t77
+                        200.0\t88
+                        """,
+                "CREATE TABLE x AS (SELECT x::decimal(4, 1) a, (x * 10)::int b FROM long_sequence(3))",
+                "CREATE TABLE y AS (SELECT 100::int a, 77::int b UNION SELECT 200::int, 88::int)",
                 false
         );
     }

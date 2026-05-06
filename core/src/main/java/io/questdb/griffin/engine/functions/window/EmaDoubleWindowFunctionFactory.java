@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -47,6 +47,7 @@ import io.questdb.griffin.engine.window.WindowFunction;
 import io.questdb.std.IntList;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
+import io.questdb.std.Unsafe;
 
 /**
  * Exponential Moving Average (EMA) window function.
@@ -326,7 +327,8 @@ public class EmaDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
 
         @Override
         public void pass1(Record record, long recordOffset, WindowSPI spi) {
-            throw new UnsupportedOperationException();
+            computeNext(record);
+            Unsafe.putDouble(spi.getAddress(recordOffset, columnIndex), ema);
         }
 
         @Override
@@ -446,7 +448,8 @@ public class EmaDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
 
         @Override
         public void pass1(Record record, long recordOffset, WindowSPI spi) {
-            throw new UnsupportedOperationException();
+            computeNext(record);
+            Unsafe.putDouble(spi.getAddress(recordOffset, columnIndex), ema);
         }
 
         @Override
@@ -510,7 +513,8 @@ public class EmaDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
 
         @Override
         public void pass1(Record record, long recordOffset, WindowSPI spi) {
-            throw new UnsupportedOperationException();
+            computeNext(record);
+            Unsafe.putDouble(spi.getAddress(recordOffset, columnIndex), ema);
         }
 
         @Override
@@ -604,7 +608,8 @@ public class EmaDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
 
         @Override
         public void pass1(Record record, long recordOffset, WindowSPI spi) {
-            throw new UnsupportedOperationException();
+            computeNext(record);
+            Unsafe.putDouble(spi.getAddress(recordOffset, columnIndex), ema);
         }
 
         @Override

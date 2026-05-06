@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -32,7 +32,7 @@ import org.jetbrains.annotations.NotNull;
 
 public class CompileViewModel implements ExecutionModel, Mutable, Sinkable {
     public static final ObjectFactory<CompileViewModel> FACTORY = CompileViewModel::new;
-    private QueryModel queryModel;
+    private IQueryModel queryModel;
     private ExpressionNode viewExpr;
 
     @Override
@@ -47,7 +47,7 @@ public class CompileViewModel implements ExecutionModel, Mutable, Sinkable {
     }
 
     @Override
-    public QueryModel getQueryModel() {
+    public IQueryModel getQueryModel() {
         return queryModel;
     }
 
@@ -61,7 +61,7 @@ public class CompileViewModel implements ExecutionModel, Mutable, Sinkable {
         return viewExpr;
     }
 
-    public void setQueryModel(QueryModel queryModel) {
+    public void setQueryModel(IQueryModel queryModel) {
         this.queryModel = queryModel;
     }
 

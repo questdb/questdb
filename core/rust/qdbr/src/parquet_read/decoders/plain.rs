@@ -60,7 +60,6 @@ pub struct PlainBooleanDecoder<'a> {
     buffers_ptr: *mut u8,
     buffers_offset: usize,
     null_value: u8,
-    error: ParquetResult<()>,
 }
 
 impl<'a> PlainBooleanDecoder<'a> {
@@ -74,38 +73,18 @@ impl<'a> PlainBooleanDecoder<'a> {
             buffers,
             buffers_offset,
             null_value,
-            error: Ok(()),
         }
     }
 
     #[inline]
-    fn has_error(&self) -> bool {
-        self.error.is_err()
-    }
-
-    #[inline]
-    fn set_layout_error(&mut self, message: &str) {
-        if self.error.is_ok() {
-            self.error = Err(fmt_err!(Layout, "{}", message));
-        }
-    }
-
-    #[inline]
-    fn can_read_bits(&mut self, count: usize) -> bool {
-        if self.has_error() {
-            return false;
-        }
-
+    fn can_read_bits(&mut self, count: usize) -> ParquetResult<()> {
         let Some(next_bit_offset) = self.bit_offset.checked_add(count) else {
-            self.set_layout_error("plain boolean bit offset overflow");
-            return false;
+            return Err(fmt_err!(Layout, "plain boolean bit offset overflow"));
         };
-
         if next_bit_offset > self.total_bits {
-            self.set_layout_error("not enough plain boolean values");
-            return false;
+            return Err(fmt_err!(Layout, "not enough plain boolean values"));
         }
-        true
+        Ok(())
     }
 
     #[inline]
@@ -273,17 +252,11 @@ where
         self.values_offset += count;
         Ok(())
     }
-
-    fn result(&self) -> ParquetResult<()> {
-        Ok(())
-    }
 }
 
 impl Pushable for PlainBooleanDecoder<'_> {
     fn push(&mut self) -> ParquetResult<()> {
-        if !self.can_read_bits(1) {
-            return Ok(());
-        }
+        self.can_read_bits(1)?;
 
         unsafe {
             *self.buffers_ptr.add(self.buffers_offset) = self.read_bit(self.bit_offset);
@@ -294,9 +267,6 @@ impl Pushable for PlainBooleanDecoder<'_> {
     }
 
     fn push_null(&mut self) -> ParquetResult<()> {
-        if self.has_error() {
-            return Ok(());
-        }
         unsafe {
             *self.buffers_ptr.add(self.buffers_offset) = self.null_value;
         }
@@ -305,7 +275,7 @@ impl Pushable for PlainBooleanDecoder<'_> {
     }
 
     fn push_nulls(&mut self, count: usize) -> ParquetResult<()> {
-        if self.has_error() || count == 0 {
+        if count == 0 {
             return Ok(());
         }
 
@@ -329,9 +299,7 @@ impl Pushable for PlainBooleanDecoder<'_> {
         if count == 0 {
             return Ok(());
         }
-        if !self.can_read_bits(count) {
-            return Ok(());
-        }
+        self.can_read_bits(count)?;
 
         let out = unsafe { self.buffers_ptr.add(self.buffers_offset) };
         let mut written = 0usize;
@@ -396,15 +364,9 @@ impl Pushable for PlainBooleanDecoder<'_> {
     }
 
     fn skip(&mut self, count: usize) -> ParquetResult<()> {
-        if !self.can_read_bits(count) {
-            return Ok(());
-        }
+        self.can_read_bits(count)?;
         self.bit_offset += count;
         Ok(())
-    }
-
-    fn result(&self) -> ParquetResult<()> {
-        self.error.clone()
     }
 }
 
@@ -424,6 +386,7 @@ mod tests {
             aux_size: 0,
             aux_ptr: ptr::null_mut(),
             aux_vec: AcVec::new_in(allocator.clone()),
+            page_buffers: Vec::new(),
         }
     }
 
@@ -435,15 +398,11 @@ mod tests {
 
         // Bits (LSB-first): [1,0,1,1,0,0,1,0,1,1]
         let values = [0x4D, 0x03];
-        let result = {
-            let mut decoder = PlainBooleanDecoder::new(&values, &mut buffers, 0);
-            decoder.reserve(10).unwrap();
-            decoder.push_slice(10).unwrap();
-            decoder.result()
-        };
+        let mut decoder = PlainBooleanDecoder::new(&values, &mut buffers, 0);
+        decoder.reserve(10).unwrap();
+        decoder.push_slice(10).unwrap();
 
         assert_eq!(&buffers.data_vec[..], &[1, 0, 1, 1, 0, 0, 1, 0, 1, 1]);
-        assert!(result.is_ok());
     }
 
     #[test]
@@ -454,18 +413,14 @@ mod tests {
 
         // Bits (LSB-first): [0,1,1,0,1,0]
         let values = [0x16];
-        let result = {
-            let mut decoder = PlainBooleanDecoder::new(&values, &mut buffers, 0);
-            decoder.reserve(6).unwrap();
-            decoder.skip(1).unwrap();
-            decoder.push_slice(3).unwrap();
-            decoder.push_nulls(2).unwrap();
-            decoder.push().unwrap();
-            decoder.result()
-        };
+        let mut decoder = PlainBooleanDecoder::new(&values, &mut buffers, 0);
+        decoder.reserve(6).unwrap();
+        decoder.skip(1).unwrap();
+        decoder.push_slice(3).unwrap();
+        decoder.push_nulls(2).unwrap();
+        decoder.push().unwrap();
 
         assert_eq!(&buffers.data_vec[..], &[1, 1, 0, 0, 0, 1]);
-        assert!(result.is_ok());
     }
 
     #[test]
@@ -475,16 +430,12 @@ mod tests {
         let mut buffers = create_buffers(&allocator);
 
         let values = [0x05];
-        let result = {
-            let mut decoder = PlainBooleanDecoder::new(&values, &mut buffers, 0);
-            decoder.reserve(9).unwrap();
-            decoder.push_slice(4).unwrap();
-            decoder.push_slice(4).unwrap();
-            decoder.push_slice(1).unwrap();
-            decoder.result()
-        };
+        let mut decoder = PlainBooleanDecoder::new(&values, &mut buffers, 0);
+        decoder.reserve(9).unwrap();
+        decoder.push_slice(4).unwrap();
+        decoder.push_slice(4).unwrap();
+        decoder.push_slice(1).unwrap_err(); // only 1 bit left
 
         assert_eq!(&buffers.data_vec[..2], &[1, 0]);
-        assert!(result.is_err());
     }
 }

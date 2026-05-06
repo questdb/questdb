@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -58,9 +58,11 @@ import org.jetbrains.annotations.NotNull;
  * Instead, each worker records all (timestamp, price) observations in a native
  * buffer. Within a single worker, observations arrive in timestamp order
  * (page frames are dispatched chronologically). During the merge phase, the
- * two sorted per-worker buffers are combined with a merge-sort merge step.
- * The final TWAP is computed from the fully sorted buffer in
- * {@link #getDouble(Record)}.
+ * two sorted per-worker buffers are combined with a merge-sort merge step
+ * into a fresh buffer in the destination's allocator - either the owner's
+ * allocator on the non-sharded merge path or a per-worker allocator on the
+ * sharded merge path. The final TWAP is computed from the fully sorted
+ * buffer in {@link #getDouble(Record)}.
  * <p>
  * <b>MapValue layout</b> (3 slots):
  * <pre>
@@ -102,8 +104,8 @@ public class TwapGroupByFunction extends DoubleFunction implements GroupByFuncti
         } else {
             // Allocate buffer and store first observation
             long ptr = allocator.malloc(INITIAL_CAPACITY * ENTRY_SIZE);
-            Unsafe.getUnsafe().putLong(ptr, ts);
-            Unsafe.getUnsafe().putDouble(ptr + 8, price);
+            Unsafe.putLong(ptr, ts);
+            Unsafe.putDouble(ptr + 8, price);
             mapValue.putLong(valueIndex, ptr);
             mapValue.putLong(valueIndex + 1, 1);
             mapValue.putLong(valueIndex + 2, INITIAL_CAPACITY);
@@ -121,8 +123,8 @@ public class TwapGroupByFunction extends DoubleFunction implements GroupByFuncti
         if (count <= 0) {
             // First valid observation after initial NULLs
             long ptr = allocator.malloc(INITIAL_CAPACITY * ENTRY_SIZE);
-            Unsafe.getUnsafe().putLong(ptr, ts);
-            Unsafe.getUnsafe().putDouble(ptr + 8, price);
+            Unsafe.putLong(ptr, ts);
+            Unsafe.putDouble(ptr + 8, price);
             mapValue.putLong(valueIndex, ptr);
             mapValue.putLong(valueIndex + 1, 1);
             mapValue.putLong(valueIndex + 2, INITIAL_CAPACITY);
@@ -139,8 +141,8 @@ public class TwapGroupByFunction extends DoubleFunction implements GroupByFuncti
                 mapValue.putLong(valueIndex + 2, newCapacity);
             }
             long offset = count * ENTRY_SIZE;
-            Unsafe.getUnsafe().putLong(ptr + offset, ts);
-            Unsafe.getUnsafe().putDouble(ptr + offset + 8, price);
+            Unsafe.putLong(ptr + offset, ts);
+            Unsafe.putDouble(ptr + offset + 8, price);
             mapValue.putLong(valueIndex + 1, count + 1);
         }
     }
@@ -166,18 +168,18 @@ public class TwapGroupByFunction extends DoubleFunction implements GroupByFuncti
         }
         double result;
         if (count == 1) {
-            result = Unsafe.getUnsafe().getDouble(ptr + 8);
+            result = Unsafe.getDouble(ptr + 8);
         } else {
             double weightedSum = 0;
             double priceSum;
-            long firstTs = Unsafe.getUnsafe().getLong(ptr);
+            long firstTs = Unsafe.getLong(ptr);
             long prevTs = firstTs;
-            double prevPrice = Unsafe.getUnsafe().getDouble(ptr + 8);
+            double prevPrice = Unsafe.getDouble(ptr + 8);
             priceSum = prevPrice;
             for (long i = 1; i < count; i++) {
                 long offset = i * ENTRY_SIZE;
-                long currTs = Unsafe.getUnsafe().getLong(ptr + offset);
-                double currPrice = Unsafe.getUnsafe().getDouble(ptr + offset + 8);
+                long currTs = Unsafe.getLong(ptr + offset);
+                double currPrice = Unsafe.getDouble(ptr + offset + 8);
                 weightedSum += prevPrice * (currTs - prevTs);
                 priceSum += currPrice;
                 prevTs = currTs;
@@ -251,15 +253,17 @@ public class TwapGroupByFunction extends DoubleFunction implements GroupByFuncti
     }
 
     /**
-     * Merges a source worker's observation buffer into the destination (owner)
-     * buffer. Both buffers are sorted by timestamp within their respective
-     * workers. The merge produces a single sorted buffer using a classic
-     * merge-sort merge step, allocated in the owner's allocator.
+     * Merges a source worker's observation buffer into the destination buffer.
+     * Both buffers are sorted by timestamp within their respective workers.
+     * The merge produces a single sorted buffer using a classic merge-sort
+     * merge step, allocated in the destination's allocator - either the
+     * owner's allocator on the non-sharded merge path or a per-worker
+     * allocator on the sharded merge path.
      * <p>
      * When the destination is empty, the source buffer is copied into a fresh
-     * allocation in the owner's allocator rather than copying the raw pointer,
-     * because the source buffer lives in a worker allocator that will be
-     * reclaimed independently.
+     * allocation in the destination's allocator rather than copying the raw
+     * pointer, because the source buffer lives in a separate allocator that
+     * will be reclaimed independently.
      */
     @Override
     public void merge(MapValue destValue, MapValue srcValue) {
@@ -289,8 +293,8 @@ public class TwapGroupByFunction extends DoubleFunction implements GroupByFuncti
         // Classic merge-sort merge of two sorted runs
         long di = 0, si = 0, mi = 0;
         while (di < destCount && si < srcCount) {
-            long destTs = Unsafe.getUnsafe().getLong(destPtr + di * ENTRY_SIZE);
-            long srcTs = Unsafe.getUnsafe().getLong(srcPtr + si * ENTRY_SIZE);
+            long destTs = Unsafe.getLong(destPtr + di * ENTRY_SIZE);
+            long srcTs = Unsafe.getLong(srcPtr + si * ENTRY_SIZE);
             if (destTs <= srcTs) {
                 Vect.memcpy(mergedPtr + mi * ENTRY_SIZE, destPtr + di * ENTRY_SIZE, ENTRY_SIZE);
                 di++;

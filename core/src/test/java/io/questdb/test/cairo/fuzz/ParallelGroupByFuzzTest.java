@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -70,6 +70,7 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
     private final boolean convertToParquet;
     private final boolean enableJitCompiler;
     private final boolean enableParallelGroupBy;
+    private final int parallelGroupByBatchSize;
     private final Rnd rnd;
 
     public ParallelGroupByFuzzTest() {
@@ -77,6 +78,24 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
         this.enableParallelGroupBy = rnd.nextBoolean();
         this.enableJitCompiler = rnd.nextBoolean();
         this.convertToParquet = rnd.nextBoolean();
+        // Pick a batch size from buckets that span the boundaries of the batched non-sharded
+        // reducer relative to the page frame size (~MIN_PAGE_FRAME_MAX_ROWS rows):
+        // 1 row (degenerate), well below a frame, around a frame boundary, and larger than
+        // a frame so the whole frame fits in a single sub-batch.
+        switch (rnd.nextInt(4)) {
+            case 0:
+                this.parallelGroupByBatchSize = 1;
+                break;
+            case 1:
+                this.parallelGroupByBatchSize = 1 + rnd.nextInt(MIN_PAGE_FRAME_MAX_ROWS / 4);
+                break;
+            case 2:
+                this.parallelGroupByBatchSize = MIN_PAGE_FRAME_MAX_ROWS / 2 + rnd.nextInt(MIN_PAGE_FRAME_MAX_ROWS);
+                break;
+            default:
+                this.parallelGroupByBatchSize = 4 * MIN_PAGE_FRAME_MAX_ROWS + rnd.nextInt(4 * MIN_PAGE_FRAME_MAX_ROWS);
+                break;
+        }
     }
 
     @Override
@@ -95,6 +114,7 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
         setProperty(PropertyKey.CAIRO_SQL_PARALLEL_GROUPBY_TOP_K_THRESHOLD, rnd.nextBoolean() ? 4 : Integer.MAX_VALUE);
         setProperty(PropertyKey.CAIRO_SQL_PARALLEL_WORK_STEALING_THRESHOLD, 1 + rnd.nextInt(16));
         setProperty(PropertyKey.CAIRO_SQL_PARALLEL_GROUPBY_ENABLED, String.valueOf(enableParallelGroupBy));
+        setProperty(PropertyKey.CAIRO_SQL_PARALLEL_GROUPBY_BATCH_SIZE, parallelGroupByBatchSize);
         super.setUp();
     }
 
@@ -226,10 +246,6 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
 
     @Test
     public void testNonKeyedGroupByEmptyTable() throws Exception {
-        // This query doesn't use filter, so we don't care about JIT.
-        Assume.assumeTrue(enableJitCompiler);
-        // The table is empty.
-        Assume.assumeFalse(convertToParquet);
         assertMemoryLeak(() -> {
             final WorkerPool pool = new WorkerPool(() -> 4);
             TestUtils.execute(
@@ -257,6 +273,30 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
                     LOG
             );
         });
+    }
+
+    @Test
+    public void testParallelBitwiseAggregates() throws Exception {
+        // Exercises the new computeKeyedBatch overrides for bit_and / bit_or / bit_xor
+        // across byte / short / int / long. The 'k0'..'k4' SYMBOL key routes through
+        // Unordered4Map, hitting the probeBatchUnsafe direct-column fast path.
+        testParallelGroupByAllTypes(
+                "SELECT asymbol, " +
+                        "bit_and(abyte) baba, bit_or(abyte) babo, bit_xor(abyte) babx, " +
+                        "bit_and(ashort) basa, bit_or(ashort) baso, bit_xor(ashort) basx, " +
+                        "bit_and(anint) baia, bit_or(anint) baio, bit_xor(anint) baix, " +
+                        "bit_and(along) bala, bit_or(along) balo, bit_xor(along) balx " +
+                        "FROM tab " +
+                        "ORDER BY asymbol",
+                """
+                        asymbol\tbaba\tbabo\tbabx\tbasa\tbaso\tbasx\tbaia\tbaio\tbaix\tbala\tbalo\tbalx
+                        \t0\t63\t43\t0\t2047\t1317\t0\t-1\t779688368\t0\t-1\t-3908818082212709664
+                        CPSW\t0\t63\t48\t0\t2047\t1465\t0\t-1\t-765938645\t0\t-1\t-7622703881723338141
+                        HYRX\t0\t63\t12\t0\t1023\t60\t0\t-1\t1609404520\t0\t-1\t-4439569899991393375
+                        PEHN\t0\t63\t37\t0\t1023\t364\t0\t-1\t-1040733386\t0\t-1\t7773742656006461436
+                        VTJW\t0\t63\t35\t0\t1023\t640\t0\t-1\t-1283576033\t0\t-1\t-6229748796184769953
+                        """
+        );
     }
 
     @Test
@@ -434,8 +474,6 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
 
     @Test
     public void testParallelCountOverMultiKeyGroupBy() throws Exception {
-        // This query doesn't use filter, so we don't care about JIT.
-        Assume.assumeTrue(enableJitCompiler);
         testParallelMultiSymbolKeyGroupBy(
                 "SELECT count(*) FROM (SELECT key1, key2 FROM tab GROUP BY key1, key2 ORDER BY key1, key2)",
                 """
@@ -511,8 +549,6 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
 
     @Test
     public void testParallelFunctionKeyExplicitGroupBy() throws Exception {
-        // This query doesn't use filter, so we don't care about JIT.
-        Assume.assumeTrue(enableJitCompiler);
         testParallelSymbolKeyGroupBy(
                 "SELECT day_of_week(ts) day, key, vwap(price, quantity), sum(colTop) FROM tab GROUP BY day, key ORDER BY day, key",
                 """
@@ -559,8 +595,6 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
 
     @Test
     public void testParallelFunctionKeyGroupByMultipleKeys1() throws Exception {
-        // This query doesn't use filter, so we don't care about JIT.
-        Assume.assumeTrue(enableJitCompiler);
         testParallelSymbolKeyGroupBy(
                 "SELECT vwap(price, quantity), day_of_week(ts) day, hour(ts) hour, sum(colTop) " +
                         "FROM tab ORDER BY day, hour",
@@ -741,8 +775,6 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
 
     @Test
     public void testParallelFunctionKeyGroupByMultipleKeys2() throws Exception {
-        // This query doesn't use filter, so we don't care about JIT.
-        Assume.assumeTrue(enableJitCompiler);
         testParallelSymbolKeyGroupBy(
                 "SELECT vwap(price, quantity), day_of_week(ts) day, sum(colTop), regexp_replace(key, 'k0', 'k42') key " +
                         "FROM tab " +
@@ -791,8 +823,6 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
 
     @Test
     public void testParallelFunctionKeyGroupByThreadSafe() throws Exception {
-        // This query doesn't use filter, so we don't care about JIT.
-        Assume.assumeTrue(enableJitCompiler);
         testParallelSymbolKeyGroupBy(
                 "SELECT day_of_week(ts) day, key, vwap(price, quantity), sum(colTop) FROM tab ORDER BY day, key",
                 """
@@ -839,8 +869,6 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
 
     @Test
     public void testParallelFunctionKeyGroupByThreadUnsafe() throws Exception {
-        // This query doesn't use filter, so we don't care about JIT.
-        Assume.assumeTrue(enableJitCompiler);
         testParallelSymbolKeyGroupBy(
                 "SELECT regexp_replace(key, 'k0', 'k42') key, vwap(price, quantity), sum(colTop) FROM tab ORDER BY key",
                 """
@@ -857,8 +885,6 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
 
     @Test
     public void testParallelFunctionKeyGroupByThreadUnsafe2() throws Exception {
-        // This query doesn't use filter, so we don't care about JIT.
-        Assume.assumeTrue(enableJitCompiler);
         // This query shouldn't be executed in parallel,
         // so this test verifies that nothing breaks.
         testParallelSymbolKeyGroupBy(
@@ -877,8 +903,6 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
 
     @Test
     public void testParallelFunctionKeyGroupByThreadUnsafe3() throws Exception {
-        // This query doesn't use filter, so we don't care about JIT.
-        Assume.assumeTrue(enableJitCompiler);
         // This query shouldn't be executed in parallel,
         // so this test verifies that nothing breaks.
         testParallelStringAndVarcharKeyGroupBy(
@@ -908,6 +932,59 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
                         [[null,null],[0.12503042190293423,null]]\t[[null,0.6489095881388134],[0.280119654942501,null],[0.5379723582047159,null]]\t[[null,null],[0.12503042190293423,null]]\t[[null,0.6489095881388134],[0.280119654942501,null],[0.5379723582047159,null]]\tk4
                         """
         );
+    }
+
+    @Test
+    public void testParallelGroupByArrayAccessConstantIndex() throws Exception {
+        assertMemoryLeak(() -> {
+            final WorkerPool pool = new WorkerPool(() -> 4);
+            TestUtils.execute(
+                    pool,
+                    (engine, compiler, sqlExecutionContext) -> {
+                        sqlExecutionContext.setJitMode(enableJitCompiler ? SqlJitMode.JIT_MODE_ENABLED : SqlJitMode.JIT_MODE_DISABLED);
+
+                        execute(compiler,
+                                "CREATE TABLE tango (ts TIMESTAMP, arr1d DOUBLE[], arr2d DOUBLE[][]) TIMESTAMP(ts) PARTITION BY DAY",
+                                sqlExecutionContext);
+                        execute(compiler,
+                                """
+                                        INSERT INTO tango VALUES
+                                        ('2025-06-26', ARRAY[10.0, 20], ARRAY[[1.0, 2], [3.0, 4]]),
+                                        ('2025-06-26', null, null),
+                                        ('2025-06-27', ARRAY[30.0, 40], ARRAY[[5.0, 6], [7.0, 8]]),
+                                        ('2025-06-27', ARRAY[50.0, 60], ARRAY[[9.0, 10], [11.0, 12]]),
+                                        ('2025-06-28', ARRAY[], ARRAY[]),
+                                        ('2025-06-28', ARRAY[70.0, 80], ARRAY[[13.0, 14], [15.0, 16]])
+                                        """,
+                                sqlExecutionContext);
+
+                        assertQueries(engine, sqlExecutionContext,
+                                "SELECT sum(arr1d[1]) FROM tango",
+                                """
+                                        sum
+                                        160.0
+                                        """,
+                                "SELECT sum(arr1d[2]) FROM tango",
+                                """
+                                        sum
+                                        200.0
+                                        """,
+                                "SELECT sum(arr2d[1, 1]) FROM tango",
+                                """
+                                        sum
+                                        28.0
+                                        """,
+                                "SELECT sum(arr2d[2, 1]) FROM tango",
+                                """
+                                        sum
+                                        36.0
+                                        """
+                        );
+                    },
+                    configuration,
+                    LOG
+            );
+        });
     }
 
     @Test
@@ -941,10 +1018,11 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
                                 "explain select ts, max(array_position(arr, a)) as v from tango sample by 1d",
                                 """
                                         QUERY PLAN
-                                        Radix sort light
+                                        Encode sort light
                                           keys: [ts]
                                             Async Group By workers: 4
                                               keys: [ts]
+                                              keyFunctions: [timestamp_floor_utc('1d',ts)]
                                               values: [max(array_position(arr, a))]
                                               filter: null
                                                 PageFrame
@@ -966,10 +1044,11 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
                                 "explain select ts, max(array_position(arr, a)) as v from tango sample by 1d",
                                 """
                                         QUERY PLAN
-                                        Radix sort light
+                                        Encode sort light
                                           keys: [ts]
                                             Async Group By workers: 4
                                               keys: [ts]
+                                              keyFunctions: [timestamp_floor_utc('1d',ts)]
                                               values: [max(array_position(arr, a))]
                                               filter: null
                                                 PageFrame
@@ -991,10 +1070,11 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
                                 "explain select ts, min(insertion_point(arr, a)) as v from tango sample by 1d",
                                 """
                                         QUERY PLAN
-                                        Radix sort light
+                                        Encode sort light
                                           keys: [ts]
                                             Async Group By workers: 4
                                               keys: [ts]
+                                              keyFunctions: [timestamp_floor_utc('1d',ts)]
                                               values: [min(insertion_point(arr,a))]
                                               filter: null
                                                 PageFrame
@@ -1016,10 +1096,11 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
                                 "explain select ts, sum(array_count(arr)) as v from tango sample by 1d",
                                 """
                                         QUERY PLAN
-                                        Radix sort light
+                                        Encode sort light
                                           keys: [ts]
                                             Async Group By workers: 4
                                               keys: [ts]
+                                              keyFunctions: [timestamp_floor_utc('1d',ts)]
                                               values: [sum(array_count(arr))]
                                               filter: null
                                                 PageFrame
@@ -1041,10 +1122,11 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
                                 "explain select ts, sum(array_avg(arr)) as v from tango sample by 1d",
                                 """
                                         QUERY PLAN
-                                        Radix sort light
+                                        Encode sort light
                                           keys: [ts]
                                             Async Group By workers: 4
                                               keys: [ts]
+                                              keyFunctions: [timestamp_floor_utc('1d',ts)]
                                               values: [sum(array_avg(arr))]
                                               filter: null
                                                 PageFrame
@@ -1066,10 +1148,11 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
                                 "explain select ts, array_sum(array_cum_sum(arr)), sum(a) from tango sample by 1d order by ts, array_sum",
                                 """
                                         QUERY PLAN
-                                        Sort light
+                                        Encode sort light
                                           keys: [ts, array_sum]
                                             Async Group By workers: 4
                                               keys: [ts,array_sum]
+                                              keyFunctions: [timestamp_floor_utc('1d',ts),array_sum(array_cum_sum(arr))]
                                               values: [sum(a)]
                                               filter: null
                                                 PageFrame
@@ -1096,10 +1179,11 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
                                 "explain select ts, dot_product(arr, 2), first(a) from tango sample by 1d",
                                 """
                                         QUERY PLAN
-                                        Radix sort light
+                                        Encode sort light
                                           keys: [ts]
                                             Async Group By workers: 4
                                               keys: [ts,dot_product]
+                                              keyFunctions: [timestamp_floor_utc('1d',ts),dot_product(arr,2)]
                                               values: [first(a)]
                                               filter: null
                                                 PageFrame
@@ -1126,10 +1210,11 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
                                 "explain select ts, sum(array_sum((arr * 5 + 3 - 1)/2)) from tango sample by 1d",
                                 """
                                         QUERY PLAN
-                                        Radix sort light
+                                        Encode sort light
                                           keys: [ts]
                                             Async Group By workers: 4
                                               keys: [ts]
+                                              keyFunctions: [timestamp_floor_utc('1d',ts)]
                                               values: [sum(array_sum(arr*5+3-1/2))]
                                               filter: null
                                                 PageFrame
@@ -1151,10 +1236,11 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
                                 "explain select ts, sum(array_sum(arr[a::int:a::int + 2])) from tango sample by 1d",
                                 """
                                         QUERY PLAN
-                                        Radix sort light
+                                        Encode sort light
                                           keys: [ts]
                                             Async Group By workers: 4
                                               keys: [ts]
+                                              keyFunctions: [timestamp_floor_utc('1d',ts)]
                                               values: [sum(array_sum(arr[a::int:a::int+2]))]
                                               filter: null
                                                 PageFrame
@@ -1221,8 +1307,6 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
 
     @Test
     public void testParallelGroupByCastToSymbol() throws Exception {
-        // This query doesn't use filter, so we don't care about JIT.
-        Assume.assumeTrue(enableJitCompiler);
         // The table is non-partitioned.
         Assume.assumeFalse(convertToParquet);
         // This query shouldn't be executed in parallel,
@@ -1427,8 +1511,6 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
 
     @Test
     public void testParallelJsonKeyGroupBy() throws Exception {
-        // This query doesn't use filter, so we don't care about JIT.
-        Assume.assumeTrue(enableJitCompiler);
         testParallelJsonKeyGroupBy(
                 "SELECT json_extract(key, '.key')::varchar key, max(price) FROM tab ORDER BY key",
                 """
@@ -1638,9 +1720,32 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testParallelMixedAggregates() throws Exception {
+        // Mixes overridden computeKeyedBatch implementations (sum, bit_and) with
+        // unoverridden ones (vwap, count_distinct) so the per-function dispatch
+        // loop in aggregateNonShardedBatched interleaves both kinds.
+        testParallelGroupByAllTypes(
+                "SELECT asymbol, " +
+                        "  count(*) c, " +
+                        "  sum(along) s, " +
+                        "  bit_and(anint) ba, " +
+                        "  count_distinct(asymbol) cd, " +
+                        "  round(vwap(adouble, along), 8) v " +
+                        "FROM tab " +
+                        "ORDER BY asymbol",
+                """
+                        asymbol\tc\ts\tba\tcd\tv
+                        \t1313\t8533052294725352078\t0\t0\t0.48971622000000004
+                        CPSW\t656\t-3339393259942281199\t0\t1\t0.48453257
+                        HYRX\t672\t-1695211113209059335\t0\t1\t0.50913075
+                        PEHN\t700\t-4539869934149012034\t0\t1\t0.50871338
+                        VTJW\t659\t-7044062940833324693\t0\t1\t0.52406265
+                        """
+        );
+    }
+
+    @Test
     public void testParallelMultiJsonKeyGroupBy() throws Exception {
-        // This query doesn't use filter, so we don't care about JIT.
-        Assume.assumeTrue(enableJitCompiler);
         testParallelJsonKeyGroupBy(
                 "SELECT json_extract(key, '.key')::varchar key, date_trunc('month', ts) ts, max(price) FROM tab ORDER BY key, ts",
                 """
@@ -1661,8 +1766,6 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
 
     @Test
     public void testParallelMultiKeyGroupBy1() throws Exception {
-        // This query doesn't use filter, so we don't care about JIT.
-        Assume.assumeTrue(enableJitCompiler);
         testParallelMultiSymbolKeyGroupBy(
                 "SELECT key1, key2, avg(value), sum(colTop) FROM tab ORDER BY key1, key2",
                 """
@@ -1693,8 +1796,6 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
 
     @Test
     public void testParallelMultiKeyGroupBy2() throws Exception {
-        // This query doesn't use filter, so we don't care about JIT.
-        Assume.assumeTrue(enableJitCompiler);
         testParallelMultiSymbolKeyGroupBy(
                 "SELECT key1, key2, key3, avg(value), sum(colTop) FROM tab ORDER BY key1, key2, key3",
                 """
@@ -1765,8 +1866,6 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
 
     @Test
     public void testParallelMultiKeyGroupBySubQuery() throws Exception {
-        // This query doesn't use filter, so we don't care about JIT.
-        Assume.assumeTrue(enableJitCompiler);
         testParallelMultiSymbolKeyGroupBy(
                 "SELECT key1, key2, avg + sum from (" +
                         "  SELECT key1, key2, avg(value), sum(colTop) FROM tab" +
@@ -1829,8 +1928,6 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
 
     @Test
     public void testParallelMultiKeyGroupByWithLimit() throws Exception {
-        // This query doesn't use filter, so we don't care about JIT.
-        Assume.assumeTrue(enableJitCompiler);
         testParallelMultiSymbolKeyGroupBy(
                 "SELECT key1, key2, avg(value), sum(colTop) FROM tab ORDER BY key1, key2 LIMIT 3",
                 """
@@ -1882,8 +1979,6 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
 
     @Test
     public void testParallelMultiKeyGroupByWithNoFunctions() throws Exception {
-        // This query doesn't use filter, so we don't care about JIT.
-        Assume.assumeTrue(enableJitCompiler);
         testParallelMultiSymbolKeyGroupBy(
                 "SELECT key1, key2 FROM tab GROUP BY key1, key2 ORDER BY key1, key2",
                 """
@@ -1952,8 +2047,6 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
 
     @Test
     public void testParallelNonKeyedGroupBy() throws Exception {
-        // This query doesn't use filter, so we don't care about JIT.
-        Assume.assumeTrue(enableJitCompiler);
         testParallelNonKeyedGroupBy(
                 "SELECT vwap(price, quantity), sum(colTop) FROM tab",
                 """
@@ -1965,9 +2058,6 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
 
     @Test
     public void testParallelNonKeyedGroupByConcurrent() throws Exception {
-        // This query doesn't use filter, so we don't care about JIT.
-        Assume.assumeTrue(enableJitCompiler);
-
         final int numOfThreads = 8;
         final int numOfIterations = 50;
         final String query = "SELECT avg(value), sum(colTop) FROM tab";
@@ -2038,8 +2128,6 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
 
     @Test
     public void testParallelNonKeyedGroupByConstant() throws Exception {
-        // This query doesn't use filter, so we don't care about JIT.
-        Assume.assumeTrue(enableJitCompiler);
         testParallelNonKeyedGroupBy(
                 "SELECT count(*) FROM tab GROUP BY 1+2",
                 """
@@ -2194,55 +2282,50 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
 
     @Test
     public void testParallelNonKeyedGroupByWithBasicDoubleFunctions() throws Exception {
-        Assume.assumeFalse(enableJitCompiler);
         testParallelGroupByAllTypes(
-                "SELECT min(adouble), max(adouble), round(avg(adouble)*count(adouble)), round(sum(adouble)), first(adouble), last(adouble) FROM tab",
+                "SELECT min(adouble), max(adouble), round(avg(adouble), 1), count(adouble), round(sum(adouble)), first(adouble), last(adouble) FROM tab",
                 """
-                        min\tmax\tround\tround1\tfirst\tlast
-                        2.0456303844185175E-4\t0.9999182937007105\t1679.0\t1679.0\t0.8799634725391621\t0.15322992873721464
+                        min\tmax\tround\tcount\tround1\tfirst\tlast
+                        2.0456303844185175E-4\t0.9999182937007105\t0.5\t3334\t1679.0\t0.8799634725391621\t0.15322992873721464
                         """
         );
     }
 
     @Test
     public void testParallelNonKeyedGroupByWithBasicFloatFunctions() throws Exception {
-        Assume.assumeFalse(enableJitCompiler);
         testParallelGroupByAllTypes(
-                "SELECT min(afloat), max(afloat), round(avg(afloat)*count(afloat)), round(sum(afloat)), first(afloat), last(afloat) FROM tab",
+                "SELECT min(afloat), max(afloat), round(avg(afloat), 1), count(afloat), round(sum(afloat)), first(afloat), last(afloat) FROM tab",
                 """
-                        min\tmax\tround\tround1\tfirst\tlast
-                        1.6343594E-4\t0.9997715\t1665.0\t1665.0\t0.87567717\t0.030083895
+                        min\tmax\tround\tcount\tround1\tfirst\tlast
+                        1.6343594E-4\t0.9997715\t0.5\t3344\t1665.0\t0.87567717\t0.030083895
                         """
         );
     }
 
     @Test
     public void testParallelNonKeyedGroupByWithBasicIntFunctions() throws Exception {
-        Assume.assumeFalse(enableJitCompiler);
         testParallelGroupByAllTypes(
-                "SELECT min(anint), max(anint), round(avg(anint)*count(anint)), sum(anint), first(anint), last(anint) FROM tab",
+                "SELECT min(anint), max(anint), round(avg(anint), 4), count(anint), sum(anint), first(anint), last(anint) FROM tab",
                 """
-                        min\tmax\tround\tsum\tfirst\tlast
-                        -2147365666\t2146394077\t-4.9631313424E10\t-49631313424\t-85170055\t1033747429
+                        min\tmax\tround\tcount\tsum\tfirst\tlast
+                        -2147365666\t2146394077\t-1.2407828356E7\t4000\t-49631313424\t-85170055\t1033747429
                         """
         );
     }
 
     @Test
     public void testParallelNonKeyedGroupByWithBasicLongFunctions() throws Exception {
-        Assume.assumeFalse(enableJitCompiler);
         testParallelGroupByAllTypes(
-                "SELECT min(along), max(along), round(avg(along)*count(along)), sum(along), first(along), last(along) FROM tab",
+                "SELECT min(along), max(along), round(avg(along), 4), count(along), sum(along), first(along), last(along) FROM tab",
                 """
-                        min\tmax\tround\tsum\tfirst\tlast
-                        -9220264229979566148\t9222440717001210457\t-9.223372036854776E18\t-8085484953408325183\t8416773233910814357\t6812734169481155056
+                        min\tmax\tround\tcount\tsum\tfirst\tlast
+                        -9220264229979566148\t9222440717001210457\t-9.223372036854776E14\t4000\t-8085484953408325183\t8416773233910814357\t6812734169481155056
                         """
         );
     }
 
     @Test
     public void testParallelNonKeyedGroupByWithBasicShortFunctions() throws Exception {
-        Assume.assumeFalse(enableJitCompiler);
         testParallelGroupByAllTypes(
                 "SELECT min(ashort), max(ashort), round(avg(ashort)), sum(ashort), first(ashort), last(ashort) FROM tab",
                 """
@@ -2292,9 +2375,18 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testParallelNonKeyedGroupByWithColumnTopsAndFirstLast() throws Exception {
+        testParallelNonKeyedGroupBy(
+                "SELECT first(price), last(price), first(colTop), last(colTop), first_not_null(colTop), last_not_null(colTop) FROM tab",
+                """
+                        first\tlast\tfirst1\tlast1\tfirst_not_null\tlast_not_null
+                        1.0\t4050.0\tnull\t4050.0\t51.0\t4050.0
+                        """
+        );
+    }
+
+    @Test
     public void testParallelNonKeyedGroupByWithCountDistinctIntFunction() throws Exception {
-        // This query doesn't use filter, so we don't care about JIT.
-        Assume.assumeTrue(enableJitCompiler);
         testParallelGroupByAllTypes(
                 "SELECT count_distinct(along) FROM tab",
                 """
@@ -2306,8 +2398,6 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
 
     @Test
     public void testParallelNonKeyedGroupByWithCountDistinctLongFunction() throws Exception {
-        // This query doesn't use filter, so we don't care about JIT.
-        Assume.assumeTrue(enableJitCompiler);
         testParallelGroupByAllTypes(
                 "SELECT count_distinct(adate) FROM tab",
                 """
@@ -2319,8 +2409,6 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
 
     @Test
     public void testParallelNonKeyedGroupByWithCountDistinctSymbolFunction1() throws Exception {
-        // This query doesn't use filter, so we don't care about JIT.
-        Assume.assumeTrue(enableJitCompiler);
         testParallelGroupByAllTypes(
                 "SELECT count_distinct(asymbol) FROM tab",
                 """
@@ -2332,8 +2420,6 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
 
     @Test
     public void testParallelNonKeyedGroupByWithCountDistinctSymbolFunction2() throws Exception {
-        // This query doesn't use filter, so we don't care about JIT.
-        Assume.assumeTrue(enableJitCompiler);
         testParallelGroupByAllTypes(
                 "SELECT count_distinct(asymbol), first(asymbol) FROM tab",
                 """
@@ -2345,8 +2431,6 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
 
     @Test
     public void testParallelNonKeyedGroupByWithCountDistinctTimestampFunction() throws Exception {
-        // This query doesn't use filter, so we don't care about JIT.
-        Assume.assumeTrue(enableJitCompiler);
         testParallelGroupByAllTypes(
                 "SELECT count_distinct(ts) FROM tab",
                 """
@@ -2368,9 +2452,19 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testParallelNonKeyedGroupByWithHybridBatchPath() throws Exception {
+        // first(anint) is batch-eligible, last(anint + 1) is not.
+        testParallelGroupByAllTypes(
+                "SELECT first(anint), last(anint), last(anint + 1) FROM tab",
+                """
+                        first\tlast\tlast1
+                        -85170055\t1033747429\t1033747430
+                        """
+        );
+    }
+
+    @Test
     public void testParallelNonKeyedGroupByWithMinMaxIntExpressionFunction() throws Exception {
-        // This query doesn't use filter, so we don't care about JIT.
-        Assume.assumeTrue(enableJitCompiler);
         testParallelGroupByAllTypes(
                 "SELECT max(length(asymbol)), max(length(astring)) FROM tab",
                 """
@@ -2382,8 +2476,6 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
 
     @Test
     public void testParallelNonKeyedGroupByWithMinMaxStrFunction() throws Exception {
-        // This query doesn't use filter, so we don't care about JIT.
-        Assume.assumeTrue(enableJitCompiler);
         testParallelStringAndVarcharKeyGroupBy(
                 "SELECT min(key), max(key) FROM tab",
                 """
@@ -2395,8 +2487,6 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
 
     @Test
     public void testParallelNonKeyedGroupByWithMinMaxSymbolFunction() throws Exception {
-        // This query doesn't use filter, so we don't care about JIT.
-        Assume.assumeTrue(enableJitCompiler);
         testParallelSymbolKeyGroupBy(
                 "SELECT min(key), max(key) FROM tab",
                 """
@@ -2409,8 +2499,6 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
 
     @Test
     public void testParallelNonKeyedGroupByWithMultipleCountDistinctFunctions() throws Exception {
-        // This query doesn't use filter, so we don't care about JIT.
-        Assume.assumeTrue(enableJitCompiler);
         testParallelGroupByAllTypes(
                 "SELECT count_distinct(ashort), count_distinct(anint), count_distinct(along) FROM tab",
                 """
@@ -2422,8 +2510,6 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
 
     @Test
     public void testParallelNonKeyedGroupByWithNestedCaseFunction() throws Exception {
-        // This query doesn't use filter, so we don't care about JIT.
-        Assume.assumeTrue(enableJitCompiler);
         testParallelStringAndVarcharKeyGroupBy(
                 "SELECT sum(CASE WHEN (key = 'k0') THEN 1 ELSE 0 END) FROM tab",
                 """
@@ -2528,8 +2614,6 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
 
     @Test
     public void testParallelNonKeyedGroupByWithTwoApproxCountDistinctIPv4Functions() throws Exception {
-        // This query doesn't use filter, so we don't care about JIT.
-        Assume.assumeTrue(enableJitCompiler);
         testParallelGroupByAllTypes(
                 "SELECT " +
                         "count_distinct(anint::ipv4), " +
@@ -2546,8 +2630,6 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
 
     @Test
     public void testParallelNonKeyedGroupByWithTwoApproxCountDistinctIntFunctions() throws Exception {
-        // This query doesn't use filter, so we don't care about JIT.
-        Assume.assumeTrue(enableJitCompiler);
         testParallelGroupByAllTypes(
                 "SELECT " +
                         "count_distinct(anint), " +
@@ -2564,8 +2646,6 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
 
     @Test
     public void testParallelNonKeyedGroupByWithTwoApproxCountDistinctLongFunctions() throws Exception {
-        // This query doesn't use filter, so we don't care about JIT.
-        Assume.assumeTrue(enableJitCompiler);
         testParallelGroupByAllTypes(
                 "SELECT " +
                         "count_distinct(along), " +
@@ -2582,8 +2662,6 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
 
     @Test
     public void testParallelNonKeyedGroupByWithTwoCountDistinctLongFunctions() throws Exception {
-        // This query doesn't use filter, so we don't care about JIT.
-        Assume.assumeTrue(enableJitCompiler);
         testParallelGroupByAllTypes(
                 "SELECT count_distinct(along), count_distinct(along % 2) FROM tab",
                 """
@@ -2616,8 +2694,6 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
 
     @Test
     public void testParallelOperationKeyGroupBy() throws Exception {
-        // This query doesn't use filter, so we don't care about JIT.
-        Assume.assumeTrue(enableJitCompiler);
         testParallelSymbolKeyGroupBy(
                 "SELECT ((key is not null) and (colTop is not null)) key, sum(colTop) FROM tab ORDER BY key",
                 """
@@ -2757,8 +2833,6 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
 
     @Test
     public void testParallelShortKeyGroupBy() throws Exception {
-        // This query doesn't use filter, so we don't care about JIT.
-        Assume.assumeTrue(enableJitCompiler);
         testParallelGroupByAllTypes(
                 "SELECT ashort, min(along), max(along), min(anint), max(anint) FROM tab ORDER BY ashort LIMIT 10",
                 """
@@ -2779,8 +2853,6 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
 
     @Test
     public void testParallelShortKeyGroupBy2() throws Exception {
-        // This query doesn't use filter, so we don't care about JIT.
-        Assume.assumeTrue(enableJitCompiler);
         testParallelGroupByAllTypes(
                 "SELECT ashort, max(along) - min(along) delta FROM tab ORDER BY ashort LIMIT 10",
                 """
@@ -2997,8 +3069,6 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
 
     @Test
     public void testParallelStringAndVarcharKeyGroupBy() throws Exception {
-        // This query doesn't use filter, so we don't care about JIT.
-        Assume.assumeTrue(enableJitCompiler);
         testParallelStringAndVarcharKeyGroupBy(
                 "SELECT key, avg(value), sum(colTop), count() FROM tab ORDER BY key",
                 """
@@ -3014,8 +3084,6 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
 
     @Test
     public void testParallelStringAndVarcharKeyGroupByWithLimit() throws Exception {
-        // This query doesn't use filter, so we don't care about JIT.
-        Assume.assumeTrue(enableJitCompiler);
         testParallelStringAndVarcharKeyGroupBy(
                 "SELECT key, avg(value), sum(colTop), first(ts)::long c FROM tab ORDER BY c DESC LIMIT 2",
                 """
@@ -3028,9 +3096,6 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
 
     @Test
     public void testParallelStringKeyGroupByConcurrent() throws Exception {
-        // This query doesn't use filter, so we don't care about JIT.
-        Assume.assumeTrue(enableJitCompiler);
-
         final int numOfThreads = 8;
         final int numOfIterations = 50;
         final String query = "SELECT key, avg + sum from (" +
@@ -3174,8 +3239,6 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
 
     @Test
     public void testParallelStringKeyGroupBySubQuery() throws Exception {
-        // This query doesn't use filter, so we don't care about JIT.
-        Assume.assumeTrue(enableJitCompiler);
         testParallelStringAndVarcharKeyGroupBy(
                 "SELECT key, avg + sum from (" +
                         "SELECT key, avg(value), sum(colTop) FROM tab" +
@@ -3259,8 +3322,6 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
 
     @Test
     public void testParallelStringKeyGroupByWithCountDistinctIntFunction() throws Exception {
-        // This query doesn't use filter, so we don't care about JIT.
-        Assume.assumeTrue(enableJitCompiler);
         testParallelGroupByAllTypes(
                 "SELECT key, count_distinct(anint), count_distinct(anint + 42) FROM tab ORDER BY key",
                 """
@@ -3276,8 +3337,6 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
 
     @Test
     public void testParallelStringKeyGroupByWithCountDistinctLongFunction() throws Exception {
-        // This query doesn't use filter, so we don't care about JIT.
-        Assume.assumeTrue(enableJitCompiler);
         testParallelGroupByAllTypes(
                 "SELECT key, count_distinct(along) FROM tab ORDER BY key",
                 """
@@ -3330,8 +3389,6 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
 
     @Test
     public void testParallelStringKeyGroupByWithLimit() throws Exception {
-        // This query doesn't use filter, so we don't care about JIT.
-        Assume.assumeTrue(enableJitCompiler);
         testParallelStringAndVarcharKeyGroupBy(
                 "SELECT key, avg(value), sum(colTop) FROM tab ORDER BY key LIMIT 3",
                 """
@@ -3352,8 +3409,6 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
 
     @Test
     public void testParallelStringKeyGroupByWithMinMaxStrFunction() throws Exception {
-        // This query doesn't use filter, so we don't care about JIT.
-        Assume.assumeTrue(enableJitCompiler);
         testParallelGroupByAllTypes(
                 "SELECT key, min(astring), max(astring) FROM tab ORDER BY key",
                 """
@@ -3369,8 +3424,6 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
 
     @Test
     public void testParallelStringKeyGroupByWithMinMaxSymbolFunction() throws Exception {
-        // This query doesn't use filter, so we don't care about JIT.
-        Assume.assumeTrue(enableJitCompiler);
         testParallelGroupByAllTypes(
                 "SELECT key, min(asymbol), max(asymbol) FROM tab ORDER BY key",
                 """
@@ -3462,8 +3515,6 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
 
     @Test
     public void testParallelStringKeyGroupByWithTwoCountDistinctLongFunctions() throws Exception {
-        // This query doesn't use filter, so we don't care about JIT.
-        Assume.assumeTrue(enableJitCompiler);
         testParallelGroupByAllTypes(
                 "SELECT key, count_distinct(along), count_distinct(abs(along) % 10) FROM tab ORDER BY key",
                 """
@@ -3520,8 +3571,6 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
 
     @Test
     public void testParallelStringKeyedFirstFunction() throws Exception {
-        // This query doesn't use filter, so we don't care about JIT.
-        Assume.assumeTrue(enableJitCompiler);
         testParallelGroupByAllTypes(
                 "SELECT key, " +
                         " first(aboolean) aboolean, first(abyte) abyte, first(ageobyte) ageobyte, " +
@@ -3544,8 +3593,6 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
 
     @Test
     public void testParallelStringKeyedFirstFunctionFuzz() throws Exception {
-        // This query doesn't use filter, so we don't care about JIT.
-        Assume.assumeTrue(enableJitCompiler);
         testFirstLastFunctionFuzz(
                 "SELECT key, " +
                         " first(aboolean) aboolean, first(abyte) abyte, first(ageobyte) ageobyte, " +
@@ -3560,8 +3607,6 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
 
     @Test
     public void testParallelStringKeyedFirstNotNullFunction() throws Exception {
-        // This query doesn't use filter, so we don't care about JIT.
-        Assume.assumeTrue(enableJitCompiler);
         testParallelGroupByAllTypes(
                 "SELECT key, " +
                         " first_not_null(ageobyte) ageobyte, " +
@@ -3584,8 +3629,6 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
 
     @Test
     public void testParallelStringKeyedFirstNotNullFunctionFuzz() throws Exception {
-        // This query doesn't use filter, so we don't care about JIT.
-        Assume.assumeTrue(enableJitCompiler);
         testFirstLastFunctionFuzz(
                 "SELECT key, " +
                         " first_not_null(ageobyte) ageobyte, " +
@@ -3600,8 +3643,6 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
 
     @Test
     public void testParallelStringKeyedGroupByWithShortFunctions() throws Exception {
-        // This query doesn't use filter, so we don't care about JIT.
-        Assume.assumeTrue(enableJitCompiler);
         testParallelGroupByAllTypes(
                 "SELECT key, sum(ashort), avg(ashort), min(ashort), max(ashort) FROM tab ORDER BY key",
                 """
@@ -3635,8 +3676,6 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
 
     @Test
     public void testParallelStringKeyedLastFunction() throws Exception {
-        // This query doesn't use filter, so we don't care about JIT.
-        Assume.assumeTrue(enableJitCompiler);
         testParallelGroupByAllTypes(
                 "SELECT key, " +
                         " last(aboolean) aboolean, last(abyte) abyte, last(ageobyte) ageobyte, " +
@@ -3659,8 +3698,6 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
 
     @Test
     public void testParallelStringKeyedLastFunctionFuzz() throws Exception {
-        // This query doesn't use filter, so we don't care about JIT.
-        Assume.assumeTrue(enableJitCompiler);
         testFirstLastFunctionFuzz(
                 "SELECT key, " +
                         " last(aboolean) aboolean, last(abyte) abyte, last(ageobyte) ageobyte, " +
@@ -3675,8 +3712,6 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
 
     @Test
     public void testParallelStringKeyedLastNotNullFunction() throws Exception {
-        // This query doesn't use filter, so we don't care about JIT.
-        Assume.assumeTrue(enableJitCompiler);
         testParallelGroupByAllTypes(
                 "SELECT key, " +
                         " last_not_null(ageobyte) ageobyte, " +
@@ -3699,8 +3734,6 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
 
     @Test
     public void testParallelStringKeyedLastNotNullFunctionFuzz() throws Exception {
-        // This query doesn't use filter, so we don't care about JIT.
-        Assume.assumeTrue(enableJitCompiler);
         testFirstLastFunctionFuzz(
                 "SELECT key, " +
                         " last_not_null(ageobyte) ageobyte, " +
@@ -3715,8 +3748,6 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
 
     @Test
     public void testParallelSymbolKeyGroupBy() throws Exception {
-        // This query doesn't use filter, so we don't care about JIT.
-        Assume.assumeTrue(enableJitCompiler);
         testParallelSymbolKeyGroupBy(
                 "SELECT key, vwap(price, quantity), sum(colTop) FROM tab ORDER BY key",
                 """
@@ -3747,8 +3778,6 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
 
     @Test
     public void testParallelSymbolKeyGroupBySubQuery() throws Exception {
-        // This query doesn't use filter, so we don't care about JIT.
-        Assume.assumeTrue(enableJitCompiler);
         testParallelSymbolKeyGroupBy(
                 "SELECT key, vwap + sum FROM (" +
                         "  SELECT key, vwap(price, quantity), sum(colTop) FROM tab" +
@@ -3767,8 +3796,6 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
 
     @Test
     public void testParallelSymbolKeyGroupByWithLimit() throws Exception {
-        // This query doesn't use filter, so we don't care about JIT.
-        Assume.assumeTrue(enableJitCompiler);
         testParallelSymbolKeyGroupBy(
                 "SELECT key, vwap(price, quantity), sum(colTop) FROM tab ORDER BY key LIMIT 3",
                 """
@@ -3791,8 +3818,6 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
 
     @Test
     public void testParallelSymbolKeyGroupByWithMinMaxStrFunction() throws Exception {
-        // This query doesn't use filter, so we don't care about JIT.
-        Assume.assumeTrue(enableJitCompiler);
         testParallelMultiSymbolKeyGroupBy(
                 "SELECT key1, min(key2), max(key2) FROM tab ORDER BY key1",
                 """
@@ -3825,8 +3850,6 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
 
     @Test
     public void testParallelSymbolKeyGroupByWithNoFunctions() throws Exception {
-        // This query doesn't use filter, so we don't care about JIT.
-        Assume.assumeTrue(enableJitCompiler);
         testParallelSymbolKeyGroupBy(
                 "SELECT key FROM tab GROUP BY key ORDER BY key",
                 """
@@ -3942,9 +3965,32 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testParallelTimestampKeyGroupBy() throws Exception {
+        // Single-column TIMESTAMP key — Unordered8Map probeBatchUnsafe direct-column path.
+        testParallelTimestampAndDateKeyGroupBy(
+                "SELECT ts_key, count() c, sum(value) s FROM tab ORDER BY ts_key",
+                """
+                        ts_key\tc\ts
+                        1970-01-01T00:00:00.000000Z\t800\t1602000
+                        1970-01-01T00:00:01.000000Z\t800\t1598800
+                        1970-01-01T00:00:02.000000Z\t800\t1599600
+                        1970-01-01T00:00:03.000000Z\t800\t1600400
+                        1970-01-01T00:00:04.000000Z\t800\t1601200
+                        """,
+                "SELECT date_key, count() c, sum(value) s FROM tab ORDER BY date_key",
+                """
+                        date_key\tc\ts
+                        1970-01-01T00:00:00.000Z\t800\t1602000
+                        1970-01-01T00:00:01.000Z\t800\t1598800
+                        1970-01-01T00:00:02.000Z\t800\t1599600
+                        1970-01-01T00:00:03.000Z\t800\t1600400
+                        1970-01-01T00:00:04.000Z\t800\t1601200
+                        """
+        );
+    }
+
+    @Test
     public void testParallelToStrFunctionKeyGroupBy() throws Exception {
-        // This query doesn't use filter, so we don't care about JIT.
-        Assume.assumeTrue(enableJitCompiler);
         testParallelSymbolKeyGroupBy(
                 "SELECT to_str(ts, 'yyyy-MM-dd') ts, max(price) FROM tab ORDER BY ts LIMIT 5",
                 """
@@ -3996,10 +4042,6 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
 
     @Test
     public void testStringKeyGroupByEmptyTable() throws Exception {
-        // This query doesn't use filter, so we don't care about JIT.
-        Assume.assumeTrue(enableJitCompiler);
-        // The table is empty, so there is nothing to convert.
-        Assume.assumeFalse(convertToParquet);
         assertMemoryLeak(() -> {
             final WorkerPool pool = new WorkerPool(() -> 4);
             TestUtils.execute(
@@ -4531,8 +4573,6 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
     }
 
     private void testParallelRostiGroupBy(String query, String expected) throws Exception {
-        // Rosti doesn't support filter, so we don't care about JIT.
-        Assume.assumeTrue(enableJitCompiler);
         assertMemoryLeak(() -> {
             final WorkerPool pool = new WorkerPool(() -> 4);
             TestUtils.execute(
@@ -4693,6 +4733,43 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
                             execute(compiler, "alter table tab convert partition to parquet where ts >= 0", sqlExecutionContext);
                         }
                         assertQueriesAndPlans(engine, sqlExecutionContext, queriesExpectedResultsAndPlans);
+                    },
+                    configuration,
+                    LOG
+            );
+        });
+    }
+
+    private void testParallelTimestampAndDateKeyGroupBy(String... queriesAndExpectedResults) throws Exception {
+        assertMemoryLeak(() -> {
+            final WorkerPool pool = new WorkerPool(() -> 4);
+            TestUtils.execute(
+                    pool,
+                    (engine, compiler, sqlExecutionContext) -> {
+                        sqlExecutionContext.setJitMode(enableJitCompiler ? SqlJitMode.JIT_MODE_ENABLED : SqlJitMode.JIT_MODE_DISABLED);
+
+                        engine.execute(
+                                "CREATE TABLE tab (" +
+                                        "  ts TIMESTAMP," +
+                                        "  ts_key TIMESTAMP," +
+                                        "  date_key DATE," +
+                                        "  value LONG" +
+                                        ") TIMESTAMP (ts) PARTITION BY DAY",
+                                sqlExecutionContext
+                        );
+                        engine.execute(
+                                "insert into tab select " +
+                                        "(x * 864000000)::timestamp, " +
+                                        "((x % 5) * 1000000)::timestamp, " +
+                                        "((x % 5) * 1000)::date, " +
+                                        "x " +
+                                        "from long_sequence(" + ROW_COUNT + ")",
+                                sqlExecutionContext
+                        );
+                        if (convertToParquet) {
+                            execute(compiler, "alter table tab convert partition to parquet where ts >= 0", sqlExecutionContext);
+                        }
+                        assertQueries(engine, sqlExecutionContext, queriesAndExpectedResults);
                     },
                     configuration,
                     LOG

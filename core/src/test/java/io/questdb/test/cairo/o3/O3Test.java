@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -27,12 +27,14 @@ package io.questdb.test.cairo.o3;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.IndexType;
 import io.questdb.cairo.MicrosTimestampDriver;
 import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.TableWriterAPI;
 import io.questdb.cairo.TimestampDriver;
 import io.questdb.cairo.TxnScoreboard;
+import io.questdb.cairo.security.AllowAllSecurityContext;
 import io.questdb.cairo.sql.InsertOperation;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
@@ -162,7 +164,7 @@ public class O3Test extends AbstractO3Test {
 
                                     CharSequence newCol = "price" + i;
                                     short colType = columnTypes[i % columnTypes.length];
-                                    writer.addColumn(newCol, colType);
+                                    writer.addColumn(newCol, colType, AllowAllSecurityContext.INSTANCE);
                                     newCols.add(newCol);
                                     newColTypes.add(colType);
 
@@ -1906,7 +1908,7 @@ public class O3Test extends AbstractO3Test {
             TimestampDriver driver = ColumnType.getTimestampDriver(w.getTimestampType());
             TableWriter.Row row;
             // lets add column
-            w.addColumn("v", ColumnType.DOUBLE);
+            w.addColumn("v", ColumnType.DOUBLE, AllowAllSecurityContext.INSTANCE);
 
             // this row goes into a non-recent partition
             // triggering O3
@@ -8703,10 +8705,11 @@ public class O3Test extends AbstractO3Test {
     ) throws SqlException, NumericException {
         CairoConfiguration configuration = engine.getConfiguration();
         TableModel tableModel = new TableModel(configuration, "x", PartitionBy.DAY);
+        Rnd rnd = TestUtils.generateRandom(LOG);
         tableModel
                 .col("id", ColumnType.LONG)
                 .col("str", ColumnType.STRING)
-                .col("sym", ColumnType.SYMBOL).indexed(true, 2)
+                .col("sym", ColumnType.SYMBOL).indexed(true, 2, rnd.nextBoolean() ? IndexType.POSTING : IndexType.POSTING)
                 .timestamp("ts", ColumnType.typeOf(timestampTypeName));
 
         TestUtils.createPopulateTable(

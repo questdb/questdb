@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -24,7 +24,9 @@
 
 package io.questdb.griffin.engine.ops;
 
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.IndexType;
 import io.questdb.cairo.OperationCodes;
 import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.TableColumnMetadata;
@@ -41,6 +43,7 @@ import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.model.CreateTableColumnModel;
 import io.questdb.mp.SCSequence;
 import io.questdb.std.Chars;
+import io.questdb.std.IntList;
 import io.questdb.std.LongList;
 import io.questdb.std.LowerCaseCharSequenceIntHashMap;
 import io.questdb.std.LowerCaseCharSequenceObjHashMap;
@@ -66,12 +69,16 @@ public class CreateTableOperationImpl implements CreateTableOperation {
     // wildcard usage, e.g. create x as select * from y. When "y" changes, such as via
     // drop column, column indices will shift.
     private final LowerCaseCharSequenceObjHashMap<TableColumnMetadata> augmentedColumnMetadata = new LowerCaseCharSequenceObjHashMap<>();
+    private final LowerCaseCharSequenceObjHashMap<ObjList<CharSequence>> augmentedCoveringNames = new LowerCaseCharSequenceObjHashMap<>();
+    private final boolean autoIncludeTimestamp;
     private final LowerCaseCharSequenceIntHashMap colNameToCastClausePos = new LowerCaseCharSequenceIntHashMap();
     private final LowerCaseCharSequenceIntHashMap colNameToDedupClausePos = new LowerCaseCharSequenceIntHashMap();
     private final LowerCaseCharSequenceIntHashMap colNameToIndexClausePos = new LowerCaseCharSequenceIntHashMap();
     private final LongList columnBits = new LongList();
     private final ObjList<String> columnNames = new ObjList<>();
+    private final ObjList<IntList> coveringColumnIndicesList = new ObjList<>();
     private final CreateTableOperationFuture future = new CreateTableOperationFuture();
+    private final IntList parquetEncodingConfigs = new IntList();
     private final String selectText;
     private final String sqlText;
     private long batchO3MaxLag;
@@ -111,6 +118,7 @@ public class CreateTableOperationImpl implements CreateTableOperation {
             String sqlText,
             boolean needRegister
     ) {
+        this.autoIncludeTimestamp = false;
         this.selectText = selectText;
         this.tableName = tableName;
         this.partitionBy = partitionBy;
@@ -139,6 +147,7 @@ public class CreateTableOperationImpl implements CreateTableOperation {
         this.partitionByPosition = partitionByPosition;
         this.volumeAlias = volumeAlias;
         this.volumePosition = volumePosition;
+        this.autoIncludeTimestamp = false;
         this.likeTableName = likeTableName;
         this.likeTableNamePosition = likeTableNamePosition;
         this.ignoreIfExists = ignoreIfExists;
@@ -166,8 +175,10 @@ public class CreateTableOperationImpl implements CreateTableOperation {
             int maxUncommittedRows,
             int ttlHoursOrMonths,
             int ttlPosition,
-            boolean walEnabled
-    ) {
+            boolean walEnabled,
+            boolean autoIncludeTimestamp
+    ) throws SqlException {
+        this.autoIncludeTimestamp = autoIncludeTimestamp;
         this.sqlText = sqlText;
         this.tableName = tableName;
         this.tableNamePosition = tableNamePosition;
@@ -180,15 +191,26 @@ public class CreateTableOperationImpl implements CreateTableOperation {
             CharSequence colName = columnNames.get(i);
             this.columnNames.add(Chars.toString(colName));
             CreateTableColumnModel model = createColumnModelMap.get(colName);
+            ObjList<CharSequence> coverNames = model.getCoveringColumnNames();
+            // Set the COVERING flag whenever resolveCoveringColumnIndices
+            // will produce a non-empty list — that is, either the user gave
+            // an INCLUDE clause, or auto-include applies (POSTING index on
+            // a column other than the designated timestamp).
+            boolean hasCovering = coverNames.size() > 0
+                    || (autoIncludeTimestamp && timestampIndex >= 0 && i != timestampIndex
+                    && IndexType.isPosting(model.getIndexType()));
             addColumnBits(
                     model.getColumnType(),
                     model.getSymbolCacheFlag(),
                     model.getSymbolCapacity(),
-                    model.isIndexed(),
+                    model.getIndexType(),
                     model.getIndexValueBlockSize(),
-                    model.isDedupKey()
+                    model.isDedupKey(),
+                    hasCovering,
+                    model.getParquetEncodingConfig()
             );
         }
+        resolveCoveringColumnIndices(columnNames, createColumnModelMap, timestampIndex);
         // this is a vanilla "create table" with fixed columns and fixed timestamp index
         this.timestampColumnName = null;
         this.timestampColumnNamePosition = 0;
@@ -255,8 +277,10 @@ public class CreateTableOperationImpl implements CreateTableOperation {
             @Transient LowerCaseCharSequenceObjHashMap<CreateTableColumnModel> createColumnModelMap,
             long batchSize,
             long batchO3MaxLag,
-            int tableKind
+            int tableKind,
+            boolean autoIncludeTimestamp
     ) {
+        this.autoIncludeTimestamp = autoIncludeTimestamp;
         this.sqlText = sqlText;
         this.tableName = tableName;
         this.tableNamePosition = tableNamePosition;
@@ -316,10 +340,6 @@ public class CreateTableOperationImpl implements CreateTableOperation {
         return batchSize;
     }
 
-    public void setBatchSize(long batchSize) {
-        this.batchSize = batchSize;
-    }
-
     @Override
     public int getColumnCount() {
         return columnNames.size();
@@ -341,8 +361,21 @@ public class CreateTableOperationImpl implements CreateTableOperation {
     }
 
     @Override
+    public IntList getCoveringColumnIndices(int index) {
+        if (index < coveringColumnIndicesList.size()) {
+            return coveringColumnIndicesList.getQuick(index);
+        }
+        return null;
+    }
+
+    @Override
     public int getIndexBlockCapacity(int index) {
         return getHighAt(index * 2 + 1);
+    }
+
+    @Override
+    public byte getIndexType(int index) {
+        return (byte) ((getLowAt(index * 2 + 1) & COLUMN_FLAG_INDEX_TYPE_MASK) >> COLUMN_FLAG_INDEX_TYPE_SHIFT);
     }
 
     @Override
@@ -373,6 +406,11 @@ public class CreateTableOperationImpl implements CreateTableOperation {
     @Override
     public OperationFuture getOperationFuture() {
         return future;
+    }
+
+    @Override
+    public int getParquetEncodingConfig(int index) {
+        return parquetEncodingConfigs.getQuick(index);
     }
 
     @Override
@@ -464,6 +502,7 @@ public class CreateTableOperationImpl implements CreateTableOperation {
         colNameToIndexClausePos.clear();
         colNameToCastClausePos.clear();
         augmentedColumnMetadata.clear();
+        augmentedCoveringNames.clear();
         final ObjList<CharSequence> colNames = createColumnModelMap.keys();
         for (int i = 0, n = colNames.size(); i < n; i++) {
             final CharSequence columnName = colNames.get(i);
@@ -485,7 +524,7 @@ public class CreateTableOperationImpl implements CreateTableOperation {
             final TableColumnMetadata columnMetadata = new TableColumnMetadata(
                     columnNameStr,
                     model.getColumnType(),
-                    model.isIndexed(),
+                    model.getIndexType(),
                     model.getIndexValueBlockSize(),
                     true,
                     null,
@@ -495,18 +534,27 @@ public class CreateTableOperationImpl implements CreateTableOperation {
                     model.getSymbolCacheFlag(),
                     symbolCapacity
             );
+            columnMetadata.setParquetEncodingConfig(model.getParquetEncodingConfig());
+            ObjList<CharSequence> coverNames = model.getCoveringColumnNames();
+            if (coverNames.size() > 0) {
+                ObjList<CharSequence> copy = new ObjList<>(coverNames.size());
+                for (int j = 0, m = coverNames.size(); j < m; j++) {
+                    copy.add(Chars.toString(coverNames.get(j)));
+                }
+                augmentedCoveringNames.put(columnNameStr, copy);
+            }
             augmentedColumnMetadata.put(columnNameStr, columnMetadata);
         }
     }
 
     @Override
-    public boolean isDedupKey(int index) {
-        return (getLowAt(index * 2 + 1) & COLUMN_FLAG_DEDUP_KEY) != 0;
+    public boolean isCovering(int index) {
+        return (getLowAt(index * 2 + 1) & COLUMN_FLAG_COVERING) != 0;
     }
 
     @Override
-    public boolean isIndexed(int index) {
-        return (getLowAt(index * 2 + 1) & COLUMN_FLAG_INDEXED) != 0;
+    public boolean isDedupKey(int index) {
+        return (getLowAt(index * 2 + 1) & COLUMN_FLAG_DEDUP_KEY) != 0;
     }
 
     @Override
@@ -517,6 +565,10 @@ public class CreateTableOperationImpl implements CreateTableOperation {
     @Override
     public boolean needRegister() {
         return needRegister;
+    }
+
+    public void setBatchSize(long batchSize) {
+        this.batchSize = batchSize;
     }
 
     @Override
@@ -554,16 +606,21 @@ public class CreateTableOperationImpl implements CreateTableOperation {
         this.ttlHoursOrMonths = likeTableMetadata.getTtlHoursOrMonths();
         columnNames.clear();
         columnBits.clear();
+        coveringColumnIndicesList.clear();
+        parquetEncodingConfigs.clear();
         for (int i = 0; i < likeTableMetadata.getColumnCount(); i++) {
             TableColumnMetadata colMeta = likeTableMetadata.getColumnMetadata(i);
             addColumnBits(
                     colMeta.getColumnType(),
                     colMeta.isSymbolCacheFlag(),
                     colMeta.getSymbolCapacity(),
-                    colMeta.isSymbolIndexFlag(),
+                    colMeta.getIndexType(),
                     colMeta.getIndexValueBlockCapacity(),
-                    colMeta.isDedupKeyFlag()
+                    colMeta.isDedupKeyFlag(),
+                    colMeta.isCovering(),
+                    colMeta.getParquetEncodingConfig()
             );
+            coveringColumnIndicesList.add(colMeta.getCoveringColumnIndices());
             columnNames.add(colMeta.getColumnName());
         }
     }
@@ -598,6 +655,8 @@ public class CreateTableOperationImpl implements CreateTableOperation {
         // at SQL parse time.
         assert this.selectText != null;
         this.columnBits.clear();
+        this.coveringColumnIndicesList.clear();
+        this.parquetEncodingConfigs.clear();
         if (this.timestampColumnName == null) {
             int timestampIndex = metadata.getTimestampIndex();
             if (timestampIndex > -1 && scanDirection == RecordCursorFactory.SCAN_DIRECTION_FORWARD) {
@@ -665,9 +724,10 @@ public class CreateTableOperationImpl implements CreateTableOperation {
             int columnType;
             int symbolCapacity;
             boolean symbolCacheFlag;
-            boolean symbolIndexed;
+            byte indexType;
             boolean isDedupKey;
             int indexBlockCapacity;
+            int parquetEncodingConfig;
             if (augMeta != null) {
                 final int fromType = metadata.getColumnType(i);
                 columnType = augMeta.getColumnType();
@@ -679,9 +739,10 @@ public class CreateTableOperationImpl implements CreateTableOperation {
                 }
                 symbolCapacity = augMeta.getSymbolCapacity();
                 symbolCacheFlag = augMeta.isSymbolCacheFlag();
-                symbolIndexed = augMeta.isSymbolIndexFlag();
+                indexType = augMeta.getIndexType();
                 isDedupKey = augMeta.isDedupKeyFlag();
                 indexBlockCapacity = augMeta.getIndexValueBlockCapacity();
+                parquetEncodingConfig = augMeta.getParquetEncodingConfig();
             } else {
                 columnType = metadata.getColumnType(i);
                 if (ColumnType.isNull(columnType)) {
@@ -691,12 +752,13 @@ public class CreateTableOperationImpl implements CreateTableOperation {
                 }
                 symbolCapacity = this.defaultSymbolCapacity;
                 symbolCacheFlag = true;
-                symbolIndexed = false;
+                indexType = IndexType.NONE;
                 isDedupKey = false;
                 indexBlockCapacity = 0;
+                parquetEncodingConfig = 0;
             }
 
-            if (!ColumnType.isSymbol(columnType) && symbolIndexed) {
+            if (!ColumnType.isSymbol(columnType) && IndexType.isIndexed(indexType)) {
                 throw SqlException.$(0, "indexes are supported only for SYMBOL columns: ").put(columnName);
             }
             if (isDedupKey) {
@@ -706,15 +768,26 @@ public class CreateTableOperationImpl implements CreateTableOperation {
                 }
             }
             this.columnNames.add(columnName);
+            ObjList<CharSequence> coverNames = augmentedCoveringNames.get(columnName);
+            // Set the COVERING flag whenever resolveCoveringFromAugmented
+            // will produce a non-empty list — that is, either the user gave
+            // an INCLUDE clause, or auto-include applies (POSTING index on
+            // a column other than the designated timestamp).
+            boolean hasCovering = (coverNames != null && coverNames.size() > 0)
+                    || (autoIncludeTimestamp && this.timestampIndex >= 0 && i != this.timestampIndex
+                    && IndexType.isPosting(indexType));
             this.addColumnBits(
                     columnType,
                     symbolCacheFlag,
                     symbolCapacity,
-                    symbolIndexed,
+                    indexType,
                     indexBlockCapacity,
-                    isDedupKey
+                    isDedupKey,
+                    hasCovering,
+                    parquetEncodingConfig
             );
         }
+        resolveCoveringFromAugmented(metadata);
         if (hasDedup && !isTimestampDeduped) {
             // Report the error's position in SQL as the position of the first column in the DEDUP list
             int firstDedupColumnPos = Integer.MAX_VALUE;
@@ -729,21 +802,31 @@ public class CreateTableOperationImpl implements CreateTableOperation {
         }
     }
 
+    private static void maybeAppendTimestamp(IntList indices, int timestampIndex) {
+        if (!indices.contains(timestampIndex)) {
+            indices.add(timestampIndex);
+        }
+    }
+
     private void addColumnBits(
             int columnType,
             boolean symbolCacheFlag,
             int symbolCapacity,
-            boolean indexFlag,
+            byte indexType,
             int indexBlockCapacity,
-            boolean dedupFlag
+            boolean dedupFlag,
+            boolean coveringFlag,
+            int parquetEncodingConfig
     ) {
         int flags = (symbolCacheFlag ? COLUMN_FLAG_CACHED : 0)
-                | (indexFlag ? COLUMN_FLAG_INDEXED : 0)
-                | (dedupFlag ? COLUMN_FLAG_DEDUP_KEY : 0);
+                | ((indexType & 0x07) << COLUMN_FLAG_INDEX_TYPE_SHIFT)
+                | (dedupFlag ? COLUMN_FLAG_DEDUP_KEY : 0)
+                | (coveringFlag ? COLUMN_FLAG_COVERING : 0);
         columnBits.add(
                 Numbers.encodeLowHighInts(columnType, symbolCapacity),
                 Numbers.encodeLowHighInts(flags, indexBlockCapacity)
         );
+        parquetEncodingConfigs.add(parquetEncodingConfig);
     }
 
     private int getHighAt(int index) {
@@ -752,6 +835,99 @@ public class CreateTableOperationImpl implements CreateTableOperation {
 
     private int getLowAt(int index) {
         return Numbers.decodeLowInt(columnBits.getQuick(index));
+    }
+
+    private void resolveCoveringColumnIndices(
+            ObjList<CharSequence> allColumnNames,
+            LowerCaseCharSequenceObjHashMap<CreateTableColumnModel> modelMap,
+            int timestampIndex
+    ) throws SqlException {
+        // The indices stored here are positions in the CREATE-TABLE column
+        // list, which equal writerIndex (stable physical slot) at create time
+        // because no DROPs have happened yet. .pci stores writerIndex for
+        // stability across subsequent DROPs.
+        coveringColumnIndicesList.clear();
+        LowerCaseCharSequenceIntHashMap nameToIndex = new LowerCaseCharSequenceIntHashMap();
+        for (int i = 0, n = allColumnNames.size(); i < n; i++) {
+            nameToIndex.put(allColumnNames.get(i), i);
+        }
+        for (int i = 0, n = allColumnNames.size(); i < n; i++) {
+            CreateTableColumnModel model = modelMap.get(allColumnNames.get(i));
+            ObjList<CharSequence> coverNames = model.getCoveringColumnNames();
+            IntList coverPositions = model.getCoveringColumnPositions();
+            IntList indices = null;
+            if (coverNames.size() > 0) {
+                indices = new IntList(coverNames.size());
+                for (int j = 0, m = coverNames.size(); j < m; j++) {
+                    CharSequence covName = coverNames.get(j);
+                    int covPos = coverPositions.getQuick(j);
+                    int idx = nameToIndex.get(covName);
+                    if (idx < 0) {
+                        throw SqlException.position(covPos)
+                                .put("INCLUDE column doesn't exist [column=").put(covName).put(']');
+                    }
+                    if (idx == i) {
+                        throw SqlException.position(covPos)
+                                .put("INCLUDE must not contain the indexed column [column=").put(covName).put(']');
+                    }
+                    for (int k = 0; k < j; k++) {
+                        if (indices.getQuick(k) == idx) {
+                            throw SqlException.position(covPos)
+                                    .put("duplicate column in INCLUDE [column=").put(covName).put(']');
+                        }
+                    }
+                    indices.add(idx);
+                }
+            }
+            // Auto-append the designated timestamp on POSTING indexes,
+            // including the bare INDEX TYPE POSTING case where the user
+            // gave no INCLUDE list. Skip when this column is itself the
+            // timestamp (you cannot cover yourself).
+            if (autoIncludeTimestamp && timestampIndex >= 0 && i != timestampIndex
+                    && IndexType.isPosting(model.getIndexType())) {
+                if (indices == null) {
+                    indices = new IntList(1);
+                }
+                maybeAppendTimestamp(indices, timestampIndex);
+            }
+            coveringColumnIndicesList.add(indices);
+        }
+    }
+
+    private void resolveCoveringFromAugmented(RecordMetadata metadata) {
+        coveringColumnIndicesList.clear();
+        for (int i = 0, n = columnNames.size(); i < n; i++) {
+            ObjList<CharSequence> coverNames = augmentedCoveringNames.get(columnNames.get(i));
+            IntList indices = null;
+            if (coverNames != null && coverNames.size() > 0) {
+                indices = new IntList(coverNames.size());
+                for (int j = 0, m = coverNames.size(); j < m; j++) {
+                    int idx = metadata.getColumnIndexQuiet(coverNames.get(j));
+                    if (idx < 0) {
+                        throw CairoException.nonCritical()
+                                .put("INCLUDE column doesn't exist [column=").put(coverNames.get(j)).put(']');
+                    }
+                    if (idx == i) {
+                        throw CairoException.nonCritical()
+                                .put("INCLUDE must not contain the indexed column [column=").put(coverNames.get(j)).put(']');
+                    }
+                    indices.add(idx);
+                }
+            }
+            // Auto-append the designated timestamp on POSTING indexes,
+            // including the no-INCLUDE case (the out-of-line INDEX(...)
+            // clause used by CTAS does not accept INCLUDE today, so this
+            // is the only way users get covering on CTAS). Skip when this
+            // column is itself the timestamp.
+            if (autoIncludeTimestamp && timestampIndex >= 0 && i != timestampIndex
+                    && IndexType.isPosting(getIndexType(i))) {
+                if (indices == null) {
+                    indices = new IntList(1);
+                }
+                maybeAppendTimestamp(indices, timestampIndex);
+            }
+            coveringColumnIndicesList.add(indices);
+        }
     }
 
     String getTimestampColumnName() {

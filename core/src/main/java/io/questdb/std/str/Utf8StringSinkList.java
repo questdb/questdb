@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -101,7 +101,7 @@ public class Utf8StringSinkList implements Mutable, Utf8Sink {
         int len = (int) (hi - lo);
         checkCapacity(len);
         for (long p = lo; p < hi; p++) {
-            byte b = Unsafe.getUnsafe().getByte(p);
+            byte b = Unsafe.getByte(p);
             buffer[pos++] = b;
         }
         return this;

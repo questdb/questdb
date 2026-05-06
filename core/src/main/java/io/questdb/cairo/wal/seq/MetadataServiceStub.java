@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -30,13 +30,19 @@ import io.questdb.cairo.SecurityContext;
 import io.questdb.cairo.UpdateOperator;
 import io.questdb.cairo.wal.MetadataService;
 import io.questdb.std.LongList;
+import io.questdb.std.ObjList;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
 public interface MetadataServiceStub extends MetadataService {
 
     @Override
-    default void addIndex(@NotNull CharSequence columnName, int indexValueBlockSize) {
+    default void addIndex(@NotNull CharSequence columnName, int indexValueBlockSize, byte indexType) {
+        throw CairoException.critical(0).put("add index does not update sequencer metadata");
+    }
+
+    @Override
+    default void addIndex(@NotNull CharSequence columnName, int indexValueBlockSize, byte indexType, @Nullable ObjList<CharSequence> coveringColumnNames) {
         throw CairoException.critical(0).put("add index does not update sequencer metadata");
     }
 
@@ -56,7 +62,7 @@ public interface MetadataServiceStub extends MetadataService {
     }
 
     @Override
-    default boolean convertPartitionNativeToParquet(long partitionTimestamp) {
+    default boolean convertPartitionNativeToParquet(long partitionTimestamp, @Nullable CharSequence bloomFilterColumns, double bloomFilterFpp) {
         throw CairoException.critical(0).put("convert native partition to parquet does not update sequencer metadata");
     }
 
@@ -99,6 +105,11 @@ public interface MetadataServiceStub extends MetadataService {
     }
 
     @Override
+    default int getTtlHoursOrMonths() {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
     default UpdateOperator getUpdateOperator() {
         throw new UnsupportedOperationException();
     }
@@ -106,6 +117,11 @@ public interface MetadataServiceStub extends MetadataService {
     @Override
     default boolean removePartition(long partitionTimestamp) {
         throw CairoException.critical(0).put("remove partition does not update sequencer metadata");
+    }
+
+    @Override
+    default void setColumnParquetEncoding(CharSequence columnName, int parquetEncodingConfig) {
+        throw CairoException.critical(0).put("set parquet encoding does not update sequencer metadata");
     }
 
     @Override

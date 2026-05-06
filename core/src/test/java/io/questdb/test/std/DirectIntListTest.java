@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -91,7 +91,7 @@ public class DirectIntListTest {
 
             Assert.assertEquals(0, list.size());
             long addr = list.getAddress();
-            Unsafe.getUnsafe().putLong(addr, 42);
+            Unsafe.putLong(addr, 42);
             Assert.assertEquals(42, list.get(0));
             for (int i = 0; i < list.getCapacity(); i++) {
                 list.add(i);

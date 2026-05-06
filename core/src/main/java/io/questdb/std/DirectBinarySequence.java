@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -30,7 +30,7 @@ public class DirectBinarySequence implements BinarySequence, Mutable {
 
     @Override
     public byte byteAt(long index) {
-        return Unsafe.getUnsafe().getByte(address + index);
+        return Unsafe.getByte(address + index);
     }
 
     @Override

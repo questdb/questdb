@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -34,6 +34,7 @@ import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.TxReader;
 import io.questdb.cairo.TxWriter;
+import io.questdb.cairo.security.AllowAllSecurityContext;
 import io.questdb.cairo.sql.InsertMethod;
 import io.questdb.cairo.sql.InsertOperation;
 import io.questdb.cairo.sql.TableMetadata;
@@ -45,6 +46,7 @@ import io.questdb.cairo.wal.WalWriter;
 import io.questdb.griffin.CompiledQuery;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
+import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.griffin.engine.functions.rnd.SharedRandom;
 import io.questdb.griffin.engine.ops.AlterOperation;
 import io.questdb.griffin.engine.ops.AlterOperationBuilder;
@@ -420,7 +422,7 @@ public class WalTableSqlTest extends AbstractCairoTest {
                 FilesFacade ff = engine.getConfiguration().getFilesFacade();
                 long fd = TableUtils.openRW(ff, path.$(), LOG, configuration.getWriterFileOpenOpts());
                 long intAddr = Unsafe.malloc(4, MemoryTag.NATIVE_DEFAULT);
-                Unsafe.getUnsafe().putInt(intAddr, 10);
+                Unsafe.putInt(intAddr, 10);
                 ff.write(fd, intAddr, 4, 0);
                 Unsafe.free(intAddr, 4, MemoryTag.NATIVE_DEFAULT);
                 ff.close(fd);
@@ -737,7 +739,7 @@ public class WalTableSqlTest extends AbstractCairoTest {
                     AlterOperationBuilder dropPartition = new AlterOperationBuilder().ofDropPartition(0, tableToken, 1);
                     dropPartition.addPartitionToList(MicrosTimestampDriver.floor("2022-02-24"), 0);
                     AlterOperation dropAlter = dropPartition.build();
-                    dropAlter.withContext(sqlExecutionContext);
+                    dropAlter.withContext(new SqlExecutionContextImpl(engine, 1).with(AllowAllSecurityContext.INSTANCE));
                     dropAlter.withSqlStatement("alter table " + tableName + " drop partition list '2022-02-24'");
                     walWriter3.apply(dropAlter, true);
                     Assert.fail();

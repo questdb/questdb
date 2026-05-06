@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -24,9 +24,12 @@
 
 package io.questdb.griffin.engine.functions.groupby;
 
+import io.questdb.cairo.map.Map;
 import io.questdb.cairo.map.MapValue;
 import io.questdb.cairo.sql.Function;
+import io.questdb.cairo.sql.PageFrameMemoryRecord;
 import io.questdb.cairo.sql.Record;
+import io.questdb.griffin.engine.groupby.FlyweightPackedMapValue;
 import io.questdb.std.Numbers;
 import io.questdb.std.Unsafe;
 import org.jetbrains.annotations.NotNull;
@@ -38,14 +41,76 @@ public class LastNotNullDoubleGroupByFunction extends FirstDoubleGroupByFunction
     }
 
     @Override
-    public void computeBatch(MapValue mapValue, long ptr, int count) {
-        if (count > 0) {
-            long hi = ptr + (count - 1) * 8L;
-            for (; hi >= ptr; hi -= 8L) {
-                double value = Unsafe.getUnsafe().getDouble(hi);
+    public void computeBatch(MapValue mapValue, long dataAddr, int rowCount, long startRowId) {
+        if (rowCount > 0) {
+            long hi = dataAddr + (rowCount - 1) * 8L;
+            long offset = rowCount - 1;
+            for (; hi >= dataAddr; hi -= 8L) {
+                double value = Unsafe.getDouble(hi);
                 if (!Numbers.isNull(value)) {
-                    mapValue.putDouble(valueIndex + 1, value);
+                    long rowId = startRowId + offset;
+                    long existingRowId = mapValue.getLong(valueIndex);
+                    if (rowId > existingRowId || existingRowId == Numbers.LONG_NULL) {
+                        mapValue.putLong(valueIndex, rowId);
+                        mapValue.putDouble(valueIndex + 1, value);
+                    }
                     break;
+                }
+                offset--;
+            }
+        }
+    }
+
+    @Override
+    public void computeKeyedBatch(
+            PageFrameMemoryRecord record,
+            FlyweightPackedMapValue mapValue,
+            long baseValueAddr,
+            long batchAddr,
+            long rowCount,
+            long baseRowId
+    ) {
+        // setEmpty pre-seeds rowId = LONG_NULL and value = NaN. Null (NaN/Infinity) input
+        // is skipped; non-null input wins when the stored value is still null or has an
+        // earlier rowId.
+        final long rowIdOffset = mapValue.getOffset(valueIndex);
+        final long valueColumnOffset = mapValue.getOffset(valueIndex + 1);
+        // Fast path: arg is a direct double column with data on the current frame.
+        // Zero page address means a column top; fall through to the record-based path.
+        final long argAddr = argColumnIndex >= 0 ? record.getPageAddress(argColumnIndex) : 0;
+        if (argAddr != 0) {
+            for (long i = 0; i < rowCount; i++) {
+                final long encoded = Unsafe.getLong(batchAddr + (i << 3));
+                final long rowIndex = Map.decodeBatchRowIndex(encoded);
+                final double value = Unsafe.getDouble(argAddr + (rowIndex << 3));
+                // Mirror computeFirst semantics on new entries (write through even for
+                // null values) so the state matches what the per-row path produces.
+                if (!Numbers.isNull(value) || Map.isNewBatchEntry(encoded)) {
+                    final long entryBase = baseValueAddr + Map.decodeBatchOffset(encoded);
+                    final long rowId = baseRowId + rowIndex;
+                    final double existingValue = Unsafe.getDouble(entryBase + valueColumnOffset);
+                    if (Numbers.isNull(existingValue) || rowId > Unsafe.getLong(entryBase + rowIdOffset)) {
+                        Unsafe.putLong(entryBase + rowIdOffset, rowId);
+                        Unsafe.putDouble(entryBase + valueColumnOffset, value);
+                    }
+                }
+            }
+        } else {
+            for (long i = 0; i < rowCount; i++) {
+                final long encoded = Unsafe.getLong(batchAddr + (i << 3));
+                final long rowIndex = Map.decodeBatchRowIndex(encoded);
+                record.setRowIndex(rowIndex);
+                final double value = arg.getDouble(record);
+                // Mirror computeFirst semantics on new entries (write through even for
+                // null values) so the state matches what the per-row path produces.
+                if (!Numbers.isNull(value) || Map.isNewBatchEntry(encoded)) {
+                    final long entryBase = baseValueAddr + Map.decodeBatchOffset(encoded);
+                    final long rowId = baseRowId + rowIndex;
+                    final double existingValue = Unsafe.getDouble(entryBase + valueColumnOffset);
+                    if (Numbers.isNull(existingValue) || rowId > Unsafe.getLong(entryBase + rowIdOffset)) {
+                        Unsafe.putLong(entryBase + rowIdOffset, rowId);
+                        Unsafe.putDouble(entryBase + valueColumnOffset, value);
+                    }
                 }
             }
         }
@@ -53,7 +118,7 @@ public class LastNotNullDoubleGroupByFunction extends FirstDoubleGroupByFunction
 
     @Override
     public void computeNext(MapValue mapValue, Record record, long rowId) {
-        if (Numbers.isFinite(arg.getDouble(record))) {
+        if (!Numbers.isNull(arg.getDouble(record))) {
             if (Numbers.isNull(mapValue.getDouble(valueIndex + 1)) || rowId > mapValue.getLong(valueIndex)) {
                 computeFirst(mapValue, record, rowId);
             }

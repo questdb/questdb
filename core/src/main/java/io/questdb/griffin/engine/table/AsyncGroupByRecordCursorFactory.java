@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -53,6 +53,7 @@ import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.GroupByFunction;
+import io.questdb.griffin.engine.groupby.FlyweightPackedMapValue;
 import io.questdb.griffin.engine.groupby.GroupByFunctionsUpdater;
 import io.questdb.griffin.engine.groupby.GroupByRecordCursorFactory;
 import io.questdb.jit.CompiledFilter;
@@ -61,6 +62,7 @@ import io.questdb.std.DirectLongList;
 import io.questdb.std.IntHashSet;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
+import io.questdb.std.Rows;
 import io.questdb.std.Transient;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
@@ -76,7 +78,9 @@ public class AsyncGroupByRecordCursorFactory extends AbstractRecordCursorFactory
     private final AsyncGroupByRecordCursor cursor;
     private final UnorderedPageFrameSequence<AsyncGroupByAtom> frameSequence;
     private final ObjList<Function> recordFunctions; // includes groupByFunctions
+    private final @Nullable ObjList<ObjList<Function>> sharedRecordFunctions;
     private final int workerCount;
+    private ObjList<AsyncGroupBySharedCursor> sharedCursors;
 
     public AsyncGroupByRecordCursorFactory(
             @NotNull CairoEngine engine,
@@ -99,12 +103,14 @@ public class AsyncGroupByRecordCursorFactory extends AbstractRecordCursorFactory
             @Nullable Function filter,
             @Nullable IntHashSet filterUsedColumnIndexes,
             @Nullable ObjList<Function> perWorkerFilters,
-            int workerCount
+            int workerCount,
+            @Nullable ObjList<ObjList<Function>> sharedRecordFunctions
     ) {
         super(groupByMetadata);
         try {
             this.base = base;
             this.recordFunctions = recordFunctions;
+            this.sharedRecordFunctions = sharedRecordFunctions;
             AsyncGroupByAtom atom = new AsyncGroupByAtom(
                     asm,
                     configuration,
@@ -159,6 +165,23 @@ public class AsyncGroupByRecordCursorFactory extends AbstractRecordCursorFactory
     }
 
     @Override
+    public RecordCursor getSharedCursor(SqlExecutionContext executionContext, int sharedId) throws SqlException {
+        if (sharedCursors == null) {
+            sharedCursors = new ObjList<>();
+        }
+        int idx = sharedId - 1;
+        AsyncGroupBySharedCursor shared = sharedCursors.getQuiet(idx);
+        if (shared == null) {
+            assert sharedRecordFunctions != null;
+            assert idx < sharedRecordFunctions.size();
+            shared = new AsyncGroupBySharedCursor(sharedRecordFunctions.getQuick(idx));
+            sharedCursors.extendAndSet(idx, shared);
+        }
+        shared.of(cursor);
+        return shared;
+    }
+
+    @Override
     public boolean recordCursorSupportsLongTopK(int columnIndex) {
         final int columnType = getMetadata().getColumnType(columnIndex);
         return columnType == ColumnType.LONG || ColumnType.isTimestamp(columnType);
@@ -166,6 +189,11 @@ public class AsyncGroupByRecordCursorFactory extends AbstractRecordCursorFactory
 
     @Override
     public boolean recordCursorSupportsRandomAccess() {
+        return true;
+    }
+
+    @Override
+    public boolean supportsSharedCursors() {
         return true;
     }
 
@@ -178,6 +206,7 @@ public class AsyncGroupByRecordCursorFactory extends AbstractRecordCursorFactory
         }
         sink.meta("workers").val(workerCount);
         sink.optAttr("keys", GroupByRecordCursorFactory.getKeys(recordFunctions, getMetadata()));
+        sink.optAttr("keyFunctions", frameSequence.getAtom().getOwnerKeyFunctions(), true);
         sink.optAttr("values", frameSequence.getAtom().getOwnerGroupByFunctions(), true);
         sink.optAttr("filter", frameSequence.getAtom(), true);
         sink.child(base);
@@ -226,7 +255,7 @@ public class AsyncGroupByRecordCursorFactory extends AbstractRecordCursorFactory
             long baseRowId = record.getRowId();
 
             if (fragment.isNotSharded()) {
-                aggregateNonSharded(record, frameRowCount, baseRowId, functionUpdater, fragment, mapSink);
+                aggregateNonShardedBatched(record, frameRowCount, baseRowId, atom, slotId, fragment, mapSink);
             } else {
                 aggregateSharded(record, frameRowCount, baseRowId, functionUpdater, fragment, mapSink);
             }
@@ -249,7 +278,7 @@ public class AsyncGroupByRecordCursorFactory extends AbstractRecordCursorFactory
         final Map map = fragment.reopenMap();
         for (long p = 0, n = rows.size(); p < n; p++) {
             long r = rows.get(p);
-            record.setRowIndex(r);
+            record.setFilteredRowIndex(r, p);
 
             final MapKey key = map.withKey();
             mapSink.copy(record, key);
@@ -258,6 +287,58 @@ public class AsyncGroupByRecordCursorFactory extends AbstractRecordCursorFactory
                 functionUpdater.updateNew(value, record, baseRowId + r);
             } else {
                 functionUpdater.updateExisting(value, record, baseRowId + r);
+            }
+        }
+    }
+
+    private static void aggregateFilteredNonShardedBatched(
+            PageFrameMemoryRecord record,
+            DirectLongList rows,
+            long baseRowId,
+            AsyncGroupByAtom atom,
+            int slotId,
+            GroupByMapFragment fragment,
+            RecordSink mapSink
+    ) {
+        final Map map = fragment.reopenMap();
+        final ObjList<GroupByFunction> functions = atom.getGroupByFunctions(slotId);
+        final DirectLongList batchList = atom.getBatchList(slotId);
+        final FlyweightPackedMapValue mapValue = atom.getBatchMapValue(slotId);
+        final int functionCount = functions.size();
+        final int batchSize = atom.getBatchSize();
+        final long rowCount = rows.size();
+        final long rowIdsAddr = rows.getAddress();
+
+        // Size the batch buffer once — probeBatch writes via the raw base address, never advancing pos.
+        // ensureCapacity reopens the list if it's closed.
+        batchList.ensureCapacity(batchSize);
+        final long batchAddr = batchList.getAddress();
+
+        for (long batchStart = 0; batchStart < rowCount; batchStart += batchSize) {
+            final long batchEnd = Math.min(batchStart + batchSize, rowCount);
+            final long batchRows = batchEnd - batchStart;
+
+            map.reserveCapacity(batchRows);
+
+            // Probe phase — rowIdsAddr[batchStart..batchEnd) holds the filtered frame-relative row ids.
+            final long baseValueAddress = map.probeBatchFiltered(
+                    record,
+                    mapSink,
+                    rowIdsAddr,
+                    batchStart,
+                    batchEnd,
+                    batchAddr
+            );
+
+            for (int i = 0; i < functionCount; i++) {
+                functions.getQuick(i).computeKeyedBatch(
+                        record,
+                        mapValue,
+                        baseValueAddress,
+                        batchAddr,
+                        batchRows,
+                        baseRowId
+                );
             }
         }
     }
@@ -274,7 +355,7 @@ public class AsyncGroupByRecordCursorFactory extends AbstractRecordCursorFactory
         final Map lookupShard = fragment.getShards().getQuick(0);
         for (long p = 0, n = rows.size(); p < n; p++) {
             long r = rows.get(p);
-            record.setRowIndex(r);
+            record.setFilteredRowIndex(r, p);
 
             final MapKey lookupKey = lookupShard.withKey();
             mapSink.copy(record, lookupKey);
@@ -299,25 +380,50 @@ public class AsyncGroupByRecordCursorFactory extends AbstractRecordCursorFactory
         }
     }
 
-    private static void aggregateNonSharded(
+    private static void aggregateNonShardedBatched(
             PageFrameMemoryRecord record,
             long frameRowCount,
             long baseRowId,
-            GroupByFunctionsUpdater functionUpdater,
+            AsyncGroupByAtom atom,
+            int slotId,
             GroupByMapFragment fragment,
             RecordSink mapSink
     ) {
         final Map map = fragment.reopenMap();
-        for (long r = 0; r < frameRowCount; r++) {
-            record.setRowIndex(r);
+        final ObjList<GroupByFunction> functions = atom.getGroupByFunctions(slotId);
+        final DirectLongList batchList = atom.getBatchList(slotId);
+        final FlyweightPackedMapValue mapValue = atom.getBatchMapValue(slotId);
+        final int functionCount = functions.size();
+        final int batchSize = atom.getBatchSize();
 
-            final MapKey key = map.withKey();
-            mapSink.copy(record, key);
-            MapValue value = key.createValue();
-            if (value.isNew()) {
-                functionUpdater.updateNew(value, record, baseRowId + r);
-            } else {
-                functionUpdater.updateExisting(value, record, baseRowId + r);
+        // Size the batch buffer once — probeBatch writes via the raw base address, never advancing pos.
+        // ensureCapacity reopens the list if it's closed.
+        batchList.ensureCapacity(batchSize);
+        final long batchAddr = batchList.getAddress();
+
+        for (long batchStart = 0; batchStart < frameRowCount; batchStart += batchSize) {
+            final long batchEnd = Math.min(batchStart + batchSize, frameRowCount);
+            final long batchRows = batchEnd - batchStart;
+
+            // Must reserve capacity before probeBatch: probeBatch packs entry offsets relative to the
+            // current memStart, so a mid-batch rehash would break the offsets for unordered maps.
+            map.reserveCapacity(batchRows);
+
+            // Probe phase — delegate to the map for inlined probe loop.
+            final long baseValueAddress = map.probeBatch(record, mapSink, batchStart, batchEnd, batchAddr);
+
+            // Update phase — one call per function per sub-batch. The encoded rowIndex in each
+            // batch entry is already the frame-relative row id, so computeKeyedBatch computes
+            // the global row id as baseRowId + rowIndex.
+            for (int i = 0; i < functionCount; i++) {
+                functions.getQuick(i).computeKeyedBatch(
+                        record,
+                        mapValue,
+                        baseValueAddress,
+                        batchAddr,
+                        batchRows,
+                        baseRowId
+                );
             }
         }
     }
@@ -416,21 +522,31 @@ public class AsyncGroupByRecordCursorFactory extends AbstractRecordCursorFactory
             if (isParquetFrame) {
                 filterCtx.getSelectivityStats(slotId).update(rows.size(), frameRowCount);
             }
+            // Late materialization installs a PageFrameFilteredMemoryRecord that requires both
+            // the absolute and the compacted row index via setFilteredRowIndex. The batched
+            // probe/update path bottoms out in Map.probeBatch* and computeKeyedBatch, which call
+            // setRowIndex(long) and have no way to supply a compacted index, so fall back to the
+            // per-row path in that case.
+            boolean lateMaterialized = false;
             if (useLateMaterialization && frameMemory.populateRemainingColumns(filterCtx.getFilterUsedColumnIndexes(), rows, false)) {
                 PageFrameFilteredMemoryRecord filteredMemoryRecord = filterCtx.getPageFrameFilteredMemoryRecord(slotId);
                 filteredMemoryRecord.of(frameMemory, record, filterCtx.getFilterUsedColumnIndexes());
                 record = filteredMemoryRecord;
+                lateMaterialized = true;
             }
 
             if (atom.isSharded()) {
                 fragment.shard();
             }
 
-            record.setRowIndex(0);
-            long baseRowId = record.getRowId();
+            long baseRowId = Rows.toRowID(frameIndex, 0);
 
             if (fragment.isNotSharded()) {
-                aggregateFilteredNonSharded(record, rows, baseRowId, functionUpdater, fragment, mapSink);
+                if (lateMaterialized) {
+                    aggregateFilteredNonSharded(record, rows, baseRowId, functionUpdater, fragment, mapSink);
+                } else {
+                    aggregateFilteredNonShardedBatched(record, rows, baseRowId, atom, slotId, fragment, mapSink);
+                }
             } else {
                 aggregateFilteredSharded(record, rows, baseRowId, functionUpdater, fragment, mapSink);
             }
@@ -448,5 +564,8 @@ public class AsyncGroupByRecordCursorFactory extends AbstractRecordCursorFactory
         Misc.free(cursor);
         Misc.free(frameSequence);
         Misc.freeObjList(recordFunctions); // groupByFunctions are included in recordFunctions
+        GroupByRecordCursorFactory.freeSharedRecordFunctions(sharedRecordFunctions);
+        // Shared cursors hold no native memory; primary state freed above covers it.
+        Misc.clear(sharedCursors);
     }
 }

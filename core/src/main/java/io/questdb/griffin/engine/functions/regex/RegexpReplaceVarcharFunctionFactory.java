@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -167,12 +167,12 @@ public class RegexpReplaceVarcharFunctionFactory extends RegexpReplaceStrFunctio
 
         @Override
         public byte byteAt(int i) {
-            return Unsafe.getUnsafe().getByte(ptr + i);
+            return Unsafe.getByte(ptr + i);
         }
 
         @Override
         public char charAt(int i) {
-            return (char) Unsafe.getUnsafe().getByte(ptr + i);
+            return (char) Unsafe.getByte(ptr + i);
         }
 
         @Override

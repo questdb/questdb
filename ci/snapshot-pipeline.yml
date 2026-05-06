@@ -15,8 +15,10 @@ stages:
     jobs:
       - job: BuildOnLinux
         displayName: "Build on Linux"
-        pool:
-          vmImage: "ubuntu-latest"
+        pool: hetzner-incus
+        variables:
+          JAVA_HOME_25_X64: "/opt/graalvm-25"
+          JAVA_HOME: "/opt/graalvm-25"
         steps:
           - checkout: self
             fetchDepth: 1
@@ -29,7 +31,7 @@ stages:
               goals: "package"
               options:
                 "--batch-mode --quiet -DskipTests -P build-web-console,build-binaries -Dhttp.keepAlive=false -Dmaven.repo.local=$(MAVEN_CACHE_FOLDER)"
-              jdkVersionOption: 1.17
+              jdkVersionOption: 1.25
           - bash: |
               cd "$(Build.SourcesDirectory)"/core
               find target \( -name "*rt-linux*.tar.gz" -o -name "*no-jre*.tar.gz" \) -exec mv '{}' "$(Build.BinariesDirectory)"/ \;
@@ -45,8 +47,7 @@ stages:
         condition: succeeded()
         displayName: "Upload snapshot to S3"
         container: pypy:3.7-slim-buster
-        pool:
-          vmImage: "ubuntu-latest"
+        pool: hetzner-incus
         steps:
           - checkout: none
           - task: DownloadBuildArtifacts@0

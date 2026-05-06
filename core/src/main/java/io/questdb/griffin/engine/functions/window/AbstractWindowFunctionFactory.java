@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -170,7 +170,7 @@ public abstract class AbstractWindowFunctionFactory implements FunctionFactory {
 
         @Override
         public void pass1(Record record, long recordOffset, WindowSPI spi) {
-            Unsafe.getUnsafe().putDouble(spi.getAddress(recordOffset, columnIndex), Double.NaN);
+            Unsafe.putDouble(spi.getAddress(recordOffset, columnIndex), Double.NaN);
         }
     }
 
@@ -203,7 +203,7 @@ public abstract class AbstractWindowFunctionFactory implements FunctionFactory {
          */
         @Override
         public void pass1(Record record, long recordOffset, WindowSPI spi) {
-            Unsafe.getUnsafe().putLong(spi.getAddress(recordOffset, columnIndex), zeroValue);
+            Unsafe.putLong(spi.getAddress(recordOffset, columnIndex), zeroValue);
         }
     }
 
@@ -268,7 +268,7 @@ public abstract class AbstractWindowFunctionFactory implements FunctionFactory {
          */
         @Override
         public void pass1(Record record, long recordOffset, WindowSPI spi) {
-            Unsafe.getUnsafe().putLong(spi.getAddress(recordOffset, columnIndex), zeroValue);
+            Unsafe.putLong(spi.getAddress(recordOffset, columnIndex), zeroValue);
         }
     }
 }

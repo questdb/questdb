@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -27,9 +27,12 @@ package io.questdb.test.griffin.engine.table.parquet;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableToken;
+import io.questdb.cairo.TableUtils;
+import io.questdb.griffin.engine.table.parquet.ParquetCompression;
 import io.questdb.griffin.engine.table.parquet.PartitionDescriptor;
 import io.questdb.griffin.engine.table.parquet.PartitionEncoder;
 import io.questdb.griffin.engine.table.parquet.PartitionUpdater;
+import io.questdb.std.Files;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.str.Path;
 import io.questdb.test.AbstractCairoTest;
@@ -73,7 +76,7 @@ public class PartitionUpdaterTest extends AbstractCairoTest {
                     Path path = new Path();
                     PartitionDescriptor descriptor = new PartitionDescriptor();
                     TableReader reader = engine.getReader(tableName);
-                    PartitionUpdater updater = new PartitionUpdater(ff)
+                    PartitionUpdater updater = new PartitionUpdater()
             ) {
                 // Initial partition dir created.
                 final TableToken table = engine.getTableTokenIfExists(tableName);
@@ -109,16 +112,26 @@ public class PartitionUpdaterTest extends AbstractCairoTest {
                 final long parquetPartitionSize = ff.length(path.$());
 
                 // Update the partition, adding a row.
+                final int opts = configuration.getWriterFileOpenOpts();
+                final int readerFd = Files.detach(ff.openRONoCache(path.$()));
+                final int writerFd = Files.detach(ff.openRW(path.$(), opts));
                 updater.of(
                         path.$(),
-                        configuration.getWriterFileOpenOpts(),
+                        readerFd,
+                        parquetPartitionSize,
+                        writerFd,
                         parquetPartitionSize,
                         1,  // index of the timestamp column
-                        0, // uncompressed
+                        0L, // uncompressed
                         false,
                         false,
-                        0,
-                        0
+                        0L,
+                        0L,
+                        0.01,
+                        0.0,
+                        -1, // no _pm fd
+                        0L,
+                        -1L
                 );
 
                 PartitionEncoder.populateFromTableReader(reader, descriptor, 0);
@@ -138,6 +151,158 @@ public class PartitionUpdaterTest extends AbstractCairoTest {
 
                 final long updatedParquetPartitionSize = ff.length(path.$());
                 Assert.assertTrue(updatedParquetPartitionSize > parquetPartitionSize);
+            }
+        });
+    }
+
+    @Test
+    public void testPerColumnEncodingWithCompression() throws Exception {
+        assertMemoryLeak(() -> {
+            final String tableName = "enc_test";
+            final long rows = 10;
+            final FilesFacade ff = configuration.getFilesFacade();
+            execute("CREATE TABLE " + tableName + " AS (SELECT" +
+                    " x id," +
+                    " timestamp_sequence(400_000_000_000, 500)::" + timestampType.getTypeName() + " designated_ts" +
+                    " FROM long_sequence(" + rows + ")) TIMESTAMP(designated_ts) PARTITION BY DAY");
+
+            // Set per-column parquet encoding
+            execute("ALTER TABLE " + tableName + " ALTER COLUMN id SET PARQUET(delta_binary_packed, zstd)");
+
+            try (
+                    Path path = new Path();
+                    PartitionDescriptor descriptor = new PartitionDescriptor();
+                    TableReader reader = engine.getReader(tableName);
+                    PartitionUpdater updater = new PartitionUpdater()
+            ) {
+                final TableToken table = engine.getTableTokenIfExists(tableName);
+                path.concat(root)
+                        .concat(table.getDirNameUtf8())
+                        .concat("1970-01-05")
+                        .slash$();
+                path.put(".1").slash$();
+                ff.mkdirs(path, configuration.getMkDirMode());
+                path.concat("data.parquet").$();
+
+                // Encode with per-column encoding config from metadata
+                PartitionEncoder.populateFromTableReader(reader, descriptor, 0);
+                PartitionEncoder.encode(descriptor, path);
+
+                Assert.assertTrue(ff.exists(path.$()));
+                final long parquetPartitionSize = ff.length(path.$());
+
+                // Update with ZSTD compression
+                long compressionCodec = ParquetCompression.packCompressionCodecLevel(
+                        ParquetCompression.COMPRESSION_ZSTD, 1
+                );
+
+                // Update the partition, adding a row.
+                final int opts = configuration.getWriterFileOpenOpts();
+                final int readerFd = Files.detach(ff.openRONoCache(path.$()));
+                final int writerFd = Files.detach(ff.openRW(path.$(), opts));
+                updater.of(
+                        path.$(),
+                        readerFd,
+                        parquetPartitionSize,
+                        writerFd,
+                        parquetPartitionSize,
+                        1,  // index of the timestamp column
+                        compressionCodec,
+                        false,
+                        false,
+                        0L,
+                        0L,
+                        0.01,
+                        0.0,
+                        -1, // no _pm fd
+                        0L,
+                        -1L
+                );
+
+                PartitionEncoder.populateFromTableReader(reader, descriptor, 0);
+                updater.updateRowGroup((short) 0, descriptor);
+                updater.updateFileMetadata();
+
+                final long updatedParquetPartitionSize = ff.length(path.$());
+                Assert.assertTrue(updatedParquetPartitionSize > parquetPartitionSize);
+            }
+        });
+    }
+
+    @Test
+    public void testUpdateWithParquetMetaFd() throws Exception {
+        assertMemoryLeak(() -> {
+            final String tableName = "parquet_meta_test";
+            final long rows = 10;
+            final FilesFacade ff = configuration.getFilesFacade();
+            execute("CREATE TABLE " + tableName + " AS (SELECT" +
+                    " x id," +
+                    " timestamp_sequence(400_000_000_000, 500)::" + timestampType.getTypeName() + " designated_ts" +
+                    " FROM long_sequence(" + rows + ")) TIMESTAMP(designated_ts) PARTITION BY DAY");
+
+            try (
+                    Path path = new Path();
+                    PartitionDescriptor descriptor = new PartitionDescriptor();
+                    TableReader reader = engine.getReader(tableName);
+                    PartitionUpdater updater = new PartitionUpdater()
+            ) {
+                final TableToken table = engine.getTableTokenIfExists(tableName);
+                path.concat(root)
+                        .concat(table.getDirNameUtf8())
+                        .concat("1970-01-05")
+                        .slash$();
+                final int partitionDirLen = path.size();
+                path.put(".1").slash$();
+                final int versionedDirLen = path.size();
+                ff.mkdirs(path, configuration.getMkDirMode());
+                path.concat("data.parquet").$();
+
+                PartitionEncoder.populateFromTableReader(reader, descriptor, 0);
+                PartitionEncoder.encode(descriptor, path);
+
+                Assert.assertTrue(ff.exists(path.$()));
+                final long parquetPartitionSize = ff.length(path.$());
+
+                // Open _pm file for writing alongside the parquet file.
+                path.trimTo(versionedDirLen).concat(TableUtils.PARQUET_METADATA_FILE_NAME).$();
+                final int opts = configuration.getWriterFileOpenOpts();
+                final int parquetMetaFd = Files.detach(ff.openRW(path.$(), opts));
+
+                // Open parquet reader/writer fds.
+                path.trimTo(versionedDirLen).concat("data.parquet").$();
+                final int readerFd = Files.detach(ff.openRONoCache(path.$()));
+                final int writerFd = Files.detach(ff.openRW(path.$(), opts));
+
+                updater.of(
+                        path.$(),
+                        readerFd,
+                        parquetPartitionSize,
+                        writerFd,
+                        parquetPartitionSize,
+                        1,  // index of the timestamp column
+                        0L, // uncompressed
+                        false,
+                        false,
+                        0L,
+                        0L,
+                        0.01,
+                        0.0,
+                        parquetMetaFd,
+                        parquetPartitionSize,
+                        0L
+                );
+
+                PartitionEncoder.populateFromTableReader(reader, descriptor, 0);
+                updater.updateRowGroup((short) 0, descriptor);
+                updater.updateFileMetadata();
+
+                final long parquetMetaFileSize = updater.getResultParquetMetaFileSize();
+                Assert.assertTrue("_pm file size must be > 0", parquetMetaFileSize > 0);
+
+                // Verify the _pm file exists on disk with the reported size.
+                path.trimTo(versionedDirLen).concat(TableUtils.PARQUET_METADATA_FILE_NAME).$();
+                Assert.assertTrue("_pm file must exist", ff.exists(path.$()));
+                Assert.assertEquals("_pm file size on disk", parquetMetaFileSize, ff.length(path.$()));
             }
         });
     }

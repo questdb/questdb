@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -120,7 +120,7 @@ public class MillisTimestampDriver implements TimestampDriver {
 
     @Override
     public boolean append(long fixedAddr, CharSink<?> sink) {
-        long value = Unsafe.getUnsafe().getLong(fixedAddr);
+        long value = Unsafe.getLong(fixedAddr);
         if (value != Numbers.LONG_NULL) {
             DateFormatUtils.appendDateTime(sink, value);
             return true;

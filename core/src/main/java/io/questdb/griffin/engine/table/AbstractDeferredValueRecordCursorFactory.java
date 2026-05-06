@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -92,6 +92,7 @@ abstract class AbstractDeferredValueRecordCursorFactory extends AbstractPageFram
         super._close();
         filter = Misc.free(filter);
         Misc.free(cursor);
+        Misc.free(symbolFunc);
     }
 
     protected abstract AbstractLatestByValueRecordCursor createCursorFor(int symbolKey);

@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -54,6 +54,26 @@ public class CreateTableAsSelectTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testCreateAsSelectDoesNotPropagateParquetConfig() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE src (ts TIMESTAMP, v LONG PARQUET(delta_binary_packed, zstd(3))) TIMESTAMP(ts) PARTITION BY DAY;");
+            execute("INSERT INTO src VALUES('2024-01-01', 42);");
+            execute("CREATE TABLE dest AS (SELECT * FROM src) TIMESTAMP(ts) PARTITION BY DAY;");
+
+            // CTAS derives columns from SELECT metadata, which does not carry
+            // per-column parquet encoding config from the source table.
+            assertSql("""
+                            ddl
+                            CREATE TABLE 'dest' (\s
+                            \tts TIMESTAMP,
+                            \tv LONG
+                            ) timestamp(ts) PARTITION BY DAY BYPASS WAL;
+                            """,
+                    "SHOW CREATE TABLE dest");
+        });
+    }
+
+    @Test
     public void testCreateAsSelectNonCairoExceptionCleansUpTable() throws Exception {
         final LongHashSet destTableColumnFds = new LongHashSet();
         final AtomicBoolean failed = new AtomicBoolean(false);
@@ -92,6 +112,23 @@ public class CreateTableAsSelectTest extends AbstractCairoTest {
             }
 
             Assert.assertNull("dest table should have been cleaned up", engine.getTableTokenIfExists("dest"));
+        });
+    }
+
+    @Test
+    public void testCreateAsSelectParquetConfig() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table src (ts timestamp, v long PARQUET(DELTA_BINARY_PACKED, zstd(3))) timestamp(ts) partition by day;");
+            execute("create table dest (like src)");
+
+            assertSql("""
+                            ddl
+                            CREATE TABLE 'dest' (\s
+                            \tts TIMESTAMP,
+                            \tv LONG PARQUET(delta_binary_packed, zstd(3))
+                            ) timestamp(ts) PARTITION BY DAY BYPASS WAL;
+                            """,
+                    "SHOW CREATE TABLE dest");
         });
     }
 

@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -63,13 +63,18 @@ public class MinCharGroupByFunctionFactoryTest extends AbstractCairoTest {
         execute("create table tab (f char)");
 
         final Rnd rnd = new Rnd();
+        char min = 0;
         try (TableWriter w = getWriter("tab")) {
             TableWriter.Row r = w.newRow();
             r.append();
             for (int i = 100; i > 10; i--) {
                 r = w.newRow();
-                r.putChar(0, rnd.nextChar());
+                char ch = rnd.nextChar();
+                r.putChar(0, ch);
                 r.append();
+                if (ch > 0 && (ch < min || min == 0)) {
+                    min = ch;
+                }
             }
             w.commit();
         }
@@ -79,7 +84,7 @@ public class MinCharGroupByFunctionFactoryTest extends AbstractCairoTest {
                 Record record = cursor.getRecord();
                 Assert.assertEquals(1, cursor.size());
                 Assert.assertTrue(cursor.hasNext());
-                Assert.assertEquals(0, record.getChar(0));
+                Assert.assertEquals(min, record.getChar(0));
             }
         }
     }

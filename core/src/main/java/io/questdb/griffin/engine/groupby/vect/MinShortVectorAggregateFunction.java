@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -119,7 +119,7 @@ public class MinShortVectorAggregateFunction extends IntFunction implements Vect
 
     @Override
     public void initRosti(long pRosti) {
-        Unsafe.getUnsafe().putLong(Rosti.getInitialValueSlot(pRosti, valueOffset), Numbers.LONG_NULL);
+        Unsafe.putLong(Rosti.getInitialValueSlot(pRosti, valueOffset), Numbers.LONG_NULL);
     }
 
     @Override

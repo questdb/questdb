@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -36,6 +36,7 @@ public class CairoTable implements Sinkable {
     public final IntList columnOrderList;
     public final ObjList<CairoColumn> columns;
     private boolean dedup;
+    private boolean hasParquetPartitions;
     private int matViewRefreshLimitHoursOrMonths;
     private int matViewTimerInterval;
     private long matViewTimerStart;
@@ -74,6 +75,7 @@ public class CairoTable implements Sinkable {
         ttlHoursOrMonths = fromTab.getTtlHoursOrMonths();
         softLink = fromTab.isSoftLink();
         dedup = fromTab.hasDedup();
+        hasParquetPartitions = fromTab.hasParquetPartitions();
         matViewRefreshLimitHoursOrMonths = fromTab.getMatViewRefreshLimitHoursOrMonths();
         matViewTimerStart = fromTab.getMatViewTimerStart();
         matViewTimerInterval = fromTab.getMatViewTimerInterval();
@@ -183,6 +185,10 @@ public class CairoTable implements Sinkable {
         return dedup;
     }
 
+    public boolean hasParquetPartitions() {
+        return hasParquetPartitions;
+    }
+
     public boolean isSoftLink() {
         return softLink;
     }
@@ -193,6 +199,10 @@ public class CairoTable implements Sinkable {
 
     public void setDedupFlag(boolean dedup) {
         this.dedup = dedup;
+    }
+
+    public void setHasParquetPartitions(boolean hasParquetPartitions) {
+        this.hasParquetPartitions = hasParquetPartitions;
     }
 
     public void setMaxUncommittedRows(int maxUncommittedRows) {
