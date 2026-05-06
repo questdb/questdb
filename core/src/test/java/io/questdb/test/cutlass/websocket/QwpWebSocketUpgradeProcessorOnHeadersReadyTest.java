@@ -135,7 +135,7 @@ public class QwpWebSocketUpgradeProcessorOnHeadersReadyTest extends AbstractCair
     }
 
     @Test
-    public void testOnHeadersReadyFailsHardWhenServiceUnavailableResponseDoesNotFitBuffer() throws Exception {
+    public void testOnHeadersReadyFailsHardWhenMisdirectedRequestResponseDoesNotFitBuffer() throws Exception {
         assertMemoryLeak(() -> {
             QwpServerInfoProvider previous = engine.getQwpServerInfoProvider();
             engine.setQwpServerInfoProvider(new FakeRoleProvider(QwpEgressMsgKind.ROLE_REPLICA));
@@ -153,7 +153,7 @@ public class QwpWebSocketUpgradeProcessorOnHeadersReadyTest extends AbstractCair
                 header.setHeader("Sec-WebSocket-Key", "dGhlIHNhbXBsZSBub25jZQ==");
                 header.setHeader("Sec-WebSocket-Version", "13");
 
-                assertBufferTooSmallFailure(processor, context, "503 ingress role-reject response");
+                assertBufferTooSmallFailure(processor, context, "421 ingress role-reject response");
 
                 Assert.assertEquals(0, context.getMockRawSocket().sentSize);
                 Assert.assertFalse(context.isSwitchProtocolCalled());
@@ -361,8 +361,8 @@ public class QwpWebSocketUpgradeProcessorOnHeadersReadyTest extends AbstractCair
             Assert.assertNull("rejected handshake must not allocate processor state", lv.get(context));
 
             String response = readResponse(bufferAddr, context.getMockRawSocket().sentSize);
-            Assert.assertTrue("response must be 503: " + response,
-                    response.startsWith("HTTP/1.1 503 Service Unavailable\r\n"));
+            Assert.assertTrue("response must be 421: " + response,
+                    response.startsWith("HTTP/1.1 421 Misdirected Request\r\n"));
             Assert.assertTrue("response must carry X-QuestDB-Role: " + expectedRoleName + ", got: " + response,
                     response.contains("\r\nX-QuestDB-Role: " + expectedRoleName + "\r\n"));
         } finally {

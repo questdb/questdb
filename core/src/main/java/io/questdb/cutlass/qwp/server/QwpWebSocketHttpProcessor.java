@@ -55,6 +55,8 @@ public class QwpWebSocketHttpProcessor implements HttpRequestHandler {
     public static final Utf8String HEADER_SEC_WEBSOCKET_VERSION = new Utf8String("Sec-WebSocket-Version");
     // Header names (case-insensitive)
     public static final Utf8String HEADER_UPGRADE = new Utf8String("Upgrade");
+    // Expected value for HEADER_X_QWP_REQUEST_DURABLE_ACK to enable durable-ack; compared case-insensitively.
+    public static final Utf8String HEADER_VALUE_DURABLE_ACK_ENABLED = new Utf8String("true");
     // QWP version negotiation headers
     public static final Utf8String HEADER_X_QWP_ACCEPT_ENCODING = new Utf8String("X-QWP-Accept-Encoding");
     public static final Utf8String HEADER_X_QWP_CLIENT_ID = new Utf8String("X-QWP-Client-Id");
@@ -63,8 +65,6 @@ public class QwpWebSocketHttpProcessor implements HttpRequestHandler {
     // Client opt-in for STATUS_DURABLE_ACK frames. Value "true" (case-insensitive) enables.
     // Any other value, or header absent, leaves the feature disabled for this connection.
     public static final Utf8String HEADER_X_QWP_REQUEST_DURABLE_ACK = new Utf8String("X-QWP-Request-Durable-Ack");
-    // Expected value for HEADER_X_QWP_REQUEST_DURABLE_ACK to enable durable-ack; compared case-insensitively.
-    public static final Utf8String HEADER_VALUE_DURABLE_ACK_ENABLED = new Utf8String("true");
     // Header values
     public static final Utf8String VALUE_WEBSOCKET = new Utf8String("websocket");
     /**
@@ -93,6 +93,12 @@ public class QwpWebSocketHttpProcessor implements HttpRequestHandler {
     // allocates (28 chars) but that's the only irreducible cost without changing
     // the writeResponse contract to consume raw bytes.
     private static final ThreadLocal<byte[]> KEY_SCRATCH = ThreadLocal.withInitial(() -> new byte[KEY_SCRATCH_SIZE]);
+    private static final byte[] MISDIRECTED_REQUEST_PREFIX =
+            ("""
+                    HTTP/1.1 421 Misdirected Request\r
+                    Connection: close\r
+                    Content-Length: 0\r
+                    X-QuestDB-Role:\s""").getBytes(StandardCharsets.US_ASCII);
     private static final byte[] RESPONSE_AFTER_ACCEPT = "\r\nX-QWP-Version: ".getBytes(StandardCharsets.US_ASCII);
     private static final byte[] RESPONSE_CONTENT_ENCODING_PREFIX =
             "\r\nX-QWP-Content-Encoding: ".getBytes(StandardCharsets.US_ASCII);
@@ -101,11 +107,6 @@ public class QwpWebSocketHttpProcessor implements HttpRequestHandler {
             "HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Accept: ".getBytes(StandardCharsets.US_ASCII);
     private static final byte[] RESPONSE_ROLE_PREFIX = "\r\nX-QuestDB-Role: ".getBytes(StandardCharsets.US_ASCII);
     private static final byte[] RESPONSE_SUFFIX = "\r\n\r\n".getBytes(StandardCharsets.US_ASCII);
-    private static final byte[] SERVICE_UNAVAILABLE_PREFIX =
-            ("HTTP/1.1 503 Service Unavailable\r\n"
-                    + "Connection: close\r\n"
-                    + "Content-Length: 0\r\n"
-                    + "X-QuestDB-Role: ").getBytes(StandardCharsets.US_ASCII);
     private static final int SHA1_BASE64_SIZE = 28;
     private static final ThreadLocal<byte[]> BASE64_SCRATCH = ThreadLocal.withInitial(() -> new byte[SHA1_BASE64_SIZE]);
     // Thread-local SHA-1 digest for computing Sec-WebSocket-Accept
@@ -256,6 +257,10 @@ public class QwpWebSocketHttpProcessor implements HttpRequestHandler {
         return upgradeHeader != null && Utf8s.equalsIgnoreCaseAscii(upgradeHeader, VALUE_WEBSOCKET);
     }
 
+    public static int misdirectedRequestWithRoleSize(byte[] roleBytes) {
+        return MISDIRECTED_REQUEST_PREFIX.length + roleBytes.length + RESPONSE_SUFFIX.length;
+    }
+
     /**
      * Returns the size of the handshake response for the given accept key and QWP version.
      *
@@ -287,10 +292,6 @@ public class QwpWebSocketHttpProcessor implements HttpRequestHandler {
             size += RESPONSE_ROLE_PREFIX.length + roleBytes.length;
         }
         return size;
-    }
-
-    public static int serviceUnavailableWithRoleSize(byte[] roleBytes) {
-        return SERVICE_UNAVAILABLE_PREFIX.length + roleBytes.length + RESPONSE_SUFFIX.length;
     }
 
     /**
@@ -344,6 +345,24 @@ public class QwpWebSocketHttpProcessor implements HttpRequestHandler {
         }
 
         return null;
+    }
+
+    public static int writeMisdirectedRequestWithRole(long buf, int bufferSize, byte[] roleBytes) {
+        int needed = misdirectedRequestWithRoleSize(roleBytes);
+        if (needed > bufferSize) {
+            return -1;
+        }
+        int offset = 0;
+        for (byte b : MISDIRECTED_REQUEST_PREFIX) {
+            Unsafe.putByte(buf + offset++, b);
+        }
+        for (byte b : roleBytes) {
+            Unsafe.putByte(buf + offset++, b);
+        }
+        for (byte b : RESPONSE_SUFFIX) {
+            Unsafe.putByte(buf + offset++, b);
+        }
+        return offset;
     }
 
     /**
@@ -410,24 +429,6 @@ public class QwpWebSocketHttpProcessor implements HttpRequestHandler {
             Unsafe.putByte(buf + offset++, b);
         }
 
-        return offset;
-    }
-
-    public static int writeServiceUnavailableWithRole(long buf, int bufferSize, byte[] roleBytes) {
-        int needed = serviceUnavailableWithRoleSize(roleBytes);
-        if (needed > bufferSize) {
-            return -1;
-        }
-        int offset = 0;
-        for (byte b : SERVICE_UNAVAILABLE_PREFIX) {
-            Unsafe.putByte(buf + offset++, b);
-        }
-        for (byte b : roleBytes) {
-            Unsafe.putByte(buf + offset++, b);
-        }
-        for (byte b : RESPONSE_SUFFIX) {
-            Unsafe.putByte(buf + offset++, b);
-        }
         return offset;
     }
 

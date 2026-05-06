@@ -252,18 +252,18 @@ public class QwpWebSocketUpgradeProcessor implements HttpRequestProcessor {
         byte role = engine.getQwpServerInfoProvider().role();
         byte[] roleBytes = QwpEgressMsgKind.roleNameBytes(role);
         if (role == QwpEgressMsgKind.ROLE_REPLICA || role == QwpEgressMsgKind.ROLE_PRIMARY_CATCHUP) {
-            int unavailableSize = QwpWebSocketHttpProcessor.serviceUnavailableWithRoleSize(roleBytes);
-            if (unavailableSize > bufferSize) {
-                throw responseDoesNotFitSendBuffer(context.getFd(), "503 ingress role-reject response", bufferSize, unavailableSize);
+            int rejectSize = QwpWebSocketHttpProcessor.misdirectedRequestWithRoleSize(roleBytes);
+            if (rejectSize > bufferSize) {
+                throw responseDoesNotFitSendBuffer(context.getFd(), "421 ingress role-reject response", bufferSize, rejectSize);
             }
-            int unavailableBytes = QwpWebSocketHttpProcessor.writeServiceUnavailableWithRole(bufferAddr, bufferSize, roleBytes);
-            if (unavailableBytes <= 0) {
-                throw responseDoesNotFitSendBuffer(context.getFd(), "503 ingress role-reject response", bufferSize, unavailableSize);
+            int rejectBytes = QwpWebSocketHttpProcessor.writeMisdirectedRequestWithRole(bufferAddr, bufferSize, roleBytes);
+            if (rejectBytes <= 0) {
+                throw responseDoesNotFitSendBuffer(context.getFd(), "421 ingress role-reject response", bufferSize, rejectSize);
             }
             try {
-                rawSocket.send(unavailableBytes);
+                rawSocket.send(rejectBytes);
             } catch (PeerIsSlowToReadException e) {
-                throw HttpException.instance("WebSocket ingress role-reject 503 blocked");
+                throw HttpException.instance("WebSocket ingress role-reject 421 blocked");
             }
             LOG.info().$("ingress upgrade rejected by role [fd=").$(context.getFd())
                     .$(", role=").$(QwpEgressMsgKind.roleName(role)).I$();
