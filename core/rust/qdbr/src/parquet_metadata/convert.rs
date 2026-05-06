@@ -1430,6 +1430,125 @@ mod tests {
         );
     }
 
+    /// Regression: an external INT32 + Date logical-type parquet must keep its
+    /// stats as i32 days at parquet physical width when ingested through the
+    /// inline path. The earlier convert_stat_to_qdb widened days to i64 millis,
+    /// so the skip path's 4-byte INT32 read interpreted the low 4 bytes of
+    /// millis as days and produced wildly wrong bounds. QuestDB itself writes
+    /// Date as INT64+millis, so this case only surfaces for external Int32-Date
+    /// parquets converted through `build_column_chunk_from_thrift`.
+    #[test]
+    fn convert_int32_date_round_trips_at_int32_width() {
+        use parquet2::metadata::{ColumnDescriptor, Descriptor};
+        use parquet2::schema::types::{
+            FieldInfo, ParquetType, PhysicalType, PrimitiveLogicalType, PrimitiveType,
+        };
+        use parquet2::schema::Repetition;
+        use parquet2::thrift_format::{
+            ColumnChunk, ColumnMetaData, CompressionCodec, Encoding as ThriftEncoding, RowGroup,
+            Statistics as ThriftStatistics, Type,
+        };
+
+        let min_days: i32 = -100; // ~1969-09-23
+        let max_days: i32 = 365; //  1971-01-01
+
+        let primitive_type = PrimitiveType {
+            field_info: FieldInfo {
+                name: "d".to_string(),
+                repetition: Repetition::Required,
+                id: None,
+            },
+            logical_type: Some(PrimitiveLogicalType::Date),
+            converted_type: None,
+            physical_type: PhysicalType::Int32,
+        };
+        let base_type = ParquetType::PrimitiveType(primitive_type.clone());
+        let descriptor = Descriptor { primitive_type, max_def_level: 0, max_rep_level: 0 };
+        let col_desc = ColumnDescriptor::new(descriptor, vec!["d".to_string()], base_type);
+
+        let stats = ThriftStatistics {
+            max: None,
+            min: None,
+            null_count: Some(0),
+            distinct_count: None,
+            max_value: Some(max_days.to_le_bytes().to_vec()),
+            min_value: Some(min_days.to_le_bytes().to_vec()),
+        };
+        let meta = ColumnMetaData {
+            type_: Type::INT32,
+            encodings: vec![ThriftEncoding::PLAIN],
+            path_in_schema: vec!["d".to_string()],
+            codec: CompressionCodec::UNCOMPRESSED,
+            num_values: 100,
+            total_uncompressed_size: 400,
+            total_compressed_size: 400,
+            key_value_metadata: None,
+            data_page_offset: 4,
+            index_page_offset: None,
+            dictionary_page_offset: None,
+            statistics: Some(stats),
+            encoding_stats: None,
+            bloom_filter_offset: None,
+            bloom_filter_length: None,
+        };
+        let column_chunk = ColumnChunk {
+            file_path: None,
+            file_offset: 0,
+            meta_data: Some(meta),
+            offset_index_offset: None,
+            offset_index_length: None,
+            column_index_offset: None,
+            column_index_length: None,
+            crypto_metadata: None,
+            encrypted_column_metadata: None,
+        };
+        let row_group = RowGroup {
+            columns: vec![column_chunk],
+            total_byte_size: 400,
+            num_rows: 100,
+            sorting_columns: None,
+            file_offset: None,
+            total_compressed_size: None,
+            ordinal: None,
+        };
+
+        let block = build_row_group_block_from_thrift_with_types(
+            &row_group,
+            std::slice::from_ref(&col_desc),
+            &[Some(ColumnTypeTag::Date)],
+            &[],
+        )
+        .unwrap();
+
+        let chunk = block.column_chunk_raw(0);
+        let stat_flags = StatFlags(chunk.stat_flags);
+        assert!(stat_flags.has_min_stat());
+        assert!(stat_flags.is_min_inlined());
+        assert!(stat_flags.has_max_stat());
+        assert!(stat_flags.is_max_inlined());
+
+        // The slot must hold i32 days at parquet physical width (4 bytes).
+        // Reading the low 4 bytes as i32 is exactly what `can_skip_row_group`
+        // does for INT32 physical type before applying `MILLIS_PER_DAY`.
+        let min_bytes = chunk.min_stat.to_le_bytes();
+        let min_i32 = i32::from_le_bytes([min_bytes[0], min_bytes[1], min_bytes[2], min_bytes[3]]);
+        assert_eq!(
+            min_i32, min_days,
+            "INT32-Date inline min must read back as i32 days, not i64 millis"
+        );
+        let max_bytes = chunk.max_stat.to_le_bytes();
+        let max_i32 = i32::from_le_bytes([max_bytes[0], max_bytes[1], max_bytes[2], max_bytes[3]]);
+        assert_eq!(
+            max_i32, max_days,
+            "INT32-Date inline max must read back as i32 days, not i64 millis"
+        );
+
+        // High 4 bytes must be zero. This pins the contract: the convert path
+        // did not widen i32 days to i64 millis before writing the slot.
+        assert_eq!(&min_bytes[4..], &[0u8; 4]);
+        assert_eq!(&max_bytes[4..], &[0u8; 4]);
+    }
+
     #[test]
     fn convert_with_qdb_meta_flags() {
         let parquet_data = write_test_parquet(10, CompressionOptions::Uncompressed);

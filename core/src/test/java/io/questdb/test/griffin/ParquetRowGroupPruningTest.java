@@ -2037,6 +2037,111 @@ public class ParquetRowGroupPruningTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testMinMaxPruningGeoByte() throws Exception {
+        // GeoByte rides the same INT32-physical inline path as BYTE: the _pm
+        // slot now holds parquet i32 stats verbatim instead of a 1-byte
+        // narrow encoding. The skip path doesn't currently push geohash
+        // equality through the row-group filter, but values must still
+        // round-trip correctly through the parquet conversion.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (val GEOHASH(1c), ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO x VALUES
+                    (#0, '2024-01-01T00:00:00.000000Z'),
+                    (#1, '2024-01-01T01:00:00.000000Z'),
+                    (#2, '2024-01-01T02:00:00.000000Z'),
+                    (#3, '2024-01-01T03:00:00.000000Z'),
+                    (#z, '2024-01-02T03:00:00.000000Z')
+                    """);
+            execute("ALTER TABLE x CONVERT PARTITION TO PARQUET WHERE ts >= 0");
+
+            assertQueryNoLeakCheck(
+                    """
+                            val
+                            2
+                            """,
+                    "SELECT val FROM x WHERE val = #2",
+                    null, true, false
+            );
+
+            // #y matches no row in either partition; the query must return
+            // empty without misclassifying the row groups.
+            assertQueryNoLeakCheck(
+                    "val\n",
+                    "SELECT val FROM x WHERE val = #y",
+                    null, true, false
+            );
+
+            // Full scan with timestamp ordering still has to read every value
+            // through the parquet reader, regardless of whether the row group
+            // filter fires.
+            assertQueryNoLeakCheck(
+                    """
+                            val\tts
+                            0\t2024-01-01T00:00:00.000000Z
+                            1\t2024-01-01T01:00:00.000000Z
+                            2\t2024-01-01T02:00:00.000000Z
+                            3\t2024-01-01T03:00:00.000000Z
+                            z\t2024-01-02T03:00:00.000000Z
+                            """,
+                    "SELECT val, ts FROM x ORDER BY ts",
+                    "ts", true, true
+            );
+        });
+    }
+
+    @Test
+    public void testMinMaxPruningGeoShort() throws Exception {
+        // GeoShort rides the same INT32-physical inline path as SHORT: the
+        // _pm slot now holds parquet i32 stats verbatim instead of a 2-byte
+        // narrow encoding. The skip path doesn't currently push geohash
+        // equality through the row-group filter, but values must still
+        // round-trip correctly through the parquet conversion.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (val GEOHASH(3c), ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO x VALUES
+                    (#000, '2024-01-01T00:00:00.000000Z'),
+                    (#001, '2024-01-01T01:00:00.000000Z'),
+                    (#002, '2024-01-01T02:00:00.000000Z'),
+                    (#003, '2024-01-01T03:00:00.000000Z'),
+                    (#zzz, '2024-01-02T03:00:00.000000Z')
+                    """);
+            execute("ALTER TABLE x CONVERT PARTITION TO PARQUET WHERE ts >= 0");
+
+            assertQueryNoLeakCheck(
+                    """
+                            val
+                            002
+                            """,
+                    "SELECT val FROM x WHERE val = #002",
+                    null, true, false
+            );
+
+            // #yyy matches no row in either partition; the query must return
+            // empty without misclassifying the row groups.
+            assertQueryNoLeakCheck(
+                    "val\n",
+                    "SELECT val FROM x WHERE val = #yyy",
+                    null, true, false
+            );
+
+            assertQueryNoLeakCheck(
+                    """
+                            val\tts
+                            000\t2024-01-01T00:00:00.000000Z
+                            001\t2024-01-01T01:00:00.000000Z
+                            002\t2024-01-01T02:00:00.000000Z
+                            003\t2024-01-01T03:00:00.000000Z
+                            zzz\t2024-01-02T03:00:00.000000Z
+                            """,
+                    "SELECT val, ts FROM x ORDER BY ts",
+                    "ts", true, true
+            );
+        });
+    }
+
+    @Test
     public void testMinMaxPruningIPv4() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE x (val IPv4, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
