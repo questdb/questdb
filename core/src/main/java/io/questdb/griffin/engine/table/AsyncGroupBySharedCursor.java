@@ -62,6 +62,17 @@ public class AsyncGroupBySharedCursor implements RecordCursor {
     @Override
     public void close() {
         mapCursor = Misc.free(mapCursor);
+        // Notify each shared function the cursor is closing so it can drop
+        // per-cursor state (e.g., array_agg's render cache). The sync
+        // counterpart AbstractVirtualFunctionRecordCursor.close() does this
+        // via the same Function.cursorClosed() hook; keep the two paths
+        // symmetric so functions can rely on the hook running in both.
+        for (int i = 0, n = recordFunctions.size(); i < n; i++) {
+            Function function = recordFunctions.getQuick(i);
+            if (function != null) {
+                function.cursorClosed();
+            }
+        }
     }
 
     @Override
