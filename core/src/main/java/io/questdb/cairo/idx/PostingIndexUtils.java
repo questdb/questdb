@@ -991,6 +991,43 @@ public final class PostingIndexUtils {
     }
 
     /**
+     * Returns true when the file at {@code keyFilePath} exists and at least
+     * one of its two seqlock header pages is in the published, stable state
+     * that {@code PostingIndexWriter.initKeyMemory} leaves behind on a
+     * successful init. Returns false for missing files, files shorter than
+     * {@link #KEY_FILE_RESERVED} (truncated mid-init), and files whose
+     * Page A and Page B both have zeroed/torn seqlocks (the shape we observe
+     * when an earlier writer mapped the file but never wrote a complete
+     * header before failing).
+     * <p>
+     * Used by {@code TableWriter.createIndexFiles} to decide whether to
+     * preserve an existing .pk (so its chain history survives a writer
+     * reopen) or wipe it as garbage from a previous failed init. Does not
+     * validate entry-region pointers, which can legitimately be empty on a
+     * freshly initialised chain.
+     */
+    public static boolean hasInitialisedKeyFileHeader(FilesFacade ff, LPSZ keyFilePath) {
+        if (!ff.exists(keyFilePath) || ff.length(keyFilePath) < KEY_FILE_RESERVED) {
+            return false;
+        }
+        long fd = ff.openRO(keyFilePath);
+        if (fd < 0) {
+            return false;
+        }
+        try {
+            long seqStartA = ff.readNonNegativeLong(fd, PAGE_A_OFFSET + V2_HEADER_OFFSET_SEQUENCE_START);
+            long seqEndA = ff.readNonNegativeLong(fd, PAGE_A_OFFSET + V2_HEADER_OFFSET_SEQUENCE_END);
+            long seqStartB = ff.readNonNegativeLong(fd, PAGE_B_OFFSET + V2_HEADER_OFFSET_SEQUENCE_START);
+            long seqEndB = ff.readNonNegativeLong(fd, PAGE_B_OFFSET + V2_HEADER_OFFSET_SEQUENCE_END);
+            boolean aStable = seqStartA != 0L && seqStartA == seqEndA && (seqStartA & 1L) == 0L;
+            boolean bStable = seqStartB != 0L && seqStartB == seqEndB && (seqStartB & 1L) == 0L;
+            return aStable || bStable;
+        } finally {
+            ff.close(fd);
+        }
+    }
+
+    /**
      * Builds the full path to the key file (.pk).
      * <p>
      * Filename format: <code>&lt;name&gt;.pk.&lt;postingColumnNameTxn&gt;</code>.
