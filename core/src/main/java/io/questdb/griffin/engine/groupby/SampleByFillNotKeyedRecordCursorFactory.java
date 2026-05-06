@@ -71,19 +71,19 @@ import java.util.Arrays;
  * keyed scaffolding (no Map allocation, no per-key value rebind, no key-skip
  * scan in the gap-emit loop).
  * <p>
- * The previous-value cache lives in a single {@link SimpleMapValue} (one row of
- * 32-byte slots, off-heap). Slots:
+ * The previous-value cache lives entirely in cursor-local fields/arrays:
  * <ul>
- *   <li>{@link #LAST_KNOWN_TS_SLOT} -- bucket timestamp where the last data row
+ *   <li>{@code lastKnownBucketTs} -- bucket timestamp where the last data row
  *       arrived, or {@link Numbers#LONG_NULL} when no data has been seen yet.
  *       Drives {@code hasPrevForCurrentGap}.</li>
- *   <li>{@link #PREV_ROWID_SLOT} -- rowId of the most recent data row, used by
+ *   <li>{@code prevRowId} -- rowId of the most recent data row, used by
  *       {@code baseCursor.recordAt} to materialize variable-width FILL_PREV
  *       columns.</li>
- *   <li>{@link #PREV_CACHE_OFFSET}..{@code PREV_CACHE_OFFSET + N - 1} -- one
- *       slot per fixed-size FILL_PREV source column. Read directly via
- *       {@link #DISPATCH_PREV_CACHE_SLOT} so the gap-emit hot path does not
- *       have to issue {@code recordAt}.</li>
+ *   <li>{@code prev{Long,Double,Float,Int,Short,Byte,Bool,Char,Long128Lo,Long128Hi,
+ *       Long256,Decimal128,Decimal256}Cache} -- one entry per fixed-size FILL_PREV
+ *       source column, indexed by source ordinal. {@link #DISPATCH_PREV_CACHE_SLOT}
+ *       reads from these arrays directly so the gap-emit hot path skips
+ *       {@code recordAt}.</li>
  * </ul>
  * Variable-width FILL_PREV sources (VARCHAR/BIN/STRING/ARRAY) still go through
  * {@link #DISPATCH_PREV_SLOT} and {@code recordAt}; {@code isPrevPositioningNeeded}
@@ -95,12 +95,11 @@ public class SampleByFillNotKeyedRecordCursorFactory extends AbstractRecordCurso
     // public constants. Re-aliased here purely to shorten switch arms below.
     private static final int FILL_CONSTANT = SampleByFillRecordCursorFactory.FILL_CONSTANT;
     private static final int FILL_PREV_SELF = SampleByFillRecordCursorFactory.FILL_PREV_SELF;
-    // Slot indices into the SimpleMapValue cache. PREV_CACHE_OFFSET == 2 keeps
-    // the per-source-col cache slots packed right after the two header slots,
-    // matching the keyed cursor's MapValue layout for easy mental reuse.
-    private static final int LAST_KNOWN_TS_SLOT = 0;
+    // SqlCodeGenerator emits prevValueSlot values in the keyed-cursor's MapValue
+    // layout (slot 0 = LAST_KNOWN_TS, slot 1 = PREV_ROWID, slot 2..2+N-1 = per-
+    // source cache). compileDispatchPlan subtracts this offset so dispatchSlot[col]
+    // indexes the typed cache arrays directly (0..N-1).
     private static final int PREV_CACHE_OFFSET = 2;
-    private static final int PREV_ROWID_SLOT = 1;
 
     private final RecordCursorFactory base;
     private final ObjList<Function> constantFills;
@@ -109,9 +108,6 @@ public class SampleByFillNotKeyedRecordCursorFactory extends AbstractRecordCurso
     private final Function fromFunc;
     private final boolean hasPrevFill;
     private final Function offsetFunc;
-    // Owned by the factory so the cache survives cursor close()/of() cycles
-    // (each test/query reuse closes and re-opens the cursor). Freed in _close().
-    private final SimpleMapValue prevValue;
     private final long samplingInterval;
     private final char samplingIntervalUnit;
     private final int timestampIndex;
@@ -154,27 +150,15 @@ public class SampleByFillNotKeyedRecordCursorFactory extends AbstractRecordCurso
                 break;
             }
         }
-        // 2 header slots + one slot per fixed-size FILL_PREV source.
-        final int slotCount = PREV_CACHE_OFFSET + fixedPrevSrcCols.size();
-        SimpleMapValue prevValueLocal = null;
-        SampleByFillNotKeyedCursor cursorLocal;
-        try {
-            prevValueLocal = new SimpleMapValue(slotCount);
-            cursorLocal = new SampleByFillNotKeyedCursor(
-                    metadata, timestampSampler,
-                    fromFunc, toFunc, toFuncPos, fillModes, constantFills,
-                    timestampIndex, timestampType, localHasPrevFill,
-                    prevValueLocal, symbolTableColIndices,
-                    offsetFunc, offsetFuncPos,
-                    tzFunc, tzFuncPos, samplingIntervalUnit,
-                    fixedPrevSrcCols, fixedPrevTypeTags, prevValueSlot, isPrevPositioningNeeded
-            );
-        } catch (Throwable th) {
-            // Free what this constructor allocated. Caller still owns its inputs
-            // (base, fromFunc, toFunc, constantFills, offsetFunc, tzFunc).
-            Misc.free(prevValueLocal);
-            throw th;
-        }
+        SampleByFillNotKeyedCursor cursorLocal = new SampleByFillNotKeyedCursor(
+                metadata, timestampSampler,
+                fromFunc, toFunc, toFuncPos, fillModes, constantFills,
+                timestampIndex, timestampType, localHasPrevFill,
+                symbolTableColIndices,
+                offsetFunc, offsetFuncPos,
+                tzFunc, tzFuncPos, samplingIntervalUnit,
+                fixedPrevSrcCols, fixedPrevTypeTags, prevValueSlot, isPrevPositioningNeeded
+        );
         this.base = base;
         this.fromFunc = fromFunc;
         this.toFunc = toFunc;
@@ -187,7 +171,6 @@ public class SampleByFillNotKeyedRecordCursorFactory extends AbstractRecordCurso
         this.constantFills = constantFills;
         this.fillModes = fillModes;
         this.hasPrevFill = localHasPrevFill;
-        this.prevValue = prevValueLocal;
         this.cursor = cursorLocal;
     }
 
@@ -248,7 +231,6 @@ public class SampleByFillNotKeyedRecordCursorFactory extends AbstractRecordCurso
     @Override
     protected void _close() {
         Misc.free(cursor);
-        Misc.free(prevValue);
         Misc.free(base);
         Misc.free(fromFunc);
         Misc.free(toFunc);
@@ -290,9 +272,9 @@ public class SampleByFillNotKeyedRecordCursorFactory extends AbstractRecordCurso
         private static final int DISPATCH_BASE = 5;
         private static final int DISPATCH_CONSTANT = 0;
         private static final int DISPATCH_NULL = 1;
-        // Cached FILL_PREV: read directly off prevValue (the cursor-local
-        // SimpleMapValue) without re-binding. SYMBOL slots hold the 4-byte id;
-        // getSymA/B resolve via the cached SymbolTable.
+        // Cached FILL_PREV: read from the matching typed cache array via
+        // dispatchSlot[col] (a 0..N-1 source ordinal). SYMBOL slots hold the
+        // 4-byte id in prevIntCache; getSymA/B resolve via the cached SymbolTable.
         private static final int DISPATCH_PREV_CACHE_SLOT = 4;
         private static final int DISPATCH_PREV_SLOT = 2;
         private static final int DISPATCH_TIMESTAMP_FILL = 3;
@@ -328,19 +310,50 @@ public class SampleByFillNotKeyedRecordCursorFactory extends AbstractRecordCurso
         // output column reads a variable-width source (VARCHAR/BIN/STRING/ARRAY).
         // False lets the gap-emit branch skip baseCursor.recordAt entirely.
         private final boolean isPrevPositioningNeeded;
+        // Bucket timestamp where the most recent data row arrived
+        // (Numbers.LONG_NULL if no data has been seen yet). Drives
+        // hasPrevForCurrentGap; replaces the keyed cursor's LAST_KNOWN_TS_SLOT.
+        private long lastKnownBucketTs;
         private long maxTimestamp;
         private final Function offsetFunc;
         private final int offsetFuncPos;
         private long pendingTs;
+        // Per-type cached PREV value arrays. Each array is sized to the count
+        // of FILL_PREV sources of that type (or null when the type is unused);
+        // typedArrayIndex remaps the per-source ordinal (0..N-1) into the
+        // array's per-type ordinal so reads stay direct (one array dereference,
+        // no in-array search).
+        private final boolean[] prevBoolCache;
+        private final byte[] prevByteCache;
+        private final char[] prevCharCache;
+        private final Decimal128[] prevDecimal128Cache;
+        private final Decimal256[] prevDecimal256Cache;
+        private final double[] prevDoubleCache;
+        private final float[] prevFloatCache;
+        private final int[] prevIntCache;
+        private final long[] prevLong128HiCache;
+        private final long[] prevLong128LoCache;
+        // A/B siblings for Long256 reads. The Record contract (asserted by
+        // testStringsLong256AndBinary) requires getLong256A(col) and
+        // getLong256B(col) to return distinct instances backed by the same
+        // values; one Long256Impl per slot per side.
+        private final Long256Impl[] prevLong256ACache;
+        private final Long256Impl[] prevLong256BCache;
+        private final long[] prevLongCache;
         private Record prevRecord;
-        // The previous-value cache (one row, off-heap, slot-indexed). Owned by
-        // the factory; the cursor only borrows it so close()/of() cycles
-        // (test harnesses re-getCursor against the same factory) preserve the
-        // off-heap allocation.
-        private final SimpleMapValue prevValue;
-        // Per output column: cache slot for the cached fixed-size PREV value,
-        // or -1 if not slot-eligible (variable-width sources fall back to PREV_SLOT).
+        // RowId of the most recent data row, used by recordAt to materialize
+        // variable-width FILL_PREV columns. Replaces PREV_ROWID_SLOT.
+        private long prevRowId;
+        private final short[] prevShortCache;
+        // Per output column: source-ordinal index (0..N-1) for the cached
+        // fixed-size PREV value, or -1 if the source is not slot-eligible
+        // (variable-width sources fall back to PREV_SLOT).
         private final IntList prevValueSlot;
+        // Per-source remap: typedArrayIndex[sourceOrdinal] is the per-type
+        // ordinal into the matching prevXxxCache array. Built once in the
+        // constructor; consumed by compileDispatchPlan, updatePrevState and
+        // preFillNullSlots.
+        private final int[] typedArrayIndex;
         // FILL stride unit ('d','w','M','y'), forwarded to the TZ wrap so the
         // local-grid floor uses the right calendar resolution.
         private final char samplingIntervalUnit;
@@ -376,7 +389,6 @@ public class SampleByFillNotKeyedRecordCursorFactory extends AbstractRecordCurso
                 int timestampIndex,
                 int timestampType,
                 boolean hasPrevFill,
-                SimpleMapValue prevValue,
                 IntList symbolTableColIndices,
                 Function offsetFunc,
                 int offsetFuncPos,
@@ -410,17 +422,75 @@ public class SampleByFillNotKeyedRecordCursorFactory extends AbstractRecordCurso
             this.fixedPrevTypeTags = fixedPrevTypeTags;
             this.prevValueSlot = prevValueSlot;
             this.isPrevPositioningNeeded = isPrevPositioningNeeded;
-            this.prevValue = prevValue;
+            // Count FILL_PREV sources per primitive-type family so each cache
+            // array can be allocated to its exact size. Sources of an unused
+            // type leave their array null; typedArrayIndex carries the
+            // per-source -> per-type-ordinal remap consumed by the read/write
+            // paths (compileDispatchPlan, updatePrevState, preFillNullSlots).
+            final int n = fixedPrevSrcCols.size();
+            this.typedArrayIndex = new int[n];
+            int longCount = 0, doubleCount = 0, floatCount = 0, intCount = 0,
+                    shortCount = 0, byteCount = 0, boolCount = 0, charCount = 0,
+                    long128Count = 0, long256Count = 0,
+                    decimal128Count = 0, decimal256Count = 0;
+            for (int i = 0; i < n; i++) {
+                switch (fixedPrevTypeTags.getQuick(i)) {
+                    case ColumnType.LONG, ColumnType.DATE, ColumnType.TIMESTAMP,
+                         ColumnType.GEOLONG, ColumnType.DECIMAL64 -> typedArrayIndex[i] = longCount++;
+                    case ColumnType.INT, ColumnType.IPv4, ColumnType.GEOINT,
+                         ColumnType.DECIMAL32, ColumnType.SYMBOL -> typedArrayIndex[i] = intCount++;
+                    case ColumnType.SHORT, ColumnType.GEOSHORT, ColumnType.DECIMAL16 ->
+                            typedArrayIndex[i] = shortCount++;
+                    case ColumnType.BYTE, ColumnType.GEOBYTE, ColumnType.DECIMAL8 ->
+                            typedArrayIndex[i] = byteCount++;
+                    case ColumnType.DOUBLE -> typedArrayIndex[i] = doubleCount++;
+                    case ColumnType.FLOAT -> typedArrayIndex[i] = floatCount++;
+                    case ColumnType.BOOLEAN -> typedArrayIndex[i] = boolCount++;
+                    case ColumnType.CHAR -> typedArrayIndex[i] = charCount++;
+                    case ColumnType.LONG128 -> typedArrayIndex[i] = long128Count++;
+                    case ColumnType.LONG256 -> typedArrayIndex[i] = long256Count++;
+                    case ColumnType.DECIMAL128 -> typedArrayIndex[i] = decimal128Count++;
+                    case ColumnType.DECIMAL256 -> typedArrayIndex[i] = decimal256Count++;
+                    default -> {
+                        assert false : "unsupported fixed-size FILL(PREV) source type: "
+                                + ColumnType.nameOf(fixedPrevTypeTags.getQuick(i));
+                    }
+                }
+            }
+            this.prevLongCache = longCount == 0 ? null : new long[longCount];
+            this.prevDoubleCache = doubleCount == 0 ? null : new double[doubleCount];
+            this.prevFloatCache = floatCount == 0 ? null : new float[floatCount];
+            this.prevIntCache = intCount == 0 ? null : new int[intCount];
+            this.prevShortCache = shortCount == 0 ? null : new short[shortCount];
+            this.prevByteCache = byteCount == 0 ? null : new byte[byteCount];
+            this.prevBoolCache = boolCount == 0 ? null : new boolean[boolCount];
+            this.prevCharCache = charCount == 0 ? null : new char[charCount];
+            this.prevLong128LoCache = long128Count == 0 ? null : new long[long128Count];
+            this.prevLong128HiCache = long128Count == 0 ? null : new long[long128Count];
+            this.prevLong256ACache = long256Count == 0 ? null : new Long256Impl[long256Count];
+            this.prevLong256BCache = long256Count == 0 ? null : new Long256Impl[long256Count];
+            this.prevDecimal128Cache = decimal128Count == 0 ? null : new Decimal128[decimal128Count];
+            this.prevDecimal256Cache = decimal256Count == 0 ? null : new Decimal256[decimal256Count];
+            // Pre-instantiate the holders that wrap raw values so getters can
+            // hand them back without per-call allocation.
+            for (int i = 0; i < long256Count; i++) {
+                prevLong256ACache[i] = new Long256Impl();
+                prevLong256BCache[i] = new Long256Impl();
+            }
+            for (int i = 0; i < decimal128Count; i++) {
+                prevDecimal128Cache[i] = new Decimal128();
+            }
+            for (int i = 0; i < decimal256Count; i++) {
+                prevDecimal256Cache[i] = new Decimal256();
+            }
 
             compileDispatchPlan(metadata.getColumnCount());
         }
 
         @Override
         public void close() {
-            // Factory owns prevValue; never free it here. The cursor is
-            // closed-and-reopened across query reuses (try-with-resources in
-            // tests, repeated getCursor calls) and prevValue must outlive
-            // those cycles.
+            // Per-type cache arrays are plain Java references; nothing off-heap
+            // to release. baseCursor is the only owned resource here.
             baseCursor = Misc.free(baseCursor);
             isOpen = false;
         }
@@ -466,7 +536,7 @@ public class SampleByFillNotKeyedRecordCursorFactory extends AbstractRecordCurso
                     // Stamp the bucket as carrying data so subsequent gap
                     // buckets recognise that prev exists; mirrors the keyed
                     // cursor's LAST_KNOWN_TS_SLOT discipline.
-                    prevValue.putLong(LAST_KNOWN_TS_SLOT, currentBucketTimestamp);
+                    lastKnownBucketTs = currentBucketTimestamp;
                     if (hasPrevFill) {
                         updatePrevState(baseRecord);
                     }
@@ -478,13 +548,12 @@ public class SampleByFillNotKeyedRecordCursorFactory extends AbstractRecordCurso
                     // Gap -- emit one fill row before advancing the bucket.
                     currentDispatchCode = fillDispatchCode;
                     fillTimestampFunc.value = currentBucketTimestamp;
-                    final long lastKnownTs = prevValue.getLong(LAST_KNOWN_TS_SLOT);
-                    final boolean hasPrev = lastKnownTs != Numbers.LONG_NULL;
+                    final boolean hasPrev = lastKnownBucketTs != Numbers.LONG_NULL;
                     hasPrevForCurrentGap = hasPrev;
                     if (hasPrev && isPrevPositioningNeeded) {
                         // Position prevRecord once; FillRecord getters read from it
                         // for variable-width FILL_PREV columns.
-                        baseCursor.recordAt(prevRecord, prevValue.getLong(PREV_ROWID_SLOT));
+                        baseCursor.recordAt(prevRecord, prevRowId);
                     }
                     currentBucketTimestamp = timestampSampler.nextTimestamp(currentBucketTimestamp);
                     return true;
@@ -522,13 +591,13 @@ public class SampleByFillNotKeyedRecordCursorFactory extends AbstractRecordCurso
             if (baseCursor != null) {
                 baseCursor.toTop();
             }
-            // Reset the prev cache: clear all slots, then write LONG_NULL into
-            // LAST_KNOWN_TS_SLOT so hasPrev evaluates false until the first
-            // data row arrives. clear() zeroes everything; the per-type null
-            // pre-fill below fixes up the prev-cache slots so unconditional
-            // PREV_CACHE_SLOT reads return the right nulls before any data.
-            prevValue.clear();
-            prevValue.putLong(LAST_KNOWN_TS_SLOT, Numbers.LONG_NULL);
+            // Reset the prev cache: LONG_NULL into lastKnownBucketTs so
+            // hasPrev evaluates false until the first data row arrives, then
+            // pre-fill the typed cache arrays with per-type null sentinels so
+            // unconditional PREV_CACHE_SLOT reads return the right nulls
+            // before any data.
+            lastKnownBucketTs = Numbers.LONG_NULL;
+            prevRowId = 0;
             preFillNullSlots();
             isInitialized = false;
             hasPendingRow = false;
@@ -563,9 +632,14 @@ public class SampleByFillNotKeyedRecordCursorFactory extends AbstractRecordCurso
                 if (mode == FILL_PREV_SELF || mode >= 0) {
                     int slot = prevValueSlot.getQuick(col);
                     if (slot >= 0) {
-                        // Fixed-size scalar (or SYMBOL) -- read from the cached prevValue slot.
+                        // Fixed-size scalar (or SYMBOL) -- read from the typed
+                        // cache array. SqlCodeGenerator emits slot in the keyed
+                        // MapValue layout (PREV_CACHE_OFFSET + sourceOrdinal);
+                        // typedArrayIndex remaps the source ordinal into the
+                        // per-type ordinal so dispatchSlot indexes the typed
+                        // array directly.
                         fillDispatchCode[col] = DISPATCH_PREV_CACHE_SLOT;
-                        dispatchSlot[col] = slot;
+                        dispatchSlot[col] = typedArrayIndex[slot - PREV_CACHE_OFFSET];
                     } else {
                         // Variable-width source -- materialize via baseCursor.recordAt.
                         fillDispatchCode[col] = DISPATCH_PREV_SLOT;
@@ -654,8 +728,8 @@ public class SampleByFillNotKeyedRecordCursorFactory extends AbstractRecordCurso
         private void of(RecordCursor baseCursor, SqlExecutionContext executionContext) throws SqlException {
             this.baseCursor = baseCursor;
             this.baseRecord = baseCursor.getRecord();
-            // Factory owns prevValue, so there is nothing to reopen between
-            // cursor close()/of() cycles -- just flip the open flag back on.
+            // Cache lives in plain Java fields/arrays; close()/of() cycles
+            // don't tear them down -- just flip the open flag back on.
             isOpen = true;
             this.circuitBreaker = executionContext.getCircuitBreaker();
             Function.init(constantFills, baseCursor, executionContext, null);
@@ -713,7 +787,11 @@ public class SampleByFillNotKeyedRecordCursorFactory extends AbstractRecordCurso
             }
             // Cache one SymbolTable per slot-dispatched output column. For
             // non-keyed only PREV_CACHE_SLOT entries with SYMBOL source need
-            // resolving; KEY_SLOT does not exist on this path.
+            // resolving; KEY_SLOT does not exist on this path. prevValueSlot
+            // already encodes PREV_CACHE_OFFSET + sourceOrdinal -- the shape
+            // symbolTableColIndices is built against in SqlCodeGenerator -- so
+            // we read it directly here instead of going through dispatchSlot
+            // (which carries the per-type ordinal).
             int columnCount = fillDispatchCode.length;
             symbolCache.setAll(columnCount, null);
             int symTableSize = symbolTableColIndices.size();
@@ -722,11 +800,11 @@ public class SampleByFillNotKeyedRecordCursorFactory extends AbstractRecordCurso
                 if (code != DISPATCH_PREV_CACHE_SLOT) {
                     continue;
                 }
-                int slot = dispatchSlot[col];
-                if (slot < 0 || slot >= symTableSize) {
+                int symTableSlot = prevValueSlot.getQuick(col);
+                if (symTableSlot < 0 || symTableSlot >= symTableSize) {
                     continue;
                 }
-                int srcCol = symbolTableColIndices.getQuick(slot);
+                int srcCol = symbolTableColIndices.getQuick(symTableSlot);
                 if (srcCol >= 0) {
                     // Unwrap MapSymbolColumn-style wrappers to drop the
                     // per-cell wrapper hop on the hot read path.
@@ -750,30 +828,36 @@ public class SampleByFillNotKeyedRecordCursorFactory extends AbstractRecordCurso
         private void preFillNullSlots() {
             int prevSlotCount = fixedPrevSrcCols.size();
             for (int i = 0; i < prevSlotCount; i++) {
-                int slot = PREV_CACHE_OFFSET + i;
+                int j = typedArrayIndex[i];
                 switch (fixedPrevTypeTags.getQuick(i)) {
-                    case ColumnType.DOUBLE -> prevValue.putDouble(slot, Double.NaN);
-                    case ColumnType.FLOAT -> prevValue.putFloat(slot, Float.NaN);
+                    case ColumnType.DOUBLE -> prevDoubleCache[j] = Double.NaN;
+                    case ColumnType.FLOAT -> prevFloatCache[j] = Float.NaN;
                     case ColumnType.LONG, ColumnType.DATE, ColumnType.TIMESTAMP ->
-                            prevValue.putLong(slot, Numbers.LONG_NULL);
-                    case ColumnType.GEOLONG -> prevValue.putLong(slot, GeoHashes.NULL);
-                    case ColumnType.DECIMAL64 -> prevValue.putLong(slot, Decimals.DECIMAL64_NULL);
-                    case ColumnType.INT, ColumnType.SYMBOL -> prevValue.putInt(slot, Numbers.INT_NULL);
-                    case ColumnType.IPv4 -> prevValue.putInt(slot, Numbers.IPv4_NULL);
-                    case ColumnType.GEOINT -> prevValue.putInt(slot, GeoHashes.INT_NULL);
-                    case ColumnType.DECIMAL32 -> prevValue.putInt(slot, Decimals.DECIMAL32_NULL);
-                    case ColumnType.SHORT -> prevValue.putShort(slot, (short) 0);
-                    case ColumnType.GEOSHORT -> prevValue.putShort(slot, GeoHashes.SHORT_NULL);
-                    case ColumnType.DECIMAL16 -> prevValue.putShort(slot, Decimals.DECIMAL16_NULL);
-                    case ColumnType.BYTE -> prevValue.putByte(slot, (byte) 0);
-                    case ColumnType.GEOBYTE -> prevValue.putByte(slot, GeoHashes.BYTE_NULL);
-                    case ColumnType.DECIMAL8 -> prevValue.putByte(slot, Decimals.DECIMAL8_NULL);
-                    case ColumnType.BOOLEAN -> prevValue.putBool(slot, false);
-                    case ColumnType.CHAR -> prevValue.putChar(slot, (char) 0);
-                    case ColumnType.LONG128 -> prevValue.putLong128(slot, Numbers.LONG_NULL, Numbers.LONG_NULL);
-                    case ColumnType.LONG256 -> prevValue.putLong256(slot, Long256Impl.NULL_LONG256);
-                    case ColumnType.DECIMAL128 -> prevValue.putDecimal128Null(slot);
-                    case ColumnType.DECIMAL256 -> prevValue.putDecimal256Null(slot);
+                            prevLongCache[j] = Numbers.LONG_NULL;
+                    case ColumnType.GEOLONG -> prevLongCache[j] = GeoHashes.NULL;
+                    case ColumnType.DECIMAL64 -> prevLongCache[j] = Decimals.DECIMAL64_NULL;
+                    case ColumnType.INT, ColumnType.SYMBOL -> prevIntCache[j] = Numbers.INT_NULL;
+                    case ColumnType.IPv4 -> prevIntCache[j] = Numbers.IPv4_NULL;
+                    case ColumnType.GEOINT -> prevIntCache[j] = GeoHashes.INT_NULL;
+                    case ColumnType.DECIMAL32 -> prevIntCache[j] = Decimals.DECIMAL32_NULL;
+                    case ColumnType.SHORT -> prevShortCache[j] = (short) 0;
+                    case ColumnType.GEOSHORT -> prevShortCache[j] = GeoHashes.SHORT_NULL;
+                    case ColumnType.DECIMAL16 -> prevShortCache[j] = Decimals.DECIMAL16_NULL;
+                    case ColumnType.BYTE -> prevByteCache[j] = (byte) 0;
+                    case ColumnType.GEOBYTE -> prevByteCache[j] = GeoHashes.BYTE_NULL;
+                    case ColumnType.DECIMAL8 -> prevByteCache[j] = Decimals.DECIMAL8_NULL;
+                    case ColumnType.BOOLEAN -> prevBoolCache[j] = false;
+                    case ColumnType.CHAR -> prevCharCache[j] = (char) 0;
+                    case ColumnType.LONG128 -> {
+                        prevLong128LoCache[j] = Numbers.LONG_NULL;
+                        prevLong128HiCache[j] = Numbers.LONG_NULL;
+                    }
+                    case ColumnType.LONG256 -> {
+                        prevLong256ACache[j].copyFrom(Long256Impl.NULL_LONG256);
+                        prevLong256BCache[j].copyFrom(Long256Impl.NULL_LONG256);
+                    }
+                    case ColumnType.DECIMAL128 -> prevDecimal128Cache[j].copyFrom(Decimal128.NULL_VALUE);
+                    case ColumnType.DECIMAL256 -> prevDecimal256Cache[j].copyFrom(Decimal256.NULL_VALUE);
                     default -> {
                         assert false : "unsupported fixed-size FILL(PREV) source type: "
                                 + ColumnType.nameOf(fixedPrevTypeTags.getQuick(i));
@@ -783,43 +867,49 @@ public class SampleByFillNotKeyedRecordCursorFactory extends AbstractRecordCurso
         }
 
         private void updatePrevState(Record record) {
-            // The data-row arrival path already wrote LAST_KNOWN_TS_SLOT to the
-            // current bucket timestamp; that doubles as the "has prev" marker
-            // for subsequent gap buckets, so no separate flag write is needed.
-            prevValue.putLong(PREV_ROWID_SLOT, record.getRowId());
-            // Copy fixed-size FILL_PREV values into cached prevValue slots --
+            // The data-row arrival path already updated lastKnownBucketTs;
+            // that doubles as the "has prev" marker for subsequent gap
+            // buckets, so no separate flag write is needed.
+            prevRowId = record.getRowId();
+            // Copy fixed-size FILL_PREV values into the typed cache arrays --
             // amortises a recordAt+RecordChain per read into N small writes.
             for (int i = 0, n = fixedPrevSrcCols.size(); i < n; i++) {
-                int slot = PREV_CACHE_OFFSET + i;
                 int srcCol = fixedPrevSrcCols.getQuick(i);
                 int tag = fixedPrevTypeTags.getQuick(i);
+                int j = typedArrayIndex[i];
                 switch (tag) {
-                    case ColumnType.DOUBLE -> prevValue.putDouble(slot, record.getDouble(srcCol));
-                    case ColumnType.FLOAT -> prevValue.putFloat(slot, record.getFloat(srcCol));
-                    case ColumnType.LONG -> prevValue.putLong(slot, record.getLong(srcCol));
-                    case ColumnType.DATE -> prevValue.putLong(slot, record.getDate(srcCol));
-                    case ColumnType.TIMESTAMP -> prevValue.putLong(slot, record.getTimestamp(srcCol));
-                    case ColumnType.GEOLONG -> prevValue.putLong(slot, record.getGeoLong(srcCol));
-                    case ColumnType.INT -> prevValue.putInt(slot, record.getInt(srcCol));
-                    case ColumnType.IPv4 -> prevValue.putInt(slot, record.getIPv4(srcCol));
-                    case ColumnType.GEOINT -> prevValue.putInt(slot, record.getGeoInt(srcCol));
+                    case ColumnType.DOUBLE -> prevDoubleCache[j] = record.getDouble(srcCol);
+                    case ColumnType.FLOAT -> prevFloatCache[j] = record.getFloat(srcCol);
+                    case ColumnType.LONG -> prevLongCache[j] = record.getLong(srcCol);
+                    case ColumnType.DATE -> prevLongCache[j] = record.getDate(srcCol);
+                    case ColumnType.TIMESTAMP -> prevLongCache[j] = record.getTimestamp(srcCol);
+                    case ColumnType.GEOLONG -> prevLongCache[j] = record.getGeoLong(srcCol);
+                    case ColumnType.INT -> prevIntCache[j] = record.getInt(srcCol);
+                    case ColumnType.IPv4 -> prevIntCache[j] = record.getIPv4(srcCol);
+                    case ColumnType.GEOINT -> prevIntCache[j] = record.getGeoInt(srcCol);
                     // SYMBOL stores the 4-byte id; getSymA/B resolves via symbolCache.
-                    case ColumnType.SYMBOL -> prevValue.putInt(slot, record.getInt(srcCol));
-                    case ColumnType.SHORT -> prevValue.putShort(slot, record.getShort(srcCol));
-                    case ColumnType.GEOSHORT -> prevValue.putShort(slot, record.getGeoShort(srcCol));
-                    case ColumnType.BYTE -> prevValue.putByte(slot, record.getByte(srcCol));
-                    case ColumnType.GEOBYTE -> prevValue.putByte(slot, record.getGeoByte(srcCol));
-                    case ColumnType.CHAR -> prevValue.putChar(slot, record.getChar(srcCol));
-                    case ColumnType.BOOLEAN -> prevValue.putBool(slot, record.getBool(srcCol));
-                    case ColumnType.DECIMAL8 -> prevValue.putByte(slot, record.getDecimal8(srcCol));
-                    case ColumnType.DECIMAL16 -> prevValue.putShort(slot, record.getDecimal16(srcCol));
-                    case ColumnType.DECIMAL32 -> prevValue.putInt(slot, record.getDecimal32(srcCol));
-                    case ColumnType.DECIMAL64 -> prevValue.putLong(slot, record.getDecimal64(srcCol));
-                    case ColumnType.LONG128 ->
-                            prevValue.putLong128(slot, record.getLong128Lo(srcCol), record.getLong128Hi(srcCol));
-                    case ColumnType.LONG256 -> prevValue.putLong256(slot, record.getLong256A(srcCol));
-                    case ColumnType.DECIMAL128 -> prevValue.putDecimal128(slot, record, srcCol);
-                    case ColumnType.DECIMAL256 -> prevValue.putDecimal256(slot, record, srcCol);
+                    case ColumnType.SYMBOL -> prevIntCache[j] = record.getInt(srcCol);
+                    case ColumnType.SHORT -> prevShortCache[j] = record.getShort(srcCol);
+                    case ColumnType.GEOSHORT -> prevShortCache[j] = record.getGeoShort(srcCol);
+                    case ColumnType.BYTE -> prevByteCache[j] = record.getByte(srcCol);
+                    case ColumnType.GEOBYTE -> prevByteCache[j] = record.getGeoByte(srcCol);
+                    case ColumnType.CHAR -> prevCharCache[j] = record.getChar(srcCol);
+                    case ColumnType.BOOLEAN -> prevBoolCache[j] = record.getBool(srcCol);
+                    case ColumnType.DECIMAL8 -> prevByteCache[j] = record.getDecimal8(srcCol);
+                    case ColumnType.DECIMAL16 -> prevShortCache[j] = record.getDecimal16(srcCol);
+                    case ColumnType.DECIMAL32 -> prevIntCache[j] = record.getDecimal32(srcCol);
+                    case ColumnType.DECIMAL64 -> prevLongCache[j] = record.getDecimal64(srcCol);
+                    case ColumnType.LONG128 -> {
+                        prevLong128LoCache[j] = record.getLong128Lo(srcCol);
+                        prevLong128HiCache[j] = record.getLong128Hi(srcCol);
+                    }
+                    case ColumnType.LONG256 -> {
+                        Long256 src = record.getLong256A(srcCol);
+                        prevLong256ACache[j].copyFrom(src);
+                        prevLong256BCache[j].copyFrom(src);
+                    }
+                    case ColumnType.DECIMAL128 -> record.getDecimal128(srcCol, prevDecimal128Cache[j]);
+                    case ColumnType.DECIMAL256 -> record.getDecimal256(srcCol, prevDecimal256Cache[j]);
                     default -> {
                         assert false : "unsupported fixed-size FILL(PREV) source type: "
                                 + ColumnType.nameOf(tag);
@@ -886,7 +976,7 @@ public class SampleByFillNotKeyedRecordCursorFactory extends AbstractRecordCurso
             public boolean getBool(int col) {
                 return switch (currentDispatchCode[col]) {
                     case DISPATCH_BASE -> baseRecord.getBool(col);
-                    case DISPATCH_PREV_CACHE_SLOT -> prevValue.getBool(dispatchSlot[col]);
+                    case DISPATCH_PREV_CACHE_SLOT -> prevBoolCache[dispatchSlot[col]];
                     case DISPATCH_PREV_SLOT -> hasPrevForCurrentGap && prevRecord.getBool(dispatchSlot[col]);
                     case DISPATCH_CONSTANT -> dispatchConstant.getQuick(col).getBool(null);
                     default -> {
@@ -900,7 +990,7 @@ public class SampleByFillNotKeyedRecordCursorFactory extends AbstractRecordCurso
             public byte getByte(int col) {
                 return switch (currentDispatchCode[col]) {
                     case DISPATCH_BASE -> baseRecord.getByte(col);
-                    case DISPATCH_PREV_CACHE_SLOT -> prevValue.getByte(dispatchSlot[col]);
+                    case DISPATCH_PREV_CACHE_SLOT -> prevByteCache[dispatchSlot[col]];
                     case DISPATCH_PREV_SLOT -> hasPrevForCurrentGap ? prevRecord.getByte(dispatchSlot[col]) : 0;
                     // Narrow-integer Function convention: byte fills come through getInt().
                     case DISPATCH_CONSTANT -> (byte) dispatchConstant.getQuick(col).getInt(null);
@@ -915,7 +1005,7 @@ public class SampleByFillNotKeyedRecordCursorFactory extends AbstractRecordCurso
             public char getChar(int col) {
                 return switch (currentDispatchCode[col]) {
                     case DISPATCH_BASE -> baseRecord.getChar(col);
-                    case DISPATCH_PREV_CACHE_SLOT -> prevValue.getChar(dispatchSlot[col]);
+                    case DISPATCH_PREV_CACHE_SLOT -> prevCharCache[dispatchSlot[col]];
                     case DISPATCH_PREV_SLOT -> hasPrevForCurrentGap ? prevRecord.getChar(dispatchSlot[col]) : 0;
                     case DISPATCH_CONSTANT -> dispatchConstant.getQuick(col).getChar(null);
                     default -> {
@@ -929,7 +1019,7 @@ public class SampleByFillNotKeyedRecordCursorFactory extends AbstractRecordCurso
             public void getDecimal128(int col, Decimal128 sink) {
                 switch (currentDispatchCode[col]) {
                     case DISPATCH_BASE -> baseRecord.getDecimal128(col, sink);
-                    case DISPATCH_PREV_CACHE_SLOT -> prevValue.getDecimal128(dispatchSlot[col], sink);
+                    case DISPATCH_PREV_CACHE_SLOT -> sink.copyFrom(prevDecimal128Cache[dispatchSlot[col]]);
                     case DISPATCH_PREV_SLOT -> {
                         if (hasPrevForCurrentGap) prevRecord.getDecimal128(dispatchSlot[col], sink);
                         else sink.ofRawNull();
@@ -946,7 +1036,7 @@ public class SampleByFillNotKeyedRecordCursorFactory extends AbstractRecordCurso
             public short getDecimal16(int col) {
                 return switch (currentDispatchCode[col]) {
                     case DISPATCH_BASE -> baseRecord.getDecimal16(col);
-                    case DISPATCH_PREV_CACHE_SLOT -> prevValue.getShort(dispatchSlot[col]);
+                    case DISPATCH_PREV_CACHE_SLOT -> prevShortCache[dispatchSlot[col]];
                     case DISPATCH_PREV_SLOT ->
                             hasPrevForCurrentGap ? prevRecord.getDecimal16(dispatchSlot[col]) : Decimals.DECIMAL16_NULL;
                     case DISPATCH_CONSTANT -> dispatchConstant.getQuick(col).getDecimal16(null);
@@ -961,7 +1051,7 @@ public class SampleByFillNotKeyedRecordCursorFactory extends AbstractRecordCurso
             public void getDecimal256(int col, Decimal256 sink) {
                 switch (currentDispatchCode[col]) {
                     case DISPATCH_BASE -> baseRecord.getDecimal256(col, sink);
-                    case DISPATCH_PREV_CACHE_SLOT -> prevValue.getDecimal256(dispatchSlot[col], sink);
+                    case DISPATCH_PREV_CACHE_SLOT -> sink.copyFrom(prevDecimal256Cache[dispatchSlot[col]]);
                     case DISPATCH_PREV_SLOT -> {
                         if (hasPrevForCurrentGap) prevRecord.getDecimal256(dispatchSlot[col], sink);
                         else sink.ofRawNull();
@@ -978,7 +1068,7 @@ public class SampleByFillNotKeyedRecordCursorFactory extends AbstractRecordCurso
             public int getDecimal32(int col) {
                 return switch (currentDispatchCode[col]) {
                     case DISPATCH_BASE -> baseRecord.getDecimal32(col);
-                    case DISPATCH_PREV_CACHE_SLOT -> prevValue.getInt(dispatchSlot[col]);
+                    case DISPATCH_PREV_CACHE_SLOT -> prevIntCache[dispatchSlot[col]];
                     case DISPATCH_PREV_SLOT ->
                             hasPrevForCurrentGap ? prevRecord.getDecimal32(dispatchSlot[col]) : Decimals.DECIMAL32_NULL;
                     case DISPATCH_CONSTANT -> dispatchConstant.getQuick(col).getDecimal32(null);
@@ -993,7 +1083,7 @@ public class SampleByFillNotKeyedRecordCursorFactory extends AbstractRecordCurso
             public long getDecimal64(int col) {
                 return switch (currentDispatchCode[col]) {
                     case DISPATCH_BASE -> baseRecord.getDecimal64(col);
-                    case DISPATCH_PREV_CACHE_SLOT -> prevValue.getLong(dispatchSlot[col]);
+                    case DISPATCH_PREV_CACHE_SLOT -> prevLongCache[dispatchSlot[col]];
                     case DISPATCH_PREV_SLOT ->
                             hasPrevForCurrentGap ? prevRecord.getDecimal64(dispatchSlot[col]) : Decimals.DECIMAL64_NULL;
                     case DISPATCH_CONSTANT -> dispatchConstant.getQuick(col).getDecimal64(null);
@@ -1008,7 +1098,7 @@ public class SampleByFillNotKeyedRecordCursorFactory extends AbstractRecordCurso
             public byte getDecimal8(int col) {
                 return switch (currentDispatchCode[col]) {
                     case DISPATCH_BASE -> baseRecord.getDecimal8(col);
-                    case DISPATCH_PREV_CACHE_SLOT -> prevValue.getByte(dispatchSlot[col]);
+                    case DISPATCH_PREV_CACHE_SLOT -> prevByteCache[dispatchSlot[col]];
                     case DISPATCH_PREV_SLOT ->
                             hasPrevForCurrentGap ? prevRecord.getDecimal8(dispatchSlot[col]) : Decimals.DECIMAL8_NULL;
                     case DISPATCH_CONSTANT -> dispatchConstant.getQuick(col).getDecimal8(null);
@@ -1023,7 +1113,7 @@ public class SampleByFillNotKeyedRecordCursorFactory extends AbstractRecordCurso
             public double getDouble(int col) {
                 return switch (currentDispatchCode[col]) {
                     case DISPATCH_BASE -> baseRecord.getDouble(col);
-                    case DISPATCH_PREV_CACHE_SLOT -> prevValue.getDouble(dispatchSlot[col]);
+                    case DISPATCH_PREV_CACHE_SLOT -> prevDoubleCache[dispatchSlot[col]];
                     case DISPATCH_PREV_SLOT ->
                             hasPrevForCurrentGap ? prevRecord.getDouble(dispatchSlot[col]) : Double.NaN;
                     case DISPATCH_CONSTANT -> dispatchConstant.getQuick(col).getDouble(null);
@@ -1038,7 +1128,7 @@ public class SampleByFillNotKeyedRecordCursorFactory extends AbstractRecordCurso
             public float getFloat(int col) {
                 return switch (currentDispatchCode[col]) {
                     case DISPATCH_BASE -> baseRecord.getFloat(col);
-                    case DISPATCH_PREV_CACHE_SLOT -> prevValue.getFloat(dispatchSlot[col]);
+                    case DISPATCH_PREV_CACHE_SLOT -> prevFloatCache[dispatchSlot[col]];
                     case DISPATCH_PREV_SLOT ->
                             hasPrevForCurrentGap ? prevRecord.getFloat(dispatchSlot[col]) : Float.NaN;
                     case DISPATCH_CONSTANT -> dispatchConstant.getQuick(col).getFloat(null);
@@ -1053,7 +1143,7 @@ public class SampleByFillNotKeyedRecordCursorFactory extends AbstractRecordCurso
             public byte getGeoByte(int col) {
                 return switch (currentDispatchCode[col]) {
                     case DISPATCH_BASE -> baseRecord.getGeoByte(col);
-                    case DISPATCH_PREV_CACHE_SLOT -> prevValue.getByte(dispatchSlot[col]);
+                    case DISPATCH_PREV_CACHE_SLOT -> prevByteCache[dispatchSlot[col]];
                     case DISPATCH_PREV_SLOT ->
                             hasPrevForCurrentGap ? prevRecord.getGeoByte(dispatchSlot[col]) : GeoHashes.BYTE_NULL;
                     case DISPATCH_CONSTANT -> dispatchConstant.getQuick(col).getGeoByte(null);
@@ -1068,7 +1158,7 @@ public class SampleByFillNotKeyedRecordCursorFactory extends AbstractRecordCurso
             public int getGeoInt(int col) {
                 return switch (currentDispatchCode[col]) {
                     case DISPATCH_BASE -> baseRecord.getGeoInt(col);
-                    case DISPATCH_PREV_CACHE_SLOT -> prevValue.getInt(dispatchSlot[col]);
+                    case DISPATCH_PREV_CACHE_SLOT -> prevIntCache[dispatchSlot[col]];
                     case DISPATCH_PREV_SLOT ->
                             hasPrevForCurrentGap ? prevRecord.getGeoInt(dispatchSlot[col]) : GeoHashes.INT_NULL;
                     case DISPATCH_CONSTANT -> dispatchConstant.getQuick(col).getGeoInt(null);
@@ -1083,7 +1173,7 @@ public class SampleByFillNotKeyedRecordCursorFactory extends AbstractRecordCurso
             public long getGeoLong(int col) {
                 return switch (currentDispatchCode[col]) {
                     case DISPATCH_BASE -> baseRecord.getGeoLong(col);
-                    case DISPATCH_PREV_CACHE_SLOT -> prevValue.getLong(dispatchSlot[col]);
+                    case DISPATCH_PREV_CACHE_SLOT -> prevLongCache[dispatchSlot[col]];
                     case DISPATCH_PREV_SLOT ->
                             hasPrevForCurrentGap ? prevRecord.getGeoLong(dispatchSlot[col]) : GeoHashes.NULL;
                     case DISPATCH_CONSTANT -> dispatchConstant.getQuick(col).getGeoLong(null);
@@ -1098,7 +1188,7 @@ public class SampleByFillNotKeyedRecordCursorFactory extends AbstractRecordCurso
             public short getGeoShort(int col) {
                 return switch (currentDispatchCode[col]) {
                     case DISPATCH_BASE -> baseRecord.getGeoShort(col);
-                    case DISPATCH_PREV_CACHE_SLOT -> prevValue.getShort(dispatchSlot[col]);
+                    case DISPATCH_PREV_CACHE_SLOT -> prevShortCache[dispatchSlot[col]];
                     case DISPATCH_PREV_SLOT ->
                             hasPrevForCurrentGap ? prevRecord.getGeoShort(dispatchSlot[col]) : GeoHashes.SHORT_NULL;
                     case DISPATCH_CONSTANT -> dispatchConstant.getQuick(col).getGeoShort(null);
@@ -1113,7 +1203,7 @@ public class SampleByFillNotKeyedRecordCursorFactory extends AbstractRecordCurso
             public int getIPv4(int col) {
                 return switch (currentDispatchCode[col]) {
                     case DISPATCH_BASE -> baseRecord.getIPv4(col);
-                    case DISPATCH_PREV_CACHE_SLOT -> prevValue.getIPv4(dispatchSlot[col]);
+                    case DISPATCH_PREV_CACHE_SLOT -> prevIntCache[dispatchSlot[col]];
                     case DISPATCH_PREV_SLOT ->
                             hasPrevForCurrentGap ? prevRecord.getIPv4(dispatchSlot[col]) : Numbers.IPv4_NULL;
                     case DISPATCH_CONSTANT -> dispatchConstant.getQuick(col).getIPv4(null);
@@ -1128,7 +1218,7 @@ public class SampleByFillNotKeyedRecordCursorFactory extends AbstractRecordCurso
             public int getInt(int col) {
                 return switch (currentDispatchCode[col]) {
                     case DISPATCH_BASE -> baseRecord.getInt(col);
-                    case DISPATCH_PREV_CACHE_SLOT -> prevValue.getInt(dispatchSlot[col]);
+                    case DISPATCH_PREV_CACHE_SLOT -> prevIntCache[dispatchSlot[col]];
                     case DISPATCH_PREV_SLOT ->
                             hasPrevForCurrentGap ? prevRecord.getInt(dispatchSlot[col]) : Numbers.INT_NULL;
                     case DISPATCH_CONSTANT -> dispatchConstant.getQuick(col).getInt(null);
@@ -1162,7 +1252,7 @@ public class SampleByFillNotKeyedRecordCursorFactory extends AbstractRecordCurso
                 return switch (currentDispatchCode[col]) {
                     case DISPATCH_BASE -> baseRecord.getLong(col);
                     case DISPATCH_TIMESTAMP_FILL -> fillTimestampFunc.value;
-                    case DISPATCH_PREV_CACHE_SLOT -> prevValue.getLong(dispatchSlot[col]);
+                    case DISPATCH_PREV_CACHE_SLOT -> prevLongCache[dispatchSlot[col]];
                     case DISPATCH_PREV_SLOT ->
                             hasPrevForCurrentGap ? prevRecord.getLong(dispatchSlot[col]) : Numbers.LONG_NULL;
                     case DISPATCH_CONSTANT -> dispatchConstant.getQuick(col).getLong(null);
@@ -1177,7 +1267,7 @@ public class SampleByFillNotKeyedRecordCursorFactory extends AbstractRecordCurso
             public long getLong128Hi(int col) {
                 return switch (currentDispatchCode[col]) {
                     case DISPATCH_BASE -> baseRecord.getLong128Hi(col);
-                    case DISPATCH_PREV_CACHE_SLOT -> prevValue.getLong128Hi(dispatchSlot[col]);
+                    case DISPATCH_PREV_CACHE_SLOT -> prevLong128HiCache[dispatchSlot[col]];
                     case DISPATCH_PREV_SLOT ->
                             hasPrevForCurrentGap ? prevRecord.getLong128Hi(dispatchSlot[col]) : Numbers.LONG_NULL;
                     case DISPATCH_CONSTANT -> dispatchConstant.getQuick(col).getLong128Hi(null);
@@ -1192,7 +1282,7 @@ public class SampleByFillNotKeyedRecordCursorFactory extends AbstractRecordCurso
             public long getLong128Lo(int col) {
                 return switch (currentDispatchCode[col]) {
                     case DISPATCH_BASE -> baseRecord.getLong128Lo(col);
-                    case DISPATCH_PREV_CACHE_SLOT -> prevValue.getLong128Lo(dispatchSlot[col]);
+                    case DISPATCH_PREV_CACHE_SLOT -> prevLong128LoCache[dispatchSlot[col]];
                     case DISPATCH_PREV_SLOT ->
                             hasPrevForCurrentGap ? prevRecord.getLong128Lo(dispatchSlot[col]) : Numbers.LONG_NULL;
                     case DISPATCH_CONSTANT -> dispatchConstant.getQuick(col).getLong128Lo(null);
@@ -1209,7 +1299,7 @@ public class SampleByFillNotKeyedRecordCursorFactory extends AbstractRecordCurso
                 // Do NOT call sink.clear() -- it would erase the caller's row prefix.
                 switch (currentDispatchCode[col]) {
                     case DISPATCH_BASE -> baseRecord.getLong256(col, sink);
-                    case DISPATCH_PREV_CACHE_SLOT -> Numbers.appendLong256(prevValue.getLong256A(dispatchSlot[col]), sink);
+                    case DISPATCH_PREV_CACHE_SLOT -> Numbers.appendLong256(prevLong256ACache[dispatchSlot[col]], sink);
                     case DISPATCH_PREV_SLOT -> {
                         if (hasPrevForCurrentGap) prevRecord.getLong256(dispatchSlot[col], sink);
                     }
@@ -1224,7 +1314,7 @@ public class SampleByFillNotKeyedRecordCursorFactory extends AbstractRecordCurso
             public Long256 getLong256A(int col) {
                 return switch (currentDispatchCode[col]) {
                     case DISPATCH_BASE -> baseRecord.getLong256A(col);
-                    case DISPATCH_PREV_CACHE_SLOT -> prevValue.getLong256A(dispatchSlot[col]);
+                    case DISPATCH_PREV_CACHE_SLOT -> prevLong256ACache[dispatchSlot[col]];
                     case DISPATCH_PREV_SLOT ->
                             hasPrevForCurrentGap ? prevRecord.getLong256A(dispatchSlot[col]) : Long256Impl.NULL_LONG256;
                     case DISPATCH_CONSTANT -> dispatchConstant.getQuick(col).getLong256A(null);
@@ -1239,7 +1329,7 @@ public class SampleByFillNotKeyedRecordCursorFactory extends AbstractRecordCurso
             public Long256 getLong256B(int col) {
                 return switch (currentDispatchCode[col]) {
                     case DISPATCH_BASE -> baseRecord.getLong256B(col);
-                    case DISPATCH_PREV_CACHE_SLOT -> prevValue.getLong256B(dispatchSlot[col]);
+                    case DISPATCH_PREV_CACHE_SLOT -> prevLong256BCache[dispatchSlot[col]];
                     case DISPATCH_PREV_SLOT ->
                             hasPrevForCurrentGap ? prevRecord.getLong256B(dispatchSlot[col]) : Long256Impl.NULL_LONG256;
                     case DISPATCH_CONSTANT -> dispatchConstant.getQuick(col).getLong256B(null);
@@ -1254,7 +1344,7 @@ public class SampleByFillNotKeyedRecordCursorFactory extends AbstractRecordCurso
             public short getShort(int col) {
                 return switch (currentDispatchCode[col]) {
                     case DISPATCH_BASE -> baseRecord.getShort(col);
-                    case DISPATCH_PREV_CACHE_SLOT -> prevValue.getShort(dispatchSlot[col]);
+                    case DISPATCH_PREV_CACHE_SLOT -> prevShortCache[dispatchSlot[col]];
                     case DISPATCH_PREV_SLOT ->
                             hasPrevForCurrentGap ? prevRecord.getShort(dispatchSlot[col]) : (short) 0;
                     // Narrow-integer Function convention: short fills come through getInt().
@@ -1312,7 +1402,7 @@ public class SampleByFillNotKeyedRecordCursorFactory extends AbstractRecordCurso
                 // by toTop(), so valueOf returns null on first read.
                 return switch (currentDispatchCode[col]) {
                     case DISPATCH_BASE -> baseRecord.getSymA(col);
-                    case DISPATCH_PREV_CACHE_SLOT -> symbolCache.getQuick(col).valueOf(prevValue.getInt(dispatchSlot[col]));
+                    case DISPATCH_PREV_CACHE_SLOT -> symbolCache.getQuick(col).valueOf(prevIntCache[dispatchSlot[col]]);
                     case DISPATCH_PREV_SLOT -> hasPrevForCurrentGap ? prevRecord.getSymA(dispatchSlot[col]) : null;
                     case DISPATCH_CONSTANT -> dispatchConstant.getQuick(col).getSymbol(null);
                     default -> {
@@ -1326,7 +1416,7 @@ public class SampleByFillNotKeyedRecordCursorFactory extends AbstractRecordCurso
             public CharSequence getSymB(int col) {
                 return switch (currentDispatchCode[col]) {
                     case DISPATCH_BASE -> baseRecord.getSymB(col);
-                    case DISPATCH_PREV_CACHE_SLOT -> symbolCache.getQuick(col).valueBOf(prevValue.getInt(dispatchSlot[col]));
+                    case DISPATCH_PREV_CACHE_SLOT -> symbolCache.getQuick(col).valueBOf(prevIntCache[dispatchSlot[col]]);
                     case DISPATCH_PREV_SLOT -> hasPrevForCurrentGap ? prevRecord.getSymB(dispatchSlot[col]) : null;
                     case DISPATCH_CONSTANT -> dispatchConstant.getQuick(col).getSymbolB(null);
                     default -> {
@@ -1341,7 +1431,7 @@ public class SampleByFillNotKeyedRecordCursorFactory extends AbstractRecordCurso
                 return switch (currentDispatchCode[col]) {
                     case DISPATCH_BASE -> baseRecord.getTimestamp(col);
                     case DISPATCH_TIMESTAMP_FILL -> fillTimestampFunc.value;
-                    case DISPATCH_PREV_CACHE_SLOT -> prevValue.getLong(dispatchSlot[col]);
+                    case DISPATCH_PREV_CACHE_SLOT -> prevLongCache[dispatchSlot[col]];
                     case DISPATCH_PREV_SLOT ->
                             hasPrevForCurrentGap ? prevRecord.getTimestamp(dispatchSlot[col]) : Numbers.LONG_NULL;
                     case DISPATCH_CONSTANT -> dispatchConstant.getQuick(col).getTimestamp(null);
