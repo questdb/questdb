@@ -81,15 +81,15 @@ public class FullFwdPartitionFrameCursor extends AbstractFullPartitionFrameCurso
         partitionIndex++;
         final byte format = reader.getPartitionFormat(frame.partitionIndex);
         if (format == PartitionFormat.PARQUET) {
-            frame.parquetDecoder = reader.getAndInitParquetPartitionDecoders(frame.partitionIndex);
-            assert frame.parquetDecoder.getFileAddr() != 0 : "parquet decoder is not initialized";
+            frame.parquetMetaDecoder = reader.getAndInitParquetPartitionDecoder(frame.partitionIndex);
+            assert frame.parquetMetaDecoder.getFileAddr() != 0 : "parquet decoder is not initialized";
             frame.format = PartitionFormat.PARQUET;
             return frame;
         }
 
         assert format == PartitionFormat.NATIVE;
         frame.format = PartitionFormat.NATIVE;
-        frame.parquetDecoder = null;
+        frame.parquetMetaDecoder = null;
         return frame;
     }
 }
