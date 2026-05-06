@@ -105,12 +105,18 @@ public final class TimerShards {
      * unwinds before parking on an entry that no shard thread will ever fire.
      */
     public void register(@NotNull DelayedFireable entry) {
-        if (!running) {entry.shutdown();
+        if (!running) {
+            entry.shutdown();
             return;
         }
         final DelayQueue<DelayedFireable> shard = shards[shardFor(entry)];
         shard.offer(entry);
         if (!running) {
+            // Won't fix: a concurrent shutdown() may have already drained the shard, so this
+            // entry is now stranded in a dead shard heap. We deliberately don't shard.remove()
+            // it: shutdown is a one-shot event, the leak is bounded to entries still in flight
+            // at that moment, and they're released when TimerShards itself is collected. Not
+            // worth the CPU on the steady-state register() path.
             throw CairoException.queryCancelled();
         }
     }

@@ -24,6 +24,7 @@
 
 package io.questdb.mp;
 
+import io.questdb.std.Unsafe;
 import jdk.internal.vm.Continuation;
 import jdk.internal.vm.ContinuationScope;
 
@@ -43,6 +44,7 @@ public final class WorkerContinuation {
     // discover the active cont via {@link #current()} without needing to plumb
     // the reference through the SQL execution context.
     private static final ThreadLocal<WorkerContinuation> CURRENT = new ThreadLocal<>();
+    private static final long PARK_REFUSED_OFFSET = Unsafe.getFieldOffset(WorkerContinuation.class, "parkRefused");
     private final Continuation cont;
     private final ContinuationSink resumeSink;
     // Per-cont handoff slot: the body writes a dequeued cont here just before
@@ -54,13 +56,15 @@ public final class WorkerContinuation {
     // called run(); the yield/run boundary supplies the memory fence, so no
     // volatile is needed.
     private WorkerContinuation handoff;
-    // Set when a body called suspend() but the JDK refused the yield AND a
+    // Set (1) when a body called suspend() but the JDK refused the yield AND a
     // scheduleResume has already pushed this cont onto its pool's resume queue
     // (i.e. a phantom entry exists). The cont is still mounted on the carrier
     // that tried to suspend; remounting from a peer worker would IllegalStateException
     // and busy-spin until that carrier unmounts. ContinuationQueue.run consumes
-    // this flag to drop the phantom dequeue so peers don't burn CPU.
-    private volatile boolean parkRefused;
+    // this flag (CAS 1 -> 0) to drop the phantom dequeue so peers don't burn CPU.
+    // Encoded as int (not boolean) because Unsafe.cas has no boolean overload.
+    @SuppressWarnings({"unused", "FieldCanBeLocal"})
+    private volatile int parkRefused;
     private volatile boolean shutdown;
 
     public WorkerContinuation(Runnable body, ContinuationSink resumeSink) {
@@ -108,14 +112,12 @@ public final class WorkerContinuation {
      * spin loop) so that a phantom queue entry left behind by a refused {@link #suspend()}
      * is dropped instead of busy-spinning a peer carrier.
      *
-     * <p>Idempotent: a single set is consumed by exactly one observer.
+     * <p>Idempotent: a single set is consumed by exactly one observer. The CAS
+     * enforces this contract — if two threads race to consume, only the winner
+     * sees {@code true} and clears the flag; the loser sees {@code false}.
      */
     public boolean consumeParkRefused() {
-        if (!parkRefused) {
-            return false;
-        }
-        parkRefused = false;
-        return true;
+        return Unsafe.cas(this, PARK_REFUSED_OFFSET, 1, 0);
     }
 
     public boolean isDone() {
@@ -140,7 +142,7 @@ public final class WorkerContinuation {
      * lost to a tryFire).
      */
     public void markParkRefused() {
-        parkRefused = true;
+        parkRefused = 1;
     }
 
     /**

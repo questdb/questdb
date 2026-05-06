@@ -26,11 +26,14 @@ package io.questdb.mp;
 
 import io.questdb.Metrics;
 import io.questdb.log.Log;
+import io.questdb.std.Misc;
 import io.questdb.std.ObjHashSet;
 import io.questdb.std.Os;
 import io.questdb.std.Unsafe;
 import io.questdb.std.datetime.Clock;
+import io.questdb.std.datetime.microtime.MicrosFormatUtils;
 import io.questdb.std.datetime.microtime.MicrosecondClockImpl;
+import io.questdb.std.str.StringSink;
 import org.jetbrains.annotations.Nullable;
 
 import java.util.concurrent.atomic.AtomicLong;
@@ -39,6 +42,10 @@ import java.util.concurrent.atomic.AtomicReference;
 public class Worker extends Thread {
     public static final Clock CLOCK_MICROS = MicrosecondClockImpl.INSTANCE;
     public static final int NO_THREAD_AFFINITY = -1;
+    // Carrier-pinned suspends are throttled to one log line per worker per this
+    // interval. Pinning typically clears within a job iteration, but if it
+    // persists, periodic re-logging keeps the condition visible without flooding.
+    private static final long YIELD_REFUSED_LOG_INTERVAL_MICROS = 2_000_000L;
     private final int affinity;
     // The pool's continuation queue. Used both as the sink for the worker's own
     // WorkerContinuation (so a yield from inside the loop body parks back into this
@@ -258,6 +265,10 @@ public class Worker extends Thread {
         WorkerContinuation self = WorkerContinuation.current();
         ContinuationQueue.ResumeTask scratchResumeTask = new ContinuationQueue.ResumeTask();
         long ticker = 0L;
+        // Throttle: log a refused yield at most once per
+        // YIELD_REFUSED_LOG_INTERVAL_MICROS. A successful suspend resets the
+        // window so a future pin episode logs immediately.
+        long nextYieldRefusedLogMicros = 0L;
         while (lifecycle.get() == Lifecycle.RUNNING) {
             boolean runAsap = false;
             // measure latency of all jobs tick
@@ -296,20 +307,33 @@ public class Worker extends Thread {
             if (toResume != null) {
                 self.setHandoff(toResume);
                 if (!WorkerContinuation.suspend()) {
-                    if (log != null) {
-                        log.critical().$("async yield to run continuation is refused (carrier pinned), re-queuing [worker=").$(getName()).I$();
-                    } else {
-                        System.err.println("0000-00-00T00:00:00.000000Z C Async yield to run continuation is refused (carrier pinned), re-queuing [worker=" + getName() + "]");
-                    }
-
                     // Yield refused (carrier pinned). We can't escape this cont
                     // to mount the dequeued one. Re-queue it so a peer worker
                     // can pick it up, and continue the loop.
+                    long now = CLOCK_MICROS.getTicks();
+                    if (now >= nextYieldRefusedLogMicros) {
+                        nextYieldRefusedLogMicros = now + YIELD_REFUSED_LOG_INTERVAL_MICROS;
+                        if (log != null) {
+                            log.info().$("async yield to run continuation is refused (carrier pinned), re-queuing [worker=").$(getName()).I$();
+                        } else {
+                            StringSink sink = Misc.getThreadLocalSink();
+                            MicrosFormatUtils.appendDateTimeUSec(sink, now);
+                            sink.put(" I async yield to run continuation is refused (carrier pinned), re-queuing [worker=").put(getName()).put(']');
+                            System.err.println(sink);
+                        }
+                    }
                     self.setHandoff(null);
                     continuationQueue.put(toResume);
+                } else {
+                    // Resumed after a successful yield: reset the throttle so a
+                    // future pin episode logs immediately rather than waiting
+                    // for the residual window to expire.
+                    nextYieldRefusedLogMicros = 0L;
                 }
-                // If suspend yielded, body never returns here -- whichever outer
-                // driver mounted this cont takes the handoff and runs it.
+                // If suspend yielded, body never returns here directly --
+                // whichever outer driver mounted this cont takes the handoff
+                // and runs it; execution lands on the else branch above only
+                // when this cont is later remounted.
             }
 
             if (runAsap) {

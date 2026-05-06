@@ -124,7 +124,7 @@ class WaitWalFunction extends BooleanFunction implements Function {
         for (int i = 0; seqTxnTracker.getWriterTxn() < seqTxn; i++) {
             Os.sleep(1);
             executionContext.getCircuitBreaker().statefulThrowExceptionIfTripped();
-            if (i % 1000 == 0 && seqTxnTracker.isSuspended()) {
+            if (i % 1000 == 0) {
                 throwIfTerminated();
             }
         }

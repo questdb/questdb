@@ -618,8 +618,12 @@ public class CairoEngine implements Closeable, WriterSource {
         Misc.free(walLocker);
         // Defensive: signalClose() already shutdown timerShards in the normal path.
         // halt() is idempotent and ensures the daemon threads are joined even if
-        // close() runs without a prior signalClose().
-        timerShards.halt();
+        // close() runs without a prior signalClose(). Null guard covers the
+        // partial-construction path where the constructor's catch block calls
+        // close() before timerShards has been assigned.
+        if (timerShards != null) {
+            timerShards.halt();
+        }
     }
 
     @TestOnly
