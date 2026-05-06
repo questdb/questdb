@@ -27,10 +27,11 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionUpd
     updater: *mut ParquetUpdater,
     rg_index: jint,
 ) {
+    let env = &mut env;
     if updater.is_null() {
         let mut err = fmt_err!(InvalidType, "ParquetUpdater pointer is null");
         err.add_context("error in PartitionUpdater.copyRowGroup");
-        return err.into_cairo_exception().throw(&mut env);
+        return err.into_cairo_exception().throw(env);
     }
 
     let parquet_updater = unsafe { &mut *updater };
@@ -39,7 +40,7 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionUpd
         Err(mut err) => {
             err.add_context(format!("could not copy row group {rg_index}"));
             err.add_context("error in PartitionUpdater.copyRowGroup");
-            err.into_cairo_exception().throw(&mut env)
+            err.into_cairo_exception().throw(env)
         }
     }
 }
@@ -58,10 +59,11 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionUpd
     col_data_len: jlong,
     timestamp_index: jint,
 ) {
+    let env = &mut env;
     if updater.is_null() {
         let mut err = fmt_err!(InvalidType, "ParquetUpdater pointer is null");
         err.add_context("error in PartitionUpdater.setTargetSchema");
-        return err.into_cairo_exception().throw(&mut env);
+        return err.into_cairo_exception().throw(env);
     }
 
     let parquet_updater = unsafe { &mut *updater };
@@ -90,7 +92,7 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionUpd
         Err(mut err) => {
             err.add_context("could not set target schema");
             err.add_context("error in PartitionUpdater.setTargetSchema");
-            err.into_cairo_exception().throw(&mut env)
+            err.into_cairo_exception().throw(env)
         }
     }
 }
@@ -104,10 +106,11 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionUpd
     null_col_desc_ptr: *const i64,
     null_col_count: jint,
 ) {
+    let env = &mut env;
     if updater.is_null() {
         let mut err = fmt_err!(InvalidType, "ParquetUpdater pointer is null");
         err.add_context("error in PartitionUpdater.copyRowGroupWithNullColumns");
-        return err.into_cairo_exception().throw(&mut env);
+        return err.into_cairo_exception().throw(env);
     }
 
     let parquet_updater = unsafe { &mut *updater };
@@ -142,7 +145,7 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionUpd
                 "could not copy row group {rg_index} with null columns"
             ));
             err.add_context("error in PartitionUpdater.copyRowGroupWithNullColumns");
-            err.into_cairo_exception().throw(&mut env)
+            err.into_cairo_exception().throw(env)
         }
     }
 }
@@ -166,24 +169,14 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionUpd
     data_page_size: jlong,
     bloom_filter_fpp: jdouble,
     min_compression_ratio: jdouble,
+    parquet_meta_fd: jint,
+    parquet_meta_file_size: jlong,
+    existing_parquet_meta_file_size: jlong,
 ) -> *mut ParquetUpdater {
+    let env = &mut env;
     let create = || -> ParquetResult<ParquetUpdater> {
-        // reader_fd and writer_fd must be distinct OS file descriptors.
-        // Both are closed by Rust when ParquetUpdater is dropped.
-        // Check before taking ownership to avoid double-close.
-        if reader_fd == writer_fd {
-            return Err(fmt_err!(
-                InvalidLayout,
-                "reader_fd and writer_fd must be different file descriptors, got {}",
-                reader_fd
-            ));
-        }
-
-        // Take ownership of fds so Rust closes them on any error path below.
-        // The Java caller must set its fd locals to -1 before this JNI call
-        // so that it never double-closes on the exception path.
-        let reader_file = unsafe { File::from_raw_fd_i32(reader_fd) };
-        let writer_file = unsafe { File::from_raw_fd_i32(writer_fd) };
+        let (reader_file, writer_file, parquet_meta_fd_handle) =
+            take_partition_updater_fds(reader_fd, writer_fd, parquet_meta_fd)?;
 
         let compression_options =
             compression_from_i64(compression_codec).context("CompressionCodec")?;
@@ -225,6 +218,9 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionUpd
             data_page_size,
             bloom_filter_fpp,
             min_compression_ratio,
+            parquet_meta_fd_handle,
+            parquet_meta_file_size as u64,
+            existing_parquet_meta_file_size,
         )
     };
 
@@ -239,7 +235,7 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionUpd
                 "could not open parquet file for update from path {src_path}"
             ));
             err.add_context("error in PartitionUpdater.create");
-            err.into_cairo_exception().throw(&mut env)
+            err.into_cairo_exception().throw(env)
         }
     }
 }
@@ -265,10 +261,11 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionUpd
     _class: JClass,
     updater: *mut ParquetUpdater,
 ) -> jlong {
+    let env = &mut env;
     if updater.is_null() {
         let mut err = fmt_err!(InvalidType, "ParquetUpdater pointer is null");
         err.add_context("error in PartitionUpdater.updateFileMetadata");
-        return err.into_cairo_exception().throw::<jlong>(&mut env);
+        return err.into_cairo_exception().throw::<jlong>(env);
     }
 
     // SAFETY: Pointer was created by `Box::into_raw` in the create function.
@@ -279,7 +276,7 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionUpd
         Err(mut err) => {
             err.add_context("could not update partition metadata");
             err.add_context("error in PartitionUpdater.updateFileMetadata");
-            err.into_cairo_exception().throw::<jlong>(&mut env)
+            err.into_cairo_exception().throw::<jlong>(env)
         }
     }
 }
@@ -290,14 +287,53 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionUpd
     _class: JClass,
     updater: *const ParquetUpdater,
 ) -> jlong {
+    let env = &mut env;
     if updater.is_null() {
         let mut err = fmt_err!(InvalidType, "ParquetUpdater pointer is null");
         err.add_context("error in PartitionUpdater.getResultUnusedBytes");
-        return err.into_cairo_exception().throw::<jlong>(&mut env);
+        return err.into_cairo_exception().throw::<jlong>(env);
     }
 
     let parquet_updater = unsafe { &*updater };
     parquet_updater.result_unused_bytes() as jlong
+}
+
+#[no_mangle]
+pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionUpdater_getResultParquetMetaFileSize(
+    mut env: JNIEnv,
+    _class: JClass,
+    updater: *const ParquetUpdater,
+) -> jlong {
+    let env = &mut env;
+    if updater.is_null() {
+        let mut err = fmt_err!(InvalidType, "ParquetUpdater pointer is null");
+        err.add_context("error in PartitionUpdater.getResultParquetMetaFileSize");
+        return err.into_cairo_exception().throw::<jlong>(env);
+    }
+
+    let parquet_updater = unsafe { &*updater };
+    parquet_updater.result_parquet_meta_size()
+}
+
+#[no_mangle]
+pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionUpdater_syncParquetMeta(
+    mut env: JNIEnv,
+    _class: JClass,
+    updater: *mut ParquetUpdater,
+) {
+    let env = &mut env;
+    if updater.is_null() {
+        let mut err = fmt_err!(InvalidType, "ParquetUpdater pointer is null");
+        err.add_context("error in PartitionUpdater.syncParquetMeta");
+        err.into_cairo_exception().throw::<()>(env);
+        return;
+    }
+
+    let parquet_updater = unsafe { &mut *updater };
+    if let Err(mut err) = parquet_updater.sync_parquet_meta() {
+        err.add_context("error in PartitionUpdater.syncParquetMeta");
+        err.into_cairo_exception().throw::<()>(env);
+    }
 }
 
 #[no_mangle]
@@ -316,10 +352,11 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionUpd
     timestamp_index: jint,
     row_count: jlong,
 ) {
+    let env = &mut env;
     if parquet_updater.is_null() {
         let mut err = fmt_err!(InvalidType, "ParquetUpdater pointer is null");
         err.add_context("error in PartitionUpdater.updateRowGroup");
-        return err.into_cairo_exception().throw(&mut env);
+        return err.into_cairo_exception().throw(env);
     }
 
     // SAFETY: Pointer was created by `Box::into_raw` in the create function.
@@ -354,7 +391,7 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionUpd
                 "could not update row group {row_group_id} for table {table_name}"
             ));
             err.add_context("error in PartitionUpdater.updateRowGroup");
-            err.into_cairo_exception().throw(&mut env)
+            err.into_cairo_exception().throw(env)
         }
     }
 }
@@ -375,10 +412,11 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionUpd
     timestamp_index: jint,
     row_count: jlong,
 ) {
+    let env = &mut env;
     if parquet_updater.is_null() {
         let mut err = fmt_err!(InvalidType, "ParquetUpdater pointer is null");
         err.add_context("error in PartitionUpdater.insertRowGroup");
-        return err.into_cairo_exception().throw(&mut env);
+        return err.into_cairo_exception().throw(env);
     }
     let parquet_updater = unsafe { &mut *parquet_updater };
 
@@ -408,7 +446,7 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionUpd
                 "could not insert row group at position {position} for table {table_name}"
             ));
             err.add_context("error in PartitionUpdater.insertRowGroup");
-            err.into_cairo_exception().throw(&mut env)
+            err.into_cairo_exception().throw(env)
         }
     }
 }
@@ -438,9 +476,11 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionEnc
     bloom_filter_column_count: jint,
     bloom_filter_fpp: jdouble,
     min_compression_ratio: jdouble,
+    parquet_meta_fd: jint,
     squash_tracker: jlong,
-) {
-    let encode = || -> ParquetResult<()> {
+) -> jlong {
+    let env = &mut env;
+    let encode = || -> ParquetResult<i64> {
         let partition = create_partition_descriptor(
             table_name_ptr,
             table_name_size,
@@ -499,25 +539,100 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionEnc
         let sorting_columns =
             local_timestamp_index.map(|i| vec![SortingColumn::new(i, false, false)]);
 
-        ParquetWriter::new(&mut file)
+        // Break apart ParquetWriter::finish() to access row groups after writing.
+        let writer = ParquetWriter::new(&mut file)
             .with_version(version)
             .with_compression(compression_options)
             .with_statistics(statistics_enabled)
             .with_raw_array_encoding(raw_array_encoding)
             .with_row_group_size(row_group_size)
             .with_data_page_size(data_page_size)
-            .with_sorting_columns(sorting_columns)
+            .with_sorting_columns(sorting_columns.clone())
             .with_bloom_filter_columns(bloom_filter_cols)
             .with_bloom_filter_fpp(bloom_filter_fpp)
             .with_min_compression_ratio(min_compression_ratio)
-            .with_squash_tracker(squash_tracker)
-            .finish(partition)
-            .map(|_| ())
-            .context("ParquetWriter::finish failed")
+            .with_squash_tracker(squash_tracker);
+
+        let (schema, additional_meta) = crate::parquet_write::schema::to_parquet_schema(
+            &partition,
+            raw_array_encoding,
+            squash_tracker,
+        )?;
+        let encodings = crate::parquet_write::schema::to_encodings(&partition);
+        let compressions = crate::parquet_write::schema::to_compressions(&partition);
+        let mut chunked = writer.chunked_with_compressions(schema, encodings, compressions)?;
+        chunked.write_chunk(&partition)?;
+        let parquet_file_size = chunked
+            .finish(additional_meta)
+            .context("ParquetWriter::finish failed")?;
+
+        // Generate _pm from the in-memory thrift row groups.
+        if parquet_meta_fd < 0 {
+            return Ok(parquet_file_size as i64);
+        }
+
+        let footer_offset = chunked.parquet_footer_offset();
+        let footer_length = parquet_file_size
+            .checked_sub(footer_offset)
+            .and_then(|v| v.checked_sub(8))
+            .ok_or_else(|| {
+                crate::parquet::error::fmt_err!(
+                    InvalidLayout,
+                    "parquet footer offset {} exceeds file size {}",
+                    footer_offset,
+                    parquet_file_size
+                )
+            })? as u32;
+        let col_infos = build_column_infos_from_partition(
+            &partition,
+            chunked.schema().columns(),
+            sorting_columns.as_deref(),
+        );
+        let sorting_col_indices: Vec<u32> = sorting_columns
+            .as_deref()
+            .unwrap_or(&[])
+            .iter()
+            .map(|sc| sc.column_idx as u32)
+            .collect();
+
+        let designated_ts = partition
+            .columns
+            .iter()
+            .position(|c| c.designated_timestamp)
+            .map(|i| i as i32)
+            .unwrap_or(-1);
+
+        let (parquet_meta_bytes, _parquet_meta_footer_offset) =
+            crate::parquet_metadata::generate_parquet_metadata(
+                &col_infos,
+                chunked.schema().columns(),
+                chunked.row_groups(),
+                designated_ts,
+                &sorting_col_indices,
+                footer_offset,
+                footer_length,
+                chunked.bloom_bitsets(),
+                0, // unused_bytes: new file, no dead space
+                squash_tracker,
+            )
+            .context("generate_parquet_metadata failed")?;
+
+        // Write to the parquet metadata fd. ManuallyDrop ensures Rust never
+        // closes the fd — Java owns it.
+        let mut parquet_meta_file: std::mem::ManuallyDrop<File> =
+            std::mem::ManuallyDrop::new(unsafe {
+                crate::parquet::io::FromRawFdI32Ext::from_raw_fd_i32(parquet_meta_fd)
+            });
+        parquet_meta_file
+            .write_all(&parquet_meta_bytes)
+            .map_err(crate::parquet::error::ParquetError::from)
+            .context("could not write _pm file")?;
+
+        Ok(parquet_file_size as i64)
     };
 
     match encode() {
-        Ok(_) => (),
+        Ok(size) => size,
         Err(mut err) => {
             // SAFETY: JNI caller guarantees a valid pointer to `table_name_size` bytes of table name data.
             // The memory remains valid for the JNI call duration.
@@ -532,9 +647,119 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionEnc
                 "could not encode partition for table {table_name} and timestamp index {timestamp_index}"
             ));
             err.add_context("error in PartitionEncoder.encodePartition");
-            err.into_cairo_exception().throw(&mut env)
+            err.into_cairo_exception().throw::<i64>(env)
         }
     }
+}
+
+/// Takes ownership of the raw fds passed by Java, returning (reader, writer,
+/// optional parquet meta) `File` wrappers. Both `reader_fd` and `writer_fd` must be
+/// distinct OS file descriptors; aliased fds would otherwise be closed twice
+/// on Drop.
+///
+/// On any error, the fds that have already been wrapped are dropped here, so
+/// the caller does not need to clean them up. `parquet_meta_fd < 0` means
+/// "no parquet meta file" (the Some/None toggle on the returned tuple element).
+fn take_partition_updater_fds(
+    reader_fd: i32,
+    writer_fd: i32,
+    parquet_meta_fd: i32,
+) -> ParquetResult<(File, File, Option<File>)> {
+    // Wrap in File FIRST so Drop closes every fd on any error path; Java has
+    // already detached these fds from its side. Avoid wrapping writer_fd when
+    // it aliases reader_fd, because dropping two File wrappers over the same
+    // fd would cause a double-close.
+    let reader_file = unsafe { File::from_raw_fd_i32(reader_fd) };
+    let writer_file_opt = if reader_fd == writer_fd {
+        None
+    } else {
+        Some(unsafe { File::from_raw_fd_i32(writer_fd) })
+    };
+    let parquet_meta_fd_handle = if parquet_meta_fd >= 0 {
+        Some(unsafe { FromRawFdI32Ext::from_raw_fd_i32(parquet_meta_fd) })
+    } else {
+        None
+    };
+
+    match writer_file_opt {
+        Some(writer_file) => Ok((reader_file, writer_file, parquet_meta_fd_handle)),
+        // reader_file and parquet_meta_fd_handle drop here, closing their fds exactly once.
+        None => Err(fmt_err!(
+            InvalidLayout,
+            "reader_fd and writer_fd must be different file descriptors, got {}",
+            reader_fd
+        )),
+    }
+}
+
+fn build_column_infos_from_partition<'a>(
+    partition: &'a crate::parquet_write::schema::Partition,
+    schema_columns: &[parquet2::metadata::ColumnDescriptor],
+    sorting_columns: Option<&[parquet2::metadata::SortingColumn]>,
+) -> Vec<crate::parquet_metadata::ParquetMetaColumnInfo<'a>> {
+    partition
+        .columns
+        .iter()
+        .enumerate()
+        .map(|(i, col)| {
+            let col_type = if col.designated_timestamp {
+                col.data_type
+                    .into_designated_with_order(col.designated_timestamp_ascending)
+                    .unwrap_or(col.data_type)
+            } else {
+                col.data_type
+            };
+
+            let mut flags = crate::parquet_metadata::types::ColumnFlags::new();
+            let repetition = if col.not_null_hint {
+                crate::parquet_metadata::types::FieldRepetition::Required
+            } else {
+                crate::parquet_metadata::types::FieldRepetition::Optional
+            };
+            flags = flags.with_repetition(repetition);
+
+            if col.data_type.tag() == qdb_core::col_type::ColumnTypeTag::Symbol {
+                flags = flags.with_local_key_is_global();
+            }
+
+            if let Some(scs) = sorting_columns {
+                if let Some(sc) = scs.iter().find(|sc| sc.column_idx == i as i32) {
+                    if sc.descending {
+                        flags = flags.with_descending();
+                    }
+                }
+            }
+
+            let (physical_type, fixed_byte_len, max_rep_level, max_def_level) =
+                if let Some(col_desc) = schema_columns.get(i) {
+                    let phys_type = col_desc.descriptor.primitive_type.physical_type;
+                    let fbl = match phys_type {
+                        parquet2::schema::types::PhysicalType::FixedLenByteArray(len) => len as i32,
+                        _ => 0,
+                    };
+                    (
+                        crate::parquet_metadata::physical_type_to_u8(phys_type),
+                        fbl,
+                        col_desc.descriptor.max_rep_level as u8,
+                        col_desc.descriptor.max_def_level as u8,
+                    )
+                } else {
+                    (0, 0, 0, 0)
+                };
+
+            crate::parquet_metadata::ParquetMetaColumnInfo {
+                name: col.name,
+                col_type_code: col_type.code(),
+                col_type_tag: Some(col.data_type.tag()),
+                id: col.id,
+                flags,
+                fixed_byte_len,
+                physical_type,
+                max_rep_level,
+                max_def_level,
+            }
+        })
+        .collect()
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -784,6 +1009,7 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionEnc
     bloom_filter_fpp: jdouble,
     min_compression_ratio: jdouble,
 ) -> *mut StreamingParquetWriter {
+    let env = &mut env;
     let create = || -> ParquetResult<StreamingParquetWriter> {
         let partition_template = create_partition_template(
             col_count,
@@ -886,7 +1112,7 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionEnc
         Err(mut err) => {
             err.add_context("error in createStreamingParquetWriter");
             err.into_cairo_exception()
-                .throw::<*mut StreamingParquetWriter>(&mut env)
+                .throw::<*mut StreamingParquetWriter>(env)
         }
     }
 }
@@ -899,10 +1125,11 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionEnc
     col_data_ptr: *const i64,
     row_count: jlong,
 ) -> *const u8 {
+    let env = &mut env;
     if encoder.is_null() {
         let mut err = fmt_err!(InvalidType, "StreamingParquetEncoder pointer is null");
         err.add_context("error in StreamingPartitionEncoder.writeChunk");
-        err.into_cairo_exception().throw::<*const u8>(&mut env);
+        err.into_cairo_exception().throw::<*const u8>(env);
         return std::ptr::null();
     }
     // SAFETY: Pointer was created by `Box::into_raw` in the create function.
@@ -927,7 +1154,7 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionEnc
         Ok(ptr) => ptr,
         Err(mut err) => {
             err.add_context("error in StreamingPartitionEncoder.writeChunk");
-            err.into_cairo_exception().throw::<*const u8>(&mut env);
+            err.into_cairo_exception().throw::<*const u8>(env);
             std::ptr::null()
         }
     }
@@ -1036,10 +1263,11 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionEnc
     _class: JClass,
     encoder: *mut StreamingParquetWriter,
 ) -> *const u8 {
+    let env = &mut env;
     if encoder.is_null() {
         let mut err = fmt_err!(InvalidType, "StreamingParquetEncoder pointer is null");
         err.add_context("error in StreamingPartitionEncoder.finish");
-        err.into_cairo_exception().throw::<*const u8>(&mut env);
+        err.into_cairo_exception().throw::<*const u8>(env);
         return std::ptr::null();
     }
 
@@ -1086,7 +1314,7 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionEnc
         Ok(ptr) => ptr,
         Err(mut err) => {
             err.add_context("error in StreamingPartitionEncoder.finish");
-            err.into_cairo_exception().throw::<*const u8>(&mut env);
+            err.into_cairo_exception().throw::<*const u8>(env);
             std::ptr::null()
         }
     }
@@ -1098,10 +1326,11 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionEnc
     _class: JClass,
     encoder: *mut StreamingParquetWriter,
 ) {
+    let env = &mut env;
     if encoder.is_null() {
         let mut err = fmt_err!(InvalidType, "StreamingParquetEncoder pointer is null");
         err.add_context("error in StreamingPartitionEncoder.destroy");
-        return err.into_cairo_exception().throw::<()>(&mut env);
+        return err.into_cairo_exception().throw::<()>(env);
     }
 
     // SAFETY: Pointer was created by `Box::into_raw` in the corresponding create function.
@@ -1285,10 +1514,11 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionEnc
     row_group_lo: jint,
     row_group_hi: jint,
 ) -> *const u8 {
+    let env = &mut env;
     if encoder.is_null() {
         let mut err = fmt_err!(InvalidType, "StreamingParquetWriter pointer is null");
         err.add_context("error in writeStreamingParquetChunkFromParquet");
-        err.into_cairo_exception().throw::<*const u8>(&mut env);
+        err.into_cairo_exception().throw::<*const u8>(env);
         return std::ptr::null();
     }
 
@@ -1351,7 +1581,7 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionEnc
         Ok(ptr) => ptr,
         Err(mut err) => {
             err.add_context("error in writeStreamingParquetChunkFromRowGroup");
-            err.into_cairo_exception().throw::<*const u8>(&mut env);
+            err.into_cairo_exception().throw::<*const u8>(env);
             std::ptr::null()
         }
     }
@@ -1434,4 +1664,79 @@ fn convert_row_group_buffers_to_partition(
         new_partition.columns.push(column);
     }
     Ok(new_partition)
+}
+
+#[cfg(all(test, unix))]
+mod tests {
+    use super::*;
+    use std::os::unix::io::AsRawFd;
+    use tempfile::NamedTempFile;
+
+    /// Returns true iff `fd` still refers to an open file descriptor in this
+    /// process.
+    fn fd_is_open(fd: i32) -> bool {
+        // SAFETY: fcntl(F_GETFD) returns -1 and sets errno=EBADF for a closed
+        // fd; the call has no side effects on still-open fds.
+        unsafe { libc::fcntl(fd, libc::F_GETFD) != -1 }
+    }
+
+    #[test]
+    fn reader_writer_fd_aliased_returns_err_and_closes_fd() {
+        let tmp = NamedTempFile::new().unwrap();
+        let fd = tmp.as_file().as_raw_fd();
+        // Leak the temp-file handle so we retain the fd after close detection;
+        // the Rust side is expected to close it on the error path.
+        let _file_retained = tmp.into_file();
+        std::mem::forget(_file_retained);
+
+        let result = take_partition_updater_fds(fd, fd, -1);
+        assert!(result.is_err(), "expected Err for aliased fds");
+        assert!(
+            !fd_is_open(fd),
+            "aliased reader/writer fd was not closed by the error path"
+        );
+    }
+
+    #[test]
+    fn reader_writer_fd_aliased_also_closes_parquet_meta_fd() {
+        let tmp1 = NamedTempFile::new().unwrap();
+        let tmp2 = NamedTempFile::new().unwrap();
+        let shared_fd = tmp1.as_file().as_raw_fd();
+        let parquet_meta_fd_handle = tmp2.as_file().as_raw_fd();
+        // Retain both handles as owned fds and detach them.
+        std::mem::forget(tmp1.into_file());
+        std::mem::forget(tmp2.into_file());
+
+        let result = take_partition_updater_fds(shared_fd, shared_fd, parquet_meta_fd_handle);
+        assert!(
+            result.is_err(),
+            "expected Err for aliased reader/writer fds"
+        );
+        assert!(!fd_is_open(shared_fd), "shared fd was not closed");
+        assert!(
+            !fd_is_open(parquet_meta_fd_handle),
+            "parquet_meta fd was not closed on the error path"
+        );
+    }
+
+    #[test]
+    fn distinct_fds_return_ok_and_retain_ownership() {
+        let tmp_reader = NamedTempFile::new().unwrap();
+        let tmp_writer = NamedTempFile::new().unwrap();
+        let reader_fd = tmp_reader.as_file().as_raw_fd();
+        let writer_fd = tmp_writer.as_file().as_raw_fd();
+        std::mem::forget(tmp_reader.into_file());
+        std::mem::forget(tmp_writer.into_file());
+
+        let result = take_partition_updater_fds(reader_fd, writer_fd, -1);
+        let (reader_file, writer_file, parquet_meta_fd_handle) =
+            result.expect("distinct fds must succeed");
+        assert!(parquet_meta_fd_handle.is_none());
+        // Drop the returned Files to close the fds; the helper must have
+        // given us ownership.
+        drop(reader_file);
+        drop(writer_file);
+        assert!(!fd_is_open(reader_fd));
+        assert!(!fd_is_open(writer_fd));
+    }
 }
