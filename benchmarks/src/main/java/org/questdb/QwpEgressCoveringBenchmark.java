@@ -82,9 +82,14 @@ import java.util.concurrent.TimeUnit;
  */
 public class QwpEgressCoveringBenchmark {
 
+    private static final int DATA_SPAN_DAYS;
+    private static final int DEFAULT_DATA_SPAN_DAYS = 0;
     private static final String DEFAULT_FILTER_VALUE = "s_0";
     private static final int DEFAULT_MEASURE_RUNS = 3;
     private static final long DEFAULT_ROW_COUNT = 100_000_000L;
+    // Fallback spacing used when DATA_SPAN_DAYS is 0/unset. Distinct constant
+    // so the ingest loop can pick at runtime without re-reading System props.
+    private static final long DEFAULT_ROW_SPACING_MICROS = 10_000L;
     private static final int DEFAULT_SYMBOL_CARDINALITY = 100;
     private static final String FILTER_VALUE;
     private static final String HOST = "localhost";
@@ -99,6 +104,7 @@ public class QwpEgressCoveringBenchmark {
     private static final String PROJECTION =
             "ts, sym, price, qty, d1, d2, d3, id, seq, size, venue, note";
     private static final long ROW_COUNT;
+    private static final long ROW_SPACING_MICROS;
     private static final boolean SKIP_POPULATE;
     private static final int SYMBOL_CARDINALITY;
     private static final String TABLE_NAME = "egress_covering_bench";
@@ -174,8 +180,10 @@ public class QwpEgressCoveringBenchmark {
     }
 
     private static void ingestRows() {
-        System.out.printf("Ingesting %,d rows over QWP/WebSocket (%,d distinct symbols)...%n",
-                ROW_COUNT, SYMBOL_CARDINALITY);
+        double spanDays = (double) (ROW_COUNT * ROW_SPACING_MICROS) / (86_400.0 * 1_000_000.0);
+        System.out.printf("Ingesting %,d rows over QWP/WebSocket (%,d distinct symbols, "
+                        + "%dus spacing -> ~%.1f day span)...%n",
+                ROW_COUNT, SYMBOL_CARDINALITY, ROW_SPACING_MICROS, spanDays);
         long start = System.nanoTime();
 
         // Pre-compute symbol pool. Cardinality is bounded (100s) so this is cheap
@@ -214,7 +222,7 @@ public class QwpEgressCoveringBenchmark {
                         .doubleColumn("d3", i * 0.75)
                         .stringColumn("venue", venuePool[venueIdx])
                         .stringColumn("note", notePool[noteIdx])
-                        .at(i * 10_000L, ChronoUnit.MICROS); // 10ms spacing
+                        .at(i * ROW_SPACING_MICROS, ChronoUnit.MICROS);
                 if (i % PROGRESS_INTERVAL == 0) {
                     long ms = TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - start);
                     System.out.printf("  %,d / %,d rows (%,d ms)%n", i, ROW_COUNT, ms);
@@ -451,5 +459,18 @@ public class QwpEgressCoveringBenchmark {
         FILTER_VALUE = System.getProperty("filterValue", DEFAULT_FILTER_VALUE);
         MEASURE_RUNS = Integer.getInteger("measureRuns", DEFAULT_MEASURE_RUNS);
         SKIP_POPULATE = Boolean.parseBoolean(System.getProperty("skip.populate", "false"));
+        DATA_SPAN_DAYS = Integer.getInteger("dataSpanDays", DEFAULT_DATA_SPAN_DAYS);
+        // dataSpanDays>0 distributes ROW_COUNT rows evenly across that many
+        // days, which controls partition count under PARTITION BY DAY. The
+        // resulting spacing is rounded down to whole microseconds; with very
+        // small spans this can collapse to 0/1 and produce duplicate ts, so
+        // clamp to 1us minimum.
+        if (DATA_SPAN_DAYS > 0) {
+            long spanMicros = (long) DATA_SPAN_DAYS * 86_400L * 1_000_000L;
+            long spacing = spanMicros / ROW_COUNT;
+            ROW_SPACING_MICROS = Math.max(1L, spacing);
+        } else {
+            ROW_SPACING_MICROS = DEFAULT_ROW_SPACING_MICROS;
+        }
     }
 }
