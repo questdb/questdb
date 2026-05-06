@@ -127,6 +127,20 @@ public abstract class AbstractArrayAggDoubleGroupByFunction extends ArrayFunctio
     }
 
     @Override
+    public void cursorClosed() {
+        // The shared instance never has clear() invoked on it (it lives in
+        // sharedRecordFunctions, not in the primary's groupByFunctions list).
+        // cursorClosed() is the only lifecycle hook that runs on both primary
+        // and shared instances when a cursor closes, so reset the render cache
+        // here too. Without this, on the next factory.getCursor() the allocator
+        // reopens and may hand back the same address; the stale cachedSrcPtr
+        // would then short-circuit getArray() to a freed cachedRenderPtr.
+        UnaryFunction.super.cursorClosed();
+        cachedRenderPtr = 0;
+        cachedSrcPtr = 0;
+    }
+
+    @Override
     public Function getArg() {
         return arg;
     }
