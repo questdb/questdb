@@ -205,6 +205,13 @@ public interface SqlExecutionContext extends Sinkable, Closeable {
 
     boolean isCacheHit();
 
+    // Returns false only for materialized view refresh contexts when the
+    // cairo.mat.view.covering.index.enabled property is set to false.
+    // All other contexts always return true.
+    default boolean isCoveringIndexEnabled() {
+        return true;
+    }
+
     // Returns true when where intrinsics are overridden, i.e. by a materialized view refresh
     default boolean isOverriddenIntrinsics(TableToken tableToken) {
         return false;

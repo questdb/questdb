@@ -886,6 +886,8 @@ public interface CairoConfiguration {
 
     boolean isIOURingEnabled();
 
+    boolean isMatViewCoveringIndexEnabled();
+
     boolean isMatViewEnabled();
 
     boolean isMatViewParallelSqlEnabled();
