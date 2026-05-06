@@ -13,20 +13,23 @@ crate-type = ["cdylib", "rlib"]
 
 [dependencies]
 qdb-core = { path = "../qdb-core" }
+qdb-parquet-meta = { path = "../qdb-parquet-meta" }
 jni = "0.21.1"
 num-traits = "0.2.18"
-parquet2 = { path = "parquet2" }
-parquet-format-safe = { path = "parquet-format-safe" }
+parquet2 = { path = "../parquet2" }
+parquet-format-safe = { path = "../parquet-format-safe" }
 libc = "0.2.155"
 rayon = "1.10.0"
 log = "0.4.22"
 serde_json = "1.0.145"
 serde = { version = "1.0.210", features = ["derive"] }
+crc32fast = "1.4"
 alloc-checked = { version = "0.1.3" }
 nonmax = "0.5.5"
 seq-macro = "0.3.6"
 rapidhash = "4.4.1"
 zstd = "0.13"
+memmap2 = "0.9.8"
 
 [dev-dependencies]
 parquet = "56.2.0"
@@ -40,6 +43,14 @@ criterion = "0.4"
 lto = true
 codegen-units = 1
 strip = "debuginfo"
+
+[[bin]]
+name = "pm_inspect"
+path = "src/bin/pm_inspect.rs"
+
+[[bin]]
+name = "pm_generate"
+path = "src/bin/pm_generate.rs"
 
 [[bench]]
 name = "decode_page"
