@@ -911,7 +911,8 @@ public class CairoEngine implements Closeable, WriterSource {
     }
 
     public @NotNull QwpServerInfoProvider getQwpServerInfoProvider() {
-        return qwpServerInfoProvider != null ? qwpServerInfoProvider : configuration.getQwpServerInfoProvider();
+        QwpServerInfoProvider provider = qwpServerInfoProvider;
+        return provider != null ? provider : configuration.getQwpServerInfoProvider();
     }
 
     public TableReader getReader(CharSequence tableName) {
@@ -1784,7 +1785,7 @@ public class CairoEngine implements Closeable, WriterSource {
         this.viewWalWriterPool.setPoolListener(poolListener);
     }
 
-    public void setQwpServerInfoProvider(QwpServerInfoProvider provider) {
+    public void setQwpServerInfoProvider(@NotNull QwpServerInfoProvider provider) {
         this.qwpServerInfoProvider = provider;
     }
 

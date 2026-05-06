@@ -249,20 +249,14 @@ public class QwpWebSocketUpgradeProcessor implements HttpRequestProcessor {
             return;
         }
 
-        HttpRequestHeader requestHeader = context.getRequestHeader();
-        Utf8Sequence wsKey = QwpWebSocketHttpProcessor.getWebSocketKey(requestHeader);
-
-        // Read QWP version negotiation headers
-        int negotiatedVersion = negotiateQwpVersion(requestHeader, context.getFd());
-
         byte role = engine.getQwpServerInfoProvider().role();
-        String roleName = QwpEgressMsgKind.roleName(role);
+        byte[] roleBytes = QwpEgressMsgKind.roleNameBytes(role);
         if (role == QwpEgressMsgKind.ROLE_REPLICA || role == QwpEgressMsgKind.ROLE_PRIMARY_CATCHUP) {
-            int unavailableSize = QwpWebSocketHttpProcessor.serviceUnavailableWithRoleSize(roleName);
+            int unavailableSize = QwpWebSocketHttpProcessor.serviceUnavailableWithRoleSize(roleBytes);
             if (unavailableSize > bufferSize) {
                 throw responseDoesNotFitSendBuffer(context.getFd(), "503 ingress role-reject response", bufferSize, unavailableSize);
             }
-            int unavailableBytes = QwpWebSocketHttpProcessor.writeServiceUnavailableWithRole(bufferAddr, bufferSize, roleName);
+            int unavailableBytes = QwpWebSocketHttpProcessor.writeServiceUnavailableWithRole(bufferAddr, bufferSize, roleBytes);
             if (unavailableBytes <= 0) {
                 throw responseDoesNotFitSendBuffer(context.getFd(), "503 ingress role-reject response", bufferSize, unavailableSize);
             }
@@ -272,12 +266,18 @@ public class QwpWebSocketUpgradeProcessor implements HttpRequestProcessor {
                 throw HttpException.instance("WebSocket ingress role-reject 503 blocked");
             }
             LOG.info().$("ingress upgrade rejected by role [fd=").$(context.getFd())
-                    .$(", role=").$(roleName).I$();
+                    .$(", role=").$(QwpEgressMsgKind.roleName(role)).I$();
             return;
         }
 
+        HttpRequestHeader requestHeader = context.getRequestHeader();
+        Utf8Sequence wsKey = QwpWebSocketHttpProcessor.getWebSocketKey(requestHeader);
+
+        // Read QWP version negotiation headers
+        int negotiatedVersion = negotiateQwpVersion(requestHeader, context.getFd());
+
         String acceptKey = QwpWebSocketHttpProcessor.computeAcceptKey(wsKey);
-        int requiredHandshakeSize = QwpWebSocketHttpProcessor.responseSize(acceptKey, negotiatedVersion, null, roleName);
+        int requiredHandshakeSize = QwpWebSocketHttpProcessor.responseSize(acceptKey, negotiatedVersion, null, roleBytes);
         if (requiredHandshakeSize > bufferSize) {
             throw responseDoesNotFitSendBuffer(context.getFd(), "101 handshake response", bufferSize, requiredHandshakeSize);
         }
@@ -309,7 +309,7 @@ public class QwpWebSocketUpgradeProcessor implements HttpRequestProcessor {
         state.setDurableAckEnabled(durableAckRequested && engine.getDurableAckRegistry().isEnabled());
 
         // Write the 101 Switching Protocols response (reuse the pre-computed accept key)
-        int bytesWritten = QwpWebSocketHttpProcessor.writeResponse(bufferAddr, acceptKey, negotiatedVersion, null, roleName);
+        int bytesWritten = QwpWebSocketHttpProcessor.writeResponse(bufferAddr, acceptKey, negotiatedVersion, null, roleBytes);
         if (bytesWritten <= 0) {
             throw responseDoesNotFitSendBuffer(context.getFd(), "101 handshake response", bufferSize, requiredHandshakeSize);
         }

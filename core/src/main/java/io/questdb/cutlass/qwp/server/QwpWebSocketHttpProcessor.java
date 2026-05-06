@@ -276,21 +276,21 @@ public class QwpWebSocketHttpProcessor implements HttpRequestHandler {
         return responseSize(acceptKey, qwpVersion, contentEncoding, null);
     }
 
-    public static int responseSize(String acceptKey, int qwpVersion, String contentEncoding, String role) {
+    public static int responseSize(String acceptKey, int qwpVersion, String contentEncoding, byte[] roleBytes) {
         int size = RESPONSE_PREFIX.length + acceptKey.length()
                 + RESPONSE_AFTER_ACCEPT.length + digitCount(qwpVersion)
                 + RESPONSE_SUFFIX.length;
         if (contentEncoding != null) {
             size += RESPONSE_CONTENT_ENCODING_PREFIX.length + contentEncoding.length();
         }
-        if (role != null) {
-            size += RESPONSE_ROLE_PREFIX.length + role.length();
+        if (roleBytes != null) {
+            size += RESPONSE_ROLE_PREFIX.length + roleBytes.length;
         }
         return size;
     }
 
-    public static int serviceUnavailableWithRoleSize(String role) {
-        return SERVICE_UNAVAILABLE_PREFIX.length + role.length() + RESPONSE_SUFFIX.length;
+    public static int serviceUnavailableWithRoleSize(byte[] roleBytes) {
+        return SERVICE_UNAVAILABLE_PREFIX.length + roleBytes.length + RESPONSE_SUFFIX.length;
     }
 
     /**
@@ -367,7 +367,7 @@ public class QwpWebSocketHttpProcessor implements HttpRequestHandler {
         return writeResponse(buf, acceptKey, qwpVersion, contentEncoding, null);
     }
 
-    public static int writeResponse(long buf, String acceptKey, int qwpVersion, String contentEncoding, String role) {
+    public static int writeResponse(long buf, String acceptKey, int qwpVersion, String contentEncoding, byte[] roleBytes) {
         int offset = 0;
 
         for (byte b : RESPONSE_PREFIX) {
@@ -397,11 +397,10 @@ public class QwpWebSocketHttpProcessor implements HttpRequestHandler {
             }
         }
 
-        if (role != null) {
+        if (roleBytes != null) {
             for (byte b : RESPONSE_ROLE_PREFIX) {
                 Unsafe.putByte(buf + offset++, b);
             }
-            byte[] roleBytes = role.getBytes(StandardCharsets.US_ASCII);
             for (byte b : roleBytes) {
                 Unsafe.putByte(buf + offset++, b);
             }
@@ -414,8 +413,8 @@ public class QwpWebSocketHttpProcessor implements HttpRequestHandler {
         return offset;
     }
 
-    public static int writeServiceUnavailableWithRole(long buf, int bufferSize, String role) {
-        int needed = serviceUnavailableWithRoleSize(role);
+    public static int writeServiceUnavailableWithRole(long buf, int bufferSize, byte[] roleBytes) {
+        int needed = serviceUnavailableWithRoleSize(roleBytes);
         if (needed > bufferSize) {
             return -1;
         }
@@ -423,7 +422,6 @@ public class QwpWebSocketHttpProcessor implements HttpRequestHandler {
         for (byte b : SERVICE_UNAVAILABLE_PREFIX) {
             Unsafe.putByte(buf + offset++, b);
         }
-        byte[] roleBytes = role.getBytes(StandardCharsets.US_ASCII);
         for (byte b : roleBytes) {
             Unsafe.putByte(buf + offset++, b);
         }

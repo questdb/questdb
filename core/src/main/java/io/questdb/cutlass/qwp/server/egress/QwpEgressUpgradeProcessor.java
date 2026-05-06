@@ -1229,8 +1229,6 @@ public class QwpEgressUpgradeProcessor implements HttpRequestProcessor, QuietClo
         return negotiated;
     }
 
-    // Outbound frame serialisation
-
     private void processWebSocketFrames(HttpConnectionContext context, QwpEgressProcessorState state, long buffer, int bufferLen)
             throws ServerDisconnectException, PeerDisconnectedException, PeerIsSlowToReadException {
         long bufferEnd = buffer + bufferLen;
