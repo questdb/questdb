@@ -765,7 +765,10 @@ fn decode_int32_dispatch<const FILTERED: bool, const FILL_NULLS: bool>(
             )?;
             Ok(true)
         }
-        (Encoding::Plain, _, Some(PrimitiveLogicalType::Date), ColumnTypeTag::Date) => {
+        (Encoding::Plain, _, _, ColumnTypeTag::Date)
+            if matches!(logical_type, Some(PrimitiveLogicalType::Date))
+                || matches!(converted_type, Some(PrimitiveConvertedType::Date)) =>
+        {
             // Parquet-native DATE column: Int32 stores days since epoch, convert to millis.
             decode_page0_mode::<_, FILTERED, FILL_NULLS>(
                 page,
@@ -790,10 +793,13 @@ fn decode_int32_dispatch<const FILTERED: bool, const FILL_NULLS: bool>(
         }
         (
             Encoding::RleDictionary | Encoding::PlainDictionary,
-            Some(dict_page),
-            Some(PrimitiveLogicalType::Date),
+            Some(_),
+            _,
             ColumnTypeTag::Date,
-        ) => {
+        ) if matches!(logical_type, Some(PrimitiveLogicalType::Date))
+            || matches!(converted_type, Some(PrimitiveConvertedType::Date)) =>
+        {
+            let dict_page = dict.unwrap();
             // Parquet-native DATE column with dictionary encoding.
             let dict_decoder =
                 ConvertablePrimitiveDictDecoder::try_new(dict_page, DayToMillisConverter::new())?;
