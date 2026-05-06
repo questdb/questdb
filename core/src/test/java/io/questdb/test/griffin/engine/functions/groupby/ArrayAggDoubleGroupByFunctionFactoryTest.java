@@ -319,8 +319,8 @@ public class ArrayAggDoubleGroupByFunctionFactoryTest extends AbstractCairoTest 
     @Test
     public void testMultipleArrayAggInSameQuery() throws Exception {
         // Two independent array_agg() calls in the same projection must produce
-        // two independent buffers per group; one's compaction sentinel must not
-        // affect the other.
+        // two independent build buffers per group; each function instance keeps
+        // its own (srcPtr -> renderPtr) cache, and the two must not collide.
         assertMemoryLeak(() -> {
             execute("CREATE TABLE tab (grp SYMBOL, x DOUBLE, y DOUBLE)");
             execute("""
@@ -745,9 +745,9 @@ public class ArrayAggDoubleGroupByFunctionFactoryTest extends AbstractCairoTest 
     @Test
     public void testSpecialDoubleValues() throws Exception {
         // Verify that arbitrary IEEE 754 finite bit patterns round-trip unchanged
-        // through the (rowId, value) pair buffer and the in-place compaction step.
-        // Covers Double.MAX_VALUE, Double.MIN_NORMAL, Double.MIN_VALUE (denormal),
-        // negative extremes, and signed zero.
+        // through the (rowId, value) build buffer and the flat render buffer
+        // produced by getArray(). Covers Double.MAX_VALUE, Double.MIN_NORMAL,
+        // Double.MIN_VALUE (denormal), negative extremes, and signed zero.
         assertMemoryLeak(() -> {
             execute("CREATE TABLE tab (val DOUBLE)");
             execute("""

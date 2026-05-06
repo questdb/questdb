@@ -86,11 +86,12 @@ public class ArrayAggDoubleArrayGroupByFunctionFactoryTest extends AbstractCairo
     }
 
     @Test
-    public void testCompactionSentinelSkipPath() throws Exception {
-        // The getArray() compaction step writes -1 into the capacity slot so subsequent
-        // calls on the same group skip re-compaction. Project the aggregate alongside a
-        // derivation so the outer expression reads it more than once on the same group,
-        // forcing the second call to traverse the already-compacted buffer.
+    public void testRenderCacheReuseOnRepeatedGetArray() throws Exception {
+        // getArray() renders a fresh allocator-backed flat buffer the first time
+        // a given group is read and caches the (srcPtr -> renderPtr) mapping per
+        // instance. Project the aggregate alongside derivations so the outer
+        // expression reads it more than once on the same group, exercising the
+        // cache-hit path for the second and third reads.
         assertMemoryLeak(() -> {
             execute("CREATE TABLE tab (grp SYMBOL, arr DOUBLE[])");
             execute("""
@@ -730,9 +731,9 @@ public class ArrayAggDoubleArrayGroupByFunctionFactoryTest extends AbstractCairo
     @Test
     public void testSpecialDoubleValues() throws Exception {
         // Verify that arbitrary IEEE 754 finite bit patterns round-trip unchanged
-        // through the per-element (rowId, value) buffer and the in-place compaction
-        // step. Covers Double.MAX_VALUE, Double.MIN_NORMAL, Double.MIN_VALUE
-        // (denormal), negative extremes, and signed zero.
+        // through the per-element (rowId, value) build buffer and the flat render
+        // buffer produced by getArray(). Covers Double.MAX_VALUE, Double.MIN_NORMAL,
+        // Double.MIN_VALUE (denormal), negative extremes, and signed zero.
         assertMemoryLeak(() -> {
             execute("CREATE TABLE tab (arr DOUBLE[])");
             execute("""
