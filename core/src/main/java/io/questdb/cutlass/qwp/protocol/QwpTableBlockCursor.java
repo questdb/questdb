@@ -480,7 +480,7 @@ public class QwpTableBlockCursor implements Mutable {
                 timestampColumnIndices[timestampColumnCount++] = colIndex;
                 yield tsCursor.of(dataAddress, dataLength, rowCount, typeCode, gorillaEnabled);
             }
-            case TYPE_STRING, TYPE_VARCHAR -> {
+            case TYPE_VARCHAR -> {
                 QwpStringColumnCursor strCursor;
                 if (cursor instanceof QwpStringColumnCursor c) {
                     strCursor = c;

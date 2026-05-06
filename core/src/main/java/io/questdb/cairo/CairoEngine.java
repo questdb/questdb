@@ -78,8 +78,10 @@ import io.questdb.cairo.view.ViewStateStoreImpl;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryCMR;
 import io.questdb.cairo.vm.api.MemoryMARW;
+import io.questdb.cairo.wal.DefaultDurableAckRegistry;
 import io.questdb.cairo.wal.DefaultWalDirectoryPolicy;
 import io.questdb.cairo.wal.DefaultWalListener;
+import io.questdb.cairo.wal.DurableAckRegistry;
 import io.questdb.cairo.wal.QdbrWalLocker;
 import io.questdb.cairo.wal.ViewWalWriter;
 import io.questdb.cairo.wal.WalDirectoryPolicy;
@@ -217,6 +219,7 @@ public class CairoEngine implements Closeable, WriterSource {
         }
     }; // no-op
     private @NotNull DdlListener ddlListener = DefaultDdlListener.INSTANCE;
+    private volatile @NotNull DurableAckRegistry durableAckRegistry = DefaultDurableAckRegistry.INSTANCE;
     private FrameFactory frameFactory;
     private @NotNull MatViewStateStore matViewStateStore = NoOpMatViewStateStore.INSTANCE;
     private volatile Runnable recentWriteTrackerHydrationCallback;
@@ -714,6 +717,7 @@ public class CairoEngine implements Closeable, WriterSource {
         verifyTableToken(tableToken);
         if (tableToken.isWal()) {
             if (notifyDropped(tableToken)) {
+                durableAckRegistry.onTableDropped(tableToken);
                 tableSequencerAPI.dropTable(tableToken, false);
                 notifyViewStoresAboutDrop(tableToken);
                 matViewStateStore.removeViewState(tableToken);
@@ -1205,6 +1209,10 @@ public class CairoEngine implements Closeable, WriterSource {
             }
             throw e;
         }
+    }
+
+    public @NotNull DurableAckRegistry getDurableAckRegistry() {
+        return durableAckRegistry;
     }
 
     public @NotNull WalDirectoryPolicy getWalDirectoryPolicy() {
@@ -1786,6 +1794,10 @@ public class CairoEngine implements Closeable, WriterSource {
     public void setUp() {
     }
 
+    public void setDurableAckRegistry(@NotNull DurableAckRegistry durableAckRegistry) {
+        this.durableAckRegistry = durableAckRegistry;
+    }
+
     public void setWalDirectoryPolicy(@NotNull WalDirectoryPolicy walDirectoryPolicy) {
         this.walDirectoryPolicy = walDirectoryPolicy;
     }
@@ -2056,6 +2068,7 @@ public class CairoEngine implements Closeable, WriterSource {
             while (!lockTableCreate(tableToken)) {
                 Os.pause();
             }
+            boolean filesystemCreated = false;
             try {
                 String lockedReason = lockAll(tableToken, "createTable", true);
                 boolean locked = true;
@@ -2066,6 +2079,7 @@ public class CairoEngine implements Closeable, WriterSource {
                         } else {
                             createTableOrViewOrMatViewUnsafe(mem, blockFileWriter, path, struct, tableToken);
                         }
+                        filesystemCreated = true;
 
                         if (struct.isWalEnabled()) {
                             tableSequencerAPI.registerTable(tableToken.getTableId(), struct, tableToken);
@@ -2099,6 +2113,29 @@ public class CairoEngine implements Closeable, WriterSource {
                 if (struct.isWalEnabled()) {
                     // tableToken.getLoggingName() === tableName, table cannot be renamed while creation hasn't finished
                     tableSequencerAPI.dropTable(tableToken, true);
+                } else if (filesystemCreated) {
+                    final FilesFacade ff = configuration.getFilesFacade();
+                    try {
+                        path.of(configuration.getDbRoot()).concat(tableToken).$();
+                        Path volumeTarget = null;
+                        if (ff.isSoftLink(path.$())) {
+                            volumeTarget = Path.getThreadLocal2("");
+                            if (!ff.readLink(path, volumeTarget)) {
+                                volumeTarget = null;
+                            }
+                        }
+                        if (!ff.unlinkOrRemove(path, LOG)) {
+                            LOG.error().$("could not clean up partial table after failed create [table=").$(tableToken)
+                                    .$(", errno=").$(ff.errno()).I$();
+                        }
+                        if (volumeTarget != null && !ff.unlinkOrRemove(volumeTarget, LOG)) {
+                            LOG.error().$("could not clean up partial table in volume [table=").$(tableToken)
+                                    .$(", errno=").$(ff.errno()).I$();
+                        }
+                    } catch (Throwable cleanupEx) {
+                        LOG.error().$("cleanup after failed create threw [table=").$(tableToken)
+                                .$(", err=").$(cleanupEx).I$();
+                    }
                 }
                 throw th;
             } finally {

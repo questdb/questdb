@@ -211,18 +211,18 @@ public class QwpWebSocketUpgradeProcessorResumeSendTest extends AbstractCairoTes
         byte[] expectedMessageBytes = "bad batch".getBytes(StandardCharsets.UTF_8);
         int expectedPayloadLen = 11 + expectedMessageBytes.length;
 
-        Assert.assertEquals((byte) 0x82, Unsafe.getUnsafe().getByte(bufferAddr));
-        Assert.assertEquals(expectedPayloadLen, Unsafe.getUnsafe().getByte(bufferAddr + 1) & 0x7F);
+        Assert.assertEquals((byte) 0x82, Unsafe.getByte(bufferAddr));
+        Assert.assertEquals(expectedPayloadLen, Unsafe.getByte(bufferAddr + 1) & 0x7F);
         Assert.assertEquals(expectedPayloadLen + 2, frameSize);
 
         long payloadAddr = bufferAddr + 2;
-        Assert.assertEquals((byte) 3, Unsafe.getUnsafe().getByte(payloadAddr));
+        Assert.assertEquals((byte) 3, Unsafe.getByte(payloadAddr));
         Assert.assertEquals(4L, readLittleEndianLong(payloadAddr + 1));
         Assert.assertEquals(expectedMessageBytes.length, readLittleEndianShort(payloadAddr + 9));
 
         byte[] actualMessageBytes = new byte[expectedMessageBytes.length];
         for (int i = 0; i < actualMessageBytes.length; i++) {
-            actualMessageBytes[i] = Unsafe.getUnsafe().getByte(payloadAddr + 11 + i);
+            actualMessageBytes[i] = Unsafe.getByte(payloadAddr + 11 + i);
         }
         Assert.assertArrayEquals(expectedMessageBytes, actualMessageBytes);
     }
@@ -237,14 +237,14 @@ public class QwpWebSocketUpgradeProcessorResumeSendTest extends AbstractCairoTes
     private static long readLittleEndianLong(long addr) {
         long value = 0;
         for (int i = 0; i < Long.BYTES; i++) {
-            value |= (long) (Unsafe.getUnsafe().getByte(addr + i) & 0xFF) << (i * 8);
+            value |= (long) (Unsafe.getByte(addr + i) & 0xFF) << (i * 8);
         }
         return value;
     }
 
     private static int readLittleEndianShort(long addr) {
-        return (Unsafe.getUnsafe().getByte(addr) & 0xFF)
-                | ((Unsafe.getUnsafe().getByte(addr + 1) & 0xFF) << 8);
+        return (Unsafe.getByte(addr) & 0xFF)
+                | ((Unsafe.getByte(addr + 1) & 0xFF) << 8);
     }
 
     private static class MockRawSocket implements HttpRawSocket {

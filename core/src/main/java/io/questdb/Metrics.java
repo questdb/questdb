@@ -30,6 +30,7 @@ import io.questdb.cutlass.http.processors.HttpMetrics;
 import io.questdb.cutlass.http.processors.JsonQueryMetrics;
 import io.questdb.cutlass.line.LineMetrics;
 import io.questdb.cutlass.pgwire.PGMetrics;
+import io.questdb.cutlass.qwp.server.egress.QwpEgressMetrics;
 import io.questdb.metrics.GCMetrics;
 import io.questdb.metrics.HealthMetricsImpl;
 import io.questdb.metrics.MetricsRegistry;
@@ -55,6 +56,7 @@ public class Metrics implements Target, Mutable {
     private final LineMetrics lineMetrics;
     private final MetricsRegistry metricsRegistry;
     private final PGMetrics pgMetrics;
+    private final QwpEgressMetrics qwpEgressMetrics;
     private final Runtime runtime = Runtime.getRuntime();
     private final VirtualLongGauge.StatProvider jvmFreeMemRef = runtime::freeMemory;
     private final VirtualLongGauge.StatProvider jvmMaxMemRef = runtime::maxMemory;
@@ -70,6 +72,7 @@ public class Metrics implements Target, Mutable {
         this.jsonQueryMetrics = new JsonQueryMetrics(metricsRegistry);
         this.httpMetrics = new HttpMetrics(metricsRegistry);
         this.pgMetrics = new PGMetrics(metricsRegistry);
+        this.qwpEgressMetrics = new QwpEgressMetrics(metricsRegistry);
         this.lineMetrics = new LineMetrics(metricsRegistry);
         this.healthCheck = new HealthMetricsImpl(metricsRegistry);
         this.tableWriterMetrics = new TableWriterMetrics(metricsRegistry);
@@ -84,6 +87,7 @@ public class Metrics implements Target, Mutable {
         gcMetrics.clear();
         jsonQueryMetrics.clear();
         pgMetrics.clear();
+        qwpEgressMetrics.clear();
         lineMetrics.clear();
         healthCheck.clear();
         tableWriterMetrics.clear();
@@ -123,6 +127,10 @@ public class Metrics implements Target, Mutable {
 
     public PGMetrics pgWireMetrics() {
         return pgMetrics;
+    }
+
+    public QwpEgressMetrics qwpEgressMetrics() {
+        return qwpEgressMetrics;
     }
 
     @Override

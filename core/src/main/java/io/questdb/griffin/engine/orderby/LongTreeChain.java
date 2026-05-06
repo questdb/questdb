@@ -152,8 +152,8 @@ public class LongTreeChain extends AbstractRedBlackTree implements Reopenable {
     private int appendNewValue(long rowId) {
         checkValueCapacity();
         final int offset = compressValueOffset(valueHeapPos - valueHeapStart);
-        Unsafe.getUnsafe().putLong(valueHeapPos, rowId);
-        Unsafe.getUnsafe().putInt(valueHeapPos + 8, -1);
+        Unsafe.putLong(valueHeapPos, rowId);
+        Unsafe.putInt(valueHeapPos + 8, -1);
         valueHeapPos += CHAIN_VALUE_SIZE;
         return offset;
     }
@@ -176,7 +176,7 @@ public class LongTreeChain extends AbstractRedBlackTree implements Reopenable {
     }
 
     private int nextValueOffset(int valueOffset) {
-        return Unsafe.getUnsafe().getInt(valueHeapStart + uncompressValueOffset(valueOffset) + 8);
+        return Unsafe.getInt(valueHeapStart + uncompressValueOffset(valueOffset) + 8);
     }
 
     private void putParent(long rowId) {
@@ -188,11 +188,11 @@ public class LongTreeChain extends AbstractRedBlackTree implements Reopenable {
     }
 
     private long rowId(int valueOffset) {
-        return Unsafe.getUnsafe().getLong(valueHeapStart + uncompressValueOffset(valueOffset));
+        return Unsafe.getLong(valueHeapStart + uncompressValueOffset(valueOffset));
     }
 
     private void setNextValueOffset(int valueOffset, int nextValueOffset) {
-        Unsafe.getUnsafe().putInt(valueHeapStart + uncompressValueOffset(valueOffset) + 8, nextValueOffset);
+        Unsafe.putInt(valueHeapStart + uncompressValueOffset(valueOffset) + 8, nextValueOffset);
     }
 
     public class TreeCursor {

@@ -13,11 +13,10 @@ use crate::parquet_read::decode::decimal::{
 use crate::parquet_read::decoders::int128::Int128ToUuidConverter;
 use crate::parquet_read::decoders::int96::{Int96Timestamp, Int96ToTimestampConverter};
 use crate::parquet_read::decoders::{
-    int32::DayToMillisConverter, int32::Int32ToDoubleConverter, BasePrimitiveDictDecoder,
-    BaseVarDictDecoder, ConvertablePrimitiveDictDecoder, DeltaBinaryPackedDecoder,
-    DeltaLAVarcharSliceDecoder, FixedDictDecoder, PlainBooleanDecoder, PlainPrimitiveDecoder,
-    RleBooleanDecoder, RleDictVarcharSliceDecoder, RleDictionaryDecoder,
-    RleLocalIsGlobalSymbolDictDecoder,
+    int32::DayToMillisConverter, BasePrimitiveDictDecoder, BaseVarDictDecoder,
+    ConvertablePrimitiveDictDecoder, DeltaBinaryPackedDecoder, DeltaLAVarcharSliceDecoder,
+    FixedDictDecoder, PlainBooleanDecoder, PlainPrimitiveDecoder, RleBooleanDecoder,
+    RleDictVarcharSliceDecoder, RleDictionaryDecoder, RleLocalIsGlobalSymbolDictDecoder,
 };
 use crate::parquet_read::page::{split_buffer, DataPage, DictPage};
 use crate::parquet_read::slicer::rle::RleDictionarySlicer;
@@ -25,7 +24,7 @@ use crate::parquet_read::slicer::{
     DataPageFixedSlicer, DataPageSlicer, DeltaBytesArraySlicer, DeltaLengthArraySlicer,
     PlainVarSlicer,
 };
-use crate::parquet_read::{ColumnChunkBuffers, ColumnChunkStats, RowGroupStatBuffers};
+use crate::parquet_read::ColumnChunkBuffers;
 use parquet2::deserialize::{HybridDecoderBitmapIter, HybridEncoded};
 
 use parquet2::encoding::hybrid_rle::HybridRleDecoder;
@@ -33,7 +32,7 @@ use parquet2::encoding::{hybrid_rle, Encoding};
 use parquet2::page::DataPageHeader;
 use parquet2::read::levels::get_bit_width;
 use parquet2::read::{SlicedDataPage, SlicedDictPage};
-use parquet2::schema::types::{PhysicalType, PrimitiveConvertedType, PrimitiveLogicalType};
+use parquet2::schema::types::PhysicalType;
 use qdb_core::col_type::{nulls, ColumnType, ColumnTypeTag, Long128, Long256};
 use std::cmp::min;
 use std::ptr;
@@ -42,25 +41,6 @@ mod array;
 mod decimal;
 
 use self::array::{decode_array_page, decode_array_page_filtered};
-
-impl RowGroupStatBuffers {
-    pub fn new(allocator: QdbAllocator) -> Self {
-        Self {
-            column_chunk_stats_ptr: ptr::null_mut(),
-            column_chunk_stats: AcVec::new_in(allocator),
-        }
-    }
-
-    pub fn ensure_n_columns(&mut self, required_cols: usize) -> ParquetResult<()> {
-        if self.column_chunk_stats.len() < required_cols {
-            let allocator = self.column_chunk_stats.allocator().clone();
-            self.column_chunk_stats
-                .resize_with(required_cols, || ColumnChunkStats::new(allocator.clone()))?;
-            self.column_chunk_stats_ptr = self.column_chunk_stats.as_mut_ptr();
-        }
-        Ok(())
-    }
-}
 
 impl ColumnChunkBuffers {
     pub fn new(allocator: QdbAllocator) -> Self {
@@ -97,19 +77,6 @@ impl ColumnChunkBuffers {
         self.aux_ptr = ptr::null_mut();
 
         self.page_buffers.clear();
-    }
-}
-
-impl ColumnChunkStats {
-    pub fn new(allocator: QdbAllocator) -> Self {
-        Self {
-            min_value_ptr: ptr::null_mut(),
-            min_value_size: 0,
-            min_value: AcVec::new_in(allocator.clone()),
-            max_value_ptr: ptr::null_mut(),
-            max_value_size: 0,
-            max_value: AcVec::new_in(allocator),
-        }
     }
 }
 
@@ -284,8 +251,6 @@ fn decode_page_dispatch<const FILTERED: bool, const FILL_NULLS: bool>(
             values_buffer,
             bufs,
             column_type,
-            primitive_type.logical_type,
-            primitive_type.converted_type,
             mode,
         ),
         PhysicalType::Int64 => decode_int64_dispatch::<FILTERED, FILL_NULLS>(
@@ -294,7 +259,6 @@ fn decode_page_dispatch<const FILTERED: bool, const FILL_NULLS: bool>(
             values_buffer,
             bufs,
             column_type,
-            primitive_type.logical_type,
             mode,
         ),
         PhysicalType::FixedLenByteArray(len) => decode_fixed_len_dispatch::<FILTERED, FILL_NULLS>(
@@ -303,8 +267,6 @@ fn decode_page_dispatch<const FILTERED: bool, const FILL_NULLS: bool>(
             values_buffer,
             bufs,
             column_type,
-            primitive_type.logical_type,
-            primitive_type.converted_type,
             len,
             mode,
         ),
@@ -315,8 +277,6 @@ fn decode_page_dispatch<const FILTERED: bool, const FILL_NULLS: bool>(
             bufs,
             col_info,
             column_type,
-            primitive_type.logical_type,
-            primitive_type.converted_type,
             mode,
         ),
         PhysicalType::Int96 => decode_int96_dispatch::<FILTERED, FILL_NULLS>(
@@ -325,7 +285,6 @@ fn decode_page_dispatch<const FILTERED: bool, const FILL_NULLS: bool>(
             values_buffer,
             bufs,
             column_type,
-            primitive_type.logical_type,
             mode,
         ),
         PhysicalType::Double => decode_double_dispatch::<FILTERED, FILL_NULLS>(
@@ -380,20 +339,17 @@ fn decode_page_dispatch<const FILTERED: bool, const FILL_NULLS: bool>(
     }
 }
 
-#[allow(clippy::too_many_arguments)]
 fn decode_int32_dispatch<const FILTERED: bool, const FILL_NULLS: bool>(
     page: &DataPage,
     dict: Option<&DictPage>,
     values_buffer: &[u8],
     bufs: &mut ColumnChunkBuffers,
     column_type: ColumnType,
-    logical_type: Option<PrimitiveLogicalType>,
-    converted_type: Option<PrimitiveConvertedType>,
     mode: DecodeModeContext<'_>,
 ) -> ParquetResult<bool> {
     let row_hi = mode.source_row_count();
-    match (page.encoding(), dict, logical_type, column_type.tag()) {
-        (Encoding::Plain, _, _, ColumnTypeTag::Byte) => {
+    match (page.encoding(), dict, column_type.tag()) {
+        (Encoding::Plain, _, ColumnTypeTag::Byte) => {
             decode_page0_mode::<_, FILTERED, FILL_NULLS>(
                 page,
                 mode,
@@ -401,7 +357,7 @@ fn decode_int32_dispatch<const FILTERED: bool, const FILL_NULLS: bool>(
             )?;
             Ok(true)
         }
-        (Encoding::Plain, _, _, ColumnTypeTag::GeoByte) => {
+        (Encoding::Plain, _, ColumnTypeTag::GeoByte) => {
             decode_page0_mode::<_, FILTERED, FILL_NULLS>(
                 page,
                 mode,
@@ -413,7 +369,7 @@ fn decode_int32_dispatch<const FILTERED: bool, const FILL_NULLS: bool>(
             )?;
             Ok(true)
         }
-        (Encoding::Plain, _, _, ColumnTypeTag::Decimal8) => {
+        (Encoding::Plain, _, ColumnTypeTag::Decimal8) => {
             decode_page0_mode::<_, FILTERED, FILL_NULLS>(
                 page,
                 mode,
@@ -421,7 +377,7 @@ fn decode_int32_dispatch<const FILTERED: bool, const FILL_NULLS: bool>(
             )?;
             Ok(true)
         }
-        (Encoding::DeltaBinaryPacked, _, _, ColumnTypeTag::Byte) => {
+        (Encoding::DeltaBinaryPacked, _, ColumnTypeTag::Byte) => {
             decode_page0_mode::<_, FILTERED, FILL_NULLS>(
                 page,
                 mode,
@@ -433,7 +389,7 @@ fn decode_int32_dispatch<const FILTERED: bool, const FILL_NULLS: bool>(
             )?;
             Ok(true)
         }
-        (Encoding::DeltaBinaryPacked, _, _, ColumnTypeTag::GeoByte) => {
+        (Encoding::DeltaBinaryPacked, _, ColumnTypeTag::GeoByte) => {
             decode_page0_mode::<_, FILTERED, FILL_NULLS>(
                 page,
                 mode,
@@ -448,7 +404,6 @@ fn decode_int32_dispatch<const FILTERED: bool, const FILL_NULLS: bool>(
         (
             Encoding::RleDictionary | Encoding::PlainDictionary,
             Some(dict_page),
-            _,
             ColumnTypeTag::Byte,
         ) => {
             let dict_decoder = BasePrimitiveDictDecoder::<i32, i8>::try_new(dict_page)?;
@@ -468,7 +423,6 @@ fn decode_int32_dispatch<const FILTERED: bool, const FILL_NULLS: bool>(
         (
             Encoding::RleDictionary | Encoding::PlainDictionary,
             Some(dict_page),
-            _,
             ColumnTypeTag::GeoByte,
         ) => {
             let dict_decoder = BasePrimitiveDictDecoder::<i32, i8>::try_new(dict_page)?;
@@ -488,7 +442,6 @@ fn decode_int32_dispatch<const FILTERED: bool, const FILL_NULLS: bool>(
         (
             Encoding::RleDictionary | Encoding::PlainDictionary,
             Some(dict_page),
-            _,
             ColumnTypeTag::Decimal8,
         ) => {
             let dict_decoder = BasePrimitiveDictDecoder::<i32, i8>::try_new(dict_page)?;
@@ -505,7 +458,7 @@ fn decode_int32_dispatch<const FILTERED: bool, const FILL_NULLS: bool>(
             )?;
             Ok(true)
         }
-        (Encoding::Plain, _, _, ColumnTypeTag::Short | ColumnTypeTag::Char) => {
+        (Encoding::Plain, _, ColumnTypeTag::Short | ColumnTypeTag::Char) => {
             decode_page0_mode::<_, FILTERED, FILL_NULLS>(
                 page,
                 mode,
@@ -513,7 +466,7 @@ fn decode_int32_dispatch<const FILTERED: bool, const FILL_NULLS: bool>(
             )?;
             Ok(true)
         }
-        (Encoding::Plain, _, _, ColumnTypeTag::GeoShort) => {
+        (Encoding::Plain, _, ColumnTypeTag::GeoShort) => {
             decode_page0_mode::<_, FILTERED, FILL_NULLS>(
                 page,
                 mode,
@@ -525,7 +478,7 @@ fn decode_int32_dispatch<const FILTERED: bool, const FILL_NULLS: bool>(
             )?;
             Ok(true)
         }
-        (Encoding::Plain, _, _, ColumnTypeTag::Decimal16) => {
+        (Encoding::Plain, _, ColumnTypeTag::Decimal16) => {
             decode_page0_mode::<_, FILTERED, FILL_NULLS>(
                 page,
                 mode,
@@ -533,7 +486,7 @@ fn decode_int32_dispatch<const FILTERED: bool, const FILL_NULLS: bool>(
             )?;
             Ok(true)
         }
-        (Encoding::DeltaBinaryPacked, _, _, ColumnTypeTag::Short | ColumnTypeTag::Char) => {
+        (Encoding::DeltaBinaryPacked, _, ColumnTypeTag::Short | ColumnTypeTag::Char) => {
             decode_page0_mode::<_, FILTERED, FILL_NULLS>(
                 page,
                 mode,
@@ -545,7 +498,7 @@ fn decode_int32_dispatch<const FILTERED: bool, const FILL_NULLS: bool>(
             )?;
             Ok(true)
         }
-        (Encoding::DeltaBinaryPacked, _, _, ColumnTypeTag::GeoShort) => {
+        (Encoding::DeltaBinaryPacked, _, ColumnTypeTag::GeoShort) => {
             decode_page0_mode::<_, FILTERED, FILL_NULLS>(
                 page,
                 mode,
@@ -560,7 +513,6 @@ fn decode_int32_dispatch<const FILTERED: bool, const FILL_NULLS: bool>(
         (
             Encoding::RleDictionary | Encoding::PlainDictionary,
             Some(dict_page),
-            _,
             ColumnTypeTag::Short | ColumnTypeTag::Char,
         ) => {
             let dict_decoder = BasePrimitiveDictDecoder::<i32, i16>::try_new(dict_page)?;
@@ -580,7 +532,6 @@ fn decode_int32_dispatch<const FILTERED: bool, const FILL_NULLS: bool>(
         (
             Encoding::RleDictionary | Encoding::PlainDictionary,
             Some(dict_page),
-            _,
             ColumnTypeTag::GeoShort,
         ) => {
             let dict_decoder = BasePrimitiveDictDecoder::<i32, i16>::try_new(dict_page)?;
@@ -600,7 +551,6 @@ fn decode_int32_dispatch<const FILTERED: bool, const FILL_NULLS: bool>(
         (
             Encoding::RleDictionary | Encoding::PlainDictionary,
             Some(dict_page),
-            _,
             ColumnTypeTag::Decimal16,
         ) => {
             let dict_decoder = BasePrimitiveDictDecoder::<i32, i16>::try_new(dict_page)?;
@@ -617,7 +567,7 @@ fn decode_int32_dispatch<const FILTERED: bool, const FILL_NULLS: bool>(
             )?;
             Ok(true)
         }
-        (Encoding::Plain, _, _, ColumnTypeTag::Int) => {
+        (Encoding::Plain, _, ColumnTypeTag::Int) => {
             decode_page0_mode::<_, FILTERED, FILL_NULLS>(
                 page,
                 mode,
@@ -625,7 +575,7 @@ fn decode_int32_dispatch<const FILTERED: bool, const FILL_NULLS: bool>(
             )?;
             Ok(true)
         }
-        (Encoding::Plain, _, _, ColumnTypeTag::IPv4) => {
+        (Encoding::Plain, _, ColumnTypeTag::IPv4) => {
             decode_page0_mode::<_, FILTERED, FILL_NULLS>(
                 page,
                 mode,
@@ -633,7 +583,7 @@ fn decode_int32_dispatch<const FILTERED: bool, const FILL_NULLS: bool>(
             )?;
             Ok(true)
         }
-        (Encoding::Plain, _, _, ColumnTypeTag::GeoInt) => {
+        (Encoding::Plain, _, ColumnTypeTag::GeoInt) => {
             decode_page0_mode::<_, FILTERED, FILL_NULLS>(
                 page,
                 mode,
@@ -641,7 +591,7 @@ fn decode_int32_dispatch<const FILTERED: bool, const FILL_NULLS: bool>(
             )?;
             Ok(true)
         }
-        (Encoding::Plain, _, _, ColumnTypeTag::Decimal32) => {
+        (Encoding::Plain, _, ColumnTypeTag::Decimal32) => {
             decode_page0_mode::<_, FILTERED, FILL_NULLS>(
                 page,
                 mode,
@@ -649,7 +599,7 @@ fn decode_int32_dispatch<const FILTERED: bool, const FILL_NULLS: bool>(
             )?;
             Ok(true)
         }
-        (Encoding::DeltaBinaryPacked, _, _, ColumnTypeTag::Int) => {
+        (Encoding::DeltaBinaryPacked, _, ColumnTypeTag::Int) => {
             decode_page0_mode::<_, FILTERED, FILL_NULLS>(
                 page,
                 mode,
@@ -661,7 +611,7 @@ fn decode_int32_dispatch<const FILTERED: bool, const FILL_NULLS: bool>(
             )?;
             Ok(true)
         }
-        (Encoding::DeltaBinaryPacked, _, _, ColumnTypeTag::IPv4) => {
+        (Encoding::DeltaBinaryPacked, _, ColumnTypeTag::IPv4) => {
             decode_page0_mode::<_, FILTERED, FILL_NULLS>(
                 page,
                 mode,
@@ -673,7 +623,7 @@ fn decode_int32_dispatch<const FILTERED: bool, const FILL_NULLS: bool>(
             )?;
             Ok(true)
         }
-        (Encoding::DeltaBinaryPacked, _, _, ColumnTypeTag::GeoInt) => {
+        (Encoding::DeltaBinaryPacked, _, ColumnTypeTag::GeoInt) => {
             decode_page0_mode::<_, FILTERED, FILL_NULLS>(
                 page,
                 mode,
@@ -688,7 +638,6 @@ fn decode_int32_dispatch<const FILTERED: bool, const FILL_NULLS: bool>(
         (
             Encoding::RleDictionary | Encoding::PlainDictionary,
             Some(dict_page),
-            _,
             ColumnTypeTag::Int,
         ) => {
             let dict_decoder = BasePrimitiveDictDecoder::<i32, i32>::try_new(dict_page)?;
@@ -708,7 +657,6 @@ fn decode_int32_dispatch<const FILTERED: bool, const FILL_NULLS: bool>(
         (
             Encoding::RleDictionary | Encoding::PlainDictionary,
             Some(dict_page),
-            _,
             ColumnTypeTag::IPv4,
         ) => {
             let dict_decoder = BasePrimitiveDictDecoder::<i32, i32>::try_new(dict_page)?;
@@ -728,7 +676,6 @@ fn decode_int32_dispatch<const FILTERED: bool, const FILL_NULLS: bool>(
         (
             Encoding::RleDictionary | Encoding::PlainDictionary,
             Some(dict_page),
-            _,
             ColumnTypeTag::GeoInt,
         ) => {
             let dict_decoder = BasePrimitiveDictDecoder::<i32, i32>::try_new(dict_page)?;
@@ -748,7 +695,6 @@ fn decode_int32_dispatch<const FILTERED: bool, const FILL_NULLS: bool>(
         (
             Encoding::RleDictionary | Encoding::PlainDictionary,
             Some(dict_page),
-            _,
             ColumnTypeTag::Decimal32,
         ) => {
             let dict_decoder = BasePrimitiveDictDecoder::<i32, i32>::try_new(dict_page)?;
@@ -765,7 +711,7 @@ fn decode_int32_dispatch<const FILTERED: bool, const FILL_NULLS: bool>(
             )?;
             Ok(true)
         }
-        (Encoding::Plain, _, _, ColumnTypeTag::Date) => {
+        (Encoding::Plain, _, ColumnTypeTag::Date) => {
             decode_page0_mode::<_, FILTERED, FILL_NULLS>(
                 page,
                 mode,
@@ -781,7 +727,6 @@ fn decode_int32_dispatch<const FILTERED: bool, const FILL_NULLS: bool>(
         (
             Encoding::RleDictionary | Encoding::PlainDictionary,
             Some(dict_page),
-            _,
             ColumnTypeTag::Date,
         ) => {
             let dict_decoder =
@@ -799,50 +744,6 @@ fn decode_int32_dispatch<const FILTERED: bool, const FILL_NULLS: bool>(
             )?;
             Ok(true)
         }
-        (encoding, dict, logical_type, ColumnTypeTag::Double) => {
-            let scale = match logical_type {
-                Some(PrimitiveLogicalType::Decimal(_, scale)) => scale,
-                _ => match converted_type {
-                    Some(PrimitiveConvertedType::Decimal(_, scale)) => scale,
-                    _ => 0,
-                },
-            };
-
-            match (encoding, dict) {
-                (Encoding::RleDictionary | Encoding::PlainDictionary, Some(dict_page)) => {
-                    let dict_decoder = ConvertablePrimitiveDictDecoder::try_new(
-                        dict_page,
-                        Int32ToDoubleConverter::new(scale),
-                    )?;
-                    decode_page0_mode::<_, FILTERED, FILL_NULLS>(
-                        page,
-                        mode,
-                        &mut RleDictionaryDecoder::try_new(
-                            values_buffer,
-                            dict_decoder,
-                            row_hi,
-                            nulls::DOUBLE,
-                            bufs,
-                        )?,
-                    )?;
-                    Ok(true)
-                }
-                (Encoding::Plain, _) => {
-                    decode_page0_mode::<_, FILTERED, FILL_NULLS>(
-                        page,
-                        mode,
-                        &mut PlainPrimitiveDecoder::new_with(
-                            values_buffer,
-                            bufs,
-                            nulls::DOUBLE,
-                            Int32ToDoubleConverter::new(scale),
-                        ),
-                    )?;
-                    Ok(true)
-                }
-                _ => Ok(false),
-            }
-        }
         _ => Ok(false),
     }
 }
@@ -853,12 +754,11 @@ fn decode_int64_dispatch<const FILTERED: bool, const FILL_NULLS: bool>(
     values_buffer: &[u8],
     bufs: &mut ColumnChunkBuffers,
     column_type: ColumnType,
-    logical_type: Option<PrimitiveLogicalType>,
     mode: DecodeModeContext<'_>,
 ) -> ParquetResult<bool> {
     let row_hi = mode.source_row_count();
-    match (page.encoding(), dict, logical_type, column_type.tag()) {
-        (Encoding::Plain, _, _, ColumnTypeTag::Decimal64) => {
+    match (page.encoding(), dict, column_type.tag()) {
+        (Encoding::Plain, _, ColumnTypeTag::Decimal64) => {
             decode_page0_mode::<_, FILTERED, FILL_NULLS>(
                 page,
                 mode,
@@ -869,7 +769,6 @@ fn decode_int64_dispatch<const FILTERED: bool, const FILL_NULLS: bool>(
         (
             Encoding::Plain,
             _,
-            _,
             ColumnTypeTag::Long | ColumnTypeTag::Date | ColumnTypeTag::Timestamp,
         ) => {
             decode_page0_mode::<_, FILTERED, FILL_NULLS>(
@@ -879,7 +778,7 @@ fn decode_int64_dispatch<const FILTERED: bool, const FILL_NULLS: bool>(
             )?;
             Ok(true)
         }
-        (Encoding::Plain, _, _, ColumnTypeTag::GeoLong) => {
+        (Encoding::Plain, _, ColumnTypeTag::GeoLong) => {
             decode_page0_mode::<_, FILTERED, FILL_NULLS>(
                 page,
                 mode,
@@ -887,7 +786,7 @@ fn decode_int64_dispatch<const FILTERED: bool, const FILL_NULLS: bool>(
             )?;
             Ok(true)
         }
-        (Encoding::DeltaBinaryPacked, _, _, ColumnTypeTag::Decimal64) => {
+        (Encoding::DeltaBinaryPacked, _, ColumnTypeTag::Decimal64) => {
             decode_page0_mode::<_, FILTERED, FILL_NULLS>(
                 page,
                 mode,
@@ -902,7 +801,6 @@ fn decode_int64_dispatch<const FILTERED: bool, const FILL_NULLS: bool>(
         (
             Encoding::DeltaBinaryPacked,
             _,
-            _,
             ColumnTypeTag::Long | ColumnTypeTag::Timestamp | ColumnTypeTag::Date,
         ) => {
             decode_page0_mode::<_, FILTERED, FILL_NULLS>(
@@ -916,7 +814,7 @@ fn decode_int64_dispatch<const FILTERED: bool, const FILL_NULLS: bool>(
             )?;
             Ok(true)
         }
-        (Encoding::DeltaBinaryPacked, _, _, ColumnTypeTag::GeoLong) => {
+        (Encoding::DeltaBinaryPacked, _, ColumnTypeTag::GeoLong) => {
             decode_page0_mode::<_, FILTERED, FILL_NULLS>(
                 page,
                 mode,
@@ -931,7 +829,6 @@ fn decode_int64_dispatch<const FILTERED: bool, const FILL_NULLS: bool>(
         (
             Encoding::RleDictionary | Encoding::PlainDictionary,
             Some(dict_page),
-            _,
             ColumnTypeTag::Decimal64,
         ) => {
             let dict_decoder = BasePrimitiveDictDecoder::<i64, i64>::try_new(dict_page)?;
@@ -951,7 +848,6 @@ fn decode_int64_dispatch<const FILTERED: bool, const FILL_NULLS: bool>(
         (
             Encoding::RleDictionary | Encoding::PlainDictionary,
             Some(dict_page),
-            _,
             ColumnTypeTag::Long | ColumnTypeTag::Timestamp | ColumnTypeTag::Date,
         ) => {
             let dict_decoder = BasePrimitiveDictDecoder::<i64, i64>::try_new(dict_page)?;
@@ -971,7 +867,6 @@ fn decode_int64_dispatch<const FILTERED: bool, const FILL_NULLS: bool>(
         (
             Encoding::RleDictionary | Encoding::PlainDictionary,
             Some(dict_page),
-            _,
             ColumnTypeTag::GeoLong,
         ) => {
             let dict_decoder = BasePrimitiveDictDecoder::<i64, i64>::try_new(dict_page)?;
@@ -992,21 +887,18 @@ fn decode_int64_dispatch<const FILTERED: bool, const FILL_NULLS: bool>(
     }
 }
 
-#[allow(clippy::too_many_arguments)]
 fn decode_fixed_len_dispatch<const FILTERED: bool, const FILL_NULLS: bool>(
     page: &DataPage,
     dict: Option<&DictPage>,
     values_buffer: &[u8],
     bufs: &mut ColumnChunkBuffers,
     column_type: ColumnType,
-    logical_type: Option<PrimitiveLogicalType>,
-    converted_type: Option<PrimitiveConvertedType>,
     len: usize,
     mode: DecodeModeContext<'_>,
 ) -> ParquetResult<bool> {
-    match (len, logical_type, converted_type) {
-        (16, Some(PrimitiveLogicalType::Uuid), _) => match (page.encoding(), column_type.tag()) {
-            (Encoding::Plain, ColumnTypeTag::Uuid) => {
+    match (len, column_type.tag()) {
+        (16, ColumnTypeTag::Uuid) => match page.encoding() {
+            Encoding::Plain => {
                 decode_page0_mode::<_, FILTERED, FILL_NULLS>(
                     page,
                     mode,
@@ -1019,7 +911,7 @@ fn decode_fixed_len_dispatch<const FILTERED: bool, const FILL_NULLS: bool>(
                 )?;
                 Ok(true)
             }
-            (Encoding::RleDictionary | Encoding::PlainDictionary, ColumnTypeTag::Uuid) => {
+            Encoding::RleDictionary | Encoding::PlainDictionary => {
                 let dict_decoder = ConvertablePrimitiveDictDecoder::try_new(
                     dict.ok_or_else(|| {
                         fmt_err!(
@@ -1044,8 +936,15 @@ fn decode_fixed_len_dispatch<const FILTERED: bool, const FILL_NULLS: bool>(
             }
             _ => Ok(false),
         },
-        (src_len, Some(PrimitiveLogicalType::Decimal(_, _)), _)
-        | (src_len, _, Some(PrimitiveConvertedType::Decimal(_, _))) => {
+        (
+            src_len,
+            ColumnTypeTag::Decimal8
+            | ColumnTypeTag::Decimal16
+            | ColumnTypeTag::Decimal32
+            | ColumnTypeTag::Decimal64
+            | ColumnTypeTag::Decimal128
+            | ColumnTypeTag::Decimal256,
+        ) => {
             match (page.encoding(), dict) {
                 (Encoding::Plain, _) => decode_fixed_decimal_mode::<FILTERED, FILL_NULLS>(
                     page,
@@ -1076,7 +975,7 @@ fn decode_fixed_len_dispatch<const FILTERED: bool, const FILL_NULLS: bool>(
             }
             Ok(true)
         }
-        (len, _, _) => match (page.encoding(), len, column_type.tag()) {
+        _ => match (page.encoding(), len, column_type.tag()) {
             (Encoding::Plain, 16, ColumnTypeTag::Long128) => {
                 decode_page0_mode::<_, FILTERED, FILL_NULLS>(
                     page,
@@ -1145,32 +1044,11 @@ fn decode_fixed_len_dispatch<const FILTERED: bool, const FILL_NULLS: bool>(
                 )?;
                 Ok(true)
             }
-            (
-                Encoding::Plain,
-                _len,
-                ColumnTypeTag::Decimal8
-                | ColumnTypeTag::Decimal16
-                | ColumnTypeTag::Decimal32
-                | ColumnTypeTag::Decimal64
-                | ColumnTypeTag::Decimal128
-                | ColumnTypeTag::Decimal256,
-            ) => {
-                decode_fixed_decimal_mode::<FILTERED, FILL_NULLS>(
-                    page,
-                    bufs,
-                    values_buffer,
-                    mode,
-                    len,
-                    column_type.tag(),
-                )?;
-                Ok(true)
-            }
             _ => Ok(false),
         },
     }
 }
 
-#[allow(clippy::too_many_arguments)]
 fn decode_byte_array_dispatch<const FILTERED: bool, const FILL_NULLS: bool>(
     page: &DataPage,
     dict: Option<&DictPage>,
@@ -1178,16 +1056,18 @@ fn decode_byte_array_dispatch<const FILTERED: bool, const FILL_NULLS: bool>(
     bufs: &mut ColumnChunkBuffers,
     col_info: QdbMetaCol,
     column_type: ColumnType,
-    logical_type: Option<PrimitiveLogicalType>,
-    converted_type: Option<PrimitiveConvertedType>,
     mode: DecodeModeContext<'_>,
 ) -> ParquetResult<bool> {
     let row_hi = mode.source_row_count();
     let row_count = mode.sliced_row_count();
 
-    match (logical_type, converted_type) {
-        (Some(PrimitiveLogicalType::Decimal(_, _)), _)
-        | (_, Some(PrimitiveConvertedType::Decimal(_, _))) => {
+    match column_type.tag() {
+        ColumnTypeTag::Decimal8
+        | ColumnTypeTag::Decimal16
+        | ColumnTypeTag::Decimal32
+        | ColumnTypeTag::Decimal64
+        | ColumnTypeTag::Decimal128
+        | ColumnTypeTag::Decimal256 => {
             match (page.encoding(), dict) {
                 (Encoding::Plain, _) => decode_byte_array_decimal_mode::<FILTERED, FILL_NULLS>(
                     page,
@@ -1216,7 +1096,10 @@ fn decode_byte_array_dispatch<const FILTERED: bool, const FILL_NULLS: bool>(
             }
             Ok(true)
         }
-        (Some(PrimitiveLogicalType::String), _) | (_, Some(PrimitiveConvertedType::Utf8)) => {
+        ColumnTypeTag::String
+        | ColumnTypeTag::Varchar
+        | ColumnTypeTag::VarcharSlice
+        | ColumnTypeTag::Symbol => {
             let encoding = page.encoding();
             match (encoding, dict, column_type.tag()) {
                 (Encoding::DeltaLengthByteArray, _, ColumnTypeTag::String) => {
@@ -1389,48 +1272,9 @@ fn decode_byte_array_dispatch<const FILTERED: bool, const FILL_NULLS: bool>(
                 _ => Ok(false),
             }
         }
-        _ => {
+        ColumnTypeTag::Binary | ColumnTypeTag::Array => {
             let encoding = page.encoding();
             match (encoding, dict, column_type.tag()) {
-                (
-                    Encoding::Plain,
-                    _,
-                    ColumnTypeTag::Decimal8
-                    | ColumnTypeTag::Decimal16
-                    | ColumnTypeTag::Decimal32
-                    | ColumnTypeTag::Decimal64
-                    | ColumnTypeTag::Decimal128
-                    | ColumnTypeTag::Decimal256,
-                ) => {
-                    decode_byte_array_decimal_mode::<FILTERED, FILL_NULLS>(
-                        page,
-                        bufs,
-                        values_buffer,
-                        mode,
-                        column_type.tag(),
-                    )?;
-                    Ok(true)
-                }
-                (
-                    Encoding::RleDictionary | Encoding::PlainDictionary,
-                    Some(dict_page),
-                    ColumnTypeTag::Decimal8
-                    | ColumnTypeTag::Decimal16
-                    | ColumnTypeTag::Decimal32
-                    | ColumnTypeTag::Decimal64
-                    | ColumnTypeTag::Decimal128
-                    | ColumnTypeTag::Decimal256,
-                ) => {
-                    decode_byte_array_decimal_dict_mode::<FILTERED, FILL_NULLS>(
-                        page,
-                        dict_page,
-                        bufs,
-                        values_buffer,
-                        mode,
-                        column_type.tag(),
-                    )?;
-                    Ok(true)
-                }
                 (Encoding::Plain, _, ColumnTypeTag::Binary) => {
                     let mut slicer = PlainVarSlicer::new(values_buffer, row_count);
                     decode_page0_mode::<_, FILTERED, FILL_NULLS>(
@@ -1492,6 +1336,7 @@ fn decode_byte_array_dispatch<const FILTERED: bool, const FILL_NULLS: bool>(
                 _ => Ok(false),
             }
         }
+        _ => Ok(false),
     }
 }
 
@@ -1501,12 +1346,11 @@ fn decode_int96_dispatch<const FILTERED: bool, const FILL_NULLS: bool>(
     values_buffer: &[u8],
     bufs: &mut ColumnChunkBuffers,
     column_type: ColumnType,
-    logical_type: Option<PrimitiveLogicalType>,
     mode: DecodeModeContext<'_>,
 ) -> ParquetResult<bool> {
     let row_hi = mode.source_row_count();
-    match (page.encoding(), dict, logical_type, column_type.tag()) {
-        (Encoding::Plain, _, _, ColumnTypeTag::Timestamp) => {
+    match (page.encoding(), dict, column_type.tag()) {
+        (Encoding::Plain, _, ColumnTypeTag::Timestamp) => {
             decode_page0_mode::<_, FILTERED, FILL_NULLS>(
                 page,
                 mode,
@@ -1522,7 +1366,6 @@ fn decode_int96_dispatch<const FILTERED: bool, const FILL_NULLS: bool>(
         (
             Encoding::PlainDictionary | Encoding::RleDictionary,
             Some(dict_page),
-            _,
             ColumnTypeTag::Timestamp,
         ) => {
             let dict_decoder = ConvertablePrimitiveDictDecoder::<
@@ -2436,7 +2279,7 @@ mod tests {
     use parquet2::schema::Repetition;
     use parquet2::write::Version;
     use qdb_core::col_type::{encode_array_type, ColumnType, ColumnTypeTag};
-    use rand::Rng;
+    use rand::RngExt;
     use std::io::Cursor;
     use std::mem::size_of;
     use std::ptr::null;
@@ -2505,9 +2348,10 @@ mod tests {
     fn test_decode_int_column_v2_partial_decode() {
         let tas = TestAllocatorState::new();
         let allocator = tas.allocator();
-        let row_count = 100;
-        let row_group_size = 10;
-        let data_page_size = 5;
+        #[cfg(miri)]
+        let (row_count, row_group_size, data_page_size) = (30, 6, 3);
+        #[cfg(not(miri))]
+        let (row_count, row_group_size, data_page_size) = (100, 10, 5);
         let version = Version::V2;
         let expected_buff =
             create_col_data_buff::<i32, 4, _>(row_count, INT_NULL, |int| int.to_le_bytes());
@@ -2570,9 +2414,10 @@ mod tests {
     fn test_decode_boolean_column_v2_partial_decode() {
         let tas = TestAllocatorState::new();
         let allocator = tas.allocator();
-        let row_count = 100;
-        let row_group_size = 10;
-        let data_page_size = 5;
+        #[cfg(miri)]
+        let (row_count, row_group_size, data_page_size) = (30, 6, 3);
+        #[cfg(not(miri))]
+        let (row_count, row_group_size, data_page_size) = (100, 10, 5);
         let version = Version::V2;
         let expected_buff = create_col_data_buff_bool(row_count);
         let columns = vec![create_fix_column(
@@ -2628,9 +2473,10 @@ mod tests {
 
     #[test]
     fn test_decode_int_long_column_v2_nulls_multi_groups() {
-        let row_count = 10000;
-        let row_group_size = 1000;
-        let data_page_size = 1000;
+        #[cfg(miri)]
+        let (row_count, row_group_size, data_page_size) = (100, 10, 10);
+        #[cfg(not(miri))]
+        let (row_count, row_group_size, data_page_size) = (10000, 1000, 1000);
         let version = Version::V1;
         let array_type = encode_array_type(ColumnTypeTag::Double, 1).unwrap();
 
@@ -2720,9 +2566,10 @@ mod tests {
 
     #[test]
     fn test_decode_column_type2() {
-        let row_count = 10000;
-        let row_group_size = 1000;
-        let data_page_size = 1000;
+        #[cfg(miri)]
+        let (row_count, row_group_size, data_page_size) = (100, 10, 10);
+        #[cfg(not(miri))]
+        let (row_count, row_group_size, data_page_size) = (10000, 1000, 1000);
         let version = Version::V2;
 
         let expected_buffs: Vec<(ColumnBuffers, ColumnType)> = vec![
@@ -3026,26 +2873,55 @@ mod tests {
         random_bin
     }
 
+    struct TestDataPage {
+        header: DataPageHeader,
+        descriptor: Descriptor,
+        buffer: Vec<u8>,
+    }
+
+    impl TestDataPage {
+        fn as_page(&self) -> DataPage<'_> {
+            DataPage {
+                header: &self.header,
+                descriptor: &self.descriptor,
+                buffer: &self.buffer,
+            }
+        }
+    }
+
+    struct TestDictPage {
+        buffer: Vec<u8>,
+        num_values: usize,
+        is_sorted: bool,
+    }
+
+    impl TestDictPage {
+        fn as_page(&self) -> DictPage<'_> {
+            DictPage {
+                buffer: &self.buffer,
+                num_values: self.num_values,
+                is_sorted: self.is_sorted,
+            }
+        }
+    }
+
     fn make_required_page(
         primitive_type: PrimitiveType,
         encoding: Encoding,
         values: Vec<u8>,
         num_values: usize,
-    ) -> DataPage<'static> {
-        let header = Box::leak(Box::new(DataPageHeader::V1(DataPageHeaderV1 {
-            num_values: num_values as i32,
-            encoding: encoding.into(),
-            definition_level_encoding: Encoding::Rle.into(),
-            repetition_level_encoding: Encoding::Rle.into(),
-            statistics: None,
-        })));
-        let descriptor = Box::leak(Box::new(Descriptor {
-            primitive_type,
-            max_def_level: 0,
-            max_rep_level: 0,
-        }));
-        let buffer = Box::leak(values.into_boxed_slice());
-        DataPage { header, descriptor, buffer }
+    ) -> TestDataPage {
+        TestDataPage {
+            header: DataPageHeader::V1(DataPageHeaderV1 {
+                num_values: num_values as i32,
+                encoding: encoding.into(),
+                definition_level_encoding: Encoding::Rle.into(),
+                repetition_level_encoding: Encoding::Rle.into(),
+                statistics: None,
+            }),
+            descriptor: Descriptor { primitive_type, max_def_level: 0, max_rep_level: 0 },
+            buffer: values,
+        }
     }
 
     fn make_decimal_flba_type(len: usize, precision: usize, scale: usize) -> PrimitiveType {
@@ -3087,33 +2963,33 @@ mod tests {
         }
     }
 
-    fn make_dict_page_i32(values: &[i32]) -> DictPage<'static> {
+    fn make_dict_page_i32(values: &[i32]) -> TestDictPage {
         let mut buf = Vec::with_capacity(values.len() * 4);
         for v in values {
             buf.extend_from_slice(&v.to_le_bytes());
         }
-        DictPage {
-            buffer: Box::leak(buf.into_boxed_slice()),
+        TestDictPage {
+            buffer: buf,
             num_values: values.len(),
             is_sorted: false,
         }
     }
 
-    fn make_dict_page_fixed<const N: usize>(values: &[[u8; N]]) -> DictPage<'static> {
+    fn make_dict_page_fixed<const N: usize>(values: &[[u8; N]]) -> TestDictPage {
         let mut buf = Vec::with_capacity(values.len() * N);
         for value in values {
             buf.extend_from_slice(value);
         }
-        DictPage {
-            buffer: Box::leak(buf.into_boxed_slice()),
+        TestDictPage {
+            buffer: buf,
             num_values: values.len(),
             is_sorted: false,
         }
     }
 
-    fn make_dict_page_var(values: &[Vec<u8>]) -> DictPage<'static> {
-        DictPage {
-            buffer: Box::leak(encode_plain_byte_array(values).into_boxed_slice()),
+    fn make_dict_page_var(values: &[Vec<u8>]) -> TestDictPage {
+        TestDictPage {
+            buffer: encode_plain_byte_array(values),
             num_values: values.len(),
             is_sorted: false,
         }
@@ -3123,7 +2999,7 @@ mod tests {
         primitive_type: PrimitiveType,
         encoding: Encoding,
         indices: &[u32],
-    ) -> DataPage<'static> {
+    ) -> TestDataPage {
         let mut buf = Vec::new();
         let max_index = indices.iter().copied().max().unwrap_or(0);
         let bit_width = get_bit_width(max_index as i16);
@@ -3869,6 +3745,93 @@ mod tests {
     }
 
     #[test]
+    fn test_decode_row_group_filtered_symbol_column_top_with_row_range() {
+        let tas = TestAllocatorState::new();
+        let allocator = tas.allocator();
+        let column_top = 8usize;
+        let symbol_count = 4usize;
+        let data_row_count = 20usize;
+        let total_row_count = column_top + data_row_count;
+        let row_group_size = total_row_count;
+        let data_page_size = 10;
+        let version = Version::V2;
+
+        let data_values: Vec<i32> = (0..data_row_count)
+            .map(|i| (i % symbol_count) as i32)
+            .collect();
+        let symbol_values: Vec<String> = (0..symbol_count).map(|i| format!("s{i}")).collect();
+        let (symbol_chars, symbol_offsets) = serialize_as_symbols(&symbol_values);
+
+        let column = Column::from_raw_data(
+            0,
+            "symbol_col",
+            ColumnTypeTag::Symbol.into_type().code(),
+            column_top as i64,
+            total_row_count,
+            data_values.as_ptr() as *const u8,
+            std::mem::size_of_val(data_values.as_slice()),
+            symbol_chars.as_ptr(),
+            symbol_chars.len(),
+            symbol_offsets.as_ptr(),
+            symbol_offsets.len(),
+            false,
+            false,
+            0,
+        )
+        .unwrap();
+
+        let file =
+            write_cols_to_parquet_file(row_group_size, data_page_size, version, vec![column]);
+        let file_len = file.len() as u64;
+        let mut reader = Cursor::new(&file);
+        let decoder = ParquetDecoder::read(allocator.clone(), &mut reader, file_len).unwrap();
+        let mut rgb = RowGroupBuffers::new(allocator);
+        let mut ctx = DecodeContext::new(file.as_ptr(), file_len);
+        let columns = vec![(0i32, ColumnTypeTag::Symbol.into_type())];
+
+        let row_group_lo = 5u32;
+        let row_group_hi = 23u32;
+        let rows_filter: Vec<i64> = vec![0, 1, 2, 3, 5, 8, 10, 14, 17];
+
+        let count = decoder
+            .decode_row_group_filtered::<false>(
+                &mut ctx,
+                &mut rgb,
+                0,
+                &columns,
+                0,
+                row_group_lo,
+                row_group_hi,
+                &rows_filter,
+            )
+            .unwrap();
+
+        assert_eq!(count, rows_filter.len());
+        let result: Vec<i32> = rgb.column_bufs[0]
+            .data_vec
+            .chunks(std::mem::size_of::<i32>())
+            .map(|c| i32::from_le_bytes(c.try_into().unwrap()))
+            .collect();
+        let expected: Vec<i32> = rows_filter
+            .iter()
+            .map(|&row| {
+                let abs_row = row_group_lo as usize + row as usize;
+                if abs_row < column_top {
+                    i32::MIN
+                } else {
+                    data_values[abs_row - column_top]
+                }
+            })
+            .collect();
+        assert_eq!(
+            rgb.column_bufs[0].data_vec.len(),
+            rows_filter.len() * std::mem::size_of::<i32>(),
+            "result={result:?}, expected={expected:?}"
+        );
+        assert_eq!(result, expected);
+    }
+
+    #[test]
     fn test_decode_flba_decimal_sign_extended_unfiltered() {
         let tas = TestAllocatorState::new();
         let allocator = tas.allocator();
@@ -3894,6 +3857,7 @@ mod tests {
             buffer,
             values.len(),
         );
+        let page = page.as_page();
 
         let mut bufs = ColumnChunkBuffers::new(allocator);
         let col_info = QdbMetaCol {
@@ -3935,6 +3899,7 @@ mod tests {
             buffer,
             values.len(),
         );
+        let page = page.as_page();
 
         let mut bufs = ColumnChunkBuffers::new(allocator);
         let col_info = QdbMetaCol {
@@ -3984,6 +3949,7 @@ mod tests {
             buffer,
             1,
         );
+        let page = page.as_page();
 
         let mut bufs = ColumnChunkBuffers::new(allocator);
         let col_info = QdbMetaCol {
@@ -4017,6 +3983,7 @@ mod tests {
             ], // +2
         ];
         let dict_page = make_dict_page_fixed(&dict_values);
+        let dict_page = dict_page.as_page();
         let indices = [0u32, 1, 2, 1, 0];
         let primitive_type = make_decimal_flba_type(src_len, 10, 2);
 
@@ -4027,6 +3994,7 @@ mod tests {
 
         for encoding in [Encoding::RleDictionary, Encoding::PlainDictionary] {
             let page = make_dict_data_page(primitive_type.clone(), encoding, &indices);
+            let page = page.as_page();
             let mut bufs = ColumnChunkBuffers::new(allocator.clone());
             let col_info = QdbMetaCol {
                 column_type: ColumnType::new(ColumnTypeTag::Decimal64, 0),
@@ -4065,6 +4033,7 @@ mod tests {
             ], // +2
         ];
         let dict_page = make_dict_page_fixed(&dict_values);
+        let dict_page = dict_page.as_page();
         let indices = [0u32, 1, 2, 1, 0];
         let primitive_type = make_decimal_flba_type(src_len, 10, 2);
         let rows_filter = vec![1i64, 3];
@@ -4081,6 +4050,7 @@ mod tests {
 
         for encoding in [Encoding::RleDictionary, Encoding::PlainDictionary] {
             let page = make_dict_data_page(primitive_type.clone(), encoding, &indices);
+            let page = page.as_page();
             let mut bufs = ColumnChunkBuffers::new(allocator.clone());
             let col_info = QdbMetaCol {
                 column_type: ColumnType::new(ColumnTypeTag::Decimal64, 0),
@@ -4125,6 +4095,7 @@ mod tests {
             encode_plain_byte_array(&values),
             values.len(),
         );
+        let page = page.as_page();
 
         let mut bufs = ColumnChunkBuffers::new(allocator);
         let col_info = QdbMetaCol {
@@ -4155,6 +4126,7 @@ mod tests {
             vec![0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xF6], // -10
         ];
         let dict_page = make_dict_page_var(&dict_values);
+        let dict_page = dict_page.as_page();
         let indices = [0u32, 1, 2, 3, 0];
         let primitive_type = make_decimal_ba_type(10, 2);
         let rows_filter = vec![1i64, 3];
@@ -4171,6 +4143,7 @@ mod tests {
 
         for encoding in [Encoding::RleDictionary, Encoding::PlainDictionary] {
             let page = make_dict_data_page(primitive_type.clone(), encoding, &indices);
+            let page = page.as_page();
             let mut bufs = ColumnChunkBuffers::new(allocator.clone());
             let col_info = QdbMetaCol {
                 column_type: ColumnType::new(ColumnTypeTag::Decimal64, 0),
@@ -4207,6 +4180,7 @@ mod tests {
             encode_plain_byte_array(&values),
             values.len(),
         );
+        let page = page.as_page();
 
         let mut bufs = ColumnChunkBuffers::new(allocator);
         let col_info = QdbMetaCol {
@@ -4244,6 +4218,7 @@ mod tests {
             encode_plain_byte_array(&values),
             values.len(),
         );
+        let page = page.as_page();
 
         for (tag, target_size) in decimal_target_cases() {
             let mut bufs = ColumnChunkBuffers::new(allocator.clone());
@@ -4279,6 +4254,7 @@ mod tests {
             vec![0x00],                         // 0
         ];
         let dict_page = make_dict_page_var(&dict_values);
+        let dict_page = dict_page.as_page();
         let indices = [0u32, 1, 2, 3, 4, 5, 6, 1];
         let rows_filter = vec![1i64, 3, 5, 6];
         let primitive_type = make_decimal_ba_type(20, 4);
@@ -4294,6 +4270,7 @@ mod tests {
 
             for encoding in [Encoding::RleDictionary, Encoding::PlainDictionary] {
                 let page = make_dict_data_page(primitive_type.clone(), encoding, &indices);
+                let page = page.as_page();
                 let mut bufs = ColumnChunkBuffers::new(allocator.clone());
                 let col_info = QdbMetaCol {
                     column_type: ColumnType::new(tag, 0),
@@ -4328,6 +4305,7 @@ mod tests {
 
         let dict_values = [10, -20, 30];
         let dict_page = make_dict_page_i32(&dict_values);
+        let dict_page = dict_page.as_page();
         let indices = [0u32, 1, 2, 1, 0];
         let primitive_type = make_int32_type();
 
@@ -4350,6 +4328,7 @@ mod tests {
 
             for encoding in [Encoding::RleDictionary, Encoding::PlainDictionary] {
                 let page = make_dict_data_page(primitive_type.clone(), encoding, &indices);
+                let page = page.as_page();
                 let mut bufs = ColumnChunkBuffers::new(allocator.clone());
                 let col_info = QdbMetaCol {
                     column_type: ColumnType::new(tag, 0),
@@ -4378,6 +4357,7 @@ mod tests {
 
         let dict_values = [10, -20, 30];
         let dict_page = make_dict_page_i32(&dict_values);
+        let dict_page = dict_page.as_page();
         let indices = [0u32, 1, 2, 1, 0];
         let primitive_type = make_int32_type();
         let rows_filter = vec![1i64, 3];
@@ -4402,6 +4382,7 @@ mod tests {
 
             for encoding in [Encoding::RleDictionary, Encoding::PlainDictionary] {
                 let page = make_dict_data_page(primitive_type.clone(), encoding, &indices);
+                let page = page.as_page();
                 let mut bufs = ColumnChunkBuffers::new(allocator.clone());
                 let col_info = QdbMetaCol {
                     column_type: ColumnType::new(tag, 0),
@@ -4451,6 +4432,7 @@ mod tests {
 
         let dict_days = [100i32, 200, 365];
         let dict_page = make_dict_page_i32(&dict_days);
+        let dict_page = dict_page.as_page();
 
         let indices = [0u32, 1, 2, 1, 0, 2];
         let primitive_type = make_date_type();
@@ -4464,6 +4446,7 @@ mod tests {
 
         for encoding in [Encoding::RleDictionary, Encoding::PlainDictionary] {
             let page = make_dict_data_page(primitive_type.clone(), encoding, &indices);
+            let page = page.as_page();
             let mut bufs = ColumnChunkBuffers::new(allocator.clone());
             let col_info = QdbMetaCol {
                 column_type: ColumnTypeTag::Date.into_type(),
@@ -4500,6 +4483,7 @@ mod tests {
 
         let dict_days = [10i32, 50, 100];
         let dict_page = make_dict_page_i32(&dict_days);
+        let dict_page = dict_page.as_page();
         let indices = [0u32, 1, 2, 1, 0];
         let primitive_type = make_date_type();
         let rows_filter = vec![1i64, 3]; // Select rows 1 and 3
@@ -4513,6 +4497,7 @@ mod tests {
 
         for encoding in [Encoding::RleDictionary, Encoding::PlainDictionary] {
             let page = make_dict_data_page(primitive_type.clone(), encoding, &indices);
+            let page = page.as_page();
             let mut bufs = ColumnChunkBuffers::new(allocator.clone());
             let col_info = QdbMetaCol {
                 column_type: ColumnTypeTag::Date.into_type(),
@@ -4553,6 +4538,7 @@ mod tests {
 
         let dict_days = [7i32, 30, 365];
         let dict_page = make_dict_page_i32(&dict_days);
+        let dict_page = dict_page.as_page();
         let indices = [0u32, 1, 2, 1, 0];
         let primitive_type = make_date_type();
         let rows_filter = vec![0i64, 2, 4]; // Select rows 0, 2, 4
@@ -4569,6 +4555,7 @@ mod tests {
 
         for encoding in [Encoding::RleDictionary, Encoding::PlainDictionary] {
             let page = make_dict_data_page(primitive_type.clone(), encoding, &indices);
+            let page = page.as_page();
             let mut bufs = ColumnChunkBuffers::new(allocator.clone());
             let col_info = QdbMetaCol {
                 column_type: ColumnTypeTag::Date.into_type(),

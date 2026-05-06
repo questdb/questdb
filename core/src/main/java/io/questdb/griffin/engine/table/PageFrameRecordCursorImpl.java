@@ -37,6 +37,7 @@ import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.std.Misc;
 import io.questdb.std.Transient;
 import org.jetbrains.annotations.Nullable;
 
@@ -78,13 +79,19 @@ public class PageFrameRecordCursorImpl extends AbstractPageFrameRecordCursor {
                 rowCursor.next();
                 counter.inc();
             }
-            rowCursor = null;
+            rowCursor = Misc.free(rowCursor);
         }
 
         counter.add(frameCursor.getRemainingRowsInInterval());
 
         frameCursor.calculateSize(counter);
         isExhausted = true;
+    }
+
+    @Override
+    public void close() {
+        rowCursor = Misc.free(rowCursor);
+        super.close();
     }
 
     public RowCursorFactory getRowCursorFactory() {
@@ -110,6 +117,7 @@ public class PageFrameRecordCursorImpl extends AbstractPageFrameRecordCursor {
             while ((frame = frameCursor.next()) != null) {
                 frameAddressCache.add(frameCount, frame);
                 final PageFrameMemory frameMemory = frameMemoryPool.navigateTo(frameCount++);
+                rowCursor = Misc.free(rowCursor);
                 rowCursor = rowCursorFactory.getCursor(frame, frameMemory);
                 if (rowCursor.hasNext()) {
                     recordA.init(frameMemory);
@@ -142,7 +150,7 @@ public class PageFrameRecordCursorImpl extends AbstractPageFrameRecordCursor {
         rowCursorFactory.init(frameCursor, sqlExecutionContext);
         areCursorsPrepared = false;
         isExhausted = false;
-        rowCursor = null;
+        rowCursor = Misc.free(rowCursor);
         // prepare for page frame iteration
         super.init();
     }
@@ -181,7 +189,7 @@ public class PageFrameRecordCursorImpl extends AbstractPageFrameRecordCursor {
             if (rowCount.get() == 0) {
                 return;
             }
-            rowCursor = null;
+            rowCursor = Misc.free(rowCursor);
         }
 
         long skipTarget = rowCount.get();
@@ -205,6 +213,7 @@ public class PageFrameRecordCursorImpl extends AbstractPageFrameRecordCursor {
             // move to frame, rowlo doesn't matter
             recordA.init(frameMemory);
             recordA.setRowIndex(0);
+            rowCursor = Misc.free(rowCursor);
             rowCursor = rowCursorFactory.getCursor(pageFrame, frameMemory);
             rowCursor.jumpTo(skipTarget);
         } else {

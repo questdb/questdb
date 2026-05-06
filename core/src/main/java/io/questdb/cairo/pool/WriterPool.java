@@ -103,7 +103,7 @@ public class WriterPool extends AbstractPool {
         this.root = configuration.getDbRoot();
         this.engine = engine;
         this.recentWriteTracker = recentWriteTracker;
-        notifyListener(Thread.currentThread().getId(), null, PoolListener.EV_POOL_OPEN);
+        notifyListener(Thread.currentThread().threadId(), null, PoolListener.EV_POOL_OPEN);
     }
 
     @TestOnly
@@ -210,7 +210,7 @@ public class WriterPool extends AbstractPool {
     public String lock(TableToken tableToken, String lockReason) {
         checkClosed();
 
-        long thread = Thread.currentThread().getId();
+        long thread = Thread.currentThread().threadId();
 
         while (true) {
             Entry e = entries.get(tableToken.getDirName());
@@ -260,7 +260,7 @@ public class WriterPool extends AbstractPool {
     }
 
     public void unlock(TableToken tableToken, @Nullable TableWriter writer, boolean newTable) {
-        long thread = Thread.currentThread().getId();
+        long thread = Thread.currentThread().threadId();
 
         Entry e = entries.get(tableToken.getDirName());
         if (e == null) {
@@ -294,8 +294,8 @@ public class WriterPool extends AbstractPool {
                 writer.transferLock(e.lockFd);
                 e.lockFd = -1;
                 e.ownershipReason = OWNERSHIP_REASON_NONE;
-                Unsafe.getUnsafe().storeFence();
-                Unsafe.getUnsafe().putOrderedLong(e, ENTRY_OWNER, UNALLOCATED);
+                Unsafe.storeFence();
+                Unsafe.putOrderedLong(e, ENTRY_OWNER, UNALLOCATED);
             }
             notifyListener(thread, tableToken, PoolListener.EV_UNLOCKED);
             LOG.debug().$("unlocked [table=").$(tableToken)
@@ -439,7 +439,7 @@ public class WriterPool extends AbstractPool {
     ) {
         checkClosed();
 
-        long thread = Thread.currentThread().getId();
+        long thread = Thread.currentThread().threadId();
 
         while (true) {
             Entry e = entries.get(tableToken.getDirName());
@@ -541,7 +541,7 @@ public class WriterPool extends AbstractPool {
     }
 
     private boolean returnToPool(Entry e) {
-        final long thread = Thread.currentThread().getId();
+        final long thread = Thread.currentThread().threadId();
         final TableToken tableToken = e.writer.getTableToken();
 
         boolean isDistressed;
@@ -587,8 +587,8 @@ public class WriterPool extends AbstractPool {
                         .$(", error=").$(th).I$();
             }
 
-            Unsafe.getUnsafe().storeFence();
-            Unsafe.getUnsafe().putOrderedLong(e, ENTRY_OWNER, UNALLOCATED);
+            Unsafe.storeFence();
+            Unsafe.putOrderedLong(e, ENTRY_OWNER, UNALLOCATED);
 
             if (isClosed()) {
                 // when pool is closed it could be busy releasing writer
@@ -624,7 +624,7 @@ public class WriterPool extends AbstractPool {
 
     @Override
     protected boolean releaseAll(long deadline) {
-        long thread = Thread.currentThread().getId();
+        long thread = Thread.currentThread().threadId();
         boolean removed = false;
         final int reason;
 
@@ -673,7 +673,7 @@ public class WriterPool extends AbstractPool {
         private volatile long lastReleaseTime;
         private volatile long lockFd = -1;
         // owner thread id or -1 if writer is available for hire
-        private volatile long owner = Thread.currentThread().getId();
+        private volatile long owner = Thread.currentThread().threadId();
         private volatile String ownershipReason = OWNERSHIP_REASON_NONE;
         private TableWriter writer;
 

@@ -48,6 +48,7 @@ public class MaxDateVectorAggregateFunction extends DateFunction implements Vect
     );
     private int valueOffset;
 
+    @SuppressWarnings("unused")
     public MaxDateVectorAggregateFunction(int keyKind, int columnIndex, int timestampIndex, int workerCount) {
         this.columnIndex = columnIndex;
         if (keyKind == GKK_MICRO_HOUR_INT) {
@@ -105,7 +106,7 @@ public class MaxDateVectorAggregateFunction extends DateFunction implements Vect
 
     @Override
     public void initRosti(long pRosti) {
-        Unsafe.getUnsafe().putLong(Rosti.getInitialValueSlot(pRosti, valueOffset), Long.MIN_VALUE);
+        Unsafe.putLong(Rosti.getInitialValueSlot(pRosti, valueOffset), Long.MIN_VALUE);
     }
 
     @Override

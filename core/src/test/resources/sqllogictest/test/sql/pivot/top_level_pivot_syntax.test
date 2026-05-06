@@ -24,7 +24,7 @@ INSERT INTO monthly_sales VALUES
 # top level PIVOT syntax
 #PIVOT monthly_sales ON MONTH USING SUM(AMOUNT)
 query IIIII rowsort
-monthly_sales PIVOT (SUM(AMOUNT) FOR MONTH IN (select distinct month from monthly_sales) GROUP BY empid);
+monthly_sales PIVOT (SUM(AMOUNT) FOR MONTH IN (select distinct month from monthly_sales order by month) GROUP BY empid);
 ----
 1	10400	8000	11000	18000
 2	39500	90700	12000	5300
@@ -70,7 +70,7 @@ regular	4900	8200	23000	13300
 
 # in CTE
 query IIIII
-WITH pivoted_sales AS (monthly_sales PIVOT (SUM(AMOUNT) FOR MONTH IN (select distinct month from monthly_sales) GROUP BY empid))
+WITH pivoted_sales AS (monthly_sales PIVOT (SUM(AMOUNT) FOR MONTH IN (select distinct month from monthly_sales order by month) GROUP BY empid))
 SELECT * FROM pivoted_sales ORDER BY empid DESC;
 ----
 2	39500	90700	12000	5300

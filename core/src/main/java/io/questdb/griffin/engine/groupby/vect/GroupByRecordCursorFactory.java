@@ -147,10 +147,10 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
                 // remember, single key for now
                 switch (ColumnType.tagOf(columnTypes.getColumnType(0))) {
                     case ColumnType.INT:
-                        Unsafe.getUnsafe().putInt(Rosti.getInitialValueSlot(pRosti[i], 0), Numbers.INT_NULL);
+                        Unsafe.putInt(Rosti.getInitialValueSlot(pRosti[i], 0), Numbers.INT_NULL);
                         break;
                     case ColumnType.SYMBOL:
-                        Unsafe.getUnsafe().putInt(Rosti.getInitialValueSlot(pRosti[i], 0), SymbolTable.VALUE_IS_NULL);
+                        Unsafe.putInt(Rosti.getInitialValueSlot(pRosti[i], 0), SymbolTable.VALUE_IS_NULL);
                         break;
                     default:
                 }
@@ -228,7 +228,7 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
     }
 
     @Override
-    public RecordCursor getSharedCursor(SqlExecutionContext executionContext, int sharedId) throws SqlException {
+    public RecordCursor getSharedCursor(SqlExecutionContext executionContext, int sharedId) {
         if (sharedCursors == null) {
             sharedCursors = new ObjList<>();
         }
@@ -286,7 +286,7 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
             long columnOffsets
     ) {
         for (int i = start; i < end; i++) {
-            columnSkewIndex.add(Unsafe.getUnsafe().getInt(columnOffsets + vafList.getQuick(i).getValueOffset() * 4L));
+            columnSkewIndex.add(Unsafe.getInt(columnOffsets + vafList.getQuick(i).getValueOffset() * 4L));
         }
     }
 
@@ -379,7 +379,7 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
         public boolean hasNext() {
             buildRostiConditionally();
             while (count < size) {
-                byte b = Unsafe.getUnsafe().getByte(ctrl);
+                byte b = Unsafe.getByte(ctrl);
                 if ((b & 0x80) != 0) {
                     ctrl++;
                     continue;
@@ -397,14 +397,14 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
             buildRostiConditionally();
             final long offset = columnSkewIndex.getQuick(columnIndex);
             while (count < size) {
-                byte b = Unsafe.getUnsafe().getByte(ctrl);
+                byte b = Unsafe.getByte(ctrl);
                 if ((b & 0x80) != 0) {
                     ctrl++;
                     continue;
                 }
                 count++;
                 final long pRow = slots + ((ctrl - ctrlStart) << shift);
-                final long v = Unsafe.getUnsafe().getLong(pRow + offset);
+                final long v = Unsafe.getLong(pRow + offset);
                 list.add(pRow, v);
                 ctrl++;
             }
@@ -692,7 +692,7 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
 
             @Override
             public double getDouble(int col) {
-                return Unsafe.getUnsafe().getDouble(getValueAddress(col));
+                return Unsafe.getDouble(getValueAddress(col));
             }
 
             @Override
@@ -722,17 +722,17 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
 
             @Override
             public int getIPv4(int col) {
-                return Unsafe.getUnsafe().getInt(getValueAddress(col));
+                return Unsafe.getInt(getValueAddress(col));
             }
 
             @Override
             public int getInt(int col) {
-                return Unsafe.getUnsafe().getInt(getValueAddress(col));
+                return Unsafe.getInt(getValueAddress(col));
             }
 
             @Override
             public long getLong(int col) {
-                return Unsafe.getUnsafe().getLong(getValueAddress(col));
+                return Unsafe.getLong(getValueAddress(col));
             }
 
             @Override
@@ -870,7 +870,7 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
         public boolean hasNext() {
             buildRostiConditionally();
             while (count < size) {
-                byte b = Unsafe.getUnsafe().getByte(ctrl);
+                byte b = Unsafe.getByte(ctrl);
                 if ((b & 0x80) != 0) {
                     ctrl++;
                     continue;
@@ -888,14 +888,14 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
             buildRostiConditionally();
             final long offset = cursor.columnSkewIndex.getQuick(columnIndex);
             while (count < size) {
-                byte b = Unsafe.getUnsafe().getByte(ctrl);
+                byte b = Unsafe.getByte(ctrl);
                 if ((b & 0x80) != 0) {
                     ctrl++;
                     continue;
                 }
                 count++;
                 final long pRow = slots + ((ctrl - ctrlStart) << shift);
-                final long v = Unsafe.getUnsafe().getLong(pRow + offset);
+                final long v = Unsafe.getLong(pRow + offset);
                 list.add(pRow, v);
                 ctrl++;
             }

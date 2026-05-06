@@ -69,7 +69,7 @@ public final class StdoutSink implements Utf8Sink, Closeable {
         if (ptr == limit) {
             flush();
         }
-        Unsafe.getUnsafe().putByte(ptr++, b);
+        Unsafe.putByte(ptr++, b);
         return this;
     }
 

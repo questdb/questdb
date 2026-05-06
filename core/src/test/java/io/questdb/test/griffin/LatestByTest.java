@@ -82,12 +82,12 @@ public class LatestByTest extends AbstractCairoTest {
             assertQuery(
                     """
                             x\tohoh
+                            7\t25
+                            9\t29
                             15\t29
                             17\t26
-                            9\t29
-                            7\t25
                             """,
-                    "select a+b*c x, sum(z)+25 ohoh from zyzy where a in (x,y) and b = 3 latest on ts partition by x;",
+                    "select a+b*c x, sum(z)+25 ohoh from zyzy where a in (x,y) and b = 3 latest on ts partition by x order by x;",
                     true
             );
         });

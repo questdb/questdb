@@ -438,7 +438,7 @@ abstract class BaseLineTcpContextTest extends AbstractCairoTest {
             byte[] bytes = getBytes(recvBuffer);
             int n = 0;
             while (n < bufferLen && n < bytes.length) {
-                Unsafe.getUnsafe().putByte(buffer++, bytes[n++]);
+                Unsafe.putByte(buffer++, bytes[n++]);
             }
             recvBuffer = new String(bytes, n, bytes.length - n);
             return n;

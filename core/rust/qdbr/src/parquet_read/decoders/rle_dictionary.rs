@@ -287,7 +287,7 @@ where
         if num_bits > 0 {
             buffer = &buffer[1..];
             let decoder = Decoder::new(buffer, num_bits as usize);
-            let mut res = Self {
+            Ok(Self {
                 dict,
                 inner: Slicer::new(Some(decoder), RleIterator::Rle(RepeatN::new(0, 0))),
                 _phantom: std::marker::PhantomData,
@@ -295,9 +295,7 @@ where
                 buffers_offset: buffers.data_vec.len() / std::mem::size_of::<U>(),
                 buffers,
                 null_value,
-            };
-            res.decode()?;
-            Ok(res)
+            })
         } else {
             Ok(Self {
                 dict,

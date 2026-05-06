@@ -53,9 +53,9 @@ public class QwpFixedWidthDecoderTest {
         int size = 1 + rowCount; // flag byte + values
         long address = Unsafe.malloc(size, MemoryTag.NATIVE_DEFAULT);
         try {
-            Unsafe.getUnsafe().putByte(address, (byte) 0); // no null bitmap
+            Unsafe.putByte(address, (byte) 0); // no null bitmap
             for (int i = 0; i < rowCount; i++) {
-                Unsafe.getUnsafe().putByte(address + 1 + i, values[i]);
+                Unsafe.putByte(address + 1 + i, values[i]);
             }
 
             QwpFixedWidthColumnCursor cursor = new QwpFixedWidthColumnCursor();
@@ -273,7 +273,7 @@ public class QwpFixedWidthDecoderTest {
         int size = 1;
         long address = Unsafe.malloc(size, MemoryTag.NATIVE_DEFAULT);
         try {
-            Unsafe.getUnsafe().putByte(address, (byte) 0); // no null bitmap
+            Unsafe.putByte(address, (byte) 0); // no null bitmap
             QwpFixedWidthColumnCursor cursor = new QwpFixedWidthColumnCursor();
             int consumed = cursor.of(address, size, 0, TYPE_LONG);
             Assert.assertEquals(1, consumed);
@@ -403,7 +403,7 @@ public class QwpFixedWidthDecoderTest {
         int size = 2;
         long address = Unsafe.malloc(size, MemoryTag.NATIVE_DEFAULT);
         try {
-            Unsafe.getUnsafe().putByte(address, (byte) 1); // null bitmap present
+            Unsafe.putByte(address, (byte) 1); // null bitmap present
             cursor.of(address, size, 10, TYPE_LONG);
             Assert.fail("expected QwpParseException for truncated null bitmap");
         } catch (QwpParseException e) {
@@ -421,7 +421,7 @@ public class QwpFixedWidthDecoderTest {
         int size = 41;
         long address = Unsafe.malloc(size, MemoryTag.NATIVE_DEFAULT);
         try {
-            Unsafe.getUnsafe().putByte(address, (byte) 0); // no null bitmap
+            Unsafe.putByte(address, (byte) 0); // no null bitmap
             cursor.of(address, size, 10, TYPE_LONG);
             Assert.fail("expected QwpParseException for truncated values");
         } catch (QwpParseException e) {
@@ -439,9 +439,9 @@ public class QwpFixedWidthDecoderTest {
         int size = 1 + rowCount * 4; // flag byte + values
         long address = Unsafe.malloc(size, MemoryTag.NATIVE_DEFAULT);
         try {
-            Unsafe.getUnsafe().putByte(address, (byte) 0); // no null bitmap
+            Unsafe.putByte(address, (byte) 0); // no null bitmap
             for (int i = 0; i < rowCount; i++) {
-                Unsafe.getUnsafe().putInt(address + 1 + (long) i * 4, values[i]);
+                Unsafe.putInt(address + 1 + (long) i * 4, values[i]);
             }
 
             QwpFixedWidthColumnCursor cursor = new QwpFixedWidthColumnCursor();
@@ -504,9 +504,9 @@ public class QwpFixedWidthDecoderTest {
         int size = 1 + rowCount * 8; // flag byte + values
         long address = Unsafe.malloc(size, MemoryTag.NATIVE_DEFAULT);
         try {
-            Unsafe.getUnsafe().putByte(address, (byte) 0); // no null bitmap
+            Unsafe.putByte(address, (byte) 0); // no null bitmap
             for (int i = 0; i < rowCount; i++) {
-                Unsafe.getUnsafe().putLong(address + 1 + (long) i * 8, i);
+                Unsafe.putLong(address + 1 + (long) i * 8, i);
             }
 
             QwpFixedWidthColumnCursor cursor = new QwpFixedWidthColumnCursor();
@@ -540,16 +540,16 @@ public class QwpFixedWidthDecoderTest {
         int size = 1 + rowCount * 32; // flag byte + values
         long address = Unsafe.malloc(size, MemoryTag.NATIVE_DEFAULT);
         try {
-            Unsafe.getUnsafe().putByte(address, (byte) 0); // no null bitmap
+            Unsafe.putByte(address, (byte) 0); // no null bitmap
             // Row 0: little-endian LONG256 (4 longs, least significant first)
-            Unsafe.getUnsafe().putLong(address + 1, 0x3333333344444444L);       // l0 (least significant)
-            Unsafe.getUnsafe().putLong(address + 1 + 8, 0x1111111122222222L);   // l1
-            Unsafe.getUnsafe().putLong(address + 1 + 16, 0xFEDCBA9876543210L);  // l2
-            Unsafe.getUnsafe().putLong(address + 1 + 24, 0x0123456789ABCDEFL);  // l3 (most significant)
+            Unsafe.putLong(address + 1, 0x3333333344444444L);       // l0 (least significant)
+            Unsafe.putLong(address + 1 + 8, 0x1111111122222222L);   // l1
+            Unsafe.putLong(address + 1 + 16, 0xFEDCBA9876543210L);  // l2
+            Unsafe.putLong(address + 1 + 24, 0x0123456789ABCDEFL);  // l3 (most significant)
 
             // Row 1: all zeros
             for (int i = 0; i < 32; i++) {
-                Unsafe.getUnsafe().putByte(address + 1 + 32 + i, (byte) 0);
+                Unsafe.putByte(address + 1 + 32 + i, (byte) 0);
             }
 
             QwpFixedWidthColumnCursor cursor = new QwpFixedWidthColumnCursor();
@@ -583,9 +583,9 @@ public class QwpFixedWidthDecoderTest {
         int size = 1 + rowCount * 8; // flag byte + values
         long address = Unsafe.malloc(size, MemoryTag.NATIVE_DEFAULT);
         try {
-            Unsafe.getUnsafe().putByte(address, (byte) 0); // no null bitmap
+            Unsafe.putByte(address, (byte) 0); // no null bitmap
             for (int i = 0; i < rowCount; i++) {
-                Unsafe.getUnsafe().putLong(address + 1 + (long) i * 8, values[i]);
+                Unsafe.putLong(address + 1 + (long) i * 8, values[i]);
             }
 
             QwpFixedWidthColumnCursor cursor = new QwpFixedWidthColumnCursor();
@@ -647,9 +647,9 @@ public class QwpFixedWidthDecoderTest {
         int size = 1 + rowCount * 2; // flag byte + values
         long address = Unsafe.malloc(size, MemoryTag.NATIVE_DEFAULT);
         try {
-            Unsafe.getUnsafe().putByte(address, (byte) 0); // no null bitmap
+            Unsafe.putByte(address, (byte) 0); // no null bitmap
             for (int i = 0; i < rowCount; i++) {
-                Unsafe.getUnsafe().putShort(address + 1 + (long) i * 2, values[i]);
+                Unsafe.putShort(address + 1 + (long) i * 2, values[i]);
             }
 
             QwpFixedWidthColumnCursor cursor = new QwpFixedWidthColumnCursor();

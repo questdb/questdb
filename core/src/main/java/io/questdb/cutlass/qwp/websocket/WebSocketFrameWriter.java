@@ -25,8 +25,7 @@
 package io.questdb.cutlass.qwp.websocket;
 
 import io.questdb.std.Unsafe;
-
-import java.nio.charset.StandardCharsets;
+import io.questdb.std.str.Utf8s;
 
 /**
  * Zero-allocation WebSocket frame writer.
@@ -37,7 +36,6 @@ import java.nio.charset.StandardCharsets;
  * <p>Thread safety: This class is thread-safe as it contains no mutable state.
  */
 public final class WebSocketFrameWriter {
-    private static final byte[] EMPTY_BYTES = new byte[0];
     // Frame header bits
     private static final int FIN_BIT = 0x80;
     private static final int MASK_BIT = 0x80;
@@ -88,9 +86,11 @@ public final class WebSocketFrameWriter {
      * @param reason     the close reason (may be null)
      * @return the total number of bytes written, or -1 if the buffer is too small
      */
-    public static int writeCloseFrame(long buf, int bufferSize, int code, String reason) {
-        byte[] reasonBytes = encodeReason(reason);
-        int payloadLen = 2 + reasonBytes.length;
+    public static int writeCloseFrame(long buf, int bufferSize, int code, CharSequence reason) {
+        int reasonLen = (reason == null || reason.isEmpty())
+                ? 0
+                : Utf8s.utf8Bytes(reason, MAX_CLOSE_REASON_BYTES);
+        int payloadLen = 2 + reasonLen;
 
         int frameSize = headerSize(payloadLen, false) + payloadLen;
         if (frameSize > bufferSize) {
@@ -98,9 +98,11 @@ public final class WebSocketFrameWriter {
         }
 
         int headerLen = writeHeader(buf, true, WebSocketOpcode.CLOSE, payloadLen, false);
-        int payloadOffset = writeClosePayload(buf + headerLen, code, reasonBytes);
-
-        return headerLen + payloadOffset;
+        Unsafe.putShort(buf + headerLen, Short.reverseBytes((short) code));
+        if (reasonLen > 0) {
+            Utf8s.strCpyUtf8(reason, buf + headerLen + 2, reasonLen);
+        }
+        return headerLen + payloadLen;
     }
 
     /**
@@ -118,20 +120,20 @@ public final class WebSocketFrameWriter {
 
         // First byte: FIN + opcode
         int byte0 = (fin ? FIN_BIT : 0) | (opcode & 0x0F);
-        Unsafe.getUnsafe().putByte(buf + offset++, (byte) byte0);
+        Unsafe.putByte(buf + offset++, (byte) byte0);
 
         // Second byte: MASK + payload length
         int maskBit = masked ? MASK_BIT : 0;
 
         if (payloadLength <= 125) {
-            Unsafe.getUnsafe().putByte(buf + offset++, (byte) (maskBit | payloadLength));
+            Unsafe.putByte(buf + offset++, (byte) (maskBit | payloadLength));
         } else if (payloadLength <= 65535) {
-            Unsafe.getUnsafe().putByte(buf + offset++, (byte) (maskBit | 126));
-            Unsafe.getUnsafe().putByte(buf + offset++, (byte) ((payloadLength >> 8) & 0xFF));
-            Unsafe.getUnsafe().putByte(buf + offset++, (byte) (payloadLength & 0xFF));
+            Unsafe.putByte(buf + offset++, (byte) (maskBit | 126));
+            Unsafe.putByte(buf + offset++, (byte) ((payloadLength >> 8) & 0xFF));
+            Unsafe.putByte(buf + offset++, (byte) (payloadLength & 0xFF));
         } else {
-            Unsafe.getUnsafe().putByte(buf + offset++, (byte) (maskBit | 127));
-            Unsafe.getUnsafe().putLong(buf + offset, Long.reverseBytes(payloadLength));
+            Unsafe.putByte(buf + offset++, (byte) (maskBit | 127));
+            Unsafe.putLong(buf + offset, Long.reverseBytes(payloadLength));
             offset += 8;
         }
 
@@ -152,7 +154,7 @@ public final class WebSocketFrameWriter {
 
         // Copy payload
         for (int i = 0; i < payloadLen; i++) {
-            Unsafe.getUnsafe().putByte(buf + headerLen + i, payload[payloadOff + i]);
+            Unsafe.putByte(buf + headerLen + i, payload[payloadOff + i]);
         }
 
         return headerLen + payloadLen;
@@ -170,34 +172,8 @@ public final class WebSocketFrameWriter {
         int headerLen = writeHeader(buf, true, WebSocketOpcode.PONG, payloadLen, false);
 
         // Copy payload from memory
-        Unsafe.getUnsafe().copyMemory(payloadPtr, buf + headerLen, payloadLen);
+        Unsafe.copyMemory(payloadPtr, buf + headerLen, payloadLen);
 
         return headerLen + payloadLen;
-    }
-
-    private static byte[] encodeReason(String reason) {
-        if (reason == null || reason.isEmpty()) {
-            return EMPTY_BYTES;
-        }
-        byte[] bytes = reason.getBytes(StandardCharsets.UTF_8);
-        if (bytes.length <= MAX_CLOSE_REASON_BYTES) {
-            return bytes;
-        }
-        // Truncate without splitting a multi-byte UTF-8 sequence.
-        int len = MAX_CLOSE_REASON_BYTES;
-        while (len > 0 && (bytes[len] & 0xC0) == 0x80) {
-            len--;
-        }
-        byte[] truncated = new byte[len];
-        System.arraycopy(bytes, 0, truncated, 0, len);
-        return truncated;
-    }
-
-    private static int writeClosePayload(long buf, int code, byte[] reasonBytes) {
-        Unsafe.getUnsafe().putShort(buf, Short.reverseBytes((short) code));
-        if (reasonBytes.length > 0) {
-            Unsafe.getUnsafe().copyMemory(reasonBytes, Unsafe.BYTE_OFFSET, null, buf + 2, reasonBytes.length);
-        }
-        return 2 + reasonBytes.length;
     }
 }

@@ -24,6 +24,7 @@
 
 package io.questdb.cairo;
 
+import io.questdb.cairo.idx.ConcurrentBitmapIndexFwdReader;
 import io.questdb.cairo.sql.RowCursor;
 import io.questdb.cairo.sql.StaticSymbolTable;
 import io.questdb.cairo.sql.SymbolTable;
@@ -136,11 +137,12 @@ public class SymbolMapReaderImpl implements Closeable, SymbolMapReader {
     public int keyOf(CharSequence value) {
         if (value != null) {
             int hash = Hash.boundedHash(value, maxHash);
-            final RowCursor cursor = indexReader.getCursor(true, hash, 0, maxOffset - Long.BYTES);
-            while (cursor.hasNext()) {
-                final long offsetOffset = cursor.next();
-                if (Chars.equals(value, charMem.getStrA(offsetMem.getLong(offsetOffset)))) {
-                    return SymbolMapWriter.offsetToKey(offsetOffset);
+            try (RowCursor cursor = indexReader.getCursor(hash, 0, maxOffset - Long.BYTES)) {
+                while (cursor.hasNext()) {
+                    final long offsetOffset = cursor.next();
+                    if (Chars.equals(value, charMem.getStrA(offsetMem.getLong(offsetOffset)))) {
+                        return SymbolMapWriter.offsetToKey(offsetOffset);
+                    }
                 }
             }
             return SymbolTable.VALUE_NOT_FOUND;
@@ -199,7 +201,8 @@ public class SymbolMapReaderImpl implements Closeable, SymbolMapReader {
 
             // index reader is used to identify attempts to store duplicate symbol value
             // partition txn does not matter, because symbol is at the root of the table dir (not at partition level)
-            indexReader.of(configuration, path.trimTo(plen), columnName, columnNameTxn, -1, 0);
+            // Symbol-table de-dup index is BITMAP — metadata + cover params unused.
+            indexReader.of(configuration, path.trimTo(plen), columnName, columnNameTxn, -1, 0, null, null, 0);
 
             long charSize = offsetMem.getLong(maxOffset);
             // char file size can be zero only if symbolCount is zero
@@ -257,7 +260,7 @@ public class SymbolMapReaderImpl implements Closeable, SymbolMapReader {
         this.nullValue = offsetMem.getBool(SymbolMapWriter.HEADER_NULL_FLAG);
         // Refresh index reader to avoid memory remapping on keyOf() calls.
         // partition txn does not matter, because symbol is at the root of the table dir (not at partition level)
-        indexReader.of(configuration, path, columnNameSink, columnNameTxn, -1, 0);
+        indexReader.of(configuration, path, columnNameSink, columnNameTxn, -1, 0, null, null, 0);
     }
 
     @Override

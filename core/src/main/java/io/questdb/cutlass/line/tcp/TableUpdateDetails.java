@@ -31,6 +31,7 @@ import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.ColumnVersionReader;
 import io.questdb.cairo.CommitFailedException;
 import io.questdb.cairo.GenericRecordMetadata;
+import io.questdb.cairo.IndexType;
 import io.questdb.cairo.SecurityContext;
 import io.questdb.cairo.TableColumnMetadata;
 import io.questdb.cairo.TableReader;
@@ -71,7 +72,7 @@ import static io.questdb.cairo.TableUtils.TXN_FILE_NAME;
 
 public class TableUpdateDetails implements Closeable {
     private static final Log LOG = LogFactory.getLog(TableUpdateDetails.class);
-    private static final DirectUtf8SymbolLookup NOT_FOUND_LOOKUP = value -> SymbolTable.VALUE_NOT_FOUND;
+    private static final DirectUtf8SymbolLookup NOT_FOUND_LOOKUP = _ -> SymbolTable.VALUE_NOT_FOUND;
     private final long commitInterval;
     private final boolean commitOnClose;
     private final DefaultColumnTypes defaultColumnTypes;
@@ -252,6 +253,22 @@ public class TableUpdateDetails implements Closeable {
         return lastMeasurementMillis;
     }
 
+    /**
+     * Returns the sequencer txn assigned to the most recent commit on the
+     * underlying writer, or -1 if none.
+     */
+    public long getLastSeqTxn() {
+        return writerAPI != null ? writerAPI.getLastSeqTxn() : -1L;
+    }
+
+    public int getSegmentId() {
+        return writerAPI != null ? writerAPI.getSegmentId() : -1;
+    }
+
+    public int getWalId() {
+        return writerAPI != null ? writerAPI.getWalId() : -1;
+    }
+
     public MillisecondClock getMillisecondClock() {
         return millisecondClock;
     }
@@ -274,6 +291,10 @@ public class TableUpdateDetails implements Closeable {
 
     public TableToken getTableToken() {
         return tableToken;
+    }
+
+    public TableWriterAPI getWriter() {
+        return writerAPI;
     }
 
     public int getWriterThreadId() {
@@ -433,10 +454,6 @@ public class TableUpdateDetails implements Closeable {
         return timestampIndex;
     }
 
-    TableWriterAPI getWriter() {
-        return writerAPI;
-    }
-
     void releaseWriter(boolean commit) {
         if (writerAPI != null) {
             try {
@@ -502,7 +519,7 @@ public class TableUpdateDetails implements Closeable {
                         new TableColumnMetadata(
                                 columnNameUtf16,
                                 columnType,
-                                false,
+                                IndexType.NONE,
                                 0,
                                 false,
                                 null,
@@ -572,7 +589,7 @@ public class TableUpdateDetails implements Closeable {
                             new TableColumnMetadata(
                                     that.getColumnName(i),
                                     that.getColumnType(i),
-                                    that.isColumnIndexed(i),
+                                    that.getColumnIndexType(i),
                                     that.getIndexValueBlockCapacity(i),
                                     that.isSymbolTableStatic(i),
                                     that.getMetadata(i),

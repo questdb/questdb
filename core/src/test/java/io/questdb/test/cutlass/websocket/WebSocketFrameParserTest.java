@@ -512,7 +512,7 @@ public class WebSocketFrameParserTest extends AbstractWebSocketTest {
 
                 writeBytes(buf, frame1);
                 for (int i = 0; i < frame2.length; i++) {
-                    Unsafe.getUnsafe().putByte(buf + frame1.length + i, frame2[i]);
+                    Unsafe.putByte(buf + frame1.length + i, frame2[i]);
                 }
 
                 WebSocketFrameParser parser = new WebSocketFrameParser();
@@ -802,7 +802,7 @@ public class WebSocketFrameParserTest extends AbstractWebSocketTest {
                 byte[] maskKey = {0x11, 0x22, 0x33, 0x44};
 
                 for (int i = 0; i < len; i++) {
-                    Unsafe.getUnsafe().putByte(buf + i,
+                    Unsafe.putByte(buf + i,
                             (byte) (original[i] ^ maskKey[i % 4]));
                 }
 
@@ -827,7 +827,7 @@ public class WebSocketFrameParserTest extends AbstractWebSocketTest {
                 byte[] maskKey = {0x12, 0x34, 0x56, 0x78};
 
                 for (int i = 0; i < original.length; i++) {
-                    Unsafe.getUnsafe().putByte(buf + i,
+                    Unsafe.putByte(buf + i,
                             (byte) (original[i] ^ maskKey[i % 4]));
                 }
 
@@ -854,7 +854,7 @@ public class WebSocketFrameParserTest extends AbstractWebSocketTest {
                     byte[] maskKey = {0x37, 0x42, (byte) 0xAB, (byte) 0xCD};
 
                     for (int i = 0; i < len; i++) {
-                        Unsafe.getUnsafe().putByte(buf + i,
+                        Unsafe.putByte(buf + i,
                                 (byte) (original[i] ^ maskKey[i % 4]));
                     }
 

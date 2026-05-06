@@ -265,7 +265,7 @@ public class Unordered4Map implements Map, Reopenable {
                         src4Map.valueAt(src4Map.zeroMemStart)
                 );
             } else {
-                Unsafe.getUnsafe().copyMemory(src4Map.zeroMemStart, zeroMemStart, entrySize);
+                Unsafe.copyMemory(src4Map.zeroMemStart, zeroMemStart, entrySize);
                 hasZero = true;
             }
             // Check if zero was the only element in the source map.
@@ -277,14 +277,14 @@ public class Unordered4Map implements Map, Reopenable {
         // Then we handle all non-zero keys.
         OUTER:
         for (long srcAddr = src4Map.memStart; srcAddr < src4Map.memLimit; srcAddr += entrySize) {
-            int key = Unsafe.getUnsafe().getInt(srcAddr);
+            int key = Unsafe.getInt(srcAddr);
             if (key == 0) {
                 continue;
             }
 
             long destAddr = getStartAddress(Hash.hashInt64(key) & mask);
             for (; ; ) {
-                int k = Unsafe.getUnsafe().getInt(destAddr);
+                int k = Unsafe.getInt(destAddr);
                 if (k == 0) {
                     break;
                 } else if (k == key) {
@@ -298,7 +298,7 @@ public class Unordered4Map implements Map, Reopenable {
                 destAddr = getNextAddress(destAddr);
             }
 
-            Unsafe.getUnsafe().copyMemory(srcAddr, destAddr, entrySize);
+            Unsafe.copyMemory(srcAddr, destAddr, entrySize);
             size++;
             if (--free == 0) {
                 try {
@@ -353,13 +353,13 @@ public class Unordered4Map implements Map, Reopenable {
                 long hashCode = Hash.hashInt64(k);
                 startAddress = getStartAddress(hashCode & mask);
                 for (; ; ) {
-                    int existing = Unsafe.getUnsafe().getInt(startAddress);
+                    int existing = Unsafe.getInt(startAddress);
                     if (existing == 0) {
-                        Unsafe.getUnsafe().putInt(startAddress, k);
+                        Unsafe.putInt(startAddress, k);
                         free--;
                         size++;
                         if (batchEmptyValueStart != 0) {
-                            Unsafe.getUnsafe().copyMemory(batchEmptyValueStart, startAddress + KEY_SIZE, valueSize);
+                            Unsafe.copyMemory(batchEmptyValueStart, startAddress + KEY_SIZE, valueSize);
                         }
                         isNew = true;
                         break;
@@ -376,13 +376,13 @@ public class Unordered4Map implements Map, Reopenable {
                 if (isNew) {
                     hasZero = true;
                     if (batchEmptyValueStart != 0) {
-                        Unsafe.getUnsafe().copyMemory(batchEmptyValueStart, startAddress + KEY_SIZE, valueSize);
+                        Unsafe.copyMemory(batchEmptyValueStart, startAddress + KEY_SIZE, valueSize);
                     }
                 }
             }
 
             long encoded = Map.encodeBatchEntry(r, startAddress + KEY_SIZE - memStart, isNew);
-            Unsafe.getUnsafe().putLong(batchAddr, encoded);
+            Unsafe.putLong(batchAddr, encoded);
             batchAddr += Long.BYTES;
         }
         return memStart;
@@ -409,7 +409,7 @@ public class Unordered4Map implements Map, Reopenable {
         }
 
         for (long p = batchStart; p < batchEnd; p++) {
-            final long r = Unsafe.getUnsafe().getLong(rowIdsAddr + (p << 3));
+            final long r = Unsafe.getLong(rowIdsAddr + (p << 3));
             record.setRowIndex(r);
             mapSink.copy(record, key);
             final int k = key.key;
@@ -420,13 +420,13 @@ public class Unordered4Map implements Map, Reopenable {
                 long hashCode = Hash.hashInt64(k);
                 startAddress = getStartAddress(hashCode & mask);
                 for (; ; ) {
-                    int existing = Unsafe.getUnsafe().getInt(startAddress);
+                    int existing = Unsafe.getInt(startAddress);
                     if (existing == 0) {
-                        Unsafe.getUnsafe().putInt(startAddress, k);
+                        Unsafe.putInt(startAddress, k);
                         free--;
                         size++;
                         if (batchEmptyValueStart != 0) {
-                            Unsafe.getUnsafe().copyMemory(batchEmptyValueStart, startAddress + KEY_SIZE, valueSize);
+                            Unsafe.copyMemory(batchEmptyValueStart, startAddress + KEY_SIZE, valueSize);
                         }
                         isNew = true;
                         break;
@@ -442,13 +442,13 @@ public class Unordered4Map implements Map, Reopenable {
                 if (isNew) {
                     hasZero = true;
                     if (batchEmptyValueStart != 0) {
-                        Unsafe.getUnsafe().copyMemory(batchEmptyValueStart, startAddress + KEY_SIZE, valueSize);
+                        Unsafe.copyMemory(batchEmptyValueStart, startAddress + KEY_SIZE, valueSize);
                     }
                 }
             }
 
             long encoded = Map.encodeBatchEntry(r, startAddress + KEY_SIZE - memStart, isNew);
-            Unsafe.getUnsafe().putLong(batchAddr, encoded);
+            Unsafe.putLong(batchAddr, encoded);
             batchAddr += Long.BYTES;
         }
         return memStart;
@@ -523,7 +523,7 @@ public class Unordered4Map implements Map, Reopenable {
             // since fresh slots are already zeroed by clear().
             boolean allZero = true;
             for (long p = buf, end = buf + valueSize; p < end; p++) {
-                if (Unsafe.getUnsafe().getByte(p) != 0) {
+                if (Unsafe.getByte(p) != 0) {
                     allZero = false;
                     break;
                 }
@@ -577,7 +577,7 @@ public class Unordered4Map implements Map, Reopenable {
     }
 
     private FlyweightPackedMapValue asNew(long startAddress, int key, long hashCode, FlyweightPackedMapValue value) {
-        Unsafe.getUnsafe().putInt(startAddress, key);
+        Unsafe.putInt(startAddress, key);
         if (--free == 0) {
             try {
                 rehash();
@@ -588,7 +588,7 @@ public class Unordered4Map implements Map, Reopenable {
             // Index may have changed after rehash, so we need to find the key.
             startAddress = getStartAddress(hashCode & mask);
             for (; ; ) {
-                int k = Unsafe.getUnsafe().getInt(startAddress);
+                int k = Unsafe.getInt(startAddress);
                 if (k == key) {
                     break;
                 }
@@ -619,8 +619,8 @@ public class Unordered4Map implements Map, Reopenable {
 
     private long probeBatchFilteredUnsafe(long columnAddr, long rowIdsAddr, long batchStart, long batchEnd, long batchAddr) {
         for (long p = batchStart; p < batchEnd; p++) {
-            final long r = Unsafe.getUnsafe().getLong(rowIdsAddr + (p << 3));
-            final int k = Unsafe.getUnsafe().getInt(columnAddr + r * Integer.BYTES);
+            final long r = Unsafe.getLong(rowIdsAddr + (p << 3));
+            final int k = Unsafe.getInt(columnAddr + r * Integer.BYTES);
 
             long startAddress;
             boolean isNew;
@@ -628,13 +628,13 @@ public class Unordered4Map implements Map, Reopenable {
                 long hashCode = Hash.hashInt64(k);
                 startAddress = getStartAddress(hashCode & mask);
                 for (; ; ) {
-                    int existing = Unsafe.getUnsafe().getInt(startAddress);
+                    int existing = Unsafe.getInt(startAddress);
                     if (existing == 0) {
-                        Unsafe.getUnsafe().putInt(startAddress, k);
+                        Unsafe.putInt(startAddress, k);
                         free--;
                         size++;
                         if (batchEmptyValueStart != 0) {
-                            Unsafe.getUnsafe().copyMemory(batchEmptyValueStart, startAddress + KEY_SIZE, valueSize);
+                            Unsafe.copyMemory(batchEmptyValueStart, startAddress + KEY_SIZE, valueSize);
                         }
                         isNew = true;
                         break;
@@ -650,13 +650,13 @@ public class Unordered4Map implements Map, Reopenable {
                 if (isNew) {
                     hasZero = true;
                     if (batchEmptyValueStart != 0) {
-                        Unsafe.getUnsafe().copyMemory(batchEmptyValueStart, startAddress + KEY_SIZE, valueSize);
+                        Unsafe.copyMemory(batchEmptyValueStart, startAddress + KEY_SIZE, valueSize);
                     }
                 }
             }
 
             long encoded = Map.encodeBatchEntry(r, startAddress + KEY_SIZE - memStart, isNew);
-            Unsafe.getUnsafe().putLong(batchAddr, encoded);
+            Unsafe.putLong(batchAddr, encoded);
             batchAddr += Long.BYTES;
         }
         return memStart;
@@ -664,7 +664,7 @@ public class Unordered4Map implements Map, Reopenable {
 
     private long probeBatchUnsafe(long columnAddr, long batchStart, long batchEnd, long batchAddr) {
         for (long r = batchStart; r < batchEnd; r++) {
-            final int k = Unsafe.getUnsafe().getInt(columnAddr + r * Integer.BYTES);
+            final int k = Unsafe.getInt(columnAddr + r * Integer.BYTES);
 
             long startAddress;
             boolean isNew;
@@ -672,13 +672,13 @@ public class Unordered4Map implements Map, Reopenable {
                 long hashCode = Hash.hashInt64(k);
                 startAddress = getStartAddress(hashCode & mask);
                 for (; ; ) {
-                    int existing = Unsafe.getUnsafe().getInt(startAddress);
+                    int existing = Unsafe.getInt(startAddress);
                     if (existing == 0) {
-                        Unsafe.getUnsafe().putInt(startAddress, k);
+                        Unsafe.putInt(startAddress, k);
                         free--;
                         size++;
                         if (batchEmptyValueStart != 0) {
-                            Unsafe.getUnsafe().copyMemory(batchEmptyValueStart, startAddress + KEY_SIZE, valueSize);
+                            Unsafe.copyMemory(batchEmptyValueStart, startAddress + KEY_SIZE, valueSize);
                         }
                         isNew = true;
                         break;
@@ -694,13 +694,13 @@ public class Unordered4Map implements Map, Reopenable {
                 if (isNew) {
                     hasZero = true;
                     if (batchEmptyValueStart != 0) {
-                        Unsafe.getUnsafe().copyMemory(batchEmptyValueStart, startAddress + KEY_SIZE, valueSize);
+                        Unsafe.copyMemory(batchEmptyValueStart, startAddress + KEY_SIZE, valueSize);
                     }
                 }
             }
 
             long encoded = Map.encodeBatchEntry(r, startAddress + KEY_SIZE - memStart, isNew);
-            Unsafe.getUnsafe().putLong(batchAddr, encoded);
+            Unsafe.putLong(batchAddr, encoded);
             batchAddr += Long.BYTES;
         }
         return memStart;
@@ -730,32 +730,31 @@ public class Unordered4Map implements Map, Reopenable {
         final int newMask = (int) newKeyCapacity - 1;
 
         for (long addr = memStart; addr < memLimit; addr += entrySize) {
-            int key = Unsafe.getUnsafe().getInt(addr);
+            int key = Unsafe.getInt(addr);
             if (key == 0) {
                 continue;
             }
 
             long newAddr = getStartAddress(newMemStart, Hash.hashInt64(key) & newMask);
-            while (Unsafe.getUnsafe().getInt(newAddr) != 0) {
+            while (Unsafe.getInt(newAddr) != 0) {
                 newAddr += entrySize;
                 if (newAddr >= newMemLimit) {
                     newAddr = newMemStart;
                 }
             }
-            Unsafe.getUnsafe().copyMemory(addr, newAddr, entrySize);
+            Unsafe.copyMemory(addr, newAddr, entrySize);
         }
 
         // Copy the zero key entry to the new end-of-buffer slot.
-        final long newZeroMemStart = newMemLimit;
         if (hasZero) {
-            Unsafe.getUnsafe().copyMemory(zeroMemStart, newZeroMemStart, entrySize);
+            Unsafe.copyMemory(zeroMemStart, newMemLimit, entrySize);
         }
 
         Unsafe.free(memStart, memLimit - memStart + entrySize, memoryTag);
 
         memStart = newMemStart;
         memLimit = newMemLimit;
-        zeroMemStart = newZeroMemStart;
+        zeroMemStart = newMemLimit;
         mask = newMask;
         free += (int) ((newKeyCapacity - keyCapacity) * loadFactor);
         keyCapacity = (int) newKeyCapacity;
@@ -771,7 +770,7 @@ public class Unordered4Map implements Map, Reopenable {
     }
 
     boolean isZeroKey(long startAddress) {
-        return Unsafe.getUnsafe().getInt(startAddress) == 0;
+        return Unsafe.getInt(startAddress) == 0;
     }
 
     class Key implements MapKey {
@@ -953,7 +952,7 @@ public class Unordered4Map implements Map, Reopenable {
             long index = hashCode & mask;
             long startAddress = getStartAddress(index);
             for (; ; ) {
-                int k = Unsafe.getUnsafe().getInt(startAddress);
+                int k = Unsafe.getInt(startAddress);
                 if (k == 0) {
                     return asNew(startAddress, key, hashCode, value);
                 } else if (k == key) {
@@ -980,7 +979,7 @@ public class Unordered4Map implements Map, Reopenable {
             long index = hashCode & mask;
             long startAddress = getStartAddress(index);
             for (; ; ) {
-                int k = Unsafe.getUnsafe().getInt(startAddress);
+                int k = Unsafe.getInt(startAddress);
                 if (k == 0) {
                     return null;
                 } else if (k == key) {

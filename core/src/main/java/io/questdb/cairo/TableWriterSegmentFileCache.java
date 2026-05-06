@@ -73,7 +73,7 @@ public class TableWriterSegmentFileCache {
 
         FilesFacade ff = configuration.getFilesFacade();
         walColumnMemoryPool = new WeakClosableObjectPool<>(memoryFactory, configuration.getWalMaxSegmentFileDescriptorsCache(), true);
-        walFdCloseCachedFdAction = (key, fdList) -> {
+        walFdCloseCachedFdAction = (_, fdList) -> {
             for (int i = 0, n = fdList.size(); i < n; i++) {
                 long fd = fdList.get(i);
                 LOG.debug().$("closing wal fd cache [fd=").$(fd).I$();
@@ -175,7 +175,7 @@ public class TableWriterSegmentFileCache {
 
         for (int i = 0; i < segmentCount; i++) {
             var segmentColumnPrimary = walMappedColumns.get(walColumnCountPerSegment * i + 2 * columnIndex);
-            Unsafe.getUnsafe().putLong(mappedAddrBuffPrimary + (long) i * Long.BYTES, segmentColumnPrimary.addressOf(0));
+            Unsafe.putLong(mappedAddrBuffPrimary + (long) i * Long.BYTES, segmentColumnPrimary.addressOf(0));
         }
     }
 
@@ -186,7 +186,7 @@ public class TableWriterSegmentFileCache {
         for (int i = 0, n = segmentCopyInfo.getSegmentCount(); i < n; i++) {
             var segmentColumnAux = walMappedColumns.get(walColumnCountPerSegment * i + 2 * columnIndex + 1);
             long segmentColumnAuxAddr = segmentColumnAux.addressOf(0);
-            Unsafe.getUnsafe().putLong(mappedAddrBuffSecondary + (long) i * Long.BYTES, segmentColumnAuxAddr);
+            Unsafe.putLong(mappedAddrBuffSecondary + (long) i * Long.BYTES, segmentColumnAuxAddr);
             totalVarSize += driver.getDataVectorSize(segmentColumnAuxAddr, segmentCopyInfo.getRowLo(i), segmentCopyInfo.getRowHi(i) - 1);
         }
         return totalVarSize;

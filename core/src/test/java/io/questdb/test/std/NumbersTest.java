@@ -626,6 +626,167 @@ public class NumbersTest {
     }
 
     @Test
+    public void testFormatFloat2() {
+        sink.clear();
+        Numbers.append(sink, 0.5f);
+        TestUtils.assertEquals("0.5", sink);
+    }
+
+    @Test
+    public void testFormatFloatExp() {
+        sink.clear();
+        Numbers.append(sink, 112334.0f);
+        TestUtils.assertEquals("112334.0", sink);
+    }
+
+    @Test
+    public void testFormatFloatExp10() {
+        sink.clear();
+        Numbers.append(sink, 1.23E3f);
+        TestUtils.assertEquals("1230.0", sink);
+    }
+
+    @Test
+    public void testFormatFloatExp100() {
+        sink.clear();
+        Numbers.append(sink, 1.23E20f);
+        TestUtils.assertEquals("1.23E20", sink);
+    }
+
+    @Test
+    public void testFormatFloatExpNeg() {
+        sink.clear();
+        Numbers.append(sink, -8892.5f);
+        TestUtils.assertEquals("-8892.5", sink);
+    }
+
+    @Test
+    public void testFormatFloatFast() {
+        sink.clear();
+        Numbers.append(sink, -5.9522651E18f);
+        TestUtils.assertEquals("-5.952265E18", sink);
+    }
+
+    @Test
+    public void testFormatFloatFastInteractive() {
+        sink.clear();
+        Numbers.append(sink, 0.872989f);
+        TestUtils.assertEquals("0.872989", sink);
+    }
+
+    @Test
+    public void testFormatFloatHugeZero() {
+        sink.clear();
+        Numbers.append(sink, -0.000000000000001f);
+        TestUtils.assertEquals("-1.0E-15", sink);
+    }
+
+    @Test
+    public void testFormatFloatInt() {
+        sink.clear();
+        Numbers.append(sink, 44556.0f);
+        TestUtils.assertEquals("44556.0", sink);
+    }
+
+    @Test
+    public void testFormatFloatLargeExp() {
+        sink.clear();
+        Numbers.append(sink, 3.4028235E38f);
+        TestUtils.assertEquals("3.4028235E38", sink);
+    }
+
+    @Test
+    public void testFormatFloatNegZero() {
+        sink.clear();
+        Numbers.append(sink, -0.0f);
+        TestUtils.assertEquals("-0.0", sink);
+    }
+
+    @Test
+    public void testFormatFloatNoExponent() {
+        sink.clear();
+        Numbers.append(sink, 0.22133f);
+        TestUtils.assertEquals("0.22133", sink);
+    }
+
+    @Test
+    public void testFormatFloatNoExponentNeg() {
+        sink.clear();
+        Numbers.append(sink, -0.22133f);
+        TestUtils.assertEquals("-0.22133", sink);
+    }
+
+    @Test
+    public void testFormatFloatRandom() {
+        Rnd rnd = TestUtils.generateRandom(null);
+        for (int i = 0; i < 1_000_000; i++) {
+            float f1 = rnd.nextFloat();
+            float f2 = rnd.nextFloat();
+            float f3 = rnd.nextFloat() * Float.MAX_VALUE;
+            sink.clear();
+            Numbers.append(sink, f1);
+            Assert.assertEquals(f1, Float.parseFloat(sink.toString()), 0);
+
+            sink.clear();
+            Numbers.append(sink, f2);
+            Assert.assertEquals(f2, Float.parseFloat(sink.toString()), 0);
+
+            sink.clear();
+            Numbers.append(sink, f3);
+            Assert.assertEquals(f3, Float.parseFloat(sink.toString()), 0);
+        }
+    }
+
+    @Test
+    public void testFormatFloatRound() {
+        sink.clear();
+        Numbers.append(sink, 4.455630E27f);
+        TestUtils.assertEquals("4.45563E27", sink);
+    }
+
+    @Test
+    public void testFormatFloatSubnormals() {
+        // Smallest subnormal
+        sink.clear();
+        Numbers.append(sink, Float.MIN_VALUE);
+        Assert.assertEquals(Float.MIN_VALUE, Float.parseFloat(sink.toString()), 0);
+
+        // Largest subnormal (just below Float.MIN_NORMAL)
+        sink.clear();
+        Numbers.append(sink, Math.nextDown(Float.MIN_NORMAL));
+        Assert.assertEquals(Math.nextDown(Float.MIN_NORMAL), Float.parseFloat(sink.toString()), 0);
+
+        // Negative subnormals
+        sink.clear();
+        Numbers.append(sink, -Float.MIN_VALUE);
+        Assert.assertEquals(-Float.MIN_VALUE, Float.parseFloat(sink.toString()), 0);
+
+        sink.clear();
+        Numbers.append(sink, -Math.nextDown(Float.MIN_NORMAL));
+        Assert.assertEquals(-Math.nextDown(Float.MIN_NORMAL), Float.parseFloat(sink.toString()), 0);
+
+        // A subnormal in the middle of the range
+        sink.clear();
+        float midSubnormal = Float.intBitsToFloat(0x0040_0000);
+        Numbers.append(sink, midSubnormal);
+        Assert.assertEquals(midSubnormal, Float.parseFloat(sink.toString()), 0);
+    }
+
+    @Test
+    public void testFormatFloatZero() {
+        sink.clear();
+        Numbers.append(sink, 0.0f);
+        TestUtils.assertEquals("0.0", sink);
+    }
+
+    @Test
+    public void testFormatFloatZeroExp() {
+        sink.clear();
+        Numbers.append(sink, -1.17549435E-38f);
+        TestUtils.assertEquals("-1.1754944E-38", sink);
+    }
+
+    @Test
     public void testFormatInt() {
         for (int i = 0; i < 1000; i++) {
             int n = rnd.nextInt();

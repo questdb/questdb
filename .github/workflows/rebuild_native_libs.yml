@@ -109,11 +109,11 @@ jobs:
           wget -nv https://github.com/Kitware/CMake/releases/download/v3.29.2/cmake-3.29.2-linux-x86_64.tar.gz
           tar -zxf cmake-3.29.2-linux-x86_64.tar.gz
           echo "PATH=`pwd`/cmake-3.29.2-linux-x86_64/bin/:$PATH" >> "$GITHUB_ENV"
-      - name: Install JDK17 (for jni.h)
+      - name: Install JDK25 (for jni.h)
         run: |
-          wget -nv https://github.com/adoptium/temurin17-binaries/releases/download/jdk-17.0.11%2B9/OpenJDK17U-jdk_x64_linux_hotspot_17.0.11_9.tar.gz
-          tar xfz OpenJDK17U-jdk_x64_linux_hotspot_17.0.11_9.tar.gz
-          echo "JAVA_HOME=`pwd`/jdk-17.0.11+9/" >> "$GITHUB_ENV"
+          wget -nv https://github.com/adoptium/temurin25-binaries/releases/download/jdk-25.0.2%2B10/OpenJDK25U-jdk_x64_linux_hotspot_25.0.2_10.tar.gz
+          tar xfz OpenJDK25U-jdk_x64_linux_hotspot_25.0.2_10.tar.gz
+          echo "JAVA_HOME=`pwd`/jdk-25.0.2+10/" >> "$GITHUB_ENV"
       - name: Generate Makefiles
         run: |
           cd ./core
@@ -146,11 +146,11 @@ jobs:
         run: |
           yum update -y
           yum install wget nasm zstd -y
-      - name: Install JDK17 (for jni.h)
+      - name: Install JDK25 (for jni.h)
         run: |
-          wget -v --timeout=180 https://api.adoptium.net/v3/binary/version/jdk-17.0.11+9/linux/aarch64/jdk/hotspot/normal/eclipse
+          wget -v --timeout=180 https://api.adoptium.net/v3/binary/version/jdk-25.0.2+10/linux/aarch64/jdk/hotspot/normal/eclipse
           tar xfvz eclipse
-          echo "JAVA_HOME=`pwd`/jdk-17.0.11+9/" >> "$GITHUB_ENV"
+          echo "JAVA_HOME=`pwd`/jdk-25.0.2+10/" >> "$GITHUB_ENV"
       - name: CMAKE linux-aarch64
         run: |
           cd ./core

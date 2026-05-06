@@ -191,18 +191,18 @@ public class HyperLogLog {
     }
 
     private long getCachedCardinality() {
-        return Unsafe.getUnsafe().getLong(ptr + CACHED_CARDINALITY_OFFSET);
+        return Unsafe.getLong(ptr + CACHED_CARDINALITY_OFFSET);
     }
 
     private byte getType() {
-        return Unsafe.getUnsafe().getByte(ptr);
+        return Unsafe.getByte(ptr);
     }
 
     private void setCachedCardinality(long estimate) {
-        Unsafe.getUnsafe().putLong(ptr + CACHED_CARDINALITY_OFFSET, estimate);
+        Unsafe.putLong(ptr + CACHED_CARDINALITY_OFFSET, estimate);
     }
 
     private void setType(byte type) {
-        Unsafe.getUnsafe().putByte(ptr, type);
+        Unsafe.putByte(ptr, type);
     }
 }

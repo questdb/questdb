@@ -65,7 +65,6 @@ public class QwpConstantsTest {
         Assert.assertEquals(16, QwpConstants.getFixedTypeSize(TYPE_DECIMAL128));
         Assert.assertEquals(32, QwpConstants.getFixedTypeSize(TYPE_DECIMAL256));
 
-        Assert.assertEquals(-1, QwpConstants.getFixedTypeSize(TYPE_STRING));
         Assert.assertEquals(-1, QwpConstants.getFixedTypeSize(TYPE_SYMBOL));
         Assert.assertEquals(-1, QwpConstants.getFixedTypeSize(TYPE_DOUBLE_ARRAY));
         Assert.assertEquals(-1, QwpConstants.getFixedTypeSize(TYPE_LONG_ARRAY));
@@ -75,7 +74,6 @@ public class QwpConstantsTest {
     public void testGetTypeName() {
         Assert.assertEquals("BOOLEAN", QwpConstants.getTypeName(TYPE_BOOLEAN));
         Assert.assertEquals("INT", QwpConstants.getTypeName(TYPE_INT));
-        Assert.assertEquals("STRING", QwpConstants.getTypeName(TYPE_STRING));
         Assert.assertEquals("TIMESTAMP", QwpConstants.getTypeName(TYPE_TIMESTAMP));
         Assert.assertEquals("TIMESTAMP_NANOS", QwpConstants.getTypeName(TYPE_TIMESTAMP_NANOS));
         Assert.assertEquals("DOUBLE_ARRAY", QwpConstants.getTypeName(TYPE_DOUBLE_ARRAY));
@@ -114,7 +112,6 @@ public class QwpConstantsTest {
         Assert.assertTrue(QwpConstants.isFixedWidthType(TYPE_DECIMAL128));
         Assert.assertTrue(QwpConstants.isFixedWidthType(TYPE_DECIMAL256));
 
-        Assert.assertFalse(QwpConstants.isFixedWidthType(TYPE_STRING));
         Assert.assertFalse(QwpConstants.isFixedWidthType(TYPE_SYMBOL));
         Assert.assertFalse(QwpConstants.isFixedWidthType(TYPE_GEOHASH));
         Assert.assertFalse(QwpConstants.isFixedWidthType(TYPE_VARCHAR));

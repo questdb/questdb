@@ -42,7 +42,7 @@ final class FastDoubleMem {
             int len = endIndex - startIndex;
             byte[] b = new byte[len];
             for (int i = 0; i < len; i++) {
-                b[i] = Unsafe.getUnsafe().getByte(str + startIndex + i);
+                b[i] = Unsafe.getByte(str + startIndex + i);
             }
             double v = Double.parseDouble(new String(b, StandardCharsets.ISO_8859_1));
             if (rejectOverflow &&
@@ -102,7 +102,7 @@ final class FastDoubleMem {
         boolean illegal = false;
         byte ch = 0;
         for (; index < endIndex; index++) {
-            ch = Unsafe.getUnsafe().getByte(str + index);
+            ch = Unsafe.getByte(str + index);
             if (isDigit(ch)) {
                 // This might overflow, we deal with it later.
                 significand = 10 * significand + ch - '0';
@@ -137,10 +137,10 @@ final class FastDoubleMem {
         // ---------------------
         int expNumber = 0;
         if (ch == 'e' || ch == 'E') {
-            ch = ++index < endIndex ? Unsafe.getUnsafe().getByte(str + index) : 0;
+            ch = ++index < endIndex ? Unsafe.getByte(str + index) : 0;
             boolean neg_exp = ch == '-';
             if (neg_exp || ch == '+') {
-                ch = ++index < endIndex ? Unsafe.getUnsafe().getByte(str + index) : 0;
+                ch = ++index < endIndex ? Unsafe.getByte(str + index) : 0;
             }
             illegal |= !isDigit(ch);
             do {
@@ -148,7 +148,7 @@ final class FastDoubleMem {
                 if (expNumber < FastDoubleUtils.MAX_EXPONENT_NUMBER) {
                     expNumber = 10 * expNumber + ch - '0';
                 }
-                ch = ++index < endIndex ? Unsafe.getUnsafe().getByte(str + index) : 0;
+                ch = ++index < endIndex ? Unsafe.getByte(str + index) : 0;
             } while (isDigit(ch));
             if (neg_exp) {
                 expNumber = -expNumber;
@@ -181,7 +181,7 @@ final class FastDoubleMem {
         if (digitCount > 19) {
             significand = 0;
             for (index = significandStartIndex; index < significandEndIndex; index++) {
-                ch = Unsafe.getUnsafe().getByte(str + index);
+                ch = Unsafe.getByte(str + index);
                 if (ch == '.') {
                     skipCountInTruncatedDigits++;
                 } else {
@@ -254,7 +254,7 @@ final class FastDoubleMem {
         boolean illegal = false;
         byte ch = 0;
         for (; index < endIndex; index++) {
-            ch = Unsafe.getUnsafe().getByte(str + index);
+            ch = Unsafe.getByte(str + index);
             // Table look up is faster than a sequence of if-else-branches.
             int hexValue = ch < 0 ? FastDoubleUtils.OTHER_CLASS : FastDoubleUtils.CHAR_TO_HEX_MAP[ch];
             if (hexValue >= 0) {
@@ -280,15 +280,15 @@ final class FastDoubleMem {
         int expNumber = 0;
         final boolean hasExponent = (ch == 'p') || (ch == 'P');
         if (hasExponent) {
-            ch = ++index < endIndex ? Unsafe.getUnsafe().getByte(str + index) : 0;
+            ch = ++index < endIndex ? Unsafe.getByte(str + index) : 0;
             boolean neg_exp = ch == '-';
             if (neg_exp || ch == '+') {
-                ch = ++index < endIndex ? Unsafe.getUnsafe().getByte(str + index) : 0;
+                ch = ++index < endIndex ? Unsafe.getByte(str + index) : 0;
             }
             illegal |= !isDigit(ch);
             do {
                 expNumber = 10 * expNumber + ch - '0';
-                ch = ++index < endIndex ? Unsafe.getUnsafe().getByte(str + index) : 0;
+                ch = ++index < endIndex ? Unsafe.getByte(str + index) : 0;
             } while (isDigit(ch));
             if (neg_exp) {
                 expNumber = -expNumber;
@@ -318,7 +318,7 @@ final class FastDoubleMem {
         if (digitCount > 16) {
             significand = 0;
             for (index = significandStartIndex; index < significandEndIndex; index++) {
-                ch = Unsafe.getUnsafe().getByte(str + index);
+                ch = Unsafe.getByte(str + index);
                 // Table look up is faster than a sequence of if-else-branches.
                 int hexValue = ch < 0 ? FastDoubleUtils.OTHER_CLASS : FastDoubleUtils.CHAR_TO_HEX_MAP[ch];
                 if (hexValue >= 0) {
@@ -367,14 +367,14 @@ final class FastDoubleMem {
      */
     private static double parseInfinity(long str, int index, int endIndex, boolean negative) throws NumericException {
         if (index + 7 < endIndex
-                && Unsafe.getUnsafe().getByte(str + index) == 'I'
-                && Unsafe.getUnsafe().getByte(str + index + 1) == 'n'
-                && Unsafe.getUnsafe().getByte(str + index + 2) == 'f'
-                && Unsafe.getUnsafe().getByte(str + index + 3) == 'i'
-                && Unsafe.getUnsafe().getByte(str + index + 4) == 'n'
-                && Unsafe.getUnsafe().getByte(str + index + 5) == 'i'
-                && Unsafe.getUnsafe().getByte(str + index + 6) == 't'
-                && Unsafe.getUnsafe().getByte(str + index + 7) == 'y'
+                && Unsafe.getByte(str + index) == 'I'
+                && Unsafe.getByte(str + index + 1) == 'n'
+                && Unsafe.getByte(str + index + 2) == 'f'
+                && Unsafe.getByte(str + index + 3) == 'i'
+                && Unsafe.getByte(str + index + 4) == 'n'
+                && Unsafe.getByte(str + index + 5) == 'i'
+                && Unsafe.getByte(str + index + 6) == 't'
+                && Unsafe.getByte(str + index + 7) == 'y'
         ) {
             index = skipWhitespace(str, index + 8, endIndex);
             if (index == endIndex) {
@@ -405,8 +405,8 @@ final class FastDoubleMem {
     private static double parseNaN(long str, int index, int endIndex) throws NumericException {
         if (index + 2 < endIndex
                 // && str[index] == 'N'
-                && Unsafe.getUnsafe().getByte(str + index + 1) == 'a'
-                && Unsafe.getUnsafe().getByte(str + index + 2) == 'N') {
+                && Unsafe.getByte(str + index + 1) == 'a'
+                && Unsafe.getByte(str + index + 2) == 'N') {
 
             index = skipWhitespace(str, index + 3, endIndex);
             if (index == endIndex) {
@@ -426,7 +426,7 @@ final class FastDoubleMem {
      */
     private static int skipWhitespace(long str, int index, int endIndex) {
         for (; index < endIndex; index++) {
-            if ((Unsafe.getUnsafe().getByte(str + index) & 0xff) > ' ') {
+            if ((Unsafe.getByte(str + index) & 0xff) > ' ') {
                 break;
             }
         }
@@ -434,7 +434,7 @@ final class FastDoubleMem {
     }
 
     private static int tryToParseEightDigits(long str, int offset) {
-        return FastDoubleSwar.tryToParseEightDigitsUtf8(Unsafe.getUnsafe().getLong(str + offset));
+        return FastDoubleSwar.tryToParseEightDigitsUtf8(Unsafe.getLong(str + offset));
     }
 
     /**
@@ -468,13 +468,13 @@ final class FastDoubleMem {
         if (index == endIndex) {
             throw NumericException.INSTANCE;
         }
-        byte ch = Unsafe.getUnsafe().getByte(str + index);
+        byte ch = Unsafe.getByte(str + index);
 
         // Parse optional sign
         // -------------------
         final boolean isNegative = ch == '-';
         if (isNegative || ch == '+') {
-            ch = ++index < endIndex ? Unsafe.getUnsafe().getByte(str + index) : 0;
+            ch = ++index < endIndex ? Unsafe.getByte(str + index) : 0;
             if (ch == 0) {
                 throw NumericException.INSTANCE;
             }
@@ -492,7 +492,7 @@ final class FastDoubleMem {
         // ---------------------------
         final boolean hasLeadingZero = ch == '0';
         if (hasLeadingZero) {
-            ch = ++index < endIndex ? Unsafe.getUnsafe().getByte(str + index) : 0;
+            ch = ++index < endIndex ? Unsafe.getByte(str + index) : 0;
             if (ch == 'x' || ch == 'X') {
                 return parseHexFloatingPointLiteral(str, index + 1, offset, endIndex, isNegative, rejectOverflow);
             }
