@@ -721,6 +721,14 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
             throw msgKaput().put("received a Bind message without a matching Parse");
         }
 
+        if (pipelineCurrentEntry.isSuspended()) {
+            // Symmetric to the pre-lookup check above. The lookup may have brought in
+            // a named entry whose cursor was retained from a previous Execute (e.g.,
+            // queued onto pipeline by an earlier Close-S that displaced it). A new
+            // Bind always starts a fresh execution, so the prior cursor must be freed.
+            pipelineCurrentEntry.closeSuspendedCursor();
+        }
+
         pipelineCurrentEntry.setStateBind(true);
 
         // "bind" is asking us to create portal. We take the conservative approach and assume
@@ -1545,6 +1553,12 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
             if (pe.isCopy || (!pe.isPreparedStatement() && !pe.isPortal())) {
                 releaseToPool(pe);
             } else {
+                if (pe.isSuspended()) {
+                    // The entry is being displaced (not retained as the current entry).
+                    // Its cursor must be freed here because nothing else will resume it,
+                    // and clearState() does not touch stateSuspended or cursor.
+                    pe.closeSuspendedCursor();
+                }
                 pe.clearState();
             }
         }

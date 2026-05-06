@@ -3405,6 +3405,91 @@ if __name__ == "__main__":
     }
 
     @Test
+    public void testClosePortalMustNotLeakSuspendedCursorOnAnotherNamedPortal() throws Exception {
+        // Portal-side counterpart of testCloseStatementMustNotLeakSuspendedCursorOnAnotherNamedStatement.
+        // msgClose handles 'S' (statement) and 'P' (portal) through the same isDirty()
+        // check, so the same regression must be guarded for portals.
+        //
+        // Wire sequence: Parse('', SELECT 1) + Bind(P_1, '') + Sync,
+        //                Parse('', SELECT x FROM long_sequence(5)) + Bind(P_2, '') + Execute(P_2, 2) + Sync,
+        //                Close-P(P_1) + Sync + Execute(P_2, 10) + Sync.
+        // P_2 is suspended after row 2; Close-P targets the unrelated P_1. Without the
+        // isDirty() fix, msgClose calls releaseToPoolIfAbandoned(P_2), the next Execute(P_2)
+        // resumes from row 3 (returns rows 3,4,5 -- "SELECT 3"). With the fix, the suspended
+        // P_2 is queued via addPipelineEntry, the syncPipeline drain frees its cursor, and
+        // the next Execute(P_2) starts a fresh cursor returning all 5 rows ("SELECT 5").
+        assertHexScript("""
+                >0000003600030000757365720061646d696e0064617461626173650071646200636c69656e745f656e636f64696e6700555446380000
+                <520000000800000003
+                >700000000a717565737400
+                <520000000800000000530000001154696d655a6f6e6500474d5400530000001d6170706c69636174696f6e5f6e616d6500517565737444420053000000187365727665725f76657273696f6e0031312e33005300000019696e74656765725f6461746574696d6573006f6e005300000019636c69656e745f656e636f64696e670055544638004b0000000c0000003fbb8b96505a0000000549
+                >50000000100053454c4543542031000000420000000f505f3100000000000000005300000004
+                <310000000432000000045a0000000549
+                >50000000260053454c45435420782046524f4d206c6f6e675f73657175656e6365283529000000420000000f505f320000000000000000450000000c505f3200000000025300000004
+                <31000000043200000004440000000b00010000000131440000000b0001000000013273000000045a0000000549
+                >430000000950505f31005300000004
+                <33000000045a0000000549
+                >450000000c505f32000000000a5300000004
+                <440000000b00010000000131440000000b00010000000132440000000b00010000000133440000000b00010000000134440000000b00010000000135430000000d53454c4543542035005a0000000549
+                >5800000004
+                """);
+    }
+
+    @Test
+    public void testCloseStatementBeforeBindMustNotResumeSuspendedCursor() throws Exception {
+        // Targets the post-lookup `closeSuspendedCursor()` guard in `msgBind`. The
+        // critical part of the wire sequence is that there is NO Sync between the
+        // Close-S and the next Bind; without that gap, the suspended cursor is
+        // never drained by syncPipeline and only the post-lookup guard can free
+        // it before the next Execute resumes from the wrong row.
+        //
+        // Setup:
+        //   Parse(S_1, "SELECT 1") + Sync,
+        //   Parse(S_2, "SELECT x FROM long_sequence(5)") + Sync,
+        //   Bind('' -> S_2) + Execute('', 2) + Sync   -- S_2 suspended after row 2.
+        //
+        // Bug-trigger (one message group, no intermediate Sync):
+        //   Close-S(S_1) + Bind('' -> S_2) + Execute('', 10) + Sync.
+        //
+        // What the other fixes do here:
+        //   - The `isDirty()` fix (Fix A) handles the prior Close-S step: when
+        //     `msgClose` swaps `pipelineCurrentEntry` from the suspended S_2 to
+        //     S_1, `isDirty()` now returns true (because `stateSuspended`), so
+        //     S_2 is queued onto `pipeline` via `addPipelineEntry()` instead of
+        //     being silently dropped. But queuing alone does not free the cursor;
+        //     only Sync's syncPipeline drain would, and there is no Sync here.
+        //   - The `releaseToPoolIfAbandoned` fix (Fix C) does not fire on this
+        //     path. `replaceCurrentPipelineEntry` calls `releaseToPoolIfAbandoned`
+        //     on the old `pipelineCurrentEntry` (here null, because the Close-S
+        //     branch in `msgBind` already set it to null before the lookup),
+        //     never on the looked-up entry.
+        //
+        // What the post-lookup `closeSuspendedCursor()` (Fix B) does:
+        //   `lookupPipelineEntryForNamedStatement` brings S_2 back from
+        //   `namedStatements` with cursor still alive and `stateSuspended=true`.
+        //   The post-lookup guard frees that cursor before `setStateBind(true)`,
+        //   so the next Execute calls `factory.getCursor()` fresh.
+        //
+        // Pre-fix output: 3 DataRows (3,4,5) + "SELECT 3" -- the resumed cursor.
+        // Post-fix output: 5 DataRows (1..5) + "SELECT 5" -- a fresh cursor.
+        assertHexScript("""
+                >0000003600030000757365720061646d696e0064617461626173650071646200636c69656e745f656e636f64696e6700555446380000
+                <520000000800000003
+                >700000000a717565737400
+                <520000000800000000530000001154696d655a6f6e6500474d5400530000001d6170706c69636174696f6e5f6e616d6500517565737444420053000000187365727665725f76657273696f6e0031312e33005300000019696e74656765725f6461746574696d6573006f6e005300000019636c69656e745f656e636f64696e670055544638004b0000000c0000003fbb8b96505a0000000549
+                >5000000013535f310053454c45435420310000005300000004
+                <31000000045a0000000549
+                >5000000029535f320053454c45435420782046524f4d206c6f6e675f73657175656e63652835290000005300000004
+                <31000000045a0000000549
+                >420000000f00535f3200000000000000450000000900000000025300000004
+                <3200000004440000000b00010000000131440000000b0001000000013273000000045a0000000549
+                >430000000953535f3100420000000f00535f32000000000000004500000009000000000a5300000004
+                <3200000004440000000b00010000000131440000000b00010000000132440000000b00010000000133440000000b00010000000134440000000b00010000000135430000000d53454c45435420350033000000045a0000000549
+                >5800000004
+                """);
+    }
+
+    @Test
     public void testCloseStatementMustNotLeakSuspendedCursorOnAnotherNamedStatement() throws Exception {
         // A `Close-Statement` for one named prepared statement must not leak a
         // suspended cursor on a different named prepared statement.
@@ -3438,12 +3523,12 @@ if __name__ == "__main__":
                 // Triggers Close-S for S_1 to be queued on the next executeQuery.
                 ps1.close();
 
-                // Wire sequence: Close-S(S_1), Bind('' -> S_2), Execute, Sync.
-                // Without the fix, msgClose drops the suspended S_2 from
-                // pipelineCurrentEntry; the Bind that follows enters with the
-                // wrong entry, the lookup brings S_2 back with cursor alive,
-                // msgExecuteSelect skips factory.getCursor() and resumes from
-                // row 2 -- so this returns just `ts` instead of all 3 rows.
+                // Wire sequence pgjdbc emits: Close-S(S_1), Sync, Bind('' -> S_2), Execute, Sync.
+                // Without the isDirty() fix, the suspended S_2 is dropped via clearState() in
+                // msgClose; without the post-lookup closeSuspendedCursor() in msgBind, the
+                // subsequent lookup brings S_2 back with its cursor alive, msgExecuteSelect
+                // skips factory.getCursor() and resumes from row 2 -- so this would return
+                // just `ts` instead of all 3 rows.
                 ps2.setMaxRows(6);
                 sink.clear();
                 try (ResultSet rs = ps2.executeQuery()) {
@@ -3815,6 +3900,44 @@ if __name__ == "__main__":
                 }
             }
         });
+    }
+
+    @Test
+    public void testDescribeStatementMustNotLeakSuspendedCursorOfAnotherNamedPortal() throws Exception {
+        // A `Describe-Statement` for one named prepared statement must not leave a stale
+        // suspended cursor on a different named portal. msgDescribe goes through
+        // lookupPipelineEntryForNamedStatement, which calls replaceCurrentPipelineEntry,
+        // which calls releaseToPoolIfAbandoned on the displaced entry. Without the
+        // closeSuspendedCursor() guard in releaseToPoolIfAbandoned, the displaced portal
+        // keeps its cursor and stateSuspended; the next Execute on that portal then
+        // resumes from the suspended position instead of starting fresh.
+        //
+        // Wire sequence: Parse('', SELECT x FROM long_sequence(5)) + Bind(P_1, '') + Sync,
+        //                Parse(S_2, SELECT 1) + Sync,
+        //                Execute(P_1, 2) + Sync  -- P_1 suspended at row 2,
+        //                Describe-S(S_2) + Sync  -- displaces P_1, leaks its cursor pre-fix,
+        //                Execute(P_1, 10) + Sync.
+        // No Bind precedes the second Execute, so the msgBind suspended-cursor guard does
+        // not protect this path -- only releaseToPoolIfAbandoned can free the cursor.
+        // Pre-fix the second Execute returns rows 3,4,5 -- "SELECT 3"; with the fix it
+        // returns all 5 rows -- "SELECT 5".
+        assertHexScript("""
+                >0000003600030000757365720061646d696e0064617461626173650071646200636c69656e745f656e636f64696e6700555446380000
+                <520000000800000003
+                >700000000a717565737400
+                <520000000800000000530000001154696d655a6f6e6500474d5400530000001d6170706c69636174696f6e5f6e616d6500517565737444420053000000187365727665725f76657273696f6e0031312e33005300000019696e74656765725f6461746574696d6573006f6e005300000019636c69656e745f656e636f64696e670055544638004b0000000c0000003fbb8b96505a0000000549
+                >50000000260053454c45435420782046524f4d206c6f6e675f73657175656e6365283529000000420000000f505f3100000000000000005300000004
+                <310000000432000000045a0000000549
+                >5000000013535f320053454c45435420310000005300000004
+                <31000000045a0000000549
+                >450000000c505f3100000000025300000004
+                <440000000b00010000000131440000000b0001000000013273000000045a0000000549
+                >440000000953535f32005300000004
+                <74000000060000540000001a00013100000000000001000000170004ffffffff00005a0000000549
+                >450000000c505f31000000000a5300000004
+                <440000000b00010000000131440000000b00010000000132440000000b00010000000133440000000b00010000000134440000000b00010000000135430000000d53454c4543542035005a0000000549
+                >5800000004
+                """);
     }
 
     @Test
