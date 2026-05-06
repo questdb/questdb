@@ -76,9 +76,9 @@ import io.questdb.griffin.UpdateOperatorImpl;
 import io.questdb.griffin.engine.ops.AbstractOperation;
 import io.questdb.griffin.engine.ops.AlterOperation;
 import io.questdb.griffin.engine.ops.UpdateOperation;
-import io.questdb.griffin.engine.table.parquet.ParquetPartitionDecoder;
-import io.questdb.griffin.engine.table.parquet.ParquetMetadataWriter;
 import io.questdb.griffin.engine.table.parquet.ParquetFileDecoder;
+import io.questdb.griffin.engine.table.parquet.ParquetMetadataWriter;
+import io.questdb.griffin.engine.table.parquet.ParquetPartitionDecoder;
 import io.questdb.griffin.engine.table.parquet.RowGroupBuffers;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
@@ -147,7 +147,6 @@ import java.util.function.LongConsumer;
 import static io.questdb.cairo.TableUtils.*;
 import static io.questdb.cairo.TableUtils.openAppend;
 import static io.questdb.cairo.TableUtils.openRO;
-import static io.questdb.cairo.TableUtils.openRW;
 import static io.questdb.cairo.idx.IndexFactory.keyFileName;
 import static io.questdb.cairo.idx.IndexFactory.valueFileName;
 import static io.questdb.cairo.sql.AsyncWriterCommand.Error.*;
@@ -7763,7 +7762,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 throw CairoException.critical(0)
                         .put("_pm is missing or unreadable [path=").put(path).put(']');
             }
-            boolean resolved = false;
+            boolean resolved;
             try {
                 resolved = parquetMetaReader.resolveFooter(parquetFileSize);
             } catch (CairoException e) {
@@ -9646,13 +9645,12 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         // operator-driven escape hatch when _pm is corrupt or stale: the convert
         // succeeds, and the operator can CONVERT TO PARQUET again to regenerate
         // a fresh _pm. The output is native, so there is no _pm to maintain here.
-        final long parquetSize = parquetFileSize;
 
         long parquetRowCount = 0;
         try (RowGroupBuffers rowGroupBuffers = new RowGroupBuffers(MemoryTag.NATIVE_PARQUET_PARTITION_UPDATER)) {
             path.trimTo(partitionDirLen).concat(PARQUET_PARTITION_NAME).$();
-            parquetAddr = mapRO(ff, path.$(), LOG, parquetSize, MemoryTag.MMAP_PARQUET_PARTITION_DECODER);
-            parquetFileDecoder.of(parquetAddr, parquetSize, MemoryTag.NATIVE_PARQUET_PARTITION_UPDATER);
+            parquetAddr = mapRO(ff, path.$(), LOG, parquetFileSize, MemoryTag.MMAP_PARQUET_PARTITION_DECODER);
+            parquetFileDecoder.of(parquetAddr, parquetFileSize, MemoryTag.NATIVE_PARQUET_PARTITION_UPDATER);
             final ParquetFileDecoder.Metadata parquetMetadata = parquetFileDecoder.metadata();
 
             // Build the list of columns to decode, mapping parquet indices to
@@ -9784,7 +9782,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             columnFdAndDataSize.resetCapacity();
             parquetFileDecoder.close();
             if (parquetAddr != 0) {
-                ff.munmap(parquetAddr, parquetSize, MemoryTag.MMAP_PARQUET_PARTITION_DECODER);
+                ff.munmap(parquetAddr, parquetFileSize, MemoryTag.MMAP_PARQUET_PARTITION_DECODER);
             }
         }
         return parquetRowCount;
@@ -11196,6 +11194,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         if (lastPartitionTimestamp == Long.MIN_VALUE) {
             return;
         }
+        int coveringPathLen = -1;
         for (int colIdx = 0; colIdx < columnCount; colIdx++) {
             if (metadata.getColumnType(colIdx) <= 0
                     || !metadata.isColumnIndexed(colIdx)
@@ -11208,17 +11207,133 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             }
             IntList coveringCols = metadata.getColumnMetadata(colIdx).getCoveringColumnIndices();
             if (coveringCols != null && coveringCols.size() > 0) {
-                // Covering POSTING indexes need the full reseal in
-                // sealPostingIndexForPartition (covering-file remap +
-                // rebuildSidecars). The fast-lag commit path is followed by
-                // a full O3 commit when more transactions accumulate, which
-                // catches the covering reseal then. Non-covering POSTING is
-                // the only path that has no later sweep.
+                // Covering POSTING needs the covering column files mapped so
+                // rebuildSidecars can copy their values into the .pc<N>
+                // sidecar alongside the sealed posting chain. Without this
+                // path, fast-lag commits that are not followed by an O3
+                // commit leave queries hitting a stale .pv that is missing
+                // the lag rows.
+                if (coveringPathLen == -1) {
+                    setStateForTimestamp(path, lastPartitionTimestamp);
+                    coveringPathLen = path.size();
+                }
+                int coverCount = coveringCols.size();
+                o3SealAddrs.setPos(coverCount);
+                o3SealAuxAddrs.setPos(coverCount);
+                o3SealAuxMappedSizes.setPos(coverCount);
+                o3SealMappedSizes.setPos(coverCount);
+                o3SealNameTxns.setPos(coverCount);
+                o3SealTops.setPos(coverCount);
+                o3SealShifts.setPos(coverCount);
+                o3SealTypes.setPos(coverCount);
+                try {
+                    for (int c = 0; c < coverCount; c++) {
+                        o3SealAddrs.setQuick(c, 0);
+                        o3SealAuxAddrs.setQuick(c, 0);
+                        o3SealAuxMappedSizes.setQuick(c, 0);
+                        int covCol = coveringCols.getQuick(c);
+                        if (covCol < 0) {
+                            o3SealTypes.setQuick(c, -1);
+                            o3SealShifts.setQuick(c, 0);
+                            o3SealTops.setQuick(c, 0);
+                            o3SealNameTxns.setQuick(c, TableUtils.COLUMN_NAME_TXN_NONE);
+                            continue;
+                        }
+                        int covType = metadata.getColumnType(covCol);
+                        boolean isVarSize = ColumnType.isVarSize(covType);
+                        o3SealTypes.setQuick(c, covType);
+                        o3SealShifts.setQuick(c, ColumnType.pow2SizeOf(covType));
+                        o3SealTops.setQuick(c, columnVersionWriter.getColumnTopQuick(lastPartitionTimestamp, covCol));
+                        long covColNameTxn = columnVersionWriter.getColumnNameTxn(lastPartitionTimestamp, covCol);
+                        o3SealNameTxns.setQuick(c, covColNameTxn);
+                        LPSZ colFile = TableUtils.dFile(path.trimTo(coveringPathLen), metadata.getColumnName(covCol), covColNameTxn);
+                        long fd = ff.openRO(colFile);
+                        if (fd < 0) {
+                            throw CairoException.critical(ff.errno())
+                                    .put("could not open covering column file [path=").put(colFile).put(']');
+                        }
+                        try {
+                            long fileSize = ff.length(fd);
+                            if (fileSize < 0) {
+                                throw CairoException.critical(0)
+                                        .put("invalid covering column file size [path=").put(colFile)
+                                        .put(", size=").put(fileSize).put(']');
+                            }
+                            if (fileSize == 0) {
+                                if (!isVarSize) {
+                                    throw CairoException.critical(0)
+                                            .put("covering column file is empty [path=").put(colFile)
+                                            .put(", size=").put(fileSize).put(']');
+                                }
+                            } else {
+                                long addr = TableUtils.mapRO(ff, fd, fileSize, MemoryTag.MMAP_DEFAULT);
+                                o3SealAddrs.setQuick(c, addr);
+                                o3SealMappedSizes.setQuick(c, fileSize);
+                            }
+                        } finally {
+                            ff.close(fd);
+                        }
+                        if (isVarSize) {
+                            LPSZ auxFile = TableUtils.iFile(path.trimTo(coveringPathLen), metadata.getColumnName(covCol), covColNameTxn);
+                            long auxFd = ff.openRO(auxFile);
+                            if (auxFd < 0) {
+                                throw CairoException.critical(ff.errno())
+                                        .put("could not open covering aux file [path=").put(auxFile).put(']');
+                            }
+                            try {
+                                long auxSize = ff.length(auxFd);
+                                if (auxSize < 0) {
+                                    throw CairoException.critical(0)
+                                            .put("invalid covering aux file size [path=").put(auxFile)
+                                            .put(", size=").put(auxSize).put(']');
+                                }
+                                if (auxSize > 0) {
+                                    long auxAddr = TableUtils.mapRO(ff, auxFd, auxSize, MemoryTag.MMAP_DEFAULT);
+                                    o3SealAuxAddrs.setQuick(c, auxAddr);
+                                    o3SealAuxMappedSizes.setQuick(c, auxSize);
+                                }
+                            } finally {
+                                ff.close(auxFd);
+                            }
+                        }
+                    }
+                    // The writer is already open at the last partition with
+                    // pending in-memory chain entries from updateIndexesParallel.
+                    // Do NOT call configureFollowerAndWriter here: that would
+                    // close and reopen the writer, dropping those entries.
+                    // Install the covering mapping then seal(): seal flushes
+                    // pending data into a fresh generation and, when coverCount
+                    // is set, also writes the .pc<N> sidecar files alongside
+                    // the new .pv. rebuildSidecars by itself early-returns when
+                    // genCount or keyCount are still zero (the fast-lag case),
+                    // so it can't be substituted here.
+                    indexer.configureCovering(o3SealAddrs, o3SealAuxAddrs, o3SealTops, o3SealShifts, coveringCols, o3SealTypes, coverCount,
+                            metadata.getTimestampIndex());
+                    indexer.setCoveredColumnNameTxns(o3SealNameTxns);
+                    indexer.getWriter().setNextTxnAtSeal(txWriter.getTxn());
+                    indexer.seal();
+                    indexer.publishPendingPurges(messageBus, tableToken, partitionBy, timestampType, txWriter.getTxn());
+                } finally {
+                    for (int c = 0; c < coverCount; c++) {
+                        if (o3SealAddrs.getQuick(c) != 0) {
+                            ff.munmap(o3SealAddrs.getQuick(c), o3SealMappedSizes.getQuick(c), MemoryTag.MMAP_DEFAULT);
+                            o3SealAddrs.setQuick(c, 0);
+                        }
+                        if (o3SealAuxAddrs.getQuick(c) != 0) {
+                            ff.munmap(o3SealAuxAddrs.getQuick(c), o3SealAuxMappedSizes.getQuick(c), MemoryTag.MMAP_DEFAULT);
+                            o3SealAuxAddrs.setQuick(c, 0);
+                        }
+                    }
+                    indexer.clearCovering();
+                }
                 continue;
             }
             indexer.getWriter().setNextTxnAtSeal(txWriter.getTxn());
             indexer.seal();
             indexer.publishPendingPurges(messageBus, tableToken, partitionBy, timestampType, txWriter.getTxn());
+        }
+        if (coveringPathLen != -1) {
+            path.trimTo(pathSize);
         }
     }
 
