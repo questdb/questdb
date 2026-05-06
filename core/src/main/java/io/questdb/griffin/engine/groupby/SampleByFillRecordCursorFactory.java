@@ -88,9 +88,13 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
     public static final int FILL_KEY = -3;
     public static final int FILL_PREV_SELF = -2;
     private static final int HAS_PREV_SLOT = 1;
-    private static final int KEY_INDEX_SLOT = 0;
+    // Per-key generational stamp: holds the bucket timestamp at which the key
+    // last received a data row, or LONG_NULL before any data arrives. Presence
+    // in the current bucket is `lastKnownTs == nextBucketTimestamp` -- bucket
+    // transitions flip every key's flag in O(1) by advancing nextBucketTimestamp.
+    private static final int LAST_KNOWN_TS_SLOT = 0;
     // Key columns in MapRecord start at KEY_POS_OFFSET, after the fixed-width
-    // value header (KEY_INDEX, HAS_PREV, PREV_ROWID).
+    // value header (LAST_KNOWN_TS, HAS_PREV, PREV_ROWID).
     private static final int KEY_POS_OFFSET = 3;
     private static final int PREV_ROWID_SLOT = 2;
 
@@ -112,8 +116,8 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
     private final Function tzFunc;
 
     /**
-     * Appends the fixed-width value header (KEY_INDEX_SLOT, HAS_PREV_SLOT,
-     * PREV_ROWID_SLOT — three LONGs) the cursor expects on every key entry.
+     * Appends the fixed-width value header (LAST_KNOWN_TS_SLOT, HAS_PREV_SLOT,
+     * PREV_ROWID_SLOT - three LONGs) the cursor expects on every key entry.
      * External map builders must call this so slot indices stay authoritative.
      */
     public static void populateMapValueTypes(ArrayColumnTypes mapValueTypes) {
@@ -341,7 +345,6 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
         // False lets emitNextFillRow skip baseCursor.recordAt entirely.
         private final boolean isPrevPositioningNeeded;
         private int keyCount;
-        private boolean[] keyPresent;
         private final RecordSink keySink;
         private final Map keysMap;
         private MapRecordCursor keysMapCursor;
@@ -515,8 +518,10 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
                         // Pass 2 sees the same cursor as pass 1, so every key must be in the map.
                         // A null hit would mean internal corruption of a direct dependency.
                         assert value != null : "key discovered in pass 1 must exist in keysMap";
-                        int keyIdx = (int) value.getLong(KEY_INDEX_SLOT);
-                        keyPresent[keyIdx] = true;
+                        // Stamp this key as present in the current bucket. Stale stamps
+                        // from prior buckets are auto-invalidated by the advance of
+                        // nextBucketTimestamp, so no per-bucket reset is needed.
+                        value.putLong(LAST_KNOWN_TS_SLOT, nextBucketTimestamp);
                         toEmitCnt--;
                         if (hasPrevFill) {
                             updateKeyPrevRowId(value, baseRecord);
@@ -536,7 +541,6 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
                     if (hasDataForCurrentBucket && keysMap != null) {
                         // Dense bucket fast-path: skip the inner key-scan if every key already had data.
                         if (toEmitCnt == 0) {
-                            Arrays.fill(keyPresent, 0, keyCount, false);
                             toEmitCnt = keyCount;
                             nextBucketTimestamp = timestampSampler.nextTimestamp(nextBucketTimestamp);
                             hasDataForCurrentBucket = false;
@@ -554,7 +558,6 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
                         // This bucket has NO data at all -- emit fills for all keys
                         isEmittingFills = true;
                         keysMapCursor.toTop();
-                        Arrays.fill(keyPresent, 0, keyCount, false);
                         toEmitCnt = keyCount;
                         if (emitNextFillRow()) {
                             return true;
@@ -689,8 +692,8 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
                     if ((++skipCount & 0x3FF) == 0) {
                         circuitBreaker.statefulThrowExceptionIfTrippedNoThrottle();
                     }
-                    int keyIdx = (int) keysMapRecord.getLong(KEY_INDEX_SLOT);
-                    if (!keyPresent[keyIdx]) {
+                    long lastKnownTs = keysMapRecord.getLong(LAST_KNOWN_TS_SLOT);
+                    if (lastKnownTs != nextBucketTimestamp) {
                         currentDispatchCode = fillDispatchCode;
                         fillTimestampFunc.value = nextBucketTimestamp;
                         // PREV_CACHE_SLOT slots are pre-filled with null sentinels in
@@ -706,8 +709,9 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
                         return true;
                     }
                 }
-                // Bucket exhausted -- advance
-                Arrays.fill(keyPresent, 0, keyCount, false);
+                // Bucket exhausted -- advance. No per-key reset needed: the
+                // next bucket's timestamp differs from any LAST_KNOWN_TS_SLOT
+                // values still carrying the just-emitted bucket's stamp.
                 toEmitCnt = keyCount;
                 nextBucketTimestamp = timestampSampler.nextTimestamp(nextBucketTimestamp);
                 hasDataForCurrentBucket = false;
@@ -759,7 +763,10 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
                     keySink.copy(baseRecord, key);
                     MapValue value = key.createValue();
                     if (value.isNew()) {
-                        value.putLong(KEY_INDEX_SLOT, keyIdx++);
+                        keyIdx++;
+                        // LONG_NULL is the absence sentinel: it can never equal
+                        // any bucket timestamp produced by TimestampSampler.
+                        value.putLong(LAST_KNOWN_TS_SLOT, Numbers.LONG_NULL);
                         value.putLong(HAS_PREV_SLOT, 0L);
                         // Pre-fill cached PREV slots with per-type null sentinels
                         // so PREV_CACHE_SLOT getters can read unconditionally
@@ -805,11 +812,6 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
                     nextBucketTimestamp = Long.MAX_VALUE;
                     return;
                 }
-                if (keyPresent == null || keyPresent.length < keyCount) {
-                    keyPresent = new boolean[Math.max(keyCount, 1)];
-                } else {
-                    Arrays.fill(keyPresent, 0, keyCount, false);
-                }
                 toEmitCnt = keyCount;
                 baseCursor.toTop();
                 keysMapRecord = keysMap.getRecord();
@@ -818,9 +820,6 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
             } else {
                 // Non-keyed: degenerate case with 1 "empty" key
                 keyCount = 1;
-                if (keyPresent == null || keyPresent.length < 1) {
-                    keyPresent = new boolean[1];
-                }
                 toEmitCnt = 1;
             }
 
