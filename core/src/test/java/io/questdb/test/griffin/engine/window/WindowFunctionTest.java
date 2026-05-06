@@ -4686,6 +4686,77 @@ public class WindowFunctionTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testKSumPartitionedRangeCachedWindow() throws Exception {
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, sym symbol, val double) timestamp(ts)", timestampType.getTypeName());
+            execute("insert into tab values " +
+                    "(1_000_000::timestamp, 'A', 10.0), " +
+                    "(2_000_000::timestamp, 'B', 100.0), " +
+                    "(2_000_000::timestamp, 'A', 30.0), " +
+                    "(3_000_000::timestamp, 'B', 200.0)");
+
+            assertQueryNoLeakCheck(
+                    replaceTimestampSuffix("""
+                            ts\tsym\tval\tksum_val\tavg_all
+                            1970-01-01T00:00:01.000000Z\tA\t10.0\t10.0\t85.0
+                            1970-01-01T00:00:02.000000Z\tB\t100.0\t100.0\t85.0
+                            1970-01-01T00:00:02.000000Z\tA\t30.0\t40.0\t85.0
+                            1970-01-01T00:00:03.000000Z\tB\t200.0\t300.0\t85.0
+                            """),
+                    "select ts, sym, val, ksum(val) over (partition by sym order by ts range between 1 second preceding and current row) as ksum_val, avg(val) over () as avg_all " +
+                            "from tab",
+                    "ts",
+                    true,
+                    true
+            );
+        });
+    }
+
+    @Test
+    public void testKSumPartitionedRangeCachedWindowWithNulls() throws Exception {
+        // Forces cached execution via avg(val) over () and exercises NULL handling through
+        // pass1() in KSumOverPartitionRangeFrameFunction. Covers a partition that opens with a
+        // NULL value, NULL rows that arrive while the frame is non-empty, and frames that
+        // become empty after the bottom-border eviction removes the only valid row.
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, sym symbol, val double) timestamp(ts)", timestampType.getTypeName());
+            execute("insert into tab values " +
+                    "(1_000_000::timestamp, 'A', NULL), " +
+                    "(2_000_000::timestamp, 'B', 20.0), " +
+                    "(3_000_000::timestamp, 'A', 10.0), " +
+                    "(4_000_000::timestamp, 'B', NULL), " +
+                    "(5_000_000::timestamp, 'A', NULL), " +
+                    "(6_000_000::timestamp, 'B', 30.0)");
+
+            // Partition A in ts order: (1s,NULL) (3s,10) (5s,NULL)
+            //   1s: first row NULL -> NaN
+            //   3s: 1s out of 1s range (and was NULL anyway) -> 10
+            //   5s: 3s out of range, current NULL, frameSize=0 -> NaN
+            // Partition B in ts order: (2s,20) (4s,NULL) (6s,30)
+            //   2s: first valid -> 20
+            //   4s: 2s out of 1s range, current NULL, frameSize=0 -> NaN
+            //   6s: 4s was NULL, 2s out of range -> 30
+            // avg(val) over () counts non-null values: (20+10+30)/3 = 20.0
+            assertQueryNoLeakCheck(
+                    replaceTimestampSuffix("""
+                            ts\tsym\tval\tksum_val\tavg_all
+                            1970-01-01T00:00:01.000000Z\tA\tnull\tnull\t20.0
+                            1970-01-01T00:00:02.000000Z\tB\t20.0\t20.0\t20.0
+                            1970-01-01T00:00:03.000000Z\tA\t10.0\t10.0\t20.0
+                            1970-01-01T00:00:04.000000Z\tB\tnull\tnull\t20.0
+                            1970-01-01T00:00:05.000000Z\tA\tnull\tnull\t20.0
+                            1970-01-01T00:00:06.000000Z\tB\t30.0\t30.0\t20.0
+                            """),
+                    "select ts, sym, val, ksum(val) over (partition by sym order by ts range between 1 second preceding and current row) as ksum_val, avg(val) over () as avg_all " +
+                            "from tab",
+                    "ts",
+                    true,
+                    true
+            );
+        });
+    }
+
+    @Test
     public void testKSumPartitionedRangeFirstRowNull() throws Exception {
         // Test ksum() with partition by range frame where first row in partition is NULL
         // This tests lines 503-507 in KSumOverPartitionRangeFrameFunction
@@ -4998,6 +5069,72 @@ public class WindowFunctionTest extends AbstractCairoTest {
                     "select ts, val, ksum(val) over (order by ts rows unbounded preceding) from precision_tab",
                     "ts",
                     false,
+                    true
+            );
+        });
+    }
+
+    @Test
+    public void testKSumRangeCachedWindow() throws Exception {
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, sym symbol, val double) timestamp(ts)", timestampType.getTypeName());
+            execute("insert into tab values " +
+                    "(1_000_000::timestamp, 'A', 10.0), " +
+                    "(2_000_000::timestamp, 'B', 20.0), " +
+                    "(3_000_000::timestamp, 'A', 30.0), " +
+                    "(4_000_000::timestamp, 'B', 40.0)");
+
+            assertQueryNoLeakCheck(
+                    replaceTimestampSuffix("""
+                            ts\tsym\tval\tksum_val\tavg_all
+                            1970-01-01T00:00:01.000000Z\tA\t10.0\t10.0\t25.0
+                            1970-01-01T00:00:02.000000Z\tB\t20.0\t30.0\t25.0
+                            1970-01-01T00:00:03.000000Z\tA\t30.0\t50.0\t25.0
+                            1970-01-01T00:00:04.000000Z\tB\t40.0\t70.0\t25.0
+                            """),
+                    "select ts, sym, val, ksum(val) over (order by ts range between 1 second preceding and current row) as ksum_val, avg(val) over () as avg_all " +
+                            "from tab",
+                    "ts",
+                    true,
+                    true
+            );
+        });
+    }
+
+    @Test
+    public void testKSumRangeCachedWindowWithNulls() throws Exception {
+        // Forces cached execution via avg(val) over () and exercises NULL handling through
+        // pass1() in KSumOverRangeFrameFunction (no partition). Covers NULL rows arriving with
+        // a non-empty frame as well as a NULL row whose only frame neighbor just aged out.
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, val double) timestamp(ts)", timestampType.getTypeName());
+            execute("insert into tab values " +
+                    "(1_000_000::timestamp, 10.0), " +
+                    "(2_000_000::timestamp, NULL), " +
+                    "(3_000_000::timestamp, 20.0), " +
+                    "(4_000_000::timestamp, NULL), " +
+                    "(5_000_000::timestamp, 30.0)");
+
+            // Range = 1 second preceding to current row:
+            //   1s, val=10  -> frame = [10]                 -> 10
+            //   2s, val=NULL -> 1s still in 1-second range  -> 10
+            //   3s, val=20  -> 1s out of range, NULL gap    -> 20
+            //   4s, val=NULL -> 3s still in range           -> 20
+            //   5s, val=30  -> 3s out of range, NULL gap    -> 30
+            // avg(val) over () counts non-null only: (10+20+30)/3 = 20.0
+            assertQueryNoLeakCheck(
+                    replaceTimestampSuffix("""
+                            ts\tval\tksum_val\tavg_all
+                            1970-01-01T00:00:01.000000Z\t10.0\t10.0\t20.0
+                            1970-01-01T00:00:02.000000Z\tnull\t10.0\t20.0
+                            1970-01-01T00:00:03.000000Z\t20.0\t20.0\t20.0
+                            1970-01-01T00:00:04.000000Z\tnull\t20.0\t20.0
+                            1970-01-01T00:00:05.000000Z\t30.0\t30.0\t20.0
+                            """),
+                    "select ts, val, ksum(val) over (order by ts range between 1 second preceding and current row) as ksum_val, avg(val) over () as avg_all " +
+                            "from tab",
+                    "ts",
+                    true,
                     true
             );
         });

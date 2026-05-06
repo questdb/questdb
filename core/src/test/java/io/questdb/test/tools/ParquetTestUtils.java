@@ -26,7 +26,7 @@ package io.questdb.test.tools;
 
 import io.questdb.cairo.TableUtils;
 import io.questdb.griffin.engine.table.parquet.ParquetEncoding;
-import io.questdb.griffin.engine.table.parquet.PartitionDecoder;
+import io.questdb.griffin.engine.table.parquet.ParquetFileDecoder;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.FilesFacade;
@@ -60,7 +60,7 @@ public final class ParquetTestUtils {
         long fd = -1;
         long addr = 0;
         long fileSize = 0;
-        try (Path path = new Path(); PartitionDecoder decoder = new PartitionDecoder()) {
+        try (Path path = new Path(); ParquetFileDecoder decoder = new ParquetFileDecoder()) {
             path.of(parquetFilePath).$();
             fd = TableUtils.openRO(ff, path.$(), LOG);
             fileSize = ff.length(fd);
