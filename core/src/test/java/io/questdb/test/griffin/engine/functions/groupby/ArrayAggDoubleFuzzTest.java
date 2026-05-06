@@ -24,6 +24,8 @@
 
 package io.questdb.test.griffin.engine.functions.groupby;
 
+import io.questdb.PropertyKey;
+import io.questdb.mp.WorkerPool;
 import io.questdb.std.Rnd;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
@@ -221,41 +223,47 @@ public class ArrayAggDoubleFuzzTest extends AbstractCairoTest {
 
     @Test
     public void testParallelCountsMatch() throws Exception {
+        // Run on an explicit 4-worker pool with small page frames so each iteration
+        // forces multi-worker dispatch and the parallel merge path runs every time.
+        setProperty(PropertyKey.CAIRO_SQL_PAGE_FRAME_MAX_ROWS, 100);
         assertMemoryLeak(() -> {
-            for (int iter = 0; iter < ITERATIONS; iter++) {
-                int numGroups = rnd.nextInt(5) + 1;
-                int rowsPerGroup = rnd.nextInt(20) + 1;
+            final WorkerPool pool = new WorkerPool(() -> 4);
+            TestUtils.execute(pool, (engine, compiler, sqlExecutionContext) -> {
+                for (int iter = 0; iter < ITERATIONS; iter++) {
+                    int numGroups = rnd.nextInt(5) + 1;
+                    int rowsPerGroup = rnd.nextInt(20) + 1;
 
-                execute("DROP TABLE IF EXISTS t");
-                execute("CREATE TABLE t (grp INT, val DOUBLE)");
+                    engine.execute("DROP TABLE IF EXISTS t", sqlExecutionContext);
+                    engine.execute("CREATE TABLE t (grp INT, val DOUBLE)", sqlExecutionContext);
 
-                StringBuilder insert = new StringBuilder("INSERT INTO t VALUES\n");
-                boolean first = true;
-                for (int g = 0; g < numGroups; g++) {
-                    for (int r = 0; r < rowsPerGroup; r++) {
-                        if (!first) {
-                            insert.append(",\n");
+                    StringBuilder insert = new StringBuilder("INSERT INTO t VALUES\n");
+                    boolean first = true;
+                    for (int g = 0; g < numGroups; g++) {
+                        for (int r = 0; r < rowsPerGroup; r++) {
+                            if (!first) {
+                                insert.append(",\n");
+                            }
+                            first = false;
+                            double val = Math.round(rnd.nextDouble() * 1000.0) / 10.0;
+                            insert.append("(").append(g).append(", ").append(val).append(")");
                         }
-                        first = false;
-                        double val = Math.round(rnd.nextDouble() * 1000.0) / 10.0;
-                        insert.append("(").append(g).append(", ").append(val).append(")");
                     }
-                }
-                execute(insert.toString());
+                    engine.execute(insert.toString(), sqlExecutionContext);
 
-                StringBuilder expected = new StringBuilder("grp\tcnt\n");
-                for (int g = 0; g < numGroups; g++) {
-                    expected.append(g).append("\t").append(rowsPerGroup).append("\n");
-                }
+                    StringBuilder expected = new StringBuilder("grp\tcnt\n");
+                    for (int g = 0; g < numGroups; g++) {
+                        expected.append(g).append("\t").append(rowsPerGroup).append("\n");
+                    }
 
-                assertQueryNoLeakCheck(
-                        expected.toString(),
-                        "SELECT grp, array_count(array_agg(val)) cnt FROM t ORDER BY grp",
-                        null,
-                        true,
-                        true
-                );
-            }
+                    TestUtils.assertSql(
+                            engine,
+                            sqlExecutionContext,
+                            "SELECT grp, array_count(array_agg(val)) cnt FROM t ORDER BY grp",
+                            sink,
+                            expected
+                    );
+                }
+            }, configuration, LOG);
         });
     }
 }

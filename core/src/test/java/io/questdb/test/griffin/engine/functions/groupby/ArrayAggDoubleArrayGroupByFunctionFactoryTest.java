@@ -26,7 +26,9 @@ package io.questdb.test.griffin.engine.functions.groupby;
 
 import io.questdb.PropertyKey;
 import io.questdb.cairo.ColumnType;
+import io.questdb.mp.WorkerPool;
 import io.questdb.test.AbstractCairoTest;
+import io.questdb.test.tools.TestUtils;
 import org.junit.Test;
 
 public class ArrayAggDoubleArrayGroupByFunctionFactoryTest extends AbstractCairoTest {
@@ -260,37 +262,45 @@ public class ArrayAggDoubleArrayGroupByFunctionFactoryTest extends AbstractCairo
 
     @Test
     public void testMergeTimeCardinalityExceeded() throws Exception {
-        // 5-element arrays make per-worker subtotals stay well below the cap regardless
-        // of how many frames a single worker receives, while the merged total comfortably
-        // exceeds it. With 100 frames of 5_00 elements each (10_000 rows / 100 rows-per-frame
-        // x 5 elements-per-row), per-worker max stays at a few thousand elements even when
-        // the test pool runs few workers, but the merged total of 50_000 always crosses
-        // the 49_999 cap. This guarantees the merge-time checkCapacityLimit() fires
-        // whenever multiple workers are dispatched, and falls through to the computeNext
-        // check otherwise.
+        // Run on an explicit 4-worker pool so per-worker subtotals stay below the
+        // 49_999-element cap (each worker sees a fraction of 50_000 elements)
+        // while the merged total reliably crosses it. This forces the merge-time
+        // checkCapacityLimit() to fire rather than falling through to the
+        // computeNext check.
         setProperty(PropertyKey.CAIRO_SQL_PAGE_FRAME_MAX_ROWS, 100);
         setProperty(PropertyKey.CAIRO_SQL_MAX_ARRAY_ELEMENT_COUNT, 49_999);
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE tab (arr DOUBLE[])");
-            StringBuilder sb = new StringBuilder("INSERT INTO tab VALUES\n");
-            for (int i = 0; i < 10_000; i++) {
-                if (i > 0) {
-                    sb.append(",\n");
+            final WorkerPool pool = new WorkerPool(() -> 4);
+            TestUtils.execute(pool, (engine, compiler, sqlExecutionContext) -> {
+                engine.execute("CREATE TABLE tab (arr DOUBLE[])", sqlExecutionContext);
+                StringBuilder sb = new StringBuilder("INSERT INTO tab VALUES\n");
+                for (int i = 0; i < 10_000; i++) {
+                    if (i > 0) {
+                        sb.append(",\n");
+                    }
+                    int base = i * 5;
+                    sb.append("(ARRAY[")
+                            .append(base).append(".0,")
+                            .append(base + 1).append(".0,")
+                            .append(base + 2).append(".0,")
+                            .append(base + 3).append(".0,")
+                            .append(base + 4).append(".0])");
                 }
-                int base = i * 5;
-                sb.append("(ARRAY[")
-                        .append(base).append(".0,")
-                        .append(base + 1).append(".0,")
-                        .append(base + 2).append(".0,")
-                        .append(base + 3).append(".0,")
-                        .append(base + 4).append(".0])");
-            }
-            execute(sb.toString());
-            assertExceptionNoLeakCheck(
-                    "SELECT array_agg(arr) FROM tab",
-                    0,
-                    "array_agg: array size exceeds configured maximum [maxArrayElementCount=49999]"
-            );
+                engine.execute(sb.toString(), sqlExecutionContext);
+                try {
+                    TestUtils.assertSql(
+                            engine,
+                            sqlExecutionContext,
+                            "SELECT array_agg(arr) FROM tab",
+                            sink,
+                            ""
+                    );
+                    org.junit.Assert.fail("expected CairoException with maxArrayElementCount=49999");
+                } catch (io.questdb.cairo.CairoException ex) {
+                    TestUtils.assertContains(ex.getMessage(),
+                            "array_agg: array size exceeds configured maximum [maxArrayElementCount=49999]");
+                }
+            }, configuration, LOG);
         });
     }
 
@@ -405,71 +415,77 @@ public class ArrayAggDoubleArrayGroupByFunctionFactoryTest extends AbstractCairo
 
     @Test
     public void testParallelCounts() throws Exception {
-        // Shrink the page frame so the insert spans many frames, forcing
-        // multi-worker dispatch and exercising the parallel merge path.
+        // Run on an explicit 4-worker pool so the parallel merge path is reliably
+        // exercised regardless of the test JVM's default worker count.
         setProperty(PropertyKey.CAIRO_SQL_PAGE_FRAME_MAX_ROWS, 100);
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE tab (grp SYMBOL, arr DOUBLE[])");
-            StringBuilder sb = new StringBuilder("INSERT INTO tab VALUES\n");
-            for (int i = 0; i < 1000; i++) {
-                if (i > 0) {
-                    sb.append(",\n");
+            final WorkerPool pool = new WorkerPool(() -> 4);
+            TestUtils.execute(pool, (engine, compiler, sqlExecutionContext) -> {
+                engine.execute("CREATE TABLE tab (grp SYMBOL, arr DOUBLE[])", sqlExecutionContext);
+                StringBuilder sb = new StringBuilder("INSERT INTO tab VALUES\n");
+                for (int i = 0; i < 1000; i++) {
+                    if (i > 0) {
+                        sb.append(",\n");
+                    }
+                    sb.append("('g").append(i % 5).append("', ARRAY[").append(i).append(".0, ").append(i + 1).append(".0])");
                 }
-                sb.append("('g").append(i % 5).append("', ARRAY[").append(i).append(".0, ").append(i + 1).append(".0])");
-            }
-            execute(sb.toString());
-            // 200 arrays * 2 elements each = 400 elements per group
-            assertQueryNoLeakCheck(
-                    "grp\tcnt\ttotal\n" +
-                            "g0\t400\t199200.0\n" +
-                            "g1\t400\t199600.0\n" +
-                            "g2\t400\t200000.0\n" +
-                            "g3\t400\t200400.0\n" +
-                            "g4\t400\t200800.0\n",
-                    "SELECT grp, array_count(array_agg(arr)) cnt, array_sum(array_agg(arr)) total FROM tab ORDER BY grp",
-                    null,
-                    true,
-                    true
-            );
+                engine.execute(sb.toString(), sqlExecutionContext);
+                // 200 arrays * 2 elements each = 400 elements per group
+                TestUtils.assertSql(
+                        engine,
+                        sqlExecutionContext,
+                        "SELECT grp, array_count(array_agg(arr)) cnt, array_sum(array_agg(arr)) total FROM tab ORDER BY grp",
+                        sink,
+                        "grp\tcnt\ttotal\n" +
+                                "g0\t400\t199200.0\n" +
+                                "g1\t400\t199600.0\n" +
+                                "g2\t400\t200000.0\n" +
+                                "g3\t400\t200400.0\n" +
+                                "g4\t400\t200800.0\n"
+                );
+            }, configuration, LOG);
         });
     }
 
     @Test
     public void testParallelOrdering() throws Exception {
-        // Shrink the page frame so the 10_000-row insert spans many frames,
-        // forcing multi-worker dispatch and exercising the merge-sort in merge().
+        // Run on an explicit 4-worker pool so the merge-sort in merge() is
+        // reliably exercised regardless of the test JVM's default worker count.
         setProperty(PropertyKey.CAIRO_SQL_PAGE_FRAME_MAX_ROWS, 100);
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE tab (grp SYMBOL, arr DOUBLE[])");
-            // 10 groups x 1000 single-element arrays. Row i goes to group g(i%10) with ARRAY[i.0].
-            // Group gN receives elements N.0, (N+10).0, ..., (N+9990).0 in insertion order.
-            StringBuilder sb = new StringBuilder("INSERT INTO tab VALUES\n");
-            for (int i = 0; i < 10_000; i++) {
-                if (i > 0) {
-                    sb.append(",\n");
-                }
-                sb.append("('g").append(i % 10).append("', ARRAY[").append(i).append(".0])");
-            }
-            execute(sb.toString());
-            // Build expected: group gN has elements N.0, (N+10).0, ..., (N+9990).0.
-            StringBuilder expected = new StringBuilder("grp\tagg\n");
-            for (int g = 0; g < 10; g++) {
-                expected.append('g').append(g).append('\t').append('[');
-                for (int j = 0; j < 1_000; j++) {
-                    if (j > 0) {
-                        expected.append(',');
+            final WorkerPool pool = new WorkerPool(() -> 4);
+            TestUtils.execute(pool, (engine, compiler, sqlExecutionContext) -> {
+                engine.execute("CREATE TABLE tab (grp SYMBOL, arr DOUBLE[])", sqlExecutionContext);
+                // 10 groups x 1000 single-element arrays. Row i goes to group g(i%10) with ARRAY[i.0].
+                // Group gN receives elements N.0, (N+10).0, ..., (N+9990).0 in insertion order.
+                StringBuilder sb = new StringBuilder("INSERT INTO tab VALUES\n");
+                for (int i = 0; i < 10_000; i++) {
+                    if (i > 0) {
+                        sb.append(",\n");
                     }
-                    expected.append(g + j * 10).append(".0");
+                    sb.append("('g").append(i % 10).append("', ARRAY[").append(i).append(".0])");
                 }
-                expected.append("]\n");
-            }
-            assertQueryNoLeakCheck(
-                    expected.toString(),
-                    "SELECT grp, array_agg(arr) agg FROM tab ORDER BY grp",
-                    null,
-                    true,
-                    true
-            );
+                engine.execute(sb.toString(), sqlExecutionContext);
+                // Build expected: group gN has elements N.0, (N+10).0, ..., (N+9990).0.
+                StringBuilder expected = new StringBuilder("grp\tagg\n");
+                for (int g = 0; g < 10; g++) {
+                    expected.append('g').append(g).append('\t').append('[');
+                    for (int j = 0; j < 1_000; j++) {
+                        if (j > 0) {
+                            expected.append(',');
+                        }
+                        expected.append(g + j * 10).append(".0");
+                    }
+                    expected.append("]\n");
+                }
+                TestUtils.assertSql(
+                        engine,
+                        sqlExecutionContext,
+                        "SELECT grp, array_agg(arr) agg FROM tab ORDER BY grp",
+                        sink,
+                        expected
+                );
+            }, configuration, LOG);
         });
     }
 
