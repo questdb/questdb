@@ -474,7 +474,7 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
                                     // Last few transactions left to process from the list
                                     // of observed transactions built upfront in the beginning of the loop.
                                     // Read more transactions from the sequencer into readWalTxnDetails to continue
-                                    fix writer.readWalTxnDetails(transactionLogCursor, timeLimit);
+                                    writer.readWalTxnDetails(transactionLogCursor, timeLimit);
                                     transactionLogCursor.setPosition(seqTxn);
                                 }
 
