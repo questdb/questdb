@@ -3405,6 +3405,65 @@ if __name__ == "__main__":
     }
 
     @Test
+    public void testCloseStatementMustNotLeakSuspendedCursorOnAnotherNamedStatement() throws Exception {
+        // A `Close-Statement` for one named prepared statement must not leak a
+        // suspended cursor on a different named prepared statement.
+        //
+        // pgjdbc only sends `Close-S` when its local cache evicts a CachedQuery.
+        // Setting preparedStatementCacheQueries=0 evicts on every close(), which
+        // makes the wire sequence deterministic. prepareThreshold=-1 forces a
+        // server-side named statement on the first execution (default = 5 would
+        // use an anonymous statement on the first call, leaving no name to close).
+        assertWithPgServer(Mode.EXTENDED, true, -1, (ignoredConn, binary, mode, port) -> {
+            Properties properties = new Properties();
+            properties.setProperty("user", "admin");
+            properties.setProperty("password", "quest");
+            properties.setProperty("prepareThreshold", "-1");
+            properties.setProperty("preparedStatementCacheQueries", "0");
+            try (Connection connection = DriverManager.getConnection(
+                    "jdbc:postgresql://127.0.0.1:" + port + "/qdb", properties)) {
+                try (Statement stmt = connection.createStatement()) {
+                    stmt.executeUpdate("create table tab ( a int, b long, ts timestamp)");
+                }
+
+                // S_1 -- something to close later.
+                PreparedStatement ps1 = connection.prepareStatement("select 1");
+                ps1.executeQuery().close();
+
+                // S_2 -- suspended after row 2 of 3.
+                PreparedStatement ps2 = connection.prepareStatement("show columns from tab");
+                ps2.setMaxRows(2);
+                ps2.executeQuery().close();
+
+                // Triggers Close-S for S_1 to be queued on the next executeQuery.
+                ps1.close();
+
+                // Wire sequence: Close-S(S_1), Bind('' -> S_2), Execute, Sync.
+                // Without the fix, msgClose drops the suspended S_2 from
+                // pipelineCurrentEntry; the Bind that follows enters with the
+                // wrong entry, the lookup brings S_2 back with cursor alive,
+                // msgExecuteSelect skips factory.getCursor() and resumes from
+                // row 2 -- so this returns just `ts` instead of all 3 rows.
+                ps2.setMaxRows(6);
+                sink.clear();
+                try (ResultSet rs = ps2.executeQuery()) {
+                    assertResultSet(
+                            """
+                                    column[VARCHAR],type[VARCHAR],indexed[BIT],indexBlockCapacity[INTEGER],symbolCached[BIT],symbolCapacity[INTEGER],symbolTableSize[INTEGER],designated[BIT],upsertKey[BIT],indexType[VARCHAR],indexInclude[VARCHAR]
+                                    a,INT,false,0,false,0,0,false,false,,
+                                    b,LONG,false,0,false,0,0,false,false,,
+                                    ts,TIMESTAMP,false,0,false,0,0,false,false,,
+                                    """,
+                            sink,
+                            rs
+                    );
+                }
+                ps2.close();
+            }
+        });
+    }
+
+    @Test
     public void testContextClearsTransactionFlag() throws Exception {
         assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
             connection.setAutoCommit(true);
