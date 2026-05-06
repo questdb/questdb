@@ -41,6 +41,7 @@ import io.questdb.std.Numbers;
 import io.questdb.std.QuietCloseable;
 import io.questdb.std.ThreadLocal;
 import io.questdb.std.Vect;
+import io.questdb.std.datetime.MicrosecondClock;
 import io.questdb.std.str.DirectString;
 import io.questdb.std.str.Path;
 import org.jetbrains.annotations.Nullable;
@@ -493,7 +494,8 @@ public class WalTxnDetails implements QuietCloseable {
             final TransactionLogCursor transactionLogCursor,
             final int rootLen,
             long appliedSeqTxn,
-            final long maxCommittedTimestamp
+            final long maxCommittedTimestamp,
+            final long deadlineMicros
     ) {
         final long lastLoadedSeqTxn = getLastSeqTxn();
         long loadFromSeqTxn = appliedSeqTxn + 1;
@@ -534,6 +536,7 @@ public class WalTxnDetails implements QuietCloseable {
         long rowsToLoad;
 
         int initialSize = transactionMeta.size();
+        final MicrosecondClock clock = config.getMicrosecondClock();
         do {
             long rowsLoaded = loadTransactionDetails(tempPath, transactionLogCursor, loadFromSeqTxn, rootLen, txnLoadCount);
             totalRowsLoadedToApply += rowsLoaded;
@@ -548,7 +551,9 @@ public class WalTxnDetails implements QuietCloseable {
                         maxLookaheadTxn
                 );
             }
-        } while (rowsToLoad > 0 && getLastSeqTxn() < transactionLogCursor.getMaxTxn());
+        } while (rowsToLoad > 0
+                && getLastSeqTxn() < transactionLogCursor.getMaxTxn()
+                && clock.getTicks() < deadlineMicros);
 
         if (transactionMeta.size() == initialSize) {
             // No transactions loaded, no need to do anything

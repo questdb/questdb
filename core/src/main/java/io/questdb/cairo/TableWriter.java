@@ -2679,12 +2679,16 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     }
 
     public void readWalTxnDetails(TransactionLogCursor transactionLogCursor) {
+        readWalTxnDetails(transactionLogCursor, Long.MAX_VALUE);
+    }
+
+    public void readWalTxnDetails(TransactionLogCursor transactionLogCursor, long deadlineMicros) {
         if (walTxnDetails == null) {
             // Lazy creation
             walTxnDetails = new WalTxnDetails(configuration, getWalMaxLagRows());
         }
 
-        walTxnDetails.readObservableTxnMeta(other, transactionLogCursor, pathSize, getAppliedSeqTxn(), txWriter.getMaxTimestamp());
+        walTxnDetails.readObservableTxnMeta(other, transactionLogCursor, pathSize, getAppliedSeqTxn(), txWriter.getMaxTimestamp(), deadlineMicros);
     }
 
     /**
