@@ -119,7 +119,7 @@ public class ServerMainSleepTest extends AbstractBootstrapTest {
                     sleepConnRef.set(conn);
                     try (Statement stmt = conn.createStatement()) {
                         sleepStarted.countDown();
-                        stmt.executeQuery("SELECT sleep(60)");
+                        stmt.executeQuery("sleep(60)");
                     }
                 } catch (Throwable t) {
                     sleepOutcome.set(t);
@@ -185,7 +185,7 @@ public class ServerMainSleepTest extends AbstractBootstrapTest {
                     Statement stmt = conn.createStatement()
             ) {
                 try {
-                    stmt.executeQuery("SELECT sleep(60)");
+                    stmt.executeQuery("sleep(60)");
                     Assert.fail("expected PSQLException for query timeout");
                 } catch (PSQLException expected) {
                     // good -- breaker tripped on the wake-interval probe
@@ -217,7 +217,7 @@ public class ServerMainSleepTest extends AbstractBootstrapTest {
                 Thread sleeper = new Thread(() -> {
                     try {
                         sleepStarted.countDown();
-                        stmt.executeQuery("SELECT sleep(60)");
+                        stmt.executeQuery("sleep(60)");
                         outcome.set(new AssertionError("expected cancellation"));
                     } catch (PSQLException expected) {
                         // good
@@ -267,7 +267,7 @@ public class ServerMainSleepTest extends AbstractBootstrapTest {
                         Statement stmt = conn.createStatement()
                 ) {
                     sleepStarted.countDown();
-                    try (ResultSet rs = stmt.executeQuery("SELECT sleep(2)")) {
+                    try (ResultSet rs = stmt.executeQuery("sleep(2)")) {
                         Assert.assertTrue(rs.next());
                         Assert.assertNotNull(rs.getTimestamp(1));
                     }
@@ -315,7 +315,7 @@ public class ServerMainSleepTest extends AbstractBootstrapTest {
             String body;
             try (HttpClient httpClient = HttpClientFactory.newPlainTextInstance()) {
                 HttpClient.Request request = httpClient.newRequest("localhost", HTTP_PORT);
-                request.GET().url("/exec").query("query", "SELECT sleep(0.4)");
+                request.GET().url("/exec").query("query", "sleep(0.4)");
                 try (HttpClient.ResponseHeaders headers = request.send()) {
                     headers.await();
                     StringSink sink = new StringSink();
@@ -352,7 +352,7 @@ public class ServerMainSleepTest extends AbstractBootstrapTest {
             try (
                     Connection conn = DriverManager.getConnection(PG_CONNECTION_URI, PG_CONNECTION_PROPERTIES);
                     Statement stmt = conn.createStatement();
-                    ResultSet rs = stmt.executeQuery("SELECT sleep(0.5)")
+                    ResultSet rs = stmt.executeQuery("sleep(0.5)")
             ) {
                 Assert.assertTrue(rs.next());
                 // getTimestamp via the default Calendar applies the JVM's local
@@ -613,7 +613,7 @@ public class ServerMainSleepTest extends AbstractBootstrapTest {
                 // Either way we want the runner unblocked quickly so the fuzz
                 // budget isn't dominated by drop scenarios that the server
                 // can't actually short-circuit.
-                stmt.executeQuery("SELECT sleep(0.7)");
+                stmt.executeQuery("sleep(0.7)");
                 outcome.set(new AssertionError("expected error after connection drop"));
             } catch (PSQLException expected) {
                 // good
@@ -654,7 +654,7 @@ public class ServerMainSleepTest extends AbstractBootstrapTest {
         try (
                 Connection conn = DriverManager.getConnection(PG_CONNECTION_URI, PG_CONNECTION_PROPERTIES);
                 Statement stmt = conn.createStatement();
-                ResultSet rs = stmt.executeQuery("SELECT sleep(" + formatSeconds(seconds) + ")")
+                ResultSet rs = stmt.executeQuery("sleep(" + formatSeconds(seconds) + ")")
         ) {
             Assert.assertTrue("no row returned for sleep(" + seconds + ")", rs.next());
             Assert.assertNotNull(rs.getTimestamp(
@@ -669,7 +669,7 @@ public class ServerMainSleepTest extends AbstractBootstrapTest {
     private static void runHttpHappySleep(double seconds, AtomicInteger counter, AtomicLong totalSleptMillis) {
         try (HttpClient httpClient = HttpClientFactory.newPlainTextInstance()) {
             HttpClient.Request request = httpClient.newRequest("localhost", HTTP_PORT);
-            request.GET().url("/exec").query("query", "SELECT sleep(" + formatSeconds(seconds) + ")");
+            request.GET().url("/exec").query("query", "sleep(" + formatSeconds(seconds) + ")");
             try (HttpClient.ResponseHeaders headers = request.send()) {
                 headers.await();
                 StringSink sink = new StringSink();
@@ -693,7 +693,7 @@ public class ServerMainSleepTest extends AbstractBootstrapTest {
             int n = 3 + tr.nextInt(4);
             for (int i = 0; i < n; i++) {
                 double secs = tr.nextDouble() * 0.1;
-                try (ResultSet rs = stmt.executeQuery("SELECT sleep(" + formatSeconds(secs) + ")")) {
+                try (ResultSet rs = stmt.executeQuery("sleep(" + formatSeconds(secs) + ")")) {
                     Assert.assertTrue(rs.next());
                     Assert.assertNotNull(rs.getTimestamp(
                             1,
@@ -728,7 +728,7 @@ public class ServerMainSleepTest extends AbstractBootstrapTest {
                     // success: the load-bearing invariant we're stressing is
                     // that the runner exits in bounded time, not that every
                     // cancel signal is honoured.
-                    stmt.executeQuery("SELECT sleep(2.1)");
+                    stmt.executeQuery("sleep(2.1)");
                 } catch (PSQLException expected) {
                     // cancel landed in time
                 } catch (Throwable t) {

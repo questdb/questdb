@@ -35,10 +35,9 @@ public class SleepFunctionFactoryTest extends AbstractCairoTest {
     @Test
     public void testNegativeSeconds() throws Exception {
         assertMemoryLeak(() -> {
-            try (RecordCursorFactory factory = select("select sleep(-1.0) from long_sequence(1)")) {
+            try (RecordCursorFactory factory = select("sleep(-1.0)")) {
                 try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
-                    Assert.assertTrue(cursor.hasNext());
-                    cursor.getRecord().getTimestamp(0);
+                    cursor.hasNext();
                     Assert.fail("expected CairoException");
                 } catch (io.questdb.cairo.CairoException e) {
                     Assert.assertTrue(e.getMessage(), e.getMessage().contains("sleep duration must be"));
@@ -50,10 +49,9 @@ public class SleepFunctionFactoryTest extends AbstractCairoTest {
     @Test
     public void testNonFiniteSeconds() throws Exception {
         assertMemoryLeak(() -> {
-            try (RecordCursorFactory factory = select("select sleep(cast('NaN' as double)) from long_sequence(1)")) {
+            try (RecordCursorFactory factory = select("sleep(cast('NaN' as double))")) {
                 try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
-                    Assert.assertTrue(cursor.hasNext());
-                    cursor.getRecord().getTimestamp(0);
+                    cursor.hasNext();
                     Assert.fail("expected CairoException");
                 } catch (io.questdb.cairo.CairoException e) {
                     Assert.assertTrue(e.getMessage(), e.getMessage().contains("sleep duration must be"));
@@ -66,10 +64,9 @@ public class SleepFunctionFactoryTest extends AbstractCairoTest {
     public void testSecondsExceedingMaximum() throws Exception {
         assertMemoryLeak(() -> {
             // 24 hours + 1 second, just over the 24 hour cap.
-            try (RecordCursorFactory factory = select("select sleep(24 * 60 * 60 + 1) from long_sequence(1)")) {
+            try (RecordCursorFactory factory = select("sleep((24 * 60 * 60 + 1)::double)")) {
                 try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
-                    Assert.assertTrue(cursor.hasNext());
-                    cursor.getRecord().getTimestamp(0);
+                    cursor.hasNext();
                     Assert.fail("expected CairoException");
                 } catch (io.questdb.cairo.CairoException e) {
                     Assert.assertTrue(e.getMessage(), e.getMessage().contains("exceeds 24 hour maximum"));
@@ -82,10 +79,9 @@ public class SleepFunctionFactoryTest extends AbstractCairoTest {
     public void testSecondsOverflowingLong() throws Exception {
         assertMemoryLeak(() -> {
             // 1e15 seconds is finite and non-negative, but * 1000 overflows long range.
-            try (RecordCursorFactory factory = select("select sleep(1e15) from long_sequence(1)")) {
+            try (RecordCursorFactory factory = select("sleep(1e15)")) {
                 try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
-                    Assert.assertTrue(cursor.hasNext());
-                    cursor.getRecord().getTimestamp(0);
+                    cursor.hasNext();
                     Assert.fail("expected CairoException");
                 } catch (io.questdb.cairo.CairoException e) {
                     Assert.assertTrue(e.getMessage(), e.getMessage().contains("exceeds 24 hour maximum"));
@@ -98,11 +94,12 @@ public class SleepFunctionFactoryTest extends AbstractCairoTest {
     public void testSleepReturnsCurrentServerTime() throws Exception {
         assertMemoryLeak(() -> {
             long start = System.nanoTime();
-            try (RecordCursorFactory factory = select("select sleep(0.2) from long_sequence(1)")) {
+            try (RecordCursorFactory factory = select("sleep(0.2)")) {
                 try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
                     Assert.assertTrue(cursor.hasNext());
                     long ts = cursor.getRecord().getTimestamp(0);
                     Assert.assertTrue("returned timestamp must be positive: " + ts, ts > 0);
+                    Assert.assertFalse(cursor.hasNext());
                 }
             }
             long elapsedMs = (System.nanoTime() - start) / 1_000_000L;
@@ -115,11 +112,12 @@ public class SleepFunctionFactoryTest extends AbstractCairoTest {
     public void testZeroSeconds() throws Exception {
         assertMemoryLeak(() -> {
             long start = System.nanoTime();
-            try (RecordCursorFactory factory = select("select sleep(0.0) from long_sequence(1)")) {
+            try (RecordCursorFactory factory = select("sleep(0.0)")) {
                 try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
                     Assert.assertTrue(cursor.hasNext());
                     long ts = cursor.getRecord().getTimestamp(0);
                     Assert.assertTrue(ts > 0);
+                    Assert.assertFalse(cursor.hasNext());
                 }
             }
             long elapsedMs = (System.nanoTime() - start) / 1_000_000L;

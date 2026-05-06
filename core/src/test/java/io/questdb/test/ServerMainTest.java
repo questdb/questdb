@@ -500,7 +500,7 @@ public class ServerMainTest extends AbstractBootstrapTest {
                                     "'cairo.root', 'cairo.sql.copy.root', 'cairo.sql.copy.work.root', " +
                                     "'cairo.writer.misc.append.page.size', 'line.tcp.io.worker.count', 'cairo.sql.copy.export.root', " +
                                     "'wal.apply.worker.count', 'export.worker.count', 'mat.view.refresh.worker.count', 'view.compiler.worker.count', " +
-                                    "'http.export.connection.limit', 'cairo.mat.view.parallel.sql.enabled'" +
+                                    "'http.export.connection.limit', 'cairo.mat.view.parallel.sql.enabled', 'cairo.timer.shards'" +
                                     ") order by 1",
                             actualSink
                     );
@@ -706,7 +706,6 @@ public class ServerMainTest extends AbstractBootstrapTest {
                                     "cairo.symbol.table.max.allocation.page.size\tQDB_CAIRO_SYMBOL_TABLE_MAX_ALLOCATION_PAGE_SIZE\t8388608\tdefault\tfalse\tfalse\n" +
                                     "cairo.table.registry.auto.reload.frequency\tQDB_CAIRO_TABLE_REGISTRY_AUTO_RELOAD_FREQUENCY\t500\tdefault\tfalse\tfalse\n" +
                                     "cairo.table.registry.compaction.threshold\tQDB_CAIRO_TABLE_REGISTRY_COMPACTION_THRESHOLD\t30\tdefault\tfalse\tfalse\n" +
-                                    "cairo.timer.shards\tQDB_CAIRO_TIMER_SHARDS\t4\tdefault\tfalse\tfalse\n" +
                                     "cairo.ttl.use.wall.clock\tQDB_CAIRO_TTL_USE_WALL_CLOCK\ttrue\tdefault\tfalse\tfalse\n" +
                                     "cairo.unordered.page.frame.reduce.queue.capacity\tQDB_CAIRO_UNORDERED_PAGE_FRAME_REDUCE_QUEUE_CAPACITY\t4096\tdefault\tfalse\tfalse\n" +
                                     "cairo.vector.aggregate.queue.capacity\tQDB_CAIRO_VECTOR_AGGREGATE_QUEUE_CAPACITY\t8\tdefault\tfalse\tfalse\n" +
