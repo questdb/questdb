@@ -417,11 +417,6 @@ public class NthValueTimestampWindowFunctionFactory extends AbstractWindowFuncti
         }
 
         @Override
-        public long getTimestamp(Record rec) {
-            return value;
-        }
-
-        @Override
         public String getName() {
             return NAME;
         }
@@ -429,6 +424,11 @@ public class NthValueTimestampWindowFunctionFactory extends AbstractWindowFuncti
         @Override
         public int getPassCount() {
             return WindowFunction.ZERO_PASS;
+        }
+
+        @Override
+        public long getTimestamp(Record rec) {
+            return value;
         }
 
         @Override
@@ -692,11 +692,6 @@ public class NthValueTimestampWindowFunctionFactory extends AbstractWindowFuncti
         }
 
         @Override
-        public long getTimestamp(Record rec) {
-            return nthValue;
-        }
-
-        @Override
         public String getName() {
             return NAME;
         }
@@ -704,6 +699,11 @@ public class NthValueTimestampWindowFunctionFactory extends AbstractWindowFuncti
         @Override
         public int getPassCount() {
             return WindowFunction.ZERO_PASS;
+        }
+
+        @Override
+        public long getTimestamp(Record rec) {
+            return nthValue;
         }
 
         @Override
@@ -872,11 +872,6 @@ public class NthValueTimestampWindowFunctionFactory extends AbstractWindowFuncti
         }
 
         @Override
-        public long getTimestamp(Record rec) {
-            return nthValue;
-        }
-
-        @Override
         public String getName() {
             return NAME;
         }
@@ -884,6 +879,11 @@ public class NthValueTimestampWindowFunctionFactory extends AbstractWindowFuncti
         @Override
         public int getPassCount() {
             return WindowFunction.ZERO_PASS;
+        }
+
+        @Override
+        public long getTimestamp(Record rec) {
+            return nthValue;
         }
 
         @Override
@@ -986,11 +986,6 @@ public class NthValueTimestampWindowFunctionFactory extends AbstractWindowFuncti
         }
 
         @Override
-        public long getTimestamp(Record rec) {
-            return nthValue;
-        }
-
-        @Override
         public String getName() {
             return NAME;
         }
@@ -998,6 +993,11 @@ public class NthValueTimestampWindowFunctionFactory extends AbstractWindowFuncti
         @Override
         public int getPassCount() {
             return WindowFunction.ZERO_PASS;
+        }
+
+        @Override
+        public long getTimestamp(Record rec) {
+            return nthValue;
         }
 
         @Override
@@ -1165,11 +1165,6 @@ public class NthValueTimestampWindowFunctionFactory extends AbstractWindowFuncti
         }
 
         @Override
-        public long getTimestamp(Record rec) {
-            return nthValue;
-        }
-
-        @Override
         public String getName() {
             return NAME;
         }
@@ -1177,6 +1172,11 @@ public class NthValueTimestampWindowFunctionFactory extends AbstractWindowFuncti
         @Override
         public int getPassCount() {
             return WindowFunction.ZERO_PASS;
+        }
+
+        @Override
+        public long getTimestamp(Record rec) {
+            return nthValue;
         }
 
         @Override
@@ -1319,11 +1319,6 @@ public class NthValueTimestampWindowFunctionFactory extends AbstractWindowFuncti
         }
 
         @Override
-        public long getTimestamp(Record rec) {
-            return nthValue;
-        }
-
-        @Override
         public String getName() {
             return NAME;
         }
@@ -1331,6 +1326,11 @@ public class NthValueTimestampWindowFunctionFactory extends AbstractWindowFuncti
         @Override
         public int getPassCount() {
             return WindowFunction.ZERO_PASS;
+        }
+
+        @Override
+        public long getTimestamp(Record rec) {
+            return nthValue;
         }
 
         @Override
@@ -1421,11 +1421,6 @@ public class NthValueTimestampWindowFunctionFactory extends AbstractWindowFuncti
         }
 
         @Override
-        public long getTimestamp(Record rec) {
-            return nthValue;
-        }
-
-        @Override
         public String getName() {
             return NAME;
         }
@@ -1433,6 +1428,11 @@ public class NthValueTimestampWindowFunctionFactory extends AbstractWindowFuncti
         @Override
         public int getPassCount() {
             return WindowFunction.ZERO_PASS;
+        }
+
+        @Override
+        public long getTimestamp(Record rec) {
+            return nthValue;
         }
 
         @Override
@@ -1537,11 +1537,6 @@ public class NthValueTimestampWindowFunctionFactory extends AbstractWindowFuncti
         }
 
         @Override
-        public long getTimestamp(Record rec) {
-            return value;
-        }
-
-        @Override
         public String getName() {
             return NAME;
         }
@@ -1549,6 +1544,11 @@ public class NthValueTimestampWindowFunctionFactory extends AbstractWindowFuncti
         @Override
         public int getPassCount() {
             return WindowFunction.ZERO_PASS;
+        }
+
+        @Override
+        public long getTimestamp(Record rec) {
+            return value;
         }
 
         @Override
@@ -1599,11 +1599,6 @@ public class NthValueTimestampWindowFunctionFactory extends AbstractWindowFuncti
         }
 
         @Override
-        public long getTimestamp(Record rec) {
-            return value;
-        }
-
-        @Override
         public String getName() {
             return NAME;
         }
@@ -1611,6 +1606,11 @@ public class NthValueTimestampWindowFunctionFactory extends AbstractWindowFuncti
         @Override
         public int getPassCount() {
             return WindowFunction.ZERO_PASS;
+        }
+
+        @Override
+        public long getTimestamp(Record rec) {
+            return value;
         }
 
         @Override
