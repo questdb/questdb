@@ -89,15 +89,13 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
     public static final int FILL_PREV_SELF = -2;
     // Per-key generational stamp: holds the bucket timestamp at which the key
     // last received a data row, or LONG_NULL before any data arrives. Presence
-    // in the current bucket is `lastKnownTs == nextBucketTimestamp` -- bucket
-    // transitions flip every key's flag in O(1) by advancing nextBucketTimestamp.
-    // During emit, lastKnownTs != nextBucketTimestamp by construction, so
+    // in the current bucket is `lastKnownTs == currentBucketTimestamp` -- bucket
+    // transitions flip every key's flag in O(1) by advancing currentBucketTimestamp.
+    // During emit, lastKnownTs != currentBucketTimestamp by construction, so
     // hasPrev for the gap collapses to `lastKnownTs != LONG_NULL` -- no separate
     // HAS_PREV slot is needed.
     private static final int LAST_KNOWN_TS_SLOT = 0;
-    // Key columns in MapRecord start at KEY_POS_OFFSET, after the fixed-width
-    // value header (LAST_KNOWN_TS, PREV_ROWID).
-    private static final int KEY_POS_OFFSET = 2;
+    private static final int PREV_CACHE_OFFSET = 2;
     private static final int PREV_ROWID_SLOT = 1;
 
     private final RecordCursorFactory base;
@@ -232,12 +230,12 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
             sink.attr("range").val('(').val(fromFunc).val(',').val(toFunc).val(')');
         }
         sink.attr("stride").val('\'').val(samplingInterval).val(samplingIntervalUnit).val('\'');
-        if (hasPrevFill && hasAnyConstantSlot()) {
+        if (hasPrevFill && hasAnyConstantOrNullFill()) {
             // PREV mixed with a constant fill column — "prev" alone would mislead.
             sink.attr("fill").val("mixed");
         } else if (hasPrevFill) {
             sink.attr("fill").val("prev");
-        } else if (hasAnyConstantFill()) {
+        } else if (hasAnyNonNullConstantFill()) {
             sink.attr("fill").val("value");
         } else {
             sink.attr("fill").val("null");
@@ -266,30 +264,28 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
         Misc.freeObjList(constantFills);
     }
 
-    private boolean hasAnyConstantFill() {
-        // Returns true if any column has a non-null constant fill. The
-        // !(f instanceof NullConstant) filter excludes both NULL fills and the
-        // timestamp slot (always FILL_CONSTANT/NullConstant.NULL).
-        for (int i = 0, n = fillModes.size(); i < n; i++) {
-            if (fillModes.getQuick(i) == FILL_CONSTANT) {
-                Function f = constantFills.getQuick(i);
-                if (f != null && !(f instanceof NullConstant)) {
-                    return true;
-                }
-            }
-        }
-        return false;
-    }
-
-    private boolean hasAnyConstantSlot() {
-        // Returns true when any non-timestamp column is FILL_CONSTANT
-        // (NULL or value). Used by toPlan to label "mixed" when PREV coexists.
+    private boolean hasAnyConstantOrNullFill() {
+        // Used by toPlan to label "mixed" when PREV coexists.
         for (int i = 0, n = fillModes.size(); i < n; i++) {
             if (i == timestampIndex) {
                 continue;
             }
             if (fillModes.getQuick(i) == FILL_CONSTANT) {
                 return true;
+            }
+        }
+        return false;
+    }
+
+    private boolean hasAnyNonNullConstantFill() {
+        // The !(f instanceof NullConstant) filter excludes both NULL fills
+        // and the timestamp slot (always FILL_CONSTANT/NullConstant.NULL).
+        for (int i = 0, n = fillModes.size(); i < n; i++) {
+            if (fillModes.getQuick(i) == FILL_CONSTANT) {
+                Function f = constantFills.getQuick(i);
+                if (f != null && !(f instanceof NullConstant)) {
+                    return true;
+                }
             }
         }
         return false;
@@ -318,6 +314,7 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
         private long calendarOffset;
         private SqlExecutionCircuitBreaker circuitBreaker;
         private final ObjList<Function> constantFills;
+        private long currentBucketTimestamp;
         private int[] currentDispatchCode;
         private int[] dataDispatchCode;
         private final ObjList<Function> dispatchConstant = new ObjList<>();
@@ -325,7 +322,7 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
         private int[] fillDispatchCode;
         private final IntList fillModes;
         private final FillRecord fillRecord = new FillRecord();
-        private final FillTimestampConstant fillTimestampFunc;
+        private final FillTimestampHolder fillTimestampFunc;
         private final IntList fixedPrevSrcCols;
         private final IntList fixedPrevTypeTags;
         private final Function fromFunc;
@@ -351,7 +348,6 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
         private MapRecordCursor keysMapCursor;
         private MapRecord keysMapRecord;
         private long maxTimestamp;
-        private long nextBucketTimestamp;
         private final Function offsetFunc;
         private final int offsetFuncPos;
         private final IntList outputColToKeyPos = new IntList();
@@ -428,7 +424,7 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
             this.constantFills = constantFills;
             this.timestampIndex = timestampIndex;
             this.timestampDriver = ColumnType.getTimestampDriver(timestampType);
-            this.fillTimestampFunc = new FillTimestampConstant(timestampType);
+            this.fillTimestampFunc = new FillTimestampHolder(timestampType);
             this.hasPrevFill = hasPrevFill;
             this.keySink = keySink;
             this.keysMap = keysMap;
@@ -443,7 +439,7 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
             // Key columns sit after the fixed-width value header plus any
             // FILL_PREV cache slots; dispatchSlot[col] for KEY_SLOT entries
             // resolves through this offset.
-            final int keyPosOffset = KEY_POS_OFFSET + fixedPrevSrcCols.size();
+            final int keyPosOffset = PREV_CACHE_OFFSET + fixedPrevSrcCols.size();
             outputColToKeyPos.setAll(metadata.getColumnCount(), -1);
             for (int i = 0, n = keyColIndices.size(); i < n; i++) {
                 outputColToKeyPos.setQuick(keyColIndices.getQuick(i), keyPosOffset + i);
@@ -486,7 +482,7 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
                 // Gap buckets exhausted — fall through to main loop.
             }
 
-            while (nextBucketTimestamp < maxTimestamp) {
+            while (currentBucketTimestamp < maxTimestamp) {
                 long dataTs;
                 if (hasPendingRow) {
                     dataTs = pendingTs;
@@ -508,7 +504,7 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
                     return false;
                 }
 
-                if (dataTs == nextBucketTimestamp) {
+                if (dataTs == currentBucketTimestamp) {
                     hasPendingRow = false;
                     currentDispatchCode = dataDispatchCode;
                     if (keysMap != null) {
@@ -521,29 +517,29 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
                         assert value != null : "key discovered in pass 1 must exist in keysMap";
                         // Stamp this key as present in the current bucket. Stale stamps
                         // from prior buckets are auto-invalidated by the advance of
-                        // nextBucketTimestamp, so no per-bucket reset is needed.
-                        value.putLong(LAST_KNOWN_TS_SLOT, nextBucketTimestamp);
+                        // currentBucketTimestamp, so no per-bucket reset is needed.
+                        value.putLong(LAST_KNOWN_TS_SLOT, currentBucketTimestamp);
                         toEmitCnt--;
                         if (hasPrevFill) {
-                            updateKeyPrevRowId(value, baseRecord);
+                            updateKeyPrevState(value, baseRecord);
                         }
                     } else {
                         // Non-keyed: only one row per bucket, advance immediately
                         if (hasPrevFill) {
                             saveSimplePrevRowId(baseRecord);
                         }
-                        nextBucketTimestamp = timestampSampler.nextTimestamp(nextBucketTimestamp);
+                        currentBucketTimestamp = timestampSampler.nextTimestamp(currentBucketTimestamp);
                     }
                     return true;
                 }
 
-                if (dataTs > nextBucketTimestamp) {
+                if (dataTs > currentBucketTimestamp) {
                     // Gap -- emit fill rows before advancing bucket.
                     if (hasDataForCurrentBucket && keysMap != null) {
                         // Dense bucket fast-path: skip the inner key-scan if every key already had data.
                         if (toEmitCnt == 0) {
                             toEmitCnt = keyCount;
-                            nextBucketTimestamp = timestampSampler.nextTimestamp(nextBucketTimestamp);
+                            currentBucketTimestamp = timestampSampler.nextTimestamp(currentBucketTimestamp);
                             hasDataForCurrentBucket = false;
                             continue;
                         }
@@ -568,14 +564,14 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
 
                     // Non-keyed gap
                     currentDispatchCode = fillDispatchCode;
-                    fillTimestampFunc.value = nextBucketTimestamp;
+                    fillTimestampFunc.value = currentBucketTimestamp;
                     hasPrevForCurrentGap = hasSimplePrev;
                     if (hasPrevForCurrentGap && isPrevPositioningNeeded) {
                         // Position prevRecord once; FillRecord getters read from it directly.
                         // Non-keyed FILL_PREV always lands here (no MapValue cache available).
                         baseCursor.recordAt(prevRecord, simplePrevRowId);
                     }
-                    nextBucketTimestamp = timestampSampler.nextTimestamp(nextBucketTimestamp);
+                    currentBucketTimestamp = timestampSampler.nextTimestamp(currentBucketTimestamp);
                     hasDataForCurrentBucket = false;
                     return true;
                 }
@@ -587,7 +583,7 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
                         .put("sample by fill: data row timestamp ")
                         .put(dataTs)
                         .put(" precedes next bucket ")
-                        .put(nextBucketTimestamp);
+                        .put(currentBucketTimestamp);
             }
             return false;
         }
@@ -694,14 +690,14 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
                         circuitBreaker.statefulThrowExceptionIfTrippedNoThrottle();
                     }
                     long lastKnownTs = keysMapRecord.getLong(LAST_KNOWN_TS_SLOT);
-                    if (lastKnownTs != nextBucketTimestamp) {
+                    if (lastKnownTs != currentBucketTimestamp) {
                         currentDispatchCode = fillDispatchCode;
-                        fillTimestampFunc.value = nextBucketTimestamp;
+                        fillTimestampFunc.value = currentBucketTimestamp;
                         // PREV_CACHE_SLOT slots are pre-filled with null sentinels in
                         // initialize(), so HAS_PREV / hasPrevForCurrentGap matter only
                         // for the variable-width PREV_SLOT path.
                         if (isPrevPositioningNeeded) {
-                            // During emit lastKnownTs != nextBucketTimestamp by
+                            // During emit lastKnownTs != currentBucketTimestamp by
                             // construction; non-null stamp <=> a prior data row
                             // exists for this key.
                             boolean hasPrev = lastKnownTs != Numbers.LONG_NULL;
@@ -717,15 +713,15 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
                 // next bucket's timestamp differs from any LAST_KNOWN_TS_SLOT
                 // values still carrying the just-emitted bucket's stamp.
                 toEmitCnt = keyCount;
-                nextBucketTimestamp = timestampSampler.nextTimestamp(nextBucketTimestamp);
+                currentBucketTimestamp = timestampSampler.nextTimestamp(currentBucketTimestamp);
                 hasDataForCurrentBucket = false;
                 isEmittingFills = false;
 
                 // Check if next bucket also needs fills (iterative, no recursion)
-                if (nextBucketTimestamp >= maxTimestamp) {
+                if (currentBucketTimestamp >= maxTimestamp) {
                     return false;
                 }
-                if (hasPendingRow && pendingTs == nextBucketTimestamp) {
+                if (hasPendingRow && pendingTs == currentBucketTimestamp) {
                     return false; // next bucket has data — let hasNext() handle it
                 }
                 if (isBaseCursorExhausted && !hasExplicitTo) {
@@ -734,7 +730,7 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
                 // Reaching here means the next bucket is a confirmed gap:
                 // either a pending row sits at a later timestamp, or the base
                 // is exhausted with an explicit TO still driving fills.
-                assert (hasPendingRow && pendingTs > nextBucketTimestamp) || isBaseCursorExhausted
+                assert (hasPendingRow && pendingTs > currentBucketTimestamp) || isBaseCursorExhausted
                         : "next bucket must be a confirmed gap before re-entering inner emit";
                 isEmittingFills = true;
                 keysMapCursor.toTop();
@@ -776,7 +772,7 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
                         // so PREV_CACHE_SLOT getters can read unconditionally
                         // -- no hasPrev branch needed in the hot path.
                         for (int i = 0; i < prevSlotCount; i++) {
-                            int slot = KEY_POS_OFFSET + i;
+                            int slot = PREV_CACHE_OFFSET + i;
                             switch (fixedPrevTypeTags.getQuick(i)) {
                                 case ColumnType.DOUBLE -> value.putDouble(slot, Double.NaN);
                                 case ColumnType.FLOAT -> value.putFloat(slot, Float.NaN);
@@ -813,7 +809,7 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
                     // Empty GROUP BY output -- no keys to fill, emit zero rows.
                     isBaseCursorExhausted = true;
                     maxTimestamp = Long.MIN_VALUE;
-                    nextBucketTimestamp = Long.MAX_VALUE;
+                    currentBucketTimestamp = Long.MAX_VALUE;
                     return;
                 }
                 toEmitCnt = keyCount;
@@ -834,14 +830,14 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
             if (baseCursor.hasNext()) {
                 prevRecord = baseCursor.getRecordB();
                 long firstTs = baseRecord.getTimestamp(timestampIndex);
-                final boolean nextBucketIsFirstTs = (fromTs == Numbers.LONG_NULL || firstTs < fromTs);
-                nextBucketTimestamp = nextBucketIsFirstTs ? firstTs : fromTs;
+                final boolean currentBucketIsFirstTs = (fromTs == Numbers.LONG_NULL || firstTs < fromTs);
+                currentBucketTimestamp = currentBucketIsFirstTs ? firstTs : fromTs;
                 if (calendarOffset != 0 && fromTs == Numbers.LONG_NULL) {
                     // No FROM but offset exists: align grid to offset so round()
                     // matches timestamp_floor_utc buckets.
                     timestampSampler.setOffset(calendarOffset);
-                    nextBucketTimestamp = timestampSampler.round(nextBucketTimestamp);
-                } else if (calendarOffset != 0 && nextBucketIsFirstTs) {
+                    currentBucketTimestamp = timestampSampler.round(currentBucketTimestamp);
+                } else if (calendarOffset != 0 && currentBucketIsFirstTs) {
                     // firstTs already sits on the floor grid (anchored at
                     // fromTs+calendarOffset). setLocalAnchor forwards untranslated
                     // because fromTs+calendarOffset is local-grid space (matches
@@ -849,13 +845,13 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
                     timestampSampler.setLocalAnchor(fromTs + calendarOffset);
                 } else {
                     // firstTs path (calendarOffset == 0) OR fromTs path (any offset).
-                    // Anchor at effectiveOffset = nextBucketTimestamp + calendarOffset
+                    // Anchor at effectiveOffset = currentBucketTimestamp + calendarOffset
                     // to match timestamp_floor_utc's grid.
                     //
                     // Math.max clamps a positive-offset case where effectiveOffset
                     // > seed: GROUP BY's Micros.floor* clamps up; round() doesn't.
                     //
-                    // setStart vs setLocalAnchor tracks the origin of nextBucketTimestamp:
+                    // setStart vs setLocalAnchor tracks the origin of currentBucketTimestamp:
                     //  - firstTs path: a GROUP BY bucket label on the local grid;
                     //    setStart applies UTC->local conversion. (Here calendarOffset
                     //    is 0, so effectiveOffset == firstTs.)
@@ -864,16 +860,16 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
                     //    lifts back to UTC for the Math.max comparison.
                     //  Using setStart on the fromTs path would shift the grid by
                     //  tzOffset and trip the grid-drift guard on super-day strides.
-                    final long effectiveOffset = nextBucketTimestamp + calendarOffset;
+                    final long effectiveOffset = currentBucketTimestamp + calendarOffset;
                     final long anchorUtc;
-                    if (nextBucketIsFirstTs) {
+                    if (currentBucketIsFirstTs) {
                         timestampSampler.setStart(effectiveOffset);
                         anchorUtc = effectiveOffset;
                     } else {
                         timestampSampler.setLocalAnchor(effectiveOffset);
                         anchorUtc = timestampSampler.localAnchorAsUtc(effectiveOffset);
                     }
-                    nextBucketTimestamp = Math.max(anchorUtc, timestampSampler.round(nextBucketTimestamp));
+                    currentBucketTimestamp = Math.max(anchorUtc, timestampSampler.round(currentBucketTimestamp));
                 }
                 hasPendingRow = true;
                 pendingTs = firstTs;
@@ -889,10 +885,10 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
                     final long effectiveOffset = fromTs + calendarOffset;
                     timestampSampler.setLocalAnchor(effectiveOffset);
                     final long anchorUtc = timestampSampler.localAnchorAsUtc(effectiveOffset);
-                    nextBucketTimestamp = Math.max(anchorUtc, timestampSampler.round(fromTs));
+                    currentBucketTimestamp = Math.max(anchorUtc, timestampSampler.round(fromTs));
                 } else {
                     maxTimestamp = Long.MIN_VALUE;
-                    nextBucketTimestamp = Long.MAX_VALUE;
+                    currentBucketTimestamp = Long.MAX_VALUE;
                 }
                 isBaseCursorExhausted = true;
             }
@@ -1008,7 +1004,7 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
             hasSimplePrev = true;
         }
 
-        private void updateKeyPrevRowId(MapValue value, Record record) {
+        private void updateKeyPrevState(MapValue value, Record record) {
             // The data-row arrival path already wrote LAST_KNOWN_TS_SLOT to the
             // current bucket timestamp; that doubles as the "has prev" marker
             // for subsequent gap buckets, so no separate flag write is needed.
@@ -1016,7 +1012,7 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
             // Copy fixed-size FILL_PREV values into cached MapValue slots --
             // amortises a recordAt+RecordChain per read into N small writes.
             for (int i = 0, n = fixedPrevSrcCols.size(); i < n; i++) {
-                int slot = KEY_POS_OFFSET + i;
+                int slot = PREV_CACHE_OFFSET + i;
                 int srcCol = fixedPrevSrcCols.getQuick(i);
                 int tag = fixedPrevTypeTags.getQuick(i);
                 switch (tag) {
@@ -1642,13 +1638,12 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
             }
         }
 
-        private static class FillTimestampConstant extends TimestampFunction {
-            // value is mutated per gap bucket and read by FillRecord. Not a
-            // ConstantFunction -- the framework never sees this instance, and
-            // the Function defaults (isConstant=false) match actual semantics.
+        private static class FillTimestampHolder extends TimestampFunction {
+            // The framework never sees this instance, so the inherited
+            // Function defaults (isConstant=false) match actual semantics.
             long value;
 
-            FillTimestampConstant(int timestampType) {
+            FillTimestampHolder(int timestampType) {
                 super(timestampType);
             }
 
