@@ -320,12 +320,16 @@ themselves at read time, using the column's physical type and logical type from 
 
 Readers consume inline stats at parquet physical type width:
 
+Inline placement is gated by the QuestDB column type's fixed size (must be `<= 8` bytes), not by the parquet physical
+width directly. A FixedLenByteArray of width `<= 8` whose column type tag has no QuestDB fixed size (or whose fixed size
+exceeds 8) is stored out-of-line, even though the physical bytes would fit in the slot.
+
 | parquet physical type | inline width | placement in u64 slot                                  |
 | --------------------- | ------------ | ------------------------------------------------------ |
 | BOOLEAN               | 1 byte       | low byte holds 0 or 1; remaining 7 bytes are zero      |
 | INT32 / FLOAT         | 4 bytes      | low 4 bytes hold the LE value; high 4 bytes are zero   |
 | INT64 / DOUBLE        | 8 bytes      | the full u64 holds the LE value                        |
-| FIXED_LEN_BYTE_ARRAY  | `fixed_byte_len` bytes when `<= 8` | low `fixed_byte_len` bytes; rest zero       |
+| FIXED_LEN_BYTE_ARRAY  | `fixed_byte_len` bytes when the column type tag's fixed size is `<= 8` | low `fixed_byte_len` bytes; rest zero |
 | BYTE_ARRAY            | up to 8 bytes when inline | low `STAT_SIZES.min/max_size` bytes; rest zero     |
 | INT96                 | always out-of-line (12 bytes)        | u64 slot holds the OOL reference            |
 
