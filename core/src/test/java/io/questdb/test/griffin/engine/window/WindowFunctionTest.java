@@ -15807,13 +15807,13 @@ public class WindowFunctionTest extends AbstractCairoTest {
             executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, i long, val long) timestamp(ts)", timestampType.getTypeName());
             execute(timestampType == TestTimestampType.MICRO
                     ? "insert into tab values " +
-                    "(1_000_000, 1, 10), (1_000_001, 2, 11), " +
-                    "(2_000_000, 1, 20), (2_000_001, 2, 22), " +
-                    "(5_000_000, 1, 50), (5_000_001, 2, 55)"
+                      "(1_000_000, 1, 10), (1_000_001, 2, 11), " +
+                      "(2_000_000, 1, 20), (2_000_001, 2, 22), " +
+                      "(5_000_000, 1, 50), (5_000_001, 2, 55)"
                     : "insert into tab values " +
-                    "(1_000_000_000, 1, 10), (1_000_000_001, 2, 11), " +
-                    "(2_000_000_000, 1, 20), (2_000_000_001, 2, 22), " +
-                    "(5_000_000_000, 1, 50), (5_000_000_001, 2, 55)");
+                      "(1_000_000_000, 1, 10), (1_000_000_001, 2, 11), " +
+                      "(2_000_000_000, 1, 20), (2_000_000_001, 2, 22), " +
+                      "(5_000_000_000, 1, 50), (5_000_000_001, 2, 55)");
 
             // nth_value(val, 2) over (partition by i order by ts range between 2 seconds preceding and current row)
             // Per partition:
@@ -16533,13 +16533,13 @@ public class WindowFunctionTest extends AbstractCairoTest {
             executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, i long, val timestamp) timestamp(ts)", timestampType.getTypeName());
             execute(timestampType == TestTimestampType.MICRO
                     ? "insert into tab values " +
-                    "(1_000_000, 1, 10), (1_000_001, 2, 11), " +
-                    "(2_000_000, 1, 20), (2_000_001, 2, 22), " +
-                    "(5_000_000, 1, 50), (5_000_001, 2, 55)"
+                      "(1_000_000, 1, 10), (1_000_001, 2, 11), " +
+                      "(2_000_000, 1, 20), (2_000_001, 2, 22), " +
+                      "(5_000_000, 1, 50), (5_000_001, 2, 55)"
                     : "insert into tab values " +
-                    "(1_000_000_000, 1, 10), (1_000_000_001, 2, 11), " +
-                    "(2_000_000_000, 1, 20), (2_000_000_001, 2, 22), " +
-                    "(5_000_000_000, 1, 50), (5_000_000_001, 2, 55)");
+                      "(1_000_000_000, 1, 10), (1_000_000_001, 2, 11), " +
+                      "(2_000_000_000, 1, 20), (2_000_000_001, 2, 22), " +
+                      "(5_000_000_000, 1, 50), (5_000_000_001, 2, 55)");
 
             assertQueryNoLeakCheck(
                     timestampType == TestTimestampType.MICRO
