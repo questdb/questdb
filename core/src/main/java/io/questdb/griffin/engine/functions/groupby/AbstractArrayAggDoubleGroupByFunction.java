@@ -267,6 +267,20 @@ public abstract class AbstractArrayAggDoubleGroupByFunction extends ArrayFunctio
         }
         checkCapacityLimit(mergedCount);
         long mergedPtr = allocator.malloc(HEADER_SIZE + (long) mergedCount * ENTRY_SIZE);
+        // Append-only fast path: when worker N's last rowId is <= worker N+1's first
+        // rowId (the common parallel-scan case), the entire dest run precedes the
+        // entire src run. Two memcpys avoid the scalar two-pointer loop. Equality is
+        // safe because the loop's tie-break is dest-first.
+        long destLastRowId = Unsafe.getUnsafe().getLong(destPtr + HEADER_SIZE + (long) (destCount - 1) * ENTRY_SIZE);
+        long srcFirstRowId = Unsafe.getUnsafe().getLong(srcPtr + HEADER_SIZE);
+        if (destLastRowId <= srcFirstRowId) {
+            Vect.memcpy(mergedPtr + HEADER_SIZE, destPtr + HEADER_SIZE, (long) destCount * ENTRY_SIZE);
+            Vect.memcpy(mergedPtr + HEADER_SIZE + (long) destCount * ENTRY_SIZE, srcPtr + HEADER_SIZE, (long) srcCount * ENTRY_SIZE);
+            Unsafe.getUnsafe().putInt(mergedPtr, mergedCount);
+            Unsafe.getUnsafe().putInt(mergedPtr + CAPACITY_OFFSET, mergedCount);
+            destValue.putLong(valueIndex, mergedPtr);
+            return;
+        }
         // Two-pointer merge-sort by rowId: both runs are sorted within their respective
         // workers because page frames arrive in rowId order per worker. For the array
         // variant, elements from the same row share the same rowId; dest-first
