@@ -23,6 +23,8 @@ import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.RowCursor;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryMA;
+import io.questdb.cairo.wal.ApplyWal2TableJob;
+import io.questdb.cairo.wal.CheckWalTransactionsJob;
 import io.questdb.griffin.SqlCompilerImpl;
 import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.log.LogFactory;
@@ -1314,5 +1316,96 @@ public class PostingIndexBenchmarkSuite {
             Misc.free(engine);
             deleteDirRecursive(tmpDir.toFile());
         }
+    }
+
+    /**
+     * S9: per-fast-lag-commit cost on a WAL-enabled covering POSTING table.
+     * <p>
+     * Each invocation inserts {@code BATCH_ROWS} rows at a fresh sub-second
+     * offset within the same DAY partition, then drains the WAL queue. Each
+     * drain runs {@code TableWriter.applyLagToLastPartition} which calls
+     * {@code sealPostingIndexesForLastPartitionFastLag}. Comparing
+     * {@code posting_covering} against {@code posting} isolates the cost of
+     * the covering machinery (configureCovering + per-column mapRO +
+     * sidecar rebuild + munmap) over the chain seal alone. {@code bitmap}
+     * and {@code no_index} bracket the legacy and unindexed baselines.
+     */
+    @State(Scope.Benchmark)
+    @BenchmarkMode(Mode.AverageTime)
+    @OutputTimeUnit(TimeUnit.MILLISECONDS)
+    public static class WalFastLagState {
+        static final int BATCH_ROWS = 1_000;
+        ApplyWal2TableJob applyJob;
+        int batchCounter;
+        CheckWalTransactionsJob checkJob;
+        SqlCompilerImpl compiler;
+        SqlExecutionContextImpl ctx;
+        CairoEngine engine;
+        @Param({"no_index", "bitmap", "posting", "posting_covering", "posting_covering_2cols"})
+        String indexType;
+        java.nio.file.Path tmpDir;
+
+        @Setup(Level.Trial)
+        public void setup() throws Exception {
+            tmpDir = Files.createTempDirectory("suite-walfastlag");
+            CairoConfiguration config = new DefaultCairoConfiguration(tmpDir.toString()) {
+                @Override
+                public byte getPostingIndexRowIdEncoding() {
+                    return IS_DELTA ? PostingIndexUtils.ENCODING_DELTA : PostingIndexUtils.ENCODING_ADAPTIVE;
+                }
+
+                @Override
+                public int getRndFunctionMemoryMaxPages() {
+                    return 4096;
+                }
+            };
+            engine = new CairoEngine(config);
+            ctx = new SqlExecutionContextImpl(engine, 1)
+                    .with(config.getFactoryProvider().getSecurityContextFactory().getRootContext(),
+                            null, null, -1, null);
+            compiler = new SqlCompilerImpl(engine);
+
+            String ddl = switch (indexType) {
+                case "no_index" -> "CREATE TABLE walbench (ts TIMESTAMP, sym SYMBOL, price DOUBLE, name VARCHAR) " +
+                        "TIMESTAMP(ts) PARTITION BY DAY WAL";
+                case "bitmap" -> "CREATE TABLE walbench (ts TIMESTAMP, sym SYMBOL INDEX, price DOUBLE, name VARCHAR) " +
+                        "TIMESTAMP(ts) PARTITION BY DAY WAL";
+                case "posting" -> "CREATE TABLE walbench (ts TIMESTAMP, sym SYMBOL INDEX TYPE " + POSTING_SQL +
+                        ", price DOUBLE, name VARCHAR) TIMESTAMP(ts) PARTITION BY DAY WAL";
+                case "posting_covering" -> "CREATE TABLE walbench (ts TIMESTAMP, sym SYMBOL INDEX TYPE " + POSTING_SQL +
+                        " INCLUDE (price), price DOUBLE, name VARCHAR) TIMESTAMP(ts) PARTITION BY DAY WAL";
+                case "posting_covering_2cols" -> "CREATE TABLE walbench (ts TIMESTAMP, sym SYMBOL INDEX TYPE " + POSTING_SQL +
+                        " INCLUDE (price, name), price DOUBLE, name VARCHAR) TIMESTAMP(ts) PARTITION BY DAY WAL";
+                default -> throw new IllegalArgumentException(indexType);
+            };
+            engine.execute(ddl, ctx);
+            applyJob = new ApplyWal2TableJob(engine, 0);
+            checkJob = new CheckWalTransactionsJob(engine);
+            batchCounter = 0;
+        }
+
+        @TearDown(Level.Trial)
+        public void tearDown() {
+            Misc.free(applyJob);
+            Misc.free(compiler);
+            Misc.free(engine);
+            deleteDirRecursive(tmpDir.toFile());
+        }
+    }
+
+    @Benchmark
+    public void walFastLagInsert(WalFastLagState s) throws Exception {
+        // Each batch advances 100s in fake time within the same DAY partition
+        // — strictly monotone, never triggers O3, so applyLagToLastPartition
+        // takes the fast-lag branch and fires sealPostingIndexesForLastPartitionFastLag.
+        int batchOffsetSeconds = s.batchCounter++ * 100;
+        String sql = "INSERT INTO walbench(ts, sym, price, name) " +
+                "SELECT dateadd('u', x::INT, dateadd('s', " + batchOffsetSeconds + ", '2024-01-01T00:00:00.000000Z'::TIMESTAMP)), " +
+                "rnd_symbol(50, 4, 8, 0), rnd_double() * 1000, rnd_varchar(10, 20, 0) " +
+                "FROM long_sequence(" + WalFastLagState.BATCH_ROWS + ")";
+        s.engine.execute(sql, s.ctx);
+        s.applyJob.drain(0);
+        s.checkJob.run(0);
+        s.applyJob.drain(0);
     }
 }
