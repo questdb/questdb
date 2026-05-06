@@ -1674,6 +1674,59 @@ public class ParquetRowGroupPruningTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testMinMaxPruningByteNegative() throws Exception {
+        // BYTE is INT32-backed in parquet. Inline stats round-trip through a
+        // u64 slot at INT32 physical width, so a negative min value must read
+        // back as the correct i32 in the skip path. Without that, predicates
+        // like val = 0 against a row group whose true min is negative drop
+        // every row.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (val BYTE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO x VALUES
+                    (-100, '2024-01-01T00:00:00.000000Z'),
+                    (-50, '2024-01-01T01:00:00.000000Z'),
+                    (-1, '2024-01-01T02:00:00.000000Z'),
+                    (0, '2024-01-01T03:00:00.000000Z'),
+                    (10, '2024-01-01T04:00:00.000000Z'),
+                    (50, '2024-01-02T03:00:00.000000Z')
+                    """);
+            execute("ALTER TABLE x CONVERT PARTITION TO PARQUET WHERE ts >= 0");
+
+            // val = 0 hits the row group whose true min is -100; before the
+            // round-trip fix the inline min read back as 156, dropping the
+            // row group. Must not skip.
+            ParquetRowGroupFilter.resetRowGroupsSkipped();
+            assertQueryNoLeakCheck(
+                    """
+                            val
+                            0
+                            """,
+                    "SELECT val FROM x WHERE val = 0",
+                    null, true, false
+            );
+
+            // val = -42 falls inside [-100, 10] but not in the data: must not
+            // be skipped, must return empty.
+            ParquetRowGroupFilter.resetRowGroupsSkipped();
+            assertQueryNoLeakCheck(
+                    "val\n",
+                    "SELECT val FROM x WHERE val = -42",
+                    null, true, false
+            );
+
+            // val = -127 is outside both row groups; should skip.
+            ParquetRowGroupFilter.resetRowGroupsSkipped();
+            assertQueryNoLeakCheck(
+                    "val\n",
+                    "SELECT val FROM x WHERE val = -127",
+                    null, true, false
+            );
+            Assert.assertTrue(ParquetRowGroupFilter.getRowGroupsSkipped() > 0);
+        });
+    }
+
+    @Test
     public void testMinMaxPruningChar() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE x (val CHAR, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
@@ -2224,6 +2277,61 @@ public class ParquetRowGroupPruningTest extends AbstractCairoTest {
             assertQueryNoLeakCheck(
                     "val\n",
                     "SELECT val FROM x WHERE val = 999",
+                    null, true, false
+            );
+            Assert.assertTrue(ParquetRowGroupFilter.getRowGroupsSkipped() > 0);
+        });
+    }
+
+    @Test
+    public void testMinMaxPruningShortNegative() throws Exception {
+        // SHORT is INT32-backed in parquet. The skip path reads inline stats
+        // at INT32 physical width, so a negative min must round-trip through
+        // the u64 slot as the correct i32. Surfaced by the query fuzzer:
+        // a SHORT column with min -74 was previously read back as 65462,
+        // dropping every row group whose true min was negative.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (val SHORT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO x VALUES
+                    (-30000, '2024-01-01T00:00:00.000000Z'),
+                    (-200, '2024-01-01T01:00:00.000000Z'),
+                    (-74, '2024-01-01T02:00:00.000000Z'),
+                    (0, '2024-01-01T03:00:00.000000Z'),
+                    (300, '2024-01-01T04:00:00.000000Z'),
+                    (29_000, '2024-01-02T04:00:00.000000Z')
+                    """);
+            execute("ALTER TABLE x CONVERT PARTITION TO PARQUET WHERE ts >= 0");
+
+            // val = 0 must not skip the row group whose min is -30000.
+            // Before the round-trip fix the inline min read back as 35536,
+            // which is greater than 0, dropping every match.
+            ParquetRowGroupFilter.resetRowGroupsSkipped();
+            assertQueryNoLeakCheck(
+                    """
+                            val
+                            0
+                            """,
+                    "SELECT val FROM x WHERE val = 0",
+                    null, true, false
+            );
+
+            // val = -74 is the literal value from the fuzzer reproduction.
+            ParquetRowGroupFilter.resetRowGroupsSkipped();
+            assertQueryNoLeakCheck(
+                    """
+                            val
+                            -74
+                            """,
+                    "SELECT val FROM x WHERE val = -74",
+                    null, true, false
+            );
+
+            // val = -32000 sits below the row group min (-30000); should skip.
+            ParquetRowGroupFilter.resetRowGroupsSkipped();
+            assertQueryNoLeakCheck(
+                    "val\n",
+                    "SELECT val FROM x WHERE val = -32000",
                     null, true, false
             );
             Assert.assertTrue(ParquetRowGroupFilter.getRowGroupsSkipped() > 0);
@@ -3241,6 +3349,62 @@ public class ParquetRowGroupPruningTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testRangeFilterByteNegative() throws Exception {
+        // Range pruning over a BYTE column whose data spans negative and
+        // positive values. Without correct sign-extension on the inline u64
+        // stat slot, a row group with min = -50 reads back as 206 in the
+        // skip path, and `val <= 0` skips every row group.
+        setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_ROW_GROUP_SIZE, 50);
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (val BYTE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            // x = 1..100, val = -50..49 (50 negative + 50 non-negative).
+            execute("""
+                    INSERT INTO x
+                    SELECT CAST(x - 51 AS BYTE), timestamp_sequence('2024-01-01', 1200_000_000)
+                    FROM long_sequence(100)
+                    """);
+            execute("ALTER TABLE x CONVERT PARTITION TO PARQUET WHERE ts >= 0");
+
+            ParquetRowGroupFilter.resetRowGroupsSkipped();
+            assertQueryNoLeakCheck(
+                    "cnt\n51\n",
+                    "SELECT count() AS cnt FROM x WHERE val <= 0",
+                    null, false, true
+            );
+
+            ParquetRowGroupFilter.resetRowGroupsSkipped();
+            assertQueryNoLeakCheck(
+                    "cnt\n60\n",
+                    "SELECT count() AS cnt FROM x WHERE val >= -10",
+                    null, false, true
+            );
+
+            ParquetRowGroupFilter.resetRowGroupsSkipped();
+            assertQueryNoLeakCheck(
+                    "cnt\n21\n",
+                    "SELECT count() AS cnt FROM x WHERE val >= -10 AND val <= 10",
+                    null, false, true
+            );
+
+            ParquetRowGroupFilter.resetRowGroupsSkipped();
+            assertQueryNoLeakCheck(
+                    "val\n",
+                    "SELECT val FROM x WHERE val < -50",
+                    null, true, false
+            );
+            Assert.assertTrue(ParquetRowGroupFilter.getRowGroupsSkipped() > 0);
+
+            ParquetRowGroupFilter.resetRowGroupsSkipped();
+            assertQueryNoLeakCheck(
+                    "val\n",
+                    "SELECT val FROM x WHERE val > 100",
+                    null, true, false
+            );
+            Assert.assertTrue(ParquetRowGroupFilter.getRowGroupsSkipped() > 0);
+        });
+    }
+
+    @Test
     public void testRangeFilterChar() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE x (val CHAR, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
@@ -3749,6 +3913,71 @@ public class ParquetRowGroupPruningTest extends AbstractCairoTest {
                     "SELECT count() AS cnt FROM x WHERE val > 100",
                     null, false, true
             );
+        });
+    }
+
+    @Test
+    public void testRangeFilterShortNegative() throws Exception {
+        // Direct reproduction of the fuzzer-surfaced bug. SHORT data spans
+        // negative and positive values across multiple row groups. Without
+        // a parquet-physical-width round trip on the inline u64 stat slot,
+        // a row group with min = -100 reads back as 65436 in the skip
+        // path, and predicates like `val <= 0` skip every row group whose
+        // true min was negative.
+        setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_ROW_GROUP_SIZE, 100);
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (val SHORT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            // x = 1..300, val = -100..199 (100 negative + 200 non-negative).
+            execute("""
+                    INSERT INTO x
+                    SELECT CAST(x - 101 AS SHORT), timestamp_sequence('2024-01-01', 600_000_000)
+                    FROM long_sequence(300)
+                    """);
+            execute("ALTER TABLE x CONVERT PARTITION TO PARQUET WHERE ts >= 0");
+
+            ParquetRowGroupFilter.resetRowGroupsSkipped();
+            assertQueryNoLeakCheck(
+                    "cnt\n101\n",
+                    "SELECT count() AS cnt FROM x WHERE val <= 0",
+                    null, false, true
+            );
+
+            ParquetRowGroupFilter.resetRowGroupsSkipped();
+            assertQueryNoLeakCheck(
+                    "cnt\n149\n",
+                    "SELECT count() AS cnt FROM x WHERE val > 50",
+                    null, false, true
+            );
+
+            ParquetRowGroupFilter.resetRowGroupsSkipped();
+            assertQueryNoLeakCheck(
+                    "cnt\n50\n",
+                    "SELECT count() AS cnt FROM x WHERE val < -50",
+                    null, false, true
+            );
+
+            ParquetRowGroupFilter.resetRowGroupsSkipped();
+            assertQueryNoLeakCheck(
+                    "cnt\n21\n",
+                    "SELECT count() AS cnt FROM x WHERE val >= -10 AND val <= 10",
+                    null, false, true
+            );
+
+            ParquetRowGroupFilter.resetRowGroupsSkipped();
+            assertQueryNoLeakCheck(
+                    "val\n",
+                    "SELECT val FROM x WHERE val < -100",
+                    null, true, false
+            );
+            Assert.assertTrue(ParquetRowGroupFilter.getRowGroupsSkipped() > 0);
+
+            ParquetRowGroupFilter.resetRowGroupsSkipped();
+            assertQueryNoLeakCheck(
+                    "val\n",
+                    "SELECT val FROM x WHERE val > 199",
+                    null, true, false
+            );
+            Assert.assertTrue(ParquetRowGroupFilter.getRowGroupsSkipped() > 0);
         });
     }
 
