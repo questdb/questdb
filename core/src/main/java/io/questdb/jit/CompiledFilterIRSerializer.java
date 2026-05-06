@@ -192,13 +192,13 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
                 long longVal = tryFoldConstantArith(node);
                 if ((int) longVal != longVal) {
                     // Skipping the OPERATION children means visit() never sees
-                    // their arithmetic tokens, so hasArithmeticOperations would
-                    // stay false and the predicate would compile in SIMD mode -
-                    // wrong for a narrow column read against a folded I8
-                    // immediate, which needs scalar lane width promotion. Mark
-                    // the fold root as arithmetic so the existing scalar-mode
-                    // forcer in serialize() kicks in.
-                    predicateContext.markArithmetic();
+                    // their arithmetic tokens or operand types, so the
+                    // existing scalar-mode forcer in serialize() and
+                    // getExecHint()'s mixed-size detection would both
+                    // miscompute. markFoldedI8Imm() flags the fold root as
+                    // arithmetic and observes the emitted I8 so neither
+                    // misses the I8 IMM.
+                    predicateContext.markFoldedI8Imm();
                     putOperand(IMM, I8_TYPE, longVal);
                     return false;
                 }
@@ -2132,15 +2132,24 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
         }
 
         /**
-         * Records that the predicate contained an arithmetic operation that
-         * was folded out before visit() got a chance to see it. The fold root
-         * may be a unary minus, which {@link #isArithmeticOperation} would
-         * skip because it gates on paramCount &gt;= 2; setting the flag
-         * unconditionally is correct here because descend only reaches this
-         * call after evaluating an integer arithmetic subtree.
+         * Records the side effects of emitting a single I8 IMM in place of a
+         * folded integer-arithmetic subtree. Sets hasArithmeticOperations
+         * unconditionally because the fold root may be a unary minus, which
+         * {@link #isArithmeticOperation} would skip due to its paramCount
+         * &gt;= 2 gate -- descend only reaches this call after evaluating an
+         * integer arithmetic subtree, so the flag is always correct here.
+         * Observes I8 in both type observers so getExecHint() sees the
+         * predicate's true operand-size diversity. Without the observation,
+         * a predicate like c5 (FLOAT) &lt; a_long_const_overflow - (708206 -
+         * c5) looks single-size (only F4 from the column) and the backend
+         * picks the AVX2 path, which has no convert from a 4-element i64
+         * vector to an 8-element f32 vector and produces wrong results for
+         * NULL c5.
          */
-        void markArithmetic() {
+        void markFoldedI8Imm() {
             hasArithmeticOperations = true;
+            localTypesObserver.observe(I8_TYPE);
+            globalTypesObserver.observe(I8_TYPE);
         }
     }
 

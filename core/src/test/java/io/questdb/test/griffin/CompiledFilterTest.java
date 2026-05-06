@@ -491,6 +491,51 @@ public class CompiledFilterTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testFloatColumnAgainstFoldedI8ConstantPicksScalarPath() throws Exception {
+        assertMemoryLeak(() -> {
+            // The descend()-time fold of 258558L * -259815L emits a single I8
+            // IMM directly without observing the I8 type, so the predicate's
+            // global TypesObserver only saw F4 (from c5). hasMixedSizes()
+            // returned false, exec_hint went to SINGLE_SIZE_TYPE, and the
+            // backend picked the AVX2 path. AVX2 has no convert from a
+            // 4-element i64 vector to an 8-element f32 vector, and the I8 -
+            // F4 sub fell through convert() unchanged into vpsubq, garbage
+            // for non-NULL c5 and a false comparison for NULL c5 -- which
+            // dropped the NULL rows that the Java filter included via
+            // NaN < x = false / NOT(false) = true. The fold path now
+            // observes I8 in both observers so getExecHint() reports mixed
+            // sizes and the scalar path is used instead.
+            execute("CREATE TABLE x (c5 FLOAT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            // Eight rows so the AVX2 step (256 / (4 * 8) = 8) covers the
+            // whole frame in a single vector iteration without falling back
+            // to the scalar tail. Row 4 is NULL; the predicate is true for
+            // all rows because the folded LHS is around -6.7e10 and c5 is
+            // either a small float or NaN (NaN < x is false, NOT false is
+            // true).
+            execute("INSERT INTO x VALUES " +
+                    "(0.50::FLOAT, '2024-01-01T00:00:00.000000Z')," +
+                    " (0.51::FLOAT, '2024-01-01T00:00:01.000000Z')," +
+                    " (0.52::FLOAT, '2024-01-01T00:00:02.000000Z')," +
+                    " (0.53::FLOAT, '2024-01-01T00:00:03.000000Z')," +
+                    " (NULL,         '2024-01-01T00:00:04.000000Z')," +
+                    " (0.55::FLOAT, '2024-01-01T00:00:05.000000Z')," +
+                    " (0.56::FLOAT, '2024-01-01T00:00:06.000000Z')," +
+                    " (0.57::FLOAT, '2024-01-01T00:00:07.000000Z')");
+
+            String sql = "SELECT count(*) FROM x WHERE NOT (c5 < ((258558L * -259815L) - (708206 - c5)))";
+
+            sqlExecutionContext.setJitMode(SqlJitMode.JIT_MODE_DISABLED);
+            assertSql("count\n8\n", sql);
+            sqlExecutionContext.setJitMode(SqlJitMode.JIT_MODE_ENABLED);
+            assertSql("count\n8\n", sql);
+
+            try (RecordCursorFactory factory = select(sql)) {
+                Assert.assertTrue("predicate must still JIT", factory.usesCompiledFilter());
+            }
+        });
+    }
+
+    @Test
     public void testIntColumnArithmeticStaysAtIntWidthWhenFloatSuppressesWidening() throws Exception {
         assertMemoryLeak(() -> {
             // Inverse of testIntColumnArithmeticWidenedToLongInLongContext:
