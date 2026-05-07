@@ -50,15 +50,20 @@ import org.jetbrains.annotations.Nullable;
  * never rewritten in V1 (ALTER LIVE VIEW is deferred). New schema bumps land as
  * new block types; old readers ignore unknown blocks.
  * <p>
- * Phase 1 holds the CORE_DEFINITION block only. ANCHOR / NAMED_WINDOWS land in a
- * later block once Phase 1 ANCHOR work begins.
+ * Block types:
+ * <ul>
+ *     <li>{@code 0} — CORE_DEFINITION (V1, required).</li>
+ *     <li>{@code 1} — ANCHOR_SPEC (V1, optional). Captures the single anchored
+ *     named WINDOW the LV's SELECT defined, so the live-view runtime can compile
+ *     the anchor expression at startup without re-parsing the SELECT.</li>
+ * </ul>
  */
 public class LiveViewDefinition {
     public static final String LIVE_VIEW_DEFINITION_FILE_NAME = "_lv";
-    // Block types ordered by lvSchemaVersion.
-    // 0 = CORE_DEFINITION (V1).
+    public static final int LIVE_VIEW_DEFINITION_ANCHOR_MSG_TYPE = 1;
     public static final int LIVE_VIEW_DEFINITION_CORE_MSG_TYPE = 0;
 
+    private final @Nullable LvAnchorSpec anchorSpec;
     private final String baseTableName;
     private final TableToken baseTableToken;
     private final int baseTimestampType;
@@ -88,6 +93,7 @@ public class LiveViewDefinition {
             int partitionBy,
             long viewLowerBoundTimestamp,
             boolean backfillRequested,
+            @Nullable LvAnchorSpec anchorSpec,
             GenericRecordMetadata metadata
     ) {
         this.viewName = viewName;
@@ -102,6 +108,7 @@ public class LiveViewDefinition {
         this.partitionBy = partitionBy;
         this.viewLowerBoundTimestamp = viewLowerBoundTimestamp;
         this.backfillRequested = backfillRequested;
+        this.anchorSpec = anchorSpec;
         this.metadata = metadata;
     }
 
@@ -118,6 +125,22 @@ public class LiveViewDefinition {
         block.putLong(definition.viewLowerBoundTimestamp);
         block.putBool(definition.backfillRequested);
         block.commit(LIVE_VIEW_DEFINITION_CORE_MSG_TYPE);
+
+        if (definition.anchorSpec != null) {
+            final AppendableBlock anchor = writer.append();
+            LvAnchorSpec spec = definition.anchorSpec;
+            anchor.putStr(spec.windowName);
+            anchor.putByte(spec.anchorKind);
+            anchor.putStr(spec.anchorExpressionSql);
+            anchor.putLong(spec.anchorDailyTimeUs);
+            anchor.putStr(spec.anchorDailyTimeZone);
+            anchor.putInt(spec.partitionColumnNames.size());
+            for (int i = 0, n = spec.partitionColumnNames.size(); i < n; i++) {
+                anchor.putStr(spec.partitionColumnNames.get(i));
+            }
+            anchor.commit(LIVE_VIEW_DEFINITION_ANCHOR_MSG_TYPE);
+        }
+
         writer.commit();
     }
 
@@ -215,55 +238,103 @@ public class LiveViewDefinition {
     ) {
         path.trimTo(rootLen).concat(liveViewToken.getDirName()).concat(LIVE_VIEW_DEFINITION_FILE_NAME);
         reader.of(path.$());
+
+        boolean coreFound = false;
+        String viewSql = null;
+        String baseTableName = null;
+        int baseTimestampType = 0;
+        long flushEveryInterval = 0;
+        char flushEveryIntervalUnit = 0;
+        long inMemoryInterval = 0;
+        char inMemoryIntervalUnit = 0;
+        int partitionBy = 0;
+        long viewLowerBoundTimestamp = 0;
+        boolean backfillRequested = false;
+        LvAnchorSpec anchorSpec = null;
+
         final BlockFileReader.BlockCursor cursor = reader.getCursor();
         while (cursor.hasNext()) {
             final ReadableBlock block = cursor.next();
             if (block.type() == LIVE_VIEW_DEFINITION_CORE_MSG_TYPE) {
+                coreFound = true;
                 long offset = 0;
-
                 CharSequence viewSqlCs = block.getStr(offset);
                 offset += Vm.getStorageLength(viewSqlCs);
-                String viewSql = Chars.toString(viewSqlCs);
+                viewSql = Chars.toString(viewSqlCs);
 
                 CharSequence baseTableNameCs = block.getStr(offset);
                 offset += Vm.getStorageLength(baseTableNameCs);
-                String baseTableName = Chars.toString(baseTableNameCs);
+                baseTableName = Chars.toString(baseTableNameCs);
 
-                int baseTimestampType = block.getInt(offset);
+                baseTimestampType = block.getInt(offset);
                 offset += Integer.BYTES;
-                long flushEveryInterval = block.getLong(offset);
+                flushEveryInterval = block.getLong(offset);
                 offset += Long.BYTES;
-                char flushEveryIntervalUnit = block.getChar(offset);
+                flushEveryIntervalUnit = block.getChar(offset);
                 offset += Character.BYTES;
-                long inMemoryInterval = block.getLong(offset);
+                inMemoryInterval = block.getLong(offset);
                 offset += Long.BYTES;
-                char inMemoryIntervalUnit = block.getChar(offset);
+                inMemoryIntervalUnit = block.getChar(offset);
                 offset += Character.BYTES;
-                int partitionBy = block.getInt(offset);
+                partitionBy = block.getInt(offset);
                 offset += Integer.BYTES;
-                long viewLowerBoundTimestamp = block.getLong(offset);
+                viewLowerBoundTimestamp = block.getLong(offset);
                 offset += Long.BYTES;
-                boolean backfillRequested = block.getBool(offset);
-
-                return new LiveViewDefinition(
-                        liveViewToken.getTableName(),
-                        viewSql,
-                        baseTableName,
-                        baseTableToken,
-                        baseTimestampType,
-                        flushEveryInterval,
-                        flushEveryIntervalUnit,
-                        inMemoryInterval,
-                        inMemoryIntervalUnit,
-                        partitionBy,
-                        viewLowerBoundTimestamp,
-                        backfillRequested,
-                        metadata
+                backfillRequested = block.getBool(offset);
+            } else if (block.type() == LIVE_VIEW_DEFINITION_ANCHOR_MSG_TYPE) {
+                long offset = 0;
+                CharSequence windowNameCs = block.getStr(offset);
+                offset += Vm.getStorageLength(windowNameCs);
+                byte anchorKind = block.getByte(offset);
+                offset += Byte.BYTES;
+                CharSequence exprSqlCs = block.getStr(offset);
+                offset += Vm.getStorageLength(exprSqlCs);
+                long anchorDailyTimeUs = block.getLong(offset);
+                offset += Long.BYTES;
+                CharSequence dailyTzCs = block.getStr(offset);
+                offset += Vm.getStorageLength(dailyTzCs);
+                int partitionColumnCount = block.getInt(offset);
+                offset += Integer.BYTES;
+                io.questdb.std.ObjList<String> partitionColumnNames = new io.questdb.std.ObjList<>(partitionColumnCount);
+                for (int i = 0; i < partitionColumnCount; i++) {
+                    CharSequence colNameCs = block.getStr(offset);
+                    offset += Vm.getStorageLength(colNameCs);
+                    partitionColumnNames.add(Chars.toString(colNameCs));
+                }
+                anchorSpec = new LvAnchorSpec(
+                        Chars.toString(windowNameCs),
+                        anchorKind,
+                        Chars.toString(exprSqlCs),
+                        anchorDailyTimeUs,
+                        dailyTzCs == null ? null : Chars.toString(dailyTzCs),
+                        partitionColumnNames
                 );
             }
         }
-        throw CairoException.critical(0)
-                .put("cannot read live view definition, block not found [path=").put(path).put(']');
+        if (!coreFound) {
+            throw CairoException.critical(0)
+                    .put("cannot read live view definition, block not found [path=").put(path).put(']');
+        }
+        return new LiveViewDefinition(
+                liveViewToken.getTableName(),
+                viewSql,
+                baseTableName,
+                baseTableToken,
+                baseTimestampType,
+                flushEveryInterval,
+                flushEveryIntervalUnit,
+                inMemoryInterval,
+                inMemoryIntervalUnit,
+                partitionBy,
+                viewLowerBoundTimestamp,
+                backfillRequested,
+                anchorSpec,
+                metadata
+        );
+    }
+
+    public @Nullable LvAnchorSpec getAnchorSpec() {
+        return anchorSpec;
     }
 
     public String getBaseTableName() {
@@ -354,5 +425,44 @@ public class LiveViewDefinition {
                     .put("base table designated timestamp must be a TIMESTAMP column");
         }
         return timestampType;
+    }
+
+    /**
+     * Persisted shape of a single anchored named WINDOW. V1 captures at most one
+     * per LV (multi-anchored-window LVs are rejected at CREATE). The runtime side
+     * — {@link LiveViewWindow} — uses this to compile the anchor expression and
+     * build the partition machinery without re-parsing the SELECT.
+     * <p>
+     * Encoding maps to the {@link LiveViewDefinition#LIVE_VIEW_DEFINITION_ANCHOR_MSG_TYPE}
+     * block: {@code windowName}, {@code anchorKind} (matches
+     * {@link io.questdb.griffin.model.WindowExpression#ANCHOR_KIND_EXPRESSION} /
+     * {@code ANCHOR_KIND_DAILY}), {@code anchorExpressionSql} (the post-DAILY-desugar
+     * expression text), {@code anchorDailyTimeUs} / {@code anchorDailyTimeZone}
+     * (raw DAILY clause for round-tripping in SHOW CREATE), and
+     * {@code partitionColumnNames}.
+     */
+    public static final class LvAnchorSpec {
+        public final long anchorDailyTimeUs;
+        public final @Nullable String anchorDailyTimeZone;
+        public final String anchorExpressionSql;
+        public final byte anchorKind;
+        public final io.questdb.std.ObjList<String> partitionColumnNames;
+        public final String windowName;
+
+        public LvAnchorSpec(
+                String windowName,
+                byte anchorKind,
+                String anchorExpressionSql,
+                long anchorDailyTimeUs,
+                @Nullable String anchorDailyTimeZone,
+                io.questdb.std.ObjList<String> partitionColumnNames
+        ) {
+            this.windowName = windowName;
+            this.anchorKind = anchorKind;
+            this.anchorExpressionSql = anchorExpressionSql;
+            this.anchorDailyTimeUs = anchorDailyTimeUs;
+            this.anchorDailyTimeZone = anchorDailyTimeZone;
+            this.partitionColumnNames = partitionColumnNames;
+        }
     }
 }
