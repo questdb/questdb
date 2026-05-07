@@ -2339,7 +2339,12 @@ public class CairoEngine implements Closeable, WriterSource {
         while (root instanceof QueryProgress) {
             root = root.getBaseFactory();
         }
-        if (root instanceof CachedWindowRecordCursorFactory) {
+        if (root instanceof CachedWindowRecordCursorFactory cwf) {
+            // The planner picks the cached factory whenever any window function needs
+            // multi-pass evaluation (e.g. lead, percentile, etc.). Surface the lead()
+            // case with the RFC's specific message before the generic reject — lead()
+            // is the most common cause and the user benefit of "use lag()" is high.
+            rejectLeadIfPresent(cwf.getAllWindowFunctions(), position);
             throw SqlException.$(position, "live view select may only use window functions that support incremental refresh; " +
                     "this query requires caching or multi-pass evaluation");
         }
@@ -2349,6 +2354,7 @@ public class CairoEngine implements Closeable, WriterSource {
         // incremental refresh only handles window functions that emit a value per input row
         // without looking ahead or buffering state across multiple passes
         ObjList<WindowFunction> fns = wf.getWindowFunctions();
+        rejectLeadIfPresent(fns, position);
         for (int i = 0, n = fns.size(); i < n; i++) {
             if (fns.getQuick(i).getPassCount() != WindowFunction.ZERO_PASS) {
                 throw SqlException.$(position, "live view select may only use window functions that support incremental refresh");
@@ -2394,6 +2400,19 @@ public class CairoEngine implements Closeable, WriterSource {
             throw SqlException.$(position, "live view select must read from the declared base table");
         }
         return pfrcf;
+    }
+
+    /**
+     * Throws an asserted-wording reject if any function in {@code fns} is {@code lead()}.
+     * lead() needs rows the streaming append-only path has not yet seen; RFC 123 V1
+     * rejects it independently of the underlying factory shape.
+     */
+    private static void rejectLeadIfPresent(ObjList<WindowFunction> fns, int position) throws SqlException {
+        for (int i = 0, n = fns.size(); i < n; i++) {
+            if ("lead".equals(fns.getQuick(i).getName())) {
+                throw SqlException.$(position, "lead() is not supported in live views; use lag() for lookback");
+            }
+        }
     }
 
     // caller has to acquire the lock before this method is called and release the lock after the call

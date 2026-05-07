@@ -437,6 +437,71 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testLiveViewsCatalogueExposesView() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 5s IN MEMORY 30s AS " +
+                    "SELECT ts, x, row_number() OVER () AS rn FROM base WHERE x > 0");
+
+            assertSql(
+                    "view_name\tbase_table_name\tview_status\tflush_every_interval\tflush_every_interval_unit\tin_memory_interval\tin_memory_interval_unit\n" +
+                            "lv\tbase\tactive\t5\tSECOND\t30\tSECOND\n",
+                    "SELECT view_name, base_table_name, view_status, flush_every_interval, flush_every_interval_unit, " +
+                            "in_memory_interval, in_memory_interval_unit FROM live_views()"
+            );
+
+            execute("DROP LIVE VIEW lv");
+        });
+    }
+
+    @Test
+    public void testTablesIntegrationReportsLiveView() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 1s AS " +
+                    "SELECT ts, x, row_number() OVER () AS rn FROM base WHERE x > 0");
+            // tables() emits 'L' in the table_type column for live views.
+            assertSql(
+                    "table_name\ttable_type\n" +
+                            "lv\tL\n",
+                    "SELECT table_name, table_type FROM tables() WHERE table_name = 'lv'"
+            );
+            execute("DROP LIVE VIEW lv");
+        });
+    }
+
+    @Test
+    public void testShowCreateLiveView() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 200ms IN MEMORY 5s PARTITION BY DAY AS " +
+                    "SELECT ts, x, row_number() OVER () AS rn FROM base WHERE x > 0");
+            assertSql(
+                    "ddl\n" +
+                            "CREATE LIVE VIEW 'lv' FLUSH EVERY 200T IN MEMORY 5s PARTITION BY DAY AS (\n" +
+                            "SELECT ts, x, row_number() OVER () AS rn FROM base WHERE x > 0\n" +
+                            ");\n",
+                    "SHOW CREATE LIVE VIEW lv"
+            );
+            execute("DROP LIVE VIEW lv");
+        });
+    }
+
+    @Test
+    public void testRejectLeadWindowFunction() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            try {
+                execute("CREATE LIVE VIEW lv FLUSH EVERY 1s AS " +
+                        "SELECT ts, x, lead(x) OVER (ORDER BY ts) AS nxt FROM base");
+                Assert.fail("expected lead() reject");
+            } catch (SqlException e) {
+                Assert.assertTrue(e.getMessage(), e.getMessage().contains("lead() is not supported"));
+            }
+        });
+    }
+
+    @Test
     public void testRequireFlushEvery() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE base (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
