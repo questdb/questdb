@@ -454,6 +454,18 @@ public class SqlOptimiser implements Mutable {
         }
     }
 
+    private static boolean hasFillValues(IQueryModel model) {
+        IQueryModel curr = model;
+        while (curr != null) {
+            ObjList<ExpressionNode> fv = curr.getFillValues();
+            if (fv != null && fv.size() > 0) {
+                return true;
+            }
+            curr = curr.getNestedModel();
+        }
+        return false;
+    }
+
     // Returns true when every leaf in the expression tree is a literal constant
     // (no function calls, bind variables, or column references). Used to decide
     // whether a constWhereClause can be evaluated at compile time by the code
@@ -9315,7 +9327,11 @@ public class SqlOptimiser implements Mutable {
                             rewriteStatus |= REWRITE_STATUS_USE_GROUP_BY_MODEL;
                         }
 
-                        if (groupByModel.getSampleByFill().size() > 0) { // fill breaks if column is de-duplicated
+                        // Skip rewriteAggregate when FILL is set: splitting sum(x+/-/*K) into
+                        // sum(x) +/- count(*)*K adds a synthetic count(*) under FillRange that
+                        // has no fill value. After rewriteSampleBy, fill lives on
+                        // baseModel.fillValues, not groupByModel.sampleByFill.
+                        if (groupByModel.getSampleByFill().size() > 0 || hasFillValues(baseModel)) {
                             continue;
                         }
 

@@ -133,21 +133,20 @@ public class SampleByTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testBadTimezoneSubDayWithFrom() throws Exception {
-        // Sub-day stride + timezone + FROM: the optimiser wraps FROM with
-        // to_utc(FROM, tz), which validates the timezone BEFORE the code
-        // generator's catch(NumericException) block at SqlCodeGenerator:6813.
-        //
-        // The catch(NumericException) in SqlCodeGenerator.generateSampleBy()
-        // is dead code because timestampDriver.getTimezoneRules() wraps
-        // NumericException in CairoException. If it were the only validation,
-        // this test would get CairoException (position=0) instead of
-        // SqlException (position=85 pointing at the timezone token).
+    public void testBadInterval() throws Exception {
         assertException(
-                "SELECT count(), ts FROM x SAMPLE BY 1h FROM '2021-03-27' ALIGN TO CALENDAR TIME ZONE 'Invalid/TZ'",
-                "CREATE TABLE x (i INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY",
-                85,
-                "invalid timezone: Invalid/TZ"
+                "select b, sum(a), k from x sample by 1hour",
+                "create table x as " +
+                        "(" +
+                        "select" +
+                        " rnd_double(0)*100 a," +
+                        " rnd_symbol(5,4,4,1) b," +
+                        " timestamp_sequence(172800000000, 3600000000) k" +
+                        " from" +
+                        " long_sequence(20)" +
+                        ") timestamp(k) partition by NONE",
+                37,
+                "Invalid unit: 1hour"
         );
     }
 
@@ -164,20 +163,21 @@ public class SampleByTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testBadInterval() throws Exception {
+    public void testBadTimezoneSubDayWithFrom() throws Exception {
+        // Sub-day stride + timezone + FROM: the optimiser wraps FROM with
+        // to_utc(FROM, tz), which validates the timezone BEFORE the code
+        // generator's catch(NumericException) block at SqlCodeGenerator:6813.
+        //
+        // The catch(NumericException) in SqlCodeGenerator.generateSampleBy()
+        // is dead code because timestampDriver.getTimezoneRules() wraps
+        // NumericException in CairoException. If it were the only validation,
+        // this test would get CairoException (position=0) instead of
+        // SqlException (position=85 pointing at the timezone token).
         assertException(
-                "select b, sum(a), k from x sample by 1hour",
-                "create table x as " +
-                        "(" +
-                        "select" +
-                        " rnd_double(0)*100 a," +
-                        " rnd_symbol(5,4,4,1) b," +
-                        " timestamp_sequence(172800000000, 3600000000) k" +
-                        " from" +
-                        " long_sequence(20)" +
-                        ") timestamp(k) partition by NONE",
-                37,
-                "Invalid unit: 1hour"
+                "SELECT count(), ts FROM x SAMPLE BY 1h FROM '2021-03-27' ALIGN TO CALENDAR TIME ZONE 'Invalid/TZ'",
+                "CREATE TABLE x (i INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY",
+                85,
+                "invalid timezone: Invalid/TZ"
         );
     }
 
@@ -356,57 +356,55 @@ public class SampleByTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testFillValueCachedPlanReturnsCorrectResults() throws Exception {
-        // Reproducer for https://github.com/questdb/questdb/issues/6902
-        // fill() returns correct results on first execution but nulls on second
-        // execution when using a cached plan.
+    public void testFillNullOrderBySampleByLong256Key() throws Exception {
+        // Regression: SAMPLE BY ... FILL(NULL) ORDER BY <non-ts> with a LONG256 key hits
+        // SortedRecordCursor -> RecordChain.put -> Record.getLong256A. The fill record used
+        // by the classic keyed SAMPLE BY (SampleByFillRecord) did not implement getLong256*,
+        // so it fell through to Record's default throwing impl.
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE trades (" +
-                    "  symbol SYMBOL," +
-                    "  side SYMBOL," +
-                    "  price DOUBLE," +
-                    "  amount DOUBLE," +
-                    "  timestamp TIMESTAMP" +
-                    ") TIMESTAMP(timestamp) PARTITION BY DAY");
-
-            execute("INSERT INTO trades VALUES" +
-                    "('BTC', 'buy',  100.0, 10.0, '2026-03-31T02:00:00.000000Z')," +
-                    "('BTC', 'buy',  101.0, 20.0, '2026-03-31T02:30:00.000000Z')," +
-                    "('BTC', 'sell', 102.0, 15.0, '2026-03-31T03:15:00.000000Z')," +
-                    "('BTC', 'buy',  103.0, 25.0, '2026-03-31T05:45:00.000000Z')");
-
-            String query = "SELECT timestamp," +
-                    "  sum(price * amount) / sum(amount) AS value," +
-                    "  sum(amount) AS count," +
-                    "  first(price)," +
-                    "  first(amount)" +
-                    " FROM trades" +
-                    " WHERE timestamp >= '2026-03-30T02:44:07.792000+01:00'" +
-                    "   AND timestamp <= '2026-03-31T09:27:07.030999+01:00'" +
-                    " SAMPLE BY 1h" +
-                    " FROM '2026-03-31T00:00:00+01:00' TO '2026-03-31T23:59:59+01:00'" +
-                    " FILL(0, 0, 0, 0)";
-
-            // getCursor() called multiple times on the same factory must
-            // return consistent results (tests cached plan reuse).
-            RecordCursorFactory factory = select(query);
-            try {
-                String firstResult = null;
-                for (int i = 0; i < 5; i++) {
-                    try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
-                        StringSink s = new StringSink();
-                        CursorPrinter.println(factory.getMetadata(), s);
-                        CursorPrinter.println(cursor, factory.getMetadata(), s);
-                        if (firstResult == null) {
-                            firstResult = s.toString();
-                        } else {
-                            TestUtils.assertEquals("execution #" + (i + 1) + " differs from #1", firstResult, s.toString());
-                        }
-                    }
-                }
-            } finally {
-                Misc.free(factory);
-            }
+            execute("CREATE TABLE t_sb_l256 (k LONG256, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO t_sb_l256 VALUES ('0x01'::LONG256, 0), ('0x02'::LONG256, 60_000_000), ('0x01'::LONG256, 900_000_000)");
+            assertQueryNoLeakCheck(
+                    """
+                            k\tcnt\tts
+                            0x01\t1\t1970-01-01T00:00:00.000000Z
+                            0x01\tnull\t1970-01-01T00:01:00.000000Z
+                            0x01\tnull\t1970-01-01T00:02:00.000000Z
+                            0x01\tnull\t1970-01-01T00:03:00.000000Z
+                            0x01\tnull\t1970-01-01T00:04:00.000000Z
+                            0x01\tnull\t1970-01-01T00:05:00.000000Z
+                            0x01\tnull\t1970-01-01T00:06:00.000000Z
+                            0x01\tnull\t1970-01-01T00:07:00.000000Z
+                            0x01\tnull\t1970-01-01T00:08:00.000000Z
+                            0x01\tnull\t1970-01-01T00:09:00.000000Z
+                            0x01\tnull\t1970-01-01T00:10:00.000000Z
+                            0x01\tnull\t1970-01-01T00:11:00.000000Z
+                            0x01\tnull\t1970-01-01T00:12:00.000000Z
+                            0x01\tnull\t1970-01-01T00:13:00.000000Z
+                            0x01\tnull\t1970-01-01T00:14:00.000000Z
+                            0x01\t1\t1970-01-01T00:15:00.000000Z
+                            0x02\tnull\t1970-01-01T00:00:00.000000Z
+                            0x02\t1\t1970-01-01T00:01:00.000000Z
+                            0x02\tnull\t1970-01-01T00:02:00.000000Z
+                            0x02\tnull\t1970-01-01T00:03:00.000000Z
+                            0x02\tnull\t1970-01-01T00:04:00.000000Z
+                            0x02\tnull\t1970-01-01T00:05:00.000000Z
+                            0x02\tnull\t1970-01-01T00:06:00.000000Z
+                            0x02\tnull\t1970-01-01T00:07:00.000000Z
+                            0x02\tnull\t1970-01-01T00:08:00.000000Z
+                            0x02\tnull\t1970-01-01T00:09:00.000000Z
+                            0x02\tnull\t1970-01-01T00:10:00.000000Z
+                            0x02\tnull\t1970-01-01T00:11:00.000000Z
+                            0x02\tnull\t1970-01-01T00:12:00.000000Z
+                            0x02\tnull\t1970-01-01T00:13:00.000000Z
+                            0x02\tnull\t1970-01-01T00:14:00.000000Z
+                            0x02\tnull\t1970-01-01T00:15:00.000000Z
+                            """,
+                    "SELECT k, count() AS cnt, ts FROM t_sb_l256 SAMPLE BY 1m FILL(NULL) ORDER BY k, ts",
+                    null,
+                    true,
+                    false
+            );
         });
     }
 
@@ -596,154 +594,57 @@ public class SampleByTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testFillValueIntCastsToDecimalAggregate() throws Exception {
-        // IntFunction has no typed DECIMAL accessor, so FillRange would crash at runtime with
-        // UnsupportedOperationException. The compiler wraps the fill value in an INT -> DECIMAL
-        // implicit cast so it reads correctly at runtime.
+    public void testFillValueCachedPlanReturnsCorrectResults() throws Exception {
+        // Reproducer for https://github.com/questdb/questdb/issues/6902
+        // fill() returns correct results on first execution but nulls on second
+        // execution when using a cached plan.
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE t_fv_dec_i (d DECIMAL(10,2), ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("INSERT INTO t_fv_dec_i VALUES (1.5::DECIMAL(10,2), 0), (2.5::DECIMAL(10,2), 300_000_000)");
-            execute("CREATE TABLE t_fv_dec_i_out AS (SELECT ts, avg(d) AS avg FROM t_fv_dec_i SAMPLE BY 1m FILL(0))");
-        });
-    }
+            execute("CREATE TABLE trades (" +
+                    "  symbol SYMBOL," +
+                    "  side SYMBOL," +
+                    "  price DOUBLE," +
+                    "  amount DOUBLE," +
+                    "  timestamp TIMESTAMP" +
+                    ") TIMESTAMP(timestamp) PARTITION BY DAY");
 
-    @Test
-    public void testFillValueIntWidensToLongAggregate() throws Exception {
-        // Sanity check: INT -> LONG is a built-in widening cast, no wrapper needed.
-        assertMemoryLeak(() -> {
-            execute("CREATE TABLE t_fv_long (n INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("INSERT INTO t_fv_long VALUES (1, 0), (2, 300_000_000)");
-            execute("CREATE TABLE t_fv_long_out AS (SELECT ts, sum(n) AS s FROM t_fv_long SAMPLE BY 1m FILL(0))");
-        });
-    }
+            execute("INSERT INTO trades VALUES" +
+                    "('BTC', 'buy',  100.0, 10.0, '2026-03-31T02:00:00.000000Z')," +
+                    "('BTC', 'buy',  101.0, 20.0, '2026-03-31T02:30:00.000000Z')," +
+                    "('BTC', 'sell', 102.0, 15.0, '2026-03-31T03:15:00.000000Z')," +
+                    "('BTC', 'buy',  103.0, 25.0, '2026-03-31T05:45:00.000000Z')");
 
-    @Test
-    public void testFillValueRejectedForArrayAggregate() throws Exception {
-        // first(array) returns DOUBLE[]; no INT -> ARRAY implicit cast exists.
-        assertException(
-                "SELECT ts, first(a) FROM t_fv_arr SAMPLE BY 1m FILL(0)",
-                "CREATE TABLE t_fv_arr (a DOUBLE[], ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY",
-                52,
-                "support for VALUE fill is not yet implemented"
-        );
-    }
+            String query = "SELECT timestamp," +
+                    "  sum(price * amount) / sum(amount) AS value," +
+                    "  sum(amount) AS count," +
+                    "  first(price)," +
+                    "  first(amount)" +
+                    " FROM trades" +
+                    " WHERE timestamp >= '2026-03-30T02:44:07.792000+01:00'" +
+                    "   AND timestamp <= '2026-03-31T09:27:07.030999+01:00'" +
+                    " SAMPLE BY 1h" +
+                    " FROM '2026-03-31T00:00:00+01:00' TO '2026-03-31T23:59:59+01:00'" +
+                    " FILL(0, 0, 0, 0)";
 
-    @Test
-    public void testFillValueRejectedForGeoHashAggregate() throws Exception {
-        // first(geohash) returns GEOHASH; no INT -> GEOHASH implicit cast exists.
-        assertException(
-                "SELECT ts, first(g) FROM t_fv_geo SAMPLE BY 1m FILL(0)",
-                "CREATE TABLE t_fv_geo (g GEOHASH(5c), ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY",
-                52,
-                "support for VALUE fill is not yet implemented"
-        );
-    }
-
-    @Test
-    public void testFillValueRejectedForIPv4Aggregate() throws Exception {
-        // first(ipv4) returns IPv4; no INT -> IPv4 implicit cast exists, and IntFunction.getIPv4
-        // throws UnsupportedOperationException at runtime.
-        assertException(
-                "SELECT ts, first(ip) FROM t_fv_ip SAMPLE BY 1m FILL(0)",
-                "CREATE TABLE t_fv_ip (ip IPv4, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY",
-                52,
-                "support for VALUE fill is not yet implemented"
-        );
-    }
-
-    @Test
-    public void testFillValueRejectedForLong256Aggregate() throws Exception {
-        // sum(long256) returns LONG256; no INT -> LONG256 implicit cast exists.
-        assertException(
-                "SELECT ts, sum(l) FROM t_fv_l256 SAMPLE BY 1m FILL(0)",
-                "CREATE TABLE t_fv_l256 (l LONG256, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY",
-                51,
-                "support for VALUE fill is not yet implemented"
-        );
-    }
-
-    @Test
-    public void testFillValueRejectedForStringAggregate() throws Exception {
-        // first(string) returns STRING; no INT -> STRING implicit cast exists.
-        assertException(
-                "SELECT ts, first(s) FROM t_fv_str SAMPLE BY 1m FILL(0)",
-                "CREATE TABLE t_fv_str (s STRING, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY",
-                52,
-                "support for VALUE fill is not yet implemented"
-        );
-    }
-
-    @Test
-    public void testFillValueRejectedForUuidAggregate() throws Exception {
-        // first(uuid) returns UUID; no INT -> UUID implicit cast exists.
-        assertException(
-                "SELECT ts, first(u) FROM t_fv_uuid SAMPLE BY 1m FILL(0)",
-                "CREATE TABLE t_fv_uuid (u UUID, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY",
-                53,
-                "support for VALUE fill is not yet implemented"
-        );
-    }
-
-    @Test
-    public void testFillValueStringCastsToDecimalAggregate() throws Exception {
-        // STRING -> DECIMAL implicit cast exists via CastStrToDecimalFunctionFactory.
-        assertMemoryLeak(() -> {
-            execute("CREATE TABLE t_fv_dec_s (d DECIMAL(10,2), ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("INSERT INTO t_fv_dec_s VALUES (1.5::DECIMAL(10,2), 0), (2.5::DECIMAL(10,2), 300_000_000)");
-            execute("CREATE TABLE t_fv_dec_s_out AS (SELECT ts, avg(d) AS avg FROM t_fv_dec_s SAMPLE BY 1m FILL('1.5'))");
-        });
-    }
-
-    @Test
-    public void testFillNullOrderBySampleByLong256Key() throws Exception {
-        // Regression: SAMPLE BY ... FILL(NULL) ORDER BY <non-ts> with a LONG256 key hits
-        // SortedRecordCursor -> RecordChain.put -> Record.getLong256A. The fill record used
-        // by the classic keyed SAMPLE BY (SampleByFillRecord) did not implement getLong256*,
-        // so it fell through to Record's default throwing impl.
-        assertMemoryLeak(() -> {
-            execute("CREATE TABLE t_sb_l256 (k LONG256, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("INSERT INTO t_sb_l256 VALUES ('0x01'::LONG256, 0), ('0x02'::LONG256, 60_000_000), ('0x01'::LONG256, 900_000_000)");
-            assertQueryNoLeakCheck(
-                    """
-                            k\tcnt\tts
-                            0x01\t1\t1970-01-01T00:00:00.000000Z
-                            0x01\tnull\t1970-01-01T00:01:00.000000Z
-                            0x01\tnull\t1970-01-01T00:02:00.000000Z
-                            0x01\tnull\t1970-01-01T00:03:00.000000Z
-                            0x01\tnull\t1970-01-01T00:04:00.000000Z
-                            0x01\tnull\t1970-01-01T00:05:00.000000Z
-                            0x01\tnull\t1970-01-01T00:06:00.000000Z
-                            0x01\tnull\t1970-01-01T00:07:00.000000Z
-                            0x01\tnull\t1970-01-01T00:08:00.000000Z
-                            0x01\tnull\t1970-01-01T00:09:00.000000Z
-                            0x01\tnull\t1970-01-01T00:10:00.000000Z
-                            0x01\tnull\t1970-01-01T00:11:00.000000Z
-                            0x01\tnull\t1970-01-01T00:12:00.000000Z
-                            0x01\tnull\t1970-01-01T00:13:00.000000Z
-                            0x01\tnull\t1970-01-01T00:14:00.000000Z
-                            0x01\t1\t1970-01-01T00:15:00.000000Z
-                            0x02\tnull\t1970-01-01T00:00:00.000000Z
-                            0x02\t1\t1970-01-01T00:01:00.000000Z
-                            0x02\tnull\t1970-01-01T00:02:00.000000Z
-                            0x02\tnull\t1970-01-01T00:03:00.000000Z
-                            0x02\tnull\t1970-01-01T00:04:00.000000Z
-                            0x02\tnull\t1970-01-01T00:05:00.000000Z
-                            0x02\tnull\t1970-01-01T00:06:00.000000Z
-                            0x02\tnull\t1970-01-01T00:07:00.000000Z
-                            0x02\tnull\t1970-01-01T00:08:00.000000Z
-                            0x02\tnull\t1970-01-01T00:09:00.000000Z
-                            0x02\tnull\t1970-01-01T00:10:00.000000Z
-                            0x02\tnull\t1970-01-01T00:11:00.000000Z
-                            0x02\tnull\t1970-01-01T00:12:00.000000Z
-                            0x02\tnull\t1970-01-01T00:13:00.000000Z
-                            0x02\tnull\t1970-01-01T00:14:00.000000Z
-                            0x02\tnull\t1970-01-01T00:15:00.000000Z
-                            """,
-                    "SELECT k, count() AS cnt, ts FROM t_sb_l256 SAMPLE BY 1m FILL(NULL) ORDER BY k, ts",
-                    null,
-                    true,
-                    false
-            );
+            // getCursor() called multiple times on the same factory must
+            // return consistent results (tests cached plan reuse).
+            RecordCursorFactory factory = select(query);
+            try {
+                String firstResult = null;
+                for (int i = 0; i < 5; i++) {
+                    try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                        StringSink s = new StringSink();
+                        CursorPrinter.println(factory.getMetadata(), s);
+                        CursorPrinter.println(cursor, factory.getMetadata(), s);
+                        if (firstResult == null) {
+                            firstResult = s.toString();
+                        } else {
+                            TestUtils.assertEquals("execution #" + (i + 1) + " differs from #1", firstResult, s.toString());
+                        }
+                    }
+                }
+            } finally {
+                Misc.free(factory);
+            }
         });
     }
 
@@ -925,6 +826,218 @@ public class SampleByTest extends AbstractCairoTest {
                               TO timestamp_floor('2s', '2025-01-20T14:01:52Z')
                               fill(0);""",
                     "created"
+            );
+        });
+    }
+
+    @Test
+    public void testFillValueIntCastsToDecimalAggregate() throws Exception {
+        // IntFunction has no typed DECIMAL accessor, so FillRange would crash at runtime with
+        // UnsupportedOperationException. The compiler wraps the fill value in an INT -> DECIMAL
+        // implicit cast so it reads correctly at runtime.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t_fv_dec_i (d DECIMAL(10,2), ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO t_fv_dec_i VALUES (1.5::DECIMAL(10,2), 0), (2.5::DECIMAL(10,2), 300_000_000)");
+            execute("CREATE TABLE t_fv_dec_i_out AS (SELECT ts, avg(d) AS avg FROM t_fv_dec_i SAMPLE BY 1m FILL(0))");
+        });
+    }
+
+    @Test
+    public void testFillValueIntWidensToLongAggregate() throws Exception {
+        // Sanity check: INT -> LONG is a built-in widening cast, no wrapper needed.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t_fv_long (n INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO t_fv_long VALUES (1, 0), (2, 300_000_000)");
+            execute("CREATE TABLE t_fv_long_out AS (SELECT ts, sum(n) AS s FROM t_fv_long SAMPLE BY 1m FILL(0))");
+        });
+    }
+
+    @Test
+    public void testFillValueRejectedForArrayAggregate() throws Exception {
+        // first(array) returns DOUBLE[]; no INT -> ARRAY implicit cast exists.
+        assertException(
+                "SELECT ts, first(a) FROM t_fv_arr SAMPLE BY 1m FILL(0)",
+                "CREATE TABLE t_fv_arr (a DOUBLE[], ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY",
+                52,
+                "support for VALUE fill is not yet implemented"
+        );
+    }
+
+    @Test
+    public void testFillValueRejectedForGeoHashAggregate() throws Exception {
+        // first(geohash) returns GEOHASH; no INT -> GEOHASH implicit cast exists.
+        assertException(
+                "SELECT ts, first(g) FROM t_fv_geo SAMPLE BY 1m FILL(0)",
+                "CREATE TABLE t_fv_geo (g GEOHASH(5c), ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY",
+                52,
+                "support for VALUE fill is not yet implemented"
+        );
+    }
+
+    @Test
+    public void testFillValueRejectedForIPv4Aggregate() throws Exception {
+        // first(ipv4) returns IPv4; no INT -> IPv4 implicit cast exists, and IntFunction.getIPv4
+        // throws UnsupportedOperationException at runtime.
+        assertException(
+                "SELECT ts, first(ip) FROM t_fv_ip SAMPLE BY 1m FILL(0)",
+                "CREATE TABLE t_fv_ip (ip IPv4, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY",
+                52,
+                "support for VALUE fill is not yet implemented"
+        );
+    }
+
+    @Test
+    public void testFillValueRejectedForLong256Aggregate() throws Exception {
+        // sum(long256) returns LONG256; no INT -> LONG256 implicit cast exists.
+        assertException(
+                "SELECT ts, sum(l) FROM t_fv_l256 SAMPLE BY 1m FILL(0)",
+                "CREATE TABLE t_fv_l256 (l LONG256, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY",
+                51,
+                "support for VALUE fill is not yet implemented"
+        );
+    }
+
+    @Test
+    public void testFillValueRejectedForStringAggregate() throws Exception {
+        // first(string) returns STRING; no INT -> STRING implicit cast exists.
+        assertException(
+                "SELECT ts, first(s) FROM t_fv_str SAMPLE BY 1m FILL(0)",
+                "CREATE TABLE t_fv_str (s STRING, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY",
+                52,
+                "support for VALUE fill is not yet implemented"
+        );
+    }
+
+    @Test
+    public void testFillValueRejectedForUuidAggregate() throws Exception {
+        // first(uuid) returns UUID; no INT -> UUID implicit cast exists.
+        assertException(
+                "SELECT ts, first(u) FROM t_fv_uuid SAMPLE BY 1m FILL(0)",
+                "CREATE TABLE t_fv_uuid (u UUID, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY",
+                53,
+                "support for VALUE fill is not yet implemented"
+        );
+    }
+
+    @Test
+    public void testFillValueStringCastsToDecimalAggregate() throws Exception {
+        // STRING -> DECIMAL implicit cast exists via CastStrToDecimalFunctionFactory.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t_fv_dec_s (d DECIMAL(10,2), ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO t_fv_dec_s VALUES (1.5::DECIMAL(10,2), 0), (2.5::DECIMAL(10,2), 300_000_000)");
+            execute("CREATE TABLE t_fv_dec_s_out AS (SELECT ts, avg(d) AS avg FROM t_fv_dec_s SAMPLE BY 1m FILL('1.5'))");
+        });
+    }
+
+    @Test
+    public void testFillValueWithSumMinusConstantKeepsSingleAggregate() throws Exception {
+        // Regression: SqlOptimiser.rewriteAggregate splits sum(x - K) into sum(x) - count(*) * K
+        // when K is an integer constant, adding a synthetic count(*) under FillRange. FillRange
+        // only carries one fill value, so cursor open throws "not enough fill values". The fix
+        // suppresses the split when FILL is set on the model chain.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t_fv_sum_minus (c SHORT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO t_fv_sum_minus VALUES (10::SHORT, '2024-01-01T00:00:00.000000Z'), (20::SHORT, '2024-01-01T03:00:00.000000Z')");
+            assertPlanNoLeakCheck(
+                    "SELECT sum(c - 1000) AS s, ts FROM t_fv_sum_minus SAMPLE BY 1h FILL(0) ALIGN TO CALENDAR",
+                    "Encode sort\n" +
+                            "  keys: [ts]\n" +
+                            "    Fill Range\n" +
+                            "      stride: '1h'\n" +
+                            "      values: [0]\n" +
+                            "        Async Group By workers: 1\n" +
+                            "          keys: [ts]\n" +
+                            "          keyFunctions: [timestamp_floor_utc('1h',ts)]\n" +
+                            "          values: [sum(c-1000)]\n" +
+                            "          filter: null\n" +
+                            "            PageFrame\n" +
+                            "                Row forward scan\n" +
+                            "                Frame forward scan on: t_fv_sum_minus\n"
+            );
+            assertQueryNoLeakCheck(
+                    "s\tts\n" +
+                            "-990\t2024-01-01T00:00:00.000000Z\n" +
+                            "0\t2024-01-01T01:00:00.000000Z\n" +
+                            "0\t2024-01-01T02:00:00.000000Z\n" +
+                            "-980\t2024-01-01T03:00:00.000000Z\n",
+                    "SELECT sum(c - 1000) AS s, ts FROM t_fv_sum_minus SAMPLE BY 1h FILL(0) ALIGN TO CALENDAR",
+                    "ts",
+                    true,
+                    false
+            );
+        });
+    }
+
+    @Test
+    public void testFillValueWithSumPlusConstantKeepsSingleAggregate() throws Exception {
+        // Regression: companion to testFillValueWithSumMinusConstantKeepsSingleAggregate for the '+' branch.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t_fv_sum_plus (c SHORT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO t_fv_sum_plus VALUES (10::SHORT, '2024-01-01T00:00:00.000000Z'), (20::SHORT, '2024-01-01T03:00:00.000000Z')");
+            assertPlanNoLeakCheck(
+                    "SELECT sum(c + 1000) AS s, ts FROM t_fv_sum_plus SAMPLE BY 1h FILL(0) ALIGN TO CALENDAR",
+                    "Encode sort\n" +
+                            "  keys: [ts]\n" +
+                            "    Fill Range\n" +
+                            "      stride: '1h'\n" +
+                            "      values: [0]\n" +
+                            "        Async Group By workers: 1\n" +
+                            "          keys: [ts]\n" +
+                            "          keyFunctions: [timestamp_floor_utc('1h',ts)]\n" +
+                            "          values: [sum(c+1000)]\n" +
+                            "          filter: null\n" +
+                            "            PageFrame\n" +
+                            "                Row forward scan\n" +
+                            "                Frame forward scan on: t_fv_sum_plus\n"
+            );
+            assertQueryNoLeakCheck(
+                    "s\tts\n" +
+                            "1010\t2024-01-01T00:00:00.000000Z\n" +
+                            "0\t2024-01-01T01:00:00.000000Z\n" +
+                            "0\t2024-01-01T02:00:00.000000Z\n" +
+                            "1020\t2024-01-01T03:00:00.000000Z\n",
+                    "SELECT sum(c + 1000) AS s, ts FROM t_fv_sum_plus SAMPLE BY 1h FILL(0) ALIGN TO CALENDAR",
+                    "ts",
+                    true,
+                    false
+            );
+        });
+    }
+
+    @Test
+    public void testFillValueWithSumTimesConstantKeepsSingleAggregate() throws Exception {
+        // Regression: companion for the '*' branch. The rewrite would push the multiplier outside
+        // (sum(x * K) -> sum(x) * K) without adding count(*), so FillRange wouldn't trip on column
+        // count, but the rewrite still has to be skipped to keep the literal/bind plans consistent.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t_fv_sum_mul (c SHORT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO t_fv_sum_mul VALUES (10::SHORT, '2024-01-01T00:00:00.000000Z'), (20::SHORT, '2024-01-01T03:00:00.000000Z')");
+            assertPlanNoLeakCheck(
+                    "SELECT sum(c * 1000) AS s, ts FROM t_fv_sum_mul SAMPLE BY 1h FILL(0) ALIGN TO CALENDAR",
+                    "Encode sort\n" +
+                            "  keys: [ts]\n" +
+                            "    Fill Range\n" +
+                            "      stride: '1h'\n" +
+                            "      values: [0]\n" +
+                            "        Async Group By workers: 1\n" +
+                            "          keys: [ts]\n" +
+                            "          keyFunctions: [timestamp_floor_utc('1h',ts)]\n" +
+                            "          values: [sum(c*1000)]\n" +
+                            "          filter: null\n" +
+                            "            PageFrame\n" +
+                            "                Row forward scan\n" +
+                            "                Frame forward scan on: t_fv_sum_mul\n"
+            );
+            assertQueryNoLeakCheck(
+                    "s\tts\n" +
+                            "10000\t2024-01-01T00:00:00.000000Z\n" +
+                            "0\t2024-01-01T01:00:00.000000Z\n" +
+                            "0\t2024-01-01T02:00:00.000000Z\n" +
+                            "20000\t2024-01-01T03:00:00.000000Z\n",
+                    "SELECT sum(c * 1000) AS s, ts FROM t_fv_sum_mul SAMPLE BY 1h FILL(0) ALIGN TO CALENDAR",
+                    "ts",
+                    true,
+                    false
             );
         });
     }
@@ -4319,39 +4432,6 @@ public class SampleByTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testSampleByIntCastToSymbolKeyHandlesNullLength() throws Exception {
-        // Regression: AbstractCastToSymbolFunction.symbolTableShortcut used IntIntHashMap
-        // with the default sentinel of -1 for the empty-slot marker. length(null_sym)
-        // returns -1, which collided with the sentinel, so each call inserted a fresh
-        // entry instead of reusing the cached id. Pass 1 (initMap) and pass 2 (buildMap)
-        // of SampleByFillValueRecordCursor consequently produced different keys for
-        // the same row, tripping `assert value != null` in buildMap.
-        assertMemoryLeak(() -> {
-            execute("CREATE TABLE t_sb_intsym (sym SYMBOL, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("INSERT INTO t_sb_intsym SELECT rnd_symbol(8, 3, 5, 8), " +
-                    "timestamp_sequence(to_timestamp('2024-01-01', 'yyyy-MM-dd'), 100_000_000L) " +
-                    "FROM long_sequence(200)");
-            // The key is length(sym)::SYMBOL; null symbols produce length=-1 which used
-            // to collide with the IntIntHashMap empty-slot sentinel.
-            try (
-                    RecordCursorFactory f = engine.select(
-                            "SELECT (length(sym))::SYMBOL AS k_a, count() AS agg_a, ts AS ts_a " +
-                                    "FROM t_sb_intsym SAMPLE BY 30s FILL(0) ALIGN TO CALENDAR ORDER BY 3 ASC",
-                            sqlExecutionContext);
-                    RecordCursor c = f.getCursor(sqlExecutionContext)
-            ) {
-                Record r = c.getRecord();
-                while (c.hasNext()) {
-                    // materialize all columns to drive every accessor
-                    r.getSymA(0);
-                    r.getLong(1);
-                    r.getTimestamp(2);
-                }
-            }
-        });
-    }
-
-    @Test
     public void testSampleBadFunction() throws Exception {
         String stringType = ColumnType.nameOf(ColumnType.STRING);
         assertException(
@@ -5585,53 +5665,6 @@ public class SampleByTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testSampleByDayNoFromAlignToCalendarDSTNYSpringForwardGap() throws Exception {
-        // Regression for https://github.com/questdb/questdb/issues/4678
-        //
-        // America/New_York: UTC-5 (EST) -> UTC-4 (EDT)
-        // Spring forward: Mar 10, 2024 at 2:00 EST -> 3:00 EDT (= Mar 10 07:00 UTC)
-        //
-        // Day boundaries (midnight local -> UTC):
-        //   Mar  7 00:00 EST = Mar  7 05:00 UTC
-        //   Mar  8 00:00 EST = Mar  8 05:00 UTC
-        //   Mar 10 00:00 EST = Mar 10 05:00 UTC  (spring-forward day, 23h long)
-        //   Mar 11 00:00 EDT = Mar 11 04:00 UTC  (now in daylight time)
-        //
-        // The filter skips Mar 9 entirely and resumes after DST on Mar 10. Before the fix, the
-        // Mar 10 bucket was emitted as Mar 10 00:00 UTC because the cursor back-converted the
-        // bucket's local boundary with the current (post-DST, EDT) offset instead of the offset
-        // valid at the bucket start (EST, pre-DST).
-        assertMemoryLeak(() -> {
-            execute("CREATE TABLE trades (timestamp TIMESTAMP, amount DOUBLE) TIMESTAMP(timestamp) PARTITION BY DAY");
-            execute("""
-                    INSERT INTO trades VALUES
-                        ('2024-03-08T00:00:00.000000Z', 1.0),
-                        ('2024-03-08T12:00:00.000000Z', 2.0),
-                        ('2024-03-10T08:00:00.000000Z', 8.0),
-                        ('2024-03-10T09:00:00.000000Z', 8.0),
-                        ('2024-03-10T10:00:00.000000Z', 8.0),
-                        ('2024-03-11T10:00:00.000000Z', 16.0)""");
-            assertQueryNoLeakCheck(
-                    """
-                            timestamp\tsum
-                            2024-03-07T05:00:00.000000Z\t1.0
-                            2024-03-08T05:00:00.000000Z\t2.0
-                            2024-03-10T05:00:00.000000Z\t24.0
-                            2024-03-11T04:00:00.000000Z\t16.0
-                            """,
-                    "SELECT timestamp, sum(amount) FROM (" +
-                            " SELECT timestamp, amount FROM trades" +
-                            " WHERE timestamp IN '2024-03-08'" +
-                            " OR timestamp BETWEEN('2024-03-10T08:00:00Z', '2024-03-12')" +
-                            ") SAMPLE BY 1d ALIGN TO CALENDAR TIME ZONE 'America/New_York'",
-                    "timestamp",
-                    false,
-                    false
-            );
-        });
-    }
-
-    @Test
     public void testSampleByDayFromAlignToCalendarDSTChathamFallBack() throws Exception {
         // Pacific/Chatham: UTC+12:45 (CHAST) / UTC+13:45 (CHADT)
         // Fall back: Apr 4, 2021 at 3:45am CHADT -> 2:45am CHAST (= Apr 3 14:00 UTC)
@@ -5896,6 +5929,53 @@ public class SampleByTest extends AbstractCairoTest {
                 true,
                 true
         );
+    }
+
+    @Test
+    public void testSampleByDayNoFromAlignToCalendarDSTNYSpringForwardGap() throws Exception {
+        // Regression for https://github.com/questdb/questdb/issues/4678
+        //
+        // America/New_York: UTC-5 (EST) -> UTC-4 (EDT)
+        // Spring forward: Mar 10, 2024 at 2:00 EST -> 3:00 EDT (= Mar 10 07:00 UTC)
+        //
+        // Day boundaries (midnight local -> UTC):
+        //   Mar  7 00:00 EST = Mar  7 05:00 UTC
+        //   Mar  8 00:00 EST = Mar  8 05:00 UTC
+        //   Mar 10 00:00 EST = Mar 10 05:00 UTC  (spring-forward day, 23h long)
+        //   Mar 11 00:00 EDT = Mar 11 04:00 UTC  (now in daylight time)
+        //
+        // The filter skips Mar 9 entirely and resumes after DST on Mar 10. Before the fix, the
+        // Mar 10 bucket was emitted as Mar 10 00:00 UTC because the cursor back-converted the
+        // bucket's local boundary with the current (post-DST, EDT) offset instead of the offset
+        // valid at the bucket start (EST, pre-DST).
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE trades (timestamp TIMESTAMP, amount DOUBLE) TIMESTAMP(timestamp) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO trades VALUES
+                        ('2024-03-08T00:00:00.000000Z', 1.0),
+                        ('2024-03-08T12:00:00.000000Z', 2.0),
+                        ('2024-03-10T08:00:00.000000Z', 8.0),
+                        ('2024-03-10T09:00:00.000000Z', 8.0),
+                        ('2024-03-10T10:00:00.000000Z', 8.0),
+                        ('2024-03-11T10:00:00.000000Z', 16.0)""");
+            assertQueryNoLeakCheck(
+                    """
+                            timestamp\tsum
+                            2024-03-07T05:00:00.000000Z\t1.0
+                            2024-03-08T05:00:00.000000Z\t2.0
+                            2024-03-10T05:00:00.000000Z\t24.0
+                            2024-03-11T04:00:00.000000Z\t16.0
+                            """,
+                    "SELECT timestamp, sum(amount) FROM (" +
+                            " SELECT timestamp, amount FROM trades" +
+                            " WHERE timestamp IN '2024-03-08'" +
+                            " OR timestamp BETWEEN('2024-03-10T08:00:00Z', '2024-03-12')" +
+                            ") SAMPLE BY 1d ALIGN TO CALENDAR TIME ZONE 'America/New_York'",
+                    "timestamp",
+                    false,
+                    false
+            );
+        });
     }
 
     @Test
@@ -7514,6 +7594,39 @@ public class SampleByTest extends AbstractCairoTest {
                     true,
                     true
             );
+        });
+    }
+
+    @Test
+    public void testSampleByIntCastToSymbolKeyHandlesNullLength() throws Exception {
+        // Regression: AbstractCastToSymbolFunction.symbolTableShortcut used IntIntHashMap
+        // with the default sentinel of -1 for the empty-slot marker. length(null_sym)
+        // returns -1, which collided with the sentinel, so each call inserted a fresh
+        // entry instead of reusing the cached id. Pass 1 (initMap) and pass 2 (buildMap)
+        // of SampleByFillValueRecordCursor consequently produced different keys for
+        // the same row, tripping `assert value != null` in buildMap.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t_sb_intsym (sym SYMBOL, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO t_sb_intsym SELECT rnd_symbol(8, 3, 5, 8), " +
+                    "timestamp_sequence(to_timestamp('2024-01-01', 'yyyy-MM-dd'), 100_000_000L) " +
+                    "FROM long_sequence(200)");
+            // The key is length(sym)::SYMBOL; null symbols produce length=-1 which used
+            // to collide with the IntIntHashMap empty-slot sentinel.
+            try (
+                    RecordCursorFactory f = engine.select(
+                            "SELECT (length(sym))::SYMBOL AS k_a, count() AS agg_a, ts AS ts_a " +
+                                    "FROM t_sb_intsym SAMPLE BY 30s FILL(0) ALIGN TO CALENDAR ORDER BY 3 ASC",
+                            sqlExecutionContext);
+                    RecordCursor c = f.getCursor(sqlExecutionContext)
+            ) {
+                Record r = c.getRecord();
+                while (c.hasNext()) {
+                    // materialize all columns to drive every accessor
+                    r.getSymA(0);
+                    r.getLong(1);
+                    r.getTimestamp(2);
+                }
+            }
         });
     }
 
@@ -17542,6 +17655,31 @@ public class SampleByTest extends AbstractCairoTest {
                 "k",
                 false
         );
+    }
+
+    @Test
+    public void testSumMinusConstantStillRewritesWithoutFill() throws Exception {
+        // Sanity check: the FILL guard added in rewriteSelectClause0 only kicks in when FILL is
+        // present. Without FILL, sum(x - K) -> sum(x) - count(*) * K rewrite must still apply.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t_fv_no_fill (c SHORT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO t_fv_no_fill VALUES (10::SHORT, '2024-01-01T00:00:00.000000Z'), (20::SHORT, '2024-01-01T03:00:00.000000Z')");
+            assertPlanNoLeakCheck(
+                    "SELECT sum(c - 1000) AS s, ts FROM t_fv_no_fill SAMPLE BY 1h ALIGN TO CALENDAR",
+                    "Encode sort light\n" +
+                            "  keys: [ts]\n" +
+                            "    VirtualRecord\n" +
+                            "      functions: [sum-COUNT*1000,ts]\n" +
+                            "        Async Group By workers: 1\n" +
+                            "          keys: [ts]\n" +
+                            "          keyFunctions: [timestamp_floor_utc('1h',ts)]\n" +
+                            "          values: [sum(c),count(*)]\n" +
+                            "          filter: null\n" +
+                            "            PageFrame\n" +
+                            "                Row forward scan\n" +
+                            "                Frame forward scan on: t_fv_no_fill\n"
+            );
+        });
     }
 
     @Test
