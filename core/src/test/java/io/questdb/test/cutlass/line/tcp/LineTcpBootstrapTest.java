@@ -491,30 +491,34 @@ public class LineTcpBootstrapTest extends AbstractBootstrapTest {
                             .at(100_000_000_000L, ChronoUnit.MICROS);
                     sender.flush();
                 }
+                // insert binary double to symbol column (accepted)
                 try (Sender sender = createTcpSender(port, PROTOCOL_VERSION_V2)) {
-                    // insert binary double to symbol column
                     sender.table("test_insert_binary_to_other_columns")
                             .doubleColumn("x", 10000.0)
                             .stringColumn("y", "ystr")
                             .doubleColumn("a1", 1)
                             .at(100_000_000_001L, ChronoUnit.MICROS);
                     sender.flush();
-
-                    // insert binary double to string column (should be rejected)
+                }
+                try (Sender sender = createTcpSender(port, PROTOCOL_VERSION_V2)) {
                     sender.table("test_insert_binary_to_other_columns")
                             .symbol("x", "x1")
                             .doubleColumn("y", 9999.0)
                             .doubleColumn("a1", 1)
                             .at(100_000_000_000L, ChronoUnit.MICROS);
                     sender.flush();
-                    // insert string to double column (should be rejected)
+                }
+                // insert string to double column (should be rejected)
+                try (Sender sender = createTcpSender(port, PROTOCOL_VERSION_V2)) {
                     sender.table("test_insert_binary_to_other_columns")
                             .symbol("x", "x1")
                             .stringColumn("y", "ystr")
                             .stringColumn("a1", "11.u")
                             .at(100_000_000_000L, ChronoUnit.MICROS);
                     sender.flush();
-                    // insert array column to double (should be rejected)
+                }
+                // insert array column to double (should be rejected)
+                try (Sender sender = createTcpSender(port, PROTOCOL_VERSION_V2)) {
                     sender.table("test_insert_binary_to_other_columns")
                             .symbol("x", "x1")
                             .stringColumn("y", "ystr")
