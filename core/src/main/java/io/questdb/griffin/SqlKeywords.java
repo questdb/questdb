@@ -89,6 +89,16 @@ public class SqlKeywords {
                 && (tok.charAt(4) | 32) == 'r';
     }
 
+    public static boolean isAnchorKeyword(CharSequence tok) {
+        return tok.length() == 6
+                && (tok.charAt(0) | 32) == 'a'
+                && (tok.charAt(1) | 32) == 'n'
+                && (tok.charAt(2) | 32) == 'c'
+                && (tok.charAt(3) | 32) == 'h'
+                && (tok.charAt(4) | 32) == 'o'
+                && (tok.charAt(5) | 32) == 'r';
+    }
+
     public static boolean isAndKeyword(CharSequence tok) {
         return tok.length() == 3
                 && (tok.charAt(0) | 32) == 'a'
@@ -460,6 +470,15 @@ public class SqlKeywords {
                 && (tok.charAt(16) | 32) == 'p';
     }
 
+    public static boolean isDailyKeyword(CharSequence tok) {
+        return tok.length() == 5
+                && (tok.charAt(0) | 32) == 'd'
+                && (tok.charAt(1) | 32) == 'a'
+                && (tok.charAt(2) | 32) == 'i'
+                && (tok.charAt(3) | 32) == 'l'
+                && (tok.charAt(4) | 32) == 'y';
+    }
+
     // Used in enterprise backups
     @SuppressWarnings("unused")
     public static boolean isDatabaseKeyword(CharSequence tok) {
@@ -811,6 +830,20 @@ public class SqlKeywords {
                 && (tok.charAt(4) | 32) == 'a'
                 && (tok.charAt(5) | 32) == 'i'
                 && (tok.charAt(6) | 32) == 'n';
+    }
+
+    public static boolean isExpressionKeyword(CharSequence tok) {
+        return tok.length() == 10
+                && (tok.charAt(0) | 32) == 'e'
+                && (tok.charAt(1) | 32) == 'x'
+                && (tok.charAt(2) | 32) == 'p'
+                && (tok.charAt(3) | 32) == 'r'
+                && (tok.charAt(4) | 32) == 'e'
+                && (tok.charAt(5) | 32) == 's'
+                && (tok.charAt(6) | 32) == 's'
+                && (tok.charAt(7) | 32) == 'i'
+                && (tok.charAt(8) | 32) == 'o'
+                && (tok.charAt(9) | 32) == 'n';
     }
 
     public static boolean isExtractKeyword(CharSequence tok) {

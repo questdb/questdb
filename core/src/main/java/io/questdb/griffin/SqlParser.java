@@ -1386,7 +1386,48 @@ public class SqlParser {
         }
         builder.setBaseTableName(Chars.toString(from.getTableName()));
 
+        // Validate ANCHOR usage on each named window. Inline anchor expressions
+        // attached to anonymous OVER (...) clauses inside SELECT columns are also
+        // captured by the parser but live in the SELECT-column WindowExpressions;
+        // we walk the named-window map here as the V1 entry point.
+        validateLiveViewAnchors(queryModel);
+
         return builder;
+    }
+
+    /**
+     * Asserted-wording validation for ANCHOR clauses on named windows in a live-view
+     * SELECT. Phase 1 enforces:
+     * <ul>
+     *     <li>{@code ANCHOR} on a window with a non-default frame is rejected — anchor-aware
+     *     incremental refresh applies only to UNBOUNDED frames.</li>
+     *     <li>Constant {@code ANCHOR EXPRESSION} (e.g. {@code ANCHOR EXPRESSION 1}) is
+     *     rejected — a constant never changes, so the anchor would never reset, which
+     *     is equivalent to a bare unbounded window.</li>
+     * </ul>
+     * The full purity validator (subqueries, runtime-state, random, aggregation) is
+     * deferred until the runtime side of the LiveViewWindow lands.
+     */
+    private static void validateLiveViewAnchors(IQueryModel queryModel) throws SqlException {
+        LowerCaseCharSequenceObjHashMap<WindowExpression> named = queryModel.getNamedWindows();
+        ObjList<CharSequence> keys = named.keys();
+        for (int i = 0, n = keys.size(); i < n; i++) {
+            WindowExpression w = named.get(keys.getQuick(i));
+            if (w == null || w.getAnchorKind() == WindowExpression.ANCHOR_KIND_NONE) {
+                continue;
+            }
+            if (w.isNonDefaultFrame()) {
+                throw SqlException.$(w.getAnchorPosition(),
+                        "ANCHOR is incompatible with bounded frames; use a separate WINDOW without ANCHOR for ROWS / RANGE windows");
+            }
+            if (w.getAnchorKind() == WindowExpression.ANCHOR_KIND_EXPRESSION) {
+                ExpressionNode expr = w.getAnchorExpression();
+                if (expr != null && expr.type == ExpressionNode.CONSTANT) {
+                    throw SqlException.$(expr.position,
+                            "ANCHOR EXPRESSION must not be a constant");
+                }
+            }
+        }
     }
 
     private ExecutionModel parseCreateMatView(
