@@ -184,7 +184,6 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
                 }
                 SymbolMapReader smr = frameCursor.getTableReader().getSymbolMapReader(indexColumnIndex);
                 multiKeyCursor.multiKeys.clear();
-                boolean hasAnyKey = false;
                 for (int i = 0, n = resolvedKeys.size(); i < n; i++) {
                     int key = resolvedKeys.getQuick(i);
                     if (key == SymbolTable.VALUE_NOT_FOUND && keyValueFuncs != null) {
@@ -193,14 +192,13 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
                     }
                     if (key != SymbolTable.VALUE_NOT_FOUND) {
                         multiKeyCursor.multiKeys.add(key);
-                        hasAnyKey = true;
                     }
                 }
-                if (!hasAnyKey) {
-                    Misc.free(frameCursor);
-                    multiKeyCursor.ofEmpty();
-                    return multiKeyCursor;
-                }
+                // Always wire up the frame cursor and table reader, even when no
+                // keys resolve. Callers wrap us in operators (e.g. ORDER BY on a
+                // SYMBOL column) that probe baseCursor.getSymbolTable() during
+                // init, before any iteration. An empty multiKeys list naturally
+                // makes advanceKey() report no rows.
                 multiKeyCursor.of(frameCursor);
                 multiKeyCursor.latestByFilter = latestByFilter;
                 if (latestByFilter != null) {
@@ -217,11 +215,6 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
                 SymbolMapReader symbolMapReader = frameCursor.getTableReader().getSymbolMapReader(indexColumnIndex);
                 CharSequence symValue = symbolFunction.getStrA(null);
                 resolvedKey = symValue != null ? symbolMapReader.keyOf(symValue) : SymbolTable.VALUE_NOT_FOUND;
-            }
-            if (resolvedKey == SymbolTable.VALUE_NOT_FOUND) {
-                Misc.free(frameCursor);
-                singleKeyCursor.ofEmpty();
-                return singleKeyCursor;
             }
             singleKeyCursor.resolveKey(resolvedKey);
             singleKeyCursor.of(frameCursor);
@@ -269,11 +262,8 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
                         multiKeyPageFrameCursor.multiKeys.add(key);
                     }
                 }
-                if (multiKeyPageFrameCursor.multiKeys.size() == 0) {
-                    Misc.free(frameCursor);
-                    multiKeyPageFrameCursor.ofEmpty();
-                    return multiKeyPageFrameCursor;
-                }
+                // Always wire the frame cursor; callers may probe getSymbolTable()
+                // before iteration. Empty multiKeys list yields no frames.
                 multiKeyPageFrameCursor.of(frameCursor);
                 return multiKeyPageFrameCursor;
             }
@@ -286,11 +276,6 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
                 SymbolMapReader smr = reader.getSymbolMapReader(indexColumnIndex);
                 CharSequence symValue = symbolFunction.getStrA(null);
                 resolvedKey = symValue != null ? smr.keyOf(symValue) : SymbolTable.VALUE_NOT_FOUND;
-            }
-            if (resolvedKey == SymbolTable.VALUE_NOT_FOUND) {
-                Misc.free(frameCursor);
-                singleKeyPageFrameCursor.ofEmpty();
-                return singleKeyPageFrameCursor;
             }
             singleKeyPageFrameCursor.resolvedKey = resolvedKey;
             singleKeyPageFrameCursor.of(frameCursor);
@@ -565,13 +550,6 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
                 }
                 coveringRecord.setIncludeSymbolTables(symTablesCache);
             }
-        }
-
-        void ofEmpty() {
-            this.frameCursor = null;
-            this.tableReader = null;
-            this.currentRowCursor = Misc.free(this.currentRowCursor);
-            this.coveringRecord.of(null);
         }
 
         abstract void resetIterationState();
@@ -1220,13 +1198,6 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
             freeBuffers();
         }
 
-        void ofEmpty() {
-            this.frameCursor = null;
-            this.tableReader = null;
-            this.isExhausted = true;
-            resetIterationState();
-        }
-
         abstract void resetIterationState();
     }
 
@@ -1677,6 +1648,9 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
 
         @Override
         boolean advanceKey() {
+            if (multiKeys.size() == 0) {
+                return false;
+            }
             if (cachedPartitionIndex >= 0) {
                 currentKeyIdx++;
                 while (currentKeyIdx < multiKeys.size()) {
@@ -1745,6 +1719,10 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
         @Override
         @Nullable
         PageFrame nextImpl() {
+            if (multiKeys.size() == 0) {
+                isExhausted = true;
+                return null;
+            }
             while (true) {
                 while (currentKeyIdx < multiKeys.size()) {
                     if (cachedPartFrame != null) {
@@ -1827,6 +1805,12 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
 
         @Override
         boolean advanceKey() {
+            // VALUE_NOT_FOUND must short-circuit: TableUtils.toIndexKey(-1) maps
+            // to 0, the index slot reserved for VALUE_IS_NULL — letting it through
+            // would silently match NULL rows for an unknown literal.
+            if (symbolKey == SymbolTable.VALUE_NOT_FOUND) {
+                return false;
+            }
             while (true) {
                 PartitionFrame frame = frameCursor.next();
                 if (frame == null) {
@@ -1840,7 +1824,7 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
 
         @Override
         boolean hasNextLatestBy() {
-            if (isLatestByDone) {
+            if (isLatestByDone || symbolKey == SymbolTable.VALUE_NOT_FOUND) {
                 return false;
             }
             if (findLatestRow(symbolKey)) {
@@ -1881,6 +1865,12 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
         @Override
         @Nullable
         PageFrame nextImpl() {
+            // See SingleKeyCoveringCursor.advanceKey() for why VALUE_NOT_FOUND
+            // must short-circuit before reaching toIndexKey().
+            if (resolvedKey == SymbolTable.VALUE_NOT_FOUND) {
+                isExhausted = true;
+                return null;
+            }
             while (true) {
                 PartitionFrame partFrame = frameCursor.next();
                 if (partFrame == null) {

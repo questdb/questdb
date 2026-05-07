@@ -7843,6 +7843,78 @@ public class CoveringIndexTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testEqFilterOnUnknownSymbolWithOrderBy() throws Exception {
+        // Regression: an ORDER BY on a SYMBOL column wraps the base cursor in
+        // EncodedSortRecordCursor, whose init() phase probes baseCursor.getSymbolTable()
+        // before iteration to build symbol-rank maps. When the WHERE literal is
+        // unknown to the symbol map (no rows match), the covering cursor must still
+        // expose a usable symbol table for that probe, even though iteration yields
+        // nothing. Realistic shape: a populated table with a few known symbols, a
+        // dashboard query for a value that has never been written. The fuzz hit
+        // this via CREATE VIEW; assertQuery exercises the same API path directly.
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE t_unknown_sym (
+                        ts TIMESTAMP,
+                        sym SYMBOL INDEX TYPE POSTING,
+                        price DOUBLE
+                    ) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL
+                    """);
+            execute("""
+                    INSERT INTO t_unknown_sym
+                    SELECT dateadd('s', x::INT, '2024-01-01')::TIMESTAMP,
+                           ('K' || (x % 5))::SYMBOL,
+                           (x % 100) * 1.5
+                    FROM long_sequence(2_000)
+                    """);
+            engine.releaseAllWriters();
+
+            // Sanity: known symbols return the expected row counts. Defends against
+            // a future change accidentally short-circuiting the populated path too.
+            assertQueryNoLeakCheck(
+                    "count\n400\n",
+                    "SELECT count() FROM t_unknown_sym WHERE sym = 'K0'",
+                    null, false, true
+            );
+
+            String singleKeyPlan = getPlan("SELECT sym FROM t_unknown_sym WHERE sym = 'qrsw' ORDER BY 1 DESC LIMIT 86");
+            assertTrue("Expected CoveringIndex plan for single-key filter:\n" + singleKeyPlan,
+                    singleKeyPlan.contains("CoveringIndex"));
+
+            assertQueryNoLeakCheck(
+                    "sym\n",
+                    "SELECT sym FROM t_unknown_sym WHERE sym = 'qrsw' ORDER BY 1 DESC LIMIT 86",
+                    null, true, false
+            );
+
+            assertQueryNoLeakCheck(
+                    "sym\n",
+                    "SELECT sym FROM t_unknown_sym WHERE sym = 'qrsw' ORDER BY 1",
+                    null, true, false
+            );
+
+            String multiKeyPlan = getPlan("SELECT sym FROM t_unknown_sym WHERE sym IN ('qrsw', 'zzz') ORDER BY 1");
+            assertTrue("Expected CoveringIndex plan for multi-key filter:\n" + multiKeyPlan,
+                    multiKeyPlan.contains("CoveringIndex"));
+
+            assertQueryNoLeakCheck(
+                    "sym\n",
+                    "SELECT sym FROM t_unknown_sym WHERE sym IN ('qrsw', 'zzz') ORDER BY 1",
+                    null, true, false
+            );
+
+            // Mixed list: one known value, one unknown. Result must contain only
+            // the known symbol's rows; the unknown literal must not poison the
+            // multi-key path or short-circuit the cursor.
+            assertQueryNoLeakCheck(
+                    "count\n400\n",
+                    "SELECT count() FROM t_unknown_sym WHERE sym IN ('K0', 'qrsw')",
+                    null, false, true
+            );
+        });
+    }
+
+    @Test
     public void testFallbackInList3Keys() throws Exception {
         assertMemoryLeak(() -> {
             execute("""
@@ -10556,8 +10628,9 @@ public class CoveringIndexTest extends AbstractCairoTest {
     @Test
     public void testPageFrameCursor_OfEmptyMultiKey() throws Exception {
         // Multi-key page frame cursor: an IN-list with all values resolving to
-        // VALUE_NOT_FOUND drives multiKeyPageFrameCursor.ofEmpty() via the
-        // multiKeys.size() == 0 short-circuit in getPageFrameCursor().
+        // VALUE_NOT_FOUND must produce no frames. The cursor is still wired to
+        // the table reader so symbol-table lookups remain valid for upstream
+        // operators that probe before iteration.
         assertMemoryLeak(() -> {
             execute("""
                     CREATE TABLE t_pf_ofempty_mk (
@@ -10587,12 +10660,12 @@ public class CoveringIndexTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testPageFrameCursor_OfEmptyNullSymbolTables() throws Exception {
-        // When the WHERE key resolves to VALUE_NOT_FOUND, the page frame
-        // cursor's ofEmpty() path runs (tableReader = null, isExhausted = true).
-        // Calling getSymbolTable / newSymbolTable on that cursor must hit the
-        // null-tableReader branches and return null without throwing. The
-        // record cursor path is checked separately via assertQueryNoLeakCheck.
+    public void testPageFrameCursor_OfEmptySingleKeyKeepsSymbolTables() throws Exception {
+        // When the WHERE key resolves to VALUE_NOT_FOUND, the page frame cursor
+        // produces no frames but must still expose working symbol tables. Upstream
+        // operators (e.g. ORDER BY on a SYMBOL column) probe getSymbolTable() on
+        // the base cursor during init, before any iteration; returning null there
+        // would break that contract.
         assertMemoryLeak(() -> {
             execute("""
                     CREATE TABLE t_pf_ofempty (
@@ -10606,8 +10679,8 @@ public class CoveringIndexTest extends AbstractCairoTest {
 
             try (var factory = select("SELECT sym, price FROM t_pf_ofempty WHERE sym = 'NOPE'")) {
                 try (PageFrameCursor cursor = factory.getPageFrameCursor(sqlExecutionContext, PartitionFrameCursorFactory.ORDER_ASC)) {
-                    assertNull("getSymbolTable on empty cursor must be null", cursor.getSymbolTable(0));
-                    assertNull("newSymbolTable on empty cursor must be null", cursor.newSymbolTable(0));
+                    assertNotNull("getSymbolTable must be usable on an empty cursor", cursor.getSymbolTable(0));
+                    assertNotNull("newSymbolTable must be usable on an empty cursor", cursor.newSymbolTable(0));
                     assertNull(cursor.next(0));
                     cursor.toTop();
                     assertNull(cursor.next(0));
