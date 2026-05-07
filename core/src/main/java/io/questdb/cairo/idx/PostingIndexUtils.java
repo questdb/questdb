@@ -159,6 +159,12 @@ import static io.questdb.cairo.TableUtils.COLUMN_NAME_TXN_NONE;
 public final class PostingIndexUtils {
 
     public static final int BLOCK_CAPACITY = 64;
+    // Per-cover-column footer entry size in chain entries: one long that
+    // publishes the authoritative valid byte extent of the .pc{c}.{...}.{sealTxn}
+    // file as of this chain entry. Readers size their sidecar mappings from
+    // this published value rather than ff.length(fd) so the upper bound is
+    // tied to the same seqlock that publishes VALUE_MEM_SIZE for .pv.
+    public static final int COVER_END_OFFSET_ENTRY_SIZE = Long.BYTES;
     // .pci layout: magic(4B) + count(4B) + writerIndex[count](4B each, -1 = tombstoned).
     public static final int COVER_INFO_MAGIC = 0x50434931; // "PCI1"
     public static final int DENSE_STRIDE = 256;
@@ -245,6 +251,16 @@ public final class PostingIndexUtils {
     //                 this is the oldest entry. Lets readers walk backwards
     //                 from head without scanning the whole region.
     //   [64..]      gen dir, GEN_COUNT * GEN_DIR_ENTRY_SIZE bytes.
+    //   [64 + GEN_COUNT * GEN_DIR_ENTRY_SIZE ..]
+    //               cover end-offset footer, COVER_COUNT * COVER_END_OFFSET_ENTRY_SIZE
+    //               bytes. The c-th long is the writer's append offset in
+    //               .pc{c}.<...>.<SEAL_TXN> at the moment this entry was
+    //               (re)published. COVER_COUNT is fixed for the .pk file's
+    //               posting column instance and lives in the .pci sidecar
+    //               header (not the chain entry), so it is constant across
+    //               every entry in this .pk file. The footer is empty when
+    //               COVER_COUNT == 0. The whole entry is then 8-byte aligned
+    //               via PostingIndexChainEntry.entrySize.
     public static final int V2_ENTRY_HEADER_SIZE = 64;
     public static final int V2_ENTRY_OFFSET_BLOCK_CAPACITY = 48;
     public static final int V2_ENTRY_OFFSET_COVERING_FORMAT = 52;
@@ -972,6 +988,43 @@ public final class PostingIndexUtils {
      */
     public static int genHeaderSizeSparse(int activeKeyCount) {
         return activeKeyCount * (Integer.BYTES + Integer.BYTES + Long.BYTES);
+    }
+
+    /**
+     * Returns true when the file at {@code keyFilePath} exists and at least
+     * one of its two seqlock header pages is in the published, stable state
+     * that {@code PostingIndexWriter.initKeyMemory} leaves behind on a
+     * successful init. Returns false for missing files, files shorter than
+     * {@link #KEY_FILE_RESERVED} (truncated mid-init), and files whose
+     * Page A and Page B both have zeroed/torn seqlocks (the shape we observe
+     * when an earlier writer mapped the file but never wrote a complete
+     * header before failing).
+     * <p>
+     * Used by {@code TableWriter.createIndexFiles} to decide whether to
+     * preserve an existing .pk (so its chain history survives a writer
+     * reopen) or wipe it as garbage from a previous failed init. Does not
+     * validate entry-region pointers, which can legitimately be empty on a
+     * freshly initialised chain.
+     */
+    public static boolean hasInitialisedKeyFileHeader(FilesFacade ff, LPSZ keyFilePath) {
+        if (!ff.exists(keyFilePath) || ff.length(keyFilePath) < KEY_FILE_RESERVED) {
+            return false;
+        }
+        long fd = ff.openRO(keyFilePath);
+        if (fd < 0) {
+            return false;
+        }
+        try {
+            long seqStartA = ff.readNonNegativeLong(fd, PAGE_A_OFFSET + V2_HEADER_OFFSET_SEQUENCE_START);
+            long seqEndA = ff.readNonNegativeLong(fd, PAGE_A_OFFSET + V2_HEADER_OFFSET_SEQUENCE_END);
+            long seqStartB = ff.readNonNegativeLong(fd, PAGE_B_OFFSET + V2_HEADER_OFFSET_SEQUENCE_START);
+            long seqEndB = ff.readNonNegativeLong(fd, PAGE_B_OFFSET + V2_HEADER_OFFSET_SEQUENCE_END);
+            boolean aStable = seqStartA != 0L && seqStartA == seqEndA && (seqStartA & 1L) == 0L;
+            boolean bStable = seqStartB != 0L && seqStartB == seqEndB && (seqStartB & 1L) == 0L;
+            return aStable || bStable;
+        } finally {
+            ff.close(fd);
+        }
     }
 
     /**

@@ -87,33 +87,8 @@ public final class PostingIndexChainWriter {
     }
 
     /**
-     * Append a new immutable chain entry at the current {@code regionLimit}
-     * and publish it as the new head. Caller must have already written the
-     * gen-dir bytes at {@code (returnedEntryOffset + V2_ENTRY_HEADER_SIZE)};
-     * otherwise readers will see uninitialised gen-dir bytes.
-     * <p>
-     * On return the {@code keyMem} is durable as far as user-space stores —
-     * the caller is still responsible for syncing the file if durability
-     * across power loss is required.
-     *
-     * @param keyMem         the .pk memory mapping (writable + readable)
-     * @param sealTxn        the suffix for {@code .pv.{sealTxn}} and
-     *                       {@code .pc{i}.{sealTxn}} files. Must be greater than
-     *                       the current {@link #getGenCounter()} so monotonicity
-     *                       is preserved across the chain.
-     * @param txnAtSeal      the table {@code _txn} value this entry takes
-     *                       effect at. Readers pin via the scoreboard before
-     *                       querying and pick the entry where
-     *                       {@code txnAtSeal <= pinned _txn}.
-     * @param valueMemSize   bytes in {@code .pv.{sealTxn}}.
-     * @param maxValue       highest row id covered by this entry.
-     * @param keyCount       distinct keys at this seal.
-     * @param genCount       number of gen-dir entries the caller has written
-     *                       starting at the entry's gen-dir region.
-     * @param blockCapacity  block capacity for this entry.
-     * @param coveringFormat reserved (currently 0). Lets sidecar formats
-     *                       evolve per-seal in future.
-     * @return the byte offset where the new entry starts.
+     * Convenience overload for callers without covering (e.g. chain-writer
+     * tests). Equivalent to passing {@code coverEndOffsets = null}.
      */
     public long appendNewEntry(
             MemoryARW keyMem,
@@ -126,11 +101,61 @@ public final class PostingIndexChainWriter {
             int blockCapacity,
             int coveringFormat
     ) {
+        return appendNewEntry(keyMem, sealTxn, txnAtSeal, valueMemSize, maxValue, keyCount,
+                genCount, blockCapacity, coveringFormat, null);
+    }
+
+    /**
+     * Append a new immutable chain entry at the current {@code regionLimit}
+     * and publish it as the new head. Caller must have already written the
+     * gen-dir bytes at {@code (returnedEntryOffset + V2_ENTRY_HEADER_SIZE)};
+     * otherwise readers will see uninitialised gen-dir bytes.
+     * <p>
+     * On return the {@code keyMem} is durable as far as user-space stores —
+     * the caller is still responsible for syncing the file if durability
+     * across power loss is required.
+     *
+     * @param keyMem          the .pk memory mapping (writable + readable)
+     * @param sealTxn         the suffix for {@code .pv.{sealTxn}} and
+     *                        {@code .pc{i}.{sealTxn}} files. Must be greater than
+     *                        the current {@link #getGenCounter()} so monotonicity
+     *                        is preserved across the chain.
+     * @param txnAtSeal       the table {@code _txn} value this entry takes
+     *                        effect at. Readers pin via the scoreboard before
+     *                        querying and pick the entry where
+     *                        {@code txnAtSeal <= pinned _txn}.
+     * @param valueMemSize    bytes in {@code .pv.{sealTxn}}.
+     * @param maxValue        highest row id covered by this entry.
+     * @param keyCount        distinct keys at this seal.
+     * @param genCount        number of gen-dir entries the caller has written
+     *                        starting at the entry's gen-dir region.
+     * @param blockCapacity   block capacity for this entry.
+     * @param coveringFormat  reserved (currently 0). Lets sidecar formats
+     *                        evolve per-seal in future.
+     * @param coverEndOffsets per-cover-column authoritative valid-byte extent
+     *                        in {@code .pc{i}.{sealTxn}}, written into the
+     *                        entry's footer; {@code null} or empty means no
+     *                        covering (footer omitted).
+     * @return the byte offset where the new entry starts.
+     */
+    public long appendNewEntry(
+            MemoryARW keyMem,
+            long sealTxn,
+            long txnAtSeal,
+            long valueMemSize,
+            long maxValue,
+            int keyCount,
+            int genCount,
+            int blockCapacity,
+            int coveringFormat,
+            LongList coverEndOffsets
+    ) {
         if (sealTxn <= genCounter) {
             throw CairoException.critical(0)
                     .put("posting index sealTxn must advance [current=").put(genCounter)
                     .put(", attempted=").put(sealTxn).put(']');
         }
+        int coverCount = coverEndOffsets != null ? coverEndOffsets.size() : 0;
         long entryOffset = regionLimit;
         long prevHead = headEntryOffset;
         PostingIndexChainEntry.writeHeader(
@@ -144,12 +169,13 @@ public final class PostingIndexChainWriter {
                 genCount,
                 blockCapacity,
                 coveringFormat,
-                prevHead
+                prevHead,
+                coverEndOffsets
         );
         Unsafe.storeFence();
         // Update mirrors before publishing so accessors see the new state
         // by the time the publish becomes visible to readers.
-        long newRegionLimit = entryOffset + PostingIndexChainEntry.entrySize(genCount);
+        long newRegionLimit = entryOffset + PostingIndexChainEntry.entrySize(genCount, coverCount);
         headEntryOffset = entryOffset;
         regionLimit = newRegionLimit;
         entryCount++;
@@ -169,6 +195,20 @@ public final class PostingIndexChainWriter {
     }
 
     /**
+     * Convenience overload for callers without covering. Equivalent to
+     * passing {@code newCoverEndOffsets = null}.
+     */
+    public void extendHead(
+            MemoryARW keyMem,
+            int newGenCount,
+            int newKeyCount,
+            long newValueMemSize,
+            long newMaxValue
+    ) {
+        extendHead(keyMem, newGenCount, newKeyCount, newValueMemSize, newMaxValue, null);
+    }
+
+    /**
      * Extend the current head entry with a freshly-appended gen-dir entry.
      * Caller must have already written the new gen-dir bytes at offset
      * {@code (head + V2_ENTRY_HEADER_SIZE + currentGenCount * GEN_DIR_ENTRY_SIZE)}.
@@ -180,6 +220,10 @@ public final class PostingIndexChainWriter {
      * the gen-dir bytes, this is the sparse-gen sub-protocol described in
      * section 4.5 of POSTING_INDEX_CHAIN_DESIGN.md.
      *
+     * @param newCoverEndOffsets per-cover-column updated valid-byte extent in
+     *                           {@code .pc{i}.{sealTxn}}, written into the
+     *                           head entry's footer; {@code null} or empty
+     *                           leaves the existing footer untouched.
      * @throws IllegalStateException if the chain is empty.
      */
     public void extendHead(
@@ -187,26 +231,44 @@ public final class PostingIndexChainWriter {
             int newGenCount,
             int newKeyCount,
             long newValueMemSize,
-            long newMaxValue
+            long newMaxValue,
+            LongList newCoverEndOffsets
     ) {
         if (headEntryOffset == PostingIndexUtils.V2_NO_HEAD) {
             throw new IllegalStateException("posting index chain is empty; no head entry to extend");
         }
-        long newLen = PostingIndexChainEntry.entrySize(newGenCount);
+        int coverCount = newCoverEndOffsets != null ? newCoverEndOffsets.size() : 0;
+        long newLen = PostingIndexChainEntry.entrySize(newGenCount, coverCount);
         // GEN_COUNT must be written LAST. It is the field readers latch on
         // to (via PostingIndexChainEntry.read which reads it first under a
         // loadFence) to gate visibility of all the other in-place updates,
         // including VALUE_MEM_SIZE which sizes the readers' valueMem
-        // mapping. Storing GEN_COUNT before VALUE_MEM_SIZE — even with a
-        // single trailing storeFence — would let a reader observe a new
-        // GEN_COUNT with an old VALUE_MEM_SIZE and dereference past the
-        // mapping. The chain header's outer seqlock does NOT cover these
-        // in-place stores: extendHead mutates the entry before the
-        // publish() call that bumps the seqlock.
+        // mapping and COVER_END_OFFSETS which size the readers' sidecar
+        // mappings. Storing GEN_COUNT before those — even with a single
+        // trailing storeFence — would let a reader observe a new GEN_COUNT
+        // with old sizes and dereference past the mapping. The chain
+        // header's outer seqlock does NOT cover these in-place stores:
+        // extendHead mutates the entry before the publish() call that
+        // bumps the seqlock.
         keyMem.putInt(headEntryOffset + PostingIndexUtils.V2_ENTRY_OFFSET_KEY_COUNT, newKeyCount);
         keyMem.putLong(headEntryOffset + PostingIndexUtils.V2_ENTRY_OFFSET_LEN, newLen);
         keyMem.putLong(headEntryOffset + PostingIndexUtils.V2_ENTRY_OFFSET_VALUE_MEM_SIZE, newValueMemSize);
         keyMem.putLong(headEntryOffset + PostingIndexUtils.V2_ENTRY_OFFSET_MAX_VALUE, newMaxValue);
+        // Cover end-offset footer slots are at offset
+        // (header + newGenCount * GEN_DIR_ENTRY_SIZE). The footer's location
+        // depends on newGenCount, so we must write the cover sizes at the
+        // location matching the GEN_COUNT we are about to publish.
+        if (coverCount > 0) {
+            for (int c = 0; c < coverCount; c++) {
+                PostingIndexChainEntry.writeCoverEndOffset(
+                        keyMem,
+                        headEntryOffset,
+                        newGenCount,
+                        c,
+                        newCoverEndOffsets.getQuick(c)
+                );
+            }
+        }
         // Fence pairs with the loadFence after GEN_COUNT in
         // PostingIndexChainEntry.read: if a reader observes the new
         // GEN_COUNT, all stores above (and the gen-dir bytes the caller
@@ -281,12 +343,12 @@ public final class PostingIndexChainWriter {
         if (headEntryOffset == PostingIndexUtils.V2_NO_HEAD || entryCount < 2) {
             return -1L;
         }
-        PostingIndexChainEntry.read(keyMem, headEntryOffset, entryScratch);
+        PostingIndexChainEntry.read(keyMem, headEntryOffset, 0, entryScratch);
         long prevOffset = entryScratch.prevEntryOffset;
         if (prevOffset == PostingIndexUtils.V2_NO_HEAD) {
             return -1L;
         }
-        PostingIndexChainEntry.read(keyMem, prevOffset, entryScratch);
+        PostingIndexChainEntry.read(keyMem, prevOffset, 0, entryScratch);
         return entryScratch.txnAtSeal;
     }
 
@@ -325,7 +387,11 @@ public final class PostingIndexChainWriter {
         if (headEntryOffset == PostingIndexUtils.V2_NO_HEAD) {
             throw new IllegalStateException("posting index chain is empty");
         }
-        PostingIndexChainEntry.read(keyMem, headEntryOffset, into);
+        // Writer state-restore from the head entry uses only header fields
+        // (sealTxn, valueMemSize, etc.); cover end-offsets in the entry are
+        // re-established from the writer's own sidecarMems on reopen, so we
+        // skip the cover footer read here.
+        PostingIndexChainEntry.read(keyMem, headEntryOffset, 0, into);
     }
 
     /**
@@ -351,7 +417,7 @@ public final class PostingIndexChainWriter {
         entryCount = headerScratch.entryCount;
         genCounter = headerScratch.generationCounter;
         if (headEntryOffset != PostingIndexUtils.V2_NO_HEAD) {
-            PostingIndexChainEntry.read(keyMem, headEntryOffset, entryScratch);
+            PostingIndexChainEntry.read(keyMem, headEntryOffset, 0, entryScratch);
             currentTxnAtSeal = entryScratch.txnAtSeal;
             headSealTxn = entryScratch.sealTxn;
         } else {
@@ -421,7 +487,7 @@ public final class PostingIndexChainWriter {
                         .put(offset).put(", regionBase=").put(regionBase)
                         .put(", regionLimit=").put(newRegionLimit).put(']');
             }
-            PostingIndexChainEntry.read(keyMem, offset, entryScratch);
+            PostingIndexChainEntry.read(keyMem, offset, 0, entryScratch);
             if (entryScratch.txnAtSeal <= currentTableTxn) {
                 break;
             }
@@ -441,7 +507,7 @@ public final class PostingIndexChainWriter {
         entryCount = newEntryCount;
         regionLimit = newRegionLimit;
         if (newHead != PostingIndexUtils.V2_NO_HEAD) {
-            PostingIndexChainEntry.read(keyMem, newHead, entryScratch);
+            PostingIndexChainEntry.read(keyMem, newHead, 0, entryScratch);
             currentTxnAtSeal = entryScratch.txnAtSeal;
             headSealTxn = entryScratch.sealTxn;
         } else {

@@ -126,6 +126,10 @@ public class PostingIndexWriter implements IndexWriter {
     // background job removes the .pv.{N} / .pc{i}.{N} files. Cleared on
     // every of() call to avoid leaking entries across reopens.
     private final LongList recoveryOrphanScratch = new LongList();
+    // Reusable scratch list passed to PostingIndexChainWriter.appendNewEntry /
+    // extendHead — built once per chain publish from each cover column's
+    // current sidecar append offset. Reused across calls to avoid allocations.
+    private final LongList coverEndOffsetsScratch = new LongList();
     private int coverCount;
     private long[] coveredAuxReadAddrs;
     private long[] coveredAuxReadSizes;
@@ -4108,6 +4112,12 @@ public class PostingIndexWriter implements IndexWriter {
         keyMem.putInt(dirOffset + PostingIndexUtils.GEN_DIR_OFFSET_MIN_KEY, overrideMinKey);
         keyMem.putInt(dirOffset + PostingIndexUtils.GEN_DIR_OFFSET_MAX_KEY, overrideMaxKey);
 
+        // Snapshot the current append offset of each open sidecar. Tombstoned
+        // and not-yet-opened slots publish 0 — readers treat them as "no file
+        // / nothing to map", consistent with how isCoveredAvailable handles
+        // missing sidecars.
+        captureCoverEndOffsets();
+
         if (newEntry) {
             // pendingTxnAtSeal supplied by the upstream caller is the
             // table _txn this seal's chain entry should be tagged with.
@@ -4140,10 +4150,36 @@ public class PostingIndexWriter implements IndexWriter {
                     /* keyCount */ keyCount,
                     /* genCount */ newGenCount,
                     /* blockCapacity */ blockCapacity,
-                    /* coveringFormat */ 0
+                    /* coveringFormat */ 0,
+                    coverEndOffsetsScratch
             );
         } else {
-            chain.extendHead(keyMem, newGenCount, keyCount, valueMemSize, maxValue);
+            chain.extendHead(keyMem, newGenCount, keyCount, valueMemSize, maxValue, coverEndOffsetsScratch);
+        }
+    }
+
+    /**
+     * Refresh {@link #coverEndOffsetsScratch} so it has exactly {@code coverCount}
+     * entries and each slot reflects the current append offset of the matching
+     * {@code sidecarMems} entry (or 0 when the slot is tombstoned / unopened).
+     * The result is the authoritative valid-byte extent of each .pcN at the
+     * moment the chain entry is republished.
+     */
+    private void captureCoverEndOffsets() {
+        coverEndOffsetsScratch.clear();
+        if (coverCount <= 0) {
+            return;
+        }
+        coverEndOffsetsScratch.setPos(coverCount);
+        for (int c = 0; c < coverCount; c++) {
+            long endOffset = 0L;
+            if (c < sidecarMems.size()) {
+                MemoryMARW mem = sidecarMems.getQuick(c);
+                if (mem != null && mem.isOpen()) {
+                    endOffset = mem.getAppendOffset();
+                }
+            }
+            coverEndOffsetsScratch.setQuick(c, endOffset);
         }
     }
 

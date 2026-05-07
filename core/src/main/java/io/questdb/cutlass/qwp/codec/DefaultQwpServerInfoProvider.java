@@ -61,7 +61,7 @@ public final class DefaultQwpServerInfoProvider implements QwpServerInfoProvider
     }
 
     @Override
-    public byte getRole() {
+    public byte role() {
         return QwpEgressMsgKind.ROLE_STANDALONE;
     }
 }

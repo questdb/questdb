@@ -54,10 +54,26 @@ public final class PostingIndexChainPicker {
     }
 
     /**
+     * Convenience overload for callers that don't read covering. Equivalent
+     * to {@code pick(keyMem, pinnedTableTxn, 0, headerScratch, into)}.
+     */
+    public static int pick(
+            MemoryR keyMem,
+            long pinnedTableTxn,
+            PostingIndexChainHeader.Snapshot headerScratch,
+            PostingIndexChainEntry.Snapshot into
+    ) {
+        return pick(keyMem, pinnedTableTxn, 0, headerScratch, into);
+    }
+
+    /**
      * Walk the chain backwards from head and pick the first entry where
      * {@code txnAtSeal <= pinnedTableTxn}. Populates {@code into} with the
      * picked entry on success.
      *
+     * @param coverCount number of cover columns published in {@code .pci};
+     *                   the entry's per-cover end-offset footer is read in
+     *                   full when {@code coverCount > 0}.
      * @return one of the RESULT_* codes:
      * <ul>
      *   <li>{@code RESULT_OK} — entry was found and {@code into} is populated;</li>
@@ -72,6 +88,7 @@ public final class PostingIndexChainPicker {
     public static int pick(
             MemoryR keyMem,
             long pinnedTableTxn,
+            int coverCount,
             PostingIndexChainHeader.Snapshot headerScratch,
             PostingIndexChainEntry.Snapshot into
     ) {
@@ -114,10 +131,10 @@ public final class PostingIndexChainPicker {
                 return RESULT_HEADER_UNREADABLE;
             }
 
-            PostingIndexChainEntry.read(keyMem, entryOffset, into);
-            // The full entry (header + gen-dir payload) must fit inside
-            // the mapped region too. snapshotMetadata reads gen-dir
-            // entries at offsets up to entryOffset + into.len.
+            PostingIndexChainEntry.read(keyMem, entryOffset, coverCount, into);
+            // The full entry (header + gen-dir payload + cover end-offset
+            // footer) must fit inside the mapped region too. snapshotMetadata
+            // reads gen-dir entries at offsets up to entryOffset + into.len.
             if (into.len <= 0 || entryOffset + into.len > mappedLimit) {
                 return RESULT_HEADER_UNREADABLE;
             }

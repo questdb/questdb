@@ -710,14 +710,12 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             RecordMetadata metadata,
             SqlExecutionContext executionContext
     ) throws SqlException {
-        try {
-            return compileBooleanFilter(expr, metadata, executionContext);
-        } catch (Throwable t) {
-            if (metadata instanceof JoinRecordMetadata that) {
-                Misc.free(that);
-            }
-            throw t;
-        }
+        // Caller owns metadata cleanup. Every call site in generateJoins
+        // has an outer catch that frees the relevant join metadata (or the
+        // master factory whose metadata it is), so freeing it here would
+        // either double-free a JoinRecordMetadata or close a master
+        // factory's still-in-use metadata.
+        return compileBooleanFilter(expr, metadata, executionContext);
     }
 
     public RecordCursorFactory generate(@Transient IQueryModel model, @Transient SqlExecutionContext executionContext) throws SqlException {
@@ -8880,46 +8878,57 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     }
 
                     WindowFunction windowFunction = (WindowFunction) f;
+                    // Until windowFunction is added to groupedWindow or naturalOrderFunctions,
+                    // the outer catch cannot find it. toOrderIndices and initRecordComparator
+                    // both throw, and some functions (e.g. cume_dist over partition by) own
+                    // native memory allocated before initRecordComparator runs.
+                    boolean windowFunctionOwned = true;
+                    try {
+                        if (osz > 0 && !dismissOrder) {
+                            IntList directions = ac.getOrderByDirection();
+                            if (windowFunction.getPass1ScanDirection() == WindowFunction.Pass1ScanDirection.BACKWARD) {
+                                for (int j = 0, size = directions.size(); j < size; j++) {
+                                    directions.set(j, 1 - directions.getQuick(j));
+                                }
+                            }
 
-                    if (osz > 0 && !dismissOrder) {
-                        IntList directions = ac.getOrderByDirection();
-                        if (windowFunction.getPass1ScanDirection() == WindowFunction.Pass1ScanDirection.BACKWARD) {
-                            for (int j = 0, size = directions.size(); j < size; j++) {
-                                directions.set(j, 1 - directions.getQuick(j));
+                            IntList order = toOrderIndices(chainMetadata, ac.getOrderBy(), ac.getOrderByDirection());
+                            ObjList<WindowFunction> funcs = groupedWindow.get(order);
+                            if (funcs == null) {
+                                groupedWindow.put(order, funcs = new ObjList<>());
+                            }
+                            funcs.add(windowFunction);
+                            windowFunctionOwned = false;
+                            windowFunction.initRecordComparator(this, chainMetadata, chainTypes, order, ac.getOrderBy(), null);
+                        } else {
+                            if (naturalOrderFunctions == null) {
+                                naturalOrderFunctions = new ObjList<>();
+                            }
+                            naturalOrderFunctions.add(windowFunction);
+                            windowFunctionOwned = false;
+                            if (osz > 0) {
+                                windowFunction.initRecordComparator(this, chainMetadata, chainTypes, null, ac.getOrderBy(), ac.getOrderByDirection());
                             }
                         }
 
-                        IntList order = toOrderIndices(chainMetadata, ac.getOrderBy(), ac.getOrderByDirection());
-                        // init comparator if we need
-                        windowFunction.initRecordComparator(this, chainMetadata, chainTypes, order, null, null);
-                        ObjList<WindowFunction> funcs = groupedWindow.get(order);
-                        if (funcs == null) {
-                            groupedWindow.put(order, funcs = new ObjList<>());
-                        }
-                        funcs.add(windowFunction);
-                    } else {
-                        if (osz > 0) {
-                            windowFunction.initRecordComparator(this, chainMetadata, chainTypes, null, ac.getOrderBy(), ac.getOrderByDirection());
-                        }
+                        windowFunction.setColumnIndex(i);
 
-                        if (naturalOrderFunctions == null) {
-                            naturalOrderFunctions = new ObjList<>();
+                        deferredWindowMetadata.extendAndSet(i, new TableColumnMetadata(
+                                Chars.toString(qc.getAlias()),
+                                windowFunction.getType(),
+                                IndexType.NONE,
+                                0,
+                                false,
+                                null
+                        ));
+
+                        listColumnFilterA.extendAndSet(i, -i - 1);
+                    } catch (Throwable th) {
+                        if (windowFunctionOwned) {
+                            Misc.free(windowFunction);
                         }
-                        naturalOrderFunctions.add(windowFunction);
+                        throw th;
                     }
-
-                    windowFunction.setColumnIndex(i);
-
-                    deferredWindowMetadata.extendAndSet(i, new TableColumnMetadata(
-                            Chars.toString(qc.getAlias()),
-                            windowFunction.getType(),
-                            IndexType.NONE,
-                            0,
-                            false,
-                            null
-                    ));
-
-                    listColumnFilterA.extendAndSet(i, -i - 1);
                 }
             }
 

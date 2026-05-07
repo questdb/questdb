@@ -24,6 +24,8 @@
 
 package io.questdb.test.cairo.covering;
 
+import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.CairoConfigurationWrapper;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.ColumnVersionReader;
@@ -49,6 +51,7 @@ import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cairo.sql.RowCursor;
 import io.questdb.cairo.sql.StaticSymbolTable;
 import io.questdb.cairo.sql.SymbolTable;
+import io.questdb.cairo.vm.api.MemoryMR;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.SqlExecutionContextImpl;
@@ -70,6 +73,7 @@ import org.jetbrains.annotations.NotNull;
 import org.junit.Assert;
 import org.junit.Test;
 
+import java.lang.reflect.Field;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 
@@ -2150,6 +2154,274 @@ public class CoveringIndexTest extends AbstractCairoTest {
                     w2.close();
                 } finally {
                     Unsafe.free(colAddr, (long) rowCount * Double.BYTES, MemoryTag.NATIVE_DEFAULT);
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testCoveringReloadDoesNotRefreshStaleSidecarMmap() throws Exception {
+        // Regression test for: long-lived posting-index readers must refresh
+        // covering sidecar mmaps when reloadConditionally() picks up a new
+        // chain entry produced by a gen flush that extended .pcN past the
+        // reader's previous extent.
+        //
+        // The default 1 MiB append-page pre-allocation would hide the bug,
+        // because both gens would land within one writer-side chunk and the
+        // reader's initial mmap (sized to the file's pre-allocated length)
+        // would happen to cover the new gen's bytes too. The OS-page override
+        // forces the writer to extend the file between gens so the bug
+        // manifests reliably.
+        //
+        // The fix publishes each .pcN's authoritative valid byte extent in
+        // the chain entry (one long per cover column, in the cover end-offset
+        // footer). reloadConditionally() resizes the sidecar mapping to the
+        // newly-published extent, so reads in the new gen stay in bounds and
+        // return the writer's actual values.
+        final long osPage = io.questdb.std.Files.PAGE_SIZE;
+        CairoConfiguration smallPageCfg = new CairoConfigurationWrapper(configuration) {
+            @Override
+            public long getDataIndexValueAppendPageSize() {
+                return osPage;
+            }
+        };
+        assertMemoryLeak(() -> {
+            try (Path path = new Path().of(configuration.getDbRoot())) {
+                String name = "stale_sidecar_red";
+                int plen = path.size();
+                // Enough rows that gen0 + gen1 sidecar bytes overflow one OS
+                // page (header 1144 + per-gen raw blocks of 4 + V*8 each).
+                int rowsPerGen = (int) (osPage / 8);
+                int totalRows = rowsPerGen * 2;
+                long colAddr = Unsafe.malloc((long) totalRows * Long.BYTES, MemoryTag.NATIVE_DEFAULT);
+                try {
+                    for (int i = 0; i < totalRows; i++) {
+                        Unsafe.putLong(colAddr + (long) i * Long.BYTES, 1000L + i);
+                    }
+                    try (PostingIndexWriter writer = new PostingIndexWriter(smallPageCfg, path, name, COLUMN_NAME_TXN_NONE)) {
+                        writer.configureCovering(
+                                new long[]{colAddr},
+                                new long[]{0},
+                                new int[]{3},               // shift for LONG (8 bytes = 2^3)
+                                new int[]{1},               // covered column writer index
+                                new int[]{ColumnType.LONG},
+                                1
+                        );
+
+                        // Gen 0: first half of rows for key 0.
+                        for (int i = 0; i < rowsPerGen; i++) writer.add(0, i);
+                        writer.setMaxValue(rowsPerGen - 1);
+                        writer.commit();
+
+                        try (PostingIndexFwdReader reader = new PostingIndexFwdReader(
+                                smallPageCfg, path.trimTo(plen), name, COLUMN_NAME_TXN_NONE, -1, 0,
+                                coveringMetadata(new int[]{1}, new int[]{ColumnType.LONG}), EMPTY_CVR, 0)) {
+                            // First covering read populates sidecarMems[0] via
+                            // ensureSidecarOpen(), mmaping to the chain-published
+                            // gen-0 extent.
+                            CoveringRowCursor cc = (CoveringRowCursor) reader.getCursor(
+                                    0, 0, Long.MAX_VALUE, new int[]{0});
+                            assertTrue(cc.isCoveredAvailable(0));
+                            for (int i = 0; i < rowsPerGen; i++) {
+                                assertTrue("gen0 row " + i, cc.hasNext());
+                                assertEquals(i, cc.next());
+                                assertEquals("gen0 covered value at row " + i,
+                                        1000L + i, cc.getCoveredLong(0));
+                            }
+                            assertFalse(cc.hasNext());
+                            Misc.free(cc);
+
+                            long mmapSizeAfterGen0 = readSidecarMmapSize(reader, 0);
+                            assertTrue("sanity: sidecar mmap was populated by first covering read",
+                                    mmapSizeAfterGen0 > 0);
+
+                            // Gen 1: second half of rows for key 0. Same writer,
+                            // no seal between commits, so sealTxn stays at 0 and
+                            // writeSidecarGenData() appends another block to the
+                            // same .pc0 file. With the small append page size this
+                            // forces the writer to allocate a fresh chunk past the
+                            // gen-0 extent.
+                            for (int i = rowsPerGen; i < totalRows; i++) writer.add(0, i);
+                            writer.setMaxValue(totalRows - 1);
+                            writer.commit();
+
+                            long fileSizeAfterGen1 = sidecarFileLengthOnDisk(path.trimTo(plen), name, 0);
+                            assertTrue(
+                                    "sanity: writer must extend .pc0 past the gen-0 mmap" +
+                                            " [gen0Mmap=" + mmapSizeAfterGen0 +
+                                            ", fileLenGen1=" + fileSizeAfterGen1 + "]",
+                                    fileSizeAfterGen1 > mmapSizeAfterGen0
+                            );
+
+                            // Trigger reloadConditionally() through getCursor and
+                            // iterate every row across both gens. Without the
+                            // chain-published cover end-offset, this would
+                            // dereference past the stale gen-0 mapping (SIGBUS) or
+                            // return zero-padded bytes. With the fix the mapping is
+                            // resized to the new published extent and every value
+                            // round-trips.
+                            cc = (CoveringRowCursor) reader.getCursor(
+                                    0, 0, Long.MAX_VALUE, new int[]{0});
+                            assertTrue(cc.isCoveredAvailable(0));
+                            for (int i = 0; i < totalRows; i++) {
+                                assertTrue("post-reload row " + i, cc.hasNext());
+                                assertEquals(i, cc.next());
+                                assertEquals("post-reload covered value at row " + i,
+                                        1000L + i, cc.getCoveredLong(0));
+                            }
+                            assertFalse(cc.hasNext());
+                            Misc.free(cc);
+
+                            long mmapSizeAfterReload = readSidecarMmapSize(reader, 0);
+                            assertTrue(
+                                    "reload must extend the sidecar mmap past the gen-0" +
+                                            " extent [gen0Mmap=" + mmapSizeAfterGen0 +
+                                            ", afterReload=" + mmapSizeAfterReload + "]",
+                                    mmapSizeAfterReload > mmapSizeAfterGen0
+                            );
+                        }
+                    }
+                } finally {
+                    Unsafe.free(colAddr, (long) totalRows * Long.BYTES, MemoryTag.NATIVE_DEFAULT);
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testCoveringReloadRefreshesAllSidecarMmapsMultiColumn() throws Exception {
+        // Same scenario as the single-column reload test, but with three cover
+        // columns of different fixed widths (Long / Int / Double). Exercises
+        // includeIdx = 0, 1, 2 of sidecarMems / sidecarFileEndOffsets so the
+        // chain entry's per-cover-column footer is verified slot by slot.
+        //
+        // Each cover column gets its own column buffer; gen 1 forces every
+        // .pcN file past gen 0's mmap, and the post-reload reads must
+        // round-trip every value through every slot.
+        final long osPage = io.questdb.std.Files.PAGE_SIZE;
+        CairoConfiguration smallPageCfg = new CairoConfigurationWrapper(configuration) {
+            @Override
+            public long getDataIndexValueAppendPageSize() {
+                return osPage;
+            }
+        };
+        assertMemoryLeak(() -> {
+            try (Path path = new Path().of(configuration.getDbRoot())) {
+                String name = "stale_sidecar_red_multi";
+                int plen = path.size();
+                int rowsPerGen = (int) (osPage / 8);
+                int totalRows = rowsPerGen * 2;
+
+                // Cover column 0: LONG (8B), values 1000 + i.
+                // Cover column 1: INT  (4B), values 2_000_000 + i.
+                // Cover column 2: DOUBLE (8B), values 3.5 * (i + 1).
+                long longAddr = Unsafe.malloc((long) totalRows * Long.BYTES, MemoryTag.NATIVE_DEFAULT);
+                long intAddr = Unsafe.malloc((long) totalRows * Integer.BYTES, MemoryTag.NATIVE_DEFAULT);
+                long doubleAddr = Unsafe.malloc((long) totalRows * Double.BYTES, MemoryTag.NATIVE_DEFAULT);
+                try {
+                    for (int i = 0; i < totalRows; i++) {
+                        Unsafe.putLong(longAddr + (long) i * Long.BYTES, 1000L + i);
+                        Unsafe.putInt(intAddr + (long) i * Integer.BYTES, 2_000_000 + i);
+                        Unsafe.putDouble(doubleAddr + (long) i * Double.BYTES, 3.5d * (i + 1));
+                    }
+                    try (PostingIndexWriter writer = new PostingIndexWriter(smallPageCfg, path, name, COLUMN_NAME_TXN_NONE)) {
+                        writer.configureCovering(
+                                new long[]{longAddr, intAddr, doubleAddr},
+                                new long[]{0, 0, 0},
+                                new int[]{3, 2, 3},                              // shifts: LONG=8(2^3), INT=4(2^2), DOUBLE=8(2^3)
+                                new int[]{1, 2, 3},                              // covered column writer indices
+                                new int[]{ColumnType.LONG, ColumnType.INT, ColumnType.DOUBLE},
+                                3
+                        );
+
+                        // Gen 0: first half of rows for key 0.
+                        for (int i = 0; i < rowsPerGen; i++) writer.add(0, i);
+                        writer.setMaxValue(rowsPerGen - 1);
+                        writer.commit();
+
+                        try (PostingIndexFwdReader reader = new PostingIndexFwdReader(
+                                smallPageCfg, path.trimTo(plen), name, COLUMN_NAME_TXN_NONE, -1, 0,
+                                coveringMetadata(
+                                        new int[]{1, 2, 3},
+                                        new int[]{ColumnType.LONG, ColumnType.INT, ColumnType.DOUBLE}
+                                ),
+                                EMPTY_CVR, 0
+                        )) {
+                            // First read populates sidecarMems[0..2] via
+                            // ensureSidecarOpen(), each mmaped to the
+                            // chain-published gen-0 extent for its slot.
+                            CoveringRowCursor cc = (CoveringRowCursor) reader.getCursor(
+                                    0, 0, Long.MAX_VALUE, new int[]{0, 1, 2});
+                            assertTrue("slot 0 covered after gen0", cc.isCoveredAvailable(0));
+                            assertTrue("slot 1 covered after gen0", cc.isCoveredAvailable(1));
+                            assertTrue("slot 2 covered after gen0", cc.isCoveredAvailable(2));
+                            for (int i = 0; i < rowsPerGen; i++) {
+                                assertTrue("gen0 row " + i, cc.hasNext());
+                                assertEquals(i, cc.next());
+                                assertEquals("gen0 LONG @row " + i, 1000L + i, cc.getCoveredLong(0));
+                                assertEquals("gen0 INT @row " + i, 2_000_000 + i, cc.getCoveredInt(1));
+                                assertEquals("gen0 DOUBLE @row " + i, 3.5d * (i + 1), cc.getCoveredDouble(2), 1e-9);
+                            }
+                            assertFalse(cc.hasNext());
+                            Misc.free(cc);
+
+                            long[] gen0Sizes = new long[3];
+                            for (int slot = 0; slot < 3; slot++) {
+                                gen0Sizes[slot] = readSidecarMmapSize(reader, slot);
+                                assertTrue(
+                                        "sanity: slot " + slot + " mmap populated by first read",
+                                        gen0Sizes[slot] > 0
+                                );
+                            }
+
+                            // Gen 1: second half. Same writer, same sealTxn —
+                            // every .pcN extends past gen-0's mmap.
+                            for (int i = rowsPerGen; i < totalRows; i++) writer.add(0, i);
+                            writer.setMaxValue(totalRows - 1);
+                            writer.commit();
+
+                            for (int slot = 0; slot < 3; slot++) {
+                                long fileLen = sidecarFileLengthOnDisk(path.trimTo(plen), name, slot);
+                                assertTrue(
+                                        "sanity: slot " + slot + " .pcN must extend past gen-0 mmap" +
+                                                " [gen0Mmap=" + gen0Sizes[slot] +
+                                                ", fileLenGen1=" + fileLen + "]",
+                                        fileLen > gen0Sizes[slot]
+                                );
+                            }
+
+                            // Reload and read everything — every covered value
+                            // for every slot must round-trip.
+                            cc = (CoveringRowCursor) reader.getCursor(
+                                    0, 0, Long.MAX_VALUE, new int[]{0, 1, 2});
+                            assertTrue(cc.isCoveredAvailable(0));
+                            assertTrue(cc.isCoveredAvailable(1));
+                            assertTrue(cc.isCoveredAvailable(2));
+                            for (int i = 0; i < totalRows; i++) {
+                                assertTrue("post-reload row " + i, cc.hasNext());
+                                assertEquals(i, cc.next());
+                                assertEquals("post-reload LONG @row " + i, 1000L + i, cc.getCoveredLong(0));
+                                assertEquals("post-reload INT @row " + i, 2_000_000 + i, cc.getCoveredInt(1));
+                                assertEquals("post-reload DOUBLE @row " + i, 3.5d * (i + 1), cc.getCoveredDouble(2), 1e-9);
+                            }
+                            assertFalse(cc.hasNext());
+                            Misc.free(cc);
+
+                            for (int slot = 0; slot < 3; slot++) {
+                                long postReload = readSidecarMmapSize(reader, slot);
+                                assertTrue(
+                                        "reload must extend slot " + slot + " mmap past the gen-0 extent" +
+                                                " [gen0Mmap=" + gen0Sizes[slot] +
+                                                ", afterReload=" + postReload + "]",
+                                        postReload > gen0Sizes[slot]
+                                );
+                            }
+                        }
+                    }
+                } finally {
+                    Unsafe.free(longAddr, (long) totalRows * Long.BYTES, MemoryTag.NATIVE_DEFAULT);
+                    Unsafe.free(intAddr, (long) totalRows * Integer.BYTES, MemoryTag.NATIVE_DEFAULT);
+                    Unsafe.free(doubleAddr, (long) totalRows * Double.BYTES, MemoryTag.NATIVE_DEFAULT);
                 }
             }
         });
@@ -12826,6 +13098,30 @@ public class CoveringIndexTest extends AbstractCairoTest {
             m.add(new TableColumnMetadata("c" + i, type, IndexType.NONE, 0, false, null, i, false));
         }
         return m;
+    }
+
+    @SuppressWarnings("unchecked")
+    private static long readSidecarMmapSize(PostingIndexFwdReader reader, int includeIdx) throws Exception {
+        Class<?> base = reader.getClass().getSuperclass();
+        Field f = base.getDeclaredField("sidecarMems");
+        f.setAccessible(true);
+        ObjList<MemoryMR> mems = (ObjList<MemoryMR>) f.get(reader);
+        if (includeIdx >= mems.size()) {
+            return -1;
+        }
+        MemoryMR mem = mems.getQuick(includeIdx);
+        return mem == null ? -1 : mem.size();
+    }
+
+    private static long sidecarFileLengthOnDisk(Path basePath, CharSequence name, int includeIdx) {
+        int len = basePath.size();
+        try {
+            LPSZ pcFile = PostingIndexUtils.coverDataFileName(
+                    basePath, name, includeIdx, COLUMN_NAME_TXN_NONE, COLUMN_NAME_TXN_NONE, 0);
+            return TestFilesFacadeImpl.INSTANCE.length(pcFile);
+        } finally {
+            basePath.trimTo(len);
+        }
     }
 
     private void assertPlanDoesNotContain(String query) throws SqlException {
