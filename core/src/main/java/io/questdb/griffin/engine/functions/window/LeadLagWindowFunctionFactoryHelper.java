@@ -337,6 +337,22 @@ public class LeadLagWindowFunctionFactoryHelper {
         }
 
         @Override
+        public void resetPartition(Record record) {
+            // ANCHOR-driven reset (RFC 123). Drop the partition's lag ring to empty:
+            // firstIdx=0, count=0 mean the function reports "no prior value yet" until
+            // {@code offset} new rows have been observed. The ring buffer's startOffset
+            // (slot 0) stays allocated and the next row's write reuses it from index 0.
+            partitionByRecord.of(record);
+            MapKey key = map.withKey();
+            key.put(partitionByRecord, partitionBySink);
+            MapValue value = key.findValue();
+            if (value != null) {
+                value.putLong(1, 0L); // firstIdx
+                value.putLong(2, 0L); // count
+            }
+        }
+
+        @Override
         public void toPlan(PlanSink sink) {
             sink.val(getName());
             sink.val('(').val(arg).val(", ").val(offset).val(", ");
