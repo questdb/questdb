@@ -52,7 +52,6 @@ import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.griffin.engine.table.parquet.ParquetDecoder;
 import io.questdb.std.BinarySequence;
 import io.questdb.std.Decimal128;
 import io.questdb.std.Decimal256;
@@ -639,11 +638,6 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
         }
 
         @Override
-        public ParquetDecoder getParquetDecoder() {
-            return null;
-        }
-
-        @Override
         public int getParquetRowGroup() {
             return 0;
         }
@@ -951,7 +945,8 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
                             addr + (long) count * Double.BYTES, crc.getCoveredDouble(includeIdx));
                     case ColumnType.FLOAT -> Unsafe.putFloat(
                             addr + (long) count * Float.BYTES, crc.getCoveredFloat(includeIdx));
-                    case ColumnType.LONG, ColumnType.TIMESTAMP, ColumnType.DATE, ColumnType.GEOLONG ->
+                    case ColumnType.LONG, ColumnType.TIMESTAMP, ColumnType.DATE, ColumnType.GEOLONG,
+                         ColumnType.DECIMAL64 ->
                             Unsafe.putLong(addr + (long) count * Long.BYTES, crc.getCoveredLong(includeIdx));
                     case ColumnType.INT, ColumnType.IPv4, ColumnType.GEOINT, ColumnType.SYMBOL ->
                             Unsafe.putInt(addr + (long) count * Integer.BYTES, crc.getCoveredInt(includeIdx));
@@ -959,8 +954,6 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
                             Unsafe.putShort(addr + (long) count * Short.BYTES, crc.getCoveredShort(includeIdx));
                     case ColumnType.BYTE, ColumnType.BOOLEAN, ColumnType.GEOBYTE ->
                             Unsafe.putByte(addr + count, crc.getCoveredByte(includeIdx));
-                    case ColumnType.DECIMAL64 ->
-                            Unsafe.putLong(addr + (long) count * Long.BYTES, crc.getCoveredLong(includeIdx));
                     case ColumnType.DECIMAL32 ->
                             Unsafe.putInt(addr + (long) count * Integer.BYTES, crc.getCoveredInt(includeIdx));
                     case ColumnType.DECIMAL16 ->
