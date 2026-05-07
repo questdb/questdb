@@ -536,6 +536,45 @@ public class CompiledFilterTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testInShortCircuitDoesNotLeakColumnCacheAfterEndSc() throws Exception {
+        assertMemoryLeak(() -> {
+            // Multi-value IN() in a scalar AND chain emits BEGIN_SC, EQ pairs
+            // gated by OR_SC, AND_SC and END_SC. Column reads for the IN
+            // values populate the C++ ColumnValueCache, which is keyed on
+            // (column, type) and persists across the OR_SC forward jump. If
+            // OR_SC takes its jump to END_SC, the load that populated the
+            // cache entry is skipped, but a later MEM read for the same
+            // column would otherwise hit the cache and use a register that
+            // was never written on the jumped-to path -- returning garbage.
+            // Here c0 is loaded both inside the IN block (for c0 = c1) and
+            // outside it (for c0 != null), and c1 IN (c0, c1) trips the
+            // OR_SC short-circuit on the c1 = c1 leaf for every non-NULL
+            // c1, so the bug surfaces as JIT including rows where c0 IS
+            // NULL. The fix snapshots the cache size at BEGIN_SC and
+            // truncates back at END_SC so entries from inside the block do
+            // not leak past it.
+            execute("CREATE TABLE x (c0 FLOAT, c1 DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO x VALUES " +
+                    "(0.5::FLOAT, 0.7, '2024-01-01T00:00:00.000000Z')," +
+                    " (NULL,       0.4, '2024-01-01T00:00:01.000000Z')");
+
+            // Predicates sort by priority: IN (PRIORITY_OTHER=5) before
+            // c0 != null (PRIORITY_OTHER_NEQ=6), so IN's END_SC sits right
+            // before the NE predicate that re-reads c0.
+            String sql = "SELECT count(*) FROM x WHERE NOT (c0 IS NULL) AND c1 IN (c0, c1)";
+
+            sqlExecutionContext.setJitMode(SqlJitMode.JIT_MODE_DISABLED);
+            assertSql("count\n1\n", sql);
+            sqlExecutionContext.setJitMode(SqlJitMode.JIT_MODE_ENABLED);
+            assertSql("count\n1\n", sql);
+
+            try (RecordCursorFactory factory = select(sql)) {
+                Assert.assertTrue("predicate must still JIT", factory.usesCompiledFilter());
+            }
+        });
+    }
+
+    @Test
     public void testIntColumnArithmeticStaysAtIntWidthWhenFloatSuppressesWidening() throws Exception {
         assertMemoryLeak(() -> {
             // Inverse of testIntColumnArithmeticWidenedToLongInLongContext:

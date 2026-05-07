@@ -1111,6 +1111,16 @@ namespace questdb::aarch64 {
               const ConstantCache &const_cache,
               ColumnValueCache &value_cache) {
 
+        // Snapshot of value_cache.size() taken at BEGIN_SC. Restored at
+        // END_SC so column reads emitted between BEGIN_SC and END_SC do not
+        // leak cached registers past END_SC: an OR_SC forward jump can skip
+        // the load that populated such an entry, and a later MEM read for
+        // the same column would otherwise return a register that was never
+        // written on the jumped-to path. Multi-value IN() is the source of
+        // these blocks today and they never nest, so a single counter is
+        // sufficient.
+        size_t sc_value_cache_snapshot = 0;
+
         for (size_t i = 0; i < size; ++i) {
             auto &instr = istream[i];
             switch (instr.opcode) {
@@ -1194,6 +1204,7 @@ namespace questdb::aarch64 {
                     auto label_idx = static_cast<size_t>(instr.ipayload.lo);
                     Label label = c.new_label();
                     labels.set(label_idx, label);
+                    sc_value_cache_snapshot = value_cache.size();
                     break;
                 }
                 case opcodes::End_Sc: {
@@ -1201,6 +1212,7 @@ namespace questdb::aarch64 {
                     if (labels.has(label_idx)) {
                         c.bind(labels.get(label_idx));
                     }
+                    value_cache.truncate(sc_value_cache_snapshot);
                     break;
                 }
                 default: {

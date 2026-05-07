@@ -350,6 +350,21 @@ struct ColumnValueCache {
         count = 0;
     }
 
+    // Snapshots the current entry count so the cache can be rolled back via
+    // truncate(). Used to drop entries added inside a BEGIN_SC/END_SC block,
+    // where an OR_SC forward jump may skip the loads that populated them.
+    size_t size() const {
+        return count;
+    }
+
+    // Drops all entries past the given count. Pair with size() to restore the
+    // cache to a snapshot taken earlier in the IR stream.
+    void truncate(size_t new_count) {
+        if (new_count < count) {
+            count = new_count;
+        }
+    }
+
 private:
     size_t count;
     int32_t column_idxs[MAX_VALUES];
@@ -400,6 +415,21 @@ private:
 
     void clear() {
         count = 0;
+    }
+
+    // Snapshots the current entry count so the cache can be rolled back via
+    // truncate(). Used to drop entries added inside a BEGIN_SC/END_SC block,
+    // where an OR_SC forward jump may skip the loads that populated them.
+    size_t size() const {
+        return count;
+    }
+
+    // Drops all entries past the given count. Pair with size() to restore the
+    // cache to a snapshot taken earlier in the IR stream.
+    void truncate(size_t new_count) {
+        if (new_count < count) {
+            count = new_count;
+        }
     }
 
 private:
