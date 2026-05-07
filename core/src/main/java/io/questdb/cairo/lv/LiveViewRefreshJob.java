@@ -386,6 +386,41 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             stateStore.notifyBaseRefreshed(refreshTask, refreshTask.seqTxn);
             didWork = true;
         }
+        if (!didWork) {
+            // Notification queue empty: scan all registered views and refresh any whose
+            // base sequencer head is past their last-processed seqTxn. Catches missed /
+            // coalesced commit notifications (e.g., a CREATE that races a writer or a
+            // notification dropped while the worker was busy on another task) and serves
+            // as the periodic FLUSH-EVERY tick this build doesn't yet have a dedicated
+            // timer for.
+            didWork = scanForLaggingViews();
+        }
+        return didWork;
+    }
+
+    /**
+     * Iterates the live-view registry and refreshes any view whose base sequencer head
+     * is ahead of its last-processed seqTxn. Returns {@code true} if any view advanced.
+     */
+    private boolean scanForLaggingViews() {
+        LiveViewRegistry registry = engine.getLiveViewRegistry();
+        registry.getViews(viewInstanceSink);
+        boolean didWork = false;
+        for (int i = 0, n = viewInstanceSink.size(); i < n; i++) {
+            LiveViewInstance instance = viewInstanceSink.getQuick(i);
+            if (instance.isDropped() || instance.isInvalid()) {
+                continue;
+            }
+            TableToken baseToken = instance.getDefinition().getBaseTableToken();
+            if (baseToken == null) {
+                continue;
+            }
+            long head = engine.getTableSequencerAPI().getTxnTracker(baseToken).getWriterTxn();
+            if (head > instance.getLastProcessedSeqTxn()) {
+                refreshInstance(instance, head);
+                didWork = true;
+            }
+        }
         return didWork;
     }
 

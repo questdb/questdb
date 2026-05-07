@@ -230,6 +230,40 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testFallbackScanPicksUpMissedNotifications() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 1s AS " +
+                    "SELECT ts, x, row_number() OVER () AS rn FROM base WHERE x > 0");
+
+            // Drain the notification state store BEFORE inserting — this simulates a
+            // missed notification (e.g., the worker was busy elsewhere when the commit
+            // landed, and the dedup gate dropped subsequent notifications).
+            engine.getLiveViewStateStore().clear();
+
+            execute("INSERT INTO base (ts, x) VALUES " +
+                    "('2026-04-01T00:00:00.000000Z', 11), ('2026-04-01T00:01:00.000000Z', 22)");
+            drainWalQueue();
+
+            // Notification queue is empty; the refresh job's fallback scan must catch
+            // the lag and refresh the LV.
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                drainJob(job);
+            }
+            drainWalQueue();
+
+            LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("lv");
+            Assert.assertTrue(
+                    "fallback scan must advance lastProcessedSeqTxn",
+                    instance.getLastProcessedSeqTxn() > 0
+            );
+            assertSql("count\n2\n", "SELECT count() FROM lv");
+
+            execute("DROP LIVE VIEW lv");
+        });
+    }
+
+    @Test
     public void testInvalidationSurvivesRestart() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE base (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
