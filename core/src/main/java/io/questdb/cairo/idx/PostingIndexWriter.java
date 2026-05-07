@@ -294,9 +294,7 @@ public class PostingIndexWriter implements IndexWriter {
     }
 
     public void clearCovering() {
-        unmapCoveredColumnReads();
-        this.coveredColumnAddrs.clear();
-        this.coveredColumnAuxAddrs.clear();
+        releaseCoveredColumnReadMappings();
         this.coveredPartitionPath.clear();
         this.coveredColumnNames.clear();
         this.coveredColumnNameTxns.clear();

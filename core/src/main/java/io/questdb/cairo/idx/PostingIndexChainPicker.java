@@ -130,8 +130,11 @@ public final class PostingIndexChainPicker {
             // gen-dir read. The post-read variant of this check used to fire
             // too late: a corrupted or truncated entry whose footer landed
             // past the mmap would already have SIGSEGV'd inside read().
+            // Compare against (mappedLimit - entryOffset) so a stomped
+            // peekedLen near Long.MAX_VALUE cannot overflow the addition
+            // and silently pass the bound check.
             long peekedLen = keyMem.getLong(entryOffset + PostingIndexUtils.V2_ENTRY_OFFSET_LEN);
-            if (peekedLen <= 0 || entryOffset + peekedLen > mappedLimit) {
+            if (peekedLen <= 0 || peekedLen > mappedLimit - entryOffset) {
                 return RESULT_HEADER_UNREADABLE;
             }
             // Hard cap on iterations to defend against a corrupted prev

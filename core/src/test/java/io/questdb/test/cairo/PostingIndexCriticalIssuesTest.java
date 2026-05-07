@@ -1195,10 +1195,12 @@ public class PostingIndexCriticalIssuesTest extends AbstractCairoTest {
                 }
                 Assert.assertTrue(
                         "iter=" + iter + ", key=" + key + ", count=" + count
-                                + " - reader did not crash but returned a "
-                                + "non-positive count, indicating the chain walk "
-                                + "skipped or mis-read entries",
-                        count >= 0
+                                + " - sampleKeys are sourced from the preloaded "
+                                + "2_000-row batch (DISTINCT sym LIMIT 3), so "
+                                + "each must have count>0; a zero or negative "
+                                + "count means the chain walk skipped or "
+                                + "mis-read the entries holding this symbol",
+                        count > 0
                 );
             }
         });
