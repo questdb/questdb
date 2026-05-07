@@ -3558,6 +3558,63 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testParallelStringKeyGroupByWithMinCharFunction() throws Exception {
+        // Regression: MinCharGroupByFunction.merge() used to call putInt on a 2-byte CHAR
+        // value slot, overrunning the 2 trailing zero bytes into the next OrderedMap heap
+        // entry's keySize prefix. The crash surfaces as a SIGSEGV in
+        // OrderedMapVarSizeCursor.hasNext() on roughly a quarter of runs of the buggy code;
+        // the rest are silent.
+        Assume.assumeTrue(enableParallelGroupBy);
+        assertMemoryLeak(() -> {
+            final WorkerPool pool = new WorkerPool(() -> 4);
+            TestUtils.execute(
+                    pool,
+                    (engine, compiler, sqlExecutionContext) -> {
+                        sqlExecutionContext.setJitMode(enableJitCompiler ? SqlJitMode.JIT_MODE_ENABLED : SqlJitMode.JIT_MODE_DISABLED);
+                        engine.execute(
+                                "CREATE TABLE tab AS (SELECT" +
+                                        " rnd_byte()::string key," +
+                                        " length(rnd_str(3, 8, 0))::char achar," +
+                                        " timestamp_sequence(to_timestamp('2024-01-01', 'yyyy-MM-dd'), 1800000000L) ts" +
+                                        " FROM long_sequence(91)) TIMESTAMP(ts) PARTITION BY DAY",
+                                sqlExecutionContext
+                        );
+                        if (convertToParquet) {
+                            execute(compiler, "ALTER TABLE tab CONVERT PARTITION TO PARQUET WHERE ts >= 0", sqlExecutionContext);
+                        }
+                        // ORDER BY ... LIMIT -1 forces the cursor to walk the full post-merge
+                        // heap to find the last row - the corrupted keySize crashes the
+                        // cursor on a fraction of the buggy runs.
+                        TestUtils.assertSql(
+                                engine,
+                                sqlExecutionContext,
+                                "SELECT key, min(achar) FROM tab ORDER BY key LIMIT -1",
+                                sink,
+                                "key\tmin\n99\t\n"
+                        );
+                    },
+                    configuration,
+                    LOG
+            );
+        });
+    }
+
+    @Test
+    public void testParallelStringKeyGroupByWithMinMaxCharFunction() throws Exception {
+        testParallelGroupByAllTypes(
+                "SELECT key, min(achar), max(achar) FROM tab ORDER BY key",
+                """
+                        key\tmin\tmax
+                        k0\tB\tZ
+                        k1\tB\tZ
+                        k2\tB\tZ
+                        k3\tB\tZ
+                        k4\tB\tZ
+                        """
+        );
+    }
+
+    @Test
     public void testParallelStringKeyGroupByWithMinMaxStrFunction() throws Exception {
         testParallelGroupByAllTypes(
                 "SELECT key, min(astring), max(astring) FROM tab ORDER BY key",
