@@ -297,6 +297,12 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final String keepAliveHeader;
     private final int latestByQueueCapacity;
     private final String legacyCheckpointRoot;
+    private final boolean liveViewEnabled;
+    private final int liveViewFlushRetryMax;
+    private final long liveViewFlushRetryMaxDurationMicros;
+    private final long liveViewInMemoryMaxMicros;
+    private final int liveViewRefreshTurnMaxCommits;
+    private final long liveViewRefreshTurnMaxDurationMicros;
     private final boolean lineHttpEnabled;
     private final CharSequence lineHttpPingVersion;
     private final LineHttpProcessorConfiguration lineHttpProcessorConfiguration = new PropLineHttpProcessorConfiguration();
@@ -1456,6 +1462,14 @@ public class PropServerConfiguration implements ServerConfiguration {
             this.walApplyWorkerSleepThreshold = getLong(properties, env, PropertyKey.WAL_APPLY_WORKER_SLEEP_THRESHOLD, 10_000);
             this.walApplySleepTimeout = getMillis(properties, env, PropertyKey.WAL_APPLY_WORKER_SLEEP_TIMEOUT, 10);
             this.walApplyWorkerYieldThreshold = getLong(properties, env, PropertyKey.WAL_APPLY_WORKER_YIELD_THRESHOLD, 1000);
+
+            // live-view config
+            this.liveViewEnabled = getBoolean(properties, env, PropertyKey.CAIRO_LIVE_VIEW_ENABLED, true);
+            this.liveViewInMemoryMaxMicros = getMicros(properties, env, PropertyKey.CAIRO_LIVE_VIEW_IN_MEMORY_MAX, 60L * Micros.MINUTE_MICROS);
+            this.liveViewFlushRetryMax = getInt(properties, env, PropertyKey.CAIRO_LIVE_VIEW_FLUSH_RETRY_MAX, 5);
+            this.liveViewFlushRetryMaxDurationMicros = getMicros(properties, env, PropertyKey.CAIRO_LIVE_VIEW_FLUSH_RETRY_MAX_DURATION, 60L * Micros.SECOND_MICROS);
+            this.liveViewRefreshTurnMaxCommits = getInt(properties, env, PropertyKey.CAIRO_LIVE_VIEW_REFRESH_TURN_MAX_COMMITS, 64);
+            this.liveViewRefreshTurnMaxDurationMicros = getMicros(properties, env, PropertyKey.CAIRO_LIVE_VIEW_REFRESH_TURN_MAX_DURATION_MICROS, 50_000L);
 
             // reuse wal-apply defaults for mat view workers
             this.matViewEnabled = getBoolean(properties, env, PropertyKey.CAIRO_MAT_VIEW_ENABLED, true);
@@ -3819,6 +3833,31 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
+        public long getLiveViewFlushRetryMaxDurationMicros() {
+            return liveViewFlushRetryMaxDurationMicros;
+        }
+
+        @Override
+        public int getLiveViewFlushRetryMax() {
+            return liveViewFlushRetryMax;
+        }
+
+        @Override
+        public long getLiveViewInMemoryMaxMicros() {
+            return liveViewInMemoryMaxMicros;
+        }
+
+        @Override
+        public int getLiveViewRefreshTurnMaxCommits() {
+            return liveViewRefreshTurnMaxCommits;
+        }
+
+        @Override
+        public long getLiveViewRefreshTurnMaxDurationMicros() {
+            return liveViewRefreshTurnMaxDurationMicros;
+        }
+
+        @Override
         public boolean getLogLevelVerbose() {
             return logLevelVerbose;
         }
@@ -4856,6 +4895,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public boolean isIOURingEnabled() {
             return ioURingEnabled;
+        }
+
+        @Override
+        public boolean isLiveViewEnabled() {
+            return liveViewEnabled;
         }
 
         @Override

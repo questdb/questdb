@@ -30,6 +30,8 @@ import io.questdb.cairo.CairoException;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.TxReader;
+import io.questdb.cairo.lv.LiveViewInstance;
+import io.questdb.cairo.lv.LiveViewRegistry;
 import io.questdb.cairo.mv.MatViewState;
 import io.questdb.cairo.sql.TableMetadata;
 import io.questdb.cairo.sql.TableReferenceOutOfDateException;
@@ -64,6 +66,7 @@ public class WalPurgeJob extends SynchronizedJob implements Closeable {
     private final TableSequencerAPI.TableSequencerCallback broadSweepRef;
     private final long checkInterval;
     private final ObjList<TableToken> childViewSink = new ObjList<>();
+    private final ObjList<LiveViewInstance> liveViewSink = new ObjList<>();
     private final Clock clock;
     private final CairoConfiguration configuration;
     private final CairoEngine engine;
@@ -489,6 +492,24 @@ public class WalPurgeJob extends SynchronizedJob implements Closeable {
                         safeToPurgeTxn = Math.min(safeToPurgeTxn, appliedToViewTxn);
                     }
                 }
+            }
+        }
+
+        // Phase 1 RFC 123: live views publish lv_consumed_seqTxn through this purge floor
+        // alongside mat-view consumers. Skip dropped / invalid views — invalid stays at the
+        // last published value but its WAL retention need disappears once it's invalid (the
+        // refresh worker will not consume more base segments).
+        liveViewSink.clear();
+        final LiveViewRegistry liveViewRegistry = engine.getLiveViewRegistry();
+        liveViewRegistry.getViewsForBaseTable(tableToken.getTableName(), liveViewSink);
+        for (int v = 0, n = liveViewSink.size(); v < n; v++) {
+            final LiveViewInstance instance = liveViewSink.getQuick(v);
+            if (instance.isDropped() || instance.isInvalid()) {
+                continue;
+            }
+            final long lvConsumed = instance.getStateReader().getLvConsumedSeqTxn();
+            if (lvConsumed > -1) {
+                safeToPurgeTxn = Math.min(safeToPurgeTxn, lvConsumed);
             }
         }
         return safeToPurgeTxn;

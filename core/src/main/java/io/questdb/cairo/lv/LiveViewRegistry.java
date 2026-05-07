@@ -103,9 +103,11 @@ public class LiveViewRegistry implements QuietCloseable {
     }
 
     /**
-     * Invalidates all live view instances that depend on the given base table.
+     * Marks every live view depending on {@code baseTableName} as invalid in memory.
+     * Callers are responsible for persisting {@code _lv.s} for each affected view —
+     * this method only flips the in-memory bit, since the registry has no FS handle.
      */
-    public void invalidateViewsForBaseTable(CharSequence baseTableName, String reason) {
+    public void invalidateViewsForBaseTable(CharSequence baseTableName, String reason, long invalidationTimestampUs) {
         DepList list = viewsByBaseTable.get(baseTableName);
         if (list == null) {
             return;
@@ -113,7 +115,7 @@ public class LiveViewRegistry implements QuietCloseable {
         ObjList<LiveViewInstance> views = list.lockForRead();
         try {
             for (int i = 0, n = views.size(); i < n; i++) {
-                views.getQuick(i).invalidate(reason);
+                views.getQuick(i).markInvalid(reason, invalidationTimestampUs);
             }
         } finally {
             list.unlockAfterRead();

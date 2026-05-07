@@ -35,6 +35,8 @@ import io.questdb.cairo.frm.file.FrameFactory;
 import io.questdb.cairo.lv.LiveViewDefinition;
 import io.questdb.cairo.lv.LiveViewInstance;
 import io.questdb.cairo.lv.LiveViewRegistry;
+import io.questdb.cairo.lv.LiveViewState;
+import io.questdb.cairo.lv.LiveViewStateReader;
 import io.questdb.cairo.lv.LiveViewStateStore;
 import io.questdb.cairo.lv.LiveViewStateStoreImpl;
 import io.questdb.cairo.lv.LiveViewTableStructure;
@@ -564,17 +566,26 @@ public class CairoEngine implements Closeable, WriterSource {
                                     baseTableToken,
                                     metadata
                             );
-                            LiveViewInstance instance = new LiveViewInstance(definition);
+                            LiveViewInstance instance = new LiveViewInstance(definition, tableToken);
+                            // Try loading durable state (_lv.s); synthesise a default if missing.
+                            if (TableUtils.isLiveViewStateFileExists(configuration, path, tableToken.getDirName())) {
+                                path.of(configuration.getDbRoot()).concat(tableToken).concat(LiveViewState.LIVE_VIEW_STATE_FILE_NAME);
+                                reader.of(path.$());
+                                LiveViewStateReader stateReader = new LiveViewStateReader();
+                                stateReader.of(reader, tableToken);
+                                instance.initFromState(stateReader);
+                            }
+                            long nowUs = configuration.getMicrosecondClock().getTicks();
                             if (!baseTableExists) {
                                 LOG.info().$("base table for live view does not exist [table=").$safe(definition.getBaseTableName())
                                         .$(", view=").$(tableToken)
                                         .I$();
-                                instance.invalidate("base table does not exist");
+                                instance.markInvalid("base table does not exist", nowUs);
                             } else if (!baseTableToken.isWal()) {
                                 LOG.info().$("base table for live view is not WAL table [table=").$safe(definition.getBaseTableName())
                                         .$(", view=").$(tableToken)
                                         .I$();
-                                instance.invalidate("base table is not WAL table");
+                                instance.markInvalid("base table is not WAL table", nowUs);
                             }
                             liveViewRegistry.registerView(instance);
                             liveViewStateStore.registerBaseTable(definition.getBaseTableName());
@@ -684,7 +695,10 @@ public class CairoEngine implements Closeable, WriterSource {
     ) throws SqlException {
         // reject DEDUP base tables: incremental refresh reads raw WAL segments, which
         // contain the pre-dedup row stream and cannot be reconciled with the applied
-        // base table state. See LiveViewRefreshJob for the incremental refresh design.
+        // base table state.
+        final int basePartitionBy;
+        final int baseTimestampType;
+        final long viewLowerBoundTimestamp;
         try (TableMetadata baseMetadata = getTableMetadata(baseTableToken)) {
             for (int i = 0, n = baseMetadata.getColumnCount(); i < n; i++) {
                 if (baseMetadata.isDedupKey(i)) {
@@ -692,7 +706,17 @@ public class CairoEngine implements Closeable, WriterSource {
                             "live view cannot be created over a base table with DEDUP keys");
                 }
             }
+            basePartitionBy = baseMetadata.getPartitionBy();
+            int tsIndex = baseMetadata.getTimestampIndex();
+            if (tsIndex < 0) {
+                throw SqlException.$(op.getViewNamePosition(),
+                        "live view base table must have a designated timestamp");
+            }
+            baseTimestampType = baseMetadata.getColumnType(tsIndex);
         }
+        // viewLowerBoundTimestamp is the floor for O3 reachability. Phase 1 (no BACKFILL)
+        // takes the wall-clock CREATE moment.
+        viewLowerBoundTimestamp = configuration.getMicrosecondClock().getTicks();
 
         // compile the SELECT to validate and get metadata. The live-view-compile flag
         // suppresses indexed-symbol key extraction in WhereClauseParser so the planner
@@ -713,8 +737,14 @@ public class CairoEngine implements Closeable, WriterSource {
             }
         }
 
-        // create disk directory with _meta and _txn via the standard infrastructure
-        LiveViewTableStructure struct = new LiveViewTableStructure(op.getViewName(), metadata);
+        // Resolve PARTITION BY: PartitionBy.NONE is the "inherit" sentinel.
+        final int partitionBy = LiveViewTableStructure.resolvePartitionBy(op.getPartitionBy(), basePartitionBy);
+
+        // capture base sequencer head as subscribeFromSeqTxn — Phase 1 starts empty
+        // and consumes commits with seqTxn >= subscribeFromSeqTxn.
+        final long subscribeFromSeqTxn = tableSequencerAPI.getTxnTracker(baseTableToken).getWriterTxn() + 1;
+
+        LiveViewTableStructure struct = new LiveViewTableStructure(op.getViewName(), partitionBy, metadata);
         try (
                 MemoryMARW mem = Vm.getCMARWInstance();
                 BlockFileWriter blockFileWriter = new BlockFileWriter(configuration.getFilesFacade(), configuration.getCommitMode());
@@ -740,15 +770,37 @@ public class CairoEngine implements Closeable, WriterSource {
                     op.getSelectSql(),
                     op.getBaseTableName(),
                     baseTableToken,
-                    op.getLagValue(),
-                    op.getLagUnit(),
-                    op.getRetentionValue(),
-                    op.getRetentionUnit(),
+                    baseTimestampType,
+                    op.getFlushEveryInterval(),
+                    op.getFlushEveryIntervalUnit(),
+                    op.getInMemoryInterval(),
+                    op.getInMemoryIntervalUnit(),
+                    partitionBy,
+                    viewLowerBoundTimestamp,
+                    false,
                     metadata
             );
             LiveViewDefinition.append(definition, blockFileWriter);
 
-            LiveViewInstance instance = new LiveViewInstance(definition);
+            // write _lv.s state file with subscribeFromSeqTxn captured above.
+            path.of(configuration.getDbRoot()).concat(liveViewToken);
+            blockFileWriter.of(path.concat(LiveViewState.LIVE_VIEW_STATE_FILE_NAME).$());
+            LiveViewState.append(
+                    false,
+                    null,
+                    Numbers.LONG_NULL,
+                    subscribeFromSeqTxn,
+                    subscribeFromSeqTxn - 1,
+                    -1L,
+                    subscribeFromSeqTxn - 1,
+                    blockFileWriter
+            );
+
+            LiveViewInstance instance = new LiveViewInstance(definition, liveViewToken);
+            instance.setSubscribeFromSeqTxn(subscribeFromSeqTxn);
+            instance.setLastProcessedSeqTxn(subscribeFromSeqTxn - 1);
+            instance.setAppliedWatermark(-1L);
+            instance.setLvConsumedSeqTxn(subscribeFromSeqTxn - 1);
             liveViewRegistry.registerView(instance);
             liveViewStateStore.registerBaseTable(definition.getBaseTableName());
         }
@@ -881,7 +933,7 @@ public class CairoEngine implements Closeable, WriterSource {
                 notifyViewStoresAboutDrop(tableToken);
                 matViewStateStore.removeViewState(tableToken);
                 matViewGraph.removeView(tableToken);
-                liveViewRegistry.invalidateViewsForBaseTable(tableToken.getTableName(), "base table drop");
+                liveViewRegistry.invalidateViewsForBaseTable(tableToken.getTableName(), "base table drop", configuration.getMicrosecondClock().getTicks());
                 recentWriteTracker.removeTable(tableToken);
             } else {
                 LOG.info().$("table is already dropped [table=").$(tableToken).I$();
@@ -903,7 +955,7 @@ public class CairoEngine implements Closeable, WriterSource {
                     // Then it can push the scoreboard max txn value into incorrect state.
                     scoreboardPool.remove(tableToken);
                     notifyViewStoresAboutDrop(tableToken);
-                    liveViewRegistry.invalidateViewsForBaseTable(tableToken.getTableName(), "base table drop");
+                    liveViewRegistry.invalidateViewsForBaseTable(tableToken.getTableName(), "base table drop", configuration.getMicrosecondClock().getTicks());
                     recentWriteTracker.removeTable(tableToken);
                 } finally {
                     unlockTableUnsafe(tableToken, null, false);
@@ -1523,7 +1575,11 @@ public class CairoEngine implements Closeable, WriterSource {
     }
 
     public void invalidateLiveViewsForBaseTable(TableToken baseTableToken, String reason) {
-        liveViewRegistry.invalidateViewsForBaseTable(baseTableToken.getTableName(), reason);
+        liveViewRegistry.invalidateViewsForBaseTable(
+                baseTableToken.getTableName(),
+                reason,
+                configuration.getMicrosecondClock().getTicks()
+        );
     }
 
     public boolean isClosing() {
@@ -1854,7 +1910,7 @@ public class CairoEngine implements Closeable, WriterSource {
                             if (fromTableToken.isWal()) {
                                 matViewStateStore.enqueueInvalidateDependentViews(fromTableToken, "table rename operation");
                             }
-                            liveViewRegistry.invalidateViewsForBaseTable(fromTableToken.getTableName(), "base table rename");
+                            liveViewRegistry.invalidateViewsForBaseTable(fromTableToken.getTableName(), "base table rename", configuration.getMicrosecondClock().getTicks());
                         } else {
                             LOG.info()
                                     .$("failed to rename table [from=").$safe(fromTableName)

@@ -24,96 +24,74 @@
 
 package io.questdb.cairo.lv;
 
+import io.questdb.cairo.TableToken;
 import io.questdb.cairo.sql.RecordCursorFactory;
+import io.questdb.std.IntList;
 import io.questdb.std.Misc;
+import io.questdb.std.Numbers;
 import io.questdb.std.QuietCloseable;
+import org.jetbrains.annotations.NotNull;
+import org.jetbrains.annotations.Nullable;
 
 import java.util.concurrent.atomic.AtomicBoolean;
 
 /**
- * Runtime representation of a live view. Wraps a {@link DoubleBufferedTable} plus the
- * compiled factory, merge buffer, and metadata.
+ * Runtime representation of a Phase 1 live view.
  * <p>
- * Concurrency model:
+ * Replaces the prototype's merge-buffer / cold-path state with the
+ * disk-only RFC 123 Phase 1 surface:
  * <ul>
- *     <li>The InMemoryTable is double-buffered ({@link DoubleBufferedTable}): readers
- *     {@link #acquireForRead} the published buffer lock-free, the refresh worker claims
- *     the non-published buffer via {@link #tryAcquireWriteBuffer}, mutates it, and
- *     {@link #publishWriteBuffer}s to swap the roles atomically. Readers never block
- *     writers; writers never block readers.</li>
- *     <li>{@link #refreshLatch} is a CAS latch held for the entire refresh operation
- *     (SQL compile + cursor + write buffer population), so a concurrent DROP cannot free
- *     the instance while the refresh is compiling — a window that per-buffer ref counts
- *     alone do not cover.</li>
- *     <li>{@link #dropped} is the DROP signal. {@link #tryCloseIfDropped} races refresh,
- *     reader release, and drop to actually free the instance; whichever party finds both
- *     buffers free and the refresh latch free wins, mirroring the {@code MatViewState}
- *     tryLock/tryCloseIfDropped pattern.</li>
- *     <li>{@link #pendingRefresh} is set by the refresh worker when
- *     {@link #tryAcquireWriteBuffer} returns null (readers still hold the write buffer).
- *     {@link LiveViewTimerJob} polls this flag and enqueues another refresh attempt on
- *     the next tick so the retry is decoupled from the refresh worker.</li>
+ *     <li>Lifecycle is derived from registry visibility + {@link #stateReader}.invalid;
+ *         see {@link LiveViewLifecycleState}.</li>
+ *     <li>The slow-path-only N=2 in-memory tier ({@link DoubleBufferedTable}) caches
+ *         recent flushed rows for low-latency reads. The disk-side data is the live view's
+ *         own WAL-backed table read through {@code TableReader}.</li>
+ *     <li>{@link LiveViewStateReader} mirrors the durable contents of {@code _lv.s} —
+ *         {@code invalid}, {@code subscribeFromSeqTxn}, {@code lastProcessedSeqTxn},
+ *         {@code appliedWatermark}, {@code lvConsumedSeqTxn}. The instance exposes the
+ *         reader; refresh / lifecycle code rewrites the file via
+ *         {@link io.questdb.cairo.lv.LiveViewState#append}.</li>
+ *     <li>{@code dependencyColumnIndexes} captures base-table writer indexes the
+ *         compiled SELECT depends on. {@code ApplyWal2TableJob}'s schema-change hook
+ *         consults this set to decide whether a base-table column change forces
+ *         {@code markInvalid}. Populated at CREATE.</li>
  * </ul>
+ * <p>
+ * V1 omits BACKFILLING / per-window-state Maps / TableWriter ownership — those land
+ * in later phases. The TableWriter for live-view-internal apply is acquired from the
+ * engine's WAL writer pool per FLUSH cycle in V1 (Phase 1 keeps things stateless on
+ * the instance side).
  */
 public class LiveViewInstance implements QuietCloseable {
     private final DoubleBufferedTable bufferedTable = new DoubleBufferedTable();
     private final LiveViewDefinition definition;
+    private final IntList dependencyColumnIndexes = new IntList();
     private final AtomicBoolean refreshLatch = new AtomicBoolean(false);
-    // Cumulative count of WAL rows the live view refresh job skipped because they were
-    // cold relative to the published buffer's oldest visible row and the compiled window
-    // functions' lookback range. Accessed only while the refresh latch is held.
-    private long coldRowSkipCount;
-    // Cached factory from the bootstrap compile. Window functions carry state across rows
-    // (e.g., row_number() counter), so incremental refresh must reuse the same function
-    // instances — reset on every refresh would restart the counters. Accessed only while
-    // the refresh latch is held, so no volatile is needed.
+    private final LiveViewStateReader stateReader = new LiveViewStateReader();
+    // Cached compiled factory. Window functions carry per-row state, so refresh must
+    // reuse the same factory across calls. Accessed only while the refresh latch is held.
     private RecordCursorFactory compiledFactory;
     private volatile boolean dropped;
-    private volatile String invalidationReason;
     private volatile boolean isClosed;
-    // -1 means the view has not been bootstrapped yet; the next refresh must run a full
-    // recompute and capture the base table's seqTxn at the start of the compile.
-    private volatile long lastProcessedSeqTxn = -1;
-    // Wall-clock microseconds (micros since epoch) of the last refresh completion. Read
-    // by LiveViewTimerJob to decide whether the view's merge buffer has been idle for
-    // longer than the LAG window and should be force-drained. Updated by the refresh
-    // job while the refresh latch is held, so no volatile is needed.
-    private long lastRefreshTimeUs;
-    // Sorted native-memory staging buffer that holds rows until they age past the LAG
-    // window. Allocated lazily on the first refresh, once the base table's metadata is
-    // known. Accessed only while the refresh latch is held.
-    private MergeBuffer mergeBuffer;
-    // Set by the refresh worker when tryAcquireWriteBuffer fails because readers still
-    // pin the non-published buffer. LiveViewTimerJob polls this on each tick and
-    // enqueues a force-drain task to retry. Cleared on a successful publishWriteBuffer.
-    private volatile boolean pendingRefresh;
-    // Earliest base-table ts currently included in the window-function accumulator.
-    // Set by bootstrap (equal to the effective lower bound used for the base scan) and
-    // expanded backward by the cold-path disk-read replay when an any-unbounded view
-    // sees a row older than the merge buffer's retention coverage. Long.MAX_VALUE until
-    // the first bootstrap completes. Accessed only while the refresh latch is held.
-    private long stateBackfillTimestamp = Long.MAX_VALUE;
+    // Last refresh-worker tick wall-clock (micros). Used by catalogue / lag metrics.
+    private volatile long lastRefreshTimeUs = Numbers.LONG_NULL;
+    // Live-view's own table token. Populated at construction.
+    private final TableToken liveViewToken;
 
-    public LiveViewInstance(LiveViewDefinition definition) {
+    public LiveViewInstance(LiveViewDefinition definition, TableToken liveViewToken) {
         this.definition = definition;
+        this.liveViewToken = liveViewToken;
         this.bufferedTable.init(definition.getMetadata());
     }
 
-    /**
-     * Releases the write buffer's exclusive claim without publishing. Used when the
-     * refresh fails mid-way; contents of the write buffer are discarded (the next
-     * {@link #tryAcquireWriteBuffer} will return the same buffer, still dirty, and
-     * the caller must re-sync before appending).
-     */
     public void abortWriteBuffer(InMemoryTable writeBuffer) {
         bufferedTable.abortWrite(writeBuffer);
     }
 
     /**
-     * Acquires the currently-published {@link InMemoryTable} for reading. Returns null
-     * if the view has been dropped or invalidated (caller must not attempt a read).
-     * On a non-null return, the caller must call {@link #releaseAfterRead} with the
-     * same table reference.
+     * Returns the currently-published in-memory buffer pinned for the caller, or
+     * {@code null} when the view has been dropped. Callers must release with
+     * {@link #releaseAfterRead}.
      */
     public InMemoryTable acquireForRead() {
         if (dropped) {
@@ -125,30 +103,13 @@ public class LiveViewInstance implements QuietCloseable {
 
     @Override
     public void close() {
-        // Shutdown path only — called from LiveViewRegistry.close() after all workers
-        // have stopped, so no concurrent refresh or reader is expected. Runtime drops
-        // go through markAsDropped() + tryCloseIfDropped() instead.
+        // Shutdown path only — called from CairoEngine.close after all workers stopped.
         dropped = true;
         if (!isClosed) {
             isClosed = true;
             Misc.free(bufferedTable);
             compiledFactory = Misc.free(compiledFactory);
-            mergeBuffer = Misc.free(mergeBuffer);
         }
-    }
-
-    /**
-     * Increments the cumulative count of WAL rows skipped by the cold-path classifier.
-     * Called by the refresh job when a row arrives with {@code ts < oldest_visible_ts -
-     * max(frameLookback)} and the view's window functions are all bounded in the ts
-     * dimension — the row cannot affect any visible output.
-     */
-    public void addColdRowSkips(long count) {
-        coldRowSkipCount += count;
-    }
-
-    public long getColdRowSkipCount() {
-        return coldRowSkipCount;
     }
 
     public RecordCursorFactory getCompiledFactory() {
@@ -159,28 +120,51 @@ public class LiveViewInstance implements QuietCloseable {
         return definition;
     }
 
-    public String getInvalidationReason() {
-        return invalidationReason;
+    public IntList getDependencyColumnIndexes() {
+        return dependencyColumnIndexes;
+    }
+
+    public CharSequence getInvalidationReason() {
+        return stateReader.getInvalidationReason();
     }
 
     public long getLastProcessedSeqTxn() {
-        return lastProcessedSeqTxn;
+        return stateReader.getLastProcessedSeqTxn();
     }
 
     public long getLastRefreshTimeUs() {
         return lastRefreshTimeUs;
     }
 
-    public MergeBuffer getMergeBuffer() {
-        return mergeBuffer;
+    public LiveViewLifecycleState getLifecycleState() {
+        return LiveViewLifecycleState.derive(
+                !dropped && !isClosed,
+                dropped,
+                refreshLatch.get(),
+                stateReader.isInvalid()
+        );
     }
 
-    public long getStateBackfillTimestamp() {
-        return stateBackfillTimestamp;
+    public TableToken getLiveViewToken() {
+        return liveViewToken;
     }
 
-    public void invalidate(String reason) {
-        invalidationReason = reason;
+    public LiveViewStateReader getStateReader() {
+        return stateReader;
+    }
+
+    /**
+     * Records the in-memory state-mirroring fields from a freshly-loaded {@code _lv.s}
+     * snapshot. Called at startup after the file is read.
+     */
+    public void initFromState(@NotNull LiveViewStateReader source) {
+        stateReader.setInvalid(source.isInvalid());
+        stateReader.setInvalidationReason(source.getInvalidationReason());
+        stateReader.setInvalidationTimestampUs(source.getInvalidationTimestampUs());
+        stateReader.setSubscribeFromSeqTxn(source.getSubscribeFromSeqTxn());
+        stateReader.setLastProcessedSeqTxn(source.getLastProcessedSeqTxn());
+        stateReader.setAppliedWatermark(source.getAppliedWatermark());
+        stateReader.setLvConsumedSeqTxn(source.getLvConsumedSeqTxn());
     }
 
     public boolean isDropped() {
@@ -188,59 +172,45 @@ public class LiveViewInstance implements QuietCloseable {
     }
 
     public boolean isInvalid() {
-        return invalidationReason != null;
-    }
-
-    public boolean isPendingRefresh() {
-        return pendingRefresh;
+        return stateReader.isInvalid();
     }
 
     /**
-     * Signals that the view is being dropped. New readers and refreshes must bail out.
-     * The actual free is handled by {@link #tryCloseIfDropped()}, which races drop,
-     * refresh, and reader release paths — whichever runs last performs the free.
+     * Writes invalidation fields into the in-memory state mirror. The caller is responsible
+     * for rewriting {@code _lv.s} via {@link io.questdb.cairo.lv.LiveViewState#append} —
+     * this method only updates the in-memory side.
      */
+    public void markInvalid(@Nullable CharSequence reason, long invalidationTimestampUs) {
+        stateReader.setInvalid(true);
+        stateReader.setInvalidationReason(reason);
+        stateReader.setInvalidationTimestampUs(invalidationTimestampUs);
+    }
+
     public void markAsDropped() {
         dropped = true;
     }
 
     /**
-     * Returns the currently-published {@link InMemoryTable} without pinning it. Safe
-     * only while the refresh latch is held (i.e. from the refresh worker) — callers
-     * that do not serialize against other writers via the latch must use
-     * {@link #acquireForRead} instead.
-     * <p>
-     * Used by the refresh worker to {@link InMemoryTable#copyFrom} the published state
-     * into the write buffer before appending incremental delta rows.
+     * Returns the currently-published buffer without pinning it. Callers must hold the
+     * refresh latch (only the refresh worker uses this).
      */
     public InMemoryTable peekPublishedBuffer() {
         return bufferedTable.peekPublished();
     }
 
-    /**
-     * Atomically swaps the published and write buffers. The buffer returned by the most
-     * recent {@link #tryAcquireWriteBuffer} becomes the published buffer readers see.
-     * Clears {@link #pendingRefresh}.
-     */
     public void publishWriteBuffer() {
         bufferedTable.publishSwap();
-        pendingRefresh = false;
     }
 
-    /**
-     * Releases a read pin previously obtained from {@link #acquireForRead} or
-     * {@link #peekPublishedBuffer}. Must be called for every successful acquire.
-     */
     public void releaseAfterRead(InMemoryTable buffer) {
         bufferedTable.release(buffer);
         tryCloseIfDropped();
     }
 
-    /**
-     * Stores the factory produced by the bootstrap compile so that subsequent incremental
-     * refreshes can reuse its window function instances. Must be called while the refresh
-     * latch is held. Frees any previously cached factory.
-     */
+    public void setAppliedWatermark(long appliedWatermark) {
+        stateReader.setAppliedWatermark(appliedWatermark);
+    }
+
     public void setCompiledFactory(RecordCursorFactory factory) {
         if (compiledFactory != factory) {
             Misc.free(compiledFactory);
@@ -249,94 +219,47 @@ public class LiveViewInstance implements QuietCloseable {
     }
 
     public void setLastProcessedSeqTxn(long seqTxn) {
-        this.lastProcessedSeqTxn = seqTxn;
+        stateReader.setLastProcessedSeqTxn(seqTxn);
     }
 
     public void setLastRefreshTimeUs(long lastRefreshTimeUs) {
         this.lastRefreshTimeUs = lastRefreshTimeUs;
     }
 
-    /**
-     * Sets the merge buffer used to hold rows within the LAG window. Must be called
-     * while the refresh latch is held. Frees any previously installed buffer.
-     */
-    public void setMergeBuffer(MergeBuffer mergeBuffer) {
-        if (this.mergeBuffer != mergeBuffer) {
-            Misc.free(this.mergeBuffer);
-            this.mergeBuffer = mergeBuffer;
-        }
+    public void setLvConsumedSeqTxn(long lvConsumedSeqTxn) {
+        stateReader.setLvConsumedSeqTxn(lvConsumedSeqTxn);
     }
 
-    /**
-     * Records the earliest base-table ts covered by the current window-function state.
-     * Set by bootstrap to the effective lower bound used for the base scan; the cold-path
-     * disk-read replay reads this to decide whether a warm-path can use the merge buffer
-     * (state coverage matches merge buffer coverage) or must re-read from disk (state
-     * coverage extends below merge buffer coverage). Must be called while the refresh
-     * latch is held.
-     */
-    public void setStateBackfillTimestamp(long stateBackfillTimestamp) {
-        this.stateBackfillTimestamp = stateBackfillTimestamp;
+    public void setSubscribeFromSeqTxn(long subscribeFromSeqTxn) {
+        stateReader.setSubscribeFromSeqTxn(subscribeFromSeqTxn);
     }
 
-    /**
-     * Non-blocking close: runs only when the view is dropped, the refresh latch is
-     * free, and no reader currently holds either buffer. Callers (DROP path, refresh
-     * finally hook, reader release, failed reader acquire) race to be the one that
-     * frees the instance; losers are a no-op.
-     * <p>
-     * This is safe because every code path that can observe the instance — running
-     * refresh, reader with a pinned buffer, or a reader that bailed due to {@code
-     * dropped} — invokes this method on its way out, so some thread eventually wins
-     * the CAS plus exclusive-buffer claim and performs the free.
-     */
     public void tryCloseIfDropped() {
         if (!dropped) {
             return;
         }
         if (!refreshLatch.compareAndSet(false, true)) {
-            // A refresh is in flight; its finally hook will retry.
+            // Refresh in flight; its finally hook retries.
             return;
         }
         try {
             if (!bufferedTable.tryAcquireExclusive()) {
-                // Readers still hold one or both buffers; they will retry on release.
                 return;
             }
             if (!isClosed) {
                 isClosed = true;
                 Misc.free(bufferedTable);
                 compiledFactory = Misc.free(compiledFactory);
-                mergeBuffer = Misc.free(mergeBuffer);
             }
         } finally {
             refreshLatch.set(false);
         }
     }
 
-    /**
-     * Attempts to claim exclusive ownership of the non-published buffer. Returns the
-     * write buffer on success; {@code null} if readers still pin it — in which case
-     * {@link #pendingRefresh} is set and the caller must not consume the cursor it
-     * would have fed in.
-     * <p>
-     * Must be paired with {@link #publishWriteBuffer} on success or {@link
-     * #abortWriteBuffer} on mid-cycle failure. Must be called while the refresh latch
-     * is held.
-     */
     public InMemoryTable tryAcquireWriteBuffer() {
-        InMemoryTable writeBuffer = bufferedTable.tryAcquireWrite();
-        if (writeBuffer == null) {
-            pendingRefresh = true;
-        }
-        return writeBuffer;
+        return bufferedTable.tryAcquireWrite();
     }
 
-    /**
-     * Acquires the refresh latch for the entire refresh operation
-     * (compile + cursor + write buffer population). Returns false if another refresh,
-     * or a {@link #tryCloseIfDropped} call, currently holds it.
-     */
     public boolean tryLockForRefresh() {
         return refreshLatch.compareAndSet(false, true);
     }

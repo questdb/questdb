@@ -31,6 +31,7 @@ import io.questdb.TelemetryOrigin;
 import io.questdb.cairo.file.BlockFileWriter;
 import io.questdb.cairo.lv.LiveViewDefinition;
 import io.questdb.cairo.mv.MatViewDefinition;
+import io.questdb.cairo.lv.LiveViewState;
 import io.questdb.cairo.mv.MatViewState;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.RecordMetadata;
@@ -1091,6 +1092,12 @@ public final class TableUtils {
     public static boolean isLiveViewDefinitionFileExists(CairoConfiguration configuration, Path path, CharSequence dirName) {
         FilesFacade ff = configuration.getFilesFacade();
         path.of(configuration.getDbRoot()).concat(dirName).concat(LiveViewDefinition.LIVE_VIEW_DEFINITION_FILE_NAME);
+        return ff.exists(path.$());
+    }
+
+    public static boolean isLiveViewStateFileExists(CairoConfiguration configuration, Path path, CharSequence dirName) {
+        FilesFacade ff = configuration.getFilesFacade();
+        path.of(configuration.getDbRoot()).concat(dirName).concat(LiveViewState.LIVE_VIEW_STATE_FILE_NAME);
         return ff.exists(path.$());
     }
 

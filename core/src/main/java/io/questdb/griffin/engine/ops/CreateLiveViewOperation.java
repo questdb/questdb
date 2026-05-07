@@ -34,11 +34,12 @@ import org.jetbrains.annotations.Nullable;
 
 public class CreateLiveViewOperation implements Operation {
     private final String baseTableName;
+    private final long flushEveryInterval;
+    private final char flushEveryIntervalUnit;
     private final boolean ignoreIfExists;
-    private final char lagUnit;
-    private final long lagValue;
-    private final char retentionUnit;
-    private final long retentionValue;
+    private final long inMemoryInterval;
+    private final char inMemoryIntervalUnit;
+    private final int partitionBy;
     private final String selectSql;
     private final String viewName;
     private final int viewNamePosition;
@@ -48,20 +49,22 @@ public class CreateLiveViewOperation implements Operation {
             int viewNamePosition,
             String baseTableName,
             String selectSql,
-            long lagValue,
-            char lagUnit,
-            long retentionValue,
-            char retentionUnit,
+            long flushEveryInterval,
+            char flushEveryIntervalUnit,
+            long inMemoryInterval,
+            char inMemoryIntervalUnit,
+            int partitionBy,
             boolean ignoreIfExists
     ) {
         this.viewName = viewName;
         this.viewNamePosition = viewNamePosition;
         this.baseTableName = baseTableName;
         this.selectSql = selectSql;
-        this.lagValue = lagValue;
-        this.lagUnit = lagUnit;
-        this.retentionValue = retentionValue;
-        this.retentionUnit = retentionUnit;
+        this.flushEveryInterval = flushEveryInterval;
+        this.flushEveryIntervalUnit = flushEveryIntervalUnit;
+        this.inMemoryInterval = inMemoryInterval;
+        this.inMemoryIntervalUnit = inMemoryIntervalUnit;
+        this.partitionBy = partitionBy;
         this.ignoreIfExists = ignoreIfExists;
     }
 
@@ -82,12 +85,20 @@ public class CreateLiveViewOperation implements Operation {
         return baseTableName;
     }
 
-    public char getLagUnit() {
-        return lagUnit;
+    public long getFlushEveryInterval() {
+        return flushEveryInterval;
     }
 
-    public long getLagValue() {
-        return lagValue;
+    public char getFlushEveryIntervalUnit() {
+        return flushEveryIntervalUnit;
+    }
+
+    public long getInMemoryInterval() {
+        return inMemoryInterval;
+    }
+
+    public char getInMemoryIntervalUnit() {
+        return inMemoryIntervalUnit;
     }
 
     @Override
@@ -100,12 +111,8 @@ public class CreateLiveViewOperation implements Operation {
         return ImmutableDoneOperationFuture.INSTANCE;
     }
 
-    public char getRetentionUnit() {
-        return retentionUnit;
-    }
-
-    public long getRetentionValue() {
-        return retentionValue;
+    public int getPartitionBy() {
+        return partitionBy;
     }
 
     public String getSelectSql() {

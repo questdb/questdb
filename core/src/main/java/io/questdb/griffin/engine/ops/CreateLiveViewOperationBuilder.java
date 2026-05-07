@@ -24,17 +24,20 @@
 
 package io.questdb.griffin.engine.ops;
 
+import io.questdb.cairo.PartitionBy;
 import io.questdb.griffin.model.ExecutionModel;
 import io.questdb.griffin.model.IQueryModel;
 import io.questdb.std.Mutable;
 
 public class CreateLiveViewOperationBuilder implements ExecutionModel, Mutable {
     private String baseTableName;
+    private long flushEveryInterval;
+    private char flushEveryIntervalUnit;
     private boolean ignoreIfExists;
-    private char lagUnit;
-    private long lagValue;
-    private char retentionUnit;
-    private long retentionValue;
+    private long inMemoryInterval;
+    private char inMemoryIntervalUnit;
+    // PartitionBy.NONE means "inherit from base"; resolved at CREATE in CairoEngine.
+    private int partitionBy = PartitionBy.NONE;
     private IQueryModel selectModel;
     private String selectSql;
     private String viewName;
@@ -46,10 +49,11 @@ public class CreateLiveViewOperationBuilder implements ExecutionModel, Mutable {
                 viewNamePosition,
                 baseTableName,
                 selectSql,
-                lagValue,
-                lagUnit,
-                retentionValue,
-                retentionUnit,
+                flushEveryInterval,
+                flushEveryIntervalUnit,
+                inMemoryInterval,
+                inMemoryIntervalUnit,
+                partitionBy,
                 ignoreIfExists
         );
     }
@@ -58,10 +62,11 @@ public class CreateLiveViewOperationBuilder implements ExecutionModel, Mutable {
     public void clear() {
         baseTableName = null;
         ignoreIfExists = false;
-        lagValue = 0;
-        lagUnit = 0;
-        retentionValue = 0;
-        retentionUnit = 0;
+        flushEveryInterval = 0;
+        flushEveryIntervalUnit = 0;
+        inMemoryInterval = 0;
+        inMemoryIntervalUnit = 0;
+        partitionBy = PartitionBy.NONE;
         selectModel = null;
         selectSql = null;
         viewName = null;
@@ -86,24 +91,28 @@ public class CreateLiveViewOperationBuilder implements ExecutionModel, Mutable {
         this.baseTableName = baseTableName;
     }
 
+    public void setFlushEveryInterval(long flushEveryInterval) {
+        this.flushEveryInterval = flushEveryInterval;
+    }
+
+    public void setFlushEveryIntervalUnit(char flushEveryIntervalUnit) {
+        this.flushEveryIntervalUnit = flushEveryIntervalUnit;
+    }
+
     public void setIgnoreIfExists(boolean ignoreIfExists) {
         this.ignoreIfExists = ignoreIfExists;
     }
 
-    public void setLagUnit(char lagUnit) {
-        this.lagUnit = lagUnit;
+    public void setInMemoryInterval(long inMemoryInterval) {
+        this.inMemoryInterval = inMemoryInterval;
     }
 
-    public void setLagValue(long lagValue) {
-        this.lagValue = lagValue;
+    public void setInMemoryIntervalUnit(char inMemoryIntervalUnit) {
+        this.inMemoryIntervalUnit = inMemoryIntervalUnit;
     }
 
-    public void setRetentionUnit(char retentionUnit) {
-        this.retentionUnit = retentionUnit;
-    }
-
-    public void setRetentionValue(long retentionValue) {
-        this.retentionValue = retentionValue;
+    public void setPartitionBy(int partitionBy) {
+        this.partitionBy = partitionBy;
     }
 
     public void setSelectModel(IQueryModel selectModel) {

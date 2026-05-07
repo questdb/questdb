@@ -30,20 +30,23 @@ import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.TableStructure;
 
 /**
- * Adapts a live view's metadata to the {@link TableStructure} interface
- * so that the existing disk file creation infrastructure can write
- * {@code _meta} and {@code _txn} files.
+ * Adapts a live view's metadata to {@link TableStructure} so the engine can
+ * materialize the on-disk WAL-backed table that backs the view's durable tier.
  * <p>
- * Live views use {@code isWalEnabled()=true} and {@code partitionBy=NOT_APPLICABLE}
- * (same as views and mat views) so that the table token gets persisted
- * in the WAL table name registry store and survives restarts.
+ * Phase 1 brings live views in line with materialized views: real
+ * {@code partitionBy}, the standard {@code _meta}/{@code _txn}/partition layout,
+ * and per-segment {@code wal<n>/} directories. The default partition scheme is
+ * inherited from the base table at CREATE time; an explicit {@code PARTITION BY}
+ * clause overrides.
  */
 public class LiveViewTableStructure implements TableStructure {
     private final GenericRecordMetadata metadata;
+    private final int partitionBy;
     private final String viewName;
 
-    public LiveViewTableStructure(String viewName, GenericRecordMetadata metadata) {
+    public LiveViewTableStructure(String viewName, int partitionBy, GenericRecordMetadata metadata) {
         this.viewName = viewName;
+        this.partitionBy = partitionBy;
         this.metadata = metadata;
     }
 
@@ -84,7 +87,7 @@ public class LiveViewTableStructure implements TableStructure {
 
     @Override
     public int getPartitionBy() {
-        return PartitionBy.NOT_APPLICABLE;
+        return partitionBy;
     }
 
     @Override
@@ -125,5 +128,17 @@ public class LiveViewTableStructure implements TableStructure {
     @Override
     public boolean isWalEnabled() {
         return true;
+    }
+
+    /**
+     * Returns the default partition scheme used when {@code PARTITION BY} is omitted at
+     * CREATE. The caller resolves "inherit" by reading the base table's metadata before
+     * constructing the structure.
+     */
+    public static int resolvePartitionBy(int explicit, int baseTablePartitionBy) {
+        if (explicit == PartitionBy.NONE) {
+            return baseTablePartitionBy;
+        }
+        return explicit;
     }
 }

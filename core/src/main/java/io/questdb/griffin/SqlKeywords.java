@@ -153,6 +153,18 @@ public class SqlKeywords {
                 && (tok.charAt(4) | 32) == 'h';
     }
 
+    public static boolean isBackfillKeyword(CharSequence tok) {
+        return tok.length() == 8
+                && (tok.charAt(0) | 32) == 'b'
+                && (tok.charAt(1) | 32) == 'a'
+                && (tok.charAt(2) | 32) == 'c'
+                && (tok.charAt(3) | 32) == 'k'
+                && (tok.charAt(4) | 32) == 'f'
+                && (tok.charAt(5) | 32) == 'i'
+                && (tok.charAt(6) | 32) == 'l'
+                && (tok.charAt(7) | 32) == 'l';
+    }
+
     public static boolean isBetweenKeyword(CharSequence tok) {
         return tok.length() == 7
                 && (tok.charAt(0) | 32) == 'b'
@@ -847,6 +859,15 @@ public class SqlKeywords {
                 && (tok.charAt(4) | 32) == 't';
     }
 
+    public static boolean isFlushKeyword(CharSequence tok) {
+        return tok.length() == 5
+                && (tok.charAt(0) | 32) == 'f'
+                && (tok.charAt(1) | 32) == 'l'
+                && (tok.charAt(2) | 32) == 'u'
+                && (tok.charAt(3) | 32) == 's'
+                && (tok.charAt(4) | 32) == 'h';
+    }
+
     public static boolean isFloat4Keyword(CharSequence tok) {
         return tok.length() == 6
                 && (tok.charAt(0) | 32) == 'f'
@@ -1376,6 +1397,16 @@ public class SqlKeywords {
                 && (tok.charAt(15) | 32) == 'o'
                 && (tok.charAt(16) | 32) == 'w'
                 && (tok.charAt(17) | 32) == 's';
+    }
+
+    public static boolean isMemoryKeyword(CharSequence tok) {
+        return tok.length() == 6
+                && (tok.charAt(0) | 32) == 'm'
+                && (tok.charAt(1) | 32) == 'e'
+                && (tok.charAt(2) | 32) == 'm'
+                && (tok.charAt(3) | 32) == 'o'
+                && (tok.charAt(4) | 32) == 'r'
+                && (tok.charAt(5) | 32) == 'y';
     }
 
     public static boolean isMicrosecondKeyword(CharSequence tok) {

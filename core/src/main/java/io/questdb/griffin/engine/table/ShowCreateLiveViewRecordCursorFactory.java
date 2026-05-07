@@ -84,12 +84,13 @@ public class ShowCreateLiveViewRecordCursorFactory extends AbstractRecordCursorF
         private final Path path;
         private final ShowCreateLiveViewRecord record = new ShowCreateLiveViewRecord();
         private final Utf8StringSink sink = new Utf8StringSink();
+        private char flushEveryUnit;
+        private long flushEveryValue;
         private boolean hasRun;
-        private char lagUnit;
-        private long lagValue;
+        private char inMemoryUnit;
+        private long inMemoryValue;
+        private int partitionBy;
         private BlockFileReader reader;
-        private char retentionUnit;
-        private long retentionValue;
         private TableToken viewToken;
         private String viewSql;
 
@@ -147,10 +148,11 @@ public class ShowCreateLiveViewRecordCursorFactory extends AbstractRecordCursorF
                         new io.questdb.cairo.GenericRecordMetadata()
                 );
                 viewSql = def.getViewSql();
-                lagValue = def.getLagValue();
-                lagUnit = def.getLagUnit();
-                retentionValue = def.getRetentionValue();
-                retentionUnit = def.getRetentionUnit();
+                flushEveryValue = def.getFlushEveryInterval();
+                flushEveryUnit = def.getFlushEveryIntervalUnit();
+                inMemoryValue = def.getInMemoryInterval();
+                inMemoryUnit = def.getInMemoryIntervalUnit();
+                partitionBy = def.getPartitionBy();
             } catch (CairoException e) {
                 throw SqlException.$(tokenPosition, "could not read live view definition [view=").put(viewToken)
                         .put(", msg=").put(e)
@@ -183,11 +185,14 @@ public class ShowCreateLiveViewRecordCursorFactory extends AbstractRecordCursorF
             sink.putAscii("CREATE LIVE VIEW '")
                     .put(viewToken.getTableName())
                     .putAscii('\'');
-            if (lagValue > 0) {
-                sink.putAscii(" LAG ").put(lagValue).putAscii(lagUnit);
+            if (flushEveryValue > 0) {
+                sink.putAscii(" FLUSH EVERY ").put(flushEveryValue).putAscii(flushEveryUnit);
             }
-            if (retentionValue > 0) {
-                sink.putAscii(" RETENTION ").put(retentionValue).putAscii(retentionUnit);
+            if (inMemoryValue > 0) {
+                sink.putAscii(" IN MEMORY ").put(inMemoryValue).putAscii(inMemoryUnit);
+            }
+            if (partitionBy != io.questdb.cairo.PartitionBy.NONE) {
+                sink.putAscii(" PARTITION BY ").put(io.questdb.cairo.PartitionBy.toString(partitionBy));
             }
             sink.putAscii(" AS (\n")
                     .put(viewSql)

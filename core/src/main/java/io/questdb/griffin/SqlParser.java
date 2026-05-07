@@ -1289,43 +1289,77 @@ public class SqlParser {
         builder.setViewName(Chars.toString(GenericLexer.unquote(tok)));
         builder.setViewNamePosition(lexer.lastTokenPosition());
 
-        // LAG duration (required, must be > 0)
-        tok = tok(lexer, "'lag'");
-        if (!isLagKeyword(tok)) {
-            throw SqlException.position(lexer.lastTokenPosition()).put("'lag' expected");
+        // FLUSH EVERY <duration> -- required
+        tok = tok(lexer, "'flush'");
+        if (!isFlushKeyword(tok)) {
+            throw SqlException.position(lexer.lastTokenPosition()).put("'flush every <duration>' expected");
         }
-        CharSequence lagTok = tok(lexer, "lag duration");
-        int lagPos = lexer.lastTokenPosition();
-        long lagValue = SqlUtil.expectIntervalValue(lagTok, lagPos);
-        char lagUnit = SqlUtil.expectIntervalUnit(lagTok, lagPos);
-        if (lagValue <= 0) {
-            throw SqlException.$(lagPos, "lag must be positive");
+        expectTok(lexer, "every");
+        CharSequence flushTok = tok(lexer, "flush every duration");
+        int flushPos = lexer.lastTokenPosition();
+        long flushValue = LiveViewDefinition.parseDurationValue(flushTok, flushPos);
+        char flushUnit = LiveViewDefinition.parseDurationUnit(flushTok, flushPos);
+        long flushMicros = LiveViewDefinition.toMicros(flushValue, flushUnit);
+        if (flushValue == 0 || flushMicros < 100_000) {
+            throw SqlException.$(flushPos, "live view FLUSH EVERY must be at least 100ms");
         }
-        builder.setLagValue(lagValue);
-        builder.setLagUnit(lagUnit);
+        builder.setFlushEveryInterval(flushValue);
+        builder.setFlushEveryIntervalUnit(flushUnit);
 
-        // RETENTION duration (required, must be > 0, must be >= LAG)
-        tok = tok(lexer, "'retention'");
-        if (!isRetentionKeyword(tok)) {
-            throw SqlException.position(lexer.lastTokenPosition()).put("'retention' expected");
+        // Defaults: IN MEMORY = FLUSH EVERY; PARTITION BY = base table's scheme.
+        long inMemoryValue = flushValue;
+        char inMemoryUnit = flushUnit;
+        long inMemoryMicros = flushMicros;
+        boolean inMemorySpecified = false;
+
+        // Optional clauses: IN MEMORY <duration>, PARTITION BY <unit>, BACKFILL.
+        // Order: any of the three may appear, in any order, before AS. (Phase 1 expects
+        // at most one of each.)
+        tok = tok(lexer, "'in', 'partition', 'backfill', or 'as'");
+        while (true) {
+            if (isInKeyword(tok)) {
+                expectTok(lexer, "memory");
+                CharSequence memTok = tok(lexer, "in memory duration");
+                int memPos = lexer.lastTokenPosition();
+                inMemoryValue = LiveViewDefinition.parseDurationValue(memTok, memPos);
+                inMemoryUnit = LiveViewDefinition.parseDurationUnit(memTok, memPos);
+                inMemoryMicros = LiveViewDefinition.toMicros(inMemoryValue, inMemoryUnit);
+                if (inMemoryMicros < flushMicros) {
+                    throw SqlException.position(memPos)
+                            .put("live view IN MEMORY must be at least FLUSH EVERY");
+                }
+                if (inMemoryMicros > configuration.getLiveViewInMemoryMaxMicros()) {
+                    throw SqlException.position(memPos)
+                            .put("live view IN MEMORY exceeds configured cairo.live.view.in.memory.max");
+                }
+                inMemorySpecified = true;
+                builder.setInMemoryInterval(inMemoryValue);
+                builder.setInMemoryIntervalUnit(inMemoryUnit);
+                tok = tok(lexer, "next clause or 'as'");
+            } else if (isPartitionKeyword(tok)) {
+                expectTok(lexer, "by");
+                tok = tok(lexer, "year month week day hour none");
+                int partPos = lexer.lastTokenPosition();
+                int partitionBy = PartitionBy.fromString(tok);
+                if (partitionBy < 0) {
+                    throw SqlException.$(partPos, "'NONE', 'HOUR', 'DAY', 'WEEK', 'MONTH' or 'YEAR' expected");
+                }
+                builder.setPartitionBy(partitionBy);
+                tok = tok(lexer, "next clause or 'as'");
+            } else if (isBackfillKeyword(tok)) {
+                throw SqlException.$(lexer.lastTokenPosition(),
+                        "BACKFILL not yet supported; deferred to a later phase");
+            } else {
+                break;
+            }
         }
-        CharSequence retTok = tok(lexer, "retention duration");
-        int retPos = lexer.lastTokenPosition();
-        long retentionValue = SqlUtil.expectIntervalValue(retTok, retPos);
-        char retentionUnit = SqlUtil.expectIntervalUnit(retTok, retPos);
-        if (retentionValue <= 0) {
-            throw SqlException.$(retPos, "retention must be positive");
+
+        if (!inMemorySpecified) {
+            builder.setInMemoryInterval(inMemoryValue);
+            builder.setInMemoryIntervalUnit(inMemoryUnit);
         }
-        long lagMicros = LiveViewDefinition.toMicros(lagValue, lagUnit);
-        long retentionMicros = LiveViewDefinition.toMicros(retentionValue, retentionUnit);
-        if (retentionMicros < lagMicros) {
-            throw SqlException.$(retPos, "retention must be greater than or equal to lag");
-        }
-        builder.setRetentionValue(retentionValue);
-        builder.setRetentionUnit(retentionUnit);
 
         // expect AS
-        tok = tok(lexer, "'as'");
         if (!isAsKeyword(tok)) {
             throw SqlException.position(lexer.lastTokenPosition()).put("'as' expected");
         }
