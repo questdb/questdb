@@ -477,12 +477,8 @@ fn extract_stat_values(stats: &dyn Statistics, physical_type: PhysicalType) -> R
 /// Converts a parquet stat value (raw LE bytes) to QuestDB's internal representation.
 ///
 /// This is the single source of truth for the mapping. Handles:
-/// - **Sign-extended truncation**: INT32-backed signed narrow types (Byte, Short,
-///   GeoByte, GeoShort) keep the low 1 or 2 value bytes but extend to the full
-///   INT32 width so the inline u64 stat slot re-reads as the correct i32 in the
-///   skip code's physical-type-width inline read path.
-/// - **Zero-extended truncation**: INT32-backed unsigned narrow types (Char) keep
-///   the low 2 value bytes and zero-extend to the full INT32 width.
+/// - **Narrowing**: INT32-backed types (Byte, Short, Char, GeoByte, GeoShort) are
+///   truncated from 4 bytes to their QuestDB fixed size.
 /// - **Date days->millis**: INT32 Date (days since epoch) -> i64 millis.
 /// - **Timestamp millis->micros**: INT64 Timestamp(Millis) with QDB Timestamp type -> i64 micros.
 /// - **INT96->nanos**: 12-byte Julian day + nanos-of-day -> i64 epoch nanos.
@@ -499,26 +495,18 @@ fn convert_stat_to_qdb(
     }
 
     match (physical_type, col_type_tag) {
-        // Signed narrow INT32-backed types: keep low byte, sign-extend to INT32 width.
+        // Narrowing: INT32 -> 1 byte for Byte/GeoByte.
         (PhysicalType::Int32, Some(ColumnTypeTag::Byte | ColumnTypeTag::GeoByte))
             if !raw.is_empty() =>
         {
-            let v = (raw[0] as i8) as i32;
-            Some(v.to_le_bytes().to_vec())
+            Some(vec![raw[0]])
         }
 
-        // Signed narrow INT32-backed types: keep low 2 bytes, sign-extend to INT32 width.
-        (PhysicalType::Int32, Some(ColumnTypeTag::Short | ColumnTypeTag::GeoShort))
-            if raw.len() >= 2 =>
-        {
-            let v = i16::from_le_bytes([raw[0], raw[1]]) as i32;
-            Some(v.to_le_bytes().to_vec())
-        }
-
-        // Unsigned narrow INT32-backed types: keep low 2 bytes, zero-extend to INT32 width.
-        (PhysicalType::Int32, Some(ColumnTypeTag::Char)) if raw.len() >= 2 => {
-            Some(vec![raw[0], raw[1], 0, 0])
-        }
+        // Narrowing: INT32 -> 2 bytes for Short/Char/GeoShort.
+        (
+            PhysicalType::Int32,
+            Some(ColumnTypeTag::Short | ColumnTypeTag::Char | ColumnTypeTag::GeoShort),
+        ) if raw.len() >= 2 => Some(vec![raw[0], raw[1]]),
 
         // Date stored as INT32 days -> i64 millis.
         // i32 * 86_400_000 always fits in i64 (max ≈ 1.86e17 < 9.22e18).
@@ -1786,7 +1774,7 @@ mod tests {
         let raw = 42i32.to_le_bytes().to_vec();
         let result =
             convert_stat_to_qdb(&raw, PhysicalType::Int32, None, Some(ColumnTypeTag::Byte));
-        assert_eq!(result, Some(42i32.to_le_bytes().to_vec()));
+        assert_eq!(result, Some(vec![42u8]));
     }
 
     #[test]
@@ -1794,8 +1782,8 @@ mod tests {
         let raw = (-3i32).to_le_bytes().to_vec();
         let result =
             convert_stat_to_qdb(&raw, PhysicalType::Int32, None, Some(ColumnTypeTag::Byte));
-        // Sign-extended back to i32 so the inline u64 stat slot reads as -3i32.
-        assert_eq!(result, Some((-3i32).to_le_bytes().to_vec()));
+        // -3 as i8 is 0xFD, which is the low byte of -3i32 in LE
+        assert_eq!(result, Some(vec![(-3i8) as u8]));
     }
 
     #[test]
@@ -1807,7 +1795,7 @@ mod tests {
             None,
             Some(ColumnTypeTag::GeoByte),
         );
-        assert_eq!(result, Some(7i32.to_le_bytes().to_vec()));
+        assert_eq!(result, Some(vec![7u8]));
     }
 
     #[test]
@@ -1815,16 +1803,7 @@ mod tests {
         let raw = 1000i32.to_le_bytes().to_vec();
         let result =
             convert_stat_to_qdb(&raw, PhysicalType::Int32, None, Some(ColumnTypeTag::Short));
-        assert_eq!(result, Some(1000i32.to_le_bytes().to_vec()));
-    }
-
-    #[test]
-    fn convert_stat_narrowing_short_negative() {
-        let raw = (-1234i32).to_le_bytes().to_vec();
-        let result =
-            convert_stat_to_qdb(&raw, PhysicalType::Int32, None, Some(ColumnTypeTag::Short));
-        // Sign-extended back to i32 so the inline u64 stat slot reads as -1234i32.
-        assert_eq!(result, Some((-1234i32).to_le_bytes().to_vec()));
+        assert_eq!(result, Some(1000i16.to_le_bytes().to_vec()));
     }
 
     #[test]
@@ -1832,7 +1811,7 @@ mod tests {
         let raw = 0x0041i32.to_le_bytes().to_vec(); // 'A' as u16
         let result =
             convert_stat_to_qdb(&raw, PhysicalType::Int32, None, Some(ColumnTypeTag::Char));
-        assert_eq!(result, Some(0x0041i32.to_le_bytes().to_vec()));
+        assert_eq!(result, Some(0x0041u16.to_le_bytes().to_vec()));
     }
 
     #[test]
@@ -1844,19 +1823,7 @@ mod tests {
             None,
             Some(ColumnTypeTag::GeoShort),
         );
-        assert_eq!(result, Some(255i32.to_le_bytes().to_vec()));
-    }
-
-    #[test]
-    fn convert_stat_narrowing_geoshort_negative() {
-        let raw = (-30000i32).to_le_bytes().to_vec();
-        let result = convert_stat_to_qdb(
-            &raw,
-            PhysicalType::Int32,
-            None,
-            Some(ColumnTypeTag::GeoShort),
-        );
-        assert_eq!(result, Some((-30000i32).to_le_bytes().to_vec()));
+        assert_eq!(result, Some(255i16.to_le_bytes().to_vec()));
     }
 
     #[test]
