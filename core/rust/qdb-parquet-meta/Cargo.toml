@@ -1,0 +1,10 @@
+[package]
+name = "qdb-parquet-meta"
+version = "0.1.0"
+edition = "2021"
+license = "Apache-2.0"
+
+[dependencies]
+qdb-core  = { path = "../qdb-core" }
+parquet2  = { path = "../parquet2" }
+crc32fast = "1.4"

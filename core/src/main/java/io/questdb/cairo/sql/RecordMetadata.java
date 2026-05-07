@@ -26,6 +26,7 @@ package io.questdb.cairo.sql;
 
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.ColumnTypes;
+import io.questdb.cairo.IndexType;
 import io.questdb.cairo.TableColumnMetadata;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.Plannable;
@@ -170,10 +171,20 @@ public interface RecordMetadata extends ColumnTypes, Plannable {
     boolean hasColumn(int columnIndex);
 
     /**
+     * Returns the index type for the column.
+     *
+     * @param columnIndex numeric index of the column
+     * @return the index type (see {@link IndexType})
+     */
+    byte getColumnIndexType(int columnIndex);
+
+    /**
      * @param columnIndex numeric index of the column
      * @return true if column is indexed, otherwise false.
      */
-    boolean isColumnIndexed(int columnIndex);
+    default boolean isColumnIndexed(int columnIndex) {
+        return IndexType.isIndexed(getColumnIndexType(columnIndex));
+    }
 
     /**
      * @param columnIndex numeric index of the column

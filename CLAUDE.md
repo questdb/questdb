@@ -187,6 +187,35 @@ java -p core/target/questdb-<version>-SNAPSHOT.jar -m io.questdb/io.questdb.Serv
 # Web console at http://localhost:9000
 ```
 
+### Building and Validating Rust Code
+
+The Rust crate lives in `core/rust/qdbr/`. Before considering any Rust task
+complete, run all four checks from that directory:
+
+```bash
+cd core/rust/qdbr
+cargo fmt        # Fix formatting
+cargo check --all-targets  # Compile all targets including tests
+cargo clippy --all-targets  # Lint — zero warnings required
+cargo test --lib  # Run unit tests
+```
+
+All four must pass with zero errors and zero warnings.
+
+After writing or modifying tests, check coverage with:
+
+```bash
+cargo llvm-cov --lib --text -- <module_name>
+```
+
+For every uncovered line, either write a test that reaches it or prove it is
+unreachable and mark it with `expect()` / `debug_assert!`.
+
+A panic in Rust code called via JNI aborts the entire JVM with no recovery.
+Never use `unwrap()` or `expect()` on data derived from file contents or
+external input. Use `Result` / `Option` with proper error propagation (`?`)
+instead.
+
 ### Building Native C/C++ Libraries
 
 ```bash

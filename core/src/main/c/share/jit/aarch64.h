@@ -129,12 +129,14 @@ namespace questdb::aarch64 {
     jit_value_t
     read_vars_mem(Compiler &c, data_type_t type, int32_t idx, const Gp &vars_ptr) {
         // ARM64: load eagerly since we can't use complex memory operands later.
-        // add-immediate is 12-bit unsigned, so idx*8 must be < 4096 => idx < 512.
+        // Bind-variable slots are a fixed 16-byte stride so UUID (i128) values
+        // fit alongside narrower types (see AsyncFilterUtils.writeBindVarFunction).
+        // add-immediate is 12-bit unsigned, so idx*16 must be < 4096 => idx < 256.
         Gp addr = c.new_gp64("var_addr");
-        if (idx >= 0 && idx < 512) {
-            c.add(addr, vars_ptr, imm(idx * 8));
+        if (idx >= 0 && idx < 256) {
+            c.add(addr, vars_ptr, imm(idx * 16));
         } else {
-            c.mov(addr, static_cast<int64_t>(idx) * 8);
+            c.mov(addr, static_cast<int64_t>(idx) * 16);
             c.add(addr, vars_ptr, addr);
         }
         switch (type) {
