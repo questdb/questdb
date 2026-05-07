@@ -320,27 +320,28 @@ themselves at read time, using the column's physical type and logical type from 
 
 Readers consume inline stats at parquet physical type width:
 
-Inline placement is gated by the QuestDB column type's fixed size (must be `<= 8` bytes), not by the parquet physical
-width directly. A FixedLenByteArray of width `<= 8` whose column type tag has no QuestDB fixed size (or whose fixed size
-exceeds 8) is stored out-of-line, even though the physical bytes would fit in the slot.
+Inline placement is gated purely by stat byte width: stats whose `min_value`/`max_value` payloads are 1..=8 bytes
+inline into the u64 slot, longer payloads spill out-of-line. The QuestDB column type does not constrain placement, so a
+short variable-length stat (e.g., a 4-byte `VARCHAR` min) can occupy the slot the same way a primitive stat does.
 
 | parquet physical type | inline width | placement in u64 slot                                  |
 | --------------------- | ------------ | ------------------------------------------------------ |
 | BOOLEAN               | 1 byte       | low byte holds 0 or 1; remaining 7 bytes are zero      |
 | INT32 / FLOAT         | 4 bytes      | low 4 bytes hold the LE value; high 4 bytes are zero   |
 | INT64 / DOUBLE        | 8 bytes      | the full u64 holds the LE value                        |
-| FIXED_LEN_BYTE_ARRAY  | `fixed_byte_len` bytes when the column type tag's fixed size is `<= 8` | low `fixed_byte_len` bytes; rest zero |
-| BYTE_ARRAY            | up to 8 bytes when inline | low `STAT_SIZES.min/max_size` bytes; rest zero     |
+| FIXED_LEN_BYTE_ARRAY  | `fixed_byte_len` bytes when `<= 8` | low `fixed_byte_len` bytes; rest zero       |
+| BYTE_ARRAY            | up to 8 bytes when the stat payload fits | low `STAT_SIZES.min/max_size` bytes; rest zero |
 | INT96                 | always out-of-line (12 bytes)        | u64 slot holds the OOL reference            |
 
 When stats are stored out-of-line (`MIN_STAT_INLINED` / `MAX_STAT_INLINED` clear), the u64 slot encodes a reference into
 the row group block's out-of-line region as `(offset << 16) | length`. The OOL bytes are the same parquet stat bytes,
 verbatim, with no width or unit conversion.
 
-Column types with fixed size that are <= 8 bytes (BOOLEAN, BYTE, SHORT, CHAR, INT/FLOAT/IPv4,
-LONG/DOUBLE/DATE/TIMESTAMP) MUST have their min/max stats inlined in the column chunk. For variable-length types (
-VARCHAR/STRING) and fixed-size types > 8 bytes (LONG128, UUID, LONG256), min/max stats MAY be stored out-of-line
-immediately after the row group blocks that references them.
+Stats with payload width 1..=8 bytes inline into the slot; stats with payload width > 8 bytes (e.g., LONG128, UUID,
+LONG256, INT96, or long VARCHAR/STRING values) MUST be stored out-of-line immediately after the row group blocks that
+reference them. In practice this means primitive stats for fixed-size types of <= 8 bytes (BOOLEAN, BYTE, SHORT, CHAR,
+INT/FLOAT/IPv4, LONG/DOUBLE/DATE/TIMESTAMP) always inline, and short SYMBOL/VARCHAR/STRING stats can also inline when
+the payload fits.
 
 Inline stats for narrow signed types (BYTE, SHORT, GeoByte, GeoShort) backed by parquet INT32 occupy 4 bytes (the
 parquet physical width), not the QuestDB-native 1- or 2-byte width: skip-pruning code reads the slot at parquet
