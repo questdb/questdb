@@ -813,7 +813,7 @@ public class CairoEngine implements Closeable, WriterSource {
                         partitionBy,
                         viewLowerBoundTimestamp,
                         false,
-                        null, // anchorSpec — wired by parser/operation in a follow-up
+                        op.getAnchorSpec(),
                         metadata
                 );
                 LiveViewDefinition.append(definition, blockFileWriter);

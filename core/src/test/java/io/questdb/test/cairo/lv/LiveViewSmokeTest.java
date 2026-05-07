@@ -396,6 +396,36 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testAnchorSpecPersistsAndRoundTrips() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (ts TIMESTAMP, x INT, sym SYMBOL) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 1s AS " +
+                    "SELECT ts, sum(x) OVER w AS s FROM base " +
+                    "WINDOW w AS (PARTITION BY sym ORDER BY ts ANCHOR EXPRESSION timestamp_floor('1d', ts))");
+
+            LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("lv");
+            Assert.assertNotNull(instance);
+            Assert.assertNotNull("anchor spec must be captured at CREATE",
+                    instance.getDefinition().getAnchorSpec());
+            Assert.assertEquals("w", instance.getDefinition().getAnchorSpec().windowName);
+            Assert.assertEquals(1, instance.getDefinition().getAnchorSpec().partitionColumnNames.size());
+            Assert.assertEquals("sym", instance.getDefinition().getAnchorSpec().partitionColumnNames.get(0));
+
+            // Simulate restart and verify anchor spec round-trips via _lv.
+            engine.getLiveViewRegistry().clear();
+            engine.buildViewGraphs();
+            LiveViewInstance reloaded = engine.getLiveViewRegistry().getViewInstance("lv");
+            Assert.assertNotNull(reloaded);
+            Assert.assertNotNull("anchor spec must round-trip via _lv",
+                    reloaded.getDefinition().getAnchorSpec());
+            Assert.assertEquals("w", reloaded.getDefinition().getAnchorSpec().windowName);
+            Assert.assertEquals(1, reloaded.getDefinition().getAnchorSpec().partitionColumnNames.size());
+
+            execute("DROP LIVE VIEW lv");
+        });
+    }
+
+    @Test
     public void testInvalidationSurvivesRestart() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE base (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");

@@ -75,6 +75,7 @@ import io.questdb.std.LowerCaseAsciiCharSequenceIntHashMap;
 import io.questdb.std.LowerCaseCharSequenceHashSet;
 import io.questdb.std.LowerCaseCharSequenceIntHashMap;
 import io.questdb.std.LowerCaseCharSequenceObjHashMap;
+import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
 import io.questdb.std.NumericException;
 import io.questdb.std.ObjList;
@@ -83,6 +84,7 @@ import io.questdb.std.Os;
 import io.questdb.std.datetime.CommonUtils;
 import io.questdb.std.datetime.DateLocaleFactory;
 import io.questdb.std.datetime.TimeZoneRules;
+import io.questdb.std.str.StringSink;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 import org.jetbrains.annotations.TestOnly;
@@ -1392,7 +1394,54 @@ public class SqlParser {
         // we walk the named-window map here as the V1 entry point.
         validateLiveViewAnchors(queryModel);
 
+        // Capture the (at most one) anchored named WINDOW for persistence in _lv.
+        // The runtime side reads this back to compile the anchor expression and
+        // build the LiveViewWindow without re-parsing the SELECT.
+        builder.setAnchorSpec(captureAnchoredWindow(queryModel));
+
         return builder;
+    }
+
+    private LiveViewDefinition.LvAnchorSpec captureAnchoredWindow(IQueryModel queryModel) throws SqlException {
+        LowerCaseCharSequenceObjHashMap<WindowExpression> named = queryModel.getNamedWindows();
+        ObjList<CharSequence> keys = named.keys();
+        for (int i = 0, n = keys.size(); i < n; i++) {
+            CharSequence keyCs = keys.getQuick(i);
+            WindowExpression w = named.get(keyCs);
+            if (w == null || w.getAnchorKind() == WindowExpression.ANCHOR_KIND_NONE) {
+                continue;
+            }
+            // Per validateLiveViewAnchors, at most one anchored window survives.
+            String windowName = Chars.toString(keyCs);
+            byte anchorKind = w.getAnchorKind();
+            String anchorExpressionSql = null;
+            if (anchorKind == WindowExpression.ANCHOR_KIND_EXPRESSION) {
+                ExpressionNode expr = w.getAnchorExpression();
+                if (expr != null) {
+                    StringSink anchorSink = Misc.getThreadLocalSink();
+                    expr.toSink(anchorSink);
+                    anchorExpressionSql = anchorSink.toString();
+                }
+            }
+            ObjList<String> partitionColumnNames = new ObjList<>(w.getPartitionBy().size());
+            for (int j = 0, k = w.getPartitionBy().size(); j < k; j++) {
+                ExpressionNode pNode = w.getPartitionBy().getQuick(j);
+                if (pNode.type != ExpressionNode.LITERAL) {
+                    throw SqlException.$(pNode.position,
+                            "live view ANCHOR currently requires PARTITION BY to reference base columns directly");
+                }
+                partitionColumnNames.add(Chars.toString(pNode.token));
+            }
+            return new LiveViewDefinition.LvAnchorSpec(
+                    windowName,
+                    anchorKind,
+                    anchorExpressionSql,
+                    w.getAnchorDailyTimeUs(),
+                    w.getAnchorDailyTimeZone() == null ? null : Chars.toString(w.getAnchorDailyTimeZone()),
+                    partitionColumnNames
+            );
+        }
+        return null;
     }
 
     /**

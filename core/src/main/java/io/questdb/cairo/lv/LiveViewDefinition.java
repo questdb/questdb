@@ -282,17 +282,23 @@ public class LiveViewDefinition {
                 offset += Long.BYTES;
                 backfillRequested = block.getBool(offset);
             } else if (block.type() == LIVE_VIEW_DEFINITION_ANCHOR_MSG_TYPE) {
+                // block.getStr returns a flyweight backed by the block's memory; subsequent
+                // getStr calls reuse the same flyweight, so each string must be materialised
+                // to a stable String *before* the next getStr.
                 long offset = 0;
                 CharSequence windowNameCs = block.getStr(offset);
                 offset += Vm.getStorageLength(windowNameCs);
+                String windowName = Chars.toString(windowNameCs);
                 byte anchorKind = block.getByte(offset);
                 offset += Byte.BYTES;
                 CharSequence exprSqlCs = block.getStr(offset);
                 offset += Vm.getStorageLength(exprSqlCs);
+                String anchorExpressionSql = Chars.toString(exprSqlCs);
                 long anchorDailyTimeUs = block.getLong(offset);
                 offset += Long.BYTES;
                 CharSequence dailyTzCs = block.getStr(offset);
                 offset += Vm.getStorageLength(dailyTzCs);
+                String anchorDailyTimeZone = dailyTzCs == null ? null : Chars.toString(dailyTzCs);
                 int partitionColumnCount = block.getInt(offset);
                 offset += Integer.BYTES;
                 io.questdb.std.ObjList<String> partitionColumnNames = new io.questdb.std.ObjList<>(partitionColumnCount);
@@ -302,11 +308,11 @@ public class LiveViewDefinition {
                     partitionColumnNames.add(Chars.toString(colNameCs));
                 }
                 anchorSpec = new LvAnchorSpec(
-                        Chars.toString(windowNameCs),
+                        windowName,
                         anchorKind,
-                        Chars.toString(exprSqlCs),
+                        anchorExpressionSql,
                         anchorDailyTimeUs,
-                        dailyTzCs == null ? null : Chars.toString(dailyTzCs),
+                        anchorDailyTimeZone,
                         partitionColumnNames
                 );
             }

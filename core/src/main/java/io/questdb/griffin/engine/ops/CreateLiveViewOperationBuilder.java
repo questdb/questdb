@@ -25,11 +25,14 @@
 package io.questdb.griffin.engine.ops;
 
 import io.questdb.cairo.PartitionBy;
+import io.questdb.cairo.lv.LiveViewDefinition;
 import io.questdb.griffin.model.ExecutionModel;
 import io.questdb.griffin.model.IQueryModel;
 import io.questdb.std.Mutable;
+import org.jetbrains.annotations.Nullable;
 
 public class CreateLiveViewOperationBuilder implements ExecutionModel, Mutable {
+    private @Nullable LiveViewDefinition.LvAnchorSpec anchorSpec;
     private String baseTableName;
     private long flushEveryInterval;
     private char flushEveryIntervalUnit;
@@ -54,12 +57,14 @@ public class CreateLiveViewOperationBuilder implements ExecutionModel, Mutable {
                 inMemoryInterval,
                 inMemoryIntervalUnit,
                 partitionBy,
-                ignoreIfExists
+                ignoreIfExists,
+                anchorSpec
         );
     }
 
     @Override
     public void clear() {
+        anchorSpec = null;
         baseTableName = null;
         ignoreIfExists = false;
         flushEveryInterval = 0;
@@ -85,6 +90,10 @@ public class CreateLiveViewOperationBuilder implements ExecutionModel, Mutable {
 
     public String getViewName() {
         return viewName;
+    }
+
+    public void setAnchorSpec(@Nullable LiveViewDefinition.LvAnchorSpec anchorSpec) {
+        this.anchorSpec = anchorSpec;
     }
 
     public void setBaseTableName(String baseTableName) {
