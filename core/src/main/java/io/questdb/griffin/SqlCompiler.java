@@ -59,6 +59,14 @@ public interface SqlCompiler extends QuietCloseable, Mutable {
 
     ExecutionModel generateExecutionModel(CharSequence sqlText, SqlExecutionContext executionContext) throws SqlException;
 
+    /**
+     * Parses a single expression text into an {@link ExpressionNode} tree without
+     * running it through the optimiser. Useful when callers persist expression
+     * fragments and need to recompile them later against a known
+     * {@link io.questdb.cairo.sql.RecordMetadata}.
+     */
+    ExpressionNode parseExpression(CharSequence expression) throws SqlException;
+
     RecordCursorFactory generateSelectWithRetries(
             @Transient IQueryModel queryModel,
             @Nullable @Transient InsertModel insertModel,

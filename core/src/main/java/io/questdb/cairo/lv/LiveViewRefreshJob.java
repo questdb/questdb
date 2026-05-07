@@ -49,12 +49,14 @@ import io.questdb.cairo.wal.WalTxnType;
 import io.questdb.cairo.wal.WalWriter;
 import io.questdb.cairo.wal.seq.TransactionLogCursor;
 import io.questdb.griffin.CompiledQuery;
+import io.questdb.griffin.FunctionParser;
 import io.questdb.griffin.RecordToRowCopier;
 import io.questdb.griffin.RecordToRowCopierUtils;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.engine.QueryProgress;
 import io.questdb.griffin.engine.window.WindowRecordCursorFactory;
+import io.questdb.griffin.model.ExpressionNode;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.mp.Job;
@@ -206,10 +208,10 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                 if (instance.getDependencyColumnNames().size() == 0) {
                     populateDependencyColumnNames(instance, factory);
                 }
-                // Lazily compile the anchor expression as a wrapping SELECT factory
-                // so the ANCHOR runtime can evaluate it per-row without re-parsing.
-                // Only fires when the LV has an anchored named WINDOW persisted in _lv.
-                ensureAnchorFactory(instance);
+                // Lazily compile the anchor expression as a Function so the
+                // ANCHOR runtime can evaluate it per-row. Only fires when the
+                // LV has an anchored named WINDOW persisted in _lv.
+                ensureAnchorFunction(instance, factory);
             } finally {
                 if (ownReader) {
                     executionContext.clearReader();
@@ -222,41 +224,76 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
     }
 
     /**
-     * Compiles the persisted anchor expression as a wrapping SELECT factory. The
-     * resulting factory's record exposes the anchor expression's value at column 0.
-     * Phase 1 stashes the factory on the {@link LiveViewInstance} so the future
-     * runtime hookup ({@link LiveViewWindow#processRow(Record)}) can pick it up;
-     * the factory is not yet consumed.
+     * Compiles the persisted anchor expression as a {@link Function} that evaluates
+     * against records shaped by the live view's projected metadata (i.e. the same
+     * shape as records emitted by {@link WalSegmentRecordCursor}). Stashed on the
+     * {@link LiveViewInstance}; consumed by the runtime hookup that wraps the
+     * source cursor with {@link LiveViewWindow#processRow(Record)}.
      */
-    private void ensureAnchorFactory(LiveViewInstance instance) {
-        if (instance.getAnchorFactory() != null) {
+    private void ensureAnchorFunction(LiveViewInstance instance, RecordCursorFactory compiledFactory) {
+        if (instance.getAnchorFunction() != null) {
             return;
         }
         LiveViewDefinition.LvAnchorSpec spec = instance.getDefinition().getAnchorSpec();
         if (spec == null || spec.anchorExpressionSql == null) {
             return;
         }
-        String wrappedSql = "SELECT " + spec.anchorExpressionSql + " FROM \""
-                + instance.getDefinition().getBaseTableName() + "\"";
         try (SqlCompiler compiler = engine.getSqlCompiler()) {
+            // Re-parse just the anchor expression text into an ExpressionNode.
+            // Going via generateExecutionModel does not work because the optimiser
+            // strips named windows after copying their spec into referencing
+            // SELECT-column WindowExpressions, and copySpecFrom does not carry the
+            // anchor spec across.
+            ExpressionNode anchorNode = compiler.parseExpression(spec.anchorExpressionSql);
+            if (anchorNode == null) {
+                LOG.error().$("anchor compile: parser returned null node [view=")
+                        .$(instance.getDefinition().getViewName())
+                        .$(", sql=").$safe(spec.anchorExpressionSql).I$();
+                return;
+            }
+            // Resolve against the LV's projected metadata (the page-frame factory's
+            // metadata at the leaf of the compiled tree). That matches the records
+            // WalSegmentRecordCursor emits at runtime.
+            RecordMetadata projectedMeta = findLeafProjectedMetadata(compiledFactory);
+            if (projectedMeta == null) {
+                LOG.error().$("anchor compile: could not find leaf projected metadata [view=")
+                        .$(instance.getDefinition().getViewName()).I$();
+                return;
+            }
+            FunctionParser fp = new FunctionParser(engine.getConfiguration(), engine.getFunctionFactoryCache());
             executionContext.setLiveViewCompile(true);
             try {
-                CompiledQuery cq = compiler.compile(wrappedSql, executionContext);
-                instance.setAnchorFactory(cq.getRecordCursorFactory());
+                Function fn = fp.parseFunction(anchorNode, projectedMeta, executionContext);
+                instance.setAnchorFunction(fn);
             } finally {
                 executionContext.setLiveViewCompile(false);
             }
         } catch (SqlException e) {
-            // Best-effort: if the anchor expression can't be re-compiled here it's a
-            // bug somewhere upstream (validator passed it but the wrapping SELECT
-            // can't form). Log and continue without the anchor factory; the runtime
-            // will fall back to no anchor reset.
-            LOG.error().$("could not compile live-view anchor expression [view=")
+            LOG.error().$("could not compile live-view anchor function [view=")
                     .$(instance.getDefinition().getViewName())
-                    .$(", sql=").$safe(wrappedSql)
                     .$(", error=").$safe(e.getFlyweightMessage())
                     .I$();
+        } catch (Throwable t) {
+            LOG.error().$("could not compile live-view anchor function [view=")
+                    .$(instance.getDefinition().getViewName())
+                    .$(", error=").$(t).I$();
         }
+    }
+
+    /**
+     * Walks the compiled SELECT factory chain down to the leaf
+     * {@code PageFrameRecordCursorFactory} and returns its projected metadata.
+     * That metadata matches the records {@link WalSegmentRecordCursor} emits at
+     * runtime, so an anchor {@code Function} compiled against it will produce
+     * correct results when invoked on the LV's source rows.
+     */
+    private static RecordMetadata findLeafProjectedMetadata(RecordCursorFactory factory) {
+        WindowRecordCursorFactory wf = unwrapWindowFactory(factory);
+        RecordCursorFactory base = wf.getBaseFactory();
+        if (base.getFilter() != null) {
+            base = base.getBaseFactory();
+        }
+        return base.getMetadata();
     }
 
     private void populateDependencyColumnNames(LiveViewInstance instance, RecordCursorFactory factory) {

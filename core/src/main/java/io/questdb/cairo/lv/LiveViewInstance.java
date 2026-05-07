@@ -25,6 +25,7 @@
 package io.questdb.cairo.lv;
 
 import io.questdb.cairo.TableToken;
+import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.griffin.RecordToRowCopier;
@@ -77,12 +78,11 @@ public class LiveViewInstance implements QuietCloseable {
     private final LiveViewStateReader stateReader = new LiveViewStateReader();
     // Cached compiled factory. Window functions carry per-row state, so refresh must
     // reuse the same factory across calls. Accessed only while the refresh latch is held.
-    // Compiled wrapping `SELECT <anchorExpressionSql> FROM <base>` used by the
-    // ANCHOR runtime to evaluate the anchor expression against base-table rows
-    // without a second SQL parse / compile per refresh cycle. Lazily built on
-    // first refresh after the live view's main SELECT has been compiled.
-    // Phase 1: stashed but not yet consumed.
-    private RecordCursorFactory anchorFactory;
+    // Compiled anchor expression — evaluated per row against records shaped by the
+    // live view's projected metadata (i.e. records emitted by WalSegmentRecordCursor).
+    // Lazily built on first refresh after the live view's main SELECT has been
+    // compiled. Phase 1: stashed but not yet consumed by the runtime.
+    private Function anchorFunction;
     private RecordCursorFactory compiledFactory;
     private volatile boolean dropped;
     private volatile boolean isClosed;
@@ -108,12 +108,12 @@ public class LiveViewInstance implements QuietCloseable {
         if (!isClosed) {
             isClosed = true;
             compiledFactory = Misc.free(compiledFactory);
-            anchorFactory = Misc.free(anchorFactory);
+            anchorFunction = Misc.free(anchorFunction);
         }
     }
 
-    public RecordCursorFactory getAnchorFactory() {
-        return anchorFactory;
+    public Function getAnchorFunction() {
+        return anchorFunction;
     }
 
     public RecordCursorFactory getCompiledFactory() {
@@ -225,10 +225,10 @@ public class LiveViewInstance implements QuietCloseable {
         stateReader.setAppliedWatermark(appliedWatermark);
     }
 
-    public void setAnchorFactory(RecordCursorFactory factory) {
-        if (anchorFactory != factory) {
-            Misc.free(anchorFactory);
-            anchorFactory = factory;
+    public void setAnchorFunction(Function function) {
+        if (anchorFunction != function) {
+            Misc.free(anchorFunction);
+            anchorFunction = function;
         }
     }
 
@@ -272,7 +272,7 @@ public class LiveViewInstance implements QuietCloseable {
             if (!isClosed) {
                 isClosed = true;
                 compiledFactory = Misc.free(compiledFactory);
-                anchorFactory = Misc.free(anchorFactory);
+                anchorFunction = Misc.free(anchorFunction);
             }
         } finally {
             refreshLatch.set(false);
