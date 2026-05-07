@@ -3514,23 +3514,29 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         }
     }
 
+    /**
+     * Hard-links {@code from} to {@code to}. Returns {@code true} on success,
+     * {@code false} if the source does not exist (either at the initial probe
+     * or after a concurrent delete reported by ENOENT from {@code hardLink}).
+     * Throws {@link CairoException} for any other hardLink failure.
+     *
+     * <p>Callers that hold the table writer lock on a path no other thread
+     * can remove will never observe the silent-{@code false} concurrent-delete
+     * branch. The branch exists for {@code linkPostingIndexAuxFiles}, which
+     * races {@code PostingSealPurgeJob} on sealed sidecar removal.
+     */
     private static boolean linkFile(FilesFacade ff, LPSZ from, LPSZ to) {
         if (ff.exists(from)) {
             if (ff.hardLink(from, to) == FILES_RENAME_OK) {
                 LOG.debug().$("renamed [from=").$(from).$(", to=").$(to).I$();
                 return true;
             }
-            // PostingSealPurgeJob runs on a worker thread and may
-            // delete a sealed posting sidecar (.pv, .pc<N>.*) between this
-            // method's ff.exists(from) check above and ff.hardLink(from, to).
-            // The purge job's TxnScoreboard check guarantees no live reader
-            // needs the version it removes, and the renamed column will only
-            // ever consult sealed files under its own (newName, newNameTxn)
-            // pair, so a vanished source is benign. Treat it as if it never
-            // existed. Other linkFile callers hold an exclusive writer lock
-            // and operate on files no other thread can remove, so this branch
-            // is unreachable for them.
-            if (Files.isErrnoFileDoesNotExist(ff.errno()) && !ff.exists(from)) {
+            // Concurrent delete by PostingSealPurgeJob between the ff.exists(from)
+            // probe above and ff.hardLink is benign; see Javadoc for the full
+            // rationale. Snapshot errno into a local because ff.exists below
+            // calls access(2) which may overwrite errno before we read it again.
+            final int linkErrno = ff.errno();
+            if (Files.isErrnoFileDoesNotExist(linkErrno) && !ff.exists(from)) {
                 return false;
             }
             if (ff.exists(to)) {

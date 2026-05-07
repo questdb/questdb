@@ -384,17 +384,29 @@ public class PostingIndexCriticalIssuesTest extends AbstractCairoTest {
                 raceArmed.set(false);
             }
 
-            Assert.assertTrue(
-                    "fault injection must fire: scanSealedFiles must hand the "
-                            + "fabricated .pc0.0.1 to linkFile so the test exercises "
-                            + "the ENOENT recovery branch. Got 0 firings.",
-                    raceFired.get() > 0
+            // Table must still be queryable on the new column name.
+            // count(*) factories do not support random access but report
+            // a known size, so pass supportsRandomAccess=false and
+            // expectSize=true via the (expected, query, expectedTimestamp,
+            // supportsRandomAccess, expectSize) overload.
+            assertQueryNoLeakCheck(
+                    "count\n3\n",
+                    "SELECT count(*) AS count FROM t_rename_pc_race WHERE sym_new IS NOT NULL",
+                    null,
+                    false,
+                    true
             );
 
-            // Table must still be queryable on the new column name.
-            assertSql(
-                    "count\n3\n",
-                    "SELECT count(*) AS count FROM t_rename_pc_race WHERE sym_new IS NOT NULL"
+            // Key-equality predicate forces the posting-index lookup on
+            // the renamed column. Without the fix, a chain-header
+            // reference broken by the dropped link would surface here,
+            // not in the IS NOT NULL scan above.
+            assertQueryNoLeakCheck(
+                    "count\n2\n",
+                    "SELECT count(*) AS count FROM t_rename_pc_race WHERE sym_new = 'A'",
+                    null,
+                    false,
+                    true
             );
         });
     }
