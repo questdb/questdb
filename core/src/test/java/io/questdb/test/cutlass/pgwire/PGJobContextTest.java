@@ -3407,17 +3407,18 @@ if __name__ == "__main__":
     @Test
     public void testClosePortalMustNotLeakSuspendedCursorOnAnotherNamedPortal() throws Exception {
         // Portal-side counterpart of testCloseStatementMustNotLeakSuspendedCursorOnAnotherNamedStatement.
-        // msgClose handles 'S' (statement) and 'P' (portal) through the same isDirty()
-        // check, so the same regression must be guarded for portals.
+        // msgClose handles 'S' (statement) and 'P' (portal) through the same
+        // releaseToPoolIfAbandoned path, so the same regression must be guarded for portals.
         //
         // Wire sequence: Parse('', SELECT 1) + Bind(P_1, '') + Sync,
         //                Parse('', SELECT x FROM long_sequence(5)) + Bind(P_2, '') + Execute(P_2, 2) + Sync,
         //                Close-P(P_1) + Sync + Execute(P_2, 10) + Sync.
-        // P_2 is suspended after row 2; Close-P targets the unrelated P_1. Without the
-        // isDirty() fix, msgClose calls releaseToPoolIfAbandoned(P_2), the next Execute(P_2)
-        // resumes from row 3 (returns rows 3,4,5 -- "SELECT 3"). With the fix, the suspended
-        // P_2 is queued via addPipelineEntry, the syncPipeline drain frees its cursor, and
-        // the next Execute(P_2) starts a fresh cursor returning all 5 rows ("SELECT 5").
+        // P_2 is suspended after row 2; Close-P targets the unrelated P_1. Pre-fix, msgClose
+        // ran releaseToPoolIfAbandoned(P_2), which only called clearState() and left the
+        // cursor alive; the next Execute(P_2) resumed from row 3 (returns rows 3,4,5 --
+        // "SELECT 3"). Post-fix, releaseToPoolIfAbandoned closes the suspended cursor inline
+        // before clearState(), so the next Execute(P_2) starts a fresh cursor and returns
+        // all 5 rows ("SELECT 5").
         assertHexScript("""
                 >0000003600030000757365720061646d696e0064617461626173650071646200636c69656e745f656e636f64696e6700555446380000
                 <520000000800000003
@@ -3451,27 +3452,19 @@ if __name__ == "__main__":
         // Bug-trigger (one message group, no intermediate Sync):
         //   Close-S(S_1) + Bind('' -> S_2) + Execute('', 10) + Sync.
         //
-        // What the other fixes do here:
-        //   - The `isDirty()` fix (Fix A) handles the prior Close-S step: when
-        //     `msgClose` swaps `pipelineCurrentEntry` from the suspended S_2 to
-        //     S_1, `isDirty()` now returns true (because `stateSuspended`), so
-        //     S_2 is queued onto `pipeline` via `addPipelineEntry()` instead of
-        //     being silently dropped. But queuing alone does not free the cursor;
-        //     only Sync's syncPipeline drain would, and there is no Sync here.
-        //   - The `releaseToPoolIfAbandoned` fix (Fix C) does not fire on this
-        //     path. `replaceCurrentPipelineEntry` calls `releaseToPoolIfAbandoned`
-        //     on the old `pipelineCurrentEntry` (here null, because the Close-S
-        //     branch in `msgBind` already set it to null before the lookup),
-        //     never on the looked-up entry.
-        //
-        // What the post-lookup `closeSuspendedCursor()` (Fix B) does:
-        //   `lookupPipelineEntryForNamedStatement` brings S_2 back from
-        //   `namedStatements` with cursor still alive and `stateSuspended=true`.
-        //   The post-lookup guard frees that cursor before `setStateBind(true)`,
-        //   so the next Execute calls `factory.getCursor()` fresh.
+        // The Close-S step calls `releaseToPoolIfAbandoned(S_2)`, where Fix C closes
+        // the suspended cursor inline. The Bind that follows finds S_2 with `cursor
+        // == null` and `stateSuspended == false`, so the next Execute calls
+        // `factory.getCursor()` fresh and returns all 5 rows. The post-lookup guard
+        // (Fix B) is the safety net for any path that bypasses Fix C's inline close
+        // -- e.g., if Close-S is dropped entirely and the suspended portal entry is
+        // looked up directly by Bind without prior cleanup.
         //
         // Pre-fix output: 3 DataRows (3,4,5) + "SELECT 3" -- the resumed cursor.
         // Post-fix output: 5 DataRows (1..5) + "SELECT 5" -- a fresh cursor.
+        //
+        // Response order matches the request order: CloseComplete (Close-S),
+        // BindComplete (Bind), 5 DataRows + CommandComplete (Execute), RFQ (Sync).
         assertHexScript("""
                 >0000003600030000757365720061646d696e0064617461626173650071646200636c69656e745f656e636f64696e6700555446380000
                 <520000000800000003
@@ -3484,7 +3477,7 @@ if __name__ == "__main__":
                 >420000000f00535f3200000000000000450000000900000000025300000004
                 <3200000004440000000b00010000000131440000000b0001000000013273000000045a0000000549
                 >430000000953535f3100420000000f00535f32000000000000004500000009000000000a5300000004
-                <3200000004440000000b00010000000131440000000b00010000000132440000000b00010000000133440000000b00010000000134440000000b00010000000135430000000d53454c45435420350033000000045a0000000549
+                <33000000043200000004440000000b00010000000131440000000b00010000000132440000000b00010000000133440000000b00010000000134440000000b00010000000135430000000d53454c4543542035005a0000000549
                 >5800000004
                 """);
     }
@@ -3524,10 +3517,10 @@ if __name__ == "__main__":
                 ps1.close();
 
                 // Wire sequence pgjdbc emits: Close-S(S_1), Sync, Bind('' -> S_2), Execute, Sync.
-                // Without the isDirty() fix, the suspended S_2 is dropped via clearState() in
-                // msgClose; without the post-lookup closeSuspendedCursor() in msgBind, the
-                // subsequent lookup brings S_2 back with its cursor alive, msgExecuteSelect
-                // skips factory.getCursor() and resumes from row 2 -- so this would return
+                // Pre-fix, msgClose ran releaseToPoolIfAbandoned on the suspended S_2, which
+                // only called clearState() and left the cursor alive. The subsequent Bind
+                // looked S_2 up with its cursor still alive, msgExecuteSelect skipped
+                // factory.getCursor() and resumed from row 2 -- so this would return
                 // just `ts` instead of all 3 rows.
                 ps2.setMaxRows(6);
                 sink.clear();
