@@ -1411,10 +1411,20 @@ public class SqlParser {
     private static void validateLiveViewAnchors(IQueryModel queryModel) throws SqlException {
         LowerCaseCharSequenceObjHashMap<WindowExpression> named = queryModel.getNamedWindows();
         ObjList<CharSequence> keys = named.keys();
+        int anchoredCount = 0;
         for (int i = 0, n = keys.size(); i < n; i++) {
             WindowExpression w = named.get(keys.getQuick(i));
             if (w == null || w.getAnchorKind() == WindowExpression.ANCHOR_KIND_NONE) {
                 continue;
+            }
+            anchoredCount++;
+            if (anchoredCount > 1) {
+                // Phase 1 limitation: the LiveViewWindow runtime supports a single
+                // anchored WINDOW per LV. Multi-window LVs with different anchors
+                // would need per-WINDOW dispatch of resetPartition, which lands
+                // alongside the runtime hookup.
+                throw SqlException.$(w.getAnchorPosition(),
+                        "live view supports at most one anchored WINDOW in V1");
             }
             if (w.isNonDefaultFrame()) {
                 throw SqlException.$(w.getAnchorPosition(),
