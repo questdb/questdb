@@ -3827,9 +3827,12 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 prevValueSlot.add(-1);
             }
             boolean needsPrevPositioning = false;
-            // Slots live in the keysMap value section, so non-keyed queries skip
-            // this loop and take the simplePrevRowId + recordAt path below.
-            for (int col = 0; keyColIndices.size() > 0 && col < columnCount; col++) {
+            // Cached fixed-size PREV slots live in the keysMap value section for
+            // keyed queries and in a single SimpleMapValue for non-keyed queries
+            // (allocated by the cursor when keysMap is null). The slot layout is
+            // identical across both cases, so the cursor reads through a uniform
+            // Record-typed prevCacheRecord regardless of mode.
+            for (int col = 0; col < columnCount; col++) {
                 int mode = fillModes.getQuick(col);
                 if (mode != SampleByFillRecordCursorFactory.FILL_PREV_SELF && mode < 0) {
                     continue;
@@ -3861,17 +3864,6 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     mapValueTypes.add(srcTag == ColumnType.SYMBOL ? ColumnType.INT : srcType);
                 }
                 prevValueSlot.setQuick(col, slot);
-            }
-            // Non-keyed FILL_PREV has no MapValue to cache, so force
-            // needsPrevPositioning on for the simplePrevRowId path.
-            if (keyColIndices.size() == 0) {
-                for (int col = 0; col < columnCount; col++) {
-                    int mode = fillModes.getQuick(col);
-                    if (mode == SampleByFillRecordCursorFactory.FILL_PREV_SELF || mode >= 0) {
-                        needsPrevPositioning = true;
-                        break;
-                    }
-                }
             }
 
             RecordSink keySink = null;

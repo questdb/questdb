@@ -101,6 +101,12 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
     private final RecordCursorFactory base;
     private final ObjList<Function> constantFills;
     private final SampleByFillCursor cursor;
+    // Slot-cache value for non-keyed runs. Allocated only when there is at
+    // least one fixed-size FILL_PREV column to cache; null otherwise. Layout
+    // mirrors the keyed MapValue exactly (LAST_KNOWN_TS_SLOT, PREV_ROWID_SLOT,
+    // then per-source PREV cache slots), so the cursor reads through a single
+    // Record-typed prevCacheRecord regardless of mode.
+    private final SimpleMapValue nonKeyedPrevCache;
     private final IntList fillModes;
     private final Function fromFunc;
     private final boolean hasPrevFill;
@@ -164,10 +170,17 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
             }
         }
         Map keysMap = null;
+        SimpleMapValue localNonKeyedPrevCache = null;
         SampleByFillCursor cursorLocal;
         try {
             if (keyColIndices.size() > 0) {
                 keysMap = MapFactory.createOrderedMap(configuration, mapKeyTypes, mapValueTypes);
+            } else if (fixedPrevSrcCols.size() > 0) {
+                // Non-keyed with at least one fixed-size FILL_PREV source: cache
+                // the prev row in a SimpleMapValue so the gap-emit path reads
+                // through the same DISPATCH_PREV_CACHE_SLOT machinery as keyed
+                // and skips baseCursor.recordAt entirely.
+                localNonKeyedPrevCache = new SimpleMapValue(mapValueTypes.getColumnCount());
             }
             cursorLocal = new SampleByFillCursor(
                     metadata, timestampSampler,
@@ -176,14 +189,17 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
                     keySink, keysMap, keyColIndices, symbolTableColIndices,
                     offsetFunc, offsetFuncPos,
                     tzFunc, tzFuncPos, samplingIntervalUnit,
-                    fixedPrevSrcCols, fixedPrevTypeTags, prevValueSlot, isPrevPositioningNeeded
+                    fixedPrevSrcCols, fixedPrevTypeTags, prevValueSlot,
+                    isPrevPositioningNeeded, localNonKeyedPrevCache
             );
         } catch (Throwable th) {
             // Free what this constructor allocated. Caller still owns its inputs
             // (base, fromFunc, toFunc, constantFills, offsetFunc, tzFunc).
             Misc.free(keysMap);
+            Misc.free(localNonKeyedPrevCache);
             throw th;
         }
+        this.nonKeyedPrevCache = localNonKeyedPrevCache;
         this.base = base;
         this.fromFunc = fromFunc;
         this.toFunc = toFunc;
@@ -261,6 +277,7 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
         Misc.free(toFunc);
         Misc.free(offsetFunc);
         Misc.free(tzFunc);
+        Misc.free(nonKeyedPrevCache);
         Misc.freeObjList(constantFills);
     }
 
@@ -346,8 +363,19 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
         private final RecordSink keySink;
         private final Map keysMap;
         private MapRecordCursor keysMapCursor;
-        private MapRecord keysMapRecord;
+        // Source for DISPATCH_KEY_SLOT and DISPATCH_PREV_CACHE_SLOT reads.
+        // Bound in initialize() to either the keyed Map's MapRecord or, for
+        // non-keyed runs with a fixed-size PREV cache, a thin Record adapter
+        // over nonKeyedPrevCache. Typed as Record so the FillRecord getters
+        // read uniformly across both modes without a per-call branch.
+        private Record keysMapRecord;
         private long maxTimestamp;
+        // Non-keyed FILL_PREV slot cache. Null for keyed runs and for non-keyed
+        // runs with no fixed-size PREV source.
+        private final SimpleMapValue nonKeyedPrevCache;
+        // Record-typed view over nonKeyedPrevCache; lazily created in
+        // initialize() when the non-keyed cache is in use.
+        private SimpleMapValueRecord nonKeyedPrevCacheRecord;
         private final Function offsetFunc;
         private final int offsetFuncPos;
         private final IntList outputColToKeyPos = new IntList();
@@ -407,7 +435,8 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
                 IntList fixedPrevSrcCols,
                 IntList fixedPrevTypeTags,
                 IntList prevValueSlot,
-                boolean isPrevPositioningNeeded
+                boolean isPrevPositioningNeeded,
+                SimpleMapValue nonKeyedPrevCache
         ) {
             this.offsetFunc = offsetFunc;
             this.offsetFuncPos = offsetFuncPos;
@@ -435,6 +464,8 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
             this.isPrevPositioningNeeded = isPrevPositioningNeeded;
             assert (keysMap == null) == (keyColIndices.size() == 0);
             this.isKeyed = keysMap != null;
+            this.nonKeyedPrevCache = nonKeyedPrevCache;
+            assert nonKeyedPrevCache == null || (!isKeyed && fixedPrevSrcCols.size() > 0);
 
             // Key columns sit after the fixed-width value header plus any
             // FILL_PREV cache slots; dispatchSlot[col] for KEY_SLOT entries
@@ -527,6 +558,14 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
                         // Non-keyed: only one row per bucket, advance immediately
                         if (hasPrevFill) {
                             saveSimplePrevRowId(baseRecord);
+                            // Mirror the keyed cache layout: cache the fixed-size
+                            // PREV column values so gap fills can read directly
+                            // without baseCursor.recordAt. Variable-width PREV
+                            // sources (when isPrevPositioningNeeded == true) keep
+                            // using the recordAt+simplePrevRowId path.
+                            if (nonKeyedPrevCache != null) {
+                                writePrevCacheSlots(nonKeyedPrevCache, baseRecord);
+                            }
                         }
                         currentBucketTimestamp = timestampSampler.nextTimestamp(currentBucketTimestamp);
                     }
@@ -737,6 +776,43 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
             }
         }
 
+        // Writes per-type null sentinels into every fixed-size PREV cache slot.
+        // Pre-filling means PREV_CACHE_SLOT getters can read unconditionally on
+        // the gap-emit hot path -- no per-row hasPrev branch.
+        private void initPrevCacheSlots(MapValue value) {
+            for (int i = 0, n = fixedPrevSrcCols.size(); i < n; i++) {
+                int slot = PREV_CACHE_OFFSET + i;
+                switch (fixedPrevTypeTags.getQuick(i)) {
+                    case ColumnType.DOUBLE -> value.putDouble(slot, Double.NaN);
+                    case ColumnType.FLOAT -> value.putFloat(slot, Float.NaN);
+                    case ColumnType.LONG, ColumnType.DATE, ColumnType.TIMESTAMP ->
+                            value.putLong(slot, Numbers.LONG_NULL);
+                    case ColumnType.GEOLONG -> value.putLong(slot, GeoHashes.NULL);
+                    case ColumnType.DECIMAL64 -> value.putLong(slot, Decimals.DECIMAL64_NULL);
+                    case ColumnType.INT, ColumnType.SYMBOL -> value.putInt(slot, Numbers.INT_NULL);
+                    case ColumnType.IPv4 -> value.putInt(slot, Numbers.IPv4_NULL);
+                    case ColumnType.GEOINT -> value.putInt(slot, GeoHashes.INT_NULL);
+                    case ColumnType.DECIMAL32 -> value.putInt(slot, Decimals.DECIMAL32_NULL);
+                    case ColumnType.SHORT -> value.putShort(slot, (short) 0);
+                    case ColumnType.GEOSHORT -> value.putShort(slot, GeoHashes.SHORT_NULL);
+                    case ColumnType.DECIMAL16 -> value.putShort(slot, Decimals.DECIMAL16_NULL);
+                    case ColumnType.BYTE -> value.putByte(slot, (byte) 0);
+                    case ColumnType.GEOBYTE -> value.putByte(slot, GeoHashes.BYTE_NULL);
+                    case ColumnType.DECIMAL8 -> value.putByte(slot, Decimals.DECIMAL8_NULL);
+                    case ColumnType.BOOLEAN -> value.putBool(slot, false);
+                    case ColumnType.CHAR -> value.putChar(slot, (char) 0);
+                    case ColumnType.LONG128 -> value.putLong128(slot, Numbers.LONG_NULL, Numbers.LONG_NULL);
+                    case ColumnType.LONG256 -> value.putLong256(slot, Long256Impl.NULL_LONG256);
+                    case ColumnType.DECIMAL128 -> value.putDecimal128Null(slot);
+                    case ColumnType.DECIMAL256 -> value.putDecimal256Null(slot);
+                    default -> {
+                        assert false : "unsupported fixed-size FILL(PREV) source type: "
+                                + ColumnType.nameOf(fixedPrevTypeTags.getQuick(i));
+                    }
+                }
+            }
+        }
+
         private void initialize() {
             TimestampDriver driver = timestampDriver;
             long fromTs = fromFunc == driver.getTimestampConstantNull() ? Numbers.LONG_NULL
@@ -756,7 +832,6 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
             if (keysMap != null) {
                 keysMap.clear();
                 int keyIdx = 0;
-                int prevSlotCount = fixedPrevSrcCols.size();
                 while (baseCursor.hasNext()) {
                     circuitBreaker.statefulThrowExceptionIfTripped();
                     MapKey key = keysMap.withKey();
@@ -771,37 +846,7 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
                         // Pre-fill cached PREV slots with per-type null sentinels
                         // so PREV_CACHE_SLOT getters can read unconditionally
                         // -- no hasPrev branch needed in the hot path.
-                        for (int i = 0; i < prevSlotCount; i++) {
-                            int slot = PREV_CACHE_OFFSET + i;
-                            switch (fixedPrevTypeTags.getQuick(i)) {
-                                case ColumnType.DOUBLE -> value.putDouble(slot, Double.NaN);
-                                case ColumnType.FLOAT -> value.putFloat(slot, Float.NaN);
-                                case ColumnType.LONG, ColumnType.DATE, ColumnType.TIMESTAMP ->
-                                        value.putLong(slot, Numbers.LONG_NULL);
-                                case ColumnType.GEOLONG -> value.putLong(slot, GeoHashes.NULL);
-                                case ColumnType.DECIMAL64 -> value.putLong(slot, Decimals.DECIMAL64_NULL);
-                                case ColumnType.INT, ColumnType.SYMBOL -> value.putInt(slot, Numbers.INT_NULL);
-                                case ColumnType.IPv4 -> value.putInt(slot, Numbers.IPv4_NULL);
-                                case ColumnType.GEOINT -> value.putInt(slot, GeoHashes.INT_NULL);
-                                case ColumnType.DECIMAL32 -> value.putInt(slot, Decimals.DECIMAL32_NULL);
-                                case ColumnType.SHORT -> value.putShort(slot, (short) 0);
-                                case ColumnType.GEOSHORT -> value.putShort(slot, GeoHashes.SHORT_NULL);
-                                case ColumnType.DECIMAL16 -> value.putShort(slot, Decimals.DECIMAL16_NULL);
-                                case ColumnType.BYTE -> value.putByte(slot, (byte) 0);
-                                case ColumnType.GEOBYTE -> value.putByte(slot, GeoHashes.BYTE_NULL);
-                                case ColumnType.DECIMAL8 -> value.putByte(slot, Decimals.DECIMAL8_NULL);
-                                case ColumnType.BOOLEAN -> value.putBool(slot, false);
-                                case ColumnType.CHAR -> value.putChar(slot, (char) 0);
-                                case ColumnType.LONG128 -> value.putLong128(slot, Numbers.LONG_NULL, Numbers.LONG_NULL);
-                                case ColumnType.LONG256 -> value.putLong256(slot, Long256Impl.NULL_LONG256);
-                                case ColumnType.DECIMAL128 -> value.putDecimal128Null(slot);
-                                case ColumnType.DECIMAL256 -> value.putDecimal256Null(slot);
-                                default -> {
-                                    assert false : "unsupported fixed-size FILL(PREV) source type: "
-                                            + ColumnType.nameOf(fixedPrevTypeTags.getQuick(i));
-                                }
-                            }
-                        }
+                        initPrevCacheSlots(value);
                     }
                 }
                 keyCount = keyIdx;
@@ -814,21 +859,39 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
                 }
                 toEmitCnt = keyCount;
                 baseCursor.toTop();
-                keysMapRecord = keysMap.getRecord();
-                keysMapRecord.setSymbolTableResolver(baseCursor, symbolTableColIndices);
+                MapRecord mapRecord = keysMap.getRecord();
+                mapRecord.setSymbolTableResolver(baseCursor, symbolTableColIndices);
+                keysMapRecord = mapRecord;
                 keysMapCursor = keysMap.getCursor();
             } else {
                 // Non-keyed: degenerate case with 1 "empty" key
                 keyCount = 1;
                 toEmitCnt = 1;
+                if (nonKeyedPrevCache != null) {
+                    nonKeyedPrevCache.clear();
+                    // LAST_KNOWN_TS_SLOT participates only in keyed bookkeeping;
+                    // for non-keyed we still seed it for layout symmetry.
+                    nonKeyedPrevCache.putLong(LAST_KNOWN_TS_SLOT, Numbers.LONG_NULL);
+                    initPrevCacheSlots(nonKeyedPrevCache);
+                    if (nonKeyedPrevCacheRecord == null) {
+                        nonKeyedPrevCacheRecord = new SimpleMapValueRecord(nonKeyedPrevCache);
+                    }
+                    keysMapRecord = nonKeyedPrevCacheRecord;
+                } else {
+                    keysMapRecord = null;
+                }
             }
 
             // Peek first row to determine range. prevRecord MUST be captured
             // AFTER buildChain (i.e. after the first hasNext on the non-keyed
             // path) -- earlier capture would let SortedRecordCursor reposition
-            // recordB underneath us.
+            // recordB underneath us. Skip the capture when no PREV column needs
+            // recordAt -- a non-random-access streaming base would throw on
+            // getRecordB and the slot-cache covers all reads anyway.
             if (baseCursor.hasNext()) {
-                prevRecord = baseCursor.getRecordB();
+                if (isPrevPositioningNeeded) {
+                    prevRecord = baseCursor.getRecordB();
+                }
                 long firstTs = baseRecord.getTimestamp(timestampIndex);
                 final boolean currentBucketIsFirstTs = (fromTs == Numbers.LONG_NULL || firstTs < fromTs);
                 currentBucketTimestamp = currentBucketIsFirstTs ? firstTs : fromTs;
@@ -1000,7 +1063,14 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
         }
 
         private void saveSimplePrevRowId(Record record) {
-            simplePrevRowId = record.getRowId();
+            // Skip the rowId capture when no PREV column needs recordAt -- a
+            // non-random-access streaming base would throw on getRowId. The
+            // hasSimplePrev flag still tracks "first data row seen" so the
+            // gap-emit path can distinguish pre-FROM gaps (no prev) from
+            // post-data gaps (cache-backed prev) on the slot-cache path.
+            if (isPrevPositioningNeeded) {
+                simplePrevRowId = record.getRowId();
+            }
             hasSimplePrev = true;
         }
 
@@ -1011,6 +1081,13 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
             value.putLong(PREV_ROWID_SLOT, record.getRowId());
             // Copy fixed-size FILL_PREV values into cached MapValue slots --
             // amortises a recordAt+RecordChain per read into N small writes.
+            writePrevCacheSlots(value, record);
+        }
+
+        // Copies fixed-size FILL_PREV values from a data row into a MapValue's
+        // cache slots. Shared by keyed (per-key MapValue) and non-keyed (single
+        // SimpleMapValue) paths so the slot layout stays in sync.
+        private void writePrevCacheSlots(MapValue value, Record record) {
             for (int i = 0, n = fixedPrevSrcCols.size(); i < n; i++) {
                 int slot = PREV_CACHE_OFFSET + i;
                 int srcCol = fixedPrevSrcCols.getQuick(i);
@@ -1650,6 +1727,162 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
             @Override
             public long getTimestamp(Record rec) {
                 return value;
+            }
+        }
+
+        // Thin Record adapter over a SimpleMapValue. Used as the non-keyed
+        // prevCacheRecord so DISPATCH_PREV_CACHE_SLOT getters can read uniformly
+        // from either keysMapRecord or this adapter. Slot indices are the
+        // SimpleMapValue value-slot indices, identical to the keyed MapValue
+        // layout (LAST_KNOWN_TS_SLOT, PREV_ROWID_SLOT, then PREV cache slots).
+        // Only the slot-eligible getters are overridden; everything else is the
+        // Record default (which throws or returns null) and is unreachable on
+        // the dispatch paths the cursor uses for cached PREV reads.
+        private static class SimpleMapValueRecord implements Record {
+            // Separate Long256 buffer for the B variant: AbstractCairoTest's
+            // testStringsLong256AndBinary asserts A != B as object identity for
+            // non-null values, mirroring the contract that record implementations
+            // must not reuse a single flyweight across A/B.
+            private final Long256Impl long256B = new Long256Impl();
+            private final SimpleMapValue value;
+
+            SimpleMapValueRecord(SimpleMapValue value) {
+                this.value = value;
+            }
+
+            @Override
+            public boolean getBool(int col) {
+                return value.getBool(col);
+            }
+
+            @Override
+            public byte getByte(int col) {
+                return value.getByte(col);
+            }
+
+            @Override
+            public char getChar(int col) {
+                return value.getChar(col);
+            }
+
+            @Override
+            public long getDate(int col) {
+                return value.getDate(col);
+            }
+
+            @Override
+            public void getDecimal128(int col, Decimal128 sink) {
+                value.getDecimal128(col, sink);
+            }
+
+            @Override
+            public short getDecimal16(int col) {
+                return value.getDecimal16(col);
+            }
+
+            @Override
+            public void getDecimal256(int col, Decimal256 sink) {
+                value.getDecimal256(col, sink);
+            }
+
+            @Override
+            public int getDecimal32(int col) {
+                return value.getDecimal32(col);
+            }
+
+            @Override
+            public long getDecimal64(int col) {
+                return value.getDecimal64(col);
+            }
+
+            @Override
+            public byte getDecimal8(int col) {
+                return value.getDecimal8(col);
+            }
+
+            @Override
+            public double getDouble(int col) {
+                return value.getDouble(col);
+            }
+
+            @Override
+            public float getFloat(int col) {
+                return value.getFloat(col);
+            }
+
+            @Override
+            public byte getGeoByte(int col) {
+                return value.getGeoByte(col);
+            }
+
+            @Override
+            public int getGeoInt(int col) {
+                return value.getGeoInt(col);
+            }
+
+            @Override
+            public long getGeoLong(int col) {
+                return value.getGeoLong(col);
+            }
+
+            @Override
+            public short getGeoShort(int col) {
+                return value.getGeoShort(col);
+            }
+
+            @Override
+            public int getIPv4(int col) {
+                return value.getIPv4(col);
+            }
+
+            @Override
+            public int getInt(int col) {
+                return value.getInt(col);
+            }
+
+            @Override
+            public long getLong(int col) {
+                return value.getLong(col);
+            }
+
+            @Override
+            public long getLong128Hi(int col) {
+                return value.getLong128Hi(col);
+            }
+
+            @Override
+            public long getLong128Lo(int col) {
+                return value.getLong128Lo(col);
+            }
+
+            @Override
+            public void getLong256(int col, CharSink<?> sink) {
+                Numbers.appendLong256(value.getLong256A(col), sink);
+            }
+
+            @Override
+            public Long256 getLong256A(int col) {
+                return value.getLong256A(col);
+            }
+
+            @Override
+            public Long256 getLong256B(int col) {
+                Long256 a = value.getLong256A(col);
+                if (a == Long256Impl.NULL_LONG256) {
+                    return Long256Impl.NULL_LONG256;
+                }
+                long256B.copyFrom(a);
+                return long256B;
+            }
+
+            @Override
+            public short getShort(int col) {
+                return value.getShort(col);
+            }
+
+            @Override
+            public long getTimestamp(int col) {
+                return value.getTimestamp(col);
             }
         }
     }
