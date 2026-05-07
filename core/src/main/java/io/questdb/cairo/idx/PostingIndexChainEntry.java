@@ -59,41 +59,6 @@ import io.questdb.std.Unsafe;
  */
 public final class PostingIndexChainEntry {
 
-    /**
-     * Reusable read snapshot. Fields populated by {@link #read}.
-     */
-    public static final class Snapshot {
-        public int blockCapacity;
-        public final LongList coverFileEndOffsets = new LongList();
-        public int coveringFormat;
-        public int genCount;
-        public long genDirOffset;
-        public int keyCount;
-        public long len;
-        public long maxValue;
-        public long offset;
-        public long prevEntryOffset;
-        public long sealTxn;
-        public long txnAtSeal;
-        public long valueMemSize;
-
-        public void reset() {
-            this.offset = 0;
-            this.len = 0;
-            this.sealTxn = 0;
-            this.txnAtSeal = 0;
-            this.valueMemSize = 0;
-            this.maxValue = 0;
-            this.keyCount = 0;
-            this.genCount = 0;
-            this.blockCapacity = 0;
-            this.coveringFormat = 0;
-            this.prevEntryOffset = PostingIndexUtils.V2_NO_HEAD;
-            this.genDirOffset = 0;
-            this.coverFileEndOffsets.clear();
-        }
-    }
-
     private PostingIndexChainEntry() {
     }
 
@@ -282,6 +247,41 @@ public final class PostingIndexChainEntry {
                         coverEndOffsets.getQuick(c)
                 );
             }
+        }
+    }
+
+    /**
+     * Reusable read snapshot. Fields populated by {@link #read}.
+     */
+    public static final class Snapshot {
+        public final LongList coverFileEndOffsets = new LongList();
+        public int blockCapacity;
+        public int coveringFormat;
+        public int genCount;
+        public long genDirOffset;
+        public int keyCount;
+        public long len;
+        public long maxValue;
+        public long offset;
+        public long prevEntryOffset;
+        public long sealTxn;
+        public long txnAtSeal;
+        public long valueMemSize;
+
+        public void reset() {
+            this.offset = 0;
+            this.len = 0;
+            this.sealTxn = 0;
+            this.txnAtSeal = 0;
+            this.valueMemSize = 0;
+            this.maxValue = 0;
+            this.keyCount = 0;
+            this.genCount = 0;
+            this.blockCapacity = 0;
+            this.coveringFormat = 0;
+            this.prevEntryOffset = PostingIndexUtils.V2_NO_HEAD;
+            this.genDirOffset = 0;
+            this.coverFileEndOffsets.clear();
         }
     }
 }
