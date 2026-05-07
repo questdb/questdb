@@ -35,9 +35,6 @@ use crate::parquet_metadata::types::{
 use crate::parquet_metadata::writer::ParquetMetaWriter;
 use parquet2::metadata::FileMetaData;
 use parquet2::schema::types::{PhysicalType, PrimitiveLogicalType};
-use parquet2::statistics::{
-    BinaryStatistics, BooleanStatistics, FixedLenStatistics, PrimitiveStatistics, Statistics,
-};
 use qdb_core::col_type::ColumnTypeTag;
 
 /// Maps a parquet2 `PhysicalType` enum to its ordinal `u8` encoding.
@@ -216,7 +213,7 @@ pub fn convert_from_parquet(
                         .map(|ct| ct.tag())
                 });
 
-            let mut chunk = build_column_chunk(col_chunk, col_type_tag)?;
+            let mut chunk = build_column_chunk(col_chunk)?;
 
             // Backfill inline min/max stats for the designated timestamp column
             // when the source parquet lacks them. Without this the `_pm` would
@@ -274,7 +271,6 @@ struct BuiltChunk {
 
 fn build_column_chunk(
     col_chunk: &parquet2::metadata::ColumnChunkMetaData,
-    col_type_tag: Option<ColumnTypeTag>,
 ) -> ParquetResult<BuiltChunk> {
     let (byte_range_start, total_compressed) = col_chunk.byte_range();
     let codec = Codec::from(col_chunk.compression());
@@ -286,12 +282,10 @@ fn build_column_chunk(
         .collect();
     let encodings = EncodingMask::from(p2_encodings.as_slice());
 
-    let bloom_filter_parquet = {
-        let m = col_chunk.metadata();
-        match (m.bloom_filter_offset, m.bloom_filter_length) {
-            (Some(off), Some(len)) if off > 0 && len > 0 => Some((off.max(0) as u64, len as u32)),
-            _ => None,
-        }
+    let m = col_chunk.metadata();
+    let bloom_filter_parquet = match (m.bloom_filter_offset, m.bloom_filter_length) {
+        (Some(off), Some(len)) if off > 0 && len > 0 => Some((off.max(0) as u64, len as u32)),
+        _ => None,
     };
 
     let mut raw = ColumnChunkRaw::zeroed();
@@ -301,171 +295,90 @@ fn build_column_chunk(
     raw.byte_range_start = byte_range_start;
     raw.total_compressed = total_compressed;
 
-    let mut ool_min: Option<Vec<u8>> = None;
-    let mut ool_max: Option<Vec<u8>> = None;
-
-    // Determine if stats should be inline or out-of-line.
-    let fixed_size = col_type_tag.and_then(|t| t.fixed_size());
-    let is_inline = fixed_size.is_some_and(|s| s <= 8);
-
-    // Extract statistics.
-    if let Some(Ok(stats)) = col_chunk.statistics() {
-        {
-            let mut stat_flags = StatFlags::new();
-
-            // null_count
-            if let Some(nc) = stats.null_count() {
-                stat_flags = stat_flags.with_null_count();
-                raw.null_count = nc.max(0) as u64;
-            }
-
-            // Inline slots store parquet bytes verbatim at parquet physical
-            // width. The skip path reads them at parquet physical width and
-            // applies parquet-aware interpretations (e.g., Int32 Date days
-            // multiplied by MILLIS_PER_DAY) on its own. Any width or unit
-            // change here would break that round-trip.
-            let (min_bytes, max_bytes, distinct_count) =
-                extract_stat_values(stats.as_ref(), col_chunk.physical_type());
-
-            if let Some(dc) = distinct_count {
-                stat_flags = stat_flags.with_distinct_count();
-                raw.distinct_count = dc.max(0) as u64;
-            }
-
-            if let Some(ref min_val) = min_bytes {
-                if is_inline && min_val.len() <= 8 {
-                    stat_flags = stat_flags.with_min(true, true);
-                    let mut buf = [0u8; 8];
-                    buf[..min_val.len()].copy_from_slice(min_val);
-                    raw.min_stat = u64::from_le_bytes(buf);
-                } else if !min_val.is_empty() {
-                    stat_flags = stat_flags.with_min(false, true);
-                    ool_min = Some(min_val.clone());
-                }
-            }
-
-            if let Some(ref max_val) = max_bytes {
-                if is_inline && max_val.len() <= 8 {
-                    stat_flags = stat_flags.with_max(true, true);
-                    let mut buf = [0u8; 8];
-                    buf[..max_val.len()].copy_from_slice(max_val);
-                    raw.max_stat = u64::from_le_bytes(buf);
-                } else if !max_val.is_empty() {
-                    stat_flags = stat_flags.with_max(false, true);
-                    ool_max = Some(max_val.clone());
-                }
-            }
-
-            // Encode stat sizes for inline stats.
-            if is_inline {
-                let min_size = min_bytes
-                    .as_ref()
-                    .filter(|_| stat_flags.is_min_inlined())
-                    .map(|v| v.len() as u8)
-                    .unwrap_or(0);
-                let max_size = max_bytes
-                    .as_ref()
-                    .filter(|_| stat_flags.is_max_inlined())
-                    .map(|v| v.len() as u8)
-                    .unwrap_or(0);
-                raw.stat_sizes = encode_stat_sizes(min_size, max_size);
-            }
-
-            raw.stat_flags = stat_flags.0;
-        }
-    }
+    let (ool_min, ool_max) = apply_thrift_stats(&mut raw, m.statistics.as_ref());
 
     Ok(BuiltChunk { raw, ool_min, ool_max, bloom_filter_parquet })
 }
 
-type RawStatValues = (Option<Vec<u8>>, Option<Vec<u8>>, Option<i64>);
+/// Reads min/max/null/distinct counts straight from parquet's thrift
+/// statistics and writes them into `raw`, returning any out-of-line bytes.
+///
+/// Inline vs OOL is gated purely by stat byte width (1..=8 bytes inline,
+/// longer goes OOL): the QuestDB column type doesn't constrain placement,
+/// because the read path (`can_skip_row_group`, `find_row_group_by_timestamp`)
+/// already interprets the slot at parquet physical width and applies any
+/// parquet-aware overlay (e.g., `is_date * MILLIS_PER_DAY`) on its own.
+/// Stats bytes are passed through verbatim — no typed deserialization, no
+/// re-serialization at convert time.
+fn apply_thrift_stats(
+    raw: &mut ColumnChunkRaw,
+    stats: Option<&parquet2::thrift_format::Statistics>,
+) -> (Option<Vec<u8>>, Option<Vec<u8>>) {
+    let Some(stats) = stats else {
+        return (None, None);
+    };
 
-/// Extracts min/max stat values as raw LE bytes and distinct_count.
-fn extract_stat_values(stats: &dyn Statistics, physical_type: PhysicalType) -> RawStatValues {
-    let none = (None, None, None);
-    match physical_type {
-        PhysicalType::Boolean => {
-            let Some(s) = stats.as_any().downcast_ref::<BooleanStatistics>() else {
-                return none;
-            };
-            let min = s.min_value.map(|v| vec![v as u8]);
-            let max = s.max_value.map(|v| vec![v as u8]);
-            (min, max, s.distinct_count)
-        }
-        PhysicalType::Int32 => {
-            let Some(s) = stats.as_any().downcast_ref::<PrimitiveStatistics<i32>>() else {
-                return none;
-            };
-            let min = s.min_value.map(|v| v.to_le_bytes().to_vec());
-            let max = s.max_value.map(|v| v.to_le_bytes().to_vec());
-            (min, max, s.distinct_count)
-        }
-        PhysicalType::Int64 => {
-            let Some(s) = stats.as_any().downcast_ref::<PrimitiveStatistics<i64>>() else {
-                return none;
-            };
-            let min = s.min_value.map(|v| v.to_le_bytes().to_vec());
-            let max = s.max_value.map(|v| v.to_le_bytes().to_vec());
-            (min, max, s.distinct_count)
-        }
-        PhysicalType::Float => {
-            let Some(s) = stats.as_any().downcast_ref::<PrimitiveStatistics<f32>>() else {
-                return none;
-            };
-            let min = s.min_value.map(|v| v.to_le_bytes().to_vec());
-            let max = s.max_value.map(|v| v.to_le_bytes().to_vec());
-            (min, max, s.distinct_count)
-        }
-        PhysicalType::Double => {
-            let Some(s) = stats.as_any().downcast_ref::<PrimitiveStatistics<f64>>() else {
-                return none;
-            };
-            let min = s.min_value.map(|v| v.to_le_bytes().to_vec());
-            let max = s.max_value.map(|v| v.to_le_bytes().to_vec());
-            (min, max, s.distinct_count)
-        }
-        PhysicalType::ByteArray => {
-            let Some(s) = stats.as_any().downcast_ref::<BinaryStatistics>() else {
-                return none;
-            };
-            (s.min_value.clone(), s.max_value.clone(), s.distinct_count)
-        }
-        PhysicalType::FixedLenByteArray(_) => {
-            let Some(s) = stats.as_any().downcast_ref::<FixedLenStatistics>() else {
-                return none;
-            };
-            (s.min_value.clone(), s.max_value.clone(), s.distinct_count)
-        }
-        PhysicalType::Int96 => {
-            let Some(s) = stats
-                .as_any()
-                .downcast_ref::<PrimitiveStatistics<[u32; 3]>>()
-            else {
-                return none;
-            };
-            let min = s.min_value.map(|v| {
-                let mut buf = Vec::with_capacity(12);
-                for word in v {
-                    buf.extend_from_slice(&word.to_le_bytes());
-                }
-                buf
-            });
-            let max = s.max_value.map(|v| {
-                let mut buf = Vec::with_capacity(12);
-                for word in v {
-                    buf.extend_from_slice(&word.to_le_bytes());
-                }
-                buf
-            });
-            (min, max, s.distinct_count)
+    let mut stat_flags = StatFlags::new();
+    let mut ool_min: Option<Vec<u8>> = None;
+    let mut ool_max: Option<Vec<u8>> = None;
+
+    if let Some(nc) = stats.null_count {
+        stat_flags = stat_flags.with_null_count();
+        raw.null_count = nc.max(0) as u64;
+    }
+    if let Some(dc) = stats.distinct_count {
+        stat_flags = stat_flags.with_distinct_count();
+        raw.distinct_count = dc.max(0) as u64;
+    }
+
+    if let Some(min_val) = stats.min_value.as_deref() {
+        if !min_val.is_empty() {
+            if min_val.len() <= 8 {
+                stat_flags = stat_flags.with_min(true, true);
+                let mut buf = [0u8; 8];
+                buf[..min_val.len()].copy_from_slice(min_val);
+                raw.min_stat = u64::from_le_bytes(buf);
+            } else {
+                stat_flags = stat_flags.with_min(false, true);
+                ool_min = Some(min_val.to_vec());
+            }
         }
     }
+
+    if let Some(max_val) = stats.max_value.as_deref() {
+        if !max_val.is_empty() {
+            if max_val.len() <= 8 {
+                stat_flags = stat_flags.with_max(true, true);
+                let mut buf = [0u8; 8];
+                buf[..max_val.len()].copy_from_slice(max_val);
+                raw.max_stat = u64::from_le_bytes(buf);
+            } else {
+                stat_flags = stat_flags.with_max(false, true);
+                ool_max = Some(max_val.to_vec());
+            }
+        }
+    }
+
+    let min_size = if stat_flags.is_min_inlined() {
+        stats.min_value.as_ref().map(|v| v.len() as u8).unwrap_or(0)
+    } else {
+        0
+    };
+    let max_size = if stat_flags.is_max_inlined() {
+        stats.max_value.as_ref().map(|v| v.len() as u8).unwrap_or(0)
+    } else {
+        0
+    };
+    if min_size > 0 || max_size > 0 {
+        raw.stat_sizes = encode_stat_sizes(min_size, max_size);
+    }
+    raw.stat_flags = stat_flags.0;
+
+    (ool_min, ool_max)
 }
 
 fn build_column_chunk_from_thrift(
     meta: &parquet2::thrift_format::ColumnMetaData,
-    schema_col: Option<&parquet2::metadata::ColumnDescriptor>,
-    col_type_tag: Option<ColumnTypeTag>,
 ) -> ParquetResult<BuiltChunk> {
     // byte_range_start: prefer dictionary_page_offset if present.
     let byte_range_start = meta
@@ -507,78 +420,7 @@ fn build_column_chunk_from_thrift(
     raw.byte_range_start = byte_range_start;
     raw.total_compressed = total_compressed;
 
-    let mut ool_min: Option<Vec<u8>> = None;
-    let mut ool_max: Option<Vec<u8>> = None;
-
-    // Determine if stats should be inline or out-of-line.
-    let fixed_size = col_type_tag.and_then(|t| t.fixed_size());
-    let is_inline = fixed_size.is_some_and(|s| s <= 8);
-
-    // Deserialize and process statistics.
-    if let (Some(ref thrift_stats), Some(col_desc)) = (&meta.statistics, schema_col) {
-        let primitive_type = col_desc.descriptor.primitive_type.clone();
-        if let Ok(stats) =
-            parquet2::statistics::deserialize_statistics(thrift_stats, primitive_type)
-        {
-            let mut stat_flags = StatFlags::new();
-
-            if let Some(nc) = stats.null_count() {
-                stat_flags = stat_flags.with_null_count();
-                raw.null_count = nc.max(0) as u64;
-            }
-
-            let physical_type = col_desc.descriptor.primitive_type.physical_type;
-            // See build_column_chunk for the rationale: inline slots hold
-            // parquet bytes verbatim, no width or unit conversion here.
-            let (min_bytes, max_bytes, distinct_count) =
-                extract_stat_values(stats.as_ref(), physical_type);
-
-            if let Some(dc) = distinct_count {
-                stat_flags = stat_flags.with_distinct_count();
-                raw.distinct_count = dc.max(0) as u64;
-            }
-
-            if let Some(ref min_val) = min_bytes {
-                if is_inline && min_val.len() <= 8 {
-                    stat_flags = stat_flags.with_min(true, true);
-                    let mut buf = [0u8; 8];
-                    buf[..min_val.len()].copy_from_slice(min_val);
-                    raw.min_stat = u64::from_le_bytes(buf);
-                } else if !min_val.is_empty() {
-                    stat_flags = stat_flags.with_min(false, true);
-                    ool_min = Some(min_val.clone());
-                }
-            }
-
-            if let Some(ref max_val) = max_bytes {
-                if is_inline && max_val.len() <= 8 {
-                    stat_flags = stat_flags.with_max(true, true);
-                    let mut buf = [0u8; 8];
-                    buf[..max_val.len()].copy_from_slice(max_val);
-                    raw.max_stat = u64::from_le_bytes(buf);
-                } else if !max_val.is_empty() {
-                    stat_flags = stat_flags.with_max(false, true);
-                    ool_max = Some(max_val.clone());
-                }
-            }
-
-            if is_inline {
-                let min_size = min_bytes
-                    .as_ref()
-                    .filter(|_| stat_flags.is_min_inlined())
-                    .map(|v| v.len() as u8)
-                    .unwrap_or(0);
-                let max_size = max_bytes
-                    .as_ref()
-                    .filter(|_| stat_flags.is_max_inlined())
-                    .map(|v| v.len() as u8)
-                    .unwrap_or(0);
-                raw.stat_sizes = encode_stat_sizes(min_size, max_size);
-            }
-
-            raw.stat_flags = stat_flags.0;
-        }
-    }
+    let (ool_min, ool_max) = apply_thrift_stats(&mut raw, meta.statistics.as_ref());
 
     Ok(BuiltChunk { raw, ool_min, ool_max, bloom_filter_parquet })
 }
@@ -590,7 +432,6 @@ fn build_column_chunk_from_thrift(
 pub struct ParquetMetaColumnInfo<'a> {
     pub name: &'a str,
     pub col_type_code: i32,
-    pub col_type_tag: Option<ColumnTypeTag>,
     pub id: i32,
     pub flags: ColumnFlags,
     pub fixed_byte_len: i32,
@@ -625,7 +466,6 @@ pub struct ParquetMetaUpdateResult {
 #[allow(clippy::too_many_arguments)]
 pub fn generate_parquet_metadata(
     columns: &[ParquetMetaColumnInfo],
-    schema_columns: &[parquet2::metadata::ColumnDescriptor],
     thrift_row_groups: &[parquet2::thrift_format::RowGroup],
     designated_timestamp: i32,
     sorting_columns: &[u32],
@@ -658,16 +498,8 @@ pub fn generate_parquet_metadata(
         );
     }
 
-    let col_type_tags: Vec<Option<ColumnTypeTag>> =
-        columns.iter().map(|c| c.col_type_tag).collect();
-
     for (rg_idx, thrift_rg) in thrift_row_groups.iter().enumerate() {
-        let mut block = build_row_group_block_from_thrift_with_types(
-            thrift_rg,
-            schema_columns,
-            &col_type_tags,
-            &[],
-        )?;
+        let mut block = build_row_group_block_from_thrift_with_types(thrift_rg, &[])?;
         // Add bloom filter bitsets captured during the parquet write.
         if let Some(rg_bitsets) = bloom_bitsets.get(rg_idx) {
             for (col_idx, bf) in rg_bitsets.iter().enumerate() {
@@ -701,8 +533,6 @@ pub fn generate_parquet_metadata(
 pub fn update_parquet_metadata(
     existing_parquet_meta: &[u8],
     existing_parquet_meta_file_size: u64,
-    columns: &[ParquetMetaColumnInfo],
-    schema_columns: &[parquet2::metadata::ColumnDescriptor],
     thrift_row_groups: &[parquet2::thrift_format::RowGroup],
     parquet_footer_offset: u64,
     parquet_footer_length: u32,
@@ -775,9 +605,6 @@ pub fn update_parquet_metadata(
         existing_parquet_meta_file_size,
     )?;
 
-    let col_type_tags: Vec<Option<ColumnTypeTag>> =
-        columns.iter().map(|c| c.col_type_tag).collect();
-
     for (i, thrift_rg) in thrift_row_groups.iter().enumerate() {
         // Fingerprint the new row group: first column's byte_range_start.
         let new_fp: Option<u64> = thrift_rg
@@ -791,12 +618,7 @@ pub fn update_parquet_metadata(
             continue;
         }
 
-        let mut block = build_row_group_block_from_thrift_with_types(
-            thrift_rg,
-            schema_columns,
-            &col_type_tags,
-            &[],
-        )?;
+        let mut block = build_row_group_block_from_thrift_with_types(thrift_rg, &[])?;
         if let Some(rg_bitsets) = bloom_bitsets.get(i) {
             for (col_idx, bf) in rg_bitsets.iter().enumerate() {
                 if let Some(bitset) = bf {
@@ -827,16 +649,16 @@ pub fn update_parquet_metadata(
     Ok(ParquetMetaUpdateResult { bytes: append_bytes, new_file_size })
 }
 
-/// Builds a `RowGroupBlockBuilder` directly from a thrift `RowGroup` struct
-/// with pre-resolved column type tags. Used by `generate_parquet_metadata`
-/// and `update_parquet_metadata` where the caller already knows the types.
+/// Builds a `RowGroupBlockBuilder` directly from a thrift `RowGroup` struct.
+/// Used by `generate_parquet_metadata` and `update_parquet_metadata`.
 ///
-/// `parquet_data` is the mmapped/read parquet file bytes, used to extract
-/// bloom filter bitsets into the _pm out-of-line region.
+/// Inline vs OOL placement of column statistics is decided by stat byte
+/// width inside `apply_thrift_stats`, so this function does not need the
+/// QuestDB column type tags. `parquet_data` is the mmapped/read parquet
+/// file bytes, used to extract bloom filter bitsets into the _pm
+/// out-of-line region.
 pub fn build_row_group_block_from_thrift_with_types(
     rg: &parquet2::thrift_format::RowGroup,
-    schema_columns: &[parquet2::metadata::ColumnDescriptor],
-    col_type_tags: &[Option<ColumnTypeTag>],
     parquet_data: &[u8],
 ) -> ParquetResult<RowGroupBlockBuilder> {
     let col_count = rg.columns.len();
@@ -844,8 +666,6 @@ pub fn build_row_group_block_from_thrift_with_types(
     builder.set_num_rows(rg.num_rows.max(0) as u64);
 
     for (col_idx, col_chunk) in rg.columns.iter().enumerate() {
-        let col_type_tag = col_type_tags.get(col_idx).copied().flatten();
-
         let meta = col_chunk.meta_data.as_ref().ok_or_else(|| {
             parquet_meta_err!(
                 ParquetMetaErrorKind::Conversion,
@@ -854,8 +674,7 @@ pub fn build_row_group_block_from_thrift_with_types(
             )
         })?;
 
-        let chunk =
-            build_column_chunk_from_thrift(meta, schema_columns.get(col_idx), col_type_tag)?;
+        let chunk = build_column_chunk_from_thrift(meta)?;
         builder.set_column_chunk(col_idx, chunk.raw)?;
 
         if let Some(ref min_bytes) = chunk.ool_min {
@@ -1439,11 +1258,6 @@ mod tests {
     /// parquets converted through `build_column_chunk_from_thrift`.
     #[test]
     fn convert_int32_date_round_trips_at_int32_width() {
-        use parquet2::metadata::{ColumnDescriptor, Descriptor};
-        use parquet2::schema::types::{
-            FieldInfo, ParquetType, PhysicalType, PrimitiveLogicalType, PrimitiveType,
-        };
-        use parquet2::schema::Repetition;
         use parquet2::thrift_format::{
             ColumnChunk, ColumnMetaData, CompressionCodec, Encoding as ThriftEncoding, RowGroup,
             Statistics as ThriftStatistics, Type,
@@ -1451,20 +1265,6 @@ mod tests {
 
         let min_days: i32 = -100; // ~1969-09-23
         let max_days: i32 = 365; //  1971-01-01
-
-        let primitive_type = PrimitiveType {
-            field_info: FieldInfo {
-                name: "d".to_string(),
-                repetition: Repetition::Required,
-                id: None,
-            },
-            logical_type: Some(PrimitiveLogicalType::Date),
-            converted_type: None,
-            physical_type: PhysicalType::Int32,
-        };
-        let base_type = ParquetType::PrimitiveType(primitive_type.clone());
-        let descriptor = Descriptor { primitive_type, max_def_level: 0, max_rep_level: 0 };
-        let col_desc = ColumnDescriptor::new(descriptor, vec!["d".to_string()], base_type);
 
         let stats = ThriftStatistics {
             max: None,
@@ -1512,13 +1312,7 @@ mod tests {
             ordinal: None,
         };
 
-        let block = build_row_group_block_from_thrift_with_types(
-            &row_group,
-            std::slice::from_ref(&col_desc),
-            &[Some(ColumnTypeTag::Date)],
-            &[],
-        )
-        .unwrap();
+        let block = build_row_group_block_from_thrift_with_types(&row_group, &[]).unwrap();
 
         let chunk = block.column_chunk_raw(0);
         let stat_flags = StatFlags(chunk.stat_flags);
@@ -1726,125 +1520,6 @@ mod tests {
     }
 
     #[test]
-    fn extract_stat_values_boolean() {
-        let stats = BooleanStatistics {
-            null_count: Some(2),
-            distinct_count: Some(2),
-            min_value: Some(false),
-            max_value: Some(true),
-        };
-        let (min, max, dc) = extract_stat_values(&stats, PhysicalType::Boolean);
-        assert_eq!(min, Some(vec![0u8]));
-        assert_eq!(max, Some(vec![1u8]));
-        assert_eq!(dc, Some(2));
-    }
-
-    #[test]
-    fn extract_stat_values_int32() {
-        use parquet2::schema::types::PrimitiveType;
-        let pt = PrimitiveType::from_physical("x".to_string(), PhysicalType::Int32);
-        let stats = PrimitiveStatistics::<i32> {
-            primitive_type: pt,
-            null_count: Some(0),
-            distinct_count: Some(10),
-            min_value: Some(-5),
-            max_value: Some(100),
-        };
-        let (min, max, dc) = extract_stat_values(&stats, PhysicalType::Int32);
-        assert_eq!(min, Some((-5i32).to_le_bytes().to_vec()));
-        assert_eq!(max, Some(100i32.to_le_bytes().to_vec()));
-        assert_eq!(dc, Some(10));
-    }
-
-    #[test]
-    fn extract_stat_values_float() {
-        use parquet2::schema::types::PrimitiveType;
-        let pt = PrimitiveType::from_physical("x".to_string(), PhysicalType::Float);
-        let stats = PrimitiveStatistics::<f32> {
-            primitive_type: pt,
-            null_count: None,
-            distinct_count: None,
-            min_value: Some(1.5f32),
-            max_value: Some(99.9f32),
-        };
-        let (min, max, dc) = extract_stat_values(&stats, PhysicalType::Float);
-        assert_eq!(min, Some(1.5f32.to_le_bytes().to_vec()));
-        assert_eq!(max, Some(99.9f32.to_le_bytes().to_vec()));
-        assert_eq!(dc, None);
-    }
-
-    #[test]
-    fn extract_stat_values_double() {
-        use parquet2::schema::types::PrimitiveType;
-        let pt = PrimitiveType::from_physical("x".to_string(), PhysicalType::Double);
-        let stats = PrimitiveStatistics::<f64> {
-            primitive_type: pt,
-            null_count: None,
-            distinct_count: None,
-            min_value: Some(-1.0),
-            max_value: Some(1.0),
-        };
-        let (min, max, dc) = extract_stat_values(&stats, PhysicalType::Double);
-        assert_eq!(min, Some((-1.0f64).to_le_bytes().to_vec()));
-        assert_eq!(max, Some(1.0f64.to_le_bytes().to_vec()));
-        assert_eq!(dc, None);
-    }
-
-    #[test]
-    fn extract_stat_values_binary() {
-        use parquet2::schema::types::PrimitiveType;
-        let pt = PrimitiveType::from_physical("x".to_string(), PhysicalType::ByteArray);
-        let stats = BinaryStatistics {
-            primitive_type: pt,
-            null_count: Some(1),
-            distinct_count: Some(5),
-            min_value: Some(vec![0x01, 0x02]),
-            max_value: Some(vec![0xFF, 0xFE]),
-        };
-        let (min, max, dc) = extract_stat_values(&stats, PhysicalType::ByteArray);
-        assert_eq!(min, Some(vec![0x01, 0x02]));
-        assert_eq!(max, Some(vec![0xFF, 0xFE]));
-        assert_eq!(dc, Some(5));
-    }
-
-    #[test]
-    fn extract_stat_values_fixed_len_byte_array() {
-        use parquet2::schema::types::PrimitiveType;
-        let pt = PrimitiveType::from_physical("x".to_string(), PhysicalType::FixedLenByteArray(16));
-        let stats = FixedLenStatistics {
-            primitive_type: pt,
-            null_count: None,
-            distinct_count: None,
-            min_value: Some(vec![0u8; 16]),
-            max_value: Some(vec![0xFFu8; 16]),
-        };
-        let (min, max, _) = extract_stat_values(&stats, PhysicalType::FixedLenByteArray(16));
-        assert_eq!(min.as_ref().map(|v| v.len()), Some(16));
-        assert_eq!(max.as_ref().map(|v| v.len()), Some(16));
-    }
-
-    #[test]
-    fn extract_stat_values_int96() {
-        use parquet2::schema::types::PrimitiveType;
-        let pt = PrimitiveType::from_physical("x".to_string(), PhysicalType::Int96);
-        let stats = PrimitiveStatistics::<[u32; 3]> {
-            primitive_type: pt,
-            null_count: None,
-            distinct_count: None,
-            min_value: Some([1, 2, 3]),
-            max_value: Some([4, 5, 6]),
-        };
-        let (min, max, _) = extract_stat_values(&stats, PhysicalType::Int96);
-        let min = min.unwrap();
-        assert_eq!(min.len(), 12);
-        assert_eq!(&min[0..4], &1u32.to_le_bytes());
-        assert_eq!(&min[4..8], &2u32.to_le_bytes());
-        assert_eq!(&min[8..12], &3u32.to_le_bytes());
-        let max = max.unwrap();
-        assert_eq!(&max[0..4], &4u32.to_le_bytes());
-    }
-
-    #[test]
     fn convert_distinct_count_present() {
         // Write a parquet file with statistics enabled.
         let parquet_data = write_multi_column_parquet(50);
@@ -1872,28 +1547,11 @@ mod tests {
 
     // ── Tests for build_row_group_block_from_thrift_with_types ─────────
 
-    /// Test helper: resolve col_type_tags from QdbMeta + schema, then delegate.
+    /// Test helper: thin wrapper around the public function.
     fn build_row_group_block_from_thrift(
         rg: &parquet2::thrift_format::RowGroup,
-        schema_columns: &[parquet2::metadata::ColumnDescriptor],
-        qdb_meta: Option<&QdbMeta>,
     ) -> crate::parquet::error::ParquetResult<RowGroupBlockBuilder> {
-        let col_type_tags: Vec<Option<ColumnTypeTag>> = (0..rg.columns.len())
-            .map(|i| {
-                qdb_meta
-                    .and_then(|m| {
-                        let code = m.schema.get(i)?.column_type.tag() as u8;
-                        ColumnTypeTag::try_from(code).ok()
-                    })
-                    .or_else(|| {
-                        schema_columns
-                            .get(i)
-                            .and_then(crate::parquet_read::meta::infer_column_type)
-                            .map(|ct| ct.tag())
-                    })
-            })
-            .collect();
-        build_row_group_block_from_thrift_with_types(rg, schema_columns, &col_type_tags, &[])
+        build_row_group_block_from_thrift_with_types(rg, &[])
     }
 
     #[test]
@@ -1925,11 +1583,8 @@ mod tests {
         let thrift_meta = metadata2.into_thrift();
 
         // Build row group blocks from thrift row groups.
-        let schema_columns = metadata.schema_descr.columns();
         for (rg_idx, thrift_rg) in thrift_meta.row_groups.iter().enumerate() {
-            let block =
-                build_row_group_block_from_thrift(thrift_rg, schema_columns, qdb_meta.as_ref())
-                    .unwrap();
+            let block = build_row_group_block_from_thrift(thrift_rg).unwrap();
 
             // Compare against the convert_from_parquet result.
             let rg1 = reader1.row_group(rg_idx).unwrap();
@@ -1989,20 +1644,9 @@ mod tests {
         let parquet_data = write_multi_column_parquet(50);
         let mut cursor = Cursor::new(&parquet_data);
         let metadata = read_metadata_with_size(&mut cursor, parquet_data.len() as u64).unwrap();
-        let qdb_meta = extract_qdb_meta_from(&metadata);
         let thrift_meta = metadata.into_thrift();
 
-        // Reload metadata for schema_columns (into_thrift consumed it).
-        let mut cursor2 = Cursor::new(&parquet_data);
-        let metadata2 = read_metadata_with_size(&mut cursor2, parquet_data.len() as u64).unwrap();
-        let schema_columns = metadata2.schema_descr.columns();
-
-        let block = build_row_group_block_from_thrift(
-            &thrift_meta.row_groups[0],
-            schema_columns,
-            qdb_meta.as_ref(),
-        )
-        .unwrap();
+        let block = build_row_group_block_from_thrift(&thrift_meta.row_groups[0]).unwrap();
 
         assert_eq!(block.num_rows(), 50);
 
@@ -2048,18 +1692,9 @@ mod tests {
         let parquet_data = write_test_parquet(100, CompressionOptions::Snappy);
         let mut cursor = Cursor::new(&parquet_data);
         let metadata = read_metadata_with_size(&mut cursor, parquet_data.len() as u64).unwrap();
-        let qdb_meta = extract_qdb_meta_from(&metadata);
         let thrift_meta = metadata.into_thrift();
 
-        let mut cursor2 = Cursor::new(&parquet_data);
-        let metadata2 = read_metadata_with_size(&mut cursor2, parquet_data.len() as u64).unwrap();
-
-        let block = build_row_group_block_from_thrift(
-            &thrift_meta.row_groups[0],
-            metadata2.schema_descr.columns(),
-            qdb_meta.as_ref(),
-        )
-        .unwrap();
+        let block = build_row_group_block_from_thrift(&thrift_meta.row_groups[0]).unwrap();
 
         let chunk = block.column_chunk_raw(0);
         assert_eq!(chunk.codec().unwrap(), Codec::Snappy);
@@ -2067,21 +1702,15 @@ mod tests {
 
     #[test]
     fn thrift_without_qdb_meta_infers_types() {
-        // Without QdbMeta, types should be inferred from parquet schema.
-        // write_multi_column_parquet: ts(Timestamp), int_val(Int), dbl_val(Double), flag(Boolean)
+        // Without QdbMeta, the convert path passes parquet stat bytes through
+        // verbatim regardless. write_multi_column_parquet: ts(Timestamp),
+        // int_val(Int), dbl_val(Double), flag(Boolean).
         let parquet_data = write_multi_column_parquet(30);
         let mut cursor = Cursor::new(&parquet_data);
         let metadata = read_metadata_with_size(&mut cursor, parquet_data.len() as u64).unwrap();
         let thrift_meta = metadata.into_thrift();
 
-        let mut cursor2 = Cursor::new(&parquet_data);
-        let metadata2 = read_metadata_with_size(&mut cursor2, parquet_data.len() as u64).unwrap();
-        let schema_columns = metadata2.schema_descr.columns();
-
-        // Pass None for QdbMeta — types should be inferred.
-        let block =
-            build_row_group_block_from_thrift(&thrift_meta.row_groups[0], schema_columns, None)
-                .unwrap();
+        let block = build_row_group_block_from_thrift(&thrift_meta.row_groups[0]).unwrap();
 
         // Stats should still be inlined for fixed-size types.
         let ts_chunk = block.column_chunk_raw(0);
@@ -2167,22 +1796,13 @@ mod tests {
 
         let mut cursor = Cursor::new(&buf);
         let metadata = read_metadata_with_size(&mut cursor, buf.len() as u64).unwrap();
-        let qdb_meta = extract_qdb_meta_from(&metadata);
         let thrift_meta = metadata.into_thrift();
-
-        let mut cursor2 = Cursor::new(&buf);
-        let metadata2 = read_metadata_with_size(&mut cursor2, buf.len() as u64).unwrap();
 
         assert_eq!(thrift_meta.row_groups.len(), 4);
         let expected_rows = [30u64, 30, 30, 10];
 
         for (i, thrift_rg) in thrift_meta.row_groups.iter().enumerate() {
-            let block = build_row_group_block_from_thrift(
-                thrift_rg,
-                metadata2.schema_descr.columns(),
-                qdb_meta.as_ref(),
-            )
-            .unwrap();
+            let block = build_row_group_block_from_thrift(thrift_rg).unwrap();
             assert_eq!(
                 block.num_rows(),
                 expected_rows[i],
@@ -2217,15 +1837,11 @@ mod tests {
                         .map(|ct| ct.code())
                         .unwrap_or(-1)
                 });
-                let col_type_tag = cm.map(|c| c.column_type.tag()).or_else(|| {
-                    crate::parquet_read::meta::infer_column_type(col_desc).map(|ct| ct.tag())
-                });
                 let mut flags = ColumnFlags::new();
                 flags = flags.with_repetition(FieldRepetition::from(field_info.repetition));
                 ParquetMetaColumnInfo {
                     name: &field_info.name,
                     col_type_code,
-                    col_type_tag,
                     id: field_info.id.unwrap_or(-1),
                     flags,
                     fixed_byte_len: match col_desc.descriptor.primitive_type.physical_type {
@@ -2246,7 +1862,6 @@ mod tests {
 
         let (parquet_meta_bytes, parquet_meta_file_size) = generate_parquet_metadata(
             &col_infos,
-            schema_columns,
             &thrift_meta.row_groups,
             0,    // designated_timestamp = column 0
             &[0], // sorting on column 0
@@ -2294,15 +1909,11 @@ mod tests {
             .map(|(i, col_desc)| {
                 let field_info = col_desc.base_type.get_field_info();
                 let cm = qdb_meta.as_ref().and_then(|m| m.schema.get(i));
-                let col_type_tag = cm.map(|c| c.column_type.tag()).or_else(|| {
-                    crate::parquet_read::meta::infer_column_type(col_desc).map(|ct| ct.tag())
-                });
                 let mut flags = ColumnFlags::new();
                 flags = flags.with_repetition(FieldRepetition::from(field_info.repetition));
                 ParquetMetaColumnInfo {
                     name: &field_info.name,
                     col_type_code: cm.map(|c| c.column_type.code()).unwrap_or(-1),
-                    col_type_tag,
                     id: field_info.id.unwrap_or(-1),
                     flags,
                     fixed_byte_len: match col_desc.descriptor.primitive_type.physical_type {
@@ -2320,7 +1931,6 @@ mod tests {
 
         let (initial_pm, _) = generate_parquet_metadata(
             &col_infos,
-            schema_columns,
             &thrift_meta.row_groups,
             0,
             &[0],
@@ -2347,18 +1957,9 @@ mod tests {
         }
         extended_rgs.push(new_rg);
 
-        let result = update_parquet_metadata(
-            &initial_pm,
-            initial_size,
-            &col_infos,
-            schema_columns,
-            &extended_rgs,
-            200,
-            60,
-            &[],
-            0,
-        )
-        .unwrap();
+        let result =
+            update_parquet_metadata(&initial_pm, initial_size, &extended_rgs, 200, 60, &[], 0)
+                .unwrap();
 
         assert!(!result.bytes.is_empty(), "should have append bytes");
 
@@ -2399,15 +2000,11 @@ mod tests {
             .map(|(i, col_desc)| {
                 let field_info = col_desc.base_type.get_field_info();
                 let cm = qdb_meta.and_then(|m| m.schema.get(i));
-                let col_type_tag = cm.map(|c| c.column_type.tag()).or_else(|| {
-                    crate::parquet_read::meta::infer_column_type(col_desc).map(|ct| ct.tag())
-                });
                 let mut flags = ColumnFlags::new();
                 flags = flags.with_repetition(FieldRepetition::from(field_info.repetition));
                 ParquetMetaColumnInfo {
                     name: &field_info.name,
                     col_type_code: cm.map(|c| c.column_type.code()).unwrap_or(-1),
-                    col_type_tag,
                     id: field_info.id.unwrap_or(-1),
                     flags,
                     fixed_byte_len: match col_desc.descriptor.primitive_type.physical_type {
@@ -2459,19 +2056,9 @@ mod tests {
         three_rgs.push(third_rg);
         assert_eq!(three_rgs.len(), 3);
 
-        let (initial_pm, _) = generate_parquet_metadata(
-            &col_infos,
-            schema_columns,
-            &three_rgs,
-            0,
-            &[0],
-            100,
-            50,
-            &[],
-            0,
-            -1,
-        )
-        .unwrap();
+        let (initial_pm, _) =
+            generate_parquet_metadata(&col_infos, &three_rgs, 0, &[0], 100, 50, &[], 0, -1)
+                .unwrap();
         let initial_size = initial_pm.len() as u64;
 
         let initial_reader = ParquetMetaReader::from_file_size(&initial_pm, initial_size).unwrap();
@@ -2479,17 +2066,7 @@ mod tests {
 
         // Drop the third row group and ask for an update with only 2.
         let two_rgs = three_rgs[..2].to_vec();
-        let result = update_parquet_metadata(
-            &initial_pm,
-            initial_size,
-            &col_infos,
-            schema_columns,
-            &two_rgs,
-            100,
-            50,
-            &[],
-            0,
-        );
+        let result = update_parquet_metadata(&initial_pm, initial_size, &two_rgs, 100, 50, &[], 0);
 
         let err = match result {
             Ok(_) => panic!("update should fail when row groups shrink"),
@@ -2529,7 +2106,7 @@ mod tests {
             ordinal: None,
         };
 
-        let result = build_row_group_block_from_thrift(&rg, &[], None);
+        let result = build_row_group_block_from_thrift(&rg);
         assert!(result.is_err());
         let err_msg = format!("{}", result.unwrap_err());
         assert!(
@@ -2595,7 +2172,6 @@ mod tests {
         let col_infos = vec![ParquetMetaColumnInfo {
             name: "ts",
             col_type_code: ColumnTypeTag::Timestamp.into_type().code(),
-            col_type_tag: Some(ColumnTypeTag::Timestamp),
             id: 0,
             flags: ColumnFlags::new().with_repetition(FieldRepetition::Required),
             fixed_byte_len: 0,
@@ -2607,7 +2183,6 @@ mod tests {
         // Generate _pm with captured bloom filter bitsets.
         let (parquet_meta_bytes, parquet_meta_file_size) = generate_parquet_metadata(
             &col_infos,
-            chunked.schema().columns(),
             chunked.row_groups(),
             0,
             &[0],
@@ -2741,13 +2316,11 @@ mod tests {
                 let field_info = col_desc.base_type.get_field_info();
                 let cm = qdb_meta.as_ref().and_then(|m| m.schema.get(i));
                 let col_type_code = cm.map(|c| c.column_type.code()).unwrap_or(-1);
-                let col_type_tag = cm.map(|c| c.column_type.tag());
                 let mut flags = ColumnFlags::new();
                 flags = flags.with_repetition(FieldRepetition::from(field_info.repetition));
                 ParquetMetaColumnInfo {
                     name: &field_info.name,
                     col_type_code,
-                    col_type_tag,
                     id: field_info.id.unwrap_or(-1),
                     flags,
                     fixed_byte_len: match col_desc.descriptor.primitive_type.physical_type {
@@ -2765,7 +2338,6 @@ mod tests {
 
         let (parquet_meta_bytes, _) = generate_parquet_metadata(
             &col_infos,
-            schema_columns,
             &thrift_meta.row_groups,
             0,
             &[0],

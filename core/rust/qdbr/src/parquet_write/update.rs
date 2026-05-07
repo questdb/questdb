@@ -832,7 +832,6 @@ impl ParquetUpdater {
                 // Full create: rewrite or first-time generation.
                 let (parquet_meta_bytes, _) = crate::parquet_metadata::generate_parquet_metadata(
                     &col_infos,
-                    &schema_columns,
                     thrift_row_groups,
                     designated_ts,
                     &sorting_indices,
@@ -865,8 +864,6 @@ impl ParquetUpdater {
                 let result = crate::parquet_metadata::update_parquet_metadata(
                     &existing_pm,
                     existing_size,
-                    &col_infos,
-                    &schema_columns,
                     thrift_row_groups,
                     footer_offset,
                     footer_length,
@@ -1356,9 +1353,6 @@ fn build_column_infos_from_qdb_meta<'a>(
                     .map(|ct| ct.code())
                     .unwrap_or(-1)
             });
-            let col_type_tag = cm.map(|c| c.column_type.tag()).or_else(|| {
-                crate::parquet_read::meta::infer_column_type(col_desc).map(|ct| ct.tag())
-            });
             let mut flags = crate::parquet_metadata::types::ColumnFlags::new();
             let repetition =
                 crate::parquet_metadata::types::FieldRepetition::from(field_info.repetition);
@@ -1381,7 +1375,6 @@ fn build_column_infos_from_qdb_meta<'a>(
             crate::parquet_metadata::ParquetMetaColumnInfo {
                 name: &field_info.name,
                 col_type_code,
-                col_type_tag,
                 id: field_info.id.unwrap_or(-1),
                 flags,
                 fixed_byte_len: match phys_type {
