@@ -1426,8 +1426,93 @@ public class SqlParser {
                     throw SqlException.$(expr.position,
                             "ANCHOR EXPRESSION must not be a constant");
                 }
+                walkAnchorExpressionForPurity(expr);
             }
         }
+    }
+
+    /**
+     * Recursive AST walk implementing the parser-side half of RFC 123's anchor-expression
+     * validator. Rejects subqueries, bind variables, and function calls that the planner
+     * would later resolve to runtime-state ({@code now}, {@code current_timestamp},
+     * {@code systimestamp}) or random ({@code rnd_*}) functions. The function-property
+     * checks (constant-fold, isGroupBy, isRandom, isRuntimeConstant, isNonDeterministic)
+     * land alongside the runtime hookup since they need a compiled {@link io.questdb.cairo.sql.Function}
+     * tree.
+     */
+    private static void walkAnchorExpressionForPurity(ExpressionNode node) throws SqlException {
+        if (node == null) {
+            return;
+        }
+        if (node.type == ExpressionNode.QUERY) {
+            throw SqlException.$(node.position, "ANCHOR EXPRESSION must not contain subqueries");
+        }
+        if (node.type == ExpressionNode.BIND_VARIABLE) {
+            throw SqlException.$(node.position, "ANCHOR EXPRESSION must not reference bind variables");
+        }
+        if (node.type == ExpressionNode.FUNCTION) {
+            CharSequence token = node.token;
+            if (token != null) {
+                if (Chars.startsWithLowerCase(token, "rnd_")) {
+                    throw SqlException.$(node.position,
+                            "ANCHOR EXPRESSION must be deterministic; ").put(token).put("() is not allowed");
+                }
+                if (SqlKeywords.isNowKeyword(token)
+                        || isCurrentTimestampToken(token)
+                        || isSystimestampToken(token)) {
+                    throw SqlException.$(node.position,
+                            "ANCHOR EXPRESSION must be deterministic; ").put(token).put("() is not allowed");
+                }
+            }
+        }
+        if (node.lhs != null) {
+            walkAnchorExpressionForPurity(node.lhs);
+        }
+        if (node.rhs != null) {
+            walkAnchorExpressionForPurity(node.rhs);
+        }
+        if (node.args != null) {
+            for (int i = 0, n = node.args.size(); i < n; i++) {
+                walkAnchorExpressionForPurity(node.args.getQuick(i));
+            }
+        }
+    }
+
+    private static boolean isCurrentTimestampToken(CharSequence token) {
+        return token.length() == 17
+                && (token.charAt(0) | 32) == 'c'
+                && (token.charAt(1) | 32) == 'u'
+                && (token.charAt(2) | 32) == 'r'
+                && (token.charAt(3) | 32) == 'r'
+                && (token.charAt(4) | 32) == 'e'
+                && (token.charAt(5) | 32) == 'n'
+                && (token.charAt(6) | 32) == 't'
+                && token.charAt(7) == '_'
+                && (token.charAt(8) | 32) == 't'
+                && (token.charAt(9) | 32) == 'i'
+                && (token.charAt(10) | 32) == 'm'
+                && (token.charAt(11) | 32) == 'e'
+                && (token.charAt(12) | 32) == 's'
+                && (token.charAt(13) | 32) == 't'
+                && (token.charAt(14) | 32) == 'a'
+                && (token.charAt(15) | 32) == 'm'
+                && (token.charAt(16) | 32) == 'p';
+    }
+
+    private static boolean isSystimestampToken(CharSequence token) {
+        return token.length() == 12
+                && (token.charAt(0) | 32) == 's'
+                && (token.charAt(1) | 32) == 'y'
+                && (token.charAt(2) | 32) == 's'
+                && (token.charAt(3) | 32) == 't'
+                && (token.charAt(4) | 32) == 'i'
+                && (token.charAt(5) | 32) == 'm'
+                && (token.charAt(6) | 32) == 'e'
+                && (token.charAt(7) | 32) == 's'
+                && (token.charAt(8) | 32) == 't'
+                && (token.charAt(9) | 32) == 'a'
+                && (token.charAt(10) | 32) == 'm'
+                && (token.charAt(11) | 32) == 'p';
     }
 
     private ExecutionModel parseCreateMatView(

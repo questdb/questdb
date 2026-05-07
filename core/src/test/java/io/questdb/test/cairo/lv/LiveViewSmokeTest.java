@@ -554,6 +554,51 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testRejectAnchorWithSubquery() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            try {
+                execute("CREATE LIVE VIEW lv FLUSH EVERY 1s AS " +
+                        "SELECT ts, x, sum(x) OVER w AS s FROM base " +
+                        "WINDOW w AS (PARTITION BY x ORDER BY ts ANCHOR EXPRESSION (SELECT 1))");
+                Assert.fail("expected subquery anchor reject");
+            } catch (SqlException e) {
+                Assert.assertTrue(e.getMessage(), e.getMessage().contains("must not contain subqueries"));
+            }
+        });
+    }
+
+    @Test
+    public void testRejectAnchorWithRandomFunction() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            try {
+                execute("CREATE LIVE VIEW lv FLUSH EVERY 1s AS " +
+                        "SELECT ts, x, sum(x) OVER w AS s FROM base " +
+                        "WINDOW w AS (PARTITION BY x ORDER BY ts ANCHOR EXPRESSION rnd_long())");
+                Assert.fail("expected random anchor reject");
+            } catch (SqlException e) {
+                Assert.assertTrue(e.getMessage(), e.getMessage().contains("must be deterministic"));
+            }
+        });
+    }
+
+    @Test
+    public void testRejectAnchorWithNow() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            try {
+                execute("CREATE LIVE VIEW lv FLUSH EVERY 1s AS " +
+                        "SELECT ts, x, sum(x) OVER w AS s FROM base " +
+                        "WINDOW w AS (PARTITION BY x ORDER BY ts ANCHOR EXPRESSION now())");
+                Assert.fail("expected now() anchor reject");
+            } catch (SqlException e) {
+                Assert.assertTrue(e.getMessage(), e.getMessage().contains("must be deterministic"));
+            }
+        });
+    }
+
+    @Test
     public void testRejectLeadWindowFunction() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE base (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
