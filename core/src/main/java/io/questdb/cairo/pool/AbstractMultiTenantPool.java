@@ -32,6 +32,7 @@ import io.questdb.cairo.pool.ex.EntryLockedException;
 import io.questdb.cairo.pool.ex.PoolClosedException;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
+import io.questdb.std.CarrierLocal;
 import io.questdb.std.ConcurrentHashMap;
 import io.questdb.std.Os;
 import io.questdb.std.Unsafe;
@@ -56,7 +57,7 @@ public abstract class AbstractMultiTenantPool<T extends PoolTenant<T>> extends A
     private final int maxEntries;
     private final int maxSegments;
     private final int segmentSize;
-    private final ThreadLocal<ResourcePoolSupervisor<T>> threadLocalPoolSupervisor;
+    private final CarrierLocal<ResourcePoolSupervisor<T>> threadLocalPoolSupervisor;
 
     public AbstractMultiTenantPool(CairoConfiguration configuration, int maxSegments, long inactiveTtlMillis) {
         super(configuration, inactiveTtlMillis);
@@ -64,9 +65,9 @@ public abstract class AbstractMultiTenantPool<T extends PoolTenant<T>> extends A
         this.segmentSize = configuration.getPoolSegmentSize();
         this.maxEntries = maxSegments * configuration.getPoolSegmentSize();
         if (configuration.cairoResourcePoolTracingEnabled()) {
-            threadLocalPoolSupervisor = new io.questdb.std.ThreadLocal<>(TracingResourcePoolSupervisor::new);
+            threadLocalPoolSupervisor = new CarrierLocal<>(TracingResourcePoolSupervisor::new);
         } else {
-            threadLocalPoolSupervisor = new ThreadLocal<>();
+            threadLocalPoolSupervisor = new CarrierLocal<>();
         }
     }
 

@@ -30,9 +30,10 @@ import io.questdb.std.ConcurrentHashMap;
 import io.questdb.std.datetime.DateFormat;
 
 import java.util.function.Function;
+import io.questdb.std.CarrierLocal;
 
 public class MicrosFormatFactory implements TimestampDateFormatFactory {
-    private final static ThreadLocal<MicrosFormatCompiler> tlCompiler = ThreadLocal.withInitial(MicrosFormatCompiler::new);
+    private final static CarrierLocal<MicrosFormatCompiler> tlCompiler = CarrierLocal.withInitial(MicrosFormatCompiler::new);
     private static final Function<CharSequence, DateFormat> mapper = MicrosFormatFactory::map;
     public static MicrosFormatFactory INSTANCE = new MicrosFormatFactory();
     private final ConcurrentHashMap<DateFormat> cache = new ConcurrentHashMap<>();

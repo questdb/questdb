@@ -34,6 +34,8 @@ import io.questdb.VolumeDefinitions;
 import io.questdb.cairo.idx.PostingIndexUtils;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreakerConfiguration;
 import io.questdb.cutlass.text.TextConfiguration;
+import io.questdb.mp.continuation.DelayedFireable;
+import io.questdb.mp.continuation.TimerShards;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.IOURingFacade;
 import io.questdb.std.IOURingFacadeImpl;
@@ -784,9 +786,9 @@ public interface CairoConfiguration {
     TextConfiguration getTextConfiguration();
 
     /**
-     * Number of {@link io.questdb.mp.TimerShards} shards (one daemon thread each) used
+     * Number of {@link TimerShards} shards (one daemon thread each) used
      * to fire timer-based wakeups for parked SQL continuations and other
-     * {@link io.questdb.mp.DelayedFireable} entries. Higher values reduce
+     * {@link DelayedFireable} entries. Higher values reduce
      * {@code DelayQueue} lock contention but cost one always-on thread per shard.
      */
     int getTimerShardCount();

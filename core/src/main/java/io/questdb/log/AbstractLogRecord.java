@@ -29,9 +29,11 @@ import io.questdb.cairo.TimestampDriver;
 import io.questdb.mp.RingQueue;
 import io.questdb.mp.Sequence;
 import io.questdb.network.Net;
+import io.questdb.mp.CarrierIdentity;
 import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjHashSet;
+import io.questdb.std.CarrierLocal;
 import io.questdb.std.datetime.Clock;
 import io.questdb.std.str.DirectUtf8Sequence;
 import io.questdb.std.str.Sinkable;
@@ -47,7 +49,7 @@ import java.util.Set;
 import static io.questdb.ParanoiaState.*;
 
 abstract class AbstractLogRecord implements LogRecord, Log {
-    private static final ThreadLocal<ObjHashSet<Throwable>> tlSet = ThreadLocal.withInitial(ObjHashSet::new);
+    private static final CarrierLocal<ObjHashSet<Throwable>> tlSet = CarrierLocal.withInitial(() -> new ObjHashSet<>());
     protected final RingQueue<LogRecordUtf8Sink> advisoryRing;
     protected final Sequence advisorySeq;
     protected final RingQueue<LogRecordUtf8Sink> criticalRing;
@@ -58,7 +60,7 @@ abstract class AbstractLogRecord implements LogRecord, Log {
     protected final Sequence errorSeq;
     protected final RingQueue<LogRecordUtf8Sink> infoRing;
     protected final Sequence infoSeq;
-    protected final ThreadLocal<CursorHolder> tl = ThreadLocal.withInitial(CursorHolder::new);
+    protected final CarrierLocal<CursorHolder> tl = CarrierLocal.withInitial(() -> new CursorHolder(CarrierIdentity.current()));
     private final Clock clock;
     private final CharSequence name;
 
@@ -225,6 +227,8 @@ abstract class AbstractLogRecord implements LogRecord, Log {
     @Override
     public void $() {
         CursorHolder h = tl.get();
+        assert h.isLogRecordInProgress : "Log record not in progress, wtf?. Current carrier id:"
+                + CarrierIdentity.current() + ", log record creator carrier id:" + h.carrierId;
         LogRecordUtf8Sink sink = h.ring.get(h.cursor);
         sink.putEOL();
         try {
@@ -605,10 +609,15 @@ abstract class AbstractLogRecord implements LogRecord, Log {
 
     protected static class CursorHolder {
         final LogError abandonedLogRecordError = createAbandonedLogError();
+        final int carrierId;
         protected long cursor;
         protected RingQueue<LogRecordUtf8Sink> ring;
         protected Sequence seq;
         boolean isLogRecordInProgress;
+
+        CursorHolder(int carrierId) {
+            this.carrierId = carrierId;
+        }
 
         private static @NotNull LogError createAbandonedLogError() {
             if (LOG_PARANOIA_MODE == LOG_PARANOIA_MODE_AGGRESSIVE)

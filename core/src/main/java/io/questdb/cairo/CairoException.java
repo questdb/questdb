@@ -28,7 +28,7 @@ import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.std.Files;
 import io.questdb.std.FlyweightMessageContainer;
 import io.questdb.std.Os;
-import io.questdb.std.ThreadLocal;
+import io.questdb.std.CarrierLocal;
 import io.questdb.std.str.CharSink;
 import io.questdb.std.str.Sinkable;
 import io.questdb.std.str.StringSink;
@@ -59,7 +59,7 @@ public class CairoException extends RuntimeException implements Sinkable, Flywei
     public static final int TXN_BLOCK_APPLY_FAILED = MAT_VIEW_DOES_NOT_EXIST - 1;
     public static final int NON_CRITICAL = -1;
     private static final StackTraceElement[] EMPTY_STACK_TRACE = {};
-    private static final ThreadLocal<CairoException> tlException = new ThreadLocal<>(CairoException::new);
+    private static final CarrierLocal<CairoException> tlException = new CarrierLocal<>(CairoException::new);
     protected final StringSink message = new StringSink();
     protected final StringSink nativeBacktrace = new StringSink();
     protected int errno;

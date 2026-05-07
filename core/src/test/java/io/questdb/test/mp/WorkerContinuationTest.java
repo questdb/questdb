@@ -24,7 +24,7 @@
 
 package io.questdb.test.mp;
 
-import io.questdb.mp.WorkerContinuation;
+import io.questdb.mp.continuation.WorkerContinuation;
 import org.junit.Assert;
 import org.junit.Test;
 

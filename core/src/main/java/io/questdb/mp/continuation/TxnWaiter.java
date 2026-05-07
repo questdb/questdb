@@ -22,11 +22,9 @@
  *
  ******************************************************************************/
 
-package io.questdb.cairo.wal.seq;
+package io.questdb.mp.continuation;
 
-import io.questdb.mp.DelayedFireable;
-import io.questdb.mp.TimerShards;
-import io.questdb.mp.WorkerContinuation;
+import io.questdb.cairo.wal.seq.SeqTxnTracker;
 import io.questdb.std.Unsafe;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
@@ -62,12 +60,12 @@ public final class TxnWaiter implements DelayedFireable {
     public static final int STATE_FIRED = 1;
     public static final int STATE_PENDING = 0;
     static final long STATE_OFFSET = Unsafe.getFieldOffset(TxnWaiter.class, "state");
-    final long targetWriterTxn;
+    private final long targetWriterTxn;
     private final TimerShards timerShards;
     private final long waitIntervalMillis;
     volatile long registeredAtMillis;
-    volatile int state = STATE_PENDING;
     private WorkerContinuation cont;
+    private final int state = STATE_PENDING;
 
     public TxnWaiter(@Nullable TimerShards timerShards, long waitIntervalMillis, long targetWriterTxn) {
         this.timerShards = timerShards;
@@ -123,6 +121,14 @@ public final class TxnWaiter implements DelayedFireable {
     public long getDelay(@NotNull TimeUnit unit) {
         long elapsed = System.currentTimeMillis() - registeredAtMillis;
         return unit.convert(waitIntervalMillis - elapsed, TimeUnit.MILLISECONDS);
+    }
+
+    public int getState() {
+        return state;
+    }
+
+    public long getTargetWriterTxn() {
+        return targetWriterTxn;
     }
 
     public boolean isCancelled() {

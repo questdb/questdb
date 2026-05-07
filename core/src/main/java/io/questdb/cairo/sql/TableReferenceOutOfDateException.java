@@ -26,13 +26,13 @@ package io.questdb.cairo.sql;
 
 import io.questdb.cairo.TableToken;
 import io.questdb.std.FlyweightMessageContainer;
-import io.questdb.std.ThreadLocal;
+import io.questdb.std.CarrierLocal;
 import io.questdb.std.str.StringSink;
 import io.questdb.std.str.Utf8Sequence;
 
 public class TableReferenceOutOfDateException extends RuntimeException implements FlyweightMessageContainer {
     private static final String prefix = "cached query plan cannot be used because table schema has changed [table=";
-    private static final ThreadLocal<TableReferenceOutOfDateException> tlException = new ThreadLocal<>(TableReferenceOutOfDateException::new);
+    private static final CarrierLocal<TableReferenceOutOfDateException> tlException = new CarrierLocal<>(TableReferenceOutOfDateException::new);
     private final StringSink message = (StringSink) new StringSink().put(prefix);
 
     public static TableReferenceOutOfDateException of(CharSequence outdatedTableName) {

@@ -26,6 +26,8 @@ package io.questdb.mp;
 
 import io.questdb.Metrics;
 import io.questdb.log.Log;
+import io.questdb.mp.continuation.ContinuationQueue;
+import io.questdb.mp.continuation.WorkerContinuation;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjHashSet;
 import io.questdb.std.Os;
@@ -120,6 +122,14 @@ public class Worker extends Thread {
         Throwable ex = null;
         try {
             if (lifecycle.compareAndSet(Lifecycle.BORN, Lifecycle.RUNNING)) {
+
+                // Stamp this OS thread's identity into TLS that survives cont
+                // freeze/thaw. CarrierLocal reads this on every access; without
+                // it, a hoisted Thread.currentThread() would alias the holder
+                // of whatever carrier first ran the cont's preheader. The id is
+                // globally unique across pools - workerId is pool-local and
+                // would collide between e.g. shared:0 and io:0.
+                CarrierIdentity.bind();
 
                 String workerName = getName();
 

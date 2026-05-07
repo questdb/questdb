@@ -26,9 +26,9 @@ package io.questdb.test.mp;
 
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
-import io.questdb.mp.TimerCont;
-import io.questdb.mp.TimerShards;
-import io.questdb.mp.WorkerContinuation;
+import io.questdb.mp.continuation.TimerCont;
+import io.questdb.mp.continuation.TimerShards;
+import io.questdb.mp.continuation.WorkerContinuation;
 import org.junit.Assert;
 import org.junit.Test;
 

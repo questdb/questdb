@@ -31,12 +31,16 @@ import io.questdb.cairo.wal.TableWriterPressureControl;
 import io.questdb.mp.ConcurrentQueue;
 import io.questdb.mp.Queue;
 import io.questdb.mp.ValueHolder;
+import io.questdb.mp.continuation.ContinuationQueue;
+import io.questdb.mp.continuation.TimerShards;
+import io.questdb.mp.continuation.TxnWaiter;
 import io.questdb.std.Unsafe;
 import org.jetbrains.annotations.TestOnly;
+import io.questdb.std.CarrierLocal;
 
 public class SeqTxnTracker {
     public static final long UNINITIALIZED_TXN = -1;
-    private static final ThreadLocal<WaiterHolder> HOLDER = ThreadLocal.withInitial(WaiterHolder::new);
+    private static final CarrierLocal<WaiterHolder> HOLDER = CarrierLocal.withInitial(WaiterHolder::new);
     private static final long SEQ_TXN_OFFSET = Unsafe.getFieldOffset(SeqTxnTracker.class, "seqTxn");
     private static final long SUSPENDED_STATE_OFFSET = Unsafe.getFieldOffset(SeqTxnTracker.class, "suspendedState");
     private static final long WAITER_REGISTRATION_COUNT_OFFSET = Unsafe.getFieldOffset(SeqTxnTracker.class, "waiterRegistrationCount");
@@ -177,8 +181,7 @@ public class SeqTxnTracker {
      * Registers a parked SQL continuation that will be resumed when the tracker's
      * {@code writerTxn} advances to at least {@code waiter.targetWriterTxn}, or when
      * the table becomes suspended/dropped, or when the waiter's deadline elapses
-     * (via the {@link io.questdb.mp.TimerShards} entry registered by
-     * {@link TxnWaiter#reset(long, long)}).
+     * (via the {@link TimerShards} entry registered by TxnWaiter#reset(long, long)).
      *
      * <p>If the target is already met (or the table is already suspended/dropped) at
      * registration time, fires the waiter immediately so the caller does not have to
@@ -186,7 +189,7 @@ public class SeqTxnTracker {
      * the body before it reaches {@code WorkerContinuation.suspend()} -- the cont is
      * still mounted on the registering carrier when {@code cont.scheduleResume()}
      * pushes it onto the resume queue. The mount race is benign on the happy path:
-     * {@link io.questdb.mp.ContinuationQueue#run} spin-waits on the resulting
+     * {@link ContinuationQueue#run} spin-waits on the resulting
      * IllegalStateException for the (typically nanosecond) window until the body
      * reaches suspend and the carrier unmounts. If suspend is refused (carrier
      * pinned), the body marks {@code parkRefused} on the cont so the dequeuer
@@ -196,7 +199,7 @@ public class SeqTxnTracker {
     public void registerWaiter(TxnWaiter waiter) {
         enqueueHolder(HOLDER.get(), waiter);
         Unsafe.getAndAddLong(this, WAITER_REGISTRATION_COUNT_OFFSET, 1);
-        if (writerTxn >= waiter.targetWriterTxn || isSuspended() || dropped) {
+        if (writerTxn >= waiter.getTargetWriterTxn() || isSuspended() || dropped) {
             fireWaiters();
         }
     }
@@ -279,9 +282,9 @@ public class SeqTxnTracker {
             if (w == null) {
                 continue;
             }
-            if (terminal || wtxn >= w.targetWriterTxn) {
+            if (terminal || wtxn >= w.getTargetWriterTxn()) {
                 w.tryFire();
-            } else if (w.state == TxnWaiter.STATE_PENDING) {
+            } else if (w.getState() == TxnWaiter.STATE_PENDING) {
                 enqueueHolder(holder, w);
             }
         }

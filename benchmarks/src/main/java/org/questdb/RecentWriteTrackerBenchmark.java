@@ -45,6 +45,7 @@ import org.openjdk.jmh.runner.options.OptionsBuilder;
 
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.TimeUnit;
+import io.questdb.std.CarrierLocal;
 
 /**
  * Benchmark to measure allocation behavior of different ConcurrentHashMap.compute() patterns.
@@ -66,7 +67,7 @@ public class RecentWriteTrackerBenchmark {
     // Shared state for all approaches
     private final ConcurrentHashMap<TableToken, WriteStats> map = new ConcurrentHashMap<>();
     // For non-capturing approach: thread-local state holder
-    private final ThreadLocal<WriteContext> writeContextThreadLocal = ThreadLocal.withInitial(WriteContext::new);
+    private final CarrierLocal<WriteContext> writeContextCarrierLocal = CarrierLocal.withInitial(WriteContext::new);
     private int index;
     private TableToken[] tableTokens;
 
@@ -171,13 +172,13 @@ public class RecentWriteTrackerBenchmark {
         long timestamp = System.nanoTime();
         long rowCount = index * 100L;
 
-        WriteContext ctx = writeContextThreadLocal.get();
+        WriteContext ctx = writeContextCarrierLocal.get();
         ctx.timestamp = timestamp;
         ctx.rowCount = rowCount;
 
         // This lambda doesn't capture local variables - it accesses ThreadLocal
         map.compute(tableToken, (key, existing) -> {
-            WriteContext c = writeContextThreadLocal.get();
+            WriteContext c = writeContextCarrierLocal.get();
             if (existing == null) {
                 return new WriteStats(c.timestamp, c.rowCount);
             } else {

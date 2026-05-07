@@ -22,9 +22,15 @@
  *
  ******************************************************************************/
 
-package io.questdb.mp;
+package io.questdb.mp.continuation;
 
+import io.questdb.mp.ConcurrentQueue;
+import io.questdb.mp.Job;
+import io.questdb.mp.Queue;
+import io.questdb.mp.ValueHolder;
+import io.questdb.mp.WorkerPool;
 import io.questdb.std.Os;
+import io.questdb.std.CarrierLocal;
 
 /**
  * Holds an MPMC queue of {@link WorkerContinuation} objects waiting to be remounted on
@@ -44,7 +50,7 @@ import io.questdb.std.Os;
  */
 public final class ContinuationQueue implements ContinuationSink {
     private final Queue<ResumeTask> queue = ConcurrentQueue.createConcurrentQueue(ResumeTask::new);
-    private final ThreadLocal<ResumeTask> producerScratch = ThreadLocal.withInitial(ResumeTask::new);
+    private final CarrierLocal<ResumeTask> producerScratch = CarrierLocal.withInitial(ResumeTask::new);
 
     @Override
     public void put(WorkerContinuation cont) {

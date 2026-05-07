@@ -28,19 +28,19 @@ import io.questdb.cairo.CairoException;
 import io.questdb.mp.EagerThreadSetup;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjectFactory;
-import io.questdb.std.ThreadLocal;
+import io.questdb.std.CarrierLocal;
 import io.questdb.std.WeakMutableObjectPool;
 
 import java.io.Closeable;
 
 public class IOContextFactoryImpl<C extends IOContext<C>> implements IOContextFactory<C>, Closeable, EagerThreadSetup {
 
-    private final ThreadLocal<WeakMutableObjectPool<C>> contextPool;
+    private final CarrierLocal<WeakMutableObjectPool<C>> contextPool;
     private volatile boolean closed = false;
 
     public IOContextFactoryImpl(ObjectFactory<C> factory, int poolSize) {
         // todo: this is very slow, refactor
-        this.contextPool = new ThreadLocal<>(() -> new WeakMutableObjectPool<>(factory, poolSize));
+        this.contextPool = new CarrierLocal<>(() -> new WeakMutableObjectPool<>(factory, poolSize));
     }
 
     @Override

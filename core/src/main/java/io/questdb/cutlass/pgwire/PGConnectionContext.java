@@ -1270,7 +1270,14 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
     }
 
     private void prepareForNewQuery() {
-        LOG.debug().$("prepare for new query").$();
+        try {
+            LOG.debug().$("prepare for new query").$();
+        } catch (Throwable e) {
+            System.out.println("got ya!!!");
+            e.printStackTrace();
+            throw e;
+        }
+
         Misc.clear(bindVariableService);
         freezeRecvBuffer = false;
         sqlExecutionContext.setCacheHit(false);

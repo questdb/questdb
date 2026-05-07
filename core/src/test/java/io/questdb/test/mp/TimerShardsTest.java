@@ -26,8 +26,8 @@ package io.questdb.test.mp;
 
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
-import io.questdb.mp.DelayedFireable;
-import io.questdb.mp.TimerShards;
+import io.questdb.mp.continuation.DelayedFireable;
+import io.questdb.mp.continuation.TimerShards;
 import org.jetbrains.annotations.NotNull;
 import org.junit.Assert;
 import org.junit.Test;

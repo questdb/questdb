@@ -260,6 +260,9 @@
                             <sourceFileExcludes>
                                 <sourceFileExclude>${excludePattern1}</sourceFileExclude>
                             </sourceFileExcludes>
+                            <additionalOptions>
+                                <additionalOption>--add-exports java.base/jdk.internal.vm=io.questdb</additionalOption>
+                            </additionalOptions>
                         </configuration>
                     </plugin>
                 </plugins>
@@ -286,6 +289,9 @@
                             <sourceFileExcludes>
                                 <sourceFileExclude>${excludePattern1}</sourceFileExclude>
                             </sourceFileExcludes>
+                            <additionalOptions>
+                                <additionalOption>--add-exports java.base/jdk.internal.vm=io.questdb</additionalOption>
+                            </additionalOptions>
                         </configuration>
                     </plugin>
                     <plugin>

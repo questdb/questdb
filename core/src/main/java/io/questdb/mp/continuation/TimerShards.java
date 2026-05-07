@@ -22,10 +22,11 @@
  *
  ******************************************************************************/
 
-package io.questdb.mp;
+package io.questdb.mp.continuation;
 
 import io.questdb.cairo.CairoException;
 import io.questdb.log.Log;
+import io.questdb.mp.CarrierIdentity;
 import org.jetbrains.annotations.NotNull;
 
 import java.util.concurrent.DelayQueue;
@@ -203,6 +204,7 @@ public final class TimerShards {
     }
 
     private void runShard(DelayQueue<DelayedFireable> shard) {
+        CarrierIdentity.bind();
         while (running) {
             try {
                 DelayedFireable e = shard.take();

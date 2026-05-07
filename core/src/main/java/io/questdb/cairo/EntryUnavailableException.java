@@ -24,10 +24,10 @@
 
 package io.questdb.cairo;
 
-import io.questdb.std.ThreadLocal;
+import io.questdb.std.CarrierLocal;
 
 public class EntryUnavailableException extends CairoException {
-    private static final ThreadLocal<EntryUnavailableException> tlException = new ThreadLocal<>(EntryUnavailableException::new);
+    private static final CarrierLocal<EntryUnavailableException> tlException = new CarrierLocal<>(EntryUnavailableException::new);
     private String reason;
 
     public static EntryUnavailableException instance(String reason) {

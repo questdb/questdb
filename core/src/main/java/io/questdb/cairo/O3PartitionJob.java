@@ -40,6 +40,7 @@ import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.mp.AbstractQueueConsumerJob;
 import io.questdb.mp.Sequence;
+import io.questdb.std.CarrierLocal;
 import io.questdb.std.DirectIntList;
 import io.questdb.std.Files;
 import io.questdb.std.FilesFacade;
@@ -68,8 +69,8 @@ import static io.questdb.cairo.TableWriter.*;
 public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
 
     private static final Log LOG = LogFactory.getLog(O3PartitionJob.class);
-    private static final io.questdb.std.ThreadLocal<O3ParquetMergeContext> PARQUET_MERGE_CONTEXT =
-            new io.questdb.std.ThreadLocal<>(O3ParquetMergeContext::new);
+    private static final CarrierLocal<O3ParquetMergeContext> PARQUET_MERGE_CONTEXT =
+            new CarrierLocal<>(O3ParquetMergeContext::new);
     public static final Closeable THREAD_LOCAL_CLEANER = PARQUET_MERGE_CONTEXT;
     // High bit set on the column type signals the Rust parquet encoder that the
     // symbol column contains no nulls, so it can emit an all-ones RLE run for

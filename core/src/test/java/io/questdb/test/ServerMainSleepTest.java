@@ -32,6 +32,7 @@ import io.questdb.client.cutlass.http.client.HttpClientFactory;
 import io.questdb.client.cutlass.http.client.Response;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
+import io.questdb.mp.continuation.TimerCont;
 import io.questdb.std.Rnd;
 import io.questdb.std.str.StringSink;
 import io.questdb.std.str.Utf8s;
@@ -60,7 +61,7 @@ import static io.questdb.test.tools.TestUtils.unchecked;
 
 /**
  * Exercises the {@code sleep(D)} SQL function over PGWire and HTTP. The function
- * parks its worker continuation through {@link io.questdb.mp.TimerCont} for the
+ * parks its worker continuation through {@link TimerCont} for the
  * requested duration, freeing the carrier to serve concurrent traffic, and resumes
  * to return the current server timestamp. These tests verify:
  *

@@ -40,6 +40,7 @@ import java.security.DigestException;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.util.Base64;
+import io.questdb.std.CarrierLocal;
 
 /**
  * HTTP request handler for QWP v1 WebSocket connections.
@@ -92,7 +93,7 @@ public class QwpWebSocketHttpProcessor implements HttpRequestHandler {
     // under sustained reconnect load. The String returned to the caller still
     // allocates (28 chars) but that's the only irreducible cost without changing
     // the writeResponse contract to consume raw bytes.
-    private static final ThreadLocal<byte[]> KEY_SCRATCH = ThreadLocal.withInitial(() -> new byte[KEY_SCRATCH_SIZE]);
+    private static final CarrierLocal<byte[]> KEY_SCRATCH = CarrierLocal.withInitial(() -> new byte[KEY_SCRATCH_SIZE]);
     private static final byte[] RESPONSE_AFTER_ACCEPT = "\r\nX-QWP-Version: ".getBytes(StandardCharsets.US_ASCII);
     private static final byte[] RESPONSE_CONTENT_ENCODING_PREFIX =
             "\r\nX-QWP-Content-Encoding: ".getBytes(StandardCharsets.US_ASCII);
@@ -101,9 +102,9 @@ public class QwpWebSocketHttpProcessor implements HttpRequestHandler {
             "HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Accept: ".getBytes(StandardCharsets.US_ASCII);
     private static final byte[] RESPONSE_SUFFIX = "\r\n\r\n".getBytes(StandardCharsets.US_ASCII);
     private static final int SHA1_BASE64_SIZE = 28;
-    private static final ThreadLocal<byte[]> BASE64_SCRATCH = ThreadLocal.withInitial(() -> new byte[SHA1_BASE64_SIZE]);
+    private static final CarrierLocal<byte[]> BASE64_SCRATCH = CarrierLocal.withInitial(() -> new byte[SHA1_BASE64_SIZE]);
     // Thread-local SHA-1 digest for computing Sec-WebSocket-Accept
-    private static final ThreadLocal<MessageDigest> SHA1_DIGEST = ThreadLocal.withInitial(() -> {
+    private static final CarrierLocal<MessageDigest> SHA1_DIGEST = CarrierLocal.withInitial(() -> {
         try {
             return MessageDigest.getInstance("SHA-1");
         } catch (NoSuchAlgorithmException e) {
@@ -114,7 +115,7 @@ public class QwpWebSocketHttpProcessor implements HttpRequestHandler {
     // (ceil(20/3)*4 = 28, with no padding needed for inputs divisible by 3... but 20
     // is not, so one '=' padding byte lands in slot 27). The exact 28 matches both.
     private static final int SHA1_DIGEST_SIZE = 20;
-    private static final ThreadLocal<byte[]> HASH_SCRATCH = ThreadLocal.withInitial(() -> new byte[SHA1_DIGEST_SIZE]);
+    private static final CarrierLocal<byte[]> HASH_SCRATCH = CarrierLocal.withInitial(() -> new byte[SHA1_DIGEST_SIZE]);
     private static final byte[] WEBSOCKET_GUID_BYTES = WEBSOCKET_GUID.getBytes(StandardCharsets.US_ASCII);
     private final QwpWebSocketUpgradeProcessor processor;
 

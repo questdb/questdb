@@ -26,7 +26,7 @@ package io.questdb.cairo;
 
 import io.questdb.std.Chars;
 import io.questdb.std.FlyweightMessageContainer;
-import io.questdb.std.ThreadLocal;
+import io.questdb.std.CarrierLocal;
 import io.questdb.std.str.Sinkable;
 import io.questdb.std.str.StringSink;
 import io.questdb.std.str.Utf8Sequence;
@@ -34,7 +34,7 @@ import org.jetbrains.annotations.Nullable;
 
 public class ImplicitCastException extends RuntimeException implements FlyweightMessageContainer {
     private static final StackTraceElement[] EMPTY_STACK_TRACE = {};
-    private static final ThreadLocal<ImplicitCastException> tlException = new ThreadLocal<>(ImplicitCastException::new);
+    private static final CarrierLocal<ImplicitCastException> tlException = new CarrierLocal<>(ImplicitCastException::new);
     private final StringSink message = new StringSink();
     private int position = 0;
 

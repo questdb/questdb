@@ -22,7 +22,7 @@
  *
  ******************************************************************************/
 
-package io.questdb.mp;
+package io.questdb.mp.continuation;
 
 import io.questdb.std.Unsafe;
 import org.jetbrains.annotations.NotNull;

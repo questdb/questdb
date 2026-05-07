@@ -30,9 +30,10 @@ import io.questdb.std.ConcurrentHashMap;
 import io.questdb.std.datetime.DateFormat;
 
 import java.util.function.Function;
+import io.questdb.std.CarrierLocal;
 
 public class NanosFormatFactory implements TimestampDateFormatFactory {
-    private final static ThreadLocal<NanosFormatCompiler> tlCompiler = ThreadLocal.withInitial(NanosFormatCompiler::new);
+    private final static CarrierLocal<NanosFormatCompiler> tlCompiler = CarrierLocal.withInitial(NanosFormatCompiler::new);
     private static final Function<CharSequence, DateFormat> mapper = NanosFormatFactory::map;
     public static NanosFormatFactory INSTANCE = new NanosFormatFactory();
     private final ConcurrentHashMap<DateFormat> cache = new ConcurrentHashMap<>();

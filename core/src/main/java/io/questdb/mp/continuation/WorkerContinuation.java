@@ -22,11 +22,12 @@
  *
  ******************************************************************************/
 
-package io.questdb.mp;
+package io.questdb.mp.continuation;
 
 import io.questdb.std.Unsafe;
 import jdk.internal.vm.Continuation;
 import jdk.internal.vm.ContinuationScope;
+import io.questdb.std.CarrierLocal;
 
 /**
  * Thin wrapper over {@link jdk.internal.vm.Continuation} that hides the JDK-internal API
@@ -43,7 +44,7 @@ public final class WorkerContinuation {
     // Set on entry to {@link #run()} and cleared on exit. Suspending functions
     // discover the active cont via {@link #current()} without needing to plumb
     // the reference through the SQL execution context.
-    private static final ThreadLocal<WorkerContinuation> CURRENT = new ThreadLocal<>();
+    private static final CarrierLocal<WorkerContinuation> CURRENT = new CarrierLocal<>();
     private static final long PARK_REFUSED_OFFSET = Unsafe.getFieldOffset(WorkerContinuation.class, "parkRefused");
     private final Continuation cont;
     private final ContinuationSink resumeSink;

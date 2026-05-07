@@ -30,7 +30,7 @@ import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.SymbolTableSource;
 import io.questdb.cairo.wal.seq.SeqTxnTracker;
-import io.questdb.cairo.wal.seq.TxnWaiter;
+import io.questdb.mp.continuation.TxnWaiter;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
