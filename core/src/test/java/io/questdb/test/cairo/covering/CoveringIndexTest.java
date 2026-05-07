@@ -7879,13 +7879,31 @@ public class CoveringIndexTest extends AbstractCairoTest {
                     null, false, true
             );
 
-            String singleKeyPlan = getPlan("SELECT sym FROM t_unknown_sym WHERE sym = 'qrsw' ORDER BY 1 DESC LIMIT 86");
+            // Positive baseline for the same factory chain that produced the
+            // original NPE stack (LimitRecordCursorFactory + EncodedSortRecordCursor
+            // + SortKeyEncoder). Confirms ORDER BY DESC + LIMIT works on a
+            // populated key.
+            assertQueryNoLeakCheck(
+                    """
+                            sym
+                            K0
+                            K0
+                            K0
+                            K0
+                            K0
+                            """,
+                    "SELECT sym FROM t_unknown_sym WHERE sym = 'K0' ORDER BY 1 DESC LIMIT 5",
+                    null, true, true
+            );
+
+            String singleKeyPlan = getPlan("SELECT sym FROM t_unknown_sym WHERE sym = 'qrsw' ORDER BY 1 DESC LIMIT 5");
             assertTrue("Expected CoveringIndex plan for single-key filter:\n" + singleKeyPlan,
                     singleKeyPlan.contains("CoveringIndex on: sym"));
 
+            // Empty result through the same LIMIT + ORDER BY chain.
             assertQueryNoLeakCheck(
                     "sym\n",
-                    "SELECT sym FROM t_unknown_sym WHERE sym = 'qrsw' ORDER BY 1 DESC LIMIT 86",
+                    "SELECT sym FROM t_unknown_sym WHERE sym = 'qrsw' ORDER BY 1 DESC LIMIT 5",
                     null, true, false
             );
 
@@ -7914,6 +7932,42 @@ public class CoveringIndexTest extends AbstractCairoTest {
                     null, false, true
             );
 
+            // Mixed list under ORDER BY: exercises the same EncodedSortRecordCursor
+            // probe with partial key resolution. LIMIT samples the head of the
+            // sorted stream to confirm only K0 rows are produced.
+            assertQueryNoLeakCheck(
+                    """
+                            sym
+                            K0
+                            K0
+                            K0
+                            """,
+                    "SELECT sym FROM t_unknown_sym WHERE sym IN ('K0', 'qrsw') ORDER BY 1 LIMIT 3",
+                    null, true, false
+            );
+
+            // Bind-variable single-key path: getCursor() takes the
+            // symbolFunctionRuntimeConstant branch, resolving the value at
+            // runtime. Pre-fix, an unknown bind value hit the same NPE.
+            bindVariableService.clear();
+            bindVariableService.setStr("sym", "qrsw");
+            assertQueryNoLeakCheck(
+                    "sym\n",
+                    "SELECT sym FROM t_unknown_sym WHERE sym = :sym ORDER BY 1",
+                    null, true, false
+            );
+
+            // Bind-variable IN-list path: keyValueFuncs branch in the multi-key
+            // code, both bind values unknown.
+            bindVariableService.clear();
+            bindVariableService.setStr(0, "qrsw");
+            bindVariableService.setStr(1, "zzz");
+            assertQueryNoLeakCheck(
+                    "sym\n",
+                    "SELECT sym FROM t_unknown_sym WHERE sym IN ($1, $2) ORDER BY 1",
+                    null, true, false
+            );
+
             // LATEST ON path: SingleKeyCoveringCursor.hasNextLatestBy() carries
             // its own VALUE_NOT_FOUND guard. Combine with an outer ORDER BY on
             // the SYMBOL column so the upstream sort still probes the empty
@@ -7926,6 +7980,24 @@ public class CoveringIndexTest extends AbstractCairoTest {
             assertQueryNoLeakCheck(
                     "sym\n",
                     "SELECT sym FROM t_unknown_sym WHERE sym = 'qrsw' LATEST ON ts PARTITION BY sym ORDER BY 1",
+                    null, true, false
+            );
+
+            // LATEST ON multi-key, all unknown. MultiKeyCoveringCursor.hasNextLatestBy()
+            // has no explicit guard; it relies on the empty multiKeys list keeping
+            // the inner loop from running. The outer ORDER BY still triggers the
+            // getSymbolTable() probe.
+            assertQueryNoLeakCheck(
+                    "sym\n",
+                    "SELECT sym FROM t_unknown_sym WHERE sym IN ('qrsw', 'zzz') LATEST ON ts PARTITION BY sym ORDER BY 1",
+                    null, true, false
+            );
+
+            // LATEST ON multi-key, mixed: returns the latest K0 row; the
+            // unknown 'qrsw' partition is naturally absent.
+            assertQueryNoLeakCheck(
+                    "sym\nK0\n",
+                    "SELECT sym FROM t_unknown_sym WHERE sym IN ('K0', 'qrsw') LATEST ON ts PARTITION BY sym ORDER BY 1",
                     null, true, false
             );
         });
