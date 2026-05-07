@@ -1407,6 +1407,22 @@ public abstract class AbstractStdDevDoubleWindowFunctionFactory extends Abstract
         }
 
         @Override
+        public void resetPartition(Record record) {
+            // ANCHOR-driven reset (RFC 123). Welford's [mean, m2, count] all return to
+            // zero. The next finite value re-runs Welford with mean=0, m2=0, count=0
+            // and produces (mean=d, m2=0, count=1) — identical to the isNew init.
+            partitionByRecord.of(record);
+            MapKey key = map.withKey();
+            key.put(partitionByRecord, partitionBySink);
+            MapValue value = key.findValue();
+            if (value != null) {
+                value.putDouble(0, 0.0);
+                value.putDouble(1, 0.0);
+                value.putLong(2, 0L);
+            }
+        }
+
+        @Override
         public void toPlan(PlanSink sink) {
             sink.val(name);
             sink.val('(').val(arg).val(')');

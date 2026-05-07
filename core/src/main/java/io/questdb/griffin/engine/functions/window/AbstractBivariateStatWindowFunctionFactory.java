@@ -1691,6 +1691,26 @@ public abstract class AbstractBivariateStatWindowFunctionFactory extends Abstrac
         }
 
         @Override
+        public void resetPartition(Record record) {
+            // ANCHOR-driven reset (RFC 123). Bivariate Welford's
+            // [meanX, sumXX, meanY, sumYY, sumXY, count] all return to zero.
+            // The next finite (x, y) re-runs Welford from the zero state, which
+            // matches the isNew init exactly.
+            partitionByRecord.of(record);
+            MapKey key = map.withKey();
+            key.put(partitionByRecord, partitionBySink);
+            MapValue value = key.findValue();
+            if (value != null) {
+                value.putDouble(0, 0.0);
+                value.putDouble(1, 0.0);
+                value.putDouble(2, 0.0);
+                value.putDouble(3, 0.0);
+                value.putDouble(4, 0.0);
+                value.putLong(5, 0L);
+            }
+        }
+
+        @Override
         public void toPlan(PlanSink sink) {
             sink.val(name);
             sink.val('(').val(argY).val(',').val(argX).val(')');

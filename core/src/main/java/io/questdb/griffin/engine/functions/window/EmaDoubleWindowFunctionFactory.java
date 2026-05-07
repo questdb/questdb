@@ -332,6 +332,22 @@ public class EmaDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
         }
 
         @Override
+        public void resetPartition(Record record) {
+            // ANCHOR-driven reset (RFC 123). Clearing hasValue (slot 2) makes the next
+            // computeNext treat its row as the first value of the new bucket; the EMA
+            // and prevTimestamp slots are also zeroed.
+            partitionByRecord.of(record);
+            MapKey key = map.withKey();
+            key.put(partitionByRecord, partitionBySink);
+            MapValue value = key.findValue();
+            if (value != null) {
+                value.putDouble(0, 0.0);
+                value.putLong(1, 0L);
+                value.putLong(2, 0L);
+            }
+        }
+
+        @Override
         public void toPlan(PlanSink sink) {
             sink.val(getName());
             sink.val('(').val(arg).val(", '").val(kindStr).val("', ").val(paramValue).val(')');
@@ -450,6 +466,22 @@ public class EmaDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
         public void pass1(Record record, long recordOffset, WindowSPI spi) {
             computeNext(record);
             Unsafe.putDouble(spi.getAddress(recordOffset, columnIndex), ema);
+        }
+
+        @Override
+        public void resetPartition(Record record) {
+            // ANCHOR-driven reset (RFC 123). Clearing hasValue (slot 2) makes the next
+            // computeNext treat its row as the first value of the new bucket; the EMA
+            // and prevTimestamp slots are also zeroed.
+            partitionByRecord.of(record);
+            MapKey key = map.withKey();
+            key.put(partitionByRecord, partitionBySink);
+            MapValue value = key.findValue();
+            if (value != null) {
+                value.putDouble(0, 0.0);
+                value.putLong(1, 0L);
+                value.putLong(2, 0L);
+            }
         }
 
         @Override
