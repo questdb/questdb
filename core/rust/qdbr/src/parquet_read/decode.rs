@@ -740,12 +740,9 @@ fn decode_int32_dispatch<const FILTERED: bool, const FILL_NULLS: bool>(
             )?;
             Ok(true)
         }
-        (
-            Encoding::RleDictionary | Encoding::PlainDictionary,
-            Some(_),
-            ColumnTypeTag::Date,
-        ) if matches!(logical_type, Some(PrimitiveLogicalType::Date))
-            || matches!(converted_type, Some(PrimitiveConvertedType::Date)) =>
+        (Encoding::RleDictionary | Encoding::PlainDictionary, Some(_), ColumnTypeTag::Date)
+            if matches!(logical_type, Some(PrimitiveLogicalType::Date))
+                || matches!(converted_type, Some(PrimitiveConvertedType::Date)) =>
         {
             let dict_page = dict.unwrap();
             // Parquet-native DATE column with dictionary encoding.
@@ -1874,7 +1871,11 @@ fn decode_double_dispatch<const FILTERED: bool, const FILL_NULLS: bool>(
                     values_buffer,
                     bufs,
                     nulls::LONG,
-                    FloatToIntRangeCheckConverter::<f64, i64>::new(nulls::LONG, i64::MAX as f64, i64::MIN as f64),
+                    FloatToIntRangeCheckConverter::<f64, i64>::new(
+                        nulls::LONG,
+                        i64::MAX as f64,
+                        i64::MIN as f64,
+                    ),
                 ),
             )?;
             Ok(true)
@@ -1887,7 +1888,11 @@ fn decode_double_dispatch<const FILTERED: bool, const FILL_NULLS: bool>(
             clear_aux_buffers(bufs);
             let dict_decoder = ConvertablePrimitiveDictDecoder::try_new(
                 dict_page,
-                FloatToIntRangeCheckConverter::<f64, i64>::new(nulls::LONG, i64::MAX as f64, i64::MIN as f64),
+                FloatToIntRangeCheckConverter::<f64, i64>::new(
+                    nulls::LONG,
+                    i64::MAX as f64,
+                    i64::MIN as f64,
+                ),
             )?;
             decode_page0_mode::<_, FILTERED, FILL_NULLS>(
                 page,
@@ -1911,7 +1916,11 @@ fn decode_double_dispatch<const FILTERED: bool, const FILL_NULLS: bool>(
                     values_buffer,
                     bufs,
                     nulls::INT,
-                    FloatToIntRangeCheckConverter::<f64, i32>::new(nulls::INT, i32::MAX as f64, i32::MIN as f64),
+                    FloatToIntRangeCheckConverter::<f64, i32>::new(
+                        nulls::INT,
+                        i32::MAX as f64,
+                        i32::MIN as f64,
+                    ),
                 ),
             )?;
             Ok(true)
@@ -1924,7 +1933,11 @@ fn decode_double_dispatch<const FILTERED: bool, const FILL_NULLS: bool>(
             clear_aux_buffers(bufs);
             let dict_decoder = ConvertablePrimitiveDictDecoder::try_new(
                 dict_page,
-                FloatToIntRangeCheckConverter::<f64, i32>::new(nulls::INT, i32::MAX as f64, i32::MIN as f64),
+                FloatToIntRangeCheckConverter::<f64, i32>::new(
+                    nulls::INT,
+                    i32::MAX as f64,
+                    i32::MIN as f64,
+                ),
             )?;
             decode_page0_mode::<_, FILTERED, FILL_NULLS>(
                 page,
@@ -1949,7 +1962,11 @@ fn decode_double_dispatch<const FILTERED: bool, const FILL_NULLS: bool>(
                     values_buffer,
                     bufs,
                     nulls::SHORT,
-                    FloatToIntRangeCheckConverter::<f64, i16>::new(nulls::SHORT, i16::MAX as f64, i16::MIN as f64),
+                    FloatToIntRangeCheckConverter::<f64, i16>::new(
+                        nulls::SHORT,
+                        i16::MAX as f64,
+                        i16::MIN as f64,
+                    ),
                 ),
             )?;
             Ok(true)
@@ -1962,7 +1979,11 @@ fn decode_double_dispatch<const FILTERED: bool, const FILL_NULLS: bool>(
             clear_aux_buffers(bufs);
             let dict_decoder = ConvertablePrimitiveDictDecoder::try_new(
                 dict_page,
-                FloatToIntRangeCheckConverter::<f64, i16>::new(nulls::SHORT, i16::MAX as f64, i16::MIN as f64),
+                FloatToIntRangeCheckConverter::<f64, i16>::new(
+                    nulls::SHORT,
+                    i16::MAX as f64,
+                    i16::MIN as f64,
+                ),
             )?;
             decode_page0_mode::<_, FILTERED, FILL_NULLS>(
                 page,
@@ -1987,7 +2008,11 @@ fn decode_double_dispatch<const FILTERED: bool, const FILL_NULLS: bool>(
                     values_buffer,
                     bufs,
                     nulls::BYTE,
-                    FloatToIntRangeCheckConverter::<f64, i8>::new(nulls::BYTE, i8::MAX as f64, i8::MIN as f64),
+                    FloatToIntRangeCheckConverter::<f64, i8>::new(
+                        nulls::BYTE,
+                        i8::MAX as f64,
+                        i8::MIN as f64,
+                    ),
                 ),
             )?;
             Ok(true)
@@ -2000,7 +2025,11 @@ fn decode_double_dispatch<const FILTERED: bool, const FILL_NULLS: bool>(
             clear_aux_buffers(bufs);
             let dict_decoder = ConvertablePrimitiveDictDecoder::try_new(
                 dict_page,
-                FloatToIntRangeCheckConverter::<f64, i8>::new(nulls::BYTE, i8::MAX as f64, i8::MIN as f64),
+                FloatToIntRangeCheckConverter::<f64, i8>::new(
+                    nulls::BYTE,
+                    i8::MAX as f64,
+                    i8::MIN as f64,
+                ),
             )?;
             decode_page0_mode::<_, FILTERED, FILL_NULLS>(
                 page,
@@ -2116,7 +2145,11 @@ fn decode_other_fixed_dispatch<const FILTERED: bool, const FILL_NULLS: bool>(
                     values_buffer,
                     bufs,
                     nulls::INT,
-                    FloatToIntRangeCheckConverter::<f32, i32>::new(nulls::INT, i32::MAX as f32, i32::MIN as f32),
+                    FloatToIntRangeCheckConverter::<f32, i32>::new(
+                        nulls::INT,
+                        i32::MAX as f32,
+                        i32::MIN as f32,
+                    ),
                 ),
             )?;
             Ok(true)
@@ -2129,7 +2162,11 @@ fn decode_other_fixed_dispatch<const FILTERED: bool, const FILL_NULLS: bool>(
         ) => {
             let dict_decoder = ConvertablePrimitiveDictDecoder::try_new(
                 dict_page,
-                FloatToIntRangeCheckConverter::<f32, i32>::new(nulls::INT, i32::MAX as f32, i32::MIN as f32),
+                FloatToIntRangeCheckConverter::<f32, i32>::new(
+                    nulls::INT,
+                    i32::MAX as f32,
+                    i32::MIN as f32,
+                ),
             )?;
             decode_page0_mode::<_, FILTERED, FILL_NULLS>(
                 page,
@@ -2158,7 +2195,11 @@ fn decode_other_fixed_dispatch<const FILTERED: bool, const FILL_NULLS: bool>(
                     values_buffer,
                     bufs,
                     nulls::LONG,
-                    FloatToIntRangeCheckConverter::<f32, i64>::new(nulls::LONG, i64::MAX as f32, i64::MIN as f32),
+                    FloatToIntRangeCheckConverter::<f32, i64>::new(
+                        nulls::LONG,
+                        i64::MAX as f32,
+                        i64::MIN as f32,
+                    ),
                 ),
             )?;
             Ok(true)
@@ -2171,7 +2212,11 @@ fn decode_other_fixed_dispatch<const FILTERED: bool, const FILL_NULLS: bool>(
         ) => {
             let dict_decoder = ConvertablePrimitiveDictDecoder::try_new(
                 dict_page,
-                FloatToIntRangeCheckConverter::<f32, i64>::new(nulls::LONG, i64::MAX as f32, i64::MIN as f32),
+                FloatToIntRangeCheckConverter::<f32, i64>::new(
+                    nulls::LONG,
+                    i64::MAX as f32,
+                    i64::MIN as f32,
+                ),
             )?;
             decode_page0_mode::<_, FILTERED, FILL_NULLS>(
                 page,
@@ -2195,7 +2240,11 @@ fn decode_other_fixed_dispatch<const FILTERED: bool, const FILL_NULLS: bool>(
                     values_buffer,
                     bufs,
                     nulls::SHORT,
-                    FloatToIntRangeCheckConverter::<f32, i16>::new(nulls::SHORT, i16::MAX as f32, i16::MIN as f32),
+                    FloatToIntRangeCheckConverter::<f32, i16>::new(
+                        nulls::SHORT,
+                        i16::MAX as f32,
+                        i16::MIN as f32,
+                    ),
                 ),
             )?;
             Ok(true)
@@ -2208,7 +2257,11 @@ fn decode_other_fixed_dispatch<const FILTERED: bool, const FILL_NULLS: bool>(
         ) => {
             let dict_decoder = ConvertablePrimitiveDictDecoder::try_new(
                 dict_page,
-                FloatToIntRangeCheckConverter::<f32, i16>::new(nulls::SHORT, i16::MAX as f32, i16::MIN as f32),
+                FloatToIntRangeCheckConverter::<f32, i16>::new(
+                    nulls::SHORT,
+                    i16::MAX as f32,
+                    i16::MIN as f32,
+                ),
             )?;
             decode_page0_mode::<_, FILTERED, FILL_NULLS>(
                 page,
@@ -2232,7 +2285,11 @@ fn decode_other_fixed_dispatch<const FILTERED: bool, const FILL_NULLS: bool>(
                     values_buffer,
                     bufs,
                     nulls::BYTE,
-                    FloatToIntRangeCheckConverter::<f32, i8>::new(nulls::BYTE, i8::MAX as f32, i8::MIN as f32),
+                    FloatToIntRangeCheckConverter::<f32, i8>::new(
+                        nulls::BYTE,
+                        i8::MAX as f32,
+                        i8::MIN as f32,
+                    ),
                 ),
             )?;
             Ok(true)
@@ -2245,7 +2302,11 @@ fn decode_other_fixed_dispatch<const FILTERED: bool, const FILL_NULLS: bool>(
         ) => {
             let dict_decoder = ConvertablePrimitiveDictDecoder::try_new(
                 dict_page,
-                FloatToIntRangeCheckConverter::<f32, i8>::new(nulls::BYTE, i8::MAX as f32, i8::MIN as f32),
+                FloatToIntRangeCheckConverter::<f32, i8>::new(
+                    nulls::BYTE,
+                    i8::MAX as f32,
+                    i8::MIN as f32,
+                ),
             )?;
             decode_page0_mode::<_, FILTERED, FILL_NULLS>(
                 page,

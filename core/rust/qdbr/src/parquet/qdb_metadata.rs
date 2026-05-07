@@ -311,8 +311,7 @@ mod tests {
     fn test_deserialize_ignores_unknown_fields() -> ParquetResult<()> {
         // Older builds wrote a `column_structure_version` key that has since been
         // removed. Make sure deserialization still succeeds when such a key is present.
-        let json_str =
-            r#"{"version":1,"schema":[{"column_type":5,"column_top":0}],"column_structure_version":3}"#;
+        let json_str = r#"{"version":1,"schema":[{"column_type":5,"column_top":0}],"column_structure_version":3}"#;
         let deserialized = QdbMeta::deserialize(json_str)?;
         assert_eq!(deserialized.unused_bytes, 0);
         Ok(())

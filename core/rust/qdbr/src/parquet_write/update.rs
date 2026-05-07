@@ -351,8 +351,7 @@ impl ParquetUpdater {
                 }
             }
             // SAFETY: secondary_data contains native VARCHAR aux entries (16 bytes each).
-            let aux: &[[u8; 16]] =
-                unsafe { super::util::transmute_slice(col.secondary_data) };
+            let aux: &[[u8; 16]] = unsafe { super::util::transmute_slice(col.secondary_data) };
             let is_ascii = super::varchar::is_column_ascii(aux);
             self.written_ascii[i] = Some(match self.written_ascii[i] {
                 Some(prev) => prev && is_ascii,
@@ -826,10 +825,10 @@ impl ParquetUpdater {
             // albeit slightly less optimal.
             for (i, col) in meta.schema.iter_mut().enumerate() {
                 col.column_top = 0; // Update the ASCII flag from the actual data written in
-                // inserted/replaced row groups. For a full rewrite, the
-                // written_ascii value is the final answer. For an in-place
-                // update, AND the old flag (covering copied row groups) with
-                // the written flag (covering new row groups).
+                                    // inserted/replaced row groups. For a full rewrite, the
+                                    // written_ascii value is the final answer. For an in-place
+                                    // update, AND the old flag (covering copied row groups) with
+                                    // the written flag (covering new row groups).
                 if let Some(&Some(written)) = self.written_ascii.get(i) {
                     if self.is_rewrite {
                         col.ascii = Some(written);
