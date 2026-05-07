@@ -395,7 +395,10 @@ public class RankFunctionFactory extends AbstractWindowFunctionFactory {
             key.put(partitionByRecord, partitionBySink);
             MapValue mapValue = key.createValue();
             long count;
-            if (mapValue.isNew()) {
+            // count == 0 acts as the implicit "uninitialized" signal — the natural
+            // state after createValue() returns a fresh entry, and the state
+            // resetPartition restores when the live-view ANCHOR fires.
+            if (mapValue.isNew() || mapValue.getLong(chainTypeIndex + 1) == 0) {
                 rank = 1;
                 count = 1;
             } else {
@@ -456,6 +459,18 @@ public class RankFunctionFactory extends AbstractWindowFunctionFactory {
         @Override
         public int getPassCount() {
             return WindowFunction.ZERO_PASS;
+        }
+
+        @Override
+        public void resetPartition(Record record) {
+            partitionByRecord.of(record);
+            MapKey key = map.withKey();
+            key.put(partitionByRecord, partitionBySink);
+            MapValue mapValue = key.createValue();
+            // Set count to 0 — the implicit "uninitialized" signal for computeNext.
+            // Rank itself doesn't need an explicit clear; the next computeNext writes
+            // both slots before they're read.
+            mapValue.putLong(chainTypeIndex + 1, 0);
         }
 
         @Override

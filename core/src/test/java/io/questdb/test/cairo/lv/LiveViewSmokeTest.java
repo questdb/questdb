@@ -647,6 +647,45 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testAnchorResetsRankAcrossDayBoundary() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (ts TIMESTAMP, x INT, sym SYMBOL) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 1s AS " +
+                    "SELECT ts, sym, rank() OVER w AS r FROM base " +
+                    "WINDOW w AS (PARTITION BY sym ORDER BY ts ANCHOR EXPRESSION timestamp_floor('1d', ts))");
+
+            // Day 1: 3 distinct ts values -> rank=1,2,3.
+            // Day 2 (anchor reset): rank restarts at 1.
+            // Without reset, day 2 would continue counting from 4.
+            execute("INSERT INTO base (ts, x, sym) VALUES " +
+                    "('2026-08-01T00:00:00.000000Z', 10, 'a'), " +
+                    "('2026-08-01T01:00:00.000000Z', 20, 'a'), " +
+                    "('2026-08-01T02:00:00.000000Z', 30, 'a'), " +
+                    "('2026-08-02T00:00:00.000000Z', 5, 'a'), " +
+                    "('2026-08-02T01:00:00.000000Z', 6, 'a'), " +
+                    "('2026-08-02T02:00:00.000000Z', 7, 'a')");
+            drainWalQueue();
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                drainJob(job);
+            }
+            drainWalQueue();
+
+            assertSql(
+                    "ts\tsym\tr\n" +
+                            "2026-08-01T00:00:00.000000Z\ta\t1\n" +
+                            "2026-08-01T01:00:00.000000Z\ta\t2\n" +
+                            "2026-08-01T02:00:00.000000Z\ta\t3\n" +
+                            "2026-08-02T00:00:00.000000Z\ta\t1\n" +
+                            "2026-08-02T01:00:00.000000Z\ta\t2\n" +
+                            "2026-08-02T02:00:00.000000Z\ta\t3\n",
+                    "SELECT ts, sym, r FROM lv ORDER BY ts"
+            );
+
+            execute("DROP LIVE VIEW lv");
+        });
+    }
+
+    @Test
     public void testAnchorIsolatesPartitionsIndependently() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE base (ts TIMESTAMP, x INT, sym SYMBOL) TIMESTAMP(ts) PARTITION BY DAY WAL");
