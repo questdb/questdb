@@ -43,7 +43,6 @@ import io.questdb.cairo.wal.SymbolMapDiff;
 import io.questdb.cairo.wal.SymbolMapDiffCursor;
 import io.questdb.cairo.wal.SymbolMapDiffEntry;
 import io.questdb.cairo.wal.WalReader;
-import io.questdb.griffin.engine.table.parquet.PartitionDecoder;
 import io.questdb.std.Chars;
 import io.questdb.std.DirectSymbolMap;
 import io.questdb.std.IntList;
@@ -480,11 +479,6 @@ public class WalSegmentPageFrameCursor implements PageFrameCursor {
         @Override
         public long getPageSize(int columnIndex) {
             return pageSizes.getQuick(2 * columnIndex);
-        }
-
-        @Override
-        public PartitionDecoder getParquetPartitionDecoder() {
-            return null;
         }
 
         @Override
