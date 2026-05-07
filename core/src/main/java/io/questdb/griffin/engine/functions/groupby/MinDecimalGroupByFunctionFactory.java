@@ -196,6 +196,11 @@ public class MinDecimalGroupByFunctionFactory implements FunctionFactory {
             arg.getDecimal128(record, decimal128A);
             if (!decimal128A.isNull()) {
                 mapValue.getDecimal128(valueIndex, decimal128B);
+                // The map only stores the 16 raw bytes, so decimal128B's scale is
+                // whatever was last set on the instance (initially 0). Align it to
+                // arg's scale -- both A and B come from the same argument and must
+                // share scale for compareTo to honor it.
+                decimal128B.setScale(decimal128A.getScale());
                 if (shouldStoreA(decimal128A, decimal128B) || decimal128B.isNull()) {
                     mapValue.putDecimal128(valueIndex, decimal128A);
                 }
@@ -222,6 +227,7 @@ public class MinDecimalGroupByFunctionFactory implements FunctionFactory {
         public void merge(MapValue destValue, MapValue srcValue) {
             srcValue.getDecimal128(valueIndex, decimal128A);
             destValue.getDecimal128(valueIndex, decimal128B);
+            decimal128B.setScale(decimal128A.getScale());
             if (!decimal128A.isNull()
                     && (shouldStoreA(decimal128A, decimal128B) || decimal128B.isNull())) {
                 destValue.putDecimal128(valueIndex, decimal128A);
@@ -316,6 +322,11 @@ public class MinDecimalGroupByFunctionFactory implements FunctionFactory {
             arg.getDecimal256(record, decimal256A);
             if (!decimal256A.isNull()) {
                 mapValue.getDecimal256(valueIndex, decimal256B);
+                // The map only stores the 32 raw bytes, so decimal256B's scale is
+                // whatever was last set on the instance (initially 0). Align it to
+                // arg's scale -- both A and B come from the same argument and must
+                // share scale for compareTo to honor it.
+                decimal256B.setScale(decimal256A.getScale());
                 if (shouldStoreA(decimal256A, decimal256B) || decimal256B.isNull()) {
                     mapValue.putDecimal256(valueIndex, decimal256A);
                 }
@@ -342,7 +353,7 @@ public class MinDecimalGroupByFunctionFactory implements FunctionFactory {
         public void merge(MapValue destValue, MapValue srcValue) {
             srcValue.getDecimal256(valueIndex, decimal256A);
             destValue.getDecimal256(valueIndex, decimal256B);
-
+            decimal256B.setScale(decimal256A.getScale());
             if (!decimal256A.isNull()
                     && (shouldStoreA(decimal256A, decimal256B) || decimal256B.isNull())) {
                 destValue.putDecimal256(valueIndex, decimal256A);

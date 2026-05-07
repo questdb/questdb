@@ -583,6 +583,65 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testParallelDecimal128MinMaxOverCast() throws Exception {
+        // Regression: min/max over a cast that sets scale on its sink (e.g.
+        // FLOAT -> DECIMAL128 via ofString) must produce the true min/max
+        // rather than an order-dependent value. The map storage only persists
+        // the 16 raw bytes, so the running aggregate is loaded back with a
+        // stale scale of 0; without explicit realignment compareTo treats the
+        // running value as ~10^scale times its true magnitude and the
+        // aggregator replaces (or never replaces) on every row, producing the
+        // last-seen (or first-seen) value across whichever frames a worker
+        // happened to scan first.
+        assertMemoryLeak(() -> {
+            final WorkerPool pool = new WorkerPool(() -> 4);
+            TestUtils.execute(
+                    pool,
+                    (engine, compiler, sqlExecutionContext) -> {
+                        engine.execute(
+                                "CREATE TABLE tab (ts TIMESTAMP, k INT, v FLOAT) timestamp(ts) PARTITION BY DAY",
+                                sqlExecutionContext
+                        );
+                        engine.execute(
+                                "INSERT INTO tab SELECT (x * 864000000)::timestamp, (x % 4)::int, x::float" +
+                                        " FROM long_sequence(" + (10 * ROW_COUNT) + ")",
+                                sqlExecutionContext
+                        );
+                        // Keyed form exercises computeFirst/computeNext within each
+                        // worker and merge across workers (sharded GROUP BY).
+                        TestUtils.assertSql(
+                                engine,
+                                sqlExecutionContext,
+                                "SELECT k, min(v::DECIMAL(38,3)) min, max(v::DECIMAL(38,3)) max FROM tab GROUP BY k ORDER BY k",
+                                sink,
+                                """
+                                        k\tmin\tmax
+                                        0\t4.000\t40000.000
+                                        1\t1.000\t39997.000
+                                        2\t2.000\t39998.000
+                                        3\t3.000\t39999.000
+                                        """
+                        );
+                        // Non-keyed form covers AsyncGroupByNotKeyed, which also
+                        // merges per-worker partial states.
+                        TestUtils.assertSql(
+                                engine,
+                                sqlExecutionContext,
+                                "SELECT min(v::DECIMAL(38,3)) min, max(v::DECIMAL(38,3)) max FROM tab",
+                                sink,
+                                """
+                                        min\tmax
+                                        1.000\t40000.000
+                                        """
+                        );
+                    },
+                    configuration,
+                    LOG
+            );
+        });
+    }
+
+    @Test
     public void testParallelDecimal256KeyGroupBy() throws Exception {
         testParallelDecimalKeyGroupBy(
                 "SELECT d256, avg(d64) FROM tab ORDER BY d256 LIMIT 5",
@@ -595,6 +654,54 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
                         4.000000\t13.75
                         """
         );
+    }
+
+    @Test
+    public void testParallelDecimal256MinMaxOverCast() throws Exception {
+        // See testParallelDecimal128MinMaxOverCast for the rationale; this
+        // mirrors it through the wider DECIMAL256 aggregator.
+        assertMemoryLeak(() -> {
+            final WorkerPool pool = new WorkerPool(() -> 4);
+            TestUtils.execute(
+                    pool,
+                    (engine, compiler, sqlExecutionContext) -> {
+                        engine.execute(
+                                "CREATE TABLE tab (ts TIMESTAMP, k INT, v FLOAT) timestamp(ts) PARTITION BY DAY",
+                                sqlExecutionContext
+                        );
+                        engine.execute(
+                                "INSERT INTO tab SELECT (x * 864000000)::timestamp, (x % 4)::int, x::float" +
+                                        " FROM long_sequence(" + (10 * ROW_COUNT) + ")",
+                                sqlExecutionContext
+                        );
+                        TestUtils.assertSql(
+                                engine,
+                                sqlExecutionContext,
+                                "SELECT k, min(v::DECIMAL(76,5)) min, max(v::DECIMAL(76,5)) max FROM tab GROUP BY k ORDER BY k",
+                                sink,
+                                """
+                                        k\tmin\tmax
+                                        0\t4.00000\t40000.00000
+                                        1\t1.00000\t39997.00000
+                                        2\t2.00000\t39998.00000
+                                        3\t3.00000\t39999.00000
+                                        """
+                        );
+                        TestUtils.assertSql(
+                                engine,
+                                sqlExecutionContext,
+                                "SELECT min(v::DECIMAL(76,5)) min, max(v::DECIMAL(76,5)) max FROM tab",
+                                sink,
+                                """
+                                        min\tmax
+                                        1.00000\t40000.00000
+                                        """
+                        );
+                    },
+                    configuration,
+                    LOG
+            );
+        });
     }
 
     @Test
