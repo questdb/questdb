@@ -29,6 +29,7 @@ import io.questdb.cairo.idx.PostingIndexChainHeader;
 import io.questdb.cairo.idx.PostingIndexChainPicker;
 import io.questdb.cairo.idx.PostingIndexUtils;
 import io.questdb.cairo.vm.MemoryCARWImpl;
+import io.questdb.std.LongList;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
 import org.junit.After;
@@ -499,5 +500,155 @@ public class PostingIndexChainTest {
 
     private int readGenCount(long entryOffset) {
         return mem.getInt(entryOffset + PostingIndexUtils.V2_ENTRY_OFFSET_GEN_COUNT);
+    }
+
+    /**
+     * Regression for the GraalVM crash in the WAL fast-lag bench: the writer
+     * sealed an entry with coverCount=0 (no .pcN footer) but the reader's
+     * .pci sidecar reported coverCount>0, so the cover-footer loop in
+     * PostingIndexChainEntry.read() would step past the entry's LEN. When
+     * the entry hugged the end of the mmap, that stepped past the mapping
+     * itself and SIGSEGV'd. The clamp must zero-fill the missing slots
+     * instead of dereferencing past the entry.
+     */
+    @Test
+    public void testPickerHandlesEntryWrittenWithFewerCoversThanReaderExpects() {
+        PostingIndexChainHeader.initialiseEmpty(mem);
+        long entryOffset = PostingIndexUtils.V2_ENTRY_REGION_BASE;
+        // genCount=1, coverEndOffsets=null - entry is written with no cover
+        // footer (LEN = entrySize(1, 0) = 96).
+        PostingIndexChainEntry.writeHeader(
+                mem, entryOffset,
+                /* sealTxn */ 1, /* txnAtSeal */ 5,
+                /* valueMemSize */ 0, /* maxValue */ 0,
+                /* keyCount */ 0, /* genCount */ 1,
+                /* blockCapacity */ 64, /* coveringFormat */ 0,
+                /* prevEntryOffset */ PostingIndexUtils.V2_NO_HEAD,
+                /* coverEndOffsets */ null
+        );
+        long entryLen = PostingIndexChainEntry.entrySize(1, 0);
+        Assert.assertEquals(96, entryLen);
+        publishHead(entryOffset, 1, 1, entryOffset + entryLen);
+
+        PostingIndexChainHeader.Snapshot header = new PostingIndexChainHeader.Snapshot();
+        PostingIndexChainEntry.Snapshot entry = new PostingIndexChainEntry.Snapshot();
+
+        // Reader passes coverCount=2 even though the entry has zero cover
+        // slots. The picker must succeed and the snapshot's
+        // coverFileEndOffsets must be zero-filled - never dereference the
+        // missing footer bytes.
+        Assert.assertEquals(PostingIndexChainPicker.RESULT_OK,
+                PostingIndexChainPicker.pick(mem, /* pinnedTxn */ 100L, /* coverCount */ 2, header, entry));
+        Assert.assertEquals(2, entry.coverFileEndOffsets.size());
+        Assert.assertEquals(0L, entry.coverFileEndOffsets.getQuick(0));
+        Assert.assertEquals(0L, entry.coverFileEndOffsets.getQuick(1));
+    }
+
+    /**
+     * Regression for the same bug, scoped to PostingIndexChainEntry.read()
+     * directly: with the entry hugging the end of the mapping, an over-eager
+     * cover-footer loop would step past the entry's LEN. The clamp must keep
+     * reads inside [entryOffset, entryOffset + entry.len).
+     */
+    @Test
+    public void testEntryReadClampsCoverFooterToEntryLen() {
+        PostingIndexChainHeader.initialiseEmpty(mem);
+        long entryOffset = PostingIndexUtils.V2_ENTRY_REGION_BASE;
+        PostingIndexChainEntry.writeHeader(
+                mem, entryOffset,
+                /* sealTxn */ 1, /* txnAtSeal */ 5,
+                0, 0, 0, /* genCount */ 1, 64, 0,
+                PostingIndexUtils.V2_NO_HEAD, /* coverEndOffsets */ null
+        );
+        // Sentinel bytes immediately past the entry: if the clamp regresses,
+        // the cover loop would read these as cover end-offset values.
+        long pastEntry = entryOffset + PostingIndexChainEntry.entrySize(1, 0);
+        mem.putLong(pastEntry, 0xDEAD_BEEFL);
+        mem.putLong(pastEntry + 8, 0xCAFE_BABEL);
+
+        PostingIndexChainEntry.Snapshot entry = new PostingIndexChainEntry.Snapshot();
+        long endOffset = PostingIndexChainEntry.read(mem, entryOffset, /* coverCount */ 3, entry);
+
+        Assert.assertEquals(96, entry.len);
+        Assert.assertEquals(entryOffset + entry.len, endOffset);
+        Assert.assertEquals(3, entry.coverFileEndOffsets.size());
+        Assert.assertEquals(0L, entry.coverFileEndOffsets.getQuick(0));
+        Assert.assertEquals(0L, entry.coverFileEndOffsets.getQuick(1));
+        Assert.assertEquals(0L, entry.coverFileEndOffsets.getQuick(2));
+    }
+
+    /**
+     * When the entry was sealed with the same coverCount the reader expects,
+     * the existing footer round-trips correctly. Guards the clamp against
+     * regressing the happy path.
+     */
+    @Test
+    public void testEntryReadReturnsWrittenCoverEndOffsets() {
+        PostingIndexChainHeader.initialiseEmpty(mem);
+        long entryOffset = PostingIndexUtils.V2_ENTRY_REGION_BASE;
+        LongList covers = new LongList();
+        covers.add(111L);
+        covers.add(222L);
+        PostingIndexChainEntry.writeHeader(
+                mem, entryOffset,
+                /* sealTxn */ 1, /* txnAtSeal */ 5,
+                0, 0, 0, /* genCount */ 1, 64, 0,
+                PostingIndexUtils.V2_NO_HEAD, covers
+        );
+        publishHead(entryOffset, 1, 1, entryOffset + PostingIndexChainEntry.entrySize(1, 2));
+
+        PostingIndexChainHeader.Snapshot header = new PostingIndexChainHeader.Snapshot();
+        PostingIndexChainEntry.Snapshot entry = new PostingIndexChainEntry.Snapshot();
+        Assert.assertEquals(PostingIndexChainPicker.RESULT_OK,
+                PostingIndexChainPicker.pick(mem, 100L, /* coverCount */ 2, header, entry));
+        Assert.assertEquals(2, entry.coverFileEndOffsets.size());
+        Assert.assertEquals(111L, entry.coverFileEndOffsets.getQuick(0));
+        Assert.assertEquals(222L, entry.coverFileEndOffsets.getQuick(1));
+    }
+
+    /**
+     * Picker pre-validates entry.LEN against mappedLimit before invoking
+     * read(). A torn or corrupted LEN that overruns the mapping must be
+     * caught up front - never produce a SEGV inside read().
+     */
+    @Test
+    public void testCorruptedLenExceedingMappingDetected() {
+        PostingIndexChainHeader.initialiseEmpty(mem);
+        long entryOffset = PostingIndexUtils.V2_ENTRY_REGION_BASE;
+        PostingIndexChainEntry.writeHeader(
+                mem, entryOffset,
+                1, 10, 0, 0, 0, 0, 64, 0,
+                PostingIndexUtils.V2_NO_HEAD
+        );
+        // Stomp LEN to a wildly out-of-range value.
+        mem.putLong(entryOffset + PostingIndexUtils.V2_ENTRY_OFFSET_LEN, 99_999_999L);
+        publishHead(entryOffset, 1, 1, entryOffset + PostingIndexChainEntry.entrySize(0));
+
+        PostingIndexChainHeader.Snapshot header = new PostingIndexChainHeader.Snapshot();
+        PostingIndexChainEntry.Snapshot entry = new PostingIndexChainEntry.Snapshot();
+        Assert.assertEquals(PostingIndexChainPicker.RESULT_HEADER_UNREADABLE,
+                PostingIndexChainPicker.pick(mem, 100L, /* coverCount */ 1, header, entry));
+    }
+
+    /**
+     * A non-positive LEN (zero or negative) is also a corruption signal -
+     * the picker rejects it without invoking read().
+     */
+    @Test
+    public void testNonPositiveLenDetected() {
+        PostingIndexChainHeader.initialiseEmpty(mem);
+        long entryOffset = PostingIndexUtils.V2_ENTRY_REGION_BASE;
+        PostingIndexChainEntry.writeHeader(
+                mem, entryOffset,
+                1, 10, 0, 0, 0, 0, 64, 0,
+                PostingIndexUtils.V2_NO_HEAD
+        );
+        mem.putLong(entryOffset + PostingIndexUtils.V2_ENTRY_OFFSET_LEN, 0L);
+        publishHead(entryOffset, 1, 1, entryOffset + PostingIndexChainEntry.entrySize(0));
+
+        PostingIndexChainHeader.Snapshot header = new PostingIndexChainHeader.Snapshot();
+        PostingIndexChainEntry.Snapshot entry = new PostingIndexChainEntry.Snapshot();
+        Assert.assertEquals(PostingIndexChainPicker.RESULT_HEADER_UNREADABLE,
+                PostingIndexChainPicker.pick(mem, 100L, header, entry));
     }
 }
