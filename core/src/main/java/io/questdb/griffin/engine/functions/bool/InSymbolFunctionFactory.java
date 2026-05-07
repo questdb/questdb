@@ -46,6 +46,7 @@ import io.questdb.std.ObjList;
 import io.questdb.std.Transient;
 
 public class InSymbolFunctionFactory implements FunctionFactory {
+
     @Override
     public String getSignature() {
         return "in(Kv)";
@@ -96,13 +97,18 @@ public class InSymbolFunctionFactory implements FunctionFactory {
                 continue;
             }
             if (tag == ColumnType.CHAR) {
-                set.add(String.valueOf(func.getChar(null)));
+                char c = func.getChar(null);
+                if (c != 0) {
+                    set.add(String.valueOf(c));
+                } else {
+                    set.add((CharSequence) null);
+                }
             } else {
                 CharSequence value = func.getStrA(null);
-                if (value == null) {
-                    set.add((CharSequence) null);
-                } else {
+                if (value != null) {
                     set.add(Chars.toString(value));
+                } else {
+                    set.add((CharSequence) null);
                 }
             }
         }
@@ -241,7 +247,8 @@ public class InSymbolFunctionFactory implements FunctionFactory {
             // CHAR-typed bind variables don't expose getStrA; route them through
             // getChar instead so the deferred set still receives a String key.
             if (ColumnType.tagOf(func.getType()) == ColumnType.CHAR) {
-                return String.valueOf(func.getChar(null));
+                char c = func.getChar(null);
+                return c != 0 ? String.valueOf(c) : null;
             }
             return func.getStrA(null);
         }

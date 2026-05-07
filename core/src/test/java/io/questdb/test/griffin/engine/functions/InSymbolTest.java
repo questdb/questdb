@@ -180,6 +180,29 @@ public class InSymbolTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testCharNulInListMatchesNullSymbolRow() throws Exception {
+        // Defensive: a CHAR(0) list element must be added to the set as null, mirroring
+        // CastCharToSymbolFunctionFactory's CHAR(0) -> NULL mapping. Otherwise a NULL
+        // symbol row would fail to match a CHAR(0) IN entry while it correctly matches
+        // an explicit NULL entry, leaving the factory inconsistent with its own cast.
+        // Covers the eager and deferred branches.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (s SYMBOL)");
+            execute("INSERT INTO t VALUES ('A'), (NULL), ('B')");
+            assertSql(
+                    "s\n\nA\n",
+                    "SELECT s FROM t WHERE s IN ('A', (0)::CHAR) ORDER BY 1"
+            );
+            bindVariableService.clear();
+            bindVariableService.setStr("b0", "0");
+            assertSql(
+                    "s\n\nA\n",
+                    "SELECT s FROM t WHERE s IN ('A', (:b0::INT)::CHAR) ORDER BY 1"
+            );
+        });
+    }
+
+    @Test
     public void testBindVarTypedCastInList() throws Exception {
         // Regression: a bind variable wrapped in a non-STRING/VARCHAR cast
         // (e.g. ::SYMBOL or ::CHAR) inside the IN list used to fall through
