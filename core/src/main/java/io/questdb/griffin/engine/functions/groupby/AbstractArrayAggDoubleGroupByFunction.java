@@ -93,15 +93,17 @@ public abstract class AbstractArrayAggDoubleGroupByFunction extends ArrayFunctio
     protected final BorrowedArray borrowedArray = new BorrowedArray();
     protected final int maxArrayElementCount;
     protected GroupByAllocator allocator;
-    // Per-instance render cache. The first getArray() call for a given build
-    // buffer copies the values into a fresh flat buffer in the allocator and
-    // remembers the mapping. The build buffer itself is never touched, so a
-    // shared cursor's read-only flyweight (via initSharedFrom) is safe.
+    // Single-slot render cache, owned by the primary. The first getArray() call
+    // for a given build buffer copies the values into a fresh flat buffer in
+    // the allocator and remembers the mapping. Shared instances (created by
+    // initSharedFrom for shared cursors like LATERAL joins) read and write
+    // these fields through the primary, so the cache is reset by primary's
+    // clear() on cursor close - matching the StringAgg / ApproxPercentile
+    // shared-container convention.
     protected long cachedRenderPtr;
     protected long cachedSrcPtr;
-    // Primary instance for read-only shared instances. The shared instance does
-    // not receive its own setAllocator() call, so it dereferences the primary's
-    // allocator at render time. Null on the primary itself.
+    // Set on shared instances to redirect cache and allocator access through
+    // the primary. Null on the primary itself.
     protected AbstractArrayAggDoubleGroupByFunction primary;
     protected int valueIndex;
 
@@ -113,6 +115,12 @@ public abstract class AbstractArrayAggDoubleGroupByFunction extends ArrayFunctio
 
     @Override
     public void clear() {
+        // Skip on shared instances: cache and allocator live on the primary,
+        // and clear() runs on the primary via Misc.clearObjList(groupByFunctions)
+        // when the cursor closes. Same convention as StringAggGroupByFunction.
+        if (primary != null) {
+            return;
+        }
         // Render cache holds native pointers into the GroupByAllocator. When
         // the enclosing factory is reused across cursor runs, the allocator is
         // reset and the same addresses may be handed out again - stale cache
@@ -124,20 +132,6 @@ public abstract class AbstractArrayAggDoubleGroupByFunction extends ArrayFunctio
     @Override
     public void close() {
         Misc.free(arg);
-    }
-
-    @Override
-    public void cursorClosed() {
-        // The shared instance never has clear() invoked on it (it lives in
-        // sharedRecordFunctions, not in the primary's groupByFunctions list).
-        // cursorClosed() is the only lifecycle hook that runs on both primary
-        // and shared instances when a cursor closes, so reset the render cache
-        // here too. Without this, on the next factory.getCursor() the allocator
-        // reopens and may hand back the same address; the stale cachedSrcPtr
-        // would then short-circuit getArray() to a freed cachedRenderPtr.
-        UnaryFunction.super.cursorClosed();
-        cachedRenderPtr = 0;
-        cachedSrcPtr = 0;
     }
 
     @Override
@@ -155,26 +149,26 @@ public abstract class AbstractArrayAggDoubleGroupByFunction extends ArrayFunctio
         if (count == 0) {
             return ArrayConstant.NULL;
         }
-        if (ptr != cachedSrcPtr) {
+        // Cache and allocator live on the primary. On a shared instance we
+        // read and write through the primary so primary.clear() on cursor
+        // close resets the cache uniformly across shared and primary reads.
+        AbstractArrayAggDoubleGroupByFunction owner = (primary != null) ? primary : this;
+        if (ptr != owner.cachedSrcPtr) {
             // Render: copy values from the (rowId, value) pair layout into a
             // fresh flat buffer in the allocator. The build buffer is never
-            // written to, so the read path is safe to invoke concurrently
-            // from a shared cursor's read-only flyweight. Shared instances do
-            // not receive their own setAllocator() call - they dereference the
-            // primary's allocator, which the engine wires up before the cursor
-            // opens.
-            GroupByAllocator alloc = (primary != null) ? primary.allocator : allocator;
-            long renderPtr = alloc.malloc((long) count * Double.BYTES);
+            // written to, so the read path is safe to invoke from a shared
+            // cursor's read-only flyweight.
+            long renderPtr = owner.allocator.malloc((long) count * Double.BYTES);
             for (int i = 0; i < count; i++) {
                 double v = Unsafe.getUnsafe().getDouble(ptr + HEADER_SIZE + (long) i * ENTRY_SIZE + VALUE_OFFSET);
                 Unsafe.getUnsafe().putDouble(renderPtr + (long) i * Double.BYTES, v);
             }
-            cachedRenderPtr = renderPtr;
-            cachedSrcPtr = ptr;
+            owner.cachedRenderPtr = renderPtr;
+            owner.cachedSrcPtr = ptr;
         }
         // Reuse the build buffer's count int (at offset 0) as the 1D shape
         // descriptor; the value bytes live in the rendered flat buffer.
-        return borrowedArray.of(type, ptr, cachedRenderPtr, (int) ((long) count * Double.BYTES));
+        return borrowedArray.of(type, ptr, owner.cachedRenderPtr, (int) ((long) count * Double.BYTES));
     }
 
     @Override
@@ -195,11 +189,12 @@ public abstract class AbstractArrayAggDoubleGroupByFunction extends ArrayFunctio
     @Override
     public void initSharedFrom(GroupByFunction primary) {
         // The shared instance reads from the same MapValue slot as the
-        // primary, so it can render groups without performing computeFirst /
-        // computeNext / merge itself. The engine calls setAllocator() on the
-        // primary AFTER assembleGroupByFunctions() wires this method, so we
-        // hold a reference to the primary and dereference its allocator at
-        // render time when it has been populated.
+        // primary and routes its render-cache reads/writes and allocator
+        // access through the primary. setAllocator() is only called on the
+        // primary; clear() is only called on the primary. Holding a primary
+        // back-reference keeps shared and primary in sync without duplicate
+        // state on the shared instance, matching the StringAgg / ApproxPercentile
+        // shared-container pattern.
         this.valueIndex = primary.getValueIndex();
         this.primary = (AbstractArrayAggDoubleGroupByFunction) primary;
     }
