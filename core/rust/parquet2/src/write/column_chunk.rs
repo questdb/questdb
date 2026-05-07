@@ -72,8 +72,9 @@ where
                 for &hash in hashes.iter() {
                     bloom_filter::insert(&mut bitset, hash);
                 }
-                let bf_offset = initial + bytes_written;
+                let bf_offset = offset;
                 let bf_bytes = write_bloom_filter(writer, &bitset)?;
+                offset += bf_bytes as u64;
                 bytes_written += bf_bytes as u64;
                 (Some(bf_offset as i64), Some(bf_bytes as i32), Some(bitset))
             }
@@ -82,8 +83,13 @@ where
         }
     };
 
-    let column_chunk =
-        build_column_chunk(&specs, descriptor, bloom_filter_offset, bloom_filter_length)?;
+    let column_chunk = build_column_chunk(
+        &specs,
+        descriptor,
+        bloom_filter_offset,
+        bloom_filter_length,
+        offset,
+    )?;
 
     // write metadata
     let mut protocol = TCompactOutputProtocol::new(writer);
@@ -171,8 +177,13 @@ where
     let bloom_filter_offset = None;
     let bloom_filter_length = None;
 
-    let column_chunk =
-        build_column_chunk(&specs, descriptor, bloom_filter_offset, bloom_filter_length)?;
+    let column_chunk = build_column_chunk(
+        &specs,
+        descriptor,
+        bloom_filter_offset,
+        bloom_filter_length,
+        offset,
+    )?;
 
     // write metadata
     let mut protocol = TCompactOutputStreamProtocol::new(writer);
@@ -191,6 +202,7 @@ fn build_column_chunk(
     descriptor: &ColumnDescriptor,
     bloom_filter_offset: Option<i64>,
     bloom_filter_length: Option<i32>,
+    column_metadata_offset: u64,
 ) -> Result<ColumnChunk> {
     // compute stats to build header at the end of the chunk
     let compression = extract_compression(specs)?;
@@ -280,7 +292,7 @@ fn build_column_chunk(
 
     Ok(ColumnChunk {
         file_path: None, // same file for now.
-        file_offset: data_page_offset + total_compressed_size,
+        file_offset: column_metadata_offset as i64,
         meta_data: Some(metadata),
         offset_index_offset: None,
         offset_index_length: None,
@@ -292,31 +304,32 @@ fn build_column_chunk(
 }
 
 /// Extract the offsets of the first data page and dictionary page from the page write specs.
+///
+/// Per the Parquet thrift spec (`parquet.thrift`, ColumnMetaData), a column chunk contains
+/// "optionally a dictionary page followed by data pages", so once the first data page is
+/// seen the scan can stop.
 fn extract_page_offsets(specs: &[PageWriteSpec]) -> Result<(i64, Option<i64>)> {
     let mut data_page_offset: i64 = 0;
-    let mut dict_page_offset: Option<i64> = None;
+    let mut dictionary_page_offset: Option<i64> = None;
     for spec in specs {
-        match spec.header.type_ {
-            parquet_format_safe::PageType::DATA_PAGE
-            | parquet_format_safe::PageType::DATA_PAGE_V2 => {
+        let page_type: PageType = spec.header.type_.try_into()?;
+        match page_type {
+            PageType::DataPage | PageType::DataPageV2 => {
                 data_page_offset = spec.offset as i64;
-                break; // data page must come after dictionary page, so we can stop looking for offsets once we see the first data page
+                break;
             }
-            parquet_format_safe::PageType::DICTIONARY_PAGE => {
-                if dict_page_offset.is_none() {
-                    dict_page_offset = Some(spec.offset as i64);
+            PageType::DictionaryPage => {
+                if dictionary_page_offset.is_none() {
+                    dictionary_page_offset = Some(spec.offset as i64);
                 } else {
                     return Err(crate::error::Error::oos(
                         "Multiple dictionary pages found in a single column chunk",
                     ));
                 }
             }
-            _ => {
-                // Ignore other page types
-            }
         }
     }
-    Ok((data_page_offset, dict_page_offset))
+    Ok((data_page_offset, dictionary_page_offset))
 }
 
 fn extract_compression(specs: &[PageWriteSpec]) -> Result<Compression> {
@@ -339,89 +352,78 @@ fn extract_compression(specs: &[PageWriteSpec]) -> Result<Compression> {
 mod tests {
     use super::*;
 
-    fn dict_page_spec(offset: u64, compression: Compression) -> PageWriteSpec {
-        PageWriteSpec {
-            offset,
-            header_size: 10,
-            header: parquet_format_safe::PageHeader {
-                type_: parquet_format_safe::PageType::DICTIONARY_PAGE,
-                uncompressed_page_size: 100,
-                compressed_page_size: 80,
-                dictionary_page_header: Some(parquet_format_safe::DictionaryPageHeader {
-                    num_values: 5,
-                    encoding: parquet_format_safe::Encoding::PLAIN,
-                    is_sorted: None,
-                }),
-                data_page_header: None,
-                data_page_header_v2: None,
-                crc: None,
-                index_page_header: None,
-            },
-            statistics: None,
-            compression,
-            bytes_written: 90,
-            num_rows: None,
-            num_values: 0,
-        }
-    }
-
-    fn data_page_spec(offset: u64, compression: Compression) -> PageWriteSpec {
+    fn default_spec(offset: u64, compression: Compression) -> PageWriteSpec {
         PageWriteSpec {
             offset,
             header_size: 10,
             header: parquet_format_safe::PageHeader {
                 type_: parquet_format_safe::PageType::DATA_PAGE,
-                uncompressed_page_size: 200,
-                compressed_page_size: 150,
+                uncompressed_page_size: 0,
+                compressed_page_size: 0,
                 dictionary_page_header: None,
-                data_page_header: Some(parquet_format_safe::DataPageHeader {
-                    num_values: 10,
-                    encoding: parquet_format_safe::Encoding::RLE_DICTIONARY,
-                    definition_level_encoding: parquet_format_safe::Encoding::RLE,
-                    repetition_level_encoding: parquet_format_safe::Encoding::RLE,
-                    statistics: None,
-                }),
+                data_page_header: None,
                 data_page_header_v2: None,
                 crc: None,
                 index_page_header: None,
             },
             statistics: None,
             compression,
-            bytes_written: 160,
+            bytes_written: 0,
             num_rows: None,
-            num_values: 10,
+            num_values: 0,
         }
     }
 
-    fn data_page_v2_spec(offset: u64, compression: Compression) -> PageWriteSpec {
-        PageWriteSpec {
-            offset,
-            header_size: 10,
-            header: parquet_format_safe::PageHeader {
-                type_: parquet_format_safe::PageType::DATA_PAGE_V2,
-                uncompressed_page_size: 200,
-                compressed_page_size: 150,
-                dictionary_page_header: None,
-                data_page_header: None,
-                data_page_header_v2: Some(parquet_format_safe::DataPageHeaderV2 {
-                    num_values: 10,
-                    num_nulls: 0,
-                    num_rows: 10,
-                    encoding: parquet_format_safe::Encoding::RLE_DICTIONARY,
-                    definition_levels_byte_length: 0,
-                    repetition_levels_byte_length: 0,
-                    is_compressed: Some(true),
-                    statistics: None,
-                }),
-                crc: None,
-                index_page_header: None,
-            },
-            statistics: None,
-            compression,
-            bytes_written: 160,
-            num_rows: Some(10),
+    fn dict_page_spec(offset: u64, compression: Compression) -> PageWriteSpec {
+        let mut spec = default_spec(offset, compression);
+        spec.header.type_ = parquet_format_safe::PageType::DICTIONARY_PAGE;
+        spec.header.uncompressed_page_size = 100;
+        spec.header.compressed_page_size = 80;
+        spec.header.dictionary_page_header = Some(parquet_format_safe::DictionaryPageHeader {
+            num_values: 5,
+            encoding: parquet_format_safe::Encoding::PLAIN,
+            is_sorted: None,
+        });
+        spec.bytes_written = 90;
+        spec
+    }
+
+    fn data_page_spec(offset: u64, compression: Compression) -> PageWriteSpec {
+        let mut spec = default_spec(offset, compression);
+        spec.header.type_ = parquet_format_safe::PageType::DATA_PAGE;
+        spec.header.uncompressed_page_size = 200;
+        spec.header.compressed_page_size = 150;
+        spec.header.data_page_header = Some(parquet_format_safe::DataPageHeader {
             num_values: 10,
-        }
+            encoding: parquet_format_safe::Encoding::RLE_DICTIONARY,
+            definition_level_encoding: parquet_format_safe::Encoding::RLE,
+            repetition_level_encoding: parquet_format_safe::Encoding::RLE,
+            statistics: None,
+        });
+        spec.bytes_written = 160;
+        spec.num_values = 10;
+        spec
+    }
+
+    fn data_page_v2_spec(offset: u64, compression: Compression) -> PageWriteSpec {
+        let mut spec = default_spec(offset, compression);
+        spec.header.type_ = parquet_format_safe::PageType::DATA_PAGE_V2;
+        spec.header.uncompressed_page_size = 200;
+        spec.header.compressed_page_size = 150;
+        spec.header.data_page_header_v2 = Some(parquet_format_safe::DataPageHeaderV2 {
+            num_values: 10,
+            num_nulls: 0,
+            num_rows: 10,
+            encoding: parquet_format_safe::Encoding::RLE_DICTIONARY,
+            definition_levels_byte_length: 0,
+            repetition_levels_byte_length: 0,
+            is_compressed: Some(true),
+            statistics: None,
+        });
+        spec.bytes_written = 160;
+        spec.num_rows = Some(10);
+        spec.num_values = 10;
+        spec
     }
 
     #[test]
@@ -529,6 +531,124 @@ mod tests {
         assert!(
             err.to_string().contains("same codec"),
             "unexpected error message: {err}"
+        );
+    }
+
+    fn make_descriptor() -> ColumnDescriptor {
+        use crate::metadata::Descriptor;
+        use crate::schema::types::{ParquetType, PhysicalType, PrimitiveType};
+
+        let primitive_type = PrimitiveType::from_physical("c".to_string(), PhysicalType::Int64);
+        ColumnDescriptor::new(
+            Descriptor {
+                primitive_type: primitive_type.clone(),
+                max_def_level: 0,
+                max_rep_level: 0,
+            },
+            vec!["c".to_string()],
+            ParquetType::PrimitiveType(primitive_type),
+        )
+    }
+
+    #[test]
+    fn test_build_column_chunk_offsets_with_dict_page() {
+        // Regression: dictionary_page_offset must be set, data_page_offset must skip past
+        // the dictionary, and ColumnChunk.file_offset must point at the inline ColumnMetaData
+        // (i.e. the byte right after the last page / bloom filter), not at
+        // data_page_offset + total_compressed_size — that buggy formula overshoots
+        // end-of-pages by dict_bytes_written whenever a dict page is present.
+        let dict_offset: u64 = 100;
+        let dict_bytes: u64 = 90; // header_size 10 + compressed_page_size 80
+        let data_offset: u64 = dict_offset + dict_bytes;
+        let data_bytes: u64 = 160; // header_size 10 + compressed_page_size 150
+        let end_of_pages: u64 = data_offset + data_bytes;
+        let column_metadata_offset: u64 = end_of_pages;
+
+        let specs = vec![
+            dict_page_spec(dict_offset, Compression::Snappy),
+            data_page_spec(data_offset, Compression::Snappy),
+        ];
+
+        let chunk = build_column_chunk(
+            &specs,
+            &make_descriptor(),
+            None,
+            None,
+            column_metadata_offset,
+        )
+        .unwrap();
+
+        let meta = chunk.meta_data.as_ref().unwrap();
+        assert_eq!(meta.dictionary_page_offset, Some(dict_offset as i64));
+        assert_eq!(meta.data_page_offset, data_offset as i64);
+        assert_eq!(meta.total_compressed_size, (dict_bytes + data_bytes) as i64);
+
+        // The fix: file_offset is the column-metadata offset, equal to end-of-pages here
+        // (no bloom filter), and never the buggy data_page_offset + total_compressed_size.
+        assert_eq!(chunk.file_offset, column_metadata_offset as i64);
+        let buggy_file_offset = meta.data_page_offset + meta.total_compressed_size;
+        assert_ne!(chunk.file_offset, buggy_file_offset);
+        assert!(
+            (chunk.file_offset as u64) <= end_of_pages,
+            "file_offset {} must not overshoot end-of-pages {}",
+            chunk.file_offset,
+            end_of_pages
+        );
+    }
+
+    #[test]
+    fn test_build_column_chunk_offsets_no_dict_page() {
+        let data_offset: u64 = 100;
+        let data_bytes: u64 = 160;
+        let end_of_pages: u64 = data_offset + data_bytes;
+
+        let specs = vec![data_page_spec(data_offset, Compression::Snappy)];
+
+        let chunk =
+            build_column_chunk(&specs, &make_descriptor(), None, None, end_of_pages).unwrap();
+
+        let meta = chunk.meta_data.as_ref().unwrap();
+        assert_eq!(meta.dictionary_page_offset, None);
+        assert_eq!(meta.data_page_offset, data_offset as i64);
+        assert_eq!(chunk.file_offset, end_of_pages as i64);
+    }
+
+    #[test]
+    fn test_build_column_chunk_file_offset_includes_bloom_filter() {
+        // When a bloom filter is written between the pages and the inline ColumnMetaData,
+        // the caller advances `column_metadata_offset` past it. Verify build_column_chunk
+        // records that offset verbatim into ColumnChunk.file_offset.
+        let dict_offset: u64 = 0;
+        let dict_bytes: u64 = 90;
+        let data_offset: u64 = dict_offset + dict_bytes;
+        let data_bytes: u64 = 160;
+        let end_of_pages: u64 = data_offset + data_bytes;
+        let bloom_filter_bytes: u64 = 64;
+        let column_metadata_offset: u64 = end_of_pages + bloom_filter_bytes;
+
+        let specs = vec![
+            dict_page_spec(dict_offset, Compression::Snappy),
+            data_page_spec(data_offset, Compression::Snappy),
+        ];
+
+        let chunk = build_column_chunk(
+            &specs,
+            &make_descriptor(),
+            Some(end_of_pages as i64),
+            Some(bloom_filter_bytes as i32),
+            column_metadata_offset,
+        )
+        .unwrap();
+
+        let meta = chunk.meta_data.as_ref().unwrap();
+        assert_eq!(meta.bloom_filter_offset, Some(end_of_pages as i64));
+        assert_eq!(meta.bloom_filter_length, Some(bloom_filter_bytes as i32));
+        assert_eq!(chunk.file_offset, column_metadata_offset as i64);
+        assert!(
+            chunk.file_offset > end_of_pages as i64,
+            "file_offset {} must sit past end-of-pages {} when a bloom filter is written",
+            chunk.file_offset,
+            end_of_pages
         );
     }
 }
