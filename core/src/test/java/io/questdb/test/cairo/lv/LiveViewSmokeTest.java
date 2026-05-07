@@ -230,6 +230,39 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testDependencyColumnIndexesPopulated() throws Exception {
+        assertMemoryLeak(() -> {
+            // Base has four columns (ts, x, y, z); LV references only ts + x.
+            execute("CREATE TABLE base (ts TIMESTAMP, x INT, y INT, z INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 1s AS " +
+                    "SELECT ts, x, row_number() OVER () AS rn FROM base WHERE x > 0");
+
+            LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("lv");
+            // ts + x should be the dependency set; y and z must not appear.
+            Assert.assertEquals(2, instance.getDependencyColumnIndexes().size());
+
+            // Restart sweep: clear the registry, reload from disk. The startup path
+            // doesn't recompile, so dependencyColumnIndexes is empty until the next
+            // refresh runs ensureCompiledFactory.
+            engine.getLiveViewRegistry().clear();
+            engine.buildViewGraphs();
+            LiveViewInstance reloaded = engine.getLiveViewRegistry().getViewInstance("lv");
+            Assert.assertEquals(0, reloaded.getDependencyColumnIndexes().size());
+
+            // Trigger a refresh (which compiles the SELECT and lazily backfills the set).
+            execute("INSERT INTO base (ts, x, y, z) VALUES ('2026-05-01T00:00:00.000000Z', 1, 2, 3)");
+            drainWalQueue();
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                drainJob(job);
+            }
+            drainWalQueue();
+            Assert.assertEquals(2, reloaded.getDependencyColumnIndexes().size());
+
+            execute("DROP LIVE VIEW lv");
+        });
+    }
+
+    @Test
     public void testFallbackScanPicksUpMissedNotifications() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE base (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");

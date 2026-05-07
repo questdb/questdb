@@ -144,6 +144,7 @@ import io.questdb.std.LowerCaseCharSequenceObjHashMap;
 import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjHashSet;
+import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
 import io.questdb.std.Os;
 import io.questdb.std.Rnd;
@@ -729,6 +730,11 @@ public class CairoEngine implements Closeable, WriterSource {
         // emits a plain FilteredRecordCursorFactory shape that the incremental refresh
         // path can handle.
         GenericRecordMetadata metadata;
+        // Base-column writer indexes the SELECT's filter + window inputs + designated
+        // ts depend on. ApplyWal2TableJob's schema-change hook will eventually consult
+        // this set to invalidate only when one of these columns is touched. Phase 1
+        // populates it; the narrowing usage of it is deferred.
+        final IntList dependencyColumnIndexes = new IntList();
         try (SqlCompiler compiler = getSqlCompiler()) {
             executionContext.setLiveViewCompile(true);
             CompiledQuery cq;
@@ -738,8 +744,27 @@ public class CairoEngine implements Closeable, WriterSource {
                 executionContext.setLiveViewCompile(false);
             }
             try (RecordCursorFactory factory = cq.getRecordCursorFactory()) {
-                validateLiveViewFactory(factory, baseTableToken, op.getViewNamePosition());
+                final PageFrameRecordCursorFactory pfrcf = validateLiveViewFactory(factory, baseTableToken, op.getViewNamePosition());
                 metadata = GenericRecordMetadata.copyOfNew(factory.getMetadata());
+
+                // Resolve each base-column reference in the page-frame factory against
+                // the base's writer-index space.
+                final RecordMetadata baseProjMeta = pfrcf.getMetadata();
+                try (MetadataCacheReader metaRO = getMetadataCache().readLock()) {
+                    final CairoTable baseTable = metaRO.getTable(baseTableToken);
+                    if (baseTable == null) {
+                        throw CairoException.tableDoesNotExist(baseTableToken.getTableName());
+                    }
+                    for (int i = 0, n = baseProjMeta.getColumnCount(); i < n; i++) {
+                        final CairoColumn col = baseTable.getColumnQuiet(baseProjMeta.getColumnName(i));
+                        if (col == null) {
+                            throw CairoException.critical(0)
+                                    .put("live view base column not found [view=").put(op.getViewName())
+                                    .put(", column=").put(baseProjMeta.getColumnName(i)).put(']');
+                        }
+                        dependencyColumnIndexes.add(col.getWriterIndex());
+                    }
+                }
             }
         }
 
@@ -807,6 +832,7 @@ public class CairoEngine implements Closeable, WriterSource {
             instance.setLastProcessedSeqTxn(subscribeFromSeqTxn - 1);
             instance.setAppliedWatermark(-1L);
             instance.setLvConsumedSeqTxn(subscribeFromSeqTxn - 1);
+            instance.getDependencyColumnIndexes().addAll(dependencyColumnIndexes);
             liveViewRegistry.registerView(instance);
             liveViewStateStore.registerBaseTable(definition.getBaseTableName());
         }
@@ -2254,7 +2280,12 @@ public class CairoEngine implements Closeable, WriterSource {
         }
     }
 
-    private static void validateLiveViewFactory(
+    /**
+     * Validates the compiled SELECT shape against the live-view contract and returns
+     * the leaf {@code PageFrameRecordCursorFactory} so the caller can resolve its
+     * column dependencies against the base table.
+     */
+    private static PageFrameRecordCursorFactory validateLiveViewFactory(
             RecordCursorFactory factory,
             TableToken baseTableToken,
             int position
@@ -2320,6 +2351,7 @@ public class CairoEngine implements Closeable, WriterSource {
         if (scannedToken == null || !scannedToken.equals(baseTableToken)) {
             throw SqlException.$(position, "live view select must read from the declared base table");
         }
+        return pfrcf;
     }
 
     // caller has to acquire the lock before this method is called and release the lock after the call
