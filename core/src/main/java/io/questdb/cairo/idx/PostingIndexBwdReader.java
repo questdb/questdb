@@ -78,6 +78,13 @@ public class PostingIndexBwdReader extends AbstractPostingIndexReader {
     public RowCursor getCursor(int key, long minValue, long maxValue, int[] requiredCoverColumns) {
         reloadConditionally();
 
+        // See PostingIndexFwdReader.getCursor: clamp the index-walked
+        // upper bound to the picked chain entry's MAX_VALUE so dirty
+        // (key, rowId) entries in .pv past the entry's coverage are
+        // not surfaced. Implicit nulls (rows before columnTop) stay
+        // clamped by columnTop only.
+        long indexMaxValue = entryMaxValue >= 0 ? Math.min(maxValue, entryMaxValue) : maxValue;
+
         if (key == 0 && columnTop > 0 && minValue < columnTop) {
             NullCursor nc;
             if (freeNullCursors.size() > 0) {
@@ -86,7 +93,7 @@ public class PostingIndexBwdReader extends AbstractPostingIndexReader {
             } else {
                 nc = new NullCursor();
             }
-            nc.of(key, minValue, maxValue);
+            nc.of(key, minValue, indexMaxValue);
             final long hi = maxValue == Long.MAX_VALUE ? Long.MAX_VALUE : maxValue + 1;
             nc.nullCount = Math.min(columnTop, hi);
             return nc;
@@ -101,7 +108,7 @@ public class PostingIndexBwdReader extends AbstractPostingIndexReader {
             } else {
                 c = new Cursor();
             }
-            c.of(key, minValue, maxValue);
+            c.of(key, minValue, indexMaxValue);
             return c;
         }
 

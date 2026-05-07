@@ -87,6 +87,18 @@ public class PostingIndexFwdReader extends AbstractPostingIndexReader {
     public RowCursor getCursor(int key, long minValue, long maxValue, int[] requiredCoverColumns) {
         reloadConditionally();
 
+        // Clamp the index-walked range to the picked chain entry's
+        // tracked maxValue. Writers can leave dirty (key, rowId) entries
+        // in .pv past the chain entry's coverage (e.g. an O3 split that
+        // shrinks the partition before the next reseal evicts them, or
+        // a stale generation a sparse-gen append later supersedes); the
+        // entry's MAX_VALUE field is the boundary between clean and
+        // dirty rows, and the reader is the only place that can skip
+        // them without a full reseal. Implicit nulls (rows before
+        // columnTop) are independent of the index and stay clamped by
+        // columnTop only.
+        long indexMaxValue = entryMaxValue >= 0 ? Math.min(maxValue, entryMaxValue) : maxValue;
+
         if (key == 0 && columnTop > 0 && minValue < columnTop) {
             NullCursor nc;
             if (freeNullCursors.size() > 0) {
@@ -95,7 +107,7 @@ public class PostingIndexFwdReader extends AbstractPostingIndexReader {
             } else {
                 nc = new NullCursor();
             }
-            nc.of(key, minValue, maxValue);
+            nc.of(key, minValue, indexMaxValue);
             nc.nullPos = minValue;
             final long hi = maxValue == Long.MAX_VALUE ? Long.MAX_VALUE : maxValue + 1;
             nc.nullCount = Math.min(columnTop, hi);
@@ -111,7 +123,7 @@ public class PostingIndexFwdReader extends AbstractPostingIndexReader {
             } else {
                 c = new Cursor();
             }
-            c.of(key, minValue, maxValue);
+            c.of(key, minValue, indexMaxValue);
             return c;
         }
 
