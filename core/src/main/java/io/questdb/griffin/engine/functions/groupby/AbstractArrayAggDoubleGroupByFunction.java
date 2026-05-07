@@ -151,7 +151,7 @@ public abstract class AbstractArrayAggDoubleGroupByFunction extends ArrayFunctio
         if (ptr == 0) {
             return ArrayConstant.NULL;
         }
-        int count = Unsafe.getUnsafe().getInt(ptr);
+        int count = Unsafe.getInt(ptr);
         if (count == 0) {
             return ArrayConstant.NULL;
         }
@@ -242,43 +242,33 @@ public abstract class AbstractArrayAggDoubleGroupByFunction extends ArrayFunctio
         if (srcPtr == 0) {
             return;
         }
-        int srcCount = Unsafe.getUnsafe().getInt(srcPtr);
+        int srcCount = Unsafe.getInt(srcPtr);
         if (srcCount == 0) {
             return;
         }
 
         long destPtr = destValue.getLong(valueIndex);
-        if (destPtr == 0 || Unsafe.getUnsafe().getInt(destPtr) == 0) {
+        if (destPtr == 0 || Unsafe.getInt(destPtr) == 0) {
             // Dest empty - deep copy src into dest's allocator. Cannot shallow-copy
             // srcPtr because src's allocator is reclaimed independently.
             checkCapacityLimit(srcCount);
             long newPtr = allocator.malloc(HEADER_SIZE + (long) srcCount * ENTRY_SIZE);
-            Unsafe.getUnsafe().putInt(newPtr, srcCount);
-            Unsafe.getUnsafe().putInt(newPtr + CAPACITY_OFFSET, srcCount);
+            Unsafe.putInt(newPtr, srcCount);
+            Unsafe.putInt(newPtr + CAPACITY_OFFSET, srcCount);
             Vect.memcpy(newPtr + HEADER_SIZE, srcPtr + HEADER_SIZE, (long) srcCount * ENTRY_SIZE);
             destValue.putLong(valueIndex, newPtr);
             return;
         }
 
-        int destCount = Unsafe.getUnsafe().getInt(destPtr);
+        int destCount = Unsafe.getInt(destPtr);
         int mergedCount = destCount + srcCount;
         if (mergedCount < 0) {
             throw CairoException.nonCritical().put("array_agg: array size exceeds maximum supported size");
         }
         checkCapacityLimit(mergedCount);
         long mergedPtr = allocator.malloc(HEADER_SIZE + (long) mergedCount * ENTRY_SIZE);
-        // Append-only fast path: when worker N's last rowId is <= worker N+1's first
-        // rowId (the common parallel-scan case), the entire dest run precedes the
-        // entire src run. Two memcpys avoid the scalar two-pointer loop. Equality is
-        // safe because the loop's tie-break is dest-first.
-        long destLastRowId = Unsafe.getUnsafe().getLong(destPtr + HEADER_SIZE + (long) (destCount - 1) * ENTRY_SIZE);
-        long srcFirstRowId = Unsafe.getUnsafe().getLong(srcPtr + HEADER_SIZE);
-        if (destLastRowId <= srcFirstRowId) {
-            Vect.memcpy(mergedPtr + HEADER_SIZE, destPtr + HEADER_SIZE, (long) destCount * ENTRY_SIZE);
-            Vect.memcpy(mergedPtr + HEADER_SIZE + (long) destCount * ENTRY_SIZE, srcPtr + HEADER_SIZE, (long) srcCount * ENTRY_SIZE);
-            Unsafe.getUnsafe().putInt(mergedPtr, mergedCount);
-            Unsafe.getUnsafe().putInt(mergedPtr + CAPACITY_OFFSET, mergedCount);
-            destValue.putLong(valueIndex, mergedPtr);
+        if (tryMergeDisjointRuns(destValue, mergedPtr, destPtr, destCount, srcPtr, srcCount, mergedCount)
+                || tryMergeDisjointRuns(destValue, mergedPtr, srcPtr, srcCount, destPtr, destCount, mergedCount)) {
             return;
         }
         // Two-pointer merge-sort by rowId: both runs are sorted within their respective
@@ -289,16 +279,16 @@ public abstract class AbstractArrayAggDoubleGroupByFunction extends ArrayFunctio
         while (di < destCount && si < srcCount) {
             long destAddr = destPtr + HEADER_SIZE + (long) di * ENTRY_SIZE;
             long srcAddr = srcPtr + HEADER_SIZE + (long) si * ENTRY_SIZE;
-            long destRowId = Unsafe.getUnsafe().getLong(destAddr);
-            long srcRowId = Unsafe.getUnsafe().getLong(srcAddr);
+            long destRowId = Unsafe.getLong(destAddr);
+            long srcRowId = Unsafe.getLong(srcAddr);
             long mergedAddr = mergedPtr + HEADER_SIZE + (long) mi * ENTRY_SIZE;
             if (destRowId <= srcRowId) {
-                Unsafe.getUnsafe().putLong(mergedAddr, destRowId);
-                Unsafe.getUnsafe().putLong(mergedAddr + VALUE_OFFSET, Unsafe.getUnsafe().getLong(destAddr + VALUE_OFFSET));
+                Unsafe.putLong(mergedAddr, destRowId);
+                Unsafe.putLong(mergedAddr + VALUE_OFFSET, Unsafe.getLong(destAddr + VALUE_OFFSET));
                 di++;
             } else {
-                Unsafe.getUnsafe().putLong(mergedAddr, srcRowId);
-                Unsafe.getUnsafe().putLong(mergedAddr + VALUE_OFFSET, Unsafe.getUnsafe().getLong(srcAddr + VALUE_OFFSET));
+                Unsafe.putLong(mergedAddr, srcRowId);
+                Unsafe.putLong(mergedAddr + VALUE_OFFSET, Unsafe.getLong(srcAddr + VALUE_OFFSET));
                 si++;
             }
             mi++;
@@ -309,8 +299,8 @@ public abstract class AbstractArrayAggDoubleGroupByFunction extends ArrayFunctio
         if (si < srcCount) {
             Vect.memcpy(mergedPtr + HEADER_SIZE + (long) mi * ENTRY_SIZE, srcPtr + HEADER_SIZE + (long) si * ENTRY_SIZE, (long) (srcCount - si) * ENTRY_SIZE);
         }
-        Unsafe.getUnsafe().putInt(mergedPtr, mergedCount);
-        Unsafe.getUnsafe().putInt(mergedPtr + CAPACITY_OFFSET, mergedCount);
+        Unsafe.putInt(mergedPtr, mergedCount);
+        Unsafe.putInt(mergedPtr + CAPACITY_OFFSET, mergedCount);
         destValue.putLong(valueIndex, mergedPtr);
     }
 
@@ -341,5 +331,27 @@ public abstract class AbstractArrayAggDoubleGroupByFunction extends ArrayFunctio
                     .put(maxArrayElementCount)
                     .put(']');
         }
+    }
+
+    private boolean tryMergeDisjointRuns(
+            MapValue destValue,
+            long mergedPtr,
+            long firstPtr,
+            int firstCount,
+            long secondPtr,
+            int secondCount,
+            int mergedCount
+    ) {
+        long firstLastRowId = Unsafe.getLong(firstPtr + HEADER_SIZE + (long) (firstCount - 1) * ENTRY_SIZE);
+        long secondFirstRowId = Unsafe.getLong(secondPtr + HEADER_SIZE);
+        if (firstLastRowId > secondFirstRowId) {
+            return false;
+        }
+        Vect.memcpy(mergedPtr + HEADER_SIZE, firstPtr + HEADER_SIZE, (long) firstCount * ENTRY_SIZE);
+        Vect.memcpy(mergedPtr + HEADER_SIZE + (long) firstCount * ENTRY_SIZE, secondPtr + HEADER_SIZE, (long) secondCount * ENTRY_SIZE);
+        Unsafe.putInt(mergedPtr, mergedCount);
+        Unsafe.putInt(mergedPtr + CAPACITY_OFFSET, mergedCount);
+        destValue.putLong(valueIndex, mergedPtr);
+        return true;
     }
 }
