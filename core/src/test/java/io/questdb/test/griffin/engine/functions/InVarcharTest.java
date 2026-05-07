@@ -132,17 +132,56 @@ public class InVarcharTest extends AbstractCairoTest {
 
     @Test
     public void testCharNulInListMatchesNullVarcharRow() throws Exception {
-        // Defensive: a CHAR(0) list element must be added to the set as null, mirroring
+        // A CHAR(0) list element must be added to the set as null, mirroring
         // CastCharToVarcharFunctionFactory's CHAR(0) -> NULL mapping. Otherwise a NULL
-        // varchar row would fail to match a CHAR(0) IN entry while it correctly matches
-        // an explicit NULL entry, leaving the factory inconsistent with its own cast.
+        // varchar row fails to match a CHAR(0) IN entry while it correctly matches an
+        // explicit NULL entry. This shape is reachable in practice: with VARCHAR LHS
+        // the dispatcher picks InVarcharFunctionFactory exactly, and a NULL row tested
+        // against a CHAR(0) IN entry hits the all-const fast path here.
         execute("create table test as (select cast(x as varchar) a, timestamp_sequence(0, 1000000) ts from long_sequence(3))");
         execute("insert into test values (NULL, '1970-01-01T00:03:00.000000Z')");
+        // CHAR(0) alongside another literal: the NULL row matches via CHAR(0), '1' picks
+        // up its own row.
         assertQuery(
                 "a\tts\n" +
                         "1\t1970-01-01T00:00:00.000000Z\n" +
                         "\t1970-01-01T00:03:00.000000Z\n",
                 "test where a in ('1', (0)::char)",
+                false
+        );
+        // CHAR(0) alone in the list: only the NULL row matches.
+        assertQuery(
+                "a\tts\n" +
+                        "\t1970-01-01T00:03:00.000000Z\n",
+                "test where a in ((0)::char)",
+                false
+        );
+        // CHAR(0) alongside an explicit NULL: both map to set-null, no double-add or
+        // false-mismatch; only the NULL row matches.
+        assertQuery(
+                "a\tts\n" +
+                        "\t1970-01-01T00:03:00.000000Z\n",
+                "test where a in (NULL, (0)::char)",
+                false
+        );
+        // A non-zero CHAR keeps its 1-byte encoding and only matches the corresponding
+        // varchar row, never the NULL row.
+        assertQuery(
+                "a\tts\n" +
+                        "1\t1970-01-01T00:00:00.000000Z\n",
+                "test where a in (('1')::char)",
+                false
+        );
+        // Bind variant of CHAR(0): LHS is the varchar column, the IN list element is a
+        // runtime-constant CHAR(0) routed through the RuntimeConstFunc path. The
+        // factory's parseToVarchar runs in init(), so the same null-mirror behavior
+        // must hold there too.
+        bindVariableService.clear();
+        bindVariableService.setStr("b0", "0");
+        assertQuery(
+                "a\tts\n" +
+                        "\t1970-01-01T00:03:00.000000Z\n",
+                "test where a in ((:b0::int)::char)",
                 false
         );
     }

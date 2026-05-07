@@ -181,23 +181,57 @@ public class InSymbolTest extends AbstractCairoTest {
 
     @Test
     public void testCharNulInListMatchesNullSymbolRow() throws Exception {
-        // Defensive: a CHAR(0) list element must be added to the set as null, mirroring
+        // A CHAR(0) list element must be added to the set as null, mirroring
         // CastCharToSymbolFunctionFactory's CHAR(0) -> NULL mapping. Otherwise a NULL
-        // symbol row would fail to match a CHAR(0) IN entry while it correctly matches
-        // an explicit NULL entry, leaving the factory inconsistent with its own cast.
-        // Covers the eager and deferred branches.
+        // symbol row fails to match a CHAR(0) IN entry while it correctly matches an
+        // explicit NULL entry. This shape is reachable in practice: with SYMBOL LHS
+        // the dispatcher picks InSymbolFunctionFactory exactly, and a NULL row tested
+        // against a CHAR(0) IN entry hits the eager CHAR branch here. The bind variant
+        // routes the same CHAR(0) through the deferred branch in init(), and both
+        // sides must agree.
         assertMemoryLeak(() -> {
             execute("CREATE TABLE t (s SYMBOL)");
             execute("INSERT INTO t VALUES ('A'), (NULL), ('B')");
+            // CHAR(0) alongside another literal: the NULL row matches via CHAR(0),
+            // 'A' picks up its own row.
             assertSql(
                     "s\n\nA\n",
                     "SELECT s FROM t WHERE s IN ('A', (0)::CHAR) ORDER BY 1"
             );
+            // CHAR(0) alone in the list: only the NULL row matches.
+            assertSql(
+                    "s\n\n",
+                    "SELECT s FROM t WHERE s IN ((0)::CHAR)"
+            );
+            // CHAR(0) alongside an explicit NULL: both map to set-null, no double-add
+            // or false-mismatch; only the NULL row matches.
+            assertSql(
+                    "s\n\n",
+                    "SELECT s FROM t WHERE s IN (NULL, (0)::CHAR)"
+            );
+            // A non-zero CHAR keeps its 1-char string and only matches the
+            // corresponding symbol row, never the NULL row.
+            assertSql(
+                    "s\nA\n",
+                    "SELECT s FROM t WHERE s IN (('A')::CHAR)"
+            );
+            // Bind variant: the runtime-constant CHAR(0) is deferred to
+            // Func.init() and routed through deferredValueToString, which must
+            // also map CHAR(0) to null so the deferred set agrees with the
+            // eager-fold branch.
             bindVariableService.clear();
             bindVariableService.setStr("b0", "0");
             assertSql(
                     "s\n\nA\n",
                     "SELECT s FROM t WHERE s IN ('A', (:b0::INT)::CHAR) ORDER BY 1"
+            );
+            // Bind-only variant: CHAR(0) is the only IN entry, exercising the
+            // deferred path with no eagerly-folded set. Only the NULL row matches.
+            bindVariableService.clear();
+            bindVariableService.setStr("b0", "0");
+            assertSql(
+                    "s\n\n",
+                    "SELECT s FROM t WHERE s IN ((:b0::INT)::CHAR)"
             );
         });
     }
