@@ -24,7 +24,7 @@ The three contexts:
 | Key | Type | Default | Scope |
 |---|---|---|---|
 | `addr` | `host:port[,host:port…]` | required | Comma-separated multi-host failover list. |
-| `auth_timeout_ms` | int | `15_000` | Per-host upper bound on the WebSocket upgrade handshake (TCP + TLS + HTTP + `SERVER_INFO` read). |
+| `auth_timeout_ms` | int | `15_000` | Per-host upper bound on the **HTTP upgrade response read** only. Does NOT cover TCP connect (OS default), TLS handshake, or the post-upgrade `SERVER_INFO` frame read (those use a separate hard-coded 5s timeout). Bounds the common "TCP accepts but the server never replies" blackhole; full-route blackholes that drop SYN-ACK still fall back to the OS connect timeout. |
 
 `addr` accepts comma syntax (`addr=h1:p1,h2:p2`) and repeated keys
 (`addr=h1:p1;addr=h2:p2`). The two forms MUST accumulate; empty
@@ -68,7 +68,7 @@ Each configured `addr` entry has a single state from this lattice:
 | `Healthy` | Last connect to this host succeeded. | 1 (best) |
 | `Unknown` | Never tried this round, or just reset. | 2 |
 | `TransientReject` | Server returned `421 Misdirected Request` + `X-QuestDB-Role: PRIMARY_CATCHUP`. Likely to recover. | 3 |
-| `TransportError` | TCP/TLS/handshake error or mid-stream send/recv failure. | 4 |
+| `TransportError` | TCP/TLS/handshake error during connect, or mid-stream send/recv failure (the latter only via `RecordMidStreamFailure`, see §2.1). | 4 |
 | `TopologyReject` | Server returned `421 Misdirected Request` + `X-QuestDB-Role: REPLICA`. Will not become writable without topology change. | 5 (worst) |
 
 A round-tracker bit per host records whether **this round** has tried
@@ -117,6 +117,14 @@ behaviour drift across clients.
   `BeginRound(forgetClassifications=true)`. Reversing the order makes
   sticky-Healthy preserve the just-failed host as priority pick,
   which then receives the first reconnect attempt and fails again.
+- **`previousIdx` is per-caller, not shared.** When multiple loops drive
+  reconnects against the same tracker (e.g. the foreground SF I/O
+  thread plus N background drainers), each loop MUST own its own
+  `previousIdx` slot. Sharing one slot across loops corrupts the
+  Healthy→TransportError demotion: drainer A's reconnect would demote
+  foreground's just-bound endpoint, and vice versa. The Java client
+  expresses this as a per-caller `ReconnectFactory` instance with a
+  private `previousIdx` field.
 - **Round reset on exhaustion.** When `PickNext()` returns `-1`, the
   loop MUST call `BeginRound(forgetClassifications=true)` before the
   next `PickNext()`. Calling `PickNext()` twice without an
@@ -151,7 +159,9 @@ NextBackoffOrGiveUp(attempt, elapsedSinceOutage):
 ```
 
 The post-jitter sleep MUST be clamped to `remaining` so a single
-sleep cannot overshoot `MaxOutageDuration`.
+sleep cannot overshoot `MaxOutageDuration`. SF role-rejects use
+`ComputeBackoff(0)` (i.e. always the initial value) but still pass
+through the deadline check above; see §3.2.
 
 ### 3.1 Jitter
 
@@ -162,7 +172,7 @@ Two jitter shapes are normative, picked by context:
   damps reconnect storms. The post-jitter sleep is **not** clamped to
   `MaxBackoff` — once `base` saturates the cap, the actual sleep
   lands in `[max, 2·max)`.
-- **Egress — full-jitter** `[0, base]`. A query client is single-user
+- **Egress — full-jitter** `[0, base)`. A query client is single-user
   and benefits from the lowest expected recovery time; thundering
   herd is not a concern at one client per workload.
 
@@ -170,7 +180,7 @@ Reference formulas:
 
 ```
 EqualJitter(base):  return base + uniform_long(base)        # [base, 2·base)
-FullJitter(base):   return uniform_long(base + 1)           # [0, base]
+FullJitter(base):   return uniform_long(base)               # [0, base)
 ```
 
 ### 3.2 Outage state
@@ -184,8 +194,16 @@ by the loop:
   observed and resets to `0` on a successful reconnect. A reconnect
   that immediately fails again starts a fresh outage clock.
 
-In SF (§4.2), role-rejects MUST NOT advance either field: a topology
-signal is not an outage. Egress (§4.3) handles role-rejects only
+In SF (§4.2), role-rejects do not advance the per-attempt backoff
+(`backoff` is reset to `InitialBackoff` after each role-reject so the
+client doesn't accumulate exponential delay against a known-but-not-
+writable endpoint). They DO consume the wall-clock outage budget
+(`reconnect_max_duration_millis`) — without that bound a long-lived
+PRIMARY_CATCHUP cluster would let an unattended SF producer block
+forever. The intended usage pattern is to set
+`reconnect_max_duration_millis` large enough (default 5 min) to
+absorb a normal failover window and short enough to surface
+permanent topology issues. Egress (§4.3) handles role-rejects only
 during `WalkTracker` (initial connect / reconnect) and so doesn't
 share the outage clock with the per-Execute loop.
 
@@ -213,9 +231,13 @@ Key properties:
   `auth_timeout_ms × hostCount` worst case.
 - **One round only.** If every host is in a non-Healthy state, the
   client throws — no retry loop.
-- **AuthError is structurally terminal** at any host: `401/403/404`
+- **AuthError is structurally terminal** at any host: `401`/`403`
   on the upgrade aborts immediately. Re-running an unsupported
   credential against every host wastes time and floods server logs.
+  `404` is **not** classified as auth: a single mid-deploy node
+  serving the wrong path while peers are healthy is a routing
+  glitch, not a credential failure, so `404` is treated as a
+  per-endpoint transport error and the walk continues.
 - **`ProtocolVersionError` is also terminal** in the same way: the
   server negotiated an unsupported QWP version, and frame-decode
   corruption is a permanent disagreement.
@@ -237,7 +259,8 @@ loop forever:
         on AuthError or ProtocolVersionError: SET TERMINAL; exit loop
         on RoleReject:
             backoff.Reset()
-            sleep InitialBackoff (do NOT count against MaxOutageDuration)
+            sleep min(InitialBackoff, remaining)    # remaining = MaxOutageDuration - elapsed
+            if elapsed >= MaxOutageDuration: SET TERMINAL; exit loop
             continue
         on other error:
             if !seenFirstConnect && !initial_connect_retry:
@@ -274,11 +297,16 @@ Key properties:
     for unattended producers where the SF dir may already carry
     segments queued from a prior process and the server may come up
     later.
-- **Role-rejects do not consume the give-up budget.** A `421 + role`
-  reply is interpreted as a topology hint, not an outage; the
-  client sleeps `InitialBackoff` and retries. This avoids
-  permanently terminating an unattended SF producer when only a
-  PRIMARY_CATCHUP node responded.
+- **Role-rejects don't accumulate exponential backoff.** A `421 +
+  role` reply is interpreted as a topology hint: the client resets
+  per-attempt backoff to `InitialBackoff` and keeps retrying. The
+  reset means a long PRIMARY_CATCHUP window doesn't blow up to
+  `reconnect_max_backoff_millis` per probe. The wall-clock outage
+  budget (`reconnect_max_duration_millis`) still bounds the loop —
+  if every endpoint stays role-rejecting for the full budget, the
+  loop terminates. Operators should size
+  `reconnect_max_duration_millis` to span their largest expected
+  failover window (default 5 minutes).
 - **Mid-stream failure** (the send or receive pump throws after a
   successful connect): the failed host index is captured as
   `previousIdx`. The next loop iteration calls
@@ -294,7 +322,7 @@ Key properties:
 on QueryClient.New(): connect once via WalkTracker (see §4.4); fail loud if no endpoint matches
 on Execute(sql, handler):
     if execute already in flight on this client: throw "one query at a time"
-    tracker.BeginRound(forgetClassifications=true)
+    tracker.BeginRound(forgetClassifications=false)
     attempt = 0
     backoffMs = failover_backoff_initial_ms
     deadline = now + failover_max_duration_ms (∞ if 0)
@@ -315,14 +343,22 @@ on Execute(sql, handler):
 
 Key properties:
 
-- **Per-Execute round reset.** Every `Execute()` enters with
-  `BeginRound(forgetClassifications=true)` so stale topology rejects
-  from a prior query don't permanently exclude an endpoint.
-- **Reconnect inside the loop uses `forgetClassifications=false`**: the
-  topology classifications observed during this `Execute()`'s
+- **Per-Execute round reset uses `forgetClassifications=false`.**
+  Every `Execute()` enters with `BeginRound(false)` — the
+  attempted-this-round flags are cleared but topology classifications
+  observed in prior Executes are preserved. A previously
+  role-rejected endpoint stays at the bottom of the priority order;
+  it is reconsidered once the current round walks off the end (see
+  §4.4 fall-through reset). This is "lazy forget": the cost is one
+  extra reconnect attempt the first time topology actually changes,
+  the benefit is no per-Execute thundering against a known-bad host.
+- **Reconnect inside the loop also uses `forgetClassifications=false`**:
+  the topology classifications observed during this `Execute()`'s
   reconnects accumulate. Once the round exhausts within a single
-  `Execute()`, fail with a role-mismatch error (carries the most
-  recent observed `SERVER_INFO`).
+  `Execute()`, `WalkTracker` calls `BeginRound(forgetClassifications=true)`
+  once and walks the list one more time. If still no endpoint matches,
+  fail with a role-mismatch error (carries the most recent observed
+  `SERVER_INFO`).
 - **`OnFailoverReset` callback** fires after a successful reconnect
   but **before** any replayed batches arrive. Handlers reset their
   per-batch_seq state here (the new node restarts `batch_seq` at 0).
@@ -343,7 +379,15 @@ Shared between initial connect and `ReconnectAsync`:
 
 ```
 WalkTracker():
-    while idx = tracker.PickNext() >= 0:
+    retriedAfterReset = false
+    loop:
+        idx = tracker.PickNext()
+        if idx < 0:
+            if !retriedAfterReset:
+                tracker.BeginRound(forgetClassifications=true)
+                retriedAfterReset = true
+                continue
+            return (lastInfo, lastError, anyRoleMismatch)
         candidate = build transport for hosts[idx]
         try connect with auth_timeout_ms budget:
             ServerInfo = (negotiatedVersion >= 2) ? read SERVER_INFO frame : null
@@ -355,13 +399,17 @@ WalkTracker():
                 lastInfo = ServerInfo; anyRoleMismatch = true
                 continue
         on AuthError: rethrow (do NOT continue past this host)
-        on 421 + X-QuestDB-Role:
+        on 421 + X-QuestDB-Role <known role>:
             RecordRoleReject(idx, transient = (role == PRIMARY_CATCHUP))
             anyRoleMismatch = true; continue
         on other error:
             RecordTransportError(idx); continue
-    return (lastInfo, lastError, anyRoleMismatch)
 ```
+
+The fall-through reset (when `PickNext` returns `-1` for the first
+time in this walk) gives stale `TransientReject` / `TopologyReject`
+hosts from prior outages another shot before declaring the entire
+walk failed.
 
 When `WalkTracker` returns no transport: if any role mismatch was
 observed, raise a role-mismatch error with the last `SERVER_INFO`
@@ -398,11 +446,21 @@ When v1 is negotiated (either v1 server, or v1-pinned client):
 reach v2+.
 
 The `X-QuestDB-Role` HTTP response header on a `421` upgrade reject
-MUST be one of `STANDALONE` / `PRIMARY` / `REPLICA` / `PRIMARY_CATCHUP`
-(ASCII uppercase). `PRIMARY_CATCHUP` is classified `TransientReject`;
-`REPLICA` and any other recognised name is `TopologyReject`. An
-unrecognised role header degrades to a generic transport error
-(`421` without role headers is identical).
+SHOULD be one of `STANDALONE` / `PRIMARY` / `REPLICA` /
+`PRIMARY_CATCHUP` (ASCII uppercase). Classification:
+
+- `PRIMARY_CATCHUP` → `TransientReject`.
+- Any other non-empty role value (including `STANDALONE`, `PRIMARY`,
+  `REPLICA`, and unrecognised tokens) → `TopologyReject`. The
+  rationale is conservative: an unknown role is treated as
+  structurally unwritable until the operator confirms the cluster is
+  healthy; demoting to last priority lets the client still discover
+  it if every other endpoint is also unreachable. The client uses
+  case-insensitive matching for `PRIMARY_CATCHUP` and `REPLICA`
+  predicates.
+- `421` **without** an `X-QuestDB-Role` header (or with an empty
+  value, after trimming) degrades to a generic transport error
+  (per-endpoint, walk continues).
 
 ## 6. Error classification
 
@@ -416,15 +474,15 @@ to the caller.
 
 | Category | Trigger | Why terminal |
 |---|---|---|
-| `AuthError` | Upgrade HTTP `401`, `403`, or `404` | Credentials are cluster-wide; retrying every host floods server logs without recovery. |
-| `ProtocolVersionError` | Server-emitted frame carries QWP version outside `[1, ClientMaxVersion]` | Version negotiation is cluster-wide; failover masks the disagreement. |
+| `AuthError` | Upgrade HTTP `401` or `403` | Credentials are cluster-wide; retrying every host floods server logs without recovery. |
+| `ProtocolVersionError` | Server-emitted frame carries QWP version outside `[1, ClientMaxVersion]` | Version negotiation is cluster-wide; failover masks the disagreement. The egress client surfaces this via `KIND_PROTOCOL_ERROR` and latches it on the connection's terminal-failure listener so subsequent `Execute()` calls fail fast through `handler.onError` (no failover). |
 | Server status reject (SF) | Receive pump decoded a non-OK status frame | Application-layer reject won't change on replay. |
 
 ### Topology (handled in-round; do not consume outage budget)
 
 | Category | Trigger | Treatment |
 |---|---|---|
-| Role reject | Upgrade `421` + `X-QuestDB-Role: <REPLICA \| PRIMARY_CATCHUP>` | `RecordRoleReject(idx, transient=…)`; SF sleeps `InitialBackoff` and retries without advancing outage state; non-SF / egress walks to next host within the round. |
+| Role reject | Upgrade `421` + non-empty `X-QuestDB-Role` | `RecordRoleReject(idx, transient = role == PRIMARY_CATCHUP)`. SF resets per-attempt backoff to `InitialBackoff`, sleeps, and retries (the wall-clock outage budget still applies; see §3.2). Non-SF / egress walk to the next host within the round. |
 | Target mismatch | `SERVER_INFO.Role` does not match `target=` filter | Same as role reject. |
 
 ### Transient (enter backoff)
@@ -433,9 +491,13 @@ Everything not terminal and not topology:
 
 - TCP/TLS errors, generic upgrade failures, `auth_timeout_ms`
   expiry, mid-stream send/receive failures.
+- `404 Not Found` on upgrade (per-endpoint path mismatch — a single
+  mid-deploy node can return 404 while peers are healthy).
 - `503 Service Unavailable` on upgrade (server is reachable but
   currently unable to serve — distinct from `421`).
-- `421` without a recognised role header.
+- `421` without an `X-QuestDB-Role` header (or with an empty value).
+- `426 Upgrade Required` and any other 4xx/5xx that is not `401`,
+  `403`, or `421`.
 - Generic frame-decode errors (truncated payload, unknown
   `msg_kind`, varint overflow). Clients SHOULD log these at
   WARNING; if the same decode error repeats across every host the
@@ -455,7 +517,7 @@ Transient errors enter the appropriate backoff/round logic per §4.
 | Jitter | n/a | equal `[base, 2·base)` | full `[0, base]` |
 | Initial-connect retry | no | gated by `initial_connect_retry=off\|on\|async` | one-shot `WalkTracker` round (no retry beyond round) |
 | Auth-error policy | terminal | terminal | terminal |
-| Role-reject (`421+role`) | skip host within round; fail round if all rejected | infinite-retry without budget consumption | skip host within round; fail Execute if all rejected |
+| Role-reject (`421+role`) | skip host within round; fail round if all rejected | retry with backoff reset to `InitialBackoff`; bounded by `reconnect_max_duration_millis` | skip host within round; fail Execute if all rejected |
 
 The split (5min budget for SF vs 30s for egress) reflects intent:
 SF is unattended background ingest with on-disk durability — long
