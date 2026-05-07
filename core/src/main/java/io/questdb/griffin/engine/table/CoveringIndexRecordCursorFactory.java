@@ -1798,9 +1798,9 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
 
         @Override
         boolean advanceKey() {
-            // VALUE_NOT_FOUND must short-circuit: TableUtils.toIndexKey(-1) maps
-            // to 0, the index slot reserved for VALUE_IS_NULL — letting it through
-            // would silently match NULL rows for an unknown literal.
+            // Skip iteration entirely when the literal did not resolve to any
+            // known symbol; otherwise we would open every partition's index
+            // reader to read empty cursors.
             if (symbolKey == SymbolTable.VALUE_NOT_FOUND) {
                 return false;
             }
@@ -1858,8 +1858,9 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
         @Override
         @Nullable
         PageFrame nextImpl() {
-            // See SingleKeyCoveringCursor.advanceKey() for why VALUE_NOT_FOUND
-            // must short-circuit before reaching toIndexKey().
+            // See SingleKeyCoveringCursor.advanceKey(): skip iteration when
+            // the literal did not resolve, instead of scanning every partition
+            // for empty cursors.
             if (resolvedKey == SymbolTable.VALUE_NOT_FOUND) {
                 isExhausted = true;
                 return null;

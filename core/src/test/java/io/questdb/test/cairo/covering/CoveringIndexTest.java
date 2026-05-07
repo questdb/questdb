@@ -7862,7 +7862,7 @@ public class CoveringIndexTest extends AbstractCairoTest {
                     """);
             execute("""
                     INSERT INTO t_unknown_sym
-                    SELECT dateadd('s', x::INT, '2024-01-01')::TIMESTAMP,
+                    SELECT dateadd('h', x::INT, '2024-01-01')::TIMESTAMP,
                            ('K' || (x % 5))::SYMBOL,
                            (x % 100) * 1.5
                     FROM long_sequence(2_000)
@@ -7871,6 +7871,8 @@ public class CoveringIndexTest extends AbstractCairoTest {
 
             // Sanity: known symbols return the expected row counts. Defends against
             // a future change accidentally short-circuiting the populated path too.
+            // Hourly spacing over 2_000 rows spans ~83 day-partitions, exercising
+            // the multi-partition advanceKey()/nextImpl() loops.
             assertQueryNoLeakCheck(
                     "count\n400\n",
                     "SELECT count() FROM t_unknown_sym WHERE sym = 'K0'",
@@ -7879,7 +7881,7 @@ public class CoveringIndexTest extends AbstractCairoTest {
 
             String singleKeyPlan = getPlan("SELECT sym FROM t_unknown_sym WHERE sym = 'qrsw' ORDER BY 1 DESC LIMIT 86");
             assertTrue("Expected CoveringIndex plan for single-key filter:\n" + singleKeyPlan,
-                    singleKeyPlan.contains("CoveringIndex"));
+                    singleKeyPlan.contains("CoveringIndex on: sym"));
 
             assertQueryNoLeakCheck(
                     "sym\n",
@@ -7895,7 +7897,7 @@ public class CoveringIndexTest extends AbstractCairoTest {
 
             String multiKeyPlan = getPlan("SELECT sym FROM t_unknown_sym WHERE sym IN ('qrsw', 'zzz') ORDER BY 1");
             assertTrue("Expected CoveringIndex plan for multi-key filter:\n" + multiKeyPlan,
-                    multiKeyPlan.contains("CoveringIndex"));
+                    multiKeyPlan.contains("CoveringIndex on: sym"));
 
             assertQueryNoLeakCheck(
                     "sym\n",
@@ -7910,6 +7912,21 @@ public class CoveringIndexTest extends AbstractCairoTest {
                     "count\n400\n",
                     "SELECT count() FROM t_unknown_sym WHERE sym IN ('K0', 'qrsw')",
                     null, false, true
+            );
+
+            // LATEST ON path: SingleKeyCoveringCursor.hasNextLatestBy() carries
+            // its own VALUE_NOT_FOUND guard. Combine with an outer ORDER BY on
+            // the SYMBOL column so the upstream sort still probes the empty
+            // cursor's getSymbolTable() before iteration.
+            String latestPlan = getPlan(
+                    "SELECT sym FROM t_unknown_sym WHERE sym = 'qrsw' LATEST ON ts PARTITION BY sym ORDER BY 1");
+            assertTrue("Expected CoveringIndex latest plan:\n" + latestPlan,
+                    latestPlan.contains("CoveringIndex op: latest on: sym"));
+
+            assertQueryNoLeakCheck(
+                    "sym\n",
+                    "SELECT sym FROM t_unknown_sym WHERE sym = 'qrsw' LATEST ON ts PARTITION BY sym ORDER BY 1",
+                    null, true, false
             );
         });
     }
