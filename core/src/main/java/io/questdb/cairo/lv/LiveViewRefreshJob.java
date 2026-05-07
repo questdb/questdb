@@ -206,6 +206,10 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                 if (instance.getDependencyColumnNames().size() == 0) {
                     populateDependencyColumnNames(instance, factory);
                 }
+                // Lazily compile the anchor expression as a wrapping SELECT factory
+                // so the ANCHOR runtime can evaluate it per-row without re-parsing.
+                // Only fires when the LV has an anchored named WINDOW persisted in _lv.
+                ensureAnchorFactory(instance);
             } finally {
                 if (ownReader) {
                     executionContext.clearReader();
@@ -215,6 +219,44 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             }
         }
         return factory;
+    }
+
+    /**
+     * Compiles the persisted anchor expression as a wrapping SELECT factory. The
+     * resulting factory's record exposes the anchor expression's value at column 0.
+     * Phase 1 stashes the factory on the {@link LiveViewInstance} so the future
+     * runtime hookup ({@link LiveViewWindow#processRow(Record)}) can pick it up;
+     * the factory is not yet consumed.
+     */
+    private void ensureAnchorFactory(LiveViewInstance instance) {
+        if (instance.getAnchorFactory() != null) {
+            return;
+        }
+        LiveViewDefinition.LvAnchorSpec spec = instance.getDefinition().getAnchorSpec();
+        if (spec == null || spec.anchorExpressionSql == null) {
+            return;
+        }
+        String wrappedSql = "SELECT " + spec.anchorExpressionSql + " FROM \""
+                + instance.getDefinition().getBaseTableName() + "\"";
+        try (SqlCompiler compiler = engine.getSqlCompiler()) {
+            executionContext.setLiveViewCompile(true);
+            try {
+                CompiledQuery cq = compiler.compile(wrappedSql, executionContext);
+                instance.setAnchorFactory(cq.getRecordCursorFactory());
+            } finally {
+                executionContext.setLiveViewCompile(false);
+            }
+        } catch (SqlException e) {
+            // Best-effort: if the anchor expression can't be re-compiled here it's a
+            // bug somewhere upstream (validator passed it but the wrapping SELECT
+            // can't form). Log and continue without the anchor factory; the runtime
+            // will fall back to no anchor reset.
+            LOG.error().$("could not compile live-view anchor expression [view=")
+                    .$(instance.getDefinition().getViewName())
+                    .$(", sql=").$safe(wrappedSql)
+                    .$(", error=").$safe(e.getFlyweightMessage())
+                    .I$();
+        }
     }
 
     private void populateDependencyColumnNames(LiveViewInstance instance, RecordCursorFactory factory) {

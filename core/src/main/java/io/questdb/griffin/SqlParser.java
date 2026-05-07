@@ -1496,8 +1496,8 @@ public class SqlParser {
      * would later resolve to runtime-state ({@code now}, {@code current_timestamp},
      * {@code systimestamp}) or random ({@code rnd_*}) functions. The function-property
      * checks (constant-fold, isGroupBy, isRandom, isRuntimeConstant, isNonDeterministic)
-     * land alongside the runtime hookup since they need a compiled {@link io.questdb.cairo.sql.Function}
-     * tree.
+     * land alongside the runtime hookup since they need a compiled
+     * {@code io.questdb.cairo.sql.Function} tree.
      */
     private static void walkAnchorExpressionForPurity(ExpressionNode node) throws SqlException {
         if (node == null) {

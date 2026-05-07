@@ -77,6 +77,12 @@ public class LiveViewInstance implements QuietCloseable {
     private final LiveViewStateReader stateReader = new LiveViewStateReader();
     // Cached compiled factory. Window functions carry per-row state, so refresh must
     // reuse the same factory across calls. Accessed only while the refresh latch is held.
+    // Compiled wrapping `SELECT <anchorExpressionSql> FROM <base>` used by the
+    // ANCHOR runtime to evaluate the anchor expression against base-table rows
+    // without a second SQL parse / compile per refresh cycle. Lazily built on
+    // first refresh after the live view's main SELECT has been compiled.
+    // Phase 1: stashed but not yet consumed.
+    private RecordCursorFactory anchorFactory;
     private RecordCursorFactory compiledFactory;
     private volatile boolean dropped;
     private volatile boolean isClosed;
@@ -102,7 +108,12 @@ public class LiveViewInstance implements QuietCloseable {
         if (!isClosed) {
             isClosed = true;
             compiledFactory = Misc.free(compiledFactory);
+            anchorFactory = Misc.free(anchorFactory);
         }
+    }
+
+    public RecordCursorFactory getAnchorFactory() {
+        return anchorFactory;
     }
 
     public RecordCursorFactory getCompiledFactory() {
@@ -214,6 +225,13 @@ public class LiveViewInstance implements QuietCloseable {
         stateReader.setAppliedWatermark(appliedWatermark);
     }
 
+    public void setAnchorFactory(RecordCursorFactory factory) {
+        if (anchorFactory != factory) {
+            Misc.free(anchorFactory);
+            anchorFactory = factory;
+        }
+    }
+
     public void setCompiledFactory(RecordCursorFactory factory) {
         if (compiledFactory != factory) {
             Misc.free(compiledFactory);
@@ -254,6 +272,7 @@ public class LiveViewInstance implements QuietCloseable {
             if (!isClosed) {
                 isClosed = true;
                 compiledFactory = Misc.free(compiledFactory);
+                anchorFactory = Misc.free(anchorFactory);
             }
         } finally {
             refreshLatch.set(false);

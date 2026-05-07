@@ -39,6 +39,7 @@ import io.questdb.griffin.SqlException;
 import io.questdb.std.Chars;
 import io.questdb.std.Numbers;
 import io.questdb.std.NumericException;
+import io.questdb.std.ObjList;
 import io.questdb.std.str.Path;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
@@ -301,7 +302,7 @@ public class LiveViewDefinition {
                 String anchorDailyTimeZone = dailyTzCs == null ? null : Chars.toString(dailyTzCs);
                 int partitionColumnCount = block.getInt(offset);
                 offset += Integer.BYTES;
-                io.questdb.std.ObjList<String> partitionColumnNames = new io.questdb.std.ObjList<>(partitionColumnCount);
+                ObjList<String> partitionColumnNames = new ObjList<>(partitionColumnCount);
                 for (int i = 0; i < partitionColumnCount; i++) {
                     CharSequence colNameCs = block.getStr(offset);
                     offset += Vm.getStorageLength(colNameCs);
@@ -452,7 +453,7 @@ public class LiveViewDefinition {
         public final @Nullable String anchorDailyTimeZone;
         public final String anchorExpressionSql;
         public final byte anchorKind;
-        public final io.questdb.std.ObjList<String> partitionColumnNames;
+        public final ObjList<String> partitionColumnNames;
         public final String windowName;
 
         public LvAnchorSpec(
@@ -461,7 +462,7 @@ public class LiveViewDefinition {
                 String anchorExpressionSql,
                 long anchorDailyTimeUs,
                 @Nullable String anchorDailyTimeZone,
-                io.questdb.std.ObjList<String> partitionColumnNames
+                ObjList<String> partitionColumnNames
         ) {
             this.windowName = windowName;
             this.anchorKind = anchorKind;

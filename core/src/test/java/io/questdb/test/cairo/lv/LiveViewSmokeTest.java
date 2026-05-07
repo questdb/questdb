@@ -411,6 +411,17 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
             Assert.assertEquals(1, instance.getDefinition().getAnchorSpec().partitionColumnNames.size());
             Assert.assertEquals("sym", instance.getDefinition().getAnchorSpec().partitionColumnNames.get(0));
 
+            // Drive a refresh so ensureAnchorFactory runs. The anchor factory should
+            // now be compiled and cached on the instance.
+            execute("INSERT INTO base (ts, x, sym) VALUES ('2026-07-01T00:00:00.000000Z', 1, 'a')");
+            drainWalQueue();
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                drainJob(job);
+            }
+            drainWalQueue();
+            Assert.assertNotNull("anchor factory must be lazily compiled on first refresh",
+                    instance.getAnchorFactory());
+
             // Simulate restart and verify anchor spec round-trips via _lv.
             engine.getLiveViewRegistry().clear();
             engine.buildViewGraphs();
