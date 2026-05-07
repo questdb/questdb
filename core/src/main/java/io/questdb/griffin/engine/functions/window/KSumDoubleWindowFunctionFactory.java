@@ -1323,6 +1323,21 @@ public class KSumDoubleWindowFunctionFactory extends AbstractWindowFunctionFacto
         }
 
         @Override
+        public void resetPartition(Record record) {
+            // ANCHOR-driven reset (RFC 123). Zero [sum, compensation, count]; Kahan
+            // re-runs cleanly from zero.
+            partitionByRecord.of(record);
+            MapKey key = map.withKey();
+            key.put(partitionByRecord, partitionBySink);
+            MapValue value = key.findValue();
+            if (value != null) {
+                value.putDouble(0, 0.0);
+                value.putDouble(1, 0.0);
+                value.putLong(2, 0L);
+            }
+        }
+
+        @Override
         public void toPlan(PlanSink sink) {
             sink.val(NAME);
             sink.val('(').val(arg).val(')');

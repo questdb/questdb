@@ -1179,6 +1179,18 @@ public class CountFunctionFactoryHelper {
         }
 
         @Override
+        public void resetPartition(Record record) {
+            // ANCHOR-driven reset (RFC 123). Zero the count slot.
+            partitionByRecord.of(record);
+            MapKey key = map.withKey();
+            key.put(partitionByRecord, partitionBySink);
+            MapValue value = key.findValue();
+            if (value != null) {
+                value.putLong(0, 0L);
+            }
+        }
+
+        @Override
         public void toPlan(PlanSink sink) {
             sink.val(getName());
             if (arg != null) {

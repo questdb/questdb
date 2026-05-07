@@ -533,6 +533,20 @@ public class SumDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
         }
 
         @Override
+        public void resetPartition(Record record) {
+            // ANCHOR-driven reset (RFC 123). Zero the [sum, count] slots; next
+            // computeNext re-anchors on the post-reset row.
+            partitionByRecord.of(record);
+            MapKey key = map.withKey();
+            key.put(partitionByRecord, partitionBySink);
+            MapValue value = key.findValue();
+            if (value != null) {
+                value.putDouble(0, 0.0);
+                value.putLong(1, 0L);
+            }
+        }
+
+        @Override
         public void toPlan(PlanSink sink) {
             sink.val(NAME);
             sink.val('(').val(arg).val(')');
