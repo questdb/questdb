@@ -94,6 +94,7 @@ import io.questdb.cairo.wal.WalWriter;
 import io.questdb.cairo.wal.seq.SeqTxnTracker;
 import io.questdb.cairo.wal.seq.SequencerMetadata;
 import io.questdb.cairo.wal.seq.TableSequencerAPI;
+import io.questdb.cutlass.qwp.codec.QwpServerInfoProvider;
 import io.questdb.cutlass.text.CopyExportContext;
 import io.questdb.cutlass.text.CopyImportContext;
 import io.questdb.griffin.CompiledQuery;
@@ -222,6 +223,7 @@ public class CairoEngine implements Closeable, WriterSource {
     private volatile @NotNull DurableAckRegistry durableAckRegistry = DefaultDurableAckRegistry.INSTANCE;
     private FrameFactory frameFactory;
     private @NotNull MatViewStateStore matViewStateStore = NoOpMatViewStateStore.INSTANCE;
+    private volatile QwpServerInfoProvider qwpServerInfoProvider;
     private volatile Runnable recentWriteTrackerHydrationCallback;
     private @NotNull ViewStateStore viewStateStore = NoOpViewStateStore.INSTANCE;
     private @NotNull WalDirectoryPolicy walDirectoryPolicy = DefaultWalDirectoryPolicy.INSTANCE;
@@ -836,6 +838,10 @@ public class CairoEngine implements Closeable, WriterSource {
         return tableFlagResolver.isSystem(tableName) ? DefaultDdlListener.INSTANCE : ddlListener;
     }
 
+    public @NotNull DurableAckRegistry getDurableAckRegistry() {
+        return durableAckRegistry;
+    }
+
     public FrameFactory getFrameFactory() {
         return frameFactory;
     }
@@ -902,6 +908,11 @@ public class CairoEngine implements Closeable, WriterSource {
 
     public QueryRegistry getQueryRegistry() {
         return queryRegistry;
+    }
+
+    public @NotNull QwpServerInfoProvider getQwpServerInfoProvider() {
+        QwpServerInfoProvider provider = qwpServerInfoProvider;
+        return provider != null ? provider : configuration.getQwpServerInfoProvider();
     }
 
     public TableReader getReader(CharSequence tableName) {
@@ -1209,10 +1220,6 @@ public class CairoEngine implements Closeable, WriterSource {
             }
             throw e;
         }
-    }
-
-    public @NotNull DurableAckRegistry getDurableAckRegistry() {
-        return durableAckRegistry;
     }
 
     public @NotNull WalDirectoryPolicy getWalDirectoryPolicy() {
@@ -1764,6 +1771,10 @@ public class CairoEngine implements Closeable, WriterSource {
         this.ddlListener = ddlListener;
     }
 
+    public void setDurableAckRegistry(@NotNull DurableAckRegistry durableAckRegistry) {
+        this.durableAckRegistry = durableAckRegistry;
+    }
+
     @TestOnly
     public void setPoolListener(PoolListener poolListener) {
         this.tableMetadataPool.setPoolListener(poolListener);
@@ -1772,6 +1783,10 @@ public class CairoEngine implements Closeable, WriterSource {
         this.readerPool.setPoolListener(poolListener);
         this.walWriterPool.setPoolListener(poolListener);
         this.viewWalWriterPool.setPoolListener(poolListener);
+    }
+
+    public void setQwpServerInfoProvider(@NotNull QwpServerInfoProvider provider) {
+        this.qwpServerInfoProvider = provider;
     }
 
     @TestOnly
@@ -1792,10 +1807,6 @@ public class CairoEngine implements Closeable, WriterSource {
 
     @TestOnly
     public void setUp() {
-    }
-
-    public void setDurableAckRegistry(@NotNull DurableAckRegistry durableAckRegistry) {
-        this.durableAckRegistry = durableAckRegistry;
     }
 
     public void setWalDirectoryPolicy(@NotNull WalDirectoryPolicy walDirectoryPolicy) {

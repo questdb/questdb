@@ -175,6 +175,33 @@ public class PercentRankFunctionTest extends AbstractCairoTest {
                             """,
                     "explain select ts, percent_rank() over (partition by s order by ts) from tab"
             );
+
+            // ORDER BY non-timestamp -> dismissOrder=false (grouped) path. Before the
+            // SqlCodeGenerator fix that forwards ac.getOrderBy() to initRecordComparator,
+            // this branch left orderBy null and toPlan rendered "order by null".
+            assertSql(
+                    """
+                            QUERY PLAN
+                            CachedWindow
+                              orderedFunctions: [[i] => [percent_rank() over (order by [i])]]
+                                PageFrame
+                                    Row forward scan
+                                    Frame forward scan on: tab
+                            """,
+                    "explain select ts, percent_rank() over (order by i) from tab"
+            );
+
+            assertSql(
+                    """
+                            QUERY PLAN
+                            CachedWindow
+                              orderedFunctions: [[i] => [percent_rank() over (partition by [s] order by [i])]]
+                                PageFrame
+                                    Row forward scan
+                                    Frame forward scan on: tab
+                            """,
+                    "explain select ts, percent_rank() over (partition by s order by i) from tab"
+            );
         });
     }
 
