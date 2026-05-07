@@ -776,7 +776,7 @@ public class CairoEngine implements Closeable, WriterSource {
         // and consumes commits with seqTxn >= subscribeFromSeqTxn.
         final long subscribeFromSeqTxn = tableSequencerAPI.getTxnTracker(baseTableToken).getWriterTxn() + 1;
 
-        LiveViewTableStructure struct = new LiveViewTableStructure(op.getViewName(), partitionBy, metadata);
+        LiveViewTableStructure struct = new LiveViewTableStructure(configuration, op.getViewName(), partitionBy, metadata);
         try (
                 MemoryMARW mem = Vm.getCMARWInstance();
                 BlockFileWriter blockFileWriter = new BlockFileWriter(configuration.getFilesFacade(), configuration.getCommitMode());

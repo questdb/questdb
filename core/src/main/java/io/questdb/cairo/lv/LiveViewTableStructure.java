@@ -24,6 +24,7 @@
 
 package io.questdb.cairo.lv;
 
+import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.GenericRecordMetadata;
 import io.questdb.cairo.IndexType;
 import io.questdb.cairo.PartitionBy;
@@ -40,11 +41,18 @@ import io.questdb.cairo.TableStructure;
  * clause overrides.
  */
 public class LiveViewTableStructure implements TableStructure {
+    private final CairoConfiguration configuration;
     private final GenericRecordMetadata metadata;
     private final int partitionBy;
     private final String viewName;
 
-    public LiveViewTableStructure(String viewName, int partitionBy, GenericRecordMetadata metadata) {
+    public LiveViewTableStructure(
+            CairoConfiguration configuration,
+            String viewName,
+            int partitionBy,
+            GenericRecordMetadata metadata
+    ) {
+        this.configuration = configuration;
         this.viewName = viewName;
         this.partitionBy = partitionBy;
         this.metadata = metadata;
@@ -92,12 +100,12 @@ public class LiveViewTableStructure implements TableStructure {
 
     @Override
     public boolean getSymbolCacheFlag(int columnIndex) {
-        return false;
+        return configuration.getDefaultSymbolCacheFlag();
     }
 
     @Override
     public int getSymbolCapacity(int columnIndex) {
-        return 0;
+        return configuration.getDefaultSymbolCapacity();
     }
 
     @Override

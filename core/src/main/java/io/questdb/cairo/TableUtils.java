@@ -656,7 +656,10 @@ public final class TableUtils {
 
             // create symbol maps
             int symbolMapCount = 0;
-            if (!structure.isView() && !structure.isLiveView()) {
+            // Plain VIEWs read from their base table, so they don't own their own
+            // symbol maps or _cv. Live views are physical WAL-backed tables that
+            // own their data and DO need both, even though isLiveView() is true.
+            if (!structure.isView()) {
                 for (int i = 0, n = structure.getColumnCount(); i < n; i++) {
                     int columnType = structure.getColumnType(i);
                     if (ColumnType.isSymbol(columnType)) {
