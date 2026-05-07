@@ -259,24 +259,15 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
         RecordMetadata baseMetadata = pageFrameFactory.getMetadata();
         buildColumnMappings(baseMetadata, baseToken);
 
-        InMemoryTable writeBuffer = instance.tryAcquireWriteBuffer();
-        if (writeBuffer == null) {
-            LOG.debug().$("live view refresh deferred, write buffer pinned [view=")
-                    .$(instance.getDefinition().getViewName()).I$();
-            return;
-        }
-
         long advanceTo = -1;
-        boolean publishWriteBuffer = false;
         WalSegmentPageFrameCursor frameCursor = new WalSegmentPageFrameCursor(
                 engine.getConfiguration(), columnIndexes, columnSizeShifts
         );
         WalSegmentRecordCursor walRecordCursor = new WalSegmentRecordCursor(addressCache, memoryPool);
         try (WalWriter walWriter = engine.getWalWriter(instance.getLiveViewToken())) {
-            // Phase 1: the in-mem buffer is rebuilt from the published snapshot each cycle
-            // and the appended delta is published atomically when the cycle completes.
-            writeBuffer.copyFrom(instance.peekPublishedBuffer());
-
+            // Phase 1: reads route through the LV's TableReader (delta plan task #3).
+            // The DoubleBufferedTable in-mem tier is parked until the seam_ts routing
+            // for sub-FLUSH-cycle freshness lands; for now we only write to the LV's WAL.
             RecordToRowCopier copier = ensureCopier(instance, windowFactory, walWriter);
             int lvTimestampIndex = walWriter.getMetadata().getTimestampIndex();
             // Window cursor metadata mirrors the LV's _meta, so the timestamp index is
@@ -340,9 +331,6 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                     try {
                         Record outRecord = windowCursor.getRecord();
                         while (windowCursor.hasNext()) {
-                            // In-memory tier — for query reads via LiveViewRecordCursor.
-                            writeBuffer.appendRow(outRecord);
-                            // Durable tier — write to the live view's own WAL.
                             long ts = outRecord.getTimestamp(cursorTimestampIndex);
                             TableWriter.Row row = walWriter.newRow(ts);
                             copier.copy(executionContext, outRecord, row);
@@ -358,15 +346,8 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             if (appendedRows > 0) {
                 walWriter.commit();
             }
-            publishWriteBuffer = true;
-        } catch (Throwable t) {
-            instance.abortWriteBuffer(writeBuffer);
-            throw t;
         } finally {
             Misc.free(frameCursor);
-            if (publishWriteBuffer) {
-                instance.publishWriteBuffer();
-            }
         }
 
         if (advanceTo > instance.getLastProcessedSeqTxn()) {

@@ -44,9 +44,11 @@ import java.util.concurrent.atomic.AtomicBoolean;
  * <ul>
  *     <li>Lifecycle is derived from registry visibility + {@link #stateReader}.invalid;
  *         see {@link LiveViewLifecycleState}.</li>
- *     <li>The slow-path-only N=2 in-memory tier ({@link DoubleBufferedTable}) caches
- *         recent flushed rows for low-latency reads. The disk-side data is the live view's
- *         own WAL-backed table read through {@code TableReader}.</li>
+ *     <li>Reads route through the LV's own WAL-backed table via the standard
+ *         {@code TableReader} machinery (delta plan task #3). The
+ *         {@link DoubleBufferedTable} / {@link InMemoryTable} primitives stay in
+ *         the package as scaffolding for the eventual seam_ts in-memory tier per
+ *         RFC 123, but Phase 1 does not pin or mutate any in-mem buffer here.</li>
  *     <li>{@link LiveViewStateReader} mirrors the durable contents of {@code _lv.s} —
  *         {@code invalid}, {@code subscribeFromSeqTxn}, {@code lastProcessedSeqTxn},
  *         {@code appliedWatermark}, {@code lvConsumedSeqTxn}. The instance exposes the
@@ -59,12 +61,11 @@ import java.util.concurrent.atomic.AtomicBoolean;
  * </ul>
  * <p>
  * V1 omits BACKFILLING / per-window-state Maps / TableWriter ownership — those land
- * in later phases. The TableWriter for live-view-internal apply is acquired from the
- * engine's WAL writer pool per FLUSH cycle in V1 (Phase 1 keeps things stateless on
- * the instance side).
+ * in later phases. The {@code WalWriter} for live-view-internal apply is acquired
+ * from the engine's WAL writer pool per FLUSH cycle in V1 (Phase 1 keeps things
+ * stateless on the instance side).
  */
 public class LiveViewInstance implements QuietCloseable {
-    private final DoubleBufferedTable bufferedTable = new DoubleBufferedTable();
     private final LiveViewDefinition definition;
     private final IntList dependencyColumnIndexes = new IntList();
     private final AtomicBoolean refreshLatch = new AtomicBoolean(false);
@@ -87,24 +88,6 @@ public class LiveViewInstance implements QuietCloseable {
     public LiveViewInstance(LiveViewDefinition definition, TableToken liveViewToken) {
         this.definition = definition;
         this.liveViewToken = liveViewToken;
-        this.bufferedTable.init(definition.getMetadata());
-    }
-
-    public void abortWriteBuffer(InMemoryTable writeBuffer) {
-        bufferedTable.abortWrite(writeBuffer);
-    }
-
-    /**
-     * Returns the currently-published in-memory buffer pinned for the caller, or
-     * {@code null} when the view has been dropped. Callers must release with
-     * {@link #releaseAfterRead}.
-     */
-    public InMemoryTable acquireForRead() {
-        if (dropped) {
-            tryCloseIfDropped();
-            return null;
-        }
-        return bufferedTable.acquire();
     }
 
     @Override
@@ -113,7 +96,6 @@ public class LiveViewInstance implements QuietCloseable {
         dropped = true;
         if (!isClosed) {
             isClosed = true;
-            Misc.free(bufferedTable);
             compiledFactory = Misc.free(compiledFactory);
         }
     }
@@ -204,23 +186,6 @@ public class LiveViewInstance implements QuietCloseable {
         dropped = true;
     }
 
-    /**
-     * Returns the currently-published buffer without pinning it. Callers must hold the
-     * refresh latch (only the refresh worker uses this).
-     */
-    public InMemoryTable peekPublishedBuffer() {
-        return bufferedTable.peekPublished();
-    }
-
-    public void publishWriteBuffer() {
-        bufferedTable.publishSwap();
-    }
-
-    public void releaseAfterRead(InMemoryTable buffer) {
-        bufferedTable.release(buffer);
-        tryCloseIfDropped();
-    }
-
     public void setAppliedWatermark(long appliedWatermark) {
         stateReader.setAppliedWatermark(appliedWatermark);
     }
@@ -262,21 +227,13 @@ public class LiveViewInstance implements QuietCloseable {
             return;
         }
         try {
-            if (!bufferedTable.tryAcquireExclusive()) {
-                return;
-            }
             if (!isClosed) {
                 isClosed = true;
-                Misc.free(bufferedTable);
                 compiledFactory = Misc.free(compiledFactory);
             }
         } finally {
             refreshLatch.set(false);
         }
-    }
-
-    public InMemoryTable tryAcquireWriteBuffer() {
-        return bufferedTable.tryAcquireWrite();
     }
 
     public boolean tryLockForRefresh() {

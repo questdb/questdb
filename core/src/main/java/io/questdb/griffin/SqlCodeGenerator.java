@@ -50,7 +50,6 @@ import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.TimestampDriver;
 import io.questdb.cairo.idx.IndexReader;
-import io.questdb.cairo.lv.LiveViewInstance;
 import io.questdb.cairo.map.RecordValueSink;
 import io.questdb.cairo.map.RecordValueSinkFactory;
 import io.questdb.cairo.sql.Function;
@@ -264,7 +263,6 @@ import io.questdb.griffin.engine.join.UnnestSource;
 import io.questdb.griffin.engine.join.VarcharToSymbolJoinKeyMapping;
 import io.questdb.griffin.engine.join.WindowJoinFastRecordCursorFactory;
 import io.questdb.griffin.engine.join.WindowJoinRecordCursorFactory;
-import io.questdb.griffin.engine.lv.LiveViewRecordCursorFactory;
 import io.questdb.griffin.engine.orderby.EncodedSortLightRecordCursorFactory;
 import io.questdb.griffin.engine.orderby.EncodedSortRecordCursorFactory;
 import io.questdb.griffin.engine.orderby.LimitedSizeSortedLightRecordCursorFactory;
@@ -9171,12 +9169,10 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             supportsRandomAccess = true;
         }
 
-        // check if this is a live view
-        final LiveViewInstance lvInstance = executionContext.getCairoEngine().getLiveViewRegistry().getViewInstance(tableName);
-        if (lvInstance != null) {
-            return new LiveViewRecordCursorFactory(lvInstance);
-        }
-
+        // Live views are WAL-backed tables: queries route through the standard
+        // TableReader cursor over the LV's _meta + _txn + applied WAL. Phase 1 has
+        // no separate in-memory routing layer (the in-mem freshness tier is
+        // populated for future seam_ts routing per RFC 123 but not read yet).
         final TableToken tableToken = executionContext.getTableToken(tableName);
         if (model.isUpdate() && !executionContext.isWalApplication() && executionContext.getCairoEngine().isWalTable(tableToken)) {
             // two phase update execution, this is client-side branch. It has to execute against the sequencer metadata

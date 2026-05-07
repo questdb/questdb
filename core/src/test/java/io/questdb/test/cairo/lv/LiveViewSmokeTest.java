@@ -189,12 +189,41 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
                     preLastProcessed,
                     reloaded.getStateReader().getLvConsumedSeqTxn()
             );
-            // The on-disk tier survives via _meta + _txn + applied WAL; once the cursor
-            // re-frames to read disk (delta plan task #3) this will assert the full row
-            // count. For now: confirm the WAL applied past 0 commits and the LV table
-            // is queryable as a regular WAL table (the LiveViewRecordCursor reads the
-            // in-mem tier only, which is empty until a refresh runs).
-            assertSql("count\n0\n", "SELECT count() FROM lv");
+            // Phase 1: reads route through the standard TableReader cursor over the LV's
+            // _meta + applied WAL. The on-disk tier survives restart so the row count
+            // should reflect what the refresh wrote before the registry was cleared.
+            assertSql("count\n2\n", "SELECT count() FROM lv");
+
+            execute("DROP LIVE VIEW lv");
+        });
+    }
+
+    @Test
+    public void testLiveViewAsAsofJoinRhs() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 1s AS " +
+                    "SELECT ts, x, row_number() OVER () AS rn FROM base WHERE x > 0");
+            execute("CREATE TABLE probe (ts TIMESTAMP, label SYMBOL) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("INSERT INTO base (ts, x) VALUES " +
+                    "('2026-03-01T00:00:00.000000Z', 10), ('2026-03-01T00:01:00.000000Z', 20)");
+            execute("INSERT INTO probe (ts, label) VALUES " +
+                    "('2026-03-01T00:00:30.000000Z', 'a'), ('2026-03-01T00:01:30.000000Z', 'b')");
+            drainWalQueue();
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                drainJob(job);
+            }
+            drainWalQueue();
+
+            // ASOF JOIN against the LV as RHS: each probe row should pick up the
+            // latest LV row at or before the probe ts.
+            assertSql(
+                    "ts\tlabel\tx\trn\n" +
+                            "2026-03-01T00:00:30.000000Z\ta\t10\t1\n" +
+                            "2026-03-01T00:01:30.000000Z\tb\t20\t2\n",
+                    "SELECT probe.ts, probe.label, lv.x, lv.rn " +
+                            "FROM probe ASOF JOIN lv"
+            );
 
             execute("DROP LIVE VIEW lv");
         });
