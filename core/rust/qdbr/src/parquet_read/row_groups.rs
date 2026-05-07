@@ -102,7 +102,7 @@ pub(crate) fn decompress_varchar_slice_data<'a>(
 
 /// Apply post-decode conversions that cannot be handled by the per-page decode dispatch,
 /// typically because the source and target share the same physical representation.
-fn post_convert(
+pub(super) fn post_convert(
     from_type: ColumnType,
     to_type: ColumnType,
     bufs: &mut ColumnChunkBuffers,
@@ -119,7 +119,10 @@ fn post_convert(
         (ColumnTypeTag::Boolean, ColumnTypeTag::Int) => {
             expand_bool::<i32>(&mut bufs.data_vec)?;
         }
-        (ColumnTypeTag::Boolean, ColumnTypeTag::Long | ColumnTypeTag::Date | ColumnTypeTag::Timestamp) => {
+        (
+            ColumnTypeTag::Boolean,
+            ColumnTypeTag::Long | ColumnTypeTag::Date | ColumnTypeTag::Timestamp,
+        ) => {
             expand_bool::<i64>(&mut bufs.data_vec)?;
         }
         (ColumnTypeTag::Boolean, ColumnTypeTag::Float) => {
@@ -139,7 +142,10 @@ fn post_convert(
         (ColumnTypeTag::Int | ColumnTypeTag::IPv4, ColumnTypeTag::Boolean) => {
             contract_to_bool::<i32>(&mut bufs.data_vec, |v| v == nulls::INT);
         }
-        (ColumnTypeTag::Long | ColumnTypeTag::Date | ColumnTypeTag::Timestamp, ColumnTypeTag::Boolean) => {
+        (
+            ColumnTypeTag::Long | ColumnTypeTag::Date | ColumnTypeTag::Timestamp,
+            ColumnTypeTag::Boolean,
+        ) => {
             contract_to_bool::<i64>(&mut bufs.data_vec, |v| v == nulls::LONG);
         }
         (ColumnTypeTag::Float, ColumnTypeTag::Boolean) => {
@@ -171,90 +177,237 @@ fn post_convert(
             }
         }
         // Fixed integer → Decimal: widen to target size and scale by 10^(target_scale).
-        (ColumnTypeTag::Byte | ColumnTypeTag::Short | ColumnTypeTag::Int | ColumnTypeTag::Long,
-         dst) if is_decimal_tag(dst) => {
+        (
+            ColumnTypeTag::Byte | ColumnTypeTag::Short | ColumnTypeTag::Int | ColumnTypeTag::Long,
+            dst,
+        ) if is_decimal_tag(dst) => {
             convert_fixed_to_decimal(&mut bufs.data_vec, src_tag, dst, to_type.decimal_scale())?;
         }
         // Int32 → Int64 widening (Byte/Short/Int → Long/Date/Timestamp).
         // Byte and Short have no null sentinel; Int uses i32::MIN → i64::MIN.
-        (ColumnTypeTag::Byte, ColumnTypeTag::Long | ColumnTypeTag::Date | ColumnTypeTag::Timestamp) => {
+        (
+            ColumnTypeTag::Byte,
+            ColumnTypeTag::Long | ColumnTypeTag::Date | ColumnTypeTag::Timestamp,
+        ) => {
             convert_numeric_in_place::<i8, i64>(&mut bufs.data_vec, |_| false, 0i64, |v| v as i64)?;
         }
-        (ColumnTypeTag::Short, ColumnTypeTag::Long | ColumnTypeTag::Date | ColumnTypeTag::Timestamp) => {
-            convert_numeric_in_place::<i16, i64>(&mut bufs.data_vec, |_| false, 0i64, |v| v as i64)?;
+        (
+            ColumnTypeTag::Short,
+            ColumnTypeTag::Long | ColumnTypeTag::Date | ColumnTypeTag::Timestamp,
+        ) => {
+            convert_numeric_in_place::<i16, i64>(
+                &mut bufs.data_vec,
+                |_| false,
+                0i64,
+                |v| v as i64,
+            )?;
         }
-        (ColumnTypeTag::Int, ColumnTypeTag::Long | ColumnTypeTag::Date | ColumnTypeTag::Timestamp) => {
-            convert_numeric_in_place::<i32, i64>(&mut bufs.data_vec, |v| v == nulls::INT, nulls::LONG, |v| v as i64)?;
+        (
+            ColumnTypeTag::Int,
+            ColumnTypeTag::Long | ColumnTypeTag::Date | ColumnTypeTag::Timestamp,
+        ) => {
+            convert_numeric_in_place::<i32, i64>(
+                &mut bufs.data_vec,
+                |v| v == nulls::INT,
+                nulls::LONG,
+                |v| v as i64,
+            )?;
         }
         // Int64 → Int32 narrowing (Long/Date/Timestamp → Byte/Short/Int).
         // Long null (i64::MIN) maps to dst null sentinel (0 for Byte/Short, i32::MIN for Int).
-        (ColumnTypeTag::Long | ColumnTypeTag::Date | ColumnTypeTag::Timestamp, ColumnTypeTag::Byte) => {
-            convert_numeric_in_place::<i64, i8>(&mut bufs.data_vec, |v| v == nulls::LONG, 0i8, |v| v as i8)?;
+        (
+            ColumnTypeTag::Long | ColumnTypeTag::Date | ColumnTypeTag::Timestamp,
+            ColumnTypeTag::Byte,
+        ) => {
+            convert_numeric_in_place::<i64, i8>(
+                &mut bufs.data_vec,
+                |v| v == nulls::LONG,
+                0i8,
+                |v| v as i8,
+            )?;
         }
-        (ColumnTypeTag::Long | ColumnTypeTag::Date | ColumnTypeTag::Timestamp, ColumnTypeTag::Short) => {
-            convert_numeric_in_place::<i64, i16>(&mut bufs.data_vec, |v| v == nulls::LONG, 0i16, |v| v as i16)?;
+        (
+            ColumnTypeTag::Long | ColumnTypeTag::Date | ColumnTypeTag::Timestamp,
+            ColumnTypeTag::Short,
+        ) => {
+            convert_numeric_in_place::<i64, i16>(
+                &mut bufs.data_vec,
+                |v| v == nulls::LONG,
+                0i16,
+                |v| v as i16,
+            )?;
         }
-        (ColumnTypeTag::Long | ColumnTypeTag::Date | ColumnTypeTag::Timestamp, ColumnTypeTag::Int) => {
-            convert_numeric_in_place::<i64, i32>(&mut bufs.data_vec, |v| v == nulls::LONG, nulls::INT, |v| v as i32)?;
+        (
+            ColumnTypeTag::Long | ColumnTypeTag::Date | ColumnTypeTag::Timestamp,
+            ColumnTypeTag::Int,
+        ) => {
+            convert_numeric_in_place::<i64, i32>(
+                &mut bufs.data_vec,
+                |v| v == nulls::LONG,
+                nulls::INT,
+                |v| v as i32,
+            )?;
         }
         // Int → Float
         (ColumnTypeTag::Byte, ColumnTypeTag::Float) => {
-            convert_numeric_in_place::<i8, f32>(&mut bufs.data_vec, |_| false, 0.0f32, |v| v as f32)?;
+            convert_numeric_in_place::<i8, f32>(
+                &mut bufs.data_vec,
+                |_| false,
+                0.0f32,
+                |v| v as f32,
+            )?;
         }
         (ColumnTypeTag::Short, ColumnTypeTag::Float) => {
-            convert_numeric_in_place::<i16, f32>(&mut bufs.data_vec, |_| false, 0.0f32, |v| v as f32)?;
+            convert_numeric_in_place::<i16, f32>(
+                &mut bufs.data_vec,
+                |_| false,
+                0.0f32,
+                |v| v as f32,
+            )?;
         }
         (ColumnTypeTag::Int, ColumnTypeTag::Float) => {
-            convert_numeric_in_place::<i32, f32>(&mut bufs.data_vec, |v| v == nulls::INT, f32::NAN, |v| v as f32)?;
+            convert_numeric_in_place::<i32, f32>(
+                &mut bufs.data_vec,
+                |v| v == nulls::INT,
+                f32::NAN,
+                |v| v as f32,
+            )?;
         }
-        (ColumnTypeTag::Long | ColumnTypeTag::Date | ColumnTypeTag::Timestamp, ColumnTypeTag::Float) => {
-            convert_numeric_in_place::<i64, f32>(&mut bufs.data_vec, |v| v == nulls::LONG, f32::NAN, |v| v as f32)?;
+        (
+            ColumnTypeTag::Long | ColumnTypeTag::Date | ColumnTypeTag::Timestamp,
+            ColumnTypeTag::Float,
+        ) => {
+            convert_numeric_in_place::<i64, f32>(
+                &mut bufs.data_vec,
+                |v| v == nulls::LONG,
+                f32::NAN,
+                |v| v as f32,
+            )?;
         }
         // Int → Double
         (ColumnTypeTag::Byte, ColumnTypeTag::Double) => {
-            convert_numeric_in_place::<i8, f64>(&mut bufs.data_vec, |_| false, 0.0f64, |v| v as f64)?;
+            convert_numeric_in_place::<i8, f64>(
+                &mut bufs.data_vec,
+                |_| false,
+                0.0f64,
+                |v| v as f64,
+            )?;
         }
         (ColumnTypeTag::Short, ColumnTypeTag::Double) => {
-            convert_numeric_in_place::<i16, f64>(&mut bufs.data_vec, |_| false, 0.0f64, |v| v as f64)?;
+            convert_numeric_in_place::<i16, f64>(
+                &mut bufs.data_vec,
+                |_| false,
+                0.0f64,
+                |v| v as f64,
+            )?;
         }
         (ColumnTypeTag::Int, ColumnTypeTag::Double) => {
-            convert_numeric_in_place::<i32, f64>(&mut bufs.data_vec, |v| v == nulls::INT, f64::NAN, |v| v as f64)?;
+            convert_numeric_in_place::<i32, f64>(
+                &mut bufs.data_vec,
+                |v| v == nulls::INT,
+                f64::NAN,
+                |v| v as f64,
+            )?;
         }
-        (ColumnTypeTag::Long | ColumnTypeTag::Date | ColumnTypeTag::Timestamp, ColumnTypeTag::Double) => {
-            convert_numeric_in_place::<i64, f64>(&mut bufs.data_vec, |v| v == nulls::LONG, f64::NAN, |v| v as f64)?;
+        (
+            ColumnTypeTag::Long | ColumnTypeTag::Date | ColumnTypeTag::Timestamp,
+            ColumnTypeTag::Double,
+        ) => {
+            convert_numeric_in_place::<i64, f64>(
+                &mut bufs.data_vec,
+                |v| v == nulls::LONG,
+                f64::NAN,
+                |v| v as f64,
+            )?;
         }
         // Float → Int (NaN, infinity, and out-of-range map to dst null sentinel)
         (ColumnTypeTag::Float, ColumnTypeTag::Byte) => {
-            convert_numeric_in_place::<f32, i8>(&mut bufs.data_vec, |v| v.is_nan() || v > i8::MAX as f32 || v < i8::MIN as f32, 0i8, |v| v as i8)?;
+            convert_numeric_in_place::<f32, i8>(
+                &mut bufs.data_vec,
+                |v| v.is_nan() || v > i8::MAX as f32 || v < i8::MIN as f32,
+                0i8,
+                |v| v as i8,
+            )?;
         }
         (ColumnTypeTag::Float, ColumnTypeTag::Short) => {
-            convert_numeric_in_place::<f32, i16>(&mut bufs.data_vec, |v| v.is_nan() || v > i16::MAX as f32 || v < i16::MIN as f32, 0i16, |v| v as i16)?;
+            convert_numeric_in_place::<f32, i16>(
+                &mut bufs.data_vec,
+                |v| v.is_nan() || v > i16::MAX as f32 || v < i16::MIN as f32,
+                0i16,
+                |v| v as i16,
+            )?;
         }
         (ColumnTypeTag::Float, ColumnTypeTag::Int) => {
-            convert_numeric_in_place::<f32, i32>(&mut bufs.data_vec, |v| v.is_nan() || v > i32::MAX as f32 || v < i32::MIN as f32, nulls::INT, |v| v as i32)?;
+            convert_numeric_in_place::<f32, i32>(
+                &mut bufs.data_vec,
+                |v| v.is_nan() || v > i32::MAX as f32 || v < i32::MIN as f32,
+                nulls::INT,
+                |v| v as i32,
+            )?;
         }
-        (ColumnTypeTag::Float, ColumnTypeTag::Long | ColumnTypeTag::Date | ColumnTypeTag::Timestamp) => {
-            convert_numeric_in_place::<f32, i64>(&mut bufs.data_vec, |v| v.is_nan() || v > i64::MAX as f32 || v < i64::MIN as f32, nulls::LONG, |v| v as i64)?;
+        (
+            ColumnTypeTag::Float,
+            ColumnTypeTag::Long | ColumnTypeTag::Date | ColumnTypeTag::Timestamp,
+        ) => {
+            convert_numeric_in_place::<f32, i64>(
+                &mut bufs.data_vec,
+                |v| v.is_nan() || v > i64::MAX as f32 || v < i64::MIN as f32,
+                nulls::LONG,
+                |v| v as i64,
+            )?;
         }
         // Double → Int (NaN, infinity, and out-of-range map to dst null sentinel)
         (ColumnTypeTag::Double, ColumnTypeTag::Byte) => {
-            convert_numeric_in_place::<f64, i8>(&mut bufs.data_vec, |v| v.is_nan() || v > i8::MAX as f64 || v < i8::MIN as f64, 0i8, |v| v as i8)?;
+            convert_numeric_in_place::<f64, i8>(
+                &mut bufs.data_vec,
+                |v| v.is_nan() || v > i8::MAX as f64 || v < i8::MIN as f64,
+                0i8,
+                |v| v as i8,
+            )?;
         }
         (ColumnTypeTag::Double, ColumnTypeTag::Short) => {
-            convert_numeric_in_place::<f64, i16>(&mut bufs.data_vec, |v| v.is_nan() || v > i16::MAX as f64 || v < i16::MIN as f64, 0i16, |v| v as i16)?;
+            convert_numeric_in_place::<f64, i16>(
+                &mut bufs.data_vec,
+                |v| v.is_nan() || v > i16::MAX as f64 || v < i16::MIN as f64,
+                0i16,
+                |v| v as i16,
+            )?;
         }
         (ColumnTypeTag::Double, ColumnTypeTag::Int) => {
-            convert_numeric_in_place::<f64, i32>(&mut bufs.data_vec, |v| v.is_nan() || v > i32::MAX as f64 || v < i32::MIN as f64, nulls::INT, |v| v as i32)?;
+            convert_numeric_in_place::<f64, i32>(
+                &mut bufs.data_vec,
+                |v| v.is_nan() || v > i32::MAX as f64 || v < i32::MIN as f64,
+                nulls::INT,
+                |v| v as i32,
+            )?;
         }
-        (ColumnTypeTag::Double, ColumnTypeTag::Long | ColumnTypeTag::Date | ColumnTypeTag::Timestamp) => {
-            convert_numeric_in_place::<f64, i64>(&mut bufs.data_vec, |v| v.is_nan() || v > i64::MAX as f64 || v < i64::MIN as f64, nulls::LONG, |v| v as i64)?;
+        (
+            ColumnTypeTag::Double,
+            ColumnTypeTag::Long | ColumnTypeTag::Date | ColumnTypeTag::Timestamp,
+        ) => {
+            convert_numeric_in_place::<f64, i64>(
+                &mut bufs.data_vec,
+                |v| v.is_nan() || v > i64::MAX as f64 || v < i64::MIN as f64,
+                nulls::LONG,
+                |v| v as i64,
+            )?;
         }
         // Float ↔ Double (infinity and out-of-range map to dst null sentinel)
         (ColumnTypeTag::Float, ColumnTypeTag::Double) => {
-            convert_numeric_in_place::<f32, f64>(&mut bufs.data_vec, |v| v.is_nan() || v.is_infinite(), f64::NAN, |v| v as f64)?;
+            convert_numeric_in_place::<f32, f64>(
+                &mut bufs.data_vec,
+                |v| v.is_nan() || v.is_infinite(),
+                f64::NAN,
+                |v| v as f64,
+            )?;
         }
         (ColumnTypeTag::Double, ColumnTypeTag::Float) => {
-            convert_numeric_in_place::<f64, f32>(&mut bufs.data_vec, |v| v.is_nan() || v > f32::MAX as f64 || v < f32::MIN as f64, f32::NAN, |v| v as f32)?;
+            convert_numeric_in_place::<f64, f32>(
+                &mut bufs.data_vec,
+                |v| v.is_nan() || v > f32::MAX as f64 || v < f32::MIN as f64,
+                f32::NAN,
+                |v| v as f32,
+            )?;
         }
         _ => return Ok(()),
     }
@@ -305,7 +458,7 @@ fn contract_to_bool<T: Default + PartialEq + Copy>(
 }
 
 /// Multiply or divide every non-null i64 in the buffer by `factor`.
-fn scale_i64_in_place(data: &mut AcVec<u8>, factor: i64, divide: bool) {
+pub(super) fn scale_i64_in_place(data: &mut AcVec<u8>, factor: i64, divide: bool) {
     let count = data.len() / size_of::<i64>();
     let ptr = data.as_mut_ptr() as *mut i64;
     for i in 0..count {
@@ -419,7 +572,11 @@ fn rescale_fixed<const N: usize>(data: &mut AcVec<u8>, scale_diff: u32, divide: 
             if val == null {
                 continue;
             }
-            let scaled = if divide { val / factor } else { val.wrapping_mul(factor) };
+            let scaled = if divide {
+                val / factor
+            } else {
+                val.wrapping_mul(factor)
+            };
             write_le_i64::<N>(ptr.add(offset), scaled);
         }
     }
@@ -458,7 +615,11 @@ fn rescale_i128(data: &mut AcVec<u8>, scale_diff: u32, divide: bool) {
             continue;
         }
         let val = ((hi as i128) << 64) | (lo as i128);
-        let scaled = if divide { val / factor } else { val.wrapping_mul(factor) };
+        let scaled = if divide {
+            val / factor
+        } else {
+            val.wrapping_mul(factor)
+        };
         unsafe {
             (ptr.add(offset) as *mut i64).write_unaligned((scaled >> 64) as i64);
             (ptr.add(offset + 8) as *mut u64).write_unaligned(scaled as u64);
@@ -529,7 +690,11 @@ fn div_i256_pow10(w0: i64, w1: u64, w2: u64, w3: u64, scale_diff: u32) -> (i64, 
 /// Divide a 256-bit two's complement integer by a u64 divisor (truncation toward zero).
 fn div_i256_u64(w0: i64, w1: u64, w2: u64, w3: u64, divisor: u64) -> (i64, u64, u64, u64) {
     let neg = w0 < 0;
-    let (aw0, aw1, aw2, aw3) = if neg { negate_i256(w0, w1, w2, w3) } else { (w0, w1, w2, w3) };
+    let (aw0, aw1, aw2, aw3) = if neg {
+        negate_i256(w0, w1, w2, w3)
+    } else {
+        (w0, w1, w2, w3)
+    };
     let d = divisor as u128;
     let p0 = aw0 as u64 as u128;
     let q0 = (p0 / d) as u64;
@@ -539,7 +704,11 @@ fn div_i256_u64(w0: i64, w1: u64, w2: u64, w3: u64, divisor: u64) -> (i64, u64, 
     let q2 = (p2 / d) as u64;
     let p3 = ((p2 % d) << 64) | aw3 as u128;
     let q3 = (p3 / d) as u64;
-    if neg { negate_i256(q0 as i64, q1, q2, q3) } else { (q0 as i64, q1, q2, q3) }
+    if neg {
+        negate_i256(q0 as i64, q1, q2, q3)
+    } else {
+        (q0 as i64, q1, q2, q3)
+    }
 }
 
 fn negate_i256(w0: i64, w1: u64, w2: u64, w3: u64) -> (i64, u64, u64, u64) {
@@ -636,9 +805,8 @@ fn convert_fixed_to_decimal(
                 } else {
                     // Sign-extend to 256-bit: (sign, sign, sign, val)
                     let sign = if val < 0 { u64::MAX } else { 0 };
-                    let (w0, w1, w2, w3) = mul_i256_pow10(
-                        sign as i64, sign, sign, val as u64, dst_scale as u32,
-                    );
+                    let (w0, w1, w2, w3) =
+                        mul_i256_pow10(sign as i64, sign, sign, val as u64, dst_scale as u32);
                     unsafe {
                         (ptr.add(offset) as *mut i64).write_unaligned(w0);
                         (ptr.add(offset + 8) as *mut u64).write_unaligned(w1);
@@ -713,7 +881,11 @@ fn scale_or_null_i64(val: i64, factor: i64, dst_size: usize, null_sentinel: i64)
         4 => (i32::MIN as i64..=i32::MAX as i64).contains(&scaled),
         _ => true,
     };
-    if fits { scaled } else { null_sentinel }
+    if fits {
+        scaled
+    } else {
+        null_sentinel
+    }
 }
 
 fn fixed_tag_size(tag: ColumnTypeTag) -> usize {
@@ -721,7 +893,10 @@ fn fixed_tag_size(tag: ColumnTypeTag) -> usize {
         ColumnTypeTag::Byte | ColumnTypeTag::Boolean => 1,
         ColumnTypeTag::Short | ColumnTypeTag::Char => 2,
         ColumnTypeTag::Int | ColumnTypeTag::IPv4 | ColumnTypeTag::Float => 4,
-        ColumnTypeTag::Long | ColumnTypeTag::Double | ColumnTypeTag::Date | ColumnTypeTag::Timestamp => 8,
+        ColumnTypeTag::Long
+        | ColumnTypeTag::Double
+        | ColumnTypeTag::Date
+        | ColumnTypeTag::Timestamp => 8,
         _ => 8,
     }
 }
@@ -778,7 +953,7 @@ fn is_var_to_fixed_target(tag: ColumnTypeTag) -> bool {
 
 /// Outcome of validating a column-type conversion request.
 #[derive(Clone, Copy)]
-enum DecodeAs {
+pub(super) enum DecodeAs {
     /// Decode using the target type directly: source and target share a physical
     /// representation, so the page decoder produces the target width.
     Target,
@@ -797,7 +972,10 @@ enum DecodeAs {
 /// return `Source` and rely on `post_convert` afterwards.
 ///
 /// Returns `None` when the conversion is not supported.
-fn plan_decode_conversion(src_tag: ColumnTypeTag, dst_tag: ColumnTypeTag) -> Option<DecodeAs> {
+pub(super) fn plan_decode_conversion(
+    src_tag: ColumnTypeTag,
+    dst_tag: ColumnTypeTag,
+) -> Option<DecodeAs> {
     use ColumnTypeTag::*;
     match (src_tag, dst_tag) {
         // Int32-family widening/narrowing (Byte/Short/Int share Int32 physical).

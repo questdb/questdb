@@ -6,11 +6,94 @@ use crate::parquet_read::decode_column::{
     decode_column_chunk_filtered_with_params, decode_column_chunk_with_params,
     reconstruct_descriptor,
 };
+use crate::parquet_read::row_groups::{
+    plan_decode_conversion, post_convert, scale_i64_in_place, DecodeAs,
+};
 use crate::parquet_read::{DecodeContext, RowGroupBuffers};
 use parquet2::schema::Repetition;
-use qdb_core::col_type::{ColumnType, ColumnTypeTag};
+use qdb_core::col_type::{ColumnType, ColumnTypeTag, QDB_TIMESTAMP_NS_COLUMN_TYPE_FLAG};
 
 use crate::parquet_read::row_groups::ParquetColumnIndex;
+
+/// Resolve the decode-time column type from the sidecar's stored column type
+/// and the caller-requested target type. Mirrors the resolution that
+/// [`crate::parquet_read::row_groups::ParquetDecoder::decode_row_group`]
+/// performs on the legacy file path so both planning paths share semantics.
+///
+/// Returns `(column_type, original_column_type)` where `column_type` is what
+/// the per-page decoder should produce, and `original_column_type` is the
+/// type the buffer holds before [`post_convert`] runs. They differ when
+/// [`plan_decode_conversion`] picks `DecodeAs::Source` and post_convert is
+/// expected to convert in place.
+fn resolve_decode_column_type(
+    sidecar_column_type: ColumnType,
+    to_column_type: ColumnType,
+    column_idx: usize,
+) -> ParquetResult<(ColumnType, ColumnType)> {
+    let mut column_type = sidecar_column_type;
+
+    // Symbol columns in QDB-written parquet are stored as BYTE_ARRAY (UTF-8),
+    // matching String/Varchar/VarcharSlice physically.
+    if column_type.tag() == ColumnTypeTag::Symbol
+        && (to_column_type.tag() == ColumnTypeTag::Varchar
+            || to_column_type.tag() == ColumnTypeTag::VarcharSlice
+            || to_column_type.tag() == ColumnTypeTag::String)
+    {
+        column_type = to_column_type;
+    }
+
+    // VarcharSlice is a zero-copy decode format over the same UTF-8 bytes
+    // that back Varchar/String.
+    if (column_type.tag() == ColumnTypeTag::Varchar || column_type.tag() == ColumnTypeTag::String)
+        && to_column_type.tag() == ColumnTypeTag::VarcharSlice
+    {
+        column_type = to_column_type;
+    }
+
+    let original_column_type = column_type;
+    if column_type != to_column_type {
+        match plan_decode_conversion(column_type.tag(), to_column_type.tag()) {
+            Some(DecodeAs::Target) => column_type = to_column_type,
+            Some(DecodeAs::Source) => {} // post_convert handles the conversion
+            None => {
+                return Err(fmt_err!(
+                    InvalidType,
+                    "requested column type {} does not match file column type {}, column index: {}",
+                    to_column_type,
+                    column_type,
+                    column_idx
+                ));
+            }
+        }
+    }
+
+    Ok((column_type, original_column_type))
+}
+
+/// Apply post-decode timestamp nano scaling between Timestamp/Date when one
+/// side is nano-precision. Mirrors the legacy file-decoder path.
+fn apply_timestamp_nano_scaling(
+    original_column_type: ColumnType,
+    to_column_type: ColumnType,
+    column_chunk_bufs: &mut crate::parquet_read::ColumnChunkBuffers,
+) {
+    if original_column_type == to_column_type {
+        return;
+    }
+    let src_tag = original_column_type.tag();
+    let dst_tag = to_column_type.tag();
+    let src_is_time = matches!(src_tag, ColumnTypeTag::Timestamp | ColumnTypeTag::Date);
+    let dst_is_time = matches!(dst_tag, ColumnTypeTag::Timestamp | ColumnTypeTag::Date);
+    if src_is_time && dst_is_time {
+        let src_nano = src_tag == ColumnTypeTag::Timestamp
+            && original_column_type.has_flag(QDB_TIMESTAMP_NS_COLUMN_TYPE_FLAG);
+        let dst_nano = dst_tag == ColumnTypeTag::Timestamp
+            && to_column_type.has_flag(QDB_TIMESTAMP_NS_COLUMN_TYPE_FLAG);
+        if src_nano != dst_nano {
+            scale_i64_in_place(&mut column_chunk_bufs.data_vec, 1000, src_nano);
+        }
+    }
+}
 
 /// Decode a row group using metadata from a `_pm` sidecar file.
 ///
@@ -18,8 +101,9 @@ use crate::parquet_read::row_groups::ParquetColumnIndex;
 /// `_pm` binary format via [`ParquetMetaReader`]. The `col_pairs` array
 /// uses the same `[parquet_column_index, column_type]` pair format as
 /// `PartitionDecoder` for compatibility with `PageFrameMemoryPool`.
-/// The `column_type` from Java is used for Symbol->Varchar and
-/// Varchar->VarcharSlice overrides; the base type comes from `_pm`.
+/// The `column_type` from Java drives Symbol/Varchar/String overrides and
+/// any fixed-to-fixed or var-to-var conversions supported by
+/// [`plan_decode_conversion`]; the base type comes from `_pm`.
 #[allow(clippy::too_many_arguments)]
 pub fn decode_row_group(
     ctx: &mut DecodeContext,
@@ -60,22 +144,11 @@ pub fn decode_row_group(
 
         let col_desc = parquet_meta_reader.column_descriptor(column_idx)?;
         let col_type_code = col_desc.col_type;
-        let mut column_type = ColumnType::new_raw(col_type_code)
+        let sidecar_column_type = ColumnType::new_raw(col_type_code)
             .ok_or_else(|| fmt_err!(InvalidType, "unknown column type code: {}", col_type_code))?;
 
-        // Apply the same Symbol->Varchar and Varchar->VarcharSlice overrides
-        // as ParquetDecoder::decode_row_group().
-        if column_type.tag() == ColumnTypeTag::Symbol
-            && (to_column_type.tag() == ColumnTypeTag::Varchar
-                || to_column_type.tag() == ColumnTypeTag::VarcharSlice)
-        {
-            column_type = to_column_type;
-        }
-        if column_type.tag() == ColumnTypeTag::Varchar
-            && to_column_type.tag() == ColumnTypeTag::VarcharSlice
-        {
-            column_type = to_column_type;
-        }
+        let (column_type, original_column_type) =
+            resolve_decode_column_type(sidecar_column_type, to_column_type, column_idx)?;
 
         let flags = ColumnFlags(col_desc.flags);
         let field_rep = flags
@@ -145,6 +218,9 @@ pub fn decode_row_group(
             Ok(count) => decoded = count,
             Err(err) => return Err(err),
         }
+
+        post_convert(original_column_type, to_column_type, column_chunk_bufs)?;
+        apply_timestamp_nano_scaling(original_column_type, to_column_type, column_chunk_bufs);
     }
 
     Ok(decoded)
@@ -186,20 +262,11 @@ pub fn decode_row_group_filtered<const FILL_NULLS: bool>(
 
         let col_desc = parquet_meta_reader.column_descriptor(column_idx)?;
         let col_type_code = col_desc.col_type;
-        let mut column_type = ColumnType::new_raw(col_type_code)
+        let sidecar_column_type = ColumnType::new_raw(col_type_code)
             .ok_or_else(|| fmt_err!(InvalidType, "unknown column type code: {}", col_type_code))?;
 
-        if column_type.tag() == ColumnTypeTag::Symbol
-            && (to_column_type.tag() == ColumnTypeTag::Varchar
-                || to_column_type.tag() == ColumnTypeTag::VarcharSlice)
-        {
-            column_type = to_column_type;
-        }
-        if column_type.tag() == ColumnTypeTag::Varchar
-            && to_column_type.tag() == ColumnTypeTag::VarcharSlice
-        {
-            column_type = to_column_type;
-        }
+        let (column_type, original_column_type) =
+            resolve_decode_column_type(sidecar_column_type, to_column_type, column_idx)?;
 
         let flags = ColumnFlags(col_desc.flags);
         let field_rep = flags
@@ -272,6 +339,9 @@ pub fn decode_row_group_filtered<const FILL_NULLS: bool>(
             Ok(count) => decoded = count,
             Err(err) => return Err(err),
         }
+
+        post_convert(original_column_type, to_column_type, column_chunk_bufs)?;
+        apply_timestamp_nano_scaling(original_column_type, to_column_type, column_chunk_bufs);
     }
 
     Ok(decoded)
