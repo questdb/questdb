@@ -230,6 +230,47 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testInvalidationSurvivesRestart() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 1s AS " +
+                    "SELECT ts, x, row_number() OVER () AS rn FROM base WHERE x > 0");
+
+            // Drop the base table — this should invalidate the live view AND persist
+            // the invalidation to _lv.s so restart sees the invalid state.
+            execute("DROP TABLE base");
+            drainWalQueue();
+
+            LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("lv");
+            Assert.assertNotNull(instance);
+            Assert.assertTrue("live view must be invalid after base drop", instance.isInvalid());
+            Assert.assertEquals(
+                    "invalidation reason must record the trigger",
+                    "base table drop",
+                    instance.getInvalidationReason().toString()
+            );
+
+            // Simulate restart: clear registry, re-load from disk.
+            engine.getLiveViewRegistry().clear();
+            engine.buildViewGraphs();
+
+            LiveViewInstance reloaded = engine.getLiveViewRegistry().getViewInstance("lv");
+            Assert.assertNotNull(reloaded);
+            Assert.assertTrue(
+                    "invalidation must round-trip via _lv.s",
+                    reloaded.isInvalid()
+            );
+            Assert.assertEquals(
+                    "invalidation reason must round-trip via _lv.s",
+                    "base table drop",
+                    reloaded.getInvalidationReason().toString()
+            );
+
+            execute("DROP LIVE VIEW lv");
+        });
+    }
+
+    @Test
     public void testRequireFlushEvery() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE base (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");

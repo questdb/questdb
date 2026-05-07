@@ -175,6 +175,7 @@ public class CairoEngine implements Closeable, WriterSource {
     public static final String REASON_CHECKPOINT_IN_PROGRESS = "checkpointInProgress";
     private static final Log LOG = LogFactory.getLog(CairoEngine.class);
     private static final int MAX_SLEEP_MILLIS = 250;
+    private static final ThreadLocal<ObjList<LiveViewInstance>> tlInvalidateSink = new ThreadLocal<>(ObjList::new);
     private static final ThreadLocal<MatViewRefreshTask> tlMatViewRefreshTask = new ThreadLocal<>(MatViewRefreshTask::new);
     protected final CairoConfiguration configuration;
     private final AtomicLong asyncCommandCorrelationId = new AtomicLong();
@@ -575,17 +576,22 @@ public class CairoEngine implements Closeable, WriterSource {
                                 stateReader.of(reader, tableToken);
                                 instance.initFromState(stateReader);
                             }
-                            long nowUs = configuration.getMicrosecondClock().getTicks();
-                            if (!baseTableExists) {
-                                LOG.info().$("base table for live view does not exist [table=").$safe(definition.getBaseTableName())
-                                        .$(", view=").$(tableToken)
-                                        .I$();
-                                instance.markInvalid("base table does not exist", nowUs);
-                            } else if (!baseTableToken.isWal()) {
-                                LOG.info().$("base table for live view is not WAL table [table=").$safe(definition.getBaseTableName())
-                                        .$(", view=").$(tableToken)
-                                        .I$();
-                                instance.markInvalid("base table is not WAL table", nowUs);
+                            // A persisted invalidation always wins — the original reason is more
+                            // specific (base drop vs base rename vs schema change), so we only
+                            // synthesize "base table does not exist" when nothing was persisted.
+                            if (!instance.isInvalid()) {
+                                long nowUs = configuration.getMicrosecondClock().getTicks();
+                                if (!baseTableExists) {
+                                    LOG.info().$("base table for live view does not exist [table=").$safe(definition.getBaseTableName())
+                                            .$(", view=").$(tableToken)
+                                            .I$();
+                                    instance.markInvalid("base table does not exist", nowUs);
+                                } else if (!baseTableToken.isWal()) {
+                                    LOG.info().$("base table for live view is not WAL table [table=").$safe(definition.getBaseTableName())
+                                            .$(", view=").$(tableToken)
+                                            .I$();
+                                    instance.markInvalid("base table is not WAL table", nowUs);
+                                }
                             }
                             liveViewRegistry.registerView(instance);
                             liveViewStateStore.registerBaseTable(definition.getBaseTableName());
@@ -933,7 +939,7 @@ public class CairoEngine implements Closeable, WriterSource {
                 notifyViewStoresAboutDrop(tableToken);
                 matViewStateStore.removeViewState(tableToken);
                 matViewGraph.removeView(tableToken);
-                liveViewRegistry.invalidateViewsForBaseTable(tableToken.getTableName(), "base table drop", configuration.getMicrosecondClock().getTicks());
+                invalidateLiveViewsForBaseTable(tableToken, "base table drop");
                 recentWriteTracker.removeTable(tableToken);
             } else {
                 LOG.info().$("table is already dropped [table=").$(tableToken).I$();
@@ -955,7 +961,7 @@ public class CairoEngine implements Closeable, WriterSource {
                     // Then it can push the scoreboard max txn value into incorrect state.
                     scoreboardPool.remove(tableToken);
                     notifyViewStoresAboutDrop(tableToken);
-                    liveViewRegistry.invalidateViewsForBaseTable(tableToken.getTableName(), "base table drop", configuration.getMicrosecondClock().getTicks());
+                    invalidateLiveViewsForBaseTable(tableToken, "base table drop");
                     recentWriteTracker.removeTable(tableToken);
                 } finally {
                     unlockTableUnsafe(tableToken, null, false);
@@ -1575,11 +1581,31 @@ public class CairoEngine implements Closeable, WriterSource {
     }
 
     public void invalidateLiveViewsForBaseTable(TableToken baseTableToken, String reason) {
-        liveViewRegistry.invalidateViewsForBaseTable(
-                baseTableToken.getTableName(),
-                reason,
-                configuration.getMicrosecondClock().getTicks()
-        );
+        final long invalidationTimestampUs = configuration.getMicrosecondClock().getTicks();
+        // Flip the in-memory bit then rewrite each affected view's _lv.s so the
+        // invalidation survives restart. The registry-only helper exists for tests
+        // that don't need durability.
+        ObjList<LiveViewInstance> sink = tlInvalidateSink.get();
+        sink.clear();
+        liveViewRegistry.getViewsForBaseTable(baseTableToken.getTableName(), sink);
+        try (
+                BlockFileWriter blockFileWriter = new BlockFileWriter(configuration.getFilesFacade(), configuration.getCommitMode());
+                Path path = new Path()
+        ) {
+            for (int i = 0, n = sink.size(); i < n; i++) {
+                LiveViewInstance instance = sink.getQuick(i);
+                instance.markInvalid(reason, invalidationTimestampUs);
+                path.of(configuration.getDbRoot()).concat(instance.getLiveViewToken()).concat(LiveViewState.LIVE_VIEW_STATE_FILE_NAME);
+                try {
+                    blockFileWriter.of(path.$());
+                    LiveViewState.append(instance.getStateReader(), blockFileWriter);
+                } catch (Throwable t) {
+                    LOG.error().$("could not persist live view invalidation [view=").$(instance.getLiveViewToken())
+                            .$(", reason=").$safe(reason)
+                            .$(", error=").$(t).I$();
+                }
+            }
+        }
     }
 
     public boolean isClosing() {
@@ -1910,7 +1936,7 @@ public class CairoEngine implements Closeable, WriterSource {
                             if (fromTableToken.isWal()) {
                                 matViewStateStore.enqueueInvalidateDependentViews(fromTableToken, "table rename operation");
                             }
-                            liveViewRegistry.invalidateViewsForBaseTable(fromTableToken.getTableName(), "base table rename", configuration.getMicrosecondClock().getTicks());
+                            invalidateLiveViewsForBaseTable(fromTableToken, "base table rename");
                         } else {
                             LOG.info()
                                     .$("failed to rename table [from=").$safe(fromTableName)
