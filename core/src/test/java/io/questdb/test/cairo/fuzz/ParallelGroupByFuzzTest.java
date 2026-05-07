@@ -28,9 +28,11 @@ import io.questdb.PropertyKey;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.CursorPrinter;
 import io.questdb.cairo.SqlJitMode;
 import io.questdb.cairo.sql.BindVariableService;
 import io.questdb.cairo.sql.NetworkSqlExecutionCircuitBreaker;
+import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.griffin.DefaultSqlExecutionCircuitBreakerConfiguration;
@@ -304,6 +306,71 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
                                 sink,
                                 "approx_count_distinct\n" + partitions + "\n"
                         );
+                    },
+                    configuration,
+                    LOG
+            );
+        });
+    }
+
+    @Test
+    public void testParallelAvgDecimal128RescaleOverflowFactoryReuse() throws Exception {
+        // Regression: AvgDecimal128Rescale256GroupByFunction.merge's "both
+        // shards overflowed into 256 bits" branch must add the running
+        // sums by raw bytes (uncheckedAdd), not via the scale-aware add.
+        // The map only persists raw bytes, so on a second cursor open the
+        // loaded scratches carry the stale scale that the prior cursor's
+        // calc() left behind via setScale + divide. With the rescale
+        // variant the target scale differs from arg's scale, so the
+        // scale-aware add would rescale by 10^delta and corrupt the sum;
+        // raw-byte add ignores the scale field and is correct because
+        // both buffers represent the running sum at the same logical
+        // scale by construction.
+        assertMemoryLeak(() -> {
+            final WorkerPool pool = new WorkerPool(() -> 4);
+            TestUtils.execute(
+                    pool,
+                    (engine, compiler, sqlExecutionContext) -> {
+                        engine.execute(
+                                "CREATE TABLE tab (ts TIMESTAMP, k INT, v DECIMAL(38, 0)) timestamp(ts) PARTITION BY DAY",
+                                sqlExecutionContext
+                        );
+                        // Each row holds DECIMAL128 max value, so per-shard sums
+                        // overflow into the 256-bit accumulator within the first
+                        // two rows; merge then hits the "both overflowed" branch
+                        // when shard pairs are combined.
+                        engine.execute(
+                                "INSERT INTO tab SELECT" +
+                                        " (x * 864000000)::timestamp," +
+                                        " (x % 4)::int," +
+                                        " 99999999999999999999999999999999999999::DECIMAL(38, 0)" +
+                                        " FROM long_sequence(" + ROW_COUNT + ")",
+                                sqlExecutionContext
+                        );
+                        // Target scale 1 differs from arg scale 0, so calc()'s
+                        // setScale(arg-scale) + divide(target-scale) leaves
+                        // decimal256A.scale at 1 between cursor opens. A second
+                        // open re-runs merge with that stale scale on A and
+                        // scale 0 (default) on B.
+                        final String sql = "SELECT k, avg(v, 1) avg FROM tab GROUP BY k ORDER BY k";
+                        final String expected = "k\tavg\n" +
+                                "0\t99999999999999999999999999999999999999.0\n" +
+                                "1\t99999999999999999999999999999999999999.0\n" +
+                                "2\t99999999999999999999999999999999999999.0\n" +
+                                "3\t99999999999999999999999999999999999999.0\n";
+                        try (RecordCursorFactory factory = compiler.compile(sql, sqlExecutionContext).getRecordCursorFactory()) {
+                            for (int i = 0; i < 2; i++) {
+                                sink.clear();
+                                CursorPrinter.println(factory.getMetadata(), sink);
+                                try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                                    final Record rec = cursor.getRecord();
+                                    while (cursor.hasNext()) {
+                                        TestUtils.println(rec, factory.getMetadata(), sink);
+                                    }
+                                }
+                                TestUtils.assertEquals("iteration " + i, expected, sink);
+                            }
+                        }
                     },
                     configuration,
                     LOG
