@@ -146,6 +146,43 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testWalPurgeHonorsLvConsumedSeqTxnFloor() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 1s AS " +
+                    "SELECT ts, x, row_number() OVER () AS rn FROM base WHERE x > 0");
+
+            // First insert + drain — base table applies seqTxn 1.
+            execute("INSERT INTO base (ts, x) VALUES ('2026-06-01T00:00:00.000000Z', 1)");
+            drainWalQueue();
+            // Force a fresh segment for the next insert by releasing pooled writers.
+            engine.releaseInactive();
+            // Second insert + drain — base table applies seqTxn 2 in segment 1.
+            execute("INSERT INTO base (ts, x) VALUES ('2026-06-01T00:01:00.000000Z', 2)");
+            drainWalQueue();
+            engine.releaseInactive();
+
+            // Purge with the LV still at lvConsumedSeqTxn = 0: segment 0 must be
+            // retained because the LV hasn't consumed seqTxn 1 yet.
+            drainPurgeJob();
+            assertSegmentExistence(true, "base", 1, 0);
+
+            // Refresh + persist. lvConsumedSeqTxn advances to base's head.
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                drainJob(job);
+            }
+            drainWalQueue();
+
+            // Now the LV no longer needs the old segment. Purge must reap it.
+            engine.releaseInactive();
+            drainPurgeJob();
+            assertSegmentExistence(false, "base", 1, 0);
+
+            execute("DROP LIVE VIEW lv");
+        });
+    }
+
+    @Test
     public void testRefreshAdvancesLvConsumedSeqTxn() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE base (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
