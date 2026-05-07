@@ -6765,6 +6765,11 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             linkFile(ff, pciSrc,
                     PostingIndexUtils.coverInfoFileName(other.trimTo(dstDirLen), dstColumnName, dstColumnNameTxn));
         }
+        // Per-column data files (.pc<N>.<C>.<S>). Use a directory scan rather
+        // than reading the (includeIdx, coveredColumnNameTxn) tuples from .pci:
+        // ALTER on covered columns can leave .pci's per-column count out of
+        // sync with the on-disk reality, so the directory listing is the
+        // source of truth.
         PostingIndexUtils.scanSealedFiles(ff, path, srcDirLen, srcColumnName, new PostingIndexUtils.SealedFileVisitor() {
             @Override
             public void onCoverDataFile(int includeIdx, long postingColumnNameTxn, long coveredColumnNameTxn, long sealTxn) {
