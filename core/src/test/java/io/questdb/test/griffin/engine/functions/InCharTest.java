@@ -57,6 +57,40 @@ public class InCharTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testBindVarLiteralDivergenceForNulChar() throws Exception {
+        // Regression: query fuzzer caught literal vs bind divergence on
+        //   (0.49)::CHAR IN ((0.49)::CHAR, 'Z')
+        // The literal form folds the LHS to a constant CHAR(0), and the dispatcher
+        // picks InStrFunctionFactory because the CHAR constant matches in(Sv) with
+        // implicit cast. InStrFunctionFactory wraps the LHS in CastCharToStr, which
+        // maps CHAR(0) to NULL string, but parseToString used to add CHAR(0) list
+        // elements as the 1-char NUL string; the asymmetric handling made the WHERE
+        // evaluate to false, while the bind form (where the LHS is a runtime
+        // constant and InCharFunctionFactory wins) correctly returned true.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (k INT)");
+            execute("INSERT INTO t VALUES (1), (2)");
+            // Literal form: fold-time constant CHAR(0) IN list with CHAR(0) and 'Z'.
+            assertSql(
+                    "k\n1\n2\n",
+                    "SELECT k FROM t WHERE (0.49)::CHAR IN ((0.49)::CHAR, 'Z')"
+            );
+            // Bind form: same query with the LHS routed through a bind variable.
+            bindVariableService.clear();
+            bindVariableService.setStr("b0", "0.49");
+            assertSql(
+                    "k\n1\n2\n",
+                    "SELECT k FROM t WHERE (:b0::DOUBLE)::CHAR IN ((0.49)::CHAR, 'Z')"
+            );
+            // CHAR(0) should not match a list with no NUL element.
+            assertSql(
+                    "k\n",
+                    "SELECT k FROM t WHERE (0.49)::CHAR IN ('Z', 'X')"
+            );
+        });
+    }
+
+    @Test
     public void testBindVarTypedCastInListMixedTypes() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE t (c CHAR)");
