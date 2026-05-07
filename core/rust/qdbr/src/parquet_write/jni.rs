@@ -1670,18 +1670,48 @@ mod tests {
     use std::os::unix::io::AsRawFd;
     use tempfile::NamedTempFile;
 
-    /// Returns true iff `fd` still refers to an open file descriptor in this
-    /// process.
-    fn fd_is_open(fd: i32) -> bool {
-        // SAFETY: fcntl(F_GETFD) returns -1 and sets errno=EBADF for a closed
-        // fd; the call has no side effects on still-open fds.
-        unsafe { libc::fcntl(fd, libc::F_GETFD) != -1 }
+    /// Identity of the file an fd points at. Used to detect whether an fd has
+    /// been closed without false positives from fd-number reuse: a plain
+    /// `fcntl(F_GETFD)` open/closed check is racy under `cargo test`'s parallel
+    /// runner because another thread can grab the just-closed fd before the
+    /// assertion fires.
+    #[derive(Debug, PartialEq, Eq)]
+    struct FileId {
+        dev: u64,
+        ino: u64,
+    }
+
+    /// Captures the `(dev, ino)` of the file currently behind `fd`, or `None`
+    /// if the fd is closed.
+    fn fd_file_id(fd: i32) -> Option<FileId> {
+        use std::mem::MaybeUninit;
+        let mut buf = MaybeUninit::<libc::stat>::uninit();
+        // SAFETY: fstat fills buf on success; we only read it on rc == 0.
+        let rc = unsafe { libc::fstat(fd, buf.as_mut_ptr()) };
+        if rc != 0 {
+            return None;
+        }
+        let stat = unsafe { buf.assume_init() };
+        // The `as u64` casts make this cross-platform: on glibc Linux x86_64
+        // st_dev/st_ino are already u64, but on other Unix targets they may
+        // differ in width. Allow the redundant-on-this-target cast for
+        // portability.
+        #[allow(clippy::unnecessary_cast)]
+        Some(FileId { dev: stat.st_dev as u64, ino: stat.st_ino as u64 })
+    }
+
+    /// True iff `fd` is open AND points at the same file `expected` was
+    /// captured from. Returns false both when the fd has been closed and when
+    /// the OS has reassigned it to a different file.
+    fn fd_still_refers_to(fd: i32, expected: &FileId) -> bool {
+        matches!(fd_file_id(fd), Some(ref cur) if cur == expected)
     }
 
     #[test]
     fn reader_writer_fd_aliased_returns_err_and_closes_fd() {
         let tmp = NamedTempFile::new().unwrap();
         let fd = tmp.as_file().as_raw_fd();
+        let fd_id = fd_file_id(fd).expect("fd should be open initially");
         // Leak the temp-file handle so we retain the fd after close detection;
         // the Rust side is expected to close it on the error path.
         let _file_retained = tmp.into_file();
@@ -1690,7 +1720,7 @@ mod tests {
         let result = take_partition_updater_fds(fd, fd, -1);
         assert!(result.is_err(), "expected Err for aliased fds");
         assert!(
-            !fd_is_open(fd),
+            !fd_still_refers_to(fd, &fd_id),
             "aliased reader/writer fd was not closed by the error path"
         );
     }
@@ -1701,6 +1731,9 @@ mod tests {
         let tmp2 = NamedTempFile::new().unwrap();
         let shared_fd = tmp1.as_file().as_raw_fd();
         let parquet_meta_fd_handle = tmp2.as_file().as_raw_fd();
+        let shared_id = fd_file_id(shared_fd).expect("shared_fd should be open initially");
+        let parquet_meta_id =
+            fd_file_id(parquet_meta_fd_handle).expect("parquet_meta_fd should be open initially");
         // Retain both handles as owned fds and detach them.
         std::mem::forget(tmp1.into_file());
         std::mem::forget(tmp2.into_file());
@@ -1710,9 +1743,12 @@ mod tests {
             result.is_err(),
             "expected Err for aliased reader/writer fds"
         );
-        assert!(!fd_is_open(shared_fd), "shared fd was not closed");
         assert!(
-            !fd_is_open(parquet_meta_fd_handle),
+            !fd_still_refers_to(shared_fd, &shared_id),
+            "shared fd was not closed"
+        );
+        assert!(
+            !fd_still_refers_to(parquet_meta_fd_handle, &parquet_meta_id),
             "parquet_meta fd was not closed on the error path"
         );
     }
@@ -1723,6 +1759,8 @@ mod tests {
         let tmp_writer = NamedTempFile::new().unwrap();
         let reader_fd = tmp_reader.as_file().as_raw_fd();
         let writer_fd = tmp_writer.as_file().as_raw_fd();
+        let reader_id = fd_file_id(reader_fd).expect("reader_fd should be open initially");
+        let writer_id = fd_file_id(writer_fd).expect("writer_fd should be open initially");
         std::mem::forget(tmp_reader.into_file());
         std::mem::forget(tmp_writer.into_file());
 
@@ -1734,7 +1772,13 @@ mod tests {
         // given us ownership.
         drop(reader_file);
         drop(writer_file);
-        assert!(!fd_is_open(reader_fd));
-        assert!(!fd_is_open(writer_fd));
+        assert!(
+            !fd_still_refers_to(reader_fd, &reader_id),
+            "reader_fd still refers to the original file after drop"
+        );
+        assert!(
+            !fd_still_refers_to(writer_fd, &writer_id),
+            "writer_fd still refers to the original file after drop"
+        );
     }
 }
