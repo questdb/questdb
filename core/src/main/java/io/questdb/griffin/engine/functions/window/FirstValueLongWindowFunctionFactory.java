@@ -1534,9 +1534,10 @@ public class FirstValueLongWindowFunctionFactory extends AbstractWindowFunctionF
             key.put(partitionByRecord, partitionBySink);
             MapValue value = key.createValue();
 
-            if (value.isNew()) {
+            if (value.isNew() || value.getByte(1) == 0) {
                 firstValue = arg.getLong(record);
                 value.putLong(0, firstValue);
+                value.putByte(1, (byte) 1);
             } else {
                 firstValue = value.getLong(0);
             }
@@ -1554,6 +1555,15 @@ public class FirstValueLongWindowFunctionFactory extends AbstractWindowFunctionF
         @Override
         public long getLong(Record rec) {
             return firstValue;
+        }
+
+        @Override
+        public void resetPartition(Record record) {
+            partitionByRecord.of(record);
+            MapKey key = map.withKey();
+            key.put(partitionByRecord, partitionBySink);
+            MapValue value = key.createValue();
+            value.putByte(1, (byte) 0);
         }
 
         /**
@@ -2700,9 +2710,10 @@ public class FirstValueLongWindowFunctionFactory extends AbstractWindowFunctionF
             key.put(partitionByRecord, partitionBySink);
             MapValue mapValue = key.createValue();
 
-            if (mapValue.isNew()) {
+            if (mapValue.isNew() || mapValue.getByte(1) == 0) {
                 long d = arg.getLong(record);
                 mapValue.putLong(0, d);
+                mapValue.putByte(1, (byte) 1);
                 value = d;
             } else {
                 value = mapValue.getLong(0);
@@ -2720,6 +2731,15 @@ public class FirstValueLongWindowFunctionFactory extends AbstractWindowFunctionF
         @Override
         public long getLong(Record rec) {
             return value;
+        }
+
+        @Override
+        public void resetPartition(Record record) {
+            partitionByRecord.of(record);
+            MapKey key = map.withKey();
+            key.put(partitionByRecord, partitionBySink);
+            MapValue mapValue = key.createValue();
+            mapValue.putByte(1, (byte) 0);
         }
 
         /**
@@ -2888,5 +2908,9 @@ public class FirstValueLongWindowFunctionFactory extends AbstractWindowFunctionF
     static {
         FIRST_VALUE_COLUMN_TYPES = new ArrayColumnTypes();
         FIRST_VALUE_COLUMN_TYPES.add(ColumnType.LONG);
+        // Live-view ANCHOR contract: explicit "initialized" byte signals "no value
+        // captured yet for this partition" so resetPartition can re-arm the slot
+        // without relying on MapValue.isNew() (only fires on the first access).
+        FIRST_VALUE_COLUMN_TYPES.add(ColumnType.BYTE); // initialized flag
     }
 }

@@ -1567,12 +1567,22 @@ public class FirstValueTimestampWindowFunctionFactory extends AbstractWindowFunc
             key.put(partitionByRecord, partitionBySink);
             MapValue value = key.createValue();
 
-            if (value.isNew()) {
+            if (value.isNew() || value.getByte(1) == 0) {
                 firstValue = arg.getTimestamp(record);
                 value.putLong(0, firstValue);
+                value.putByte(1, (byte) 1);
             } else {
                 firstValue = value.getTimestamp(0);
             }
+        }
+
+        @Override
+        public void resetPartition(Record record) {
+            partitionByRecord.of(record);
+            MapKey key = map.withKey();
+            key.put(partitionByRecord, partitionBySink);
+            MapValue value = key.createValue();
+            value.putByte(1, (byte) 0);
         }
 
         /**
@@ -2793,13 +2803,23 @@ public class FirstValueTimestampWindowFunctionFactory extends AbstractWindowFunc
             key.put(partitionByRecord, partitionBySink);
             MapValue mapValue = key.createValue();
 
-            if (mapValue.isNew()) {
+            if (mapValue.isNew() || mapValue.getByte(1) == 0) {
                 long d = arg.getTimestamp(record);
                 mapValue.putLong(0, d);
+                mapValue.putByte(1, (byte) 1);
                 value = d;
             } else {
                 value = mapValue.getTimestamp(0);
             }
+        }
+
+        @Override
+        public void resetPartition(Record record) {
+            partitionByRecord.of(record);
+            MapKey key = map.withKey();
+            key.put(partitionByRecord, partitionBySink);
+            MapValue mapValue = key.createValue();
+            mapValue.putByte(1, (byte) 0);
         }
 
         /**
@@ -3000,5 +3020,9 @@ public class FirstValueTimestampWindowFunctionFactory extends AbstractWindowFunc
     static {
         FIRST_VALUE_COLUMN_TYPES = new ArrayColumnTypes();
         FIRST_VALUE_COLUMN_TYPES.add(ColumnType.TIMESTAMP);
+        // Live-view ANCHOR contract: explicit "initialized" byte signals "no value
+        // captured yet for this partition" so resetPartition can re-arm the slot
+        // without relying on MapValue.isNew() (only fires on the first access).
+        FIRST_VALUE_COLUMN_TYPES.add(ColumnType.BYTE); // initialized flag
     }
 }

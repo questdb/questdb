@@ -610,6 +610,43 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testAnchorResetsFirstValueAcrossDayBoundary() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (ts TIMESTAMP, x DOUBLE, sym SYMBOL) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 1s AS " +
+                    "SELECT ts, sym, first_value(x) OVER w AS f FROM base " +
+                    "WINDOW w AS (PARTITION BY sym ORDER BY ts ANCHOR EXPRESSION timestamp_floor('1d', ts))");
+
+            // Day 1 first_value sticks to the first row (10.0); day 2 first_value
+            // should reset to the new first row (100.0). Without anchor reset,
+            // day 2 would keep returning 10.0 (the original first row).
+            execute("INSERT INTO base (ts, x, sym) VALUES " +
+                    "('2026-08-01T00:00:00.000000Z', 10.0, 'a'), " +
+                    "('2026-08-01T01:00:00.000000Z', 20.0, 'a'), " +
+                    "('2026-08-01T02:00:00.000000Z', 30.0, 'a'), " +
+                    "('2026-08-02T00:00:00.000000Z', 100.0, 'a'), " +
+                    "('2026-08-02T01:00:00.000000Z', 200.0, 'a')");
+            drainWalQueue();
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                drainJob(job);
+            }
+            drainWalQueue();
+
+            assertSql(
+                    "ts\tsym\tf\n" +
+                            "2026-08-01T00:00:00.000000Z\ta\t10.0\n" +
+                            "2026-08-01T01:00:00.000000Z\ta\t10.0\n" +
+                            "2026-08-01T02:00:00.000000Z\ta\t10.0\n" +
+                            "2026-08-02T00:00:00.000000Z\ta\t100.0\n" +
+                            "2026-08-02T01:00:00.000000Z\ta\t100.0\n",
+                    "SELECT ts, sym, f FROM lv ORDER BY ts"
+            );
+
+            execute("DROP LIVE VIEW lv");
+        });
+    }
+
+    @Test
     public void testAnchorIsolatesPartitionsIndependently() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE base (ts TIMESTAMP, x INT, sym SYMBOL) TIMESTAMP(ts) PARTITION BY DAY WAL");
