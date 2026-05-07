@@ -24,14 +24,19 @@
 
 package io.questdb.test.cairo;
 
+import io.questdb.cairo.CairoException;
+import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.idx.BitpackUtils;
 import io.questdb.cairo.idx.PostingIndexChainEntry;
+import io.questdb.cairo.idx.PostingIndexChainHeader;
+import io.questdb.cairo.idx.PostingIndexChainPicker;
 import io.questdb.cairo.idx.PostingIndexChainWriter;
 import io.questdb.cairo.idx.PostingIndexNative;
 import io.questdb.cairo.idx.PostingIndexUtils;
 import io.questdb.cairo.idx.PostingIndexWriter;
+import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.vm.MemoryCMARWImpl;
 import io.questdb.std.FilesFacade;
@@ -50,7 +55,6 @@ import org.junit.Test;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
-import java.util.concurrent.atomic.AtomicReference;
 
 import static io.questdb.cairo.TableUtils.COLUMN_NAME_TXN_NONE;
 
@@ -444,13 +448,13 @@ public class PostingIndexCriticalIssuesTest extends AbstractCairoTest {
                 try {
                     try (RecordCursorFactory factory = select(
                             "SELECT count(*) AS c FROM (SELECT DISTINCT sym FROM t_stale_pk)")) {
-                        try (io.questdb.cairo.sql.RecordCursor c = factory.getCursor(sqlExecutionContext)) {
+                        try (RecordCursor c = factory.getCursor(sqlExecutionContext)) {
                             if (c.hasNext()) {
                                 count = c.getRecord().getLong(0);
                             }
                         }
                     }
-                } catch (io.questdb.cairo.CairoException ok) {
+                } catch (CairoException ok) {
                     // Acceptable post-fix outcome: clean error surfaced.
                     return;
                 } catch (AssertionError jvmAssert) {
@@ -668,7 +672,7 @@ public class PostingIndexCriticalIssuesTest extends AbstractCairoTest {
                             INSERT INTO t_truncate_half VALUES
                             ('2024-01-02T00:00:00', 'C')
                             """);
-                } catch (io.questdb.cairo.CairoException expected) {
+                } catch (CairoException expected) {
                     // OK — this is the clean failure mode.
                 } catch (NullPointerException | AssertionError leaked) {
                     Assert.fail(
@@ -1160,7 +1164,7 @@ public class PostingIndexCriticalIssuesTest extends AbstractCairoTest {
             String[] sampleKeys = {"AAAA", "BBBB", "CCCC"};
             try (RecordCursorFactory f = select("SELECT DISTINCT sym FROM walbench LIMIT 3")) {
                 int idx = 0;
-                try (io.questdb.cairo.sql.RecordCursor c = f.getCursor(sqlExecutionContext)) {
+                try (RecordCursor c = f.getCursor(sqlExecutionContext)) {
                     while (c.hasNext() && idx < sampleKeys.length) {
                         sampleKeys[idx++] = c.getRecord().getSymA(0).toString();
                     }
@@ -1183,7 +1187,7 @@ public class PostingIndexCriticalIssuesTest extends AbstractCairoTest {
                 long count = -1;
                 try (RecordCursorFactory f = select(
                         "SELECT count() FROM walbench WHERE sym = '" + key + "'")) {
-                    try (io.questdb.cairo.sql.RecordCursor c = f.getCursor(sqlExecutionContext)) {
+                    try (RecordCursor c = f.getCursor(sqlExecutionContext)) {
                         if (c.hasNext()) {
                             count = c.getRecord().getLong(0);
                         }
@@ -1232,7 +1236,7 @@ public class PostingIndexCriticalIssuesTest extends AbstractCairoTest {
                     long[] tops = {0L};
                     int[] shifts = {shift};
                     int[] indices = {1};
-                    int[] types = {io.questdb.cairo.ColumnType.LONG};
+                    int[] types = {ColumnType.LONG};
 
                     try (PostingIndexWriter writer = new PostingIndexWriter(
                             configuration, path.trimTo(plen), name, COLUMN_NAME_TXN_NONE)) {
@@ -1336,7 +1340,7 @@ public class PostingIndexCriticalIssuesTest extends AbstractCairoTest {
                     long[] tops = {0L};
                     int[] shifts = {shift};
                     int[] indices = {1}; // dummy writer-side index
-                    int[] types = {io.questdb.cairo.ColumnType.LONG};
+                    int[] types = {ColumnType.LONG};
 
                     try (PostingIndexWriter writer = new PostingIndexWriter(
                             configuration, path.trimTo(plen), name, COLUMN_NAME_TXN_NONE)) {
@@ -1464,14 +1468,13 @@ public class PostingIndexCriticalIssuesTest extends AbstractCairoTest {
                             final long sentinel = 0xDEAD_BEEF_CAFE_BABEL;
                             mem.putLong(footerOffset, sentinel);
 
-                            io.questdb.cairo.idx.PostingIndexChainHeader.Snapshot header =
-                                    new io.questdb.cairo.idx.PostingIndexChainHeader.Snapshot();
+                            PostingIndexChainHeader.Snapshot header = new PostingIndexChainHeader.Snapshot();
                             PostingIndexChainEntry.Snapshot entry = new PostingIndexChainEntry.Snapshot();
-                            int rc = io.questdb.cairo.idx.PostingIndexChainPicker.pick(
+                            int rc = PostingIndexChainPicker.pick(
                                     mem, /* pinnedTableTxn */ Long.MAX_VALUE,
                                     /* coverCount */ coverCount, header, entry);
                             Assert.assertEquals(
-                                    io.questdb.cairo.idx.PostingIndexChainPicker.RESULT_OK, rc);
+                                    PostingIndexChainPicker.RESULT_OK, rc);
                             Assert.assertEquals(
                                     "Fix A: missing cover slot is zero-filled instead "
                                             + "of dereferencing past the entry",
