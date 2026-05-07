@@ -132,9 +132,11 @@ pub fn can_skip_row_group(
                 || x == ColumnTypeTag::Decimal256 as i32
         );
 
-        // Read inline stats at the physical type width, not the narrowed QDB
-        // width. The _pm stores narrowed values (e.g., 1 byte for BYTE) but the
-        // pruning comparison expects physical type width (4 bytes for INT32).
+        // Inline stats hold parquet bytes verbatim at parquet physical type
+        // width: the convert path writes them this way and the comparison
+        // helpers below decode them as parquet-native LE values (i32 for
+        // INT32, i64 for INT64, etc., with parquet-aware overlays like
+        // is_date * MILLIS_PER_DAY).
         let phys_size = match physical_type {
             PhysicalType::Boolean => 1,
             PhysicalType::Int32 | PhysicalType::Float => 4,
