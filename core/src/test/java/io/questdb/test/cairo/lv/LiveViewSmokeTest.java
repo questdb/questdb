@@ -573,6 +573,43 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testAnchorResetsMaxAcrossDayBoundary() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (ts TIMESTAMP, x DOUBLE, sym SYMBOL) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 1s AS " +
+                    "SELECT ts, sym, max(x) OVER w AS m FROM base " +
+                    "WINDOW w AS (PARTITION BY sym ORDER BY ts ANCHOR EXPRESSION timestamp_floor('1d', ts))");
+
+            // Day 1 max climbs 5 -> 50; day 2 starts fresh at 3 (lower than day 1's
+            // 50). Without anchor reset, day 2's first row would carry forward
+            // max=50 instead of 3.
+            execute("INSERT INTO base (ts, x, sym) VALUES " +
+                    "('2026-08-01T00:00:00.000000Z', 5.0, 'a'), " +
+                    "('2026-08-01T01:00:00.000000Z', 50.0, 'a'), " +
+                    "('2026-08-01T02:00:00.000000Z', 25.0, 'a'), " +
+                    "('2026-08-02T00:00:00.000000Z', 3.0, 'a'), " +
+                    "('2026-08-02T01:00:00.000000Z', 7.0, 'a')");
+            drainWalQueue();
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                drainJob(job);
+            }
+            drainWalQueue();
+
+            assertSql(
+                    "ts\tsym\tm\n" +
+                            "2026-08-01T00:00:00.000000Z\ta\t5.0\n" +
+                            "2026-08-01T01:00:00.000000Z\ta\t50.0\n" +
+                            "2026-08-01T02:00:00.000000Z\ta\t50.0\n" +
+                            "2026-08-02T00:00:00.000000Z\ta\t3.0\n" +
+                            "2026-08-02T01:00:00.000000Z\ta\t7.0\n",
+                    "SELECT ts, sym, m FROM lv ORDER BY ts"
+            );
+
+            execute("DROP LIVE VIEW lv");
+        });
+    }
+
+    @Test
     public void testAnchorIsolatesPartitionsIndependently() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE base (ts TIMESTAMP, x INT, sym SYMBOL) TIMESTAMP(ts) PARTITION BY DAY WAL");
