@@ -293,6 +293,112 @@ public class PostingIndexCriticalIssuesTest extends AbstractCairoTest {
         });
     }
 
+    @Test
+    public void testRenameColumnSurvivesConcurrentSealedSidecarPurge() throws Exception {
+        // Regression for the race between TableWriter.renameColumn and
+        // PostingSealPurgeJob: when the rename's linkPostingIndexAuxFiles
+        // hardlinks a sealed posting sidecar (.pv or .pc<N>.*) under the
+        // new column name, the purge job — which runs on a separate
+        // worker — can delete the source file in between linkFile's own
+        // ff.exists(from) check and the ff.hardLink(from, to) call.
+        // Production hit this on the dbRoot2 replica during a fuzz-driven
+        // RENAME COLUMN: the purger removed new_col_0.pc0.6.0 for the
+        // live partition 236 microseconds before the rename's hardLink
+        // fired against the same path, the OS returned ENOENT, and
+        // TableWriter suspended the table.
+        //
+        // The fix lives in linkFile: on hardLink failure it re-checks
+        // the source, and treats a vanished source as if it never
+        // existed (returns false instead of throwing). The purger's
+        // scoreboard guarantee means the just-deleted version was
+        // already proven unreferenced, and the renamed column will only
+        // ever consult sealed files under its own (newName, newNameTxn)
+        // pair, so dropping the link is benign.
+        //
+        // The test makes the race deterministic with a FilesFacade that
+        // intercepts hardLink for sealed cover-data paths and removes
+        // the source before delegating to the real hardLink. The OS
+        // then returns ENOENT, exercising the same code path as a real
+        // concurrent purger.
+        final AtomicBoolean raceArmed = new AtomicBoolean(false);
+        final AtomicInteger raceFired = new AtomicInteger(0);
+        ff = new TestFilesFacadeImpl() {
+            @Override
+            public int hardLink(LPSZ src, LPSZ hardLink) {
+                // Match sealed cover-data files (.pc<N>.*). Excludes the
+                // .pci cover-info file, which the purger never touches.
+                // For the test column the include index is always 0, so
+                // .pc0. is a sufficient and exclusive discriminator.
+                if (raceArmed.get() && src != null && Utf8s.containsAscii(src, ".pc0.")) {
+                    super.removeQuiet(src);
+                    raceFired.incrementAndGet();
+                }
+                return super.hardLink(src, hardLink);
+            }
+        };
+
+        assertMemoryLeak(ff, () -> {
+            execute("""
+                    CREATE TABLE t_rename_pc_race (
+                        ts TIMESTAMP,
+                        sym SYMBOL INDEX TYPE POSTING
+                    ) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL
+                    """);
+            execute("""
+                    INSERT INTO t_rename_pc_race VALUES
+                    ('2024-01-01T00:00:00', 'A'),
+                    ('2024-01-01T01:00:00', 'B'),
+                    ('2024-01-01T02:00:00', 'A')
+                    """);
+            engine.releaseAllWriters();
+
+            TableToken token = engine.getTableTokenIfExists("t_rename_pc_race");
+            Assert.assertNotNull(token);
+
+            // Fabricate a sealed cover-data sidecar so the rename's
+            // scanSealedFiles enumeration has something to link. Doing
+            // this directly removes any dependency on the seal trigger
+            // path: as long as a .pc<N> file matching the source column
+            // exists in the partition directory, the visitor in
+            // linkPostingIndexAuxFiles will hand it to linkFile.
+            FilesFacade rawFf = configuration.getFilesFacade();
+            try (Path partitionPath = new Path()) {
+                partitionPath.of(configuration.getDbRoot()).concat(token).concat("2024-01-01").slash();
+                int plen = partitionPath.size();
+                LPSZ pcSrc = PostingIndexUtils.coverDataFileName(
+                        partitionPath.trimTo(plen), "sym", 0,
+                        COLUMN_NAME_TXN_NONE, COLUMN_NAME_TXN_NONE, 1L);
+                long fd = rawFf.openRW(pcSrc, configuration.getWriterFileOpenOpts());
+                Assert.assertTrue("setup: must be able to create fabricated .pc0.0.1", fd >= 0);
+                rawFf.close(fd);
+                Assert.assertTrue("setup: fabricated .pc0.0.1 must be on disk",
+                        rawFf.exists(PostingIndexUtils.coverDataFileName(
+                                partitionPath.trimTo(plen), "sym", 0,
+                                COLUMN_NAME_TXN_NONE, COLUMN_NAME_TXN_NONE, 1L)));
+            }
+
+            raceArmed.set(true);
+            try {
+                execute("ALTER TABLE t_rename_pc_race RENAME COLUMN sym TO sym_new");
+            } finally {
+                raceArmed.set(false);
+            }
+
+            Assert.assertTrue(
+                    "fault injection must fire: scanSealedFiles must hand the "
+                            + "fabricated .pc0.0.1 to linkFile so the test exercises "
+                            + "the ENOENT recovery branch. Got 0 firings.",
+                    raceFired.get() > 0
+            );
+
+            // Table must still be queryable on the new column name.
+            assertSql(
+                    "count\n3\n",
+                    "SELECT count(*) AS count FROM t_rename_pc_race WHERE sym_new IS NOT NULL"
+            );
+        });
+    }
+
     // Critical findings #2 (setMaxValue seqlock), #6 ([0, Long.MAX_VALUE)
     // conservative purge interval) and #7 (seal-loop partial failure
     // recovery) were RED placeholders during the v1 era. They are now

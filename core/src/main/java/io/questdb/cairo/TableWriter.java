@@ -3519,7 +3519,21 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             if (ff.hardLink(from, to) == FILES_RENAME_OK) {
                 LOG.debug().$("renamed [from=").$(from).$(", to=").$(to).I$();
                 return true;
-            } else if (ff.exists(to)) {
+            }
+            // PostingSealPurgeJob runs on a worker thread and may
+            // delete a sealed posting sidecar (.pv, .pc<N>.*) between this
+            // method's ff.exists(from) check above and ff.hardLink(from, to).
+            // The purge job's TxnScoreboard check guarantees no live reader
+            // needs the version it removes, and the renamed column will only
+            // ever consult sealed files under its own (newName, newNameTxn)
+            // pair, so a vanished source is benign. Treat it as if it never
+            // existed. Other linkFile callers hold an exclusive writer lock
+            // and operate on files no other thread can remove, so this branch
+            // is unreachable for them.
+            if (Files.isErrnoFileDoesNotExist(ff.errno()) && !ff.exists(from)) {
+                return false;
+            }
+            if (ff.exists(to)) {
                 LOG.info().$("rename destination file exists, assuming previously failed rename attempt [path=").$(to).I$();
                 try {
                     ff.remove(to);
