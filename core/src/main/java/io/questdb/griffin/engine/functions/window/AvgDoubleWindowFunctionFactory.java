@@ -400,6 +400,22 @@ public class AvgDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
                 }
             }
         }
+
+        @Override
+        public void resetPartition(Record record) {
+            // ANCHOR-driven reset (RFC 123). The Map value's [sum, count] slots
+            // return to identity so the next row in the new bucket starts fresh.
+            // findValue() returns null when the partition has no recorded state
+            // yet — nothing to reset.
+            partitionByRecord.of(record);
+            MapKey key = map.withKey();
+            key.put(partitionByRecord, partitionBySink);
+            MapValue value = key.findValue();
+            if (value != null) {
+                value.putDouble(0, 0.0);
+                value.putLong(1, 0L);
+            }
+        }
     }
 
     // Handles avg() over (partition by x order by ts range between [unbounded | y] preceding and [z preceding | current row])

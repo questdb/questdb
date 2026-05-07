@@ -357,6 +357,30 @@ public interface WindowFunction extends Function {
      **/
     void reset();
 
+    /**
+     * Resets the per-partition accumulator for the partition the supplied record
+     * belongs to. Called by the live-view ANCHOR runtime when the anchor expression's
+     * value changes within a partition — the partition's state must be cleared to
+     * the identity value before the new bucket's first row is processed.
+     * <p>
+     * The default no-op is correct for window functions whose state is intrinsically
+     * per-row (ranking) or that do not maintain partitioned state. Window functions
+     * that key per-partition state on PARTITION BY override this to reset the matching
+     * Map entry's value bytes to identity (e.g. {@code sum -> 0}, {@code count -> 0},
+     * {@code min/max -> NaN}, etc.).
+     * <p>
+     * The function is expected to use its own {@code partitionByRecord} +
+     * {@code partitionBySink} to derive the Map key from {@code record}; for the
+     * common case of multiple functions on the same named WINDOW, all of them use
+     * the same partition shape, so the per-record cost of re-keying is just a
+     * memcpy.
+     * <p>
+     * Phase 1 of RFC 123 wires this from {@link io.questdb.cairo.lv.LiveViewInstance};
+     * non-live-view queries never invoke it.
+     */
+    default void resetPartition(Record record) {
+    }
+
     /*
       Set index of record chain column used to store window function result.
      */
