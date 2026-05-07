@@ -399,6 +399,22 @@ public class KSumDoubleWindowFunctionFactory extends AbstractWindowFunctionFacto
             // so no fixup is needed. Partitions with all NULLs have no map entry and
             // pass2() handles that by returning NaN.
         }
+
+        @Override
+        public void resetPartition(Record record) {
+            // ANCHOR-driven reset (RFC 123). [sum, compensation, count] all return to zero;
+            // the next finite value re-runs Kahan with sum=0, compensation=0 which
+            // correctly anchors the new bucket on the post-reset row.
+            partitionByRecord.of(record);
+            MapKey key = map.withKey();
+            key.put(partitionByRecord, partitionBySink);
+            MapValue value = key.findValue();
+            if (value != null) {
+                value.putDouble(0, 0.0);
+                value.putDouble(1, 0.0);
+                value.putLong(2, 0L);
+            }
+        }
     }
 
     // Handles ksum() over (partition by x order by ts range between [unbounded | y] preceding and [z preceding | current row])

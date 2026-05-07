@@ -366,6 +366,17 @@ public class CountFunctionFactoryHelper {
             long val = value != null ? value.getLong(0) : 0;
             Unsafe.putLong(spi.getAddress(recordOffset, columnIndex), val);
         }
+
+        @Override
+        public void resetPartition(Record record) {
+            partitionByRecord.of(record);
+            MapKey key = map.withKey();
+            key.put(partitionByRecord, partitionBySink);
+            MapValue value = key.findValue();
+            if (value != null) {
+                value.putLong(0, 0L);
+            }
+        }
     }
 
     // Handles count(arg) over (partition by x order by ts range between [unbounded | y] preceding and [z preceding | current row])
