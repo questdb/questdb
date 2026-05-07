@@ -352,12 +352,16 @@ public class PostingIndexCriticalIssuesTest extends AbstractCairoTest {
                 // Match cover-data files only (".pc<digit>."), not ".pci".
                 // The seal purge only deletes superseded .pc<N> files; the
                 // .pci link is not racy, and tripping it here would mask
-                // the actual fix path.
+                // the actual fix path. Anchor on the column name without a
+                // leading separator so the test is portable across
+                // platforms with different path separators; the negative
+                // match keeps "sym.pc0." from matching "new_sym.pc0.".
                 if (armed.get()
                         && src != null
-                        && Utf8s.containsAscii(src, "/sym.pc0.")
+                        && Utf8s.containsAscii(src, "sym.pc0.")
+                        && !Utf8s.containsAscii(src, "new_sym.pc0.")
                         && hardLink != null
-                        && Utf8s.containsAscii(hardLink, "/new_sym.pc0.")) {
+                        && Utf8s.containsAscii(hardLink, "new_sym.pc0.")) {
                     // Simulate PostingSealPurgeJob completing between the
                     // visitor's exists() check and our hardLink call. The
                     // file is gone; hardLink will return ENOENT.
