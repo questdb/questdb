@@ -96,9 +96,12 @@ cluster/node identity, and a capabilities bitfield so clients can route reads
 to primary vs replica. Ingest is pinned to version 1 because the v2 bump has
 no ingest semantics.
 
-The connection-level contract from the ingress spec applies: every message's
-header version byte must equal the negotiated version, and the server rejects
-mismatches with a parse error and closes the WebSocket.
+The connection-level contract from the ingress spec applies on the
+server-to-client direction (§4): the header version byte on every
+server-to-client frame must equal the negotiated version, and the client
+rejects mismatches with a decode error and closes the WebSocket.
+Client-to-server frames carry no header and therefore no per-message version
+byte; the negotiated version is fixed for the lifetime of the connection.
 
 ### Batch body compression
 
@@ -121,8 +124,14 @@ Absent `X-QWP-Accept-Encoding` the server defaults to `raw`.
 
 ## 4. Message Structure
 
-The egress header is **byte-identical** to the ingress header (12 bytes,
-little-endian throughout):
+The egress wire format is direction-asymmetric. Server-to-client frames carry
+the 12-byte QWP header (byte-identical to ingress); client-to-server frames
+omit it and ship the body directly.
+
+### Server-to-client frames
+
+`RESULT_BATCH`, `RESULT_END`, `QUERY_ERROR`, `EXEC_DONE`, `CACHE_RESET`, and
+`SERVER_INFO` are framed with the 12-byte header, little-endian throughout:
 
 ```
 Offset  Size  Type    Field           Description
@@ -138,7 +147,7 @@ The **first byte of the payload** is the message kind. The remaining payload
 layout depends on the kind. For `RESULT_BATCH` the rest of the payload is the
 existing ingress payload format (optional delta symbol dictionary followed
 by exactly one table block); for control kinds the layout is defined per
-kind in sections 6 through 11.
+kind in sections 7 through 11.
 
 ```
 +-----------------------------------------+
@@ -152,9 +161,31 @@ kind in sections 6 through 11.
 +-----------------------------------------+
 ```
 
-Putting `msg_kind` in the payload (rather than the header) keeps the codec
-shared with ingress: header parsing, framing, and length checks are identical.
-Endpoint disambiguation is sufficient because connections are direction-pure.
+Carrying `msg_kind` in the payload (rather than as a dedicated header field)
+keeps the framing-layer codec shared with ingress: header parsing, length
+checks, and frame routing are identical. Endpoint disambiguation
+(`/write/v4` vs `/read/v1`) is sufficient because connections are
+direction-pure.
+
+### Client-to-server frames
+
+`QUERY_REQUEST`, `CANCEL`, and `CREDIT` ship the body directly: the WebSocket
+binary frame begins with `msg_kind` and is followed immediately by the
+kind-specific body. There is no preceding QWP header.
+
+```
++-----------------------------------------+
+| msg_kind: uint8                         |
+| (kind-specific body)                    |
++-----------------------------------------+
+```
+
+The fields a header would carry have no role on the inbound path: the
+WebSocket binary frame already bounds the payload length, the protocol
+version is pinned by the upgrade negotiation (§3), and `flags` /
+`table_count` describe table data that no client-to-server kind carries.
+Per-kind body layouts are defined in §6 (`QUERY_REQUEST`), §10 (`CANCEL`),
+and §11 (`CREDIT`).
 
 ## 5. Message Kinds
 
@@ -388,7 +419,7 @@ spec does not introduce a separate "QWP NaN" representation — a row carrying
 
 ### 11.5.1 Array element NULLs
 
-Array column types (`DOUBLE_ARRAY` 0x18, `LONG_ARRAY` 0x12) ship element bytes
+Array column types (`DOUBLE_ARRAY` 0x11, `LONG_ARRAY` 0x12) ship element bytes
 verbatim with **no per-element null bitmap**. Element-level NULL is encoded by
 re-using the element-type's row-level sentinel from the table above:
 
@@ -590,11 +621,110 @@ unreachable".
 
 With `failover=on` (the default), a transport failure mid-query triggers a
 transparent reconnect to another endpoint that still matches the filter, and
-the client re-submits the in-flight `QUERY_REQUEST`. Accumulating handlers
-observe a `onFailoverReset` callback (in the Java client) just before
-replayed batches start arriving with `batch_seq` restarting at 0 on the new
-node. `failover=off` restores the pre-v2 behaviour where transport failures
-surface directly through `onError`.
+the client re-submits the query. Accumulating handlers observe a
+`onFailoverReset` callback (in the Java client) just before replayed batches
+start arriving with `batch_seq` restarting at 0 on the new node.
+`failover=off` restores the pre-v2 behaviour where transport failures
+surface directly through `onError`. The full state machine is documented in
+the next subsection.
+
+### Failover semantics
+
+The contract below defines the observable behaviour a v2 client implements
+when `failover=on`. The spec leaves the retry envelope (attempt cap,
+backoff schedule) to implementations but pins everything a caller can
+observe through the public API.
+
+#### What triggers failover
+
+| Event | Fails over? | Notes |
+|---|---|---|
+| `QUERY_ERROR` frame from server | No | Surfaced through `onError`; the connection remains usable for the next query. |
+| Client-side bind encoding error | No | Surfaced through `onError` before any frame leaves the client. |
+| Server-initiated WebSocket close | Yes | Transport-level. |
+| Truncated, malformed, or unknown-`msg_kind` frame | Yes | Transport-level. |
+| Decoder desync (e.g., dict `deltaStart` mismatch, schema-id reference miss) | Yes | Transport-level. |
+| `send` / `recv` raises an I/O exception | Yes | Transport-level. |
+
+Only transport-level faults latch a sticky terminal state on the
+connection. Per-query `QUERY_ERROR` is not terminal: only the cursor is
+affected, and the next `execute()` runs on the same connection.
+
+#### Reconnect
+
+On a transport fault during `execute()`:
+
+1. Tear down the broken connection (close the WebSocket, join the I/O
+   thread, release buffers).
+2. Walk the configured endpoint list starting **after** the just-failed
+   endpoint, attempting each in order. For each candidate, open a fresh
+   WebSocket, read `SERVER_INFO`, and accept the endpoint if its role
+   passes the `target=` filter (see "Client routing" above).
+3. Between consecutive failover attempts, sleep an interruptible
+   implementation-defined backoff. A thread interrupt MUST abort the
+   sleep and surface as an `onError`, so a blocked `execute()` can be
+   cancelled.
+4. After an implementation-defined cap on total attempts, give up and
+   dispatch `onError` with `STATUS_INTERNAL_ERROR`. The error message
+   MUST identify failover exhaustion and SHOULD include the most recent
+   transport-failure message and the attempt count.
+
+#### Cache state on reconnect
+
+Both connection-scoped caches (§12) reset implicitly because the new
+WebSocket carries fresh server-side state:
+
+- Delta symbol dictionary: empty (`size=0`, `heapPos=0`). The next
+  `RESULT_BATCH` carrying `FLAG_DELTA_SYMBOL_DICT` MUST start its delta
+  section at `deltaStart=0`, the same invariant `CACHE_RESET` enforces
+  (§11.7).
+- Schema registry: empty. The next `RESULT_BATCH` MUST ship its schema
+  in `SCHEMA_MODE_FULL`.
+
+#### Replay
+
+After a successful reconnect, the client re-submits the query on the new
+connection: same SQL text, same bind encoding, **fresh `request_id`** (the
+new server has no record of the original). The new cursor's `batch_seq`
+restarts at 0; the eventual `RESULT_END`'s `total_rows` reflects only the
+rows produced on the new connection.
+
+#### User callback contract
+
+Before the first replayed `RESULT_BATCH` is dispatched on the new
+connection, the client invokes a user callback (`onFailoverReset` in the
+Java client) carrying the new endpoint's `SERVER_INFO`. Handlers that
+accumulate state across batches (running totals, pagination cursors, row
+buffers) MUST treat this callback as a signal to discard everything seen
+before the reset and restart accumulation. If the same query crosses N
+failovers, the handler observes N `onFailoverReset` calls.
+
+A handler with no accumulation contract (e.g., one that streams rows
+directly to a downstream sink) is allowed to ignore the callback, but its
+sink will see duplicate rows whenever a failover fires.
+
+#### `failover=off`
+
+With `failover=off` the reconnect loop is skipped: a transport fault
+surfaces directly through `onError` with `STATUS_INTERNAL_ERROR` and
+latches a sticky terminal state on the connection. Subsequent `execute()`
+calls on the same client short-circuit through `onError` carrying the
+latched status and message until the caller explicitly reconnects. The
+spec does not mandate a runtime reconnect API; implementations MAY require
+a fresh client instance (the Java client does).
+
+#### Connection-string knobs
+
+| Key | Default | Notes |
+|---|---|---|
+| `failover=on\|off` | `on` | Master switch. |
+| `failover_max_attempts=N` | implementation-defined (Java: 8) | Total attempts, including the original. |
+| `failover_backoff_initial_ms=N` | implementation-defined (Java: 50) | First inter-attempt sleep, in milliseconds. |
+| `failover_backoff_max_ms=N` | implementation-defined (Java: 1000) | Ceiling on the backoff, in milliseconds. |
+
+Implementations MAY add further knobs but SHOULD expose at least these
+four under the names above so connection strings stay portable across
+client implementations.
 
 ## 12. Schema and Symbol Dictionary Scope
 
@@ -786,26 +916,19 @@ to receive `CACHE_RESET` at any query boundary.
 ### Example 1: Simple unbounded query
 
 Client sends `SELECT id, value FROM sensors LIMIT 2` with no bind
-parameters and no credit window.
+parameters and no credit window. Client-to-server frames carry no QWP
+header (§4); the WebSocket binary frame starts at `msg_kind`.
 
 ```
 QUERY_REQUEST:
-  Header:
-    51 57 50 31         magic "QWP1"
-    01                  version 1
-    00                  flags
-    00 00               table_count = 0
-    XX XX XX XX         payload_length
-
-  Payload:
-    10                  msg_kind = QUERY_REQUEST
-    01 00 00 00 00 00 00 00   request_id = 1
-    24                  sql_length = 36
-    53 45 4C 45 43 54 20 69 64 2C 20 76 61 6C 75 65
-    20 46 52 4F 4D 20 73 65 6E 73 6F 72 73 20 4C 49
-    4D 49 54 20 32     "SELECT id, value FROM sensors LIMIT 2"
-    00                  initial_credit = 0 (unbounded)
-    00                  bind_count = 0
+  10                       msg_kind = QUERY_REQUEST
+  01 00 00 00 00 00 00 00  request_id = 1
+  25                       sql_length = 37
+  53 45 4C 45 43 54 20 69 64 2C 20 76 61 6C 75 65
+  20 46 52 4F 4D 20 73 65 6E 73 6F 72 73 20 4C 49
+  4D 49 54 20 32           "SELECT id, value FROM sensors LIMIT 2"
+  00                       initial_credit = 0 (unbounded)
+  00                       bind_count = 0
 ```
 
 Server responds:
@@ -897,6 +1020,52 @@ CREDIT:
 ```
 
 Server resumes streaming.
+
+### Example 4: Mid-stream failover
+
+Client connects to a two-node cluster with
+`addr=db-a:9000,db-b:9000;target=primary;failover=on`. A query begins
+streaming from `db-a`; mid-result, `db-a`'s WebSocket drops. The client
+walks to `db-b`, replays, and the handler observes one
+`onFailoverReset` interleaved with the batch stream.
+
+```
+client -> db-a    WebSocket upgrade /read/v1
+db-a   -> client  101 Upgrade + SERVER_INFO(role=PRIMARY, node=db-a)
+
+client -> db-a    QUERY_REQUEST(request_id=42, sql="SELECT ...")
+db-a   -> client  RESULT_BATCH(request_id=42, batch_seq=0, schema_mode=0x00)
+db-a   -> client  RESULT_BATCH(request_id=42, batch_seq=1, schema_mode=0x01)
+                  (handler.onBatch invoked twice)
+                  (transport failure: db-a closes the socket)
+
+(client tears down the broken connection, sleeps backoff)
+
+client -> db-b    WebSocket upgrade /read/v1
+db-b   -> client  101 Upgrade + SERVER_INFO(role=PRIMARY, node=db-b)
+                  (target=primary passes; client invokes
+                   handler.onFailoverReset(server_info=db-b))
+
+client -> db-b    QUERY_REQUEST(request_id=43, sql="SELECT ...")
+                  (fresh request_id; delta dict and schema registry empty)
+db-b   -> client  RESULT_BATCH(request_id=43, batch_seq=0, schema_mode=0x00, deltaStart=0)
+db-b   -> client  RESULT_BATCH(request_id=43, batch_seq=1, schema_mode=0x01)
+db-b   -> client  RESULT_BATCH(request_id=43, batch_seq=2, schema_mode=0x01)
+db-b   -> client  RESULT_END(request_id=43)
+```
+
+The handler observes, in order:
+
+1. Two `onBatch` callbacks for the rows `db-a` sent before the failure.
+2. One `onFailoverReset(server_info=db-b)` callback.
+3. Three `onBatch` callbacks for the full result replayed from `db-b`.
+4. A `RESULT_END` whose `total_rows` reflects only what `db-b` produced;
+   the rows `db-a` sent before the failure are not counted.
+
+Accumulating handlers (running totals, pagination cursors) reset on step 2
+and re-accumulate from `db-b`'s batches. Streaming handlers that do not
+implement `onFailoverReset` see the rows `db-a` sent duplicated in their
+downstream sink.
 
 ## 18. Open Questions
 
