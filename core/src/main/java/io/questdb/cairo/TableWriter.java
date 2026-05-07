@@ -3515,10 +3515,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     }
 
     private static boolean linkFile(FilesFacade ff, LPSZ from, LPSZ to) {
-        return linkFile(ff, from, to, false);
-    }
-
-    private static boolean linkFile(FilesFacade ff, LPSZ from, LPSZ to, boolean tolerateConcurrentDelete) {
         if (ff.exists(from)) {
             if (ff.hardLink(from, to) == FILES_RENAME_OK) {
                 LOG.debug().$("renamed [from=").$(from).$(", to=").$(to).I$();
@@ -3544,16 +3540,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     LOG.debug().$("renamed [from=").$(from).$(", to=").$(to).I$();
                     return true;
                 }
-            }
-
-            // The source existed at the start of this call but hardLink reported it
-            // is gone now: PostingSealPurgeJob runs concurrently with rename column
-            // and removes superseded sealed-posting files. The purge contract
-            // guarantees the file is no longer needed by any reader, so the
-            // renamed column does not need it either. Skip silently.
-            if (tolerateConcurrentDelete && Files.isErrnoFileDoesNotExist(ff.errno()) && !ff.exists(from)) {
-                LOG.info().$("link source vanished mid-link, skipping [from=").$(from).$(", to=").$(to).I$();
-                return false;
             }
 
             throw CairoException.critical(ff.errno())
@@ -6776,13 +6762,9 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 if (postingColumnNameTxn != srcColumnNameTxn) {
                     return;
                 }
-                // PostingSealPurgeJob may delete a superseded .pc<N> file between
-                // scanSealedFiles' iterateDir and our linkFile call. Tolerate that
-                // race: a purged generation is by contract no longer reader-visible.
                 linkFile(ff,
                         PostingIndexUtils.coverDataFileName(path.trimTo(srcDirLen), srcColumnName, includeIdx, srcColumnNameTxn, coveredColumnNameTxn, sealTxn),
-                        PostingIndexUtils.coverDataFileName(other.trimTo(dstDirLen), dstColumnName, includeIdx, dstColumnNameTxn, coveredColumnNameTxn, sealTxn),
-                        true
+                        PostingIndexUtils.coverDataFileName(other.trimTo(dstDirLen), dstColumnName, includeIdx, dstColumnNameTxn, coveredColumnNameTxn, sealTxn)
                 );
             }
 
