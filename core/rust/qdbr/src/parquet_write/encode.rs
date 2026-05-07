@@ -212,7 +212,13 @@ fn encode_int32_dispatch(
             options,
             bloom_set,
         ),
-        (Encoding::Plain, Byte) => plain::encode_int_notnull::<i8, i32>(
+        // Byte/Short/Char have no in-band null sentinel but need Optional repetition
+        // so column-top rows can be marked NULL via def-level=0. The Nullable impls
+        // for i8/i16/u16 return false unconditionally, so only column-top rows take
+        // the null branch; data values are never reported null. See schema.rs for
+        // the matching is_notnull_type narrowing and parquet_write/mod.rs for the
+        // Nullable impls.
+        (Encoding::Plain, Byte) => plain::encode_int_nullable::<i8, i32, false>(
             columns,
             first_partition_start,
             last_partition_end,
@@ -220,7 +226,7 @@ fn encode_int32_dispatch(
             options,
             bloom_set,
         ),
-        (Encoding::Plain, Short) => plain::encode_int_notnull::<i16, i32>(
+        (Encoding::Plain, Short) => plain::encode_int_nullable::<i16, i32, false>(
             columns,
             first_partition_start,
             last_partition_end,
@@ -228,7 +234,7 @@ fn encode_int32_dispatch(
             options,
             bloom_set,
         ),
-        (Encoding::Plain, Char) => plain::encode_int_notnull::<u16, i32>(
+        (Encoding::Plain, Char) => plain::encode_int_nullable::<u16, i32, true>(
             columns,
             first_partition_start,
             last_partition_end,
@@ -286,16 +292,10 @@ fn encode_int32_dispatch(
             options,
             bloom_set,
         ),
-        (Encoding::DeltaBinaryPacked, Byte) => delta_binary_packed::encode_int_notnull::<i8, i32>(
-            columns,
-            first_partition_start,
-            last_partition_end,
-            pt,
-            options,
-            bloom_set,
-        ),
-        (Encoding::DeltaBinaryPacked, Short) => {
-            delta_binary_packed::encode_int_notnull::<i16, i32>(
+        // Byte/Short/Char need Optional repetition for column-top NULL preservation;
+        // see the Plain arm above for rationale.
+        (Encoding::DeltaBinaryPacked, Byte) => {
+            delta_binary_packed::encode_int_nullable::<i8, i32, false>(
                 columns,
                 first_partition_start,
                 last_partition_end,
@@ -304,14 +304,26 @@ fn encode_int32_dispatch(
                 bloom_set,
             )
         }
-        (Encoding::DeltaBinaryPacked, Char) => delta_binary_packed::encode_int_notnull::<u16, i32>(
-            columns,
-            first_partition_start,
-            last_partition_end,
-            pt,
-            options,
-            bloom_set,
-        ),
+        (Encoding::DeltaBinaryPacked, Short) => {
+            delta_binary_packed::encode_int_nullable::<i16, i32, false>(
+                columns,
+                first_partition_start,
+                last_partition_end,
+                pt,
+                options,
+                bloom_set,
+            )
+        }
+        (Encoding::DeltaBinaryPacked, Char) => {
+            delta_binary_packed::encode_int_nullable::<u16, i32, true>(
+                columns,
+                first_partition_start,
+                last_partition_end,
+                pt,
+                options,
+                bloom_set,
+            )
+        }
         (Encoding::DeltaBinaryPacked, IPv4) => {
             delta_binary_packed::encode_int_nullable::<crate::parquet_write::IPv4, i32, true>(
                 columns,
@@ -362,7 +374,9 @@ fn encode_int32_dispatch(
             options,
             bloom_set,
         ),
-        (Encoding::RleDictionary, Byte) => rle_dictionary::encode_int_notnull::<i8, i32>(
+        // Byte/Short/Char need Optional repetition for column-top NULL preservation;
+        // see the Plain arm above for rationale.
+        (Encoding::RleDictionary, Byte) => rle_dictionary::encode_int_nullable::<i8, i32>(
             columns,
             first_partition_start,
             last_partition_end,
@@ -370,7 +384,7 @@ fn encode_int32_dispatch(
             options,
             bloom_set,
         ),
-        (Encoding::RleDictionary, Short) => rle_dictionary::encode_int_notnull::<i16, i32>(
+        (Encoding::RleDictionary, Short) => rle_dictionary::encode_int_nullable::<i16, i32>(
             columns,
             first_partition_start,
             last_partition_end,
@@ -378,7 +392,7 @@ fn encode_int32_dispatch(
             options,
             bloom_set,
         ),
-        (Encoding::RleDictionary, Char) => rle_dictionary::encode_int_notnull::<u16, i32>(
+        (Encoding::RleDictionary, Char) => rle_dictionary::encode_int_nullable::<u16, i32>(
             columns,
             first_partition_start,
             last_partition_end,
