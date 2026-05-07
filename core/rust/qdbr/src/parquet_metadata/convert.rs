@@ -33,10 +33,8 @@ use crate::parquet_metadata::types::{
     encode_stat_sizes, Codec, ColumnFlags, EncodingMask, FieldRepetition, StatFlags,
 };
 use crate::parquet_metadata::writer::ParquetMetaWriter;
-use crate::parquet_read::decoders::int32::DayToMillisConverter;
-use crate::parquet_read::decoders::int96::Int96ToTimestampConverter;
 use parquet2::metadata::FileMetaData;
-use parquet2::schema::types::{PhysicalType, PrimitiveLogicalType, TimeUnit};
+use parquet2::schema::types::{PhysicalType, PrimitiveLogicalType};
 use parquet2::statistics::{
     BinaryStatistics, BooleanStatistics, FixedLenStatistics, PrimitiveStatistics, Statistics,
 };
@@ -321,23 +319,13 @@ fn build_column_chunk(
                 raw.null_count = nc.max(0) as u64;
             }
 
-            // Extract raw min/max from parquet stats, then convert to QuestDB representation.
-            let (raw_min, raw_max, distinct_count) =
+            // Inline slots store parquet bytes verbatim at parquet physical
+            // width. The skip path reads them at parquet physical width and
+            // applies parquet-aware interpretations (e.g., Int32 Date days
+            // multiplied by MILLIS_PER_DAY) on its own. Any width or unit
+            // change here would break that round-trip.
+            let (min_bytes, max_bytes, distinct_count) =
                 extract_stat_values(stats.as_ref(), col_chunk.physical_type());
-
-            let logical_type = col_chunk
-                .descriptor()
-                .descriptor
-                .primitive_type
-                .logical_type
-                .as_ref();
-
-            let min_bytes = raw_min.and_then(|v| {
-                convert_stat_to_qdb(&v, col_chunk.physical_type(), logical_type, col_type_tag)
-            });
-            let max_bytes = raw_max.and_then(|v| {
-                convert_stat_to_qdb(&v, col_chunk.physical_type(), logical_type, col_type_tag)
-            });
 
             if let Some(dc) = distinct_count {
                 stat_flags = stat_flags.with_distinct_count();
@@ -474,94 +462,6 @@ fn extract_stat_values(stats: &dyn Statistics, physical_type: PhysicalType) -> R
     }
 }
 
-/// Converts a parquet stat value (raw LE bytes) to QuestDB's internal representation.
-///
-/// This is the single source of truth for the mapping. Handles:
-/// - **Narrowing**: INT32-backed types (Byte, Short, Char, GeoByte, GeoShort) are
-///   truncated from 4 bytes to their QuestDB fixed size.
-/// - **Date days->millis**: INT32 Date (days since epoch) -> i64 millis.
-/// - **Timestamp millis->micros**: INT64 Timestamp(Millis) with QDB Timestamp type -> i64 micros.
-/// - **INT96->nanos**: 12-byte Julian day + nanos-of-day -> i64 epoch nanos.
-///
-/// Returns `None` if the input is empty.
-fn convert_stat_to_qdb(
-    raw: &[u8],
-    physical_type: PhysicalType,
-    logical_type: Option<&PrimitiveLogicalType>,
-    col_type_tag: Option<ColumnTypeTag>,
-) -> Option<Vec<u8>> {
-    if raw.is_empty() {
-        return None;
-    }
-
-    match (physical_type, col_type_tag) {
-        // Narrowing: INT32 -> 1 byte for Byte/GeoByte.
-        (PhysicalType::Int32, Some(ColumnTypeTag::Byte | ColumnTypeTag::GeoByte))
-            if !raw.is_empty() =>
-        {
-            Some(vec![raw[0]])
-        }
-
-        // Narrowing: INT32 -> 2 bytes for Short/Char/GeoShort.
-        (
-            PhysicalType::Int32,
-            Some(ColumnTypeTag::Short | ColumnTypeTag::Char | ColumnTypeTag::GeoShort),
-        ) if raw.len() >= 2 => Some(vec![raw[0], raw[1]]),
-
-        // Date stored as INT32 days -> i64 millis.
-        // i32 * 86_400_000 always fits in i64 (max ≈ 1.86e17 < 9.22e18).
-        (PhysicalType::Int32, Some(ColumnTypeTag::Date)) if raw.len() == 4 => {
-            // Safety: we just checked the length is 4 bytes.
-            let days = i32::from_le_bytes(unsafe { raw[..4].try_into().unwrap_unchecked() });
-            let millis = DayToMillisConverter::convert(days);
-            Some(millis.to_le_bytes().to_vec())
-        }
-
-        // External parquet Date (INT32 + Date logical type) without QdbMeta.
-        (PhysicalType::Int32, None) if raw.len() == 4 => {
-            if matches!(logical_type, Some(PrimitiveLogicalType::Date)) {
-                // Safety: we just checked the length is 4 bytes.
-                let days = i32::from_le_bytes(unsafe { raw[..4].try_into().unwrap_unchecked() });
-                let millis = DayToMillisConverter::convert(days);
-                Some(millis.to_le_bytes().to_vec())
-            } else {
-                Some(raw.to_vec())
-            }
-        }
-
-        // Timestamp(Millis) -> micros, only for QDB Timestamp (not Date).
-        (PhysicalType::Int64, Some(ColumnTypeTag::Timestamp)) if raw.len() == 8 => {
-            if matches!(
-                logical_type,
-                Some(PrimitiveLogicalType::Timestamp { unit: TimeUnit::Milliseconds, .. })
-            ) {
-                // Safety: we just checked the length is 8 bytes.
-                let millis = i64::from_le_bytes(unsafe { raw[..8].try_into().unwrap_unchecked() });
-                let micros = millis.checked_mul(1000).unwrap_or(if millis >= 0 {
-                    i64::MAX
-                } else {
-                    i64::MIN
-                });
-                Some(micros.to_le_bytes().to_vec())
-            } else {
-                // Micros or Nanos: pass through (Nanos stays nanos with NS flag).
-                Some(raw.to_vec())
-            }
-        }
-
-        // INT96 -> epoch nanos.
-        (PhysicalType::Int96, _) if raw.len() == 12 => {
-            let mut arr = [0u8; 12];
-            arr.copy_from_slice(&raw[..12]);
-            let nanos = Int96ToTimestampConverter::convert(arr.into());
-            Some(nanos.to_le_bytes().to_vec())
-        }
-
-        // Pass-through for everything else.
-        _ => Some(raw.to_vec()),
-    }
-}
-
 fn build_column_chunk_from_thrift(
     meta: &parquet2::thrift_format::ColumnMetaData,
     schema_col: Option<&parquet2::metadata::ColumnDescriptor>,
@@ -628,15 +528,10 @@ fn build_column_chunk_from_thrift(
             }
 
             let physical_type = col_desc.descriptor.primitive_type.physical_type;
-            let (raw_min, raw_max, distinct_count) =
+            // See build_column_chunk for the rationale: inline slots hold
+            // parquet bytes verbatim, no width or unit conversion here.
+            let (min_bytes, max_bytes, distinct_count) =
                 extract_stat_values(stats.as_ref(), physical_type);
-
-            let logical_type = col_desc.descriptor.primitive_type.logical_type.as_ref();
-
-            let min_bytes = raw_min
-                .and_then(|v| convert_stat_to_qdb(&v, physical_type, logical_type, col_type_tag));
-            let max_bytes = raw_max
-                .and_then(|v| convert_stat_to_qdb(&v, physical_type, logical_type, col_type_tag));
 
             if let Some(dc) = distinct_count {
                 stat_flags = stat_flags.with_distinct_count();
@@ -1446,6 +1341,214 @@ mod tests {
         assert!(bool_flags.has_max_stat());
     }
 
+    /// Regression: a SHORT column with negative values must round-trip through
+    /// the inline u64 stat slot and read back as the correct i32 at parquet
+    /// physical width (Int32). Earlier the convert path narrowed to 2 bytes,
+    /// the inline slot zero-padded to 8, and the skip path's 4-byte i32 read
+    /// turned a -74 i16 into 65462, dropping every row group whose true min
+    /// was negative.
+    #[test]
+    fn convert_short_negative_min_round_trips_at_int32_width() {
+        let row_count = 100;
+        let short_data: Vec<i16> = (0..row_count as i16).map(|i| i - 50).collect();
+        let short_bytes = leak_bytes(unsafe {
+            std::slice::from_raw_parts(short_data.as_ptr() as *const u8, short_data.len() * 2)
+        });
+
+        let ts_data: Vec<i64> = (0..row_count as i64).collect();
+        let ts_bytes = leak_bytes(unsafe {
+            std::slice::from_raw_parts(ts_data.as_ptr() as *const u8, ts_data.len() * 8)
+        });
+
+        let cols = vec![
+            Column {
+                name: "ts",
+                data_type: ColumnTypeTag::Timestamp.into_type(),
+                id: 0,
+                row_count,
+                primary_data: ts_bytes,
+                secondary_data: &[],
+                symbol_offsets: &[],
+                column_top: 0,
+                designated_timestamp: true,
+                not_null_hint: true,
+                designated_timestamp_ascending: true,
+                parquet_encoding_config: ParquetEncodingConfig::from_raw(0),
+            },
+            Column {
+                name: "val",
+                data_type: ColumnTypeTag::Short.into_type(),
+                id: 1,
+                row_count,
+                primary_data: short_bytes,
+                secondary_data: &[],
+                symbol_offsets: &[],
+                column_top: 0,
+                designated_timestamp: false,
+                not_null_hint: false,
+                designated_timestamp_ascending: false,
+                parquet_encoding_config: ParquetEncodingConfig::from_raw(0),
+            },
+        ];
+
+        let partition = Partition { table: "test_short_neg".to_string(), columns: cols };
+
+        let mut buf = Vec::new();
+        ParquetWriter::new(&mut buf)
+            .with_statistics(true)
+            .with_compression(CompressionOptions::Uncompressed)
+            .with_version(Version::V1)
+            .with_row_group_size(Some(row_count))
+            .finish(partition)
+            .unwrap();
+
+        let mut cursor = Cursor::new(&buf);
+        let metadata = read_metadata_with_size(&mut cursor, buf.len() as u64).unwrap();
+        let qdb_meta = extract_qdb_meta_from(&metadata);
+
+        let (parquet_meta_bytes, parquet_meta_file_size) =
+            convert_from_parquet(&metadata, qdb_meta.as_ref(), 0, 0, None).unwrap();
+
+        let reader =
+            ParquetMetaReader::from_file_size(&parquet_meta_bytes, parquet_meta_file_size).unwrap();
+        let chunk = reader.row_group(0).unwrap().column_chunk(1).unwrap();
+
+        // Read the low 4 bytes of the inline slot as i32 — exactly what
+        // can_skip_row_group does for Int32 physical width.
+        let bytes = chunk.min_stat.to_le_bytes();
+        let min_i32 = i32::from_le_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]);
+        assert_eq!(
+            min_i32, -50,
+            "inline min_stat must read back as -50 at Int32 width"
+        );
+
+        let bytes = chunk.max_stat.to_le_bytes();
+        let max_i32 = i32::from_le_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]);
+        assert_eq!(
+            max_i32, 49,
+            "inline max_stat must read back as 49 at Int32 width"
+        );
+    }
+
+    /// Regression: an external INT32 + Date logical-type parquet must keep its
+    /// stats as i32 days at parquet physical width when ingested through the
+    /// inline path. The earlier convert_stat_to_qdb widened days to i64 millis,
+    /// so the skip path's 4-byte INT32 read interpreted the low 4 bytes of
+    /// millis as days and produced wildly wrong bounds. QuestDB itself writes
+    /// Date as INT64+millis, so this case only surfaces for external Int32-Date
+    /// parquets converted through `build_column_chunk_from_thrift`.
+    #[test]
+    fn convert_int32_date_round_trips_at_int32_width() {
+        use parquet2::metadata::{ColumnDescriptor, Descriptor};
+        use parquet2::schema::types::{
+            FieldInfo, ParquetType, PhysicalType, PrimitiveLogicalType, PrimitiveType,
+        };
+        use parquet2::schema::Repetition;
+        use parquet2::thrift_format::{
+            ColumnChunk, ColumnMetaData, CompressionCodec, Encoding as ThriftEncoding, RowGroup,
+            Statistics as ThriftStatistics, Type,
+        };
+
+        let min_days: i32 = -100; // ~1969-09-23
+        let max_days: i32 = 365; //  1971-01-01
+
+        let primitive_type = PrimitiveType {
+            field_info: FieldInfo {
+                name: "d".to_string(),
+                repetition: Repetition::Required,
+                id: None,
+            },
+            logical_type: Some(PrimitiveLogicalType::Date),
+            converted_type: None,
+            physical_type: PhysicalType::Int32,
+        };
+        let base_type = ParquetType::PrimitiveType(primitive_type.clone());
+        let descriptor = Descriptor { primitive_type, max_def_level: 0, max_rep_level: 0 };
+        let col_desc = ColumnDescriptor::new(descriptor, vec!["d".to_string()], base_type);
+
+        let stats = ThriftStatistics {
+            max: None,
+            min: None,
+            null_count: Some(0),
+            distinct_count: None,
+            max_value: Some(max_days.to_le_bytes().to_vec()),
+            min_value: Some(min_days.to_le_bytes().to_vec()),
+        };
+        let meta = ColumnMetaData {
+            type_: Type::INT32,
+            encodings: vec![ThriftEncoding::PLAIN],
+            path_in_schema: vec!["d".to_string()],
+            codec: CompressionCodec::UNCOMPRESSED,
+            num_values: 100,
+            total_uncompressed_size: 400,
+            total_compressed_size: 400,
+            key_value_metadata: None,
+            data_page_offset: 4,
+            index_page_offset: None,
+            dictionary_page_offset: None,
+            statistics: Some(stats),
+            encoding_stats: None,
+            bloom_filter_offset: None,
+            bloom_filter_length: None,
+        };
+        let column_chunk = ColumnChunk {
+            file_path: None,
+            file_offset: 0,
+            meta_data: Some(meta),
+            offset_index_offset: None,
+            offset_index_length: None,
+            column_index_offset: None,
+            column_index_length: None,
+            crypto_metadata: None,
+            encrypted_column_metadata: None,
+        };
+        let row_group = RowGroup {
+            columns: vec![column_chunk],
+            total_byte_size: 400,
+            num_rows: 100,
+            sorting_columns: None,
+            file_offset: None,
+            total_compressed_size: None,
+            ordinal: None,
+        };
+
+        let block = build_row_group_block_from_thrift_with_types(
+            &row_group,
+            std::slice::from_ref(&col_desc),
+            &[Some(ColumnTypeTag::Date)],
+            &[],
+        )
+        .unwrap();
+
+        let chunk = block.column_chunk_raw(0);
+        let stat_flags = StatFlags(chunk.stat_flags);
+        assert!(stat_flags.has_min_stat());
+        assert!(stat_flags.is_min_inlined());
+        assert!(stat_flags.has_max_stat());
+        assert!(stat_flags.is_max_inlined());
+
+        // The slot must hold i32 days at parquet physical width (4 bytes).
+        // Reading the low 4 bytes as i32 is exactly what `can_skip_row_group`
+        // does for INT32 physical type before applying `MILLIS_PER_DAY`.
+        let min_bytes = chunk.min_stat.to_le_bytes();
+        let min_i32 = i32::from_le_bytes([min_bytes[0], min_bytes[1], min_bytes[2], min_bytes[3]]);
+        assert_eq!(
+            min_i32, min_days,
+            "INT32-Date inline min must read back as i32 days, not i64 millis"
+        );
+        let max_bytes = chunk.max_stat.to_le_bytes();
+        let max_i32 = i32::from_le_bytes([max_bytes[0], max_bytes[1], max_bytes[2], max_bytes[3]]);
+        assert_eq!(
+            max_i32, max_days,
+            "INT32-Date inline max must read back as i32 days, not i64 millis"
+        );
+
+        // High 4 bytes must be zero. This pins the contract: the convert path
+        // did not widen i32 days to i64 millis before writing the slot.
+        assert_eq!(&min_bytes[4..], &[0u8; 4]);
+        assert_eq!(&max_bytes[4..], &[0u8; 4]);
+    }
+
     #[test]
     fn convert_with_qdb_meta_flags() {
         let parquet_data = write_test_parquet(10, CompressionOptions::Uncompressed);
@@ -1765,297 +1868,6 @@ mod tests {
             }
         }
         assert!(has_null_count);
-    }
-
-    // ── convert_stat_to_qdb tests ─────────────────────────────────────
-
-    #[test]
-    fn convert_stat_narrowing_byte() {
-        let raw = 42i32.to_le_bytes().to_vec();
-        let result =
-            convert_stat_to_qdb(&raw, PhysicalType::Int32, None, Some(ColumnTypeTag::Byte));
-        assert_eq!(result, Some(vec![42u8]));
-    }
-
-    #[test]
-    fn convert_stat_narrowing_byte_negative() {
-        let raw = (-3i32).to_le_bytes().to_vec();
-        let result =
-            convert_stat_to_qdb(&raw, PhysicalType::Int32, None, Some(ColumnTypeTag::Byte));
-        // -3 as i8 is 0xFD, which is the low byte of -3i32 in LE
-        assert_eq!(result, Some(vec![(-3i8) as u8]));
-    }
-
-    #[test]
-    fn convert_stat_narrowing_geobyte() {
-        let raw = 7i32.to_le_bytes().to_vec();
-        let result = convert_stat_to_qdb(
-            &raw,
-            PhysicalType::Int32,
-            None,
-            Some(ColumnTypeTag::GeoByte),
-        );
-        assert_eq!(result, Some(vec![7u8]));
-    }
-
-    #[test]
-    fn convert_stat_narrowing_short() {
-        let raw = 1000i32.to_le_bytes().to_vec();
-        let result =
-            convert_stat_to_qdb(&raw, PhysicalType::Int32, None, Some(ColumnTypeTag::Short));
-        assert_eq!(result, Some(1000i16.to_le_bytes().to_vec()));
-    }
-
-    #[test]
-    fn convert_stat_narrowing_char() {
-        let raw = 0x0041i32.to_le_bytes().to_vec(); // 'A' as u16
-        let result =
-            convert_stat_to_qdb(&raw, PhysicalType::Int32, None, Some(ColumnTypeTag::Char));
-        assert_eq!(result, Some(0x0041u16.to_le_bytes().to_vec()));
-    }
-
-    #[test]
-    fn convert_stat_narrowing_geoshort() {
-        let raw = 255i32.to_le_bytes().to_vec();
-        let result = convert_stat_to_qdb(
-            &raw,
-            PhysicalType::Int32,
-            None,
-            Some(ColumnTypeTag::GeoShort),
-        );
-        assert_eq!(result, Some(255i16.to_le_bytes().to_vec()));
-    }
-
-    #[test]
-    fn convert_stat_date_days_to_millis_with_qdb_meta() {
-        // 1 day = 86_400_000 millis
-        let raw = 10i32.to_le_bytes().to_vec(); // 10 days
-        let result =
-            convert_stat_to_qdb(&raw, PhysicalType::Int32, None, Some(ColumnTypeTag::Date));
-        let expected = (10i64 * 86_400_000).to_le_bytes().to_vec();
-        assert_eq!(result, Some(expected));
-    }
-
-    #[test]
-    fn convert_stat_date_days_to_millis_without_qdb_meta() {
-        let raw = 5i32.to_le_bytes().to_vec();
-        let result = convert_stat_to_qdb(
-            &raw,
-            PhysicalType::Int32,
-            Some(&PrimitiveLogicalType::Date),
-            None,
-        );
-        let expected = (5i64 * 86_400_000).to_le_bytes().to_vec();
-        assert_eq!(result, Some(expected));
-    }
-
-    #[test]
-    fn convert_stat_date_negative_days() {
-        // Days before epoch
-        let raw = (-100i32).to_le_bytes().to_vec();
-        let result =
-            convert_stat_to_qdb(&raw, PhysicalType::Int32, None, Some(ColumnTypeTag::Date));
-        let expected = (-100i64 * 86_400_000).to_le_bytes().to_vec();
-        assert_eq!(result, Some(expected));
-    }
-
-    #[test]
-    fn convert_stat_int32_no_qdb_meta_no_logical_type() {
-        // Plain INT32 without QdbMeta or logical type: pass through
-        let raw = 42i32.to_le_bytes().to_vec();
-        let result = convert_stat_to_qdb(&raw, PhysicalType::Int32, None, None);
-        assert_eq!(result, Some(raw));
-    }
-
-    #[test]
-    fn convert_stat_timestamp_millis_to_micros() {
-        let millis = 1_000_000i64; // 1000 seconds
-        let raw = millis.to_le_bytes().to_vec();
-        let logical = PrimitiveLogicalType::Timestamp {
-            unit: TimeUnit::Milliseconds,
-            is_adjusted_to_utc: true,
-        };
-        let result = convert_stat_to_qdb(
-            &raw,
-            PhysicalType::Int64,
-            Some(&logical),
-            Some(ColumnTypeTag::Timestamp),
-        );
-        let expected = (millis * 1000).to_le_bytes().to_vec();
-        assert_eq!(result, Some(expected));
-    }
-
-    #[test]
-    fn convert_stat_timestamp_micros_passthrough() {
-        let micros = 1_000_000_000i64;
-        let raw = micros.to_le_bytes().to_vec();
-        let logical = PrimitiveLogicalType::Timestamp {
-            unit: TimeUnit::Microseconds,
-            is_adjusted_to_utc: true,
-        };
-        let result = convert_stat_to_qdb(
-            &raw,
-            PhysicalType::Int64,
-            Some(&logical),
-            Some(ColumnTypeTag::Timestamp),
-        );
-        assert_eq!(result, Some(raw));
-    }
-
-    #[test]
-    fn convert_stat_timestamp_nanos_passthrough() {
-        let nanos = 1_000_000_000_000i64;
-        let raw = nanos.to_le_bytes().to_vec();
-        let logical = PrimitiveLogicalType::Timestamp {
-            unit: TimeUnit::Nanoseconds,
-            is_adjusted_to_utc: true,
-        };
-        let result = convert_stat_to_qdb(
-            &raw,
-            PhysicalType::Int64,
-            Some(&logical),
-            Some(ColumnTypeTag::Timestamp),
-        );
-        assert_eq!(result, Some(raw));
-    }
-
-    #[test]
-    fn convert_stat_int96_to_epoch_nanos() {
-        // Construct an INT96 for 1970-01-02 00:00:00.000000001 UTC
-        // Julian day for 1970-01-02 = 2_440_589
-        // nanos_of_day = 1
-        let nanos_of_day: u64 = 1;
-        let julian_day: u32 = 2_440_589;
-        let mut raw = Vec::with_capacity(12);
-        raw.extend_from_slice(&(nanos_of_day as u32).to_le_bytes()); // low 32
-        raw.extend_from_slice(&((nanos_of_day >> 32) as u32).to_le_bytes()); // high 32
-        raw.extend_from_slice(&julian_day.to_le_bytes());
-
-        let result = convert_stat_to_qdb(&raw, PhysicalType::Int96, None, None);
-
-        // 1 day = 86_400_000_000_000 nanos, plus 1
-        let expected_nanos: i64 = 86_400_000_000_000 + 1;
-        assert_eq!(result, Some(expected_nanos.to_le_bytes().to_vec()));
-    }
-
-    #[test]
-    fn convert_stat_int96_epoch() {
-        // Julian day for 1970-01-01 = 2_440_588, nanos_of_day = 0
-        let mut raw = Vec::with_capacity(12);
-        raw.extend_from_slice(&0u32.to_le_bytes());
-        raw.extend_from_slice(&0u32.to_le_bytes());
-        raw.extend_from_slice(&2_440_588u32.to_le_bytes());
-
-        let result = convert_stat_to_qdb(&raw, PhysicalType::Int96, None, None);
-        assert_eq!(result, Some(0i64.to_le_bytes().to_vec()));
-    }
-
-    #[test]
-    fn convert_stat_empty_returns_none() {
-        let result = convert_stat_to_qdb(&[], PhysicalType::Int32, None, Some(ColumnTypeTag::Int));
-        assert_eq!(result, None);
-    }
-
-    #[test]
-    fn convert_stat_int_passthrough() {
-        let raw = 42i32.to_le_bytes().to_vec();
-        let result = convert_stat_to_qdb(&raw, PhysicalType::Int32, None, Some(ColumnTypeTag::Int));
-        assert_eq!(result, Some(raw));
-    }
-
-    #[test]
-    fn convert_stat_long_passthrough() {
-        let raw = 123456789i64.to_le_bytes().to_vec();
-        let result =
-            convert_stat_to_qdb(&raw, PhysicalType::Int64, None, Some(ColumnTypeTag::Long));
-        assert_eq!(result, Some(raw));
-    }
-
-    #[test]
-    fn convert_stat_double_passthrough() {
-        let raw = 42.5_f64.to_le_bytes().to_vec();
-        let result = convert_stat_to_qdb(
-            &raw,
-            PhysicalType::Double,
-            None,
-            Some(ColumnTypeTag::Double),
-        );
-        assert_eq!(result, Some(raw));
-    }
-
-    #[test]
-    fn convert_stat_float_passthrough() {
-        let raw = 2.5f32.to_le_bytes().to_vec();
-        let result =
-            convert_stat_to_qdb(&raw, PhysicalType::Float, None, Some(ColumnTypeTag::Float));
-        assert_eq!(result, Some(raw));
-    }
-
-    #[test]
-    fn convert_stat_byte_array_passthrough() {
-        let raw = b"hello".to_vec();
-        let result = convert_stat_to_qdb(
-            &raw,
-            PhysicalType::ByteArray,
-            None,
-            Some(ColumnTypeTag::Varchar),
-        );
-        assert_eq!(result, Some(raw));
-    }
-
-    // ── Saturation on extreme values ──────────────────────────────────
-
-    #[test]
-    fn convert_stat_timestamp_millis_overflow_saturates() {
-        let raw = i64::MAX.to_le_bytes().to_vec();
-        let logical = PrimitiveLogicalType::Timestamp {
-            unit: TimeUnit::Milliseconds,
-            is_adjusted_to_utc: true,
-        };
-        let result = convert_stat_to_qdb(
-            &raw,
-            PhysicalType::Int64,
-            Some(&logical),
-            Some(ColumnTypeTag::Timestamp),
-        );
-        let val = i64::from_le_bytes(result.unwrap().try_into().unwrap());
-        assert_eq!(val, i64::MAX);
-    }
-
-    #[test]
-    fn convert_stat_timestamp_millis_negative_overflow_saturates() {
-        let raw = i64::MIN.to_le_bytes().to_vec();
-        let logical = PrimitiveLogicalType::Timestamp {
-            unit: TimeUnit::Milliseconds,
-            is_adjusted_to_utc: true,
-        };
-        let result = convert_stat_to_qdb(
-            &raw,
-            PhysicalType::Int64,
-            Some(&logical),
-            Some(ColumnTypeTag::Timestamp),
-        );
-        let val = i64::from_le_bytes(result.unwrap().try_into().unwrap());
-        assert_eq!(val, i64::MIN);
-    }
-
-    // ── Mismatched-length stats fall through to passthrough ───────────
-
-    #[test]
-    fn convert_stat_short_int32_passes_through() {
-        // 2 bytes with Int32+Date: guard `raw.len() == 4` fails, hits passthrough.
-        let raw = vec![0u8; 2];
-        let result =
-            convert_stat_to_qdb(&raw, PhysicalType::Int32, None, Some(ColumnTypeTag::Date));
-        assert_eq!(result, Some(raw));
-    }
-
-    #[test]
-    fn convert_stat_short_int96_passes_through() {
-        // 8 bytes with Int96: guard `raw.len() == 12` fails, hits passthrough.
-        let raw = vec![0u8; 8];
-        let result = convert_stat_to_qdb(&raw, PhysicalType::Int96, None, None);
-        assert_eq!(result, Some(raw));
     }
 
     // ── Tests for build_row_group_block_from_thrift_with_types ─────────

@@ -295,8 +295,8 @@ Per-column-chunk metadata needed to locate and decode data from the parquet file
 | 24     | 8    | TOTAL_COMPRESSED | u64  | total compressed bytes of all pages                                                                                               |
 | 32     | 8    | NULL_COUNT       | u64  | number of nulls; mandatory for QuestDB-managed `_pm` files                                                                        |
 | 40     | 8    | DISTINCT_COUNT   | u64  | number of distinct values                                                                                                         |
-| 48     | 8    | MIN_STAT         | u64  | min value (see STAT_KIND)                                                                                                         |
-| 56     | 8    | MAX_STAT         | u64  | max value (see STAT_KIND)                                                                                                         |
+| 48     | 8    | MIN_STAT         | u64  | inline min value (parquet physical-width LE bytes, low bytes of the u64) or OOL reference (see Stat encoding)                     |
+| 56     | 8    | MAX_STAT         | u64  | inline max value (parquet physical-width LE bytes, low bytes of the u64) or OOL reference (see Stat encoding)                     |
 
 #### STAT_FLAGS interpretation
 
@@ -311,10 +311,40 @@ Per-column-chunk metadata needed to locate and decode data from the parquet file
 | 6          | 1        | DISTINCT_COUNT_PRESENT | i1   | Indicates if DISTINCT_COUNT is present |
 | 7          | 1        | NULL_COUNT_PRESENT     | i1   | Indicates if NULL_COUNT is present     |
 
+#### Stat encoding
+
+`MIN_STAT` and `MAX_STAT` hold parquet stat bytes verbatim — at parquet physical type width and in parquet-native units.
+No QuestDB-side conversion (no narrowing, no Date days-to-millis, no Timestamp millis-to-micros, no INT96-to-nanos)
+happens between the parquet file and the `_pm` slot. Readers that need a QuestDB-native interpretation must apply it
+themselves at read time, using the column's physical type and logical type from the parquet schema.
+
+Readers consume inline stats at parquet physical type width:
+
+Inline placement is gated by the QuestDB column type's fixed size (must be `<= 8` bytes), not by the parquet physical
+width directly. A FixedLenByteArray of width `<= 8` whose column type tag has no QuestDB fixed size (or whose fixed size
+exceeds 8) is stored out-of-line, even though the physical bytes would fit in the slot.
+
+| parquet physical type | inline width | placement in u64 slot                                  |
+| --------------------- | ------------ | ------------------------------------------------------ |
+| BOOLEAN               | 1 byte       | low byte holds 0 or 1; remaining 7 bytes are zero      |
+| INT32 / FLOAT         | 4 bytes      | low 4 bytes hold the LE value; high 4 bytes are zero   |
+| INT64 / DOUBLE        | 8 bytes      | the full u64 holds the LE value                        |
+| FIXED_LEN_BYTE_ARRAY  | `fixed_byte_len` bytes when the column type tag's fixed size is `<= 8` | low `fixed_byte_len` bytes; rest zero |
+| BYTE_ARRAY            | up to 8 bytes when inline | low `STAT_SIZES.min/max_size` bytes; rest zero     |
+| INT96                 | always out-of-line (12 bytes)        | u64 slot holds the OOL reference            |
+
+When stats are stored out-of-line (`MIN_STAT_INLINED` / `MAX_STAT_INLINED` clear), the u64 slot encodes a reference into
+the row group block's out-of-line region as `(offset << 16) | length`. The OOL bytes are the same parquet stat bytes,
+verbatim, with no width or unit conversion.
+
 Column types with fixed size that are <= 8 bytes (BOOLEAN, BYTE, SHORT, CHAR, INT/FLOAT/IPv4,
 LONG/DOUBLE/DATE/TIMESTAMP) MUST have their min/max stats inlined in the column chunk. For variable-length types (
 VARCHAR/STRING) and fixed-size types > 8 bytes (LONG128, UUID, LONG256), min/max stats MAY be stored out-of-line
 immediately after the row group blocks that references them.
+
+Inline stats for narrow signed types (BYTE, SHORT, GeoByte, GeoShort) backed by parquet INT32 occupy 4 bytes (the
+parquet physical width), not the QuestDB-native 1- or 2-byte width: skip-pruning code reads the slot at parquet
+physical width, so a sub-physical encoding would round-trip negatives incorrectly.
 
 QuestDB-managed `_pm` files always set `NULL_COUNT_PRESENT`. Readers use `NULL_COUNT == NUM_VALUES` as the all-null fast
 path when deciding whether a parquet column chunk needs to be fetched and decoded.
