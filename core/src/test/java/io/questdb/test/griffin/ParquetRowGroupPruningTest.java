@@ -3510,6 +3510,28 @@ public class ParquetRowGroupPruningTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testRangeFilterByteNegativeStats() throws Exception {
+        // Same _pm sidecar inline-stat sign bug for BYTE: 1 narrow byte read back as 4
+        // bytes for the i32 skip comparison.
+        setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_ROW_GROUP_SIZE, 100);
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (val BYTE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO x
+                    SELECT CAST(x - 75 AS BYTE), timestamp_sequence('2024-01-01', 600_000_000)
+                    FROM long_sequence(150)
+                    """);
+            execute("ALTER TABLE x CONVERT PARTITION TO PARQUET WHERE ts >= 0");
+
+            assertQueryNoLeakCheck(
+                    "cnt\n75\n",
+                    "SELECT count() AS cnt FROM x WHERE val <= 0::BYTE",
+                    null, false, true
+            );
+        });
+    }
+
+    @Test
     public void testRangeFilterChar() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE x (val CHAR, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
@@ -4083,6 +4105,43 @@ public class ParquetRowGroupPruningTest extends AbstractCairoTest {
                     null, true, false
             );
             Assert.assertTrue(ParquetRowGroupFilter.getRowGroupsSkipped() > 0);
+        });
+    }
+
+    @Test
+    public void testRangeFilterShortNegativeStats() throws Exception {
+        // Regression for the _pm sidecar inline-stat sign bug: SHORT min/max stored as
+        // 2 narrow bytes, then read back as 4 bytes for the i32 skip comparison. Without
+        // sign extension a negative min like -74 reads as 65462 and the row group is
+        // wrongly skipped. See ParquetRowGroupFilter.prepareFilterList SHORT branch and
+        // the convert_stat_to_qdb narrow-INT32 path.
+        setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_ROW_GROUP_SIZE, 100);
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (val SHORT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO x
+                    SELECT CAST(x - 75 AS SHORT), timestamp_sequence('2024-01-01', 600_000_000)
+                    FROM long_sequence(150)
+                    """);
+            execute("ALTER TABLE x CONVERT PARTITION TO PARQUET WHERE ts >= 0");
+
+            assertQueryNoLeakCheck(
+                    "cnt\n75\n",
+                    "SELECT count() AS cnt FROM x WHERE val <= 0::SHORT",
+                    null, false, true
+            );
+
+            assertQueryNoLeakCheck(
+                    "cnt\n75\n",
+                    "SELECT count() AS cnt FROM x WHERE 0::SHORT >= val",
+                    null, false, true
+            );
+
+            assertQueryNoLeakCheck(
+                    "cnt\n75\n",
+                    "SELECT count() AS cnt FROM x WHERE 0.147451::FLOAT >= val",
+                    null, false, true
+            );
         });
     }
 
