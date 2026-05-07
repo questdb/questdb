@@ -367,6 +367,24 @@ public class VwemaDoubleWindowFunctionFactory extends AbstractWindowFunctionFact
         }
 
         @Override
+        public void resetPartition(Record record) {
+            // ANCHOR-driven reset (RFC 123). Zero all VWEMA slots — the next finite
+            // (price, volume, volume > 0) row hits the hasValue == 0 branch and
+            // initialises numerator = price * volume, denominator = volume,
+            // matching the isNew init exactly.
+            partitionByRecord.of(record);
+            MapKey key = map.withKey();
+            key.put(partitionByRecord, partitionBySink);
+            MapValue value = key.findValue();
+            if (value != null) {
+                value.putDouble(0, 0.0);
+                value.putDouble(1, 0.0);
+                value.putLong(2, 0L);
+                value.putLong(3, 0L);
+            }
+        }
+
+        @Override
         public void toPlan(PlanSink sink) {
             sink.val(getName());
             sink.val('(').val(arg).val(", '").val(kindStr).val("', ").val(paramValue).val(", ").val(volumeArg).val(')');
@@ -610,6 +628,24 @@ public class VwemaDoubleWindowFunctionFactory extends AbstractWindowFunctionFact
         public void pass1(Record record, long recordOffset, WindowSPI spi) {
             computeNext(record);
             Unsafe.putDouble(spi.getAddress(recordOffset, columnIndex), vwema);
+        }
+
+        @Override
+        public void resetPartition(Record record) {
+            // ANCHOR-driven reset (RFC 123). Zero all VWEMA slots — the next finite
+            // (price, volume, volume > 0) row hits the hasValue == 0 branch and
+            // initialises numerator = price * volume, denominator = volume,
+            // matching the isNew init exactly.
+            partitionByRecord.of(record);
+            MapKey key = map.withKey();
+            key.put(partitionByRecord, partitionBySink);
+            MapValue value = key.findValue();
+            if (value != null) {
+                value.putDouble(0, 0.0);
+                value.putDouble(1, 0.0);
+                value.putLong(2, 0L);
+                value.putLong(3, 0L);
+            }
         }
 
         @Override
