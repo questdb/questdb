@@ -4148,6 +4148,11 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         if (!engine.isWalTable(baseTableToken)) {
             throw SqlException.$(op.getViewNamePosition(), "base table must be a WAL table [name=").put(op.getBaseTableName()).put(']');
         }
+        if (baseTableToken.isLiveView()) {
+            // V1 rejects live-on-live composition per RFC 123.
+            throw SqlException.$(op.getViewNamePosition(),
+                    "live views are not allowed as base tables in V1 [name=").put(op.getBaseTableName()).put(']');
+        }
 
         engine.createLiveView(op, baseTableToken, executionContext);
         return true;

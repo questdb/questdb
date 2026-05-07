@@ -794,48 +794,62 @@ public class CairoEngine implements Closeable, WriterSource {
                     TableUtils.TABLE_KIND_REGULAR_TABLE
             );
 
-            // write _lv definition file
-            path.of(configuration.getDbRoot()).concat(liveViewToken);
-            blockFileWriter.of(path.concat(LiveViewDefinition.LIVE_VIEW_DEFINITION_FILE_NAME).$());
-            LiveViewDefinition definition = new LiveViewDefinition(
-                    op.getViewName(),
-                    op.getSelectSql(),
-                    op.getBaseTableName(),
-                    baseTableToken,
-                    baseTimestampType,
-                    op.getFlushEveryInterval(),
-                    op.getFlushEveryIntervalUnit(),
-                    op.getInMemoryInterval(),
-                    op.getInMemoryIntervalUnit(),
-                    partitionBy,
-                    viewLowerBoundTimestamp,
-                    false,
-                    metadata
-            );
-            LiveViewDefinition.append(definition, blockFileWriter);
+            // From here on, any failure must roll back the table to avoid orphan
+            // LV-typed directories the startup loader skips and never reclaims.
+            try {
+                // write _lv definition file
+                path.of(configuration.getDbRoot()).concat(liveViewToken);
+                blockFileWriter.of(path.concat(LiveViewDefinition.LIVE_VIEW_DEFINITION_FILE_NAME).$());
+                LiveViewDefinition definition = new LiveViewDefinition(
+                        op.getViewName(),
+                        op.getSelectSql(),
+                        op.getBaseTableName(),
+                        baseTableToken,
+                        baseTimestampType,
+                        op.getFlushEveryInterval(),
+                        op.getFlushEveryIntervalUnit(),
+                        op.getInMemoryInterval(),
+                        op.getInMemoryIntervalUnit(),
+                        partitionBy,
+                        viewLowerBoundTimestamp,
+                        false,
+                        metadata
+                );
+                LiveViewDefinition.append(definition, blockFileWriter);
 
-            // write _lv.s state file with subscribeFromSeqTxn captured above.
-            path.of(configuration.getDbRoot()).concat(liveViewToken);
-            blockFileWriter.of(path.concat(LiveViewState.LIVE_VIEW_STATE_FILE_NAME).$());
-            LiveViewState.append(
-                    false,
-                    null,
-                    Numbers.LONG_NULL,
-                    subscribeFromSeqTxn,
-                    subscribeFromSeqTxn - 1,
-                    -1L,
-                    subscribeFromSeqTxn - 1,
-                    blockFileWriter
-            );
+                // write _lv.s state file with subscribeFromSeqTxn captured above.
+                path.of(configuration.getDbRoot()).concat(liveViewToken);
+                blockFileWriter.of(path.concat(LiveViewState.LIVE_VIEW_STATE_FILE_NAME).$());
+                LiveViewState.append(
+                        false,
+                        null,
+                        Numbers.LONG_NULL,
+                        subscribeFromSeqTxn,
+                        subscribeFromSeqTxn - 1,
+                        -1L,
+                        subscribeFromSeqTxn - 1,
+                        blockFileWriter
+                );
 
-            LiveViewInstance instance = new LiveViewInstance(definition, liveViewToken);
-            instance.setSubscribeFromSeqTxn(subscribeFromSeqTxn);
-            instance.setLastProcessedSeqTxn(subscribeFromSeqTxn - 1);
-            instance.setAppliedWatermark(-1L);
-            instance.setLvConsumedSeqTxn(subscribeFromSeqTxn - 1);
-            instance.getDependencyColumnNames().addAll(dependencyColumnNames);
-            liveViewRegistry.registerView(instance);
-            liveViewStateStore.registerBaseTable(definition.getBaseTableName());
+                LiveViewInstance instance = new LiveViewInstance(definition, liveViewToken);
+                instance.setSubscribeFromSeqTxn(subscribeFromSeqTxn);
+                instance.setLastProcessedSeqTxn(subscribeFromSeqTxn - 1);
+                instance.setAppliedWatermark(-1L);
+                instance.setLvConsumedSeqTxn(subscribeFromSeqTxn - 1);
+                instance.getDependencyColumnNames().addAll(dependencyColumnNames);
+                liveViewRegistry.registerView(instance);
+                liveViewStateStore.registerBaseTable(definition.getBaseTableName());
+            } catch (Throwable t) {
+                // Best-effort rollback. Failures here just leave the orphan in place;
+                // the original cause is what the operator needs to see.
+                try {
+                    dropTableOrViewOrMatView(path, liveViewToken);
+                } catch (Throwable rollbackErr) {
+                    LOG.error().$("could not roll back partially-created live view [view=").$(liveViewToken)
+                            .$(", error=").$(rollbackErr).I$();
+                }
+                throw t;
+            }
         }
     }
 

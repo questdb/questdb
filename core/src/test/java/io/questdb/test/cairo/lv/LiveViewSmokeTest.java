@@ -72,6 +72,38 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testRejectLiveViewOverNonWalBase() throws Exception {
+        assertMemoryLeak(() -> {
+            // No WAL — bypass-WAL is the default for non-partitioned plain tables.
+            execute("CREATE TABLE base (ts TIMESTAMP, x INT) TIMESTAMP(ts)");
+            try {
+                execute("CREATE LIVE VIEW lv FLUSH EVERY 1s AS " +
+                        "SELECT ts, x, row_number() OVER () AS rn FROM base");
+                Assert.fail("expected non-WAL-base reject");
+            } catch (SqlException e) {
+                Assert.assertTrue(e.getMessage(), e.getMessage().contains("must be a WAL table"));
+            }
+        });
+    }
+
+    @Test
+    public void testRejectLiveViewOverLiveView() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE LIVE VIEW lv1 FLUSH EVERY 1s AS " +
+                    "SELECT ts, x, row_number() OVER () AS rn FROM base");
+            try {
+                execute("CREATE LIVE VIEW lv2 FLUSH EVERY 1s AS " +
+                        "SELECT ts, x, row_number() OVER () AS rn FROM lv1");
+                Assert.fail("expected live-on-live reject");
+            } catch (SqlException e) {
+                Assert.assertTrue(e.getMessage(), e.getMessage().contains("not allowed as base tables"));
+            }
+            execute("DROP LIVE VIEW lv1");
+        });
+    }
+
+    @Test
     public void testRejectBackfill() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE base (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
