@@ -111,6 +111,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
     private final IntList columnSizeShifts = new IntList();
     private final CairoEngine engine;
     private final LiveViewRefreshSqlExecutionContext executionContext;
+    private final AnchorDispatchingCursor anchorDispatchingCursor = new AnchorDispatchingCursor();
     private final FilteringRecordCursor filteringCursor = new FilteringRecordCursor();
     private final PageFrameMemoryPool memoryPool = new PageFrameMemoryPool(0);
     private final Path path = new Path();
@@ -262,12 +263,24 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             }
             FunctionParser fp = new FunctionParser(engine.getConfiguration(), engine.getFunctionFactoryCache());
             executionContext.setLiveViewCompile(true);
+            Function fn;
             try {
-                Function fn = fp.parseFunction(anchorNode, projectedMeta, executionContext);
-                instance.setAnchorFunction(fn);
+                fn = fp.parseFunction(anchorNode, projectedMeta, executionContext);
             } finally {
                 executionContext.setLiveViewCompile(false);
             }
+            instance.setAnchorFunction(fn);
+
+            WindowRecordCursorFactory wf = unwrapWindowFactory(compiledFactory);
+            LiveViewWindow window = LiveViewWindow.build(
+                    engine.getConfiguration(),
+                    compiler.getAsm(),
+                    projectedMeta,
+                    spec.partitionColumnNames,
+                    fn,
+                    wf.getWindowFunctions()
+            );
+            instance.setAnchorWindow(window);
         } catch (SqlException e) {
             LOG.error().$("could not compile live-view anchor function [view=")
                     .$(instance.getDefinition().getViewName())
@@ -424,6 +437,14 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                     if (filter != null) {
                         filteringCursor.of(walRecordCursor, filter, executionContext);
                         source = filteringCursor;
+                    }
+                    LiveViewWindow anchorWindow = instance.getAnchorWindow();
+                    if (anchorWindow != null) {
+                        // Anchor dispatch sits between the filter (or raw WAL cursor)
+                        // and the window cursor so window functions see resetPartition
+                        // before pass1 evaluates the row.
+                        anchorDispatchingCursor.of(source, anchorWindow, executionContext);
+                        source = anchorDispatchingCursor;
                     }
 
                     RecordCursor windowCursor = windowFactory.getIncrementalCursor(source, executionContext);

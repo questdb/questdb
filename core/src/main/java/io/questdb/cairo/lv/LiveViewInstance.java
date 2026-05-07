@@ -83,6 +83,9 @@ public class LiveViewInstance implements QuietCloseable {
     // Lazily built on first refresh after the live view's main SELECT has been
     // compiled. Phase 1: stashed but not yet consumed by the runtime.
     private Function anchorFunction;
+    // Built once from anchorFunction + the compiled SELECT's window functions. Drives the
+    // per-row resetPartition dispatch when the LV has an anchored named WINDOW.
+    private LiveViewWindow anchorWindow;
     private RecordCursorFactory compiledFactory;
     private volatile boolean dropped;
     private volatile boolean isClosed;
@@ -108,12 +111,17 @@ public class LiveViewInstance implements QuietCloseable {
         if (!isClosed) {
             isClosed = true;
             compiledFactory = Misc.free(compiledFactory);
+            anchorWindow = Misc.free(anchorWindow);
             anchorFunction = Misc.free(anchorFunction);
         }
     }
 
     public Function getAnchorFunction() {
         return anchorFunction;
+    }
+
+    public LiveViewWindow getAnchorWindow() {
+        return anchorWindow;
     }
 
     public RecordCursorFactory getCompiledFactory() {
@@ -232,6 +240,13 @@ public class LiveViewInstance implements QuietCloseable {
         }
     }
 
+    public void setAnchorWindow(LiveViewWindow window) {
+        if (anchorWindow != window) {
+            Misc.free(anchorWindow);
+            anchorWindow = window;
+        }
+    }
+
     public void setCompiledFactory(RecordCursorFactory factory) {
         if (compiledFactory != factory) {
             Misc.free(compiledFactory);
@@ -272,6 +287,7 @@ public class LiveViewInstance implements QuietCloseable {
             if (!isClosed) {
                 isClosed = true;
                 compiledFactory = Misc.free(compiledFactory);
+                anchorWindow = Misc.free(anchorWindow);
                 anchorFunction = Misc.free(anchorFunction);
             }
         } finally {
