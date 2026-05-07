@@ -722,9 +722,11 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
         }
 
         if (pipelineCurrentEntry.isSuspended()) {
-            // Symmetric to the pre-lookup check above. The lookup may have brought in
-            // a named entry whose cursor was retained from a previous Execute (e.g.,
-            // queued onto pipeline by an earlier Close-S that displaced it). A new
+            // Symmetric to the pre-lookup check above. The lookup may have re-introduced
+            // a named entry whose cursor was retained from a previous suspended Execute
+            // (e.g., a Close-S of an unrelated statement landed in between, intentionally
+            // preserving the suspended cursor; an intervening Sync then nulled
+            // pipelineCurrentEntry, so the pre-lookup guard could not see it). A new
             // Bind always starts a fresh execution, so the prior cursor must be freed.
             pipelineCurrentEntry.closeSuspendedCursor();
         }
@@ -1553,12 +1555,6 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
             if (pe.isCopy || (!pe.isPreparedStatement() && !pe.isPortal())) {
                 releaseToPool(pe);
             } else {
-                if (pe.isSuspended()) {
-                    // The entry is being displaced (not retained as the current entry).
-                    // Its cursor must be freed here because nothing else will resume it,
-                    // and clearState() does not touch stateSuspended or cursor.
-                    pe.closeSuspendedCursor();
-                }
                 pe.clearState();
             }
         }
