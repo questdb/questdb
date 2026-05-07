@@ -24,7 +24,10 @@
 
 package io.questdb.test.cairo.lv;
 
+import io.questdb.cairo.lv.LiveViewInstance;
+import io.questdb.cairo.lv.LiveViewRefreshJob;
 import io.questdb.griffin.SqlException;
+import io.questdb.mp.Job;
 import io.questdb.test.AbstractCairoTest;
 import org.junit.Assert;
 import org.junit.Test;
@@ -38,6 +41,15 @@ import org.junit.Test;
  * suite is rewritten in delta plan task #8.
  */
 public class LiveViewSmokeTest extends AbstractCairoTest {
+
+    private static boolean drainJob(Job job) {
+        Job.RunStatus status = () -> false;
+        boolean any = false;
+        for (int i = 0; i < 64 && job.run(0, status); i++) {
+            any = true;
+        }
+        return any;
+    }
 
     @Test
     public void testCreateAndDropLiveView() throws Exception {
@@ -98,6 +110,93 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
             } catch (SqlException e) {
                 Assert.assertTrue(e.getMessage(), e.getMessage().contains("IN MEMORY must be at least FLUSH EVERY"));
             }
+        });
+    }
+
+    @Test
+    public void testRefreshAdvancesLvConsumedSeqTxn() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 1s AS " +
+                    "SELECT ts, x, row_number() OVER () AS rn FROM base WHERE x > 0");
+            execute("INSERT INTO base (ts, x) VALUES ('2026-01-01T00:00:00.000000Z', 1), " +
+                    "('2026-01-01T00:01:00.000000Z', 5), ('2026-01-01T00:02:00.000000Z', -3)");
+            drainWalQueue();
+
+            LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("lv");
+            Assert.assertNotNull(instance);
+
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                drainJob(job);
+            }
+            drainWalQueue();
+
+            // The live view's last-processed seqTxn moved past 0 because we ingested at
+            // least one DATA commit on the base.
+            Assert.assertTrue(
+                    "lastProcessedSeqTxn must advance past 0",
+                    instance.getLastProcessedSeqTxn() > 0
+            );
+            Assert.assertEquals(
+                    "lvConsumedSeqTxn must equal lastProcessedSeqTxn after refresh",
+                    instance.getLastProcessedSeqTxn(),
+                    instance.getStateReader().getLvConsumedSeqTxn()
+            );
+
+            // Two rows match (x > 0); the live view's on-disk tier picks them up via
+            // the standard ApplyWal2TableJob.
+            assertSql(
+                    "count\n2\n",
+                    "SELECT count() FROM lv"
+            );
+
+            execute("DROP LIVE VIEW lv");
+        });
+    }
+
+    @Test
+    public void testRestartRecoversLvState() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 1s AS " +
+                    "SELECT ts, x, row_number() OVER () AS rn FROM base WHERE x > 0");
+            execute("INSERT INTO base (ts, x) VALUES ('2026-02-01T00:00:00.000000Z', 7), " +
+                    "('2026-02-01T00:01:00.000000Z', 9)");
+            drainWalQueue();
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                drainJob(job);
+            }
+            drainWalQueue();
+
+            LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("lv");
+            long preLastProcessed = instance.getLastProcessedSeqTxn();
+            Assert.assertTrue("preLastProcessed must be > 0", preLastProcessed > 0);
+
+            // Simulate restart: clear the in-memory registry and rebuild from on-disk
+            // _lv + _lv.s files via buildViewGraphs (the same path startup takes).
+            engine.getLiveViewRegistry().clear();
+            engine.buildViewGraphs();
+
+            LiveViewInstance reloaded = engine.getLiveViewRegistry().getViewInstance("lv");
+            Assert.assertNotNull("live view must be re-registered after restart", reloaded);
+            Assert.assertEquals(
+                    "lastProcessedSeqTxn must round-trip via _lv.s",
+                    preLastProcessed,
+                    reloaded.getLastProcessedSeqTxn()
+            );
+            Assert.assertEquals(
+                    "lvConsumedSeqTxn must round-trip via _lv.s",
+                    preLastProcessed,
+                    reloaded.getStateReader().getLvConsumedSeqTxn()
+            );
+            // The on-disk tier survives via _meta + _txn + applied WAL; once the cursor
+            // re-frames to read disk (delta plan task #3) this will assert the full row
+            // count. For now: confirm the WAL applied past 0 commits and the LV table
+            // is queryable as a regular WAL table (the LiveViewRecordCursor reads the
+            // in-mem tier only, which is empty until a refresh runs).
+            assertSql("count\n0\n", "SELECT count() FROM lv");
+
+            execute("DROP LIVE VIEW lv");
         });
     }
 

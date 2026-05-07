@@ -29,9 +29,12 @@ import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.CairoTable;
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.EntityColumnFilter;
 import io.questdb.cairo.MetadataCacheReader;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableToken;
+import io.questdb.cairo.TableWriter;
+import io.questdb.cairo.file.BlockFileWriter;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.PageFrameAddressCache;
 import io.questdb.cairo.sql.PageFrameMemoryPool;
@@ -43,8 +46,11 @@ import io.questdb.cairo.wal.WalEventCursor;
 import io.questdb.cairo.wal.WalEventReader;
 import io.questdb.cairo.wal.WalTxnDetails;
 import io.questdb.cairo.wal.WalTxnType;
+import io.questdb.cairo.wal.WalWriter;
 import io.questdb.cairo.wal.seq.TransactionLogCursor;
 import io.questdb.griffin.CompiledQuery;
+import io.questdb.griffin.RecordToRowCopier;
+import io.questdb.griffin.RecordToRowCopierUtils;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.engine.QueryProgress;
@@ -69,30 +75,43 @@ import static io.questdb.cairo.wal.WalUtils.WAL_NAME_BASE;
  * Disk-only refresh path: walks the base table's sequencer log forward from
  * {@code lastProcessedSeqTxn + 1}, opens each WAL segment via
  * {@link WalSegmentPageFrameCursor}, runs rows through the compiled SELECT's
- * filter + window cursor, and appends outputs to the in-memory tier.
- * <p>
- * Phase 1 sharp edges (per delta plan):
+ * filter + window cursor, writes outputs to:
  * <ul>
- *     <li>No checkpoints — output rows live in the in-memory tier only between
- *     refresh cycles. The "true" live-view-internal apply (writing to the live view's
- *     own WAL + applying via {@code TableWriter}) is a follow-up step that this skeleton
- *     stubs out via the in-memory publish path.</li>
- *     <li>No JIT filter path — Function-based filter only.</li>
- *     <li>No cold-path skip / warm-path replay — every commit is processed once.</li>
- *     <li>FLUSH cycle is implicit per-task: every dequeued task drives a refresh, then
- *     the in-memory tier publishes; durable apply via the live view's own WAL is
- *     deferred.</li>
+ *     <li>The live view's own WAL via {@link WalWriter} for durability — once committed,
+ *     the global {@code ApplyWal2TableJob} applies the rows into the LV's on-disk tier.
+ *     {@code lvConsumedSeqTxn} advances at WAL commit (the data is durable on disk
+ *     irrespective of when the apply job catches up).</li>
+ *     <li>The N=2 in-memory tier ({@link DoubleBufferedTable}) so the
+ *     {@link io.questdb.griffin.engine.lv.LiveViewRecordCursor} can serve recent rows
+ *     without touching disk.</li>
+ * </ul>
+ * <p>
+ * Phase 1 sharp edges (per delta plan §"Phase 1 — disk-only end-to-end"):
+ * <ul>
+ *     <li>No checkpoints, no JIT filter path, no cold-skip / warm-replay branching.</li>
+ *     <li>FLUSH cycle is implicit per-task: every dequeued task drives one WAL commit.
+ *     A periodic FLUSH-EVERY tick is deferred.</li>
+ *     <li>Schema-change detection still routes through {@code ApplyWal2TableJob} —
+ *     non-DATA WAL events on the base are walked past by this job without modifying
+ *     state, while invalidation flows via
+ *     {@link CairoEngine#invalidateLiveViewsForBaseTable}.</li>
+ *     <li>The {@code maxBaseSeqTxnInBlock} live-view-WAL block-header field is not yet
+ *     emitted — Phase 1 derives {@code lvConsumedSeqTxn} from the refresh worker's
+ *     own {@code lastProcessedSeqTxn} tracking. Schema bump pending.</li>
  * </ul>
  */
 public class LiveViewRefreshJob implements Job, QuietCloseable {
     private static final Log LOG = LogFactory.getLog(LiveViewRefreshJob.class);
     private final PageFrameAddressCache addressCache = new PageFrameAddressCache();
+    private final BlockFileWriter blockFileWriter;
+    private final EntityColumnFilter columnFilter = new EntityColumnFilter();
     private final IntList columnIndexes = new IntList();
     private final IntList columnSizeShifts = new IntList();
     private final CairoEngine engine;
     private final LiveViewRefreshSqlExecutionContext executionContext;
     private final FilteringRecordCursor filteringCursor = new FilteringRecordCursor();
     private final PageFrameMemoryPool memoryPool = new PageFrameMemoryPool(0);
+    private final Path path = new Path();
     private final LiveViewRefreshTask refreshTask = new LiveViewRefreshTask();
     private final LiveViewStateStore stateStore;
     private final ObjList<LiveViewInstance> viewInstanceSink = new ObjList<>();
@@ -107,6 +126,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
         this.executionContext = new LiveViewRefreshSqlExecutionContext(engine, sharedQueryWorkerCount);
         this.walEventReader = new WalEventReader(engine.getConfiguration());
         this.stateStore = engine.getLiveViewStateStore();
+        this.blockFileWriter = new BlockFileWriter(engine.getConfiguration().getFilesFacade(), engine.getConfiguration().getCommitMode());
     }
 
     @Override
@@ -115,6 +135,8 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
         executionContext.close();
         Misc.free(walEventReader);
         Misc.free(walPath);
+        Misc.free(path);
+        Misc.free(blockFileWriter);
         Misc.free(addressCache);
         Misc.free(memoryPool);
     }
@@ -127,8 +149,6 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
 
     /**
      * Builds the base-column writer-index mapping for {@link WalSegmentPageFrameCursor}.
-     * Each output column from the SELECT must resolve to a writer-index slot in the base
-     * table's WAL segments.
      */
     private void buildColumnMappings(RecordMetadata baseMetadata, TableToken baseToken) {
         columnIndexes.clear();
@@ -191,6 +211,33 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
         return factory;
     }
 
+    /**
+     * Returns a {@link RecordToRowCopier} for the live view, compiling a fresh one when
+     * the cached one's metadata version is out of sync with the WAL writer.
+     */
+    private RecordToRowCopier ensureCopier(
+            LiveViewInstance instance,
+            WindowRecordCursorFactory windowFactory,
+            WalWriter walWriter
+    ) throws SqlException {
+        long metadataVersion = walWriter.getMetadata().getMetadataVersion();
+        RecordToRowCopier copier = instance.getRecordToRowCopier();
+        if (copier == null || instance.getRecordRowCopierMetadataVersion() != metadataVersion) {
+            try (SqlCompiler compiler = engine.getSqlCompiler()) {
+                columnFilter.of(windowFactory.getMetadata().getColumnCount());
+                copier = RecordToRowCopierUtils.generateCopier(
+                        compiler.getAsm(),
+                        windowFactory.getMetadata(),
+                        walWriter.getMetadata(),
+                        columnFilter,
+                        engine.getConfiguration()
+                );
+                instance.setRecordToRowCopier(copier, metadataVersion);
+            }
+        }
+        return copier;
+    }
+
     private WindowRecordCursorFactory getWindowFactory(LiveViewInstance instance) throws SqlException {
         RecordCursorFactory factory = ensureCompiledFactory(instance);
         return unwrapWindowFactory(factory);
@@ -198,14 +245,13 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
 
     /**
      * Walks the sequencer log forward and processes each DATA commit through the
-     * compiled window cursor, appending output rows to the live view's in-memory tier.
-     * Non-DATA commits are walked past without modifying state — schema-change-driven
-     * invalidation is handled in {@code ApplyWal2TableJob} via
-     * {@link CairoEngine#invalidateLiveViewsForBaseTable}.
+     * compiled window cursor. For each output row, writes to both the LV's WAL (durable
+     * tier) and the in-memory tier (read cache). Commits the WAL writer once at the end
+     * of the cycle; advances {@code lastProcessedSeqTxn} / {@code lvConsumedSeqTxn} /
+     * {@code appliedWatermark} on the instance and rewrites {@code _lv.s}.
      */
     private void incrementalRefresh(LiveViewInstance instance, long fromSeqTxn, long toSeqTxn) throws SqlException {
         WindowRecordCursorFactory windowFactory = getWindowFactory(instance);
-        // The compiled tree is WindowRecordCursorFactory -> [FilteredRecordCursorFactory] -> PageFrameRecordCursorFactory.
         RecordCursorFactory filterFactory = windowFactory.getBaseFactory();
         final Function filter = filterFactory.getFilter();
         RecordCursorFactory pageFrameFactory = filter != null ? filterFactory.getBaseFactory() : filterFactory;
@@ -220,22 +266,36 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             return;
         }
 
+        long advanceTo = -1;
+        boolean publishWriteBuffer = false;
         WalSegmentPageFrameCursor frameCursor = new WalSegmentPageFrameCursor(
                 engine.getConfiguration(), columnIndexes, columnSizeShifts
         );
         WalSegmentRecordCursor walRecordCursor = new WalSegmentRecordCursor(addressCache, memoryPool);
-        try {
-            // Phase 1: rebuild the write buffer from scratch each cycle. The full live-view
-            // WAL apply path will replace this with append-and-publish semantics, but for
-            // the spike we can copy the published snapshot and append the delta on top.
+        try (WalWriter walWriter = engine.getWalWriter(instance.getLiveViewToken())) {
+            // Phase 1: the in-mem buffer is rebuilt from the published snapshot each cycle
+            // and the appended delta is published atomically when the cycle completes.
             writeBuffer.copyFrom(instance.peekPublishedBuffer());
 
+            RecordToRowCopier copier = ensureCopier(instance, windowFactory, walWriter);
+            int lvTimestampIndex = walWriter.getMetadata().getTimestampIndex();
+            // Window cursor metadata mirrors the LV's _meta, so the timestamp index is
+            // the same in both sources.
+            int cursorTimestampIndex = windowFactory.getMetadata().getTimestampIndex();
+            if (lvTimestampIndex < 0 || cursorTimestampIndex < 0) {
+                throw CairoException.nonCritical()
+                        .put("live view requires a designated timestamp [view=")
+                        .put(instance.getDefinition().getViewName()).put(']');
+            }
+
+            long appendedRows = 0;
             try (TransactionLogCursor txnCursor = engine.getTableSequencerAPI().getCursor(baseToken, fromSeqTxn)) {
                 while (txnCursor.hasNext()) {
                     long txn = txnCursor.getTxn();
                     if (txn > toSeqTxn) {
                         break;
                     }
+                    advanceTo = txn;
                     int walId = txnCursor.getWalId();
                     int segmentId = txnCursor.getSegmentId();
                     int segmentTxn = txnCursor.getSegmentTxn();
@@ -252,8 +312,9 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
 
                     if (!WalTxnType.isDataType(eventCursor.getType())) {
                         // Non-data commit (schema change / DROP PARTITION / TRUNCATE / TTL) —
-                        // walked past, no rewrite to the in-memory tier. Schema changes that
-                        // touch referenced columns invalidate via ApplyWal2TableJob.
+                        // walked past, no rewrite to the in-memory tier or LV WAL. Schema
+                        // changes that touch referenced columns invalidate via
+                        // ApplyWal2TableJob.
                         continue;
                     }
 
@@ -279,19 +340,61 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                     try {
                         Record outRecord = windowCursor.getRecord();
                         while (windowCursor.hasNext()) {
+                            // In-memory tier — for query reads via LiveViewRecordCursor.
                             writeBuffer.appendRow(outRecord);
+                            // Durable tier — write to the live view's own WAL.
+                            long ts = outRecord.getTimestamp(cursorTimestampIndex);
+                            TableWriter.Row row = walWriter.newRow(ts);
+                            copier.copy(executionContext, outRecord, row);
+                            row.append();
+                            appendedRows++;
                         }
                     } finally {
                         windowCursor.close();
                     }
                 }
             }
-            instance.publishWriteBuffer();
+
+            if (appendedRows > 0) {
+                walWriter.commit();
+            }
+            publishWriteBuffer = true;
         } catch (Throwable t) {
             instance.abortWriteBuffer(writeBuffer);
             throw t;
         } finally {
             Misc.free(frameCursor);
+            if (publishWriteBuffer) {
+                instance.publishWriteBuffer();
+            }
+        }
+
+        if (advanceTo > instance.getLastProcessedSeqTxn()) {
+            instance.setLastProcessedSeqTxn(advanceTo);
+            // Phase 1 simplification: lvConsumedSeqTxn advances at WAL-commit time. The
+            // rows are durable in the LV's WAL even before ApplyWal2TableJob copies them
+            // into the LV's table, so base WAL retention can release safely. The
+            // appliedWatermark mirrors lastProcessed for now; once live-view-internal
+            // apply lands it'll track T_w on the LV's own table separately.
+            instance.setLvConsumedSeqTxn(advanceTo);
+            instance.setAppliedWatermark(advanceTo);
+            persistState(instance);
+        }
+    }
+
+    /**
+     * Rewrites {@code _lv.s} from the in-memory state mirror. Called after each
+     * cycle's advance so restart sees the latest {@code lastProcessedSeqTxn}.
+     */
+    private void persistState(LiveViewInstance instance) {
+        TableToken token = instance.getLiveViewToken();
+        path.of(engine.getConfiguration().getDbRoot()).concat(token).concat(LiveViewState.LIVE_VIEW_STATE_FILE_NAME);
+        try {
+            blockFileWriter.of(path.$());
+            LiveViewState.append(instance.getStateReader(), blockFileWriter);
+        } catch (Throwable t) {
+            LOG.error().$("could not persist live view state [view=").$(token)
+                    .$(", error=").$(t).I$();
         }
     }
 
@@ -316,20 +419,15 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             try {
                 long lastSeqTxn = instance.getLastProcessedSeqTxn();
                 if (seqTxn > lastSeqTxn) {
-                    incrementalRefresh(instance, lastSeqTxn + 1, seqTxn);
-                    instance.setLastProcessedSeqTxn(seqTxn);
-                    // Phase 1 sharp edge: the in-mem-tier publish doubles as the durability cut.
-                    // True live-view-internal apply via the view's own TableWriter is deferred,
-                    // so for now lv_consumed_seqTxn matches lastProcessed (no rows reside only
-                    // in the unflushed range — there is no on-disk tier yet).
-                    instance.setLvConsumedSeqTxn(seqTxn);
-                    instance.setAppliedWatermark(seqTxn);
+                    // TransactionLogCursor treats txnLo as exclusive (lastApplied), so we
+                    // pass lastSeqTxn directly. The cursor's getTxn() returns entries with
+                    // seqTxn > lastSeqTxn.
+                    incrementalRefresh(instance, lastSeqTxn, seqTxn);
                 }
                 instance.setLastRefreshTimeUs(engine.getConfiguration().getMicrosecondClock().getTicks());
             } catch (Throwable t) {
                 LOG.critical().$("live view refresh failed [view=").$(instance.getDefinition().getViewName())
-                        .$(", error=").$(t)
-                        .I$();
+                        .$(", error=").$(t).I$();
             }
         } finally {
             instance.unlockAfterRefresh();

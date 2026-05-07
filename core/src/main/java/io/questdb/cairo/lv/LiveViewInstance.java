@@ -26,6 +26,7 @@ package io.questdb.cairo.lv;
 
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.sql.RecordCursorFactory;
+import io.questdb.griffin.RecordToRowCopier;
 import io.questdb.std.IntList;
 import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
@@ -77,6 +78,11 @@ public class LiveViewInstance implements QuietCloseable {
     private volatile long lastRefreshTimeUs = Numbers.LONG_NULL;
     // Live-view's own table token. Populated at construction.
     private final TableToken liveViewToken;
+    // Cached RecordToRowCopier (compiled bytecode bridging the SELECT cursor's record
+    // shape to the LV's WalWriter row). Invalidated when the WalWriter's metadata version
+    // moves past recordRowCopierMetadataVersion. Accessed only while the refresh latch is held.
+    private RecordToRowCopier recordToRowCopier;
+    private long recordRowCopierMetadataVersion = -1;
 
     public LiveViewInstance(LiveViewDefinition definition, TableToken liveViewToken) {
         this.definition = definition;
@@ -147,6 +153,14 @@ public class LiveViewInstance implements QuietCloseable {
 
     public TableToken getLiveViewToken() {
         return liveViewToken;
+    }
+
+    public long getRecordRowCopierMetadataVersion() {
+        return recordRowCopierMetadataVersion;
+    }
+
+    public RecordToRowCopier getRecordToRowCopier() {
+        return recordToRowCopier;
     }
 
     public LiveViewStateReader getStateReader() {
@@ -228,6 +242,11 @@ public class LiveViewInstance implements QuietCloseable {
 
     public void setLvConsumedSeqTxn(long lvConsumedSeqTxn) {
         stateReader.setLvConsumedSeqTxn(lvConsumedSeqTxn);
+    }
+
+    public void setRecordToRowCopier(RecordToRowCopier copier, long metadataVersion) {
+        this.recordToRowCopier = copier;
+        this.recordRowCopierMetadataVersion = metadataVersion;
     }
 
     public void setSubscribeFromSeqTxn(long subscribeFromSeqTxn) {
