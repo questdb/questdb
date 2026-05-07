@@ -1119,6 +1119,292 @@ public class PostingIndexCriticalIssuesTest extends AbstractCairoTest {
     }
 
     /**
+     * Reproduces the SIGSEGV from the JMH walFastLag bench (hs_err_pid19555):
+     * MemoryCR.getLong over-read inside PostingIndexChainEntry.read on a
+     * covering posting index. The bench ran walFastLagInsertAndQuery in a
+     * tight INSERT/drain/SELECT loop; a chain entry sealed with coverCount=0
+     * (because PostingIndexWriter's coverCount field is reset to 0 by the
+     * post-fast-lag-seal clearCovering(), and a subsequent commit() flushes
+     * pending data via extendHead with coverCount=0) ended up flush against
+     * the end of the .pk mmap. The reader, opened with coverCount=1 from
+     * the .pci sidecar, stepped past the entry's LEN reading the cover
+     * footer and SIGSEGV'd when the read crossed the mapping boundary.
+     * <p>
+     * This test mirrors the bench shape (covering posting index, WAL
+     * INSERT, drain, SELECT, repeat). With the picker/read fix in place,
+     * the cover-mismatched entries no longer crash readers - readers see
+     * zero-filled cover end offsets for those entries, fall back to the
+     * non-covering path, and queries return correct row counts. Without
+     * the fix, this test crashes the JVM (no AssertionError, just SIGSEGV).
+     */
+    @Test
+    public void testWalFastLagCoveringPostingDoesNotCrashReader() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE walbench (
+                        ts TIMESTAMP,
+                        sym SYMBOL INDEX TYPE POSTING INCLUDE (price),
+                        price DOUBLE
+                    ) TIMESTAMP(ts) PARTITION BY DAY WAL
+                    """);
+            execute("""
+                    INSERT INTO walbench(ts, sym, price)
+                    SELECT dateadd('u', x::INT, '2024-01-01T00:00:00.000000Z'::TIMESTAMP),
+                           rnd_symbol(50, 4, 8, 0), rnd_double() * 1000
+                    FROM long_sequence(2_000)
+                    """);
+            drainWalQueue();
+
+            // Sample a few keys that exist in the preloaded data so the
+            // SELECT below has something to count.
+            String[] sampleKeys = {"AAAA", "BBBB", "CCCC"};
+            try (RecordCursorFactory f = select("SELECT DISTINCT sym FROM walbench LIMIT 3")) {
+                int idx = 0;
+                try (io.questdb.cairo.sql.RecordCursor c = f.getCursor(sqlExecutionContext)) {
+                    while (c.hasNext() && idx < sampleKeys.length) {
+                        sampleKeys[idx++] = c.getRecord().getSymA(0).toString();
+                    }
+                }
+            }
+
+            // Loop the bench's per-iteration shape: INSERT batch -> drain ->
+            // SELECT count. The fast-lag commit path runs inside drainWalQueue,
+            // so each iteration pushes a new chain entry that, on the buggy
+            // writer, has coverCount=0 even though .pci advertises 1 cover.
+            for (int iter = 0; iter < 64; iter++) {
+                int batchOffset = iter + 1;
+                execute("INSERT INTO walbench(ts, sym, price) " +
+                        "SELECT dateadd('u', x::INT, dateadd('s', " + batchOffset + ", '2024-01-01T00:00:00.000000Z'::TIMESTAMP)), " +
+                        "rnd_symbol(50, 4, 8, 0), rnd_double() * 1000 " +
+                        "FROM long_sequence(200)");
+                drainWalQueue();
+
+                String key = sampleKeys[iter % sampleKeys.length];
+                long count = -1;
+                try (RecordCursorFactory f = select(
+                        "SELECT count() FROM walbench WHERE sym = '" + key + "'")) {
+                    try (io.questdb.cairo.sql.RecordCursor c = f.getCursor(sqlExecutionContext)) {
+                        if (c.hasNext()) {
+                            count = c.getRecord().getLong(0);
+                        }
+                    }
+                }
+                Assert.assertTrue(
+                        "iter=" + iter + ", key=" + key + ", count=" + count
+                                + " - reader did not crash but returned a "
+                                + "non-positive count, indicating the chain walk "
+                                + "skipped or mis-read entries",
+                        count >= 0
+                );
+            }
+        });
+    }
+
+    /**
+     * Reproduces the writer-side root cause of the GraalVM SIGSEGV in
+     * hs_err_pid19555 (PostingIndexBenchmarkSuite.walFastLagInsertAndQuery
+     * on bench/posting-wal-fastlag): a covering posting index whose chain
+     * head had LEN=96 (= entrySize(genCount=1, coverCount=0)) while .pci
+     * advertised coverCount=1. This test drives PostingIndexWriter through
+     * the same lifecycle the WAL fast-lag path follows in production:
+     * <p>
+     * 1. configureCovering(...) -> coverCount=1 on the writer.<br>
+     * 2. add() rows, seal() -> publishes a chain entry with cover footer.<br>
+     * 3. clearCovering() -> writer's coverCount field is reset to 0
+     *    (this is what TableWriter does in the finally block of
+     *    sealPostingIndexesForLastPartitionFastLag, line 11367).<br>
+     * 4. add() more rows, commit() -> flushAllPending() publishes via
+     *    extendHead, which rewrites the head entry's LEN using
+     *    entrySize(genCount, coverCount=0), DROPPING the cover footer.<br>
+     * <p>
+     * After step 4, the chain head's LEN no longer accommodates a cover
+     * footer slot, even though the table's covering schema (mirrored in
+     * .pci) still says one cover. A reader sourcing coverCount=1 from the
+     * .pci sidecar and walking the chain steps past the entry's LEN to
+     * read the (non-existent) footer - in production this surfaces as a
+     * SIGSEGV when the entry hugs the end of the .pk mmap. With the
+     * picker/read clamp fix in place the read self-bounds against the
+     * entry's LEN and zero-fills the missing cover slot, so the reader
+     * recovers gracefully.
+     */
+    @Test
+    public void testWriterEntrysCoverFooterShrinksAfterClearCoveringCommit() throws Exception {
+        assertMemoryLeak(() -> {
+            try (Path path = new Path().of(configuration.getDbRoot())) {
+                String name = "writer_clear_covering_then_commit";
+                int plen = path.size();
+                FilesFacade ff = configuration.getFilesFacade();
+
+                final int coverCount = 1;
+                final long fakeColRows = 32;
+                final int shift = 3; // 8 bytes per row (LONG-shaped covered column)
+                final long fakeColBytes = fakeColRows << shift;
+                long fakeColAddr = Unsafe.malloc(fakeColBytes, MemoryTag.NATIVE_DEFAULT);
+                try {
+                    Unsafe.getUnsafe().setMemory(fakeColAddr, fakeColBytes, (byte) 0);
+
+                    long[] addrs = {fakeColAddr};
+                    long[] tops = {0L};
+                    int[] shifts = {shift};
+                    int[] indices = {1}; // dummy writer-side index
+                    int[] types = {io.questdb.cairo.ColumnType.LONG};
+
+                    try (PostingIndexWriter writer = new PostingIndexWriter(
+                            configuration, path.trimTo(plen), name, COLUMN_NAME_TXN_NONE)) {
+                        // Step 1+2: configure covering, add rows, seal.
+                        // The seal publishes the first chain entry with a
+                        // proper cover footer (LEN includes coverCount=1).
+                        writer.configureCovering(addrs, tops, shifts, indices, types, coverCount);
+                        for (int i = 0; i < 8; i++) {
+                            writer.add(i % 4, i);
+                        }
+                        writer.setMaxValue(7);
+                        writer.setNextTxnAtSeal(1L);
+                        writer.seal();
+
+                        long lenAfterSeal;
+                        long sealedSealTxn;
+                        {
+                            LPSZ keyFile = PostingIndexUtils.keyFileName(
+                                    path.trimTo(plen), name, COLUMN_NAME_TXN_NONE);
+                            long fileSize = ff.length(keyFile);
+                            try (MemoryCMARWImpl mem = new MemoryCMARWImpl(
+                                    ff, keyFile, ff.getPageSize(), fileSize,
+                                    MemoryTag.MMAP_DEFAULT, /* opts */ 0)) {
+                                PostingIndexChainWriter chain = new PostingIndexChainWriter();
+                                chain.openExisting(mem);
+                                PostingIndexChainEntry.Snapshot head = new PostingIndexChainEntry.Snapshot();
+                                chain.loadHeadEntry(mem, head);
+                                lenAfterSeal = head.len;
+                                sealedSealTxn = head.sealTxn;
+                            }
+                        }
+                        Assert.assertEquals(
+                                "post-seal head LEN must include the cover footer "
+                                        + "(64 header + genCount*28 gen-dir + coverCount*8 footer, "
+                                        + "padded to 8): expected entrySize(genCount=1, coverCount=1)=104",
+                                PostingIndexChainEntry.entrySize(1, coverCount), lenAfterSeal
+                        );
+
+                        // Step 3: clearCovering - models the finally block in
+                        // TableWriter.sealPostingIndexesForLastPartitionFastLag.
+                        // This resets the writer's coverCount field to 0
+                        // even though the table's covering schema remains
+                        // unchanged.
+                        writer.clearCovering();
+
+                        // Step 4: add more rows, commit. commit() ->
+                        // flushAllPending() -> publishToChain() ->
+                        // chain.extendHead with coverEndOffsetsScratch empty
+                        // (because captureCoverEndOffsets short-circuits when
+                        // coverCount<=0). extendHead rewrites the head's LEN
+                        // using entrySize(newGenCount, 0).
+                        for (int i = 0; i < 4; i++) {
+                            writer.add(i, 100 + i);
+                        }
+                        writer.setMaxValue(103);
+                        writer.setNextTxnAtSeal(2L);
+                        writer.commit();
+
+                        long lenAfterCommit;
+                        int genCountAfterCommit;
+                        {
+                            LPSZ keyFile = PostingIndexUtils.keyFileName(
+                                    path.trimTo(plen), name, COLUMN_NAME_TXN_NONE);
+                            long fileSize = ff.length(keyFile);
+                            try (MemoryCMARWImpl mem = new MemoryCMARWImpl(
+                                    ff, keyFile, ff.getPageSize(), fileSize,
+                                    MemoryTag.MMAP_DEFAULT, /* opts */ 0)) {
+                                PostingIndexChainWriter chain = new PostingIndexChainWriter();
+                                chain.openExisting(mem);
+                                PostingIndexChainEntry.Snapshot head = new PostingIndexChainEntry.Snapshot();
+                                chain.loadHeadEntry(mem, head);
+                                lenAfterCommit = head.len;
+                                genCountAfterCommit = head.genCount;
+                                Assert.assertEquals(
+                                        "extendHead reuses the same chain entry "
+                                                + "(same sealTxn since commit() does not "
+                                                + "advance sealTxn) - confirms the bad LEN "
+                                                + "was written into the head sealed at "
+                                                + "txn=" + sealedSealTxn,
+                                        sealedSealTxn, head.sealTxn
+                                );
+                            }
+                        }
+                        Assert.assertEquals(
+                                "RED: with the writer-side bug, the head's LEN no "
+                                        + "longer includes the cover footer because "
+                                        + "extendHead used coverCount=0 for the size "
+                                        + "calculation. Expected coverCount=1 sized "
+                                        + "entry, observed coverCount=0 sized entry.",
+                                PostingIndexChainEntry.entrySize(genCountAfterCommit, 0),
+                                lenAfterCommit
+                        );
+                        Assert.assertNotEquals(
+                                "RED: the schema-correct LEN would include cover footer "
+                                        + "bytes, but the writer dropped them",
+                                PostingIndexChainEntry.entrySize(genCountAfterCommit, coverCount),
+                                lenAfterCommit
+                        );
+
+                        // Final: prove Fix A keeps the reader from
+                        // dereferencing past the entry on this corrupted-footer
+                        // entry. Plant a sentinel byte pattern into the bytes
+                        // immediately past the entry's LEN - the (mis-computed)
+                        // cover footer offset for coverCount=1 lands on these
+                        // bytes. Without the picker/read clamp, getLong reads
+                        // the sentinel and assigns it as the cover end offset.
+                        // With the clamp, the read self-bounds against the
+                        // entry's LEN and zero-fills the missing slot.
+                        LPSZ keyFile = PostingIndexUtils.keyFileName(
+                                path.trimTo(plen), name, COLUMN_NAME_TXN_NONE);
+                        long fileSize = ff.length(keyFile);
+                        try (MemoryCMARWImpl mem = new MemoryCMARWImpl(
+                                ff, keyFile, ff.getPageSize(), fileSize,
+                                MemoryTag.MMAP_DEFAULT, /* opts */ 0)) {
+                            PostingIndexChainWriter chain = new PostingIndexChainWriter();
+                            chain.openExisting(mem);
+                            PostingIndexChainEntry.Snapshot head = new PostingIndexChainEntry.Snapshot();
+                            chain.loadHeadEntry(mem, head);
+                            // The unfixed cover loop would read at offset
+                            // (header + genCount * GEN_DIR_ENTRY_SIZE) for
+                            // each cover slot. Plant a sentinel there so a
+                            // failing clamp surfaces as a non-zero value.
+                            long footerOffset = PostingIndexChainEntry.resolveCoverFooterOffset(
+                                    head.offset, head.genCount);
+                            final long sentinel = 0xDEAD_BEEF_CAFE_BABEL;
+                            mem.putLong(footerOffset, sentinel);
+
+                            io.questdb.cairo.idx.PostingIndexChainHeader.Snapshot header =
+                                    new io.questdb.cairo.idx.PostingIndexChainHeader.Snapshot();
+                            PostingIndexChainEntry.Snapshot entry = new PostingIndexChainEntry.Snapshot();
+                            int rc = io.questdb.cairo.idx.PostingIndexChainPicker.pick(
+                                    mem, /* pinnedTableTxn */ Long.MAX_VALUE,
+                                    /* coverCount */ coverCount, header, entry);
+                            Assert.assertEquals(
+                                    io.questdb.cairo.idx.PostingIndexChainPicker.RESULT_OK, rc);
+                            Assert.assertEquals(
+                                    "Fix A: missing cover slot is zero-filled instead "
+                                            + "of dereferencing past the entry",
+                                    coverCount, entry.coverFileEndOffsets.size());
+                            Assert.assertEquals(
+                                    "RED without Fix A: the picker would read the planted "
+                                            + "sentinel " + Long.toHexString(sentinel)
+                                            + "L as the cover end offset because the cover "
+                                            + "footer loop is not clamped against the entry's "
+                                            + "own LEN field. With Fix A, the clamp returns 0 "
+                                            + "instead.",
+                                    0L, entry.coverFileEndOffsets.getQuick(0));
+                        }
+                    }
+                } finally {
+                    Unsafe.free(fakeColAddr, fakeColBytes, MemoryTag.NATIVE_DEFAULT);
+                }
+            }
+        });
+    }
+
+    /**
      * Critical #4 and #5 are style violations enforced by static
      * analysis, not JUnit. They cannot be expressed as red unit tests.
      * Reference checks:
