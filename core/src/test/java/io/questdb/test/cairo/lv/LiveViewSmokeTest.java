@@ -437,6 +437,41 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testAnchorResetsRunningSumAcrossDayBoundary() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (ts TIMESTAMP, x INT, k INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 1s AS " +
+                    "SELECT ts, k, sum(x) OVER w AS s FROM base " +
+                    "WINDOW w AS (PARTITION BY k ORDER BY ts ANCHOR EXPRESSION timestamp_floor('1d', ts))");
+
+            // Two days for k=1: day 1 has values 10 and 20 (running sum: 10, 30);
+            // day 2 has values 5 and 15 (running sum should restart from 0: 5, 20).
+            // Without anchor reset, day 2's sums would continue from day 1 (35, 50).
+            execute("INSERT INTO base (ts, x, k) VALUES " +
+                    "('2026-08-01T00:00:00.000000Z', 10, 1), " +
+                    "('2026-08-01T01:00:00.000000Z', 20, 1), " +
+                    "('2026-08-02T00:00:00.000000Z', 5, 1), " +
+                    "('2026-08-02T01:00:00.000000Z', 15, 1)");
+            drainWalQueue();
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                drainJob(job);
+            }
+            drainWalQueue();
+
+            assertSql(
+                    "ts\tk\ts\n" +
+                            "2026-08-01T00:00:00.000000Z\t1\t10.0\n" +
+                            "2026-08-01T01:00:00.000000Z\t1\t30.0\n" +
+                            "2026-08-02T00:00:00.000000Z\t1\t5.0\n" +
+                            "2026-08-02T01:00:00.000000Z\t1\t20.0\n",
+                    "SELECT ts, k, s FROM lv ORDER BY ts"
+            );
+
+            execute("DROP LIVE VIEW lv");
+        });
+    }
+
+    @Test
     public void testInvalidationSurvivesRestart() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE base (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");

@@ -142,8 +142,13 @@ public class LiveViewWindow implements QuietCloseable {
             throw CairoException.nonCritical()
                     .put("anchored live-view window requires PARTITION BY columns");
         }
+        // The RecordSink contract: columnFilter holds 1-based indexes into the
+        // source record's metadata, and the ColumnTypes argument carries the
+        // FULL source metadata's types (the sink looks up types by source index,
+        // not by filter slot). The map's key types — separately — must match
+        // the filtered subset.
         ListColumnFilter columnFilter = new ListColumnFilter();
-        ArrayColumnTypes keyTypes = new ArrayColumnTypes();
+        ArrayColumnTypes mapKeyTypes = new ArrayColumnTypes();
         for (int i = 0; i < n; i++) {
             String name = partitionColumnNames.getQuick(i);
             int idx = projectedMetadata.getColumnIndexQuiet(name);
@@ -151,12 +156,15 @@ public class LiveViewWindow implements QuietCloseable {
                 throw CairoException.nonCritical()
                         .put("partition column not found in projected metadata [column=").put(name).put(']');
             }
-            // ListColumnFilter is 1-based per RecordSinkFactory contract.
             columnFilter.add(idx + 1);
-            keyTypes.add(projectedMetadata.getColumnType(idx));
+            mapKeyTypes.add(projectedMetadata.getColumnType(idx));
         }
-        RecordSink sink = RecordSinkFactory.getInstance(configuration, asm, keyTypes, columnFilter, null);
-        Map map = MapFactory.createOrderedMap(configuration, keyTypes, anchorMapValueTypes());
+        ArrayColumnTypes sourceColumnTypes = new ArrayColumnTypes();
+        for (int i = 0, m = projectedMetadata.getColumnCount(); i < m; i++) {
+            sourceColumnTypes.add(projectedMetadata.getColumnType(i));
+        }
+        RecordSink sink = RecordSinkFactory.getInstance(configuration, asm, sourceColumnTypes, columnFilter, null);
+        Map map = MapFactory.createOrderedMap(configuration, mapKeyTypes, anchorMapValueTypes());
         int returnType = anchorExpression.getType();
         int tag = ColumnType.tagOf(returnType);
         if (tag != ColumnType.TIMESTAMP && tag != ColumnType.LONG) {
