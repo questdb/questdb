@@ -421,6 +421,16 @@ public final class QueryRunner {
      *       function-lookup table is a planner-controlled choice driven by
      *       compile-time vs. bind-time type information, not a data
      *       divergence.</li>
+     *   <li>"there is no matching operator" - same shape as the function
+     *       case but for operator overload resolution, in either direction.
+     *       Either the literal narrows to a type with no overload while the
+     *       bind path picks a STRING overload via {@code setStr}, or the
+     *       literal folds an entire subtree to a constant (e.g. a
+     *       {@code true != true} contradiction collapsing the whole WHERE
+     *       to FALSE) and never type-checks an unsupported sibling like
+     *       {@code IN} over BOOLEAN, while the bind form keeps the subtree
+     *       opaque and the type-check fires. Compile-time vs. bind-time
+     *       type resolution, not a data divergence.</li>
      *   <li>"decimal places but scale is limited to" - {@code FunctionParser}
      *       routes a literal {@code DOUBLE/FLOAT::DECIMAL(p,s)} through
      *       {@code DecimalUtil.parseDecimalConstant} with the strict {@code
@@ -441,6 +451,7 @@ public final class QueryRunner {
                 || o.exceptionMessage.contains("column must appear in GROUP BY clause")
                 || o.exceptionMessage.contains("constant expected")
                 || o.exceptionMessage.contains("there is no matching function")
+                || o.exceptionMessage.contains("there is no matching operator")
                 || o.exceptionMessage.contains("decimal places but scale is limited to");
     }
 
