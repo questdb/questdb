@@ -291,7 +291,7 @@ public interface SqlExecutionContext extends Sinkable, Closeable {
     void setUseSimpleCircuitBreaker(boolean value);
 
     default boolean shouldLogSql() {
-        return false;
+        return true;
     }
 
     default void storeTelemetry(short event, short origin) {
