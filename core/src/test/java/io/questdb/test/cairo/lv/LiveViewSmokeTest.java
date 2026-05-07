@@ -239,7 +239,7 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
 
             LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("lv");
             // ts + x should be the dependency set; y and z must not appear.
-            Assert.assertEquals(2, instance.getDependencyColumnIndexes().size());
+            Assert.assertEquals(2, instance.getDependencyColumnNames().size());
 
             // Restart sweep: clear the registry, reload from disk. The startup path
             // doesn't recompile, so dependencyColumnIndexes is empty until the next
@@ -247,7 +247,7 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
             engine.getLiveViewRegistry().clear();
             engine.buildViewGraphs();
             LiveViewInstance reloaded = engine.getLiveViewRegistry().getViewInstance("lv");
-            Assert.assertEquals(0, reloaded.getDependencyColumnIndexes().size());
+            Assert.assertEquals(0, reloaded.getDependencyColumnNames().size());
 
             // Trigger a refresh (which compiles the SELECT and lazily backfills the set).
             execute("INSERT INTO base (ts, x, y, z) VALUES ('2026-05-01T00:00:00.000000Z', 1, 2, 3)");
@@ -256,7 +256,7 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
                 drainJob(job);
             }
             drainWalQueue();
-            Assert.assertEquals(2, reloaded.getDependencyColumnIndexes().size());
+            Assert.assertEquals(2, reloaded.getDependencyColumnNames().size());
 
             execute("DROP LIVE VIEW lv");
         });
@@ -291,6 +291,36 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
                     instance.getLastProcessedSeqTxn() > 0
             );
             assertSql("count\n2\n", "SELECT count() FROM lv");
+
+            execute("DROP LIVE VIEW lv");
+        });
+    }
+
+    @Test
+    public void testSchemaChangeNarrowsToReferencedColumns() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (ts TIMESTAMP, x INT, y INT, z INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 1s AS " +
+                    "SELECT ts, x, row_number() OVER () AS rn FROM base WHERE x > 0");
+
+            LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("lv");
+            Assert.assertFalse("LV must start valid", instance.isInvalid());
+
+            // Drop an unreferenced column — LV should stay ACTIVE.
+            execute("ALTER TABLE base DROP COLUMN z");
+            drainWalQueue();
+            Assert.assertFalse(
+                    "dropping an unreferenced column must not invalidate the LV",
+                    instance.isInvalid()
+            );
+
+            // Drop a referenced column (x) — LV should flip to INVALID.
+            execute("ALTER TABLE base DROP COLUMN x");
+            drainWalQueue();
+            Assert.assertTrue(
+                    "dropping a referenced column must invalidate the LV",
+                    instance.isInvalid()
+            );
 
             execute("DROP LIVE VIEW lv");
         });

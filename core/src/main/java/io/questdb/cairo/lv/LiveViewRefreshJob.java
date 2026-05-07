@@ -200,11 +200,11 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                     executionContext.setLiveViewCompile(false);
                 }
                 instance.setCompiledFactory(factory);
-                // Lazily backfill dependencyColumnIndexes for views that came up from
+                // Lazily backfill dependencyColumnNames for views that came up from
                 // disk (the startup loader doesn't recompile, so a freshly-loaded view
                 // has an empty dependency set until the first refresh runs).
-                if (instance.getDependencyColumnIndexes().size() == 0) {
-                    populateDependencyColumnIndexes(instance, factory);
+                if (instance.getDependencyColumnNames().size() == 0) {
+                    populateDependencyColumnNames(instance, factory);
                 }
             } finally {
                 if (ownReader) {
@@ -217,27 +217,17 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
         return factory;
     }
 
-    private void populateDependencyColumnIndexes(LiveViewInstance instance, RecordCursorFactory factory) {
+    private void populateDependencyColumnNames(LiveViewInstance instance, RecordCursorFactory factory) {
         WindowRecordCursorFactory windowFactory = unwrapWindowFactory(factory);
         RecordCursorFactory base = windowFactory.getBaseFactory();
         if (base.getFilter() != null) {
             base = base.getBaseFactory();
         }
         RecordMetadata baseProjMeta = base.getMetadata();
-        TableToken baseToken = instance.getDefinition().getBaseTableToken();
-        try (MetadataCacheReader metaRO = engine.getMetadataCache().readLock()) {
-            CairoTable baseTable = metaRO.getTable(baseToken);
-            if (baseTable == null) {
-                return;
-            }
-            IntList sink = instance.getDependencyColumnIndexes();
-            sink.clear();
-            for (int i = 0, n = baseProjMeta.getColumnCount(); i < n; i++) {
-                CairoColumn col = baseTable.getColumnQuiet(baseProjMeta.getColumnName(i));
-                if (col != null) {
-                    sink.add(col.getWriterIndex());
-                }
-            }
+        ObjList<String> sink = instance.getDependencyColumnNames();
+        sink.clear();
+        for (int i = 0, n = baseProjMeta.getColumnCount(); i < n; i++) {
+            sink.add(io.questdb.std.Chars.toString(baseProjMeta.getColumnName(i)));
         }
     }
 

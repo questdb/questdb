@@ -144,7 +144,6 @@ import io.questdb.std.LowerCaseCharSequenceObjHashMap;
 import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjHashSet;
-import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
 import io.questdb.std.Os;
 import io.questdb.std.Rnd;
@@ -730,11 +729,11 @@ public class CairoEngine implements Closeable, WriterSource {
         // emits a plain FilteredRecordCursorFactory shape that the incremental refresh
         // path can handle.
         GenericRecordMetadata metadata;
-        // Base-column writer indexes the SELECT's filter + window inputs + designated
-        // ts depend on. ApplyWal2TableJob's schema-change hook will eventually consult
-        // this set to invalidate only when one of these columns is touched. Phase 1
-        // populates it; the narrowing usage of it is deferred.
-        final IntList dependencyColumnIndexes = new IntList();
+        // Base-column names the SELECT's filter + window inputs + designated ts
+        // depend on. ApplyWal2TableJob's schema-change hook narrows invalidation
+        // using this set: only changes that touch one of these columns mark the
+        // view INVALID; unrelated ALTERs leave it ACTIVE.
+        final ObjList<String> dependencyColumnNames = new ObjList<>();
         try (SqlCompiler compiler = getSqlCompiler()) {
             executionContext.setLiveViewCompile(true);
             CompiledQuery cq;
@@ -747,8 +746,10 @@ public class CairoEngine implements Closeable, WriterSource {
                 final PageFrameRecordCursorFactory pfrcf = validateLiveViewFactory(factory, baseTableToken, op.getViewNamePosition());
                 metadata = GenericRecordMetadata.copyOfNew(factory.getMetadata());
 
-                // Resolve each base-column reference in the page-frame factory against
-                // the base's writer-index space.
+                // Capture each base-column name the SELECT projects. Resolving
+                // against the base table here also catches the rare case of an LV
+                // SELECT that names a column the base no longer has — better to fail
+                // CREATE early than to land an LV that's invalid on first refresh.
                 final RecordMetadata baseProjMeta = pfrcf.getMetadata();
                 try (MetadataCacheReader metaRO = getMetadataCache().readLock()) {
                     final CairoTable baseTable = metaRO.getTable(baseTableToken);
@@ -756,13 +757,13 @@ public class CairoEngine implements Closeable, WriterSource {
                         throw CairoException.tableDoesNotExist(baseTableToken.getTableName());
                     }
                     for (int i = 0, n = baseProjMeta.getColumnCount(); i < n; i++) {
-                        final CairoColumn col = baseTable.getColumnQuiet(baseProjMeta.getColumnName(i));
-                        if (col == null) {
+                        CharSequence colName = baseProjMeta.getColumnName(i);
+                        if (baseTable.getColumnQuiet(colName) == null) {
                             throw CairoException.critical(0)
                                     .put("live view base column not found [view=").put(op.getViewName())
-                                    .put(", column=").put(baseProjMeta.getColumnName(i)).put(']');
+                                    .put(", column=").put(colName).put(']');
                         }
-                        dependencyColumnIndexes.add(col.getWriterIndex());
+                        dependencyColumnNames.add(Chars.toString(colName));
                     }
                 }
             }
@@ -832,7 +833,7 @@ public class CairoEngine implements Closeable, WriterSource {
             instance.setLastProcessedSeqTxn(subscribeFromSeqTxn - 1);
             instance.setAppliedWatermark(-1L);
             instance.setLvConsumedSeqTxn(subscribeFromSeqTxn - 1);
-            instance.getDependencyColumnIndexes().addAll(dependencyColumnIndexes);
+            instance.getDependencyColumnNames().addAll(dependencyColumnNames);
             liveViewRegistry.registerView(instance);
             liveViewStateStore.registerBaseTable(definition.getBaseTableName());
         }
@@ -1607,6 +1608,29 @@ public class CairoEngine implements Closeable, WriterSource {
     }
 
     public void invalidateLiveViewsForBaseTable(TableToken baseTableToken, String reason) {
+        invalidateLiveViewsForBaseTable0(baseTableToken, reason, null);
+    }
+
+    /**
+     * Schema-change-aware invalidation. Iterates live views whose base is
+     * {@code baseTableToken} and only invalidates those that depend on a column
+     * missing from {@code postChangeMetadata}. This narrows the broad invalidation
+     * the {@link #invalidateLiveViewsForBaseTable} variant does on TRUNCATE / DROP
+     * (where every dependent view is invalidated regardless of dependency set).
+     */
+    public void invalidateLiveViewsForBaseSchemaChange(
+            TableToken baseTableToken,
+            io.questdb.cairo.sql.RecordMetadata postChangeMetadata,
+            String reason
+    ) {
+        invalidateLiveViewsForBaseTable0(baseTableToken, reason, postChangeMetadata);
+    }
+
+    private void invalidateLiveViewsForBaseTable0(
+            TableToken baseTableToken,
+            String reason,
+            @Nullable io.questdb.cairo.sql.RecordMetadata postChangeMetadata
+    ) {
         final long invalidationTimestampUs = configuration.getMicrosecondClock().getTicks();
         // Flip the in-memory bit then rewrite each affected view's _lv.s so the
         // invalidation survives restart. The registry-only helper exists for tests
@@ -1620,6 +1644,10 @@ public class CairoEngine implements Closeable, WriterSource {
         ) {
             for (int i = 0, n = sink.size(); i < n; i++) {
                 LiveViewInstance instance = sink.getQuick(i);
+                if (postChangeMetadata != null && !instance.dependsOnMissingColumn(postChangeMetadata)) {
+                    // Schema change touches columns the LV doesn't read — leave it valid.
+                    continue;
+                }
                 instance.markInvalid(reason, invalidationTimestampUs);
                 path.of(configuration.getDbRoot()).concat(instance.getLiveViewToken()).concat(LiveViewState.LIVE_VIEW_STATE_FILE_NAME);
                 try {

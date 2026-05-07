@@ -26,10 +26,11 @@ package io.questdb.cairo.lv;
 
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.sql.RecordCursorFactory;
+import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.griffin.RecordToRowCopier;
-import io.questdb.std.IntList;
 import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
+import io.questdb.std.ObjList;
 import io.questdb.std.QuietCloseable;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
@@ -67,7 +68,11 @@ import java.util.concurrent.atomic.AtomicBoolean;
  */
 public class LiveViewInstance implements QuietCloseable {
     private final LiveViewDefinition definition;
-    private final IntList dependencyColumnIndexes = new IntList();
+    // Base-column names the SELECT depends on (filter inputs + window inputs +
+    // designated ts). Populated at CREATE and lazily after restart on first refresh.
+    // Used by ApplyWal2TableJob's schema-change hook to narrow invalidation: only
+    // changes touching one of these columns mark the view INVALID.
+    private final ObjList<String> dependencyColumnNames = new ObjList<>();
     private final AtomicBoolean refreshLatch = new AtomicBoolean(false);
     private final LiveViewStateReader stateReader = new LiveViewStateReader();
     // Cached compiled factory. Window functions carry per-row state, so refresh must
@@ -108,8 +113,27 @@ public class LiveViewInstance implements QuietCloseable {
         return definition;
     }
 
-    public IntList getDependencyColumnIndexes() {
-        return dependencyColumnIndexes;
+    /**
+     * Returns {@code true} if any of this view's dependency columns is missing from
+     * the post-change writer metadata — i.e. the column was dropped or renamed away.
+     * Callers use this to decide whether a base-table schema change must invalidate
+     * the view. An empty dependency set returns {@code false} (defensive: we don't
+     * know what the view reads, so we leave invalidation to the broader path).
+     */
+    public boolean dependsOnMissingColumn(@NotNull RecordMetadata baseMetadata) {
+        if (dependencyColumnNames.size() == 0) {
+            return false;
+        }
+        for (int i = 0, n = dependencyColumnNames.size(); i < n; i++) {
+            if (baseMetadata.getColumnIndexQuiet(dependencyColumnNames.getQuick(i)) < 0) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    public ObjList<String> getDependencyColumnNames() {
+        return dependencyColumnNames;
     }
 
     public CharSequence getInvalidationReason() {

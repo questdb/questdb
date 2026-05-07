@@ -428,7 +428,14 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
                                         if (matViewInvalidationReason != null) {
                                             mvRefreshTask.operation = MatViewRefreshTask.INVALIDATE;
                                             mvRefreshTask.invalidationReason = matViewInvalidationReason;
-                                            engine.invalidateLiveViewsForBaseTable(tableToken, matViewInvalidationReason);
+                                            // Narrow live-view invalidation: only views that read a
+                                            // column missing from the post-change writer metadata
+                                            // need to be invalidated.
+                                            engine.invalidateLiveViewsForBaseSchemaChange(
+                                                    tableToken,
+                                                    writer.getMetadata(),
+                                                    matViewInvalidationReason
+                                            );
                                         }
                                         if (metadataChangeOp.shouldCompileDependentViews()) {
                                             engine.enqueueCompileView(tableToken);
