@@ -34,12 +34,11 @@ import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.Numbers;
 import io.questdb.std.Unsafe;
-import org.apache.hadoop.conf.Configuration;
 import org.apache.parquet.hadoop.ParquetFileReader;
 import org.apache.parquet.hadoop.metadata.BlockMetaData;
 import org.apache.parquet.hadoop.metadata.ParquetMetadata;
-import org.apache.parquet.hadoop.util.HadoopInputFile;
 import org.apache.parquet.io.InputFile;
+import org.apache.parquet.io.LocalInputFile;
 import org.junit.Assert;
 import org.junit.Test;
 
@@ -560,9 +559,7 @@ public class ParquetSymbolExportTest extends AbstractTest {
             exportToParquet(serverMain, "SELECT * FROM symbol_coltop_multi_rg", parquetFile);
 
             // Validate the parquet file structure and symbol values
-            Configuration conf = new Configuration();
-            org.apache.hadoop.fs.Path hadoopPath = new org.apache.hadoop.fs.Path(parquetFile.getAbsolutePath());
-            InputFile inputFile = HadoopInputFile.fromPath(hadoopPath, conf);
+            InputFile inputFile = new LocalInputFile(parquetFile.toPath());
 
             // First validate row count and row groups using ParquetFileReader
             try (ParquetFileReader fileReader = ParquetFileReader.open(inputFile)) {
@@ -671,7 +668,7 @@ public class ParquetSymbolExportTest extends AbstractTest {
                         int len = (int) (hi - lo);
                         byte[] buf = new byte[len];
                         for (int i = 0; i < len; i++) {
-                            buf[i] = Unsafe.getUnsafe().getByte(lo + i);
+                            buf[i] = Unsafe.getByte(lo + i);
                         }
                         fos.write(buf);
                     }
@@ -685,9 +682,7 @@ public class ParquetSymbolExportTest extends AbstractTest {
     }
 
     private void validateParquetFile(File parquetFile, int expectedRowCount) throws IOException {
-        Configuration conf = new Configuration();
-        org.apache.hadoop.fs.Path hadoopPath = new org.apache.hadoop.fs.Path(parquetFile.getAbsolutePath());
-        InputFile inputFile = HadoopInputFile.fromPath(hadoopPath, conf);
+        InputFile inputFile = new LocalInputFile(parquetFile.toPath());
 
         // Validate file structure and read all row groups
         // This is where PyArrow would fail before the fix with:
@@ -719,9 +714,7 @@ public class ParquetSymbolExportTest extends AbstractTest {
     }
 
     private void validateParquetFileRowGroups(File parquetFile, int expectedRowCount, int expectedRowGroups) throws IOException {
-        Configuration conf = new Configuration();
-        org.apache.hadoop.fs.Path hadoopPath = new org.apache.hadoop.fs.Path(parquetFile.getAbsolutePath());
-        InputFile inputFile = HadoopInputFile.fromPath(hadoopPath, conf);
+        InputFile inputFile = new LocalInputFile(parquetFile.toPath());
 
         try (ParquetFileReader reader = ParquetFileReader.open(inputFile)) {
             ParquetMetadata metadata = reader.getFooter();

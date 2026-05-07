@@ -186,7 +186,7 @@ public final class TxWriter extends TxReader implements Closeable, Mutable, Symb
             // Store symbol counts. Unfortunately we cannot skip it in here
             storeSymbolCounts(symbolCountProviders);
 
-            Unsafe.getUnsafe().storeFence();
+            Unsafe.storeFence();
             txMemBase.putLong(TX_BASE_OFFSET_VERSION_64, ++baseVersion);
 
             super.switchRecord(writeBaseOffset, writeAreaSize); // writeAreaSize should be between records
@@ -679,7 +679,7 @@ public final class TxWriter extends TxReader implements Closeable, Mutable, Symb
         txMemBase.putInt(symbolSizeOffset, bytesSymbols);
         txMemBase.putInt(partitionsSizeOffset, bytesPartitions);
 
-        Unsafe.getUnsafe().storeFence();
+        Unsafe.storeFence();
         txMemBase.putLong(TX_BASE_OFFSET_VERSION_64, ++baseVersion);
 
         readRecordSize = calculateTxRecordSize(bytesSymbols, bytesPartitions);

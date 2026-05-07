@@ -32,6 +32,7 @@ import io.questdb.std.BinarySequence;
 import io.questdb.std.Chars;
 import io.questdb.std.Decimal128;
 import io.questdb.std.Decimal256;
+import io.questdb.std.Long128;
 import io.questdb.std.Long256;
 import io.questdb.std.Long256Acceptor;
 import io.questdb.std.Long256FromCharSequenceDecoder;
@@ -63,7 +64,7 @@ public interface MemoryCARW extends MemoryCR, MemoryARW, MemoryCA, MemoryMAT {
         if (value != null) {
             final long len = value.length();
             long addr = appendAddressFor(len + Long.BYTES);
-            Unsafe.getUnsafe().putLong(addr, len);
+            Unsafe.putLong(addr, len);
             value.copyTo(addr + Long.BYTES, 0, len);
             return getAppendOffset();
         }
@@ -74,7 +75,7 @@ public interface MemoryCARW extends MemoryCR, MemoryARW, MemoryCA, MemoryMAT {
     default long putBin(long from, long len) {
         if (len > 0) {
             long addr = appendAddressFor(len + Long.BYTES);
-            Unsafe.getUnsafe().putLong(addr, len);
+            Unsafe.putLong(addr, len);
             Vect.memcpy(addr + Long.BYTES, from, len);
             return getAppendOffset();
         }
@@ -98,22 +99,22 @@ public interface MemoryCARW extends MemoryCR, MemoryARW, MemoryCA, MemoryMAT {
 
     @Override
     default void putByte(byte value) {
-        Unsafe.getUnsafe().putByte(appendAddressFor(Byte.BYTES), value);
+        Unsafe.putByte(appendAddressFor(Byte.BYTES), value);
     }
 
     @Override
     default void putByte(long offset, byte value) {
-        Unsafe.getUnsafe().putByte(appendAddressFor(offset, Byte.BYTES), value);
+        Unsafe.putByte(appendAddressFor(offset, Byte.BYTES), value);
     }
 
     @Override
     default void putChar(char value) {
-        Unsafe.getUnsafe().putChar(appendAddressFor(Character.BYTES), value);
+        Unsafe.putChar(appendAddressFor(Character.BYTES), value);
     }
 
     @Override
     default void putChar(long offset, char value) {
-        Unsafe.getUnsafe().putChar(appendAddressFor(offset, Character.BYTES), value);
+        Unsafe.putChar(appendAddressFor(offset, Character.BYTES), value);
     }
 
     @Override
@@ -138,58 +139,54 @@ public interface MemoryCARW extends MemoryCR, MemoryARW, MemoryCA, MemoryMAT {
 
     @Override
     default void putDouble(double value) {
-        Unsafe.getUnsafe().putDouble(appendAddressFor(Double.BYTES), value);
+        Unsafe.putDouble(appendAddressFor(Double.BYTES), value);
     }
 
     @Override
     default void putDouble(long offset, double value) {
-        Unsafe.getUnsafe().putDouble(appendAddressFor(offset, Double.BYTES), value);
+        Unsafe.putDouble(appendAddressFor(offset, Double.BYTES), value);
     }
 
     @Override
     default void putFloat(float value) {
-        Unsafe.getUnsafe().putFloat(appendAddressFor(Float.BYTES), value);
+        Unsafe.putFloat(appendAddressFor(Float.BYTES), value);
     }
 
     @Override
     default void putFloat(long offset, float value) {
-        Unsafe.getUnsafe().putFloat(appendAddressFor(offset, Float.BYTES), value);
+        Unsafe.putFloat(appendAddressFor(offset, Float.BYTES), value);
     }
 
     @Override
     default void putInt(int value) {
-        Unsafe.getUnsafe().putInt(appendAddressFor(Integer.BYTES), value);
+        Unsafe.putInt(appendAddressFor(Integer.BYTES), value);
     }
 
     @Override
     default void putInt(long offset, int value) {
-        Unsafe.getUnsafe().putInt(appendAddressFor(offset, Integer.BYTES), value);
+        Unsafe.putInt(appendAddressFor(offset, Integer.BYTES), value);
     }
 
     @Override
     default void putLong(long value) {
-        Unsafe.getUnsafe().putLong(appendAddressFor(Long.BYTES), value);
+        Unsafe.putLong(appendAddressFor(Long.BYTES), value);
     }
 
     @Override
     default void putLong(long offset, long value) {
-        Unsafe.getUnsafe().putLong(appendAddressFor(offset, Long.BYTES), value);
+        Unsafe.putLong(appendAddressFor(offset, Long.BYTES), value);
     }
 
     @Override
     default void putLong128(long lo, long hi) {
         long addr = appendAddressFor(2 * Long.BYTES);
-        Unsafe.getUnsafe().putLong(addr, lo);
-        Unsafe.getUnsafe().putLong(addr + Long.BYTES, hi);
+        Long128.putLong128(lo, hi, addr);
     }
 
     @Override
     default void putLong256(long l0, long l1, long l2, long l3) {
         final long addr = appendAddressFor(32);
-        Unsafe.getUnsafe().putLong(addr, l0);
-        Unsafe.getUnsafe().putLong(addr + Long.BYTES, l1);
-        Unsafe.getUnsafe().putLong(addr + Long.BYTES * 2, l2);
-        Unsafe.getUnsafe().putLong(addr + Long.BYTES * 3, l3);
+        Long256.putLong256(l0, l1, l2, l3, addr);
     }
 
     @Override
@@ -226,10 +223,7 @@ public interface MemoryCARW extends MemoryCR, MemoryARW, MemoryCA, MemoryMAT {
     @Override
     default void putLong256(long offset, long l0, long l1, long l2, long l3) {
         final long addr = appendAddressFor(offset, Long256.BYTES);
-        Unsafe.getUnsafe().putLong(addr, l0);
-        Unsafe.getUnsafe().putLong(addr + Long.BYTES, l1);
-        Unsafe.getUnsafe().putLong(addr + Long.BYTES * 2, l2);
-        Unsafe.getUnsafe().putLong(addr + Long.BYTES * 3, l3);
+        Long256.putLong256(l0, l1, l2, l3, addr);
     }
 
     default void putLong256(CharSequence hexString, int start, int end, Long256Acceptor acceptor) {
@@ -264,12 +258,12 @@ public interface MemoryCARW extends MemoryCR, MemoryARW, MemoryCA, MemoryMAT {
 
     @Override
     default void putShort(short value) {
-        Unsafe.getUnsafe().putShort(appendAddressFor(Short.BYTES), value);
+        Unsafe.putShort(appendAddressFor(Short.BYTES), value);
     }
 
     @Override
     default void putShort(long offset, short value) {
-        Unsafe.getUnsafe().putShort(appendAddressFor(offset, Short.BYTES), value);
+        Unsafe.putShort(appendAddressFor(offset, Short.BYTES), value);
     }
 
     @Override
@@ -281,8 +275,8 @@ public interface MemoryCARW extends MemoryCR, MemoryARW, MemoryCA, MemoryMAT {
     default long putStr(char value) {
         if (value != 0) {
             long addr = appendAddressFor(Integer.BYTES + Character.BYTES);
-            Unsafe.getUnsafe().putInt(addr, 1);
-            Unsafe.getUnsafe().putChar(addr + Integer.BYTES, value);
+            Unsafe.putInt(addr, 1);
+            Unsafe.putChar(addr + Integer.BYTES, value);
             return getAppendOffset();
         }
         return putNullStr();
@@ -308,14 +302,14 @@ public interface MemoryCARW extends MemoryCR, MemoryARW, MemoryCA, MemoryMAT {
     @Override
     default void putStr(long offset, CharSequence value, int pos, int len) {
         final long addr = appendAddressFor(offset, Vm.getStorageLength(len));
-        Unsafe.getUnsafe().putInt(addr, len);
+        Unsafe.putInt(addr, len);
         Chars.copyStrChars(value, pos, len, addr + Vm.STRING_LENGTH_BYTES);
     }
 
     default long putStrUnsafe(CharSequence value, int pos, int len) {
         final long storageLen = Vm.getStorageLength(len);
         final long addr = appendAddressFor(storageLen);
-        Unsafe.getUnsafe().putInt(addr, len);
+        Unsafe.putInt(addr, len);
         Chars.copyStrChars(value, pos, len, addr + Integer.BYTES);
         return getAppendOffset();
     }
@@ -341,6 +335,6 @@ public interface MemoryCARW extends MemoryCR, MemoryARW, MemoryCA, MemoryMAT {
 
     @Override
     default void zeroMem(int length) {
-        Unsafe.getUnsafe().setMemory(appendAddressFor(length), length, (byte) 0);
+        Unsafe.setMemory(appendAddressFor(length), length, (byte) 0);
     }
 }

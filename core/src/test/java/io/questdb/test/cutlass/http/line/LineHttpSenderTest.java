@@ -28,7 +28,13 @@ import io.questdb.Bootstrap;
 import io.questdb.DefaultBootstrapConfiguration;
 import io.questdb.PropertyKey;
 import io.questdb.ServerMain;
-import io.questdb.cairo.*;
+import io.questdb.cairo.CairoEngine;
+import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.DefaultDdlListener;
+import io.questdb.cairo.MicrosTimestampDriver;
+import io.questdb.cairo.NanosTimestampDriver;
+import io.questdb.cairo.SecurityContext;
+import io.questdb.cairo.TableToken;
 import io.questdb.cairo.sql.TableMetadata;
 import io.questdb.client.DefaultHttpClientConfiguration;
 import io.questdb.client.Sender;
@@ -89,91 +95,6 @@ public class LineHttpSenderTest extends AbstractBootstrapTest {
     public static <T> T createLongArray(int... shape) {
         int[] indices = new int[shape.length];
         return buildNestedArray(ArrayDataType.LONG, shape, 0, indices);
-    }
-
-    @SuppressWarnings("unchecked")
-    private static <T> T buildNestedArray(ArrayDataType dataType, int[] shape, int currentDim, int[] indices) {
-        if (currentDim == shape.length - 1) {
-            Object arr = dataType.createArray(shape[currentDim]);
-            for (int i = 0; i < Array.getLength(arr); i++) {
-                indices[currentDim] = i;
-                dataType.setElement(arr, i, indices);
-            }
-            return (T) arr;
-        } else {
-            Class<?> componentType = dataType.getComponentType(shape.length - currentDim - 1);
-            Object arr = Array.newInstance(componentType, shape[currentDim]);
-            for (int i = 0; i < shape[currentDim]; i++) {
-                indices[currentDim] = i;
-                Object subArr = buildNestedArray(dataType, shape, currentDim + 1, indices);
-                Array.set(arr, i, subArr);
-            }
-            return (T) arr;
-        }
-    }
-
-    private static void flushAndAssertError(Sender sender, String... errors) {
-        try {
-            sender.flush();
-            Assert.fail("Expected exception");
-        } catch (LineSenderException e) {
-            for (String error : errors) {
-                TestUtils.assertContains(e.getMessage(), error);
-            }
-        }
-    }
-
-    private static void sendIlp(String tableName, int count, ServerMain serverMain) throws NumericException {
-        long timestamp = MicrosTimestampDriver.floor("2023-11-27T18:53:24.834Z");
-        int i = 0;
-
-        int port = serverMain.getHttpServerPort();
-        try (Sender sender = Sender.builder(Sender.Transport.HTTP)
-                .address("localhost:" + port)
-                .autoFlushRows(Integer.MAX_VALUE) // we want to flush manually
-                .autoFlushIntervalMillis(Integer.MAX_VALUE) // flush manually...
-                .build()
-        ) {
-            if (count / 2 > 0) {
-                String tableNameUpper = tableName.toUpperCase();
-                for (; i < count / 2; i++) {
-                    String tn = i % 2 == 0 ? tableName : tableNameUpper;
-                    sender.table(tn)
-                            .symbol("async", "true")
-                            .symbol("location", "santa_monica")
-                            .stringColumn("level", "below 3 feet asd fasd fasfd asdf asdf asdfasdf asdf asdfasdfas dfads".substring(0, i % 68))
-                            .longColumn("water_level", i)
-                            .at(timestamp, ChronoUnit.MICROS);
-                }
-                sender.flush();
-            }
-
-            for (; i < count; i++) {
-                String tableNameUpper = tableName.toUpperCase();
-                String tn = i % 2 == 0 ? tableName : tableNameUpper;
-                sender.table(tn)
-                        .symbol("async", "true")
-                        .symbol("location", "santa_monica")
-                        .stringColumn("level", "below 3 feet asd fasd fasfd asdf asdf asdfasdf asdf asdfasdfas dfads".substring(0, i % 68))
-                        .longColumn("water_level", i)
-                        .at(timestamp, ChronoUnit.MICROS);
-            }
-            sender.flush();
-        }
-    }
-
-    private static void putDouble(DirectUtf8Sink sink, double value) {
-        sink.put('=');
-        sink.putAny((byte) 16);
-        long raw = Double.doubleToRawLongBits(value);
-        sink.putAny((byte) (raw & 0xFF));
-        sink.putAny((byte) ((raw >> 8) & 0xFF));
-        sink.putAny((byte) ((raw >> 16) & 0xFF));
-        sink.putAny((byte) ((raw >> 24) & 0xFF));
-        sink.putAny((byte) ((raw >> 32) & 0xFF));
-        sink.putAny((byte) ((raw >> 40) & 0xFF));
-        sink.putAny((byte) ((raw >> 48) & 0xFF));
-        sink.putAny((byte) ((raw >> 56) & 0xFF));
     }
 
     public void assertSql(CairoEngine engine, CharSequence sql, CharSequence expectedResult) throws SqlException {
@@ -3253,6 +3174,91 @@ public class LineHttpSenderTest extends AbstractBootstrapTest {
         });
     }
 
+    @SuppressWarnings("unchecked")
+    private static <T> T buildNestedArray(ArrayDataType dataType, int[] shape, int currentDim, int[] indices) {
+        if (currentDim == shape.length - 1) {
+            Object arr = dataType.createArray(shape[currentDim]);
+            for (int i = 0; i < Array.getLength(arr); i++) {
+                indices[currentDim] = i;
+                dataType.setElement(arr, i, indices);
+            }
+            return (T) arr;
+        } else {
+            Class<?> componentType = dataType.getComponentType(shape.length - currentDim - 1);
+            Object arr = Array.newInstance(componentType, shape[currentDim]);
+            for (int i = 0; i < shape[currentDim]; i++) {
+                indices[currentDim] = i;
+                Object subArr = buildNestedArray(dataType, shape, currentDim + 1, indices);
+                Array.set(arr, i, subArr);
+            }
+            return (T) arr;
+        }
+    }
+
+    private static void flushAndAssertError(Sender sender, String... errors) {
+        try {
+            sender.flush();
+            Assert.fail("Expected exception");
+        } catch (LineSenderException e) {
+            for (String error : errors) {
+                TestUtils.assertContains(e.getMessage(), error);
+            }
+        }
+    }
+
+    private static void putDouble(DirectUtf8Sink sink, double value) {
+        sink.put('=');
+        sink.putAny((byte) 16);
+        long raw = Double.doubleToRawLongBits(value);
+        sink.putAny((byte) (raw & 0xFF));
+        sink.putAny((byte) ((raw >> 8) & 0xFF));
+        sink.putAny((byte) ((raw >> 16) & 0xFF));
+        sink.putAny((byte) ((raw >> 24) & 0xFF));
+        sink.putAny((byte) ((raw >> 32) & 0xFF));
+        sink.putAny((byte) ((raw >> 40) & 0xFF));
+        sink.putAny((byte) ((raw >> 48) & 0xFF));
+        sink.putAny((byte) ((raw >> 56) & 0xFF));
+    }
+
+    private static void sendIlp(String tableName, int count, ServerMain serverMain) throws NumericException {
+        long timestamp = MicrosTimestampDriver.floor("2023-11-27T18:53:24.834Z");
+        int i = 0;
+
+        int port = serverMain.getHttpServerPort();
+        try (Sender sender = Sender.builder(Sender.Transport.HTTP)
+                .address("localhost:" + port)
+                .autoFlushRows(Integer.MAX_VALUE) // we want to flush manually
+                .autoFlushIntervalMillis(Integer.MAX_VALUE) // flush manually...
+                .build()
+        ) {
+            if (count / 2 > 0) {
+                String tableNameUpper = tableName.toUpperCase();
+                for (; i < count / 2; i++) {
+                    String tn = i % 2 == 0 ? tableName : tableNameUpper;
+                    sender.table(tn)
+                            .symbol("async", "true")
+                            .symbol("location", "santa_monica")
+                            .stringColumn("level", "below 3 feet asd fasd fasfd asdf asdf asdfasdf asdf asdfasdfas dfads".substring(0, i % 68))
+                            .longColumn("water_level", i)
+                            .at(timestamp, ChronoUnit.MICROS);
+                }
+                sender.flush();
+            }
+
+            for (; i < count; i++) {
+                String tableNameUpper = tableName.toUpperCase();
+                String tn = i % 2 == 0 ? tableName : tableNameUpper;
+                sender.table(tn)
+                        .symbol("async", "true")
+                        .symbol("location", "santa_monica")
+                        .stringColumn("level", "below 3 feet asd fasd fasfd asdf asdf asdfasdf asdf asdfasdfas dfads".substring(0, i % 68))
+                        .longColumn("water_level", i)
+                        .at(timestamp, ChronoUnit.MICROS);
+            }
+            sender.flush();
+        }
+    }
+
     private void testCreateTimestampColumns(long timestamp, ChronoUnit unit, int protocolVersion, int[] expectedColumnTypes, String expected) throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             try (final TestServerMain serverMain = startWithEnvVariables(
@@ -3385,7 +3391,11 @@ public class LineHttpSenderTest extends AbstractBootstrapTest {
                         }
                     } catch (LineSenderException | ArithmeticException e) {
                         if (expected2 == null) {
-                            TestUtils.assertContains(e.getMessage(), "long overflow");
+                            // V1 overflows client-side (ArithmeticException from Math.multiplyExact),
+                            // V2 sends micros as-is and the server rejects the nanos overflow (LineSenderException)
+                            if (e instanceof LineSenderException) {
+                                TestUtils.assertContains(e.getMessage(), "long overflow");
+                            }
                         } else {
                             throw e;
                         }
@@ -3406,7 +3416,9 @@ public class LineHttpSenderTest extends AbstractBootstrapTest {
                         }
                     } catch (LineSenderException | ArithmeticException e) {
                         if (expected2 == null) {
-                            TestUtils.assertContains(e.getMessage(), "long overflow");
+                            if (e instanceof LineSenderException) {
+                                TestUtils.assertContains(e.getMessage(), "long overflow");
+                            }
                         } else {
                             throw e;
                         }

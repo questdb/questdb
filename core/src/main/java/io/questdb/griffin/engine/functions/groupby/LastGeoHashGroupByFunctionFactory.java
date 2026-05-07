@@ -69,7 +69,7 @@ public class LastGeoHashGroupByFunctionFactory implements FunctionFactory {
                         if (lastRowId > existingRowId || existingRowId == Numbers.LONG_NULL) {
                             mapValue.putLong(valueIndex, lastRowId);
                             final long addr = dataAddr + ((long) rowCount - 1) * Byte.BYTES;
-                            mapValue.putByte(valueIndex + 1, Unsafe.getUnsafe().getByte(addr));
+                            mapValue.putByte(valueIndex + 1, Unsafe.getByte(addr));
                         }
                     }
                 }
@@ -103,7 +103,7 @@ public class LastGeoHashGroupByFunctionFactory implements FunctionFactory {
                         if (lastRowId > existingRowId || existingRowId == Numbers.LONG_NULL) {
                             mapValue.putLong(valueIndex, lastRowId);
                             final long addr = dataAddr + ((long) rowCount - 1) * Short.BYTES;
-                            mapValue.putShort(valueIndex + 1, Unsafe.getUnsafe().getShort(addr));
+                            mapValue.putShort(valueIndex + 1, Unsafe.getShort(addr));
                         }
                     }
                 }
@@ -137,7 +137,7 @@ public class LastGeoHashGroupByFunctionFactory implements FunctionFactory {
                         if (lastRowId > existingRowId || existingRowId == Numbers.LONG_NULL) {
                             mapValue.putLong(valueIndex, lastRowId);
                             final long addr = dataAddr + ((long) rowCount - 1) * Integer.BYTES;
-                            mapValue.putInt(valueIndex + 1, Unsafe.getUnsafe().getInt(addr));
+                            mapValue.putInt(valueIndex + 1, Unsafe.getInt(addr));
                         }
                     }
                 }
@@ -171,7 +171,7 @@ public class LastGeoHashGroupByFunctionFactory implements FunctionFactory {
                         if (lastRowId > existingRowId || existingRowId == Numbers.LONG_NULL) {
                             mapValue.putLong(valueIndex, lastRowId);
                             final long addr = dataAddr + ((long) rowCount - 1) * Long.BYTES;
-                            mapValue.putLong(valueIndex + 1, Unsafe.getUnsafe().getLong(addr));
+                            mapValue.putLong(valueIndex + 1, Unsafe.getLong(addr));
                         }
                     }
                 }

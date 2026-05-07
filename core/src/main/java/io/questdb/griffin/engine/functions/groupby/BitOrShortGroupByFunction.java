@@ -71,19 +71,19 @@ public class BitOrShortGroupByFunction extends ShortFunction implements GroupByF
         final long argAddr = argColumnIndex >= 0 ? record.getPageAddress(argColumnIndex) : 0;
         if (argAddr != 0) {
             for (long i = 0; i < rowCount; i++) {
-                final long encoded = Unsafe.getUnsafe().getLong(batchAddr + (i << 3));
+                final long encoded = Unsafe.getLong(batchAddr + (i << 3));
                 final long rowIndex = Map.decodeBatchRowIndex(encoded);
-                final short value = Unsafe.getUnsafe().getShort(argAddr + (rowIndex << 1));
+                final short value = Unsafe.getShort(argAddr + (rowIndex << 1));
                 final long addr = baseValueAddr + Map.decodeBatchOffset(encoded) + valueColumnOffset;
-                Unsafe.getUnsafe().putShort(addr, (short) (Unsafe.getUnsafe().getShort(addr) | value));
+                Unsafe.putShort(addr, (short) (Unsafe.getShort(addr) | value));
             }
         } else {
             for (long i = 0; i < rowCount; i++) {
-                final long encoded = Unsafe.getUnsafe().getLong(batchAddr + (i << 3));
+                final long encoded = Unsafe.getLong(batchAddr + (i << 3));
                 record.setRowIndex(Map.decodeBatchRowIndex(encoded));
                 final short value = arg.getShort(record);
                 final long addr = baseValueAddr + Map.decodeBatchOffset(encoded) + valueColumnOffset;
-                Unsafe.getUnsafe().putShort(addr, (short) (Unsafe.getUnsafe().getShort(addr) | value));
+                Unsafe.putShort(addr, (short) (Unsafe.getShort(addr) | value));
             }
         }
     }

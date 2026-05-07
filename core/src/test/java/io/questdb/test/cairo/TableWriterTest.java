@@ -25,7 +25,6 @@
 package io.questdb.test.cairo;
 
 import io.questdb.PropertyKey;
-import io.questdb.cairo.BitmapIndexReader;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoError;
 import io.questdb.cairo.CairoException;
@@ -35,6 +34,7 @@ import io.questdb.cairo.DefaultCairoConfiguration;
 import io.questdb.cairo.EntryUnavailableException;
 import io.questdb.cairo.GeoHashes;
 import io.questdb.cairo.ImplicitCastException;
+import io.questdb.cairo.IndexType;
 import io.questdb.cairo.MicrosTimestampDriver;
 import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.SymbolMapReader;
@@ -44,6 +44,7 @@ import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.TimestampDriver;
 import io.questdb.cairo.TxWriter;
+import io.questdb.cairo.idx.IndexReader;
 import io.questdb.cairo.security.AllowAllSecurityContext;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordMetadata;
@@ -58,6 +59,8 @@ import io.questdb.cairo.wal.seq.TableTransactionLogFile;
 import io.questdb.cairo.wal.seq.TableTransactionLogV1;
 import io.questdb.griffin.engine.ops.AlterOperation;
 import io.questdb.griffin.engine.ops.AlterOperationBuilder;
+import io.questdb.griffin.engine.table.parquet.PartitionDescriptor;
+import io.questdb.griffin.engine.table.parquet.PartitionEncoder;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.Chars;
@@ -108,6 +111,7 @@ public class TableWriterTest extends AbstractCairoTest {
 
     @Before
     public void setUp() {
+        setProperty(PropertyKey.CAIRO_DEFAULT_SYMBOL_INDEX_TYPE, TestUtils.randomSymbolIndexTypeName(rnd));
         super.setUp();
         PRODUCT_FS = PRODUCT;
         if (configuration.mangleTableDirNames()) {
@@ -115,6 +119,7 @@ public class TableWriterTest extends AbstractCairoTest {
         }
         timestampType = rnd.nextBoolean() ? ColumnType.TIMESTAMP_MICRO : ColumnType.TIMESTAMP_NANO;
         this.timestampDriver = ColumnType.getTimestampDriver(timestampType);
+        super.setUp();
     }
 
     @Test
@@ -287,7 +292,7 @@ public class TableWriterTest extends AbstractCairoTest {
                         String columnName = "col" + i;
                         alterOperationBuilder
                                 .ofAddColumn(0, token, tableId)
-                                .ofAddColumn(columnName, 5, ColumnType.INT, 0, false, false, 0);
+                                .ofAddColumn(columnName, 5, ColumnType.INT, 0, false, IndexType.NONE, 0);
                         AlterOperation alterOp = alterOperationBuilder.build();
                         alterOp.withSecurityContext(AllowAllSecurityContext.INSTANCE);
                         try (TableWriter writer = engine.getWriterOrPublishCommand(token, alterOp)) {
@@ -713,7 +718,7 @@ public class TableWriterTest extends AbstractCairoTest {
                 writer.commit();
 
                 try {
-                    writer.addColumn("c", ColumnType.STRING, 0, false, true, 1024, false, AllowAllSecurityContext.INSTANCE);
+                    writer.addColumn("c", ColumnType.STRING, 0, false, IndexType.BITMAP, 1024, false, AllowAllSecurityContext.INSTANCE);
                     Assert.fail();
                 } catch (CairoException e) {
                     TestUtils.assertContains(e.getFlyweightMessage(), "only supported");
@@ -728,7 +733,7 @@ public class TableWriterTest extends AbstractCairoTest {
                 writer.commit();
 
                 // re-add column  with index flag switched off
-                writer.addColumn("c", ColumnType.STRING, 0, false, false, 0, false, AllowAllSecurityContext.INSTANCE);
+                writer.addColumn("c", ColumnType.STRING, 0, false, IndexType.NONE, 0, false, AllowAllSecurityContext.INSTANCE);
             }
         });
     }
@@ -754,7 +759,7 @@ public class TableWriterTest extends AbstractCairoTest {
                 writer.commit();
 
                 try {
-                    writer.addColumn("c", ColumnType.SYMBOL, 0, false, true, 0, false, AllowAllSecurityContext.INSTANCE);
+                    writer.addColumn("c", ColumnType.SYMBOL, 0, false, IndexType.BITMAP, 0, false, AllowAllSecurityContext.INSTANCE);
                     Assert.fail();
                 } catch (CairoException e) {
                     TestUtils.assertContains(e.getFlyweightMessage(), "invalid index value block capacity");
@@ -769,7 +774,7 @@ public class TableWriterTest extends AbstractCairoTest {
                 writer.commit();
 
                 // re-add column  with index flag switched off
-                writer.addColumn("c", ColumnType.STRING, 0, false, false, 0, false, AllowAllSecurityContext.INSTANCE);
+                writer.addColumn("c", ColumnType.STRING, 0, false, IndexType.NONE, 0, false, AllowAllSecurityContext.INSTANCE);
             }
         });
     }
@@ -1996,8 +2001,8 @@ public class TableWriterTest extends AbstractCairoTest {
             w.truncate();
 
             // add a couple of indexes
-            w.addIndex("sym1", 1024);
-            w.addIndex("sym2", 1024);
+            w.addIndex("sym1", 1024, IndexType.BITMAP);
+            w.addIndex("sym2", 1024, IndexType.BITMAP);
 
             Assert.assertTrue(w.getMetadata().isColumnIndexed(0));
             Assert.assertTrue(w.getMetadata().isColumnIndexed(1));
@@ -2846,6 +2851,134 @@ public class TableWriterTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testSwitchNativePartitionWithParquetLinksPmSidecar() throws Exception {
+        assertMemoryLeak(() -> {
+            int N = 10000;
+            create(FF, PartitionBy.DAY, N);
+
+            Rnd rnd = new Rnd();
+            long ts = timestampDriver.parseFloorLiteral("2013-03-04T00:00:00.000Z");
+            long interval = 60000L * 1000L;
+
+            try (TableWriter writer = newOffPoolWriter(configuration, PRODUCT)) {
+                populateProducts(writer, rnd, ts, N, interval);
+                writer.commit();
+            }
+
+            final TableToken token;
+            try (TableWriter writer = newOffPoolWriter(configuration, PRODUCT)) {
+                token = writer.getTableToken();
+                TxWriter tx = writer.getTxWriter();
+
+                long partitionTs = tx.getPartitionTimestampByIndex(0);
+                int partitionIndex = tx.getPartitionIndex(partitionTs);
+                long partitionNameTxn = tx.getPartitionNameTxn(partitionIndex);
+
+                // Stamp data.parquet and _pm stubs into the non-active partition dir.
+                // switchNativePartitionWithParquet only checks existence and hard-links,
+                // so empty stubs exercise the code path without needing a real encode.
+                try (Path p = new Path()) {
+                    p.of(configuration.getDbRoot()).concat(token);
+                    TableUtils.setPathForParquetPartition(p, timestampType, PartitionBy.DAY, partitionTs, partitionNameTxn);
+                    Assert.assertTrue("failed to touch data.parquet", FF.touch(p.$()));
+
+                    p.of(configuration.getDbRoot()).concat(token);
+                    TableUtils.setPathForParquetPartitionMetadata(p, timestampType, PartitionBy.DAY, partitionTs, partitionNameTxn);
+                    Assert.assertTrue("failed to touch _pm", FF.touch(p.$()));
+                }
+
+                // Bump writer.txn past partition.nameTxn so the switch creates a
+                // distinct destination dir.
+                populateRow(writer, rnd, tx.getMaxTimestamp(), timestampDriver.fromMicros(interval));
+                writer.commit();
+
+                // Mark the partition as parquet-generated so the switch passes the
+                // isPartitionParquetGenerated guard.
+                tx.setPartitionParquetGenerated(partitionIndex, true);
+
+                int rc = writer.switchNativePartitionWithParquet(partitionTs, 0L);
+                Assert.assertEquals(TableWriter.SWITCH_OK, rc);
+            }
+
+            try (TableReader reader = engine.getReader(token)) {
+                long partitionTs = reader.getTxFile().getPartitionTimestampByIndex(0);
+                long newNameTxn = reader.getTxFile().getPartitionNameTxn(0);
+                try (Path p = new Path()) {
+                    p.of(configuration.getDbRoot()).concat(token);
+                    TableUtils.setPathForParquetPartitionMetadata(p, timestampType, PartitionBy.DAY, partitionTs, newNameTxn);
+                    Assert.assertTrue("_pm must survive switchNativePartitionWithParquet", FF.exists(p.$()));
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testSwitchNativePartitionWithParquetMissingPmDoesNotOrphanNewDir() throws Exception {
+        assertMemoryLeak(() -> {
+            int N = 10000;
+            create(FF, PartitionBy.DAY, N);
+
+            Rnd rnd = new Rnd();
+            long ts = timestampDriver.parseFloorLiteral("2013-03-04T00:00:00.000Z");
+            long interval = 60000L * 1000L;
+
+            try (TableWriter writer = newOffPoolWriter(configuration, PRODUCT)) {
+                populateProducts(writer, rnd, ts, N, interval);
+                writer.commit();
+            }
+
+            final TableToken token;
+            long partitionTs;
+            long destTxn;
+            try (TableWriter writer = newOffPoolWriter(configuration, PRODUCT)) {
+                token = writer.getTableToken();
+                TxWriter tx = writer.getTxWriter();
+
+                partitionTs = tx.getPartitionTimestampByIndex(0);
+                int partitionIndex = tx.getPartitionIndex(partitionTs);
+                long partitionNameTxn = tx.getPartitionNameTxn(partitionIndex);
+
+                // Stamp data.parquet but NOT _pm in the source partition dir to
+                // simulate a partition predating Mig940 or one whose _pm was
+                // manually removed. The switch must abort and leave nothing on
+                // disk for the destination version.
+                try (Path p = new Path()) {
+                    p.of(configuration.getDbRoot()).concat(token);
+                    TableUtils.setPathForParquetPartition(p, timestampType, PartitionBy.DAY, partitionTs, partitionNameTxn);
+                    Assert.assertTrue("failed to touch data.parquet", FF.touch(p.$()));
+                }
+
+                // Bump writer.txn past partition.nameTxn so the switch creates
+                // a distinct destination dir.
+                populateRow(writer, rnd, tx.getMaxTimestamp(), timestampDriver.fromMicros(interval));
+                writer.commit();
+
+                // Mark the partition as parquet-generated so the switch passes
+                // the isPartitionParquetGenerated guard and reaches the _pm
+                // existence check.
+                tx.setPartitionParquetGenerated(partitionIndex, true);
+
+                destTxn = writer.getTxn();
+                int rc = writer.switchNativePartitionWithParquet(partitionTs, 0L);
+                Assert.assertEquals(TableWriter.SWITCH_NO_PARQUET, rc);
+            }
+
+            // The switch must clean up the destination dir it created before
+            // it discovered _pm was missing. Otherwise the hard-linked
+            // data.parquet remains on disk in a directory _txn never
+            // references.
+            try (Path p = new Path()) {
+                p.of(configuration.getDbRoot()).concat(token);
+                TableUtils.setPathForNativePartition(p, timestampType, PartitionBy.DAY, partitionTs, destTxn);
+                Assert.assertFalse(
+                        "orphan partition dir [path=" + p + "]",
+                        FF.exists(p.$())
+                );
+            }
+        });
+    }
+
+    @Test
     public void testTableDoesNotExist() throws Exception {
         assertMemoryLeak(() -> {
             try {
@@ -3340,18 +3473,19 @@ public class TableWriterTest extends AbstractCairoTest {
     private void assertIndex(TableReader reader, TestTableReaderRecord record, int columnIndex) {
         final int partitionIndex = 0;
         reader.openPartition(partitionIndex);
-        final BitmapIndexReader indexReader = reader.getBitmapIndexReader(partitionIndex, columnIndex, BitmapIndexReader.DIR_FORWARD);
+        final IndexReader indexReader = reader.getIndexReader(partitionIndex, columnIndex, IndexReader.DIR_FORWARD);
         final SymbolMapReader r = reader.getSymbolMapReader(columnIndex);
         final int symbolCount = r.getSymbolCount();
 
         long calculatedRowCount = 0;
         for (int i = 0; i < symbolCount; i++) {
-            final RowCursor rowCursor = indexReader.getCursor(true, i + 1, 0, Long.MAX_VALUE);
+            final RowCursor rowCursor = indexReader.getCursor(i + 1, 0, Long.MAX_VALUE);
             while (rowCursor.hasNext()) {
                 record.setRecordIndex(Rows.toRowID(partitionIndex, rowCursor.next()));
                 Assert.assertEquals(i, record.getInt(columnIndex));
                 calculatedRowCount++;
             }
+            Misc.free(rowCursor);
         }
         Assert.assertEquals(reader.size(), calculatedRowCount);
     }
@@ -3683,7 +3817,7 @@ public class TableWriterTest extends AbstractCairoTest {
             }
 
             try (TableWriter writer = newOffPoolWriter(configuration, PRODUCT)) {
-                writer.addIndex("supplier", configuration.getIndexValueBlockSize());
+                writer.addIndex("supplier", configuration.getIndexValueBlockSize(), IndexType.BITMAP);
                 Assert.fail();
             } catch (CairoException ignored) {
             }
@@ -3704,7 +3838,7 @@ public class TableWriterTest extends AbstractCairoTest {
 
             // another attempt to create index
             try (TableWriter writer = newOffPoolWriter(configuration, PRODUCT)) {
-                writer.addIndex("supplier", configuration.getIndexValueBlockSize());
+                writer.addIndex("supplier", configuration.getIndexValueBlockSize(), IndexType.BITMAP);
             }
         });
     }
@@ -4162,8 +4296,8 @@ public class TableWriterTest extends AbstractCairoTest {
             w.truncate();
 
             // add a couple of indexes
-            w.addIndex("sym1", 1024);
-            w.addIndex("sym2", 1024);
+            w.addIndex("sym1", 1024, IndexType.BITMAP);
+            w.addIndex("sym2", 1024, IndexType.BITMAP);
 
             Assert.assertTrue(w.getMetadata().isColumnIndexed(0));
             Assert.assertTrue(w.getMetadata().isColumnIndexed(1));

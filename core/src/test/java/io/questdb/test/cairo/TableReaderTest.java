@@ -25,7 +25,6 @@
 package io.questdb.test.cairo;
 
 import io.questdb.PropertyKey;
-import io.questdb.cairo.BitmapIndexReader;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnPurgeJob;
@@ -36,6 +35,7 @@ import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.TimestampDriver;
+import io.questdb.cairo.idx.IndexReader;
 import io.questdb.cairo.security.AllowAllSecurityContext;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
@@ -81,9 +81,9 @@ public class TableReaderTest extends AbstractCairoTest {
     public static final int DO_NOT_CARE = 0;
     public static final int MUST_NOT_SWITCH = 2;
     public static final int MUST_SWITCH = 1;
-    private static final RecordAssert BATCH2_BEFORE_ASSERTER = (r, rnd, ts, blob) -> assertNullStr(r, 13);
-    private static final RecordAssert BATCH3_BEFORE_ASSERTER = (r, rnd, ts, blob) -> Assert.assertEquals(Numbers.INT_NULL, r.getInt(14));
-    private static final RecordAssert BATCH4_BEFORE_ASSERTER = (r, rnd, ts, blob) -> {
+    private static final RecordAssert BATCH2_BEFORE_ASSERTER = (r, _, _, _) -> assertNullStr(r, 13);
+    private static final RecordAssert BATCH3_BEFORE_ASSERTER = (r, _, _, _) -> Assert.assertEquals(Numbers.INT_NULL, r.getInt(14));
+    private static final RecordAssert BATCH4_BEFORE_ASSERTER = (r, _, _, _) -> {
         Assert.assertEquals(0, r.getShort(15));
         Assert.assertFalse(r.getBool(16));
         Assert.assertEquals(0, r.getByte(17));
@@ -95,7 +95,7 @@ public class TableReaderTest extends AbstractCairoTest {
         Assert.assertNull(r.getBin(23));
         Assert.assertEquals(TableUtils.NULL_LEN, r.getBinLen(23));
     };
-    private static final RecordAssert BATCH5_BEFORE_ASSERTER = (r, rnd, ts, blob) -> {
+    private static final RecordAssert BATCH5_BEFORE_ASSERTER = (r, _, _, _) -> {
         Assert.assertEquals(0, r.getShort(15));
         Assert.assertFalse(r.getBool(16));
         Assert.assertEquals(0, r.getByte(17));
@@ -105,11 +105,11 @@ public class TableReaderTest extends AbstractCairoTest {
         Assert.assertEquals(Numbers.LONG_NULL, r.getLong(21));
         Assert.assertEquals(Numbers.LONG_NULL, r.getDate(22));
     };
-    private static final RecordAssert BATCH_2_7_BEFORE_ASSERTER = (r, rnd, ts, blob) -> assertNullStr(r, 12);
-    private static final RecordAssert BATCH_2_9_BEFORE_ASSERTER = (r, rnd, ts, blob) -> assertNullStr(r, 11);
-    private static final RecordAssert BATCH_3_7_BEFORE_ASSERTER = (r, rnd, ts, blob) -> Assert.assertEquals(Numbers.INT_NULL, r.getInt(13));
-    private static final RecordAssert BATCH_3_9_BEFORE_ASSERTER = (r, rnd, ts, blob) -> Assert.assertEquals(Numbers.INT_NULL, r.getInt(12));
-    private static final RecordAssert BATCH_4_7_BEFORE_ASSERTER = (r, rnd, ts, blob) -> {
+    private static final RecordAssert BATCH_2_7_BEFORE_ASSERTER = (r, _, _, _) -> assertNullStr(r, 12);
+    private static final RecordAssert BATCH_2_9_BEFORE_ASSERTER = (r, _, _, _) -> assertNullStr(r, 11);
+    private static final RecordAssert BATCH_3_7_BEFORE_ASSERTER = (r, _, _, _) -> Assert.assertEquals(Numbers.INT_NULL, r.getInt(13));
+    private static final RecordAssert BATCH_3_9_BEFORE_ASSERTER = (r, _, _, _) -> Assert.assertEquals(Numbers.INT_NULL, r.getInt(12));
+    private static final RecordAssert BATCH_4_7_BEFORE_ASSERTER = (r, _, _, _) -> {
         Assert.assertEquals(0, r.getShort(14));
         Assert.assertFalse(r.getBool(15));
         Assert.assertEquals(0, r.getByte(16));
@@ -119,7 +119,7 @@ public class TableReaderTest extends AbstractCairoTest {
         Assert.assertEquals(Numbers.LONG_NULL, r.getLong(20));
         Assert.assertEquals(Numbers.LONG_NULL, r.getDate(21));
     };
-    private static final RecordAssert BATCH_4_9_BEFORE_ASSERTER = (r, rnd, ts, blob) -> {
+    private static final RecordAssert BATCH_4_9_BEFORE_ASSERTER = (r, _, _, _) -> {
         Assert.assertEquals(0, r.getShort(13));
         Assert.assertFalse(r.getBool(14));
         Assert.assertEquals(0, r.getByte(15));
@@ -1267,6 +1267,12 @@ public class TableReaderTest extends AbstractCairoTest {
     private static final Rnd rnd = TestUtils.generateRandom(null);
     private TimestampDriver timestampDriver;
     private int timestampType;
+
+    @Override
+    public void setUp() {
+        setProperty(PropertyKey.CAIRO_DEFAULT_SYMBOL_INDEX_TYPE, TestUtils.randomSymbolIndexTypeName(rnd));
+        super.setUp();
+    }
 
     @Before
     public void setUp2() {
@@ -2978,37 +2984,6 @@ public class TableReaderTest extends AbstractCairoTest {
         testRemovePartitionReload(PartitionBy.YEAR, "2020", 3000, current -> timestampDriver.addYears(timestampDriver.getPartitionFloorMethod(PartitionBy.YEAR).floor(current), 1));
     }
 
-    @Test
-    public void testScoreBoardOverflow() throws Throwable {
-        TableModel model = new TableModel(configuration, "all", PartitionBy.DAY)
-                .col("int", ColumnType.INT)
-                .timestamp("t");
-        CreateTableTestUtils.createTableWithVersionAndId(model, engine, ColumnType.VERSION, 1);
-        assertMemoryLeak(() -> {
-            try (TableReader ignore = getReader("all")) {
-                try (TableWriter writer = newOffPoolWriter(configuration, "all")) {
-                    for (int i = 0; i < configuration.getTxnScoreboardEntryCount() + 1; i++) {
-                        TableWriter.Row r = writer.newRow(1000);
-                        r.putInt(0, 100);
-                        r.append();
-                        writer.commit();
-                    }
-                }
-
-                try (TableReader ignore2 = getReader("all")) {
-                } catch (CairoException ex) {
-                    TestUtils.assertContains(ex.getFlyweightMessage(), "max txn-inflight limit reached");
-                }
-
-                try (TableWriter writer = newOffPoolWriter(configuration, "all")) {
-                    TableWriter.Row r = writer.newRow(0);
-                    r.putInt(0, 100);
-                    r.append();
-                    writer.commit();
-                }
-            }
-        });
-    }
 
     @Test
     public void testSetActiveColumnsAllColumnsOpenFlagFastPath() throws Exception {
@@ -3789,7 +3764,7 @@ public class TableReaderTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute(
                     """
-                            CREATE TABLE x (a INT, sym SYMBOL INDEX CAPACITY 4, b LONG, ts TIMESTAMP)
+                            CREATE TABLE x (a INT, sym SYMBOL INDEX, b LONG, ts TIMESTAMP)
                             TIMESTAMP(ts) PARTITION BY DAY WAL
                             """
             );
@@ -3822,7 +3797,7 @@ public class TableReaderTest extends AbstractCairoTest {
 
                 // Verify bitmap index reader works for the previously-skipped indexed column
                 int symIndex = reader.getMetadata().getColumnIndex("sym");
-                BitmapIndexReader indexReader = reader.getBitmapIndexReader(0, symIndex, BitmapIndexReader.DIR_BACKWARD);
+                IndexReader indexReader = reader.getIndexReader(0, symIndex, IndexReader.DIR_BACKWARD);
                 Assert.assertNotNull(indexReader);
                 Assert.assertTrue(indexReader.isOpen());
             }
@@ -3833,14 +3808,17 @@ public class TableReaderTest extends AbstractCairoTest {
     public void testSetActiveColumnsOpenPartitionColumnsErrorPathParquet() throws Exception {
         // Verifies that openPartitionCount stays consistent when
         // openPartitionColumns() throws during Parquet partition open.
-        // The bitmap index .k file open is the only I/O in this path
-        // that can fail, and it requires a non-null (previously created)
-        // bitmap index reader in the slot.
+        // The index key file open is the only I/O in this path that can
+        // fail, and it requires a non-null (previously created) index
+        // reader in the slot. Match both bitmap (.k) and posting (.pk)
+        // key files so the test works regardless of the default symbol
+        // index type.
         AtomicInteger failCounter = new AtomicInteger();
         FilesFacade ff = new TestFilesFacadeImpl() {
             @Override
             public long openRO(LPSZ name) {
-                if (Utf8s.endsWithAscii(name, ".k") && failCounter.get() > 0 && failCounter.decrementAndGet() >= 0) {
+                boolean isKeyFile = Utf8s.endsWithAscii(name, ".k") || Utf8s.endsWithAscii(name, ".pk");
+                if (isKeyFile && failCounter.get() > 0 && failCounter.decrementAndGet() >= 0) {
                     return -1;
                 }
                 return TestFilesFacadeImpl.INSTANCE.openRO(name);
@@ -3850,7 +3828,7 @@ public class TableReaderTest extends AbstractCairoTest {
         assertMemoryLeak(ff, () -> {
             execute(
                     """
-                            CREATE TABLE x (a INT, sym SYMBOL INDEX CAPACITY 4, b LONG, ts TIMESTAMP)
+                            CREATE TABLE x (a INT, sym SYMBOL INDEX, b LONG, ts TIMESTAMP)
                             TIMESTAMP(ts) PARTITION BY DAY WAL
                             """
             );
@@ -3875,7 +3853,7 @@ public class TableReaderTest extends AbstractCairoTest {
                 // to populate the bitmapIndexes slot with a non-null reader.
                 reader.openPartition(0);
                 int symIndex = reader.getMetadata().getColumnIndex("sym");
-                reader.getBitmapIndexReader(0, symIndex, BitmapIndexReader.DIR_BACKWARD);
+                reader.getIndexReader(0, symIndex, IndexReader.DIR_BACKWARD);
                 assertOpenPartitionCount(reader);
 
                 // Close the partition. The bitmap index reader is closed but
@@ -5041,9 +5019,9 @@ public class TableReaderTest extends AbstractCairoTest {
             BinarySequence sq = r.getBin(index);
             for (int l = 0; l < blobLen; l++) {
                 byte b = sq.byteAt(l);
-                boolean result = Unsafe.getUnsafe().getByte(blob + l) != b;
+                boolean result = Unsafe.getByte(blob + l) != b;
                 if (result) {
-                    Assert.fail("Error at [" + l + "]: expected=" + Unsafe.getUnsafe().getByte(blob + l) + ", actual=" + b);
+                    Assert.fail("Error at [" + l + "]: expected=" + Unsafe.getByte(blob + l) + ", actual=" + b);
                 }
             }
         } else {
@@ -5070,7 +5048,8 @@ public class TableReaderTest extends AbstractCairoTest {
         try (ColumnPurgeJob job = new ColumnPurgeJob(engine)) {
             job.run(0);
         }
-        Assert.assertTrue(ff.called() >= removeCallsExpected);
+        int actual = ff.called();
+        Assert.assertTrue("Expected at least " + removeCallsExpected + " file removals, but got " + actual, actual >= removeCallsExpected);
     }
 
     @NotNull

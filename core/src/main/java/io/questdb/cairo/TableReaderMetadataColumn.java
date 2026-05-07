@@ -34,7 +34,7 @@ public class TableReaderMetadataColumn extends TableColumnMetadata {
     public TableReaderMetadataColumn(
             String name,
             int type,
-            boolean indexed,
+            byte indexType,
             int indexValueBlockCapacity,
             boolean symbolTableStatic,
             @Nullable RecordMetadata metadata,
@@ -49,7 +49,7 @@ public class TableReaderMetadataColumn extends TableColumnMetadata {
         super(
                 name,
                 type,
-                indexed,
+                indexType,
                 indexValueBlockCapacity,
                 symbolTableStatic,
                 metadata,

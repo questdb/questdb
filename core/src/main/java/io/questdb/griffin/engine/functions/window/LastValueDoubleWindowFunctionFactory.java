@@ -499,7 +499,7 @@ public class LastValueDoubleWindowFunctionFactory extends AbstractWindowFunction
         @Override
         public void pass1(Record record, long recordOffset, WindowSPI spi) {
             computeNext(record);
-            Unsafe.getUnsafe().putDouble(spi.getAddress(recordOffset, columnIndex), lastValue);
+            Unsafe.putDouble(spi.getAddress(recordOffset, columnIndex), lastValue);
         }
 
         @Override
@@ -560,7 +560,7 @@ public class LastValueDoubleWindowFunctionFactory extends AbstractWindowFunction
         @Override
         public void pass1(Record record, long recordOffset, WindowSPI spi) {
             computeNext(record);
-            Unsafe.getUnsafe().putDouble(spi.getAddress(recordOffset, columnIndex), value);
+            Unsafe.putDouble(spi.getAddress(recordOffset, columnIndex), value);
         }
     }
 
@@ -614,7 +614,7 @@ public class LastValueDoubleWindowFunctionFactory extends AbstractWindowFunction
             key.put(partitionByRecord, partitionBySink);
             MapValue value = key.findValue();
             double val = value != null ? value.getDouble(0) : Double.NaN;
-            Unsafe.getUnsafe().putDouble(spi.getAddress(recordOffset, columnIndex), val);
+            Unsafe.putDouble(spi.getAddress(recordOffset, columnIndex), val);
         }
     }
 
@@ -869,7 +869,7 @@ public class LastValueDoubleWindowFunctionFactory extends AbstractWindowFunction
         @Override
         public void pass1(Record record, long recordOffset, WindowSPI spi) {
             computeNext(record);
-            Unsafe.getUnsafe().putDouble(spi.getAddress(recordOffset, columnIndex), lastValue);
+            Unsafe.putDouble(spi.getAddress(recordOffset, columnIndex), lastValue);
         }
 
         @Override
@@ -1098,7 +1098,7 @@ public class LastValueDoubleWindowFunctionFactory extends AbstractWindowFunction
         @Override
         public void pass1(Record record, long recordOffset, WindowSPI spi) {
             computeNext(record);
-            Unsafe.getUnsafe().putDouble(spi.getAddress(recordOffset, columnIndex), lastValue);
+            Unsafe.putDouble(spi.getAddress(recordOffset, columnIndex), lastValue);
         }
 
         @Override
@@ -1204,7 +1204,7 @@ public class LastValueDoubleWindowFunctionFactory extends AbstractWindowFunction
         @Override
         public void pass1(Record record, long recordOffset, WindowSPI spi) {
             computeNext(record);
-            Unsafe.getUnsafe().putDouble(spi.getAddress(recordOffset, columnIndex), value);
+            Unsafe.putDouble(spi.getAddress(recordOffset, columnIndex), value);
         }
 
         @Override
@@ -1261,7 +1261,7 @@ public class LastValueDoubleWindowFunctionFactory extends AbstractWindowFunction
 
         @Override
         public void pass2(Record record, long recordOffset, WindowSPI spi) {
-            Unsafe.getUnsafe().putDouble(spi.getAddress(recordOffset, columnIndex), value);
+            Unsafe.putDouble(spi.getAddress(recordOffset, columnIndex), value);
         }
 
         @Override
@@ -1316,7 +1316,7 @@ public class LastValueDoubleWindowFunctionFactory extends AbstractWindowFunction
         @Override
         public void pass1(Record record, long recordOffset, WindowSPI spi) {
             computeNext(record);
-            Unsafe.getUnsafe().putDouble(spi.getAddress(recordOffset, columnIndex), value);
+            Unsafe.putDouble(spi.getAddress(recordOffset, columnIndex), value);
         }
 
         @Override
@@ -1392,7 +1392,7 @@ public class LastValueDoubleWindowFunctionFactory extends AbstractWindowFunction
         @Override
         public void pass1(Record record, long recordOffset, WindowSPI spi) {
             computeNext(record);
-            Unsafe.getUnsafe().putDouble(spi.getAddress(recordOffset, columnIndex), value);
+            Unsafe.putDouble(spi.getAddress(recordOffset, columnIndex), value);
         }
 
         @Override
@@ -1452,7 +1452,7 @@ public class LastValueDoubleWindowFunctionFactory extends AbstractWindowFunction
             } else {
                 val = value.getDouble(0);
             }
-            Unsafe.getUnsafe().putDouble(spi.getAddress(recordOffset, columnIndex), val);
+            Unsafe.putDouble(spi.getAddress(recordOffset, columnIndex), val);
         }
     }
 
@@ -1615,7 +1615,7 @@ public class LastValueDoubleWindowFunctionFactory extends AbstractWindowFunction
         @Override
         public void pass1(Record record, long recordOffset, WindowSPI spi) {
             computeNext(record);
-            Unsafe.getUnsafe().putDouble(spi.getAddress(recordOffset, columnIndex), lastValue);
+            Unsafe.putDouble(spi.getAddress(recordOffset, columnIndex), lastValue);
         }
 
         @Override
@@ -1737,7 +1737,7 @@ public class LastValueDoubleWindowFunctionFactory extends AbstractWindowFunction
         @Override
         public void pass1(Record record, long recordOffset, WindowSPI spi) {
             computeNext(record);
-            Unsafe.getUnsafe().putDouble(spi.getAddress(recordOffset, columnIndex), lastValue);
+            Unsafe.putDouble(spi.getAddress(recordOffset, columnIndex), lastValue);
         }
 
         @Override
@@ -1914,7 +1914,7 @@ public class LastValueDoubleWindowFunctionFactory extends AbstractWindowFunction
         @Override
         public void pass1(Record record, long recordOffset, WindowSPI spi) {
             computeNext(record);
-            Unsafe.getUnsafe().putDouble(spi.getAddress(recordOffset, columnIndex), lastValue);
+            Unsafe.putDouble(spi.getAddress(recordOffset, columnIndex), lastValue);
         }
 
         @Override
@@ -2012,7 +2012,7 @@ public class LastValueDoubleWindowFunctionFactory extends AbstractWindowFunction
         @Override
         public void pass1(Record record, long recordOffset, WindowSPI spi) {
             computeNext(record);
-            Unsafe.getUnsafe().putDouble(spi.getAddress(recordOffset, columnIndex), lastValue);
+            Unsafe.putDouble(spi.getAddress(recordOffset, columnIndex), lastValue);
         }
 
         @Override
@@ -2090,7 +2090,7 @@ public class LastValueDoubleWindowFunctionFactory extends AbstractWindowFunction
                 value = arg.getDouble(record);
                 found = true;
             }
-            Unsafe.getUnsafe().putDouble(spi.getAddress(recordOffset, columnIndex), value);
+            Unsafe.putDouble(spi.getAddress(recordOffset, columnIndex), value);
         }
 
         @Override

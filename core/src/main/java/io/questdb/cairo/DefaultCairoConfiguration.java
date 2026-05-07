@@ -259,7 +259,7 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
 
     @Override
     public double getCountDistinctLoadFactor() {
-        return 0.5;
+        return 0.7;
     }
 
     @Override
@@ -340,6 +340,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     @Override
     public int getDefaultSymbolCapacity() {
         return 128;
+    }
+
+    @Override
+    public byte getDefaultSymbolIndexType() {
+        return IndexType.BITMAP;
     }
 
     @Override
@@ -812,6 +817,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     @Override
     public int getPoolSegmentSize() {
         return 32;
+    }
+
+    @Override
+    public int getPostingSealGenThreshold() {
+        return 16;
     }
 
     @Override
@@ -1578,6 +1588,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     @Override
     public boolean isPartitionO3OverwriteControlEnabled() {
         return false;
+    }
+
+    @Override
+    public boolean isPostingIndexAutoIncludeTimestamp() {
+        return true;
     }
 
     @Override

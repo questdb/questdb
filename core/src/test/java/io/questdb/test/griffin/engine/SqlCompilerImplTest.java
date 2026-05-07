@@ -223,6 +223,145 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testAlterTableAddIndexBitmapIncludeFails() throws Exception {
+        execute("create table t_idx (ts TIMESTAMP, sym SYMBOL, p DOUBLE) timestamp(ts) PARTITION BY DAY BYPASS WAL");
+        assertException(
+                "alter table t_idx alter column sym add index type bitmap include (p)",
+                57,
+                "INCLUDE is only supported for POSTING index type"
+        );
+    }
+
+    @Test
+    public void testAlterTableAddIndexCapacityInfersBitmap() throws Exception {
+        addIndexAndAssertType("alter table t_idx alter column sym add index capacity 256", "BITMAP");
+    }
+
+    @Test
+    public void testAlterTableAddIndexDefault() throws Exception {
+        addIndexAndAssertType("alter table t_idx alter column sym add index", "BITMAP");
+    }
+
+    @Test
+    public void testAlterTableAddIndexIncludeInfersPosting() throws Exception {
+        addIndexAndAssertType("alter table t_idx alter column sym add index include (p)", "POSTING");
+    }
+
+    @Test
+    public void testAlterTableAddIndexPosting() throws Exception {
+        addIndexAndAssertType("alter table t_idx alter column sym add index type posting", "POSTING");
+    }
+
+    @Test
+    public void testAlterTableAddColumnIndexBitmapCapacity() throws Exception {
+        addColumnAndAssertType("alter table t_idx add column sym SYMBOL INDEX TYPE BITMAP CAPACITY 256", "BITMAP");
+    }
+
+    @Test
+    public void testAlterTableAddColumnIndexCapacityInfersBitmap() throws Exception {
+        addColumnAndAssertType("alter table t_idx add column sym SYMBOL INDEX CAPACITY 256", "BITMAP");
+    }
+
+    @Test
+    public void testAlterTableAddColumnIndexDefault() throws Exception {
+        addColumnAndAssertType("alter table t_idx add column sym SYMBOL INDEX", "BITMAP");
+    }
+
+    @Test
+    public void testAlterTableAddColumnIndexPosting() throws Exception {
+        addColumnAndAssertType("alter table t_idx add column sym SYMBOL INDEX TYPE POSTING", "POSTING");
+    }
+
+    @Test
+    public void testAlterTableAddColumnIndexPostingDelta() throws Exception {
+        addColumnAndAssertType("alter table t_idx add column sym SYMBOL INDEX TYPE POSTING DELTA", "POSTING DELTA");
+    }
+
+    @Test
+    public void testAlterTableAddColumnIndexPostingEf() throws Exception {
+        addColumnAndAssertType("alter table t_idx add column sym SYMBOL INDEX TYPE POSTING EF", "POSTING EF");
+    }
+
+    @Test
+    public void testAlterTableAddColumnPostingCapacityFails() throws Exception {
+        execute("create table t_idx (ts TIMESTAMP) timestamp(ts) PARTITION BY DAY BYPASS WAL");
+        assertException(
+                "alter table t_idx add column sym SYMBOL INDEX TYPE POSTING CAPACITY 256",
+                59,
+                "CAPACITY is only supported for BITMAP index type"
+        );
+    }
+
+    @Test
+    public void testAlterTableAddColumnPostingDeltaCapacityFails() throws Exception {
+        execute("create table t_idx (ts TIMESTAMP) timestamp(ts) PARTITION BY DAY BYPASS WAL");
+        assertException(
+                "alter table t_idx add column sym SYMBOL INDEX TYPE POSTING DELTA CAPACITY 256",
+                65,
+                "CAPACITY is only supported for BITMAP index type"
+        );
+    }
+
+    @Test
+    public void testAlterTableAddColumnPostingEfCapacityFails() throws Exception {
+        execute("create table t_idx (ts TIMESTAMP) timestamp(ts) PARTITION BY DAY BYPASS WAL");
+        assertException(
+                "alter table t_idx add column sym SYMBOL INDEX TYPE POSTING EF CAPACITY 256",
+                62,
+                "CAPACITY is only supported for BITMAP index type"
+        );
+    }
+
+    private void addColumnAndAssertType(String alterSql, String expectedIndexType) throws Exception {
+        execute("create table t_idx (ts TIMESTAMP) timestamp(ts) PARTITION BY DAY BYPASS WAL");
+        execute(alterSql);
+        assertSql(
+                "indexType\n" + expectedIndexType + "\n",
+                "SELECT indexType FROM (SHOW COLUMNS FROM t_idx) WHERE column = 'sym'"
+        );
+    }
+
+    @Test
+    public void testAlterTableAddIndexPostingCapacityFails() throws Exception {
+        execute("create table t_idx (ts TIMESTAMP, sym SYMBOL, p DOUBLE) timestamp(ts) PARTITION BY DAY BYPASS WAL");
+        assertException(
+                "alter table t_idx alter column sym add index type posting capacity 256",
+                58,
+                "CAPACITY is only supported for BITMAP index type"
+        );
+    }
+
+    @Test
+    public void testAlterTableAddIndexPostingDelta() throws Exception {
+        addIndexAndAssertType("alter table t_idx alter column sym add index type posting delta", "POSTING DELTA");
+    }
+
+    @Test
+    public void testAlterTableAddIndexPostingEf() throws Exception {
+        addIndexAndAssertType("alter table t_idx alter column sym add index type posting ef", "POSTING EF");
+    }
+
+    @Test
+    public void testAlterTableAddIndexPostingEfInclude() throws Exception {
+        addIndexAndAssertType("alter table t_idx alter column sym add index type posting ef include (p)", "POSTING EF");
+    }
+
+    @Test
+    public void testAlterTableAddIndexPostingInclude() throws Exception {
+        addIndexAndAssertType("alter table t_idx alter column sym add index type posting include (p)", "POSTING");
+    }
+
+    private void addIndexAndAssertType(String alterSql, String expectedIndexType) throws Exception {
+        execute("create table t_idx (ts TIMESTAMP, sym SYMBOL, p DOUBLE) timestamp(ts) PARTITION BY DAY BYPASS WAL");
+        execute("insert into t_idx values ('2024-01-01T00:00:00', 'A', 1.0)");
+        execute(alterSql);
+        assertSql(
+                "indexType\n" + expectedIndexType + "\n",
+                "SELECT indexType FROM (SHOW COLUMNS FROM t_idx) WHERE column = 'sym'"
+        );
+    }
+
+    @Test
     public void testCannotCreateTable() throws Exception {
         assertException(
                 new TestFilesFacadeImpl() {
@@ -518,26 +657,26 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
         assertCastDate(
                 """
                         a
-                        1.42629719E12
+                        1.4262972E12
                         null
-                        1.44608107E12
-                        1.43483417E12
+                        1.4460811E12
+                        1.4348342E12
                         null
-                        1.43973981E12
-                        1.44395783E12
-                        1.44028022E12
+                        1.4397398E12
+                        1.4439578E12
+                        1.4402802E12
                         null
-                        1.44318385E12
+                        1.4431839E12
                         null
-                        1.43529856E12
+                        1.4352986E12
                         null
-                        1.44718168E12
-                        1.44236151E12
-                        1.42816523E12
+                        1.4471817E12
+                        1.4423615E12
+                        1.4281652E12
                         null
-                        1.43499959E12
+                        1.4349996E12
                         1.4237367E12
-                        1.42656641E12
+                        1.4265664E12
                         """,
                 ColumnType.FLOAT
         );
@@ -1938,26 +2077,26 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
         assertCastTimestamp(
                 """
                         a
-                        1.45120261E15
+                        1.4512026E15
                         null
-                        1.44721768E15
-                        1.45086451E15
+                        1.4472177E15
+                        1.4508645E15
                         null
-                        1.42523054E15
-                        1.43926824E15
-                        1.44667571E15
+                        1.4252305E15
+                        1.4392682E15
+                        1.4466757E15
                         null
-                        1.43270808E15
+                        1.4327081E15
                         null
-                        1.44679678E15
+                        1.4467968E15
                         null
-                        1.43687487E15
-                        1.44081201E15
-                        1.44089254E15
+                        1.4368749E15
+                        1.440812E15
+                        1.4408925E15
                         null
-                        1.44058384E15
-                        1.44391553E15
-                        1.44839638E15
+                        1.4405838E15
+                        1.4439155E15
+                        1.4483964E15
                         """,
                 ColumnType.FLOAT
         );

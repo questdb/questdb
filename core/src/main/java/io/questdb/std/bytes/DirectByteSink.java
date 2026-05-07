@@ -166,7 +166,7 @@ public class DirectByteSink implements DirectByteSequence, BorrowableAsNativeByt
      * Returns true when the buffer contains a UTF-8 encoded string containing non-ASCII characters.
      */
     public boolean isAscii() {
-        return Unsafe.getUnsafe().getByte(impl + BYTE_SINK_ASCII_OFFSET) != 0;
+        return Unsafe.getByte(impl + BYTE_SINK_ASCII_OFFSET) != 0;
     }
 
     /**
@@ -179,7 +179,7 @@ public class DirectByteSink implements DirectByteSequence, BorrowableAsNativeByt
 
     public DirectByteSink put(byte b) {
         final long dest = ensureCapacity(1);
-        Unsafe.getUnsafe().putByte(dest, b);
+        Unsafe.putByte(dest, b);
         advance(1);
         return this;
     }
@@ -189,7 +189,7 @@ public class DirectByteSink implements DirectByteSequence, BorrowableAsNativeByt
             final int bsSize = bs.size();
             final long dest = ensureCapacity(bsSize);
             for (int i = 0; i < bsSize; i++) {
-                Unsafe.getUnsafe().putByte(dest + i, bs.byteAt(i));
+                Unsafe.putByte(dest + i, bs.byteAt(i));
             }
             advance(bsSize);
         }
@@ -212,37 +212,37 @@ public class DirectByteSink implements DirectByteSequence, BorrowableAsNativeByt
     }
 
     public DirectByteSink putByte(byte value) {
-        Unsafe.getUnsafe().putByte(ensureCapacity(Byte.BYTES), value);
+        Unsafe.putByte(ensureCapacity(Byte.BYTES), value);
         advance(Byte.BYTES);
         return this;
     }
 
     public DirectByteSink putDouble(double value) {
-        Unsafe.getUnsafe().putDouble(ensureCapacity(Double.BYTES), value);
+        Unsafe.putDouble(ensureCapacity(Double.BYTES), value);
         advance(Double.BYTES);
         return this;
     }
 
     public DirectByteSink putFloat(float value) {
-        Unsafe.getUnsafe().putFloat(ensureCapacity(Float.BYTES), value);
+        Unsafe.putFloat(ensureCapacity(Float.BYTES), value);
         advance(Float.BYTES);
         return this;
     }
 
     public DirectByteSink putInt(int value) {
-        Unsafe.getUnsafe().putInt(ensureCapacity(Integer.BYTES), value);
+        Unsafe.putInt(ensureCapacity(Integer.BYTES), value);
         advance(Integer.BYTES);
         return this;
     }
 
     public DirectByteSink putLong(long value) {
-        Unsafe.getUnsafe().putLong(ensureCapacity(Long.BYTES), value);
+        Unsafe.putLong(ensureCapacity(Long.BYTES), value);
         advance(Long.BYTES);
         return this;
     }
 
     public DirectByteSink putShort(short value) {
-        Unsafe.getUnsafe().putShort(ensureCapacity(Short.BYTES), value);
+        Unsafe.putShort(ensureCapacity(Short.BYTES), value);
         advance(Short.BYTES);
         return this;
     }
@@ -276,7 +276,7 @@ public class DirectByteSink implements DirectByteSequence, BorrowableAsNativeByt
     }
 
     public void setAscii(boolean ascii) {
-        Unsafe.getUnsafe().putByte(impl + BYTE_SINK_ASCII_OFFSET, (byte) (ascii ? 1 : 0));
+        Unsafe.putByte(impl + BYTE_SINK_ASCII_OFFSET, (byte) (ascii ? 1 : 0));
     }
 
     /**
@@ -312,20 +312,20 @@ public class DirectByteSink implements DirectByteSequence, BorrowableAsNativeByt
 
     private long getImplHi() {
         assert impl != 0;
-        return Unsafe.getUnsafe().getLong(impl + BYTE_SINK_HI_OFFSET);
+        return Unsafe.getLong(impl + BYTE_SINK_HI_OFFSET);
     }
 
     private long getImplLo() {
         assert impl != 0;
-        return Unsafe.getUnsafe().getLong(impl + BYTE_SINK_LO_OFFSET);
+        return Unsafe.getLong(impl + BYTE_SINK_LO_OFFSET);
     }
 
     private boolean getImplOverflow() {
-        return Unsafe.getUnsafe().getByte(impl + BYTE_SINK_OVERFLOW_OFFSET) != 0;
+        return Unsafe.getByte(impl + BYTE_SINK_OVERFLOW_OFFSET) != 0;
     }
 
     private long getImplPtr() {
-        return Unsafe.getUnsafe().getLong(impl + BYTE_SINK_PTR_OFFSET);
+        return Unsafe.getLong(impl + BYTE_SINK_PTR_OFFSET);
     }
 
     private void inflate() {
@@ -338,7 +338,7 @@ public class DirectByteSink implements DirectByteSequence, BorrowableAsNativeByt
     }
 
     private void setImplPtr(long ptr) {
-        Unsafe.getUnsafe().putLong(impl + BYTE_SINK_PTR_OFFSET, ptr);
+        Unsafe.putLong(impl + BYTE_SINK_PTR_OFFSET, ptr);
     }
 
     static {

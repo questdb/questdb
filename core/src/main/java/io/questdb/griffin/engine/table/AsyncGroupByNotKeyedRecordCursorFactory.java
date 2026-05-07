@@ -57,6 +57,7 @@ import io.questdb.std.DirectLongList;
 import io.questdb.std.IntHashSet;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
+import io.questdb.std.Rows;
 import io.questdb.std.Transient;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
@@ -273,7 +274,7 @@ public class AsyncGroupByNotKeyedRecordCursorFactory extends AbstractRecordCurso
     ) {
         for (long p = 0, n = rows.size(); p < n; p++) {
             long r = rows.get(p);
-            record.setRowIndex(r);
+            record.setFilteredRowIndex(r, p);
             if (value.isNew()) {
                 functionUpdater.updateNew(value, record, baseRowId + r);
                 value.setNew(false);
@@ -460,8 +461,7 @@ public class AsyncGroupByNotKeyedRecordCursorFactory extends AbstractRecordCurso
                 filteredMemoryRecord.of(frameMemory, record, filterCtx.getFilterUsedColumnIndexes());
                 record = filteredMemoryRecord;
             }
-            record.setRowIndex(0);
-            long baseRowId = record.getRowId();
+            long baseRowId = Rows.toRowID(frameIndex, 0);
             aggregateFiltered(record, rows, baseRowId, value, functionUpdater);
         } finally {
             frameMemoryPool.releaseParquetBuffers();

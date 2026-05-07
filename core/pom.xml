@@ -33,8 +33,8 @@
         <maven.javadoc.skip>false</maven.javadoc.skip>
         <outputPath>target</outputPath>
         <runtime.assembly>none</runtime.assembly>
-        <javac.target>17</javac.target>
-        <argLine>-ea -Dfile.encoding=UTF-8 -XX:+UseParallelGC</argLine>
+        <javac.target>25</javac.target>
+        <argLine>-ea -Dfile.encoding=UTF-8 -XX:+UseParallelGC --sun-misc-unsafe-memory-access=allow --enable-native-access=ALL-UNNAMED --add-opens=java.base/java.lang=ALL-UNNAMED --add-opens=java.base/java.lang.reflect=ALL-UNNAMED --add-opens=java.base/java.nio=ALL-UNNAMED --add-opens=java.base/java.time.zone=ALL-UNNAMED</argLine>
         <test.exclude>None</test.exclude>
         <test.include>%regex[.*[^o].class]</test.include><!-- exclude module-info.class-->
         <web.console.version>1.2.1</web.console.version>
@@ -46,8 +46,7 @@
         -->
         <qdbr.rustflags>-D warnings</qdbr.rustflags>
 
-        <!-- Java QWiP client version - override with -Dquestdb.client.version=1.1.1-SNAPSHOT for local dev -->
-        <questdb.client.version>1.1.0</questdb.client.version>
+        <questdb.client.version>1.2.0</questdb.client.version>
     </properties>
 
     <version>9.3.6-SNAPSHOT</version>
@@ -606,7 +605,7 @@
                     <plugin>
                         <groupId>org.jacoco</groupId>
                         <artifactId>jacoco-maven-plugin</artifactId>
-                        <version>0.8.8</version>
+                        <version>0.8.14</version>
                         <executions>
                             <execution>
                                 <id>default-prepare-agent</id>
@@ -627,10 +626,10 @@
             </build>
         </profile>
         <profile>
-            <id>java17+</id>
+            <id>java25+</id>
             <properties>
-                <jdk.version>17</jdk.version>
-                <java.enforce.version>17</java.enforce.version>
+                <jdk.version>25</jdk.version>
+                <java.enforce.version>25</java.enforce.version>
                 <questdb.artifactid>questdb</questdb.artifactid>
                 <excludePattern1>nothing-to-exclude-dummy-value-include-all-java11plus</excludePattern1>
                 <excludeTestPattern1>nothing-to-exclude-dummy-value-include-all-java11plus</excludeTestPattern1>
@@ -638,7 +637,7 @@
                 <javac.compile.target>${javac.target}</javac.compile.target>
             </properties>
             <activation>
-                <jdk>(17,)</jdk>
+                <jdk>(24,)</jdk>
             </activation>
             <dependencies>
                 <dependency>

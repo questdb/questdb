@@ -46,6 +46,7 @@ public class SumIntVectorAggregateFunction extends LongFunction implements Vecto
     private final LongAdder sum = new LongAdder();
     private int valueOffset;
 
+    @SuppressWarnings("unused")
     public SumIntVectorAggregateFunction(int keyKind, int columnIndex, int timestampIndex, int workerCount) {
         if (keyKind == GKK_MICRO_HOUR_INT) {
             distinctFunc = Rosti::keyedMicroHourDistinct;
@@ -108,8 +109,8 @@ public class SumIntVectorAggregateFunction extends LongFunction implements Vecto
 
     @Override
     public void initRosti(long pRosti) {
-        Unsafe.getUnsafe().putLong(Rosti.getInitialValueSlot(pRosti, this.valueOffset), 0);
-        Unsafe.getUnsafe().putLong(Rosti.getInitialValueSlot(pRosti, this.valueOffset + 1), 0);
+        Unsafe.putLong(Rosti.getInitialValueSlot(pRosti, this.valueOffset), 0);
+        Unsafe.putLong(Rosti.getInitialValueSlot(pRosti, this.valueOffset + 1), 0);
     }
 
     @Override

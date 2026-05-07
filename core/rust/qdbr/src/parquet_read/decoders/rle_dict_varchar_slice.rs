@@ -61,16 +61,14 @@ impl<'a> RleDictVarcharSliceDecoder<'a> {
         if num_bits > 0 {
             buffer = &buffer[1..];
             let hybrid_decoder = Decoder::new(buffer, num_bits as usize);
-            let mut res = Self {
+            Ok(Self {
                 buffers,
                 dict_aux,
                 null_entry,
                 dict_len,
                 decoder: Some(hybrid_decoder),
                 data: RleIterator::Rle(RepeatN::new(0, 0)),
-            };
-            res.decode_next_run()?;
-            Ok(res)
+            })
         } else {
             // Zero bit width: single dict entry, all indices are 0.
             // We don't know row_count here, but we use usize::MAX as a

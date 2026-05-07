@@ -26,6 +26,7 @@ package io.questdb.test.fuzz;
 
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.IndexType;
 import io.questdb.cairo.TableColumnMetadata;
 import io.questdb.cairo.TableWriterAPI;
 import io.questdb.cairo.security.AllowAllSecurityContext;
@@ -56,15 +57,15 @@ public class FuzzChangeColumnTypeOperation implements FuzzTransactionOperation {
     public static boolean CONVERT_TO_SYMBOL_ALLOWED = true;
     private final boolean cacheSymbolMap;
     private final String columName;
-    private final boolean indexFlag;
+    private final byte indexType;
     private final int indexValueBlockCapacity;
     private final int newColumnType;
     private final int symbolCapacity;
 
-    public FuzzChangeColumnTypeOperation(Rnd rnd, String columName, int newColumnType, int symbolCapacity, boolean indexFlag, int indexValueBlockCapacity, boolean cacheSymbolMap) {
+    public FuzzChangeColumnTypeOperation(Rnd rnd, String columName, int newColumnType, int symbolCapacity, byte indexType, int indexValueBlockCapacity, boolean cacheSymbolMap) {
         this.columName = TestUtils.randomiseCase(rnd, columName);
         this.newColumnType = newColumnType;
-        this.indexFlag = indexFlag;
+        this.indexType = indexType;
         this.indexValueBlockCapacity = indexValueBlockCapacity;
         this.cacheSymbolMap = cacheSymbolMap;
         this.symbolCapacity = symbolCapacity;
@@ -130,10 +131,29 @@ public class FuzzChangeColumnTypeOperation implements FuzzTransactionOperation {
                 int newColType = changeColumnTypeTo(rnd, columnType, estimatedTotalRowCount);
 
                 int capacity = 1 << (5 + rnd.nextInt(3));
-                boolean indexFlag = ColumnType.isSymbol(newColType) && (columnType == ColumnType.BOOLEAN || columnType == ColumnType.BYTE);
+                byte indexType;
+                if (ColumnType.isSymbol(newColType) && (columnType == ColumnType.BOOLEAN || columnType == ColumnType.BYTE)) {
+                    // Spread index choice across BITMAP and the three POSTING
+                    // encoding variants so column-type changes exercise both
+                    // index families.
+                    double pick = rnd.nextDouble();
+                    if (pick < 0.5) {
+                        indexType = IndexType.BITMAP;
+                    } else if (pick < 0.7) {
+                        indexType = IndexType.POSTING;
+                    } else if (pick < 0.85) {
+                        indexType = IndexType.POSTING_DELTA;
+                    } else {
+                        indexType = IndexType.POSTING_EF;
+                    }
+                } else {
+                    indexType = IndexType.NONE;
+                }
+                // CAPACITY is parser-rejected for POSTING but the metadata
+                // field still requires a value >= 2; reuse the BITMAP default.
                 int indexValueBlockCapacity = (columnType == ColumnType.BOOLEAN) ? 4 : 128;
                 boolean cacheSymbolMap = ColumnType.isSymbol(newColType) && rnd.nextBoolean();
-                FuzzChangeColumnTypeOperation operation = new FuzzChangeColumnTypeOperation(rnd, columnName, newColType, capacity, indexFlag, indexValueBlockCapacity, cacheSymbolMap);
+                FuzzChangeColumnTypeOperation operation = new FuzzChangeColumnTypeOperation(rnd, columnName, newColType, capacity, indexType, indexValueBlockCapacity, cacheSymbolMap);
                 transaction.operationList.add(operation);
                 transaction.structureVersion = metadataVersion;
                 transaction.waitBarrierVersion = waitBarrierVersion;
@@ -147,7 +167,7 @@ public class FuzzChangeColumnTypeOperation implements FuzzTransactionOperation {
                         newMeta.add(new TableColumnMetadata(
                                 columnName,
                                 newColType,
-                                indexFlag,
+                                indexType,
                                 indexValueBlockCapacity,
                                 cacheSymbolMap,
                                 null,
@@ -174,7 +194,7 @@ public class FuzzChangeColumnTypeOperation implements FuzzTransactionOperation {
                 wApi.getMetadata().getTableId()
         );
         builder.addColumnToList(columName, 0, newColumnType, symbolCapacity, cacheSymbolMap,
-                indexFlag, indexValueBlockCapacity, false);
+                indexType, indexValueBlockCapacity, false);
         AlterOperation alterOp = builder.build();
         try (SqlExecutionContextImpl context = new SqlExecutionContextImpl(engine, 1).with(AllowAllSecurityContext.INSTANCE)
         ) {

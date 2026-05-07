@@ -133,7 +133,7 @@ public class Utf8StringSink implements MutableUtf8Sink {
         ascii = false;
         checkCapacity(Bytes.checkedLoHiSize(lo, hi, pos));
         for (long p = lo; p < hi; p++) {
-            buffer[pos++] = Unsafe.getUnsafe().getByte(p);
+            buffer[pos++] = Unsafe.getByte(p);
         }
         return this;
     }

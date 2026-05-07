@@ -353,7 +353,7 @@ public final class Utf8s {
             return false;
         }
         for (int i = 0; i < rLen; i++) {
-            if (asciiSeq.charAt(i) != (char) Unsafe.getUnsafe().getByte(rLo + i)) {
+            if (asciiSeq.charAt(i) != (char) Unsafe.getByte(rLo + i)) {
                 return false;
             }
         }
@@ -467,7 +467,7 @@ public final class Utf8s {
         long p = lo;
         int sequenceType = 0;
         while (p < hi) {
-            byte b = Unsafe.getUnsafe().getByte(p);
+            byte b = Unsafe.getByte(p);
             if (b < 0) {
                 int n = validateUtf8MultiByte(p, hi, b);
                 if (n == -1) {
@@ -844,12 +844,12 @@ public final class Utf8s {
     public static boolean isAscii(long ptr, int size) {
         long i = 0;
         for (; i + 7 < size; i += 8) {
-            if (!isAscii(Unsafe.getUnsafe().getLong(ptr + i))) {
+            if (!isAscii(Unsafe.getLong(ptr + i))) {
                 return false;
             }
         }
         for (; i < size; i++) {
-            if (Unsafe.getUnsafe().getByte(ptr + i) < 0) {
+            if (Unsafe.getByte(ptr + i) < 0) {
                 return false;
             }
         }
@@ -962,7 +962,7 @@ public final class Utf8s {
     public static void putSafe(long lo, long hi, @NotNull Utf8Sink sink) {
         long p = lo;
         while (p < hi) {
-            byte b = Unsafe.getUnsafe().getByte(p);
+            byte b = Unsafe.getByte(p);
             if (b < 0) {
                 int n = putMultibyteSafe(p, hi, b, sink);
                 p += n;
@@ -1039,13 +1039,13 @@ public final class Utf8s {
 
     public static void strCpy(@NotNull Utf8Sequence src, int destLen, long destAddr) {
         for (int i = 0; i < destLen; i++) {
-            Unsafe.getUnsafe().putByte(destAddr + i, src.byteAt(i));
+            Unsafe.putByte(destAddr + i, src.byteAt(i));
         }
     }
 
     public static void strCpy(long srcLo, long srcHi, @NotNull Utf8Sink dest) {
         for (long i = srcLo; i < srcHi; i++) {
-            dest.putAny(Unsafe.getUnsafe().getByte(i));
+            dest.putAny(Unsafe.getByte(i));
         }
     }
 
@@ -1071,7 +1071,7 @@ public final class Utf8s {
 
     public static void strCpyAscii(char @NotNull [] srcChars, int srcLo, int srcLen, long destAddr) {
         for (int i = 0; i < srcLen; i++) {
-            Unsafe.getUnsafe().putByte(destAddr + i, (byte) srcChars[i + srcLo]);
+            Unsafe.putByte(destAddr + i, (byte) srcChars[i + srcLo]);
         }
     }
 
@@ -1086,7 +1086,7 @@ public final class Utf8s {
 
     public static void strCpyAscii(@NotNull CharSequence asciiSrc, int srcLo, int srcLen, long destAddr) {
         for (int i = 0; i < srcLen; i++) {
-            Unsafe.getUnsafe().putByte(destAddr + i, (byte) asciiSrc.charAt(srcLo + i));
+            Unsafe.putByte(destAddr + i, (byte) asciiSrc.charAt(srcLo + i));
         }
     }
 
@@ -1103,33 +1103,33 @@ public final class Utf8s {
             char c = src.charAt(i);
             if (c < 0x80) {
                 if (pos + 1 > maxBytes) break;
-                Unsafe.getUnsafe().putByte(destAddr + pos, (byte) c);
+                Unsafe.putByte(destAddr + pos, (byte) c);
                 pos++;
             } else if (c < 0x800) {
                 if (pos + 2 > maxBytes) break;
-                Unsafe.getUnsafe().putByte(destAddr + pos, (byte) (192 | c >> 6));
-                Unsafe.getUnsafe().putByte(destAddr + pos + 1, (byte) (128 | c & 63));
+                Unsafe.putByte(destAddr + pos, (byte) (192 | c >> 6));
+                Unsafe.putByte(destAddr + pos + 1, (byte) (128 | c & 63));
                 pos += 2;
             } else if (Character.isSurrogate(c)) {
                 if (Character.isHighSurrogate(c) && i + 1 < n && Character.isLowSurrogate(src.charAt(i + 1))) {
                     if (pos + 4 > maxBytes) break;
                     int cp = Character.toCodePoint(c, src.charAt(i + 1));
-                    Unsafe.getUnsafe().putByte(destAddr + pos, (byte) (240 | cp >> 18));
-                    Unsafe.getUnsafe().putByte(destAddr + pos + 1, (byte) (128 | cp >> 12 & 63));
-                    Unsafe.getUnsafe().putByte(destAddr + pos + 2, (byte) (128 | cp >> 6 & 63));
-                    Unsafe.getUnsafe().putByte(destAddr + pos + 3, (byte) (128 | cp & 63));
+                    Unsafe.putByte(destAddr + pos, (byte) (240 | cp >> 18));
+                    Unsafe.putByte(destAddr + pos + 1, (byte) (128 | cp >> 12 & 63));
+                    Unsafe.putByte(destAddr + pos + 2, (byte) (128 | cp >> 6 & 63));
+                    Unsafe.putByte(destAddr + pos + 3, (byte) (128 | cp & 63));
                     pos += 4;
                     i++;
                 } else {
                     if (pos + 1 > maxBytes) break;
-                    Unsafe.getUnsafe().putByte(destAddr + pos, (byte) '?');
+                    Unsafe.putByte(destAddr + pos, (byte) '?');
                     pos++;
                 }
             } else {
                 if (pos + 3 > maxBytes) break;
-                Unsafe.getUnsafe().putByte(destAddr + pos, (byte) (224 | c >> 12));
-                Unsafe.getUnsafe().putByte(destAddr + pos + 1, (byte) (128 | c >> 6 & 63));
-                Unsafe.getUnsafe().putByte(destAddr + pos + 2, (byte) (128 | c & 63));
+                Unsafe.putByte(destAddr + pos, (byte) (224 | c >> 12));
+                Unsafe.putByte(destAddr + pos + 1, (byte) (128 | c >> 6 & 63));
+                Unsafe.putByte(destAddr + pos + 2, (byte) (128 | c & 63));
                 pos += 3;
             }
         }
@@ -1396,7 +1396,7 @@ public final class Utf8s {
     public static boolean utf8ToUtf16(long lo, long hi, @NotNull Utf16Sink sink) {
         long p = lo;
         while (p < hi) {
-            byte b = Unsafe.getUnsafe().getByte(p);
+            byte b = Unsafe.getByte(p);
             if (b < 0) {
                 int n = utf8DecodeMultiByte(p, hi, b, sink);
                 if (n == -1) {
@@ -1532,7 +1532,7 @@ public final class Utf8s {
         int quoteCount = 0;
 
         while (p < hi) {
-            byte b = Unsafe.getUnsafe().getByte(p);
+            byte b = Unsafe.getByte(p);
             if (b < 0) {
                 int n = utf8DecodeMultiByte(p, hi, b, sink);
                 if (n == -1) {
@@ -1565,7 +1565,7 @@ public final class Utf8s {
     public static boolean utf8ToUtf16Z(long lo, Utf16Sink sink) {
         long p = lo;
         while (true) {
-            byte b = Unsafe.getUnsafe().getByte(p);
+            byte b = Unsafe.getByte(p);
             if (b == 0) {
                 break;
             }
@@ -1593,7 +1593,7 @@ public final class Utf8s {
     public static void utf8ZCopy(long addr, Utf8Sink sink) {
         long p = addr;
         while (true) {
-            byte b = Unsafe.getUnsafe().getByte(p++);
+            byte b = Unsafe.getByte(p++);
             if (b == 0) {
                 break;
             }
@@ -1828,7 +1828,7 @@ public final class Utf8s {
         putNonAsciiAsHex(sink, b);
         int i = 1;
         for (; lo + i < hi; i++) {
-            byte val = Unsafe.getUnsafe().getByte(lo + i);
+            byte val = Unsafe.getByte(lo + i);
             if (val >= 0) {
                 i--;
                 break;
@@ -1891,7 +1891,7 @@ public final class Utf8s {
 
     private static int putUpTo2BytesSafe(long lo, long hi, byte b1, @NotNull Utf8Sink sink) {
         if (hi - lo >= 2) {
-            byte b2 = Unsafe.getUnsafe().getByte(lo + 1);
+            byte b2 = Unsafe.getByte(lo + 1);
             put2BytesSafe(b1, sink, b2);
             return 2;
         }
@@ -1911,13 +1911,13 @@ public final class Utf8s {
 
     private static int putUpTo3BytesSafe(long lo, long hi, byte b1, @NotNull Utf8Sink sink) {
         if (hi - lo >= 3) {
-            byte b2 = Unsafe.getUnsafe().getByte(lo + 1);
-            byte b3 = Unsafe.getUnsafe().getByte(lo + 2);
+            byte b2 = Unsafe.getByte(lo + 1);
+            byte b3 = Unsafe.getByte(lo + 2);
             return put3BytesSafe(b1, b2, b3, sink);
         }
         putNonAsciiAsHex(sink, b1);
         if (hi - lo > 1) {
-            putNonAsciiAsHex(sink, Unsafe.getUnsafe().getByte(lo + 1));
+            putNonAsciiAsHex(sink, Unsafe.getByte(lo + 1));
             return 2;
         }
         return 1;
@@ -1939,17 +1939,17 @@ public final class Utf8s {
 
     private static int putUpTo4BytesSafe(long lo, long hi, byte b, @NotNull Utf8Sink sink) {
         if (hi - lo >= 4) {
-            byte b2 = Unsafe.getUnsafe().getByte(lo + 1);
-            byte b3 = Unsafe.getUnsafe().getByte(lo + 2);
-            byte b4 = Unsafe.getUnsafe().getByte(lo + 3);
+            byte b2 = Unsafe.getByte(lo + 1);
+            byte b3 = Unsafe.getByte(lo + 2);
+            byte b4 = Unsafe.getByte(lo + 3);
             put4ByteSafe(b, b2, b3, b4, sink);
             return 4;
         }
         putNonAsciiAsHex(sink, b);
         if (hi - lo > 1) {
-            putNonAsciiAsHex(sink, Unsafe.getUnsafe().getByte(lo + 1));
+            putNonAsciiAsHex(sink, Unsafe.getByte(lo + 1));
             if (hi - lo > 2) {
-                putNonAsciiAsHex(sink, Unsafe.getUnsafe().getByte(lo + 2));
+                putNonAsciiAsHex(sink, Unsafe.getByte(lo + 2));
                 return 3;
             }
             return 2;
@@ -2077,7 +2077,7 @@ public final class Utf8s {
         if (hi - lo < 2) {
             return -1;
         }
-        byte b2 = Unsafe.getUnsafe().getByte(lo + 1);
+        byte b2 = Unsafe.getByte(lo + 1);
         if (isNotContinuation(b2)) {
             return -1;
         }
@@ -2086,7 +2086,7 @@ public final class Utf8s {
     }
 
     private static int utf8Decode2BytesZ(long lo, int b1, @NotNull Utf16Sink sink) {
-        byte b2 = Unsafe.getUnsafe().getByte(lo + 1);
+        byte b2 = Unsafe.getByte(lo + 1);
         if (b2 == 0) {
             return -1;
         }
@@ -2113,8 +2113,8 @@ public final class Utf8s {
         if (hi - lo < 3) {
             return -1;
         }
-        byte b2 = Unsafe.getUnsafe().getByte(lo + 1);
-        byte b3 = Unsafe.getUnsafe().getByte(lo + 2);
+        byte b2 = Unsafe.getByte(lo + 1);
+        byte b3 = Unsafe.getByte(lo + 2);
         return utf8Decode3Byte0(b1, sink, b2, b3);
     }
 
@@ -2128,11 +2128,11 @@ public final class Utf8s {
     }
 
     private static int utf8Decode3BytesZ(long lo, byte b1, @NotNull Utf16Sink sink) {
-        byte b2 = Unsafe.getUnsafe().getByte(lo + 1);
+        byte b2 = Unsafe.getByte(lo + 1);
         if (b2 == 0) {
             return -1;
         }
-        byte b3 = Unsafe.getUnsafe().getByte(lo + 2);
+        byte b3 = Unsafe.getByte(lo + 2);
         if (b3 == 0) {
             return -1;
         }
@@ -2143,9 +2143,9 @@ public final class Utf8s {
         if (b >> 3 != -2 || hi - lo < 4) {
             return -1;
         }
-        byte b2 = Unsafe.getUnsafe().getByte(lo + 1);
-        byte b3 = Unsafe.getUnsafe().getByte(lo + 2);
-        byte b4 = Unsafe.getUnsafe().getByte(lo + 3);
+        byte b2 = Unsafe.getByte(lo + 1);
+        byte b3 = Unsafe.getByte(lo + 2);
+        byte b4 = Unsafe.getByte(lo + 3);
         return utf8Decode4Bytes0(b, sink, b2, b3, b4);
     }
 
@@ -2176,15 +2176,15 @@ public final class Utf8s {
         if (b >> 3 != -2) {
             return -1;
         }
-        byte b2 = Unsafe.getUnsafe().getByte(lo + 1);
+        byte b2 = Unsafe.getByte(lo + 1);
         if (b2 == 0) {
             return -1;
         }
-        byte b3 = Unsafe.getUnsafe().getByte(lo + 2);
+        byte b3 = Unsafe.getByte(lo + 2);
         if (b3 == 0) {
             return -1;
         }
-        byte b4 = Unsafe.getUnsafe().getByte(lo + 3);
+        byte b4 = Unsafe.getByte(lo + 3);
         if (b4 == 0) {
             return -1;
         }
@@ -2227,7 +2227,7 @@ public final class Utf8s {
         if (hi - lo < 2) {
             return -1;
         }
-        byte b2 = Unsafe.getUnsafe().getByte(lo + 1);
+        byte b2 = Unsafe.getByte(lo + 1);
         if (isNotContinuation(b2)) {
             return -1;
         }
@@ -2239,8 +2239,8 @@ public final class Utf8s {
             return -1;
         }
 
-        byte b2 = Unsafe.getUnsafe().getByte(lo + 1);
-        byte b3 = Unsafe.getUnsafe().getByte(lo + 2);
+        byte b2 = Unsafe.getByte(lo + 1);
+        byte b3 = Unsafe.getByte(lo + 2);
 
         if (isMalformed3(b1, b2, b3)) {
             return -1;
@@ -2275,9 +2275,9 @@ public final class Utf8s {
         if (b >> 3 != -2 || hi - lo < 4) {
             return -1;
         }
-        byte b2 = Unsafe.getUnsafe().getByte(lo + 1);
-        byte b3 = Unsafe.getUnsafe().getByte(lo + 2);
-        byte b4 = Unsafe.getUnsafe().getByte(lo + 3);
+        byte b2 = Unsafe.getByte(lo + 1);
+        byte b3 = Unsafe.getByte(lo + 2);
+        byte b4 = Unsafe.getByte(lo + 3);
 
         if (isMalformed4(b2, b3, b4)) {
             return -1;

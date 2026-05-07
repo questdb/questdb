@@ -479,8 +479,8 @@ public class CopyExportRequestTask implements Mutable, QuietCloseable {
             long buffer = finishStreamingParquetWrite(streamWriter);
             exportFinished = true;
             streamExportCurrentPtr = buffer + BUFFER_HEADER_SIZE;
-            streamExportCurrentSize = Unsafe.getUnsafe().getLong(buffer);
-            rowsWrittenToRowGroups = Unsafe.getUnsafe().getLong(buffer + Long.BYTES);
+            streamExportCurrentSize = Unsafe.getLong(buffer);
+            rowsWrittenToRowGroups = Unsafe.getLong(buffer + Long.BYTES);
             assert writeCallback != null;
             writeCallback.onWrite(streamExportCurrentPtr, streamExportCurrentSize);
             clear();
@@ -518,8 +518,8 @@ public class CopyExportRequestTask implements Mutable, QuietCloseable {
                     long buffer = writeStreamingParquetChunk(streamWriter, 0, 0);
                     if (buffer != 0) {
                         streamExportCurrentPtr = buffer + BUFFER_HEADER_SIZE;
-                        streamExportCurrentSize = Unsafe.getUnsafe().getLong(buffer);
-                        rowsWrittenToRowGroups = Unsafe.getUnsafe().getLong(buffer + Long.BYTES);
+                        streamExportCurrentSize = Unsafe.getLong(buffer);
+                        rowsWrittenToRowGroups = Unsafe.getLong(buffer + Long.BYTES);
                     } else {
                         streamExportCurrentPtr = 0;
                         streamExportCurrentSize = 0;
@@ -599,6 +599,10 @@ public class CopyExportRequestTask implements Mutable, QuietCloseable {
                 } else {
                     columnMetadata.add((long) writerIdx << 32 | (columnType & 0xFFFFFFFFL));
                 }
+                // Per-column parquet encoding config (third long); the JNI side reads it
+                // and stores it in Column::parquet_encoding_config so the writer can honour
+                // PARQUET_ENCODING(...) overrides.
+                columnMetadata.add(meta.getColumnMetadata(i).getParquetEncodingConfig());
             }
 
             long bloomFilterIndexesPtr = 0;
@@ -641,8 +645,8 @@ public class CopyExportRequestTask implements Mutable, QuietCloseable {
             long buffer = writeStreamingParquetChunk(streamWriter, prebuiltColumnData.getAddress(), frameRowCount);
             while (buffer != 0) {
                 streamExportCurrentPtr = buffer + BUFFER_HEADER_SIZE;
-                streamExportCurrentSize = Unsafe.getUnsafe().getLong(buffer);
-                rowsWrittenToRowGroups = Unsafe.getUnsafe().getLong(buffer + Long.BYTES);
+                streamExportCurrentSize = Unsafe.getLong(buffer);
+                rowsWrittenToRowGroups = Unsafe.getLong(buffer + Long.BYTES);
                 writeCallback.onWrite(streamExportCurrentPtr, streamExportCurrentSize);
                 buffer = writeStreamingParquetChunk(streamWriter, 0, 0);
             }
@@ -702,8 +706,8 @@ public class CopyExportRequestTask implements Mutable, QuietCloseable {
                 long buffer = writeStreamingParquetChunk(streamWriter, columnData.getAddress(), frameRowCount);
                 while (buffer != 0) {
                     streamExportCurrentPtr = buffer + BUFFER_HEADER_SIZE;
-                    streamExportCurrentSize = Unsafe.getUnsafe().getLong(buffer);
-                    rowsWrittenToRowGroups = Unsafe.getUnsafe().getLong(buffer + Long.BYTES);
+                    streamExportCurrentSize = Unsafe.getLong(buffer);
+                    rowsWrittenToRowGroups = Unsafe.getLong(buffer + Long.BYTES);
                     writeCallback.onWrite(streamExportCurrentPtr, streamExportCurrentSize);
                     buffer = writeStreamingParquetChunk(
                             streamWriter,
@@ -732,16 +736,16 @@ public class CopyExportRequestTask implements Mutable, QuietCloseable {
                         streamWriter,
                         allocator,
                         columnData.getAddress(),
-                        frame.getParquetPartitionDecoder().getFileAddr(),
-                        frame.getParquetPartitionDecoder().getFileSize(),
+                        frame.getParquetDecoder().getFileAddr(),
+                        frame.getParquetDecoder().getFileSize(),
                         frame.getParquetRowGroup(),
                         frame.getParquetRowGroupLo(),
                         frame.getParquetRowGroupHi()
                 );
                 while (buffer != 0) {
                     streamExportCurrentPtr = buffer + BUFFER_HEADER_SIZE;
-                    streamExportCurrentSize = Unsafe.getUnsafe().getLong(buffer);
-                    rowsWrittenToRowGroups = Unsafe.getUnsafe().getLong(buffer + Long.BYTES);
+                    streamExportCurrentSize = Unsafe.getLong(buffer);
+                    rowsWrittenToRowGroups = Unsafe.getLong(buffer + Long.BYTES);
                     writeCallback.onWrite(streamExportCurrentPtr, streamExportCurrentSize);
                     buffer = writeStreamingParquetChunkFromRowGroup(
                             streamWriter,

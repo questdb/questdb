@@ -478,6 +478,14 @@ public class TxReader implements Closeable, Mutable {
         return isPartitionReadOnlyByRawIndex(i * LONGS_PER_TX_ATTACHED_PARTITION);
     }
 
+    public boolean isPartitionParquetByPartitionTimestamp(long ts) {
+        int indexRaw = findAttachedPartitionRawIndexByLoTimestamp(ts);
+        if (indexRaw > -1) {
+            return isPartitionParquetByRawIndex(indexRaw);
+        }
+        return false;
+    }
+
     public boolean isPartitionReadOnlyByPartitionTimestamp(long ts) {
         int indexRaw = findAttachedPartitionRawIndexByLoTimestamp(ts);
         if (indexRaw > -1) {
@@ -632,7 +640,7 @@ public class TxReader implements Closeable, Mutable {
             lagOrdered = lagTxnCountRaw > -1;
             unsafeLoadSymbolCounts(symbolColumnCount);
             unsafeLoadPartitions(prevPartitionTableVersion, prevColumnVersion, partitionSegmentSize);
-            Unsafe.getUnsafe().loadFence();
+            Unsafe.loadFence();
             if (version == unsafeReadVersion()) {
                 return true;
             }
@@ -644,7 +652,7 @@ public class TxReader implements Closeable, Mutable {
 
     public boolean unsafeLoadBaseOffset() {
         version = unsafeReadVersion();
-        Unsafe.getUnsafe().loadFence();
+        Unsafe.loadFence();
 
         boolean isA = (version & 1) == 0;
         baseOffset = isA ? roTxMemBase.getInt(TX_BASE_OFFSET_A_32) : roTxMemBase.getInt(TX_BASE_OFFSET_B_32);
@@ -652,7 +660,7 @@ public class TxReader implements Closeable, Mutable {
         partitionSegmentSize = isA ? roTxMemBase.getInt(TX_BASE_OFFSET_PARTITIONS_SIZE_A_32) : roTxMemBase.getInt(TX_BASE_OFFSET_PARTITIONS_SIZE_B_32);
 
         // Before extending file, check that values read are not dirty
-        Unsafe.getUnsafe().loadFence();
+        Unsafe.loadFence();
         if (unsafeReadVersion() != version) {
             return false;
         }
@@ -677,7 +685,7 @@ public class TxReader implements Closeable, Mutable {
             transientRowCount = getLong(TX_OFFSET_TRANSIENT_ROW_COUNT_64);
             fixedRowCount = getLong(TX_OFFSET_FIXED_ROW_COUNT_64);
 
-            Unsafe.getUnsafe().loadFence();
+            Unsafe.loadFence();
             if (version == unsafeReadVersion()) {
                 return getRowCount();
             }

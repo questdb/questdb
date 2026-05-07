@@ -44,14 +44,14 @@ public class QwpArrayColumnCursorTest {
         long addr = Unsafe.malloc(bufferSize, MemoryTag.NATIVE_DEFAULT);
         try {
             long p = addr;
-            Unsafe.getUnsafe().putByte(p++, (byte) 1);      // null bitmap flag
-            Unsafe.getUnsafe().putByte(p++, (byte) 0x01);    // bitmap: row 0 is null
-            Unsafe.getUnsafe().putByte(p++, (byte) 1);       // row 1: nDims=1
-            Unsafe.getUnsafe().putInt(p, 2);                 // row 1: dim[0]=2
+            Unsafe.putByte(p++, (byte) 1);      // null bitmap flag
+            Unsafe.putByte(p++, (byte) 0x01);    // bitmap: row 0 is null
+            Unsafe.putByte(p++, (byte) 1);       // row 1: nDims=1
+            Unsafe.putInt(p, 2);                 // row 1: dim[0]=2
             p += 4;
-            Unsafe.getUnsafe().putDouble(p, 1.0);            // row 1: value[0]
+            Unsafe.putDouble(p, 1.0);            // row 1: value[0]
             p += 8;
-            Unsafe.getUnsafe().putDouble(p, 2.0);            // row 1: value[1]
+            Unsafe.putDouble(p, 2.0);            // row 1: value[1]
 
             QwpArrayColumnCursor cursor = new QwpArrayColumnCursor();
             cursor.of(addr, bufferSize, 2, TYPE_DOUBLE_ARRAY);
@@ -70,8 +70,8 @@ public class QwpArrayColumnCursorTest {
             Assert.assertEquals(2, cursor.getDimSize(0));
             Assert.assertEquals(2, cursor.getTotalElements());
             Assert.assertNotEquals(0, cursor.getValuesAddress());
-            Assert.assertEquals(1.0, Unsafe.getUnsafe().getDouble(cursor.getValuesAddress()), 0.0);
-            Assert.assertEquals(2.0, Unsafe.getUnsafe().getDouble(cursor.getValuesAddress() + 8), 0.0);
+            Assert.assertEquals(1.0, Unsafe.getDouble(cursor.getValuesAddress()), 0.0);
+            Assert.assertEquals(2.0, Unsafe.getDouble(cursor.getValuesAddress() + 8), 0.0);
         } finally {
             Unsafe.free(addr, bufferSize, MemoryTag.NATIVE_DEFAULT);
         }
@@ -86,12 +86,12 @@ public class QwpArrayColumnCursorTest {
         long addr = Unsafe.malloc(bufferSize, MemoryTag.NATIVE_DEFAULT);
         try {
             long p = addr;
-            Unsafe.getUnsafe().putByte(p++, (byte) 0); // no null bitmap
+            Unsafe.putByte(p++, (byte) 0); // no null bitmap
             for (int i = 0; i < rowCount; i++) {
-                Unsafe.getUnsafe().putByte(p++, (byte) 1);   // nDims=1
-                Unsafe.getUnsafe().putInt(p, 1);              // dim[0]=1
+                Unsafe.putByte(p++, (byte) 1);   // nDims=1
+                Unsafe.putInt(p, 1);              // dim[0]=1
                 p += 4;
-                Unsafe.getUnsafe().putDouble(p, i);  // value
+                Unsafe.putDouble(p, i);  // value
                 p += 8;
             }
 
@@ -104,7 +104,7 @@ public class QwpArrayColumnCursorTest {
                 Assert.assertFalse(cursor.isNull());
                 Assert.assertEquals(1, cursor.getNDims());
                 Assert.assertEquals(1, cursor.getTotalElements());
-                Assert.assertEquals(i, Unsafe.getUnsafe().getDouble(cursor.getValuesAddress()), 0.0);
+                Assert.assertEquals(i, Unsafe.getDouble(cursor.getValuesAddress()), 0.0);
             }
         } finally {
             Unsafe.free(addr, bufferSize, MemoryTag.NATIVE_DEFAULT);
@@ -117,10 +117,10 @@ public class QwpArrayColumnCursorTest {
         int bufferSize = 14; // flag(1) + nDims(1) + dim(4) + value(8)
         long addr = Unsafe.malloc(bufferSize, MemoryTag.NATIVE_DEFAULT);
         try {
-            Unsafe.getUnsafe().putByte(addr, (byte) 0);
-            Unsafe.getUnsafe().putByte(addr + 1, (byte) 1);
-            Unsafe.getUnsafe().putInt(addr + 2, 1);
-            Unsafe.getUnsafe().putDouble(addr + 6, 42.0);
+            Unsafe.putByte(addr, (byte) 0);
+            Unsafe.putByte(addr + 1, (byte) 1);
+            Unsafe.putInt(addr + 2, 1);
+            Unsafe.putDouble(addr + 6, 42.0);
 
             QwpArrayColumnCursor cursor = new QwpArrayColumnCursor();
             cursor.of(addr, bufferSize, 1, TYPE_DOUBLE_ARRAY);
@@ -136,10 +136,10 @@ public class QwpArrayColumnCursorTest {
         int bufferSize = 14;
         long addr = Unsafe.malloc(bufferSize, MemoryTag.NATIVE_DEFAULT);
         try {
-            Unsafe.getUnsafe().putByte(addr, (byte) 0);
-            Unsafe.getUnsafe().putByte(addr + 1, (byte) 1);
-            Unsafe.getUnsafe().putInt(addr + 2, 1);
-            Unsafe.getUnsafe().putLong(addr + 6, 99L);
+            Unsafe.putByte(addr, (byte) 0);
+            Unsafe.putByte(addr + 1, (byte) 1);
+            Unsafe.putInt(addr + 2, 1);
+            Unsafe.putLong(addr + 6, 99L);
 
             QwpArrayColumnCursor cursor = new QwpArrayColumnCursor();
             cursor.of(addr, bufferSize, 1, TYPE_LONG_ARRAY);
@@ -148,7 +148,7 @@ public class QwpArrayColumnCursorTest {
             Assert.assertEquals(TYPE_LONG_ARRAY, cursor.getTypeCode());
 
             cursor.advanceRow();
-            Assert.assertEquals(99L, Unsafe.getUnsafe().getLong(cursor.getValuesAddress()));
+            Assert.assertEquals(99L, Unsafe.getLong(cursor.getValuesAddress()));
         } finally {
             Unsafe.free(addr, bufferSize, MemoryTag.NATIVE_DEFAULT);
         }
@@ -162,16 +162,16 @@ public class QwpArrayColumnCursorTest {
         long addr = Unsafe.malloc(bufferSize, MemoryTag.NATIVE_DEFAULT);
         try {
             long p = addr;
-            Unsafe.getUnsafe().putByte(p++, (byte) 0);
-            Unsafe.getUnsafe().putByte(p++, (byte) 3);   // nDims=3
-            Unsafe.getUnsafe().putInt(p, 2);          // dim[0]=2
+            Unsafe.putByte(p++, (byte) 0);
+            Unsafe.putByte(p++, (byte) 3);   // nDims=3
+            Unsafe.putInt(p, 2);          // dim[0]=2
             p += 4;
-            Unsafe.getUnsafe().putInt(p, 3);          // dim[1]=3
+            Unsafe.putInt(p, 3);          // dim[1]=3
             p += 4;
-            Unsafe.getUnsafe().putInt(p, 4);          // dim[2]=4
+            Unsafe.putInt(p, 4);          // dim[2]=4
             p += 4;
             for (int i = 0; i < totalElements; i++) {
-                Unsafe.getUnsafe().putDouble(p, i);
+                Unsafe.putDouble(p, i);
                 p += 8;
             }
 
@@ -186,8 +186,8 @@ public class QwpArrayColumnCursorTest {
             Assert.assertEquals(totalElements, cursor.getTotalElements());
 
             long valAddr = cursor.getValuesAddress();
-            Assert.assertEquals(0.0, Unsafe.getUnsafe().getDouble(valAddr), 0.0);
-            Assert.assertEquals(23.0, Unsafe.getUnsafe().getDouble(valAddr + 23 * 8), 0.0);
+            Assert.assertEquals(0.0, Unsafe.getDouble(valAddr), 0.0);
+            Assert.assertEquals(23.0, Unsafe.getDouble(valAddr + 23 * 8), 0.0);
         } finally {
             Unsafe.free(addr, bufferSize, MemoryTag.NATIVE_DEFAULT);
         }
@@ -199,10 +199,10 @@ public class QwpArrayColumnCursorTest {
         int bufferSize = 10; // flag(1) + nDims(1) + 2*dim(8)
         long addr = Unsafe.malloc(bufferSize, MemoryTag.NATIVE_DEFAULT);
         try {
-            Unsafe.getUnsafe().putByte(addr, (byte) 0);
-            Unsafe.getUnsafe().putByte(addr + 1, (byte) 2);
-            Unsafe.getUnsafe().putInt(addr + 2, 65_536);
-            Unsafe.getUnsafe().putInt(addr + 6, 65_536);
+            Unsafe.putByte(addr, (byte) 0);
+            Unsafe.putByte(addr + 1, (byte) 2);
+            Unsafe.putInt(addr + 2, 65_536);
+            Unsafe.putInt(addr + 6, 65_536);
 
             QwpArrayColumnCursor cursor = new QwpArrayColumnCursor();
             cursor.of(addr, bufferSize, 1, TYPE_DOUBLE_ARRAY);
@@ -233,8 +233,8 @@ public class QwpArrayColumnCursorTest {
         int bufferSize = 2;
         long addr = Unsafe.malloc(bufferSize, MemoryTag.NATIVE_DEFAULT);
         try {
-            Unsafe.getUnsafe().putByte(addr, (byte) 0);
-            Unsafe.getUnsafe().putByte(addr + 1, (byte) 33);
+            Unsafe.putByte(addr, (byte) 0);
+            Unsafe.putByte(addr + 1, (byte) 33);
 
             QwpArrayColumnCursor cursor = new QwpArrayColumnCursor();
             cursor.of(addr, bufferSize, 1, TYPE_DOUBLE_ARRAY);
@@ -251,8 +251,8 @@ public class QwpArrayColumnCursorTest {
         int bufferSize = 2;
         long addr = Unsafe.malloc(bufferSize, MemoryTag.NATIVE_DEFAULT);
         try {
-            Unsafe.getUnsafe().putByte(addr, (byte) 0);
-            Unsafe.getUnsafe().putByte(addr + 1, (byte) 0);
+            Unsafe.putByte(addr, (byte) 0);
+            Unsafe.putByte(addr + 1, (byte) 0);
 
             QwpArrayColumnCursor cursor = new QwpArrayColumnCursor();
             cursor.of(addr, bufferSize, 1, TYPE_DOUBLE_ARRAY);
@@ -269,9 +269,9 @@ public class QwpArrayColumnCursorTest {
         int bufferSize = 6; // flag(1) + nDims(1) + dim(4)
         long addr = Unsafe.malloc(bufferSize, MemoryTag.NATIVE_DEFAULT);
         try {
-            Unsafe.getUnsafe().putByte(addr, (byte) 0);
-            Unsafe.getUnsafe().putByte(addr + 1, (byte) 1);
-            Unsafe.getUnsafe().putInt(addr + 2, -1);
+            Unsafe.putByte(addr, (byte) 0);
+            Unsafe.putByte(addr + 1, (byte) 1);
+            Unsafe.putInt(addr + 2, -1);
 
             QwpArrayColumnCursor cursor = new QwpArrayColumnCursor();
             cursor.of(addr, bufferSize, 1, TYPE_DOUBLE_ARRAY);
@@ -289,7 +289,7 @@ public class QwpArrayColumnCursorTest {
         int bufferSize = 1;
         long addr = Unsafe.malloc(bufferSize, MemoryTag.NATIVE_DEFAULT);
         try {
-            Unsafe.getUnsafe().putByte(addr, (byte) 1); // has null bitmap
+            Unsafe.putByte(addr, (byte) 1); // has null bitmap
 
             QwpArrayColumnCursor cursor = new QwpArrayColumnCursor();
             cursor.of(addr, bufferSize, 8, TYPE_DOUBLE_ARRAY);
@@ -307,7 +307,7 @@ public class QwpArrayColumnCursorTest {
         int bufferSize = 1;
         long addr = Unsafe.malloc(bufferSize, MemoryTag.NATIVE_DEFAULT);
         try {
-            Unsafe.getUnsafe().putByte(addr, (byte) 0);
+            Unsafe.putByte(addr, (byte) 0);
 
             QwpArrayColumnCursor cursor = new QwpArrayColumnCursor();
             cursor.of(addr, bufferSize, 1, TYPE_DOUBLE_ARRAY);
@@ -325,9 +325,9 @@ public class QwpArrayColumnCursorTest {
         int bufferSize = 6; // flag(1) + nDims(1) + dim(4)
         long addr = Unsafe.malloc(bufferSize, MemoryTag.NATIVE_DEFAULT);
         try {
-            Unsafe.getUnsafe().putByte(addr, (byte) 0);
-            Unsafe.getUnsafe().putByte(addr + 1, (byte) 1);
-            Unsafe.getUnsafe().putInt(addr + 2, 2);
+            Unsafe.putByte(addr, (byte) 0);
+            Unsafe.putByte(addr + 1, (byte) 1);
+            Unsafe.putInt(addr + 2, 2);
 
             QwpArrayColumnCursor cursor = new QwpArrayColumnCursor();
             cursor.of(addr, bufferSize, 1, TYPE_DOUBLE_ARRAY);

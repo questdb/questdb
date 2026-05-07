@@ -42,7 +42,6 @@ public class QwpColumnDefTest {
                 QwpConstants.TYPE_LONG,
                 QwpConstants.TYPE_FLOAT,
                 QwpConstants.TYPE_DOUBLE,
-                QwpConstants.TYPE_STRING,
                 QwpConstants.TYPE_SYMBOL,
                 QwpConstants.TYPE_TIMESTAMP,
                 QwpConstants.TYPE_DATE,

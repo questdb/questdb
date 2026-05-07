@@ -736,10 +736,11 @@ public class TimestampNanoQueryTest extends AbstractCairoTest {
             execute("INSERT INTO mixed_ts VALUES(3, '2021-01-02T09:00:00.000300000Z', '2021-01-02T09:00:00.000300Z')");
             final long tsLong = 1_609_491_600_000_100L; // '2021-01-01T09:00:00.000100Z' in microseconds
 
-            // Test RightRunTimeConstFunc - TIMESTAMP_NS column = :timestamp_micro_bind_variable
-            // This triggers RightRunTimeConstFunc because:
-            // - left: nano_time (TIMESTAMP_NS) - higher precision
-            // - right: bind variable (TIMESTAMP - microsecond) - lower precision, runtime constant
+            // TIMESTAMP_NS column = :timestamp_micro_bind_variable
+            // EqTimestampFunctionFactory swaps the lower-precision side onto the left
+            // and uses LeftRunTimeConstFunc to cache the converted bind variable value:
+            // - left: bind variable (TIMESTAMP - microsecond) - lower precision, runtime constant
+            // - right: nano_time (TIMESTAMP_NS) - higher precision
             bindVariableService.clear();
             bindVariableService.setTimestamp("micro_bind", tsLong);
 
