@@ -1302,16 +1302,16 @@ public class PostingIndexCriticalIssuesTest extends AbstractCairoTest {
      * head had LEN=96 (= entrySize(genCount=1, coverCount=0)) while .pci
      * advertised coverCount=1. This test drives PostingIndexWriter through
      * the same lifecycle the WAL fast-lag path follows in production:
-     * <p>
-     * 1. configureCovering(...) -> coverCount=1 on the writer.<br>
-     * 2. add() rows, seal() -> publishes a chain entry with cover footer.<br>
-     * 3. clearCovering() -> writer's coverCount field is reset to 0
-     *    (this is what TableWriter does in the finally block of
-     *    sealPostingIndexesForLastPartitionFastLag, line 11367).<br>
-     * 4. add() more rows, commit() -> flushAllPending() publishes via
-     *    extendHead, which rewrites the head entry's LEN using
-     *    entrySize(genCount, coverCount=0), DROPPING the cover footer.<br>
-     * <p>
+     * <ol>
+     * <li> configureCovering(...) -> coverCount=1 on the writer.
+     * <li> add() rows, seal() -> publishes a chain entry with cover footer.
+     * <li> clearCovering() -> writer's coverCount field is reset to 0
+     *     (this is what TableWriter does in the finally block of
+     *     sealPostingIndexesForLastPartitionFastLag, line 11367).
+     * <li> add() more rows, commit() -> flushAllPending() publishes via
+     *     extendHead, which rewrites the head entry's LEN using
+     *     entrySize(genCount, coverCount=0), DROPPING the cover footer.
+     * </ol>
      * After step 4, the chain head's LEN no longer accommodates a cover
      * footer slot, even though the table's covering schema (mirrored in
      * .pci) still says one cover. A reader sourcing coverCount=1 from the
