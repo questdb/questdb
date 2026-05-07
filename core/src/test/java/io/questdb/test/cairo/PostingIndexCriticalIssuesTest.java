@@ -1405,6 +1405,95 @@ public class PostingIndexCriticalIssuesTest extends AbstractCairoTest {
     }
 
     /**
+     * Validates the Fix B writer-side change: after a seal, the
+     * post-seal finally block now calls
+     * {@link PostingIndexWriter#releaseCoveredColumnReadMappings()}
+     * instead of {@link PostingIndexWriter#clearCovering()}, preserving
+     * the writer's covering schema (coverCount, sidecarMems) so a
+     * subsequent commit() between seals still publishes a chain entry
+     * with a correctly-sized cover footer. This is the symmetric
+     * counterpart to {@link #testWriterEntrysCoverFooterShrinksAfterClearCoveringCommit},
+     * which documents that the old clearCovering()-then-commit() flow
+     * shrinks the footer.
+     */
+    @Test
+    public void testWriterEntrysCoverFooterPersistsAfterReleaseReadMappingsCommit() throws Exception {
+        assertMemoryLeak(() -> {
+            try (Path path = new Path().of(configuration.getDbRoot())) {
+                String name = "writer_release_read_mappings_then_commit";
+                int plen = path.size();
+                FilesFacade ff = configuration.getFilesFacade();
+
+                final int coverCount = 1;
+                final long fakeColRows = 32;
+                final int shift = 3;
+                final long fakeColBytes = fakeColRows << shift;
+                long fakeColAddr = Unsafe.malloc(fakeColBytes, MemoryTag.NATIVE_DEFAULT);
+                try {
+                    Unsafe.getUnsafe().setMemory(fakeColAddr, fakeColBytes, (byte) 0);
+
+                    long[] addrs = {fakeColAddr};
+                    long[] tops = {0L};
+                    int[] shifts = {shift};
+                    int[] indices = {1};
+                    int[] types = {io.questdb.cairo.ColumnType.LONG};
+
+                    try (PostingIndexWriter writer = new PostingIndexWriter(
+                            configuration, path.trimTo(plen), name, COLUMN_NAME_TXN_NONE)) {
+                        writer.configureCovering(addrs, tops, shifts, indices, types, coverCount);
+                        for (int i = 0; i < 8; i++) {
+                            writer.add(i % 4, i);
+                        }
+                        writer.setMaxValue(7);
+                        writer.setNextTxnAtSeal(1L);
+                        writer.seal();
+
+                        // Models the production post-seal finally block:
+                        // release the borrowed read-side addrs but keep
+                        // the covering schema (coverCount, sidecarMems).
+                        writer.releaseCoveredColumnReadMappings();
+
+                        for (int i = 0; i < 4; i++) {
+                            writer.add(i, 100 + i);
+                        }
+                        writer.setMaxValue(103);
+                        writer.setNextTxnAtSeal(2L);
+                        writer.commit();
+
+                        LPSZ keyFile = PostingIndexUtils.keyFileName(
+                                path.trimTo(plen), name, COLUMN_NAME_TXN_NONE);
+                        long fileSize = ff.length(keyFile);
+                        try (MemoryCMARWImpl mem = new MemoryCMARWImpl(
+                                ff, keyFile, ff.getPageSize(), fileSize,
+                                MemoryTag.MMAP_DEFAULT, /* opts */ 0)) {
+                            PostingIndexChainWriter chain = new PostingIndexChainWriter();
+                            chain.openExisting(mem);
+                            PostingIndexChainEntry.Snapshot head = new PostingIndexChainEntry.Snapshot();
+                            chain.loadHeadEntry(mem, head);
+                            Assert.assertEquals(
+                                    "Fix B: with releaseCoveredColumnReadMappings the "
+                                            + "writer's coverCount stays > 0 across the "
+                                            + "post-seal release, so the next commit's "
+                                            + "extendHead writes a LEN that includes the "
+                                            + "cover footer",
+                                    PostingIndexChainEntry.entrySize(head.genCount, coverCount),
+                                    head.len
+                            );
+                            Assert.assertNotEquals(
+                                    "Fix B: the head LEN must NOT match the no-cover sizing",
+                                    PostingIndexChainEntry.entrySize(head.genCount, 0),
+                                    head.len
+                            );
+                        }
+                    }
+                } finally {
+                    Unsafe.free(fakeColAddr, fakeColBytes, MemoryTag.NATIVE_DEFAULT);
+                }
+            }
+        });
+    }
+
+    /**
      * Critical #4 and #5 are style violations enforced by static
      * analysis, not JUnit. They cannot be expressed as red unit tests.
      * Reference checks:

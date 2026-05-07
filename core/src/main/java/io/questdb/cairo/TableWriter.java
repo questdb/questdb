@@ -11186,9 +11186,13 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                         }
                         // Clear the writer's reference to o3SealAddrs so that
                         // a subsequent close() → seal() cannot dereference the
-                        // unmapped addresses. The seal would return early (gen0
-                        // is already dense), but this is a defensive measure.
-                        indexer.clearCovering();
+                        // unmapped addresses. Keep the covering schema
+                        // (coverCount, sidecarMems) intact so a subsequent
+                        // commit() between seals still publishes a chain
+                        // entry with a correct cover footer; clearCovering()
+                        // would zero coverCount and the next captureCoverEnd
+                        // Offsets would short-circuit, dropping the footer.
+                        indexer.releaseCoveredColumnReadMappings();
                     }
                 } else {
                     indexer.configureFollowerAndWriter(
@@ -11364,7 +11368,11 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                                 o3SealAuxAddrs.setQuick(c, 0);
                             }
                         }
-                        indexer.clearCovering();
+                        // Drop the borrowed o3SealAddrs pointers from the
+                        // indexer but keep coverCount and sidecarMems set,
+                        // so a follow-up commit() between fast-lag seals
+                        // still publishes with a correct cover footer.
+                        indexer.releaseCoveredColumnReadMappings();
                     }
                     continue;
                 }
