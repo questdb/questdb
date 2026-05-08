@@ -158,7 +158,7 @@ spec — and treat them with the precedence rules in §14.
 
 | Key | Type | Default | Description |
 |-----|------|---------|-------------|
-| `addr` | host[:port][,host[:port]…] | required | Server endpoint(s). Comma-separated for multi-host failover; selection semantics, host-health states, and the SF reconnect loop are normatively specified in [`failover.md`](failover.md). |
+| `addr` | host[:port][,host[:port]…] | required | Server endpoint(s). Comma-separated for multi-host failover; selection semantics, host-health states, and the cursor-engine reconnect loop are normatively specified in [`failover.md`](failover.md). |
 | `username` / `password` | string | unset | HTTP Basic auth on the upgrade request. |
 | `token` | string | unset | Bearer token on the upgrade request. |
 | `tls_verify` | enum | `on` | `on` or `unsafe_off`. Applies on `wss::` / TLS connections. |
@@ -611,15 +611,17 @@ Mapped to the SF client's local error categories:
 
 - **Terminal** (bypass reconnect; do NOT consume the retry budget) —
   `AuthError` (HTTP `401` / `403` on the upgrade) surfaces as
-  `SECURITY_ERROR`; `ProtocolVersionError` surfaces as
-  `PROTOCOL_VIOLATION`; server-status rejects surface in the matching
+  `SECURITY_ERROR`; server-status rejects surface in the matching
   status-byte category.
 - **Topology** (`421 Misdirected Request` + `X-QuestDB-Role`) — handled
   within the round per §13.6 (and `failover.md` §6 "Topology"); not
   terminal.
 - **Transient** (consume the per-outage budget) — everything else: TCP /
   TLS / handshake failures, mid-stream send / recv errors, `404`, `426`,
-  `503`, any other 4xx / 5xx that is not `401` / `403` / `421`, and
+  `503`, any other 4xx / 5xx that is not `401` / `403` / `421`, an
+  upgrade response that advertises a QWP version outside the supported
+  range (per-endpoint mismatch — the loop walks to the next host so a
+  rolling upgrade in flight does not block compatible peers), and
   generic frame-decode errors.
 
 When the per-outage budget (`reconnect_max_duration_millis`) exhausts,
@@ -687,11 +689,11 @@ loop forever:
         continue
 
     try connect host[idx]:
-        on AuthError or ProtocolVersionError: SET TERMINAL; exit loop
+        on AuthError: SET TERMINAL; exit loop
         on RoleReject(t):
             tracker.RecordRoleReject(idx, t); lastError = RoleReject
             continue                                 # no per-host sleep within the round
-        on other error:
+        on other error (incl. upgrade-time version mismatch):
             tracker.RecordTransportError(idx); lastError = TransportError
             if !seenFirstConnect && !initial_connect_retry:
                 SET TERMINAL; exit loop
@@ -701,8 +703,8 @@ loop forever:
     backoff.Reset(); lastError = null
     rewind cursor to (ackedFsn + 1)         # replay first un-acked frame; see §13.5
     run send/recv pumps until either pump throws
-        on server status reject / AuthError / ProtocolVersionError: SET TERMINAL
-        on transient error (TCP/TLS, mid-stream send/recv, etc.):
+        on server status reject / AuthError: SET TERMINAL
+        on transient error (TCP/TLS, mid-stream send/recv, frame corruption, etc.):
             previousIdx = currentIdx                 # demoted on next iter via RecordMidStreamFailure
             continue                                  # next iter walks the next untried host
 ```
@@ -724,13 +726,11 @@ Key properties:
   before `BeginRound(forgetClassifications=true)`. The per-producer
   round time stays bounded by `auth_timeout_ms × hostCount` plus one
   backoff sleep, and equal-jitter (`failover.md` §3.1) spreads the
-  round-boundary sleeps across producers. Mirrors the non-SF ingress
-  walk ([`wire-ingress.md`](wire-ingress.md) §15.5) and the egress
+  round-boundary sleeps across producers. Mirrors the egress
   `WalkTracker` ([`wire-egress.md`](wire-egress.md) §11.9), where the
   address-list walk is also un-throttled within a round.
 - **`initial_connect_retry`** (default `off`):
-  - `off` — first connect failure is terminal (matches non-SF ingress;
-    see `wire-ingress.md` §15.5).
+  - `off` — first connect failure is terminal.
   - `on` (alias `sync`) — block the constructor; enter the standard
     reconnect loop until success or `MaxOutageDuration` exhaustion.
   - `async` — return from the constructor immediately; the

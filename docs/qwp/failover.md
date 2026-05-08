@@ -8,21 +8,20 @@ in the wire docs:
 
 | Context | Loop home |
 |---|---|
-| Ingress non-SF — `Sender.New("ws::...")` initial connect; one-shot walk, no run-time reconnect | [`wire-ingress.md`](wire-ingress.md) §15.5 |
-| Ingress SF — the cursor-engine reconnect loop (`sf_dir=...`); long-running, recovers across outages | [`sf-client.md`](sf-client.md) §13.6 |
+| Ingress — cursor-engine reconnect loop; tolerates transient outages within `reconnect_max_duration_millis`. The unacked buffer is mmap'd under `sf_dir` (recovers across sender restarts) when `sf_dir` is set, otherwise malloc'd in process memory (no cross-restart recovery). Both modes share the same failover semantics. | [`sf-client.md`](sf-client.md) §13.6 |
 | Egress — per-`Execute()` attempt loop on the read-side `QueryClient`; bounded by attempt count + wall-clock budget | [`wire-egress.md`](wire-egress.md) §11.9 |
 
 ## 1. Connect-string keys (common)
 
-These keys apply to every WS client. Per-context knobs (SF reconnect
-budget, egress failover budget, etc.) are documented next to their
-loops in the wire docs above.
+These keys apply to every WS client. Per-context knobs (ingress
+reconnect budget, egress failover budget, etc.) are documented next
+to their loops in the wire docs above.
 
 | Key | Type | Default | Scope |
 |---|---|---|---|
 | `addr` | `host:port[,host:port…]` | required | Comma-separated multi-host failover list. |
 | `auth_timeout_ms` | int | `15_000` | Per-host upper bound on the **HTTP upgrade response read** only. Does NOT cover TCP connect (OS default), TLS handshake, or the post-upgrade `SERVER_INFO` frame read (those use a separate hard-coded 5s timeout). Bounds the common "TCP accepts but the server never replies" blackhole; full-route blackholes that drop SYN-ACK still fall back to the OS connect timeout. |
-| `zone` | string | unset | Client's zone identifier (opaque, case-insensitive; e.g. `eu-west-1a`, `dc-amsterdam`). Egress with `target=any\|replica` prefers endpoints whose server-advertised `zone_id` matches; see §2 for the priority lattice and `wire-egress.md` §11.8 for the `SERVER_INFO.zone_id` field. Ignored when `target=primary` (writers follow the master across zones). Ignored on ingress (zone-blind, pinned to v1) — ingress logs a one-time WARN if set so the no-op is visible. |
+| `zone` | string | unset | Client's zone identifier (opaque, case-insensitive; e.g. `eu-west-1a`, `dc-amsterdam`). Egress with `target=any\|replica` prefers endpoints whose server-advertised `zone_id` matches; see §2 for the priority lattice and `wire-egress.md` §11.8 for the `SERVER_INFO.zone_id` field. Ignored when `target=primary` (writers follow the master across zones). Silently ignored on ingress (zone-blind, pinned to v1) — users are encouraged to share the same connect string across ingress and egress clients, so a per-startup WARN would fire spuriously for a setting that is working correctly on its egress siblings. |
 
 `addr` accepts comma syntax (`addr=h1:p1,h2:p2`) and repeated keys
 (`addr=h1:p1;addr=h2:p2`). The two forms MUST accumulate; empty
@@ -54,9 +53,9 @@ Zone tier is assigned the first time the host's zone is observed
 | `Other`   | Server advertised a different zone. | 3 (worst) |
 
 `target=primary` collapses every host's zone tier to `Same`: writers
-must follow the master regardless of geography. Ingress (SF and non-SF)
-is likewise zone-blind — it pins v1 and never reads zone information,
-so every host is `Same` by default.
+must follow the master regardless of geography. Ingress is likewise
+zone-blind in both storage modes — it pins v1 and never reads zone
+information, so every host is `Same` by default.
 
 ### Selection priority
 
@@ -66,11 +65,16 @@ tried in the current round. State outranks zone, so a known-good host
 in another zone is picked before an untried local host (the alternative
 risks wasted probes against unproven peers when a working endpoint is
 already in hand). Within a tied `(state, zone_tier)` bucket, the order
-is the address-list shuffle established at client construction.
+follows the user-supplied `addr=` list.
 
-Clients SHOULD shuffle the configured `addr=` list at construction
-time. The shuffle has no operator-visible knob; it spreads first-connect
-attempts across same-tier hosts when many clients start simultaneously.
+Clients are NOT expected to shuffle, randomise, or otherwise reorder
+the configured `addr=` list. Cluster-level load-balancing is the
+responsibility of the server-side coordinators (replica-aware writers,
+read-side routers); the client just walks the list in priority order
+and surfaces failover events. Operators who want a different first-pick
+distribution across many simultaneously-starting clients should rotate
+the connect string at deployment time, not rely on per-client
+randomisation.
 
 A round-tracker bit per host records whether **this round** has tried
 the host yet. A "round" is the time between two `BeginRound` calls.
@@ -157,12 +161,9 @@ behaviour drift across clients.
 
 ## 3. Backoff function
 
-Used by SF reconnect ([`sf-client.md`](sf-client.md) §13.6) and egress
-failover ([`wire-egress.md`](wire-egress.md) §11.9). Non-SF ingress
-walks the address list once with no inter-host backoff and never
-reconnects, so it doesn't consume this function (see
-[`wire-ingress.md`](wire-ingress.md) §15.5). The function is pure; the
-loop owner provides elapsed wall-clock time.
+Used by ingress reconnect ([`sf-client.md`](sf-client.md) §13.6) and
+egress failover ([`wire-egress.md`](wire-egress.md) §11.9). The
+function is pure; the loop owner provides elapsed wall-clock time.
 
 ```
 ComputeBackoff(attempt):       # attempt is 0-based; backoff(0) returns InitialBackoff
@@ -242,8 +243,7 @@ context-specific knobs, pseudocode, and key properties.
 
 | Context | Wire-doc home |
 |---|---|
-| Ingress non-SF — one-shot walk over `addr=` at construction; AuthError / ProtocolVersionError terminal; role rejects walk to next host | [`wire-ingress.md`](wire-ingress.md) §15.5 |
-| Ingress SF — long-running reconnect loop with mid-stream demote, equal-jitter backoff, `initial_connect_retry` policy, `reconnect_max_duration_millis` outage budget | [`sf-client.md`](sf-client.md) §13.6 |
+| Ingress — cursor-engine reconnect loop with mid-stream demote, equal-jitter backoff, `initial_connect_retry` policy, `reconnect_max_duration_millis` outage budget; storage is mmap'd under `sf_dir` (durable across sender restarts) when set, malloc'd in process memory otherwise (lost on process exit, but the reconnect loop still spans transient server outages such as rolling upgrades) | [`sf-client.md`](sf-client.md) §13.6 |
 | Egress — per-`Execute()` loop with `failover=on/off` master switch, `failover_max_attempts` cap, full-jitter backoff, `OnFailoverReset` callback; `WalkTracker` helper for initial connect / reconnect | [`wire-egress.md`](wire-egress.md) §11.9 |
 
 ## 5. Role filter (`target=`)
@@ -315,14 +315,13 @@ to the caller.
 | Category | Trigger | Why terminal |
 |---|---|---|
 | `AuthError` | Upgrade HTTP `401` or `403` | Credentials are cluster-wide; retrying every host floods server logs without recovery. |
-| `ProtocolVersionError` | Server-emitted frame carries QWP version outside `[1, ClientMaxVersion]` | Version negotiation is cluster-wide; failover masks the disagreement. The egress client surfaces this via `KIND_PROTOCOL_ERROR` and latches it on the connection's terminal-failure listener so subsequent `Execute()` calls fail fast through `handler.onError` (no failover). |
 | Server status reject (SF) | Receive pump decoded a non-OK status frame | Application-layer reject won't change on replay. |
 
 ### Topology (handled in-round; do not advance the doubling counter)
 
 | Category | Trigger | Treatment |
 |---|---|---|
-| Role reject | Upgrade `421` + non-empty `X-QuestDB-Role` | `RecordRoleReject(idx, transient = role == PRIMARY_CATCHUP)`, then walk to the next host within the round. SF additionally pays a fixed `InitialBackoff` sleep at round exhaustion (no exponential doubling) and the wall-clock outage budget still applies; see §3.2. Non-SF / egress fail the round if every host role-rejects. |
+| Role reject | Upgrade `421` + non-empty `X-QuestDB-Role` | `RecordRoleReject(idx, transient = role == PRIMARY_CATCHUP)`, then walk to the next host within the round. Ingress additionally pays a fixed `InitialBackoff` sleep at round exhaustion (no exponential doubling) and the wall-clock outage budget still applies; see §3.2. Egress fails the round if every host role-rejects. |
 | Target mismatch | `SERVER_INFO.Role` does not match `target=` filter | Same as role reject. |
 
 ### Transient (enter backoff)
@@ -338,10 +337,23 @@ Everything not terminal and not topology:
 - `421` without an `X-QuestDB-Role` header (or with an empty value).
 - `426 Upgrade Required` and any other 4xx/5xx that is not `401`,
   `403`, or `421`.
+- Upgrade response advertises a QWP version outside
+  `[1, ClientMaxVersion]`. Per-endpoint, not cluster-wide: during a
+  rolling upgrade one node may already speak the new version while
+  peers haven't caught up (or vice-versa), so a single mismatched
+  peer must not lock the client out of compatible siblings. The
+  client records `TransportError` and walks to the next host;
+  if every peer disagrees the round-exhaustion error surfaces the
+  version detail. There is no separate "mid-stream version
+  mismatch" — once an upgrade negotiates a version, it is fixed
+  for the lifetime of the connection. A bad version byte appearing
+  in a later frame is frame corruption or a server bug, classified
+  under the generic decode-error bullet below.
 - Generic frame-decode errors (truncated payload, unknown
-  `msg_kind`, varint overflow). Clients SHOULD log these at
-  WARNING; if the same decode error repeats across every host the
-  failover-exhausted error surfaces the underlying bug.
+  `msg_kind`, varint overflow, mid-stream version-byte
+  inconsistency). Clients SHOULD log these at WARNING; if the same
+  decode error repeats across every host the failover-exhausted
+  error surfaces the underlying bug.
 
 Transient errors enter the appropriate backoff / round logic per the
 context's loop spec ([`wire-ingress.md`](wire-ingress.md) §15.5,
@@ -350,29 +362,31 @@ context's loop spec ([`wire-ingress.md`](wire-ingress.md) §15.5,
 
 ## 7. Defaults at a glance
 
-| Knob | Ingress non-SF | Ingress SF | Egress |
-|---|---|---|---|
-| Per-host connect timeout | `auth_timeout_ms` (15s) | `auth_timeout_ms` (15s) | `auth_timeout_ms` (15s) |
-| Inter-host backoff within a round | none (single-pass walk) | none (skip-backoff-within-round; sleep paid at round boundary) | none (`WalkTracker` walks the full round in one factory call) |
-| Backoff initial | n/a | `100ms` (`reconnect_initial_backoff_millis`) | `50ms` (`failover_backoff_initial_ms`) |
-| Backoff max | n/a | `5_000ms` | `1_000ms` |
-| Total budget | n/a | `300_000ms` (`reconnect_max_duration_millis`) | `30_000ms` (`failover_max_duration_ms`) |
-| Attempt cap | hosts × 1 | unbounded (budget-only) | `8` (`failover_max_attempts`) |
-| Jitter | n/a | equal `[base, 2·base)` | full `[0, base]` |
-| Initial-connect retry | no | gated by `initial_connect_retry=off\|on\|async` | one-shot `WalkTracker` round (no retry beyond round) |
-| Auth-error policy | terminal | terminal | terminal |
-| Role-reject (`421+role`) | skip host within round; fail round if all rejected | retry with backoff reset to `InitialBackoff`; bounded by `reconnect_max_duration_millis` | skip host within round; fail Execute if all rejected |
-| Zone-locality (`zone=`) | n/a (zone-blind: every host treated as `Same`) | n/a (zone-blind: every host treated as `Same`) | same-zone preferred via `(state, zone)` priority lattice when `zone=` set; `target=primary` collapses to zone-blind |
+| Knob | Ingress | Egress |
+|---|---|---|
+| Per-host connect timeout | `auth_timeout_ms` (15s) | `auth_timeout_ms` (15s) |
+| Inter-host backoff within a round | none (skip-backoff-within-round; sleep paid at round boundary) | none (`WalkTracker` walks the full round in one factory call) |
+| Backoff initial | `100ms` (`reconnect_initial_backoff_millis`) | `50ms` (`failover_backoff_initial_ms`) |
+| Backoff max | `5_000ms` | `1_000ms` |
+| Total budget | `300_000ms` (`reconnect_max_duration_millis`); same default in both storage modes — memory-mode users may prefer to lower it because the RAM buffer caps how much can pile up during the outage | `30_000ms` (`failover_max_duration_ms`) |
+| Attempt cap | unbounded (budget-only) | `8` (`failover_max_attempts`) |
+| Jitter | equal `[base, 2·base)` | full `[0, base]` |
+| Initial-connect retry | gated by `initial_connect_retry=off\|on\|async` | one-shot `WalkTracker` round (no retry beyond round) |
+| Auth-error policy | terminal | terminal |
+| Role-reject (`421+role`) | retry with backoff reset to `InitialBackoff`; bounded by `reconnect_max_duration_millis` | skip host within round; fail Execute if all rejected |
+| Zone-locality (`zone=`) | n/a (zone-blind: every host treated as `Same`) | same-zone preferred via `(state, zone)` priority lattice when `zone=` set; `target=primary` collapses to zone-blind |
 
-The split (5min budget for SF vs 30s for egress) reflects intent:
-SF is unattended background ingest with on-disk durability — long
-outages are recoverable. Egress is interactive — failing fast keeps
-the user in the loop.
+The split (5min budget for ingress vs 30s for egress) reflects intent:
+ingest is throughput-oriented and tolerates long outages — durable
+across sender restarts when `sf_dir` is set, RAM-bounded otherwise but
+still resilient to transient server outages such as rolling upgrades.
+Egress is interactive — failing fast keeps the user in the loop.
 
-Knob homes: SF connect-string keys live in [`sf-client.md`](sf-client.md)
-§4.2; egress connect-string keys live in [`wire-egress.md`](wire-egress.md)
-§11.9. The values above are derived; this table is a summary, not
-the canonical defaults.
+Knob homes: ingress connect-string keys live in
+[`sf-client.md`](sf-client.md) §4.2 (the same keys apply whether or
+not `sf_dir` is set); egress connect-string keys live in
+[`wire-egress.md`](wire-egress.md) §11.9. The values above are
+derived; this table is a summary, not the canonical defaults.
 
 ## Document history
 
@@ -384,3 +398,7 @@ the canonical defaults.
 | 2026-05-08 | Consistency follow-up to the zone feature. §2.1 adds the `RecordZone(idx, zoneId)` operation explicitly (zone tier was previously assigned implicitly); zone tier survives `BeginRound` so observations don't have to be re-issued each round. §4.4 WalkTracker pseudocode now invokes `RecordZone` from both the post-`SERVER_INFO` path (gated by `CAP_ZONE`) and the `421` upgrade-reject path (using the optional `X-QuestDB-Zone` header). |
 | 2026-05-08 | Clarifications. §4.3 new key-property bullet: `failover_max_duration_ms` bounds failover eligibility, not Execute wall-clock — `WalkTracker` is bounded only by `hostCount × auth_timeout_ms`, so total Execute time can be `failover_max_duration_ms + (last walk)`. §4.4 trailing paragraph: under `target=primary`, `RecordZone` is still called but zone tier collapses to `Same` for selection. |
 | 2026-05-08 | Structural split. The per-context loops (formerly §4.1 / §4.2 / §4.3 / §4.4) and their connect-string knobs (formerly §1.2 / §1.3) move out of this doc into the corresponding wire docs: non-SF ingress to `wire-ingress.md` §15.5, SF reconnect to `sf-client.md` §13.6, egress per-Execute and `WalkTracker` to `wire-egress.md` §11.9. `failover.md` now hosts only the shared primitives — common keys (§1.1), host-health model (§2), backoff function (§3), role filter (§5), error classification (§6), defaults cheat sheet (§7). §3 / §3.2 / §6 cross-references rewritten to point at the new loop homes. |
+| 2026-05-08 | Collapse non-SF and SF ingress into a single ingress context. Both modes use the cursor-engine reconnect loop (`sf-client.md` §13.6); `sf_dir` toggles only the storage backend (mmap files vs malloc'd memory) and whether unacked data survives sender restarts. The reconnect budget (`reconnect_max_duration_millis`) and all other failover knobs apply uniformly. §1 / §3 / §4 / §6 / §7 rewritten to drop the "non-SF = one-shot, no run-time reconnect" framing. |
+| 2026-05-08 | Drop the ingress one-time WARN for `zone=`. Users are encouraged to share a single connect string across ingress and egress clients, so a per-startup WARN would fire spuriously for a setting that is working correctly on its egress siblings without giving the user any actionable signal. The key is now silently accepted and ignored on ingress; §1.1 and `wire-ingress.md` §3 / §15.5 updated. |
+| 2026-05-08 | Drop the "clients SHOULD shuffle the `addr=` list" guidance from §2. Cluster-level load-balancing is owned by server-side coordinators in QuestDB's failover topology, not by the client; the client walks `addr=` in priority order and trusts the server to spread load. Within-tier ordering now follows the user-supplied list verbatim. Operators who want different first-pick distributions across simultaneously-starting clients should rotate the connect string at deployment time. |
+| 2026-05-08 | Reclassify `ProtocolVersionError` from Terminal to Transient. Per-endpoint version disagreement is a normal rolling-upgrade artifact (one node on the new version, peers still on the old, or vice-versa) — failing fast across all hosts blocks the client out of compatible siblings. The client now records `TransportError` and walks; only after the round exhausts (every peer disagrees) does the error surface terminally. There is no "mid-stream version mismatch" — once an upgrade negotiates a version it is fixed, and a bad version byte in a later frame is frame corruption (already covered by the generic decode-error transient bullet). §6 Terminal table loses the `ProtocolVersionError` row; Transient list gains the upgrade-response-version-out-of-range bullet. `wire-ingress.md` §15.5, `wire-egress.md` §11.9.2, and `sf-client.md` §13.3 / §13.6 updated to match. |

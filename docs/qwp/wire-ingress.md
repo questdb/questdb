@@ -99,8 +99,9 @@ routing (see [`wire-egress.md`](wire-egress.md) §11.8 and
 [`failover.md`](failover.md) §5). Ingress clients do NOT read `SERVER_INFO`,
 ignore zone advertising, and rely on the `421 + X-QuestDB-Role` upgrade-reject
 convention alone for primary-vs-replica routing. The `zone=` connect-string
-knob is parsed for syntactic uniformity with egress and logs a one-time WARN
-on ingress; see `failover.md` §1.1.
+knob is accepted but silently ignored on ingress so a single connect string
+can be reused across ingress and egress clients without per-startup noise;
+see `failover.md` §1.1.
 
 ## 4. Byte Ordering
 
@@ -909,66 +910,58 @@ The client uses double-buffered microbatches:
 - The server accumulates these deltas for the lifetime of the connection.
 - Upon connection loss, both sides reset the dictionary.
 
-### 15.5 Initial Connect and Host Selection
+### 15.5 Initial Connect and Failover
 
-Non-SF ingress senders perform a single one-shot walk over the configured
-`addr=` list at construction time. There is no run-time reconnect: once
-`Sender.New("ws::...")` returns, the WebSocket is bound to one endpoint
-for the lifetime of the sender, and any subsequent transport failure
-surfaces directly to the producer.
+Ingress senders use the cursor-engine reconnect loop documented in
+[`sf-client.md`](sf-client.md) §13.6, regardless of whether `sf_dir`
+is configured. The two storage modes share identical failover
+semantics — host tracker, equal-jitter backoff, `initial_connect_retry`
+policy, `reconnect_max_duration_millis` outage budget, mid-stream
+demote, role-reject handling, terminal classification. They differ
+only in where the unacked buffer lives:
 
-This subsection specifies the construction-time walk. SF ingress (the
-long-running reconnect loop driving store-and-forward replay) lives in
-[`sf-client.md`](sf-client.md) §13.6.
+- **`sf_dir` set** (store-and-forward): segments are mmap'd files
+  under `sf_dir`. Unacked data survives sender restarts and is
+  replayed by the next sender bound to the same slot. Orphan slots
+  from prior sender processes can be adopted (see
+  [`sf-client.md`](sf-client.md) §18).
+- **`sf_dir` unset** (memory-mode): segments are malloc'd in process
+  memory. Unacked data is lost if the sender process dies. The
+  reconnect loop still spans transient server outages such as rolling
+  upgrades, but the RAM buffer caps how much data can pile up during
+  the outage. Operators who want to surface a stuck server sooner
+  should lower `reconnect_max_duration_millis` below the 5-minute
+  default; senders that need durability across sender restarts must
+  opt into SF (`sf_dir=...`).
 
 Host selection consumes the shared primitives in
 [`failover.md`](failover.md): connect-string keys (§1.1), host-health
 model and `(state, zone_tier)` priority lattice (§2), role filter
-(§5), and error classification (§6). Non-SF ingress is zone-blind —
-it pins QWP v1 and never reads `SERVER_INFO`, so every host's zone
-tier is `Same` and selection degenerates to state-only ordering. The
-`zone=` connect-string key is parsed but logs a one-time WARN.
+(§5), and error classification (§6). Ingress is zone-blind in both
+storage modes — it pins QWP v1 and never reads `SERVER_INFO`, so
+every host's zone tier is `Same` and selection degenerates to
+state-only ordering. The `zone=` connect-string key is accepted but
+silently ignored, so a connect string shared with egress clients
+works unchanged on ingress.
 
-```
-hosts = configured addr list
-tracker = HostTracker(hosts)
-for attempt in 0 .. hosts.length - 1:
-    idx = tracker.PickNext()                # priority order
-    if idx < 0: break                       # round exhausted
-    try connect host[idx] with auth_timeout_ms budget
-        on success:        RecordSuccess(idx); return transport
-        on AuthError:      rethrow (terminal, do NOT continue)
-        on RoleReject(t):  RecordRoleReject(idx, t); continue
-        on other errors:   RecordTransportError(idx); continue
-throw "ingress failed against all <count> endpoints" with last error attached
-```
+Connect-string knobs are documented at their canonical home in
+[`sf-client.md`](sf-client.md) §4.2 — the same keys apply whether or
+not `sf_dir` is set:
 
-Key properties:
+- `reconnect_max_duration_millis` (default `300_000`)
+- `reconnect_initial_backoff_millis` (default `100`)
+- `reconnect_max_backoff_millis` (default `5_000`)
+- `initial_connect_retry` (default `off`; `on` / `sync` / `async`)
 
-- **No backoff between hosts.** The walk is bounded by
-  `auth_timeout_ms × hostCount` worst case.
-- **One round only.** If every host is in a non-Healthy state, the
-  client throws — no retry loop. Non-SF ingress has no
-  `reconnect_max_duration_millis` budget; senders that need recovery
-  across outages must opt into SF (`sf_dir=...`).
-- **AuthError is structurally terminal** at any host: `401`/`403`
-  on the upgrade aborts immediately. Re-running an unsupported
-  credential against every host wastes time and floods server logs.
-  `404` is **not** classified as auth: a single mid-deploy node
-  serving the wrong path while peers are healthy is a routing
-  glitch, not a credential failure, so `404` is treated as a
-  per-endpoint transport error and the walk continues.
-- **`ProtocolVersionError` is also terminal** in the same way: the
-  server negotiated an unsupported QWP version, and frame-decode
-  corruption is a permanent disagreement.
-- **Role rejects are recoverable** within this single round: the
-  client moves on to the next configured host. Once all hosts are
-  exhausted, the role-mismatch detail is surfaced.
-
-The non-SF ingress sender exposes no failover-tuning knobs beyond
-the common `addr=` / `auth_timeout_ms` / `zone=` set in
-[`failover.md`](failover.md) §1.1, because there is no backoff state
-to tune.
+Per-host upgrade-error classification follows
+[`failover.md`](failover.md) §6: `401`/`403` → `AuthError` (terminal),
+`421 + X-QuestDB-Role` → role reject (transient if `PRIMARY_CATCHUP`,
+topology otherwise). All other upgrade errors are transient and feed
+into the reconnect loop, including `404`, `426`, `503`, generic
+4xx/5xx, TCP/TLS failures, mid-stream send/recv errors, and an upgrade
+response that advertises a QWP version outside the client's supported
+range — the last one is per-endpoint, so a host on an in-flight rolling
+upgrade does not lock the client out of compatible peers.
 
 ## 16. Examples
 

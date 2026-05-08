@@ -695,8 +695,15 @@ Key properties:
   Clients that omit the callback MUST instead surface the failure
   and have the user re-issue `Execute` from a clean accumulator.
 - **AuthError is terminal** at any host (see `failover.md` §6).
-- **`ProtocolVersionError` is terminal** and surfaces directly to the
-  caller; failover masks the cluster-wide disagreement.
+- **Upgrade-time version mismatch is per-endpoint, not terminal**
+  (see `failover.md` §6). A host whose upgrade response advertises a
+  QWP version outside `[1, ClientMaxVersion]` is recorded as a
+  transport error and the walk continues; if every host disagrees the
+  round-exhaustion error surfaces the version detail. There is no
+  separate mid-stream "version mismatch" — once an upgrade negotiates
+  a version, it is fixed for the connection's lifetime, and a bad
+  version byte appearing in a later frame is frame corruption (handled
+  by the generic decode-error path).
 - **Cooperative cancel** (`Cancel()` API, out of scope for this spec)
   sends a `CANCEL` frame; the server replies with a `QUERY_ERROR`
   carrying `STATUS_CANCELLED`. That reply routes through the normal
