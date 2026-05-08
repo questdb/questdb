@@ -123,4 +123,39 @@ public class ArgMaxTimestampUuidGroupByFunctionFactoryTest extends AbstractCairo
         execute("insert into tab values ('2023-01-03T00:00:00.000000Z', '22222222-2222-2222-2222-222222222222')");
         assertSql("arg_max\n\n", "select arg_max(value, key) from tab");
     }
+
+    @Test
+    public void testArgMaxNanoTimestamp() throws SqlException {
+        execute("create table tab (value timestamp_ns, key uuid)");
+        execute("""
+                INSERT INTO tab VALUES
+                ('2023-01-01T00:00:00.123456789Z', '11111111-1111-1111-1111-111111111111'),
+                ('2023-01-03T12:34:56.987654321Z', 'ffffffff-ffff-ffff-ffff-ffffffffffff'),
+                ('2023-01-02T05:43:21.111222333Z', '22222222-2222-2222-2222-222222222222')""");
+        // ffffffff-... is max
+        assertSql("arg_max\n2023-01-03T12:34:56.987654321Z\n", "select arg_max(value, key) from tab");
+    }
+
+    @Test
+    public void testArgMaxNanoTimestampReturnsNanoType() throws SqlException {
+        execute("create table tab (value timestamp_ns, key uuid)");
+        execute("INSERT INTO tab VALUES ('2024-06-15T10:00:00.123456789Z', '11111111-1111-1111-1111-111111111111')");
+        assertSql("column_type\nTIMESTAMP_NS\n",
+                "select typeOf(arg_max(value, key)) AS column_type from tab");
+    }
+
+    @Test
+    public void testArgMaxNanoTimestampWithGroupBy() throws SqlException {
+        execute("create table tab (sym symbol, value timestamp_ns, key uuid)");
+        execute("""
+                INSERT INTO tab VALUES
+                ('A', '2023-01-01T00:00:00.111111111Z', '11111111-1111-1111-1111-111111111111'),
+                ('A', '2023-01-03T00:00:00.333333333Z', 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa'),
+                ('B', '2023-01-05T00:00:00.555555555Z', 'ffffffff-ffff-ffff-ffff-ffffffffffff'),
+                ('B', '2023-01-04T00:00:00.444444444Z', '22222222-2222-2222-2222-222222222222')""");
+        assertSql(
+                "sym\targ_max\nA\t2023-01-03T00:00:00.333333333Z\nB\t2023-01-05T00:00:00.555555555Z\n",
+                "select sym, arg_max(value, key) from tab order by sym"
+        );
+    }
 }

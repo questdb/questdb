@@ -308,9 +308,78 @@ public class ArgMaxTimestampDoubleGroupByFunctionFactoryTest extends AbstractCai
         assertSql(
                 """
                         arg_max
-                        
+
                         """,
                 "select arg_max(value, key) from tab"
         );
+    }
+
+    @Test
+    public void testArgMaxNanoTimestamp() throws SqlException {
+        execute("create table tab (value timestamp_ns, key double)");
+        execute("""
+                INSERT INTO tab VALUES
+                ('2023-01-01T00:00:00.123456789Z', 1.0),
+                ('2023-01-03T12:34:56.987654321Z', 3.0),
+                ('2023-01-02T05:43:21.111222333Z', 2.0)""");
+        // result must preserve nanosecond precision
+        assertSql(
+                """
+                        arg_max
+                        2023-01-03T12:34:56.987654321Z
+                        """,
+                "select arg_max(value, key) from tab"
+        );
+    }
+
+    @Test
+    public void testArgMaxNanoTimestampReturnsNanoType() throws Exception {
+        execute("create table tab (value timestamp_ns, key double)");
+        execute("INSERT INTO tab VALUES ('2024-06-15T10:00:00.123456789Z', 5.0)");
+        // verify the returned column is TIMESTAMP_NS, not TIMESTAMP (micros)
+        assertSql(
+                """
+                        column_type
+                        TIMESTAMP_NS
+                        """,
+                "select typeOf(arg_max(value, key)) AS column_type from tab"
+        );
+    }
+
+    @Test
+    public void testArgMaxNanoTimestampWithGroupBy() throws SqlException {
+        execute("create table tab (sym symbol, value timestamp_ns, key double)");
+        execute("""
+                INSERT INTO tab VALUES
+                ('A', '2023-01-01T00:00:00.111111111Z', 1.0),
+                ('A', '2023-01-03T00:00:00.333333333Z', 3.0),
+                ('A', '2023-01-02T00:00:00.222222222Z', 2.0),
+                ('B', '2023-01-05T00:00:00.555555555Z', 5.0),
+                ('B', '2023-01-04T00:00:00.444444444Z', 4.0)""");
+        assertSql(
+                """
+                        sym\targ_max
+                        A\t2023-01-03T00:00:00.333333333Z
+                        B\t2023-01-05T00:00:00.555555555Z
+                        """,
+                "select sym, arg_max(value, key) from tab order by sym"
+        );
+    }
+
+    @Test
+    public void testArgMaxNanoTimestampParallel() throws Exception {
+        execute("create table tab as (" +
+                "select rnd_symbol('A','B','C','D','E') sym, " +
+                "(timestamp_sequence(0, 1000000)::timestamp_ns) value, " +
+                "rnd_double() key " +
+                "from long_sequence(100000))");
+        try (WorkerPool pool = new WorkerPool(() -> 4)) {
+            TestUtils.execute(pool, (engine, compiler, sqlExecutionContext) -> {
+                String sql = "select sym, typeOf(arg_max(value, key)) AS t, arg_max(value, key) val from tab group by sym order by sym";
+                TestUtils.assertSqlCursors(engine, sqlExecutionContext, sql, sql, LOG);
+                // verify each cell shows a TIMESTAMP_NS column type
+                TestUtils.assertSql(engine, sqlExecutionContext, "select distinct typeOf(arg_max(value, key)) from tab", sink, "typeOf\nTIMESTAMP_NS\n");
+            }, configuration, LOG);
+        }
     }
 }

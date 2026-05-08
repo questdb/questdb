@@ -122,4 +122,38 @@ public class ArgMinTimestampDoubleGroupByFunctionFactoryTest extends AbstractCai
         execute("insert into tab values ('2023-01-03T00:00:00.000000Z', 3.0)");
         assertSql("arg_min\n\n", "select arg_min(value, key) from tab");
     }
+
+    @Test
+    public void testArgMinNanoTimestamp() throws SqlException {
+        execute("create table tab (value timestamp_ns, key double)");
+        execute("""
+                INSERT INTO tab VALUES
+                ('2023-01-01T00:00:00.123456789Z', 1.0),
+                ('2023-01-03T12:34:56.987654321Z', 3.0),
+                ('2023-01-02T05:43:21.111222333Z', 2.0)""");
+        assertSql("arg_min\n2023-01-01T00:00:00.123456789Z\n", "select arg_min(value, key) from tab");
+    }
+
+    @Test
+    public void testArgMinNanoTimestampReturnsNanoType() throws SqlException {
+        execute("create table tab (value timestamp_ns, key double)");
+        execute("INSERT INTO tab VALUES ('2024-06-15T10:00:00.123456789Z', 5.0)");
+        assertSql("column_type\nTIMESTAMP_NS\n",
+                "select typeOf(arg_min(value, key)) AS column_type from tab");
+    }
+
+    @Test
+    public void testArgMinNanoTimestampWithGroupBy() throws SqlException {
+        execute("create table tab (sym symbol, value timestamp_ns, key double)");
+        execute("""
+                INSERT INTO tab VALUES
+                ('A', '2023-01-01T00:00:00.111111111Z', 1.0),
+                ('A', '2023-01-03T00:00:00.333333333Z', 3.0),
+                ('B', '2023-01-05T00:00:00.555555555Z', 5.0),
+                ('B', '2023-01-04T00:00:00.444444444Z', 4.0)""");
+        assertSql(
+                "sym\targ_min\nA\t2023-01-01T00:00:00.111111111Z\nB\t2023-01-04T00:00:00.444444444Z\n",
+                "select sym, arg_min(value, key) from tab order by sym"
+        );
+    }
 }
