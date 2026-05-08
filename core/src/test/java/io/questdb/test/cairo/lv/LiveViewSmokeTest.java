@@ -146,7 +146,27 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testRejectInMemoryAboveCap() throws Exception {
+        // Default cap is 60min, which the formatter renders as the largest clean
+        // divisor "1h". The reject must include the value so the operator knows
+        // what they need to override.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            try {
+                execute("CREATE LIVE VIEW lv FLUSH EVERY 1s IN MEMORY 2h AS " +
+                        "SELECT ts, x, row_number() OVER () AS rn FROM base");
+                Assert.fail("expected IN MEMORY > cap reject");
+            } catch (SqlException e) {
+                Assert.assertTrue(e.getMessage(), e.getMessage().contains(
+                        "IN MEMORY must be at most cairo.live.view.in.memory.max (1h)"));
+            }
+        });
+    }
+
+    @Test
     public void testRejectInMemoryBelowFlushEvery() throws Exception {
+        // Asserted-wording RFC requires the FLUSH EVERY value in parentheses so the
+        // operator sees what the floor was (1s in this case).
         assertMemoryLeak(() -> {
             execute("CREATE TABLE base (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
             try {
@@ -154,7 +174,8 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
                         "SELECT ts, x, row_number() OVER () AS rn FROM base");
                 Assert.fail("expected IN MEMORY < FLUSH EVERY reject");
             } catch (SqlException e) {
-                Assert.assertTrue(e.getMessage(), e.getMessage().contains("IN MEMORY must be at least FLUSH EVERY"));
+                Assert.assertTrue(e.getMessage(), e.getMessage().contains(
+                        "IN MEMORY must be at least FLUSH EVERY (1s)"));
             }
         });
     }

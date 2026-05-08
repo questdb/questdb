@@ -85,6 +85,7 @@ import io.questdb.std.ObjectPool;
 import io.questdb.std.Os;
 import io.questdb.std.datetime.CommonUtils;
 import io.questdb.std.datetime.DateLocaleFactory;
+import io.questdb.std.datetime.microtime.Micros;
 import io.questdb.std.datetime.TimeZoneRules;
 import io.questdb.std.str.StringSink;
 import org.jetbrains.annotations.NotNull;
@@ -1333,12 +1334,19 @@ public class SqlParser {
                 inMemoryUnit = LiveViewDefinition.parseDurationUnit(memTok, memPos);
                 inMemoryMicros = LiveViewDefinition.toMicros(inMemoryValue, inMemoryUnit);
                 if (inMemoryMicros < flushMicros) {
-                    throw SqlException.position(memPos)
-                            .put("live view IN MEMORY must be at least FLUSH EVERY");
+                    SqlException ex = SqlException.position(memPos)
+                            .put("live view IN MEMORY must be at least FLUSH EVERY (")
+                            .put(flushValue)
+                            .put(displayDurationUnit(flushUnit))
+                            .put(')');
+                    throw ex;
                 }
                 if (inMemoryMicros > configuration.getLiveViewInMemoryMaxMicros()) {
-                    throw SqlException.position(memPos)
-                            .put("live view IN MEMORY exceeds configured cairo.live.view.in.memory.max");
+                    SqlException ex = SqlException.position(memPos)
+                            .put("live view IN MEMORY must be at most cairo.live.view.in.memory.max (");
+                    appendDurationFromMicros(ex, configuration.getLiveViewInMemoryMaxMicros());
+                    ex.put(')');
+                    throw ex;
                 }
                 inMemorySpecified = true;
                 builder.setInMemoryInterval(inMemoryValue);
@@ -1499,6 +1507,42 @@ public class SqlParser {
             sink.put(":00.000000Z'::timestamp, '+00:00', '").put(tz).put("')");
         }
         return sink.toString();
+    }
+
+    /**
+     * Renders a duration in microseconds onto an asserted-wording error message,
+     * picking the largest unit that divides cleanly. Mirrors the user-facing
+     * grammar units accepted by {@link LiveViewDefinition#parseDurationUnit}, so
+     * {@code 60min} round-trips back through the parser.
+     */
+    private static void appendDurationFromMicros(SqlException ex, long micros) {
+        if (micros > 0 && micros % Micros.HOUR_MICROS == 0) {
+            ex.put(micros / Micros.HOUR_MICROS).put('h');
+        } else if (micros > 0 && micros % Micros.MINUTE_MICROS == 0) {
+            ex.put(micros / Micros.MINUTE_MICROS).put("min");
+        } else if (micros > 0 && micros % Micros.SECOND_MICROS == 0) {
+            ex.put(micros / Micros.SECOND_MICROS).put('s');
+        } else if (micros > 0 && micros % Micros.MILLI_MICROS == 0) {
+            ex.put(micros / Micros.MILLI_MICROS).put("ms");
+        } else {
+            ex.put(micros).put("us");
+        }
+    }
+
+    /**
+     * Maps the internal duration-unit char ({@code 's'}, {@code 'm'}, {@code 'h'},
+     * {@code 'd'}, {@code 'T'} for milliseconds) back to the grammar string a user
+     * would type. Used to render values in CREATE-time error messages.
+     */
+    private static String displayDurationUnit(char unit) {
+        return switch (unit) {
+            case 's' -> "s";
+            case 'm' -> "min";
+            case 'h' -> "h";
+            case 'd' -> "d";
+            case 'T' -> "ms";
+            default -> String.valueOf(unit);
+        };
     }
 
     private static void putHHMM(StringSink sink, long timeUs) {
