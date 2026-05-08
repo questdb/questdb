@@ -207,6 +207,7 @@ public class PostingIndexWriter implements IndexWriter {
         this.configuration = configuration;
         this.ff = configuration.getFilesFacade();
         this.rowIdEncoding = rowIdEncoding;
+        this.encodeCtx.setAdaptiveDeltaAtOrAbove(configuration.getPostingIndexAdaptiveDeltaAtOrAbove());
     }
 
     @TestOnly
@@ -625,6 +626,11 @@ public class PostingIndexWriter implements IndexWriter {
         }
 
         return new TestFwdCursor(values);
+    }
+
+    @TestOnly
+    public int getAdaptiveDeltaAtOrAbove() {
+        return encodeCtx.adaptiveDeltaAtOrAbove;
     }
 
     @TestOnly

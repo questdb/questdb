@@ -1299,6 +1299,14 @@ public final class PostingIndexUtils {
             Unsafe.putInt(destAddr, 0);
             return 4;
         }
+        // Adaptive threshold: above ctx.adaptiveDeltaAtOrAbove force DELTA and
+        // skip the EF trial. EF and DELTA produce similar byte sizes at large
+        // counts so the size-only race becomes a coin flip, but DELTA reads
+        // markedly faster (per-block unpack vs EF's bitmap walk). See
+        // CairoConfiguration#getPostingIndexAdaptiveDeltaAtOrAbove.
+        if (count >= ctx.adaptiveDeltaAtOrAbove) {
+            return encodeKeyNativeDeltaFoR(srcAddr, count, destAddr, ctx);
+        }
         int efSize = encodeKeyEF(srcAddr, count, ctx.efTrialAddr, ctx);
         int deltaSize = encodeKeyNativeDeltaFoR(srcAddr, count, destAddr, ctx);
         if (efSize < deltaSize) {
@@ -1629,6 +1637,13 @@ public final class PostingIndexUtils {
      * Reusable workspace for encodeKey to avoid per-call allocations.
      */
     public static class EncodeContext implements QuietCloseable {
+        // Threshold above (inclusive) which the adaptive encoder forces DELTA
+        // instead of running the size-only EF-vs-DELTA race. Defaults to
+        // Integer.MAX_VALUE so an EncodeContext built without a CairoConfiguration
+        // (e.g. unit tests) keeps the prior pure-size behaviour. The
+        // production default of 2000 is set by PostingIndexWriter when it
+        // reads CairoConfiguration#getPostingIndexAdaptiveDeltaAtOrAbove.
+        int adaptiveDeltaAtOrAbove = Integer.MAX_VALUE;
         long blockBitWidthsAddr;
         long blockFirstValuesAddr;
         long blockMinDeltasAddr;
@@ -1644,6 +1659,10 @@ public final class PostingIndexUtils {
         long residualsAddr;
         private int blockCapacity;
         private int residualsCapacity;
+
+        public void setAdaptiveDeltaAtOrAbove(int threshold) {
+            this.adaptiveDeltaAtOrAbove = threshold > 0 ? threshold : Integer.MAX_VALUE;
+        }
 
         public void close() {
             if (deltasAddr != 0) {
