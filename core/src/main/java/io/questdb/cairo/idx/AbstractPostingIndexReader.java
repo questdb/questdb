@@ -160,6 +160,16 @@ public abstract class AbstractPostingIndexReader implements IndexReader {
         if (genCount == 0 || keyCount == 0) {
             return 0;
         }
+        // Clamp rowHi to the picked chain entry's MAX_VALUE for the same
+        // reason PostingIndexFwdReader#getCursor does: dirty (key, rowId)
+        // pairs in .pv past the entry's coverage must not surface as
+        // keys "present in range".
+        if (entryMaxValue >= 0 && rowHi > entryMaxValue) {
+            rowHi = entryMaxValue;
+        }
+        if (rowHi < rowLo) {
+            return 0;
+        }
         int newlyFound = 0;
         for (int g = 0; g < genCount; g++) {
             int genKeyCount = genLookup.getGenKeyCount(g);

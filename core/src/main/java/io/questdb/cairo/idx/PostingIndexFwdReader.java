@@ -898,10 +898,11 @@ public class PostingIndexFwdReader extends AbstractPostingIndexReader {
 
         @Override
         public long size() {
-            long hi = maxValue == Long.MAX_VALUE ? Long.MAX_VALUE : maxValue + 1;
-            long nullLimit = Math.min(columnTop, hi);
-            long nulls = Math.max(0L, nullLimit - minValue);
-            return super.size() + nulls;
+            // nullCount is set in getCursor from the unclamped caller maxValue
+            // and never mutates during iteration; using it directly avoids the
+            // Cursor.maxValue field, which now holds the entryMaxValue-clamped
+            // bound and would under-count nulls when entryMaxValue < columnTop.
+            return super.size() + Math.max(0L, nullCount - minValue);
         }
     }
 }
