@@ -252,7 +252,12 @@ public class ExportQueryProcessor implements HttpRequestProcessor, HttpRequestHa
                         state.pageFrameCursor.setStreamingMode(true);
                         state.materializer.setUpPageFrameBacked(vf, state.pageFrameCursor, sqlExecutionContext);
                     } else if (isParquet && state.parquetExportMode == ParquetExportMode.CURSOR_BASED) {
-                        state.materializer.setUp(state.recordCursorFactory.getMetadata());
+                        RecordCursorFactory unwrapped = ParquetExportMode.unwrapFactory(state.recordCursorFactory);
+                        if (unwrapped instanceof VirtualRecordCursorFactory vf) {
+                            state.materializer.setUpCursorBacked(vf);
+                        } else {
+                            state.materializer.setUp(state.recordCursorFactory.getMetadata());
+                        }
                     }
                     state.metadata = state.recordCursorFactory.getMetadata();
                     doResumeSend(context);

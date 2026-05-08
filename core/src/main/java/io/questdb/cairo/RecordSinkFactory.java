@@ -98,7 +98,7 @@ public class RecordSinkFactory {
             }
             return sink;
         }
-        return createSinkFromClass(clazz, keyFunctions);
+        return createSinkFromClass(clazz, columnFilter, keyFunctions);
     }
 
     public static RecordSink getInstance(
@@ -494,6 +494,7 @@ public class RecordSinkFactory {
      */
     private static void compileConstructor(
             BytecodeAssembler asm,
+            int superInitMethodIndex,
             int decimal128FieldIndex,
             int decimal128ClassIndex,
             int decimal128CtorIndex,
@@ -505,7 +506,7 @@ public class RecordSinkFactory {
         asm.startMethod(asm.getDefaultConstructorNameIndex(), asm.getDefaultConstructorDescIndex(), 3, 1);
         // code
         asm.aload(0);
-        asm.invokespecial(asm.getObjectInitMethodIndex());
+        asm.invokespecial(superInitMethodIndex);
 
         // decimal128 = new Decimal128();
         if (decimal128FieldIndex != -1) {
@@ -547,14 +548,42 @@ public class RecordSinkFactory {
     }
 
     /**
+     * Computes the page-frame column index of the only key column when the
+     * sink represents a single raw column reference, or -1 otherwise. Used by
+     * the keyed GROUP BY batched dispatch path to skip the sink and read keys
+     * directly from page-frame memory.
+     * <p>
+     * SqlCodeGenerator/GroupByUtils route raw column references through
+     * {@code columnFilter} and only put virtual (computed) functions into
+     * {@code keyFunctions}, so a single raw column key always shows up as
+     * {@code columnFilter.getColumnCount() == 1} with no key functions.
+     */
+    private static int computeDirectColumnIndex(
+            @Nullable ColumnFilter columnFilter,
+            @Nullable ObjList<Function> keyFunctions
+    ) {
+        if ((keyFunctions == null || keyFunctions.size() == 0) && columnFilter != null && columnFilter.getColumnCount() == 1) {
+            return columnFilter.getColumnIndexFactored(0);
+        }
+        return -1;
+    }
+
+    /**
      * Creates an instance of a record sink class previously generated via getInstanceClass().
      * This legacy method only works with non-null classes (does not support looping fallback).
      */
-    private static RecordSink createSinkFromClass(Class<RecordSink> clazz, @Nullable ObjList<Function> keyFunctions) {
+    private static RecordSink createSinkFromClass(
+            Class<RecordSink> clazz,
+            ColumnFilter columnFilter,
+            @Nullable ObjList<Function> keyFunctions
+    ) {
         try {
             final RecordSink sink = clazz.getDeclaredConstructor().newInstance();
             if (keyFunctions != null) {
                 sink.setFunctions(keyFunctions);
+            }
+            if (sink instanceof BaseRecordSink baseRecordSink) {
+                baseRecordSink.setDirectColumnIndex(computeDirectColumnIndex(columnFilter, keyFunctions));
             }
             return sink;
         } catch (Exception e) {
@@ -694,7 +723,8 @@ public class RecordSinkFactory {
         asm.init(RecordSink.class);
         asm.setupPool();
         final int thisClassIndex = asm.poolClass(asm.poolUtf8("io/questdb/cairo/chunkedsink"));
-        final int interfaceClassIndex = asm.poolClass(RecordSink.class);
+        final int superClassIndex = asm.poolClass(BaseRecordSink.class);
+        final int superInitMethodIndex = asm.poolMethod(superClassIndex, asm.getDefaultConstructorSigIndex());
 
         // Pool all method references (same as single-method approach)
         final int rGetInt = asm.poolInterfaceMethod(Record.class, "getInt", "(I)I");
@@ -835,9 +865,9 @@ public class RecordSinkFactory {
         }
 
         asm.finishPool();
-        asm.defineClass(thisClassIndex);
-        asm.interfaceCount(1);
-        asm.putShort(interfaceClassIndex);
+        asm.defineClass(thisClassIndex, superClassIndex);
+        // The RecordSink interface is inherited from BaseRecordSink; no extra interfaces required.
+        asm.interfaceCount(0);
 
         // Fields
         asm.fieldCount(functionSize + (decimal128FieldIndex >= 0 ? 1 : 0) + (decimal256FieldIndex >= 0 ? 1 : 0));
@@ -855,7 +885,7 @@ public class RecordSinkFactory {
         asm.methodCount(3 + numChunks);
 
         // Constructor
-        compileConstructor(asm, decimal128FieldIndex, decimal128ClassIndex, decimal128CtorIndex,
+        compileConstructor(asm, superInitMethodIndex, decimal128FieldIndex, decimal128ClassIndex, decimal128CtorIndex,
                 decimal256FieldIndex, decimal256ClassIndex, decimal256CtorIndex);
 
         // Main copy method - just calls sub-methods
@@ -1503,7 +1533,8 @@ public class RecordSinkFactory {
         asm.init(RecordSink.class);
         asm.setupPool();
         final int thisClassIndex = asm.poolClass(asm.poolUtf8("io/questdb/cairo/sink"));
-        final int interfaceClassIndex = asm.poolClass(RecordSink.class);
+        final int superClassIndex = asm.poolClass(BaseRecordSink.class);
+        final int superInitMethodIndex = asm.poolMethod(superClassIndex, asm.getDefaultConstructorSigIndex());
 
         final int rGetInt = asm.poolInterfaceMethod(Record.class, "getInt", "(I)I");
         final int rGetIPv4 = asm.poolInterfaceMethod(Record.class, "getIPv4", "(I)I");
@@ -1635,9 +1666,9 @@ public class RecordSinkFactory {
         }
 
         asm.finishPool();
-        asm.defineClass(thisClassIndex);
-        asm.interfaceCount(1);
-        asm.putShort(interfaceClassIndex);
+        asm.defineClass(thisClassIndex, superClassIndex);
+        // The RecordSink interface is inherited from BaseRecordSink; no extra interfaces required.
+        asm.interfaceCount(0);
 
         //#region fields
         asm.fieldCount(functionSize + (decimal128FieldIndex >= 0 ? 1 : 0) + (decimal256FieldIndex >= 0 ? 1 : 0));
@@ -1645,17 +1676,24 @@ public class RecordSinkFactory {
             asm.defineField(firstFieldNameIndex + (i * FIELD_POOL_OFFSET), typeIndex);
         }
         if (decimal128FieldIndex >= 0) {
-            // Utf8s are cached internally, the same index as the one generated previously will be reused
             asm.defineField(asm.poolUtf8("decimal128"), asm.poolUtf8("Lio/questdb/std/Decimal128;"));
         }
         if (decimal256FieldIndex >= 0) {
-            // Utf8s are cached internally, the same index as the one generated previously will be reused
             asm.defineField(asm.poolUtf8("decimal256"), asm.poolUtf8("Lio/questdb/std/Decimal256;"));
         }
         //#endregion fields
 
         asm.methodCount(3);
-        compileConstructor(asm, decimal128FieldIndex, decimal128ClassIndex, decimal128CtorIndex, decimal256FieldIndex, decimal256ClassIndex, decimal256CtorIndex);
+        compileConstructor(
+                asm,
+                superInitMethodIndex,
+                decimal128FieldIndex,
+                decimal128ClassIndex,
+                decimal128CtorIndex,
+                decimal256FieldIndex,
+                decimal256ClassIndex,
+                decimal256CtorIndex
+        );
 
         asm.startMethod(copyNameIndex, copySigIndex, 7, 5);
 
@@ -2338,5 +2376,25 @@ public class RecordSinkFactory {
         }
 
         return Numbers.encodeLowHighInts(decimal128FieldIndex, decimal256FieldIndex);
+    }
+
+    /**
+     * Common base class for {@link RecordSink} implementations created by
+     * {@link RecordSinkFactory}, including bytecode-generated sinks. Tracks an
+     * optional direct-column index that lets the keyed GROUP BY batched
+     * dispatch path skip the sink and read the key directly from page-frame
+     * memory.
+     */
+    public abstract static class BaseRecordSink implements RecordSink {
+        private int directColumnIndex = -1;
+
+        @Override
+        public final int getDirectColumnIndex() {
+            return directColumnIndex;
+        }
+
+        public final void setDirectColumnIndex(int directColumnIndex) {
+            this.directColumnIndex = directColumnIndex;
+        }
     }
 }

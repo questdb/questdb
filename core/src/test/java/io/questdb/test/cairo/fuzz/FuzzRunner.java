@@ -871,12 +871,12 @@ public class FuzzRunner {
                 }
             }
 
-            sink.put("), index(sym2) timestamp(ts) partition by DAY BYPASS WAL");
+            sink.put("), index(sym2 ").put(randomIndexTypeClause()).put(") timestamp(ts) partition by DAY BYPASS WAL");
             engine.execute(sink, sqlExecutionContext);
             // force few column tops
             engine.execute("alter table " + tableName + " add column long_top long", sqlExecutionContext);
             engine.execute("alter table " + tableName + " add column str_top long", sqlExecutionContext);
-            engine.execute("alter table " + tableName + " add column sym_top symbol index", sqlExecutionContext);
+            engine.execute("alter table " + tableName + " add column sym_top symbol index " + randomIndexTypeClause(), sqlExecutionContext);
             engine.execute("alter table " + tableName + " add column ip4 ipv4", sqlExecutionContext);
             engine.execute("alter table " + tableName + " add column var_top varchar", sqlExecutionContext);
         }
@@ -909,13 +909,13 @@ public class FuzzRunner {
             engine.execute(
                     "create atomic table " + tableName + " as (" +
                             "select * from data_temp" +
-                            "), index(sym2) timestamp(ts) partition by DAY " + (isWal ? "WAL" : "BYPASS WAL"),
+                            "), index(sym2 " + randomIndexTypeClause() + ") timestamp(ts) partition by DAY " + (isWal ? "WAL" : "BYPASS WAL"),
                     sqlExecutionContext
             );
             // force few column tops
             engine.execute("alter table " + tableName + " add column long_top long", sqlExecutionContext);
             engine.execute("alter table " + tableName + " add column str_top long", sqlExecutionContext);
-            engine.execute("alter table " + tableName + " add column sym_top symbol index", sqlExecutionContext);
+            engine.execute("alter table " + tableName + " add column sym_top symbol index " + randomIndexTypeClause(), sqlExecutionContext);
             engine.execute("alter table " + tableName + " add column ip4 ipv4", sqlExecutionContext);
             engine.execute("alter table " + tableName + " add column var_top varchar", sqlExecutionContext);
         }
@@ -948,17 +948,41 @@ public class FuzzRunner {
             engine.execute(
                     "create atomic table " + tableName + " as (" +
                             "select * from data_temp" +
-                            "), index(sym2) timestamp(ts) partition by DAY WAL",
+                            "), index(sym2 " + randomIndexTypeClause() + ") timestamp(ts) partition by DAY WAL",
                     sqlExecutionContext
             );
             // force few column tops
             engine.execute("alter table " + tableName + " add column long_top long", sqlExecutionContext);
             engine.execute("alter table " + tableName + " add column str_top long", sqlExecutionContext);
-            engine.execute("alter table " + tableName + " add column sym_top symbol index", sqlExecutionContext);
+            engine.execute("alter table " + tableName + " add column sym_top symbol index " + randomIndexTypeClause(), sqlExecutionContext);
             engine.execute("alter table " + tableName + " add column ip4 ipv4", sqlExecutionContext);
             engine.execute("alter table " + tableName + " add column var_top varchar", sqlExecutionContext);
         }
         engine.verifyTableName(tableName);
+    }
+
+    /**
+     * Picks an index type clause for fuzz table creation. Returns either
+     * an empty string (BITMAP — the default), or one of the POSTING
+     * variants. Uses {@link SharedRandom} so the choice tracks the existing
+     * fuzz seed.
+     */
+    private String randomIndexTypeClause() {
+        Rnd rnd = SharedRandom.RANDOM.get();
+        if (rnd == null) {
+            return "";
+        }
+        double pick = rnd.nextDouble();
+        if (pick < 0.5) {
+            return ""; // BITMAP (the default for the existing INDEX clause)
+        }
+        if (pick < 0.7) {
+            return "TYPE POSTING";
+        }
+        if (pick < 0.85) {
+            return "TYPE POSTING DELTA";
+        }
+        return "TYPE POSTING EF";
     }
 
     @NotNull
@@ -998,6 +1022,7 @@ public class FuzzRunner {
             int opIndex;
 
             try {
+                String updatedTableName = tableName;
                 Rnd tempRnd = new Rnd();
                 while (errors.isEmpty() && (opIndex = nextOperation.incrementAndGet()) < transactions.size() && errors.isEmpty()) {
                     FuzzTransaction transaction = transactions.getQuick(opIndex);
@@ -1033,6 +1058,15 @@ public class FuzzRunner {
                     }
 
                     boolean increment = false;
+
+                    if (transaction.reopenTable) {
+                        TableToken updatedTableToken = engine.getTableTokenByDirName(walWriter.getTableToken().getDirName());
+                        if (updatedTableToken == null) {
+                            throw new IllegalStateException("table is missing after reopen [table=" + tableName + "]");
+                        }
+                        updatedTableName = updatedTableToken.getTableName();
+                    }
+
                     for (int operationIndex = 0; operationIndex < transaction.operationList.size(); operationIndex++) {
                         FuzzTransactionOperation operation = transaction.operationList.getQuick(operationIndex);
                         increment |= operation.apply(tempRnd, engine, walWriter, -1, null);
@@ -1040,11 +1074,10 @@ public class FuzzRunner {
 
                     if (transaction.reopenTable) {
                         synchronized (writers) {
-                            // Table is dropped, reload all writers
                             for (int ii = 0; ii < writers.size(); ii++) {
-                                if (writers.get(ii).getTableToken().getTableName().equals(tableName)) {
+                                if (writers.get(ii).getTableToken().getTableName().equals(updatedTableName)) {
                                     writers.get(ii).close();
-                                    writers.setQuick(ii, (WalWriter) engine.getTableWriterAPI(tableName, "apply trans test"));
+                                    writers.setQuick(ii, (WalWriter) engine.getTableWriterAPI(updatedTableName, "apply trans test"));
                                 }
                             }
                         }
@@ -1080,6 +1113,13 @@ public class FuzzRunner {
             } catch (Throwable e) {
                 e.printStackTrace(System.out);
                 errors.add(e);
+                // Unblock peers waiting on a barrier this worker was supposed to advance.
+                // Without this, peers spin in the Os.sleep loop above because their wait
+                // condition (waitBarrierVersion < target) stays true; the errors check
+                // inside the loop relies on Os.sleep returning, which under heavy load
+                // can be delayed indefinitely. Overshooting to MAX guarantees the wait
+                // condition flips so peers reach the errors.isEmpty() check and return.
+                waitBarrierVersion.set(Long.MAX_VALUE);
             } finally {
                 Path.clearThreadLocals();
             }
@@ -1143,7 +1183,7 @@ public class FuzzRunner {
             CheckWalTransactionsJob checkJob = new CheckWalTransactionsJob(engine);
             try (ApplyWal2TableJob job = new ApplyWal2TableJob(engine, 0)) {
                 while (done.get() == 0 && errors.isEmpty()) {
-                    Unsafe.getUnsafe().loadFence();
+                    Unsafe.loadFence();
                     while (job.run(0) || checkJob.run(0)) {
                         // Sometimes WAL Apply Job does not finish table in one go and return TableWriter to the pool
                         // where it can be fully closed before continuing the WAL application Test TableWriter closures.

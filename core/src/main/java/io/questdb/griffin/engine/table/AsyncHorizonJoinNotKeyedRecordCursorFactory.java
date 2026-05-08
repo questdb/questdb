@@ -60,6 +60,7 @@ import io.questdb.std.DirectLongList;
 import io.questdb.std.IntHashSet;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
+import io.questdb.std.Rows;
 import io.questdb.std.Transient;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
@@ -329,8 +330,7 @@ public class AsyncHorizonJoinNotKeyedRecordCursorFactory extends AbstractRecordC
 
             // Get horizon timestamp iterator and initialize for filtered rows
             final AsyncHorizonTimestampIterator horizonIterator = atom.getHorizonIterator(slotId);
-            record.setRowIndex(0);
-            long baseRowId = record.getRowId();
+            long baseRowId = Rows.toRowID(frameIndex, 0);
             horizonIterator.ofFiltered(frameMemory.getPageAddress(masterTimestampColumnIndex), rows);
 
             // Process horizon timestamps in sorted order for sequential ASOF lookups
@@ -404,7 +404,7 @@ public class AsyncHorizonJoinNotKeyedRecordCursorFactory extends AbstractRecordC
             final int offsetIdx = horizonIterator.getOffsetIndex();
             final long offset = atom.getOffset(offsetIdx);
 
-            masterRecord.setRowIndex(masterRowIdx, horizonIterator.getMasterRowCompactIndex());
+            masterRecord.setFilteredRowIndex(masterRowIdx, horizonIterator.getMasterRowCompactIndex());
             final long masterRowId = baseRowId + masterRowIdx;
 
             final long scaledHorizonTs = scaleTimestamp(horizonTs, masterTsScale);
@@ -485,8 +485,7 @@ public class AsyncHorizonJoinNotKeyedRecordCursorFactory extends AbstractRecordC
 
             // Get horizon timestamp iterator and initialize for this frame
             final AsyncHorizonTimestampIterator horizonIterator = atom.getHorizonIterator(slotId);
-            record.setRowIndex(0);
-            long baseRowId = record.getRowId();
+            long baseRowId = Rows.toRowID(frameIndex, 0);
             horizonIterator.of(frameMemory.getPageAddress(masterTimestampColumnIndex), 0, frameRowCount);
 
             // Process horizon timestamps in sorted order for sequential ASOF lookups

@@ -41,8 +41,8 @@ import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.PerWorkerLocks;
 import io.questdb.griffin.engine.functions.GroupByFunction;
-import io.questdb.griffin.engine.groupby.DirectMapValueFactory;
 import io.questdb.griffin.engine.groupby.FlyweightMapValue;
+import io.questdb.griffin.engine.groupby.FlyweightMapValueFactory;
 import io.questdb.griffin.engine.groupby.GroupByAllocator;
 import io.questdb.griffin.engine.groupby.GroupByAllocatorFactory;
 import io.questdb.griffin.engine.groupby.GroupByColumnSink;
@@ -266,11 +266,11 @@ public class AsyncWindowJoinAtom implements StatefulAtom, Reopenable, Plannable 
                 perWorkerSelectivityStats.extendAndSet(i, new SelectivityStats());
             }
 
-            ownerGroupByValue = DirectMapValueFactory.createDirectMapValue(valueTypes, GROUP_BY_VALUE_USE_COMPACT_DIRECT_MAP);
+            ownerGroupByValue = FlyweightMapValueFactory.createMapValue(valueTypes, GROUP_BY_VALUE_USE_COMPACT_DIRECT_MAP);
             valueSizeInBytes = ownerGroupByValue.getSizeInBytes();
             perWorkerGroupByValues = new ObjList<>(slotCount);
             for (int i = 0; i < slotCount; i++) {
-                perWorkerGroupByValues.extendAndSet(i, DirectMapValueFactory.createDirectMapValue(valueTypes, GROUP_BY_VALUE_USE_COMPACT_DIRECT_MAP));
+                perWorkerGroupByValues.extendAndSet(i, FlyweightMapValueFactory.createMapValue(valueTypes, GROUP_BY_VALUE_USE_COMPACT_DIRECT_MAP));
             }
 
             if (vectorized) {

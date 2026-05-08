@@ -101,7 +101,7 @@ public class TableTransactionLogV1 implements TableTransactionLogFile {
         txnMem.putInt(segmentTxn);
         txnMem.putLong(timestamp);
 
-        Unsafe.getUnsafe().storeFence();
+        Unsafe.storeFence();
         long maxTxn = this.maxTxn.incrementAndGet();
         txnMem.putLong(MAX_TXN_OFFSET_64, maxTxn);
         sync0();
@@ -254,7 +254,7 @@ public class TableTransactionLogV1 implements TableTransactionLogFile {
 
         @Override
         public long getCommitTimestamp() {
-            return Unsafe.getUnsafe().getLong(address + txnOffset + TX_LOG_COMMIT_TIMESTAMP_OFFSET);
+            return Unsafe.getLong(address + txnOffset + TX_LOG_COMMIT_TIMESTAMP_OFFSET);
         }
 
         @Override
@@ -269,17 +269,17 @@ public class TableTransactionLogV1 implements TableTransactionLogFile {
 
         @Override
         public int getSegmentId() {
-            return Unsafe.getUnsafe().getInt(address + txnOffset + TX_LOG_SEGMENT_OFFSET);
+            return Unsafe.getInt(address + txnOffset + TX_LOG_SEGMENT_OFFSET);
         }
 
         @Override
         public int getSegmentTxn() {
-            return Unsafe.getUnsafe().getInt(address + txnOffset + TX_LOG_SEGMENT_TXN_OFFSET);
+            return Unsafe.getInt(address + txnOffset + TX_LOG_SEGMENT_TXN_OFFSET);
         }
 
         @Override
         public long getStructureVersion() {
-            return Unsafe.getUnsafe().getLong(address + txnOffset + TX_LOG_STRUCTURE_VERSION_OFFSET);
+            return Unsafe.getLong(address + txnOffset + TX_LOG_STRUCTURE_VERSION_OFFSET);
         }
 
         @Override
@@ -309,7 +309,7 @@ public class TableTransactionLogV1 implements TableTransactionLogFile {
 
         @Override
         public int getWalId() {
-            return Unsafe.getUnsafe().getInt(address + txnOffset + TX_LOG_WAL_ID_OFFSET);
+            return Unsafe.getInt(address + txnOffset + TX_LOG_WAL_ID_OFFSET);
         }
 
         @Override

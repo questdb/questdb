@@ -259,7 +259,7 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
 
     @Override
     public double getCountDistinctLoadFactor() {
-        return 0.5;
+        return 0.7;
     }
 
     @Override
@@ -343,6 +343,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
+    public byte getDefaultSymbolIndexType() {
+        return IndexType.BITMAP;
+    }
+
+    @Override
     public int getDetachedMkDirMode() {
         return 509;
     }
@@ -380,6 +385,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     @Override
     public long getGroupByAllocatorMaxChunkSize() {
         return Numbers.SIZE_1GB;
+    }
+
+    @Override
+    public int getGroupByBatchSize() {
+        return 2048;
     }
 
     @Override
@@ -807,6 +817,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     @Override
     public int getPoolSegmentSize() {
         return 32;
+    }
+
+    @Override
+    public int getPostingSealGenThreshold() {
+        return 16;
     }
 
     @Override
@@ -1521,6 +1536,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
+    public boolean isMatViewCoveringIndexEnabled() {
+        return false;
+    }
+
+    @Override
     public boolean isMatViewEnabled() {
         return true;
     }
@@ -1573,6 +1593,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     @Override
     public boolean isPartitionO3OverwriteControlEnabled() {
         return false;
+    }
+
+    @Override
+    public boolean isPostingIndexAutoIncludeTimestamp() {
+        return true;
     }
 
     @Override

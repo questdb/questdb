@@ -268,7 +268,7 @@ public class QwpSenderFuzzTest extends AbstractQwpWebSocketTest {
     @Test
     public void testReorderingColumnsNoSymbols() throws Exception {
         initLoadParameters(100, Os.isWindows() ? 3 : 5, 5, 5, 50);
-        initFuzzParameters(4, -1, -1, -1, true, false, false, 0.1);
+        initFuzzParameters(4, -1, -1, -1, true, false, false, 0.05);
         runTest();
     }
 

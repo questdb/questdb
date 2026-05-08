@@ -58,7 +58,7 @@ abstract class AbstractMSequence extends AbstractSSequence {
 
     @Override
     public void done(long cursor) {
-        Unsafe.getUnsafe().putOrderedInt(flags, ((cursor & mask) << Unsafe.INT_SCALE) + Unsafe.INT_OFFSET, (int) (cursor >>> shift));
+        Unsafe.putOrderedInt(flags, ((cursor & mask) << Unsafe.INT_SCALE) + Unsafe.INT_OFFSET, (int) (cursor >>> shift));
         barrier.getWaitStrategy().signal();
     }
 
@@ -68,6 +68,6 @@ abstract class AbstractMSequence extends AbstractSSequence {
     }
 
     private boolean available0(long lo) {
-        return Unsafe.getUnsafe().getIntVolatile(flags, (((lo & mask)) << Unsafe.INT_SCALE) + Unsafe.INT_OFFSET) == (int) (lo >>> shift);
+        return Unsafe.getIntVolatile(flags, (((lo & mask)) << Unsafe.INT_SCALE) + Unsafe.INT_OFFSET) == (int) (lo >>> shift);
     }
 }

@@ -31,7 +31,10 @@ import io.questdb.FactoryProvider;
 import io.questdb.Metrics;
 import io.questdb.TelemetryConfiguration;
 import io.questdb.VolumeDefinitions;
+import io.questdb.cairo.idx.PostingIndexUtils;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreakerConfiguration;
+import io.questdb.cutlass.qwp.codec.DefaultQwpServerInfoProvider;
+import io.questdb.cutlass.qwp.codec.QwpServerInfoProvider;
 import io.questdb.cutlass.text.TextConfiguration;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.IOURingFacade;
@@ -256,6 +259,8 @@ public interface CairoConfiguration {
 
     int getDefaultSymbolCapacity();
 
+    byte getDefaultSymbolIndexType();
+
     int getDetachedMkDirMode();
 
     default Map<String, String> getEnv() {
@@ -277,6 +282,8 @@ public interface CairoConfiguration {
     long getGroupByAllocatorDefaultChunkSize();
 
     long getGroupByAllocatorMaxChunkSize();
+
+    int getGroupByBatchSize();
 
     int getGroupByMapCapacity();
 
@@ -490,11 +497,48 @@ public interface CairoConfiguration {
 
     int getPoolSegmentSize();
 
+    default double getPostingIndexAlignedBitWidthThreshold() {
+        return 0.0;
+    }
+
+    default byte getPostingIndexRowIdEncoding() {
+        return PostingIndexUtils.ENCODING_ADAPTIVE;
+    }
+
+    int getPostingSealGenThreshold();
+
+    /**
+     * Hard cap on the per-writer in-memory outbox of superseded posting-seal
+     * generations awaiting publish to the global purge queue. When the cap
+     * is reached the writer evicts the oldest entry and emits a critical
+     * log message — the file the entry pointed at is recovered later by the
+     * writer-open orphan scan.
+     * <p>
+     * Sized for steady-state operation where the purge queue is healthy. If
+     * the queue is saturated for an extended period (e.g. background job
+     * disabled) the outbox saturates, oldest entries are dropped, and the
+     * orphan scan picks up the slack on the next reopen.
+     */
+    default int getPostingSealPurgeOutboxMax() {
+        return 8192;
+    }
+
     int getPreferencesStringPoolCapacity();
 
     int getQueryCacheEventQueueCapacity();
 
     int getQueryRegistryPoolSize();
+
+    /**
+     * Source of the role / cluster / node identity emitted in the QWP egress
+     * {@code SERVER_INFO} frame. Default is the standalone OSS provider; the
+     * Enterprise configuration overrides this with a provider backed by the
+     * live replication role so clients can route reads to primary vs replica.
+     */
+    @NotNull
+    default QwpServerInfoProvider getQwpServerInfoProvider() {
+        return DefaultQwpServerInfoProvider.INSTANCE;
+    }
 
     @NotNull
     default Rnd getRandom() {
@@ -844,6 +888,8 @@ public interface CairoConfiguration {
 
     boolean isIOURingEnabled();
 
+    boolean isMatViewCoveringIndexEnabled();
+
     boolean isMatViewEnabled();
 
     boolean isMatViewParallelSqlEnabled();
@@ -865,6 +911,8 @@ public interface CairoConfiguration {
     boolean isPartitionEncoderParquetStatisticsEnabled();
 
     boolean isPartitionO3OverwriteControlEnabled();
+
+    boolean isPostingIndexAutoIncludeTimestamp();
 
     boolean isQueryTracingEnabled();
 

@@ -55,10 +55,12 @@ standard resizable list and integrates with `Misc.freeObjList()` /
   correct resource cleanup on each path.
 - use assertQueryNoLeakCheck() to assert the results of queries. This method
   asserts factory properties (supportsRandomAccess, expectSize, expectedTimestamp)
-  in addition to data correctness. Storage tests (typically in the cairo test
-  package) that only verify data persistence should use assertSql() instead,
-  because the factory properties are irrelevant for data-correctness checks and
-  can cause false failures.
+  in addition to data correctness. When a parameter combination does not match
+  a direct overload, adjust the call (pass explicit nulls, booleans, or use a
+  different overload) rather than falling back to assertSql(). Only use
+  assertSql() in storage tests (typically in the cairo test package) that
+  purely verify data persistence, where factory property assertions are
+  irrelevant and can cause false failures.
 - use execute() to run non-queries (DDL)
 - prefer UPPERCASE for SQL keywords (CREATE TABLE, INSERT, SELECT ... AS ... FROM,
   etc.), but mixing cases is acceptable since SQL is case-insensitive
@@ -184,6 +186,35 @@ mkdir <root_directory>
 java -p core/target/questdb-<version>-SNAPSHOT.jar -m io.questdb/io.questdb.ServerMain -d <root_directory>
 # Web console at http://localhost:9000
 ```
+
+### Building and Validating Rust Code
+
+The Rust crate lives in `core/rust/qdbr/`. Before considering any Rust task
+complete, run all four checks from that directory:
+
+```bash
+cd core/rust/qdbr
+cargo fmt        # Fix formatting
+cargo check --all-targets  # Compile all targets including tests
+cargo clippy --all-targets  # Lint — zero warnings required
+cargo test --lib  # Run unit tests
+```
+
+All four must pass with zero errors and zero warnings.
+
+After writing or modifying tests, check coverage with:
+
+```bash
+cargo llvm-cov --lib --text -- <module_name>
+```
+
+For every uncovered line, either write a test that reaches it or prove it is
+unreachable and mark it with `expect()` / `debug_assert!`.
+
+A panic in Rust code called via JNI aborts the entire JVM with no recovery.
+Never use `unwrap()` or `expect()` on data derived from file contents or
+external input. Use `Result` / `Option` with proper error propagation (`?`)
+instead.
 
 ### Building Native C/C++ Libraries
 

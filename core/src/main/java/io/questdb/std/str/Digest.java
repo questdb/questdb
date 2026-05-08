@@ -45,19 +45,11 @@ public class Digest implements Utf8Sink {
     private final byte[] buffer;
 
     public Digest(@NotNull DigestAlgorithm algorithm) {
-        String algo;
-        switch (algorithm) {
-            case MD5:
-                algo = "MD5";
-                break;
-            case SHA1:
-                algo = "SHA-1";
-                break;
-            case SHA256:
-            default:
-                algo = "SHA-256";
-                break;
-        }
+        String algo = switch (algorithm) {
+            case MD5 -> "MD5";
+            case SHA1 -> "SHA-1";
+            default -> "SHA-256";
+        };
         try {
             this.digest = MessageDigest.getInstance(algo);
         } catch (NoSuchAlgorithmException e) {
@@ -92,7 +84,7 @@ public class Digest implements Utf8Sink {
     @Override
     public Utf8Sink putNonAscii(long lo, long hi) {
         for (long p = lo; p < hi; p++) {
-            this.digest.update(Unsafe.getUnsafe().getByte(p));
+            this.digest.update(Unsafe.getByte(p));
         }
         return this;
     }

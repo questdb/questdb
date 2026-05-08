@@ -42,7 +42,7 @@ import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.table.ParquetRowGroupFilter;
 import io.questdb.griffin.engine.table.PushdownFilterExtractor;
-import io.questdb.griffin.engine.table.parquet.PartitionDecoder;
+import io.questdb.griffin.engine.table.parquet.ParquetFileDecoder;
 import io.questdb.griffin.engine.table.parquet.RowGroupBuffers;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
@@ -72,13 +72,20 @@ import org.jetbrains.annotations.Nullable;
 
 /**
  * Page frame cursor for single-threaded read_parquet() SQL function.
+ * <p>
+ * This cursor currently reads external parquet files via {@link ParquetFileDecoder},
+ * which materializes all requested chunks. It does not currently understand the
+ * `_pm` zero-pointer all-null convention used by {@code ParquetPartitionDecoder}.
+ * If {@code read_parquet()} ever starts using `_pm`, the getters in this class
+ * must first be taught to treat {@code dataPtr == 0 && auxPtr == 0} as a logical
+ * all-null chunk instead of dereferencing the pointers directly.
  */
 public class ReadParquetRecordCursor implements NoRandomAccessRecordCursor {
     private static final Log LOG = LogFactory.getLog(ReadParquetRecordCursor.class);
     private final LongList auxPtrs = new LongList();
     private final DirectIntList columns;
     private final LongList dataPtrs = new LongList();
-    private final PartitionDecoder decoder;
+    private final ParquetFileDecoder decoder;
     private final FilesFacade ff;
     private final DirectLongList filterList;
     private final MemoryCARWImpl filterValues;
@@ -100,7 +107,7 @@ public class ReadParquetRecordCursor implements NoRandomAccessRecordCursor {
         try {
             this.ff = ff;
             this.metadata = metadata;
-            this.decoder = new PartitionDecoder();
+            this.decoder = new ParquetFileDecoder();
             this.rowGroupBuffers = new RowGroupBuffers(MemoryTag.NATIVE_PARQUET_PARTITION_DECODER);
             this.columns = new DirectIntList(32, MemoryTag.NATIVE_DEFAULT);
             this.record = new ParquetRecord(metadata.getColumnCount());
@@ -135,11 +142,11 @@ public class ReadParquetRecordCursor implements NoRandomAccessRecordCursor {
      */
     public static boolean canProjectMetadata(
             RecordMetadata metadata,
-            PartitionDecoder decoder,
+            ParquetFileDecoder decoder,
             @Nullable DirectIntList columns,
             @Nullable ColumnMapping columnMapping
     ) {
-        final PartitionDecoder.Metadata parquetMetadata = decoder.metadata();
+        final ParquetFileDecoder.Metadata parquetMetadata = decoder.metadata();
 
         for (int i = 0; i < metadata.getColumnCount(); i++) {
             final int expectedType = metadata.getColumnType(i);
@@ -190,7 +197,7 @@ public class ReadParquetRecordCursor implements NoRandomAccessRecordCursor {
 
     @Override
     public void calculateSize(SqlExecutionCircuitBreaker circuitBreaker, Counter counter) {
-        PartitionDecoder.Metadata meta = decoder.metadata();
+        ParquetFileDecoder.Metadata meta = decoder.metadata();
         if (rowGroupIndex < 0) {
             counter.add(meta.getRowCount());
         } else {
@@ -327,7 +334,7 @@ public class ReadParquetRecordCursor implements NoRandomAccessRecordCursor {
     private long getStrAddr(int col) {
         long auxPtr = auxPtrs.get(col);
         long dataPtr = dataPtrs.get(col);
-        long dataOffset = Unsafe.getUnsafe().getLong(auxPtr + currentRowInRowGroup * 8L);
+        long dataOffset = Unsafe.getLong(auxPtr + currentRowInRowGroup * 8L);
         return dataPtr + dataOffset;
     }
 
@@ -407,8 +414,8 @@ public class ReadParquetRecordCursor implements NoRandomAccessRecordCursor {
         public BinarySequence getBin(int col) {
             long auxPtr = auxPtrs.get(col);
             long dataPtr = dataPtrs.get(col);
-            long dataOffset = Unsafe.getUnsafe().getLong(auxPtr + currentRowInRowGroup * 8L);
-            long len = Unsafe.getUnsafe().getLong(dataPtr + dataOffset);
+            long dataOffset = Unsafe.getLong(auxPtr + currentRowInRowGroup * 8L);
+            long len = Unsafe.getLong(dataPtr + dataOffset);
             if (len != TableUtils.NULL_LEN) {
                 return bsView(col).of(dataPtr + dataOffset + 8L, len);
             }
@@ -419,8 +426,8 @@ public class ReadParquetRecordCursor implements NoRandomAccessRecordCursor {
         public long getBinLen(int col) {
             long auxPtr = auxPtrs.get(col);
             long dataPtr = dataPtrs.get(col);
-            long dataOffset = Unsafe.getUnsafe().getLong(auxPtr + currentRowInRowGroup * 8L);
-            return Unsafe.getUnsafe().getLong(dataPtr + dataOffset);
+            long dataOffset = Unsafe.getLong(auxPtr + currentRowInRowGroup * 8L);
+            return Unsafe.getLong(dataPtr + dataOffset);
         }
 
         @Override
@@ -431,21 +438,21 @@ public class ReadParquetRecordCursor implements NoRandomAccessRecordCursor {
         @Override
         public byte getByte(int col) {
             long dataPtr = dataPtrs.get(col);
-            return Unsafe.getUnsafe().getByte(dataPtr + currentRowInRowGroup);
+            return Unsafe.getByte(dataPtr + currentRowInRowGroup);
         }
 
         @Override
         public char getChar(int col) {
             long dataPtr = dataPtrs.get(col);
-            return Unsafe.getUnsafe().getChar(dataPtr + currentRowInRowGroup * 2L);
+            return Unsafe.getChar(dataPtr + currentRowInRowGroup * 2L);
         }
 
         @Override
         public void getDecimal128(int col, Decimal128 sink) {
             long dataPtr = dataPtrs.get(col) + currentRowInRowGroup * 16L;
             sink.ofRaw(
-                    Unsafe.getUnsafe().getLong(dataPtr),
-                    Unsafe.getUnsafe().getLong(dataPtr + 8L)
+                    Unsafe.getLong(dataPtr),
+                    Unsafe.getLong(dataPtr + 8L)
             );
         }
 
@@ -458,10 +465,10 @@ public class ReadParquetRecordCursor implements NoRandomAccessRecordCursor {
         public void getDecimal256(int col, Decimal256 sink) {
             long dataPtr = dataPtrs.get(col) + currentRowInRowGroup * 32L;
             sink.ofRaw(
-                    Unsafe.getUnsafe().getLong(dataPtr),
-                    Unsafe.getUnsafe().getLong(dataPtr + 8L),
-                    Unsafe.getUnsafe().getLong(dataPtr + 16L),
-                    Unsafe.getUnsafe().getLong(dataPtr + 24L)
+                    Unsafe.getLong(dataPtr),
+                    Unsafe.getLong(dataPtr + 8L),
+                    Unsafe.getLong(dataPtr + 16L),
+                    Unsafe.getLong(dataPtr + 24L)
             );
         }
 
@@ -483,13 +490,13 @@ public class ReadParquetRecordCursor implements NoRandomAccessRecordCursor {
         @Override
         public double getDouble(int col) {
             long dataPtr = dataPtrs.get(col);
-            return Unsafe.getUnsafe().getDouble(dataPtr + currentRowInRowGroup * 8L);
+            return Unsafe.getDouble(dataPtr + currentRowInRowGroup * 8L);
         }
 
         @Override
         public float getFloat(int col) {
             long dataPtr = dataPtrs.get(col);
-            return Unsafe.getUnsafe().getFloat(dataPtr + currentRowInRowGroup * 4L);
+            return Unsafe.getFloat(dataPtr + currentRowInRowGroup * 4L);
         }
 
         @Override
@@ -520,25 +527,25 @@ public class ReadParquetRecordCursor implements NoRandomAccessRecordCursor {
         @Override
         public int getInt(int col) {
             long dataPtr = dataPtrs.get(col);
-            return Unsafe.getUnsafe().getInt(dataPtr + currentRowInRowGroup * 4L);
+            return Unsafe.getInt(dataPtr + currentRowInRowGroup * 4L);
         }
 
         @Override
         public long getLong(int col) {
             long dataPtr = dataPtrs.get(col);
-            return Unsafe.getUnsafe().getLong(dataPtr + currentRowInRowGroup * 8L);
+            return Unsafe.getLong(dataPtr + currentRowInRowGroup * 8L);
         }
 
         @Override
         public long getLong128Hi(int col) {
             long dataPtr = dataPtrs.get(col);
-            return Unsafe.getUnsafe().getLong(dataPtr + currentRowInRowGroup * 16L + 8);
+            return Unsafe.getLong(dataPtr + currentRowInRowGroup * 16L + 8);
         }
 
         @Override
         public long getLong128Lo(int col) {
             long dataPtr = dataPtrs.get(col);
-            return Unsafe.getUnsafe().getLong(dataPtr + currentRowInRowGroup * 16L);
+            return Unsafe.getLong(dataPtr + currentRowInRowGroup * 16L);
         }
 
         @Override
@@ -563,7 +570,7 @@ public class ReadParquetRecordCursor implements NoRandomAccessRecordCursor {
         @Override
         public short getShort(int col) {
             long dataPtr = dataPtrs.get(col);
-            return Unsafe.getUnsafe().getShort(dataPtr + currentRowInRowGroup * 2L);
+            return Unsafe.getShort(dataPtr + currentRowInRowGroup * 2L);
         }
 
         @Override
@@ -578,7 +585,7 @@ public class ReadParquetRecordCursor implements NoRandomAccessRecordCursor {
 
         @Override
         public int getStrLen(int col) {
-            return Unsafe.getUnsafe().getInt(getStrAddr(col));
+            return Unsafe.getInt(getStrAddr(col));
         }
 
         @Nullable
@@ -637,7 +644,7 @@ public class ReadParquetRecordCursor implements NoRandomAccessRecordCursor {
 
         private DirectString getStr(long addr, DirectString view) {
             assert addr > 0;
-            final int len = Unsafe.getUnsafe().getInt(addr);
+            final int len = Unsafe.getInt(addr);
             if (len != TableUtils.NULL_LEN) {
                 return view.of(addr + Vm.STRING_LENGTH_BYTES, len);
             }

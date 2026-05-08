@@ -59,7 +59,7 @@ public class GroupByColumnSink implements Mutable {
     }
 
     public int capacity() {
-        return ptr != 0 ? Unsafe.getUnsafe().getInt(ptr) : 0;
+        return ptr != 0 ? Unsafe.getInt(ptr) : 0;
     }
 
     public void checkCapacity(int capacity) {
@@ -73,22 +73,22 @@ public class GroupByColumnSink implements Mutable {
         if (capacity > oldCapacity) {
             final int newCapacity = Math.max(oldCapacity << 1, capacity);
             ptr = allocator.realloc(oldPtr, oldCapacity + HEADER_SIZE, newCapacity + HEADER_SIZE);
-            Unsafe.getUnsafe().putInt(ptr, newCapacity);
+            Unsafe.putInt(ptr, newCapacity);
         }
     }
 
     @Override
     public void clear() {
         if (ptr != 0) {
-            Unsafe.getUnsafe().putInt(this.ptr + SIZE_OFFSET, 0);
+            Unsafe.putInt(this.ptr + SIZE_OFFSET, 0);
         }
     }
 
     public GroupByColumnSink of(long ptr) {
         if (ptr == 0) {
             this.ptr = allocator.malloc(HEADER_SIZE + initialCapacity);
-            Unsafe.getUnsafe().putInt(this.ptr, initialCapacity);
-            Unsafe.getUnsafe().putInt(this.ptr + SIZE_OFFSET, 0);
+            Unsafe.putInt(this.ptr, initialCapacity);
+            Unsafe.putInt(this.ptr + SIZE_OFFSET, 0);
         } else {
             this.ptr = ptr;
         }
@@ -247,42 +247,42 @@ public class GroupByColumnSink implements Mutable {
 
     public void putByteAt(int index, byte value) {
         assert index < size();
-        Unsafe.getUnsafe().putByte(ptr + HEADER_SIZE + index, value);
+        Unsafe.putByte(ptr + HEADER_SIZE + index, value);
     }
 
     public void putDouble(double value) {
         long ptr = reserve(Double.BYTES);
-        Unsafe.getUnsafe().putDouble(ptr, value);
+        Unsafe.putDouble(ptr, value);
     }
 
     public void putDoubleAt(int index, double value) {
         long offset = 8L * index;
         assert offset <= size() - 8;
-        Unsafe.getUnsafe().putDouble(ptr + HEADER_SIZE + offset, value);
+        Unsafe.putDouble(ptr + HEADER_SIZE + offset, value);
     }
 
     public void putFloatAt(int index, float value) {
         long offset = 4L * index;
         assert offset <= size() - 4;
-        Unsafe.getUnsafe().putFloat(ptr + HEADER_SIZE + offset, value);
+        Unsafe.putFloat(ptr + HEADER_SIZE + offset, value);
     }
 
     public void putIntAt(int index, int value) {
         long offset = 4L * index;
         assert offset <= size() - 4;
-        Unsafe.getUnsafe().putInt(ptr + HEADER_SIZE + offset, value);
+        Unsafe.putInt(ptr + HEADER_SIZE + offset, value);
     }
 
     public void putLongAt(int index, long value) {
         long offset = 8L * index;
         assert offset <= size() - 8;
-        Unsafe.getUnsafe().putLong(ptr + HEADER_SIZE + offset, value);
+        Unsafe.putLong(ptr + HEADER_SIZE + offset, value);
     }
 
     public void putShortAt(int index, short value) {
         long offset = 2L * index;
         assert offset <= size() - 2;
-        Unsafe.getUnsafe().putShort(ptr + HEADER_SIZE + offset, value);
+        Unsafe.putShort(ptr + HEADER_SIZE + offset, value);
     }
 
     public void resetPtr() {
@@ -294,7 +294,7 @@ public class GroupByColumnSink implements Mutable {
     }
 
     public int size() {
-        return ptr != 0 ? Unsafe.getUnsafe().getInt(ptr + SIZE_OFFSET) : 0;
+        return ptr != 0 ? Unsafe.getInt(ptr + SIZE_OFFSET) : 0;
     }
 
     public long startAddress() {
@@ -303,84 +303,84 @@ public class GroupByColumnSink implements Mutable {
 
     private void putByte(byte value) {
         long ptr = reserve(Byte.BYTES);
-        Unsafe.getUnsafe().putByte(ptr, value);
+        Unsafe.putByte(ptr, value);
     }
 
     private void putChar(char value) {
         long ptr = reserve(Character.BYTES);
-        Unsafe.getUnsafe().putChar(ptr, value);
+        Unsafe.putChar(ptr, value);
     }
 
     private void putCharAt(int index, char value) {
         long offset = 2L * index;
         assert offset <= size() - 2;
-        Unsafe.getUnsafe().putChar(ptr + HEADER_SIZE + offset, value);
+        Unsafe.putChar(ptr + HEADER_SIZE + offset, value);
     }
 
     private void putDecimal128() {
         long ptr = reserve(16);
-        Unsafe.getUnsafe().putLong(ptr, decimal128.getHigh());
-        Unsafe.getUnsafe().putLong(ptr + 8, decimal128.getLow());
+        Unsafe.putLong(ptr, decimal128.getHigh());
+        Unsafe.putLong(ptr + 8, decimal128.getLow());
     }
 
     private void putDecimal128At(int index) {
         long offset = 16L * index;
         assert offset <= size() - 16;
         long p = ptr + HEADER_SIZE + offset;
-        Unsafe.getUnsafe().putLong(p, decimal128.getHigh());
-        Unsafe.getUnsafe().putLong(p + 8, decimal128.getLow());
+        Unsafe.putLong(p, decimal128.getHigh());
+        Unsafe.putLong(p + 8, decimal128.getLow());
     }
 
     private void putDecimal256() {
         long ptr = reserve(32);
-        Unsafe.getUnsafe().putLong(ptr, decimal256.getHh());
-        Unsafe.getUnsafe().putLong(ptr + 8, decimal256.getHl());
-        Unsafe.getUnsafe().putLong(ptr + 16, decimal256.getLh());
-        Unsafe.getUnsafe().putLong(ptr + 24, decimal256.getLl());
+        Unsafe.putLong(ptr, decimal256.getHh());
+        Unsafe.putLong(ptr + 8, decimal256.getHl());
+        Unsafe.putLong(ptr + 16, decimal256.getLh());
+        Unsafe.putLong(ptr + 24, decimal256.getLl());
     }
 
     private void putDecimal256At(int index) {
         long offset = 32L * index;
         assert offset <= size() - 32;
         long p = ptr + HEADER_SIZE + offset;
-        Unsafe.getUnsafe().putLong(p, decimal256.getHh());
-        Unsafe.getUnsafe().putLong(p + 8, decimal256.getHl());
-        Unsafe.getUnsafe().putLong(p + 16, decimal256.getLh());
-        Unsafe.getUnsafe().putLong(p + 24, decimal256.getLl());
+        Unsafe.putLong(p, decimal256.getHh());
+        Unsafe.putLong(p + 8, decimal256.getHl());
+        Unsafe.putLong(p + 16, decimal256.getLh());
+        Unsafe.putLong(p + 24, decimal256.getLl());
     }
 
     private void putFloat(float value) {
         long ptr = reserve(Float.BYTES);
-        Unsafe.getUnsafe().putFloat(ptr, value);
+        Unsafe.putFloat(ptr, value);
     }
 
     private void putInt(int value) {
         long ptr = reserve(Integer.BYTES);
-        Unsafe.getUnsafe().putInt(ptr, value);
+        Unsafe.putInt(ptr, value);
     }
 
     private void putLong(long value) {
         long ptr = reserve(Long.BYTES);
-        Unsafe.getUnsafe().putLong(ptr, value);
+        Unsafe.putLong(ptr, value);
     }
 
     private void putLong128(long lo, long hi) {
         long ptr = reserve(16);
-        Unsafe.getUnsafe().putLong(ptr, lo);
-        Unsafe.getUnsafe().putLong(ptr + 8, hi);
+        Unsafe.putLong(ptr, lo);
+        Unsafe.putLong(ptr + 8, hi);
     }
 
     private void putLong128At(int index, long lo, long hi) {
         long offset = 16L * index;
         assert offset <= size() - 16;
         long p = ptr + HEADER_SIZE + offset;
-        Unsafe.getUnsafe().putLong(p, lo);
-        Unsafe.getUnsafe().putLong(p + 8, hi);
+        Unsafe.putLong(p, lo);
+        Unsafe.putLong(p + 8, hi);
     }
 
     private void putShort(short value) {
         long ptr = reserve(Short.BYTES);
-        Unsafe.getUnsafe().putShort(ptr, value);
+        Unsafe.putShort(ptr, value);
     }
 
     /**
@@ -390,7 +390,7 @@ public class GroupByColumnSink implements Mutable {
         int currentSize = size();
         int newSize = currentSize + reservedSize;
         checkCapacity(newSize);
-        Unsafe.getUnsafe().putInt(ptr + SIZE_OFFSET, newSize);
+        Unsafe.putInt(ptr + SIZE_OFFSET, newSize);
         return ptr + HEADER_SIZE + currentSize;
     }
 }

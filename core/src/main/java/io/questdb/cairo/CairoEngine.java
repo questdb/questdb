@@ -78,8 +78,10 @@ import io.questdb.cairo.view.ViewStateStoreImpl;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryCMR;
 import io.questdb.cairo.vm.api.MemoryMARW;
+import io.questdb.cairo.wal.DefaultDurableAckRegistry;
 import io.questdb.cairo.wal.DefaultWalDirectoryPolicy;
 import io.questdb.cairo.wal.DefaultWalListener;
+import io.questdb.cairo.wal.DurableAckRegistry;
 import io.questdb.cairo.wal.QdbrWalLocker;
 import io.questdb.cairo.wal.ViewWalWriter;
 import io.questdb.cairo.wal.WalDirectoryPolicy;
@@ -92,6 +94,7 @@ import io.questdb.cairo.wal.WalWriter;
 import io.questdb.cairo.wal.seq.SeqTxnTracker;
 import io.questdb.cairo.wal.seq.SequencerMetadata;
 import io.questdb.cairo.wal.seq.TableSequencerAPI;
+import io.questdb.cutlass.qwp.codec.QwpServerInfoProvider;
 import io.questdb.cutlass.text.CopyExportContext;
 import io.questdb.cutlass.text.CopyImportContext;
 import io.questdb.griffin.CompiledQuery;
@@ -217,8 +220,10 @@ public class CairoEngine implements Closeable, WriterSource {
         }
     }; // no-op
     private @NotNull DdlListener ddlListener = DefaultDdlListener.INSTANCE;
+    private volatile @NotNull DurableAckRegistry durableAckRegistry = DefaultDurableAckRegistry.INSTANCE;
     private FrameFactory frameFactory;
     private @NotNull MatViewStateStore matViewStateStore = NoOpMatViewStateStore.INSTANCE;
+    private volatile QwpServerInfoProvider qwpServerInfoProvider;
     private volatile Runnable recentWriteTrackerHydrationCallback;
     private @NotNull ViewStateStore viewStateStore = NoOpViewStateStore.INSTANCE;
     private @NotNull WalDirectoryPolicy walDirectoryPolicy = DefaultWalDirectoryPolicy.INSTANCE;
@@ -714,6 +719,7 @@ public class CairoEngine implements Closeable, WriterSource {
         verifyTableToken(tableToken);
         if (tableToken.isWal()) {
             if (notifyDropped(tableToken)) {
+                durableAckRegistry.onTableDropped(tableToken);
                 tableSequencerAPI.dropTable(tableToken, false);
                 notifyViewStoresAboutDrop(tableToken);
                 matViewStateStore.removeViewState(tableToken);
@@ -832,6 +838,10 @@ public class CairoEngine implements Closeable, WriterSource {
         return tableFlagResolver.isSystem(tableName) ? DefaultDdlListener.INSTANCE : ddlListener;
     }
 
+    public @NotNull DurableAckRegistry getDurableAckRegistry() {
+        return durableAckRegistry;
+    }
+
     public FrameFactory getFrameFactory() {
         return frameFactory;
     }
@@ -898,6 +908,11 @@ public class CairoEngine implements Closeable, WriterSource {
 
     public QueryRegistry getQueryRegistry() {
         return queryRegistry;
+    }
+
+    public @NotNull QwpServerInfoProvider getQwpServerInfoProvider() {
+        QwpServerInfoProvider provider = qwpServerInfoProvider;
+        return provider != null ? provider : configuration.getQwpServerInfoProvider();
     }
 
     public TableReader getReader(CharSequence tableName) {
@@ -1756,6 +1771,10 @@ public class CairoEngine implements Closeable, WriterSource {
         this.ddlListener = ddlListener;
     }
 
+    public void setDurableAckRegistry(@NotNull DurableAckRegistry durableAckRegistry) {
+        this.durableAckRegistry = durableAckRegistry;
+    }
+
     @TestOnly
     public void setPoolListener(PoolListener poolListener) {
         this.tableMetadataPool.setPoolListener(poolListener);
@@ -1764,6 +1783,10 @@ public class CairoEngine implements Closeable, WriterSource {
         this.readerPool.setPoolListener(poolListener);
         this.walWriterPool.setPoolListener(poolListener);
         this.viewWalWriterPool.setPoolListener(poolListener);
+    }
+
+    public void setQwpServerInfoProvider(@NotNull QwpServerInfoProvider provider) {
+        this.qwpServerInfoProvider = provider;
     }
 
     @TestOnly
@@ -2056,6 +2079,7 @@ public class CairoEngine implements Closeable, WriterSource {
             while (!lockTableCreate(tableToken)) {
                 Os.pause();
             }
+            boolean filesystemCreated = false;
             try {
                 String lockedReason = lockAll(tableToken, "createTable", true);
                 boolean locked = true;
@@ -2066,6 +2090,7 @@ public class CairoEngine implements Closeable, WriterSource {
                         } else {
                             createTableOrViewOrMatViewUnsafe(mem, blockFileWriter, path, struct, tableToken);
                         }
+                        filesystemCreated = true;
 
                         if (struct.isWalEnabled()) {
                             tableSequencerAPI.registerTable(tableToken.getTableId(), struct, tableToken);
@@ -2099,6 +2124,29 @@ public class CairoEngine implements Closeable, WriterSource {
                 if (struct.isWalEnabled()) {
                     // tableToken.getLoggingName() === tableName, table cannot be renamed while creation hasn't finished
                     tableSequencerAPI.dropTable(tableToken, true);
+                } else if (filesystemCreated) {
+                    final FilesFacade ff = configuration.getFilesFacade();
+                    try {
+                        path.of(configuration.getDbRoot()).concat(tableToken).$();
+                        Path volumeTarget = null;
+                        if (ff.isSoftLink(path.$())) {
+                            volumeTarget = Path.getThreadLocal2("");
+                            if (!ff.readLink(path, volumeTarget)) {
+                                volumeTarget = null;
+                            }
+                        }
+                        if (!ff.unlinkOrRemove(path, LOG)) {
+                            LOG.error().$("could not clean up partial table after failed create [table=").$(tableToken)
+                                    .$(", errno=").$(ff.errno()).I$();
+                        }
+                        if (volumeTarget != null && !ff.unlinkOrRemove(volumeTarget, LOG)) {
+                            LOG.error().$("could not clean up partial table in volume [table=").$(tableToken)
+                                    .$(", errno=").$(ff.errno()).I$();
+                        }
+                    } catch (Throwable cleanupEx) {
+                        LOG.error().$("cleanup after failed create threw [table=").$(tableToken)
+                                .$(", err=").$(cleanupEx).I$();
+                    }
                 }
                 throw th;
             } finally {

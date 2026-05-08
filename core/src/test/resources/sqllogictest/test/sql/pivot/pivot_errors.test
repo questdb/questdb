@@ -6,10 +6,10 @@ test PIVOT (sum(test.i) FOR j IN ('a', 'b'));
 ----
 NULL NULL
 
-query 2
+query error
 test PIVOT (sum(41) over() FOR j IN ('a', 'b'));
 ----
-NULL NULL
+db error: ERROR: Window function is not allowed in context of aggregation. Use sub-query.
 
 #PIVOT test ON j IN ('a', 'b') USING get_current_timestamp();
 query error

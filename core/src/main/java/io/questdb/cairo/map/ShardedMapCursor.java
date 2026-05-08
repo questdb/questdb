@@ -368,6 +368,11 @@ public class ShardedMapCursor implements MapRecordCursor {
         }
 
         @Override
+        public void of(long address) {
+            baseRecord.of(address);
+        }
+
+        @Override
         public void setSymbolTableResolver(RecordCursor resolver, IntList symbolTableIndex) {
             for (int i = 0, n = shardCursors.size(); i < n; i++) {
                 if (isPrimary) {

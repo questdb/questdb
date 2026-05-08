@@ -75,7 +75,7 @@ final class PGNonNullBinaryArrayView extends MutableArray implements FlatArrayVi
     public double getDoubleAtAbsIndex(int flatIndex) {
         final long addr = lo + Integer.BYTES + ((long) flatIndex * (Double.BYTES + Integer.BYTES));
         assert addr < hi;
-        long networkOrderVal = Unsafe.getUnsafe().getLong(addr);
+        long networkOrderVal = Unsafe.getLong(addr);
         return Double.longBitsToDouble(Numbers.bswap(networkOrderVal));
     }
 
@@ -83,7 +83,7 @@ final class PGNonNullBinaryArrayView extends MutableArray implements FlatArrayVi
     public long getLongAtAbsIndex(int flatIndex) {
         final long addr = lo + Integer.BYTES + ((long) flatIndex * (Long.BYTES + Integer.BYTES));
         assert addr < hi;
-        long networkOrderVal = Unsafe.getUnsafe().getLong(addr);
+        long networkOrderVal = Unsafe.getLong(addr);
         return Numbers.bswap(networkOrderVal);
     }
 
@@ -93,8 +93,10 @@ final class PGNonNullBinaryArrayView extends MutableArray implements FlatArrayVi
     }
 
     void addDimLen(int dimLen) {
+        // compute the new length first; on overflow multiplyExact throws and shape stays consistent
+        int newLen = Math.multiplyExact(flatViewLength, dimLen);
         shape.add(dimLen);
-        flatViewLength *= dimLen;
+        flatViewLength = newLen;
     }
 
     /**
@@ -123,19 +125,18 @@ final class PGNonNullBinaryArrayView extends MutableArray implements FlatArrayVi
         assert shape.size() > 0;
 
         short componentNativeType;
-        int expectedElementSize;
-        switch (pgOidType) {
-            case PGOids.PG_INT8:
+        int expectedElementSize = switch (pgOidType) {
+            case PGOids.PG_INT8 -> {
                 componentNativeType = ColumnType.LONG;
-                expectedElementSize = Long.BYTES;
-                break;
-            case PGOids.PG_FLOAT8:
+                yield Long.BYTES;
+            }
+            case PGOids.PG_FLOAT8 -> {
                 componentNativeType = ColumnType.DOUBLE;
-                expectedElementSize = Double.BYTES;
-                break;
-            default:
-                throw CairoException.nonCritical().put("unsupported array type, only arrays of int8 and float8 are supported [pgOid=").put(pgOidType).put(']');
-        }
+                yield Double.BYTES;
+            }
+            default ->
+                    throw CairoException.nonCritical().put("unsupported array type, only arrays of int8 and float8 are supported [pgOid=").put(pgOidType).put(']');
+        };
 
         // validate that there are no nulls in the array since we don't support them
         int increment = Integer.BYTES + expectedElementSize;
@@ -143,7 +144,7 @@ final class PGNonNullBinaryArrayView extends MutableArray implements FlatArrayVi
         for (long p = lo; p < hi; p += increment) {
 
             // element size as reported by the client
-            int actualElementSizeBE = Unsafe.getUnsafe().getInt(p);
+            int actualElementSizeBE = Unsafe.getInt(p);
 
             // -1 is a special value that indicates a NULL element
             // no need to swap bytes since -1 is always -1, regardless of endianness, it's all 1s

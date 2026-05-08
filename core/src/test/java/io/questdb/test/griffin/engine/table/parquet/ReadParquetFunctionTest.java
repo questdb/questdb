@@ -115,6 +115,7 @@ public class ReadParquetFunctionTest extends AbstractCairoTest {
                         (int) bloomFilterColumnIndexes.size(),
                         0.01,
                         0.0,
+                        -1,
                         -1L
                 );
                 Assert.assertTrue(Files.exists(path.$()));

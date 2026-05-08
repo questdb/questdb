@@ -38,6 +38,7 @@ import io.questdb.cairo.EntryUnavailableException;
 import io.questdb.cairo.ErrorTag;
 import io.questdb.cairo.GenericRecordMetadata;
 import io.questdb.cairo.IndexBuilder;
+import io.questdb.cairo.IndexType;
 import io.questdb.cairo.ListColumnFilter;
 import io.questdb.cairo.MicrosTimestampDriver;
 import io.questdb.cairo.OperationCodes;
@@ -202,7 +203,6 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
     private final ObjList<TableWriterAPI> tableWriters = new ObjList<>();
     private final VacuumColumnVersions vacuumColumnVersions;
     private final ObjList<CharSequence> views = new ObjList<>();
-    private final ObjectPool<WindowExpression> windowExpressionPool;
     protected CharSequence sqlText;
     private boolean closed = false;
     // Helper var used to pass back count in cases it can't be done via method result.
@@ -226,7 +226,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             this.queryColumnPool = new ObjectPool<>(QueryColumn.FACTORY, configuration.getSqlColumnPoolCapacity());
             this.queryModelPool = new ObjectPool<>(QueryModel.FACTORY, configuration.getSqlModelPoolCapacity());
             this.queryModelWrapperPool = new ObjectPool<>(QueryModelWrapper.FACTORY, 2);
-            this.windowExpressionPool = new ObjectPool<>(WindowExpression.FACTORY, configuration.getWindowColumnPoolCapacity());
+            ObjectPool<WindowExpression> windowExpressionPool = new ObjectPool<>(WindowExpression.FACTORY, configuration.getWindowColumnPoolCapacity());
             this.compiledQuery = new CompiledQueryImpl(engine);
             this.characterStore = new CharacterStore(
                     configuration.getSqlCharacterStoreCapacity(),
@@ -813,7 +813,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         final int indexValueBlockCapacity;
         final boolean cache;
         int symbolCapacity;
-        final boolean indexed;
+        byte indexType = IndexType.NONE;
 
         if (
                 ColumnType.isSymbol(columnType)
@@ -862,12 +862,38 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
 
             TableUtils.validateSymbolCapacityCached(cache, symbolCapacity, lexer.lastTokenPosition());
 
-            indexed = Chars.equalsLowerCaseAsciiNc("index", tok);
+            boolean indexed = Chars.equalsLowerCaseAsciiNc("index", tok);
+            boolean indexTypeExplicit = false;
             if (indexed) {
                 tok = SqlUtil.fetchNext(lexer);
+                if (tok != null && isTypeKeyword(tok)) {
+                    indexTypeExplicit = true;
+                    tok = expectToken(lexer, "index type name");
+                    indexType = IndexType.valueOf(tok);
+                    if (indexType == IndexType.NONE) {
+                        throw SqlException.$(lexer.lastTokenPosition(), "unknown index type: ").put(tok);
+                    }
+                    tok = SqlUtil.fetchNext(lexer);
+                    if (tok != null && IndexType.isPosting(indexType)) {
+                        if (SqlKeywords.isDeltaKeyword(tok)) {
+                            indexType = IndexType.POSTING_DELTA;
+                            tok = SqlUtil.fetchNext(lexer);
+                        } else if (SqlKeywords.isEfKeyword(tok)) {
+                            indexType = IndexType.POSTING_EF;
+                            tok = SqlUtil.fetchNext(lexer);
+                        }
+                    }
+                } else {
+                    indexType = configuration.getDefaultSymbolIndexType();
+                }
             }
 
             if (Chars.equalsLowerCaseAsciiNc("capacity", tok)) {
+                if (indexed && !indexTypeExplicit) {
+                    indexType = IndexType.BITMAP;
+                } else if (indexed && indexType != IndexType.BITMAP) {
+                    throw SqlException.$(lexer.lastTokenPosition(), "CAPACITY is only supported for BITMAP index type");
+                }
                 tok = expectToken(lexer, "symbol index capacity");
 
                 try {
@@ -892,7 +918,6 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             cache = configuration.getDefaultSymbolCacheFlag();
             indexValueBlockCapacity = configuration.getIndexValueBlockSize();
             symbolCapacity = configuration.getDefaultSymbolCapacity();
-            indexed = false;
         }
 
         if (addColumn != null) {
@@ -902,7 +927,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                     columnType,
                     Numbers.ceilPow2(symbolCapacity),
                     cache,
-                    indexed,
+                    indexType,
                     Numbers.ceilPow2(indexValueBlockCapacity),
                     false
             );
@@ -1120,7 +1145,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                 ColumnType.SYMBOL,
                 Numbers.ceilPow2(symbolCapacity),
                 configuration.getDefaultSymbolCacheFlag(), // ignored
-                false, // ignored
+                IndexType.NONE, // ignored
                 Numbers.ceilPow2(configuration.getIndexValueBlockSize()), // ignored
                 false // ignored
         );
@@ -1135,7 +1160,10 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             int columnNamePosition,
             CharSequence columnName,
             TableRecordMetadata metadata,
-            int indexValueBlockSize
+            int indexValueBlockSize,
+            byte indexType,
+            @Nullable ObjList<CharSequence> coveringColumnNames,
+            @Nullable IntList coveringColumnPositions
     ) throws SqlException {
         final int columnIndex = metadata.getColumnIndexQuiet(columnName);
         if (columnIndex == -1) {
@@ -1147,6 +1175,55 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             throw SqlException.position(columnNamePosition).put("indexes are only supported for symbol type [column=").put(columnName).put(", type=").put(ColumnType.nameOf(type)).put(']');
         }
 
+        if (coveringColumnNames != null) {
+            for (int i = 0, n = coveringColumnNames.size(); i < n; i++) {
+                CharSequence covName = coveringColumnNames.get(i);
+                // Positions list is parallel to names; when callers pass null
+                // (internal re-use) we report the column-name position as a
+                // best-effort fallback rather than 0.
+                int covPos = coveringColumnPositions != null ? coveringColumnPositions.getQuick(i) : columnNamePosition;
+                int covIdx = metadata.getColumnIndexQuiet(covName);
+                if (covIdx == -1) {
+                    throw SqlException.$(covPos, "INCLUDE column does not exist [column=").put(covName).put(']');
+                }
+                if (covIdx == columnIndex) {
+                    throw SqlException.$(covPos, "INCLUDE must not contain the indexed column [column=").put(covName).put(']');
+                }
+                for (int j = 0; j < i; j++) {
+                    if (metadata.getColumnIndexQuiet(coveringColumnNames.get(j)) == covIdx) {
+                        throw SqlException.$(covPos, "duplicate column in INCLUDE [column=").put(covName).put(']');
+                    }
+                }
+            }
+        }
+
+        // Auto-append the designated timestamp on POSTING indexes, even
+        // when the user gave no INCLUDE clause. This is the bare
+        // ALTER TABLE ... ADD INDEX TYPE POSTING case; without the
+        // append the default config's covering benefit silently
+        // disappears.
+        if (IndexType.isPosting(indexType) && configuration.isPostingIndexAutoIncludeTimestamp()) {
+            int tsIndex = metadata.getTimestampIndex();
+            if (tsIndex >= 0 && tsIndex != columnIndex) {
+                CharSequence tsName = metadata.getColumnName(tsIndex);
+                boolean isTimestampAlreadyIncluded = false;
+                if (coveringColumnNames != null) {
+                    for (int i = 0, n = coveringColumnNames.size(); i < n; i++) {
+                        if (metadata.getColumnIndexQuiet(coveringColumnNames.get(i)) == tsIndex) {
+                            isTimestampAlreadyIncluded = true;
+                            break;
+                        }
+                    }
+                }
+                if (!isTimestampAlreadyIncluded) {
+                    if (coveringColumnNames == null) {
+                        coveringColumnNames = new ObjList<>(1);
+                    }
+                    coveringColumnNames.add(tsName);
+                }
+            }
+        }
+
         if (indexValueBlockSize == -1) {
             indexValueBlockSize = configuration.getIndexValueBlockSize();
         }
@@ -1156,9 +1233,16 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                 tableToken,
                 metadata.getTableId(),
                 columnName,
-                Numbers.ceilPow2(indexValueBlockSize)
+                Numbers.ceilPow2(indexValueBlockSize),
+                indexType,
+                coveringColumnNames
         );
-        securityContext.authorizeAlterTableAddIndex(tableToken, alterOperationBuilder.getExtraStrInfo());
+        // Authorize against the indexed column only. Covering INCLUDE columns
+        // are not part of the ADD INDEX privilege; passing them here would let
+        // an enterprise ACL conflate INDEX and READ permissions.
+        columnNames.clear();
+        columnNames.add(columnName);
+        securityContext.authorizeAlterTableAddIndex(tableToken, columnNames);
         compiledQuery.ofAlter(alterOperationBuilder.build());
     }
 
@@ -1875,21 +1959,53 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
 
                     final int indexValueBlockSize;
                     final boolean sizeInferred;
+                    byte indexType = configuration.getDefaultSymbolIndexType();
+                    boolean indexTypeExplicit = false;
 
                     tok = SqlUtil.fetchNext(lexer);
                     if (tok == null || isSemicolon(tok)) {
                         indexValueBlockSize = estimateIndexValueBlockSizeFromReader(configuration, executionContext, matViewToken, columnIndex);
                         sizeInferred = true;
                     } else {
-                        if (!SqlKeywords.isCapacityKeyword(tok)) {
-                            throw SqlException.$(lexer.lastTokenPosition(), "'capacity' keyword expected");
+                        // ADD INDEX TYPE POSTING [DELTA|EF]
+                        if (isTypeKeyword(tok)) {
+                            indexTypeExplicit = true;
+                            tok = expectToken(lexer, "index type name");
+                            byte parsedType = IndexType.valueOf(tok);
+                            if (parsedType == IndexType.NONE) {
+                                throw SqlException.$(lexer.lastTokenPosition(), "unknown index type: ").put(tok);
+                            }
+                            indexType = parsedType;
+                            tok = SqlUtil.fetchNext(lexer);
+                            if (tok != null && IndexType.isPosting(indexType)) {
+                                if (SqlKeywords.isDeltaKeyword(tok)) {
+                                    indexType = IndexType.POSTING_DELTA;
+                                    tok = SqlUtil.fetchNext(lexer);
+                                } else if (SqlKeywords.isEfKeyword(tok)) {
+                                    indexType = IndexType.POSTING_EF;
+                                    tok = SqlUtil.fetchNext(lexer);
+                                }
+                            }
                         }
-                        tok = expectToken(lexer, "index capacity value");
-                        try {
-                            indexValueBlockSize = Numbers.parseInt(tok);
-                            sizeInferred = false;
-                        } catch (NumericException e) {
-                            throw SqlException.$(lexer.lastTokenPosition(), "index capacity value must be numeric");
+                        if (tok == null || isSemicolon(tok)) {
+                            indexValueBlockSize = estimateIndexValueBlockSizeFromReader(configuration, executionContext, matViewToken, columnIndex);
+                            sizeInferred = true;
+                        } else {
+                            if (!SqlKeywords.isCapacityKeyword(tok)) {
+                                throw SqlException.$(lexer.lastTokenPosition(), "'capacity' keyword expected");
+                            }
+                            if (!indexTypeExplicit) {
+                                indexType = IndexType.BITMAP;
+                            } else if (indexType != IndexType.BITMAP) {
+                                throw SqlException.$(lexer.lastTokenPosition(), "CAPACITY is only supported for BITMAP index type");
+                            }
+                            tok = expectToken(lexer, "index capacity value");
+                            try {
+                                indexValueBlockSize = Numbers.parseInt(tok);
+                                sizeInferred = false;
+                            } catch (NumericException e) {
+                                throw SqlException.$(lexer.lastTokenPosition(), "index capacity value must be numeric");
+                            }
                         }
                     }
 
@@ -1906,7 +2022,10 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                             columnNamePosition,
                             columnName,
                             tableMetadata,
-                            indexValueBlockSize
+                            indexValueBlockSize,
+                            indexType,
+                            null,
+                            null
                     );
                 } else if (SqlKeywords.isDropKeyword(tok)) {
                     expectKeyword(lexer, "index");
@@ -2235,11 +2354,72 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                         expectKeyword(lexer, "index");
                         tok = SqlUtil.fetchNext(lexer);
                         int indexValueCapacity = -1;
+                        byte indexType = configuration.getDefaultSymbolIndexType();
+                        boolean indexTypeExplicit = false;
+                        ObjList<CharSequence> coveringColumnNames = null;
+                        IntList coveringColumnPositions = null;
 
-                        if (tok != null && (!isSemicolon(tok))) {
-                            if (!isCapacityKeyword(tok)) {
-                                throw SqlException.$(lexer.lastTokenPosition(), "'capacity' expected");
-                            } else {
+                        if (tok != null && !isSemicolon(tok)) {
+                            // ADD INDEX TYPE POSTING [DELTA|EF]
+                            if (isTypeKeyword(tok)) {
+                                indexTypeExplicit = true;
+                                tok = expectToken(lexer, "index type name");
+                                byte parsedType = IndexType.valueOf(tok);
+                                if (parsedType == IndexType.NONE) {
+                                    throw SqlException.$(lexer.lastTokenPosition(), "unknown index type: ").put(tok);
+                                }
+                                indexType = parsedType;
+                                tok = SqlUtil.fetchNext(lexer);
+                                // Handle sub-tokens DELTA and EF for POSTING index type
+                                if (tok != null && IndexType.isPosting(indexType)) {
+                                    if (SqlKeywords.isDeltaKeyword(tok)) {
+                                        indexType = IndexType.POSTING_DELTA;
+                                        tok = SqlUtil.fetchNext(lexer);
+                                    } else if (SqlKeywords.isEfKeyword(tok)) {
+                                        indexType = IndexType.POSTING_EF;
+                                        tok = SqlUtil.fetchNext(lexer);
+                                    }
+                                }
+                            }
+                            // tok might be INCLUDE, CAPACITY, semicolon, or null
+                            if (tok != null && !isSemicolon(tok) && SqlKeywords.isIncludeKeyword(tok)) {
+                                if (!indexTypeExplicit) {
+                                    indexType = IndexType.POSTING;
+                                } else if (!IndexType.isPosting(indexType)) {
+                                    throw SqlException.$(lexer.lastTokenPosition(), "INCLUDE is only supported for POSTING index type");
+                                }
+                                coveringColumnNames = new ObjList<>();
+                                coveringColumnPositions = new IntList();
+                                tok = expectToken(lexer, "'('");
+                                if (!Chars.equals(tok, '(')) {
+                                    throw SqlException.$(lexer.lastTokenPosition(), "'(' expected");
+                                }
+                                tok = expectToken(lexer, "column name");
+                                if (Chars.equals(tok, ')')) {
+                                    throw SqlException.$(lexer.lastTokenPosition(), "at least one column name expected in INCLUDE");
+                                }
+                                do {
+                                    coveringColumnNames.add(GenericLexer.immutableOf(unquote(tok)));
+                                    coveringColumnPositions.add(lexer.lastTokenPosition());
+                                    tok = expectToken(lexer, "',' or ')'");
+                                    if (Chars.equals(tok, ',')) {
+                                        tok = expectToken(lexer, "column name");
+                                    }
+                                } while (!Chars.equals(tok, ')'));
+                                if (!Chars.equals(tok, ')')) {
+                                    throw SqlException.$(lexer.lastTokenPosition(), "')' expected");
+                                }
+                                tok = SqlUtil.fetchNext(lexer);
+                            }
+                            if (tok != null && !isSemicolon(tok)) {
+                                if (!isCapacityKeyword(tok)) {
+                                    throw SqlException.$(lexer.lastTokenPosition(), "'capacity' expected");
+                                }
+                                if (!indexTypeExplicit) {
+                                    indexType = IndexType.BITMAP;
+                                } else if (indexType != IndexType.BITMAP) {
+                                    throw SqlException.$(lexer.lastTokenPosition(), "CAPACITY is only supported for BITMAP index type");
+                                }
                                 tok = expectToken(lexer, "capacity value");
                                 try {
                                     indexValueCapacity = Numbers.parseInt(tok);
@@ -2259,7 +2439,10 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                                 columnNamePosition,
                                 columnName,
                                 tableMetadata,
-                                indexValueCapacity
+                                indexValueCapacity,
+                                indexType,
+                                coveringColumnNames,
+                                coveringColumnPositions
                         );
                     } else if (isDropKeyword(tok)) {
                         tok = expectToken(lexer, "'index'");

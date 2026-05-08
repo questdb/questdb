@@ -131,14 +131,14 @@ public class Path implements Utf8Sink, DirectUtf8Sequence, Closeable {
     }
 
     public LPSZ $() {
-        if (tailPtr == headPtr || Unsafe.getUnsafe().getByte(tailPtr) != NULL) {
-            Unsafe.getUnsafe().putByte(tailPtr, NULL);
+        if (tailPtr == headPtr || Unsafe.getByte(tailPtr) != NULL) {
+            Unsafe.putByte(tailPtr, NULL);
         }
         return this.lpsz;
     }
 
     public void $at(int index) {
-        Unsafe.getUnsafe().putByte(headPtr + index, NULL);
+        Unsafe.putByte(headPtr + index, NULL);
     }
 
     public @NotNull CharSequence asAsciiCharSequence() {
@@ -181,7 +181,7 @@ public class Path implements Utf8Sink, DirectUtf8Sequence, Closeable {
         ensureSeparator();
         long p = pUtf8NameZ;
         while (true) {
-            byte b = Unsafe.getUnsafe().getByte(p++);
+            byte b = Unsafe.getByte(p++);
             if (b == NULL) {
                 break;
             }
@@ -190,7 +190,7 @@ public class Path implements Utf8Sink, DirectUtf8Sequence, Closeable {
             if (requiredCapacity + OVERHEAD >= capacity) {
                 extend(requiredCapacity * 2 + OVERHEAD);
             }
-            Unsafe.getUnsafe().putByte(tailPtr++, (byte) (b == '/' && Os.isWindows() ? '\\' : b));
+            Unsafe.putByte(tailPtr++, (byte) (b == '/' && Os.isWindows() ? '\\' : b));
         }
         return this;
     }
@@ -255,7 +255,7 @@ public class Path implements Utf8Sink, DirectUtf8Sequence, Closeable {
         }
 
         if (len > 0) {
-            Unsafe.getUnsafe().copyMemory(other.ptr(), headPtr, len);
+            Unsafe.copyMemory(other.ptr(), headPtr, len);
         }
         tailPtr = headPtr + len;
         return this;
@@ -271,14 +271,14 @@ public class Path implements Utf8Sink, DirectUtf8Sequence, Closeable {
     public Path parent() {
         if (tailPtr > headPtr) {
             long p = tailPtr - 1;
-            byte last = Unsafe.getUnsafe().getByte(p);
+            byte last = Unsafe.getByte(p);
             if (last == Files.SEPARATOR || last == NULL) {
                 if (p < headPtr + 2) {
                     return this;
                 }
                 p--;
             }
-            while (p > headPtr && Unsafe.getUnsafe().getByte(p) != Files.SEPARATOR) {
+            while (p > headPtr && Unsafe.getByte(p) != Files.SEPARATOR) {
                 p--;
             }
             tailPtr = p;
@@ -307,7 +307,7 @@ public class Path implements Utf8Sink, DirectUtf8Sequence, Closeable {
 
     public void put(int index, byte b) {
         ascii = false;
-        Unsafe.getUnsafe().putByte(headPtr + index, b);
+        Unsafe.putByte(headPtr + index, b);
     }
 
     @Override
@@ -411,7 +411,7 @@ public class Path implements Utf8Sink, DirectUtf8Sequence, Closeable {
     public Path seekZ() {
         int count = 0;
         while (count < capacity) {
-            if (Unsafe.getUnsafe().getByte(headPtr + count) == NULL) {
+            if (Unsafe.getByte(headPtr + count) == NULL) {
                 tailPtr = headPtr + count;
                 break;
             }
@@ -497,18 +497,18 @@ public class Path implements Utf8Sink, DirectUtf8Sequence, Closeable {
         if (requiredCapacity >= capacity) {
             extend(requiredCapacity + 15);
         }
-        Unsafe.getUnsafe().putByte(tailPtr++, b);
+        Unsafe.putByte(tailPtr++, b);
         return this;
     }
 
     private void randomSeed() {
         for (long p = headPtr, hi = headPtr + capacity + 1; p < hi; p++) {
-            Unsafe.getUnsafe().putByte(p, (byte) (p % 127));
+            Unsafe.putByte(p, (byte) (p % 127));
         }
     }
 
     protected final void ensureSeparator() {
-        if (tailPtr > headPtr && Unsafe.getUnsafe().getByte(tailPtr - 1) != Files.SEPARATOR) {
+        if (tailPtr > headPtr && Unsafe.getByte(tailPtr - 1) != Files.SEPARATOR) {
             //noinspection resource
             putByte0((byte) Files.SEPARATOR);
         }

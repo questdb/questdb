@@ -7,7 +7,7 @@ jobs:
           imageName: "macos-14"
           poolName: "Azure Pipelines"
           os: macOS
-          jdk: "1.17"
+          jdk: "1.25"
           testset: "all"
           includeTests: "**/griffin/**"
           javadoc_step: ""
@@ -16,7 +16,7 @@ jobs:
           imageName: "macos-14"
           poolName: "Azure Pipelines"
           os: macOS
-          jdk: "1.17"
+          jdk: "1.25"
           testset: "all"
           includeTests: "**/cairo/**"
           # Exclude cairo fuzz tests: run in mac-cairo-fuzz
@@ -27,7 +27,7 @@ jobs:
           imageName: "macos-14"
           poolName: "Azure Pipelines"
           os: macOS
-          jdk: "1.17"
+          jdk: "1.25"
           testset: "all"
           includeTests: "**/cairo/fuzz/**"
           javadoc_step: ""
@@ -36,7 +36,7 @@ jobs:
           imageName: "macos-14"
           poolName: "Azure Pipelines"
           os: macOS
-          jdk: "1.17"
+          jdk: "1.25"
           testset: "all"
           includeTests: "**/pgwire/**/*.java"
           javadoc_step: ""
@@ -45,7 +45,7 @@ jobs:
           imageName: "macos-14"
           poolName: "Azure Pipelines"
           os: macOS
-          jdk: "1.17"
+          jdk: "1.25"
           testset: "all"
           # Exclude griffin: run in mac-griffin
           # Exclude cairo: run in mac-cairo and mac-cairo-fuzz
@@ -58,7 +58,7 @@ jobs:
           imageName: "windows-latest"
           poolName: "Azure Pipelines"
           os: Windows
-          jdk: "1.17"
+          jdk: "1.25"
           testset: "all"
           includeTests: "**/griffin/*"
           # Exclude O3 tests: run in windows-other-2
@@ -70,7 +70,7 @@ jobs:
           imageName: "windows-latest"
           poolName: "Azure Pipelines"
           os: Windows
-          jdk: "1.17"
+          jdk: "1.25"
           testset: "all"
           includeTests: "**/griffin/**/*"
           # Exclude O3 tests: run in windows-other-2
@@ -83,7 +83,7 @@ jobs:
           imageName: "windows-latest"
           poolName: "Azure Pipelines"
           os: Windows
-          jdk: "1.17"
+          jdk: "1.25"
           testset: "all"
           includeTests: "**/cairo/fuzz/**"
           javadoc_step: ""
@@ -92,7 +92,7 @@ jobs:
           imageName: "windows-latest"
           poolName: "Azure Pipelines"
           os: Windows
-          jdk: "1.17"
+          jdk: "1.25"
           testset: "all"
           includeTests: "**/**Fuzz**"
           # Exclude cairo fuzz tests: run in windows-fuzz1
@@ -103,7 +103,7 @@ jobs:
           imageName: "windows-latest"
           poolName: "Azure Pipelines"
           os: Windows
-          jdk: "1.17"
+          jdk: "1.25"
           testset: "all"
           includeTests: "**/cairo/**"
           # Exclude O3 tests: run in windows-other-2
@@ -116,7 +116,7 @@ jobs:
           imageName: "windows-latest"
           poolName: "Azure Pipelines"
           os: Windows
-          jdk: "1.17"
+          jdk: "1.25"
           testset: "all"
           includeTests: "**/cairo/mv/**,**/cairo/o3/**"
           # Exclude Fuzz tests: run in windows-fuzz2
@@ -127,7 +127,7 @@ jobs:
           imageName: "windows-latest"
           poolName: "Azure Pipelines"
           os: Windows
-          jdk: "1.17"
+          jdk: "1.25"
           testset: "all"
           includeTests: "**/pgwire/**/*.java"
           # Exclude O3 tests: run in windows-other-2
@@ -139,7 +139,7 @@ jobs:
           imageName: "windows-latest"
           poolName: "Azure Pipelines"
           os: Windows
-          jdk: "1.17"
+          jdk: "1.25"
           testset: "all"
           # Exclude griffin: run in windows-griffin-base and windows-griffin-sub
           # Exclude cairo: run in windows-cairo-1, windows-cairo-2, windows-fuzz1
@@ -155,7 +155,7 @@ jobs:
           imageName: "windows-latest"
           poolName: "Azure Pipelines"
           os: Windows
-          jdk: "1.17"
+          jdk: "1.25"
           testset: "all"
           includeTests: "**/cutlass/http/**,**/O3*Test**"
           # Exclude Fuzz tests: run in windows-fuzz2

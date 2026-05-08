@@ -143,16 +143,14 @@ impl<'a, T: VarDictDecoder> RleDictionarySlicer<'a, T> {
         if num_bits > 0 {
             buffer = &buffer[1..];
             let decoder = Decoder::new(buffer, num_bits as usize);
-            let mut res = Self {
+            Ok(Self {
                 dict,
                 inner: SlicerInner::new(
                     Some(decoder),
                     RleIterator::Rle(RepeatN::new(0, 0)),
                     sliced_row_count,
                 ),
-            };
-            res.decode()?;
-            Ok(res)
+            })
         } else {
             Ok(Self {
                 dict,

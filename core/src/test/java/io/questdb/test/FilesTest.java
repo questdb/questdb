@@ -701,7 +701,7 @@ public class FilesTest {
         AtomicInteger errors = new AtomicInteger();
 
         long srcMem = Unsafe.malloc(Long.BYTES, MemoryTag.NATIVE_DEFAULT);
-        Unsafe.getUnsafe().putLong(srcMem, valueInMem);
+        Unsafe.putLong(srcMem, valueInMem);
 
         long fd = -1;
         long mmapMem = 0;
@@ -728,7 +728,7 @@ public class FilesTest {
             });
             Thread th2 = new Thread(() -> {
                 for (long offset = Long.BYTES; offset < fileSize; offset += 2 * Long.BYTES) {
-                    Unsafe.getUnsafe().putLong(finalMmapMem + offset, valueInMem);
+                    Unsafe.putLong(finalMmapMem + offset, valueInMem);
                     long valueOnDisk = Files.readNonNegativeLong(finalFd, offset);
                     if (valueInMem != valueOnDisk) {
                         errors.incrementAndGet();
@@ -916,8 +916,8 @@ public class FilesTest {
                         mem = Files.mmap(fd, sizeInBytes, 0, Files.MAP_RW, MemoryTag.MMAP_DEFAULT);
 
                         for (long j = 0; j < sizeInLongs; j++) {
-                            Assert.assertEquals(0, Unsafe.getUnsafe().getLong(mem + j * Long.BYTES));
-                            Unsafe.getUnsafe().putLong(mem + j * Long.BYTES, i);
+                            Assert.assertEquals(0, Unsafe.getLong(mem + j * Long.BYTES));
+                            Unsafe.putLong(mem + j * Long.BYTES, i);
                         }
                     } finally {
                         if (mem != 0) {
@@ -1001,7 +1001,7 @@ public class FilesTest {
                 long mem = Unsafe.malloc(fileSize, MemoryTag.NATIVE_DEFAULT);
 
                 long testValue = 0x1234567890ABCDEFL;
-                Unsafe.getUnsafe().putLong(mem, testValue);
+                Unsafe.putLong(mem, testValue);
 
                 try {
                     Files.truncate(fd1, fileSize);
@@ -1034,7 +1034,7 @@ public class FilesTest {
                 long mem = Unsafe.malloc(size2Gb, MemoryTag.NATIVE_DEFAULT);
 
                 long testValue = 0x1234567890ABCDEFL;
-                Unsafe.getUnsafe().putLong(mem, testValue);
+                Unsafe.putLong(mem, testValue);
 
                 try {
                     Files.truncate(fd1, size2Gb);
@@ -1122,7 +1122,7 @@ public class FilesTest {
                 long mem = Unsafe.malloc(8, MemoryTag.NATIVE_DEFAULT);
 
                 long testValue = 0x1234567890ABCDEFL;
-                Unsafe.getUnsafe().putLong(mem, testValue);
+                Unsafe.putLong(mem, testValue);
                 long size2Gb = (2L << 30) + 4096;
 
                 try {
@@ -1177,7 +1177,7 @@ public class FilesTest {
                 long mem = Unsafe.malloc(8, MemoryTag.NATIVE_DEFAULT);
 
                 long testValue = 0x1234567890ABCDEFL;
-                Unsafe.getUnsafe().putLong(mem, testValue);
+                Unsafe.putLong(mem, testValue);
                 long fileSize = (2L << 30) + 2 * 4096;
 
                 try {
@@ -1223,7 +1223,7 @@ public class FilesTest {
 
                     // Check subsequent copy call with zero offset works
                     long anotherTestValue = 0x0987654321FEDCBAL;
-                    Unsafe.getUnsafe().putLong(mem, anotherTestValue);
+                    Unsafe.putLong(mem, anotherTestValue);
                     Files.write(fd1, mem, 8, 0);
 
                     copiedLen = Files.copyDataToOffset(fd1, fd2, 0, 0, 8);
@@ -1269,7 +1269,7 @@ public class FilesTest {
                 File[] fileArray = link.getParentFile().listFiles();
                 Assert.assertNotNull(fileArray);
                 List<File> files = Arrays.asList(fileArray);
-                Assert.assertEquals(fileName + ".1", files.get(0).getName());
+                Assert.assertEquals(fileName + ".1", files.getFirst().getName());
 
                 // however
                 Assert.assertFalse(link.exists());
@@ -1438,7 +1438,7 @@ public class FilesTest {
                 long mem = Unsafe.malloc(8, MemoryTag.NATIVE_DEFAULT);
 
                 long testValue = 0x1234567890ABCDEFL;
-                Unsafe.getUnsafe().putLong(mem, testValue);
+                Unsafe.putLong(mem, testValue);
                 long fileSize = (2L << 30) + 4096;
 
                 try {
@@ -1472,7 +1472,7 @@ public class FilesTest {
                 long mmap = 0;
 
                 long testValue = 0x1234567890ABCDEFL;
-                Unsafe.getUnsafe().putLong(mem, testValue);
+                Unsafe.putLong(mem, testValue);
                 long size2Gb = (2L << 30) + 4096;
 
                 try {
@@ -1561,9 +1561,9 @@ public class FilesTest {
         final byte[] bytes = fileContent.getBytes(Files.UTF_8);
         long p = buffPtr;
         for (int i = 0, n = bytes.length; i < n; i++) {
-            Unsafe.getUnsafe().putByte(p++, bytes[i]);
+            Unsafe.putByte(p++, bytes[i]);
         }
-        Unsafe.getUnsafe().putByte(p, (byte) 0);
+        Unsafe.putByte(p, (byte) 0);
         long fd = -1;
         try {
             fd = Files.openAppend(path.concat(fileName).$());
@@ -1594,7 +1594,7 @@ public class FilesTest {
                 assert fd != -1;
                 if (ff.allocate(fd, fileSize)) {
                     mem = ff.mmap(fd, fileSize, 0, Files.MAP_RW, 0);
-                    Unsafe.getUnsafe().putLong(mem, 123455);
+                    Unsafe.putLong(mem, 123455);
                 }
             } finally {
                 if (mem != -1) {
@@ -1718,7 +1718,7 @@ public class FilesTest {
                 File[] fileArray = link.getParentFile().listFiles();
                 Assert.assertNotNull(fileArray);
                 List<File> files = Arrays.asList(fileArray);
-                Assert.assertEquals(fileName, files.get(0).getName());
+                Assert.assertEquals(fileName, files.getFirst().getName());
 
                 // however, OS checks do check the existence of the file pointed to
                 Assert.assertFalse(link.exists());

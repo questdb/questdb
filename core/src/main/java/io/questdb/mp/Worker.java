@@ -129,14 +129,14 @@ public class Worker extends Thread {
 
                 // setup eager jobs
                 for (int i = 0, n = jobs.size(); i < n; i++) {
-                    Unsafe.getUnsafe().loadFence();
+                    Unsafe.loadFence();
                     try {
                         Job job = jobs.get(i);
                         if (job instanceof EagerThreadSetup) {
                             ((EagerThreadSetup) job).setup();
                         }
                     } finally {
-                        Unsafe.getUnsafe().storeFence();
+                        Unsafe.storeFence();
                     }
                 }
 
@@ -147,7 +147,7 @@ public class Worker extends Thread {
                     // measure latency of all jobs tick
                     jobStartMicros.lazySet(CLOCK_MICROS.getTicks());
                     for (int i = 0, n = jobs.size(); i < n; i++) {
-                        Unsafe.getUnsafe().loadFence();
+                        Unsafe.loadFence();
                         try {
                             runAsap |= jobs.get(i).run(workerId, runStatus);
                         } catch (Throwable e) {
@@ -167,7 +167,7 @@ public class Worker extends Thread {
                                 throw e;
                             }
                         } finally {
-                            Unsafe.getUnsafe().storeFence();
+                            Unsafe.storeFence();
                         }
                     }
 

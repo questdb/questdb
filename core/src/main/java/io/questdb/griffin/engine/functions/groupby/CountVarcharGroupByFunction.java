@@ -25,10 +25,14 @@
 package io.questdb.griffin.engine.functions.groupby;
 
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.TableUtils;
+import io.questdb.cairo.map.Map;
 import io.questdb.cairo.map.MapValue;
 import io.questdb.cairo.sql.Function;
+import io.questdb.cairo.sql.PageFrameMemoryRecord;
 import io.questdb.cairo.sql.Record;
-import io.questdb.std.str.Utf8Sequence;
+import io.questdb.griffin.engine.groupby.FlyweightPackedMapValue;
+import io.questdb.std.Unsafe;
 import org.jetbrains.annotations.NotNull;
 
 public class CountVarcharGroupByFunction extends AbstractCountGroupByFunction {
@@ -39,8 +43,7 @@ public class CountVarcharGroupByFunction extends AbstractCountGroupByFunction {
 
     @Override
     public void computeFirst(MapValue mapValue, Record record, long rowId) {
-        Utf8Sequence value = arg.getVarcharA(record);
-        if (value != null) {
+        if (arg.getVarcharSize(record) != TableUtils.NULL_LEN) {
             mapValue.putLong(valueIndex, 1);
         } else {
             mapValue.putLong(valueIndex, 0);
@@ -48,9 +51,32 @@ public class CountVarcharGroupByFunction extends AbstractCountGroupByFunction {
     }
 
     @Override
+    public void computeKeyedBatch(
+            PageFrameMemoryRecord record,
+            FlyweightPackedMapValue mapValue,
+            long baseValueAddr,
+            long batchAddr,
+            long rowCount,
+            long baseRowId
+    ) {
+        // setEmpty stores 0, so the etalon seed matches the identity element for count
+        // and new entries need no branching. Each non-null row adds 1.
+        // Varchar storage uses an aux+data layout that does not admit a direct-column
+        // fast path, so we go through the record every iteration.
+        final long valueColumnOffset = mapValue.getOffset(valueIndex);
+        for (long i = 0; i < rowCount; i++) {
+            final long encoded = Unsafe.getLong(batchAddr + (i << 3));
+            record.setRowIndex(Map.decodeBatchRowIndex(encoded));
+            if (arg.getVarcharSize(record) != TableUtils.NULL_LEN) {
+                final long addr = baseValueAddr + Map.decodeBatchOffset(encoded) + valueColumnOffset;
+                Unsafe.putLong(addr, Unsafe.getLong(addr) + 1);
+            }
+        }
+    }
+
+    @Override
     public void computeNext(MapValue mapValue, Record record, long rowId) {
-        Utf8Sequence value = arg.getVarcharA(record);
-        if (value != null) {
+        if (arg.getVarcharSize(record) != TableUtils.NULL_LEN) {
             mapValue.addLong(valueIndex, 1);
         }
     }

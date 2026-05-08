@@ -151,44 +151,48 @@ public class HttpMultipartContentParserTest {
     public void testSimple() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             try (HttpMultipartContentParser multipartContentParser = new HttpMultipartContentParser(new HttpHeaderParser(1024, pool))) {
-                final String content = "------WebKitFormBoundaryxFKYDBybTLu2rb8P\r\n" +
-                        "Content-Disposition: form-data; name=\"textline\"\r\n" +
-                        "\r\n" +
-                        "value1" +
-                        "\r\n" +
-                        "------WebKitFormBoundaryxF" +
-                        "\r\n" +
-                        "------WebKitFormBoundaryxFKYDBybTLu2rb8P\r\n" +
-                        "Content-Disposition: form-data; name=\"textline2\"\n" +
-                        "\r\n" +
-                        "value2\r\n" +
-                        "------WebKitFormBoundaryxFKYDBybTLu2rb8PZ" +
-                        "\r\n" +
-                        "------WebKitFormBoundaryxFKYDBybTLu2rb8P\r\n" +
-                        "Content-Disposition: form-data; name=\"datafile\"; filename=\"pom.xml\"\r\n" +
-                        "Content-Type: text/xml\r\n" +
-                        "\r\n" +
-                        "this is a file" +
-                        "\r\n" +
-                        "------WebKitFormBoundaryxFKYDBybTLu2rb8P--\r\n";
+                final String content = """
+                        ------WebKitFormBoundaryxFKYDBybTLu2rb8P\r
+                        Content-Disposition: form-data; name="textline"\r
+                        \r
+                        value1\
+                        \r
+                        ------WebKitFormBoundaryxF\
+                        \r
+                        ------WebKitFormBoundaryxFKYDBybTLu2rb8P\r
+                        Content-Disposition: form-data; name="textline2"
+                        \r
+                        value2\r
+                        ------WebKitFormBoundaryxFKYDBybTLu2rb8PZ\
+                        \r
+                        ------WebKitFormBoundaryxFKYDBybTLu2rb8P\r
+                        Content-Disposition: form-data; name="datafile"; filename="pom.xml"\r
+                        Content-Type: text/xml\r
+                        \r
+                        this is a file\
+                        \r
+                        ------WebKitFormBoundaryxFKYDBybTLu2rb8P--\r
+                        """;
 
-                String expected = "Content-Disposition: form-data; name=\"textline\"\r\n" +
-                        "\r\n" +
-                        "value1" +
-                        "\r\n" +
-                        "------WebKitFormBoundaryxF" +
-                        "\r\n" +
-                        "-----------------------------\r\n" +
-                        "Content-Disposition: form-data; name=\"textline2\"\r\n" +
-                        "\r\n" +
-                        "value2\r\n" +
-                        "------WebKitFormBoundaryxFKYDBybTLu2rb8PZ\r\n" +
-                        "-----------------------------\r\n" +
-                        "Content-Disposition: form-data; name=\"datafile\"; filename=\"pom.xml\"\r\n" +
-                        "Content-Type: text/xml\r\n" +
-                        "\r\n" +
-                        "this is a file\r\n" +
-                        "-----------------------------\r\n";
+                String expected = """
+                        Content-Disposition: form-data; name="textline"\r
+                        \r
+                        value1\
+                        \r
+                        ------WebKitFormBoundaryxF\
+                        \r
+                        -----------------------------\r
+                        Content-Disposition: form-data; name="textline2"\r
+                        \r
+                        value2\r
+                        ------WebKitFormBoundaryxFKYDBybTLu2rb8PZ\r
+                        -----------------------------\r
+                        Content-Disposition: form-data; name="datafile"; filename="pom.xml"\r
+                        Content-Type: text/xml\r
+                        \r
+                        this is a file\r
+                        -----------------------------\r
+                        """;
 
                 int len = content.length();
                 long p = TestUtils.toMemory(content);
@@ -249,18 +253,20 @@ public class HttpMultipartContentParserTest {
     public void testQuotedBoundary() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             try (HttpMultipartContentParser multipartContentParser = new HttpMultipartContentParser(new HttpHeaderParser(1024, pool))) {
-                final String content = "------gc0pJq0M:08jU5\"34c0p\r\n" +
-                        "Content-Disposition: form-data; name=\"textline\"\r\n" +
-                        "\r\n" +
-                        "value1" +
-                        "\r\n" +
-                        "------gc0pJq0M:08jU534c0p";
+                final String content = """
+                        ------gc0pJq0M:08jU5"34c0p\r
+                        Content-Disposition: form-data; name="textline"\r
+                        \r
+                        value1\
+                        \r
+                        ------gc0pJq0M:08jU534c0p""";
 
-                String expected = "Content-Disposition: form-data; name=\"textline\"\r\n" +
-                        "\r\n" +
-                        "value1" +
-                        "\r\n" +
-                        "------gc0pJq0M:08jU534c0p";
+                String expected = """
+                        Content-Disposition: form-data; name="textline"\r
+                        \r
+                        value1\
+                        \r
+                        ------gc0pJq0M:08jU534c0p""";
 
                 int len = content.length();
                 long p = TestUtils.toMemory(content);
@@ -313,10 +319,12 @@ public class HttpMultipartContentParserTest {
                         "B00014,,,\r\n" +
                         "--" + boundaryToken + "--";
                 final String expected =
-                        "Content-Disposition: form-data; name=\"data\"; filename=\"02.csv\"\r\n" +
-                                "\r\n" +
-                                "B00014,,,\r\n" +
-                                "-----------------------------\r\n";
+                        """
+                                Content-Disposition: form-data; name="data"; filename="02.csv"\r
+                                \r
+                                B00014,,,\r
+                                -----------------------------\r
+                                """;
 
                 if (breakAt >= content.length()) return;
 
@@ -362,7 +370,7 @@ public class HttpMultipartContentParserTest {
         public void onChunk(long lo, long hi) {
             onChunkCount++;
             for (long p = lo; p < hi; p++) {
-                sink.put((char) Unsafe.getUnsafe().getByte(p));
+                sink.put((char) Unsafe.getByte(p));
             }
             if (firstChunkException != null && onChunkCount == 1) {
                 throw firstChunkException;

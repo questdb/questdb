@@ -33,6 +33,108 @@ pub(crate) fn extract_qdb_meta(file_metadata: &FileMetaData) -> ParquetResult<Op
     Ok(Some(qdb_meta))
 }
 
+/// Infers a QuestDB `ColumnType` from a parquet `ColumnDescriptor`'s
+/// physical type, logical type, and converted type.
+///
+/// Used when QuestDB-specific metadata (`QdbMeta`) is absent — i.e. for
+/// external parquet files not written by QuestDB.
+pub fn infer_column_type(column: &ColumnDescriptor) -> Option<ColumnType> {
+    match (
+        column.descriptor.primitive_type.physical_type,
+        column.descriptor.primitive_type.logical_type,
+        column.descriptor.primitive_type.converted_type,
+    ) {
+        (
+            PhysicalType::Int64,
+            Some(Timestamp {
+                unit: TimeUnit::Microseconds,
+                is_adjusted_to_utc: _,
+            }),
+            _,
+        ) => Some(ColumnType::new(ColumnTypeTag::Timestamp, 0)),
+        (
+            PhysicalType::Int64,
+            Some(Timestamp { unit: TimeUnit::Nanoseconds, is_adjusted_to_utc: _ }),
+            _,
+        ) => Some(ColumnType::new(
+            ColumnTypeTag::Timestamp,
+            QDB_TIMESTAMP_NS_COLUMN_TYPE_FLAG,
+        )),
+        (
+            PhysicalType::Int64,
+            Some(Timestamp {
+                unit: TimeUnit::Milliseconds,
+                is_adjusted_to_utc: _,
+            }),
+            _,
+        ) => Some(ColumnType::new(ColumnTypeTag::Date, 0)),
+        (PhysicalType::Int64, Some(PrimitiveLogicalType::Decimal(precision, scale)), _)
+        | (PhysicalType::Int64, _, Some(PrimitiveConvertedType::Decimal(precision, scale))) => {
+            ColumnType::new_decimal(precision as u8, scale as u8)
+        }
+        (PhysicalType::Int64, _, _) => Some(ColumnType::new(ColumnTypeTag::Long, 0)),
+        (PhysicalType::Int32, Some(PrimitiveLogicalType::Integer(IntegerType::Int32)), _) => {
+            Some(ColumnType::new(ColumnTypeTag::Int, 0))
+        }
+        (PhysicalType::Int32, Some(PrimitiveLogicalType::Decimal(precision, scale)), _)
+        | (PhysicalType::Int32, _, Some(PrimitiveConvertedType::Decimal(precision, scale))) => {
+            ColumnType::new_decimal(precision as u8, scale as u8)
+        }
+        (PhysicalType::Int32, Some(PrimitiveLogicalType::Integer(IntegerType::Int16)), _)
+        | (PhysicalType::Int32, _, Some(PrimitiveConvertedType::Int16)) => {
+            Some(ColumnType::new(ColumnTypeTag::Short, 0))
+        }
+        (PhysicalType::Int32, Some(PrimitiveLogicalType::Integer(IntegerType::Int8)), _)
+        | (PhysicalType::Int32, _, Some(PrimitiveConvertedType::Int8)) => {
+            Some(ColumnType::new(ColumnTypeTag::Byte, 0))
+        }
+        (PhysicalType::Int32, Some(PrimitiveLogicalType::Date), _)
+        | (PhysicalType::Int32, _, Some(PrimitiveConvertedType::Date)) => {
+            Some(ColumnType::new(ColumnTypeTag::Date, 0))
+        }
+        (PhysicalType::Int32, _, _) => Some(ColumnType::new(ColumnTypeTag::Int, 0)),
+        (PhysicalType::Boolean, _, _) => Some(ColumnType::new(ColumnTypeTag::Boolean, 0)),
+        (PhysicalType::Double, _, _) => match array_column_type(&column.base_type) {
+            Some(array_type) => Some(array_type),
+            None => Some(ColumnType::new(ColumnTypeTag::Double, 0)),
+        },
+        (PhysicalType::Float, _, _) => Some(ColumnType::new(ColumnTypeTag::Float, 0)),
+        (
+            PhysicalType::FixedLenByteArray(_),
+            Some(PrimitiveLogicalType::Decimal(precision, scale)),
+            _,
+        )
+        | (
+            PhysicalType::FixedLenByteArray(_),
+            _,
+            Some(PrimitiveConvertedType::Decimal(precision, scale)),
+        ) => ColumnType::new_decimal(precision as u8, scale as u8),
+        (PhysicalType::ByteArray, Some(PrimitiveLogicalType::Decimal(precision, scale)), _)
+        | (PhysicalType::ByteArray, _, Some(PrimitiveConvertedType::Decimal(precision, scale))) => {
+            ColumnType::new_decimal(precision as u8, scale as u8)
+        }
+        (PhysicalType::FixedLenByteArray(16), Some(Uuid), _) => {
+            Some(ColumnType::new(ColumnTypeTag::Uuid, 0))
+        }
+        (PhysicalType::FixedLenByteArray(16), _, _) => {
+            Some(ColumnType::new(ColumnTypeTag::Long128, 0))
+        }
+        (PhysicalType::FixedLenByteArray(32), _, _) => {
+            Some(ColumnType::new(ColumnTypeTag::Long256, 0))
+        }
+        (PhysicalType::ByteArray, Some(PrimitiveLogicalType::String), _)
+        | (PhysicalType::ByteArray, _, Some(PrimitiveConvertedType::Utf8)) => {
+            Some(ColumnType::new(ColumnTypeTag::Varchar, 0))
+        }
+        (PhysicalType::ByteArray, _, _) => Some(ColumnType::new(ColumnTypeTag::Binary, 0)),
+        (PhysicalType::Int96, _, None) => Some(ColumnType::new(
+            ColumnTypeTag::Timestamp,
+            QDB_TIMESTAMP_NS_COLUMN_TYPE_FLAG,
+        )),
+        (_, _, _) => None,
+    }
+}
+
 impl ParquetDecoder {
     pub fn read<R: Read + Seek>(
         allocator: QdbAllocator,
@@ -190,103 +292,7 @@ impl ParquetDecoder {
         if let Some(col_type) = Self::extract_column_type_from_qdb_meta(qdb_meta, column_index) {
             return Some(col_type);
         }
-
-        match (
-            column.descriptor.primitive_type.physical_type,
-            column.descriptor.primitive_type.logical_type,
-            column.descriptor.primitive_type.converted_type,
-        ) {
-            (
-                PhysicalType::Int64,
-                Some(Timestamp {
-                    unit: TimeUnit::Microseconds,
-                    is_adjusted_to_utc: _,
-                }),
-                _,
-            ) => Some(ColumnType::new(ColumnTypeTag::Timestamp, 0)),
-            (
-                PhysicalType::Int64,
-                Some(Timestamp { unit: TimeUnit::Nanoseconds, is_adjusted_to_utc: _ }),
-                _,
-            ) => Some(ColumnType::new(
-                ColumnTypeTag::Timestamp,
-                QDB_TIMESTAMP_NS_COLUMN_TYPE_FLAG,
-            )),
-            (
-                PhysicalType::Int64,
-                Some(Timestamp {
-                    unit: TimeUnit::Milliseconds,
-                    is_adjusted_to_utc: _,
-                }),
-                _,
-            ) => Some(ColumnType::new(ColumnTypeTag::Date, 0)),
-            (PhysicalType::Int64, Some(PrimitiveLogicalType::Decimal(precision, scale)), _)
-            | (PhysicalType::Int64, _, Some(PrimitiveConvertedType::Decimal(precision, scale))) => {
-                ColumnType::new_decimal(precision as u8, scale as u8)
-            }
-            (PhysicalType::Int64, _, _) => Some(ColumnType::new(ColumnTypeTag::Long, 0)),
-            (PhysicalType::Int32, Some(PrimitiveLogicalType::Integer(IntegerType::Int32)), _) => {
-                Some(ColumnType::new(ColumnTypeTag::Int, 0))
-            }
-            (PhysicalType::Int32, Some(PrimitiveLogicalType::Decimal(precision, scale)), _)
-            | (PhysicalType::Int32, _, Some(PrimitiveConvertedType::Decimal(precision, scale))) => {
-                ColumnType::new_decimal(precision as u8, scale as u8)
-            }
-            (PhysicalType::Int32, Some(PrimitiveLogicalType::Integer(IntegerType::Int16)), _)
-            | (PhysicalType::Int32, _, Some(PrimitiveConvertedType::Int16)) => {
-                Some(ColumnType::new(ColumnTypeTag::Short, 0))
-            }
-            (PhysicalType::Int32, Some(PrimitiveLogicalType::Integer(IntegerType::Int8)), _)
-            | (PhysicalType::Int32, _, Some(PrimitiveConvertedType::Int8)) => {
-                Some(ColumnType::new(ColumnTypeTag::Byte, 0))
-            }
-            (PhysicalType::Int32, Some(PrimitiveLogicalType::Date), _)
-            | (PhysicalType::Int32, _, Some(PrimitiveConvertedType::Date)) => {
-                Some(ColumnType::new(ColumnTypeTag::Date, 0))
-            }
-            (PhysicalType::Int32, _, _) => Some(ColumnType::new(ColumnTypeTag::Int, 0)),
-            (PhysicalType::Boolean, _, _) => Some(ColumnType::new(ColumnTypeTag::Boolean, 0)),
-            (PhysicalType::Double, _, _) => match array_column_type(&column.base_type) {
-                Some(array_type) => Some(array_type),
-                None => Some(ColumnType::new(ColumnTypeTag::Double, 0)),
-            },
-            (PhysicalType::Float, _, _) => Some(ColumnType::new(ColumnTypeTag::Float, 0)),
-            (
-                PhysicalType::FixedLenByteArray(_),
-                Some(PrimitiveLogicalType::Decimal(precision, scale)),
-                _,
-            )
-            | (
-                PhysicalType::FixedLenByteArray(_),
-                _,
-                Some(PrimitiveConvertedType::Decimal(precision, scale)),
-            ) => ColumnType::new_decimal(precision as u8, scale as u8),
-            (PhysicalType::ByteArray, Some(PrimitiveLogicalType::Decimal(precision, scale)), _)
-            | (
-                PhysicalType::ByteArray,
-                _,
-                Some(PrimitiveConvertedType::Decimal(precision, scale)),
-            ) => ColumnType::new_decimal(precision as u8, scale as u8),
-            (PhysicalType::FixedLenByteArray(16), Some(Uuid), _) => {
-                Some(ColumnType::new(ColumnTypeTag::Uuid, 0))
-            }
-            (PhysicalType::FixedLenByteArray(16), _, _) => {
-                Some(ColumnType::new(ColumnTypeTag::Long128, 0))
-            }
-            (PhysicalType::FixedLenByteArray(32), _, _) => {
-                Some(ColumnType::new(ColumnTypeTag::Long256, 0))
-            }
-            (PhysicalType::ByteArray, Some(PrimitiveLogicalType::String), _)
-            | (PhysicalType::ByteArray, _, Some(PrimitiveConvertedType::Utf8)) => {
-                Some(ColumnType::new(ColumnTypeTag::Varchar, 0))
-            }
-            (PhysicalType::ByteArray, _, _) => Some(ColumnType::new(ColumnTypeTag::Binary, 0)),
-            (PhysicalType::Int96, _, None) => Some(ColumnType::new(
-                ColumnTypeTag::Timestamp,
-                QDB_TIMESTAMP_NS_COLUMN_TYPE_FLAG,
-            )),
-            (_, _, _) => None,
-        }
+        infer_column_type(column)
     }
 }
 
@@ -352,6 +358,7 @@ mod tests {
     use std::ptr::null;
 
     use crate::allocator::TestAllocatorState;
+    use crate::parquet::tests::ColumnTypeTagExt;
     use crate::parquet_read::meta::ParquetDecoder;
     use crate::parquet_write::file::ParquetWriter;
     use crate::parquet_write::schema::{Column, Partition};
@@ -484,6 +491,173 @@ mod tests {
                 ColumnType::new_decimal(20, 4).expect("valid QuestDB decimal type")
             );
         }
+    }
+
+    /// Parquet thrift Encoding enum bytes that the writer emits and the
+    /// `row_group_column_has_encoding` reader compares against.
+    /// PLAIN=0, RLE=3, RLE_DICTIONARY=8, PLAIN_DICTIONARY=2.
+    const PARQUET_ENCODING_PLAIN: i32 = 0;
+    const PARQUET_ENCODING_RLE_DICTIONARY: i32 = 8;
+
+    /// Build a 100-row Int column. `parquet_encoding` follows the
+    /// `parquet_encoding_override_round_trip_representative_types` convention:
+    /// the low byte is a QuestDB encoding id (1 = Plain, 2 = RleDictionary)
+    /// and bit 24 marks the override as user-supplied.
+    fn build_int_column_with_encoding(encoding_id: i32) -> (Vec<i32>, Column) {
+        let data: Vec<i32> = (0..100i32).collect();
+        let parquet_encoding = if encoding_id == 0 {
+            0
+        } else {
+            encoding_id | (1 << 24)
+        };
+        let col = Column::from_raw_data(
+            0,
+            "val",
+            ColumnTypeTag::Int.into_type().code(),
+            0,
+            data.len(),
+            data.as_ptr() as *const u8,
+            data.len() * size_of::<i32>(),
+            null(),
+            0,
+            null(),
+            0,
+            false,
+            false,
+            parquet_encoding,
+        )
+        .unwrap();
+        (data, col)
+    }
+
+    /// Write a single-column single-row-group parquet file to a temp file and
+    /// open it through `ParquetDecoder::read`. Returns the decoder, the temp
+    /// file (kept alive so the path stays valid), and the original buffer of
+    /// column data so the caller can keep that alive too.
+    fn round_trip_int_column(
+        encoding_id: i32,
+    ) -> (
+        ParquetDecoder,
+        NamedTempFile,
+        Vec<i32>,
+        crate::allocator::TestAllocatorState,
+    ) {
+        let tas = TestAllocatorState::new();
+        let allocator = tas.allocator();
+
+        let (data, col) = build_int_column_with_encoding(encoding_id);
+        let partition = Partition { table: "t".to_string(), columns: vec![col] };
+
+        let mut buf: Cursor<Vec<u8>> = Cursor::new(Vec::new());
+        ParquetWriter::new(&mut buf)
+            .with_statistics(true)
+            .with_row_group_size(Some(1_048_576))
+            .with_data_page_size(Some(1_048_576))
+            .finish(partition)
+            .expect("parquet writer");
+
+        buf.set_position(0);
+        let bytes: Bytes = buf.into_inner().into();
+        let mut temp_file = NamedTempFile::new().expect("temp file");
+        temp_file
+            .write_all(bytes.to_byte_slice())
+            .expect("write parquet bytes");
+
+        let path = temp_file.path().to_str().unwrap();
+        let mut file = File::open(Path::new(path)).unwrap();
+        let file_len = file.len();
+        let decoder = ParquetDecoder::read(allocator, &mut file, file_len).unwrap();
+        (decoder, temp_file, data, tas)
+    }
+
+    #[test]
+    fn row_group_column_has_encoding_finds_plain() {
+        let (decoder, _temp_file, _data, _tas) = round_trip_int_column(0);
+
+        // Sanity-check the file shape.
+        assert_eq!(decoder.row_group_count, 1);
+        assert_eq!(decoder.col_count, 1);
+
+        let has_plain = decoder
+            .row_group_column_has_encoding(0, 0, PARQUET_ENCODING_PLAIN)
+            .expect("plain lookup");
+        assert!(has_plain, "default-encoded column should report PLAIN");
+
+        let has_dict = decoder
+            .row_group_column_has_encoding(0, 0, PARQUET_ENCODING_RLE_DICTIONARY)
+            .expect("dict lookup");
+        assert!(
+            !has_dict,
+            "default-encoded column should not report RLE_DICTIONARY"
+        );
+    }
+
+    #[test]
+    fn row_group_column_has_encoding_finds_rle_dictionary() {
+        // QuestDB encoding id 2 = RleDictionary; the writer should emit
+        // RLE_DICTIONARY=8 in the column chunk's encoding list.
+        let (decoder, _temp_file, _data, _tas) = round_trip_int_column(2);
+
+        let has_dict = decoder
+            .row_group_column_has_encoding(0, 0, PARQUET_ENCODING_RLE_DICTIONARY)
+            .expect("dict lookup");
+        assert!(
+            has_dict,
+            "RleDictionary-overridden column should report RLE_DICTIONARY"
+        );
+    }
+
+    #[test]
+    fn row_group_column_has_encoding_row_group_index_out_of_range() {
+        let (decoder, _temp_file, _data, _tas) = round_trip_int_column(0);
+
+        let err = decoder
+            .row_group_column_has_encoding(5, 0, PARQUET_ENCODING_PLAIN)
+            .expect_err("expected out-of-range row group error");
+        assert!(
+            matches!(
+                err.reason(),
+                crate::parquet::error::ParquetErrorReason::InvalidLayout
+            ),
+            "expected InvalidLayout, got {:?}",
+            err.reason()
+        );
+        let msg = err.to_string();
+        assert!(
+            msg.contains("row group index"),
+            "error should mention 'row group index', got: {msg}"
+        );
+        assert!(
+            msg.contains("out of range"),
+            "error should mention 'out of range', got: {msg}"
+        );
+    }
+
+    #[test]
+    fn row_group_column_has_encoding_column_index_out_of_range() {
+        let (decoder, _temp_file, _data, _tas) = round_trip_int_column(0);
+
+        let bad_col = decoder.col_count + 1;
+        let err = decoder
+            .row_group_column_has_encoding(0, bad_col, PARQUET_ENCODING_PLAIN)
+            .expect_err("expected out-of-range column error");
+        assert!(
+            matches!(
+                err.reason(),
+                crate::parquet::error::ParquetErrorReason::InvalidLayout
+            ),
+            "expected InvalidLayout, got {:?}",
+            err.reason()
+        );
+        let msg = err.to_string();
+        assert!(
+            msg.contains("column index"),
+            "error should mention 'column index', got: {msg}"
+        );
+        assert!(
+            msg.contains("out of range"),
+            "error should mention 'out of range', got: {msg}"
+        );
     }
 
     fn create_fix_column(

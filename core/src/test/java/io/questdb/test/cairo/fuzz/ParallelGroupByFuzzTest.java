@@ -70,6 +70,7 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
     private final boolean convertToParquet;
     private final boolean enableJitCompiler;
     private final boolean enableParallelGroupBy;
+    private final int parallelGroupByBatchSize;
     private final Rnd rnd;
 
     public ParallelGroupByFuzzTest() {
@@ -77,6 +78,24 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
         this.enableParallelGroupBy = rnd.nextBoolean();
         this.enableJitCompiler = rnd.nextBoolean();
         this.convertToParquet = rnd.nextBoolean();
+        // Pick a batch size from buckets that span the boundaries of the batched non-sharded
+        // reducer relative to the page frame size (~MIN_PAGE_FRAME_MAX_ROWS rows):
+        // 1 row (degenerate), well below a frame, around a frame boundary, and larger than
+        // a frame so the whole frame fits in a single sub-batch.
+        switch (rnd.nextInt(4)) {
+            case 0:
+                this.parallelGroupByBatchSize = 1;
+                break;
+            case 1:
+                this.parallelGroupByBatchSize = 1 + rnd.nextInt(MIN_PAGE_FRAME_MAX_ROWS / 4);
+                break;
+            case 2:
+                this.parallelGroupByBatchSize = MIN_PAGE_FRAME_MAX_ROWS / 2 + rnd.nextInt(MIN_PAGE_FRAME_MAX_ROWS);
+                break;
+            default:
+                this.parallelGroupByBatchSize = 4 * MIN_PAGE_FRAME_MAX_ROWS + rnd.nextInt(4 * MIN_PAGE_FRAME_MAX_ROWS);
+                break;
+        }
     }
 
     @Override
@@ -95,6 +114,7 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
         setProperty(PropertyKey.CAIRO_SQL_PARALLEL_GROUPBY_TOP_K_THRESHOLD, rnd.nextBoolean() ? 4 : Integer.MAX_VALUE);
         setProperty(PropertyKey.CAIRO_SQL_PARALLEL_WORK_STEALING_THRESHOLD, 1 + rnd.nextInt(16));
         setProperty(PropertyKey.CAIRO_SQL_PARALLEL_GROUPBY_ENABLED, String.valueOf(enableParallelGroupBy));
+        setProperty(PropertyKey.CAIRO_SQL_PARALLEL_GROUPBY_BATCH_SIZE, parallelGroupByBatchSize);
         super.setUp();
     }
 
@@ -253,6 +273,30 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
                     LOG
             );
         });
+    }
+
+    @Test
+    public void testParallelBitwiseAggregates() throws Exception {
+        // Exercises the new computeKeyedBatch overrides for bit_and / bit_or / bit_xor
+        // across byte / short / int / long. The 'k0'..'k4' SYMBOL key routes through
+        // Unordered4Map, hitting the probeBatchUnsafe direct-column fast path.
+        testParallelGroupByAllTypes(
+                "SELECT asymbol, " +
+                        "bit_and(abyte) baba, bit_or(abyte) babo, bit_xor(abyte) babx, " +
+                        "bit_and(ashort) basa, bit_or(ashort) baso, bit_xor(ashort) basx, " +
+                        "bit_and(anint) baia, bit_or(anint) baio, bit_xor(anint) baix, " +
+                        "bit_and(along) bala, bit_or(along) balo, bit_xor(along) balx " +
+                        "FROM tab " +
+                        "ORDER BY asymbol",
+                """
+                        asymbol\tbaba\tbabo\tbabx\tbasa\tbaso\tbasx\tbaia\tbaio\tbaix\tbala\tbalo\tbalx
+                        \t0\t63\t43\t0\t2047\t1317\t0\t-1\t779688368\t0\t-1\t-3908818082212709664
+                        CPSW\t0\t63\t48\t0\t2047\t1465\t0\t-1\t-765938645\t0\t-1\t-7622703881723338141
+                        HYRX\t0\t63\t12\t0\t1023\t60\t0\t-1\t1609404520\t0\t-1\t-4439569899991393375
+                        PEHN\t0\t63\t37\t0\t1023\t364\t0\t-1\t-1040733386\t0\t-1\t7773742656006461436
+                        VTJW\t0\t63\t35\t0\t1023\t640\t0\t-1\t-1283576033\t0\t-1\t-6229748796184769953
+                        """
+        );
     }
 
     @Test
@@ -1672,6 +1716,31 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
                 "SELECT varchar_key::long k, sum(value) FROM tab ORDER BY k DESC LIMIT 3",
                 expected,
                 "Long Top K lo: 3"
+        );
+    }
+
+    @Test
+    public void testParallelMixedAggregates() throws Exception {
+        // Mixes overridden computeKeyedBatch implementations (sum, bit_and) with
+        // unoverridden ones (vwap, count_distinct) so the per-function dispatch
+        // loop in aggregateNonShardedBatched interleaves both kinds.
+        testParallelGroupByAllTypes(
+                "SELECT asymbol, " +
+                        "  count(*) c, " +
+                        "  sum(along) s, " +
+                        "  bit_and(anint) ba, " +
+                        "  count_distinct(asymbol) cd, " +
+                        "  round(vwap(adouble, along), 8) v " +
+                        "FROM tab " +
+                        "ORDER BY asymbol",
+                """
+                        asymbol\tc\ts\tba\tcd\tv
+                        \t1313\t8533052294725352078\t0\t0\t0.48971622000000004
+                        CPSW\t656\t-3339393259942281199\t0\t1\t0.48453257
+                        HYRX\t672\t-1695211113209059335\t0\t1\t0.50913075
+                        PEHN\t700\t-4539869934149012034\t0\t1\t0.50871338
+                        VTJW\t659\t-7044062940833324693\t0\t1\t0.52406265
+                        """
         );
     }
 
@@ -3896,6 +3965,31 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testParallelTimestampKeyGroupBy() throws Exception {
+        // Single-column TIMESTAMP key — Unordered8Map probeBatchUnsafe direct-column path.
+        testParallelTimestampAndDateKeyGroupBy(
+                "SELECT ts_key, count() c, sum(value) s FROM tab ORDER BY ts_key",
+                """
+                        ts_key\tc\ts
+                        1970-01-01T00:00:00.000000Z\t800\t1602000
+                        1970-01-01T00:00:01.000000Z\t800\t1598800
+                        1970-01-01T00:00:02.000000Z\t800\t1599600
+                        1970-01-01T00:00:03.000000Z\t800\t1600400
+                        1970-01-01T00:00:04.000000Z\t800\t1601200
+                        """,
+                "SELECT date_key, count() c, sum(value) s FROM tab ORDER BY date_key",
+                """
+                        date_key\tc\ts
+                        1970-01-01T00:00:00.000Z\t800\t1602000
+                        1970-01-01T00:00:01.000Z\t800\t1598800
+                        1970-01-01T00:00:02.000Z\t800\t1599600
+                        1970-01-01T00:00:03.000Z\t800\t1600400
+                        1970-01-01T00:00:04.000Z\t800\t1601200
+                        """
+        );
+    }
+
+    @Test
     public void testParallelToStrFunctionKeyGroupBy() throws Exception {
         testParallelSymbolKeyGroupBy(
                 "SELECT to_str(ts, 'yyyy-MM-dd') ts, max(price) FROM tab ORDER BY ts LIMIT 5",
@@ -4639,6 +4733,43 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
                             execute(compiler, "alter table tab convert partition to parquet where ts >= 0", sqlExecutionContext);
                         }
                         assertQueriesAndPlans(engine, sqlExecutionContext, queriesExpectedResultsAndPlans);
+                    },
+                    configuration,
+                    LOG
+            );
+        });
+    }
+
+    private void testParallelTimestampAndDateKeyGroupBy(String... queriesAndExpectedResults) throws Exception {
+        assertMemoryLeak(() -> {
+            final WorkerPool pool = new WorkerPool(() -> 4);
+            TestUtils.execute(
+                    pool,
+                    (engine, compiler, sqlExecutionContext) -> {
+                        sqlExecutionContext.setJitMode(enableJitCompiler ? SqlJitMode.JIT_MODE_ENABLED : SqlJitMode.JIT_MODE_DISABLED);
+
+                        engine.execute(
+                                "CREATE TABLE tab (" +
+                                        "  ts TIMESTAMP," +
+                                        "  ts_key TIMESTAMP," +
+                                        "  date_key DATE," +
+                                        "  value LONG" +
+                                        ") TIMESTAMP (ts) PARTITION BY DAY",
+                                sqlExecutionContext
+                        );
+                        engine.execute(
+                                "insert into tab select " +
+                                        "(x * 864000000)::timestamp, " +
+                                        "((x % 5) * 1000000)::timestamp, " +
+                                        "((x % 5) * 1000)::date, " +
+                                        "x " +
+                                        "from long_sequence(" + ROW_COUNT + ")",
+                                sqlExecutionContext
+                        );
+                        if (convertToParquet) {
+                            execute(compiler, "alter table tab convert partition to parquet where ts >= 0", sqlExecutionContext);
+                        }
+                        assertQueries(engine, sqlExecutionContext, queriesAndExpectedResults);
                     },
                     configuration,
                     LOG
