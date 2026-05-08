@@ -2745,6 +2745,22 @@ public class PostingIndexWriter implements IndexWriter {
             //     covering rebuildSidecars branch): txnAtSeal = current
             //     committed _txn, so recovery does NOT drop the
             //     legitimately published entry on the next reopen.
+            //   - WAL fast-lag commit
+            //     (publishPostingIndexesForLastPartitionFastLag): commit
+            //     is in-progress, but txnAtSeal = txWriter.getTxn() (the
+            //     pre-commit committed txn), NOT getTxn()+1. The chain
+            //     walk therefore does NOT drop a partial entry on the
+            //     next reopen. That is fine because the partition stays
+            //     attached: openPartition runs
+            //     rollbackConditionally(committed transientRowCount) on
+            //     each posting writer, which evicts the orphan rowids
+            //     directly. Contrast with switchPartition, where the
+            //     retired partition is not reopened and the chain walk
+            //     is the only recovery -- hence its getTxn()+1 tag.
+            //     Note also that commit() takes the extendHead branch
+            //     while a chain head exists, so this value only ends up
+            //     on disk on the first commit after a fresh / truncated
+            //     chain.
             // -1 (unset) means the caller didn't wire the setter; fall
             // back to txnAtSeal=0 so the entry is visible to every pinned
             // reader. The recovery walk cannot drop a 0-tagged entry
