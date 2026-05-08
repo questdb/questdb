@@ -5437,41 +5437,50 @@ public class ExplainPlanTest extends AbstractCairoTest {
             execute("create table taba (a1 int, a2 long)");
             execute("create table tabb (b1 int, b2 long)");
 
-            assertPlanNoLeakCheck("select * from taba left join tabb on a1=b1 and a2=b2 and a2+5 = b2+10 and 1=0", """
-                    SelectedRecord
-                        Hash Left Outer Join
-                          condition: b2=a2 and b1=a1
-                          filter: false
-                            PageFrame
-                                Row forward scan
-                                Frame forward scan on: taba
-                            Hash
-                                Empty table
-                    """);
-            assertPlanNoLeakCheck("select * from taba right join tabb on a1=b1 and a2=b2 and a2+5 = b2+10 and 1=0", """
-                    SelectedRecord
-                        Hash Right Outer Join Light
-                          condition: b2=a2 and b1=a1
-                          filter: false
-                            Empty table
-                            Hash
-                                PageFrame
-                                    Row forward scan
-                                    Frame forward scan on: tabb
-                    """);
-            assertPlanNoLeakCheck("select * from taba full join tabb on a1=b1 and a2=b2 and a2+5 = b2+10 and 1=0", """
-                    SelectedRecord
-                        Hash Full Outer Join Light
-                          condition: b2=a2 and b1=a1
-                          filter: false
-                            PageFrame
-                                Row forward scan
-                                Frame forward scan on: taba
-                            Hash
-                                PageFrame
-                                    Row forward scan
-                                    Frame forward scan on: tabb
-                    """);
+            assertPlanNoLeakCheck(
+                    "select * from taba left join tabb on a1=b1 and a2=b2 and a2+5 = b2+10 and 1=0",
+                    """
+                            SelectedRecord
+                                Hash Left Outer Join Light
+                                  condition: b2=a2 and b1=a1
+                                  filter: false
+                                    PageFrame
+                                        Row forward scan
+                                        Frame forward scan on: taba
+                                    Hash
+                                        Empty table
+                            """
+            );
+            assertPlanNoLeakCheck(
+                    "select * from taba right join tabb on a1=b1 and a2=b2 and a2+5 = b2+10 and 1=0",
+                    """
+                            SelectedRecord
+                                Hash Right Outer Join Light
+                                  condition: b2=a2 and b1=a1
+                                  filter: false
+                                    Empty table
+                                    Hash
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: tabb
+                            """
+            );
+            assertPlanNoLeakCheck(
+                    "select * from taba full join tabb on a1=b1 and a2=b2 and a2+5 = b2+10 and 1=0",
+                    """
+                            SelectedRecord
+                                Hash Full Outer Join Light
+                                  condition: b2=a2 and b1=a1
+                                  filter: false
+                                    PageFrame
+                                        Row forward scan
+                                        Frame forward scan on: taba
+                                    Hash
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: tabb
+                            """
+            );
         });
     }
 
@@ -8010,70 +8019,88 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
     @Test
     public void testSelectIndexedSymbols04() throws Exception {
-        assertPlan("create table a ( s symbol index, ts timestamp) timestamp(ts) ;", "select * from a where s = 'S1' and s = 'S2' order by ts desc limit 1", """
-                Limit value: 1 skip-rows: 0 take-rows: 0
-                    Encode sort
-                      keys: [ts desc]
-                        Empty table
-                """);
+        assertPlan(
+                "create table a ( s symbol index, ts timestamp) timestamp(ts) ;",
+                "select * from a where s = 'S1' and s = 'S2' order by ts desc limit 1",
+                """
+                        Sort light lo: 1
+                          keys: [ts desc]
+                            Empty table
+                        """
+        );
     }
 
     @Test
     public void testSelectIndexedSymbols05() throws Exception {
-        assertPlan("create table a ( s symbol index, ts timestamp) timestamp(ts) ;", "select * from a where s in (select 'S1' union all select 'S2') order by ts desc limit 1", """
-                Sort light lo: 1
-                  keys: [ts desc]
-                    FilterOnSubQuery
-                        Union All
-                            VirtualRecord
-                              functions: ['S1']
-                                long_sequence count: 1
-                            VirtualRecord
-                              functions: ['S2']
-                                long_sequence count: 1
-                        Frame backward scan on: a
-                """);
+        assertPlan(
+                "create table a ( s symbol index, ts timestamp) timestamp(ts) ;",
+                "select * from a where s in (select 'S1' union all select 'S2') order by ts desc limit 1",
+                """
+                        Sort light lo: 1
+                          keys: [ts desc]
+                            FilterOnSubQuery
+                                Union All
+                                    VirtualRecord
+                                      functions: ['S1']
+                                        long_sequence count: 1
+                                    VirtualRecord
+                                      functions: ['S2']
+                                        long_sequence count: 1
+                                Frame backward scan on: a
+                        """
+        );
     }
 
     @Test
     public void testSelectIndexedSymbols05a() throws Exception {
-        assertPlan("create table a ( s symbol index, ts timestamp) timestamp(ts) ;", "select * from a where s in (select 'S1' union all select 'S2') and length(s) = 2 order by ts desc limit 1", """
-                Sort light lo: 1
-                  keys: [ts desc]
-                    FilterOnSubQuery
-                      filter: length(s)=2
-                        Union All
-                            VirtualRecord
-                              functions: ['S1']
-                                long_sequence count: 1
-                            VirtualRecord
-                              functions: ['S2']
-                                long_sequence count: 1
-                        Frame backward scan on: a
-                """);
+        assertPlan(
+                "create table a ( s symbol index, ts timestamp) timestamp(ts) ;",
+                "select * from a where s in (select 'S1' union all select 'S2') and length(s) = 2 order by ts desc limit 1",
+                """
+                        Sort light lo: 1
+                          keys: [ts desc]
+                            FilterOnSubQuery
+                              filter: length(s)=2
+                                Union All
+                                    VirtualRecord
+                                      functions: ['S1']
+                                        long_sequence count: 1
+                                    VirtualRecord
+                                      functions: ['S2']
+                                        long_sequence count: 1
+                                Frame backward scan on: a
+                        """
+        );
     }
 
     @Test
     public void testSelectIndexedSymbols06() throws Exception {
-        assertPlan("create table a ( s symbol index) ;", "select * from a where s = 'S1' order by s asc limit 10", """
-                Limit value: 10 skip-rows-max: 0 take-rows-max: 10
-                    DeferredSingleSymbolFilterPageFrame
-                        Index forward scan on: s deferred: true
-                          filter: s='S1'
-                        Frame forward scan on: a
-                """);
+        assertPlan(
+                "create table a ( s symbol index) ;",
+                "select * from a where s = 'S1' order by s asc limit 10",
+                """
+                        Limit value: 10 skip-rows-max: 0 take-rows-max: 10
+                            DeferredSingleSymbolFilterPageFrame
+                                Index forward scan on: s deferred: true
+                                  filter: s='S1'
+                                Frame forward scan on: a
+                        """
+        );
     }
 
     @Test
     public void testSelectIndexedSymbols06a() throws Exception {
-        assertPlan("create table a ( s symbol index, ts timestamp) timestamp(ts) partition by day", "select * from a where s = 'S1' order by s asc limit 10", """
-                Sort light lo: 10
-                  keys: [s]
-                    DeferredSingleSymbolFilterPageFrame
-                        Index forward scan on: s deferred: true
-                          filter: s='S1'
-                        Frame forward scan on: a
-                """);
+        assertPlan(
+                "create table a ( s symbol index, ts timestamp) timestamp(ts) partition by day",
+                "select * from a where s = 'S1' order by s asc limit 10", """
+                        Sort light lo: 10
+                          keys: [s]
+                            DeferredSingleSymbolFilterPageFrame
+                                Index forward scan on: s deferred: true
+                                  filter: s='S1'
+                                Frame forward scan on: a
+                        """
+        );
     }
 
     @Test
