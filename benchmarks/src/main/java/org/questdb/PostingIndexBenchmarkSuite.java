@@ -97,16 +97,37 @@ public class PostingIndexBenchmarkSuite {
         System.setProperty("questdb.log.level", "E");
         LogFactory.haltInstance();
 
-        Collection<RunResult> results = new Runner(new OptionsBuilder()
-                .include(PostingIndexBenchmarkSuite.class.getSimpleName() + "\\.")
-                .warmupIterations(2).warmupTime(org.openjdk.jmh.runner.options.TimeValue.seconds(1))
-                .measurementIterations(3).measurementTime(org.openjdk.jmh.runner.options.TimeValue.seconds(1))
-                .forks(0)
-                .resultFormat(ResultFormatType.TEXT)
-                .build()
-        ).run();
+        // Optional filter: -Dquestdb.suite.bench=<token>
+        //   "all"  (default): every benchmark
+        //   "core":            commitProfile, decode, index*, sidecarRead,
+        //                      sqlQuery, writeInsert (the printSummary set)
+        //   "wal":             walFastLag* and walLargePartition*
+        //   "io":              page-fault analysis only (skip JMH benchmarks)
+        //   anything else:     literal regex body, expanded to
+        //                      "PostingIndexBenchmarkSuite\.(<token>)$"
+        String filter = System.getProperty("questdb.suite.bench", "all");
+        String suiteName = PostingIndexBenchmarkSuite.class.getSimpleName();
+        String includePattern = switch (filter) {
+            case "all" -> suiteName + "\\.";
+            case "core" -> suiteName + "\\.(commitProfile|decode|indexPointRead|indexScanRead|"
+                    + "indexRangeRead|sidecarRead|sqlQuery|writeInsert)$";
+            case "wal" -> suiteName + "\\.(walFastLag|walLargePartition).*";
+            case "io" -> null;
+            default -> suiteName + "\\.(" + filter + ")$";
+        };
 
-        printSummary(results);
+        Collection<RunResult> results;
+        if (includePattern != null) {
+            results = new Runner(new OptionsBuilder()
+                    .include(includePattern)
+                    .warmupIterations(2).warmupTime(org.openjdk.jmh.runner.options.TimeValue.seconds(1))
+                    .measurementIterations(3).measurementTime(org.openjdk.jmh.runner.options.TimeValue.seconds(1))
+                    .forks(0)
+                    .resultFormat(ResultFormatType.TEXT)
+                    .build()
+            ).run();
+            printSummary(results);
+        }
         runPageFaultAnalysis();
     }
 
@@ -669,7 +690,7 @@ public class PostingIndexBenchmarkSuite {
         }
 
         // --- Sidecar ---
-        out.println("── Sidecar Compression (ops/s, higher=better) ────────────────────────────────────");
+        out.println("── Sidecar Read Throughput (ops/s, higher=better) ────────────────────────────────");
         out.printf("  %-8s %10s %10s %8s%n", "type", "baseline", "covering", "ratio");
         for (String t : new String[]{"DOUBLE", "FLOAT", "LONG", "INT", "DECIMAL64", "DECIMAL32", "SHORT"}) {
             Double base = scores.get("sidecarRead/" + t + "/baseline");
@@ -772,6 +793,11 @@ public class PostingIndexBenchmarkSuite {
                 "", "base", "cover", "base", "cover", "cover", "cover", "cover");
         System.err.println("  " + "─".repeat(88));
 
+        // Captured per-type so we can print a compression-ratio table
+        // after the page-fault loop. Index by CoverType.ordinal().
+        double[] rawMB = new double[CoverType.values().length];
+        double[] sidecarMB = new double[CoverType.values().length];
+
         for (CoverType ct : CoverType.values()) {
             String baseDir = tmpDir + File.separator + "pf_base_" + ct + "_" + System.nanoTime();
             String covDir = tmpDir + File.separator + "pf_cov_" + ct + "_" + System.nanoTime();
@@ -821,6 +847,9 @@ public class PostingIndexBenchmarkSuite {
                 double fraction = (double) readKeys / keys;
                 int covPages = Math.max(1, (int) Math.ceil(sidecarTotalPages * fraction));
 
+                rawMB[ct.ordinal()] = (rows * (long) ct.size) / 1024.0 / 1024.0;
+                sidecarMB[ct.ordinal()] = sidecarBytes / 1024.0 / 1024.0;
+
                 // Measure CPU time
                 for (int w = 0; w < warmup; w++) {
                     doCovBaselineRead(config, baseDir, queryKeys, colAddr, ct);
@@ -857,6 +886,24 @@ public class PostingIndexBenchmarkSuite {
                 deleteDir(baseDir);
                 deleteDir(covDir);
             }
+        }
+        System.err.println();
+
+        // Implied compression: raw column bytes vs the additional bytes
+        // covering writes for the .pcN sidecar (covSize - baseSize, after
+        // purgeStaleSidecars). Ratio > 1.0 means the sidecar encoding
+        // compresses the raw column.
+        System.err.println("══════════════════════════════════════════════════════════════════════════════════════════════════");
+        System.err.println("  Implied Sidecar Compression (file size, raw column vs encoded sidecar)");
+        System.err.println("══════════════════════════════════════════════════════════════════════════════════════════════════");
+        System.err.printf("  %-14s  %12s  %12s  %12s%n", "type", "raw column", "sidecar", "ratio");
+        System.err.println("  " + "─".repeat(56));
+        for (CoverType ct : CoverType.values()) {
+            double raw = rawMB[ct.ordinal()];
+            double side = sidecarMB[ct.ordinal()];
+            double ratio = side > 0 ? raw / side : Double.NaN;
+            System.err.printf("  %-14s  %9.2f MB  %9.2f MB  %11.2fx%n",
+                    ct.name(), raw, side, ratio);
         }
         System.err.println();
     }
@@ -1178,7 +1225,11 @@ public class PostingIndexBenchmarkSuite {
         static final int COVER_WRITER_IDX = 2;
         static final int KEYS = 500;
         static final int READ_KEYS = 200;
-        static final int VPK = 2_000;
+        // -Dquestdb.suite.bench.sidecar.vpk=<n>: rows per key. Default 2000
+        // (8 MB DOUBLE column, 2 MB SHORT — partially cache-resident).
+        // Set higher (e.g. 125_000 → 62.5M rows × 8 = 500 MB DOUBLE) to
+        // push the baseline column firmly into DRAM.
+        static final int VPK = Integer.getInteger("questdb.suite.bench.sidecar.vpk", 2_000);
         static final int ROWS = KEYS * VPK;
         long colAddr;
         int colType, colShift, colSize;
