@@ -90,6 +90,18 @@ byte (offset 4) of the message header. The server validates every incoming
 message against the negotiated version and rejects any message whose version
 byte does not match with a parse error.
 
+### Ingress is pinned to version 1
+
+Ingress senders advertise `X-QWP-Max-Version: 1` because no v2 ingest semantics
+exist. The v2 bump is purely an egress addition — an unsolicited `SERVER_INFO`
+frame on the upgrade carrying server role and zone metadata for read-side
+routing (see [`wire-egress.md`](wire-egress.md) §11.8 and
+[`failover.md`](failover.md) §5). Ingress clients do NOT read `SERVER_INFO`,
+ignore zone advertising, and rely on the `421 + X-QuestDB-Role` upgrade-reject
+convention alone for primary-vs-replica routing. The `zone=` connect-string
+knob is parsed for syntactic uniformity with egress and logs a one-time WARN
+on ingress; see `failover.md` §1.1.
+
 ## 4. Byte Ordering
 
 All multi-byte numeric values are **little-endian**. Variable-length integers
@@ -857,7 +869,7 @@ specified separately in [`sf-client.md`](sf-client.md). Cross-language client
 implementers should treat that document as normative for SF-mode behaviour;
 this section is a sketch.
 
-### Double-Buffered Async I/O
+### 15.1 Double-Buffered Async I/O
 
 The client uses double-buffered microbatches:
 
@@ -868,7 +880,7 @@ The client uses double-buffered microbatches:
 4. The client swaps to the other buffer so writing can continue without
    blocking.
 
-### Auto-Flush Triggers
+### 15.2 Auto-Flush Triggers
 
 | Trigger              | Default    |
 |----------------------|------------|
@@ -876,7 +888,7 @@ The client uses double-buffered microbatches:
 | Byte size            | disabled   |
 | Time since first row | 100 ms     |
 
-### Schema Registry
+### 15.3 Schema Registry
 
 - First batch for a given table: full schema mode (0x00) with a new schema ID.
 - Subsequent batches with an unchanged column set: schema reference mode (0x01)
@@ -888,7 +900,7 @@ The client uses double-buffered microbatches:
 - On reconnect both sides reset: the client reassigns IDs from 0 and the server
   clears its registry.
 
-### Symbol Dictionary Lifecycle
+### 15.4 Symbol Dictionary Lifecycle
 
 - The client maintains a global symbol dictionary across all tables/columns.
 - Symbol IDs are assigned sequentially starting from 0.
@@ -896,6 +908,67 @@ The client uses double-buffered microbatches:
   batch).
 - The server accumulates these deltas for the lifetime of the connection.
 - Upon connection loss, both sides reset the dictionary.
+
+### 15.5 Initial Connect and Host Selection
+
+Non-SF ingress senders perform a single one-shot walk over the configured
+`addr=` list at construction time. There is no run-time reconnect: once
+`Sender.New("ws::...")` returns, the WebSocket is bound to one endpoint
+for the lifetime of the sender, and any subsequent transport failure
+surfaces directly to the producer.
+
+This subsection specifies the construction-time walk. SF ingress (the
+long-running reconnect loop driving store-and-forward replay) lives in
+[`sf-client.md`](sf-client.md) §13.6.
+
+Host selection consumes the shared primitives in
+[`failover.md`](failover.md): connect-string keys (§1.1), host-health
+model and `(state, zone_tier)` priority lattice (§2), role filter
+(§5), and error classification (§6). Non-SF ingress is zone-blind —
+it pins QWP v1 and never reads `SERVER_INFO`, so every host's zone
+tier is `Same` and selection degenerates to state-only ordering. The
+`zone=` connect-string key is parsed but logs a one-time WARN.
+
+```
+hosts = configured addr list
+tracker = HostTracker(hosts)
+for attempt in 0 .. hosts.length - 1:
+    idx = tracker.PickNext()                # priority order
+    if idx < 0: break                       # round exhausted
+    try connect host[idx] with auth_timeout_ms budget
+        on success:        RecordSuccess(idx); return transport
+        on AuthError:      rethrow (terminal, do NOT continue)
+        on RoleReject(t):  RecordRoleReject(idx, t); continue
+        on other errors:   RecordTransportError(idx); continue
+throw "ingress failed against all <count> endpoints" with last error attached
+```
+
+Key properties:
+
+- **No backoff between hosts.** The walk is bounded by
+  `auth_timeout_ms × hostCount` worst case.
+- **One round only.** If every host is in a non-Healthy state, the
+  client throws — no retry loop. Non-SF ingress has no
+  `reconnect_max_duration_millis` budget; senders that need recovery
+  across outages must opt into SF (`sf_dir=...`).
+- **AuthError is structurally terminal** at any host: `401`/`403`
+  on the upgrade aborts immediately. Re-running an unsupported
+  credential against every host wastes time and floods server logs.
+  `404` is **not** classified as auth: a single mid-deploy node
+  serving the wrong path while peers are healthy is a routing
+  glitch, not a credential failure, so `404` is treated as a
+  per-endpoint transport error and the walk continues.
+- **`ProtocolVersionError` is also terminal** in the same way: the
+  server negotiated an unsupported QWP version, and frame-decode
+  corruption is a permanent disagreement.
+- **Role rejects are recoverable** within this single round: the
+  client moves on to the next configured host. Once all hosts are
+  exhausted, the role-mismatch detail is surfaced.
+
+The non-SF ingress sender exposes no failover-tuning knobs beyond
+the common `addr=` / `auth_timeout_ms` / `zone=` set in
+[`failover.md`](failover.md) §1.1, because there is no backoff state
+to tune.
 
 ## 16. Examples
 

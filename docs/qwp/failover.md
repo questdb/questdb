@@ -1,75 +1,76 @@
 # QWP Client Failover Spec
 
-Normative behaviour for multi-host failover across QWP clients. Three
-contexts share one host-health model and one backoff function; they
-differ in (a) when they enter the loop, (b) how they bound it, and
-(c) how they react to terminal errors.
+Normative behaviour for multi-host failover across QWP clients. This
+document specifies the **shared primitives** — host-health model,
+backoff function, role filter, error classification — that every
+client uses. The per-context loops that consume these primitives live
+in the wire docs:
 
-The three contexts:
+| Context | Loop home |
+|---|---|
+| Ingress non-SF — `Sender.New("ws::...")` initial connect; one-shot walk, no run-time reconnect | [`wire-ingress.md`](wire-ingress.md) §15.5 |
+| Ingress SF — the cursor-engine reconnect loop (`sf_dir=...`); long-running, recovers across outages | [`sf-client.md`](sf-client.md) §13.6 |
+| Egress — per-`Execute()` attempt loop on the read-side `QueryClient`; bounded by attempt count + wall-clock budget | [`wire-egress.md`](wire-egress.md) §11.9 |
 
-1. **Ingress non-SF** — `Sender.New("ws::...")` initial connect for the
-   non-store-and-forward producer. One-shot walk over the configured
-   address list at construction time; no run-time reconnect.
-2. **Ingress SF** — the cursor-engine reconnect loop driving the
-   store-and-forward replay (`sf_dir=...`). Long-running, recovers
-   silently across transient outages.
-3. **Egress** — per-`Execute()` attempt loop on the read-side
-   `QueryClient`. Bounded by attempt count + wall-clock budget;
-   replays the in-flight `QUERY_REQUEST` after a successful reconnect.
+## 1. Connect-string keys (common)
 
-## 1. Connect-string keys
-
-### 1.1 Common (every WS client)
+These keys apply to every WS client. Per-context knobs (SF reconnect
+budget, egress failover budget, etc.) are documented next to their
+loops in the wire docs above.
 
 | Key | Type | Default | Scope |
 |---|---|---|---|
 | `addr` | `host:port[,host:port…]` | required | Comma-separated multi-host failover list. |
 | `auth_timeout_ms` | int | `15_000` | Per-host upper bound on the **HTTP upgrade response read** only. Does NOT cover TCP connect (OS default), TLS handshake, or the post-upgrade `SERVER_INFO` frame read (those use a separate hard-coded 5s timeout). Bounds the common "TCP accepts but the server never replies" blackhole; full-route blackholes that drop SYN-ACK still fall back to the OS connect timeout. |
+| `zone` | string | unset | Client's zone identifier (opaque, case-insensitive; e.g. `eu-west-1a`, `dc-amsterdam`). Egress with `target=any\|replica` prefers endpoints whose server-advertised `zone_id` matches; see §2 for the priority lattice and `wire-egress.md` §11.8 for the `SERVER_INFO.zone_id` field. Ignored when `target=primary` (writers follow the master across zones). Ignored on ingress (zone-blind, pinned to v1) — ingress logs a one-time WARN if set so the no-op is visible. |
 
 `addr` accepts comma syntax (`addr=h1:p1,h2:p2`) and repeated keys
 (`addr=h1:p1;addr=h2:p2`). The two forms MUST accumulate; empty
 entries (`,,` or trailing/leading commas) MUST be rejected. Multi-host
 failover semantics are normative for WS/WSS and HTTP/HTTPS only.
 
-### 1.2 Ingress SF (`sf_dir=...` set)
-
-| Key | Type | Default | Notes |
-|---|---|---|---|
-| `reconnect_initial_backoff_millis` | int | `100` | First post-failure sleep before the second connect attempt. |
-| `reconnect_max_backoff_millis` | int | `5_000` | Cap on per-attempt sleep after exponential growth. |
-| `reconnect_max_duration_millis` | int | `300_000` | Total wall-clock budget across one outage; exceeded → engine becomes terminal. |
-| `initial_connect_retry` | `off \| on \| async` | `off` | First-connect retry policy. Semantics defined in §4.2. |
-
-The non-SF ingress sender does **not** expose backoff knobs because
-it never reconnects.
-
-SF subsystem tuning (`sf_append_deadline_millis`, `drain_orphans`,
-`max_background_drainers`, etc.) is orthogonal to failover and lives
-in [`sf-client.md`](sf-client.md).
-
-### 1.3 Egress (`QueryClient.New("ws::...")`)
-
-| Key | Type | Default | Notes |
-|---|---|---|---|
-| `target` | `any \| primary \| replica` | `any` | Server-role filter applied per-endpoint after the upgrade reads `SERVER_INFO`. |
-| `lb_strategy` | `random \| first` | `random` | Initial address-list ordering at client construction. |
-| `failover` | `on \| off` | `on` | Master switch for the per-Execute reconnect loop. `off` surfaces transport errors directly. |
-| `failover_max_attempts` | int | `8` | Cap on reconnects per `Execute()` (initial attempt + `N-1` failovers). |
-| `failover_backoff_initial_ms` | int | `50` | First post-failure sleep. |
-| `failover_backoff_max_ms` | int | `1_000` | Cap on per-attempt sleep. |
-| `failover_max_duration_ms` | int | `30_000` | Total wall-clock budget per `Execute()`; `0` = unbounded. |
-
 ## 2. Host health model
 
-Each configured `addr` entry has a single state from this lattice:
+Each configured `addr` entry carries a `(state, zone_tier)` classification.
 
-| State | Meaning | Selection priority |
+State lattice:
+
+| State | Meaning | State priority |
 |---|---|---|
 | `Healthy` | Last connect to this host succeeded. | 1 (best) |
 | `Unknown` | Never tried this round, or just reset. | 2 |
 | `TransientReject` | Server returned `421 Misdirected Request` + `X-QuestDB-Role: PRIMARY_CATCHUP`. Likely to recover. | 3 |
 | `TransportError` | TCP/TLS/handshake error during connect, or mid-stream send/recv failure (the latter only via `RecordMidStreamFailure`, see §2.1). | 4 |
 | `TopologyReject` | Server returned `421 Misdirected Request` + `X-QuestDB-Role: REPLICA`. Will not become writable without topology change. | 5 (worst) |
+
+Zone tier is assigned the first time the host's zone is observed
+(`SERVER_INFO.zone_id` on the upgrade frame, or `X-QuestDB-Zone` on a
+`421` reject — see §5):
+
+| Zone tier | Meaning | Zone priority |
+|---|---|---|
+| `Same`    | Server zone equals client `zone=` (case-insensitive), OR client `zone=` is unset, OR `target=primary`. | 1 (best) |
+| `Unknown` | Server did not advertise a zone (no `CAP_ZONE`, no `X-QuestDB-Zone` header, or v1-pinned client). | 2 |
+| `Other`   | Server advertised a different zone. | 3 (worst) |
+
+`target=primary` collapses every host's zone tier to `Same`: writers
+must follow the master regardless of geography. Ingress (SF and non-SF)
+is likewise zone-blind — it pins v1 and never reads zone information,
+so every host is `Same` by default.
+
+### Selection priority
+
+`PickNext()` returns the host with the lowest `(state_priority,
+zone_priority)` tuple — compared lexicographically — that has not been
+tried in the current round. State outranks zone, so a known-good host
+in another zone is picked before an untried local host (the alternative
+risks wasted probes against unproven peers when a working endpoint is
+already in hand). Within a tied `(state, zone_tier)` bucket, the order
+is the address-list shuffle established at client construction.
+
+Clients SHOULD shuffle the configured `addr=` list at construction
+time. The shuffle has no operator-visible knob; it spreads first-connect
+attempts across same-tier hosts when many clients start simultaneously.
 
 A round-tracker bit per host records whether **this round** has tried
 the host yet. A "round" is the time between two `BeginRound` calls.
@@ -82,9 +83,21 @@ RecordSuccess(idx)               → state=Healthy,           attempted=true
 RecordRoleReject(idx, transient) → state=TransientReject (transient=true) or TopologyReject (false), attempted=true
 RecordTransportError(idx)        → state=TransportError,    attempted=true
 RecordMidStreamFailure(idx)      → if state==Healthy, demote to TransportError; do NOT touch attempted
+RecordZone(idx, zoneId)          → if zoneId is non-null/non-empty: zone_tier = Same when
+                                   zoneId equals client zone= (case-insensitive) OR client zone=
+                                   is unset OR target=primary; else zone_tier = Other.
+                                   if zoneId is null/empty: no-op (existing zone_tier preserved,
+                                   defaulting to Unknown if never set).
+                                   Do NOT touch state or attempted.
+                                   Caller invokes from the connect path: once after SERVER_INFO
+                                   is read iff capabilities & CAP_ZONE, and once with the
+                                   X-QuestDB-Zone header value (or null) on a 421 reject.
 BeginRound(forgetClassifications)→ clear attempted flags. forgetClassifications=true also resets every
-                                   non-Healthy state to Unknown but preserves the last-known Healthy entry
-                                   (sticky-Healthy: the previously-good host stays first in line on the next round)
+                                   non-Healthy state to Unknown and preserves the last-known same-zone
+                                   Healthy entry only (cross-zone Healthy entries are reset to Unknown);
+                                   see §2.2 for the sticky-Healthy rationale.
+                                   zone_tier is NOT cleared by BeginRound — once observed, it persists
+                                   for the host's lifetime in this client until re-observed differently.
 IsRoundExhausted                 → true iff every host has attempted=true
 ```
 
@@ -102,9 +115,17 @@ that role-rejected this outage stays demoted).
 `RecordSuccess(idx)` only mutates the target index; previously-Healthy
 hosts are not implicitly demoted. The sticky effect emerges from
 `BeginRound(forgetClassifications=true)`: when scanning for the entry
-to preserve, the **last** `Healthy` index wins. The most recent
-successful connection stays first in line on the next round; older
-`Healthy` entries are reset to `Unknown`.
+to preserve, the **last** `Healthy` index whose zone tier is `Same`
+wins. Cross-zone (`Other`) `Healthy` entries are reset to `Unknown`
+rather than preserved — a sticky pin in another zone would otherwise
+lock the client out of probing local hosts after they recover. The
+most recent same-zone success stays first in line on the next round;
+older `Healthy` entries (regardless of zone tier) are reset to
+`Unknown`.
+
+When `target=primary` (or client `zone=` is unset), every zone tier
+collapses to `Same`, so the rule degenerates to "preserve the last
+`Healthy` host" — the original behavior.
 
 ### 2.3 Tracker ordering invariants
 
@@ -136,9 +157,12 @@ behaviour drift across clients.
 
 ## 3. Backoff function
 
-Shared by ingress SF and egress (the non-SF initial connect doesn't
-back off — see §4.1). The function is pure; the loop owner provides
-elapsed wall-clock time.
+Used by SF reconnect ([`sf-client.md`](sf-client.md) §13.6) and egress
+failover ([`wire-egress.md`](wire-egress.md) §11.9). Non-SF ingress
+walks the address list once with no inter-host backoff and never
+reconnects, so it doesn't consume this function (see
+[`wire-ingress.md`](wire-ingress.md) §15.5). The function is pure; the
+loop owner provides elapsed wall-clock time.
 
 ```
 ComputeBackoff(attempt):       # attempt is 0-based; backoff(0) returns InitialBackoff
@@ -194,264 +218,33 @@ by the loop:
   observed and resets to `0` on a successful reconnect. A reconnect
   that immediately fails again starts a fresh outage clock.
 
-In SF (§4.2), role-rejects do not advance the per-attempt backoff
-(when a round exhausts with role-reject as `lastError`, the
-round-boundary sleep is the configured `InitialBackoff` and
-`backoff.attempt` is reset, so the client doesn't accumulate
-exponential delay against a known-but-not-writable endpoint). They
-DO consume the wall-clock outage budget
-(`reconnect_max_duration_millis`) — without that bound a long-lived
-PRIMARY_CATCHUP cluster would let an unattended SF producer block
-forever. The intended usage pattern is to set
+In the SF reconnect loop ([`sf-client.md`](sf-client.md) §13.6),
+role-rejects do not advance the per-attempt backoff (when a round
+exhausts with role-reject as `lastError`, the round-boundary sleep
+is the configured `InitialBackoff` and `backoff.attempt` is reset,
+so the client doesn't accumulate exponential delay against a
+known-but-not-writable endpoint). They DO consume the wall-clock
+outage budget (`reconnect_max_duration_millis`) — without that
+bound a long-lived PRIMARY_CATCHUP cluster would let an unattended
+SF producer block forever. The intended usage pattern is to set
 `reconnect_max_duration_millis` large enough (default 5 min) to
 absorb a normal failover window and short enough to surface
-permanent topology issues. Egress (§4.3) handles role-rejects only
+permanent topology issues. The egress per-Execute loop
+([`wire-egress.md`](wire-egress.md) §11.9) handles role-rejects only
 during `WalkTracker` (initial connect / reconnect) and so doesn't
 share the outage clock with the per-Execute loop.
 
 ## 4. Loop semantics by context
 
-### 4.1 Ingress non-SF — initial connect
+The three failover loops live in their respective wire docs. Each
+consumes the primitives in §1.1 / §2 / §3 / §5 / §6 and adds the
+context-specific knobs, pseudocode, and key properties.
 
-```
-hosts = configured addr list
-tracker = HostTracker(hosts)
-for attempt in 0 .. hosts.length - 1:
-    idx = tracker.PickNext()                # priority order
-    if idx < 0: break                       # round exhausted
-    try connect host[idx] with auth_timeout_ms budget
-        on success:        RecordSuccess(idx); return transport
-        on AuthError:      rethrow (terminal, do NOT continue)
-        on RoleReject(t):  RecordRoleReject(idx, t); continue
-        on other errors:   RecordTransportError(idx); continue
-throw "ingress failed against all <count> endpoints" with last error attached
-```
-
-Key properties:
-
-- **No backoff between hosts.** The walk is bounded by
-  `auth_timeout_ms × hostCount` worst case.
-- **One round only.** If every host is in a non-Healthy state, the
-  client throws — no retry loop.
-- **AuthError is structurally terminal** at any host: `401`/`403`
-  on the upgrade aborts immediately. Re-running an unsupported
-  credential against every host wastes time and floods server logs.
-  `404` is **not** classified as auth: a single mid-deploy node
-  serving the wrong path while peers are healthy is a routing
-  glitch, not a credential failure, so `404` is treated as a
-  per-endpoint transport error and the walk continues.
-- **`ProtocolVersionError` is also terminal** in the same way: the
-  server negotiated an unsupported QWP version, and frame-decode
-  corruption is a permanent disagreement.
-- **Role rejects are recoverable** within this single round: the
-  client moves on to the next configured host. Once all hosts are
-  exhausted, the role-mismatch detail is surfaced.
-
-### 4.2 Ingress SF — reconnect loop
-
-```
-backoff = BackoffState()
-seenFirstConnect = false
-lastError = null
-loop forever:
-    if previousIdx >= 0:                # mid-stream failure path
-        tracker.RecordMidStreamFailure(previousIdx)
-        previousIdx = -1
-
-    idx = tracker.PickNext()
-    if idx < 0:
-        # Round exhausted: every host in this round has been tried. Pay
-        # one sleep, reset the round, then walk again.
-        if lastError == RoleReject:
-            sleep min(InitialBackoff, remaining)    # remaining = MaxOutageDuration - elapsed
-            if elapsed >= MaxOutageDuration: SET TERMINAL; exit loop
-            backoff.Reset()                          # role-reject does not advance doubling
-        else:
-            sleep = NextBackoffOrGiveUp(backoff.attempt, backoff.elapsedSinceOutage)
-            if sleep == GIVE_UP: SET TERMINAL; exit loop
-            sleep; backoff.attempt++
-        tracker.BeginRound(forgetClassifications=true)
-        continue
-
-    try connect host[idx]:
-        on AuthError or ProtocolVersionError: SET TERMINAL; exit loop
-        on RoleReject(t):
-            tracker.RecordRoleReject(idx, t); lastError = RoleReject
-            continue                                 # no per-host sleep within the round
-        on other error:
-            tracker.RecordTransportError(idx); lastError = TransportError
-            if !seenFirstConnect && !initial_connect_retry:
-                SET TERMINAL; exit loop
-            continue                                 # no per-host sleep within the round
-
-    seenFirstConnect = true
-    backoff.Reset(); lastError = null
-    rewind cursor to (ackedFsn + 1)         # replay first un-acked frame
-    run send/recv pumps until either pump throws
-        on server status reject / AuthError / ProtocolVersionError: SET TERMINAL
-        on transient error (TCP/TLS, mid-stream send/recv, etc.):
-            previousIdx = currentIdx                 # demoted on next iter via RecordMidStreamFailure
-            continue                                  # next iter walks the next untried host
-```
-
-Key properties:
-
-- **Single-round walk per attempt.** When the tracker exhausts
-  (`PickNext == -1`), the loop **MUST** invoke
-  `BeginRound(forgetClassifications=true)` before the next `PickNext`.
-  The current-round flags reset; classifications fade except for the
-  sticky-Healthy entry.
-- **No per-host backoff within a round.** While the tracker still has
-  untried hosts in the current round, every transient error (transport
-  or role-reject) flows directly into the next iteration with no
-  inter-host sleep — the loop walks the full address list as fast as
-  per-host `auth_timeout_ms` allows. The post-error sleep (exponential
-  for transport, fixed `InitialBackoff` for role-reject) is paid once
-  per round, at the moment `PickNext` returns `-1` and immediately
-  before `BeginRound(forgetClassifications=true)`. Mirrors §4.1
-  (non-SF ingress) and §4.4 (egress `WalkTracker`), where the
-  address-list walk is also un-throttled within a round; the
-  round-exhaustion sleep is what damps reconnect storms (the
-  per-producer round time stays bounded by `auth_timeout_ms ×
-  hostCount` plus one backoff sleep, and equal-jitter §3.1 spreads
-  the round-boundary sleeps across producers).
-- **`initial_connect_retry`** (default `off`):
-  - `off` — first connect failure is terminal (matches non-SF §4.1).
-  - `on` (alias `sync`) — block the constructor; enter the standard
-    reconnect loop until success or `MaxOutageDuration` exhaustion.
-  - `async` — return from the constructor immediately; the
-    background I/O thread drives the reconnect loop. `append` writes
-    accumulate in the SF dir without blocking on connect. Intended
-    for unattended producers where the SF dir may already carry
-    segments queued from a prior process and the server may come up
-    later.
-- **Role-rejects don't accumulate exponential backoff.** A `421 +
-  role` reply is interpreted as a topology hint. Within a round it
-  flows through the no-sleep path above (the next host gets tried
-  immediately). When a round exhausts with role-reject as `lastError`,
-  the round-boundary sleep is the configured `InitialBackoff` (no
-  doubling) and `backoff.attempt` is reset, so a long PRIMARY_CATCHUP
-  window doesn't blow up to `reconnect_max_backoff_millis` per probe.
-  The wall-clock outage budget (`reconnect_max_duration_millis`)
-  still bounds the loop — if every endpoint stays role-rejecting for
-  the full budget, the loop terminates. Operators should size
-  `reconnect_max_duration_millis` to span their largest expected
-  failover window (default 5 minutes).
-- **Mid-stream failure** (the send or receive pump throws after a
-  successful connect): the failed host index is captured as
-  `previousIdx`. The next loop iteration calls
-  `tracker.RecordMidStreamFailure(previousIdx)` **before** the next
-  `PickNext`, so Healthy→TransportError demotion happens before host
-  selection runs. The next host is then tried under the same no-sleep
-  rule (skip-backoff-within-round), so a healthy peer takes over
-  with only `auth_timeout_ms` worth of slack. The mid-stream failure
-  itself does not advance `backoff.attempt` — the doubling counter
-  starts fresh from the post-success `backoff.Reset()` and only moves
-  forward at round exhaustion, so a single mid-stream blip pays no
-  exponential cost when at least one peer is healthy.
-
-### 4.3 Egress — per-Execute loop
-
-```
-on QueryClient.New(): connect once via WalkTracker (see §4.4); fail loud if no endpoint matches
-on Execute(sql, handler):
-    if execute already in flight on this client: throw "one query at a time"
-    tracker.BeginRound(forgetClassifications=false)
-    attempt = 0
-    backoffMs = failover_backoff_initial_ms
-    deadline = now + failover_max_duration_ms (∞ if 0)
-    loop:
-        send QUERY_REQUEST(rid, sql, binds)
-        drive receive loop until terminator
-        on success: return
-        on transport-error AND failover=on AND attempt+1 < failover_max_attempts AND now < deadline:
-            tracker.RecordMidStreamFailure(activeIdx)
-            sleep clamp(FullJitter(backoffMs), deadline - now)
-            backoffMs = min(2 × backoffMs, failover_backoff_max_ms)
-            attempt++
-            ReconnectAsync(attempt)         # see §4.4; uses BeginRound(forget=false)
-            handler.OnFailoverReset(serverInfo)
-            continue
-        else: rethrow (failover not eligible or budget exhausted)
-```
-
-Key properties:
-
-- **Per-Execute round reset uses `forgetClassifications=false`.**
-  Every `Execute()` enters with `BeginRound(false)` — the
-  attempted-this-round flags are cleared but topology classifications
-  observed in prior Executes are preserved. A previously
-  role-rejected endpoint stays at the bottom of the priority order;
-  it is reconsidered once the current round walks off the end (see
-  §4.4 fall-through reset). This is "lazy forget": the cost is one
-  extra reconnect attempt the first time topology actually changes,
-  the benefit is no per-Execute thundering against a known-bad host.
-- **Reconnect inside the loop also uses `forgetClassifications=false`**:
-  the topology classifications observed during this `Execute()`'s
-  reconnects accumulate. Once the round exhausts within a single
-  `Execute()`, `WalkTracker` calls `BeginRound(forgetClassifications=true)`
-  once and walks the list one more time. If still no endpoint matches,
-  fail with a role-mismatch error (carries the most recent observed
-  `SERVER_INFO`).
-- **`OnFailoverReset` callback** fires after a successful reconnect
-  but **before** any replayed batches arrive. Handlers reset their
-  per-batch_seq state here (the new node restarts `batch_seq` at 0).
-  Clients that omit the callback MUST instead surface the failure
-  and have the user re-issue `Execute` from a clean accumulator.
-- **AuthError is terminal** at any host: same reasoning as ingress.
-- **`ProtocolVersionError` is terminal** and surfaces directly to the
-  caller; failover masks the cluster-wide disagreement.
-- **Cooperative cancel** (`Cancel()` API, out of scope for this spec)
-  sends a `CANCEL` frame; the server replies with a `QUERY_ERROR`
-  carrying `STATUS_CANCELLED`. That reply routes through the normal
-  error path, not the transport-error path, so it never triggers
-  failover.
-
-### 4.4 Egress connect / reconnect helper (`WalkTracker`)
-
-Shared between initial connect and `ReconnectAsync`:
-
-```
-WalkTracker():
-    retriedAfterReset = false
-    loop:
-        idx = tracker.PickNext()
-        if idx < 0:
-            if !retriedAfterReset:
-                tracker.BeginRound(forgetClassifications=true)
-                retriedAfterReset = true
-                continue
-            return (lastInfo, lastError, anyRoleMismatch)
-        candidate = build transport for hosts[idx]
-        try connect with auth_timeout_ms budget:
-            ServerInfo = (negotiatedVersion >= 2) ? read SERVER_INFO frame : null
-        on success:
-            if EndpointMatchesTarget(ServerInfo):
-                RecordSuccess(idx); install transport; return (info, null, false)
-            else:
-                RecordRoleReject(idx, transient = (ServerInfo.Role == PRIMARY_CATCHUP))
-                lastInfo = ServerInfo; anyRoleMismatch = true
-                continue
-        on AuthError: rethrow (do NOT continue past this host)
-        on 421 + X-QuestDB-Role <known role>:
-            RecordRoleReject(idx, transient = (role == PRIMARY_CATCHUP))
-            anyRoleMismatch = true; continue
-        on other error:
-            RecordTransportError(idx); continue
-```
-
-The fall-through reset (when `PickNext` returns `-1` for the first
-time in this walk) gives stale `TransientReject` / `TopologyReject`
-hosts from prior outages another shot before declaring the entire
-walk failed.
-
-When `WalkTracker` returns no transport: if any role mismatch was
-observed, raise a role-mismatch error with the last `SERVER_INFO`
-attached so callers can distinguish "no endpoint matched target=" from
-"all endpoints unreachable". Otherwise raise a transport error
-summarising attempts × endpoints. The reconnect path uses the same
-helper and wraps the outcome with "failover exhausted after N attempts
-across M endpoints".
+| Context | Wire-doc home |
+|---|---|
+| Ingress non-SF — one-shot walk over `addr=` at construction; AuthError / ProtocolVersionError terminal; role rejects walk to next host | [`wire-ingress.md`](wire-ingress.md) §15.5 |
+| Ingress SF — long-running reconnect loop with mid-stream demote, equal-jitter backoff, `initial_connect_retry` policy, `reconnect_max_duration_millis` outage budget | [`sf-client.md`](sf-client.md) §13.6 |
+| Egress — per-`Execute()` loop with `failover=on/off` master switch, `failover_max_attempts` cap, full-jitter backoff, `OnFailoverReset` callback; `WalkTracker` helper for initial connect / reconnect | [`wire-egress.md`](wire-egress.md) §11.9 |
 
 ## 5. Role filter (`target=`)
 
@@ -459,11 +252,14 @@ Per-endpoint check sequence:
 
 1. Open TCP/TLS connection within `auth_timeout_ms`.
 2. Issue HTTP upgrade; observe response.
-3. If response is `421 + X-QuestDB-Role: <role>` → `RecordRoleReject`,
-   walk to next host (no `SERVER_INFO` frame is read).
+3. If response is `421 + X-QuestDB-Role: <role>`: extract `X-QuestDB-Zone`
+   if present and record the host's zone tier (§2); then `RecordRoleReject`
+   and walk to next host (no `SERVER_INFO` frame is read).
 4. Otherwise upgrade succeeds; if negotiated version ≥ 2, read the
-   `SERVER_INFO` frame and apply the table below.
-5. v1 negotiation skips the `SERVER_INFO` read entirely.
+   `SERVER_INFO` frame. If `capabilities & CAP_ZONE`, parse `zone_id`
+   and record the host's zone tier. Apply the role table below.
+5. v1 negotiation skips the `SERVER_INFO` read entirely; the host's
+   zone tier remains `Unknown`.
 
 `SERVER_INFO.Role` byte values:
 
@@ -495,6 +291,16 @@ SHOULD be one of `STANDALONE` / `PRIMARY` / `REPLICA` /
 - `421` **without** an `X-QuestDB-Role` header (or with an empty
   value, after trimming) degrades to a generic transport error
   (per-endpoint, walk continues).
+
+The `X-QuestDB-Zone` HTTP response header is the upgrade-time companion
+to `SERVER_INFO.zone_id` (`wire-egress.md` §11.8). The value is an
+opaque, case-insensitive identifier (`eu-west-1a`, `dc-amsterdam`,
+etc.) compared as bytes against the client's configured `zone=`. Servers
+that have a zone configured SHOULD emit it on every `421` reject so the
+zone tier is observable without a successful upgrade. Absence (or empty
+value, after trimming) leaves the host's zone tier as `Unknown`. The
+header has no effect on ingress (zone-blind, pinned to v1) and no effect
+on any client whose `zone=` is unset (every host collapses to `Same`).
 
 ## 6. Error classification
 
@@ -537,7 +343,10 @@ Everything not terminal and not topology:
   WARNING; if the same decode error repeats across every host the
   failover-exhausted error surfaces the underlying bug.
 
-Transient errors enter the appropriate backoff/round logic per §4.
+Transient errors enter the appropriate backoff / round logic per the
+context's loop spec ([`wire-ingress.md`](wire-ingress.md) §15.5,
+[`sf-client.md`](sf-client.md) §13.6, or
+[`wire-egress.md`](wire-egress.md) §11.9).
 
 ## 7. Defaults at a glance
 
@@ -553,11 +362,17 @@ Transient errors enter the appropriate backoff/round logic per §4.
 | Initial-connect retry | no | gated by `initial_connect_retry=off\|on\|async` | one-shot `WalkTracker` round (no retry beyond round) |
 | Auth-error policy | terminal | terminal | terminal |
 | Role-reject (`421+role`) | skip host within round; fail round if all rejected | retry with backoff reset to `InitialBackoff`; bounded by `reconnect_max_duration_millis` | skip host within round; fail Execute if all rejected |
+| Zone-locality (`zone=`) | n/a (zone-blind: every host treated as `Same`) | n/a (zone-blind: every host treated as `Same`) | same-zone preferred via `(state, zone)` priority lattice when `zone=` set; `target=primary` collapses to zone-blind |
 
 The split (5min budget for SF vs 30s for egress) reflects intent:
 SF is unattended background ingest with on-disk durability — long
 outages are recoverable. Egress is interactive — failing fast keeps
 the user in the loop.
+
+Knob homes: SF connect-string keys live in [`sf-client.md`](sf-client.md)
+§4.2; egress connect-string keys live in [`wire-egress.md`](wire-egress.md)
+§11.9. The values above are derived; this table is a summary, not
+the canonical defaults.
 
 ## Document history
 
@@ -565,3 +380,7 @@ the user in the loop.
 |---|---|
 | 2026-05-06 | Initial spec. |
 | 2026-05-08 | §4.2: capture skip-backoff-within-round (the SF reconnect loop walks the full address list with no inter-host sleep, then pays one backoff at round exhaustion). Pseudocode rewritten to make `PickNext == -1` the explicit sleep point; new key-property bullet; mid-stream / role-reject bullets reconciled. §7: new "Inter-host backoff within a round" row covering all three contexts. |
+| 2026-05-08 | Server-advertised zone preference. §1.1 adds `zone=` connect-string knob (egress-only effective; ingress logs WARN). §2 extends host classification with a `zone_tier` dimension (`Same`/`Unknown`/`Other`); selection priority becomes `(state, zone)` lexicographic; sticky-Healthy preserves only same-zone entries. §5 adds `X-QuestDB-Zone` header on `421` rejects and references the `SERVER_INFO.zone_id` field gated by `CAP_ZONE` (`wire-egress.md` §11.8). §7 adds a Zone-locality row. `lb_strategy` removed from §1.3 — intra-tier order is now implementation-defined; clients SHOULD shuffle the address list at construction. |
+| 2026-05-08 | Consistency follow-up to the zone feature. §2.1 adds the `RecordZone(idx, zoneId)` operation explicitly (zone tier was previously assigned implicitly); zone tier survives `BeginRound` so observations don't have to be re-issued each round. §4.4 WalkTracker pseudocode now invokes `RecordZone` from both the post-`SERVER_INFO` path (gated by `CAP_ZONE`) and the `421` upgrade-reject path (using the optional `X-QuestDB-Zone` header). |
+| 2026-05-08 | Clarifications. §4.3 new key-property bullet: `failover_max_duration_ms` bounds failover eligibility, not Execute wall-clock — `WalkTracker` is bounded only by `hostCount × auth_timeout_ms`, so total Execute time can be `failover_max_duration_ms + (last walk)`. §4.4 trailing paragraph: under `target=primary`, `RecordZone` is still called but zone tier collapses to `Same` for selection. |
+| 2026-05-08 | Structural split. The per-context loops (formerly §4.1 / §4.2 / §4.3 / §4.4) and their connect-string knobs (formerly §1.2 / §1.3) move out of this doc into the corresponding wire docs: non-SF ingress to `wire-ingress.md` §15.5, SF reconnect to `sf-client.md` §13.6, egress per-Execute and `WalkTracker` to `wire-egress.md` §11.9. `failover.md` now hosts only the shared primitives — common keys (§1.1), host-health model (§2), backoff function (§3), role filter (§5), error classification (§6), defaults cheat sheet (§7). §3 / §3.2 / §6 cross-references rewritten to point at the new loop homes. |

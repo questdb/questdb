@@ -131,7 +131,7 @@ binary multipliers).
 | `reconnect_max_duration_millis` | int (ms) | `300000` | Per-outage time budget. Resets on each successful reconnect. |
 | `reconnect_initial_backoff_millis` | int (ms) | `100` | Initial backoff. |
 | `reconnect_max_backoff_millis` | int (ms) | `5000` | Backoff ceiling. |
-| `initial_connect_retry` | enum | `off` | `off`/`false` = terminal on first failure; `on`/`true`/`sync` = same retry loop as reconnect, blocking; `async` = same retry loop in the I/O thread, non-blocking. |
+| `initial_connect_retry` | enum | `off` | `off` (canonical; alias `false`) = terminal on first failure; `on` (canonical; aliases `sync`, `true`) = same retry loop as reconnect, blocking; `async` = same retry loop in the I/O thread, non-blocking. See §13.4 (initial connect) and §13.6 (the loop pseudocode that consumes this knob). |
 | `close_flush_timeout_millis` | int (ms) | `5000` | `close()` blocks up to this long waiting for `ackedFsn >= publishedFsn`. `0` or `-1` skips the drain entirely AND skips pre-drain `checkError()`. |
 
 ### 4.3 Durable-ack
@@ -158,7 +158,7 @@ spec — and treat them with the precedence rules in §14.
 
 | Key | Type | Default | Description |
 |-----|------|---------|-------------|
-| `addr` | host[:port][,host[:port]…] | required | Server endpoint(s). Comma-separated for multi-host failover (parsed today; only the first is used; see §21). |
+| `addr` | host[:port][,host[:port]…] | required | Server endpoint(s). Comma-separated for multi-host failover; selection semantics, host-health states, and the SF reconnect loop are normatively specified in [`failover.md`](failover.md). |
 | `username` / `password` | string | unset | HTTP Basic auth on the upgrade request. |
 | `token` | string | unset | Bearer token on the upgrade request. |
 | `tls_verify` | enum | `on` | `on` or `unsafe_off`. Applies on `wss::` / TLS connections. |
@@ -440,10 +440,12 @@ If the client sent `X-QWP-Request-Durable-Ack: true`:
 
 ### 8.2 Authentication
 
-Auth failures during upgrade (HTTP 401 / 403, non-101 status, invalid
-upgrade response) are **terminal**. They neither retry the initial
-connect nor trigger reconnect; they surface immediately as a
-`SECURITY_ERROR` category error (HALT policy).
+Auth failures during upgrade (HTTP 401 / 403) are **terminal** per
+`failover.md` §6 — they neither retry the initial connect nor trigger
+reconnect, and surface immediately as a `SECURITY_ERROR` category error
+(HALT policy). Other non-101 statuses follow the topology / transient
+classification in `failover.md` §6 (e.g. `421` is in-round topology;
+`404` / `426` / `503` are transient and consume the reconnect budget).
 
 ## 9. OK ACK and Trim
 
@@ -587,29 +589,49 @@ publishing into the substrate (subject to the cap, §16).
 
 ### 13.2 Backoff
 
-- Initial backoff = `reconnect_initial_backoff_millis` (default 100).
-- After each attempt: `backoff = min(backoff * 2, reconnect_max_backoff_millis)`.
-- Jitter: actual sleep is `backoff + uniform_rand(0, backoff)`, i.e. in
-  `[backoff, 2 * backoff)`.
-- Per-outage cap = `reconnect_max_duration_millis` (default 300000). Reset
-  on each successful reconnect.
-- If the next sleep would exceed the deadline, cap it to the remaining
-  time.
+Backoff math is normatively specified in [`failover.md`](failover.md)
+§3 (`ComputeBackoff` / `NextBackoffOrGiveUp`). SF uses equal-jitter
+`[base, 2·base)` per §3.1 — equal-jitter has a non-zero lower bound
+that damps reconnect storms when multiple SF producers share a cluster.
+The post-jitter sleep is clamped to the remaining outage budget so a
+single sleep cannot overshoot `reconnect_max_duration_millis`; see
+`failover.md` §3 for the exact deadline check and §13.6 below for how
+the SF loop consumes it.
+
+Defaults bound to the SF connect-string keys
+(`reconnect_initial_backoff_millis` = 100ms,
+`reconnect_max_backoff_millis` = 5_000ms,
+`reconnect_max_duration_millis` = 300_000ms); see §4.2 for the keys
+and `failover.md` §7 for the cross-context defaults table.
 
 ### 13.3 Terminal conditions
 
-- HTTP upgrade rejection (non-101 status, including 401/403/426) is
-  terminal — does NOT consume the retry budget. Surfaces as
-  `SECURITY_ERROR`.
-- Reconnect-budget exhaustion is terminal. Surfaces as
-  `PROTOCOL_VIOLATION` with FSN span = unacked window at giveup time.
+Error classification is normatively specified in `failover.md` §6.
+Mapped to the SF client's local error categories:
+
+- **Terminal** (bypass reconnect; do NOT consume the retry budget) —
+  `AuthError` (HTTP `401` / `403` on the upgrade) surfaces as
+  `SECURITY_ERROR`; `ProtocolVersionError` surfaces as
+  `PROTOCOL_VIOLATION`; server-status rejects surface in the matching
+  status-byte category.
+- **Topology** (`421 Misdirected Request` + `X-QuestDB-Role`) — handled
+  within the round per §13.6 (and `failover.md` §6 "Topology"); not
+  terminal.
+- **Transient** (consume the per-outage budget) — everything else: TCP /
+  TLS / handshake failures, mid-stream send / recv errors, `404`, `426`,
+  `503`, any other 4xx / 5xx that is not `401` / `403` / `421`, and
+  generic frame-decode errors.
+
+When the per-outage budget (`reconnect_max_duration_millis`) exhausts,
+the loop becomes terminal and surfaces as `PROTOCOL_VIOLATION` with FSN
+span = unacked window at giveup time.
 
 ### 13.4 Initial connect
 
 By default (`initial_connect_retry=off`) any failure on the very first
 connect is terminal — typically a misconfig, retrying for 5 minutes
-just hides it. Setting `initial_connect_retry=sync` (or legacy
-`on`/`true`) reuses the same retry loop, blocking the calling thread.
+just hides it. Setting `initial_connect_retry=on` (aliases: `sync`,
+`true`) reuses the same retry loop, blocking the calling thread.
 `async` runs the retry loop in the I/O thread and lets the constructor
 return; the producer then experiences backpressure if it tries to
 publish before the connection comes up.
@@ -631,6 +653,124 @@ On each successful (re)connect:
 Producer threads MAY append concurrently during replay; the I/O loop
 uses the volatile `publishedFsn()` cursor to discover newly-appended
 frames.
+
+### 13.6 Reconnect loop
+
+The full pseudocode that ties together failure detection (§13.1),
+backoff (§13.2), terminal classification (§13.3), initial-connect
+policy (§13.4), and replay (§13.5). The loop owns the host tracker
+defined in [`failover.md`](failover.md) §2 and consumes the backoff
+function in `failover.md` §3.
+
+```
+backoff = BackoffState()
+seenFirstConnect = false
+lastError = null
+loop forever:
+    if previousIdx >= 0:                # mid-stream failure path
+        tracker.RecordMidStreamFailure(previousIdx)
+        previousIdx = -1
+
+    idx = tracker.PickNext()
+    if idx < 0:
+        # Round exhausted: every host in this round has been tried. Pay
+        # one sleep, reset the round, then walk again.
+        if lastError == RoleReject:
+            sleep min(InitialBackoff, remaining)    # remaining = MaxOutageDuration - elapsed
+            if elapsed >= MaxOutageDuration: SET TERMINAL; exit loop
+            backoff.Reset()                          # role-reject does not advance doubling
+        else:
+            sleep = NextBackoffOrGiveUp(backoff.attempt, backoff.elapsedSinceOutage)
+            if sleep == GIVE_UP: SET TERMINAL; exit loop
+            sleep; backoff.attempt++
+        tracker.BeginRound(forgetClassifications=true)
+        continue
+
+    try connect host[idx]:
+        on AuthError or ProtocolVersionError: SET TERMINAL; exit loop
+        on RoleReject(t):
+            tracker.RecordRoleReject(idx, t); lastError = RoleReject
+            continue                                 # no per-host sleep within the round
+        on other error:
+            tracker.RecordTransportError(idx); lastError = TransportError
+            if !seenFirstConnect && !initial_connect_retry:
+                SET TERMINAL; exit loop
+            continue                                 # no per-host sleep within the round
+
+    seenFirstConnect = true
+    backoff.Reset(); lastError = null
+    rewind cursor to (ackedFsn + 1)         # replay first un-acked frame; see §13.5
+    run send/recv pumps until either pump throws
+        on server status reject / AuthError / ProtocolVersionError: SET TERMINAL
+        on transient error (TCP/TLS, mid-stream send/recv, etc.):
+            previousIdx = currentIdx                 # demoted on next iter via RecordMidStreamFailure
+            continue                                  # next iter walks the next untried host
+```
+
+Key properties:
+
+- **Single-round walk per attempt.** When the tracker exhausts
+  (`PickNext == -1`), the loop **MUST** invoke
+  `BeginRound(forgetClassifications=true)` before the next `PickNext`.
+  The current-round flags reset; classifications fade except for the
+  sticky-Healthy entry (`failover.md` §2.2).
+- **No per-host backoff within a round.** While the tracker still has
+  untried hosts in the current round, every transient error (transport
+  or role-reject) flows directly into the next iteration with no
+  inter-host sleep — the loop walks the full address list as fast as
+  per-host `auth_timeout_ms` allows. The post-error sleep (exponential
+  for transport, fixed `InitialBackoff` for role-reject) is paid once
+  per round, at the moment `PickNext` returns `-1` and immediately
+  before `BeginRound(forgetClassifications=true)`. The per-producer
+  round time stays bounded by `auth_timeout_ms × hostCount` plus one
+  backoff sleep, and equal-jitter (`failover.md` §3.1) spreads the
+  round-boundary sleeps across producers. Mirrors the non-SF ingress
+  walk ([`wire-ingress.md`](wire-ingress.md) §15.5) and the egress
+  `WalkTracker` ([`wire-egress.md`](wire-egress.md) §11.9), where the
+  address-list walk is also un-throttled within a round.
+- **`initial_connect_retry`** (default `off`):
+  - `off` — first connect failure is terminal (matches non-SF ingress;
+    see `wire-ingress.md` §15.5).
+  - `on` (alias `sync`) — block the constructor; enter the standard
+    reconnect loop until success or `MaxOutageDuration` exhaustion.
+  - `async` — return from the constructor immediately; the
+    background I/O thread drives the reconnect loop. `append` writes
+    accumulate in the SF dir without blocking on connect. Intended
+    for unattended producers where the SF dir may already carry
+    segments queued from a prior process and the server may come up
+    later.
+- **Role-rejects don't accumulate exponential backoff.** A `421 +
+  role` reply is interpreted as a topology hint. Within a round it
+  flows through the no-sleep path above (the next host gets tried
+  immediately). When a round exhausts with role-reject as `lastError`,
+  the round-boundary sleep is the configured `InitialBackoff` (no
+  doubling) and `backoff.attempt` is reset, so a long PRIMARY_CATCHUP
+  window doesn't blow up to `reconnect_max_backoff_millis` per probe.
+  The wall-clock outage budget (`reconnect_max_duration_millis`)
+  still bounds the loop — if every endpoint stays role-rejecting for
+  the full budget, the loop terminates. Operators should size
+  `reconnect_max_duration_millis` to span their largest expected
+  failover window (default 5 minutes).
+- **Mid-stream failure** (the send or receive pump throws after a
+  successful connect): the failed host index is captured as
+  `previousIdx`. The next loop iteration calls
+  `tracker.RecordMidStreamFailure(previousIdx)` **before** the next
+  `PickNext`, so Healthy→TransportError demotion happens before host
+  selection runs (see `failover.md` §2.3 — this ordering is normative).
+  The next host is then tried under the same no-sleep rule
+  (skip-backoff-within-round), so a healthy peer takes over with only
+  `auth_timeout_ms` worth of slack. The mid-stream failure itself
+  does not advance `backoff.attempt` — the doubling counter starts
+  fresh from the post-success `backoff.Reset()` and only moves
+  forward at round exhaustion, so a single mid-stream blip pays no
+  exponential cost when at least one peer is healthy.
+- **Per-caller `previousIdx`.** When multiple loops drive reconnects
+  against the same tracker (foreground SF I/O thread plus background
+  drainers; see §18.2), each loop MUST own its own `previousIdx`
+  slot. Sharing one slot across loops corrupts the
+  Healthy→TransportError demotion. The Java client expresses this as
+  a per-caller `ReconnectFactory` instance with a private
+  `previousIdx` field. See `failover.md` §2.3.
 
 ## 14. Error Frame Handling
 
@@ -899,27 +1039,22 @@ Items intentionally out of scope today, tracked for future revisions:
    "not yet supported". The wire-level behaviour is unchanged; only the
    producer's flush path (and the `sf_append_deadline_millis` semantics)
    need new code.
-2. **Multi-host failover**: see [`failover.md`](failover.md) for the
-   normative spec covering host-health states, selection priority,
-   backoff math, and the three context-specific loops (ingress non-SF
-   initial connect, ingress SF reconnect loop, egress per-Execute
-   loop).
-3. **Retryable errors**: the wire format has no retryable bit; transient
+2. **Retryable errors**: the wire format has no retryable bit; transient
    server faults and permanent ones both surface as `INTERNAL_ERROR`. A
    future server change could split status bytes or add a 1-byte field;
    when that lands, the spec gains a `RETRY_TRANSIENT` policy.
-4. **Per-table attribution in multi-table batch errors**: today
+3. **Per-table attribution in multi-table batch errors**: today
    `tableName` is only populated when the rejected batch had exactly one
    table. The wire format would need an optional table index field for
    the multi-table case.
-5. **`on_*_error` connect-string keys**: normatively defined in §4.4 but
+4. **`on_*_error` connect-string keys**: normatively defined in §4.4 but
    not yet recognised by the Java parser; only the fluent
    `LineSenderBuilder` API exposes them today.
-6. **Per-segment partial-ack tracking**: would let trim drop the acked
+5. **Per-segment partial-ack tracking**: would let trim drop the acked
    prefix of a partially-acked sealed segment, instead of waiting until
    the entire segment is acked. Improves disk efficiency under tail-heavy
    ack patterns; not implemented.
-7. **`resumeAfterHalt()` API**: clears the latched terminal error and
+6. **`resumeAfterHalt()` API**: clears the latched terminal error and
    restarts the I/O loop without rebuilding the sender. The reference
    loop is one-shot today; users work around with `close()` + rebuild.
 
@@ -928,3 +1063,4 @@ Items intentionally out of scope today, tracked for future revisions:
 | Date | Commit | Change |
 |------|--------|--------|
 | 2026-05-05 | client `1125b0b` / oss `dc108e66ff` | Initial spec extracted from Java reference. |
+| 2026-05-08 | (pending) | Align with `failover.md`. §13.3 + §8.2: rewrite HTTP-status terminal classification to defer to `failover.md` §6 (only `401`/`403` are terminal; `421` is topology, handled in-round; `404`/`426`/`503` are transient and consume the reconnect budget). §4.5 + §21: drop "multi-host failover deferred" — `failover.md` is the normative spec. §4.2 + §13.4: clarify `initial_connect_retry=on` is canonical; `sync` and `true` are aliases. §13.2: replace inlined backoff math with a forward-pointer to `failover.md` §3 / §3.1 to avoid drift. |

@@ -10,11 +10,11 @@ every conformant client and server must implement to.
 ```
 docs/qwp/
 ├── README.md                          this index
-├── wire-ingress.md                    QWP1 ingest wire format (WebSocket + UDP shared core)
+├── wire-ingress.md                    QWP1 ingest wire format (WebSocket + UDP shared core); §15.5 owns the non-SF initial-connect failover walk
 ├── wire-udp.md                        UDP-specific deviations from wire-ingress
-├── wire-egress.md                     egress (query result streaming) wire format
-├── sf-client.md                       client-side Store-and-Forward substrate spec
-├── failover.md                        multi-host failover semantics (ingress + ingress-SF + egress)
+├── wire-egress.md                     egress (query result streaming) wire format; §11.9 owns the per-Execute failover loop and WalkTracker
+├── sf-client.md                       client-side Store-and-Forward substrate spec; §13.6 owns the SF reconnect loop
+├── failover.md                        shared failover primitives (host-health model, backoff, role filter, error classification, cross-context defaults table)
 └── design/                            non-normative working notes (decision logs, backlogs)
     └── egress-phase2-backlog.md
 ```
@@ -23,13 +23,14 @@ docs/qwp/
 
 | You are writing… | Read |
 |------------------|------|
-| A new ingest client (any language), no on-disk durability | `wire-ingress.md` (+ `failover.md` if it accepts multi-host `addr=`) |
-| A new ingest client with durability across restarts | `wire-ingress.md` + `sf-client.md` + `failover.md` |
+| A new ingest client (any language), no on-disk durability | `wire-ingress.md` (incl. §15.5 for multi-host `addr=`) + `failover.md` §1.1 / §2 / §5 / §6 for the primitives §15.5 imports |
+| A new ingest client with durability across restarts | `wire-ingress.md` + `sf-client.md` (incl. §13.6 reconnect loop) + `failover.md` (primitives) |
 | A UDP-only ingest client (e.g. metrics collector) | `wire-ingress.md` + `wire-udp.md` |
-| A new query client (SELECT, DDL, EXEC) | `wire-egress.md` + `failover.md` (`wire-egress.md` references `wire-ingress.md` for the shared header / type system) |
+| A new query client (SELECT, DDL, EXEC) | `wire-egress.md` (incl. §11.9 failover loop + WalkTracker) + `failover.md` (primitives); `wire-egress.md` references `wire-ingress.md` for the shared header / type system |
 | A server-side change to ingest framing | `wire-ingress.md` (+ `wire-udp.md` if UDP, + `sf-client.md` if it touches ACKs, durable-ack, or close-codes) |
 | A server-side change to egress framing | `wire-egress.md` |
-| A server-side change to topology / role headers | `failover.md` §5–6 + `wire-egress.md` §11 |
+| A server-side change to topology / role headers | `failover.md` §5–6 + `wire-egress.md` §11.8 / §11.9 |
+| Tuning the cross-context defaults (knob names, budgets) | `failover.md` §7 (cheat sheet) → drill into `sf-client.md` §4.2 or `wire-egress.md` §11.9.1 for the canonical knob homes |
 | A bug fix that doesn't change interop | none of the above; just the code |
 
 ## Spec layers
@@ -63,14 +64,18 @@ A short checklist for spec-affecting PRs:
 
 - [ ] Did the wire bytes change? Update `wire-ingress.md` / `wire-egress.md`.
 - [ ] Did the on-disk segment format, slot layout, or recovery contract change? Update `sf-client.md` §5–6, §18.
-- [ ] Did handshake headers, ACK rules, durable-ack, keepalive, reconnect, close-code routing, error categories, or connect-string keys change? Update `sf-client.md` §4, §8–17.
+- [ ] Did handshake headers, ACK rules, durable-ack, keepalive, close-code routing, error categories, or connect-string keys change? Update `sf-client.md` §4, §8–17.
+- [ ] Did the SF reconnect loop, mid-stream demote, or `initial_connect_retry` semantics change? Update `sf-client.md` §13.6.
+- [ ] Did the egress per-`Execute` loop, `WalkTracker`, or `OnFailoverReset` contract change? Update `wire-egress.md` §11.9.
+- [ ] Did the non-SF ingress initial-connect walk change? Update `wire-ingress.md` §15.5.
+- [ ] Did the shared host-health model, backoff math, role filter, or error classification change? Update `failover.md` §2 / §3 / §5 / §6 — and check that the three loop docs above still match.
 - [ ] Did the relevant Reference Implementation commit hash advance? Bump the footer.
 
 ## See also
 
-- Wire protocol: [`wire-ingress.md`](wire-ingress.md)
+- Wire protocol: [`wire-ingress.md`](wire-ingress.md) (incl. §15.5 non-SF initial-connect walk)
 - UDP variant: [`wire-udp.md`](wire-udp.md)
-- Egress (query results): [`wire-egress.md`](wire-egress.md)
-- SF client (storage, FSN, ACKs, reconnect, errors, connect-string): [`sf-client.md`](sf-client.md)
-- Failover (multi-host selection, role filter, backoff): [`failover.md`](failover.md)
+- Egress (query results): [`wire-egress.md`](wire-egress.md) (incl. §11.9 per-Execute failover loop and WalkTracker)
+- SF client (storage, FSN, ACKs, errors, connect-string, §13.6 reconnect loop): [`sf-client.md`](sf-client.md)
+- Failover primitives (host tracker, backoff math, role filter, error classes, cross-context defaults): [`failover.md`](failover.md)
 - Egress Phase 2 backlog: [`design/egress-phase2-backlog.md`](design/egress-phase2-backlog.md)
