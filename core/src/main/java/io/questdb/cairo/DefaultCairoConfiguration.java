@@ -885,6 +885,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
+    public int getSampleByFillSortStrategy() {
+        return SampleBySortStrategy.LIGHT_ENCODED;
+    }
+
+    @Override
     public int getSampleByIndexSearchPageSize() {
         return 0;
     }
@@ -1543,6 +1548,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     @Override
     public boolean isIOURingEnabled() {
         return true;
+    }
+
+    @Override
+    public boolean isMatViewCoveringIndexEnabled() {
+        return false;
     }
 
     @Override

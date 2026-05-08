@@ -33,6 +33,8 @@ import io.questdb.TelemetryConfiguration;
 import io.questdb.VolumeDefinitions;
 import io.questdb.cairo.idx.PostingIndexUtils;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreakerConfiguration;
+import io.questdb.cutlass.qwp.codec.DefaultQwpServerInfoProvider;
+import io.questdb.cutlass.qwp.codec.QwpServerInfoProvider;
 import io.questdb.cutlass.text.TextConfiguration;
 import io.questdb.mp.continuation.DelayedFireable;
 import io.questdb.mp.continuation.TimerShards;
@@ -505,6 +507,8 @@ public interface CairoConfiguration {
         return PostingIndexUtils.ENCODING_ADAPTIVE;
     }
 
+    int getPostingSealGenThreshold();
+
     /**
      * Hard cap on the per-writer in-memory outbox of superseded posting-seal
      * generations awaiting publish to the global purge queue. When the cap
@@ -521,8 +525,6 @@ public interface CairoConfiguration {
         return 8192;
     }
 
-    int getPostingSealGenThreshold();
-
     int getPreferencesStringPoolCapacity();
 
     int getQueryCacheEventQueueCapacity();
@@ -538,8 +540,8 @@ public interface CairoConfiguration {
      * live replication role so clients can route reads to primary vs replica.
      */
     @NotNull
-    default io.questdb.cutlass.qwp.codec.QwpServerInfoProvider getQwpServerInfoProvider() {
-        return io.questdb.cutlass.qwp.codec.DefaultQwpServerInfoProvider.INSTANCE;
+    default QwpServerInfoProvider getQwpServerInfoProvider() {
+        return DefaultQwpServerInfoProvider.INSTANCE;
     }
 
     @NotNull
@@ -575,6 +577,13 @@ public interface CairoConfiguration {
     }
 
     boolean getSampleByDefaultAlignmentCalendar();
+
+    /**
+     * Selects the sort backend the SAMPLE BY FILL fast path stacks above
+     * the GROUP BY output. Returns one of {@link SampleBySortStrategy}'s int
+     * constants. The default is {@link SampleBySortStrategy#LIGHT_ENCODED}.
+     */
+    int getSampleByFillSortStrategy();
 
     int getSampleByIndexSearchPageSize();
 
@@ -897,6 +906,8 @@ public interface CairoConfiguration {
     boolean isGroupByPresizeEnabled();
 
     boolean isIOURingEnabled();
+
+    boolean isMatViewCoveringIndexEnabled();
 
     boolean isMatViewEnabled();
 

@@ -94,6 +94,7 @@ import io.questdb.cairo.wal.WalWriter;
 import io.questdb.cairo.wal.seq.SeqTxnTracker;
 import io.questdb.cairo.wal.seq.SequencerMetadata;
 import io.questdb.cairo.wal.seq.TableSequencerAPI;
+import io.questdb.cutlass.qwp.codec.QwpServerInfoProvider;
 import io.questdb.mp.continuation.TxnWaiter;
 import io.questdb.cutlass.text.CopyExportContext;
 import io.questdb.cutlass.text.CopyImportContext;
@@ -225,6 +226,7 @@ public class CairoEngine implements Closeable, WriterSource {
     private volatile @NotNull DurableAckRegistry durableAckRegistry = DefaultDurableAckRegistry.INSTANCE;
     private FrameFactory frameFactory;
     private @NotNull MatViewStateStore matViewStateStore = NoOpMatViewStateStore.INSTANCE;
+    private volatile QwpServerInfoProvider qwpServerInfoProvider;
     private volatile Runnable recentWriteTrackerHydrationCallback;
     private @NotNull ViewStateStore viewStateStore = NoOpViewStateStore.INSTANCE;
     private @NotNull WalDirectoryPolicy walDirectoryPolicy = DefaultWalDirectoryPolicy.INSTANCE;
@@ -929,6 +931,11 @@ public class CairoEngine implements Closeable, WriterSource {
 
     public QueryRegistry getQueryRegistry() {
         return queryRegistry;
+    }
+
+    public @NotNull QwpServerInfoProvider getQwpServerInfoProvider() {
+        QwpServerInfoProvider provider = qwpServerInfoProvider;
+        return provider != null ? provider : configuration.getQwpServerInfoProvider();
     }
 
     public TableReader getReader(CharSequence tableName) {
@@ -1810,6 +1817,10 @@ public class CairoEngine implements Closeable, WriterSource {
         this.readerPool.setPoolListener(poolListener);
         this.walWriterPool.setPoolListener(poolListener);
         this.viewWalWriterPool.setPoolListener(poolListener);
+    }
+
+    public void setQwpServerInfoProvider(@NotNull QwpServerInfoProvider provider) {
+        this.qwpServerInfoProvider = provider;
     }
 
     @TestOnly
