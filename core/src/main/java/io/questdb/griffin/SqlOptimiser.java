@@ -121,6 +121,24 @@ public class SqlOptimiser implements Mutable {
     public static final int REWRITE_STATUS_USE_OUTER_MODEL = 8;
     public static final int REWRITE_STATUS_USE_WINDOW_JOIN_MODE = 128;
     public static final int REWRITE_STATUS_USE_WINDOW_MODEL = 2;
+    // Rewriters that break the 1:1 relationship between baseModel rows and
+    // the rows the outer LIMIT counts: DISTINCT and GROUP BY drop rows
+    // (SAMPLE BY is encoded as GROUP BY); WINDOW preserves the count but
+    // depends on seeing the full input frame to compute its functions;
+    // HORIZON JOIN runs as a keyed GROUP BY ("GROUP BY with keys" per
+    // HorizonJoinRecordCursorFactory) so it also drops rows. When any of
+    // them sits between the outer LIMIT and baseModel, pushDownLimitAdvice
+    // must not propagate the limit to baseModel, because a row-count
+    // limit at the base cursor produces fewer post-rewrite rows than the
+    // outer LIMIT requested. WINDOW JOIN is intentionally excluded: it
+    // preserves the master side's row count and order, and the rewrite
+    // path enforces translationIsRedundant for it (see the assertion on
+    // the WINDOW_JOIN branch below), so it never reaches this push-down.
+    private static final int LIMIT_PUSH_DOWN_ROW_COUNT_BLOCKERS =
+            REWRITE_STATUS_USE_DISTINCT_MODEL
+                    | REWRITE_STATUS_USE_GROUP_BY_MODEL
+                    | REWRITE_STATUS_USE_HORIZON_JOIN_MODE
+                    | REWRITE_STATUS_USE_WINDOW_MODEL;
     private static final int JOIN_OP_AND = 2;
     private static final int JOIN_OP_EQUAL = 1;
     private static final int JOIN_OP_OR = 3;
@@ -777,8 +795,8 @@ public class SqlOptimiser implements Mutable {
         }
     }
 
-    private static void pushDownLimitAdvice(IQueryModel model, IQueryModel nestedModel, boolean useDistinctModel) {
-        if ((nestedModel.getOrderBy().size() == 0 || isOrderedByDesignatedTimestamp(nestedModel)) && !useDistinctModel) {
+    private static void pushDownLimitAdvice(IQueryModel model, IQueryModel nestedModel, boolean rowCountChanges) {
+        if ((nestedModel.getOrderBy().size() == 0 || isOrderedByDesignatedTimestamp(nestedModel)) && !rowCountChanges) {
             nestedModel.setLimitAdvice(model.getLimitLo(), model.getLimitHi());
         }
     }
@@ -9880,7 +9898,7 @@ public class SqlOptimiser implements Mutable {
             // when parent model is order by or join.
             // The only exception is when order by is by designated timestamp because
             // it'll be implemented as forward or backward scan (no sorting required).
-            pushDownLimitAdvice(model, baseModel, (rewriteStatus & REWRITE_STATUS_USE_DISTINCT_MODEL) != 0);
+            pushDownLimitAdvice(model, baseModel, (rewriteStatus & LIMIT_PUSH_DOWN_ROW_COUNT_BLOCKERS) != 0);
 
             translatingModel.moveLimitFrom(model);
             translatingModel.moveJoinAliasFrom(model);
@@ -9895,7 +9913,7 @@ public class SqlOptimiser implements Mutable {
             innerVirtualModel.copyHints(model.getHints());
 
             // Set limit hint if applicable.
-            pushDownLimitAdvice(innerVirtualModel, root, (rewriteStatus & REWRITE_STATUS_USE_DISTINCT_MODEL) != 0);
+            pushDownLimitAdvice(innerVirtualModel, root, (rewriteStatus & LIMIT_PUSH_DOWN_ROW_COUNT_BLOCKERS) != 0);
 
             root = innerVirtualModel;
             limitSource = innerVirtualModel;

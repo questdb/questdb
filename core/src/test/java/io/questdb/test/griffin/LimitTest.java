@@ -40,7 +40,6 @@ import org.junit.Assert;
 import org.junit.Test;
 
 public class LimitTest extends AbstractCairoTest {
-
     private static final String createTableDdl = "create table y as (" +
             "select" +
             " cast(x as int) i," +
@@ -282,7 +281,11 @@ public class LimitTest extends AbstractCairoTest {
     @Test
     public void testInvalidNegativeLimitJitDisabled() throws Exception {
         sqlExecutionContext.setJitMode(SqlJitMode.JIT_MODE_DISABLED);
-        testInvalidNegativeLimit();
+        try {
+            testInvalidNegativeLimit();
+        } finally {
+            sqlExecutionContext.setJitMode(SqlJitMode.JIT_MODE_ENABLED);
+        }
     }
 
     @Test
@@ -450,12 +453,212 @@ public class LimitTest extends AbstractCairoTest {
     @Test
     public void testLimitMinusOneJitDisabled() throws Exception {
         sqlExecutionContext.setJitMode(SqlJitMode.JIT_MODE_DISABLED);
-        testLimitMinusOne();
+        try {
+            testLimitMinusOne();
+        } finally {
+            sqlExecutionContext.setJitMode(SqlJitMode.JIT_MODE_ENABLED);
+        }
     }
 
     @Test
     public void testLimitMinusOneJitEnabled() throws Exception {
         testLimitMinusOne();
+    }
+
+    // DISTINCT collapses duplicates, so an outer LIMIT N pushed into the
+    // inner Async Filter would yield fewer than N post-DISTINCT rows.
+    // The (t0.k + t0.k) key and disabled parallel GROUP BY keep the
+    // filter and GROUP BY in separate factories -- the shape that
+    // exposes the bug.
+    @Test
+    public void testLimitNotPushedBelowDistinct() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE tab (k INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            // 40 distinct keys, > LIMIT 30
+            execute("""
+                    INSERT INTO tab
+                    SELECT (x % 40 + 1)::INT, timestamp_sequence(0, 1_000_000)
+                    FROM long_sequence(100)
+                    """);
+            String query = "SELECT DISTINCT (t0.k + t0.k) AS kk FROM tab t0 WHERE t0.k > 0 LIMIT 30";
+            sqlExecutionContext.setParallelGroupByEnabled(false);
+            assertPlanNoLeakCheck(query, """
+                    Limit value: 30 skip-rows-max: 0 take-rows-max: 30
+                        GroupBy vectorized: false
+                          keys: [kk]
+                            SelectedRecord
+                                Async JIT Filter workers: 1
+                                  filter: 0<k
+                                    PageFrame
+                                        Row forward scan
+                                        Frame forward scan on: tab
+                    """);
+            try (
+                    RecordCursorFactory factory = engine.select(query, sqlExecutionContext);
+                    RecordCursor cursor = factory.getCursor(sqlExecutionContext)
+            ) {
+                int rows = 0;
+                while (cursor.hasNext()) {
+                    rows++;
+                }
+                Assert.assertEquals(30, rows);
+            }
+        });
+    }
+
+    // Locks in the original query-fuzzer divergence: an outer LIMIT N
+    // pushed into the inner Async Filter under a GROUP BY collapses
+    // those N rows into fewer than N groups, breaking LIMIT semantics.
+    // The query mirrors the shape of the failing fuzz query (computed
+    // key and constant projection); disabled parallel GROUP BY keeps
+    // the filter and GROUP BY in separate factories.
+    @Test
+    public void testLimitNotPushedBelowGroupBy() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE tab (k INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            // 40 distinct keys, > LIMIT 30
+            execute("""
+                    INSERT INTO tab
+                    SELECT (x % 40 + 1)::INT, timestamp_sequence(0, 1_000_000)
+                    FROM long_sequence(100)
+                    """);
+            String query = "SELECT (t0.k + t0.k) AS kk, -1.0::DECIMAL(38, 5) AS lit, first(true) AS a0 FROM tab t0 WHERE t0.k > 0 LIMIT 30";
+            sqlExecutionContext.setParallelGroupByEnabled(false);
+            assertPlanNoLeakCheck(query, """
+                    Limit value: 30 skip-rows-max: 0 take-rows-max: 30
+                        VirtualRecord
+                          functions: [kk,-1.00000,a0]
+                            GroupBy vectorized: false
+                              keys: [kk]
+                              values: [first(true)]
+                                SelectedRecord
+                                    Async JIT Filter workers: 1
+                                      filter: 0<k
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: tab
+                    """);
+            try (
+                    RecordCursorFactory factory = engine.select(query, sqlExecutionContext);
+                    RecordCursor cursor = factory.getCursor(sqlExecutionContext)
+            ) {
+                int rows = 0;
+                while (cursor.hasNext()) {
+                    rows++;
+                }
+                Assert.assertEquals(30, rows);
+            }
+        });
+    }
+
+    // HORIZON JOIN runs as a keyed GROUP BY (see
+    // HorizonJoinRecordCursorFactory), so it drops rows. The current
+    // optimizer absorbs the filter into the join factory in
+    // single-worker mode, so the row-count check is a forward guard for
+    // future rewrites that might re-introduce a separate inner filter.
+    @Test
+    public void testLimitNotPushedBelowHorizonJoin() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE trades (ts TIMESTAMP, sym SYMBOL, qty DOUBLE) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE prices (ts TIMESTAMP, sym SYMBOL, price DOUBLE) TIMESTAMP(ts) PARTITION BY DAY");
+            // 100 trades with 40 distinct sym values; > 30 surviving keys
+            // so the LIMIT 30 only matches if applied above the HORIZON
+            // aggregation.
+            execute("""
+                    INSERT INTO trades
+                    SELECT timestamp_sequence(0, 1_000_000) ts,
+                           ('s' || (x % 40))::SYMBOL,
+                           x::DOUBLE
+                    FROM long_sequence(100)
+                    """);
+            execute("""
+                    INSERT INTO prices
+                    SELECT timestamp_sequence(0, 1_000_000) ts,
+                           ('s' || (x % 40))::SYMBOL,
+                           x::DOUBLE
+                    FROM long_sequence(100)
+                    """);
+            String query = "SELECT t.sym, avg(p.price) "
+                    + "FROM trades AS t "
+                    + "HORIZON JOIN prices AS p ON (t.sym = p.sym) "
+                    + "RANGE FROM 0s TO 0s STEP 1s AS h "
+                    + "LIMIT 30";
+            try (
+                    RecordCursorFactory factory = engine.select(query, sqlExecutionContext);
+                    RecordCursor cursor = factory.getCursor(sqlExecutionContext)
+            ) {
+                int rows = 0;
+                while (cursor.hasNext()) {
+                    rows++;
+                }
+                Assert.assertEquals(30, rows);
+            }
+        });
+    }
+
+    // SAMPLE BY is encoded as GROUP BY (USE_GROUP_BY_MODEL), so the same
+    // push-down rule applies. The Top-K-driving ORDER BY ts absorbs the
+    // Limit at the top, so the row-count check is a forward guard
+    // rather than a direct catch of the original bug shape.
+    @Test
+    public void testLimitNotPushedBelowSampleBy() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE tab (k INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            // 100 rows over 100 minutes -> 100 distinct minute buckets
+            execute("""
+                    INSERT INTO tab
+                    SELECT x::INT, timestamp_sequence(0, 60_000_000)
+                    FROM long_sequence(100)
+                    """);
+            String query = "SELECT ts, count() AS c FROM tab WHERE k > 0 SAMPLE BY 1m LIMIT 30";
+            sqlExecutionContext.setParallelGroupByEnabled(false);
+            try (
+                    RecordCursorFactory factory = engine.select(query, sqlExecutionContext);
+                    RecordCursor cursor = factory.getCursor(sqlExecutionContext)
+            ) {
+                int rows = 0;
+                while (cursor.hasNext()) {
+                    rows++;
+                }
+                Assert.assertEquals(30, rows);
+            }
+        });
+    }
+
+    // Window functions are 1:1 in row count, but their values depend on
+    // the entire input frame (row_number assigns 1..N over all rows), so
+    // pushing the LIMIT into the inner filter changes the window output.
+    @Test
+    public void testLimitNotPushedBelowWindow() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE tab (k INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO tab
+                    SELECT (x % 40 + 1)::INT, timestamp_sequence(0, 1_000_000)
+                    FROM long_sequence(100)
+                    """);
+            String query = "SELECT k, row_number() OVER (ORDER BY ts) AS rn FROM tab WHERE k > 0 LIMIT 30";
+            assertPlanNoLeakCheck(query, """
+                    Limit value: 30 skip-rows-max: 0 take-rows-max: 30
+                        Window
+                          functions: [row_number()]
+                            Async JIT Filter workers: 1
+                              filter: 0<k
+                                PageFrame
+                                    Row forward scan
+                                    Frame forward scan on: tab
+                    """);
+            try (
+                    RecordCursorFactory factory = engine.select(query, sqlExecutionContext);
+                    RecordCursor cursor = factory.getCursor(sqlExecutionContext)
+            ) {
+                int rows = 0;
+                while (cursor.hasNext()) {
+                    rows++;
+                }
+                Assert.assertEquals(30, rows);
+            }
+        });
     }
 
     @Test
