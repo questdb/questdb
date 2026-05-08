@@ -70,6 +70,12 @@ public class CheckpointFuzzTest extends AbstractFuzzTest {
     }
 
     @Test
+    public void testCheckpointEjectedWalApply() throws Exception {
+        Rnd rnd = generateRandom(LOG);
+        runEjectedWalApplyBody(rnd);
+    }
+
+    @Test
     public void testCheckpointEjectedWalApplyRepro() throws Exception {
         // Reproducer for the fuzz failure observed in Azure DevOps build 231528:
         //   io.questdb.test.cairo.fuzz.CheckpointFuzzTest.testCheckpointEjectedWalApply
@@ -77,53 +83,6 @@ public class CheckpointFuzzTest extends AbstractFuzzTest {
         // Captured seeds from the failing run.
         Rnd rnd = generateRandom(LOG, 7421798330890341L, 1778093562730L);
         runEjectedWalApplyBody(rnd);
-    }
-
-    @Test
-    public void testCheckpointEjectedWalApply() throws Exception {
-        Rnd rnd = generateRandom(LOG);
-        runEjectedWalApplyBody(rnd);
-    }
-
-    private void runEjectedWalApplyBody(Rnd rnd) throws Exception {
-        fuzzer.setFuzzProbabilities(
-                0,
-                0,
-                0,
-                0,
-                0,
-                0,
-                0,
-                0,
-                1,
-                0.5,
-                0.0,
-                0,
-                0,
-                0.5,
-                0.01,
-                0
-        );
-
-        fuzzer.setFuzzCounts(
-                rnd.nextBoolean(),
-                rnd.nextInt(2_000_000),
-                rnd.nextInt(1000),
-                rnd.nextInt(3),
-                rnd.nextInt(5),
-                rnd.nextInt(1000),
-                rnd.nextInt(1_000_000),
-                5 + rnd.nextInt(10)
-        );
-
-        setFuzzProperties(
-                1,
-                getRndO3PartitionSplit(rnd),
-                getRndO3PartitionSplitMaxCount(rnd),
-                10 * Numbers.SIZE_1MB,
-                3
-        );
-        runFuzzWithCheckpoint(rnd);
     }
 
     @Test
@@ -345,6 +304,47 @@ public class CheckpointFuzzTest extends AbstractFuzzTest {
                 dst.trimTo(dstLen);
             }
         }
+    }
+
+    private void runEjectedWalApplyBody(Rnd rnd) throws Exception {
+        fuzzer.setFuzzProbabilities(
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                1,
+                0.5,
+                0.0,
+                0,
+                0,
+                0.5,
+                0.01,
+                0
+        );
+
+        fuzzer.setFuzzCounts(
+                rnd.nextBoolean(),
+                rnd.nextInt(2_000_000),
+                rnd.nextInt(1000),
+                rnd.nextInt(3),
+                rnd.nextInt(5),
+                rnd.nextInt(1000),
+                rnd.nextInt(1_000_000),
+                5 + rnd.nextInt(10)
+        );
+
+        setFuzzProperties(
+                1,
+                getRndO3PartitionSplit(rnd),
+                getRndO3PartitionSplitMaxCount(rnd),
+                10 * Numbers.SIZE_1MB,
+                3
+        );
+        runFuzzWithCheckpoint(rnd);
     }
 
     protected void runFuzzWithCheckpoint(Rnd rnd) throws Exception {
