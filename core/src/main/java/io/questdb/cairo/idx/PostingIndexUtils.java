@@ -990,6 +990,22 @@ public final class PostingIndexUtils {
         return activeKeyCount * (Integer.BYTES + Integer.BYTES + Long.BYTES);
     }
 
+    /**
+     * Returns true when the file at {@code keyFilePath} exists and at least
+     * one of its two seqlock header pages is in the published, stable state
+     * that {@code PostingIndexWriter.initKeyMemory} leaves behind on a
+     * successful init. Returns false for missing files, files shorter than
+     * {@link #KEY_FILE_RESERVED} (truncated mid-init), and files whose
+     * Page A and Page B both have zeroed/torn seqlocks (the shape we observe
+     * when an earlier writer mapped the file but never wrote a complete
+     * header before failing).
+     * <p>
+     * Used by {@code TableWriter.createIndexFiles} to decide whether to
+     * preserve an existing .pk (so its chain history survives a writer
+     * reopen) or wipe it as garbage from a previous failed init. Does not
+     * validate entry-region pointers, which can legitimately be empty on a
+     * freshly initialised chain.
+     */
     public static boolean hasInitialisedKeyFileHeader(FilesFacade ff, LPSZ keyFilePath) {
         if (!ff.exists(keyFilePath) || ff.length(keyFilePath) < KEY_FILE_RESERVED) {
             return false;
