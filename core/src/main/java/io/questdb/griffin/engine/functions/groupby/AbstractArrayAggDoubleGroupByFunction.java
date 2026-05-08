@@ -135,6 +135,21 @@ public abstract class AbstractArrayAggDoubleGroupByFunction extends ArrayFunctio
     }
 
     @Override
+    public void cursorClosed() {
+        // Defence-in-depth: reset the render cache on every instance (primary
+        // and shared) when the cursor closes. The primary's clear() already
+        // resets the cache via Misc.clearObjList(groupByFunctions) on the
+        // owning cursor close, but a shared cursor (LATERAL join) reuses the
+        // same factory across executions and only sees cursorClosed() on its
+        // lifecycle hook. Without this override, allocator address recycling
+        // between executions could short-circuit getArray() to a freed
+        // cachedRenderPtr and silently return stale array bytes.
+        cachedRenderPtr = 0;
+        cachedSrcPtr = 0;
+        UnaryFunction.super.cursorClosed();
+    }
+
+    @Override
     public Function getArg() {
         return arg;
     }
