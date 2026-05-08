@@ -632,6 +632,10 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
         final byte walTxnType = txnDetails.getWalTxnType(seqTxn);
         final long start = microClock.getTicks();
 
+        // Reset per iteration: branches that don't internally reset (skip, no-op SQL, mat view
+        // invalidate, view def, truncate) would otherwise re-read the prior iter's count.
+        writer.resetWalApplyCounters();
+
         switch (walTxnType) {
             case DATA:
             case MAT_VIEW_DATA:

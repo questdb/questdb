@@ -2959,6 +2959,11 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         bumpColumnStructureVersion();
     }
 
+    public void resetWalApplyCounters() {
+        physicallyWrittenRowsSinceLastCommit.reset();
+        dedupRowsRemovedSinceLastCommit.reset();
+    }
+
     @Override
     public void rollback() {
         checkDistressed();
@@ -6740,30 +6745,44 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             CharSequence dstColumnName,
             long dstColumnNameTxn
     ) {
-        // Sealed value file: read sealTxn from src .pk so we link the currently-live .pv.
-        long valueTxn = PostingIndexUtils.readSealTxnFromKeyFile(
+        // Read the live sealTxn from src .pk and use it for both the .pv link and
+        // the .pc<N> visitor filter. Linking only the live generation mirrors how
+        // .pv has always worked here and preserves two invariants:
+        //   1. No race with PostingSealPurgeJob. The purge only targets superseded
+        //      sealTxns; rename holds the writer lock so no new seal can occur,
+        //      so the live sealTxn cannot be subject to a pending or in-flight
+        //      purge task.
+        //   2. No leaked hardlinks under the dst column's namespace. If the
+        //      visitor linked superseded generations, the src copies would still
+        //      get purged by their queued tasks, but the dst copies would survive
+        //      until the dst column is dropped (no purge task targets the dst
+        //      namespace).
+        final long liveSealTxn = PostingIndexUtils.readSealTxnFromKeyFile(
                 ff, keyFileName(IndexType.POSTING, path.trimTo(srcDirLen), srcColumnName, srcColumnNameTxn)
         );
-        if (valueTxn >= 0) {
-            LPSZ srcPv = IndexFactory.valueFileName(IndexType.POSTING, path.trimTo(srcDirLen), srcColumnName, srcColumnNameTxn, valueTxn);
-            LPSZ dstPv = IndexFactory.valueFileName(IndexType.POSTING, other.trimTo(dstDirLen), dstColumnName, dstColumnNameTxn, valueTxn);
+        if (liveSealTxn >= 0) {
+            LPSZ srcPv = IndexFactory.valueFileName(IndexType.POSTING, path.trimTo(srcDirLen), srcColumnName, srcColumnNameTxn, liveSealTxn);
+            LPSZ dstPv = IndexFactory.valueFileName(IndexType.POSTING, other.trimTo(dstDirLen), dstColumnName, dstColumnNameTxn, liveSealTxn);
             if (ff.exists(srcPv) && !ff.exists(dstPv)) {
                 linkFile(ff, srcPv, dstPv);
             }
         }
-        // Sidecar info file (.pci) and per-column data files (.pc<N>.<C>.<S>).
-        // Enumerate every .pc<N>.<C>.<S> via directory scan so we cover all sealed generations
-        // and don't depend on the .pci's per-column count (which may not match the on-disk reality
-        // after ALTER on covered columns).
+        // Sidecar info file (.pci) is not subject to seal purge and is one per
+        // posting column instance, so it is linked unconditionally.
         LPSZ pciSrc = PostingIndexUtils.coverInfoFileName(path.trimTo(srcDirLen), srcColumnName, srcColumnNameTxn);
         if (ff.exists(pciSrc)) {
             linkFile(ff, pciSrc,
                     PostingIndexUtils.coverInfoFileName(other.trimTo(dstDirLen), dstColumnName, dstColumnNameTxn));
         }
+        // Per-column data files (.pc<N>.<C>.<S>). Use a directory scan rather
+        // than reading the (includeIdx, coveredColumnNameTxn) tuples from .pci:
+        // ALTER on covered columns can leave .pci's per-column count out of
+        // sync with the on-disk reality, so the directory listing is the
+        // source of truth.
         PostingIndexUtils.scanSealedFiles(ff, path, srcDirLen, srcColumnName, new PostingIndexUtils.SealedFileVisitor() {
             @Override
             public void onCoverDataFile(int includeIdx, long postingColumnNameTxn, long coveredColumnNameTxn, long sealTxn) {
-                if (postingColumnNameTxn != srcColumnNameTxn) {
+                if (postingColumnNameTxn != srcColumnNameTxn || sealTxn != liveSealTxn) {
                     return;
                 }
                 linkFile(ff,
