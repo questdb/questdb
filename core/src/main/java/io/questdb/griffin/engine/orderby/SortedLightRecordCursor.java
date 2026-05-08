@@ -106,6 +106,8 @@ class SortedLightRecordCursor implements DelegatingRecordCursor {
         if (!isOpen) {
             isOpen = true;
             chain.reopen();
+        } else {
+            chain.clear();
         }
         SortKeyEncoder.buildRankMaps(baseCursor, rankMaps, comparator);
         circuitBreaker = executionContext.getCircuitBreaker();
