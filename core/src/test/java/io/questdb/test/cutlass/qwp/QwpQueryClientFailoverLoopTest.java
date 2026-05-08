@@ -38,7 +38,6 @@ import org.junit.Test;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
-import java.lang.reflect.Method;
 import java.net.ServerSocket;
 import java.net.Socket;
 import java.net.SocketException;
@@ -53,11 +52,11 @@ import java.util.concurrent.atomic.AtomicReference;
  * tests in the client repo can't follow that branch without a real QWP
  * egress server).
  *
- * <p>Latched failures are injected via the package-private
- * {@code recordTerminalFailure(byte, String, boolean)} reflection hook --
+ * <p>Latched failures are injected via
+ * {@link QwpQueryClient#recordTerminalFailureForTest(byte, String)} --
  * the same hook {@link QwpQueryClientTerminalFailureTest} uses -- so each
  * test has deterministic control over when the loop sees a transport
- * error vs a terminal-bypass error vs a clean execute.
+ * error vs a clean execute.
  *
  * <p>Coverage:
  * <ul>
@@ -66,9 +65,6 @@ import java.util.concurrent.atomic.AtomicReference;
  *   <li>{@code failover_max_attempts} caps the loop after N executes.</li>
  *   <li>{@code failover_max_duration_ms} caps the loop by wall clock
  *       even when attempts remain.</li>
- *   <li>{@code terminalFailoverBypass=true} (synthesised
- *       AuthError / ProtocolVersionError) skips failover entirely and
- *       surfaces the message verbatim.</li>
  *   <li>The first latched failure wins -- subsequent injects do not
  *       overwrite the root cause.</li>
  *   <li>After a clean execute that re-binds (no synthetic failures),
@@ -116,7 +112,7 @@ public class QwpQueryClientFailoverLoopTest extends AbstractBootstrapTest {
                 try (QwpQueryClient client = QwpQueryClient.fromConfig(
                         "ws::addr=127.0.0.1:" + HTTP_PORT
                                 + ",127.0.0.1:" + blackholePort
-                                + ";lb_strategy=first;failover=on;"
+                                + ";failover=on;"
                                 + "failover_max_attempts=20;"
                                 + "failover_max_duration_ms=50;"
                                 + "failover_backoff_initial_ms=5;"
@@ -130,8 +126,8 @@ public class QwpQueryClientFailoverLoopTest extends AbstractBootstrapTest {
                     // than the deadline / attempts cap.
                     serverMain.close();
                     serverMainClosed = true;
-                    invokeRecordTerminalFailure(client, (byte) 11,
-                            "synthetic-deadline-cause", false);
+                    client.recordTerminalFailureForTest((byte) 11,
+                            "synthetic-deadline-cause");
 
                     CapturingHandler h = new CapturingHandler();
                     long t0 = System.nanoTime();
@@ -140,8 +136,17 @@ public class QwpQueryClientFailoverLoopTest extends AbstractBootstrapTest {
 
                     Assert.assertNotNull("onError must fire", h.lastMessage);
                     String msg = h.lastMessage;
+                    // Bounded-failure phrases the impl can surface here:
+                    // - "budget exhausted" / "failover exhausted" -- failover-loop
+                    //   level deadline / attempts cap tripped.
+                    // - "all QWP endpoints unreachable on failover" -- WalkTracker
+                    //   exhausted both peers in a single reconnect attempt (the
+                    //   blackhole's auth_timeout chews up the per-loop budget so
+                    //   this is the path actually taken when failover_max_duration
+                    //   is shorter than auth_timeout x hostCount).
                     boolean bounded = msg.contains("budget exhausted")
-                            || msg.contains("failover exhausted");
+                            || msg.contains("failover exhausted")
+                            || msg.contains("all QWP endpoints unreachable");
                     Assert.assertTrue("loop must surface a bounded failure: " + msg,
                             bounded);
                     Assert.assertTrue("elapsed must be bounded, was " + elapsedMs + "ms",
@@ -165,7 +170,7 @@ public class QwpQueryClientFailoverLoopTest extends AbstractBootstrapTest {
                 try (QwpQueryClient client = QwpQueryClient.fromConfig(
                         "ws::addr=127.0.0.1:" + HTTP_PORT + ";failover=off;")) {
                     client.connect();
-                    invokeRecordTerminalFailure(client, (byte) 7, "transport-direct", false);
+                    client.recordTerminalFailureForTest((byte) 7, "transport-direct");
 
                     CapturingHandler h = new CapturingHandler();
                     long t0 = System.nanoTime();
@@ -192,9 +197,9 @@ public class QwpQueryClientFailoverLoopTest extends AbstractBootstrapTest {
                 try (QwpQueryClient client = QwpQueryClient.fromConfig(
                         "ws::addr=127.0.0.1:" + HTTP_PORT + ";failover=off;")) {
                     client.connect();
-                    invokeRecordTerminalFailure(client, (byte) 1, "first-cause", false);
-                    invokeRecordTerminalFailure(client, (byte) 2, "second-symptom", false);
-                    invokeRecordTerminalFailure(client, (byte) 3, "third-noise", true);
+                    client.recordTerminalFailureForTest((byte) 1, "first-cause");
+                    client.recordTerminalFailureForTest((byte) 2, "second-symptom");
+                    client.recordTerminalFailureForTest((byte) 3, "third-noise");
 
                     CapturingHandler h = new CapturingHandler();
                     client.execute("SELECT 1", h);
@@ -203,36 +208,6 @@ public class QwpQueryClientFailoverLoopTest extends AbstractBootstrapTest {
                             Byte.valueOf((byte) 1), h.lastStatus);
                     Assert.assertEquals("first cause message preserved",
                             "first-cause", h.lastMessage);
-                }
-            }
-        });
-    }
-
-    @Test(timeout = TEST_TIMEOUT_MS)
-    public void testTerminalBypassSurfacesDirectlyWithFailoverOn() throws Exception {
-        // bypassFailover=true on the latched failure (e.g. from a
-        // server-emitted KIND_PROTOCOL_ERROR): the loop must NOT enter
-        // failover even when failover=on. Surface verbatim.
-        TestUtils.assertMemoryLeak(() -> {
-            try (TestServerMain ignored = startWithEnvVariables()) {
-                try (QwpQueryClient client = QwpQueryClient.fromConfig(
-                        "ws::addr=127.0.0.1:" + HTTP_PORT + ";failover=on;")) {
-                    client.connect();
-                    invokeRecordTerminalFailure(client, (byte) 13, "qwp-version-mismatch", true);
-
-                    CapturingHandler h = new CapturingHandler();
-                    client.execute("SELECT 1", h);
-
-                    Assert.assertEquals(Byte.valueOf((byte) 13), h.lastStatus);
-                    Assert.assertEquals("qwp-version-mismatch", h.lastMessage);
-                    // Distinguishing test: failover wrappers MUST NOT
-                    // appear in the message. The bypass path delivers
-                    // the raw stored message.
-                    Assert.assertFalse("must NOT enter failover wrapper: " + h.lastMessage,
-                            h.lastMessage.contains("transport failure after"));
-                    Assert.assertFalse("must NOT enter failover wrapper: " + h.lastMessage,
-                            h.lastMessage.contains("failover exhausted"));
-                    Assert.assertEquals("no failover reset must fire", 0, h.failoverResetCount);
                 }
             }
         });
@@ -263,7 +238,7 @@ public class QwpQueryClientFailoverLoopTest extends AbstractBootstrapTest {
                     // trips the failover loop. The single host is the
                     // real TestServerMain, so walkTracker rebinds it
                     // successfully on the first walk-fall-through-walk.
-                    invokeRecordTerminalFailure(client, (byte) 5, "first-execute-fault", false);
+                    client.recordTerminalFailureForTest((byte) 5, "first-execute-fault");
 
                     CapturingHandler h1 = new CapturingHandler();
                     client.execute("SELECT id FROM recover_test", h1);
@@ -320,7 +295,7 @@ public class QwpQueryClientFailoverLoopTest extends AbstractBootstrapTest {
                 try (QwpQueryClient client = QwpQueryClient.fromConfig(
                         "ws::addr=127.0.0.1:" + HTTP_PORT
                                 + ",127.0.0.1:" + authPort
-                                + ";lb_strategy=first;failover=on;"
+                                + ";failover=on;"
                                 + "failover_max_attempts=20;"
                                 + "failover_max_duration_ms=5000;"
                                 + "failover_backoff_initial_ms=5;"
@@ -329,8 +304,8 @@ public class QwpQueryClientFailoverLoopTest extends AbstractBootstrapTest {
                     client.connect(); // binds HTTP_PORT
                     serverMain.close();
                     serverMainClosed = true;
-                    invokeRecordTerminalFailure(client, (byte) 9,
-                            "synthetic-trigger-reconnect", false);
+                    client.recordTerminalFailureForTest((byte) 9,
+                            "synthetic-trigger-reconnect");
 
                     CapturingHandler h = new CapturingHandler();
                     client.execute("SELECT 1", h);
@@ -352,18 +327,6 @@ public class QwpQueryClientFailoverLoopTest extends AbstractBootstrapTest {
                 }
             }
         });
-    }
-
-    /**
-     * Reflection wrapper for the package-private
-     * {@code recordTerminalFailure(byte, String, boolean)} test hook.
-     */
-    private static void invokeRecordTerminalFailure(QwpQueryClient client, byte status,
-                                                     String message, boolean bypassFailover) throws Exception {
-        Method m = QwpQueryClient.class.getDeclaredMethod(
-                "recordTerminalFailure", byte.class, String.class, boolean.class);
-        m.setAccessible(true);
-        m.invoke(client, status, message, bypassFailover);
     }
 
     /**
