@@ -69,11 +69,6 @@ import java.util.concurrent.atomic.AtomicBoolean;
  */
 public class LiveViewInstance implements QuietCloseable {
     private final LiveViewDefinition definition;
-    // Base-column names the SELECT depends on (filter inputs + window inputs +
-    // designated ts). Populated at CREATE and lazily after restart on first refresh.
-    // Used by ApplyWal2TableJob's schema-change hook to narrow invalidation: only
-    // changes touching one of these columns mark the view INVALID.
-    private final ObjList<String> dependencyColumnNames = new ObjList<>();
     private final AtomicBoolean refreshLatch = new AtomicBoolean(false);
     private final LiveViewStateReader stateReader = new LiveViewStateReader();
     // Cached compiled factory. Window functions carry per-row state, so refresh must
@@ -140,11 +135,12 @@ public class LiveViewInstance implements QuietCloseable {
      * know what the view reads, so we leave invalidation to the broader path).
      */
     public boolean dependsOnMissingColumn(@NotNull RecordMetadata baseMetadata) {
-        if (dependencyColumnNames.size() == 0) {
+        ObjList<String> deps = definition.getDependencyColumnNames();
+        if (deps.size() == 0) {
             return false;
         }
-        for (int i = 0, n = dependencyColumnNames.size(); i < n; i++) {
-            if (baseMetadata.getColumnIndexQuiet(dependencyColumnNames.getQuick(i)) < 0) {
+        for (int i = 0, n = deps.size(); i < n; i++) {
+            if (baseMetadata.getColumnIndexQuiet(deps.getQuick(i)) < 0) {
                 return true;
             }
         }
@@ -152,7 +148,7 @@ public class LiveViewInstance implements QuietCloseable {
     }
 
     public ObjList<String> getDependencyColumnNames() {
-        return dependencyColumnNames;
+        return definition.getDependencyColumnNames();
     }
 
     public CharSequence getInvalidationReason() {

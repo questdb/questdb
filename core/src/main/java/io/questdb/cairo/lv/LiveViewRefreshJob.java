@@ -203,12 +203,6 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                     executionContext.setLiveViewCompile(false);
                 }
                 instance.setCompiledFactory(factory);
-                // Lazily backfill dependencyColumnNames for views that came up from
-                // disk (the startup loader doesn't recompile, so a freshly-loaded view
-                // has an empty dependency set until the first refresh runs).
-                if (instance.getDependencyColumnNames().size() == 0) {
-                    populateDependencyColumnNames(instance, factory);
-                }
                 // Lazily compile the anchor expression as a Function so the
                 // ANCHOR runtime can evaluate it per-row. Only fires when the
                 // LV has an anchored named WINDOW persisted in _lv.
@@ -307,20 +301,6 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             base = base.getBaseFactory();
         }
         return base.getMetadata();
-    }
-
-    private void populateDependencyColumnNames(LiveViewInstance instance, RecordCursorFactory factory) {
-        WindowRecordCursorFactory windowFactory = unwrapWindowFactory(factory);
-        RecordCursorFactory base = windowFactory.getBaseFactory();
-        if (base.getFilter() != null) {
-            base = base.getBaseFactory();
-        }
-        RecordMetadata baseProjMeta = base.getMetadata();
-        ObjList<String> sink = instance.getDependencyColumnNames();
-        sink.clear();
-        for (int i = 0, n = baseProjMeta.getColumnCount(); i < n; i++) {
-            sink.add(io.questdb.std.Chars.toString(baseProjMeta.getColumnName(i)));
-        }
     }
 
     /**

@@ -310,21 +310,12 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
             // ts + x should be the dependency set; y and z must not appear.
             Assert.assertEquals(2, instance.getDependencyColumnNames().size());
 
-            // Restart sweep: clear the registry, reload from disk. The startup path
-            // doesn't recompile, so dependencyColumnIndexes is empty until the next
-            // refresh runs ensureCompiledFactory.
+            // Restart sweep: the dependency set lives in _lv, so reload restores it
+            // before any refresh runs. A schema change between restart and first
+            // refresh would otherwise fall back to the broad invalidation path.
             engine.getLiveViewRegistry().clear();
             engine.buildViewGraphs();
             LiveViewInstance reloaded = engine.getLiveViewRegistry().getViewInstance("lv");
-            Assert.assertEquals(0, reloaded.getDependencyColumnNames().size());
-
-            // Trigger a refresh (which compiles the SELECT and lazily backfills the set).
-            execute("INSERT INTO base (ts, x, y, z) VALUES ('2026-05-01T00:00:00.000000Z', 1, 2, 3)");
-            drainWalQueue();
-            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
-                drainJob(job);
-            }
-            drainWalQueue();
             Assert.assertEquals(2, reloaded.getDependencyColumnNames().size());
 
             execute("DROP LIVE VIEW lv");
@@ -389,6 +380,32 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
             Assert.assertTrue(
                     "dropping a referenced column must invalidate the LV",
                     instance.isInvalid()
+            );
+
+            execute("DROP LIVE VIEW lv");
+        });
+    }
+
+    @Test
+    public void testSchemaChangeNarrowsAfterRestart() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (ts TIMESTAMP, x INT, y INT, z INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 1s AS " +
+                    "SELECT ts, x, row_number() OVER () AS rn FROM base WHERE x > 0");
+
+            // Restart sweep before any refresh runs. The dependency set must come
+            // back from _lv, otherwise the schema-change hook falls back to broad
+            // invalidation and the LV flips INVALID on an unrelated DROP.
+            engine.getLiveViewRegistry().clear();
+            engine.buildViewGraphs();
+            LiveViewInstance reloaded = engine.getLiveViewRegistry().getViewInstance("lv");
+            Assert.assertFalse("LV must come back valid", reloaded.isInvalid());
+
+            execute("ALTER TABLE base DROP COLUMN z");
+            drainWalQueue();
+            Assert.assertFalse(
+                    "post-restart unreferenced-column DROP must not invalidate the LV",
+                    reloaded.isInvalid()
             );
 
             execute("DROP LIVE VIEW lv");

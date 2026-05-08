@@ -814,6 +814,7 @@ public class CairoEngine implements Closeable, WriterSource {
                         viewLowerBoundTimestamp,
                         false,
                         op.getAnchorSpec(),
+                        dependencyColumnNames,
                         metadata
                 );
                 LiveViewDefinition.append(definition, blockFileWriter);
@@ -837,7 +838,6 @@ public class CairoEngine implements Closeable, WriterSource {
                 instance.setLastProcessedSeqTxn(subscribeFromSeqTxn - 1);
                 instance.setAppliedWatermark(-1L);
                 instance.setLvConsumedSeqTxn(subscribeFromSeqTxn - 1);
-                instance.getDependencyColumnNames().addAll(dependencyColumnNames);
                 liveViewRegistry.registerView(instance);
                 liveViewStateStore.registerBaseTable(definition.getBaseTableName());
             } catch (Throwable t) {

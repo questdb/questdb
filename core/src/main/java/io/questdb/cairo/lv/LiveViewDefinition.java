@@ -69,6 +69,11 @@ public class LiveViewDefinition {
     private final TableToken baseTableToken;
     private final int baseTimestampType;
     private final boolean backfillRequested;
+    // Base-column names the SELECT depends on (filter inputs + window inputs +
+    // designated ts). ApplyWal2TableJob's schema-change hook narrows invalidation
+    // using this set: only changes touching one of these columns mark the view
+    // INVALID; unrelated ALTERs leave it ACTIVE.
+    private final ObjList<String> dependencyColumnNames;
     private final long flushEveryInterval;
     private final char flushEveryIntervalUnit;
     private final long inMemoryInterval;
@@ -95,6 +100,7 @@ public class LiveViewDefinition {
             long viewLowerBoundTimestamp,
             boolean backfillRequested,
             @Nullable LvAnchorSpec anchorSpec,
+            ObjList<String> dependencyColumnNames,
             GenericRecordMetadata metadata
     ) {
         this.viewName = viewName;
@@ -110,6 +116,7 @@ public class LiveViewDefinition {
         this.viewLowerBoundTimestamp = viewLowerBoundTimestamp;
         this.backfillRequested = backfillRequested;
         this.anchorSpec = anchorSpec;
+        this.dependencyColumnNames = dependencyColumnNames;
         this.metadata = metadata;
     }
 
@@ -125,6 +132,10 @@ public class LiveViewDefinition {
         block.putInt(definition.partitionBy);
         block.putLong(definition.viewLowerBoundTimestamp);
         block.putBool(definition.backfillRequested);
+        block.putInt(definition.dependencyColumnNames.size());
+        for (int i = 0, n = definition.dependencyColumnNames.size(); i < n; i++) {
+            block.putStr(definition.dependencyColumnNames.getQuick(i));
+        }
         block.commit(LIVE_VIEW_DEFINITION_CORE_MSG_TYPE);
 
         if (definition.anchorSpec != null) {
@@ -251,6 +262,7 @@ public class LiveViewDefinition {
         int partitionBy = 0;
         long viewLowerBoundTimestamp = 0;
         boolean backfillRequested = false;
+        ObjList<String> dependencyColumnNames = new ObjList<>();
         LvAnchorSpec anchorSpec = null;
 
         final BlockFileReader.BlockCursor cursor = reader.getCursor();
@@ -282,6 +294,15 @@ public class LiveViewDefinition {
                 viewLowerBoundTimestamp = block.getLong(offset);
                 offset += Long.BYTES;
                 backfillRequested = block.getBool(offset);
+                offset += Byte.BYTES;
+                int depCount = block.getInt(offset);
+                offset += Integer.BYTES;
+                dependencyColumnNames = new ObjList<>(depCount);
+                for (int i = 0; i < depCount; i++) {
+                    CharSequence colNameCs = block.getStr(offset);
+                    offset += Vm.getStorageLength(colNameCs);
+                    dependencyColumnNames.add(Chars.toString(colNameCs));
+                }
             } else if (block.type() == LIVE_VIEW_DEFINITION_ANCHOR_MSG_TYPE) {
                 // block.getStr returns a flyweight backed by the block's memory; subsequent
                 // getStr calls reuse the same flyweight, so each string must be materialised
@@ -336,6 +357,7 @@ public class LiveViewDefinition {
                 viewLowerBoundTimestamp,
                 backfillRequested,
                 anchorSpec,
+                dependencyColumnNames,
                 metadata
         );
     }
@@ -354,6 +376,10 @@ public class LiveViewDefinition {
 
     public int getBaseTimestampType() {
         return baseTimestampType;
+    }
+
+    public ObjList<String> getDependencyColumnNames() {
+        return dependencyColumnNames;
     }
 
     public long getFlushEveryInterval() {
