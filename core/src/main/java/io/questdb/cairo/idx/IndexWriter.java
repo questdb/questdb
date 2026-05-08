@@ -90,6 +90,22 @@ public interface IndexWriter extends Closeable, Mutable {
     }
 
     /**
+     * Resets the writer's in-memory state so a subsequent sequence of
+     * {@link #add(int, long)} calls plus {@link #seal()} produces a fresh
+     * single-generation chain that supersedes any prior chain entry. Unlike
+     * {@link #truncate()} this MUST NOT touch on-disk files: callers rely
+     * on it to discard stale (key, rowId) pairs left by replace-range,
+     * dedup-replace, or O3 splits without rotating the .pv or rewriting
+     * the .pk header that concurrent readers may have mmapped.
+     * <p>
+     * Default is no-op for index types that don't accumulate stale state
+     * (e.g. BitmapIndexWriter persists every add immediately and has no
+     * chain).
+     */
+    default void discardForRebuild() {
+    }
+
+    /**
      * Returns the index type for this writer.
      *
      * @return the index type constant from {@link IndexType}

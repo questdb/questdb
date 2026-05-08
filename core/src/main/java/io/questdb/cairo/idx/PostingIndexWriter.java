@@ -541,6 +541,30 @@ public class PostingIndexWriter implements IndexWriter {
         configureCovering(addrs, null, tops, shifts, indices, types, coverCount, timestampColumnIndex);
     }
 
+    @Override
+    public void discardForRebuild() {
+        if (!keyMem.isOpen()) {
+            return;
+        }
+        // Drop pending and spill in-memory state. Keep valueMem, keyMem,
+        // sealTxn, and the chain head intact: the next seal() advances
+        // sealTxn (peekNextSealTxn -> newSealTxn), writes a fresh .pv
+        // at newSealTxn from re-added entries, and publishToChain takes
+        // the appendNewEntry branch (sealTxn != chain.getHeadSealTxn())
+        // so a new chain entry with genCount=1 supersedes the old head.
+        // Old gens stay in the prior .pv until their committed-window
+        // closes and the seal-purge job removes them.
+        freePendingBuffers();
+        freeSpillData();
+        keyCapacity = 0;
+        keyCount = 0;
+        genCount = 0;
+        maxValue = -1L;
+        hasPendingData = false;
+        activeKeyCount = 0;
+        allocateNativeBuffers();
+    }
+
     @TestOnly
     public RowCursor getCursor(int key) {
         flushAllPending();

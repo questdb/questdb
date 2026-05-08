@@ -11160,10 +11160,31 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                         // Fold the fd-based O3 tentative state into
                         // the writer view before the reseal.
                         indexer.mergeTentativeIntoActiveIfAny();
-                        // Evict stale rowids left from a prior shrink
-                        // (O3 split of this partition, replace-range,
-                        // dedup-replace). No-op when maxValue < size.
-                        indexer.getWriter().rollbackConditionally(partitionSize);
+                        // Rebuild the chain from the column data file.
+                        // rollbackConditionally(partitionSize) only
+                        // evicts entries past the new partition size; it
+                        // leaves stale (key, rowId) pairs within
+                        // [columnTop, partitionSize) that survive
+                        // replace-range, dedup-replace, and O3 splits
+                        // where the same rowid takes a different value
+                        // across writes. discardForRebuild drops the
+                        // in-memory state without rotating .pv or
+                        // rewriting .pk, then index() re-reads sym2.d
+                        // (the source of truth) and the trailing seal
+                        // publishes a fresh single-gen chain entry.
+                        indexer.getWriter().discardForRebuild();
+                        long dataFd = openRO(ff, dFile(path.trimTo(plen), colName, colNameTxn), LOG);
+                        try {
+                            indexer.index(ff, dataFd, columnTop, partitionSize);
+                        } finally {
+                            ff.close(dataFd);
+                        }
+                        // Flush pending into gen 0 so rebuildSidecars (and seal in
+                        // the non-covering branch) sees a non-empty chain. add()
+                        // populated pending; commit() runs flushAllPending which
+                        // converts pending into a fresh gen and republishes the
+                        // chain head via extendHead at the same sealTxn.
+                        indexer.getWriter().commit();
                         // Pass the writer-space timestamp index so the
                         // O3 reseal preserves the linear-prediction
                         // encoding for the designated-timestamp covering
@@ -11227,8 +11248,15 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     // same trade-off is correct here.
                     indexer.getWriter().setNextTxnAtSeal(txWriter.getTxn());
                     indexer.mergeTentativeIntoActiveIfAny();
-                    // See rollbackConditionally comment in the covering branch.
-                    indexer.getWriter().rollbackConditionally(partitionSize);
+                    // See rebuild-from-data comment in the covering branch.
+                    indexer.getWriter().discardForRebuild();
+                    long dataFd = openRO(ff, dFile(path.trimTo(plen), colName, colNameTxn), LOG);
+                    try {
+                        indexer.index(ff, dataFd, columnTop, partitionSize);
+                    } finally {
+                        ff.close(dataFd);
+                    }
+                    indexer.getWriter().commit();
                     indexer.seal();
                     indexer.publishPendingPurges(messageBus, tableToken, partitionBy, timestampType, txWriter.getTxn());
                 }
