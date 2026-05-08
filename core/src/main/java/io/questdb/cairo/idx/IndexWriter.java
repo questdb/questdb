@@ -196,6 +196,14 @@ public interface IndexWriter extends Closeable, Mutable {
     }
 
     /**
+     * Drop the read-side state set up for the most recent seal but keep
+     * the covering schema intact. See
+     * {@link io.questdb.cairo.idx.PostingIndexWriter#releaseCoveredColumnReadMappings()}.
+     */
+    default void releaseCoveredColumnReadMappings() {
+    }
+
+    /**
      * Rolls back values that are strictly greater than the given row.
      * <p>
      * This operation is only supported by some index implementations.

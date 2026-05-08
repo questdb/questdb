@@ -294,9 +294,7 @@ public class PostingIndexWriter implements IndexWriter {
     }
 
     public void clearCovering() {
-        unmapCoveredColumnReads();
-        this.coveredColumnAddrs.clear();
-        this.coveredColumnAuxAddrs.clear();
+        releaseCoveredColumnReadMappings();
         this.coveredPartitionPath.clear();
         this.coveredColumnNames.clear();
         this.coveredColumnNameTxns.clear();
@@ -1036,6 +1034,36 @@ public class PostingIndexWriter implements IndexWriter {
         }
     }
 
+    /**
+     * Release the read-side state set up for the most recent seal: the
+     * covered-column read mappings and the borrowed source-column addresses
+     * passed in via {@link #configureCovering}. Keeps the covering schema
+     * (coverCount, coveredColumnIndices, coveredColumnNames,
+     * coveredColumnNameTxns, coveredColumnTops, coveredColumnShifts,
+     * coveredColumnTypes, sidecarMems) intact so a subsequent commit() can
+     * still publish a chain entry with a correctly-sized cover footer
+     * sourced from {@link #sidecarMems}' append offsets at the last seal.
+     * <p>
+     * Called from {@code TableWriter}'s post-seal finally blocks where the
+     * caller is about to munmap the covered-column files it mapped RO for
+     * the seal. Without dropping the borrowed pointers held in
+     * {@code coveredColumnAddrs} / {@code coveredColumnAuxAddrs} here, a
+     * subsequent ensureCoveredColumnReadMaps would dereference garbage.
+     * <p>
+     * Use {@link #clearCovering()} only when truly tearing down covering
+     * (writer discard, swap to a different cover schema). For the typical
+     * "seal done, release temporary read mmaps, keep schema" lifecycle,
+     * use this method - {@code clearCovering()} would zero {@code
+     * coverCount} and the next {@code commit()}'s {@code
+     * captureCoverEndOffsets} would short-circuit, dropping the cover
+     * footer from the published chain entry.
+     */
+    public void releaseCoveredColumnReadMappings() {
+        unmapCoveredColumnReads();
+        this.coveredColumnAddrs.clear();
+        this.coveredColumnAuxAddrs.clear();
+    }
+
     @Override
     public void rollbackConditionally(long row) {
         if (row < 0) {
@@ -1570,6 +1598,13 @@ public class PostingIndexWriter implements IndexWriter {
         activeKeyIds = new int[keyCapacity];
     }
 
+    /**
+     * Refresh {@link #coverEndOffsetsScratch} so it has exactly {@code coverCount}
+     * entries and each slot reflects the current append offset of the matching
+     * {@code sidecarMems} entry (or 0 when the slot is tombstoned / unopened).
+     * The result is the authoritative valid-byte extent of each .pcN at the
+     * moment the chain entry is republished.
+     */
     private void captureCoverEndOffsets() {
         coverEndOffsetsScratch.clear();
         if (coverCount <= 0) {

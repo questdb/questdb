@@ -10056,7 +10056,14 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                         indexer.publishPendingPurges(messageBus, tableToken, partitionBy, timestampType, txWriter.getTxn());
                     } finally {
                         unmapCoveringColumns(coverCount);
-                        indexer.clearCovering();
+                        // Same pattern as sealPostingIndexesForO3Partitions: drop
+                        // the borrowed read-side mappings but keep the covering
+                        // schema (coverCount, sidecarMems) so the next commit on
+                        // this writer still publishes a chain entry with a
+                        // correct cover footer. clearCovering() would zero
+                        // coverCount and the next captureCoverEndOffsets would
+                        // short-circuit, dropping the footer.
+                        indexer.releaseCoveredColumnReadMappings();
                     }
                     continue;
                 }
@@ -11320,11 +11327,16 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                         indexer.publishPendingPurges(messageBus, tableToken, partitionBy, timestampType, txWriter.getTxn());
                     } finally {
                         unmapCoveringColumns(coverCount);
-                        // Clear the writer's reference to o3SealAddrs so that
+                        // Drop the writer's reference to o3SealAddrs so that
                         // a subsequent close() -> seal() cannot dereference the
-                        // unmapped addresses. The seal would return early (gen0
-                        // is already dense), but this is a defensive measure.
-                        indexer.clearCovering();
+                        // unmapped addresses. Keep the covering schema
+                        // (coverCount, sidecarMems) intact so a subsequent
+                        // commit() between seals still publishes a chain
+                        // entry with a correct cover footer; clearCovering()
+                        // would zero coverCount and the next
+                        // captureCoverEndOffsets would short-circuit, dropping
+                        // the footer.
+                        indexer.releaseCoveredColumnReadMappings();
                     }
                 } else {
                     indexer.configureFollowerAndWriter(
