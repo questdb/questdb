@@ -27,8 +27,10 @@ package io.questdb.griffin;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.CairoException;
+import io.questdb.cairo.CairoTable;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.IndexType;
+import io.questdb.cairo.MetadataCacheReader;
 import io.questdb.cairo.MicrosTimestampDriver;
 import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.TableToken;
@@ -1392,6 +1394,12 @@ public class SqlParser {
         }
         builder.setBaseTableName(Chars.toString(from.getTableName()));
 
+        // Validate ORDER BY on each named window: RFC 123 §"CREATE-time validation"
+        // requires the ORDER BY column to be the base table's designated timestamp,
+        // ascending. Caught at parse time so the LV never reaches the engine with a
+        // shape its WAL-row-order processing can't honor.
+        validateLiveViewWindowOrderBy(queryModel, from.getTableName());
+
         // Validate ANCHOR usage on each named window. Inline anchor expressions
         // attached to anonymous OVER (...) clauses inside SELECT columns are also
         // captured by the parser but live in the SELECT-column WindowExpressions;
@@ -1527,6 +1535,74 @@ public class SqlParser {
      * {@code CairoEngine.validateAnchorPurity} and runs at CREATE time once the SELECT
      * factory has been compiled.
      */
+    /**
+     * Validates the ORDER BY clause of every named WINDOW in a live-view SELECT
+     * against RFC 123's requirement that windows order rows by the base table's
+     * designated timestamp ascending. The base table is resolved via
+     * {@link CairoEngine#getTableTokenIfExists(CharSequence)}; if the base can't be
+     * resolved (e.g. concurrent DROP, mistyped name) this validator skips the
+     * column-name match so the engine surfaces the primary "base does not exist"
+     * error rather than a misleading ORDER-BY message.
+     */
+    private void validateLiveViewWindowOrderBy(IQueryModel queryModel, CharSequence baseTableName) throws SqlException {
+        LowerCaseCharSequenceObjHashMap<WindowExpression> named = queryModel.getNamedWindows();
+        if (named.size() == 0) {
+            return;
+        }
+        String designatedTsName = null;
+        if (baseTableName != null) {
+            final TableToken baseToken = cairoEngine.getTableTokenIfExists(baseTableName);
+            if (baseToken != null) {
+                try (MetadataCacheReader metaRO = cairoEngine.getMetadataCache().readLock()) {
+                    final CairoTable baseTable = metaRO.getTable(baseToken);
+                    if (baseTable != null) {
+                        CharSequence n = baseTable.getTimestampName();
+                        if (n != null) {
+                            designatedTsName = Chars.toString(n);
+                        }
+                    }
+                }
+            }
+        }
+        if (designatedTsName == null) {
+            return;
+        }
+
+        ObjList<CharSequence> keys = named.keys();
+        for (int i = 0, n = keys.size(); i < n; i++) {
+            WindowExpression w = named.get(keys.getQuick(i));
+            if (w == null) {
+                continue;
+            }
+            ObjList<ExpressionNode> orderBy = w.getOrderBy();
+            IntList orderDir = w.getOrderByDirection();
+            int fallbackPos = w.getAnchorPosition();
+            if (fallbackPos <= 0 && w.getPartitionBy().size() > 0) {
+                fallbackPos = w.getPartitionBy().getQuick(0).position;
+            }
+            if (orderBy.size() == 0) {
+                throw SqlException.$(fallbackPos,
+                        "live view named WINDOW must ORDER BY ").put(designatedTsName);
+            }
+            if (orderBy.size() > 1) {
+                throw SqlException.$(orderBy.getQuick(1).position,
+                        "live view named WINDOW must ORDER BY a single column (")
+                        .put(designatedTsName).put(')');
+            }
+            ExpressionNode tsNode = orderBy.getQuick(0);
+            if (tsNode.type != ExpressionNode.LITERAL
+                    || !Chars.equalsIgnoreCase(tsNode.token, designatedTsName)) {
+                throw SqlException.$(tsNode.position,
+                        "live view named WINDOW must ORDER BY ").put(designatedTsName);
+            }
+            if (orderDir.size() > 0
+                    && orderDir.getQuick(0) == IQueryModel.ORDER_DIRECTION_DESCENDING) {
+                throw SqlException.$(tsNode.position,
+                        "live view named WINDOW must ORDER BY ").put(designatedTsName).put(" ASC");
+            }
+        }
+    }
+
     private static void validateLiveViewAnchors(IQueryModel queryModel) throws SqlException {
         LowerCaseCharSequenceObjHashMap<WindowExpression> named = queryModel.getNamedWindows();
         ObjList<CharSequence> keys = named.keys();

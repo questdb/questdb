@@ -1687,6 +1687,73 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testRejectWindowOrderByNonTimestampColumn() throws Exception {
+        // RFC 123: each named WINDOW must ORDER BY the base's designated timestamp.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            try {
+                execute("CREATE LIVE VIEW lv FLUSH EVERY 1s AS " +
+                        "SELECT ts, x, sum(x) OVER w AS s FROM base " +
+                        "WINDOW w AS (PARTITION BY x ORDER BY x)");
+                Assert.fail("expected non-timestamp ORDER BY reject");
+            } catch (SqlException e) {
+                Assert.assertTrue(e.getMessage(), e.getMessage().contains("must ORDER BY ts"));
+            }
+        });
+    }
+
+    @Test
+    public void testRejectWindowOrderByDescending() throws Exception {
+        // RFC 123: ORDER BY direction must be ascending; DESC violates the WAL-row-order
+        // processing model.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            try {
+                execute("CREATE LIVE VIEW lv FLUSH EVERY 1s AS " +
+                        "SELECT ts, x, sum(x) OVER w AS s FROM base " +
+                        "WINDOW w AS (PARTITION BY x ORDER BY ts DESC)");
+                Assert.fail("expected ORDER BY DESC reject");
+            } catch (SqlException e) {
+                Assert.assertTrue(e.getMessage(), e.getMessage().contains("must ORDER BY ts ASC"));
+            }
+        });
+    }
+
+    @Test
+    public void testRejectWindowOrderByMissing() throws Exception {
+        // RFC 123: a named WINDOW without any ORDER BY can't be ordered by the
+        // designated ts and must be rejected.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            try {
+                execute("CREATE LIVE VIEW lv FLUSH EVERY 1s AS " +
+                        "SELECT ts, x, sum(x) OVER w AS s FROM base " +
+                        "WINDOW w AS (PARTITION BY x)");
+                Assert.fail("expected missing ORDER BY reject");
+            } catch (SqlException e) {
+                Assert.assertTrue(e.getMessage(), e.getMessage().contains("must ORDER BY ts"));
+            }
+        });
+    }
+
+    @Test
+    public void testRejectWindowOrderByMultipleColumns() throws Exception {
+        // RFC 123: ORDER BY must be a single column (the designated timestamp);
+        // multi-column ordering doesn't have a meaningful WAL-stream semantics.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            try {
+                execute("CREATE LIVE VIEW lv FLUSH EVERY 1s AS " +
+                        "SELECT ts, x, sum(x) OVER w AS s FROM base " +
+                        "WINDOW w AS (PARTITION BY x ORDER BY ts, x)");
+                Assert.fail("expected multi-column ORDER BY reject");
+            } catch (SqlException e) {
+                Assert.assertTrue(e.getMessage(), e.getMessage().contains("must ORDER BY a single column"));
+            }
+        });
+    }
+
+    @Test
     public void testRequireFlushEvery() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE base (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
