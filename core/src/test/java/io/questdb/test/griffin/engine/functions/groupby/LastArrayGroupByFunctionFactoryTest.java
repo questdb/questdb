@@ -254,11 +254,10 @@ public class LastArrayGroupByFunctionFactoryTest extends AbstractCairoTest {
     public void testSampleByFillValueRejectedWithArrayColumns() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE tab (ts TIMESTAMP, grp SYMBOL, arr DOUBLE[]) TIMESTAMP(ts) PARTITION BY DAY");
-            final String sql = "SELECT ts, grp, last(arr) arr FROM tab SAMPLE BY 10s FILL(42)";
             assertExceptionNoLeakCheck(
-                    sql,
-                    sql.indexOf("42"),
-                    "fill value of type INT cannot fill column of type DOUBLE[]"
+                    "SELECT ts, grp, last(arr) arr FROM tab SAMPLE BY 10s FILL(42)",
+                    16,
+                    "support for VALUE fill is not yet implemented"
             );
         });
     }
