@@ -3381,8 +3381,11 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                             indexWriter.setMaxValue(newPartitionSize - 1);
                         }
 
-                        indexWriter.commit();
-                        indexWriter.seal();
+                        if (IndexType.isPosting(indexType)) {
+                            indexWriter.seal();
+                        } else {
+                            indexWriter.commit();
+                        }
                     } finally {
                         Misc.free(indexWriter);
                         indexWriter = null;

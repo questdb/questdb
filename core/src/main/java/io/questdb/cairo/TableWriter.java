@@ -3828,21 +3828,23 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             }
             updateIndexesParallel(initialTransientRowCount, newTransientRowCount);
             try {
-                sealPostingIndexesForLastPartitionFastLag();
+                publishPostingIndexesForLastPartitionFastLag();
             } catch (Throwable e) {
                 // txWriter has already advanced (transient row count, lag
                 // min/max, max timestamp) and updateIndexesParallel has
                 // queued chain entries on the posting writers. A partial
-                // seal leaves some indexed columns republished with
-                // txnAtSeal pointing at the upcoming commit while others
-                // are not, and the writer's in-memory cover/seal state
-                // is no longer trustworthy. The on-disk recovery is still
-                // sound: the v2 chain's recoveryDropAbandoned, run from
-                // PostingIndexWriter.of() on the next reopen, drops every
-                // entry with txnAtSeal > currentTableTxn. Mark the writer
-                // distressed so the pool replaces it instead of handing
-                // back a writer that thinks the fast-lag commit succeeded.
-                LOG.critical().$("posting-index fast-lag seal failed `").$(e).$('`').$();
+                // commit leaves some indexed columns with new sparse gens
+                // whose rowids exceed the not-yet-committed transient
+                // rowcount while others have nothing published yet.
+                // On-disk recovery stays sound: every reopen of the last
+                // partition runs rollbackConditionally(committed
+                // transientRowCount) on each posting writer, evicting any
+                // rowid >= the committed bound regardless of whether it
+                // landed via appendNewEntry or extendHead. Mark the
+                // writer distressed so the pool replaces it instead of
+                // handing back a writer that thinks the fast-lag commit
+                // succeeded.
+                LOG.critical().$("posting-index fast-lag commit failed `").$(e).$('`').$();
                 distressed = true;
                 throw e;
             }
@@ -11239,16 +11241,14 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         return processed;
     }
 
-    private void sealPostingIndexesForLastPartitionFastLag() {
-        // applyLagToLastPartition runs OUTSIDE the o3 commit window — there
-        // is no sealPostingIndexesForO3Partitions sweep to follow. The
-        // writer for each indexed column is already open at the last
-        // partition (configured by openPartition), and updateIndexesParallel
-        // has just called writer.add() for every fresh row. POSTING writers
-        // hold those entries in memory until seal() flushes them to .pv;
-        // BITMAP writers persist incrementally and need no extra step.
-        // Without this seal, queries hit the .pv file and return zero rows
-        // for symbols added through the fast-lag path.
+    private void publishPostingIndexesForLastPartitionFastLag() {
+        // Fast-lag has no sealPostingIndexesForO3Partitions sweep to follow,
+        // so this is the only place pending POSTING entries from
+        // updateIndexesParallel get published. commit, not seal: seal would
+        // rewrite the whole posting index per fast-lag commit. Compaction
+        // is deferred to flushAllPending's MAX_GEN_COUNT auto-seal; partial
+        // publish is recovered by rollbackConditionally on next partition
+        // reopen, not by chain-level recoveryDropAbandoned.
         if (lastPartitionTimestamp == Long.MIN_VALUE) {
             return;
         }
@@ -11266,12 +11266,9 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 }
                 IntList coveringCols = metadata.getColumnMetadata(colIdx).getCoveringColumnIndices();
                 if (coveringCols != null && coveringCols.size() > 0) {
-                    // Covering POSTING needs the covering column files mapped so
-                    // rebuildSidecars can copy their values into the .pc<N>
-                    // sidecar alongside the sealed posting chain. Without this
-                    // path, fast-lag commits that are not followed by an O3
-                    // commit leave queries hitting a stale .pv that is missing
-                    // the lag rows.
+                    // Covering POSTING needs the covering column files mapped
+                    // so writeSidecarGenData (called inside flushAllPending
+                    // via commit()) can copy their values into .pc<N>.
                     if (coveringPathLen == -1) {
                         setStateForTimestamp(path, lastPartitionTimestamp);
                         coveringPathLen = path.size();
@@ -11356,21 +11353,17 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                                 }
                             }
                         }
-                        // The writer is already open at the last partition with
-                        // pending in-memory chain entries from updateIndexesParallel.
-                        // Do NOT call configureFollowerAndWriter here: that would
-                        // close and reopen the writer, dropping those entries.
-                        // Install the covering mapping then seal(): seal flushes
-                        // pending data into a fresh generation and, when coverCount
-                        // is set, also writes the .pc<N> sidecar files alongside
-                        // the new .pv. rebuildSidecars by itself early-returns when
-                        // genCount or keyCount are still zero (the fast-lag case),
-                        // so it can't be substituted here.
+                        // configureFollowerAndWriter would close+reopen the
+                        // writer, dropping pending entries from
+                        // updateIndexesParallel. configureCovering wires the
+                        // covered-column addresses that writeSidecarGenData
+                        // (called inside flushAllPending) uses to extend
+                        // .pc<N>.
                         indexer.configureCovering(o3SealAddrs, o3SealAuxAddrs, o3SealTops, o3SealShifts, coveringCols, o3SealTypes, coverCount,
                                 metadata.getTimestampIndex());
                         indexer.setCoveredColumnNameTxns(o3SealNameTxns);
                         indexer.getWriter().setNextTxnAtSeal(txWriter.getTxn());
-                        indexer.seal();
+                        indexer.getWriter().commit();
                         indexer.publishPendingPurges(messageBus, tableToken, partitionBy, timestampType, txWriter.getTxn());
                     } finally {
                         for (int c = 0; c < coverCount; c++) {
@@ -11388,7 +11381,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     continue;
                 }
                 indexer.getWriter().setNextTxnAtSeal(txWriter.getTxn());
-                indexer.seal();
+                indexer.getWriter().commit();
                 indexer.publishPendingPurges(messageBus, tableToken, partitionBy, timestampType, txWriter.getTxn());
             }
         } finally {
