@@ -45,6 +45,24 @@ import org.junit.Test;
  */
 public class LiveViewTest extends AbstractCairoTest {
 
+    private void assertMutationRejected(String sql, String expectedMessageFragment) throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (val INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY HOUR WAL");
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 1s AS " +
+                    "SELECT val, ts, row_number() OVER () AS rn FROM base");
+            try {
+                execute(sql);
+                Assert.fail("expected SqlException for " + sql);
+            } catch (SqlException e) {
+                Assert.assertTrue(
+                        "expected message containing '" + expectedMessageFragment + "', got: " + e.getMessage(),
+                        e.getMessage().contains(expectedMessageFragment)
+                );
+            }
+            execute("DROP LIVE VIEW lv");
+        });
+    }
+
     @Test
     public void testCreateLiveViewIfNotExists() throws Exception {
         assertMemoryLeak(() -> {
@@ -123,6 +141,86 @@ public class LiveViewTest extends AbstractCairoTest {
             );
             execute("DROP LIVE VIEW lv");
         });
+    }
+
+    @Test
+    public void testRejectAlterTable() throws Exception {
+        assertMutationRejected(
+                "ALTER TABLE lv ADD COLUMN x INT",
+                "cannot modify live view [view=lv]"
+        );
+    }
+
+    @Test
+    public void testRejectInsertInto() throws Exception {
+        assertMutationRejected(
+                "INSERT INTO lv VALUES (1, '2026-01-01T00:00:00.000000Z', 1)",
+                "cannot modify live view [view=lv]"
+        );
+    }
+
+    @Test
+    public void testRejectUpdate() throws Exception {
+        assertMutationRejected(
+                "UPDATE lv SET val = 0",
+                "cannot modify live view [view=lv]"
+        );
+    }
+
+    @Test
+    public void testRejectTruncate() throws Exception {
+        assertMutationRejected(
+                "TRUNCATE TABLE lv",
+                "cannot modify live view [view=lv]"
+        );
+    }
+
+    @Test
+    public void testRejectReindex() throws Exception {
+        assertMutationRejected(
+                "REINDEX TABLE lv COLUMN val LOCK EXCLUSIVE",
+                "cannot modify live view [view=lv]"
+        );
+    }
+
+    @Test
+    public void testRejectVacuum() throws Exception {
+        assertMutationRejected(
+                "VACUUM TABLE lv",
+                "cannot modify live view [view=lv]"
+        );
+    }
+
+    @Test
+    public void testRejectRename() throws Exception {
+        assertMutationRejected(
+                "RENAME TABLE lv TO lv2",
+                "cannot modify live view [view=lv]"
+        );
+    }
+
+    @Test
+    public void testRejectDropTableOnLiveView() throws Exception {
+        assertMutationRejected(
+                "DROP TABLE lv",
+                "table name expected, got live view name: lv"
+        );
+    }
+
+    @Test
+    public void testRejectDropViewOnLiveView() throws Exception {
+        assertMutationRejected(
+                "DROP VIEW lv",
+                "view name expected, got table or materialized view name"
+        );
+    }
+
+    @Test
+    public void testRejectDropMaterializedViewOnLiveView() throws Exception {
+        assertMutationRejected(
+                "DROP MATERIALIZED VIEW lv",
+                "materialized view name expected, got table or view name"
+        );
     }
 
     @Test
