@@ -195,6 +195,36 @@ public class ArrayAggDoubleArrayGroupByFunctionFactoryTest extends AbstractCairo
     }
 
     @Test
+    public void testGroupByCompoundKey() throws Exception {
+        // GROUP BY a, b uses a composite map key encoding distinct from the
+        // single-symbol path covered by testGroupByKeyed. Verify that the
+        // per-group buffer pointer is correctly resolved through a multi-key
+        // map and that elements within each composite group concatenate in
+        // insertion order.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE tab (region SYMBOL, country SYMBOL, arr DOUBLE[])");
+            execute("""
+                    INSERT INTO tab VALUES
+                    ('eu', 'fr', ARRAY[1.0, 2.0]),
+                    ('eu', 'de', ARRAY[10.0]),
+                    ('eu', 'fr', ARRAY[3.0]),
+                    ('na', 'us', ARRAY[100.0, 200.0]),
+                    ('eu', 'de', ARRAY[20.0, 30.0])
+                    """);
+            assertQueryNoLeakCheck(
+                    "region\tcountry\tagg\n" +
+                            "eu\tde\t[10.0,20.0,30.0]\n" +
+                            "eu\tfr\t[1.0,2.0,3.0]\n" +
+                            "na\tus\t[100.0,200.0]\n",
+                    "SELECT region, country, array_agg(arr) agg FROM tab GROUP BY region, country ORDER BY region, country",
+                    null,
+                    true,
+                    true
+            );
+        });
+    }
+
+    @Test
     public void testGroupByKeyed() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE tab (grp SYMBOL, arr DOUBLE[])");

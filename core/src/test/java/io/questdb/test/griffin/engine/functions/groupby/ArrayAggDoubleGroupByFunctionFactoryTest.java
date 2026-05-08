@@ -159,6 +159,36 @@ public class ArrayAggDoubleGroupByFunctionFactoryTest extends AbstractCairoTest 
     }
 
     @Test
+    public void testGroupByCompoundKey() throws Exception {
+        // GROUP BY a, b uses a composite map key encoding distinct from the
+        // single-symbol path covered by testGroupByKeyed. Verify that the
+        // per-group buffer pointer is correctly resolved through a multi-key
+        // map and that ordering across groups is stable.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE tab (region SYMBOL, country SYMBOL, val DOUBLE)");
+            execute("""
+                    INSERT INTO tab VALUES
+                    ('eu', 'fr', 1.0),
+                    ('eu', 'de', 2.0),
+                    ('eu', 'fr', 3.0),
+                    ('na', 'us', 10.0),
+                    ('na', 'us', 20.0),
+                    ('eu', 'de', 4.0)
+                    """);
+            assertQueryNoLeakCheck(
+                    "region\tcountry\tarr\n" +
+                            "eu\tde\t[2.0,4.0]\n" +
+                            "eu\tfr\t[1.0,3.0]\n" +
+                            "na\tus\t[10.0,20.0]\n",
+                    "SELECT region, country, array_agg(val) arr FROM tab GROUP BY region, country ORDER BY region, country",
+                    null,
+                    true,
+                    true
+            );
+        });
+    }
+
+    @Test
     public void testGroupByKeyed() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE tab (grp SYMBOL, val DOUBLE)");
@@ -349,6 +379,38 @@ public class ArrayAggDoubleGroupByFunctionFactoryTest extends AbstractCairoTest 
                     "SELECT grp, array_agg(x) xs, array_agg(y) ys FROM tab ORDER BY grp",
                     null,
                     true,
+                    true
+            );
+        });
+    }
+
+    @Test
+    public void testNestedReAggregationCrossVariant() throws Exception {
+        // The output of the inner scalar array_agg(D) flows into the outer
+        // array array_agg(D[]) via the array variant's computeFirst/computeNext.
+        // This exercises the cross-variant handoff: the outer reads the inner's
+        // BorrowedArray flyweight (allocator-backed render buffer) and copies
+        // its elements into its own pair buffer.
+        // Use a single inner group so the test does not depend on hash GROUP BY
+        // emission order. array_sum on the outer concatenated array is
+        // order-independent.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE tab (grp SYMBOL, val DOUBLE)");
+            execute("""
+                    INSERT INTO tab VALUES
+                    ('a', 1.0),
+                    ('a', 2.5),
+                    ('a', 3.0),
+                    ('a', 4.5)
+                    """);
+            assertQueryNoLeakCheck(
+                    "concat\tsum\n" +
+                            "[1.0,2.5,3.0,4.5]\t11.0\n",
+                    "SELECT array_agg(arr) concat, array_sum(array_agg(arr)) sum FROM (" +
+                            "  SELECT array_agg(val) arr FROM tab" +
+                            ")",
+                    null,
+                    false,
                     true
             );
         });
