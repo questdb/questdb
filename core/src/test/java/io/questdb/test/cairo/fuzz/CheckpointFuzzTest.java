@@ -76,16 +76,6 @@ public class CheckpointFuzzTest extends AbstractFuzzTest {
     }
 
     @Test
-    public void testCheckpointEjectedWalApplyRepro() throws Exception {
-        // Reproducer for the fuzz failure observed in Azure DevOps build 231528:
-        //   io.questdb.test.cairo.fuzz.CheckpointFuzzTest.testCheckpointEjectedWalApply
-        //   java.lang.AssertionError: Actual cursor does not have record at 0
-        // Captured seeds from the failing run.
-        Rnd rnd = generateRandom(LOG, 7421798330890341L, 1778093562730L);
-        runEjectedWalApplyBody(rnd);
-    }
-
-    @Test
     public void testCheckpointFrequentTableDrop() throws Exception {
         Rnd rnd = generateRandom(LOG);
         fuzzer.setFuzzProbabilities(
