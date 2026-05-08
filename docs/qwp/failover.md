@@ -195,9 +195,11 @@ by the loop:
   that immediately fails again starts a fresh outage clock.
 
 In SF (§4.2), role-rejects do not advance the per-attempt backoff
-(`backoff` is reset to `InitialBackoff` after each role-reject so the
-client doesn't accumulate exponential delay against a known-but-not-
-writable endpoint). They DO consume the wall-clock outage budget
+(when a round exhausts with role-reject as `lastError`, the
+round-boundary sleep is the configured `InitialBackoff` and
+`backoff.attempt` is reset, so the client doesn't accumulate
+exponential delay against a known-but-not-writable endpoint). They
+DO consume the wall-clock outage budget
 (`reconnect_max_duration_millis`) — without that bound a long-lived
 PRIMARY_CATCHUP cluster would let an unattended SF producer block
 forever. The intended usage pattern is to set
@@ -250,43 +252,69 @@ Key properties:
 ```
 backoff = BackoffState()
 seenFirstConnect = false
+lastError = null
 loop forever:
     if previousIdx >= 0:                # mid-stream failure path
         tracker.RecordMidStreamFailure(previousIdx)
         previousIdx = -1
-    tracker.PickNext() and walk through hosts (one factory call yields one tracker pick)
-    try connect:
-        on AuthError or ProtocolVersionError: SET TERMINAL; exit loop
-        on RoleReject:
-            backoff.Reset()
+
+    idx = tracker.PickNext()
+    if idx < 0:
+        # Round exhausted: every host in this round has been tried. Pay
+        # one sleep, reset the round, then walk again.
+        if lastError == RoleReject:
             sleep min(InitialBackoff, remaining)    # remaining = MaxOutageDuration - elapsed
             if elapsed >= MaxOutageDuration: SET TERMINAL; exit loop
-            continue
-        on other error:
-            if !seenFirstConnect && !initial_connect_retry:
-                SET TERMINAL; exit loop
+            backoff.Reset()                          # role-reject does not advance doubling
+        else:
             sleep = NextBackoffOrGiveUp(backoff.attempt, backoff.elapsedSinceOutage)
             if sleep == GIVE_UP: SET TERMINAL; exit loop
             sleep; backoff.attempt++
-            continue
+        tracker.BeginRound(forgetClassifications=true)
+        continue
+
+    try connect host[idx]:
+        on AuthError or ProtocolVersionError: SET TERMINAL; exit loop
+        on RoleReject(t):
+            tracker.RecordRoleReject(idx, t); lastError = RoleReject
+            continue                                 # no per-host sleep within the round
+        on other error:
+            tracker.RecordTransportError(idx); lastError = TransportError
+            if !seenFirstConnect && !initial_connect_retry:
+                SET TERMINAL; exit loop
+            continue                                 # no per-host sleep within the round
+
     seenFirstConnect = true
-    backoff.Reset()
+    backoff.Reset(); lastError = null
     rewind cursor to (ackedFsn + 1)         # replay first un-acked frame
     run send/recv pumps until either pump throws
         on server status reject / AuthError / ProtocolVersionError: SET TERMINAL
         on transient error (TCP/TLS, mid-stream send/recv, etc.):
-            sleep = NextBackoffOrGiveUp(...)
-            if GIVE_UP: SET TERMINAL
-            else: continue (next iter resets attempt after the next successful connect)
+            previousIdx = currentIdx                 # demoted on next iter via RecordMidStreamFailure
+            continue                                  # next iter walks the next untried host
 ```
 
 Key properties:
 
 - **Single-round walk per attempt.** When the tracker exhausts
-  (`PickNext == -1`), the next factory call **MUST** invoke
-  `BeginRound(forgetClassifications=true)` and pick again. The
-  current-round flags reset; classifications fade except for the
+  (`PickNext == -1`), the loop **MUST** invoke
+  `BeginRound(forgetClassifications=true)` before the next `PickNext`.
+  The current-round flags reset; classifications fade except for the
   sticky-Healthy entry.
+- **No per-host backoff within a round.** While the tracker still has
+  untried hosts in the current round, every transient error (transport
+  or role-reject) flows directly into the next iteration with no
+  inter-host sleep — the loop walks the full address list as fast as
+  per-host `auth_timeout_ms` allows. The post-error sleep (exponential
+  for transport, fixed `InitialBackoff` for role-reject) is paid once
+  per round, at the moment `PickNext` returns `-1` and immediately
+  before `BeginRound(forgetClassifications=true)`. Mirrors §4.1
+  (non-SF ingress) and §4.4 (egress `WalkTracker`), where the
+  address-list walk is also un-throttled within a round; the
+  round-exhaustion sleep is what damps reconnect storms (the
+  per-producer round time stays bounded by `auth_timeout_ms ×
+  hostCount` plus one backoff sleep, and equal-jitter §3.1 spreads
+  the round-boundary sleeps across producers).
 - **`initial_connect_retry`** (default `off`):
   - `off` — first connect failure is terminal (matches non-SF §4.1).
   - `on` (alias `sync`) — block the constructor; enter the standard
@@ -298,13 +326,15 @@ Key properties:
     segments queued from a prior process and the server may come up
     later.
 - **Role-rejects don't accumulate exponential backoff.** A `421 +
-  role` reply is interpreted as a topology hint: the client resets
-  per-attempt backoff to `InitialBackoff` and keeps retrying. The
-  reset means a long PRIMARY_CATCHUP window doesn't blow up to
-  `reconnect_max_backoff_millis` per probe. The wall-clock outage
-  budget (`reconnect_max_duration_millis`) still bounds the loop —
-  if every endpoint stays role-rejecting for the full budget, the
-  loop terminates. Operators should size
+  role` reply is interpreted as a topology hint. Within a round it
+  flows through the no-sleep path above (the next host gets tried
+  immediately). When a round exhausts with role-reject as `lastError`,
+  the round-boundary sleep is the configured `InitialBackoff` (no
+  doubling) and `backoff.attempt` is reset, so a long PRIMARY_CATCHUP
+  window doesn't blow up to `reconnect_max_backoff_millis` per probe.
+  The wall-clock outage budget (`reconnect_max_duration_millis`)
+  still bounds the loop — if every endpoint stays role-rejecting for
+  the full budget, the loop terminates. Operators should size
   `reconnect_max_duration_millis` to span their largest expected
   failover window (default 5 minutes).
 - **Mid-stream failure** (the send or receive pump throws after a
@@ -312,9 +342,13 @@ Key properties:
   `previousIdx`. The next loop iteration calls
   `tracker.RecordMidStreamFailure(previousIdx)` **before** the next
   `PickNext`, so Healthy→TransportError demotion happens before host
-  selection runs. Backoff state is **not** reset before the
-  next backoff sleep, so the second consecutive failure waits
-  longer.
+  selection runs. The next host is then tried under the same no-sleep
+  rule (skip-backoff-within-round), so a healthy peer takes over
+  with only `auth_timeout_ms` worth of slack. The mid-stream failure
+  itself does not advance `backoff.attempt` — the doubling counter
+  starts fresh from the post-success `backoff.Reset()` and only moves
+  forward at round exhaustion, so a single mid-stream blip pays no
+  exponential cost when at least one peer is healthy.
 
 ### 4.3 Egress — per-Execute loop
 
@@ -478,11 +512,11 @@ to the caller.
 | `ProtocolVersionError` | Server-emitted frame carries QWP version outside `[1, ClientMaxVersion]` | Version negotiation is cluster-wide; failover masks the disagreement. The egress client surfaces this via `KIND_PROTOCOL_ERROR` and latches it on the connection's terminal-failure listener so subsequent `Execute()` calls fail fast through `handler.onError` (no failover). |
 | Server status reject (SF) | Receive pump decoded a non-OK status frame | Application-layer reject won't change on replay. |
 
-### Topology (handled in-round; do not consume outage budget)
+### Topology (handled in-round; do not advance the doubling counter)
 
 | Category | Trigger | Treatment |
 |---|---|---|
-| Role reject | Upgrade `421` + non-empty `X-QuestDB-Role` | `RecordRoleReject(idx, transient = role == PRIMARY_CATCHUP)`. SF resets per-attempt backoff to `InitialBackoff`, sleeps, and retries (the wall-clock outage budget still applies; see §3.2). Non-SF / egress walk to the next host within the round. |
+| Role reject | Upgrade `421` + non-empty `X-QuestDB-Role` | `RecordRoleReject(idx, transient = role == PRIMARY_CATCHUP)`, then walk to the next host within the round. SF additionally pays a fixed `InitialBackoff` sleep at round exhaustion (no exponential doubling) and the wall-clock outage budget still applies; see §3.2. Non-SF / egress fail the round if every host role-rejects. |
 | Target mismatch | `SERVER_INFO.Role` does not match `target=` filter | Same as role reject. |
 
 ### Transient (enter backoff)
@@ -510,6 +544,7 @@ Transient errors enter the appropriate backoff/round logic per §4.
 | Knob | Ingress non-SF | Ingress SF | Egress |
 |---|---|---|---|
 | Per-host connect timeout | `auth_timeout_ms` (15s) | `auth_timeout_ms` (15s) | `auth_timeout_ms` (15s) |
+| Inter-host backoff within a round | none (single-pass walk) | none (skip-backoff-within-round; sleep paid at round boundary) | none (`WalkTracker` walks the full round in one factory call) |
 | Backoff initial | n/a | `100ms` (`reconnect_initial_backoff_millis`) | `50ms` (`failover_backoff_initial_ms`) |
 | Backoff max | n/a | `5_000ms` | `1_000ms` |
 | Total budget | n/a | `300_000ms` (`reconnect_max_duration_millis`) | `30_000ms` (`failover_max_duration_ms`) |
@@ -529,3 +564,4 @@ the user in the loop.
 | Date | Change |
 |---|---|
 | 2026-05-06 | Initial spec. |
+| 2026-05-08 | §4.2: capture skip-backoff-within-round (the SF reconnect loop walks the full address list with no inter-host sleep, then pays one backoff at round exhaustion). Pseudocode rewritten to make `PickNext == -1` the explicit sleep point; new key-property bullet; mid-stream / role-reject bullets reconciled. §7: new "Inter-host backoff within a round" row covering all three contexts. |
