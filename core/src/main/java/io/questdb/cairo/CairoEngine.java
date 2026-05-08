@@ -912,6 +912,16 @@ public class CairoEngine implements Closeable, WriterSource {
                 // Best-effort rollback. Failures here just leave the orphan in place;
                 // the original cause is what the operator needs to see.
                 try {
+                    // If we got past liveViewRegistry.registerView before failing,
+                    // remove the in-memory entry so the registry does not leak the
+                    // freed instance after the table-drop below succeeds.
+                    LiveViewInstance partial = liveViewRegistry.removeView(op.getViewName());
+                    Misc.free(partial);
+                } catch (Throwable rollbackErr) {
+                    LOG.error().$("could not unregister partially-created live view [view=").$(liveViewToken)
+                            .$(", error=").$(rollbackErr).I$();
+                }
+                try {
                     dropTableOrViewOrMatView(path, liveViewToken);
                 } catch (Throwable rollbackErr) {
                     LOG.error().$("could not roll back partially-created live view [view=").$(liveViewToken)
