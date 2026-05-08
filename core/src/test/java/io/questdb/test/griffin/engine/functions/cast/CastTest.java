@@ -2538,6 +2538,30 @@ public class CastTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testDateToSymbolHandlesNegativeOneAsKey() throws Exception {
+        // CastDateToSymbol's symbol-table shortcut keys live in a LongIntHashMap
+        // whose default empty-slot sentinel is -1. A real -1 DATE (1ms before the
+        // epoch, a perfectly legal value) used to collide with the empty slot,
+        // breaking dedup so every -1 row produced a fresh symbol id and the
+        // symbols list grew unbounded. The map now uses Numbers.LONG_NULL as the
+        // sentinel.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (ts TIMESTAMP, d DATE) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO t VALUES " +
+                    "('2024-01-01T00:00:00.000000Z', cast(-1 AS DATE)), " +
+                    "('2024-01-01T01:00:00.000000Z', cast(-1 AS DATE)), " +
+                    "('2024-01-01T02:00:00.000000Z', cast(5 AS DATE))");
+            assertQueryNoLeakCheck(
+                    "s\tc\n-1\t2\n5\t1\n",
+                    "SELECT (d)::SYMBOL AS s, count() AS c FROM t ORDER BY s",
+                    null,
+                    true,
+                    true
+            );
+        });
+    }
+
+    @Test
     public void testDateToSymbolIndexBehaviour() throws Exception {
         assertQuery(
                 """
@@ -5459,6 +5483,29 @@ public class CastTest extends AbstractCairoTest {
                 true,
                 false
         );
+    }
+
+    @Test
+    public void testLongToSymbolHandlesNegativeOneAsKey() throws Exception {
+        // CastLongToSymbol's symbol-table shortcut keys live in a LongIntHashMap
+        // whose default empty-slot sentinel is -1. A real -1L (a perfectly legal
+        // LONG input) used to collide with the empty slot, breaking dedup so
+        // every -1L row produced a fresh symbol id and the symbols list grew
+        // unbounded. The map now uses Numbers.LONG_NULL as the sentinel.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (ts TIMESTAMP, n LONG) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO t VALUES " +
+                    "('2024-01-01T00:00:00.000000Z', -1), " +
+                    "('2024-01-01T01:00:00.000000Z', -1), " +
+                    "('2024-01-01T02:00:00.000000Z', 5)");
+            assertQueryNoLeakCheck(
+                    "s\tc\n-1\t2\n5\t1\n",
+                    "SELECT (n)::SYMBOL AS s, count() AS c FROM t ORDER BY s",
+                    null,
+                    true,
+                    true
+            );
+        });
     }
 
     @Test
@@ -8716,6 +8763,30 @@ public class CastTest extends AbstractCairoTest {
                 true,
                 false
         );
+    }
+
+    @Test
+    public void testTimestampToSymbolHandlesNegativeOneAsKey() throws Exception {
+        // CastTimestampToSymbol's symbol-table shortcut keys live in a LongIntHashMap
+        // whose default empty-slot sentinel is -1. A real -1us TIMESTAMP (1us before
+        // the epoch, a perfectly legal value) used to collide with the empty slot,
+        // breaking dedup so every -1 row produced a fresh symbol id and the
+        // symbols list grew unbounded. The map now uses Numbers.LONG_NULL as the
+        // sentinel.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (ts TIMESTAMP, v TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO t VALUES " +
+                    "('2024-01-01T00:00:00.000000Z', cast(-1 AS TIMESTAMP)), " +
+                    "('2024-01-01T01:00:00.000000Z', cast(-1 AS TIMESTAMP)), " +
+                    "('2024-01-01T02:00:00.000000Z', cast(5 AS TIMESTAMP))");
+            assertQueryNoLeakCheck(
+                    "s\tc\n-1\t2\n5\t1\n",
+                    "SELECT (v)::SYMBOL AS s, count() AS c FROM t ORDER BY s",
+                    null,
+                    true,
+                    true
+            );
+        });
     }
 
     @Test
