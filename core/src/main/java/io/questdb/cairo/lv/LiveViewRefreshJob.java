@@ -459,6 +459,15 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
     /**
      * Rewrites {@code _lv.s} from the in-memory state mirror. Called after each
      * cycle's advance so restart sees the latest {@code lastProcessedSeqTxn}.
+     * <p>
+     * Unlike {@code CairoEngine.advanceLiveViewConsumedSeqTxn}, this call cannot
+     * persist-then-publish: the live view's WAL block has already been committed
+     * upstream, so the in-memory advance is necessary to prevent the next cycle
+     * from re-processing the same base seqTxns and writing duplicate output rows.
+     * The order is therefore: in-memory advance, then persist. On persist failure
+     * the exception propagates to the {@code refreshInstance} top-level catch,
+     * which logs at LOG.critical level. Subsequent cycles re-attempt the persist
+     * the next time the in-memory state advances.
      */
     private void persistState(LiveViewInstance instance) {
         TableToken token = instance.getLiveViewToken();
@@ -467,13 +476,8 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
         // workers can otherwise race on the same file.
         synchronized (instance) {
             path.of(engine.getConfiguration().getDbRoot()).concat(token).concat(LiveViewState.LIVE_VIEW_STATE_FILE_NAME);
-            try {
-                blockFileWriter.of(path.$());
-                LiveViewState.append(instance.getStateReader(), blockFileWriter);
-            } catch (Throwable t) {
-                LOG.error().$("could not persist live view state [view=").$(token)
-                        .$(", error=").$(t).I$();
-            }
+            blockFileWriter.of(path.$());
+            LiveViewState.append(instance.getStateReader(), blockFileWriter);
         }
     }
 

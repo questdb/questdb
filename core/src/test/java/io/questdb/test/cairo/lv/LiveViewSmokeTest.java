@@ -309,6 +309,66 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testRefreshPersistFailureKeepsInMemoryAdvanced() throws Exception {
+        // Refresh-side _lv.s write happens after the LV WAL block is committed, so
+        // a failing persist cannot roll back the in-memory advance without producing
+        // duplicate rows on retry. The refresh worker logs critical and moves on; the
+        // next cycle resumes from the in-memory advance and the eventual successful
+        // persist catches up the durable file.
+        final AtomicBoolean failPersist = new AtomicBoolean(false);
+        FilesFacade ff = new TestFilesFacadeImpl() {
+            @Override
+            public long openRW(LPSZ name, int opts) {
+                if (failPersist.get() && Utf8s.endsWithAscii(name, LiveViewState.LIVE_VIEW_STATE_FILE_NAME)) {
+                    return -1;
+                }
+                return super.openRW(name, opts);
+            }
+        };
+
+        assertMemoryLeak(ff, () -> {
+            // Pin the clock so the second refresh isn't skipped by the FLUSH-EVERY gate.
+            setCurrentMicros(0);
+            execute("CREATE TABLE base (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 1s AS " +
+                    "SELECT ts, x, row_number() OVER () AS rn FROM base WHERE x > 0");
+
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                execute("INSERT INTO base (ts, x) VALUES ('2026-04-01T00:00:00.000000Z', 4)");
+                drainWalQueue();
+                drainJob(job);
+                drainWalQueue();
+
+                LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("lv");
+                Assert.assertNotNull(instance);
+                long baselineLastProcessed = instance.getLastProcessedSeqTxn();
+                Assert.assertTrue("baseline lastProcessedSeqTxn must be > -1", baselineLastProcessed > -1);
+
+                // Advance past the FLUSH EVERY 1s window so the next refresh isn't gated.
+                setCurrentMicros(2_000_000L);
+
+                failPersist.set(true);
+                try {
+                    execute("INSERT INTO base (ts, x) VALUES ('2026-04-01T00:00:00.000001Z', 8)");
+                    drainWalQueue();
+                    drainJob(job);
+                    // The persist threw; the refresh top-level catch logged critical. The
+                    // key invariant: in-memory still advanced so the next refresh cycle
+                    // does not re-process and double-write rows to the LV WAL.
+                    Assert.assertTrue(
+                            "refresh must keep lastProcessedSeqTxn advanced even when _lv.s persist fails",
+                            instance.getLastProcessedSeqTxn() > baselineLastProcessed
+                    );
+                } finally {
+                    failPersist.set(false);
+                }
+            }
+
+            execute("DROP LIVE VIEW lv");
+        });
+    }
+
+    @Test
     public void testRefreshAdvancesLvConsumedSeqTxn() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE base (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");

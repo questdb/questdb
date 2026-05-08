@@ -57,10 +57,15 @@ import org.jetbrains.annotations.Nullable;
  */
 public class LiveViewStateReader implements Mutable {
     private final StringSink invalidationReason = new StringSink();
-    private long appliedWatermark = -1L;
+    // Read lock-free by LiveViewsFunctionFactory (catalogue cursor) and by sibling refresh
+    // worker code paths; written by the refresh worker. Volatile so lock-free readers see
+    // a published value rather than a torn long.
+    private volatile long appliedWatermark = -1L;
     private boolean invalid;
     private long invalidationTimestampUs = Numbers.LONG_NULL;
-    private long lastProcessedSeqTxn = -1L;
+    // Same lock-free-read pattern as appliedWatermark. Refresh worker advances this after
+    // committing the live view's WAL block; LiveViewsFunctionFactory exposes it.
+    private volatile long lastProcessedSeqTxn = -1L;
     // Read lock-free by WalPurgeJob; writes are guarded by synchronized (LiveViewInstance)
     // in advanceLiveViewConsumedSeqTxn. Volatile so the lock-free read sees a published value.
     private volatile long lvConsumedSeqTxn = -1L;
