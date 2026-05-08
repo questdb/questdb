@@ -413,12 +413,12 @@ public class SampleByTest extends AbstractCairoTest {
     @Test
     public void testNonKeyedSampleByFillValuePassesValidation() throws Exception {
         // Non-keyed SAMPLE BY with FILL(value) goes through SqlOptimiser.rewriteSampleBy,
-        // which converts SAMPLE BY into GROUP BY + FillRangeRecordCursorFactory and clears
-        // the inner sample-by clause. SqlCodeGenerator.findRewrittenSampleByFill walks the
-        // nested-model chain to recover the fill list and feeds it to
-        // GroupByUtils.assembleGroupByFunctions for fill-mode validation. This regression
-        // test guards against breakage where that recovery path could spuriously reject
-        // standard aggregates that legitimately support FILL(VALUE).
+        // which converts SAMPLE BY into GROUP BY + SampleByFillValueRecordCursorFactory and
+        // clears the inner sample-by clause. SqlCodeGenerator.findRewrittenSampleByFill walks
+        // the nested-model chain (gated on getFillStride() != null) to recover the fill list
+        // and feeds it to GroupByUtils.assembleGroupByFunctions for fill-mode validation.
+        // This regression test guards against breakage where that recovery path could
+        // spuriously reject standard aggregates that legitimately support FILL(VALUE).
         assertMemoryLeak(() -> {
             execute("CREATE TABLE tab (ts TIMESTAMP, val INT) TIMESTAMP(ts) PARTITION BY DAY");
             execute("""
@@ -434,8 +434,45 @@ public class SampleByTest extends AbstractCairoTest {
                             "2024-01-01T03:00:00.000000Z\t30\n",
                     "SELECT ts, sum(val) value FROM tab SAMPLE BY 1h FILL(0)",
                     "ts",
-                    true,
+                    false,
                     false
+            );
+        });
+    }
+
+    @Test
+    public void testOuterAggregateOverNonKeyedSampleByFillSubquery() throws Exception {
+        // Cross-boundary regression. A non-keyed SAMPLE BY ... FILL(value) inside an
+        // inner subquery sets fillStride and fillValues on its own model. The outer
+        // aggregate is unrelated to the inner FILL and must not be validated against
+        // the inner fill list. findRewrittenSampleByFill must stop the walk at the
+        // model whose fillStride is set (the inner one), and the outer GROUP BY must
+        // see fill = null.
+        // Without the fillStride gate, the walker would descend through the subquery
+        // boundary, recover the inner FILL(0) list, and falsely reject the outer
+        // aggregate whose getSampleByFlags() omits SAMPLE_BY_FILL_VALUE - e.g.
+        // last(D[]), first(D[]), array_agg.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE tabA (ts TIMESTAMP, grp SYMBOL, val INT) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE tabB (grp SYMBOL, arr DOUBLE[])");
+            execute("""
+                    INSERT INTO tabA VALUES
+                    ('2024-01-01T00:00:00', 'a', 10),
+                    ('2024-01-01T01:00:00', 'a', 20)
+                    """);
+            execute("""
+                    INSERT INTO tabB VALUES
+                    ('a', ARRAY[1.0, 2.0])
+                    """);
+            assertQueryNoLeakCheck(
+                    "grp\tlast\n" +
+                            "a\t[1.0,2.0]\n",
+                    "SELECT a.grp, last(b.arr) " +
+                            "FROM (SELECT ts, grp, sum(val) sumval FROM tabA SAMPLE BY 1h FILL(0)) a " +
+                            "JOIN tabB b ON a.grp = b.grp",
+                    null,
+                    true,
+                    true
             );
         });
     }

@@ -667,7 +667,7 @@ public class ArrayAggDoubleArrayGroupByFunctionFactoryTest extends AbstractCairo
                             "2024-01-01T02:00:00.000000Z\t[3.0,4.0]\n",
                     "SELECT ts, array_agg(arr) agg FROM tab SAMPLE BY 1h FILL(NULL)",
                     "ts",
-                    true,
+                    false,
                     false
             );
         });
