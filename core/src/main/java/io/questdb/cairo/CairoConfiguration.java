@@ -574,6 +574,13 @@ public interface CairoConfiguration {
 
     boolean getSampleByDefaultAlignmentCalendar();
 
+    /**
+     * Selects the sort backend the SAMPLE BY FILL fast path stacks above
+     * the GROUP BY output. Returns one of {@link SampleBySortStrategy}'s int
+     * constants. The default is {@link SampleBySortStrategy#LIGHT_ENCODED}.
+     */
+    int getSampleByFillSortStrategy();
+
     int getSampleByIndexSearchPageSize();
 
     long getSequencerCheckInterval();
@@ -887,6 +894,8 @@ public interface CairoConfiguration {
     boolean isGroupByPresizeEnabled();
 
     boolean isIOURingEnabled();
+
+    boolean isMatViewCoveringIndexEnabled();
 
     boolean isMatViewEnabled();
 

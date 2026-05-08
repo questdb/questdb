@@ -2955,6 +2955,11 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         bumpColumnStructureVersion();
     }
 
+    public void resetWalApplyCounters() {
+        physicallyWrittenRowsSinceLastCommit.reset();
+        dedupRowsRemovedSinceLastCommit.reset();
+    }
+
     @Override
     public void rollback() {
         checkDistressed();

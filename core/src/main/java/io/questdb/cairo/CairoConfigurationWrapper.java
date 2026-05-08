@@ -873,6 +873,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
+    public int getSampleByFillSortStrategy() {
+        return getDelegate().getSampleByFillSortStrategy();
+    }
+
+    @Override
     public int getSampleByIndexSearchPageSize() {
         return getDelegate().getSampleByIndexSearchPageSize();
     }
@@ -1525,6 +1530,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     @Override
     public boolean isIOURingEnabled() {
         return getDelegate().isIOURingEnabled();
+    }
+
+    @Override
+    public boolean isMatViewCoveringIndexEnabled() {
+        return getDelegate().isMatViewCoveringIndexEnabled();
     }
 
     @Override

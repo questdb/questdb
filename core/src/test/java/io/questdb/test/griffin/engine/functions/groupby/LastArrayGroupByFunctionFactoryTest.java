@@ -214,8 +214,8 @@ public class LastArrayGroupByFunctionFactoryTest extends AbstractCairoTest {
                     "ts\tgrp\tarr\n" +
                             "1970-01-01T00:00:00.000000Z\ta\t[1.0,2.0]\n" +
                             "1970-01-01T00:00:00.000000Z\tb\tnull\n" +
-                            "1970-01-01T00:00:10.000000Z\ta\t[3.0,4.0]\n" +
-                            "1970-01-01T00:00:10.000000Z\tb\t[5.0,6.0]\n",
+                            "1970-01-01T00:00:10.000000Z\tb\t[5.0,6.0]\n" +
+                            "1970-01-01T00:00:10.000000Z\ta\t[3.0,4.0]\n",
                     "SELECT ts, grp, last(arr) arr FROM tab SAMPLE BY 10s FILL(PREV) ALIGN TO CALENDAR"
             );
         });
@@ -251,13 +251,16 @@ public class LastArrayGroupByFunctionFactoryTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testSampleByFillValueRejectsArrayColumns() throws Exception {
-        assertException(
-                "SELECT ts, grp, last(arr) arr FROM tab SAMPLE BY 10s FILL(42)",
-                "CREATE TABLE tab (ts TIMESTAMP, grp SYMBOL, arr DOUBLE[]) TIMESTAMP(ts) PARTITION BY DAY",
-                16,
-                "support for VALUE fill is not yet implemented"
-        );
+    public void testSampleByFillValueRejectedWithArrayColumns() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE tab (ts TIMESTAMP, grp SYMBOL, arr DOUBLE[]) TIMESTAMP(ts) PARTITION BY DAY");
+            final String sql = "SELECT ts, grp, last(arr) arr FROM tab SAMPLE BY 10s FILL(42)";
+            assertExceptionNoLeakCheck(
+                    sql,
+                    sql.indexOf("42"),
+                    "fill value of type INT cannot fill column of type DOUBLE[]"
+            );
+        });
     }
 
     @Test
