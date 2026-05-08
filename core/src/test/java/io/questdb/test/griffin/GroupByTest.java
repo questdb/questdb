@@ -981,6 +981,32 @@ public class GroupByTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testGroupByBrokenColumnAfterTimestampClosesFunctionsOnce() throws Exception {
+        // Regression: assembleGroupByFunctions's first column loop adds the
+        // designated timestamp column as a null placeholder on the outer
+        // projection list but skips the inner list, so subsequent non-timestamp
+        // columns sit at outer[i] and inner[i-1]. When a later column fails to
+        // parse, the failure-path cleanup must dedupe shared Function references
+        // by reference identity rather than by index. A naive index-aligned
+        // dedup would close every shared reference past the timestamp slot
+        // twice and underflow the native allocator counter; assertMemoryLeak
+        // catches the imbalance.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (c0 INT, c1 INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO t VALUES (1, 10, '2024-01-01T00:00:00.000000Z')");
+            try {
+                engine.select(
+                        "SELECT ts, c0, c1, sum(nonexistent_col) FROM t SAMPLE BY 1h",
+                        sqlExecutionContext
+                ).close();
+                Assert.fail("expected SqlException");
+            } catch (SqlException expected) {
+                TestUtils.assertContains(expected.getFlyweightMessage(), "Invalid column");
+            }
+        });
+    }
+
+    @Test
     public void testGroupByCastOverColumnStaysKey() throws Exception {
         // Regression: the recursive walk in isEffectivelyConstantExpression
         // must reject cast over a real column. (x)::STRING contains a LITERAL

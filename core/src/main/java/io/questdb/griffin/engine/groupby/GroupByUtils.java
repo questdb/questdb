@@ -335,31 +335,33 @@ public class GroupByUtils {
                 }
             }
             validateGroupByColumns(sqlNodeStack, model, inferredKeyColumnCount);
-        } catch (Throwable e) {
-            // The first column loop adds the parsed Function to both outer and inner
-            // projection lists, so they share references. The third loop may replace
-            // some outer entries with newly created column-ref Functions, leaving the
-            // original parsed Function reachable only through the inner list.
-            // Walk both lists once and free each unique reference exactly once --
-            // closing the same Function twice would underflow allocator counters.
-            int n = Math.max(outerProjectionFunctions.size(), innerProjectionFunctions.size());
-            for (int i = 0; i < n; i++) {
-                Function outerFunc = i < outerProjectionFunctions.size() ? outerProjectionFunctions.getQuick(i) : null;
-                Function innerFunc = i < innerProjectionFunctions.size() ? innerProjectionFunctions.getQuick(i) : null;
-                Misc.free(outerFunc);
-                if (innerFunc != outerFunc) {
-                    Misc.free(innerFunc);
+        } catch (Throwable th) {
+            // The first loop adds each parsed Function to both lists, so they share
+            // references. The timestamp column appends null to outer but skips inner,
+            // so subsequent entries sit at outer[i] and inner[i-1]. The third loop
+            // may also replace outer entries with column-ref Functions, leaving the
+            // original parsed Function reachable only via inner. Free outer first
+            // (Misc.free is null-safe), keeping the list as a reference-identity
+            // index, then walk inner and free only references not already in outer.
+            // Closing the same Function twice would underflow allocator counters.
+            for (int i = 0, n = outerProjectionFunctions.size(); i < n; i++) {
+                Misc.free(outerProjectionFunctions.getQuick(i));
+            }
+            for (int i = 0, n = innerProjectionFunctions.size(); i < n; i++) {
+                Function f = innerProjectionFunctions.getQuick(i);
+                if (f != null && !containsIdentity(outerProjectionFunctions, f)) {
+                    Misc.free(f);
                 }
             }
             outerProjectionFunctions.clear();
             innerProjectionFunctions.clear();
             if (extraOuterProjectionFunctions != null) {
-                for (int d = 0, dn = extraOuterProjectionFunctions.size(); d < dn; d++) {
-                    Misc.freeObjListAndClear(extraOuterProjectionFunctions.getQuick(d));
+                for (int i = 0, n = extraOuterProjectionFunctions.size(); i < n; i++) {
+                    Misc.freeObjListAndClear(extraOuterProjectionFunctions.getQuick(i));
                 }
                 extraOuterProjectionFunctions.clear();
             }
-            throw e;
+            throw th;
         }
     }
 
@@ -715,6 +717,15 @@ public class GroupByUtils {
             }
         }
 
+        return false;
+    }
+
+    private static boolean containsIdentity(ObjList<Function> list, Function target) {
+        for (int i = 0, n = list.size(); i < n; i++) {
+            if (list.getQuick(i) == target) {
+                return true;
+            }
+        }
         return false;
     }
 
