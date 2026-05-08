@@ -81,6 +81,8 @@ import static io.questdb.cairo.TableUtils.COLUMN_NAME_TXN_NONE;
  */
 public class PostingIndexBenchmarkSuite {
 
+    // -Dquestdb.suite.bench: "all" (default), "write", "read", or a method name / regex.
+    private static final String BENCH_FILTER = System.getProperty("questdb.suite.bench", "write");
     private static final double CLOUD_US_PER_PAGE = 1_000;
     private static final long COL_TXN = COLUMN_NAME_TXN_NONE;
     private static final double HDD_US_PER_PAGE = 4_000;
@@ -101,8 +103,18 @@ public class PostingIndexBenchmarkSuite {
         System.setProperty("questdb.log.level", "E");
         LogFactory.haltInstance();
 
+        String suiteName = PostingIndexBenchmarkSuite.class.getSimpleName();
+        String includePattern = switch (BENCH_FILTER) {
+            case "all" -> suiteName + "\\.";
+            case "write" -> suiteName + "\\.(commitProfile|writeInsert|walFastLagInsert)$";
+            case "read" -> suiteName + "\\.(decode|indexPointRead|indexScanRead|indexRangeRead|"
+                    + "sidecarRead|sqlQuery|walFastLagQuery|walFastLagInsertAndQuery|tailScanEquality)$";
+            default -> suiteName + "\\.(" + BENCH_FILTER + ")$";
+        };
+        out.printf("Running benchmark filter: %s (pattern: %s)%n", BENCH_FILTER, includePattern);
+
         Collection<RunResult> results = new Runner(new OptionsBuilder()
-                .include(PostingIndexBenchmarkSuite.class.getSimpleName() + "\\.")
+                .include(includePattern)
                 .warmupIterations(2).warmupTime(org.openjdk.jmh.runner.options.TimeValue.seconds(1))
                 .measurementIterations(3).measurementTime(org.openjdk.jmh.runner.options.TimeValue.seconds(1))
                 .forks(0)
@@ -278,12 +290,93 @@ public class PostingIndexBenchmarkSuite {
     // ==================================================================================
 
     @Benchmark
+    @BenchmarkMode(Mode.AverageTime)
+    @OutputTimeUnit(TimeUnit.NANOSECONDS)
+    public long tailScanEquality(TailScanState s) {
+        int target = s.targetKey;
+        long col = s.colAddr;
+        long out = s.outAddr;
+        int n = s.tailRows;
+        long matches = 0;
+        long outOff = 0;
+        for (int i = 0; i < n; i++) {
+            int v = Unsafe.getInt(col + (long) i * Integer.BYTES);
+            if (v == target) {
+                Unsafe.putLong(out + outOff, i);
+                outOff += Long.BYTES;
+                matches++;
+            }
+        }
+        return matches;
+    }
+
+    @Benchmark
+    @BenchmarkMode(Mode.AverageTime)
+    @OutputTimeUnit(TimeUnit.MILLISECONDS)
+    public void walFastLagInsert(WalFastLagState s) throws Exception {
+        // 1s spacing: at JMH's typical invocation rates a full trial
+        // (~50000 invocations) advances ~14h of fake time, comfortably
+        // within the single 2024-01-01 partition. Wider spacing would
+        // cross DAY boundaries and contaminate the seal cost with
+        // partition-switch work.
+        int batchOffsetSeconds = (s.batchCounter++) + 1;
+        String sql = "INSERT INTO walbench(ts, sym, price, name) " +
+                "SELECT dateadd('u', x::INT, dateadd('s', " + batchOffsetSeconds + ", '2024-01-01T00:00:00.000000Z'::TIMESTAMP)), " +
+                "rnd_symbol(" + s.keyCount + ", 4, 8, 0), rnd_double() * 1000, rnd_varchar(10, 20, 0) " +
+                "FROM long_sequence(" + s.batchRows + ")";
+        s.engine.execute(sql, s.ctx);
+        s.applyJob.drain(0);
+        s.checkJob.run(0);
+        s.applyJob.drain(0);
+    }
+
+    @Benchmark
+    @BenchmarkMode(Mode.AverageTime)
+    @OutputTimeUnit(TimeUnit.MILLISECONDS)
+    public long walFastLagInsertAndQuery(WalFastLagState s) throws Exception {
+        // Combined: one fast-lag commit followed by one point query against
+        // the freshly-committed state. Headline number for "what does a
+        // tick of work cost when a query lands in the unsealed window".
+        walFastLagInsert(s);
+        return walFastLagQuery(s);
+    }
+
+    // ==================================================================================
+    // Section 3: Covering Sidecar Compression
+    // ==================================================================================
+
+    @Benchmark
+    @BenchmarkMode(Mode.AverageTime)
+    @OutputTimeUnit(TimeUnit.MICROSECONDS)
+    public long walFastLagQuery(WalFastLagState s) throws Exception {
+        // Single point query against the table state left by previous
+        // invocations. Compiles fresh because the WAL apply path bumps
+        // table metadata version and invalidates cached factories. The
+        // batchRows axis is irrelevant here but JMH still varies it;
+        // treat those rows as replicate measurements when reading results.
+        String key = s.queryKeys[(s.queryCounter++) & (s.queryKeys.length - 1)];
+        long sum = 0;
+        try (RecordCursorFactory f = s.compiler.compile(
+                "SELECT count() FROM walbench WHERE sym = '" + key + "'", s.ctx
+        ).getRecordCursorFactory()) {
+            try (RecordCursor c = f.getCursor(s.ctx)) {
+                while (c.hasNext()) sum += c.getRecord().getLong(0);
+            }
+        }
+        return sum;
+    }
+
+    @Benchmark
     public void writeInsert(WriteState s) throws Exception {
         s.engine.execute(s.ddl, s.ctx);
         s.engine.execute(s.insertSql, s.ctx);
         s.engine.releaseAllWriters();
         s.engine.execute("DROP TABLE wbench", s.ctx);
     }
+
+    // ==================================================================================
+    // Section 4: SQL Covering Queries
+    // ==================================================================================
 
     private static DefaultCairoConfiguration benchConfig(String root) {
         return new DefaultCairoConfiguration(root) {
@@ -301,7 +394,7 @@ public class PostingIndexBenchmarkSuite {
     }
 
     // ==================================================================================
-    // Section 3: Covering Sidecar Compression
+    // Section 5: Write Overhead
     // ==================================================================================
 
     private static int[] buildShuffled(int totalRows, int keyCount) {
@@ -336,7 +429,7 @@ public class PostingIndexBenchmarkSuite {
     }
 
     // ==================================================================================
-    // Section 4: SQL Covering Queries
+    // Shared utilities
     // ==================================================================================
 
     private static void deleteDir(String path) {
@@ -366,10 +459,6 @@ public class PostingIndexBenchmarkSuite {
         } catch (IOException ignored) {
         }
     }
-
-    // ==================================================================================
-    // Section 5: Write Overhead
-    // ==================================================================================
 
     private static void doCovBaselineRead(CairoConfiguration config, String dir, int[] keys,
                                           long colAddr, CoverType ct) {
@@ -415,10 +504,6 @@ public class PostingIndexBenchmarkSuite {
             }
         }
     }
-
-    // ==================================================================================
-    // Shared utilities
-    // ==================================================================================
 
     private static long getDirectorySize(String path) {
         File dir = new File(path);
@@ -693,6 +778,10 @@ public class PostingIndexBenchmarkSuite {
         System.err.println();
     }
 
+    // ==================================================================================
+    // Page fault analysis helpers
+    // ==================================================================================
+
     private static String[] sampleKeys(SqlCompilerImpl compiler, SqlExecutionContextImpl ctx, String table, int n) throws Exception {
         String[] result = new String[n];
         int idx = 0;
@@ -750,10 +839,6 @@ public class PostingIndexBenchmarkSuite {
             this.size = size;
         }
     }
-
-    // ==================================================================================
-    // Page fault analysis helpers
-    // ==================================================================================
 
     /**
      * State for per-commit write profiling (market data pattern from IndexScenarioBenchmark).
@@ -1288,65 +1373,41 @@ public class PostingIndexBenchmarkSuite {
         }
     }
 
+    /**
+     * Synthetic cost of a column-range equality scan with row-id emission —
+     * the primitive a tail-scan fallback would invoke when the posting
+     * index does not cover all rows visible at the reader's pinned txn.
+     * Independent of partition / TableReader plumbing so the measurement
+     * isolates the inner loop's cost as a function of tail length and match
+     * rate ({@code 1/keyCount}).
+     */
     @State(Scope.Benchmark)
-    @BenchmarkMode(Mode.SingleShotTime)
-    @OutputTimeUnit(TimeUnit.MILLISECONDS)
-    public static class WriteState {
-        SqlCompilerImpl compiler;
-        SqlExecutionContextImpl ctx;
-        String ddl;
-        CairoEngine engine;
-        @Param({"no_index", "bitmap", "posting", "posting_covering", "posting_varchar"})
-        String indexType;
-        String insertSql;
-        java.nio.file.Path tmpDir;
+    @BenchmarkMode(Mode.AverageTime)
+    @OutputTimeUnit(TimeUnit.NANOSECONDS)
+    public static class TailScanState {
+        long colAddr;
+        @Param({"50", "1000", "10000", "100000"})
+        int keyCount;
+        long outAddr;
+        @Param({"1000", "10000", "100000", "1000000"})
+        int tailRows;
+        int targetKey;
 
         @Setup(Level.Trial)
-        public void setup() throws Exception {
-            tmpDir = Files.createTempDirectory("suite-write");
-            CairoConfiguration config = new DefaultCairoConfiguration(tmpDir.toString()) {
-                @Override
-                public byte getPostingIndexRowIdEncoding() {
-                    return IS_DELTA ? PostingIndexUtils.ENCODING_DELTA : PostingIndexUtils.ENCODING_ADAPTIVE;
-                }
-
-                @Override
-                public int getRndFunctionMemoryMaxPages() {
-                    return 4096;
-                }
-            };
-            engine = new CairoEngine(config);
-            ctx = new SqlExecutionContextImpl(engine, 1)
-                    .with(config.getFactoryProvider().getSecurityContextFactory().getRootContext(),
-                            null, null, -1, null);
-            compiler = new SqlCompilerImpl(engine);
-
-            ddl = switch (indexType) {
-                case "no_index" -> "CREATE TABLE wbench (ts TIMESTAMP, sym SYMBOL, price DOUBLE, name VARCHAR) " +
-                        "TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL";
-                case "bitmap" -> "CREATE TABLE wbench (ts TIMESTAMP, sym SYMBOL INDEX, price DOUBLE, name VARCHAR) " +
-                        "TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL";
-                case "posting" ->
-                        "CREATE TABLE wbench (ts TIMESTAMP, sym SYMBOL INDEX TYPE " + POSTING_SQL + ", price DOUBLE, name VARCHAR) " +
-                                "TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL";
-                case "posting_covering" ->
-                        "CREATE TABLE wbench (ts TIMESTAMP, sym SYMBOL INDEX TYPE " + POSTING_SQL + " INCLUDE (price), " +
-                                "price DOUBLE, name VARCHAR) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL";
-                case "posting_varchar" ->
-                        "CREATE TABLE wbench (ts TIMESTAMP, sym SYMBOL INDEX TYPE " + POSTING_SQL + " INCLUDE (price, name), " +
-                                "price DOUBLE, name VARCHAR) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL";
-                default -> throw new IllegalArgumentException(indexType);
-            };
-            insertSql = "INSERT INTO wbench SELECT dateadd('T', x::INT, '2024-01-01')::TIMESTAMP, " +
-                    "rnd_symbol(50, 4, 8, 0), rnd_double() * 1000, rnd_varchar(10, 20, 0) " +
-                    "FROM long_sequence(50000)";
+        public void setup() {
+            colAddr = Unsafe.malloc((long) tailRows * Integer.BYTES, MemoryTag.NATIVE_DEFAULT);
+            outAddr = Unsafe.malloc((long) tailRows * Long.BYTES, MemoryTag.NATIVE_DEFAULT);
+            Random rng = new Random(1234);
+            for (int i = 0; i < tailRows; i++) {
+                Unsafe.putInt(colAddr + (long) i * Integer.BYTES, rng.nextInt(keyCount));
+            }
+            targetKey = 0;
         }
 
         @TearDown(Level.Trial)
         public void tearDown() {
-            Misc.free(compiler);
-            Misc.free(engine);
-            deleteDirRecursive(tmpDir.toFile());
+            Unsafe.free(colAddr, (long) tailRows * Integer.BYTES, MemoryTag.NATIVE_DEFAULT);
+            Unsafe.free(outAddr, (long) tailRows * Long.BYTES, MemoryTag.NATIVE_DEFAULT);
         }
     }
 
@@ -1434,8 +1495,9 @@ public class PostingIndexBenchmarkSuite {
                         ", price DOUBLE, name VARCHAR) TIMESTAMP(ts) PARTITION BY DAY WAL";
                 case "posting_covering" -> "CREATE TABLE walbench (ts TIMESTAMP, sym SYMBOL INDEX TYPE " + POSTING_SQL +
                         " INCLUDE (price), price DOUBLE, name VARCHAR) TIMESTAMP(ts) PARTITION BY DAY WAL";
-                case "posting_covering_2cols" -> "CREATE TABLE walbench (ts TIMESTAMP, sym SYMBOL INDEX TYPE " + POSTING_SQL +
-                        " INCLUDE (price, name), price DOUBLE, name VARCHAR) TIMESTAMP(ts) PARTITION BY DAY WAL";
+                case "posting_covering_2cols" ->
+                        "CREATE TABLE walbench (ts TIMESTAMP, sym SYMBOL INDEX TYPE " + POSTING_SQL +
+                                " INCLUDE (price, name), price DOUBLE, name VARCHAR) TIMESTAMP(ts) PARTITION BY DAY WAL";
                 default -> throw new IllegalArgumentException(indexType);
             };
             engine.execute(ddl, ctx);
@@ -1476,114 +1538,65 @@ public class PostingIndexBenchmarkSuite {
         }
     }
 
-    @Benchmark
-    @BenchmarkMode(Mode.AverageTime)
-    @OutputTimeUnit(TimeUnit.MILLISECONDS)
-    public void walFastLagInsert(WalFastLagState s) throws Exception {
-        // 1s spacing: at JMH's typical invocation rates a full trial
-        // (~50000 invocations) advances ~14h of fake time, comfortably
-        // within the single 2024-01-01 partition. Wider spacing would
-        // cross DAY boundaries and contaminate the seal cost with
-        // partition-switch work.
-        int batchOffsetSeconds = (s.batchCounter++) + 1;
-        String sql = "INSERT INTO walbench(ts, sym, price, name) " +
-                "SELECT dateadd('u', x::INT, dateadd('s', " + batchOffsetSeconds + ", '2024-01-01T00:00:00.000000Z'::TIMESTAMP)), " +
-                "rnd_symbol(" + s.keyCount + ", 4, 8, 0), rnd_double() * 1000, rnd_varchar(10, 20, 0) " +
-                "FROM long_sequence(" + s.batchRows + ")";
-        s.engine.execute(sql, s.ctx);
-        s.applyJob.drain(0);
-        s.checkJob.run(0);
-        s.applyJob.drain(0);
-    }
-
-    @Benchmark
-    @BenchmarkMode(Mode.AverageTime)
-    @OutputTimeUnit(TimeUnit.MICROSECONDS)
-    public long walFastLagQuery(WalFastLagState s) throws Exception {
-        // Single point query against the table state left by previous
-        // invocations. Compiles fresh because the WAL apply path bumps
-        // table metadata version and invalidates cached factories. The
-        // batchRows axis is irrelevant here but JMH still varies it;
-        // treat those rows as replicate measurements when reading results.
-        String key = s.queryKeys[(s.queryCounter++) & (s.queryKeys.length - 1)];
-        long sum = 0;
-        try (RecordCursorFactory f = s.compiler.compile(
-                "SELECT count() FROM walbench WHERE sym = '" + key + "'", s.ctx
-        ).getRecordCursorFactory()) {
-            try (RecordCursor c = f.getCursor(s.ctx)) {
-                while (c.hasNext()) sum += c.getRecord().getLong(0);
-            }
-        }
-        return sum;
-    }
-
-    @Benchmark
-    @BenchmarkMode(Mode.AverageTime)
-    @OutputTimeUnit(TimeUnit.MILLISECONDS)
-    public long walFastLagInsertAndQuery(WalFastLagState s) throws Exception {
-        // Combined: one fast-lag commit followed by one point query against
-        // the freshly-committed state. Headline number for "what does a
-        // tick of work cost when a query lands in the unsealed window".
-        walFastLagInsert(s);
-        return walFastLagQuery(s);
-    }
-
-    /**
-     * Synthetic cost of a column-range equality scan with row-id emission —
-     * the primitive a tail-scan fallback would invoke when the posting
-     * index does not cover all rows visible at the reader's pinned txn.
-     * Independent of partition / TableReader plumbing so the measurement
-     * isolates the inner loop's cost as a function of tail length and match
-     * rate ({@code 1/keyCount}).
-     */
     @State(Scope.Benchmark)
-    @BenchmarkMode(Mode.AverageTime)
-    @OutputTimeUnit(TimeUnit.NANOSECONDS)
-    public static class TailScanState {
-        long colAddr;
-        @Param({"50", "1000", "10000", "100000"})
-        int keyCount;
-        long outAddr;
-        @Param({"1000", "10000", "100000", "1000000"})
-        int tailRows;
-        int targetKey;
+    @BenchmarkMode(Mode.SingleShotTime)
+    @OutputTimeUnit(TimeUnit.MILLISECONDS)
+    public static class WriteState {
+        SqlCompilerImpl compiler;
+        SqlExecutionContextImpl ctx;
+        String ddl;
+        CairoEngine engine;
+        @Param({"no_index", "bitmap", "posting", "posting_covering", "posting_varchar"})
+        String indexType;
+        String insertSql;
+        java.nio.file.Path tmpDir;
 
         @Setup(Level.Trial)
-        public void setup() {
-            colAddr = Unsafe.malloc((long) tailRows * Integer.BYTES, MemoryTag.NATIVE_DEFAULT);
-            outAddr = Unsafe.malloc((long) tailRows * Long.BYTES, MemoryTag.NATIVE_DEFAULT);
-            Random rng = new Random(1234);
-            for (int i = 0; i < tailRows; i++) {
-                Unsafe.putInt(colAddr + (long) i * Integer.BYTES, rng.nextInt(keyCount));
-            }
-            targetKey = 0;
+        public void setup() throws Exception {
+            tmpDir = Files.createTempDirectory("suite-write");
+            CairoConfiguration config = new DefaultCairoConfiguration(tmpDir.toString()) {
+                @Override
+                public byte getPostingIndexRowIdEncoding() {
+                    return IS_DELTA ? PostingIndexUtils.ENCODING_DELTA : PostingIndexUtils.ENCODING_ADAPTIVE;
+                }
+
+                @Override
+                public int getRndFunctionMemoryMaxPages() {
+                    return 4096;
+                }
+            };
+            engine = new CairoEngine(config);
+            ctx = new SqlExecutionContextImpl(engine, 1)
+                    .with(config.getFactoryProvider().getSecurityContextFactory().getRootContext(),
+                            null, null, -1, null);
+            compiler = new SqlCompilerImpl(engine);
+
+            ddl = switch (indexType) {
+                case "no_index" -> "CREATE TABLE wbench (ts TIMESTAMP, sym SYMBOL, price DOUBLE, name VARCHAR) " +
+                        "TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL";
+                case "bitmap" -> "CREATE TABLE wbench (ts TIMESTAMP, sym SYMBOL INDEX, price DOUBLE, name VARCHAR) " +
+                        "TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL";
+                case "posting" ->
+                        "CREATE TABLE wbench (ts TIMESTAMP, sym SYMBOL INDEX TYPE " + POSTING_SQL + ", price DOUBLE, name VARCHAR) " +
+                                "TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL";
+                case "posting_covering" ->
+                        "CREATE TABLE wbench (ts TIMESTAMP, sym SYMBOL INDEX TYPE " + POSTING_SQL + " INCLUDE (price), " +
+                                "price DOUBLE, name VARCHAR) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL";
+                case "posting_varchar" ->
+                        "CREATE TABLE wbench (ts TIMESTAMP, sym SYMBOL INDEX TYPE " + POSTING_SQL + " INCLUDE (price, name), " +
+                                "price DOUBLE, name VARCHAR) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL";
+                default -> throw new IllegalArgumentException(indexType);
+            };
+            insertSql = "INSERT INTO wbench SELECT dateadd('T', x::INT, '2024-01-01')::TIMESTAMP, " +
+                    "rnd_symbol(50, 4, 8, 0), rnd_double() * 1000, rnd_varchar(10, 20, 0) " +
+                    "FROM long_sequence(50000)";
         }
 
         @TearDown(Level.Trial)
         public void tearDown() {
-            Unsafe.free(colAddr, (long) tailRows * Integer.BYTES, MemoryTag.NATIVE_DEFAULT);
-            Unsafe.free(outAddr, (long) tailRows * Long.BYTES, MemoryTag.NATIVE_DEFAULT);
+            Misc.free(compiler);
+            Misc.free(engine);
+            deleteDirRecursive(tmpDir.toFile());
         }
-    }
-
-    @Benchmark
-    @BenchmarkMode(Mode.AverageTime)
-    @OutputTimeUnit(TimeUnit.NANOSECONDS)
-    public long tailScanEquality(TailScanState s) {
-        int target = s.targetKey;
-        long col = s.colAddr;
-        long out = s.outAddr;
-        int n = s.tailRows;
-        long matches = 0;
-        long outOff = 0;
-        for (int i = 0; i < n; i++) {
-            int v = Unsafe.getInt(col + (long) i * Integer.BYTES);
-            if (v == target) {
-                Unsafe.putLong(out + outOff, i);
-                outOff += Long.BYTES;
-                matches++;
-            }
-        }
-        return matches;
     }
 }
