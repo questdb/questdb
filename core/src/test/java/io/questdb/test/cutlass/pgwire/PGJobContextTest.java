@@ -3405,6 +3405,109 @@ if __name__ == "__main__":
     }
 
     @Test
+    public void testCloseStatementBeforeBindMustNotResumeSuspendedCursor() throws Exception {
+        // Targets the post-lookup `closeSuspendedCursor()` guard in `msgBind`.
+        //
+        // Setup:
+        //   Parse(S_1, "SELECT 1") + Sync,
+        //   Parse(S_2, "SELECT x FROM long_sequence(5)") + Sync,
+        //   Bind('' -> S_2) + Execute('', 2) + Sync   -- S_2 suspended after row 2.
+        //
+        // Bug-trigger (one message group, no intermediate Sync):
+        //   Close-S(S_1) + Bind('' -> S_2) + Execute('', 10) + Sync.
+        //
+        // After the previous suspended Execute, `pipelineCurrentEntry` is S_2 with
+        // `stateSuspended = true`. `Close-S(S_1)` runs `releaseToPoolIfAbandoned(S_2)`,
+        // which calls `clearState()` but does NOT touch the cursor or `stateSuspended`.
+        // The pre-lookup `closeSuspendedCursor()` in `msgBind` then sees `S_1` (the close
+        // target, not suspended) and skips. The lookup re-introduces S_2 with the
+        // cursor still alive, and without the post-lookup guard `msgExecuteSelect`
+        // would skip `factory.getCursor()` and resume from row 3. The post-lookup
+        // guard frees the cursor before `setStateBind(true)`, so the next Execute
+        // calls `factory.getCursor()` fresh.
+        //
+        // Pre-fix output: 3 DataRows (3,4,5) + "SELECT 3" -- the resumed cursor.
+        // Post-fix output: 5 DataRows (1..5) + "SELECT 5" -- a fresh cursor.
+        //
+        // Response order matches the request order: CloseComplete (Close-S),
+        // BindComplete (Bind), 5 DataRows + CommandComplete (Execute), RFQ (Sync).
+        assertHexScript("""
+                >0000003600030000757365720061646d696e0064617461626173650071646200636c69656e745f656e636f64696e6700555446380000
+                <520000000800000003
+                >700000000a717565737400
+                <520000000800000000530000001154696d655a6f6e6500474d5400530000001d6170706c69636174696f6e5f6e616d6500517565737444420053000000187365727665725f76657273696f6e0031312e33005300000019696e74656765725f6461746574696d6573006f6e005300000019636c69656e745f656e636f64696e670055544638004b0000000c0000003fbb8b96505a0000000549
+                >5000000013535f310053454c45435420310000005300000004
+                <31000000045a0000000549
+                >5000000029535f320053454c45435420782046524f4d206c6f6e675f73657175656e63652835290000005300000004
+                <31000000045a0000000549
+                >420000000f00535f3200000000000000450000000900000000025300000004
+                <3200000004440000000b00010000000131440000000b0001000000013273000000045a0000000549
+                >430000000953535f3100420000000f00535f32000000000000004500000009000000000a5300000004
+                <33000000043200000004440000000b00010000000131440000000b00010000000132440000000b00010000000133440000000b00010000000134440000000b00010000000135430000000d53454c4543542035005a0000000549
+                >5800000004
+                """);
+    }
+
+    @Test
+    public void testCloseStatementMustNotLeakSuspendedCursorOnAnotherNamedStatement() throws Exception {
+        // A `Close-Statement` for one named prepared statement must not leak a
+        // suspended cursor on a different named prepared statement.
+        //
+        // pgjdbc only sends `Close-S` when its local cache evicts a CachedQuery.
+        // Setting preparedStatementCacheQueries=0 evicts on every close(), which
+        // makes the wire sequence deterministic. prepareThreshold=-1 forces a
+        // server-side named statement on the first execution (default = 5 would
+        // use an anonymous statement on the first call, leaving no name to close).
+        assertWithPgServer(Mode.EXTENDED, true, -1, (ignoredConn, binary, mode, port) -> {
+            Properties properties = new Properties();
+            properties.setProperty("user", "admin");
+            properties.setProperty("password", "quest");
+            properties.setProperty("prepareThreshold", "-1");
+            properties.setProperty("preparedStatementCacheQueries", "0");
+            try (Connection connection = DriverManager.getConnection(
+                    "jdbc:postgresql://127.0.0.1:" + port + "/qdb", properties)) {
+                try (Statement stmt = connection.createStatement()) {
+                    stmt.executeUpdate("create table tab ( a int, b long, ts timestamp)");
+                }
+
+                // S_1 -- something to close later.
+                PreparedStatement ps1 = connection.prepareStatement("select 1");
+                ps1.executeQuery().close();
+
+                // S_2 -- suspended after row 2 of 3.
+                PreparedStatement ps2 = connection.prepareStatement("show columns from tab");
+                ps2.setMaxRows(2);
+                ps2.executeQuery().close();
+
+                // Triggers Close-S for S_1 to be queued on the next executeQuery.
+                ps1.close();
+
+                // Wire sequence pgjdbc emits: Close-S(S_1), Sync, Bind('' -> S_2), Execute, Sync.
+                // Pre-fix, msgClose ran releaseToPoolIfAbandoned on the suspended S_2, which
+                // only called clearState() and left the cursor alive. The subsequent Bind
+                // looked S_2 up with its cursor still alive, msgExecuteSelect skipped
+                // factory.getCursor() and resumed from row 2 -- so this would return
+                // just `ts` instead of all 3 rows.
+                ps2.setMaxRows(6);
+                sink.clear();
+                try (ResultSet rs = ps2.executeQuery()) {
+                    assertResultSet(
+                            """
+                                    column[VARCHAR],type[VARCHAR],indexed[BIT],indexBlockCapacity[INTEGER],symbolCached[BIT],symbolCapacity[INTEGER],symbolTableSize[INTEGER],designated[BIT],upsertKey[BIT],indexType[VARCHAR],indexInclude[VARCHAR]
+                                    a,INT,false,0,false,0,0,false,false,,
+                                    b,LONG,false,0,false,0,0,false,false,,
+                                    ts,TIMESTAMP,false,0,false,0,0,false,false,,
+                                    """,
+                            sink,
+                            rs
+                    );
+                }
+                ps2.close();
+            }
+        });
+    }
+
+    @Test
     public void testContextClearsTransactionFlag() throws Exception {
         assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
             connection.setAutoCommit(true);
