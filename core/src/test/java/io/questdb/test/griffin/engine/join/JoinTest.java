@@ -2841,7 +2841,9 @@ public class JoinTest extends AbstractCairoTest {
                     "SELECT T1.val, T2.val FROM t T1 " +
                             "INNER JOIN t T2 ON T1.ts < T2.ts " +
                             "WHERE T1.val > 0 AND NOW() = NOW()",
-                    null, false, false
+                    null,
+                    false,
+                    false
             );
         });
     }
@@ -2859,7 +2861,9 @@ public class JoinTest extends AbstractCairoTest {
                     "SELECT T1.val, T2.val FROM t T1 " +
                             "INNER JOIN t T2 ON T1.ts < T2.ts " +
                             "WHERE T1.val > 0 AND 1 > 10 AND NOW() = NOW()",
-                    null, false, true
+                    null,
+                    true,
+                    true
             );
         });
     }
@@ -2885,7 +2889,9 @@ public class JoinTest extends AbstractCairoTest {
                             1\t2
                             """,
                     query,
-                    null, false, false
+                    null,
+                    false,
+                    false
             );
             // Verify: no Empty table (1 < 10 folded as constant true), and
             // now()=now() merged from constWhereClause into a post-join filter.
@@ -7659,7 +7665,7 @@ public class JoinTest extends AbstractCairoTest {
                     expected,
                     "select x.c, x.a, b, a+b from x join y on y.m = x.c and 1 > 10",
                     null,
-                    false,
+                    true,
                     true,
                     fullFatJoin
             );
