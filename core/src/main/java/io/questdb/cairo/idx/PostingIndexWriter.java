@@ -546,14 +546,25 @@ public class PostingIndexWriter implements IndexWriter {
         if (!keyMem.isOpen()) {
             return;
         }
-        // Drop pending and spill in-memory state. Keep valueMem, keyMem,
-        // sealTxn, and the chain head intact: the next seal() advances
-        // sealTxn (peekNextSealTxn -> newSealTxn), writes a fresh .pv
-        // at newSealTxn from re-added entries, and publishToChain takes
-        // the appendNewEntry branch (sealTxn != chain.getHeadSealTxn())
-        // so a new chain entry with genCount=1 supersedes the old head.
-        // Old gens stay in the prior .pv until their committed-window
-        // closes and the seal-purge job removes them.
+        // Drop pending and spill in-memory state. Keep valueMem, valueMemSize,
+        // keyMem, sealTxn, and the chain head intact so concurrent readers with
+        // active mmaps stay safe -- this method touches no on-disk files.
+        //
+        // The caller's republish runs in two steps:
+        //   1. commit() -> flushAllPending appends the new gen to the SAME .pv
+        //      at offset = preserved valueMemSize, then publishToChain takes
+        //      the extendHead branch (sealTxn == chain.getHeadSealTxn()) and
+        //      overwrites gen-dir slot 0 of the existing head in place,
+        //      bumping its GEN_COUNT to 1. Prior gen bytes stay in the .pv
+        //      but become unreachable through the chain. Readers see either
+        //      the old or new state, never a mix: the chain header's seqlock
+        //      plus extendHead's GEN_COUNT-last ordering rule out torn reads.
+        //   2. seal() / rebuildSidecars() rotates to a fresh sealTxn
+        //      (peekNextSealTxn -> newSealTxn), writes a dense single-gen .pv
+        //      at newSealTxn, and publishToChain takes the appendNewEntry
+        //      branch (sealTxn != chain.getHeadSealTxn()), publishing a new
+        //      chain entry that supersedes the in-place-mutated head. The
+        //      old .pv is queued for the seal-purge job.
         freePendingBuffers();
         freeSpillData();
         keyCapacity = 0;

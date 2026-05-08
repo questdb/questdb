@@ -90,13 +90,31 @@ public interface IndexWriter extends Closeable, Mutable {
     }
 
     /**
-     * Resets the writer's in-memory state so a subsequent sequence of
-     * {@link #add(int, long)} calls plus {@link #seal()} produces a fresh
-     * single-generation chain that supersedes any prior chain entry. Unlike
-     * {@link #truncate()} this MUST NOT touch on-disk files: callers rely
-     * on it to discard stale (key, rowId) pairs left by replace-range,
-     * dedup-replace, or O3 splits without rotating the .pv or rewriting
-     * the .pk header that concurrent readers may have mmapped.
+     * Discards the writer's in-memory state so the caller can re-add entries
+     * from authoritative source data. Used to evict stale (key, rowId) pairs
+     * left by replace-range, dedup-replace, or O3 splits where the same row
+     * id takes a different value across writes -- cases the chain cannot
+     * surgically rewind because the stale entries sit inside the live row
+     * range.
+     * <p>
+     * Expected caller pattern:
+     * <pre>
+     *     writer.discardForRebuild();
+     *     for (...) writer.add(key, rowId);   // re-add from .d file
+     *     writer.commit();                    // flush as fresh gen 0
+     *     writer.seal();                      // rotate the value file
+     * </pre>
+     * {@code commit()} extends the existing chain head in place, bumping
+     * GEN_COUNT to 1 so prior gens become unreachable through the chain;
+     * the trailing {@code seal()} rotates the value file at a fresh sealTxn
+     * and queues the old one for purge.
+     * <p>
+     * Unlike {@link #truncate()}, this call itself does no I/O: it leaves
+     * the value file, key file header, and chain head in place so concurrent
+     * readers with active mmaps stay safe. The subsequent {@code commit()} /
+     * {@code seal()} writes use the chain's established in-place mutation
+     * and rotation protocols and are safe under the same seqlock guarantees
+     * as a normal flush.
      * <p>
      * Default is no-op for index types that don't accumulate stale state
      * (e.g. BitmapIndexWriter persists every add immediately and has no
