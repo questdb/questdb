@@ -212,7 +212,7 @@ public final class PostingIndexUtils {
     public static final double SPARSE_SBBF_DEFAULT_FPP = 0.01;
     public static final int SPARSE_SBBF_NUM_BLOCKS_FOOTER_SIZE = Integer.BYTES;
     public static final int STRIDE_IDX_BYTES = Long.BYTES;
-    // Stride block mode constants — see class javadoc for when each mode wins
+    // Stride block mode constants - see class javadoc for when each mode wins
     public static final byte STRIDE_MODE_DELTA = 0;
     public static final byte STRIDE_MODE_FLAT = 1;
     public static final int STRIDE_MODE_PREFIX_SIZE = 4; // mode(1B) + bitWidth/reserved(1B) + padding(2B)

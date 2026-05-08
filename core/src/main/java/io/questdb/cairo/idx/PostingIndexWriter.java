@@ -84,11 +84,11 @@ public class PostingIndexWriter implements IndexWriter {
     private final double alignedBitWidthThreshold;
     // v2 chain helper: owns the in-memory mirror of the chain header,
     // exposes append/extend/recovery primitives. Single instance per writer
-    // — reused across reopens via resetState().
+    // reused across reopens via resetState().
     private final PostingIndexChainWriter chain = new PostingIndexChainWriter();
     private final CairoConfiguration configuration;
     // Reusable scratch list passed to PostingIndexChainWriter.appendNewEntry /
-    // extendHead — built once per chain publish from each cover column's
+    // extendHead, built once per chain publish from each cover column's
     // current sidecar append offset. Reused across calls to avoid allocations.
     private final LongList coverEndOffsetsScratch = new LongList();
     // O3 addr-based covering: caller-provided native memory addresses
@@ -2684,7 +2684,7 @@ public class PostingIndexWriter implements IndexWriter {
      * supplied gen-dir entry to the right slot, then either extends the
      * head entry (when the .pv file matches the head's sealTxn) or
      * appends a brand-new chain entry (when {@code sealTxn} has just
-     * advanced past the head's sealTxn — i.e. a path-based seal).
+     * advanced past the head's sealTxn, i.e. a path-based seal).
      * <p>
      * The new entry's bytes go to {@code chain.getRegionLimit()}; the
      * extended head entry's bytes mutate at {@code chain.getHeadEntryOffset()}.
@@ -2707,7 +2707,7 @@ public class PostingIndexWriter implements IndexWriter {
         // (head matches the same .pv file) we extend the head entry. When
         // sealTxn advances past the head's sealTxn (a seal switched .pv),
         // we append a fresh entry. The same applies to the empty-chain
-        // case (headSealTxn = -1 < sealTxn) — first flush after init/
+        // case (headSealTxn = -1 < sealTxn): first flush after init/
         // truncate. The comparison is against the head's sealTxn rather
         // than chain.getGenCounter() because recoveryDropAbandoned can
         // leave the chain with headSealTxn < genCounter (the dropped
@@ -2726,7 +2726,7 @@ public class PostingIndexWriter implements IndexWriter {
         keyMem.putInt(dirOffset + PostingIndexUtils.GEN_DIR_OFFSET_MAX_KEY, overrideMaxKey);
 
         // Snapshot the current append offset of each open sidecar. Tombstoned
-        // and not-yet-opened slots publish 0 — readers treat them as "no file
+        // and not-yet-opened slots publish 0; readers treat them as "no file
         // / nothing to map", consistent with how isCoveredAvailable handles
         // missing sidecars.
         captureCoverEndOffsets();
@@ -3599,7 +3599,7 @@ public class PostingIndexWriter implements IndexWriter {
         final long oldSealTxn = sealTxn;
         final long newSealTxn = Math.max(1, chain.peekNextSealTxn());
         reencodeAllGenerations(newSealTxn, maxValue, maxValue);
-        // Skip when reencode bypassed via truncate() — that path already
+        // Skip when reencode bypassed via truncate(): that path already
         // recorded its own purge entry.
         if (sealTxn != oldSealTxn) {
             recordPostingSealPurge(oldSealTxn);

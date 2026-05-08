@@ -4826,7 +4826,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
      * @param allowDestructiveRecovery POSTING-only: when true, an existing .pk that fails the
      *                                 seqlock integrity check is treated as crashed-init garbage and
      *                                 wiped + recreated. When false, an existing .pk is preserved
-     *                                 unconditionally — the right behaviour at runtime, where the
+     *                                 unconditionally - the right behaviour at runtime, where the
      *                                 writer is already managing chain history that wiping would
      *                                 silently drop. Pass true only from contexts that hold no live
      *                                 indexer for this file (constructor recovery, DDL fresh build).
