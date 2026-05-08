@@ -2802,6 +2802,177 @@ public class CoveringIndexTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testCoveringIndexFastLagAccumulatesAcrossWalCommits() throws Exception {
+        // Each WAL transaction with sequential timestamps in the active
+        // partition takes the fast-lag path through
+        // TableWriter.publishPostingIndexesForLastPartitionFastLag, which
+        // calls indexer.getWriter().commit(), appending a sparse generation
+        // rather than rewriting the whole .pv. After many fast-lag commits the
+        // posting chain has multiple pending generations on the active
+        // partition; readers must walk all of them. A regression to
+        // seal-per-commit would still pass functional checks but defeat the
+        // perf goal; a regression that drops pending data would surface here
+        // as missing rows in the covering query.
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE t_fastlag_acc (
+                        ts TIMESTAMP,
+                        sym SYMBOL INDEX TYPE POSTING INCLUDE (price, qty),
+                        price DOUBLE,
+                        qty INT
+                    ) TIMESTAMP(ts) PARTITION BY DAY WAL
+                    """);
+
+            final int commitCount = 30;
+            // Two distinct symbols so covering reads exercise per-key cursors
+            // across multiple sparse gens, not just key=0.
+            String[] syms = {"A", "B"};
+            for (int i = 0; i < commitCount; i++) {
+                String sym = syms[i % syms.length];
+                // 10-minute spacing keeps every row inside the 2024-01-01 partition.
+                String ts = String.format("2024-01-01T%02d:%02d:00", i / 6, (i % 6) * 10);
+                execute("INSERT INTO t_fastlag_acc VALUES ('" + ts + "', '"
+                        + sym + "', " + (i + 0.5) + ", " + (i * 10) + ")");
+                drainWalQueue();
+            }
+
+            // Total row count visible: proves no commit silently dropped data.
+            assertSql("count\n" + commitCount + "\n", "SELECT count() FROM t_fastlag_acc");
+
+            // Covering plan + correct per-key results: proves multi-gen reads
+            // resolve covering values from the right gen.
+            assertPlanNoLeakCheck(
+                    "SELECT price, qty FROM t_fastlag_acc WHERE sym = 'A'",
+                    """
+                            SelectedRecord
+                                CoveringIndex on: sym with: price, qty
+                                  filter: sym='A'
+                            """
+            );
+
+            // 'A' is at even indices (0, 2, 4, ..., 28): 15 rows.
+            // 'B' is at odd indices (1, 3, 5, ..., 29): 15 rows.
+            assertSql("count\n15\n", "SELECT count() FROM t_fastlag_acc WHERE sym = 'A'");
+            assertSql("count\n15\n", "SELECT count() FROM t_fastlag_acc WHERE sym = 'B'");
+
+            // Aggregation across the covered columns: exercises the covering
+            // sidecar reads on every gen that contributed to key 'A'.
+            // sum(price) for A = 0.5 + 2.5 + 4.5 + ... + 28.5 = 15 * 14.5 = 217.5
+            // sum(qty)   for A = 0 + 20 + 40 + ... + 280     = 15 * 140 = 2100
+            assertSql("sum_price\tsum_qty\n217.5\t2100\n",
+                    "SELECT sum(price) sum_price, sum(qty) sum_qty FROM t_fastlag_acc WHERE sym = 'A'");
+        });
+    }
+
+    @Test
+    public void testCoveringIndexFastLagAutoSealAtMaxGenCount() throws Exception {
+        // Drives MAX_GEN_COUNT+5 fast-lag commits to exercise the inline
+        // auto-seal that PostingIndexWriter.flushAllPending fires when
+        // genCount >= MAX_GEN_COUNT. The auto-seal runs from inside
+        // commit() via the WAL fast-lag path; if it corrupts state during
+        // the rewrite (e.g., truncates pending sidecar data, mishandles the
+        // sealTxn bump), queries return stale or missing rows. Each insert
+        // is its own transaction so the writer accumulates one sparse gen
+        // per drain.
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE t_fastlag_max (
+                        ts TIMESTAMP,
+                        sym SYMBOL INDEX TYPE POSTING INCLUDE (price),
+                        price DOUBLE
+                    ) TIMESTAMP(ts) PARTITION BY DAY WAL
+                    """);
+
+            final int commitCount = PostingIndexUtils.MAX_GEN_COUNT + 5;
+            for (int i = 0; i < commitCount; i++) {
+                // 1-second spacing fits commitCount rows comfortably inside
+                // a single day partition (max 86_400 rows possible).
+                long tsMicros = 1_704_067_200_000_000L + i * 1_000_000L; // 2024-01-01T00:00:00 + i sec
+                execute("INSERT INTO t_fastlag_max VALUES (" + tsMicros + ", 'A', " + (i + 0.5) + ")");
+                drainWalQueue();
+            }
+
+            assertSql("count\n" + commitCount + "\n", "SELECT count() FROM t_fastlag_max");
+            assertSql("count\n" + commitCount + "\n",
+                    "SELECT count() FROM t_fastlag_max WHERE sym = 'A'");
+
+            // sum(price) = 0.5 + 1.5 + ... + (commitCount-0.5) = commitCount^2 / 2.
+            double expectedSum = (double) commitCount * commitCount / 2.0;
+            assertSql("sum_price\n" + expectedSum + "\n",
+                    "SELECT sum(price) sum_price FROM t_fastlag_max WHERE sym = 'A'");
+
+            // Reopen the writer to verify chain state survives a clean cycle:
+            // the chain must reload either as a single sealed gen (if
+            // close() invoked seal on multi-gen) or as the post-auto-seal
+            // sparse tail. Either way the data must remain intact.
+            engine.releaseAllWriters();
+            assertSql("count\n" + commitCount + "\n", "SELECT count() FROM t_fastlag_max");
+            assertSql("sum_price\n" + expectedSum + "\n",
+                    "SELECT sum(price) sum_price FROM t_fastlag_max WHERE sym = 'A'");
+        });
+    }
+
+    @Test
+    public void testCoveringIndexFastLagSealsOnPartitionSwitch() throws Exception {
+        // Multiple fast-lag commits accumulate sparse generations on the
+        // active partition. Switching to a new partition routes through
+        // TableWriter.switchPartition, which calls
+        // sealIfMultiGen(sealThreshold) on every indexer to compact the
+        // retired partition's chain. After the switch, the previous
+        // partition's data must remain readable, AND new fast-lag commits
+        // on the new partition must work from a clean chain. Catches
+        // regressions where switchPartition's seal corrupts the retired
+        // partition's index, or where the new partition's writer inherits
+        // stale state.
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE t_fastlag_switch (
+                        ts TIMESTAMP,
+                        sym SYMBOL INDEX TYPE POSTING INCLUDE (price),
+                        price DOUBLE
+                    ) TIMESTAMP(ts) PARTITION BY DAY WAL
+                    """);
+
+            // Phase 1: 20 fast-lag commits on partition 2024-01-01 (above the
+            // default sealThreshold=16, so the upcoming switch must seal).
+            for (int i = 0; i < 20; i++) {
+                String ts = String.format("2024-01-01T%02d:%02d:00", i / 4, (i % 4) * 15);
+                execute("INSERT INTO t_fastlag_switch VALUES ('" + ts + "', 'A', " + (i + 0.5) + ")");
+                drainWalQueue();
+            }
+            assertSql("count\n20\n", "SELECT count() FROM t_fastlag_switch WHERE sym = 'A'");
+
+            // Phase 2: a row in the next day forces a partition switch.
+            // switchPartition runs commit() + sealIfMultiGen(threshold) on
+            // every indexer; the 2024-01-01 chain compacts to a single
+            // sealed gen.
+            execute("INSERT INTO t_fastlag_switch VALUES ('2024-01-02T00:00:00', 'A', 100.5)");
+            drainWalQueue();
+
+            // Retired partition's data must survive the seal.
+            assertSql("count\n20\n",
+                    "SELECT count() FROM t_fastlag_switch WHERE ts < '2024-01-02' AND sym = 'A'");
+            // sum(price) for partition 1 = 0.5 + 1.5 + ... + 19.5 = 200.
+            assertSql("sum_price\n200.0\n",
+                    "SELECT sum(price) sum_price FROM t_fastlag_switch WHERE ts < '2024-01-02' AND sym = 'A'");
+
+            // Phase 3: more fast-lag commits on the new partition. These
+            // must take the same fast-lag path on a freshly opened writer
+            // for partition 2024-01-02.
+            for (int i = 1; i <= 5; i++) {
+                String ts = String.format("2024-01-02T%02d:00:00", i);
+                execute("INSERT INTO t_fastlag_switch VALUES ('" + ts + "', 'A', " + (200 + i) + ".0)");
+                drainWalQueue();
+            }
+
+            assertSql("count\n26\n", "SELECT count() FROM t_fastlag_switch WHERE sym = 'A'");
+            // partition 2024-01-02: 100.5 + 201 + 202 + 203 + 204 + 205 = 1115.5
+            assertSql("sum_price\n1115.5\n",
+                    "SELECT sum(price) sum_price FROM t_fastlag_switch WHERE ts >= '2024-01-02' AND sym = 'A'");
+        });
+    }
+
+    @Test
     public void testCoveringIndexGroupByAggregation() throws Exception {
         assertMemoryLeak(() -> {
             execute("""
