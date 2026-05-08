@@ -141,8 +141,7 @@ public class QwpSenderE2ETest extends AbstractQwpWebSocketTest {
             try (QwpWebSocketSender sender = connectWs(port,
                     2,
                     1024 * 1024,
-                    100_000_000L,
-                    QwpWebSocketSender.DEFAULT_IN_FLIGHT_WINDOW_SIZE)) {
+                    100_000_000L)) {
                 // 200 rows / 2 per batch = 100 batches
                 for (int i = 0; i < 200; i++) {
                     sender.table("ack_stress")
@@ -187,8 +186,7 @@ public class QwpSenderE2ETest extends AbstractQwpWebSocketTest {
             try (QwpWebSocketSender sender = connectWs(port,
                     10,
                     1024 * 1024,
-                    100_000_000L,
-                    QwpWebSocketSender.DEFAULT_IN_FLIGHT_WINDOW_SIZE)) {
+                    100_000_000L)) {
                 for (int i = 0; i < 50; i++) {
                     sender.table("async_row_flush")
                             .longColumn("id", i)
@@ -1829,8 +1827,7 @@ public class QwpSenderE2ETest extends AbstractQwpWebSocketTest {
                     try (QwpWebSocketSender sender = connectWs(port,
                             autoFlushRows,
                             1024 * 1024,
-                            100_000_000L,
-                            QwpWebSocketSender.DEFAULT_IN_FLIGHT_WINDOW_SIZE)) {
+                            100_000_000L)) {
                         barrier.await();
                         for (int i = 0; i < rowsPerSender; i++) {
                             sender.table("concurrent_diff_" + senderIdx)
@@ -1878,8 +1875,7 @@ public class QwpSenderE2ETest extends AbstractQwpWebSocketTest {
                     try (QwpWebSocketSender sender = connectWs(port,
                             autoFlushRows,
                             1024 * 1024,
-                            100_000_000L,
-                            QwpWebSocketSender.DEFAULT_IN_FLIGHT_WINDOW_SIZE)) {
+                            100_000_000L)) {
                         barrier.await();
                         for (int i = 0; i < rowsPerSender; i++) {
                             sender.table("concurrent_same")
@@ -1934,8 +1930,7 @@ public class QwpSenderE2ETest extends AbstractQwpWebSocketTest {
                     try (QwpWebSocketSender sender = connectWs(port,
                             autoFlushRows,
                             1024 * 1024,
-                            100_000_000L,
-                            QwpWebSocketSender.DEFAULT_IN_FLIGHT_WINDOW_SIZE)) {
+                            100_000_000L)) {
                         barrier.await();
                         for (int i = 0; i < rowsPerSender; i++) {
                             // All senders use the same set of symbol values

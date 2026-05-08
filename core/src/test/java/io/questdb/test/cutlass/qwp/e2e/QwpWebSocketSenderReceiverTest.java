@@ -2305,15 +2305,13 @@ public class QwpWebSocketSenderReceiverTest extends AbstractQwpWebSocketTest {
         Assume.assumeTrue("Async mode only (window > 1)", windowSize > 1);
 
         runInContext((port) -> {
-            int inFlightWindowSize = 100;
             int totalRows = 10_000;
 
             // Create sender with high in-flight window
             try (QwpWebSocketSender sender = connectWs(port,
                     10,
                     Integer.MAX_VALUE,
-                    TimeUnit.HOURS.toNanos(1),
-                    inFlightWindowSize)) {
+                    TimeUnit.HOURS.toNanos(1))) {
                 for (int i = 0; i < totalRows; i++) {
                     sender.table("ws_ack_test")
                             .longColumn("value", i)
