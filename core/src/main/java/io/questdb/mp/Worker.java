@@ -58,13 +58,13 @@ public class Worker extends Thread {
     private final boolean haltOnError;
     private final AtomicLong jobStartMicros = new AtomicLong();
     private final ObjHashSet<? extends Job> jobs;
-    private final AtomicReference<Lifecycle> lifecycle = new AtomicReference<>(Lifecycle.BORN);
+    private final AtomicReference<WorkerLifecycle> lifecycle = new AtomicReference<>(WorkerLifecycle.BORN);
     private final Log log;
     private final Metrics metrics;
     private final long napThreshold;
     private final OnHaltAction onHaltAction;
     private final String poolName;
-    private final Job.RunStatus runStatus = () -> lifecycle.get() == Lifecycle.HALTED;
+    private final Job.RunStatus runStatus = () -> lifecycle.get() == WorkerLifecycle.HALTED;
     private final long sleepMs;
     private final long sleepThreshold;
     private final int workerId;
@@ -114,14 +114,14 @@ public class Worker extends Thread {
     }
 
     public void halt() {
-        lifecycle.set(Lifecycle.HALTED);
+        lifecycle.set(WorkerLifecycle.HALTED);
     }
 
     @Override
     public void run() {
         Throwable ex = null;
         try {
-            if (lifecycle.compareAndSet(Lifecycle.BORN, Lifecycle.RUNNING)) {
+            if (lifecycle.compareAndSet(WorkerLifecycle.BORN, WorkerLifecycle.RUNNING)) {
 
                 // Stamp this OS thread's identity into TLS that survives cont
                 // freeze/thaw. CarrierLocal reads this on every access; without
@@ -185,49 +185,40 @@ public class Worker extends Thread {
                 // function can be remounted on a peer carrier; the body's writes
                 // to per-mount state must travel with the cont, not be aliased to
                 // a specific Worker instance.
-                outer:
-                while (lifecycle.get() == Lifecycle.RUNNING) {
-                    WorkerContinuation own = new WorkerContinuation(this::loopBody, continuationQueue);
-                    WorkerContinuation cont = own;
+                while (lifecycle.get() == WorkerLifecycle.RUNNING) {
+                    WorkerContinuation cont = new WorkerContinuation(this::loopBody, continuationQueue);
                     cont.run();
+                    if (cont.isDone()) {
+                        // loopBody returned, which only happens when this worker
+                        // observed lifecycle HALTED. Exit the pool.
+                        return;
+                    }
+                    // Walk the handoff chain. Each parked body, just before yielding,
+                    // may have stashed a dequeued foreign cont in its handoff slot.
+                    // Remount it here in the outer driver, since cont.run() requires
+                    // the calling thread NOT to already be carrying a cont in the
+                    // same scope. A foreign cont may itself dequeue and hand off
+                    // another, so the chain length is unbounded; it terminates when
+                    // a body parks without a handoff (captured deep inside a
+                    // suspending function) or completes. A foreign-done end of chain
+                    // is NOT an exit signal: tying worker exit to any done cont
+                    // would deplete the pool whenever a stale or shutdown-race cont
+                    // surfaces, and leave parked queries with no remounter. The
+                    // authoritative exit signal is the outer while's lifecycle check.
                     while (true) {
-                        if (cont.isDone()) {
-                            // Differentiate own vs. foreign:
-                            //   - own done: our loopBody returned, which only
-                            //     happens when this worker observed lifecycle
-                            //     HALTED. Exit the pool.
-                            //   - foreign done: a handed-off cont (someone
-                            //     else's old loopBody, or a body that already
-                            //     unwound on a peer carrier) finished. End the
-                            //     handoff chain but keep this worker alive --
-                            //     the authoritative exit signal is the outer
-                            //     while's lifecycle check, NOT a foreign
-                            //     cont's done state. Tying worker exit to any
-                            //     done cont would deplete the pool whenever a
-                            //     stale or shutdown-race cont surfaces, and
-                            //     leave parked queries with no remounter.
-                            if (cont == own) {
-                                break outer;
-                            }
-                            break;
-                        }
                         WorkerContinuation handoff = cont.takeHandoff();
                         if (handoff == null) {
                             // Body parked deep inside a job (no dequeue this turn).
-                            // The fresh next-iteration cont is enough; whoever fires
-                            // the parked cont will push it onto the queue and a
-                            // worker will dequeue it.
+                            // The next outer iteration's fresh cont is enough;
+                            // whoever fires the parked cont will push it onto the
+                            // queue and a worker will dequeue it.
                             break;
                         }
-                        // Remount the dequeued cont here. continuationQueue.run()
-                        // spins through any IllegalStateException window where the
-                        // cont's previous carrier has not yet finished unmounting,
-                        // and silently returns if the foreign cont has already
-                        // completed via another path. Reassign cont so the loop
-                        // re-checks done/handoff against the cont we actually just
-                        // ran -- but now isDone-vs-own discriminates correctly.
                         cont = handoff;
-                        continuationQueue.run(cont);
+                        mountForeignCont(cont);
+                        if (cont.isDone()) {
+                            break;
+                        }
                     }
                 }
             }
@@ -279,7 +270,7 @@ public class Worker extends Thread {
         // YIELD_REFUSED_LOG_INTERVAL_MICROS. A successful suspend resets the
         // window so a future pin episode logs immediately.
         long nextYieldRefusedLogMicros = 0L;
-        while (lifecycle.get() == Lifecycle.RUNNING) {
+        while (lifecycle.get() == WorkerLifecycle.RUNNING) {
             boolean runAsap = false;
             // measure latency of all jobs tick
             jobStartMicros.lazySet(CLOCK_MICROS.getTicks());
@@ -363,6 +354,44 @@ public class Worker extends Thread {
         }
     }
 
+    /**
+     * Remount a foreign cont on this thread. Three race shapes:
+     * <ol>
+     *   <li><b>Benign mount race</b> -- the cont was scheduleResume'd in the narrow
+     *       window before its registering carrier reached suspend(); cont.run()
+     *       throws ISE until that carrier unmounts (typically nanoseconds). Spin.</li>
+     *   <li><b>Phantom resume</b> -- the body's suspend() returned false (carrier
+     *       pinned) after a scheduleResume had already enqueued the cont; the cont
+     *       stays mounted on its polling carrier. parkRefused is set by
+     *       abortContinuation; we consume it and drop the dequeue.</li>
+     *   <li><b>Already-done shutdown race</b> -- a TimerShards drain scheduleResumed
+     *       a cont that has already completed via another path. cont.isDone() is
+     *       the structural test.</li>
+     * </ol>
+     * Lifecycle bail-out: if this worker is halting, abandon the spin so the pool
+     * can shut down. The cont stays mounted on its carrier; when that carrier
+     * finishes its body the cont becomes done and is naturally disposed of.
+     */
+    private void mountForeignCont(WorkerContinuation cont) {
+        if (cont.consumeParkRefused() || cont.isDone()) {
+            return;
+        }
+        while (true) {
+            try {
+                cont.run();
+                return;
+            } catch (IllegalStateException e) {
+                if (cont.isDone() || cont.consumeParkRefused()) {
+                    return;
+                }
+                if (lifecycle.get() != WorkerLifecycle.RUNNING) {
+                    return;
+                }
+                Os.pause();
+            }
+        }
+    }
+
     private void stdErrCritical(Throwable e) {
         System.err.println(criticalErrorLine);
         e.printStackTrace(System.err);
@@ -370,10 +399,6 @@ public class Worker extends Thread {
 
     long getJobStartMicros() {
         return jobStartMicros.get();
-    }
-
-    private enum Lifecycle {
-        BORN, RUNNING, HALTED
     }
 
     @FunctionalInterface

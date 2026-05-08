@@ -152,6 +152,11 @@ public class CarrierLocal<T> extends java.lang.ThreadLocal<T> implements Closeab
                 r[id] = grown;
                 row = grown;
             }
+            // Volatile self-assign publishes the plain r[id] store and the
+            // preceding arraycopy. Pairs with the reader's volatile read of
+            // rows; without it, a reader could observe the new row reference
+            // but null contents, and get() would clobber the migrated value.
+            rows = r;
             return row;
         }
     }

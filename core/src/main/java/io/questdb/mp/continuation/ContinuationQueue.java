@@ -29,7 +29,6 @@ import io.questdb.mp.Job;
 import io.questdb.mp.Queue;
 import io.questdb.mp.ValueHolder;
 import io.questdb.mp.WorkerPool;
-import io.questdb.std.Os;
 import io.questdb.std.CarrierLocal;
 
 /**
@@ -63,7 +62,7 @@ public final class ContinuationQueue implements ContinuationSink {
     /**
      * Pop one parked continuation off the queue without running it. Returns
      * {@code null} if the queue is empty. The caller is responsible for
-     * eventually running the returned cont via {@link #run(WorkerContinuation)}.
+     * eventually remounting the returned cont via {@link WorkerContinuation#run()}.
      *
      * <p>The {@code scratch} is a caller-managed buffer used by the queue's
      * value-holder copy protocol; passing it in (rather than having the queue
@@ -71,7 +70,7 @@ public final class ContinuationQueue implements ContinuationSink {
      * when the caller allocates it on its own stack frame.
      *
      * <p>Safe to call from inside a mounted continuation: this is just a queue
-     * dequeue, no remount happens until {@link #run} is called.
+     * dequeue, no remount happens here.
      */
     public WorkerContinuation tryDequeue(ResumeTask scratch) {
         if (!queue.tryDequeue(scratch)) {
@@ -80,65 +79,6 @@ public final class ContinuationQueue implements ContinuationSink {
         WorkerContinuation cont = scratch.cont;
         scratch.cont = null;
         return cont;
-    }
-
-    /**
-     * Remount {@code cont} on the calling thread. Must be called from a thread
-     * that is NOT already carrying a cont in {@link WorkerContinuation#SCOPE}.
-     *
-     * <p>Three distinct race shapes are handled here:
-     *
-     * <ol>
-     *   <li><b>Benign mount race.</b> A waiter can be fired by a concurrent
-     *       thread (e.g. updateWriterTxns from the WAL apply pool) in the narrow
-     *       window between registerWaiter enqueueing the waiter and the body
-     *       actually reaching {@link WorkerContinuation#suspend()}. In that
-     *       window the cont is still mounted on its registering carrier and
-     *       {@code Continuation.run()} rejects the remount with
-     *       {@code IllegalStateException}. We spin until the carrier unmounts --
-     *       typically nanoseconds.</li>
-     *   <li><b>Phantom resume.</b> A body that called {@code suspend()} on a
-     *       pinned carrier (e.g. a synchronized or native frame above) gets back
-     *       a {@code false} from suspend, but a {@code scheduleResume} may have
-     *       already enqueued the cont. The cont stays mounted on the original
-     *       carrier for the entire legacy polling fallback (potentially
-     *       seconds-to-minutes). The body sets {@code parkRefused} on the cont;
-     *       we consume it here and drop the dequeue so a peer doesn't burn CPU
-     *       waiting for an unmount that won't happen any time soon.</li>
-     *   <li><b>Already-done shutdown race.</b> During engine shutdown a
-     *       {@link TimerShards#shutdown()} drain may CAS a {@link TimerCont} entry
-     *       to CANCELLED and {@code scheduleResume} a cont that has, by then,
-     *       already completed via a different path (e.g. its loopBody returned
-     *       because the worker's lifecycle transitioned to HALTED while another
-     *       wakeup raced ahead). The cont is on the queue but its run() is no
-     *       longer legal. Silently drop instead of crashing the worker -- the
-     *       body has already unwound and there is no remaining work to mount.
-     *       The producer-side narrowing in {@code TimerCont} reduces but cannot
-     *       fully close this TOCTOU window, so the queue side absorbs it.</li>
-     * </ol>
-     *
-     * <p>{@code cont.isDone()} is the structural test (not message-text matching
-     * against an internal JDK string): a not-done cont that refused to run can
-     * only be in the mounted-elsewhere state.
-     */
-    public void run(WorkerContinuation cont) {
-        if (cont.consumeParkRefused() || cont.isDone()) {
-            return;
-        }
-        while (true) {
-            try {
-                cont.run();
-                return;
-            } catch (IllegalStateException e) {
-                if (cont.isDone()) {
-                    return;
-                }
-                if (cont.consumeParkRefused()) {
-                    return;
-                }
-                Os.pause();
-            }
-        }
     }
 
     public static final class ResumeTask implements ValueHolder<ResumeTask> {

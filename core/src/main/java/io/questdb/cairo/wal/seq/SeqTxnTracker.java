@@ -189,9 +189,9 @@ public class SeqTxnTracker {
      * the body before it reaches {@code WorkerContinuation.suspend()} -- the cont is
      * still mounted on the registering carrier when {@code cont.scheduleResume()}
      * pushes it onto the resume queue. The mount race is benign on the happy path:
-     * {@link ContinuationQueue#run} spin-waits on the resulting
-     * IllegalStateException for the (typically nanosecond) window until the body
-     * reaches suspend and the carrier unmounts. If suspend is refused (carrier
+     * the dequeuing peer worker spin-waits on the resulting IllegalStateException
+     * for the (typically nanosecond) window until the body reaches suspend and the
+     * carrier unmounts. If suspend is refused (carrier
      * pinned), the body marks {@code parkRefused} on the cont so the dequeuer
      * drops the phantom entry instead of spinning for the duration of the legacy
      * polling fallback.

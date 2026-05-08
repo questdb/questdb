@@ -106,7 +106,7 @@ public final class TimerCont implements DelayedFireable {
     /**
      * Timer-shard pop. CAS PENDING -> FIRED, then resume the bound cont. The
      * resume is unconditional: even if the cont raced ahead to done state via
-     * another path, {@link ContinuationQueue#run} silently drops it on dequeue,
+     * another path, the dequeuing peer worker silently drops it on remount,
      * so we never strand a body that is still parked.
      */
     @Override
@@ -136,8 +136,8 @@ public final class TimerCont implements DelayedFireable {
      * cont remounts and observes the flag. Subject to the usual CAS no-op rule: if
      * another path already moved this entry to a terminal state, only the shutdown
      * flag is set; the pending dequeue carries the body to the close-aware exit.
-     * If the cont has already completed via another path, the queue-side
-     * {@link ContinuationQueue#run} guard silently drops it on dequeue.
+     * If the cont has already completed via another path, the dequeuing peer
+     * worker silently drops it on remount.
      */
     @Override
     public void shutdown() {

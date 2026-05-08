@@ -85,39 +85,52 @@ class WaitWalFunction extends BooleanFunction implements Function {
         );
         boolean firstRegister = true;
         if (waiter.tryBindCurrent()) {
-            while (seqTxnTracker.getWriterTxn() < seqTxn) {
-                // Owning context is closing: do not re-park. Throwing unwinds the
-                // body all the way to the continuation loop's tail suspend, which is
-                // what the close path needs in order to drive cont.run() to isDone().
-                if (waiter.isShuttingDown()) {
-                    throw CairoException.nonCritical().put("wait_wal_table aborted, connection closing [tableName=").put(tableName).put("]");
-                }
-                // Probe before re-parking: detects timeout, cancellation, broken
-                // connection, shutdown.
-                executionContext.getCircuitBreaker().statefulThrowExceptionIfTrippedNoThrottle();
-                throwIfTerminated();
+            try {
+                while (seqTxnTracker.getWriterTxn() < seqTxn) {
+                    // Owning context is closing: do not re-park. Throwing unwinds the
+                    // body all the way to the continuation loop's tail suspend, which is
+                    // what the close path needs in order to drive cont.run() to isDone().
+                    if (waiter.isShuttingDown()) {
+                        throw CairoException.nonCritical().put("wait_wal_table aborted, connection closing [tableName=").put(tableName).put("]");
+                    }
+                    // Probe before re-parking: detects timeout, cancellation, broken
+                    // connection, shutdown.
+                    executionContext.getCircuitBreaker().statefulThrowExceptionIfTrippedNoThrottle();
+                    throwIfTerminated();
 
-                boolean resumed = waiter.reset();
-                if (firstRegister || resumed) {
-                    seqTxnTracker.registerWaiter(waiter);
-                    firstRegister = false;
+                    boolean resumed = waiter.reset();
+                    if (firstRegister || resumed) {
+                        seqTxnTracker.registerWaiter(waiter);
+                        firstRegister = false;
+                    }
+                    if (!waiter.suspend()) {
+                        // The JDK refused to yield because the carrier is pinned (a
+                        // synchronized or native frame sits above this call). The body
+                        // never unmounted, so this is the same carrier that registered
+                        // the waiter.
+                        break;
+                    }
+                    // Resumed: either the waiter fired (target met or table state
+                    // changed) or the timer shard cancelled it at the deadline.
+                    // Loop top re-checks writerTxn and probes the breaker.
                 }
-                if (!waiter.suspend()) {
-                    // The JDK refused to yield because the carrier is pinned (a
-                    // synchronized or native frame sits above this call). The body
-                    // never unmounted, so this is the same carrier that registered
-                    // the waiter.
-                    break;
+                if (seqTxnTracker.getWriterTxn() >= seqTxn) {
+                    throwIfTerminated();
+                    return true;
                 }
-                // Resumed: either the waiter fired (target met or table state
-                // changed) or the timer shard cancelled it at the deadline.
-                // Loop top re-checks writerTxn and probes the breaker.
+                // else: yield was refused at least once; fall through to polling.
+            } finally {
+                // Hygiene: if state is still PENDING (throw landed during the
+                // iteration-1 PENDING window, before any racer fired), CAS to
+                // CANCELLED so the next fireWaiters() walk drops the holder
+                // immediately instead of waiting up to waitIntervalMillis for
+                // the timer pop. Mostly a no-op: on iteration 2+ throws state
+                // is already FIRED by the racer that woke us, and tryCancel's
+                // CAS fails harmlessly. The timer-shard heap entry is not
+                // touched either way -- it pops at its deadline and observes
+                // CANCELLED / FIRED, so expire() short-circuits.
+                waiter.tryCancel();
             }
-            if (seqTxnTracker.getWriterTxn() >= seqTxn) {
-                throwIfTerminated();
-                return true;
-            }
-            // else: yield was refused at least once; fall through to polling.
         }
 
         // Legacy polling fallback: no continuation gateway, or yield refused.

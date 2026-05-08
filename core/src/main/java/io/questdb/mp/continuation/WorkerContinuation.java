@@ -61,8 +61,9 @@ public final class WorkerContinuation {
     // scheduleResume has already pushed this cont onto its pool's resume queue
     // (i.e. a phantom entry exists). The cont is still mounted on the carrier
     // that tried to suspend; remounting from a peer worker would IllegalStateException
-    // and busy-spin until that carrier unmounts. ContinuationQueue.run consumes
-    // this flag (CAS 1 -> 0) to drop the phantom dequeue so peers don't burn CPU.
+    // and busy-spin until that carrier unmounts. The dequeuing peer worker
+    // consumes this flag (CAS 1 -> 0) to drop the phantom dequeue so it doesn't
+    // burn CPU.
     // Encoded as int (not boolean) because Unsafe.cas has no boolean overload.
     @SuppressWarnings({"unused", "FieldCanBeLocal"})
     private volatile int parkRefused;
@@ -109,9 +110,9 @@ public final class WorkerContinuation {
 
     /**
      * If the park-refused flag is set, clears it and returns {@code true}. Called by
-     * {@link ContinuationQueue#run} on each dequeue (and inside its IllegalStateException
-     * spin loop) so that a phantom queue entry left behind by a refused {@link #suspend()}
-     * is dropped instead of busy-spinning a peer carrier.
+     * the dequeuing peer worker on each remount attempt (and inside its
+     * IllegalStateException spin loop) so that a phantom queue entry left behind by
+     * a refused {@link #suspend()} is dropped instead of busy-spinning the peer.
      *
      * <p>Idempotent: a single set is consumed by exactly one observer. The CAS
      * enforces this contract — if two threads race to consume, only the winner
@@ -137,7 +138,7 @@ public final class WorkerContinuation {
     /**
      * Marks this cont as having a phantom entry on its resume queue: a
      * {@link #suspend()} that returned {@code false} after a {@code scheduleResume}
-     * had already enqueued it. The next {@link ContinuationQueue#run} on this cont
+     * had already enqueued it. The next remount attempt by a dequeuing peer worker
      * consumes the flag and drops the dequeue. Callers must only set this when they
      * know an enqueue has actually happened (e.g. tryCancel on the gating waiter
      * lost to a tryFire).

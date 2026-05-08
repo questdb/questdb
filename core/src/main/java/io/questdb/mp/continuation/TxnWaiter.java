@@ -65,7 +65,8 @@ public final class TxnWaiter implements DelayedFireable {
     private final long waitIntervalMillis;
     volatile long registeredAtMillis;
     private WorkerContinuation cont;
-    private final int state = STATE_PENDING;
+    @SuppressWarnings("FieldMayBeFinal")
+    private volatile int state = STATE_PENDING;
 
     public TxnWaiter(@Nullable TimerShards timerShards, long waitIntervalMillis, long targetWriterTxn) {
         this.timerShards = timerShards;
@@ -90,9 +91,9 @@ public final class TxnWaiter implements DelayedFireable {
         // scheduleResume has happened and there is no phantom queue entry.
         // If we lose (someone already fired this waiter), a scheduleResume
         // has pushed this cont onto the resume queue while the cont is still
-        // mounted here -- mark parkRefused so ContinuationQueue.run drops the
-        // phantom dequeue instead of burning a peer carrier for the duration
-        // of the legacy polling fallback below.
+        // mounted here -- mark parkRefused so the dequeuing peer worker drops
+        // the phantom dequeue instead of busy-spinning for the duration of the
+        // legacy polling fallback below.
         if (!Unsafe.cas(this, STATE_OFFSET, STATE_PENDING, STATE_CANCELLED)) {
             cont.markParkRefused();
         }
