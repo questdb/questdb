@@ -32,15 +32,10 @@ import io.questdb.client.cutlass.qwp.client.QwpWebSocketSender;
 import io.questdb.client.cutlass.qwp.protocol.QwpTableBuffer;
 import io.questdb.client.std.Decimal64;
 import org.junit.Assert;
-import org.junit.Assume;
 import org.junit.Ignore;
 import org.junit.Test;
-import org.junit.runner.RunWith;
-import org.junit.runners.Parameterized;
 
 import java.time.temporal.ChronoUnit;
-import java.util.Arrays;
-import java.util.Collection;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.TimeUnit;
 
@@ -56,28 +51,8 @@ import static io.questdb.client.cutlass.qwp.protocol.QwpConstants.TYPE_GEOHASH;
  * <p>
  * Tests verify that data sent via QwpWebSocketSender over WebSocket is correctly
  * written to QuestDB tables and can be queried.
- * <p>
- * Tests are parametrized over in-flight window sizes. Sync mode (window=1)
- * is no longer offered by the client's public {@code Sender.fromConfig} API
- * (WebSocket transport requires async mode), so only async window sizes
- * are exercised here.
  */
-@RunWith(Parameterized.class)
 public class QwpWebSocketSenderReceiverTest extends AbstractQwpWebSocketTest {
-
-    private final int windowSize;
-
-    @SuppressWarnings("unused")
-    public QwpWebSocketSenderReceiverTest(int windowSize) {
-        this.windowSize = windowSize;
-    }
-
-    @Parameterized.Parameters(name = "windowSize={0}")
-    public static Collection<Object[]> data() {
-        return Arrays.asList(new Object[][]{
-                {8}    // window=8 (async behavior)
-        });
-    }
 
     @Test
     public void test10000Rows() throws Exception {
@@ -584,7 +559,6 @@ public class QwpWebSocketSenderReceiverTest extends AbstractQwpWebSocketTest {
      */
     @Test
     public void testAutoFlushByBytes() throws Exception {
-        Assume.assumeTrue("Async mode only (window > 1)", windowSize > 1);
 
         runInContext((port) -> {
             // 1024 byte threshold; row-count and interval triggers disabled
@@ -626,7 +600,6 @@ public class QwpWebSocketSenderReceiverTest extends AbstractQwpWebSocketTest {
      */
     @Test
     public void testAutoFlushByInterval() throws Exception {
-        Assume.assumeTrue("Async mode only (window > 1)", windowSize > 1);
 
         runInContext((port) -> {
             // 50 ms interval; row-count and byte triggers disabled
@@ -1092,7 +1065,6 @@ public class QwpWebSocketSenderReceiverTest extends AbstractQwpWebSocketTest {
      */
     @Test
     public void testDeltaSymbolDict_asyncMode_watermarkUpdate() throws Exception {
-        Assume.assumeTrue("Async mode only (window > 1)", windowSize > 1);
 
         runInContext((port) -> {
             try (QwpWebSocketSender sender = connectWs(port,
@@ -1703,7 +1675,6 @@ public class QwpWebSocketSenderReceiverTest extends AbstractQwpWebSocketTest {
      */
     @Test
     public void testErrorPropagation_asyncMultipleBatchesInFlight() throws Exception {
-        Assume.assumeTrue("Async mode only (window > 1)", windowSize > 1);
 
         runInContext((port) -> {
             // Pre-create a table with a LONG column
@@ -1757,116 +1728,6 @@ public class QwpWebSocketSenderReceiverTest extends AbstractQwpWebSocketTest {
             assertSql(
                     "SELECT value FROM ws_async_multi_err WHERE value = 0",
                     "value\n0\n"
-            );
-        });
-    }
-
-    /**
-     * Tests that a sender can recover after a type-mismatch error by reconnecting.
-     * <p>
-     * Sends a bad batch (string into a long column), catches the error,
-     * creates a new sender (fresh connection), sends a valid batch, and
-     * verifies the valid data landed.
-     * <p>
-     * Only runs in sync mode (window=1) where error propagation is immediate.
-     */
-    @Test
-    public void testErrorRecovery_reconnectAfterTypeMismatch() throws Exception {
-        Assume.assumeTrue("Window=1 only", windowSize == 1);
-
-        runInContext((port) -> {
-            // Step 1: create table with a long column
-            try (QwpWebSocketSender sender = createSender(port)) {
-                sender.table("ws_error_recovery")
-                        .longColumn("value", 100)
-                        .at(1_000_000_000_000L, ChronoUnit.MICROS);
-                sender.flush();
-            }
-            drainWalQueue();
-
-            // Step 2: send a type-mismatch batch — string into long column
-            try (QwpWebSocketSender sender = createSender(port)) {
-                sender.table("ws_error_recovery")
-                        .stringColumn("value", "not a number")
-                        .at(1_000_000_000_001L, ChronoUnit.MICROS);
-                sender.flush();
-                Assert.fail("Expected LineSenderException for type mismatch");
-            } catch (LineSenderException e) {
-                Assert.assertTrue("Error should indicate server error: " + e.getMessage(),
-                        e.getMessage().contains("WRITE_ERROR") ||
-                                e.getMessage().contains("Processing failed") ||
-                                e.getMessage().contains("Server error"));
-            }
-
-            // Step 3: reconnect with a fresh sender, send valid data
-            try (QwpWebSocketSender sender = createSender(port)) {
-                sender.table("ws_error_recovery")
-                        .longColumn("value", 200)
-                        .at(1_000_000_000_002L, ChronoUnit.MICROS);
-                sender.flush();
-            }
-            drainWalQueue();
-
-            // Step 4: verify both valid rows landed (the bad row should not)
-            assertSql(
-                    "SELECT value FROM ws_error_recovery ORDER BY value",
-                    "value\n100\n200\n"
-            );
-        });
-    }
-
-    /**
-     * Tests error recovery with multiple valid batches after a failure.
-     * <p>
-     * Ensures the server accepts multiple successive batches from a new
-     * connection after a previous connection's batch failed.
-     * <p>
-     * Only runs in sync mode (window=1) where error propagation is immediate.
-     */
-    @Test
-    public void testErrorRecovery_reconnectMultipleBatchesAfterFailure() throws Exception {
-        Assume.assumeTrue("Window=1 only", windowSize == 1);
-
-        runInContext((port) -> {
-            // Step 1: create table with a long column
-            try (QwpWebSocketSender sender = createSender(port)) {
-                sender.table("ws_error_recovery_multi")
-                        .longColumn("value", 1)
-                        .at(1_000_000_000_000L, ChronoUnit.MICROS);
-                sender.flush();
-            }
-            drainWalQueue();
-
-            // Step 2: send a type-mismatch batch
-            try (QwpWebSocketSender sender = createSender(port)) {
-                sender.table("ws_error_recovery_multi")
-                        .stringColumn("value", "bad data")
-                        .at(1_000_000_000_001L, ChronoUnit.MICROS);
-                sender.flush();
-                Assert.fail("Expected LineSenderException for type mismatch");
-            } catch (LineSenderException e) {
-                // expected
-            }
-
-            // Step 3: reconnect and send three valid batches
-            try (QwpWebSocketSender sender = createSender(port)) {
-                for (int batch = 0; batch < 3; batch++) {
-                    for (int i = 0; i < 5; i++) {
-                        sender.table("ws_error_recovery_multi")
-                                .longColumn("value", (batch + 1) * 100 + i)
-                                .at(1_000_000_000_002L + batch * 5 + i, ChronoUnit.MICROS);
-                    }
-                    sender.flush();
-                }
-            }
-
-            // Wait for WAL to apply all transactions
-            drainWalQueue();
-
-            // Step 4: verify 16 rows total (1 initial + 15 recovered)
-            assertSql(
-                    "SELECT count() FROM ws_error_recovery_multi",
-                    "count\n16\n"
             );
         });
     }
@@ -2298,7 +2159,6 @@ public class QwpWebSocketSenderReceiverTest extends AbstractQwpWebSocketTest {
     @Test
     public void testHighInFlightWindowWithCumulativeAcks() throws Exception {
         // This test is specific to async mode where cumulative ACKs are most important
-        Assume.assumeTrue("Async mode only (window > 1)", windowSize > 1);
 
         runInContext((port) -> {
             int totalRows = 10_000;
@@ -3502,140 +3362,6 @@ public class QwpWebSocketSenderReceiverTest extends AbstractQwpWebSocketTest {
     }
 
     @Test
-    public void testSymbolCache_fastPath_cacheInvalidationOnWalApply() throws Exception {
-        // Tests that cache is properly invalidated when watermark changes.
-        // The cache uses checkAndInvalidate(watermark) to detect changes.
-        Assume.assumeTrue("Sync mode only (window=1) - requires same connection", windowSize == 1);
-        runInContext((port) -> {
-            try (QwpWebSocketSender sender = createSender(port)) {
-                // Phase 1: Insert and commit sym_a, sym_b
-                sender.table("ws_cache_invalidate")
-                        .symbol("tag", "sym_a")
-                        .longColumn("val", 1)
-                        .at(1_000_000_000_000L, ChronoUnit.MICROS);
-                sender.table("ws_cache_invalidate")
-                        .symbol("tag", "sym_b")
-                        .longColumn("val", 2)
-                        .at(1_000_000_000_001L, ChronoUnit.MICROS);
-                sender.flush();
-
-                drainWalQueue();
-
-                // Phase 2: Populate cache for sym_a, sym_b
-                sender.table("ws_cache_invalidate")
-                        .symbol("tag", "sym_a")
-                        .longColumn("val", 3)
-                        .at(1_000_000_001_000L, ChronoUnit.MICROS);
-                sender.table("ws_cache_invalidate")
-                        .symbol("tag", "sym_b")
-                        .longColumn("val", 4)
-                        .at(1_000_000_001_001L, ChronoUnit.MICROS);
-                sender.flush();
-
-                // Phase 3: Add sym_c (new symbol)
-                sender.table("ws_cache_invalidate")
-                        .symbol("tag", "sym_c")  // NEW
-                        .longColumn("val", 5)
-                        .at(1_000_000_002_000L, ChronoUnit.MICROS);
-                sender.flush();
-
-                // Apply WAL - sym_c becomes committed, watermark changes
-                drainWalQueue();
-
-                // Phase 4: After WAL apply, watermark changed
-                // Cache should be invalidated, but sym_a and sym_b are still in table
-                // This round repopulates cache with new watermark
-                sender.table("ws_cache_invalidate")
-                        .symbol("tag", "sym_a")  // Cache invalidated, repopulate
-                        .longColumn("val", 6)
-                        .at(1_000_000_003_000L, ChronoUnit.MICROS);
-                sender.table("ws_cache_invalidate")
-                        .symbol("tag", "sym_b")  // Cache invalidated, repopulate
-                        .longColumn("val", 7)
-                        .at(1_000_000_003_001L, ChronoUnit.MICROS);
-                sender.table("ws_cache_invalidate")
-                        .symbol("tag", "sym_c")  // Now committed, can be cached
-                        .longColumn("val", 8)
-                        .at(1_000_000_003_002L, ChronoUnit.MICROS);
-                sender.flush();
-
-                // Phase 5: All three should now hit cache
-                sender.table("ws_cache_invalidate")
-                        .symbol("tag", "sym_a")  // CACHE HIT
-                        .longColumn("val", 9)
-                        .at(1_000_000_004_000L, ChronoUnit.MICROS);
-                sender.table("ws_cache_invalidate")
-                        .symbol("tag", "sym_b")  // CACHE HIT
-                        .longColumn("val", 10)
-                        .at(1_000_000_004_001L, ChronoUnit.MICROS);
-                sender.table("ws_cache_invalidate")
-                        .symbol("tag", "sym_c")  // CACHE HIT
-                        .longColumn("val", 11)
-                        .at(1_000_000_004_002L, ChronoUnit.MICROS);
-                sender.flush();
-            }
-
-            drainWalQueue();
-            assertSql("SELECT count() FROM ws_cache_invalidate", "count\n11\n");
-            assertSql("SELECT count(distinct tag) FROM ws_cache_invalidate", "count_distinct\n3\n");
-        });
-    }
-
-    @Test
-    public void testSymbolCache_fastPath_highVolumeReuse() throws Exception {
-        // High-volume test: many rows reusing the same small set of symbols.
-        // After warmup, the vast majority should be cache hits.
-        Assume.assumeTrue("Sync mode only (window=1) - requires same connection", windowSize == 1);
-        runInContext((port) -> {
-            try (QwpWebSocketSender sender = createSender(port)) {
-                String[] levels = {"DEBUG", "INFO", "WARN", "ERROR"};  // 4 symbols
-                String[] sources = {"app", "db", "cache"};  // 3 symbols
-
-                // Round 1: Initial batch to create symbols
-                for (int i = 0; i < 12; i++) {  // 4*3 = 12 combinations
-                    sender.table("ws_cache_high_volume")
-                            .symbol("level", levels[i % levels.length])
-                            .symbol("source", sources[i % sources.length])
-                            .longColumn("seq", i)
-                            .at(1_000_000_000_000L + i, ChronoUnit.MICROS);
-                }
-                sender.flush();
-
-                drainWalQueue();
-
-                // Round 2: Populate caches
-                for (int i = 0; i < 12; i++) {
-                    sender.table("ws_cache_high_volume")
-                            .symbol("level", levels[i % levels.length])
-                            .symbol("source", sources[i % sources.length])
-                            .longColumn("seq", i + 100)
-                            .at(1_000_000_001_000L + i, ChronoUnit.MICROS);
-                }
-                sender.flush();
-
-                // Rounds 3-12: 1000 more rows, all should be cache hits
-                for (int batch = 0; batch < 10; batch++) {
-                    for (int i = 0; i < 100; i++) {
-                        int idx = batch * 100 + i;
-                        sender.table("ws_cache_high_volume")
-                                .symbol("level", levels[idx % levels.length])  // CACHE HIT
-                                .symbol("source", sources[idx % sources.length])  // CACHE HIT
-                                .longColumn("seq", idx + 1000)
-                                .at(1_000_000_002_000L + idx, ChronoUnit.MICROS);
-                    }
-                    sender.flush();
-                }
-            }
-
-            drainWalQueue();
-            // 12 + 12 + 1000 = 1024 rows
-            assertSql("SELECT count() FROM ws_cache_high_volume", "count\n1024\n");
-            assertSql("SELECT count(distinct level) FROM ws_cache_high_volume", "count_distinct\n4\n");
-            assertSql("SELECT count(distinct source) FROM ws_cache_high_volume", "count_distinct\n3\n");
-        });
-    }
-
-    @Test
     public void testSymbolCache_fastPath_manyRoundsNoWalApplyBetween() throws Exception {
         // Tests cache behavior when WAL is applied once, then many rounds of symbol reuse.
         // After initial WAL apply:
@@ -3681,166 +3407,6 @@ public class QwpWebSocketSenderReceiverTest extends AbstractQwpWebSocketTest {
     }
     // These tests exercise various interleavings of server-side commits,
     // WAL apply jobs, and sender batches.
-
-    @Test
-    public void testSymbolCache_fastPath_mixedNewAndCached() throws Exception {
-        // Tests interleaving of new symbols (cache miss) and existing symbols (cache hit).
-        // After WAL apply and cache warmup:
-        // - Existing symbols should hit cache (fast path)
-        // - New symbols should miss cache (slow path via putSym)
-        Assume.assumeTrue("Sync mode only (window=1) - requires same connection", windowSize == 1);
-        runInContext((port) -> {
-            try (QwpWebSocketSender sender = createSender(port)) {
-                // Round 1: Initial symbols
-                sender.table("ws_cache_mixed")
-                        .symbol("type", "existing_a")
-                        .longColumn("val", 1)
-                        .at(1_000_000_000_000L, ChronoUnit.MICROS);
-                sender.table("ws_cache_mixed")
-                        .symbol("type", "existing_b")
-                        .longColumn("val", 2)
-                        .at(1_000_000_000_001L, ChronoUnit.MICROS);
-                sender.flush();
-
-                drainWalQueue();
-
-                // Round 2: Populate cache for existing symbols
-                sender.table("ws_cache_mixed")
-                        .symbol("type", "existing_a")  // Cache miss -> populate
-                        .longColumn("val", 3)
-                        .at(1_000_000_001_000L, ChronoUnit.MICROS);
-                sender.table("ws_cache_mixed")
-                        .symbol("type", "existing_b")  // Cache miss -> populate
-                        .longColumn("val", 4)
-                        .at(1_000_000_001_001L, ChronoUnit.MICROS);
-                sender.flush();
-
-                drainWalQueue();
-
-                // Round 3: Mix of cached (fast path) and new (slow path)
-                sender.table("ws_cache_mixed")
-                        .symbol("type", "existing_a")  // CACHE HIT (fast path)
-                        .longColumn("val", 5)
-                        .at(1_000_000_002_000L, ChronoUnit.MICROS);
-                sender.table("ws_cache_mixed")
-                        .symbol("type", "new_c")  // NEW - cache miss, putSym
-                        .longColumn("val", 6)
-                        .at(1_000_000_002_001L, ChronoUnit.MICROS);
-                sender.table("ws_cache_mixed")
-                        .symbol("type", "existing_b")  // CACHE HIT (fast path)
-                        .longColumn("val", 7)
-                        .at(1_000_000_002_002L, ChronoUnit.MICROS);
-                sender.table("ws_cache_mixed")
-                        .symbol("type", "new_d")  // NEW - cache miss, putSym
-                        .longColumn("val", 8)
-                        .at(1_000_000_002_003L, ChronoUnit.MICROS);
-                sender.table("ws_cache_mixed")
-                        .symbol("type", "existing_a")  // CACHE HIT (fast path)
-                        .longColumn("val", 9)
-                        .at(1_000_000_002_004L, ChronoUnit.MICROS);
-                sender.flush();
-
-                // Round 4: All symbols now exist, but new_c and new_d not yet in cache
-                // After WAL apply, they'll be committed
-                drainWalQueue();
-
-                // Round 5: new_c, new_d should now be cacheable
-                sender.table("ws_cache_mixed")
-                        .symbol("type", "new_c")  // Cache miss -> populate (now committed)
-                        .longColumn("val", 10)
-                        .at(1_000_000_003_000L, ChronoUnit.MICROS);
-                sender.table("ws_cache_mixed")
-                        .symbol("type", "new_d")  // Cache miss -> populate (now committed)
-                        .longColumn("val", 11)
-                        .at(1_000_000_003_001L, ChronoUnit.MICROS);
-                sender.flush();
-
-                // Round 6: All four symbols should now hit cache
-                sender.table("ws_cache_mixed")
-                        .symbol("type", "existing_a")  // CACHE HIT
-                        .longColumn("val", 12)
-                        .at(1_000_000_004_000L, ChronoUnit.MICROS);
-                sender.table("ws_cache_mixed")
-                        .symbol("type", "existing_b")  // CACHE HIT
-                        .longColumn("val", 13)
-                        .at(1_000_000_004_001L, ChronoUnit.MICROS);
-                sender.table("ws_cache_mixed")
-                        .symbol("type", "new_c")  // CACHE HIT
-                        .longColumn("val", 14)
-                        .at(1_000_000_004_002L, ChronoUnit.MICROS);
-                sender.table("ws_cache_mixed")
-                        .symbol("type", "new_d")  // CACHE HIT
-                        .longColumn("val", 15)
-                        .at(1_000_000_004_003L, ChronoUnit.MICROS);
-                sender.flush();
-            }
-
-            drainWalQueue();
-            assertSql("SELECT count() FROM ws_cache_mixed", "count\n15\n");
-            assertSql("SELECT count(distinct type) FROM ws_cache_mixed", "count_distinct\n4\n");
-        });
-    }
-
-    @Test
-    public void testSymbolCache_fastPath_multipleColumnsIndependentCaches() throws Exception {
-        // Tests that each symbol column has its own independent cache.
-        // Cache for column A should not affect cache for column B.
-        Assume.assumeTrue("Sync mode only (window=1) - requires same connection", windowSize == 1);
-        runInContext((port) -> {
-            try (QwpWebSocketSender sender = createSender(port)) {
-                // Round 1: Different symbols in each column
-                for (int i = 0; i < 5; i++) {
-                    sender.table("ws_cache_multi_col")
-                            .symbol("col_a", "a_val_" + (i % 2))  // 2 distinct
-                            .symbol("col_b", "b_val_" + (i % 3))  // 3 distinct
-                            .symbol("col_c", "c_val_" + (i % 4))  // 4 distinct (but only 4 rows so actually max 4)
-                            .longColumn("seq", i)
-                            .at(1_000_000_000_000L + i, ChronoUnit.MICROS);
-                }
-                sender.flush();
-
-                drainWalQueue();
-
-                // Round 2: Populate caches (cache miss -> SymbolMapReader)
-                for (int i = 0; i < 5; i++) {
-                    sender.table("ws_cache_multi_col")
-                            .symbol("col_a", "a_val_" + (i % 2))
-                            .symbol("col_b", "b_val_" + (i % 3))
-                            .symbol("col_c", "c_val_" + (i % 4))
-                            .longColumn("seq", i + 10)
-                            .at(1_000_000_001_000L + i, ChronoUnit.MICROS);
-                }
-                sender.flush();
-
-                // Round 3: All caches should hit (fast path for all 3 columns)
-                for (int i = 0; i < 5; i++) {
-                    sender.table("ws_cache_multi_col")
-                            .symbol("col_a", "a_val_" + (i % 2))  // CACHE HIT
-                            .symbol("col_b", "b_val_" + (i % 3))  // CACHE HIT
-                            .symbol("col_c", "c_val_" + (i % 4))  // CACHE HIT
-                            .longColumn("seq", i + 20)
-                            .at(1_000_000_002_000L + i, ChronoUnit.MICROS);
-                }
-                sender.flush();
-
-                // Round 4: Add new symbol to col_a, reuse others
-                // col_a cache miss for new value, col_b and col_c still hit
-                sender.table("ws_cache_multi_col")
-                        .symbol("col_a", "a_val_NEW")  // NEW - cache miss
-                        .symbol("col_b", "b_val_0")  // CACHE HIT
-                        .symbol("col_c", "c_val_0")  // CACHE HIT
-                        .longColumn("seq", 100)
-                        .at(1_000_000_003_000L, ChronoUnit.MICROS);
-                sender.flush();
-            }
-
-            drainWalQueue();
-            assertSql("SELECT count() FROM ws_cache_multi_col", "count\n16\n");
-            assertSql("SELECT count(distinct col_a) FROM ws_cache_multi_col", "count_distinct\n3\n");
-            assertSql("SELECT count(distinct col_b) FROM ws_cache_multi_col", "count_distinct\n3\n");
-            assertSql("SELECT count(distinct col_c) FROM ws_cache_multi_col", "count_distinct\n4\n");
-        });
-    }
 
     @Test
     public void testSymbolCache_fastPath_sameConnectionThreeRounds() throws Exception {
@@ -4061,44 +3627,6 @@ public class QwpWebSocketSenderReceiverTest extends AbstractQwpWebSocketTest {
     }
 
     @Test
-    public void testSymbolCache_reconnect_clearsCache() throws Exception {
-        // Tests that disconnecting and reconnecting clears the symbol cache.
-        // The new connection should still work correctly with fresh symbols.
-        Assume.assumeTrue("Sync mode only (window=1) - reconnection behavior differs", windowSize == 1);
-        runInContext((port) -> {
-            // First connection
-            try (QwpWebSocketSender sender = createSender(port)) {
-                for (int i = 0; i < 10; i++) {
-                    sender.table("ws_reconnect_test")
-                            .symbol("tag", "conn1_val" + (i % 3))
-                            .longColumn("value", i)
-                            .at(1_000_000_000_000L + i, ChronoUnit.MICROS);
-                }
-                sender.flush();
-            }
-
-            // Wait for first batch to be processed
-            drainWalQueue();
-
-            // Second connection with different symbols
-            try (QwpWebSocketSender sender = createSender(port)) {
-                for (int i = 0; i < 10; i++) {
-                    sender.table("ws_reconnect_test")
-                            .symbol("tag", "conn2_val" + (i % 3))
-                            .longColumn("value", i + 100)
-                            .at(1_000_000_001_000L + i, ChronoUnit.MICROS);
-                }
-                sender.flush();
-            }
-
-            drainWalQueue();
-            assertSql("SELECT count() FROM ws_reconnect_test", "count\n20\n");
-            // Should have 6 distinct tags: conn1_val0, conn1_val1, conn1_val2, conn2_val0, conn2_val1, conn2_val2
-            assertSql("SELECT count(distinct tag) FROM ws_reconnect_test", "count_distinct\n6\n");
-        });
-    }
-
-    @Test
     public void testSymbolDeduplication() throws Exception {
         runInContext((port) -> {
             try (QwpWebSocketSender sender = createSender(port)) {
@@ -4155,58 +3683,6 @@ public class QwpWebSocketSenderReceiverTest extends AbstractQwpWebSocketTest {
         });
     }
 
-    @Test
-    public void testSymbol_connectionDropAndReconnectMidBatch() throws Exception {
-        // Tests behavior when connection drops and reconnects in the middle of data ingestion.
-        Assume.assumeTrue("Sync mode only (window=1) - connection behavior differs", windowSize == 1);
-        runInContext((port) -> {
-            // Connection 1: Send partial data
-            try (QwpWebSocketSender sender = createSender(port)) {
-                for (int i = 0; i < 10; i++) {
-                    sender.table("ws_drop_reconnect")
-                            .symbol("source", "conn1")
-                            .symbol("type", i % 2 == 0 ? "typeA" : "typeB")
-                            .longColumn("seq", i)
-                            .at(1_000_000_000_000L + i * 1000L, ChronoUnit.MICROS);
-                }
-                sender.flush();
-            }
-            // Connection 1 closed
-
-            drainWalQueue();
-
-            // Connection 2: Different symbols for "source", reuse "type" values
-            try (QwpWebSocketSender sender = createSender(port)) {
-                for (int i = 0; i < 10; i++) {
-                    sender.table("ws_drop_reconnect")
-                            .symbol("source", "conn2")
-                            .symbol("type", i % 3 == 0 ? "typeA" : i % 3 == 1 ? "typeB" : "typeC")
-                            .longColumn("seq", i + 100)
-                            .at(1_000_000_001_000L + i * 1000L, ChronoUnit.MICROS);
-                }
-                sender.flush();
-            }
-
-            drainWalQueue();
-
-            // Connection 3: Mix of all previous symbols plus new
-            try (QwpWebSocketSender sender = createSender(port)) {
-                for (int i = 0; i < 10; i++) {
-                    sender.table("ws_drop_reconnect")
-                            .symbol("source", i % 3 == 0 ? "conn1" : i % 3 == 1 ? "conn2" : "conn3")
-                            .symbol("type", i % 4 == 0 ? "typeA" : i % 4 == 1 ? "typeB" : i % 4 == 2 ? "typeC" : "typeD")
-                            .longColumn("seq", i + 200)
-                            .at(1_000_000_002_000L + i * 1000L, ChronoUnit.MICROS);
-                }
-                sender.flush();
-            }
-
-            drainWalQueue();
-            assertSql("SELECT count() FROM ws_drop_reconnect", "count\n30\n");
-            assertSql("SELECT count(distinct source) FROM ws_drop_reconnect", "count_distinct\n3\n");
-            assertSql("SELECT count(distinct type) FROM ws_drop_reconnect", "count_distinct\n4\n");
-        });
-    }
     // These tests specifically exercise the cache hit (fast path) in writeSymbolWithCache().
     // The fast path requires:
     // 1. Symbols committed to table (WAL applied)
@@ -4263,158 +3739,6 @@ public class QwpWebSocketSenderReceiverTest extends AbstractQwpWebSocketTest {
     }
 
     @Test
-    public void testSymbol_interleavedTablesWithWalApply() throws Exception {
-        // Tests interleaved writes to multiple tables with WAL apply between batches.
-        Assume.assumeTrue("Sync mode only (window=1) - timing-dependent", windowSize == 1);
-        runInContext((port) -> {
-            // Round 1: Write to both tables
-            try (QwpWebSocketSender sender = createSender(port)) {
-                for (int i = 0; i < 5; i++) {
-                    sender.table("ws_interleave_t1")
-                            .symbol("sym", "t1_v" + (i % 2))
-                            .longColumn("val", i)
-                            .at(1_000_000_000_000L + i, ChronoUnit.MICROS);
-                    sender.table("ws_interleave_t2")
-                            .symbol("sym", "t2_v" + (i % 3))
-                            .longColumn("val", i * 10)
-                            .at(1_000_000_000_000L + i, ChronoUnit.MICROS);
-                }
-                sender.flush();
-            }
-
-            drainWalQueue();
-
-            // Round 2: More interleaved writes with some symbol reuse
-            try (QwpWebSocketSender sender = createSender(port)) {
-                for (int i = 0; i < 5; i++) {
-                    // Reuse t1_v0, t1_v1, add t1_v2
-                    sender.table("ws_interleave_t1")
-                            .symbol("sym", "t1_v" + (i % 3))
-                            .longColumn("val", i + 100)
-                            .at(1_000_000_001_000L + i, ChronoUnit.MICROS);
-                    // Reuse t2_v0, t2_v1, t2_v2, add t2_v3
-                    sender.table("ws_interleave_t2")
-                            .symbol("sym", "t2_v" + (i % 4))
-                            .longColumn("val", i * 10 + 100)
-                            .at(1_000_000_001_000L + i, ChronoUnit.MICROS);
-                }
-                sender.flush();
-            }
-
-            drainWalQueue();
-
-            assertSql("SELECT count() FROM ws_interleave_t1", "count\n10\n");
-            assertSql("SELECT count(distinct sym) FROM ws_interleave_t1", "count_distinct\n3\n");
-            assertSql("SELECT count() FROM ws_interleave_t2", "count\n10\n");
-            assertSql("SELECT count(distinct sym) FROM ws_interleave_t2", "count_distinct\n4\n");
-        });
-    }
-
-    @Test
-    public void testSymbol_manySymbolsWithPeriodicWalApply() throws Exception {
-        // Tests a large number of distinct symbols with periodic WAL apply.
-        // This exercises symbol table growth and cache behavior.
-        Assume.assumeTrue("Sync mode only (window=1) - timing-dependent", windowSize == 1);
-        runInContext((port) -> {
-            int totalSymbols = 100;
-            int batchSize = 10;
-
-            try (QwpWebSocketSender sender = createSender(port)) {
-                for (int i = 0; i < totalSymbols; i++) {
-                    sender.table("ws_many_symbols_wal")
-                            .symbol("unique_tag", "tag_" + i)
-                            .symbol("group", "group_" + (i % 10))
-                            .longColumn("seq", i)
-                            .at(1_000_000_000_000L + i * 1000L, ChronoUnit.MICROS);
-
-                    // Flush every batchSize rows
-                    if ((i + 1) % batchSize == 0) {
-                        sender.flush();
-
-                        // Apply WAL periodically
-                        if ((i + 1) % (batchSize * 3) == 0) {
-                            drainWalQueue();
-                        }
-                    }
-                }
-                sender.flush();
-            }
-
-            drainWalQueue();
-            assertSql("SELECT count() FROM ws_many_symbols_wal", "count\n100\n");
-            assertSql("SELECT count(distinct unique_tag) FROM ws_many_symbols_wal", "count_distinct\n100\n");
-            assertSql("SELECT count(distinct \"group\") FROM ws_many_symbols_wal", "count_distinct\n10\n");
-        });
-    }
-
-    @Test
-    public void testSymbol_newSymbolsAfterWalApply() throws Exception {
-        // Tests that new symbols can be added after WAL apply has committed previous symbols.
-        Assume.assumeTrue("Sync mode only (window=1) - timing-dependent", windowSize == 1);
-        runInContext((port) -> {
-            // Phase 1: Initial symbols
-            try (QwpWebSocketSender sender = createSender(port)) {
-                sender.table("ws_new_after_wal")
-                        .symbol("category", "cat_a")
-                        .longColumn("id", 1)
-                        .at(1_000_000_000_000L, ChronoUnit.MICROS);
-                sender.table("ws_new_after_wal")
-                        .symbol("category", "cat_b")
-                        .longColumn("id", 2)
-                        .at(1_000_000_000_001L, ChronoUnit.MICROS);
-                sender.flush();
-            }
-
-            drainWalQueue();
-
-            // Phase 2: Mix of existing and new symbols
-            try (QwpWebSocketSender sender = createSender(port)) {
-                sender.table("ws_new_after_wal")
-                        .symbol("category", "cat_a")  // existing
-                        .longColumn("id", 3)
-                        .at(1_000_000_001_000L, ChronoUnit.MICROS);
-                sender.table("ws_new_after_wal")
-                        .symbol("category", "cat_c")  // NEW
-                        .longColumn("id", 4)
-                        .at(1_000_000_001_001L, ChronoUnit.MICROS);
-                sender.table("ws_new_after_wal")
-                        .symbol("category", "cat_b")  // existing
-                        .longColumn("id", 5)
-                        .at(1_000_000_001_002L, ChronoUnit.MICROS);
-                sender.table("ws_new_after_wal")
-                        .symbol("category", "cat_d")  // NEW
-                        .longColumn("id", 6)
-                        .at(1_000_000_001_003L, ChronoUnit.MICROS);
-                sender.flush();
-            }
-
-            drainWalQueue();
-
-            // Phase 3: Even more new symbols
-            try (QwpWebSocketSender sender = createSender(port)) {
-                sender.table("ws_new_after_wal")
-                        .symbol("category", "cat_e")  // NEW
-                        .longColumn("id", 7)
-                        .at(1_000_000_002_000L, ChronoUnit.MICROS);
-                sender.table("ws_new_after_wal")
-                        .symbol("category", "cat_a")  // existing from phase 1
-                        .longColumn("id", 8)
-                        .at(1_000_000_002_001L, ChronoUnit.MICROS);
-                sender.flush();
-            }
-
-            drainWalQueue();
-            assertSql("SELECT count() FROM ws_new_after_wal", "count\n8\n");
-            assertSql("SELECT count(distinct category) FROM ws_new_after_wal", "count_distinct\n5\n");
-            // Verify all categories exist
-            assertSql(
-                    "SELECT category FROM ws_new_after_wal ORDER BY category",
-                    "category\ncat_a\ncat_a\ncat_a\ncat_b\ncat_b\ncat_c\ncat_d\ncat_e\n"
-            );
-        });
-    }
-
-    @Test
     public void testSymbol_nullSymbolsInterleaved() throws Exception {
         // Tests interleaving of null and non-null symbol values.
         runInContext((port) -> {
@@ -4444,139 +3768,6 @@ public class QwpWebSocketSenderReceiverTest extends AbstractQwpWebSocketTest {
             // 10 nulls (i % 3 == 0), 20 non-nulls with values val_1, val_2, val_3, val_4 (not val_0 since those are null rows)
             assertSql("SELECT count() FROM ws_null_interleave WHERE optional IS NULL", "count\n10\n");
             assertSql("SELECT count() FROM ws_null_interleave WHERE optional IS NOT NULL", "count\n20\n");
-        });
-    }
-
-    @Test
-    public void testSymbol_rapidFlushWithWalApply() throws Exception {
-        // Stress test: rapid small flushes with periodic WAL apply.
-        Assume.assumeTrue("Sync mode only (window=1) - timing-dependent", windowSize == 1);
-        runInContext((port) -> {
-            try (QwpWebSocketSender sender = createSender(port)) {
-                String[] envs = {"prod", "staging", "dev", "test"};
-                String[] services = {"api", "web", "worker", "scheduler", "cache"};
-
-                for (int batch = 0; batch < 10; batch++) {
-                    // Small batch of rows
-                    for (int i = 0; i < 5; i++) {
-                        int idx = batch * 5 + i;
-                        sender.table("ws_rapid_flush")
-                                .symbol("env", envs[idx % envs.length])
-                                .symbol("service", services[idx % services.length])
-                                .doubleColumn("latency", 10.0 + (idx % 100))
-                                .at(1_000_000_000_000L + idx * 1000L, ChronoUnit.MICROS);
-                    }
-                    sender.flush();
-
-                    // Drain WAL every 3 batches
-                    if ((batch + 1) % 3 == 0) {
-                        drainWalQueue();
-                        drainWalQueue();
-                    }
-                }
-            }
-
-            drainWalQueue();
-            drainWalQueue();
-            assertSql("SELECT count() FROM ws_rapid_flush", "count\n50\n");
-            assertSql("SELECT count(distinct env) FROM ws_rapid_flush", "count_distinct\n4\n");
-            assertSql("SELECT count(distinct service) FROM ws_rapid_flush", "count_distinct\n5\n");
-        });
-    }
-
-    @Test
-    public void testSymbol_sameConnectionMultipleBatchesWithWalApply() throws Exception {
-        // Tests multiple batches on the same connection with WAL apply between them.
-        // This is the most realistic scenario for long-lived connections.
-        Assume.assumeTrue("Sync mode only (window=1) - timing-dependent", windowSize == 1);
-        runInContext((port) -> {
-            try (QwpWebSocketSender sender = createSender(port)) {
-                // Batch 1
-                for (int i = 0; i < 10; i++) {
-                    sender.table("ws_same_conn_wal")
-                            .symbol("status", i % 2 == 0 ? "ok" : "error")
-                            .longColumn("code", i)
-                            .at(1_000_000_000_000L + i * 1000L, ChronoUnit.MICROS);
-                }
-                sender.flush();
-
-                drainWalQueue();
-
-                // Batch 2 - reuse symbols on same connection after WAL apply
-                for (int i = 0; i < 10; i++) {
-                    sender.table("ws_same_conn_wal")
-                            .symbol("status", i % 3 == 0 ? "ok" : i % 3 == 1 ? "error" : "warning")
-                            .longColumn("code", i + 100)
-                            .at(1_000_000_001_000L + i * 1000L, ChronoUnit.MICROS);
-                }
-                sender.flush();
-
-                // Apply WAL again
-                drainWalQueue();
-
-                // Batch 3 - more symbols
-                for (int i = 0; i < 10; i++) {
-                    sender.table("ws_same_conn_wal")
-                            .symbol("status", i % 4 == 0 ? "ok" : i % 4 == 1 ? "error" : i % 4 == 2 ? "warning" : "critical")
-                            .longColumn("code", i + 200)
-                            .at(1_000_000_002_000L + i * 1000L, ChronoUnit.MICROS);
-                }
-                sender.flush();
-            }
-
-            drainWalQueue();
-            assertSql("SELECT count() FROM ws_same_conn_wal", "count\n30\n");
-            assertSql("SELECT count(distinct status) FROM ws_same_conn_wal", "count_distinct\n4\n");
-        });
-    }
-
-    @Test
-    public void testSymbol_walApplyBetweenBatches() throws Exception {
-        // Tests symbol handling when WAL is applied between sender batches.
-        // This exercises the watermark change detection in the cache.
-        Assume.assumeTrue("Sync mode only (window=1) - timing-dependent", windowSize == 1);
-        runInContext((port) -> {
-            try (QwpWebSocketSender sender = createSender(port)) {
-                // Batch 1: Send some symbols
-                for (int i = 0; i < 10; i++) {
-                    sender.table("ws_wal_apply_test")
-                            .symbol("region", i % 2 == 0 ? "east" : "west")
-                            .longColumn("value", i)
-                            .at(1_000_000_000_000L + i * 1000L, ChronoUnit.MICROS);
-                }
-                sender.flush();
-            }
-
-            drainWalQueue();
-
-            try (QwpWebSocketSender sender = createSender(port)) {
-                // Batch 2: Reuse some symbols, add new ones
-                for (int i = 0; i < 10; i++) {
-                    sender.table("ws_wal_apply_test")
-                            .symbol("region", i % 3 == 0 ? "east" : i % 3 == 1 ? "west" : "central")
-                            .longColumn("value", i + 100)
-                            .at(1_000_000_001_000L + i * 1000L, ChronoUnit.MICROS);
-                }
-                sender.flush();
-            }
-
-            drainWalQueue();
-
-            try (QwpWebSocketSender sender = createSender(port)) {
-                // Batch 3: More symbols
-                for (int i = 0; i < 10; i++) {
-                    sender.table("ws_wal_apply_test")
-                            .symbol("region", i % 4 == 0 ? "north" : i % 4 == 1 ? "south" : i % 4 == 2 ? "east" : "west")
-                            .longColumn("value", i + 200)
-                            .at(1_000_000_002_000L + i * 1000L, ChronoUnit.MICROS);
-                }
-                sender.flush();
-            }
-            drainWalQueue();
-
-            assertSql("SELECT count() FROM ws_wal_apply_test", "count\n30\n");
-            // east, west, central, north, south = 5 distinct
-            assertSql("SELECT count(distinct region) FROM ws_wal_apply_test", "count_distinct\n5\n");
         });
     }
 
