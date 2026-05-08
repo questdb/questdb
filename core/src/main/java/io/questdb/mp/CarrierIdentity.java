@@ -24,6 +24,7 @@
 
 package io.questdb.mp;
 
+import io.questdb.std.CarrierLocal;
 import io.questdb.std.Os;
 
 import java.lang.foreign.FunctionDescriptor;
@@ -81,6 +82,26 @@ public final class CarrierIdentity {
     public static int current() {
         try {
             return (int) CURRENT.invokeExact();
+        } catch (Throwable t) {
+            throw new AssertionError(t);
+        }
+    }
+
+    /**
+     * Releases the {@link CarrierLocal} row pinned to the current carrier id and
+     * resets the per-thread slot to {@link #UNBOUND}. Idempotent; a no-op on threads
+     * that never called {@link #bind()}. Designed to be called from a thread's exit
+     * path (e.g. a Worker's finally block) so per-carrier state does not accumulate
+     * across thread churn.
+     */
+    public static void unbind() {
+        int id = current();
+        if (id < 0) {
+            return;
+        }
+        CarrierLocal.releaseRow(id);
+        try {
+            BIND.invokeExact(UNBOUND);
         } catch (Throwable t) {
             throw new AssertionError(t);
         }

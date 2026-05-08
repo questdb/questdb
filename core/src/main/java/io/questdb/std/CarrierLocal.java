@@ -57,12 +57,15 @@ import java.util.function.Supplier;
  * see {@code io/questdb/mp/continuation/CARRIER_LOCAL.md}.
  */
 public class CarrierLocal<T> extends java.lang.ThreadLocal<T> implements Closeable {
-    private static final int INITIAL_ROW_CAPACITY = 16;
     private static final AtomicInteger SLOT_SEQ = new AtomicInteger();
-    // Per-carrier rows of per-instance values, indexed [carrierId][slot].
-    // Reads are unsynchronized; growth happens under the class monitor and
-    // publishes via the volatile write to `rows`.
-    private static volatile Object[][] rows = new Object[0][];
+    // Per-carrier rows of per-instance values. The outer array is indexed by
+    // carrier id; each inner map is keyed by slot. Reads of `rows` and of an
+    // individual row entry are unsynchronized; outer growth and inner-row
+    // installation happen under the class monitor and publish via the volatile
+    // write to `rows`. Mutations of an installed inner map are confined to the
+    // owning carrier's thread.
+    @SuppressWarnings({"rawtypes", "unchecked"})
+    private static volatile IntObjHashMap<Object>[] rows = new IntObjHashMap[0];
     private final java.lang.ThreadLocal<T> fallback;
     private final IntFunction<? extends T> initial;
     private final int slot;
@@ -81,6 +84,31 @@ public class CarrierLocal<T> extends java.lang.ThreadLocal<T> implements Closeab
         this.fallback = java.lang.ThreadLocal.withInitial(() -> initial.apply(CarrierIdentity.UNBOUND));
     }
 
+    /**
+     * Frees and clears every slot of the row for the given carrier id, then
+     * detaches the row so it can be GC'd. Called by {@link CarrierIdentity#unbind()}
+     * when a carrier-bound thread exits, so {@link #rows} does not grow unbounded
+     * across thread churn.
+     */
+    public static void releaseRow(int id) {
+        synchronized (CarrierLocal.class) {
+            IntObjHashMap<Object>[] r = rows;
+            if (id < 0 || id >= r.length) {
+                return;
+            }
+            IntObjHashMap<Object> row = r[id];
+            if (row == null) {
+                return;
+            }
+            Object[] values = row.getValues();
+            for (int i = 0; i < values.length; i++) {
+                Misc.freeIfCloseable(values[i]);
+            }
+            r[id] = null;
+            rows = r;
+        }
+    }
+
     public static <T> CarrierLocal<T> withInitial(Supplier<? extends T> initial) {
         return new CarrierLocal<>(id -> initial.get());
     }
@@ -93,9 +121,9 @@ public class CarrierLocal<T> extends java.lang.ThreadLocal<T> implements Closeab
             fallback.remove();
             return;
         }
-        Object[] row = rowFor(id);
-        Misc.freeIfCloseable(row[slot]);
-        row[slot] = null;
+        IntObjHashMap<Object> row = rowFor(id);
+        Misc.freeIfCloseable(row.get(slot));
+        row.put(slot, null);
     }
 
     @SuppressWarnings("unchecked")
@@ -104,11 +132,11 @@ public class CarrierLocal<T> extends java.lang.ThreadLocal<T> implements Closeab
         if (id < 0) {
             return fallback.get();
         }
-        Object[] row = rowFor(id);
-        Object v = row[slot];
+        IntObjHashMap<Object> row = rowFor(id);
+        Object v = row.get(slot);
         if (v == null) {
             v = initial.apply(id);
-            row[slot] = v;
+            row.put(slot, v);
         }
         return (T) v;
     }
@@ -119,8 +147,7 @@ public class CarrierLocal<T> extends java.lang.ThreadLocal<T> implements Closeab
             fallback.remove();
             return;
         }
-        Object[] row = rowFor(id);
-        row[slot] = null;
+        rowFor(id).put(slot, null);
     }
 
     public void set(T value) {
@@ -129,46 +156,40 @@ public class CarrierLocal<T> extends java.lang.ThreadLocal<T> implements Closeab
             fallback.set(value);
             return;
         }
-        Object[] row = rowFor(id);
-        row[slot] = value;
+        rowFor(id).put(slot, value);
     }
 
-    private static Object[] ensureRow(int id, int requiredSlot) {
+    private static IntObjHashMap<Object> ensureRow(int id) {
         synchronized (CarrierLocal.class) {
-            Object[][] r = rows;
+            IntObjHashMap<Object>[] r = rows;
             if (id >= r.length) {
-                Object[][] grown = new Object[Math.max(id + 1, r.length * 2)][];
+                @SuppressWarnings({"rawtypes", "unchecked"})
+                IntObjHashMap<Object>[] grown = new IntObjHashMap[Math.max(id + 1, r.length * 2)];
                 System.arraycopy(r, 0, grown, 0, r.length);
                 rows = grown;
                 r = grown;
             }
-            Object[] row = r[id];
+            IntObjHashMap<Object> row = r[id];
             if (row == null) {
-                row = new Object[Math.max(requiredSlot + 1, INITIAL_ROW_CAPACITY)];
+                row = new IntObjHashMap<>();
                 r[id] = row;
-            } else if (row.length <= requiredSlot) {
-                Object[] grown = new Object[Math.max(requiredSlot + 1, row.length * 2)];
-                System.arraycopy(row, 0, grown, 0, row.length);
-                r[id] = grown;
-                row = grown;
             }
-            // Volatile self-assign publishes the plain r[id] store and the
-            // preceding arraycopy. Pairs with the reader's volatile read of
-            // rows; without it, a reader could observe the new row reference
-            // but null contents, and get() would clobber the migrated value.
+            // Volatile self-assign publishes the plain r[id] store. Pairs with
+            // the reader's volatile read of rows; without it, a reader could
+            // observe the new map reference but uninitialized contents.
             rows = r;
             return row;
         }
     }
 
-    private Object[] rowFor(int id) {
-        Object[][] r = rows;
+    private IntObjHashMap<Object> rowFor(int id) {
+        IntObjHashMap<Object>[] r = rows;
         if (id < r.length) {
-            Object[] row = r[id];
-            if (row != null && row.length > slot) {
+            IntObjHashMap<Object> row = r[id];
+            if (row != null) {
                 return row;
             }
         }
-        return ensureRow(id, slot);
+        return ensureRow(id);
     }
 }
