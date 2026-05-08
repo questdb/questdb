@@ -1528,6 +1528,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
+    public boolean isMatViewCoveringIndexEnabled() {
+        return getDelegate().isMatViewCoveringIndexEnabled();
+    }
+
+    @Override
     public boolean isMatViewEnabled() {
         return getDelegate().isMatViewEnabled();
     }
