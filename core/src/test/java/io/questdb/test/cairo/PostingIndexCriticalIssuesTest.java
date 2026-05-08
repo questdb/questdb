@@ -317,6 +317,134 @@ public class PostingIndexCriticalIssuesTest extends AbstractCairoTest {
     // separately.
 
     /**
+     * {@code TableWriter.linkPostingIndexAuxFiles} must hardlink only the
+     * live seal generation's {@code .pc<N>} files to the dst column's
+     * namespace. Two reasons:
+     * <ul>
+     *   <li>Race avoidance. The visitor used to enumerate every sealed
+     *   {@code .pc<N>} on disk via {@code scanSealedFiles}. A queued
+     *   {@code PostingSealPurgeTask} for a superseded generation could fire
+     *   between the visitor's {@code ff.exists(from)} and {@code ff.hardLink}
+     *   syscalls and remove the source, throwing
+     *   {@code [errno=2] could not create hard link} mid-DDL. Recently
+     *   observed on master as {@code WalWriterFuzzTest
+     *   .testAddDropColumnDropPartition} (build 231522). Filtering by
+     *   {@code sealTxn == liveSealTxn} dodges the race entirely: the live
+     *   generation cannot be subject to a purge task because rename holds
+     *   the writer lock and purge only targets superseded sealTxns.</li>
+     *   <li>No leaked hardlinks. If the visitor links a superseded
+     *   generation, the src copies still get removed by their queued purge
+     *   tasks, but the dst copies are not targeted by any task and survive
+     *   under the dst column's namespace until the column itself is
+     *   dropped.</li>
+     * </ul>
+     * The test plants a "ghost" {@code .pc<N>} file with a sealTxn that is
+     * clearly not the live one, runs the rename, and verifies the ghost was
+     * not propagated to the dst column. As a positive control, it also
+     * verifies the live {@code .pc<N>} file did get linked.
+     */
+    @Test
+    public void testRenameColumnLinksOnlyLiveSealGeneration() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE t_rename_live (
+                        ts TIMESTAMP,
+                        sym SYMBOL INDEX TYPE POSTING INCLUDE (price),
+                        price DOUBLE
+                    ) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL
+                    """);
+            execute("""
+                    INSERT INTO t_rename_live VALUES
+                    ('2024-01-01T00:00:00', 'A', 1.0),
+                    ('2024-01-01T01:00:00', 'B', 2.0)
+                    """);
+            // Release the writer so the on-disk .pc<N> files are stable and
+            // the next ALTER opens the table fresh.
+            engine.releaseAllWriters();
+
+            final TableToken token = engine.getTableTokenIfExists("t_rename_live");
+            Assert.assertNotNull("test table must exist", token);
+            final FilesFacade ff = configuration.getFilesFacade();
+            final long ghostSealTxn = 9_999L;
+            final long liveSealTxn = 0L;
+
+            try (Path path = new Path()) {
+                path.of(configuration.getDbRoot()).concat(token).concat("2024-01-01").slash();
+                int plen = path.size();
+                LPSZ ghostSrc = PostingIndexUtils.coverDataFileName(
+                        path.trimTo(plen), "sym", 0,
+                        COLUMN_NAME_TXN_NONE, COLUMN_NAME_TXN_NONE, ghostSealTxn);
+                Assert.assertTrue(
+                        "test setup: failed to plant ghost .pc<N> file at " + ghostSrc,
+                        ff.touch(ghostSrc)
+                );
+
+                // Sanity-check the live .pc<N> file the rename should pick up
+                // exists, so a missing dst-side counterpart later is a real
+                // assertion failure and not a setup gap.
+                LPSZ liveSrc = PostingIndexUtils.coverDataFileName(
+                        path.trimTo(plen), "sym", 0,
+                        COLUMN_NAME_TXN_NONE, COLUMN_NAME_TXN_NONE, liveSealTxn);
+                Assert.assertTrue(
+                        "test setup: live .pc<N> file not produced at " + liveSrc,
+                        ff.exists(liveSrc)
+                );
+            }
+
+            execute("ALTER TABLE t_rename_live RENAME COLUMN sym TO new_sym");
+
+            // Enumerate every .pc<N> file under the dst column's namespace and
+            // record the distinct sealTxns. With the fix, only the live sealTxn
+            // appears; without it, the ghost sealTxn would also appear because
+            // the visitor would have hardlinked it.
+            final LongList dstSealTxns = new LongList();
+            try (Path path = new Path()) {
+                path.of(configuration.getDbRoot()).concat(token).concat("2024-01-01").slash();
+                int plen = path.size();
+                PostingIndexUtils.scanSealedFiles(ff, path, plen, "new_sym",
+                        new PostingIndexUtils.SealedFileVisitor() {
+                            @Override
+                            public void onCoverDataFile(int includeIdx, long postingColumnNameTxn,
+                                                        long coveredColumnNameTxn, long sealTxn) {
+                                dstSealTxns.add(sealTxn);
+                            }
+
+                            @Override
+                            public void onValueFile(long postingColumnNameTxn, long sealTxn) {
+                                // .pv files are not the subject of this test.
+                            }
+                        });
+            }
+
+            Assert.assertEquals(
+                    "rename must NOT hardlink a superseded .pc<N> on the dst column. "
+                            + "Found ghost sealTxn=" + ghostSealTxn + " in dst .pc files: "
+                            + dstSealTxns
+                            + ". Linking dead generations leaks files under the dst "
+                            + "namespace until the column is dropped, since no purge task "
+                            + "targets the new column name.",
+                    -1, dstSealTxns.indexOf(ghostSealTxn)
+            );
+            Assert.assertTrue(
+                    "rename must hardlink the live .pc<N> to the dst column. "
+                            + "Expected sealTxn=" + liveSealTxn + " in dst .pc files but found: "
+                            + dstSealTxns,
+                    dstSealTxns.indexOf(liveSealTxn) >= 0
+            );
+
+            assertQueryNoLeakCheck(
+                    "ts\tnew_sym\tprice\n"
+                            + "2024-01-01T00:00:00.000000Z\tA\t1.0\n"
+                            + "2024-01-01T01:00:00.000000Z\tB\t2.0\n",
+                    "SELECT ts, new_sym, price FROM t_rename_live",
+                    "ts",
+                    true,
+                    true
+            );
+        });
+    }
+
+    /**
      * Review finding #3 — reader reads past keyMem mmap when the chain
      * header points to an entry beyond the mapped region.
      * <p>
