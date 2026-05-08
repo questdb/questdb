@@ -65,6 +65,7 @@ import io.questdb.cairo.pool.WriterSource;
 import io.questdb.cairo.pool.ex.EntryLockedException;
 import io.questdb.cairo.security.AllowAllSecurityContext;
 import io.questdb.cairo.sql.AsyncWriterCommand;
+import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.InsertMethod;
 import io.questdb.cairo.sql.InsertOperation;
 import io.questdb.cairo.sql.OperationFuture;
@@ -109,6 +110,7 @@ import io.questdb.griffin.CompiledQuery;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.FunctionFactoryCache;
 import io.questdb.griffin.FunctionFactoryCacheBuilder;
+import io.questdb.griffin.FunctionParser;
 import io.questdb.griffin.QueryRegistry;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlCompilerFactory;
@@ -116,6 +118,11 @@ import io.questdb.griffin.SqlCompilerFactoryImpl;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.SqlExecutionContextImpl;
+import io.questdb.griffin.engine.functions.BinaryFunction;
+import io.questdb.griffin.engine.functions.GroupByFunction;
+import io.questdb.griffin.engine.functions.MultiArgFunction;
+import io.questdb.griffin.engine.functions.TernaryFunction;
+import io.questdb.griffin.engine.functions.UnaryFunction;
 import io.questdb.griffin.engine.ops.CreateLiveViewOperation;
 import io.questdb.griffin.engine.ops.CreateMatViewOperation;
 import io.questdb.griffin.engine.ops.CreateViewOperation;
@@ -126,6 +133,7 @@ import io.questdb.griffin.engine.table.PageFrameRecordCursorFactory;
 import io.questdb.griffin.engine.window.CachedWindowRecordCursorFactory;
 import io.questdb.griffin.engine.window.WindowFunction;
 import io.questdb.griffin.engine.window.WindowRecordCursorFactory;
+import io.questdb.griffin.model.ExpressionNode;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.log.LogRecord;
@@ -845,6 +853,32 @@ public class CairoEngine implements Closeable, WriterSource {
                                     .put(", column=").put(colName).put(']');
                         }
                         dependencyColumnNames.add(Chars.toString(colName));
+                    }
+                }
+
+                // Pass 2 of the ANCHOR EXPRESSION validator (RFC 123 §"ANCHOR
+                // EXPRESSION validator"). Pass 1 (AST-level rejects of subqueries,
+                // bind variables, rnd_*/now()/etc.) ran in the parser; this is the
+                // function-property half that needs the compiled tree so it can see
+                // post-constant-fold flags and runtime-state predicates per-fn.
+                // Runs at CREATE only, never at restart, per RFC.
+                final LiveViewDefinition.LvAnchorSpec anchor = op.getAnchorSpec();
+                if (anchor != null && anchor.anchorExpressionSql != null) {
+                    final ExpressionNode anchorNode = compiler.parseExpression(anchor.anchorExpressionSql);
+                    if (anchorNode != null) {
+                        Function anchorFn = null;
+                        try {
+                            FunctionParser fp = new FunctionParser(configuration, getFunctionFactoryCache());
+                            executionContext.setLiveViewCompile(true);
+                            try {
+                                anchorFn = fp.parseFunction(anchorNode, baseProjMeta, executionContext);
+                            } finally {
+                                executionContext.setLiveViewCompile(false);
+                            }
+                            validateAnchorPurity(anchorFn, anchorNode.position, true);
+                        } finally {
+                            Misc.free(anchorFn);
+                        }
                     }
                 }
             }
@@ -2429,6 +2463,60 @@ public class CairoEngine implements Closeable, WriterSource {
                 throw SqlException.$(0, "use drop()");
             default:
                 throw SqlException.$(0, "use ddl()");
+        }
+    }
+
+    /**
+     * Pass 2 of the ANCHOR EXPRESSION validator — the function-property half that
+     * RFC 123 §"ANCHOR EXPRESSION validator" specifies on the post-constant-fold
+     * Function tree. Rejects fold-to-constant top-level expressions, runtime-state
+     * functions ({@code now()}, {@code current_timestamp}, ...), random functions,
+     * non-deterministic functions, and aggregations. Pass 1 (AST-level rejects of
+     * subqueries, bind variables, and well-known runtime/random function names by
+     * token) lives in {@code SqlParser.walkAnchorExpressionForPurity}.
+     * <p>
+     * Walks the Function tree in pre-order: checks fire on the parent before
+     * recursing into args. {@code BinaryFunction} / {@code UnaryFunction} et al.
+     * propagate {@code isRandom} / {@code isNonDeterministic} from children, so the
+     * recursion descends to surface the offending leaf's name in the error message.
+     * <p>
+     * The {@code isConstant()} check is gated by {@code isTopLevel} since constant
+     * subexpressions are routine (e.g. the {@code '1d'} stride in
+     * {@code timestamp_floor('1d', ts)}). The semantic guarantee is "the top-level
+     * value depends on row data," which equals "the top-level expression is not
+     * constant" post-fold.
+     */
+    private static void validateAnchorPurity(Function fn, int rootPosition, boolean isTopLevel) throws SqlException {
+        if (fn == null) {
+            return;
+        }
+        if (isTopLevel && fn.isConstant()) {
+            throw SqlException.$(rootPosition, "ANCHOR EXPRESSION must not be a constant");
+        }
+        if (fn.isRandom() || fn.isRuntimeConstant() || fn.isNonDeterministic()) {
+            throw SqlException.$(rootPosition, "ANCHOR EXPRESSION must be deterministic; ")
+                    .put(fn.getName()).put("() is not allowed");
+        }
+        if (fn instanceof GroupByFunction) {
+            throw SqlException.$(rootPosition, "ANCHOR EXPRESSION must not contain aggregation; ")
+                    .put(fn.getName()).put("() is not allowed");
+        }
+        if (fn instanceof UnaryFunction u) {
+            validateAnchorPurity(u.getArg(), rootPosition, false);
+        } else if (fn instanceof BinaryFunction b) {
+            validateAnchorPurity(b.getLeft(), rootPosition, false);
+            validateAnchorPurity(b.getRight(), rootPosition, false);
+        } else if (fn instanceof TernaryFunction t) {
+            validateAnchorPurity(t.getLeft(), rootPosition, false);
+            validateAnchorPurity(t.getCenter(), rootPosition, false);
+            validateAnchorPurity(t.getRight(), rootPosition, false);
+        } else if (fn instanceof MultiArgFunction m) {
+            ObjList<Function> args = m.args();
+            if (args != null) {
+                for (int i = 0, n = args.size(); i < n; i++) {
+                    validateAnchorPurity(args.getQuick(i), rootPosition, false);
+                }
+            }
         }
     }
 

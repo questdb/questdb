@@ -1510,16 +1510,22 @@ public class SqlParser {
 
     /**
      * Asserted-wording validation for ANCHOR clauses on named windows in a live-view
-     * SELECT. Phase 1 enforces:
+     * SELECT — Pass 1 of the RFC 123 ANCHOR EXPRESSION validator. Enforces:
      * <ul>
      *     <li>{@code ANCHOR} on a window with a non-default frame is rejected — anchor-aware
      *     incremental refresh applies only to UNBOUNDED frames.</li>
-     *     <li>Constant {@code ANCHOR EXPRESSION} (e.g. {@code ANCHOR EXPRESSION 1}) is
-     *     rejected — a constant never changes, so the anchor would never reset, which
-     *     is equivalent to a bare unbounded window.</li>
+     *     <li>Direct constant {@code ANCHOR EXPRESSION} (e.g. {@code ANCHOR EXPRESSION 1}) is
+     *     rejected at the AST level — a constant never changes, so the anchor would never
+     *     reset, which is equivalent to a bare unbounded window.</li>
+     *     <li>Subqueries, bind variables, and well-known runtime/random function calls
+     *     ({@code rnd_*}, {@code now}, {@code current_timestamp}, {@code systimestamp})
+     *     by token name.</li>
      * </ul>
-     * The full purity validator (subqueries, runtime-state, random, aggregation) is
-     * deferred until the runtime side of the LiveViewWindow lands.
+     * Pass 2 (function-property checks on the post-constant-fold compiled tree —
+     * {@code isConstant} top-level, {@code isRandom}, {@code isRuntimeConstant},
+     * {@code isNonDeterministic}, aggregation) lives in
+     * {@code CairoEngine.validateAnchorPurity} and runs at CREATE time once the SELECT
+     * factory has been compiled.
      */
     private static void validateLiveViewAnchors(IQueryModel queryModel) throws SqlException {
         LowerCaseCharSequenceObjHashMap<WindowExpression> named = queryModel.getNamedWindows();
@@ -1560,8 +1566,9 @@ public class SqlParser {
      * would later resolve to runtime-state ({@code now}, {@code current_timestamp},
      * {@code systimestamp}) or random ({@code rnd_*}) functions. The function-property
      * checks (constant-fold, isGroupBy, isRandom, isRuntimeConstant, isNonDeterministic)
-     * land alongside the runtime hookup since they need a compiled
-     * {@code io.questdb.cairo.sql.Function} tree.
+     * are Pass 2; they need the compiled {@code io.questdb.cairo.sql.Function} tree
+     * and live in {@code CairoEngine.validateAnchorPurity} (called at CREATE time
+     * after the SELECT factory has been compiled).
      */
     private static void walkAnchorExpressionForPurity(ExpressionNode node) throws SqlException {
         if (node == null) {

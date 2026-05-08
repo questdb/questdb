@@ -1635,6 +1635,44 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testRejectFoldToConstantAnchorExpression() throws Exception {
+        // Pass 2 of the ANCHOR EXPRESSION validator: function calls whose arguments
+        // are all constants fold to a constant at the top level. Pass 1 (parser AST)
+        // only catches direct CONSTANT nodes (e.g. ANCHOR EXPRESSION 1); the fold case
+        // needs the post-constant-fold Function tree.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            try {
+                execute("CREATE LIVE VIEW lv FLUSH EVERY 1s AS " +
+                        "SELECT ts, x, sum(x) OVER w AS s FROM base " +
+                        "WINDOW w AS (PARTITION BY x ORDER BY ts ANCHOR EXPRESSION 1 + 2 + 3)");
+                Assert.fail("expected fold-to-constant anchor reject");
+            } catch (SqlException e) {
+                Assert.assertTrue(e.getMessage(), e.getMessage().contains("must not be a constant"));
+            }
+        });
+    }
+
+    @Test
+    public void testRejectAggregationAnchorExpression() throws Exception {
+        // Pass 2 of the ANCHOR EXPRESSION validator: aggregates can't appear in an
+        // anchor expression because anchor evaluation is scalar per-row. The compiled
+        // Function is a GroupByFunction; the validator surfaces it with the asserted
+        // "must not contain aggregation" wording.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            try {
+                execute("CREATE LIVE VIEW lv FLUSH EVERY 1s AS " +
+                        "SELECT ts, x, sum(x) OVER w AS s FROM base " +
+                        "WINDOW w AS (PARTITION BY x ORDER BY ts ANCHOR EXPRESSION sum(x))");
+                Assert.fail("expected aggregation anchor reject");
+            } catch (SqlException e) {
+                Assert.assertTrue(e.getMessage(), e.getMessage().contains("must not contain aggregation"));
+            }
+        });
+    }
+
+    @Test
     public void testRejectLeadWindowFunction() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE base (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
