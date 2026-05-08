@@ -1608,6 +1608,41 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testLiveViewsCatalogueExposesOperationalColumns() throws Exception {
+        // Pin the clock so lag_micros is deterministic across runs.
+        assertMemoryLeak(() -> {
+            setCurrentMicros(1_000_000L);
+            execute("CREATE TABLE base (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms AS " +
+                    "SELECT ts, x, row_number() OVER () AS rn FROM base WHERE x > 0");
+            execute("INSERT INTO base (ts, x) VALUES ('2026-04-01T00:00:00.000001Z', 1)");
+            drainWalQueue();
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                drainJob(job);
+            }
+            drainWalQueue();
+
+            // Advance the clock so lag_micros reflects time since the last flush.
+            setCurrentMicros(3_000_000L);
+
+            // view_table_dir_name must match the live view's actual directory; once mangling
+            // is enabled in tests it diverges from the view name, so resolve via the engine.
+            TableToken token = engine.verifyTableName("lv");
+            String expectedDir = token.getDirName();
+            // writer_stall_micros is always 0 in Phase 1a (no in-mem tier, no stall mechanism).
+            // lag_micros = 3_000_000 - lastFlushTimeUs. lastFlushTimeUs was set to 1_000_000
+            // (the clock at refresh), so lag_micros = 2_000_000.
+            assertSql(
+                    "view_name\tview_table_dir_name\tlag_micros\twriter_stall_micros\n" +
+                            "lv\t" + expectedDir + "\t2000000\t0\n",
+                    "SELECT view_name, view_table_dir_name, lag_micros, writer_stall_micros FROM live_views()"
+            );
+
+            execute("DROP LIVE VIEW lv");
+        });
+    }
+
+    @Test
     public void testTablesIntegrationReportsLiveView() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE base (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
