@@ -6861,6 +6861,105 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         }
     }
 
+    /**
+     * Opens, validates, and mmaps every covering column file for the given
+     * partition, populating the {@code o3Seal*} scratch lists that will be
+     * passed to {@code indexer.configureCovering(...)}. Tombstoned slots
+     * (covCol &lt; 0) get sentinel entries with zero address.
+     * <p>
+     * The path object must already be positioned at the partition directory
+     * up to {@code pathLen}; the helper only trims back to that length.
+     * Callers must invoke {@link #unmapCoveringColumns(int)} from a
+     * {@code finally} block to release the mappings, including on partial
+     * failure mid-loop. Both posting-seal sites (fast-lag and O3) share
+     * this helper so divergence cannot creep in.
+     *
+     * @param coveringCols       cover column indices; entries &lt; 0 are tombstones
+     * @param partitionTimestamp partition this seal targets
+     * @param pathLen            length to trim {@code path} to before resolving each cover file
+     * @param coverCount         length of the covering set
+     */
+    private void mapCoveringColumnsForSeal(IntList coveringCols, long partitionTimestamp, int pathLen, int coverCount) {
+        o3SealAddrs.setPos(coverCount);
+        o3SealAuxAddrs.setPos(coverCount);
+        o3SealAuxMappedSizes.setPos(coverCount);
+        o3SealMappedSizes.setPos(coverCount);
+        o3SealNameTxns.setPos(coverCount);
+        o3SealTops.setPos(coverCount);
+        o3SealShifts.setPos(coverCount);
+        o3SealTypes.setPos(coverCount);
+        for (int c = 0; c < coverCount; c++) {
+            o3SealAddrs.setQuick(c, 0);
+            o3SealAuxAddrs.setQuick(c, 0);
+            o3SealAuxMappedSizes.setQuick(c, 0);
+            int covCol = coveringCols.getQuick(c);
+            if (covCol < 0) {
+                o3SealTypes.setQuick(c, -1);
+                o3SealShifts.setQuick(c, 0);
+                o3SealTops.setQuick(c, 0);
+                o3SealNameTxns.setQuick(c, TableUtils.COLUMN_NAME_TXN_NONE);
+                continue;
+            }
+            int covType = metadata.getColumnType(covCol);
+            boolean isVarSize = ColumnType.isVarSize(covType);
+            o3SealTypes.setQuick(c, covType);
+            o3SealShifts.setQuick(c, ColumnType.pow2SizeOf(covType));
+            o3SealTops.setQuick(c, columnVersionWriter.getColumnTopQuick(partitionTimestamp, covCol));
+            long covColNameTxn = columnVersionWriter.getColumnNameTxn(partitionTimestamp, covCol);
+            o3SealNameTxns.setQuick(c, covColNameTxn);
+            LPSZ colFile = TableUtils.dFile(path.trimTo(pathLen), metadata.getColumnName(covCol), covColNameTxn);
+            long fd = ff.openRO(colFile);
+            if (fd < 0) {
+                throw CairoException.critical(ff.errno())
+                        .put("could not open covering column file [path=").put(colFile).put(']');
+            }
+            try {
+                long fileSize = ff.length(fd);
+                if (fileSize < 0) {
+                    throw CairoException.critical(0)
+                            .put("invalid covering column file size [path=").put(colFile)
+                            .put(", size=").put(fileSize).put(']');
+                }
+                if (fileSize == 0) {
+                    if (!isVarSize) {
+                        throw CairoException.critical(0)
+                                .put("covering column file is empty [path=").put(colFile)
+                                .put(", size=").put(fileSize).put(']');
+                    }
+                } else {
+                    long addr = TableUtils.mapRO(ff, fd, fileSize, MemoryTag.MMAP_DEFAULT);
+                    o3SealAddrs.setQuick(c, addr);
+                    o3SealMappedSizes.setQuick(c, fileSize);
+                }
+            } finally {
+                ff.close(fd);
+            }
+            if (isVarSize) {
+                LPSZ auxFile = TableUtils.iFile(path.trimTo(pathLen), metadata.getColumnName(covCol), covColNameTxn);
+                long auxFd = ff.openRO(auxFile);
+                if (auxFd < 0) {
+                    throw CairoException.critical(ff.errno())
+                            .put("could not open covering aux file [path=").put(auxFile).put(']');
+                }
+                try {
+                    long auxSize = ff.length(auxFd);
+                    if (auxSize < 0) {
+                        throw CairoException.critical(0)
+                                .put("invalid covering aux file size [path=").put(auxFile)
+                                .put(", size=").put(auxSize).put(']');
+                    }
+                    if (auxSize > 0) {
+                        long auxAddr = TableUtils.mapRO(ff, auxFd, auxSize, MemoryTag.MMAP_DEFAULT);
+                        o3SealAuxAddrs.setQuick(c, auxAddr);
+                        o3SealAuxMappedSizes.setQuick(c, auxSize);
+                    }
+                } finally {
+                    ff.close(auxFd);
+                }
+            }
+        }
+    }
+
     private Row newRowO3(long timestamp) {
         LOG.info().$("switched to o3 [table=").$(tableToken).I$();
         txWriter.beginPartitionSizeUpdate();
@@ -9934,85 +10033,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                         coveringPathLen = path.size();
                     }
                     int coverCount = coveringCols.size();
-                    o3SealAddrs.setPos(coverCount);
-                    o3SealAuxAddrs.setPos(coverCount);
-                    o3SealAuxMappedSizes.setPos(coverCount);
-                    o3SealMappedSizes.setPos(coverCount);
-                    o3SealNameTxns.setPos(coverCount);
-                    o3SealTops.setPos(coverCount);
-                    o3SealShifts.setPos(coverCount);
-                    o3SealTypes.setPos(coverCount);
                     try {
-                        for (int c = 0; c < coverCount; c++) {
-                            o3SealAddrs.setQuick(c, 0);
-                            o3SealAuxAddrs.setQuick(c, 0);
-                            o3SealAuxMappedSizes.setQuick(c, 0);
-                            int covCol = coveringCols.getQuick(c);
-                            if (covCol < 0) {
-                                o3SealTypes.setQuick(c, -1);
-                                o3SealShifts.setQuick(c, 0);
-                                o3SealTops.setQuick(c, 0);
-                                o3SealNameTxns.setQuick(c, TableUtils.COLUMN_NAME_TXN_NONE);
-                                continue;
-                            }
-                            int covType = metadata.getColumnType(covCol);
-                            boolean isVarSize = ColumnType.isVarSize(covType);
-                            o3SealTypes.setQuick(c, covType);
-                            o3SealShifts.setQuick(c, ColumnType.pow2SizeOf(covType));
-                            o3SealTops.setQuick(c, columnVersionWriter.getColumnTopQuick(lastPartitionTimestamp, covCol));
-                            long covColNameTxn = columnVersionWriter.getColumnNameTxn(lastPartitionTimestamp, covCol);
-                            o3SealNameTxns.setQuick(c, covColNameTxn);
-                            LPSZ colFile = TableUtils.dFile(path.trimTo(coveringPathLen), metadata.getColumnName(covCol), covColNameTxn);
-                            long fd = ff.openRO(colFile);
-                            if (fd < 0) {
-                                throw CairoException.critical(ff.errno())
-                                        .put("could not open covering column file [path=").put(colFile).put(']');
-                            }
-                            try {
-                                long fileSize = ff.length(fd);
-                                if (fileSize < 0) {
-                                    throw CairoException.critical(0)
-                                            .put("invalid covering column file size [path=").put(colFile)
-                                            .put(", size=").put(fileSize).put(']');
-                                }
-                                if (fileSize == 0) {
-                                    if (!isVarSize) {
-                                        throw CairoException.critical(0)
-                                                .put("covering column file is empty [path=").put(colFile)
-                                                .put(", size=").put(fileSize).put(']');
-                                    }
-                                } else {
-                                    long addr = TableUtils.mapRO(ff, fd, fileSize, MemoryTag.MMAP_DEFAULT);
-                                    o3SealAddrs.setQuick(c, addr);
-                                    o3SealMappedSizes.setQuick(c, fileSize);
-                                }
-                            } finally {
-                                ff.close(fd);
-                            }
-                            if (isVarSize) {
-                                LPSZ auxFile = TableUtils.iFile(path.trimTo(coveringPathLen), metadata.getColumnName(covCol), covColNameTxn);
-                                long auxFd = ff.openRO(auxFile);
-                                if (auxFd < 0) {
-                                    throw CairoException.critical(ff.errno())
-                                            .put("could not open covering aux file [path=").put(auxFile).put(']');
-                                }
-                                try {
-                                    long auxSize = ff.length(auxFd);
-                                    if (auxSize < 0) {
-                                        throw CairoException.critical(0)
-                                                .put("invalid covering aux file size [path=").put(auxFile)
-                                                .put(", size=").put(auxSize).put(']');
-                                    }
-                                    if (auxSize > 0) {
-                                        long auxAddr = TableUtils.mapRO(ff, auxFd, auxSize, MemoryTag.MMAP_DEFAULT);
-                                        o3SealAuxAddrs.setQuick(c, auxAddr);
-                                        o3SealAuxMappedSizes.setQuick(c, auxSize);
-                                    }
-                                } finally {
-                                    ff.close(auxFd);
-                                }
-                            }
-                        }
+                        mapCoveringColumnsForSeal(coveringCols, lastPartitionTimestamp, coveringPathLen, coverCount);
                         // configureFollowerAndWriter would close+reopen the
                         // writer, dropping pending entries from
                         // updateIndexesParallel. configureCovering wires the
@@ -10026,16 +10048,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                         indexer.getWriter().commit();
                         indexer.publishPendingPurges(messageBus, tableToken, partitionBy, timestampType, txWriter.getTxn());
                     } finally {
-                        for (int c = 0; c < coverCount; c++) {
-                            if (o3SealAddrs.getQuick(c) != 0) {
-                                ff.munmap(o3SealAddrs.getQuick(c), o3SealMappedSizes.getQuick(c), MemoryTag.MMAP_DEFAULT);
-                                o3SealAddrs.setQuick(c, 0);
-                            }
-                            if (o3SealAuxAddrs.getQuick(c) != 0) {
-                                ff.munmap(o3SealAuxAddrs.getQuick(c), o3SealAuxMappedSizes.getQuick(c), MemoryTag.MMAP_DEFAULT);
-                                o3SealAuxAddrs.setQuick(c, 0);
-                            }
-                        }
+                        unmapCoveringColumns(coverCount);
                         indexer.clearCovering();
                     }
                     continue;
@@ -11254,86 +11267,9 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
                 if (hasCovering) {
                     int coverCount = coveringCols.size();
-                    o3SealAddrs.setPos(coverCount);
-                    o3SealAuxAddrs.setPos(coverCount);
-                    o3SealAuxMappedSizes.setPos(coverCount);
-                    o3SealMappedSizes.setPos(coverCount);
-                    o3SealNameTxns.setPos(coverCount);
-                    o3SealTops.setPos(coverCount);
-                    o3SealShifts.setPos(coverCount);
-                    o3SealTypes.setPos(coverCount);
 
                     try {
-                        for (int c = 0; c < coverCount; c++) {
-                            o3SealAddrs.setQuick(c, 0);
-                            o3SealAuxAddrs.setQuick(c, 0);
-                            o3SealAuxMappedSizes.setQuick(c, 0);
-                            int covCol = coveringCols.getQuick(c);
-                            if (covCol < 0) {
-                                o3SealTypes.setQuick(c, -1);
-                                o3SealShifts.setQuick(c, 0);
-                                o3SealTops.setQuick(c, 0);
-                                o3SealNameTxns.setQuick(c, TableUtils.COLUMN_NAME_TXN_NONE);
-                                continue;
-                            }
-                            int covType = metadata.getColumnType(covCol);
-                            boolean isVarSize = ColumnType.isVarSize(covType);
-                            o3SealTypes.setQuick(c, covType);
-                            o3SealShifts.setQuick(c, ColumnType.pow2SizeOf(covType));
-                            o3SealTops.setQuick(c, columnVersionWriter.getColumnTopQuick(partitionTimestamp, covCol));
-                            long covColNameTxn = columnVersionWriter.getColumnNameTxn(partitionTimestamp, covCol);
-                            o3SealNameTxns.setQuick(c, covColNameTxn);
-                            LPSZ colFile = TableUtils.dFile(path.trimTo(plen), metadata.getColumnName(covCol), covColNameTxn);
-                            long fd = ff.openRO(colFile);
-                            if (fd < 0) {
-                                throw CairoException.critical(ff.errno())
-                                        .put("could not open covering column file [path=").put(colFile).put(']');
-                            }
-                            try {
-                                long fileSize = ff.length(fd);
-                                if (fileSize < 0) {
-                                    throw CairoException.critical(0)
-                                            .put("invalid covering column file size [path=").put(colFile)
-                                            .put(", size=").put(fileSize).put(']');
-                                }
-                                if (fileSize == 0) {
-                                    if (!isVarSize) {
-                                        throw CairoException.critical(0)
-                                                .put("covering column file is empty [path=").put(colFile)
-                                                .put(", size=").put(fileSize).put(']');
-                                    }
-                                } else {
-                                    long addr = TableUtils.mapRO(ff, fd, fileSize, MemoryTag.MMAP_DEFAULT);
-                                    o3SealAddrs.setQuick(c, addr);
-                                    o3SealMappedSizes.setQuick(c, fileSize);
-                                }
-                            } finally {
-                                ff.close(fd);
-                            }
-                            if (isVarSize) {
-                                LPSZ auxFile = TableUtils.iFile(path.trimTo(plen), metadata.getColumnName(covCol), covColNameTxn);
-                                long auxFd = ff.openRO(auxFile);
-                                if (auxFd < 0) {
-                                    throw CairoException.critical(ff.errno())
-                                            .put("could not open covering aux file [path=").put(auxFile).put(']');
-                                }
-                                try {
-                                    long auxSize = ff.length(auxFd);
-                                    if (auxSize < 0) {
-                                        throw CairoException.critical(0)
-                                                .put("invalid covering aux file size [path=").put(auxFile)
-                                                .put(", size=").put(auxSize).put(']');
-                                    }
-                                    if (auxSize > 0) {
-                                        long auxAddr = TableUtils.mapRO(ff, auxFd, auxSize, MemoryTag.MMAP_DEFAULT);
-                                        o3SealAuxAddrs.setQuick(c, auxAddr);
-                                        o3SealAuxMappedSizes.setQuick(c, auxSize);
-                                    }
-                                } finally {
-                                    ff.close(auxFd);
-                                }
-                            }
-                        }
+                        mapCoveringColumnsForSeal(coveringCols, partitionTimestamp, plen, coverCount);
 
                         indexer.configureFollowerAndWriter(
                                 path.trimTo(plen), colName, colNameTxn,
@@ -11376,18 +11312,9 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                         indexer.rebuildSidecars();
                         indexer.publishPendingPurges(messageBus, tableToken, partitionBy, timestampType, txWriter.getTxn());
                     } finally {
-                        for (int c = 0; c < coverCount; c++) {
-                            if (o3SealAddrs.getQuick(c) != 0) {
-                                ff.munmap(o3SealAddrs.getQuick(c), o3SealMappedSizes.getQuick(c), MemoryTag.MMAP_DEFAULT);
-                                o3SealAddrs.setQuick(c, 0);
-                            }
-                            if (o3SealAuxAddrs.getQuick(c) != 0) {
-                                ff.munmap(o3SealAuxAddrs.getQuick(c), o3SealAuxMappedSizes.getQuick(c), MemoryTag.MMAP_DEFAULT);
-                                o3SealAuxAddrs.setQuick(c, 0);
-                            }
-                        }
+                        unmapCoveringColumns(coverCount);
                         // Clear the writer's reference to o3SealAddrs so that
-                        // a subsequent close() → seal() cannot dereference the
+                        // a subsequent close() -> seal() cannot dereference the
                         // unmapped addresses. The seal would return early (gen0
                         // is already dense), but this is a defensive measure.
                         indexer.clearCovering();
@@ -12126,6 +12053,25 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 }
             }
 
+        }
+    }
+
+    /**
+     * Releases mappings established by {@link #mapCoveringColumnsForSeal}
+     * and zeroes the corresponding {@code o3SealAddrs} / {@code o3SealAuxAddrs}
+     * slots so a subsequent reuse starts clean. Call from a {@code finally}
+     * block to guarantee unmap on partial failure.
+     */
+    private void unmapCoveringColumns(int coverCount) {
+        for (int c = 0; c < coverCount; c++) {
+            if (o3SealAddrs.getQuick(c) != 0) {
+                ff.munmap(o3SealAddrs.getQuick(c), o3SealMappedSizes.getQuick(c), MemoryTag.MMAP_DEFAULT);
+                o3SealAddrs.setQuick(c, 0);
+            }
+            if (o3SealAuxAddrs.getQuick(c) != 0) {
+                ff.munmap(o3SealAuxAddrs.getQuick(c), o3SealAuxMappedSizes.getQuick(c), MemoryTag.MMAP_DEFAULT);
+                o3SealAuxAddrs.setQuick(c, 0);
+            }
         }
     }
 
