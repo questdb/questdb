@@ -1377,6 +1377,26 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testLiveViewsCatalogueExposesViewLowerBoundTimestamp() throws Exception {
+        assertMemoryLeak(() -> {
+            // Pin the microsecond clock so view_lower_bound_timestamp captures the
+            // wall-clock at CREATE deterministically.
+            setCurrentMicros(1_700_000_000_000_000L);
+            execute("CREATE TABLE base (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 1s AS " +
+                    "SELECT ts, x, row_number() OVER () AS rn FROM base WHERE x > 0");
+
+            assertSql(
+                    "view_name\tview_lower_bound_timestamp\n" +
+                            "lv\t2023-11-14T22:13:20.000000Z\n",
+                    "SELECT view_name, view_lower_bound_timestamp FROM live_views()"
+            );
+
+            execute("DROP LIVE VIEW lv");
+        });
+    }
+
+    @Test
     public void testTablesIntegrationReportsLiveView() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE base (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");

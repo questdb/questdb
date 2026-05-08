@@ -100,6 +100,7 @@ public class LiveViewsFunctionFactory implements FunctionFactory {
         private static final int COLUMN_LAG_SEQTXN = 9;
         private static final int COLUMN_LAST_PROCESSED_SEQTXN = 10;
         private static final int COLUMN_LV_CONSUMED_SEQTXN = 12;
+        private static final int COLUMN_VIEW_LOWER_BOUND_TIMESTAMP = 13;
         private static final int COLUMN_VIEW_NAME = 0;
         private static final int COLUMN_VIEW_SQL = 8;
         private static final int COLUMN_VIEW_STATUS = 2;
@@ -194,6 +195,7 @@ public class LiveViewsFunctionFactory implements FunctionFactory {
                         case COLUMN_LAST_PROCESSED_SEQTXN -> instance.getLastProcessedSeqTxn();
                         case COLUMN_APPLIED_WATERMARK -> instance.getStateReader().getAppliedWatermark();
                         case COLUMN_LV_CONSUMED_SEQTXN -> instance.getStateReader().getLvConsumedSeqTxn();
+                        case COLUMN_VIEW_LOWER_BOUND_TIMESTAMP -> definition.getViewLowerBoundTimestamp();
                         default -> 0;
                     };
                 }
@@ -245,6 +247,7 @@ public class LiveViewsFunctionFactory implements FunctionFactory {
             metadata.add(new TableColumnMetadata("last_processed_seqtxn", ColumnType.LONG));            // 10
             metadata.add(new TableColumnMetadata("applied_watermark", ColumnType.LONG));                // 11
             metadata.add(new TableColumnMetadata("lv_consumed_seqtxn", ColumnType.LONG));               // 12
+            metadata.add(new TableColumnMetadata("view_lower_bound_timestamp", ColumnType.TIMESTAMP_MICRO)); // 13
             METADATA = metadata;
         }
     }
