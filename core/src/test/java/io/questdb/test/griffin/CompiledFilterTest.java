@@ -579,9 +579,9 @@ public class CompiledFilterTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             // Inverse of testIntColumnArithmeticWidenedToLongInLongContext:
             // when the predicate also has a FLOAT/DOUBLE source, the int-
-            // arithmetic subtree is consumed by CastIntToDouble.getDouble,
-            // which calls IntFunction.getInt() and wraps modulo 2^32. The
-            // IR emitter must suppress widening when any F operand appears,
+            // arithmetic subtree is consumed by IntFunction#getDouble, which
+            // calls IntFunction.getInt() and wraps modulo 2^32. The IR
+            // emitter must suppress widening when any F operand appears,
             // including lexical float CONSTANT tokens like 0.5.
             execute("CREATE TABLE x (a INT, b INT, l LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
             execute("INSERT INTO x VALUES " +
@@ -733,27 +733,72 @@ public class CompiledFilterTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testIntArithmeticWrapsAtInt32InMixedLongDoubleContext() throws Exception {
+        assertMemoryLeak(() -> {
+            // The fuzzer hit a JIT/Java divergence on a predicate of shape
+            //   ((d_const + d_const) - c6_long) > (c9_int * int_const)
+            // where the int product overflows int32. serializeUntypedNumber
+            // skipped the I4 emit path whenever the predicate had any LONG
+            // operand and widened the integer constant to I8, which made
+            // convert() promote c9 to i64 at MUL time and the JIT compute
+            // c9 * 403251 at long width. The Java filter went through
+            // IntFunction#getDouble = intToDouble(getInt) and wrapped at
+            // int32, so the two paths disagreed for c9 large enough that
+            // the inner product overflowed int32. After the fix the JIT
+            // keeps the constant at I4 when any FLOAT / DOUBLE source is
+            // present in the predicate, and int32_mul wraps on both sides.
+            execute("CREATE TABLE x (c6 LONG, c9 INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO x VALUES " +
+                    "(0,  5328, '2024-01-01T00:00:00.000000Z')," +
+                    " (0,  6000, '2024-01-01T00:00:00.000001Z')," +
+                    " (0,  1000, '2024-01-01T00:00:00.000002Z')," +
+                    " (0, -6000, '2024-01-01T00:00:00.000003Z')," +
+                    " (0,  -100, '2024-01-01T00:00:00.000004Z')");
+
+            String sql = "SELECT count(*) FROM x WHERE ((0.983116 + 0.206995) - c6) > (c9 * 403251)";
+            //  5328 *   403251 wraps to -2_146_445_968 at int32. 1.19 > -2.146e9 -> true.
+            //  6000 *   403251 wraps to -1_875_461_296 at int32. 1.19 > -1.875e9 -> true.
+            //  1000 *   403251 =        403_251_000  at int32.   1.19 > 4e8      -> false.
+            // -6000 *   403251 wraps to  1_875_461_296 at int32. 1.19 > 1.875e9  -> false.
+            //  -100 *   403251 =         -40_325_100  at int32.  1.19 > -4e7     -> true.
+            sqlExecutionContext.setJitMode(SqlJitMode.JIT_MODE_DISABLED);
+            assertSql("count\n3\n", sql);
+            sqlExecutionContext.setJitMode(SqlJitMode.JIT_MODE_ENABLED);
+            assertSql("count\n3\n", sql);
+
+            try (RecordCursorFactory factory = select(sql)) {
+                Assert.assertTrue("INT*INT in mixed LONG/DOUBLE context must still JIT",
+                        factory.usesCompiledFilter());
+            }
+        });
+    }
+
+    @Test
     public void testIntColumnArithmeticInDoubleContextStaysAtIntWidth() throws Exception {
         assertMemoryLeak(() -> {
             // Negative case: in DOUBLE context the Java filter goes through
-            // CastIntToDouble.getDouble = intToDouble(getInt) at int width, so
+            // IntFunction#getDouble = intToDouble(getInt) at int width, so
             // the JIT must NOT widen INT operands to i64. NarrowI64WidenDetector
-            // only triggers when a LONG operand is present, leaving the FLOAT /
-            // DOUBLE path at int width (matching int32_mul / int32_add overflow
-            // semantics on both sides).
+            // only triggers when a LONG operand is present and no FLOAT/DOUBLE
+            // source is in the predicate, leaving the FLOAT / DOUBLE path at
+            // int width (matching int32_mul / int32_add overflow semantics on
+            // both sides).
             execute("CREATE TABLE x (i INT, d DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
             execute("INSERT INTO x VALUES " +
                     "(46341, 0.0, '2024-01-01T00:00:00.000000Z')," +
                     " (46340, 0.0, '2024-01-01T00:00:00.000001Z')," +
                     " (10, 0.0, '2024-01-01T00:00:00.000002Z')");
 
-            sqlExecutionContext.setJitMode(SqlJitMode.JIT_MODE_ENABLED);
+            String sql = "SELECT count(*) FROM x WHERE (i * i) > d";
             // 46341 * 46341 = 2_147_488_281 -> int32 wraps to negative -> excluded.
             // 46340 * 46340 = 2_147_395_600 -> fits int32, positive -> included.
             // 10 * 10 = 100 -> included. So two rows match.
-            assertSql("count\n2\n", "SELECT count(*) FROM x WHERE (i * i) > d");
+            sqlExecutionContext.setJitMode(SqlJitMode.JIT_MODE_DISABLED);
+            assertSql("count\n2\n", sql);
+            sqlExecutionContext.setJitMode(SqlJitMode.JIT_MODE_ENABLED);
+            assertSql("count\n2\n", sql);
 
-            try (RecordCursorFactory factory = select("SELECT count(*) FROM x WHERE (i * i) > d")) {
+            try (RecordCursorFactory factory = select(sql)) {
                 Assert.assertTrue("INT*INT in DOUBLE context must still JIT",
                         factory.usesCompiledFilter());
             }

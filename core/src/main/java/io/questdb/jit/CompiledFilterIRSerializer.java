@@ -1524,12 +1524,18 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
     private void serializeUntypedNumber(long offset, int position, final CharSequence token, boolean negated) throws SqlException {
         long sign = negated ? -1 : 1;
 
-        // Skip the parseInt fallback when the predicate has a LONG operand: the
-        // Java filter's SubLong / AddLong reaches into MulInt.getLong and
-        // computes at long width, so the JIT IMM must be I8 too. F4 / F8
-        // operands intentionally do not trigger this -- IntFunction.getDouble
-        // does intToDouble(getInt), keeping the int math at int width.
-        if (!predicateContext.localTypesObserver.hasI8()) {
+        // Skip the parseInt fallback when the predicate has a LONG operand
+        // and no FLOAT/DOUBLE source: the Java filter's SubLong / AddLong
+        // reaches into MulInt.getLong and computes at long width, so the
+        // JIT IMM must be I8 too. With a FLOAT/DOUBLE in the same predicate
+        // the int-arithmetic subtree is consumed by IntFunction#getDouble /
+        // IntFunction#getFloat, both of which call getInt() and wrap mod
+        // 2^32. Widening the constant to I8 there would let convert()
+        // promote the int operand to i64 at op time and dispatch to
+        // int64_mul, preserving the long product and diverging from the
+        // Java filter's wrap. Keep the constant at I4 so int32_mul wraps
+        // on both sides.
+        if (!predicateContext.localTypesObserver.hasI8() || predicateContext.hasFloatInPredicate) {
             try {
                 final int i = Numbers.parseInt(token);
                 putOperand(offset, IMM, I4_TYPE, sign * i);
@@ -1800,13 +1806,15 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
      * MulInt.getLong / AddInt.getLong, which compute via ((long) l) OP r.
      * <p>
      * A FLOAT or DOUBLE operand anywhere in the predicate suppresses the
-     * widening: in that case the int-arithmetic subtree gets consumed by a
-     * CastInt[T]oDouble / CastInt[T]oFloat that calls
+     * widening: in that case the int-arithmetic subtree gets consumed by
+     * IntFunction#getDouble / IntFunction#getFloat, which call
      * {@link io.questdb.cairo.sql.Function#getInt}, so the Java filter
      * computes at int32 width and wraps modulo 2^32 on overflow. Widening
      * here would let the JIT preserve the full long product and diverge
      * from the Java filter -- the inverse of the bug the pre-pass was
-     * introduced to fix.
+     * introduced to fix. Note that {@link #serializeUntypedNumber} also
+     * keeps integer constants at I4 in that case, otherwise the constant
+     * widening alone would re-introduce the divergence via convert().
      */
     private class NarrowI64WidenDetector implements PostOrderTreeTraversalAlgo.Visitor, Mutable {
         private final TypesObserver typesObserver = new TypesObserver();
@@ -1848,7 +1856,7 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
                     // Observe FLOAT / DOUBLE numeric constants so a predicate
                     // whose only float source is a literal (e.g. c7 + 0.5)
                     // suppresses narrow-int widening, matching the Java
-                    // filter's CastInt[T]oDouble path that wraps at int32.
+                    // filter's IntFunction#getDouble path that wraps at int32.
                     int typeCode = floatConstantTypeCode(node.token);
                     if (typeCode != UNDEFINED_CODE) {
                         typesObserver.observe(typeCode);
@@ -1872,6 +1880,10 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
                     }
                     break;
             }
+        }
+
+        boolean hasFloat() {
+            return typesObserver.hasFloat();
         }
 
         boolean shouldWiden() {
@@ -1908,6 +1920,13 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
         private final LongList inIntervals = new LongList();
         int columnType;
         boolean hasArithmeticOperations;
+        // True when the predicate has at least one FLOAT / DOUBLE column,
+        // bind variable, or numeric constant. Captured up front by
+        // NarrowI64WidenDetector so other code paths (e.g. constant
+        // typing in serializeUntypedNumber) can keep INT operands at i32
+        // when the int-arithmetic subtree is consumed by IntFunction's
+        // getDouble / getFloat, which call getInt() and wrap mod 2^32.
+        boolean hasFloatInPredicate;
         // True when the predicate has integer arithmetic mixed with a LONG
         // operand. The IR emitter widens narrow operands to i64 in this case
         // so the JIT computes at long width, matching MulInt.getLong /
@@ -1941,14 +1960,18 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
                     reset();
                     rootNode = node;
                     // Pre-pass: decide whether to widen narrow integer operands
-                    // to i64 at IR emission time. See NarrowI64WidenDetector.
+                    // to i64 at IR emission time, and remember whether any
+                    // FLOAT / DOUBLE source is present anywhere in the
+                    // predicate. See NarrowI64WidenDetector.
                     try {
                         narrowI64WidenDetector.clear();
                         traverseAlgo.traverse(node, narrowI64WidenDetector);
                         needsNarrowI64Widening = narrowI64WidenDetector.shouldWiden();
+                        hasFloatInPredicate = narrowI64WidenDetector.hasFloat();
                     } catch (SqlException ignore) {
                         // Detector does not throw; defensive only.
                         needsNarrowI64Widening = false;
+                        hasFloatInPredicate = false;
                     }
                 }
                 if (topLevelBooleanColumn) {
@@ -2041,6 +2064,7 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
             symbolColumnIndex = -1;
             singleBooleanColumn = false;
             hasArithmeticOperations = false;
+            hasFloatInPredicate = false;
             needsNarrowI64Widening = false;
             localTypesObserver.clear();
             currentInSerialization = false;
