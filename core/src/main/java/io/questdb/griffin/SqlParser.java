@@ -1309,6 +1309,10 @@ public class SqlParser {
         builder.setFlushEveryIntervalUnit(flushUnit);
 
         // Defaults: IN MEMORY = FLUSH EVERY; PARTITION BY = base table's scheme.
+        // IN MEMORY is the user-facing knob for the in-memory tier reserved for
+        // Phase 2 (the disk-only Phase 1 read path does not consume it). Parsed,
+        // bounded by cairo.live.view.in.memory.max, and persisted into _lv so the
+        // Phase 2 in-mem cache picks it up without a schema bump or grammar change.
         long inMemoryValue = flushValue;
         char inMemoryUnit = flushUnit;
         long inMemoryMicros = flushMicros;

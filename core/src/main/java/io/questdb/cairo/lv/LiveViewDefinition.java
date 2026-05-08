@@ -75,6 +75,12 @@ public class LiveViewDefinition {
     private final ObjList<String> dependencyColumnNames;
     private final long flushEveryInterval;
     private final char flushEveryIntervalUnit;
+    // User-facing knob for the in-memory tier. Phase 1 has no in-mem tier
+    // (reads route through the standard TableReader), so the value is parsed,
+    // validated against cairo.live.view.in.memory.max, and persisted but not
+    // consumed at runtime. Reserved for the Phase 2 in-mem cache, which will
+    // honour this duration as the trim window. Forward-compat: existing LVs
+    // already carry the parameter when the tier lands; no _lv schema bump.
     private final long inMemoryInterval;
     private final char inMemoryIntervalUnit;
     private final GenericRecordMetadata metadata;
