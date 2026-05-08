@@ -214,12 +214,12 @@ public class QueryModelWrapper implements IQueryModel {
     }
 
     @Override
-    public void copyDeclsFrom(IQueryModel model, boolean overrideDeclares) throws SqlException {
+    public void copyDeclsFrom(IQueryModel model, boolean overrideDeclares) {
         throw new UnsupportedOperationException();
     }
 
     @Override
-    public void copyDeclsFrom(LowerCaseCharSequenceObjHashMap<ExpressionNode> decls, boolean overrideDeclares) throws SqlException {
+    public void copyDeclsFrom(LowerCaseCharSequenceObjHashMap<ExpressionNode> decls, boolean overrideDeclares) {
         throw new UnsupportedOperationException();
     }
 
@@ -343,8 +343,18 @@ public class QueryModelWrapper implements IQueryModel {
     }
 
     @Override
+    public ExpressionNode getFillOffset() {
+        return delegate.getFillOffset();
+    }
+
+    @Override
     public ExpressionNode getFillStride() {
         return delegate.getFillStride();
+    }
+
+    @Override
+    public ExpressionNode getFillTimezoneName() {
+        return delegate.getFillTimezoneName();
     }
 
     @Override
@@ -1043,7 +1053,17 @@ public class QueryModelWrapper implements IQueryModel {
     }
 
     @Override
+    public void setFillOffset(ExpressionNode fillOffset) {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
     public void setFillStride(ExpressionNode fillStride) {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
+    public void setFillTimezoneName(ExpressionNode fillTimezoneName) {
         throw new UnsupportedOperationException();
     }
 
