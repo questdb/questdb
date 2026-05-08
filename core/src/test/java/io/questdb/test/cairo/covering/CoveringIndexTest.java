@@ -3359,6 +3359,35 @@ public class CoveringIndexTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testCoveringIndexOrderByNoMatchOnSymbolKey() throws Exception {
+        // CoveringIndexRecordCursorFactory.ofEmpty leaves frameCursor null when
+        // the WHERE symbol value is not in the symbol map. An outer ORDER BY on
+        // a SYMBOL column triggers SortKeyEncoder.init -> getSymbolTable on the
+        // empty inner cursor; getSymbolTable must return EmptySymbolMapReader
+        // rather than NPE on frameCursor.
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE t_ord_no_match (
+                        ts TIMESTAMP,
+                        sym SYMBOL INDEX TYPE POSTING INCLUDE (price),
+                        price DOUBLE
+                    ) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL
+                    """);
+            execute("""
+                    INSERT INTO t_ord_no_match VALUES
+                    ('2024-01-01T00:00:00', 'A', 30.0),
+                    ('2024-01-01T01:00:00', 'B', 20.0)
+                    """);
+            engine.releaseAllWriters();
+
+            assertSql("sym\n",
+                    "SELECT sym FROM t_ord_no_match WHERE sym = 'NONEXISTENT' ORDER BY sym");
+            assertSql("sym\n",
+                    "(SELECT sym FROM t_ord_no_match WHERE sym = 'NONEXISTENT' ORDER BY price) ORDER BY 1");
+        });
+    }
+
+    @Test
     public void testCoveringIndexResidualFilterMultiPartition() throws Exception {
         assertMemoryLeak(() -> {
             execute("""

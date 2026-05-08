@@ -25,6 +25,7 @@
 package io.questdb.griffin.engine.table;
 
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.EmptySymbolMapReader;
 import io.questdb.cairo.GeoHashes;
 import io.questdb.cairo.SymbolMapReader;
 import io.questdb.cairo.TableReader;
@@ -438,6 +439,9 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
 
         @Override
         public SymbolTable getSymbolTable(int columnIndex) {
+            if (frameCursor == null) {
+                return EmptySymbolMapReader.INSTANCE;
+            }
             return frameCursor.getSymbolTable(columnIndexes.getQuick(columnIndex));
         }
 
@@ -462,6 +466,9 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
 
         @Override
         public SymbolTable newSymbolTable(int columnIndex) {
+            if (frameCursor == null) {
+                return EmptySymbolMapReader.INSTANCE;
+            }
             return frameCursor.newSymbolTable(columnIndexes.getQuick(columnIndex));
         }
 
