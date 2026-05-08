@@ -26,11 +26,11 @@ package io.questdb.std.datetime.nanotime;
 
 
 import io.questdb.cairo.TimestampDateFormatFactory;
+import io.questdb.std.CarrierLocal;
 import io.questdb.std.ConcurrentHashMap;
 import io.questdb.std.datetime.DateFormat;
 
 import java.util.function.Function;
-import io.questdb.std.CarrierLocal;
 
 public class NanosFormatFactory implements TimestampDateFormatFactory {
     private final static CarrierLocal<NanosFormatCompiler> tlCompiler = CarrierLocal.withInitial(NanosFormatCompiler::new);

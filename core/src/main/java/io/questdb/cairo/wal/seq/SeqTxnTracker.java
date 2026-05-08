@@ -31,8 +31,6 @@ import io.questdb.cairo.wal.TableWriterPressureControl;
 import io.questdb.mp.ConcurrentQueue;
 import io.questdb.mp.Queue;
 import io.questdb.mp.ValueHolder;
-import io.questdb.mp.continuation.ContinuationQueue;
-import io.questdb.mp.continuation.TimerShards;
 import io.questdb.mp.continuation.TxnWaiter;
 import io.questdb.std.Unsafe;
 import org.jetbrains.annotations.TestOnly;
@@ -49,9 +47,7 @@ public class SeqTxnTracker {
     private final TableWriterPressureControlImpl pressureControl;
     private final Queue<WaiterHolder> waiters = ConcurrentQueue.createConcurrentQueue(WaiterHolder::new);
     private volatile long dirtyWriterTxn;
-    // Volatile because fireWaiters() and registerWaiter() read this outside the
-    // tracker monitor; without volatile they could observe a stale false after
-    // notifyOnDrop has flipped it to true.
+    // Volatile because fireWaiters() and registerWaiter() can race. See comments there
     private volatile boolean dropped;
     private volatile String errorMessage = "";
     private volatile ErrorTag errorTag = ErrorTag.NONE;
@@ -178,27 +174,17 @@ public class SeqTxnTracker {
     }
 
     /**
-     * Registers a parked SQL continuation that will be resumed when the tracker's
-     * {@code writerTxn} advances to at least {@code waiter.targetWriterTxn}, or when
-     * the table becomes suspended/dropped, or when the waiter's deadline elapses
-     * (via the {@link TimerShards} entry registered by TxnWaiter#reset(long, long)).
-     *
-     * <p>If the target is already met (or the table is already suspended/dropped) at
-     * registration time, fires the waiter immediately so the caller does not have to
-     * wait until the next external event or deadline expiry. This eager fire races
-     * the body before it reaches {@code WorkerContinuation.suspend()} -- the cont is
-     * still mounted on the registering carrier when {@code cont.scheduleResume()}
-     * pushes it onto the resume queue. The mount race is benign on the happy path:
-     * the dequeuing peer worker spin-waits on the resulting IllegalStateException
-     * for the (typically nanosecond) window until the body reaches suspend and the
-     * carrier unmounts. If suspend is refused (carrier
-     * pinned), the body marks {@code parkRefused} on the cont so the dequeuer
-     * drops the phantom entry instead of spinning for the duration of the legacy
-     * polling fallback.
+     * Registers a parked waiter to be resumed when writerTxn reaches target, the table
+     * goes suspended/dropped, or the deadline elapses. Fires immediately if the condition
+     * is already met. The eager fire can race the body before it reaches suspend(); the
+     * dequeuing peer worker spins on ISE or drops the phantom via parkRefused if pinned.
      */
     public void registerWaiter(TxnWaiter waiter) {
         enqueueHolder(HOLDER.get(), waiter);
         Unsafe.getAndAddLong(this, WAITER_REGISTRATION_COUNT_OFFSET, 1);
+        // Race: a concurrent fireWaiters can read a stale queue length and miss our
+        // enqueue. Closed by dropped / suspendedState / writerTxn being volatile -- the
+        // read below pairs with their volatile writes to order our enqueue first.
         if (writerTxn >= waiter.getTargetWriterTxn() || isSuspended() || dropped) {
             fireWaiters();
         }
@@ -270,6 +256,10 @@ public class SeqTxnTracker {
      * whose table has become suspended/dropped. Non-ready waiters are re-enqueued. Fired
      * waiters are CAS'd PENDING -> FIRED and the winning thread enqueues the continuation
      * on the waiter's resume job.
+     *
+     * Race: {@code waiters.sizeDirty()} can lag a concurrent registerWaiter and miss
+     * its enqueue. Closed by dropped / suspendedState / writerTxn being volatile --
+     * callers must write one of these before calling here, which orders the enqueue.
      */
     private void fireWaiters() {
         WaiterHolder holder = HOLDER.get();

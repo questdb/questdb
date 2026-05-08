@@ -34,6 +34,7 @@ import io.questdb.cairo.vm.api.MemoryCMARW;
 import io.questdb.cairo.wal.WalUtils;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
+import io.questdb.std.CarrierLocal;
 import io.questdb.std.Files;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.MemoryTag;
@@ -48,7 +49,6 @@ import java.util.concurrent.atomic.AtomicLong;
 import static io.questdb.cairo.TableUtils.openSmallFile;
 import static io.questdb.cairo.wal.WalUtils.TXNLOG_FILE_NAME;
 import static io.questdb.cairo.wal.WalUtils.WAL_SEQUENCER_FORMAT_VERSION_V1;
-import io.questdb.std.CarrierLocal;
 
 /**
  * This class is used to read/write transactions to the disk.

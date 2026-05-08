@@ -240,6 +240,10 @@ public class Worker extends Thread {
             if (log != null) {
                 log.debug().$("os scheduled worker stopped [name=").$(getName()).I$();
             }
+            // Release the CarrierLocal row pinned to this thread's id so it
+            // does not survive across engine restarts in long-running JVMs.
+            // No-op if bind() was never reached (lifecycle CAS failed).
+            CarrierIdentity.unbind();
         }
     }
 

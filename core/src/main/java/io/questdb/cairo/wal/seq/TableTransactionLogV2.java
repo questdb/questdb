@@ -35,6 +35,7 @@ import io.questdb.cairo.wal.WalDirectoryPolicy;
 import io.questdb.cairo.wal.WalUtils;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
+import io.questdb.std.CarrierLocal;
 import io.questdb.std.Files;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.MemoryTag;
@@ -47,7 +48,6 @@ import org.jetbrains.annotations.NotNull;
 import java.util.concurrent.atomic.AtomicLong;
 
 import static io.questdb.cairo.wal.WalUtils.*;
-import io.questdb.std.CarrierLocal;
 
 /**
  * This class is used to read/write transactions to the disk.

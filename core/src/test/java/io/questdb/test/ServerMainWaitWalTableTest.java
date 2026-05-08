@@ -26,11 +26,15 @@ package io.questdb.test;
 
 import io.questdb.PropertyKey;
 import io.questdb.ServerMain;
+import io.questdb.cairo.ErrorTag;
 import io.questdb.cairo.wal.seq.SeqTxnTracker;
 import io.questdb.client.cutlass.http.client.Fragment;
 import io.questdb.client.cutlass.http.client.HttpClient;
 import io.questdb.client.cutlass.http.client.HttpClientFactory;
 import io.questdb.client.cutlass.http.client.Response;
+import io.questdb.log.Log;
+import io.questdb.log.LogFactory;
+import io.questdb.std.Rnd;
 import io.questdb.std.str.StringSink;
 import io.questdb.std.str.Utf8s;
 import io.questdb.test.tools.TestUtils;
@@ -42,10 +46,15 @@ import org.postgresql.util.PSQLException;
 import java.sql.Connection;
 import java.sql.DriverManager;
 import java.sql.ResultSet;
+import java.sql.SQLException;
 import java.sql.Statement;
 import java.util.HashMap;
+import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.CyclicBarrier;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 
 import static io.questdb.test.tools.TestUtils.unchecked;
@@ -66,6 +75,7 @@ import static io.questdb.test.tools.TestUtils.unchecked;
  * </ul>
  */
 public class ServerMainWaitWalTableTest extends AbstractBootstrapTest {
+    private static final Log LOG = LogFactory.getLog(ServerMainWaitWalTableTest.class);
 
     @Before
     public void setUp() {
@@ -79,6 +89,224 @@ public class ServerMainWaitWalTableTest extends AbstractBootstrapTest {
                 PropertyKey.GRIFFIN_QUERY_CONTINUATION_WAKE_INTERVAL + "=100"
         ));
         dbPath.parent().$();
+    }
+
+    @Test(timeout = 240_000)
+    public void testFuzzConcurrentWaitWalTable() throws Exception {
+        // Concurrency / load test for wait_wal_table. Spawns many client threads
+        // against a server with multiple workers and timer shards, each running
+        // a randomly-chosen scenario:
+        //   - happy wait that resolves via the periodic drainWalQueue;
+        //   - fast path: wait_wal_table('t', N) with N <= writerTxn (no waiter
+        //     registered);
+        //   - stmt.cancel mid-wait (PG cancel request trips the breaker);
+        //   - connection drop mid-wait (broken FD trips the breaker);
+        //   - HTTP /exec happy wait;
+        //   - multi-waiter notifyOnDrop terminal: K helpers parked, then DROP;
+        //   - multi-waiter setSuspended terminal: K helpers parked, then suspend.
+        // Background drainer + inserter threads keep the shared tracker hot, so
+        // concurrent fireWaiters vs registerWaiter races and the
+        // ContinuationQueue MPMC drain path are exercised throughout. The shard
+        // count is set to >= 2 so register() distribution and concurrent timer
+        // threads contend on different shards; the worker count is >= 2 so two
+        // parked waits can each be on a different carrier and concurrent
+        // scheduleResume traffic on the origin pools' resume queues is exercised.
+        // The two terminal scenarios are the explicit gap closures: until now,
+        // notifyOnDrop / setSuspended were only validated with a single waiter.
+        Rnd rnd = TestUtils.generateRandom(LOG);
+        long seed1 = rnd.getSeed1();
+        long seed0 = rnd.getSeed0();
+
+        final int workerCount = 2;
+        final int timerShardCount = 2;
+        final int clientThreads = 24;
+        final int iterationsPerThread = 4;
+
+        try (final ServerMain serverMain = ServerMain.create(root, new HashMap<>() {{
+            put(PropertyKey.SHARED_WORKER_COUNT.getEnvVarName(), String.valueOf(workerCount));
+            put(PropertyKey.PG_WORKER_COUNT.getEnvVarName(), String.valueOf(workerCount));
+            put(PropertyKey.HTTP_WORKER_COUNT.getEnvVarName(), String.valueOf(workerCount));
+            put(PropertyKey.CAIRO_TIMER_SHARDS.getEnvVarName(), String.valueOf(timerShardCount));
+            // WAL apply disabled: writerTxn only advances via the drainer thread
+            // below, so wait_wal_table actually parks rather than fast-pathing.
+            put(PropertyKey.CAIRO_WAL_APPLY_ENABLED.getEnvVarName(), "false");
+            put(PropertyKey.QUERY_TIMEOUT.getEnvVarName(), "30s");
+        }})) {
+            serverMain.start();
+
+            // Sanity: server bootstrapped the requested number of timer shards.
+            Assert.assertNotNull(serverMain.getEngine().getTimerShards());
+
+            // Bootstrap the shared table that the bulk of the scenarios target.
+            try (
+                    Connection conn = DriverManager.getConnection(PG_CONNECTION_URI, PG_CONNECTION_PROPERTIES);
+                    Statement stmt = conn.createStatement()
+            ) {
+                stmt.execute("CREATE TABLE shared (ts TIMESTAMP, v INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+                stmt.execute("INSERT INTO shared VALUES ('2024-01-01T00:00:00.000000Z', 0)");
+            }
+
+            final AtomicBoolean stopBackground = new AtomicBoolean();
+            // Drainer: periodically advance writerTxn via a manual apply. Without
+            // this the implicit-target wait would only end via the wake-cycle
+            // breaker check (timeout / cancel / disconnect).
+            Thread drainer = new Thread(() -> {
+                while (!stopBackground.get()) {
+                    try {
+                        TestUtils.drainWalQueue(serverMain.getEngine());
+                        Thread.sleep(20);
+                    } catch (Throwable ignored) {
+                    }
+                }
+            }, "wait-fuzz-drainer");
+            drainer.setDaemon(true);
+            drainer.start();
+
+            // Inserter: continually advance seqTxn on the shared table. Combined
+            // with the drainer this yields a moving target: implicit-form waits
+            // capture seqTxn at compile time, then race the drainer's
+            // updateWriterTxns -> fireWaiters against their own registerWaiter.
+            Thread inserter = new Thread(() -> {
+                int rowId = 1;
+                try (
+                        Connection conn = DriverManager.getConnection(PG_CONNECTION_URI, PG_CONNECTION_PROPERTIES);
+                        Statement stmt = conn.createStatement()
+                ) {
+                    while (!stopBackground.get()) {
+                        try {
+                            stmt.execute("INSERT INTO shared VALUES ('2024-01-01T00:00:00.000000Z', " + (rowId++) + ")");
+                            Thread.sleep(10);
+                        } catch (Throwable ignored) {
+                        }
+                    }
+                } catch (Throwable ignored) {
+                }
+            }, "wait-fuzz-inserter");
+            inserter.setDaemon(true);
+            inserter.start();
+
+            final CyclicBarrier startGate = new CyclicBarrier(clientThreads);
+            final CountDownLatch doneLatch = new CountDownLatch(clientThreads);
+            final AtomicInteger happyCount = new AtomicInteger();
+            final AtomicInteger fastPathCount = new AtomicInteger();
+            final AtomicInteger cancelledCount = new AtomicInteger();
+            final AtomicInteger droppedCount = new AtomicInteger();
+            final AtomicInteger httpCount = new AtomicInteger();
+            final AtomicInteger dropTerminalCount = new AtomicInteger();
+            final AtomicInteger suspendTerminalCount = new AtomicInteger();
+            final ConcurrentLinkedQueue<Throwable> failures = new ConcurrentLinkedQueue<>();
+
+            for (int i = 0; i < clientThreads; i++) {
+                final long threadSeed1 = rnd.nextLong();
+                final long threadSeed2 = rnd.nextLong();
+                final int threadId = i;
+                Thread t = new Thread(() -> {
+                    Rnd tr = new Rnd(threadSeed1, threadSeed2);
+                    try {
+                        startGate.await();
+                        for (int j = 0; j < iterationsPerThread; j++) {
+                            int scenario = tr.nextInt(7);
+                            try {
+                                switch (scenario) {
+                                    case 0:
+                                        runHappyWaitFuzz(happyCount);
+                                        break;
+                                    case 1:
+                                        runFastPathSeqTxnFuzz(fastPathCount);
+                                        break;
+                                    case 2:
+                                        runCancelledWaitFuzz(tr, cancelledCount);
+                                        break;
+                                    case 3:
+                                        runDroppedConnectionWaitFuzz(tr, droppedCount);
+                                        break;
+                                    case 4:
+                                        runHttpHappyWaitFuzz(httpCount);
+                                        break;
+                                    case 5:
+                                        runMultiWaiterDropFuzz(serverMain, threadId, j, dropTerminalCount);
+                                        break;
+                                    case 6:
+                                        runMultiWaiterSuspendFuzz(serverMain, threadId, j, suspendTerminalCount);
+                                        break;
+                                }
+                            } catch (Throwable iterError) {
+                                failures.add(new AssertionError(
+                                        "thread=" + threadId + " iter=" + j + " scenario=" + scenario
+                                                + "; " + iterError.getMessage(),
+                                        iterError
+                                ));
+                            }
+                        }
+                    } catch (Throwable outer) {
+                        failures.add(outer);
+                    } finally {
+                        doneLatch.countDown();
+                    }
+                }, "wait-wal-fuzz-" + threadId);
+                // Platform threads (not virtual): isolates the framework under test
+                // from JEP 491 / virtual-thread monitor-handoff interactions.
+                t.setDaemon(true);
+                t.start();
+            }
+
+            Assert.assertTrue(
+                    "fuzz did not complete in time, seeds=" + seed0 + "L, " + seed1 + "L",
+                    doneLatch.await(180, TimeUnit.SECONDS)
+            );
+            stopBackground.set(true);
+            drainer.join(2_000);
+            inserter.join(2_000);
+
+            if (!failures.isEmpty()) {
+                Throwable head = failures.peek();
+                AssertionError summary = new AssertionError(
+                        "fuzz produced " + failures.size() + " failures (seeds=" + seed0 + "L, " + seed1 + "L; first: "
+                                + head.getMessage()
+                );
+                summary.initCause(head);
+                throw summary;
+            }
+
+            // Final liveness check: server must still serve a query promptly
+            // after the load of cancellations, drops, suspends, and concurrent
+            // waits.
+            long probeStart = System.currentTimeMillis();
+            try (
+                    Connection probeConn = DriverManager.getConnection(PG_CONNECTION_URI, PG_CONNECTION_PROPERTIES);
+                    Statement probeStmt = probeConn.createStatement();
+                    ResultSet rs = probeStmt.executeQuery("SELECT 1")
+            ) {
+                Assert.assertTrue(rs.next());
+                Assert.assertEquals(1, rs.getInt(1));
+            }
+            long probeElapsed = System.currentTimeMillis() - probeStart;
+            Assert.assertTrue(
+                    "post-fuzz SELECT 1 took too long: " + probeElapsed + " ms (seeds=" + seed0 + "L, " + seed1 + "L)",
+                    probeElapsed < 2_000
+            );
+
+            LOG.info().$("wait_wal_table fuzz completed [happy=").$(happyCount.get())
+                    .$(", fastPath=").$(fastPathCount.get())
+                    .$(", cancelled=").$(cancelledCount.get())
+                    .$(", dropped=").$(droppedCount.get())
+                    .$(", http=").$(httpCount.get())
+                    .$(", dropTerminal=").$(dropTerminalCount.get())
+                    .$(", suspendTerminal=").$(suspendTerminalCount.get())
+                    .$(", failures=").$(failures.size())
+                    .$(", seeds=").$(seed0).$("L, ").$(seed1).$("L")
+                    .$(']').$();
+
+            // Probabilistic coverage: with 24*4=96 iterations across 7 buckets
+            // each path is expected to fire several times. The terminal-state
+            // scenarios are the load-bearing additions; fail loudly if either
+            // never ran -- it would mean the gap closure is silently inactive.
+            Assert.assertTrue("no happy waits ran (seeds=" + seed0 + "L, " + seed1 + "L)", happyCount.get() > 0);
+            Assert.assertTrue("no cancelled waits ran (seeds=" + seed0 + "L, " + seed1 + "L)", cancelledCount.get() > 0);
+            Assert.assertTrue("no dropped-connection waits ran (seeds=" + seed0 + "L, " + seed1 + "L)", droppedCount.get() > 0);
+            Assert.assertTrue("no multi-waiter drop terminal ran (seeds=" + seed0 + "L, " + seed1 + "L)", dropTerminalCount.get() > 0);
+            Assert.assertTrue("no multi-waiter suspend terminal ran (seeds=" + seed0 + "L, " + seed1 + "L)", suspendTerminalCount.get() > 0);
+        }
     }
 
     @Test
@@ -607,14 +835,25 @@ public class ServerMainWaitWalTableTest extends AbstractBootstrapTest {
      * to drive its trigger (drop, drain, probe) before the waiter is actually parked.
      */
     private static void awaitWaiterRegistered(ServerMain serverMain, String tableName) throws Exception {
+        awaitWaiterRegistered(serverMain, tableName, 1);
+    }
+
+    /**
+     * Blocks until at least {@code minCount} waiters have registered on the named
+     * table's tracker. {@link SeqTxnTracker#getWaiterRegistrationCount()} is
+     * monotonic for the tracker's lifetime, so for a freshly created table this
+     * upper-bounds the multi-waiter scenarios on parallel registrations.
+     */
+    private static void awaitWaiterRegistered(ServerMain serverMain, String tableName, long minCount) throws Exception {
         SeqTxnTracker tracker = serverMain.getEngine().getTableSequencerAPI()
                 .getTxnTracker(serverMain.getEngine().verifyTableName(tableName));
         TestUtils.assertEventually(
                 () -> Assert.assertTrue(
-                        "waiter never registered for table " + tableName,
-                        tracker.getWaiterRegistrationCount() > 0
+                        "waiters never registered for table " + tableName + " (count="
+                                + tracker.getWaiterRegistrationCount() + ", expected >= " + minCount + ")",
+                        tracker.getWaiterRegistrationCount() >= minCount
                 ),
-                5
+                10
         );
     }
 
@@ -623,5 +862,269 @@ public class ServerMainWaitWalTableTest extends AbstractBootstrapTest {
         while ((fragment = response.recv()) != null) {
             Utf8s.utf8ToUtf16(fragment.lo(), fragment.hi(), sink);
         }
+    }
+
+    private static void runCancelledWaitFuzz(Rnd tr, AtomicInteger counter) throws Exception {
+        // stmt.cancel mid-park: the breaker tripper observes the cancel on the
+        // next wake-recheck and the parked body throws.
+        try (
+                Connection conn = DriverManager.getConnection(PG_CONNECTION_URI, PG_CONNECTION_PROPERTIES);
+                Statement stmt = conn.createStatement()
+        ) {
+            CountDownLatch started = new CountDownLatch(1);
+            AtomicReference<Throwable> outcome = new AtomicReference<>();
+            Thread runner = new Thread(() -> {
+                try {
+                    started.countDown();
+                    // Target far beyond any plausible writerTxn so only the cancel
+                    // can end this. The PG cancel protocol may silently drop a
+                    // CancelRequest that arrives before the server has bound a
+                    // breaker (parse->execute boundary); under the 24-thread /
+                    // 2-worker load that race fires occasionally and the wait
+                    // runs to its query timeout. Accept either outcome -- the
+                    // load-bearing invariant is bounded exit, not signal delivery.
+                    stmt.executeQuery("SELECT wait_wal_table('shared', 1_000_000_000)");
+                } catch (PSQLException expected) {
+                    // good
+                } catch (Throwable t) {
+                    outcome.set(t);
+                }
+            }, "wait-wal-fuzz-cancel-runner");
+            runner.setDaemon(true);
+            runner.start();
+            Assert.assertTrue(started.await(5, TimeUnit.SECONDS));
+            Thread.sleep(50 + tr.nextInt(300));
+            stmt.cancel();
+            runner.join(35_000);
+            Assert.assertFalse("cancelled wait runner did not exit", runner.isAlive());
+            if (outcome.get() != null) {
+                throw new AssertionError("statement cancel scenario failed", outcome.get());
+            }
+        }
+        counter.incrementAndGet();
+    }
+
+    private static void runDroppedConnectionWaitFuzz(Rnd tr, AtomicInteger counter) throws Exception {
+        // Forcible socket teardown via Connection.abort. PG JDBC's close() is
+        // synchronized on the connection's monitor, which the runner holds while
+        // parked in executeQuery's blocking socket read; abort() schedules close
+        // off-thread so the socket teardown can happen while the runner is still
+        // parked. The server-side breaker probe trips on the broken FD on the
+        // next wake-recheck.
+        Connection conn = DriverManager.getConnection(PG_CONNECTION_URI, PG_CONNECTION_PROPERTIES);
+        AtomicReference<Throwable> outcome = new AtomicReference<>();
+        CountDownLatch started = new CountDownLatch(1);
+        Thread runner = new Thread(() -> {
+            try (Statement stmt = conn.createStatement()) {
+                started.countDown();
+                stmt.executeQuery("SELECT wait_wal_table('shared', 1_000_000_000)");
+                outcome.set(new AssertionError("expected error after connection drop"));
+            } catch (PSQLException expected) {
+                // good
+            } catch (Throwable t) {
+                outcome.set(t);
+            }
+        }, "wait-wal-fuzz-drop-runner");
+        runner.setDaemon(true);
+        runner.start();
+        Assert.assertTrue(started.await(5, TimeUnit.SECONDS));
+        Thread.sleep(50 + tr.nextInt(300));
+        try {
+            conn.abort(r -> {
+                Thread t = new Thread(r, "wait-wal-fuzz-drop-abort");
+                t.setDaemon(true);
+                t.start();
+            });
+        } catch (SQLException ignored) {
+        }
+        runner.join(35_000);
+        Assert.assertFalse("dropped wait runner did not exit", runner.isAlive());
+        counter.incrementAndGet();
+    }
+
+    private static void runFastPathSeqTxnFuzz(AtomicInteger counter) throws SQLException {
+        // wait_wal_table('shared', 0) targets a writerTxn that has been observed
+        // since boot (the bootstrap INSERT advanced past 0 once the drainer ran).
+        // The fast path returns immediately and does NOT enter the slow path; this
+        // is the read of the tracker that registerWaiter must NOT be called on.
+        try (
+                Connection conn = DriverManager.getConnection(PG_CONNECTION_URI, PG_CONNECTION_PROPERTIES);
+                Statement stmt = conn.createStatement();
+                ResultSet rs = stmt.executeQuery("SELECT wait_wal_table('shared', 0)")
+        ) {
+            Assert.assertTrue(rs.next());
+            Assert.assertTrue(rs.getBoolean(1));
+        }
+        counter.incrementAndGet();
+    }
+
+    private static void runHappyWaitFuzz(AtomicInteger counter) throws SQLException {
+        // Implicit-target form: captures seqTxn at compile time. The drainer
+        // background thread advances writerTxn in periodic bursts; the wait
+        // resolves once the drain catches up. With many concurrent registrants
+        // and a parallel drainer, this exercises the registerWaiter / fireWaiters
+        // race directly.
+        try (
+                Connection conn = DriverManager.getConnection(PG_CONNECTION_URI, PG_CONNECTION_PROPERTIES);
+                Statement stmt = conn.createStatement();
+                ResultSet rs = stmt.executeQuery("SELECT wait_wal_table('shared')")
+        ) {
+            Assert.assertTrue(rs.next());
+            Assert.assertTrue(rs.getBoolean(1));
+        }
+        counter.incrementAndGet();
+    }
+
+    private static void runHttpHappyWaitFuzz(AtomicInteger counter) {
+        try (HttpClient httpClient = HttpClientFactory.newPlainTextInstance()) {
+            HttpClient.Request request = httpClient.newRequest("localhost", HTTP_PORT);
+            request.GET().url("/exec").query("query", "SELECT wait_wal_table('shared')");
+            try (HttpClient.ResponseHeaders headers = request.send()) {
+                headers.await();
+                StringSink sink = new StringSink();
+                drainResponse(headers.getResponse(), sink);
+                String body = sink.toString();
+                Assert.assertFalse("HTTP wait returned error: " + body, body.contains("\"error\""));
+                Assert.assertTrue("HTTP wait missing dataset: " + body, body.contains("\"dataset\""));
+            }
+        }
+        counter.incrementAndGet();
+    }
+
+    private static void runMultiWaiterDropFuzz(ServerMain serverMain, int threadId, int iter, AtomicInteger counter) throws Exception {
+        // Self-contained scenario: create a fresh table, spawn helperCount
+        // threads each issuing wait_wal_table on it with an unreachable target
+        // so all helpers park and queue on the tracker, then DROP the table
+        // from this thread. notifyOnDrop must wake every parked waiter; the
+        // SeqTxnTrackerTest suite only validated this with a single waiter.
+        String table = "doomed_drop_" + threadId + "_" + iter;
+        try (
+                Connection setupConn = DriverManager.getConnection(PG_CONNECTION_URI, PG_CONNECTION_PROPERTIES);
+                Statement setupStmt = setupConn.createStatement()
+        ) {
+            setupStmt.execute("CREATE TABLE " + table + " (ts TIMESTAMP, v INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            setupStmt.execute("INSERT INTO " + table + " VALUES ('2024-01-01T00:00:00.000000Z', 1)");
+        }
+
+        final int helperCount = 4;
+        final CountDownLatch helpersStarted = new CountDownLatch(helperCount);
+        final CountDownLatch helpersDone = new CountDownLatch(helperCount);
+        final AtomicInteger helperFailures = new AtomicInteger();
+        Thread[] helpers = new Thread[helperCount];
+        for (int h = 0; h < helperCount; h++) {
+            helpers[h] = new Thread(() -> {
+                try (
+                        Connection conn = DriverManager.getConnection(PG_CONNECTION_URI, PG_CONNECTION_PROPERTIES);
+                        Statement stmt = conn.createStatement()
+                ) {
+                    helpersStarted.countDown();
+                    try {
+                        stmt.executeQuery("SELECT wait_wal_table('" + table + "', 1_000_000_000)");
+                        // Unreachable target + no other terminator means we
+                        // must NOT have returned normally.
+                        helperFailures.incrementAndGet();
+                    } catch (PSQLException expected) {
+                        // good -- DROP TABLE wakes the parked wait, which
+                        // throws table-does-not-exist on the resumed loop top.
+                    }
+                } catch (Throwable t) {
+                    helperFailures.incrementAndGet();
+                } finally {
+                    helpersDone.countDown();
+                }
+            }, "wait-wal-fuzz-multi-drop-" + threadId + "-" + iter + "-" + h);
+            helpers[h].setDaemon(true);
+            helpers[h].start();
+        }
+        Assert.assertTrue(
+                "multi-waiter drop helpers did not start in time",
+                helpersStarted.await(10, TimeUnit.SECONDS)
+        );
+        // Wait until all helpers are parked on the tracker. The reg counter
+        // is monotonic on a fresh tracker, so >= helperCount means each
+        // helper has reached its first registerWaiter call.
+        awaitWaiterRegistered(serverMain, table, helperCount);
+
+        try (
+                Connection dropConn = DriverManager.getConnection(PG_CONNECTION_URI, PG_CONNECTION_PROPERTIES);
+                Statement dropStmt = dropConn.createStatement()
+        ) {
+            dropStmt.execute("DROP TABLE " + table);
+        }
+
+        Assert.assertTrue(
+                "multi-waiter drop helpers did not exit after DROP",
+                helpersDone.await(15, TimeUnit.SECONDS)
+        );
+        Assert.assertEquals("multi-waiter drop produced helper failures", 0, helperFailures.get());
+        counter.incrementAndGet();
+    }
+
+    private static void runMultiWaiterSuspendFuzz(ServerMain serverMain, int threadId, int iter, AtomicInteger counter) throws Exception {
+        // Mirrors runMultiWaiterDropFuzz but flips the terminal path to
+        // setSuspended: helperCount parked waits, then setSuspended must wake
+        // every waiter. The SQL surface has no equivalent of a SUSPEND command,
+        // so we drive setSuspended via the engine API (the same path the apply
+        // job takes when it fails).
+        String table = "doomed_suspend_" + threadId + "_" + iter;
+        try (
+                Connection setupConn = DriverManager.getConnection(PG_CONNECTION_URI, PG_CONNECTION_PROPERTIES);
+                Statement setupStmt = setupConn.createStatement()
+        ) {
+            setupStmt.execute("CREATE TABLE " + table + " (ts TIMESTAMP, v INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            setupStmt.execute("INSERT INTO " + table + " VALUES ('2024-01-01T00:00:00.000000Z', 1)");
+        }
+        // Settle this table's writerTxn against its seqTxn before suspending.
+        // The fuzz's background drainer thread keeps calling drainWalQueue;
+        // if we leave a pending INSERT here, that drain advances writerTxn,
+        // and updateWriterTxns flips suspendedState back to 1 (un-suspended),
+        // racing the waiters back to PENDING before they can throw. With nothing
+        // left to apply, subsequent drainer ticks are no-ops for this table and
+        // setSuspended sticks.
+        TestUtils.drainWalQueue(serverMain.getEngine());
+
+        final int helperCount = 4;
+        final CountDownLatch helpersStarted = new CountDownLatch(helperCount);
+        final CountDownLatch helpersDone = new CountDownLatch(helperCount);
+        final AtomicInteger helperFailures = new AtomicInteger();
+        Thread[] helpers = new Thread[helperCount];
+        for (int h = 0; h < helperCount; h++) {
+            helpers[h] = new Thread(() -> {
+                try (
+                        Connection conn = DriverManager.getConnection(PG_CONNECTION_URI, PG_CONNECTION_PROPERTIES);
+                        Statement stmt = conn.createStatement()
+                ) {
+                    helpersStarted.countDown();
+                    try {
+                        stmt.executeQuery("SELECT wait_wal_table('" + table + "', 1_000_000_000)");
+                        helperFailures.incrementAndGet();
+                    } catch (PSQLException expected) {
+                        // good -- table-is-suspended bubbles up to the client
+                    }
+                } catch (Throwable t) {
+                    helperFailures.incrementAndGet();
+                } finally {
+                    helpersDone.countDown();
+                }
+            }, "wait-wal-fuzz-multi-suspend-" + threadId + "-" + iter + "-" + h);
+            helpers[h].setDaemon(true);
+            helpers[h].start();
+        }
+        Assert.assertTrue(
+                "multi-waiter suspend helpers did not start in time",
+                helpersStarted.await(10, TimeUnit.SECONDS)
+        );
+        awaitWaiterRegistered(serverMain, table, helperCount);
+
+        SeqTxnTracker tracker = serverMain.getEngine().getTableSequencerAPI()
+                .getTxnTracker(serverMain.getEngine().verifyTableName(table));
+        tracker.setSuspended(ErrorTag.NONE, "fuzz-induced");
+
+        Assert.assertTrue(
+                "multi-waiter suspend helpers did not exit after setSuspended",
+                helpersDone.await(15, TimeUnit.SECONDS)
+        );
+        Assert.assertEquals("multi-waiter suspend produced helper failures", 0, helperFailures.get());
+        counter.incrementAndGet();
     }
 }

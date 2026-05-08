@@ -29,6 +29,7 @@ import io.questdb.log.LogFactory;
 import io.questdb.mp.continuation.TimerCont;
 import io.questdb.mp.continuation.TimerShards;
 import io.questdb.mp.continuation.WorkerContinuation;
+import io.questdb.std.datetime.millitime.MillisecondClockImpl;
 import org.junit.Assert;
 import org.junit.Test;
 
@@ -49,7 +50,7 @@ public class TimerContTest {
             AtomicReference<TimerCont> timerRef = new AtomicReference<>();
             AtomicBoolean parked = new AtomicBoolean();
             WorkerContinuation cont = new WorkerContinuation(() -> {
-                TimerCont t = TimerCont.scheduleAfter(shards, 50);
+                TimerCont t = TimerCont.scheduleAfter(shards, MillisecondClockImpl.INSTANCE, 50);
                 timerRef.set(t);
                 if (WorkerContinuation.suspend()) {
                     parked.set(true);
@@ -75,7 +76,7 @@ public class TimerContTest {
         CountDownLatch resumed = new CountDownLatch(1);
         AtomicBoolean wasShutdown = new AtomicBoolean();
         WorkerContinuation cont = new WorkerContinuation(() -> {
-            TimerCont t = TimerCont.scheduleAfter(shards, 60_000);
+            TimerCont t = TimerCont.scheduleAfter(shards, MillisecondClockImpl.INSTANCE, 60_000);
             if (WorkerContinuation.suspend()) {
                 wasShutdown.set(t.isShuttingDown());
                 resumed.countDown();

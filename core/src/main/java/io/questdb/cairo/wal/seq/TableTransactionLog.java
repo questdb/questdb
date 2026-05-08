@@ -35,6 +35,7 @@ import io.questdb.cairo.wal.WalDirectoryPolicy;
 import io.questdb.griffin.engine.ops.AlterOperation;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
+import io.questdb.std.CarrierLocal;
 import io.questdb.std.Files;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.MemoryTag;
@@ -52,7 +53,6 @@ import java.util.concurrent.atomic.AtomicLong;
 
 import static io.questdb.cairo.TableUtils.openSmallFile;
 import static io.questdb.cairo.wal.WalUtils.*;
-import io.questdb.std.CarrierLocal;
 
 public class TableTransactionLog implements Closeable {
     private static final Log LOG = LogFactory.getLog(TableTransactionLog.class);

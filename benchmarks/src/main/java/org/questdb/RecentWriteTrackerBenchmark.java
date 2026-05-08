@@ -25,6 +25,7 @@
 package org.questdb;
 
 import io.questdb.cairo.TableToken;
+import io.questdb.std.CarrierLocal;
 import org.openjdk.jmh.annotations.Benchmark;
 import org.openjdk.jmh.annotations.BenchmarkMode;
 import org.openjdk.jmh.annotations.Fork;
@@ -45,7 +46,6 @@ import org.openjdk.jmh.runner.options.OptionsBuilder;
 
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.TimeUnit;
-import io.questdb.std.CarrierLocal;
 
 /**
  * Benchmark to measure allocation behavior of different ConcurrentHashMap.compute() patterns.

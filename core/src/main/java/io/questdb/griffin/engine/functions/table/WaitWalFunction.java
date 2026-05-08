@@ -158,6 +158,7 @@ class WaitWalFunction extends BooleanFunction implements Function {
             this.executionContext = executionContext;
         } else {
             seqTxnTracker = null;
+            tableToken = null;
             this.executionContext = null;
         }
         super.init(symbolTableSource, executionContext);

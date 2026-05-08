@@ -25,6 +25,7 @@
 package io.questdb.mp.continuation;
 
 import io.questdb.std.Unsafe;
+import io.questdb.std.datetime.millitime.MillisecondClock;
 import org.jetbrains.annotations.NotNull;
 
 import java.util.concurrent.Delayed;
@@ -37,7 +38,7 @@ import java.util.concurrent.TimeUnit;
  *
  * <p>Usage shape:
  * <pre>
- *   TimerCont t = TimerCont.scheduleAfter(engine.getTimerShards(), 50);
+ *   TimerCont t = TimerCont.scheduleAfter(engine.getTimerShards(), clock, 50);
  *   if (!WorkerContinuation.suspend()) {
  *       t.abortContinuation();
  *       // fall back to legacy polling
@@ -58,13 +59,15 @@ public final class TimerCont implements DelayedFireable {
     public static final int STATE_FIRED = 1;
     public static final int STATE_PENDING = 0;
     private static final long STATE_OFFSET = Unsafe.getFieldOffset(TimerCont.class, "state");
+    private final MillisecondClock clock;
     private final WorkerContinuation cont;
     private final long deadlineMillis;
     @SuppressWarnings("FieldMayBeFinal")
     private volatile int state = STATE_PENDING;
 
-    private TimerCont(WorkerContinuation cont, long deadlineMillis) {
+    private TimerCont(WorkerContinuation cont, MillisecondClock clock, long deadlineMillis) {
         this.cont = cont;
+        this.clock = clock;
         this.deadlineMillis = deadlineMillis;
     }
 
@@ -74,14 +77,18 @@ public final class TimerCont implements DelayedFireable {
      * callers must invoke this from inside a worker continuation (verified by
      * {@link WorkerContinuation#isMounted}).
      *
+     * <p>The {@code clock} is used both for the deadline computation here and for the
+     * subsequent {@link #getDelay} reads. Callers should pass the same clock that gates
+     * their own deadline math so the two cannot diverge under a mocked clock.
+     *
      * @throws IllegalStateException when no continuation is mounted on the calling thread
      */
-    public static TimerCont scheduleAfter(@NotNull TimerShards shards, long afterMillis) {
+    public static TimerCont scheduleAfter(@NotNull TimerShards shards, @NotNull MillisecondClock clock, long afterMillis) {
         WorkerContinuation cont = WorkerContinuation.current();
         if (cont == null || !WorkerContinuation.isMounted()) {
             throw new IllegalStateException("TimerCont.scheduleAfter requires a mounted WorkerContinuation");
         }
-        TimerCont t = new TimerCont(cont, System.currentTimeMillis() + afterMillis);
+        TimerCont t = new TimerCont(cont, clock, clock.getTicks() + afterMillis);
         shards.register(t);
         return t;
     }
@@ -118,7 +125,7 @@ public final class TimerCont implements DelayedFireable {
 
     @Override
     public long getDelay(@NotNull TimeUnit unit) {
-        return unit.convert(deadlineMillis - System.currentTimeMillis(), TimeUnit.MILLISECONDS);
+        return unit.convert(deadlineMillis - clock.getTicks(), TimeUnit.MILLISECONDS);
     }
 
     /**

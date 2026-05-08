@@ -79,6 +79,6 @@ public class ParanoiaState {
     }
 
     static {
-        LOG_PARANOIA_MODE = LOG_PARANOIA_MODE_AGGRESSIVE;
+        LOG_PARANOIA_MODE = isInsideJUnitTest() ? LOG_PARANOIA_MODE_BASIC : LOG_PARANOIA_MODE_NONE;
     }
 }

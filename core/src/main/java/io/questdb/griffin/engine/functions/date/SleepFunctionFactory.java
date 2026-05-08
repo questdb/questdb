@@ -207,7 +207,7 @@ public class SleepFunctionFactory implements FunctionFactory {
                     }
                     executionContext.getCircuitBreaker().statefulThrowExceptionIfTrippedNoThrottle();
                     long chunk = Math.min(remaining, wakeIntervalMillis);
-                    TimerCont t = TimerCont.scheduleAfter(shards, chunk);
+                    TimerCont t = TimerCont.scheduleAfter(shards, clock, chunk);
                     if (!WorkerContinuation.suspend()) {
                         // Carrier pinned by a synchronized or native frame: cancel the
                         // pending timer entry and fall back to the polling loop below.

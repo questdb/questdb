@@ -205,21 +205,27 @@ public final class TimerShards {
 
     private void runShard(DelayQueue<DelayedFireable> shard) {
         CarrierIdentity.bind();
-        while (running) {
-            try {
-                DelayedFireable e = shard.take();
-                if (e == PoisonSentinel.INSTANCE || !running) {
-                    return;
+        try {
+            while (running) {
+                try {
+                    DelayedFireable e = shard.take();
+                    if (e == PoisonSentinel.INSTANCE || !running) {
+                        return;
+                    }
+                    e.expire();
+                } catch (InterruptedException ie) {
+                    Thread.currentThread().interrupt();
+                    if (!running) {
+                        return;
+                    }
+                } catch (Throwable t) {
+                    log.critical().$("timer shard expire failed [error=").$(t).I$();
                 }
-                e.expire();
-            } catch (InterruptedException ie) {
-                Thread.currentThread().interrupt();
-                if (!running) {
-                    return;
-                }
-            } catch (Throwable t) {
-                log.critical().$("timer shard expire failed [error=").$(t).I$();
             }
+        } finally {
+            // Release the CarrierLocal row pinned to this shard thread's id so
+            // it does not survive across engine restarts in long-running JVMs.
+            CarrierIdentity.unbind();
         }
     }
 
