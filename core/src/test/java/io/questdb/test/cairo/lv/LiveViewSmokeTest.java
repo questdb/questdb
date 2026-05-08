@@ -24,6 +24,7 @@
 
 package io.questdb.test.cairo.lv;
 
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.lv.LiveViewDefinition;
 import io.questdb.cairo.lv.LiveViewInstance;
@@ -31,11 +32,17 @@ import io.questdb.cairo.lv.LiveViewRefreshJob;
 import io.questdb.cairo.lv.LiveViewState;
 import io.questdb.griffin.SqlException;
 import io.questdb.mp.Job;
+import io.questdb.std.Chars;
 import io.questdb.std.FilesFacade;
+import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
+import io.questdb.std.str.Utf8s;
 import io.questdb.test.AbstractCairoTest;
+import io.questdb.test.std.TestFilesFacadeImpl;
 import org.junit.Assert;
 import org.junit.Test;
+
+import java.util.concurrent.atomic.AtomicBoolean;
 
 /**
  * Phase 1 smoke tests: confirm the new CREATE LIVE VIEW syntax (FLUSH EVERY,
@@ -223,6 +230,77 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
             Assert.assertEquals(
                     "lvConsumedSeqTxn must equal lastProcessedSeqTxn after apply",
                     instance.getLastProcessedSeqTxn(),
+                    instance.getStateReader().getLvConsumedSeqTxn()
+            );
+
+            execute("DROP LIVE VIEW lv");
+        });
+    }
+
+    @Test
+    public void testApplyPersistFailureDoesNotAdvanceFloor() throws Exception {
+        // Regression: pre-fix, advanceLiveViewConsumedSeqTxn mutated the in-memory
+        // floor before persisting _lv.s and silently swallowed any persist error,
+        // leaving the in-memory floor ahead of the durable contract WalPurgeJob
+        // reads (RFC 123 §"WAL retention coupling"). The fix reorders to persist
+        // first and throws on failure.
+        final AtomicBoolean failPersist = new AtomicBoolean(false);
+        FilesFacade ff = new TestFilesFacadeImpl() {
+            @Override
+            public long openRW(LPSZ name, int opts) {
+                if (failPersist.get() && Utf8s.endsWithAscii(name, LiveViewState.LIVE_VIEW_STATE_FILE_NAME)) {
+                    return -1;
+                }
+                return super.openRW(name, opts);
+            }
+        };
+
+        assertMemoryLeak(ff, () -> {
+            execute("CREATE TABLE base (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 1s AS " +
+                    "SELECT ts, x, row_number() OVER () AS rn FROM base WHERE x > 0");
+            execute("INSERT INTO base (ts, x) VALUES ('2026-04-01T00:00:00.000000Z', 4)");
+            drainWalQueue();
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                drainJob(job);
+            }
+            drainWalQueue();
+
+            LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("lv");
+            Assert.assertNotNull(instance);
+            TableToken token = instance.getLiveViewToken();
+            long baselineFloor = instance.getStateReader().getLvConsumedSeqTxn();
+            Assert.assertTrue("baseline lvConsumedSeqTxn must be > -1", baselineFloor > -1);
+
+            // Inject persist failure and call advance directly with a strictly higher value.
+            // Pre-fix the in-memory floor would advance and the persist error would be
+            // swallowed; post-fix the call throws and the in-memory floor stays put.
+            failPersist.set(true);
+            try {
+                long target = baselineFloor + 10;
+                try {
+                    engine.advanceLiveViewConsumedSeqTxn(token, target);
+                    Assert.fail("expected CairoException from failed _lv.s persist");
+                } catch (CairoException e) {
+                    Assert.assertTrue(
+                            "exception must mention the view name [msg=" + e.getFlyweightMessage() + "]",
+                            Chars.contains(e.getFlyweightMessage(), token.getTableName())
+                    );
+                }
+                Assert.assertEquals(
+                        "in-memory lvConsumedSeqTxn must not advance when _lv.s persist fails",
+                        baselineFloor,
+                        instance.getStateReader().getLvConsumedSeqTxn()
+                );
+            } finally {
+                failPersist.set(false);
+            }
+
+            // Sanity: with the failure flag cleared, the same advance succeeds and the
+            // in-memory floor publishes the new value.
+            engine.advanceLiveViewConsumedSeqTxn(token, baselineFloor + 10);
+            Assert.assertEquals(
+                    baselineFloor + 10,
                     instance.getStateReader().getLvConsumedSeqTxn()
             );
 

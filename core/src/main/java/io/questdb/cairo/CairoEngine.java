@@ -369,6 +369,11 @@ public class CairoEngine implements Closeable, WriterSource {
      * {@code LIVE_VIEW_DATA} apply. Synchronizes on the instance to coordinate with the
      * refresh worker, which also rewrites {@code _lv.s} for {@code lastProcessedSeqTxn}
      * bookkeeping.
+     * <p>
+     * Persists the new value to {@code _lv.s} before mutating in-memory state — disk is
+     * the contract with {@code WalPurgeJob}. On persist failure, throws
+     * {@link CairoException}; the in-memory floor stays at the prior durable value so the
+     * next apply re-attempts the advance from the same point.
      */
     public void advanceLiveViewConsumedSeqTxn(TableToken liveViewToken, long maxBaseSeqTxn) {
         if (maxBaseSeqTxn < 0) {
@@ -379,22 +384,38 @@ public class CairoEngine implements Closeable, WriterSource {
             return;
         }
         synchronized (instance) {
-            if (maxBaseSeqTxn <= instance.getStateReader().getLvConsumedSeqTxn()) {
+            LiveViewStateReader reader = instance.getStateReader();
+            if (maxBaseSeqTxn <= reader.getLvConsumedSeqTxn()) {
                 return;
             }
-            instance.setLvConsumedSeqTxn(maxBaseSeqTxn);
+            // Durability rule (RFC 123 §"WAL retention coupling"): _lv.s is the contract with
+            // WalPurgeJob; the in-memory floor must trail disk. Persist the new value first,
+            // then publish in-memory. If persist fails, the in-memory value stays at the old
+            // durable floor, so the next apply re-attempts the advance from the same point.
             try (
                     BlockFileWriter blockFileWriter = new BlockFileWriter(configuration.getFilesFacade(), configuration.getCommitMode());
                     Path path = new Path()
             ) {
                 path.of(configuration.getDbRoot()).concat(liveViewToken).concat(LiveViewState.LIVE_VIEW_STATE_FILE_NAME);
                 blockFileWriter.of(path.$());
-                LiveViewState.append(instance.getStateReader(), blockFileWriter);
+                LiveViewState.append(
+                        reader.isInvalid(),
+                        reader.getInvalidationReason(),
+                        reader.getInvalidationTimestampUs(),
+                        reader.getSubscribeFromSeqTxn(),
+                        reader.getLastProcessedSeqTxn(),
+                        reader.getAppliedWatermark(),
+                        maxBaseSeqTxn,
+                        blockFileWriter
+                );
             } catch (Throwable t) {
                 LOG.error().$("could not persist live view consumed seqTxn [view=").$(liveViewToken)
                         .$(", maxBaseSeqTxn=").$(maxBaseSeqTxn)
                         .$(", error=").$(t).I$();
+                throw CairoException.critical(0).put("could not persist live view consumed seqTxn [view=")
+                        .put(liveViewToken.getTableName()).put(", maxBaseSeqTxn=").put(maxBaseSeqTxn).put(']');
             }
+            instance.setLvConsumedSeqTxn(maxBaseSeqTxn);
         }
     }
 

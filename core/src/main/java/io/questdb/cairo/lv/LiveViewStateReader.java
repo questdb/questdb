@@ -61,7 +61,9 @@ public class LiveViewStateReader implements Mutable {
     private boolean invalid;
     private long invalidationTimestampUs = Numbers.LONG_NULL;
     private long lastProcessedSeqTxn = -1L;
-    private long lvConsumedSeqTxn = -1L;
+    // Read lock-free by WalPurgeJob; writes are guarded by synchronized (LiveViewInstance)
+    // in advanceLiveViewConsumedSeqTxn. Volatile so the lock-free read sees a published value.
+    private volatile long lvConsumedSeqTxn = -1L;
     private long subscribeFromSeqTxn = -1L;
 
     @Override
