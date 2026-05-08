@@ -25,6 +25,7 @@
 package io.questdb.test.cairo.lv;
 
 import io.questdb.cairo.TableToken;
+import io.questdb.cairo.lv.LiveViewDefinition;
 import io.questdb.cairo.lv.LiveViewInstance;
 import io.questdb.cairo.lv.LiveViewRefreshJob;
 import io.questdb.cairo.lv.LiveViewState;
@@ -387,6 +388,47 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
             );
 
             execute("DROP LIVE VIEW lv");
+        });
+    }
+
+    @Test
+    public void testLoaderReapsOrphanLiveViewDirectory() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 1s AS " +
+                    "SELECT ts, x, row_number() OVER () AS rn FROM base WHERE x > 0");
+
+            // Simulate a CREATE crash that left the table directory and _lv.s
+            // behind but never wrote the _lv commit marker. After restart, the
+            // loader should reap the directory.
+            TableToken token = engine.getLiveViewRegistry().getViewInstance("lv").getLiveViewToken();
+            FilesFacade ff = engine.getConfiguration().getFilesFacade();
+            try (Path path = new Path()) {
+                path.of(engine.getConfiguration().getDbRoot())
+                        .concat(token)
+                        .concat(LiveViewDefinition.LIVE_VIEW_DEFINITION_FILE_NAME);
+                Assert.assertTrue(ff.removeQuiet(path.$()));
+
+                // Sanity: the LV directory is still on disk before the loader runs.
+                path.of(engine.getConfiguration().getDbRoot()).concat(token);
+                Assert.assertTrue("LV directory must still exist before reap", ff.exists(path.$()));
+            }
+
+            engine.getLiveViewRegistry().clear();
+            engine.buildViewGraphs();
+
+            Assert.assertNull(
+                    "loader must not register an LV without a committed _lv",
+                    engine.getLiveViewRegistry().getViewInstance("lv")
+            );
+            // The reap path goes through dropTableOrViewOrMatView, which marks
+            // the WAL token dropped in the name registry. On-disk cleanup is
+            // then handled by the standard WAL purge machinery; this assertion
+            // captures the durable-side outcome (the LV name no longer resolves).
+            Assert.assertNull(
+                    "loader must mark the orphan token as dropped",
+                    engine.getTableTokenIfExists("lv")
+            );
         });
     }
 

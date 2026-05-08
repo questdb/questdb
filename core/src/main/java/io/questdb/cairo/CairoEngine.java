@@ -547,7 +547,22 @@ public class CairoEngine implements Closeable, WriterSource {
                         rec.I$();
                     }
                 }
-                if (tableToken.isLiveView() && TableUtils.isLiveViewDefinitionFileExists(configuration, path, tableToken.getDirName())) {
+                if (tableToken.isLiveView()) {
+                    if (!TableUtils.isLiveViewDefinitionFileExists(configuration, path, tableToken.getDirName())) {
+                        // Orphan LV directory: createLiveView writes _lv last as the
+                        // atomic commit marker, so a missing _lv means CREATE crashed
+                        // before finishing. Reap the directory so it does not pile up.
+                        // Best-effort: a failure here only delays cleanup, never loses
+                        // committed data (the LV never reached the visible state).
+                        LOG.info().$("reaping half-created live view [view=").$(tableToken).I$();
+                        try {
+                            dropTableOrViewOrMatView(path, tableToken);
+                        } catch (Throwable th) {
+                            LOG.error().$("could not reap half-created live view [view=").$(tableToken)
+                                    .$(", msg=").$safe(th.getMessage()).I$();
+                        }
+                        continue;
+                    }
                     try {
                         if (liveViewRegistry.getViewInstance(tableToken.getTableName()) == null) {
                             final GenericRecordMetadata metadata;
