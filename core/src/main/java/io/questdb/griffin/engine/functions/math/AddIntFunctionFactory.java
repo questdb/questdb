@@ -96,12 +96,16 @@ public class AddIntFunctionFactory implements FunctionFactory {
 
         @Override
         public long getLong(Record rec) {
-            final int left = this.left.getInt(rec);
-            final int right = this.right.getInt(rec);
-            if (left == Numbers.INT_NULL || right == Numbers.INT_NULL) {
+            // Widen subtree operands to long so nested INT arithmetic stays
+            // at long width here too; calling getInt() recursively would let
+            // an inner INT*INT product wrap mod 2^32 before the outer
+            // promotion, diverging from the JIT widening path.
+            final long left = this.left.getLong(rec);
+            final long right = this.right.getLong(rec);
+            if (left == Numbers.LONG_NULL || right == Numbers.LONG_NULL) {
                 return Numbers.LONG_NULL;
             }
-            return ((long) left) + right;
+            return left + right;
         }
 
         @Override

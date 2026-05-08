@@ -96,10 +96,14 @@ public class SubIntFunctionFactory implements FunctionFactory {
 
         @Override
         public long getLong(Record rec) {
-            int l = left.getInt(rec);
-            int r = right.getInt(rec);
-            if (l != Numbers.INT_NULL && r != Numbers.INT_NULL) {
-                return ((long) l) - r;
+            // Widen subtree operands to long so nested INT arithmetic stays
+            // at long width here too; calling getInt() recursively would let
+            // an inner INT*INT product wrap mod 2^32 before the outer
+            // promotion, diverging from the JIT widening path.
+            long l = left.getLong(rec);
+            long r = right.getLong(rec);
+            if (l != Numbers.LONG_NULL && r != Numbers.LONG_NULL) {
+                return l - r;
             }
             return Numbers.LONG_NULL;
         }

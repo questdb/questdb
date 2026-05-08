@@ -672,6 +672,67 @@ public class CompiledFilterTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testNestedIntArithmeticWidenedToLongInLongContext() throws Exception {
+        assertMemoryLeak(() -> {
+            // The fuzzer hit a JIT/Java divergence on a predicate of shape
+            //   c0 <= ((-732674 * c5) + -238927)
+            // where c0 is LONG and c5 is INT. The Java filter computed
+            // AddInt.getLong as ((long) MulInt.getInt()) + rightInt, so the
+            // inner -732674 * c5 wrapped at int32 before the outer cast
+            // widened the sum to long. The JIT pre-pass widens every narrow
+            // operand to i64 up front and computes at long width throughout,
+            // so the two paths disagreed for c5 large enough that the inner
+            // product overflowed int32. After the fix MulInt / AddInt /
+            // SubInt / NegInt's getLong recurse via .getLong on their
+            // subtrees, keeping nested INT arithmetic at long width too.
+            execute("CREATE TABLE x (c0 LONG, c5 INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO x VALUES " +
+                    "(1_000_000_000, 10000, '2024-01-01T00:00:00.000000Z')," +
+                    " (-7_326_979_000, 10000, '2024-01-01T00:00:00.000001Z')," +
+                    " (2_000_000_000, 10000, '2024-01-01T00:00:00.000002Z')");
+
+            // -732674 * 10000 = -7_326_740_000L (overflows int32). Adding
+            // -238927 yields -7_326_978_927L. Only c0 = -7_326_979_000
+            // satisfies c0 <= rhs at long width. Pre-fix the inner mul
+            // wrapped to 1_263_194_592 at int32, so rhs became 1_262_955_665
+            // and the c0 = 1_000_000_000 row also matched, giving a count
+            // of 2 on the Java filter while JIT (with widening) returned 1.
+            String sql = "SELECT count(*) FROM x WHERE c0 <= ((-732674 * c5) + -238927)";
+
+            sqlExecutionContext.setJitMode(SqlJitMode.JIT_MODE_DISABLED);
+            assertSql("count\n1\n", sql);
+            sqlExecutionContext.setJitMode(SqlJitMode.JIT_MODE_ENABLED);
+            assertSql("count\n1\n", sql);
+
+            try (RecordCursorFactory factory = select(sql)) {
+                Assert.assertTrue("nested INT arithmetic in LONG context must still JIT",
+                        factory.usesCompiledFilter());
+            }
+
+            // Same shape with subtraction: (-732674 * c5) - 238927 reaches
+            // SubInt.getLong, which must recurse through MulInt as well.
+            String subSql = "SELECT count(*) FROM x WHERE c0 <= ((-732674 * c5) - 238927)";
+            sqlExecutionContext.setJitMode(SqlJitMode.JIT_MODE_DISABLED);
+            assertSql("count\n1\n", subSql);
+            sqlExecutionContext.setJitMode(SqlJitMode.JIT_MODE_ENABLED);
+            assertSql("count\n1\n", subSql);
+
+            // Same shape under unary minus: -((-732674 * c5) + 238927)
+            // reaches NegInt.getLong, which must also recurse. At long width
+            // rhs = 7_326_501_073L and all three rows satisfy c0 <= rhs.
+            // Pre-fix the inner mul wrapped to 1_263_194_592 at int32, so
+            // rhs became -1_263_433_519 and only c0 = -7_326_979_000
+            // matched, giving a count of 1 on the Java filter while JIT
+            // returned 3.
+            String negSql = "SELECT count(*) FROM x WHERE c0 <= -((-732674 * c5) + 238927)";
+            sqlExecutionContext.setJitMode(SqlJitMode.JIT_MODE_DISABLED);
+            assertSql("count\n3\n", negSql);
+            sqlExecutionContext.setJitMode(SqlJitMode.JIT_MODE_ENABLED);
+            assertSql("count\n3\n", negSql);
+        });
+    }
+
+    @Test
     public void testIntColumnArithmeticInDoubleContextStaysAtIntWidth() throws Exception {
         assertMemoryLeak(() -> {
             // Negative case: in DOUBLE context the Java filter goes through

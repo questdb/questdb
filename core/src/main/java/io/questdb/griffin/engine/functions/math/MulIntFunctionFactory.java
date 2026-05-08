@@ -94,12 +94,17 @@ public class MulIntFunctionFactory implements FunctionFactory {
 
         @Override
         public long getLong(Record rec) {
-            final int l = left.getInt(rec);
-            final int r = right.getInt(rec);
-            if (l == Numbers.INT_NULL || r == Numbers.INT_NULL) {
+            // Widen subtree operands to long so nested INT arithmetic computes
+            // at long width here too. Calling getInt() recursively would let
+            // an inner INT*INT product wrap mod 2^32 before the outer cast
+            // promoted it to long, diverging from the JIT path which widens
+            // every narrow operand up front when the predicate has a LONG.
+            final long l = left.getLong(rec);
+            final long r = right.getLong(rec);
+            if (l == Numbers.LONG_NULL || r == Numbers.LONG_NULL) {
                 return Numbers.LONG_NULL;
             }
-            return ((long) l) * r;
+            return l * r;
         }
 
         @Override
