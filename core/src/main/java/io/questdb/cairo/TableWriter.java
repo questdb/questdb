@@ -4828,20 +4828,28 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 // lifecycle: the genCounter in the .pk header is the
                 // high-water sealTxn that pending orphan purges may target,
                 // and removing a live .pk silently drops every published
-                // chain entry. Treat existing files as sacrosanct: if the
-                // .pk is there, leave it alone regardless of size or
-                // header content. A genuinely torn header (partial init
-                // crash, zeroed seqlock pages) surfaces later via
-                // chain.openExisting / keyMem mapping ("posting index
-                // header unreadable", "Index file too short"), which is
-                // the right place for a loud detect-and-propagate. The
-                // alternative — probing with openRO + readNonNegativeLong
-                // here — has to invent a fallback when the read itself
-                // fails (test-injected fault, transient I/O), and any
-                // fallback that returns "uninitialised" leads back to
-                // this branch wiping a file the writer was actively
-                // managing. Skipping the probe entirely removes that
-                // failure mode.
+                // chain entry — a data-loss bug. Treat existing files as
+                // sacrosanct: if the .pk is there, leave it alone
+                // regardless of size or header content.
+                //
+                // Earlier revisions probed the file with openRO +
+                // readNonNegativeLong to validate the v2 seqlock and
+                // wipe-and-recreate any .pk that looked partially
+                // initialised. The probe is unsound: openRO and length
+                // can fail transiently in production (fd exhaustion,
+                // disk I/O hiccups) on a perfectly healthy file, and any
+                // fallback the helper picks for that failure has to
+                // either drop a live writer's chain or refuse to clean
+                // up real garbage. The destructive choice was the
+                // default and lost data under load. Skipping the probe
+                // and trusting ff.exists removes that failure mode.
+                //
+                // A genuinely torn header from a crashed init still
+                // surfaces — just later, via chain.openExisting /
+                // keyMem mapping ("posting index header unreadable",
+                // "Index file too short"). That path has explicit
+                // error propagation, while the wipe-and-recreate path
+                // had none.
                 if (ff.exists(path.$())) {
                     return;
                 }
