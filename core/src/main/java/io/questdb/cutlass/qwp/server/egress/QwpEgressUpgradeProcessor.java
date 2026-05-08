@@ -597,7 +597,10 @@ public class QwpEgressUpgradeProcessor implements HttpRequestProcessor, QuietClo
             QwpServerInfoProvider provider,
             long serverWallNs
     ) {
-        int minSize = 2 + QwpConstants.HEADER_SIZE + 26;
+        // 26 bytes covers the v2.0 fixed body; CAP_ZONE adds another 2 bytes
+        // for the zone_id length prefix, so size for the worst case unconditionally
+        // (a couple of bytes is negligible against the egress send buffer).
+        int minSize = 2 + QwpConstants.HEADER_SIZE + 28;
         if (bufSize < minSize) {
             return -1;
         }
@@ -614,7 +617,8 @@ public class QwpEgressUpgradeProcessor implements HttpRequestProcessor, QuietClo
                 provider.getCapabilities(),
                 serverWallNs,
                 provider.getClusterId(),
-                provider.getNodeId()
+                provider.getNodeId(),
+                provider.getZoneId()
         );
         if (bodyEnd < 0) {
             return -1;
