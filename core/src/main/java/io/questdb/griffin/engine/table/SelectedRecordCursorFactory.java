@@ -55,7 +55,6 @@ import org.jetbrains.annotations.Nullable;
 public final class SelectedRecordCursorFactory extends AbstractRecordCursorFactory {
     private final RecordCursorFactory base;
     private final IntList columnCrossIndex;
-    private final boolean crossedIndex;
     private final SelectedRecordCursor cursor;
     private final boolean needsProjection;
     private SelectedPageFrameCursor pageFrameCursor;
@@ -67,11 +66,12 @@ public final class SelectedRecordCursorFactory extends AbstractRecordCursorFacto
         this.base = base;
         this.columnCrossIndex = columnCrossIndex;
         this.cursor = new SelectedRecordCursor(columnCrossIndex, base.recordCursorSupportsRandomAccess());
-        this.crossedIndex = isCrossedIndex(columnCrossIndex);
-        // Page frame consumers expect the cursor's column mapping to be parallel with the
-        // projected metadata. A drop-only projection (size shrinks but elements stay at their
-        // own index) doesn't trigger crossedIndex, so check the size separately.
-        this.needsProjection = crossedIndex || columnCrossIndex.size() != base.getMetadata().getColumnCount();
+        // True when the cursor must wrap its base to expose only the projected columns.
+        // isCrossedIndex covers reorder; the size check covers drop-only-with-identity-mapping
+        // (kept columns are at base[0..size-1]). Without the size check, page frame consumers
+        // that iterate by base columnMapping size would walk past the projected metadata.
+        this.needsProjection = isCrossedIndex(columnCrossIndex)
+                || columnCrossIndex.size() != base.getMetadata().getColumnCount();
     }
 
     public static boolean isCrossedIndex(IntList columnCrossIndex) {
@@ -118,7 +118,7 @@ public final class SelectedRecordCursorFactory extends AbstractRecordCursorFacto
     @Override
     public RecordCursor getCursor(SqlExecutionContext executionContext) throws SqlException {
         final RecordCursor baseCursor = base.getCursor(executionContext);
-        if (!crossedIndex) {
+        if (!needsProjection) {
             return baseCursor;
         }
         try {
@@ -154,7 +154,7 @@ public final class SelectedRecordCursorFactory extends AbstractRecordCursorFacto
 
     @Override
     public RecordCursor getSharedCursor(SqlExecutionContext executionContext, int sharedId) throws SqlException {
-        if (!crossedIndex) {
+        if (!needsProjection) {
             return base.getSharedCursor(executionContext, sharedId);
         }
         if (sharedCursors == null) {
@@ -200,7 +200,7 @@ public final class SelectedRecordCursorFactory extends AbstractRecordCursorFacto
     @Override
     public ConcurrentTimeFrameCursor newTimeFrameCursor() {
         ConcurrentTimeFrameCursor baseCursor = base.newTimeFrameCursor();
-        if (baseCursor == null || !crossedIndex) {
+        if (baseCursor == null || !needsProjection) {
             return baseCursor;
         }
         return new SelectedConcurrentTimeFrameCursor(baseCursor, getMetadata().getTimestampIndex());
