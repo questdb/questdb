@@ -91,8 +91,11 @@ import static io.questdb.cairo.wal.WalUtils.WAL_NAME_BASE;
  * Phase 1 sharp edges (per delta plan §"Phase 1 — disk-only end-to-end"):
  * <ul>
  *     <li>No checkpoints, no JIT filter path, no cold-skip / warm-replay branching.</li>
- *     <li>FLUSH cycle is implicit per-task: every dequeued task drives one WAL commit.
- *     A periodic FLUSH-EVERY tick is deferred.</li>
+ *     <li>FLUSH EVERY enforces a minimum interval between LV WAL commits: a refresh
+ *     that arrives within {@code flushEveryMicros} of the previous commit is skipped
+ *     and the fallback scan retries on the next worker tick. Under high-rate base
+ *     ingestion this batches many base notifications into one LV commit per FLUSH
+ *     EVERY interval.</li>
  *     <li>Schema-change detection still routes through {@code ApplyWal2TableJob} —
  *     non-DATA WAL events on the base are walked past by this job without modifying
  *     state, while invalidation flows via
@@ -541,10 +544,22 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             try {
                 long lastSeqTxn = instance.getLastProcessedSeqTxn();
                 if (seqTxn > lastSeqTxn) {
+                    // FLUSH EVERY rate-limit: skip if the previous commit was within
+                    // flushEveryMicros. The fallback scan retries each worker tick, so
+                    // this view's catch-up resumes naturally once the interval elapses.
+                    // We bump lastFlushTimeUs to nowUs only after a successful refresh,
+                    // so a long-running first commit does not double-charge the budget.
+                    long nowUs = engine.getConfiguration().getMicrosecondClock().getTicks();
+                    long lastFlushUs = instance.getLastFlushTimeUs();
+                    long flushEveryMicros = instance.getDefinition().getFlushEveryMicros();
+                    if (lastFlushUs != Numbers.LONG_NULL && nowUs - lastFlushUs < flushEveryMicros) {
+                        return;
+                    }
                     // TransactionLogCursor treats txnLo as exclusive (lastApplied), so we
                     // pass lastSeqTxn directly. The cursor's getTxn() returns entries with
                     // seqTxn > lastSeqTxn.
                     incrementalRefresh(instance, lastSeqTxn, seqTxn);
+                    instance.setLastFlushTimeUs(engine.getConfiguration().getMicrosecondClock().getTicks());
                 }
                 instance.setLastRefreshTimeUs(engine.getConfiguration().getMicrosecondClock().getTicks());
             } catch (Throwable t) {

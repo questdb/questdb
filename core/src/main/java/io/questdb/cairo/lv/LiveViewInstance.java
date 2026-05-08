@@ -84,6 +84,12 @@ public class LiveViewInstance implements QuietCloseable {
     private RecordCursorFactory compiledFactory;
     private volatile boolean dropped;
     private volatile boolean isClosed;
+    // Wall-clock (micros) of the most recent successful LV WAL commit. Used by
+    // LiveViewRefreshJob to enforce FLUSH EVERY: a refresh that arrives within
+    // flushEveryMicros of the previous commit is skipped, so high-rate base
+    // ingestion produces batched commits at FLUSH EVERY cadence rather than one
+    // commit per base notification.
+    private volatile long lastFlushTimeUs = Numbers.LONG_NULL;
     // Last refresh-worker tick wall-clock (micros). Used by catalogue / lag metrics.
     private volatile long lastRefreshTimeUs = Numbers.LONG_NULL;
     // Live-view's own table token. Populated at construction.
@@ -153,6 +159,10 @@ public class LiveViewInstance implements QuietCloseable {
 
     public CharSequence getInvalidationReason() {
         return stateReader.getInvalidationReason();
+    }
+
+    public long getLastFlushTimeUs() {
+        return lastFlushTimeUs;
     }
 
     public long getLastProcessedSeqTxn() {
@@ -253,6 +263,10 @@ public class LiveViewInstance implements QuietCloseable {
             Misc.free(compiledFactory);
             compiledFactory = factory;
         }
+    }
+
+    public void setLastFlushTimeUs(long lastFlushTimeUs) {
+        this.lastFlushTimeUs = lastFlushTimeUs;
     }
 
     public void setLastProcessedSeqTxn(long seqTxn) {

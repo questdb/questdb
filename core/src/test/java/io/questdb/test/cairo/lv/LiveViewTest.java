@@ -341,6 +341,9 @@ public class LiveViewTest extends AbstractCairoTest {
     @Test
     public void testMultipleRefreshBatchesAccumulateState() throws Exception {
         assertMemoryLeak(() -> {
+            // Pin a deterministic clock so the FLUSH EVERY rate-limit (1s) does
+            // not coalesce batch 2 into batch 1 when both run in the same millisecond.
+            setCurrentMicros(0);
             execute("CREATE TABLE base (val INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY HOUR WAL");
             execute("CREATE LIVE VIEW lv FLUSH EVERY 1s AS " +
                     "SELECT val, ts, row_number() OVER () AS rn FROM base");
@@ -352,6 +355,9 @@ public class LiveViewTest extends AbstractCairoTest {
                 drainWalQueue();
                 drainJob(job);
                 drainWalQueue();
+
+                // Advance past FLUSH EVERY so batch 2's refresh is not rate-limited.
+                setCurrentMicros(2_000_000L);
 
                 // Batch 2: rows 3, 4 — rn must continue from 3, not restart at 1.
                 execute("INSERT INTO base (val, ts) VALUES " +

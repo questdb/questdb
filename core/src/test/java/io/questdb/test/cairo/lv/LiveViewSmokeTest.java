@@ -405,6 +405,70 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testFlushEveryRateLimitsCommits() throws Exception {
+        assertMemoryLeak(() -> {
+            // Pin the test clock so the FLUSH EVERY 1s gate is exercised
+            // deterministically: both batches land at t=0, so the second refresh
+            // must be skipped; only after we advance the clock past 1s does
+            // the LV catch up.
+            setCurrentMicros(0);
+            execute("CREATE TABLE base (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 1s AS " +
+                    "SELECT ts, x, row_number() OVER () AS rn FROM base WHERE x > 0");
+
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                // Batch 1 at t=0: passes the gate (lastFlushTimeUs is unset).
+                execute("INSERT INTO base (ts, x) VALUES ('2026-04-01T00:00:00.000000Z', 1)");
+                drainWalQueue();
+                drainJob(job);
+                drainWalQueue();
+
+                LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("lv");
+                Assert.assertNotNull(instance);
+                long firstFlushUs = instance.getLastFlushTimeUs();
+                Assert.assertEquals("first refresh must record the commit timestamp", 0L, firstFlushUs);
+                long firstProcessed = instance.getLastProcessedSeqTxn();
+                Assert.assertTrue("first refresh must advance lastProcessedSeqTxn", firstProcessed > 0);
+
+                // Batch 2 still at t=0: refresh must be skipped because we are
+                // within the 1s rate-limit window.
+                execute("INSERT INTO base (ts, x) VALUES ('2026-04-01T00:00:00.000001Z', 2)");
+                drainWalQueue();
+                drainJob(job);
+                drainWalQueue();
+                Assert.assertEquals(
+                        "rate-limited refresh must not advance lastFlushTimeUs",
+                        firstFlushUs,
+                        instance.getLastFlushTimeUs()
+                );
+                Assert.assertEquals(
+                        "rate-limited refresh must not advance lastProcessedSeqTxn",
+                        firstProcessed,
+                        instance.getLastProcessedSeqTxn()
+                );
+
+                // Advance past FLUSH EVERY: the fallback scan must pick up the
+                // pending commit and refresh now succeeds.
+                setCurrentMicros(2_000_000L);
+                drainJob(job);
+                drainWalQueue();
+                Assert.assertEquals(
+                        "post-window refresh must record the new commit timestamp",
+                        2_000_000L,
+                        instance.getLastFlushTimeUs()
+                );
+                Assert.assertTrue(
+                        "post-window refresh must advance lastProcessedSeqTxn",
+                        instance.getLastProcessedSeqTxn() > firstProcessed
+                );
+            }
+
+            assertSql("count\n2\n", "SELECT count() FROM lv");
+            execute("DROP LIVE VIEW lv");
+        });
+    }
+
+    @Test
     public void testSchemaChangeNarrowsToReferencedColumns() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE base (ts TIMESTAMP, x INT, y INT, z INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
