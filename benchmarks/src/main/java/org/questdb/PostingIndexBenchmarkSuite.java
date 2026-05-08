@@ -23,6 +23,8 @@ import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.RowCursor;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryMA;
+import io.questdb.cairo.wal.ApplyWal2TableJob;
+import io.questdb.cairo.wal.CheckWalTransactionsJob;
 import io.questdb.griffin.SqlCompilerImpl;
 import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.log.LogFactory;
@@ -81,6 +83,7 @@ public class PostingIndexBenchmarkSuite {
 
     private static final double CLOUD_US_PER_PAGE = 1_000;
     private static final long COL_TXN = COLUMN_NAME_TXN_NONE;
+    private static final int[] COVER_REQ_0 = new int[]{0};
     private static final double HDD_US_PER_PAGE = 4_000;
     private static final boolean IS_DELTA = "delta".equals(System.getProperty("questdb.posting.format", "ef"));
     private static final double NVME_US_PER_PAGE = 80;
@@ -130,7 +133,8 @@ public class PostingIndexBenchmarkSuite {
                     writer.setMaxValue(rowId - 1);
                     writer.commit();
                 }
-                writer.close(); // seal
+                writer.seal();
+                writer.close();
             }
         } finally {
             deleteDir(dir);
@@ -205,13 +209,15 @@ public class PostingIndexBenchmarkSuite {
     @Benchmark
     public long sidecarRead(SidecarState s) {
         long sum = 0;
+        boolean covering = "covering".equals(s.mode);
+        int[] requiredCovers = covering ? COVER_REQ_0 : null;
         try (Path path = new Path().of(s.dir)) {
             try (PostingIndexFwdReader reader = new PostingIndexFwdReader(
                     s.config, path, "test", COLUMN_NAME_TXN_NONE, 0, 0,
                     s.coverMetadata, s.cvr, 0)) {
                 for (int key : s.readKeys) {
-                    try (RowCursor cursor = reader.getCursor(key, 0, Long.MAX_VALUE)) {
-                        if ("covering".equals(s.mode) && cursor instanceof CoveringRowCursor crc && crc.isCoveredAvailable(0)) {
+                    try (RowCursor cursor = reader.getCursor(key, 0, Long.MAX_VALUE, requiredCovers)) {
+                        if (covering && cursor instanceof CoveringRowCursor crc && crc.isCoveredAvailable(0)) {
                             while (crc.hasNext()) {
                                 crc.next();
                                 sum += switch (s.columnType) {
@@ -269,6 +275,116 @@ public class PostingIndexBenchmarkSuite {
     // ==================================================================================
     // Section 2: Decode Throughput
     // ==================================================================================
+
+    @Benchmark
+    @BenchmarkMode(Mode.AverageTime)
+    @OutputTimeUnit(TimeUnit.MILLISECONDS)
+    public void walFastLagInsert(WalFastLagState s) throws Exception {
+        // 1s spacing: at JMH's typical invocation rates a full trial
+        // (~50000 invocations) advances ~14h of fake time, comfortably
+        // within the single 2024-01-01 partition. Wider spacing would
+        // cross DAY boundaries and contaminate the seal cost with
+        // partition-switch work.
+        int batchOffsetSeconds = (s.batchCounter++) + 1;
+        String sql = "INSERT INTO walbench(ts, sym, " + s.extraColumns + ") " +
+                "SELECT dateadd('u', x::INT, dateadd('s', " + batchOffsetSeconds + ", '2024-01-01T00:00:00.000000Z'::TIMESTAMP)), " +
+                "rnd_symbol(" + s.keyCount + ", 4, 8, 0), " + s.extraValues + " " +
+                "FROM long_sequence(" + s.batchRows + ")";
+        s.engine.execute(sql, s.ctx);
+        s.applyJob.drain(0);
+        s.checkJob.run(0);
+        s.applyJob.drain(0);
+    }
+
+    @Benchmark
+    @BenchmarkMode(Mode.AverageTime)
+    @OutputTimeUnit(TimeUnit.MILLISECONDS)
+    public long walFastLagInsertAndQuery(WalFastLagState s) throws Exception {
+        // Combined: one fast-lag commit followed by one point query against
+        // the freshly-committed state. Headline number for "what does a
+        // tick of work cost when a query lands in the unsealed window".
+        walFastLagInsert(s);
+        return walFastLagQuery(s);
+    }
+
+    @Benchmark
+    @BenchmarkMode(Mode.AverageTime)
+    @OutputTimeUnit(TimeUnit.MICROSECONDS)
+    public long walFastLagQueryAtGen(WalFastLagQueryGenState s) throws Exception {
+        // Pure point-query against state pre-built to a target unsealed
+        // gen count. Setup ran preload + unsealedGens fast-lag commits;
+        // benchmark adds nothing, so gen count is stable across iters.
+        // This isolates the per-key cursor cost as a function of unsealed
+        // gens (each commit produces one gen via extendHead).
+        String key = s.queryKeys[(s.queryCounter++) & (s.queryKeys.length - 1)];
+        long sum = 0;
+        try (RecordCursorFactory f = s.compiler.compile(
+                "SELECT count() FROM walbench WHERE sym = '" + key + "'", s.ctx
+        ).getRecordCursorFactory()) {
+            try (RecordCursor c = f.getCursor(s.ctx)) {
+                while (c.hasNext()) sum += c.getRecord().getLong(0);
+            }
+        }
+        return sum;
+    }
+
+    @Benchmark
+    @BenchmarkMode(Mode.AverageTime)
+    @OutputTimeUnit(TimeUnit.MILLISECONDS)
+    public void walLargePartitionInsert(WalLargePartitionState s) throws Exception {
+        // One additional 100k-row commit on top of the preloaded partition.
+        // Partition grows by ~1% per JMH iteration, so the measured cost
+        // reflects insert latency at approximately partitionSize rows.
+        int batchOffsetUs = (s.batchCounter++) + WalLargePartitionState.PRELOAD_TS_LIMIT_US + 1;
+        String sql = "INSERT INTO walbench(ts, sym, " + s.extraColumns + ") " +
+                "SELECT dateadd('u', x::INT + " + batchOffsetUs + ", '2024-01-01T00:00:00.000000Z'::TIMESTAMP), " +
+                "rnd_symbol(" + s.keyCount + ", 4, 8, 0), " + s.extraValues + " " +
+                "FROM long_sequence(" + WalLargePartitionState.BATCH_ROWS + ")";
+        s.engine.execute(sql, s.ctx);
+        s.applyJob.drain(0);
+        s.checkJob.run(0);
+        s.applyJob.drain(0);
+    }
+
+    @Benchmark
+    @BenchmarkMode(Mode.AverageTime)
+    @OutputTimeUnit(TimeUnit.MICROSECONDS)
+    public long walLargePartitionQuery(WalLargePartitionState s) throws Exception {
+        // Point-query against a partition pre-loaded to partitionSize rows.
+        // No insert during measurement, so the partition stays at the
+        // configured size across all iterations of a trial.
+        String key = s.queryKeys[(s.queryCounter++) & (s.queryKeys.length - 1)];
+        long sum = 0;
+        try (RecordCursorFactory f = s.compiler.compile(
+                "SELECT count() FROM walbench WHERE sym = '" + key + "'", s.ctx
+        ).getRecordCursorFactory()) {
+            try (RecordCursor c = f.getCursor(s.ctx)) {
+                while (c.hasNext()) sum += c.getRecord().getLong(0);
+            }
+        }
+        return sum;
+    }
+
+    @Benchmark
+    @BenchmarkMode(Mode.AverageTime)
+    @OutputTimeUnit(TimeUnit.MICROSECONDS)
+    public long walFastLagQuery(WalFastLagState s) throws Exception {
+        // Single point query against the table state left by previous
+        // invocations. Compiles fresh because the WAL apply path bumps
+        // table metadata version and invalidates cached factories. The
+        // batchRows axis is irrelevant here but JMH still varies it;
+        // treat those rows as replicate measurements when reading results.
+        String key = s.queryKeys[(s.queryCounter++) & (s.queryKeys.length - 1)];
+        long sum = 0;
+        try (RecordCursorFactory f = s.compiler.compile(
+                "SELECT count() FROM walbench WHERE sym = '" + key + "'", s.ctx
+        ).getRecordCursorFactory()) {
+            try (RecordCursor c = f.getCursor(s.ctx)) {
+                while (c.hasNext()) sum += c.getRecord().getLong(0);
+            }
+        }
+        return sum;
+    }
 
     @Benchmark
     public void writeInsert(WriteState s) throws Exception {
@@ -386,10 +502,13 @@ public class PostingIndexBenchmarkSuite {
     }
 
     private static void doCovCoveringRead(CairoConfiguration config, String dir, int[] keys, CoverType ct) {
-        try (Path path = new Path().of(dir)) {
-            try (PostingIndexFwdReader reader = new PostingIndexFwdReader(config, path, "test", COL_TXN, 0, 0)) {
+        GenericRecordMetadata meta = buildCoverMetadata(ct.columnType);
+        try (ColumnVersionReader cvr = new ColumnVersionReader();
+             Path path = new Path().of(dir)) {
+            try (PostingIndexFwdReader reader = new PostingIndexFwdReader(
+                    config, path, "test", COL_TXN, 0, 0, meta, cvr, 0)) {
                 for (int key : keys) {
-                    try (RowCursor cursor = reader.getCursor(key, 0, Long.MAX_VALUE)) {
+                    try (RowCursor cursor = reader.getCursor(key, 0, Long.MAX_VALUE, COVER_REQ_0)) {
                         if (cursor instanceof CoveringRowCursor crc && crc.isCoveredAvailable(0)) {
                             while (crc.hasNext()) {
                                 crc.next();
@@ -409,6 +528,15 @@ public class PostingIndexBenchmarkSuite {
         }
     }
 
+    private static GenericRecordMetadata buildCoverMetadata(int colType) {
+        GenericRecordMetadata meta = new GenericRecordMetadata();
+        for (int i = 0; i <= 2; i++) {
+            int t = (i == 2) ? colType : ColumnType.LONG;
+            meta.add(new TableColumnMetadata("c" + i, t, IndexType.NONE, 0, false, null, i, false));
+        }
+        return meta;
+    }
+
     // ==================================================================================
     // Shared utilities
     // ==================================================================================
@@ -419,6 +547,54 @@ public class PostingIndexBenchmarkSuite {
         File[] files = dir.listFiles();
         if (files != null) for (File f : files) size += f.length();
         return size;
+    }
+
+    /**
+     * Sidecar files are named {@code <name>.pc<idx>.<colTxn>.<sealTxn>}. Each seal
+     * publishes a new file at a higher sealTxn, but the previous one is normally
+     * removed by a message-bus purge job that this bare-bones benchmark setup does
+     * not run. Call this after {@code writer.seal()} so {@code getDirectorySize}
+     * reflects only the live sidecar.
+     */
+    private static void purgeStaleSidecars(String dir) {
+        File d = new File(dir);
+        File[] files = d.listFiles();
+        if (files == null) return;
+        // group by "<name>.pc<idx>.<colTxn>" prefix; track max sealTxn per group.
+        Map<String, Long> maxSeal = new LinkedHashMap<>();
+        for (File f : files) {
+            String n = f.getName();
+            int pcAt = n.indexOf(".pc");
+            if (pcAt < 0 || n.contains(".pci")) continue;
+            int lastDot = n.lastIndexOf('.');
+            if (lastDot <= pcAt) continue;
+            String prefix = n.substring(0, lastDot);
+            long sealTxn;
+            try {
+                sealTxn = Long.parseLong(n.substring(lastDot + 1));
+            } catch (NumberFormatException e) {
+                continue;
+            }
+            maxSeal.merge(prefix, sealTxn, Math::max);
+        }
+        for (File f : files) {
+            String n = f.getName();
+            int pcAt = n.indexOf(".pc");
+            if (pcAt < 0 || n.contains(".pci")) continue;
+            int lastDot = n.lastIndexOf('.');
+            if (lastDot <= pcAt) continue;
+            String prefix = n.substring(0, lastDot);
+            long sealTxn;
+            try {
+                sealTxn = Long.parseLong(n.substring(lastDot + 1));
+            } catch (NumberFormatException e) {
+                continue;
+            }
+            Long max = maxSeal.get(prefix);
+            if (max != null && sealTxn < max) {
+                f.delete();
+            }
+        }
     }
 
     private static void initPosting(CairoConfiguration config, String dir) {
@@ -685,6 +861,24 @@ public class PostingIndexBenchmarkSuite {
         System.err.println();
     }
 
+    private static String[] sampleKeys(SqlCompilerImpl compiler, SqlExecutionContextImpl ctx, String table, int n) throws Exception {
+        String[] result = new String[n];
+        int idx = 0;
+        try (RecordCursorFactory f = compiler.compile("SELECT DISTINCT sym FROM " + table + " LIMIT " + n, ctx).getRecordCursorFactory()) {
+            try (RecordCursor c = f.getCursor(ctx)) {
+                while (c.hasNext() && idx < n) {
+                    result[idx++] = c.getRecord().getSymA(0).toString();
+                }
+            }
+        }
+        if (idx == 0) {
+            for (int i = 0; i < n; i++) result[i] = "_";
+        } else {
+            for (int i = idx; i < n; i++) result[i] = result[i % idx];
+        }
+        return result;
+    }
+
     private static int[] selectRandomKeys(int keyCount, int n) {
         int[] keys = new int[n];
         Random rng = new Random(99);
@@ -706,8 +900,10 @@ public class PostingIndexBenchmarkSuite {
                     writer.add(keyAssignment[rowId], rowId);
                 }
                 writer.setMaxValue(keyAssignment.length - 1);
+                writer.seal();
             }
         }
+        purgeStaleSidecars(dir);
     }
 
     enum CoverType {
@@ -895,7 +1091,8 @@ public class PostingIndexBenchmarkSuite {
                         writer.setMaxValue(rowIdBase + totalRows - 1);
                         writer.commit();
                     }
-                    writer.close(); // seal
+                    writer.seal();
+                    writer.close();
                 }
             } else {
                 int blockCap = Math.max(8, Numbers.ceilPow2(totalRows / Math.max(keyCount, 1)));
@@ -955,6 +1152,7 @@ public class PostingIndexBenchmarkSuite {
                         writer.setMaxValue(rowId - 1);
                         writer.commit();
                     }
+                    writer.seal();
                     writer.close();
                 }
             } else {
@@ -1083,8 +1281,10 @@ public class PostingIndexBenchmarkSuite {
                     }
                     for (int i = 0; i < ROWS; i++) writer.add(keyAssignment[i], i);
                     writer.setMaxValue(ROWS - 1);
+                    writer.seal();
                 }
             }
+            purgeStaleSidecars(dir);
         }
 
         @TearDown(Level.Trial)
@@ -1248,6 +1448,413 @@ public class PostingIndexBenchmarkSuite {
 
         @TearDown(Level.Trial)
         public void tearDown() {
+            Misc.free(compiler);
+            Misc.free(engine);
+            deleteDirRecursive(tmpDir.toFile());
+        }
+    }
+
+    /**
+     * S9: WAL fast-lag cost suite — per-commit seal cost, point-query cost in
+     * the unsealed window, and combined insert+query cost.
+     * <p>
+     * {@code @Setup} preloads {@link #PRELOAD_ROWS} rows at sub-second
+     * timestamps within {@code 2024-01-01}, then drains the WAL queue, so
+     * every benchmark invocation operates on a warmed partition rather than
+     * from empty. Each {@code walFastLagInsert} invocation appends
+     * {@code batchRows} rows at offset {@code (batchCounter+1) * 1s} —
+     * strictly monotone, single-partition, always taking the fast-lag branch
+     * inside {@code applyLagToLastPartition}.
+     * <p>
+     * Read benchmarks ({@code walFastLagQuery}, {@code walFastLagInsertAndQuery})
+     * dispatch to a fixed pool of pre-compiled {@code SELECT count() FROM
+     * walbench WHERE sym = '...'} factories sampled from the preloaded keys.
+     * Pre-compilation keeps parse/plan cost out of the measurement.
+     * <p>
+     * Axes:
+     * <ul>
+     *   <li>{@code indexType}: {@code no_index} and {@code bitmap} bracket the
+     *       legacy / unindexed baselines; {@code posting} measures the
+     *       non-covering posting index (currently seals on fast-lag);
+     *       {@code posting_covering} / {@code posting_covering_2cols} measure
+     *       the covering machinery (configureCovering + sidecar rebuild).</li>
+     *   <li>{@code batchRows}: rows-per-fast-lag-commit. Drives the seal
+     *       cost's dependence on per-batch volume.</li>
+     *   <li>{@code keyCount}: distinct symbol values. At {@code 50} every key
+     *       appears in every batch (full re-encode); at {@code 100000} most
+     *       keys are quiet in any one batch (sparse-gen extension). Drives
+     *       both seal cost and per-key match rate at query time.</li>
+     * </ul>
+     */
+    /**
+     * State for {@code walFastLagQueryAtGen}: preload + a configurable number
+     * of fast-lag commits, then queries-only during measurement so the
+     * unsealed gen count is stable across iterations. Each fast-lag commit
+     * adds one gen via {@code extendHead}, so {@code unsealedGens} maps
+     * (modulo a small preload contribution) to the gen count the chain
+     * picker walks per query.
+     * <p>
+     * Fixed batchRows (100) and keyCount (10000) keep prebuild cost
+     * bounded; the only axes that matter for the read-cost-vs-gens
+     * hypothesis are {@code indexType} and {@code unsealedGens}.
+     */
+    @State(Scope.Benchmark)
+    @BenchmarkMode(Mode.AverageTime)
+    @OutputTimeUnit(TimeUnit.MICROSECONDS)
+    public static class WalFastLagQueryGenState {
+        static final int PREBUILD_BATCH_ROWS = 100;
+        static final int PRELOAD_ROWS = 10_000;
+        static final int QUERY_KEY_POOL = 32;
+
+        ApplyWal2TableJob applyJob;
+        CheckWalTransactionsJob checkJob;
+        SqlCompilerImpl compiler;
+        SqlExecutionContextImpl ctx;
+        CairoEngine engine;
+        @Param({"no_index", "bitmap", "posting", "posting_covering", "posting_covering_2cols", "posting_covering_10cols"})
+        String indexType;
+        @Param({"50", "10000"})
+        int keyCount;
+        int queryCounter;
+        String[] queryKeys;
+        java.nio.file.Path tmpDir;
+        @Param({"1", "16", "64", "142"})
+        int unsealedGens;
+
+        @Setup(Level.Trial)
+        public void setup() throws Exception {
+            tmpDir = Files.createTempDirectory("suite-walfastlag-querygen");
+            CairoConfiguration config = new DefaultCairoConfiguration(tmpDir.toString()) {
+                @Override
+                public byte getPostingIndexRowIdEncoding() {
+                    return IS_DELTA ? PostingIndexUtils.ENCODING_DELTA : PostingIndexUtils.ENCODING_ADAPTIVE;
+                }
+
+                @Override
+                public int getRndFunctionMemoryMaxPages() {
+                    return 4096;
+                }
+            };
+            engine = new CairoEngine(config);
+            ctx = new SqlExecutionContextImpl(engine, 1)
+                    .with(config.getFactoryProvider().getSecurityContextFactory().getRootContext(),
+                            null, null, -1, null);
+            compiler = new SqlCompilerImpl(engine);
+
+            String ddl;
+            String extraColumns;
+            String extraValues;
+            if ("posting_covering_10cols".equals(indexType)) {
+                ddl = "CREATE TABLE walbench (ts TIMESTAMP, sym SYMBOL INDEX TYPE " + POSTING_SQL +
+                        " INCLUDE (c1, c2, c3, c4, c5, c6, c7, c8, c9, c10), " +
+                        "c1 DOUBLE, c2 FLOAT, c3 LONG, c4 INT, c5 SHORT, c6 BYTE, " +
+                        "c7 DOUBLE, c8 LONG, c9 INT, c10 FLOAT) " +
+                        "TIMESTAMP(ts) PARTITION BY DAY WAL";
+                extraColumns = "c1, c2, c3, c4, c5, c6, c7, c8, c9, c10";
+                extraValues = "rnd_double() * 1000, rnd_float() * 100, " +
+                        "rnd_long(1, 1000000, 0), rnd_int(0, 10000, 0), " +
+                        "rnd_short(), rnd_byte(0, 127), " +
+                        "rnd_double() * 1000, rnd_long(1, 1000000, 0), " +
+                        "rnd_int(0, 10000, 0), rnd_float() * 100";
+            } else {
+                ddl = switch (indexType) {
+                    case "no_index" -> "CREATE TABLE walbench (ts TIMESTAMP, sym SYMBOL, price DOUBLE, name VARCHAR) " +
+                            "TIMESTAMP(ts) PARTITION BY DAY WAL";
+                    case "bitmap" -> "CREATE TABLE walbench (ts TIMESTAMP, sym SYMBOL INDEX, price DOUBLE, name VARCHAR) " +
+                            "TIMESTAMP(ts) PARTITION BY DAY WAL";
+                    case "posting" -> "CREATE TABLE walbench (ts TIMESTAMP, sym SYMBOL INDEX TYPE " + POSTING_SQL +
+                            ", price DOUBLE, name VARCHAR) TIMESTAMP(ts) PARTITION BY DAY WAL";
+                    case "posting_covering" -> "CREATE TABLE walbench (ts TIMESTAMP, sym SYMBOL INDEX TYPE " + POSTING_SQL +
+                            " INCLUDE (price), price DOUBLE, name VARCHAR) TIMESTAMP(ts) PARTITION BY DAY WAL";
+                    case "posting_covering_2cols" ->
+                            "CREATE TABLE walbench (ts TIMESTAMP, sym SYMBOL INDEX TYPE " + POSTING_SQL +
+                                    " INCLUDE (price, name), price DOUBLE, name VARCHAR) TIMESTAMP(ts) PARTITION BY DAY WAL";
+                    default -> throw new IllegalArgumentException(indexType);
+                };
+                extraColumns = "price, name";
+                extraValues = "rnd_double() * 1000, rnd_varchar(10, 20, 0)";
+            }
+            engine.execute(ddl, ctx);
+            applyJob = new ApplyWal2TableJob(engine, 0);
+            checkJob = new CheckWalTransactionsJob(engine);
+
+            // Small preload: one big INSERT that the WAL apply path drains
+            // before our gen-driving commits start. Smaller than the insert
+            // bench's preload because per-trial setup time matters more here
+            // (24+ trials each doing setup).
+            String preloadSql = "INSERT INTO walbench(ts, sym, " + extraColumns + ") " +
+                    "SELECT dateadd('u', x::INT, '2024-01-01T00:00:00.000000Z'::TIMESTAMP), " +
+                    "rnd_symbol(" + keyCount + ", 4, 8, 0), " + extraValues + " " +
+                    "FROM long_sequence(" + PRELOAD_ROWS + ")";
+            engine.execute(preloadSql, ctx);
+            applyJob.drain(0);
+            checkJob.run(0);
+            applyJob.drain(0);
+
+            // Drive the chain to the target unsealed gen count. Each
+            // fast-lag commit adds one gen via extendHead; auto-seal at
+            // genCount >= 143 caps unsealedGens at 142 for "just before
+            // seal" measurements.
+            for (int i = 0; i < unsealedGens; i++) {
+                int batchOffsetSeconds = i + 1;
+                String batchSql = "INSERT INTO walbench(ts, sym, " + extraColumns + ") " +
+                        "SELECT dateadd('u', x::INT, dateadd('s', " + batchOffsetSeconds +
+                        ", '2024-01-01T00:00:00.000000Z'::TIMESTAMP)), " +
+                        "rnd_symbol(" + keyCount + ", 4, 8, 0), " + extraValues + " " +
+                        "FROM long_sequence(" + PREBUILD_BATCH_ROWS + ")";
+                engine.execute(batchSql, ctx);
+                applyJob.drain(0);
+                checkJob.run(0);
+                applyJob.drain(0);
+            }
+
+            queryKeys = sampleKeys(compiler, ctx, "walbench", QUERY_KEY_POOL);
+            queryCounter = 0;
+        }
+
+        @TearDown(Level.Trial)
+        public void tearDown() {
+            Misc.free(applyJob);
+            Misc.free(compiler);
+            Misc.free(engine);
+            deleteDirRecursive(tmpDir.toFile());
+        }
+    }
+
+    @State(Scope.Benchmark)
+    @BenchmarkMode(Mode.AverageTime)
+    @OutputTimeUnit(TimeUnit.MILLISECONDS)
+    public static class WalFastLagState {
+        static final int PRELOAD_ROWS = 100_000;
+        static final int QUERY_KEY_POOL = 32;
+
+        ApplyWal2TableJob applyJob;
+        int batchCounter;
+        @Param({"100", "1000", "10000"})
+        int batchRows;
+        CheckWalTransactionsJob checkJob;
+        SqlCompilerImpl compiler;
+        SqlExecutionContextImpl ctx;
+        CairoEngine engine;
+        // Column list used in the INSERT statement, e.g. "price, name" or
+        // "c1, c2, ..., c10". Computed in setup based on indexType so the
+        // 10cols schema can opt out of the price/name layout.
+        String extraColumns;
+        // SELECT expression list matching extraColumns 1:1, e.g.
+        // "rnd_double() * 1000, rnd_varchar(10, 20, 0)".
+        String extraValues;
+        @Param({"no_index", "bitmap", "posting", "posting_covering", "posting_covering_2cols", "posting_covering_10cols"})
+        String indexType;
+        @Param({"50", "1000", "10000", "100000"})
+        int keyCount;
+        int queryCounter;
+        String[] queryKeys;
+        java.nio.file.Path tmpDir;
+
+        @Setup(Level.Trial)
+        public void setup() throws Exception {
+            tmpDir = Files.createTempDirectory("suite-walfastlag");
+            CairoConfiguration config = new DefaultCairoConfiguration(tmpDir.toString()) {
+                @Override
+                public byte getPostingIndexRowIdEncoding() {
+                    return IS_DELTA ? PostingIndexUtils.ENCODING_DELTA : PostingIndexUtils.ENCODING_ADAPTIVE;
+                }
+
+                @Override
+                public int getRndFunctionMemoryMaxPages() {
+                    return 4096;
+                }
+            };
+            engine = new CairoEngine(config);
+            ctx = new SqlExecutionContextImpl(engine, 1)
+                    .with(config.getFactoryProvider().getSecurityContextFactory().getRootContext(),
+                            null, null, -1, null);
+            compiler = new SqlCompilerImpl(engine);
+
+            String ddl;
+            if ("posting_covering_10cols".equals(indexType)) {
+                ddl = "CREATE TABLE walbench (ts TIMESTAMP, sym SYMBOL INDEX TYPE " + POSTING_SQL +
+                        " INCLUDE (c1, c2, c3, c4, c5, c6, c7, c8, c9, c10), " +
+                        "c1 DOUBLE, c2 FLOAT, c3 LONG, c4 INT, c5 SHORT, c6 BYTE, " +
+                        "c7 DOUBLE, c8 LONG, c9 INT, c10 FLOAT) " +
+                        "TIMESTAMP(ts) PARTITION BY DAY WAL";
+                extraColumns = "c1, c2, c3, c4, c5, c6, c7, c8, c9, c10";
+                extraValues = "rnd_double() * 1000, rnd_float() * 100, " +
+                        "rnd_long(1, 1000000, 0), rnd_int(0, 10000, 0), " +
+                        "rnd_short(), rnd_byte(0, 127), " +
+                        "rnd_double() * 1000, rnd_long(1, 1000000, 0), " +
+                        "rnd_int(0, 10000, 0), rnd_float() * 100";
+            } else {
+                ddl = switch (indexType) {
+                    case "no_index" -> "CREATE TABLE walbench (ts TIMESTAMP, sym SYMBOL, price DOUBLE, name VARCHAR) " +
+                            "TIMESTAMP(ts) PARTITION BY DAY WAL";
+                    case "bitmap" -> "CREATE TABLE walbench (ts TIMESTAMP, sym SYMBOL INDEX, price DOUBLE, name VARCHAR) " +
+                            "TIMESTAMP(ts) PARTITION BY DAY WAL";
+                    case "posting" -> "CREATE TABLE walbench (ts TIMESTAMP, sym SYMBOL INDEX TYPE " + POSTING_SQL +
+                            ", price DOUBLE, name VARCHAR) TIMESTAMP(ts) PARTITION BY DAY WAL";
+                    case "posting_covering" -> "CREATE TABLE walbench (ts TIMESTAMP, sym SYMBOL INDEX TYPE " + POSTING_SQL +
+                            " INCLUDE (price), price DOUBLE, name VARCHAR) TIMESTAMP(ts) PARTITION BY DAY WAL";
+                    case "posting_covering_2cols" ->
+                            "CREATE TABLE walbench (ts TIMESTAMP, sym SYMBOL INDEX TYPE " + POSTING_SQL +
+                                    " INCLUDE (price, name), price DOUBLE, name VARCHAR) TIMESTAMP(ts) PARTITION BY DAY WAL";
+                    default -> throw new IllegalArgumentException(indexType);
+                };
+                extraColumns = "price, name";
+                extraValues = "rnd_double() * 1000, rnd_varchar(10, 20, 0)";
+            }
+            engine.execute(ddl, ctx);
+            applyJob = new ApplyWal2TableJob(engine, 0);
+            checkJob = new CheckWalTransactionsJob(engine);
+
+            // Preload occupies offsets [1us, PRELOAD_ROWS us] (= 100ms span)
+            // within 2024-01-01. Bench batches start at offset >= 1s, well
+            // after the preload tail, so they always exercise the fast-lag
+            // branch on a warmed partition.
+            String preloadSql = "INSERT INTO walbench(ts, sym, " + extraColumns + ") " +
+                    "SELECT dateadd('u', x::INT, '2024-01-01T00:00:00.000000Z'::TIMESTAMP), " +
+                    "rnd_symbol(" + keyCount + ", 4, 8, 0), " + extraValues + " " +
+                    "FROM long_sequence(" + PRELOAD_ROWS + ")";
+            engine.execute(preloadSql, ctx);
+            applyJob.drain(0);
+            checkJob.run(0);
+            applyJob.drain(0);
+
+            // Sample distinct symbols from the preloaded data for the read
+            // benches. Pre-compiling factories does not survive WAL apply
+            // (table metadata version bumps invalidate the cached plan), so
+            // benches recompile per invocation as the existing SqlState
+            // pattern does. Compile cost is constant across runs and
+            // cancels in the differential analysis (baseline vs candidate).
+            queryKeys = sampleKeys(compiler, ctx, "walbench", QUERY_KEY_POOL);
+
+            batchCounter = 0;
+            queryCounter = 0;
+        }
+
+        @TearDown(Level.Trial)
+        public void tearDown() {
+            Misc.free(applyJob);
+            Misc.free(compiler);
+            Misc.free(engine);
+            deleteDirRecursive(tmpDir.toFile());
+        }
+    }
+
+    /**
+     * State for {@code walLargePartitionInsert} and {@code walLargePartitionQuery}:
+     * preload the table with {@code partitionSize} rows in {@link #BATCH_ROWS}-row
+     * batches (i.e. {@code partitionSize / 100_000} fast-lag commits) before any
+     * measurement begins. Single DAY partition; commits are spaced by 1us so the
+     * full 100M-row preload still fits inside one partition.
+     * <p>
+     * Auto-seal at gen >= 143 fires multiple times during preload for the larger
+     * sizes (100M / 100k = 1000 commits → ~7 seal cycles), so the post-setup state
+     * has both a sealed prefix on disk and a small unsealed tail.
+     */
+    @State(Scope.Benchmark)
+    @BenchmarkMode(Mode.AverageTime)
+    @OutputTimeUnit(TimeUnit.MILLISECONDS)
+    public static class WalLargePartitionState {
+        static final int BATCH_ROWS = 100_000;
+        // Reserve [1us, PRELOAD_TS_LIMIT_US] for setup INSERTs. After setup
+        // completes, walLargePartitionInsert appends at offsets above this.
+        static final int PRELOAD_TS_LIMIT_US = 200_000_000;
+        static final int QUERY_KEY_POOL = 32;
+
+        ApplyWal2TableJob applyJob;
+        int batchCounter;
+        CheckWalTransactionsJob checkJob;
+        SqlCompilerImpl compiler;
+        SqlExecutionContextImpl ctx;
+        CairoEngine engine;
+        String extraColumns;
+        String extraValues;
+        @Param({"no_index", "bitmap", "posting_covering_10cols"})
+        String indexType;
+        // Bench keeps the per-batch sym cardinality at 1000 so each batch
+        // touches a sizeable subset of keys without exploding compile cost
+        // for queries.
+        int keyCount = 1000;
+        @Param({"1000000", "10000000", "100000000"})
+        int partitionSize;
+        int queryCounter;
+        String[] queryKeys;
+        java.nio.file.Path tmpDir;
+
+        @Setup(Level.Trial)
+        public void setup() throws Exception {
+            tmpDir = Files.createTempDirectory("suite-largepart");
+            CairoConfiguration config = new DefaultCairoConfiguration(tmpDir.toString()) {
+                @Override
+                public byte getPostingIndexRowIdEncoding() {
+                    return IS_DELTA ? PostingIndexUtils.ENCODING_DELTA : PostingIndexUtils.ENCODING_ADAPTIVE;
+                }
+
+                @Override
+                public int getRndFunctionMemoryMaxPages() {
+                    return 4096;
+                }
+            };
+            engine = new CairoEngine(config);
+            ctx = new SqlExecutionContextImpl(engine, 1)
+                    .with(config.getFactoryProvider().getSecurityContextFactory().getRootContext(),
+                            null, null, -1, null);
+            compiler = new SqlCompilerImpl(engine);
+
+            String ddl;
+            if ("posting_covering_10cols".equals(indexType)) {
+                ddl = "CREATE TABLE walbench (ts TIMESTAMP, sym SYMBOL INDEX TYPE " + POSTING_SQL +
+                        " INCLUDE (c1, c2, c3, c4, c5, c6, c7, c8, c9, c10), " +
+                        "c1 DOUBLE, c2 FLOAT, c3 LONG, c4 INT, c5 SHORT, c6 BYTE, " +
+                        "c7 DOUBLE, c8 LONG, c9 INT, c10 FLOAT) " +
+                        "TIMESTAMP(ts) PARTITION BY DAY WAL";
+                extraColumns = "c1, c2, c3, c4, c5, c6, c7, c8, c9, c10";
+                extraValues = "rnd_double() * 1000, rnd_float() * 100, " +
+                        "rnd_long(1, 1000000, 0), rnd_int(0, 10000, 0), " +
+                        "rnd_short(), rnd_byte(0, 127), " +
+                        "rnd_double() * 1000, rnd_long(1, 1000000, 0), " +
+                        "rnd_int(0, 10000, 0), rnd_float() * 100";
+            } else {
+                ddl = switch (indexType) {
+                    case "no_index" -> "CREATE TABLE walbench (ts TIMESTAMP, sym SYMBOL, price DOUBLE, name VARCHAR) " +
+                            "TIMESTAMP(ts) PARTITION BY DAY WAL";
+                    case "bitmap" -> "CREATE TABLE walbench (ts TIMESTAMP, sym SYMBOL INDEX, price DOUBLE, name VARCHAR) " +
+                            "TIMESTAMP(ts) PARTITION BY DAY WAL";
+                    default -> throw new IllegalArgumentException(indexType);
+                };
+                extraColumns = "price, name";
+                extraValues = "rnd_double() * 1000, rnd_varchar(10, 20, 0)";
+            }
+            engine.execute(ddl, ctx);
+            applyJob = new ApplyWal2TableJob(engine, 0);
+            checkJob = new CheckWalTransactionsJob(engine);
+
+            // Preload partitionSize rows in 100k-row batches. Each batch is
+            // one INSERT + WAL drain = one fast-lag commit. Auto-seal at
+            // genCount>=143 fires multiple times during a 1000-batch
+            // (100M-row) preload, producing a sealed prefix on disk plus a
+            // small unsealed tail.
+            int batches = partitionSize / BATCH_ROWS;
+            for (int i = 0; i < batches; i++) {
+                int batchOffsetUs = i * BATCH_ROWS + 1;
+                String batchSql = "INSERT INTO walbench(ts, sym, " + extraColumns + ") " +
+                        "SELECT dateadd('u', x::INT + " + batchOffsetUs + ", '2024-01-01T00:00:00.000000Z'::TIMESTAMP), " +
+                        "rnd_symbol(" + keyCount + ", 4, 8, 0), " + extraValues + " " +
+                        "FROM long_sequence(" + BATCH_ROWS + ")";
+                engine.execute(batchSql, ctx);
+                applyJob.drain(0);
+                checkJob.run(0);
+                applyJob.drain(0);
+            }
+
+            queryKeys = sampleKeys(compiler, ctx, "walbench", QUERY_KEY_POOL);
+            batchCounter = 0;
+            queryCounter = 0;
+        }
+
+        @TearDown(Level.Trial)
+        public void tearDown() {
+            Misc.free(applyJob);
             Misc.free(compiler);
             Misc.free(engine);
             deleteDirRecursive(tmpDir.toFile());
