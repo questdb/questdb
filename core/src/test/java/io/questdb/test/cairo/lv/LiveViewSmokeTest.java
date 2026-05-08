@@ -24,6 +24,7 @@
 
 package io.questdb.test.cairo.lv;
 
+import io.questdb.PropertyKey;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.lv.LiveViewDefinition;
@@ -34,6 +35,7 @@ import io.questdb.griffin.SqlException;
 import io.questdb.mp.Job;
 import io.questdb.std.Chars;
 import io.questdb.std.FilesFacade;
+import io.questdb.std.datetime.microtime.Micros;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.Utf8s;
@@ -737,6 +739,77 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
             }
 
             assertSql("count\n2\n", "SELECT count() FROM lv");
+            execute("DROP LIVE VIEW lv");
+        });
+    }
+
+    @Test
+    public void testFlushRetryBudgetExhaustionInvalidatesView() throws Exception {
+        // RFC 123 §"Flush": persist failures retry up to cairo.live.view.flush.retry.max
+        // (or .duration, whichever fires first). On budget exhaustion the view is
+        // invalidated via the unified path. We force consecutive _lv.s persist failures
+        // on the refresh worker and assert the LV flips to INVALID after the configured
+        // count.
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_FLUSH_RETRY_MAX, 2);
+        // Set a duration cap large enough that the count trigger fires first.
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_FLUSH_RETRY_MAX_DURATION_MICROS, Micros.HOUR_MICROS);
+
+        final AtomicBoolean failPersist = new AtomicBoolean(false);
+        FilesFacade ff = new TestFilesFacadeImpl() {
+            @Override
+            public long openRW(LPSZ name, int opts) {
+                if (failPersist.get() && Utf8s.endsWithAscii(name, LiveViewState.LIVE_VIEW_STATE_FILE_NAME)) {
+                    return -1;
+                }
+                return super.openRW(name, opts);
+            }
+        };
+
+        assertMemoryLeak(ff, () -> {
+            setCurrentMicros(0);
+            execute("CREATE TABLE base (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms AS " +
+                    "SELECT ts, x, row_number() OVER () AS rn FROM base WHERE x > 0");
+
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                // Happy-path drain seeds lastFlushTimeUs and lvConsumedSeqTxn.
+                execute("INSERT INTO base (ts, x) VALUES ('2026-04-01T00:00:00.000001Z', 1)");
+                drainWalQueue();
+                drainJob(job);
+                drainWalQueue();
+
+                LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("lv");
+                Assert.assertNotNull(instance);
+                Assert.assertFalse("LV must be valid after happy path", instance.isInvalid());
+
+                failPersist.set(true);
+                try {
+                    // Two consecutive persist failures: first hits retryCount=1 (budget
+                    // not exhausted, log only); second hits retryCount=2 == max → invalidate.
+                    setCurrentMicros(200_000L);
+                    execute("INSERT INTO base (ts, x) VALUES ('2026-04-01T00:00:00.000002Z', 2)");
+                    drainWalQueue();
+                    drainJob(job);
+                    Assert.assertEquals("first failure must increment retryCount to 1",
+                            1, instance.getFlushRetryCount());
+                    Assert.assertFalse("LV must still be valid after one failure",
+                            instance.isInvalid());
+
+                    setCurrentMicros(400_000L);
+                    execute("INSERT INTO base (ts, x) VALUES ('2026-04-01T00:00:00.000003Z', 3)");
+                    drainWalQueue();
+                    drainJob(job);
+                    Assert.assertTrue("second failure (retryCount=2) must exhaust the budget",
+                            instance.isInvalid());
+                    Assert.assertTrue(
+                            "invalidation reason must mention flush retry [reason=" + instance.getInvalidationReason() + "]",
+                            Chars.contains(instance.getInvalidationReason(), "flush retry budget")
+                    );
+                } finally {
+                    failPersist.set(false);
+                }
+            }
+
             execute("DROP LIVE VIEW lv");
         });
     }

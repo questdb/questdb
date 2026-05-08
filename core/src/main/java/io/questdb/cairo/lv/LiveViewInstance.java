@@ -81,6 +81,16 @@ public class LiveViewInstance implements QuietCloseable {
     private LiveViewWindow anchorWindow;
     private RecordCursorFactory compiledFactory;
     private volatile boolean dropped;
+    // Consecutive refresh-cycle failures since the last success. RFC 123 §"Flush"
+    // budgets retries by both count (cairo.live.view.flush.retry.max) and elapsed
+    // time (cairo.live.view.flush.retry.max.duration); on budget exhaustion the
+    // refresh worker invalidates the view via the unified path. Mutated only on
+    // the refresh-worker thread; not volatile because it isn't read elsewhere.
+    private int flushRetryCount;
+    // Wall-clock (micros) of the first failure in the current consecutive-failure
+    // streak; Numbers.LONG_NULL when no streak is in progress. Same write-only
+    // discipline as flushRetryCount.
+    private long flushRetryStartUs = Numbers.LONG_NULL;
     private volatile boolean isClosed;
     // Wall-clock (micros) of the most recent successful LV WAL commit. Used by
     // LiveViewRefreshJob to enforce FLUSH EVERY: a refresh that arrives within
@@ -153,6 +163,14 @@ public class LiveViewInstance implements QuietCloseable {
 
     public ObjList<String> getDependencyColumnNames() {
         return definition.getDependencyColumnNames();
+    }
+
+    public int getFlushRetryCount() {
+        return flushRetryCount;
+    }
+
+    public long getFlushRetryStartUs() {
+        return flushRetryStartUs;
     }
 
     public CharSequence getInvalidationReason() {
@@ -236,6 +254,27 @@ public class LiveViewInstance implements QuietCloseable {
 
     public void markAsDropped() {
         dropped = true;
+    }
+
+    /**
+     * Records a refresh-cycle failure. Increments the consecutive-failure counter
+     * and stamps the start of the failure streak (used by the flush retry budget
+     * in {@link io.questdb.cairo.lv.LiveViewRefreshJob}).
+     */
+    public void recordRefreshFailure(long nowUs) {
+        if (flushRetryStartUs == Numbers.LONG_NULL) {
+            flushRetryStartUs = nowUs;
+        }
+        flushRetryCount++;
+    }
+
+    /**
+     * Resets the consecutive-failure counter and the streak start. Called after each
+     * successful refresh cycle so the retry budget is per-streak, not lifetime.
+     */
+    public void recordRefreshSuccess() {
+        flushRetryCount = 0;
+        flushRetryStartUs = Numbers.LONG_NULL;
     }
 
     public void setAppliedWatermark(long appliedWatermark) {

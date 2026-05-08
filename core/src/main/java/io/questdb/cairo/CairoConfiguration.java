@@ -339,6 +339,10 @@ public interface CairoConfiguration {
     @NotNull
     CharSequence getLegacyCheckpointRoot(); // same as root/../snapshot
 
+    int getLiveViewFlushRetryMax();
+
+    long getLiveViewFlushRetryMaxDurationMicros();
+
     long getLiveViewInMemoryMaxMicros();
 
     int getLiveViewRefreshTurnMaxCommits();

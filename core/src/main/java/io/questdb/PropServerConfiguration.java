@@ -298,6 +298,8 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final int latestByQueueCapacity;
     private final String legacyCheckpointRoot;
     private final boolean liveViewEnabled;
+    private final int liveViewFlushRetryMax;
+    private final long liveViewFlushRetryMaxDurationMicros;
     private final long liveViewInMemoryMaxMicros;
     private final int liveViewRefreshTurnMaxCommits;
     private final long liveViewRefreshTurnMaxDurationMicros;
@@ -1464,6 +1466,8 @@ public class PropServerConfiguration implements ServerConfiguration {
 
             // live-view config
             this.liveViewEnabled = getBoolean(properties, env, PropertyKey.CAIRO_LIVE_VIEW_ENABLED, true);
+            this.liveViewFlushRetryMax = getInt(properties, env, PropertyKey.CAIRO_LIVE_VIEW_FLUSH_RETRY_MAX, 5);
+            this.liveViewFlushRetryMaxDurationMicros = getMicros(properties, env, PropertyKey.CAIRO_LIVE_VIEW_FLUSH_RETRY_MAX_DURATION_MICROS, 60L * Micros.SECOND_MICROS);
             this.liveViewInMemoryMaxMicros = getMicros(properties, env, PropertyKey.CAIRO_LIVE_VIEW_IN_MEMORY_MAX, 60L * Micros.MINUTE_MICROS);
             this.liveViewRefreshTurnMaxCommits = getInt(properties, env, PropertyKey.CAIRO_LIVE_VIEW_REFRESH_TURN_MAX_COMMITS, 64);
             this.liveViewRefreshTurnMaxDurationMicros = getMicros(properties, env, PropertyKey.CAIRO_LIVE_VIEW_REFRESH_TURN_MAX_DURATION_MICROS, 50_000L);
@@ -3828,6 +3832,16 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public @NotNull CharSequence getLegacyCheckpointRoot() {
             return legacyCheckpointRoot;
+        }
+
+        @Override
+        public int getLiveViewFlushRetryMax() {
+            return liveViewFlushRetryMax;
+        }
+
+        @Override
+        public long getLiveViewFlushRetryMaxDurationMicros() {
+            return liveViewFlushRetryMaxDurationMicros;
         }
 
         @Override

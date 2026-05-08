@@ -534,6 +534,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             if (instance.isDropped() || instance.isInvalid()) {
                 return;
             }
+            boolean attempted = false;
             try {
                 long lastSeqTxn = instance.getLastProcessedSeqTxn();
                 if (seqTxn > lastSeqTxn) {
@@ -551,17 +552,48 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                     // TransactionLogCursor treats txnLo as exclusive (lastApplied), so we
                     // pass lastSeqTxn directly. The cursor's getTxn() returns entries with
                     // seqTxn > lastSeqTxn.
+                    attempted = true;
                     incrementalRefresh(instance, lastSeqTxn, seqTxn);
                     instance.setLastFlushTimeUs(engine.getConfiguration().getMicrosecondClock().getTicks());
                 }
                 instance.setLastRefreshTimeUs(engine.getConfiguration().getMicrosecondClock().getTicks());
+                if (attempted) {
+                    instance.recordRefreshSuccess();
+                }
             } catch (Throwable t) {
-                LOG.critical().$("live view refresh failed [view=").$(instance.getDefinition().getViewName())
-                        .$(", error=").$(t).I$();
+                handleRefreshFailure(instance, t);
             }
         } finally {
             instance.unlockAfterRefresh();
             instance.tryCloseIfDropped();
+        }
+    }
+
+    /**
+     * RFC 123 §"Flush" retry budget: count consecutive failures and the elapsed
+     * wall-clock time since the streak began. On budget exhaustion, invalidate
+     * the view via the unified path. The view stops refreshing but stays
+     * queryable; recovery is operator-driven (DROP + CREATE).
+     */
+    private void handleRefreshFailure(LiveViewInstance instance, Throwable t) {
+        long nowUs = engine.getConfiguration().getMicrosecondClock().getTicks();
+        instance.recordRefreshFailure(nowUs);
+        int retryCount = instance.getFlushRetryCount();
+        long retryStartUs = instance.getFlushRetryStartUs();
+        int maxRetry = engine.getConfiguration().getLiveViewFlushRetryMax();
+        long maxDurationMicros = engine.getConfiguration().getLiveViewFlushRetryMaxDurationMicros();
+        long elapsedUs = retryStartUs == Numbers.LONG_NULL ? 0 : nowUs - retryStartUs;
+        boolean budgetExhausted = retryCount >= maxRetry || elapsedUs >= maxDurationMicros;
+        if (budgetExhausted) {
+            LOG.critical().$("live view refresh budget exhausted, invalidating [view=").$(instance.getDefinition().getViewName())
+                    .$(", retryCount=").$(retryCount)
+                    .$(", elapsedUs=").$(elapsedUs)
+                    .$(", error=").$(t).I$();
+            engine.invalidateLiveView(instance, "flush retry budget exhausted");
+        } else {
+            LOG.critical().$("live view refresh failed [view=").$(instance.getDefinition().getViewName())
+                    .$(", retryCount=").$(retryCount)
+                    .$(", error=").$(t).I$();
         }
     }
 

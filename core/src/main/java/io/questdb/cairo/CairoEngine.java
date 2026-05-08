@@ -1759,6 +1759,32 @@ public class CairoEngine implements Closeable, WriterSource {
         }
     }
 
+    /**
+     * Invalidates a single live view directly by instance reference, without going
+     * through the per-base-table iteration. Used by paths that already hold the
+     * instance — notably the refresh worker on flush retry budget exhaustion
+     * (RFC 123 §"Lifecycle / Invalidation"). Mirrors the lock + persist pattern
+     * of {@link #invalidateLiveViewsForBaseTable0}.
+     */
+    public void invalidateLiveView(LiveViewInstance instance, String reason) {
+        final long invalidationTimestampUs = configuration.getMicrosecondClock().getTicks();
+        synchronized (instance) {
+            instance.markInvalid(reason, invalidationTimestampUs);
+            try (
+                    BlockFileWriter blockFileWriter = new BlockFileWriter(configuration.getFilesFacade(), configuration.getCommitMode());
+                    Path path = new Path()
+            ) {
+                path.of(configuration.getDbRoot()).concat(instance.getLiveViewToken()).concat(LiveViewState.LIVE_VIEW_STATE_FILE_NAME);
+                blockFileWriter.of(path.$());
+                LiveViewState.append(instance.getStateReader(), blockFileWriter);
+            } catch (Throwable t) {
+                LOG.error().$("could not persist live view invalidation [view=").$(instance.getLiveViewToken())
+                        .$(", reason=").$safe(reason)
+                        .$(", error=").$(t).I$();
+            }
+        }
+    }
+
     public void invalidateLiveViewsForBaseTable(TableToken baseTableToken, String reason) {
         invalidateLiveViewsForBaseTable0(baseTableToken, reason, null);
     }
