@@ -316,6 +316,141 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testRestartPicksUpUnappliedLvWalBlock() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 1s AS " +
+                    "SELECT ts, x, row_number() OVER () AS rn FROM base WHERE x > 0");
+            execute("INSERT INTO base (ts, x) VALUES ('2026-04-01T00:00:00.000000Z', 4), " +
+                    "('2026-04-01T00:01:00.000000Z', 8)");
+            drainWalQueue();
+
+            LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("lv");
+            long preLvConsumed = instance.getStateReader().getLvConsumedSeqTxn();
+
+            // Refresh writes the LV's WAL block but lvConsumed only advances at apply
+            // time. We deliberately do NOT drainWalQueue here, so the LV's own WAL has
+            // a committed-but-unapplied block when restart happens.
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                drainJob(job);
+            }
+            long postRefreshLastProcessed = instance.getLastProcessedSeqTxn();
+            Assert.assertTrue(
+                    "refresh must advance lastProcessedSeqTxn",
+                    postRefreshLastProcessed > preLvConsumed
+            );
+            Assert.assertEquals(
+                    "lvConsumedSeqTxn must NOT advance until apply runs",
+                    preLvConsumed,
+                    instance.getStateReader().getLvConsumedSeqTxn()
+            );
+
+            // Simulate restart with the LV WAL block still pending apply.
+            engine.getLiveViewRegistry().clear();
+            engine.buildViewGraphs();
+            LiveViewInstance reloaded = engine.getLiveViewRegistry().getViewInstance("lv");
+            Assert.assertNotNull("live view must be re-registered after restart", reloaded);
+            Assert.assertEquals(
+                    "lvConsumed must round-trip at the pre-apply value",
+                    preLvConsumed,
+                    reloaded.getStateReader().getLvConsumedSeqTxn()
+            );
+            Assert.assertEquals(
+                    "lastProcessed must round-trip at the post-refresh value",
+                    postRefreshLastProcessed,
+                    reloaded.getLastProcessedSeqTxn()
+            );
+
+            // Apply now picks up the still-pending LV WAL block and bumps lvConsumed.
+            drainWalQueue();
+            Assert.assertEquals(
+                    "post-restart apply must catch lvConsumed up to lastProcessed",
+                    postRefreshLastProcessed,
+                    reloaded.getStateReader().getLvConsumedSeqTxn()
+            );
+            assertSql("count\n2\n", "SELECT count() FROM lv");
+
+            execute("DROP LIVE VIEW lv");
+        });
+    }
+
+    @Test
+    public void testRestartContinuesProcessingNewBaseCommits() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 1s AS " +
+                    "SELECT ts, x, row_number() OVER () AS rn FROM base WHERE x > 0");
+
+            // First batch lands and is fully refreshed/applied.
+            execute("INSERT INTO base (ts, x) VALUES ('2026-04-01T00:00:00.000000Z', 1)");
+            drainWalQueue();
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                drainJob(job);
+            }
+            drainWalQueue();
+            assertSql("count\n1\n", "SELECT count() FROM lv");
+
+            // Restart: the registry is rebuilt from disk.
+            engine.getLiveViewRegistry().clear();
+            engine.buildViewGraphs();
+
+            // New base commits arrive after restart. The freshly-loaded LV instance
+            // must pick them up via the refresh job's normal notification path. This
+            // catches loader bugs where the registry is registered but the
+            // liveViewStateStore base-table mapping is not, so notifications would
+            // silently never enqueue a task for the reloaded view.
+            execute("INSERT INTO base (ts, x) VALUES ('2026-04-02T00:00:00.000000Z', 2), " +
+                    "('2026-04-02T00:01:00.000000Z', 3)");
+            drainWalQueue();
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                drainJob(job);
+            }
+            drainWalQueue();
+            assertSql("count\n3\n", "SELECT count() FROM lv");
+
+            execute("DROP LIVE VIEW lv");
+        });
+    }
+
+    @Test
+    public void testMultipleLiveViewsOverSameBaseRefreshTogether() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            // Two LVs over the same base with different SELECT shapes. A single base
+            // commit must fan out to BOTH via getViewsForBaseTable; the per-instance
+            // refresh latch must not block one LV from refreshing while the other is.
+            execute("CREATE LIVE VIEW lv1 FLUSH EVERY 1s AS " +
+                    "SELECT ts, x, row_number() OVER () AS rn FROM base WHERE x > 0");
+            execute("CREATE LIVE VIEW lv2 FLUSH EVERY 1s AS " +
+                    "SELECT ts, x, row_number() OVER () AS rn FROM base WHERE x > 5");
+
+            execute("INSERT INTO base (ts, x) VALUES ('2026-05-01T00:00:00.000000Z', 3), " +
+                    "('2026-05-01T00:01:00.000000Z', 7), " +
+                    "('2026-05-01T00:02:00.000000Z', 12)");
+            drainWalQueue();
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                drainJob(job);
+            }
+            drainWalQueue();
+
+            // lv1: x > 0 keeps all three rows.
+            assertSql("count\n3\n", "SELECT count() FROM lv1");
+            // lv2: x > 5 keeps the 7 and 12.
+            assertSql("count\n2\n", "SELECT count() FROM lv2");
+
+            // Both LVs must have actually advanced their state independently — verify
+            // neither is stuck at zero (which would happen if refresh skipped one of them).
+            LiveViewInstance i1 = engine.getLiveViewRegistry().getViewInstance("lv1");
+            LiveViewInstance i2 = engine.getLiveViewRegistry().getViewInstance("lv2");
+            Assert.assertTrue("lv1 must advance", i1.getLastProcessedSeqTxn() > 0);
+            Assert.assertTrue("lv2 must advance", i2.getLastProcessedSeqTxn() > 0);
+
+            execute("DROP LIVE VIEW lv1");
+            execute("DROP LIVE VIEW lv2");
+        });
+    }
+
+    @Test
     public void testLiveViewAsAsofJoinRhs() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE base (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
