@@ -82,14 +82,14 @@ public abstract class AbstractPostingIndexReader implements IndexReader {
     protected long columnTop;
     protected int coverCount;
     protected boolean[] coveredAvailable;
-    // Highest row id covered by the picked chain entry's index data
+    // Highest row id the picked chain entry's index data covers
     // (V2_ENTRY_OFFSET_MAX_VALUE). Cursor reads must not surface row ids
-    // beyond this value: writers may leave dirty entries in .pv past
+    // beyond this value: the writer can leave dirty entries in .pv past
     // the chain's tracked maxValue (e.g. after an O3 split shrinks the
-    // partition before the next reseal evicts them). Refreshed on each
-    // readIndexMetadataFromChain() success; -1 means no chain entry is
-    // currently picked, in which case the cursor degrades to the empty
-    // path and entryMaxValue is unused.
+    // partition before the next reseal evicts them).
+    // readIndexMetadataFromChain() refreshes this field on each success;
+    // -1 indicates the picker has no visible chain entry, in which case
+    // the cursor degrades to the empty path and ignores entryMaxValue.
     protected long entryMaxValue = -1L;
     protected int genCount;
     protected int keyCount;
