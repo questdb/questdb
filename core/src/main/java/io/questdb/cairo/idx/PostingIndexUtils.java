@@ -990,6 +990,27 @@ public final class PostingIndexUtils {
         return activeKeyCount * (Integer.BYTES + Integer.BYTES + Long.BYTES);
     }
 
+    public static boolean hasInitialisedKeyFileHeader(FilesFacade ff, LPSZ keyFilePath) {
+        if (!ff.exists(keyFilePath) || ff.length(keyFilePath) < KEY_FILE_RESERVED) {
+            return false;
+        }
+        long fd = ff.openRO(keyFilePath);
+        if (fd < 0) {
+            return false;
+        }
+        try {
+            long seqStartA = ff.readNonNegativeLong(fd, PAGE_A_OFFSET + V2_HEADER_OFFSET_SEQUENCE_START);
+            long seqEndA = ff.readNonNegativeLong(fd, PAGE_A_OFFSET + V2_HEADER_OFFSET_SEQUENCE_END);
+            long seqStartB = ff.readNonNegativeLong(fd, PAGE_B_OFFSET + V2_HEADER_OFFSET_SEQUENCE_START);
+            long seqEndB = ff.readNonNegativeLong(fd, PAGE_B_OFFSET + V2_HEADER_OFFSET_SEQUENCE_END);
+            boolean aStable = seqStartA != 0L && seqStartA == seqEndA && (seqStartA & 1L) == 0L;
+            boolean bStable = seqStartB != 0L && seqStartB == seqEndB && (seqStartB & 1L) == 0L;
+            return aStable || bStable;
+        } finally {
+            ff.close(fd);
+        }
+    }
+
     /**
      * Builds the full path to the key file (.pk).
      * <p>
