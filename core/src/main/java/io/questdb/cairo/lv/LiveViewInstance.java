@@ -76,7 +76,7 @@ public class LiveViewInstance implements QuietCloseable {
     // Compiled anchor expression — evaluated per row against records shaped by the
     // live view's projected metadata (i.e. records emitted by WalSegmentRecordCursor).
     // Lazily built on first refresh after the live view's main SELECT has been
-    // compiled. Phase 1: stashed but not yet consumed by the runtime.
+    // compiled. Consumed by anchorWindow's per-row resetPartition dispatch.
     private Function anchorFunction;
     // Built once from anchorFunction + the compiled SELECT's window functions. Drives the
     // per-row resetPartition dispatch when the LV has an anchored named WINDOW.

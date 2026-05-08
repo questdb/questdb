@@ -100,9 +100,10 @@ import static io.questdb.cairo.wal.WalUtils.WAL_NAME_BASE;
  *     non-DATA WAL events on the base are walked past by this job without modifying
  *     state, while invalidation flows via
  *     {@link CairoEngine#invalidateLiveViewsForBaseTable}.</li>
- *     <li>The {@code maxBaseSeqTxnInBlock} live-view-WAL block-header field is not yet
- *     emitted — Phase 1 derives {@code lvConsumedSeqTxn} from the refresh worker's
- *     own {@code lastProcessedSeqTxn} tracking. Schema bump pending.</li>
+ *     <li>The LV's WAL block carries {@code maxBaseSeqTxnInBlock} on a dedicated
+ *     {@code WalTxnType#LIVE_VIEW_DATA} event; {@code ApplyWal2TableJob} reads it back
+ *     and bumps {@code lvConsumedSeqTxn} at apply time so retention only releases once
+ *     the rows are durable in the LV's own table (RFC 123 §Flush).</li>
  * </ul>
  */
 public class LiveViewRefreshJob implements Job, QuietCloseable {
