@@ -568,14 +568,20 @@ public class CairoEngine implements Closeable, WriterSource {
                                     metadata
                             );
                             LiveViewInstance instance = new LiveViewInstance(definition, tableToken);
-                            // Try loading durable state (_lv.s); synthesise a default if missing.
-                            if (TableUtils.isLiveViewStateFileExists(configuration, path, tableToken.getDirName())) {
-                                path.of(configuration.getDbRoot()).concat(tableToken).concat(LiveViewState.LIVE_VIEW_STATE_FILE_NAME);
-                                reader.of(path.$());
-                                LiveViewStateReader stateReader = new LiveViewStateReader();
-                                stateReader.of(reader, tableToken);
-                                instance.initFromState(stateReader);
+                            // _lv exists, so CREATE committed atomically (the engine writes
+                            // _lv.s first and _lv last). If _lv.s is somehow missing here,
+                            // the on-disk state is corrupt: refusing the load avoids re-
+                            // replaying the entire base table from seqTxn 0.
+                            if (!TableUtils.isLiveViewStateFileExists(configuration, path, tableToken.getDirName())) {
+                                throw CairoException.critical(0)
+                                        .put("live view state file missing alongside committed definition [view=")
+                                        .put(tableToken.getTableName()).put(']');
                             }
+                            path.of(configuration.getDbRoot()).concat(tableToken).concat(LiveViewState.LIVE_VIEW_STATE_FILE_NAME);
+                            reader.of(path.$());
+                            LiveViewStateReader stateReader = new LiveViewStateReader();
+                            stateReader.of(reader, tableToken);
+                            instance.initFromState(stateReader);
                             // A persisted invalidation always wins — the original reason is more
                             // specific (base drop vs base rename vs schema change), so we only
                             // synthesize "base table does not exist" when nothing was persisted.
@@ -797,9 +803,13 @@ public class CairoEngine implements Closeable, WriterSource {
             // From here on, any failure must roll back the table to avoid orphan
             // LV-typed directories the startup loader skips and never reclaims.
             try {
-                // write _lv definition file
-                path.of(configuration.getDbRoot()).concat(liveViewToken);
-                blockFileWriter.of(path.concat(LiveViewDefinition.LIVE_VIEW_DEFINITION_FILE_NAME).$());
+                // _lv is the atomic CREATE commit marker, so it must be written
+                // last. Order: _lv.s (state) first, then _lv (definition). A crash
+                // between the two leaves _lv missing and the partial CREATE looks
+                // like an orphan LV directory to the loader. Rolling that back is
+                // safe; loading a half-created LV is not (without _lv.s, lastProcessed
+                // would default to -1 and the next refresh would re-replay the
+                // entire base table).
                 LiveViewDefinition definition = new LiveViewDefinition(
                         op.getViewName(),
                         op.getSelectSql(),
@@ -817,7 +827,6 @@ public class CairoEngine implements Closeable, WriterSource {
                         dependencyColumnNames,
                         metadata
                 );
-                LiveViewDefinition.append(definition, blockFileWriter);
 
                 // write _lv.s state file with subscribeFromSeqTxn captured above.
                 path.of(configuration.getDbRoot()).concat(liveViewToken);
@@ -832,6 +841,11 @@ public class CairoEngine implements Closeable, WriterSource {
                         subscribeFromSeqTxn - 1,
                         blockFileWriter
                 );
+
+                // write _lv definition file (commit marker)
+                path.of(configuration.getDbRoot()).concat(liveViewToken);
+                blockFileWriter.of(path.concat(LiveViewDefinition.LIVE_VIEW_DEFINITION_FILE_NAME).$());
+                LiveViewDefinition.append(definition, blockFileWriter);
 
                 LiveViewInstance instance = new LiveViewInstance(definition, liveViewToken);
                 instance.setSubscribeFromSeqTxn(subscribeFromSeqTxn);

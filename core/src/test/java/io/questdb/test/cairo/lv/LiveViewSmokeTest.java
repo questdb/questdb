@@ -24,10 +24,14 @@
 
 package io.questdb.test.cairo.lv;
 
+import io.questdb.cairo.TableToken;
 import io.questdb.cairo.lv.LiveViewInstance;
 import io.questdb.cairo.lv.LiveViewRefreshJob;
+import io.questdb.cairo.lv.LiveViewState;
 import io.questdb.griffin.SqlException;
 import io.questdb.mp.Job;
+import io.questdb.std.FilesFacade;
+import io.questdb.std.str.Path;
 import io.questdb.test.AbstractCairoTest;
 import org.junit.Assert;
 import org.junit.Test;
@@ -383,6 +387,39 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
             );
 
             execute("DROP LIVE VIEW lv");
+        });
+    }
+
+    @Test
+    public void testLoaderRejectsHalfCreatedLiveView() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 1s AS " +
+                    "SELECT ts, x, row_number() OVER () AS rn FROM base WHERE x > 0");
+
+            // Simulate a crash that left _lv on disk but not _lv.s. With the
+            // engine's atomic write order (_lv.s first, _lv last) this state can
+            // only occur via external corruption, but if it does the loader must
+            // reject the LV rather than fall back to a default subscribeFromSeqTxn
+            // that would re-replay the entire base table.
+            TableToken token = engine.getLiveViewRegistry().getViewInstance("lv").getLiveViewToken();
+            FilesFacade ff = engine.getConfiguration().getFilesFacade();
+            try (Path path = new Path()) {
+                path.of(engine.getConfiguration().getDbRoot())
+                        .concat(token)
+                        .concat(LiveViewState.LIVE_VIEW_STATE_FILE_NAME);
+                Assert.assertTrue(ff.removeQuiet(path.$()));
+            }
+
+            engine.getLiveViewRegistry().clear();
+            engine.buildViewGraphs();
+
+            Assert.assertNull(
+                    "loader must refuse to register a live view whose _lv.s is missing",
+                    engine.getLiveViewRegistry().getViewInstance("lv")
+            );
+            // No DROP here: the loader rejected the LV, so the SQL surface no
+            // longer sees it. Per-test fixture cleans up the on-disk leftover.
         });
     }
 
