@@ -10032,6 +10032,13 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                         setStateForTimestamp(path, lastPartitionTimestamp);
                         coveringPathLen = path.size();
                     }
+                    // Defensive: mapCoveringColumnsForSeal leaves path
+                    // appended with the last cover file's name on return.
+                    // It also re-trims internally before each cover file,
+                    // so a stale subpath here is harmless today, but the
+                    // explicit trim keeps the loop body's path invariant
+                    // local instead of relying on the helper's behaviour.
+                    path.trimTo(coveringPathLen);
                     int coverCount = coveringCols.size();
                     try {
                         mapCoveringColumnsForSeal(coveringCols, lastPartitionTimestamp, coveringPathLen, coverCount);
