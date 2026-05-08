@@ -24,7 +24,9 @@
 
 package io.questdb.test.cairo.lv;
 
+import io.questdb.cairo.lv.LiveViewRefreshJob;
 import io.questdb.griffin.SqlException;
+import io.questdb.mp.Job;
 import io.questdb.test.AbstractCairoTest;
 import org.junit.Assert;
 import org.junit.Test;
@@ -44,6 +46,15 @@ import org.junit.Test;
  * </ul>
  */
 public class LiveViewTest extends AbstractCairoTest {
+
+    private static boolean drainJob(Job job) {
+        Job.RunStatus status = () -> false;
+        boolean any = false;
+        for (int i = 0; i < 64 && job.run(0, status); i++) {
+            any = true;
+        }
+        return any;
+    }
 
     private void assertMutationRejected(String sql, String expectedMessageFragment) throws Exception {
         assertMemoryLeak(() -> {
@@ -294,6 +305,89 @@ public class LiveViewTest extends AbstractCairoTest {
                         e.getMessage().contains("live view") || e.getMessage().contains("simple scan")
                 );
             }
+        });
+    }
+
+    @Test
+    public void testRefreshWithWhereClause() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (val INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY HOUR WAL");
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 1s AS " +
+                    "SELECT val, ts, row_number() OVER () AS rn FROM base WHERE val > 5");
+            // Mix in rows that fail the filter (val <= 5) — they must NOT advance rn.
+            execute("INSERT INTO base (val, ts) VALUES " +
+                    "(1, '2026-01-01T00:00:00.000000Z'), " +
+                    "(10, '2026-01-01T00:01:00.000000Z'), " +
+                    "(3, '2026-01-01T00:02:00.000000Z'), " +
+                    "(20, '2026-01-01T00:03:00.000000Z'), " +
+                    "(30, '2026-01-01T00:04:00.000000Z')");
+            drainWalQueue();
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                drainJob(job);
+            }
+            drainWalQueue();
+
+            assertSql(
+                    "val\tts\trn\n" +
+                            "10\t2026-01-01T00:01:00.000000Z\t1\n" +
+                            "20\t2026-01-01T00:03:00.000000Z\t2\n" +
+                            "30\t2026-01-01T00:04:00.000000Z\t3\n",
+                    "SELECT val, ts, rn FROM lv ORDER BY ts"
+            );
+            execute("DROP LIVE VIEW lv");
+        });
+    }
+
+    @Test
+    public void testMultipleRefreshBatchesAccumulateState() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (val INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY HOUR WAL");
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 1s AS " +
+                    "SELECT val, ts, row_number() OVER () AS rn FROM base");
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                // Batch 1: rows 1, 2.
+                execute("INSERT INTO base (val, ts) VALUES " +
+                        "(10, '2026-01-01T00:00:00.000000Z'), " +
+                        "(20, '2026-01-01T00:01:00.000000Z')");
+                drainWalQueue();
+                drainJob(job);
+                drainWalQueue();
+
+                // Batch 2: rows 3, 4 — rn must continue from 3, not restart at 1.
+                execute("INSERT INTO base (val, ts) VALUES " +
+                        "(30, '2026-01-01T00:02:00.000000Z'), " +
+                        "(40, '2026-01-01T00:03:00.000000Z')");
+                drainWalQueue();
+                drainJob(job);
+                drainWalQueue();
+            }
+
+            assertSql(
+                    "val\tts\trn\n" +
+                            "10\t2026-01-01T00:00:00.000000Z\t1\n" +
+                            "20\t2026-01-01T00:01:00.000000Z\t2\n" +
+                            "30\t2026-01-01T00:02:00.000000Z\t3\n" +
+                            "40\t2026-01-01T00:03:00.000000Z\t4\n",
+                    "SELECT val, ts, rn FROM lv ORDER BY ts"
+            );
+            execute("DROP LIVE VIEW lv");
+        });
+    }
+
+    @Test
+    public void testRefreshOnEmptyBaseProducesNoRows() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (val INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY HOUR WAL");
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 1s AS " +
+                    "SELECT val, ts, row_number() OVER () AS rn FROM base");
+            drainWalQueue();
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                drainJob(job);
+            }
+            drainWalQueue();
+
+            assertSql("count\n0\n", "SELECT count() FROM lv");
+            execute("DROP LIVE VIEW lv");
         });
     }
 
