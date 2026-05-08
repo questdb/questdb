@@ -1566,6 +1566,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
+    public boolean isMatViewCoveringIndexEnabled() {
+        return false;
+    }
+
+    @Override
     public boolean isMatViewEnabled() {
         return true;
     }

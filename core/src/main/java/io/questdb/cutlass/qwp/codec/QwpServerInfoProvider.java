@@ -78,5 +78,5 @@ public interface QwpServerInfoProvider {
      * at handshake time; a role transition after the handshake is not reflected
      * on the already-open WebSocket (clients detect it on reconnect).
      */
-    byte getRole();
+    byte role();
 }

@@ -205,6 +205,13 @@ public interface SqlExecutionContext extends Sinkable, Closeable {
 
     boolean isCacheHit();
 
+    // Returns false only for materialized view refresh contexts when the
+    // cairo.mat.view.covering.index.enabled property is set to false.
+    // All other contexts always return true.
+    default boolean isCoveringIndexEnabled() {
+        return true;
+    }
+
     // Returns true when the current compile is the CREATE-time or refresh-time
     // compile of a live view's SELECT. Compile-time switch that lets window
     // function factories opt into live-view-only machinery (e.g. the

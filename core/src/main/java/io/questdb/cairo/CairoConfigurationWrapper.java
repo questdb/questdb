@@ -32,6 +32,7 @@ import io.questdb.Metrics;
 import io.questdb.TelemetryConfiguration;
 import io.questdb.VolumeDefinitions;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreakerConfiguration;
+import io.questdb.cutlass.qwp.codec.QwpServerInfoProvider;
 import io.questdb.cutlass.text.TextConfiguration;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.ObjObjHashMap;
@@ -852,7 +853,7 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
-    public io.questdb.cutlass.qwp.codec.@NotNull QwpServerInfoProvider getQwpServerInfoProvider() {
+    public @NotNull QwpServerInfoProvider getQwpServerInfoProvider() {
         return getDelegate().getQwpServerInfoProvider();
     }
 
@@ -1554,6 +1555,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     @Override
     public boolean isLiveViewEnabled() {
         return getDelegate().isLiveViewEnabled();
+    }
+
+    @Override
+    public boolean isMatViewCoveringIndexEnabled() {
+        return getDelegate().isMatViewCoveringIndexEnabled();
     }
 
     @Override

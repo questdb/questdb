@@ -44,6 +44,7 @@ import io.questdb.std.str.CharSink;
 import org.jetbrains.annotations.NotNull;
 
 public class MatViewRefreshSqlExecutionContext extends SqlExecutionContextImpl {
+    private final boolean coveringIndexEnabled;
     private TableReader baseTableReader;
     private TableToken viewTableToken;
 
@@ -56,6 +57,7 @@ public class MatViewRefreshSqlExecutionContext extends SqlExecutionContextImpl {
             setParallelWindowJoinEnabled(false);
             setParallelReadParquetEnabled(false);
         }
+        this.coveringIndexEnabled = engine.getConfiguration().isMatViewCoveringIndexEnabled();
         this.securityContext = new ReadOnlySecurityContext() {
             @Override
             public void authorizeInsert(TableToken tableToken) {
@@ -108,6 +110,11 @@ public class MatViewRefreshSqlExecutionContext extends SqlExecutionContextImpl {
             return getCairoEngine().getReaderAtTxn(baseTableReader);
         }
         return getCairoEngine().getReader(tableToken);
+    }
+
+    @Override
+    public boolean isCoveringIndexEnabled() {
+        return coveringIndexEnabled;
     }
 
     @Override
