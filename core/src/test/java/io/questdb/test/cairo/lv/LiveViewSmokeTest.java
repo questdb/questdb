@@ -188,6 +188,49 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testApplyAdvancesLvConsumedSeqTxn() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 1s AS " +
+                    "SELECT ts, x, row_number() OVER () AS rn FROM base WHERE x > 0");
+            execute("INSERT INTO base (ts, x) VALUES ('2026-04-01T00:00:00.000000Z', 4), " +
+                    "('2026-04-01T00:01:00.000000Z', 8)");
+            drainWalQueue();
+
+            LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("lv");
+            Assert.assertNotNull(instance);
+            long preLvConsumed = instance.getStateReader().getLvConsumedSeqTxn();
+
+            // Refresh writes the LV's WAL block but does not advance lvConsumedSeqTxn —
+            // that's deferred to apply time so retention only releases once the rows are
+            // durable in the LV's own table (RFC 123 §Flush).
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                drainJob(job);
+            }
+            Assert.assertEquals(
+                    "lvConsumedSeqTxn must not advance until apply runs",
+                    preLvConsumed,
+                    instance.getStateReader().getLvConsumedSeqTxn()
+            );
+            Assert.assertTrue(
+                    "lastProcessedSeqTxn must advance after refresh",
+                    instance.getLastProcessedSeqTxn() > preLvConsumed
+            );
+
+            // ApplyWal2TableJob reads maxBaseSeqTxnInBlock from the LV's WAL block and
+            // bumps lvConsumedSeqTxn.
+            drainWalQueue();
+            Assert.assertEquals(
+                    "lvConsumedSeqTxn must equal lastProcessedSeqTxn after apply",
+                    instance.getLastProcessedSeqTxn(),
+                    instance.getStateReader().getLvConsumedSeqTxn()
+            );
+
+            execute("DROP LIVE VIEW lv");
+        });
+    }
+
+    @Test
     public void testRefreshAdvancesLvConsumedSeqTxn() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE base (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");

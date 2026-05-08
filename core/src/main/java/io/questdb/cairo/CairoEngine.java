@@ -359,6 +359,43 @@ public class CairoEngine implements Closeable, WriterSource {
         return compiler.compile(selectSql, sqlExecutionContext).getRecordCursorFactory();
     }
 
+    /**
+     * Advances the live view's {@code lvConsumedSeqTxn} to {@code maxBaseSeqTxn} after
+     * the LV's own WAL block has been applied to its on-disk table. The advance is
+     * monotonic and persisted to {@code _lv.s} so WAL purge sees the latest floor across
+     * restarts. Called by {@link io.questdb.cairo.wal.ApplyWal2TableJob} on each
+     * {@code LIVE_VIEW_DATA} apply. Synchronizes on the instance to coordinate with the
+     * refresh worker, which also rewrites {@code _lv.s} for {@code lastProcessedSeqTxn}
+     * bookkeeping.
+     */
+    public void advanceLiveViewConsumedSeqTxn(TableToken liveViewToken, long maxBaseSeqTxn) {
+        if (maxBaseSeqTxn < 0) {
+            return;
+        }
+        LiveViewInstance instance = liveViewRegistry.getViewInstance(liveViewToken.getTableName());
+        if (instance == null) {
+            return;
+        }
+        synchronized (instance) {
+            if (maxBaseSeqTxn <= instance.getStateReader().getLvConsumedSeqTxn()) {
+                return;
+            }
+            instance.setLvConsumedSeqTxn(maxBaseSeqTxn);
+            try (
+                    BlockFileWriter blockFileWriter = new BlockFileWriter(configuration.getFilesFacade(), configuration.getCommitMode());
+                    Path path = new Path()
+            ) {
+                path.of(configuration.getDbRoot()).concat(liveViewToken).concat(LiveViewState.LIVE_VIEW_STATE_FILE_NAME);
+                blockFileWriter.of(path.$());
+                LiveViewState.append(instance.getStateReader(), blockFileWriter);
+            } catch (Throwable t) {
+                LOG.error().$("could not persist live view consumed seqTxn [view=").$(liveViewToken)
+                        .$(", maxBaseSeqTxn=").$(maxBaseSeqTxn)
+                        .$(", error=").$(t).I$();
+            }
+        }
+    }
+
     public void applyTableRename(TableToken token, TableToken updatedTableToken) {
         if (updatedTableToken.isMatView() && matViewGraph.getViewDefinition(updatedTableToken) == null) {
             throw CairoException.nonCritical().put("materialized view has not been registered yet [name=").put(updatedTableToken.getTableName()).put(']');
@@ -1692,15 +1729,17 @@ public class CairoEngine implements Closeable, WriterSource {
                     // Schema change touches columns the LV doesn't read — leave it valid.
                     continue;
                 }
-                instance.markInvalid(reason, invalidationTimestampUs);
-                path.of(configuration.getDbRoot()).concat(instance.getLiveViewToken()).concat(LiveViewState.LIVE_VIEW_STATE_FILE_NAME);
-                try {
-                    blockFileWriter.of(path.$());
-                    LiveViewState.append(instance.getStateReader(), blockFileWriter);
-                } catch (Throwable t) {
-                    LOG.error().$("could not persist live view invalidation [view=").$(instance.getLiveViewToken())
-                            .$(", reason=").$safe(reason)
-                            .$(", error=").$(t).I$();
+                synchronized (instance) {
+                    instance.markInvalid(reason, invalidationTimestampUs);
+                    path.of(configuration.getDbRoot()).concat(instance.getLiveViewToken()).concat(LiveViewState.LIVE_VIEW_STATE_FILE_NAME);
+                    try {
+                        blockFileWriter.of(path.$());
+                        LiveViewState.append(instance.getStateReader(), blockFileWriter);
+                    } catch (Throwable t) {
+                        LOG.error().$("could not persist live view invalidation [view=").$(instance.getLiveViewToken())
+                                .$(", reason=").$safe(reason)
+                                .$(", error=").$(t).I$();
+                    }
                 }
             }
         }

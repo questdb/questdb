@@ -342,6 +342,25 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
         );
     }
 
+    /**
+     * Commits the live view's WAL block with the highest base sequencer txn whose
+     * rows the block reflects. {@code ApplyWal2TableJob} uses this value to advance
+     * {@code lvConsumedSeqTxn} only when the block has been applied to the live view's
+     * own table, satisfying RFC 123's "applied to the LV's own on-disk tier" rule for
+     * base-WAL retention.
+     */
+    public void commitLiveView(long maxBaseSeqTxnInBlock) {
+        commit0(
+                WalTxnType.LIVE_VIEW_DATA,
+                maxBaseSeqTxnInBlock,
+                WAL_DEFAULT_LAST_REFRESH_TIMESTAMP,
+                WAL_DEFAULT_LAST_PERIOD_HI,
+                0,
+                0,
+                WAL_DEDUP_MODE_DEFAULT
+        );
+    }
+
     public void commitWithParams(long replaceRangeLowTs, long replaceRangeHiTs, byte dedupMode) {
         commit0(
                 WalTxnType.DATA,

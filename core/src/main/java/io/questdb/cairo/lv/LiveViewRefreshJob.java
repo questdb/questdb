@@ -444,7 +444,11 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             }
 
             if (appendedRows > 0) {
-                walWriter.commit();
+                // The LV-data block carries advanceTo as maxBaseSeqTxnInBlock. ApplyWal2TableJob
+                // reads it back at apply time and bumps lvConsumedSeqTxn / persists _lv.s, so base
+                // WAL retention only releases once the rows are durable in the LV's own table
+                // (RFC 123 strict semantics).
+                walWriter.commitLiveView(advanceTo);
             }
         } finally {
             Misc.free(frameCursor);
@@ -452,13 +456,10 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
 
         if (advanceTo > instance.getLastProcessedSeqTxn()) {
             instance.setLastProcessedSeqTxn(advanceTo);
-            // Phase 1 simplification: lvConsumedSeqTxn advances at WAL-commit time. The
-            // rows are durable in the LV's WAL even before ApplyWal2TableJob copies them
-            // into the LV's table, so base WAL retention can release safely. The
-            // appliedWatermark mirrors lastProcessed for now; once live-view-internal
-            // apply lands it'll track T_w on the LV's own table separately.
-            instance.setLvConsumedSeqTxn(advanceTo);
+            // appliedWatermark mirrors lastProcessed for now; sub-FLUSH-cycle freshness via
+            // the in-mem tier is parked, so the seam_ts is anchored at the WAL commit boundary.
             instance.setAppliedWatermark(advanceTo);
+            // lvConsumedSeqTxn is advanced from the apply path (CairoEngine.advanceLiveViewConsumedSeqTxn).
             persistState(instance);
         }
     }
@@ -469,13 +470,18 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
      */
     private void persistState(LiveViewInstance instance) {
         TableToken token = instance.getLiveViewToken();
-        path.of(engine.getConfiguration().getDbRoot()).concat(token).concat(LiveViewState.LIVE_VIEW_STATE_FILE_NAME);
-        try {
-            blockFileWriter.of(path.$());
-            LiveViewState.append(instance.getStateReader(), blockFileWriter);
-        } catch (Throwable t) {
-            LOG.error().$("could not persist live view state [view=").$(token)
-                    .$(", error=").$(t).I$();
+        // Synchronize on the instance: ApplyWal2TableJob also rewrites _lv.s when it
+        // applies an LV-data block (advanceLiveViewConsumedSeqTxn), and the two
+        // workers can otherwise race on the same file.
+        synchronized (instance) {
+            path.of(engine.getConfiguration().getDbRoot()).concat(token).concat(LiveViewState.LIVE_VIEW_STATE_FILE_NAME);
+            try {
+                blockFileWriter.of(path.$());
+                LiveViewState.append(instance.getStateReader(), blockFileWriter);
+            } catch (Throwable t) {
+                LOG.error().$("could not persist live view state [view=").$(token)
+                        .$(", error=").$(t).I$();
+            }
         }
     }
 
