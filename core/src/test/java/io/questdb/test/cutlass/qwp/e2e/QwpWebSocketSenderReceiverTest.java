@@ -591,8 +591,7 @@ public class QwpWebSocketSenderReceiverTest extends AbstractQwpWebSocketTest {
             try (QwpWebSocketSender sender = connectWs(port,
                     Integer.MAX_VALUE,
                     1024,
-                    TimeUnit.HOURS.toNanos(1),
-                    windowSize)) {
+                    TimeUnit.HOURS.toNanos(1))) {
                 // ~200 bytes per row; 20 rows = ~4 KB >> 1 KB threshold
                 String largePayload = "A".repeat(180);
                 for (int i = 0; i < 20; i++) {
@@ -634,8 +633,7 @@ public class QwpWebSocketSenderReceiverTest extends AbstractQwpWebSocketTest {
             try (QwpWebSocketSender sender = connectWs(port,
                     Integer.MAX_VALUE,
                     Integer.MAX_VALUE,
-                    TimeUnit.MILLISECONDS.toNanos(50),
-                    windowSize)) {
+                    TimeUnit.MILLISECONDS.toNanos(50))) {
                 // Send first row — stays buffered (interval hasn't elapsed yet)
                 sender.table("ws_autoflush_interval")
                         .longColumn("value", 1)
@@ -1100,8 +1098,7 @@ public class QwpWebSocketSenderReceiverTest extends AbstractQwpWebSocketTest {
             try (QwpWebSocketSender sender = connectWs(port,
                     5,
                     Integer.MAX_VALUE,
-                    TimeUnit.HOURS.toNanos(1),
-                    10)) {
+                    TimeUnit.HOURS.toNanos(1))) {
                 // Send multiple small batches
                 for (int batch = 0; batch < 10; batch++) {
                     for (int i = 0; i < 5; i++) {
@@ -1729,7 +1726,6 @@ public class QwpWebSocketSenderReceiverTest extends AbstractQwpWebSocketTest {
                     1,
                     Integer.MAX_VALUE,
                     TimeUnit.HOURS.toNanos(1),
-                    windowSize,
                     errorFut::complete)) {
                 // Good rows to a separate table — auto-flushed, no ACK wait
                 for (int i = 1; i <= 3; i++) {
@@ -2358,7 +2354,6 @@ public class QwpWebSocketSenderReceiverTest extends AbstractQwpWebSocketTest {
                     QwpWebSocketSender.DEFAULT_AUTO_FLUSH_ROWS,
                     QwpWebSocketSender.DEFAULT_AUTO_FLUSH_BYTES,
                     QwpWebSocketSender.DEFAULT_AUTO_FLUSH_INTERVAL_NANOS,
-                    windowSize,
                     errorFut::complete)) {
                 sender.table("ws_error_propagation_test")
                         .stringColumn("value", "not a number")
@@ -3133,7 +3128,6 @@ public class QwpWebSocketSenderReceiverTest extends AbstractQwpWebSocketTest {
                     QwpWebSocketSender.DEFAULT_AUTO_FLUSH_ROWS,
                     QwpWebSocketSender.DEFAULT_AUTO_FLUSH_BYTES,
                     QwpWebSocketSender.DEFAULT_AUTO_FLUSH_INTERVAL_NANOS,
-                    windowSize,
                     errorFut::complete)) {
                 sender.table("non_wal_table")
                         .symbol("tag", "test")
@@ -4889,7 +4883,6 @@ public class QwpWebSocketSenderReceiverTest extends AbstractQwpWebSocketTest {
         return connectWs(port,
                 QwpWebSocketSender.DEFAULT_AUTO_FLUSH_ROWS,
                 QwpWebSocketSender.DEFAULT_AUTO_FLUSH_BYTES,
-                QwpWebSocketSender.DEFAULT_AUTO_FLUSH_INTERVAL_NANOS,
-                windowSize);
+                QwpWebSocketSender.DEFAULT_AUTO_FLUSH_INTERVAL_NANOS);
     }
 }
