@@ -27,12 +27,15 @@ package io.questdb.test.cairo;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.idx.BitpackUtils;
+import io.questdb.cairo.idx.PostingIndexBwdReader;
 import io.questdb.cairo.idx.PostingIndexChainEntry;
 import io.questdb.cairo.idx.PostingIndexChainWriter;
+import io.questdb.cairo.idx.PostingIndexFwdReader;
 import io.questdb.cairo.idx.PostingIndexNative;
 import io.questdb.cairo.idx.PostingIndexUtils;
 import io.questdb.cairo.idx.PostingIndexWriter;
 import io.questdb.cairo.sql.RecordCursorFactory;
+import io.questdb.cairo.sql.RowCursor;
 import io.questdb.cairo.vm.MemoryCMARWImpl;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.LongList;
@@ -289,6 +292,149 @@ public class PostingIndexCriticalIssuesTest extends AbstractCairoTest {
             } finally {
                 Unsafe.free(src, 64, MemoryTag.NATIVE_DEFAULT);
                 Unsafe.free(dst, (long) count * Long.BYTES, MemoryTag.NATIVE_DEFAULT);
+            }
+        });
+    }
+
+    /**
+     * Reader must clamp returned rowids by the picked chain entry's
+     * V2_ENTRY_OFFSET_MAX_VALUE field. Writers can leave dirty
+     * (key, rowid) pairs in .pv past the chain's tracked coverage --
+     * for example after an O3 split shrinks a partition before the
+     * next reseal evicts them, or after a stale generation a
+     * sparse-gen append later supersedes. The chain entry's MAX_VALUE
+     * is the boundary between clean and dirty rows; the reader is the
+     * only place that can skip them without a full reseal.
+     * <p>
+     * Reproducer (no race, no fault injection): write 100 rowids
+     * across 5 keys to a fresh chain and commit -- the chain head now
+     * has MAX_VALUE=99 with valueMemSize covering all 100 rowids in
+     * .pv. Then call {@code setMaxValue(49)}, which writes 49 into
+     * the head entry's MAX_VALUE field via
+     * {@code PostingIndexChainWriter.updateHeadMaxValue} without
+     * touching .pv or the gen-dir. The on-disk state is the canonical
+     * dirty-data signature: chain claims coverage up to 49, but the
+     * encoded gen still walks rowids 0..99.
+     * <p>
+     * Open a fresh PostingIndexFwdReader / PostingIndexBwdReader and
+     * request key 0 (rowids 0, 5, 10, ..., 95) with caller-supplied
+     * max=Long.MAX_VALUE. Without the fix, the cursor walks every
+     * encoded value because it ignores entryMaxValue and clamps only
+     * by the caller-supplied bound. With the fix,
+     * {@code indexMaxValue = min(callerMax, entryMaxValue) = 49} and
+     * the cursor stops emitting values above 49.
+     */
+    @Test
+    public void testReaderClampsCursorToChainEntryMaxValue() throws Exception {
+        assertMemoryLeak(() -> {
+            final String name = "posting_max_value_clamp";
+            try (Path path = new Path().of(configuration.getDbRoot())) {
+                final int plen = path.size();
+                final FilesFacade ff = configuration.getFilesFacade();
+
+                try (PostingIndexWriter writer = new PostingIndexWriter(
+                        configuration, path.trimTo(plen), name, COLUMN_NAME_TXN_NONE)) {
+                    // Five keys, rowids 0..99. add() requires per-key
+                    // ascending rowids; using rowid as the loop index
+                    // satisfies that for every key.
+                    for (long rowId = 0; rowId < 100; rowId++) {
+                        writer.add((int) (rowId % 5), rowId);
+                    }
+                    writer.setMaxValue(99);
+                    writer.commit();
+                    // Lower MAX_VALUE in place. updateHeadMaxValue
+                    // writes V2_ENTRY_OFFSET_MAX_VALUE atomically and
+                    // republishes the chain header -- it does not
+                    // touch valueMem or the gen-dir, so the encoded
+                    // gen still walks rowids 0..99.
+                    writer.setMaxValue(49);
+                }
+
+                LPSZ keyFile = PostingIndexUtils.keyFileName(
+                        path.trimTo(plen), name, COLUMN_NAME_TXN_NONE);
+                try (MemoryCMARWImpl mem = new MemoryCMARWImpl(
+                        ff, keyFile, ff.getPageSize(), ff.length(keyFile),
+                        MemoryTag.MMAP_DEFAULT, /* opts */ 0)) {
+                    PostingIndexChainWriter chain = new PostingIndexChainWriter();
+                    chain.openExisting(mem);
+                    Assert.assertTrue(
+                            "test setup gap: chain head must exist after commit()",
+                            chain.hasHead()
+                    );
+                    PostingIndexChainEntry.Snapshot head = new PostingIndexChainEntry.Snapshot();
+                    chain.loadHeadEntry(mem, head);
+                    Assert.assertEquals(
+                            "test setup gap: head MAX_VALUE must reflect the lowered value "
+                                    + "after setMaxValue(49)",
+                            49L, head.maxValue
+                    );
+                    Assert.assertTrue(
+                            "test setup gap: head valueMemSize must still cover the encoded "
+                                    + "data for rowids 0..99 -- updateHeadMaxValue must not "
+                                    + "shrink it",
+                            head.valueMemSize > 0
+                    );
+                }
+
+                try (PostingIndexFwdReader reader = new PostingIndexFwdReader(
+                        configuration, path.trimTo(plen), name,
+                        COLUMN_NAME_TXN_NONE, /* partitionTxn */ 0, /* columnTop */ 0)) {
+                    int leaked = 0;
+                    long maxReturned = -1L;
+                    long count = 0;
+                    try (RowCursor cursor = reader.getCursor(0, 0L, Long.MAX_VALUE)) {
+                        while (cursor.hasNext()) {
+                            long rowId = cursor.next();
+                            if (rowId > maxReturned) maxReturned = rowId;
+                            if (rowId > 49) leaked++;
+                            count++;
+                        }
+                    }
+                    Assert.assertTrue(
+                            "Fwd reader returned no rowids -- key 0 has 20 entries "
+                                    + "(rowids 0,5,...,95) so cursor must emit at least "
+                                    + "the entries at or below MAX_VALUE=49",
+                            count > 0
+                    );
+                    Assert.assertEquals(
+                            "Fwd reader leaked " + leaked + " rowids past chain "
+                                    + "MAX_VALUE=49 (max returned=" + maxReturned + "). "
+                                    + "Cursor must clamp to entryMaxValue when the .pv "
+                                    + "encodes more rowids than the chain claims to cover.",
+                            0, leaked
+                    );
+                }
+
+                try (PostingIndexBwdReader reader = new PostingIndexBwdReader(
+                        configuration, path.trimTo(plen), name,
+                        COLUMN_NAME_TXN_NONE, /* partitionTxn */ 0, /* columnTop */ 0,
+                        /* metadata */ null, /* columnVersionReader */ null,
+                        /* partitionTimestamp */ 0)) {
+                    int leaked = 0;
+                    long maxReturned = -1L;
+                    long count = 0;
+                    try (RowCursor cursor = reader.getCursor(0, 0L, Long.MAX_VALUE)) {
+                        while (cursor.hasNext()) {
+                            long rowId = cursor.next();
+                            if (rowId > maxReturned) maxReturned = rowId;
+                            if (rowId > 49) leaked++;
+                            count++;
+                        }
+                    }
+                    Assert.assertTrue(
+                            "Bwd reader returned no rowids -- key 0 has 20 entries "
+                                    + "and the cursor must emit at least the entries at "
+                                    + "or below MAX_VALUE=49",
+                            count > 0
+                    );
+                    Assert.assertEquals(
+                            "Bwd reader leaked " + leaked + " rowids past chain "
+                                    + "MAX_VALUE=49 (max returned=" + maxReturned + "). "
+                                    + "Cursor must clamp to entryMaxValue when the .pv "
+                                    + "encodes more rowids than the chain claims to cover.",
+                            0, leaked
+                    );
+                }
             }
         });
     }
