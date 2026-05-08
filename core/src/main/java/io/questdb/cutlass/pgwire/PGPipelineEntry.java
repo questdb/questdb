@@ -3393,6 +3393,13 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
         }
     }
 
+    /**
+     * Resets per-iteration state so the entry can serve another execution.
+     * Intentionally does NOT touch {@code stateSuspended} or {@code cursor}:
+     * a suspended named portal must keep both alive across iterations so the
+     * next Execute can resume the same cursor. Callers that mean to discard
+     * the suspended cursor must invoke {@link #closeSuspendedCursor()} first.
+     */
     void clearState() {
         error = false;
         stalePlanError = false;

@@ -182,13 +182,16 @@ public class FirstArrayGroupByFunctionFactoryTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testSampleByFillValueRejectsArrayColumns() throws Exception {
-        assertException(
-                "SELECT ts, grp, first(arr) arr FROM tab SAMPLE BY 10s FILL(42)",
-                "CREATE TABLE tab (ts TIMESTAMP, grp SYMBOL, arr DOUBLE[]) TIMESTAMP(ts) PARTITION BY DAY",
-                16,
-                "support for VALUE fill is not yet implemented"
-        );
+    public void testSampleByFillValueRejectedWithArrayColumns() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE tab (ts TIMESTAMP, grp SYMBOL, arr DOUBLE[]) TIMESTAMP(ts) PARTITION BY DAY");
+            final String sql = "SELECT ts, grp, first(arr) arr FROM tab SAMPLE BY 10s FILL(42)";
+            assertExceptionNoLeakCheck(
+                    sql,
+                    sql.indexOf("42"),
+                    "fill value of type INT cannot fill column of type DOUBLE[]"
+            );
+        });
     }
 
     @Test

@@ -605,7 +605,6 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionEnc
         let (parquet_meta_bytes, _parquet_meta_footer_offset) =
             crate::parquet_metadata::generate_parquet_metadata(
                 &col_infos,
-                chunked.schema().columns(),
                 chunked.row_groups(),
                 designated_ts,
                 &sorting_col_indices,
@@ -750,7 +749,6 @@ fn build_column_infos_from_partition<'a>(
             crate::parquet_metadata::ParquetMetaColumnInfo {
                 name: col.name,
                 col_type_code: col_type.code(),
-                col_type_tag: Some(col.data_type.tag()),
                 id: col.id,
                 flags,
                 fixed_byte_len,
