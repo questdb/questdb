@@ -292,6 +292,8 @@ public interface IQueryModel extends Mutable, ExecutionModel, AliasTranslator, S
 
     ObjList<ExpressionNode> getGroupBy();
 
+    ObjList<IntList> getGroupingSets();
+
     LowerCaseCharSequenceObjHashMap<CharSequence> getHints();
 
     HorizonJoinContext getHorizonJoinContext();
@@ -453,6 +455,8 @@ public interface IQueryModel extends Mutable, ExecutionModel, AliasTranslator, S
     LowerCaseCharSequenceObjHashMap<WithClauseModel> getWithClauses();
 
     boolean hasExplicitTimestamp();
+
+    boolean hasGroupingSets();
 
     boolean hasSharedRefs();
 
