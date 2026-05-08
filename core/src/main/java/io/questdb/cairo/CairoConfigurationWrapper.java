@@ -483,16 +483,6 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
-    public long getLiveViewFlushRetryMaxDurationMicros() {
-        return getDelegate().getLiveViewFlushRetryMaxDurationMicros();
-    }
-
-    @Override
-    public int getLiveViewFlushRetryMax() {
-        return getDelegate().getLiveViewFlushRetryMax();
-    }
-
-    @Override
     public long getLiveViewInMemoryMaxMicros() {
         return getDelegate().getLiveViewInMemoryMaxMicros();
     }

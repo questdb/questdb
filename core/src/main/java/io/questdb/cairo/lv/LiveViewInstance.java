@@ -47,10 +47,8 @@ import java.util.concurrent.atomic.AtomicBoolean;
  *     <li>Lifecycle is derived from registry visibility + {@link #stateReader}.invalid;
  *         see {@link LiveViewLifecycleState}.</li>
  *     <li>Reads route through the LV's own WAL-backed table via the standard
- *         {@code TableReader} machinery (delta plan task #3). The
- *         {@link DoubleBufferedTable} / {@link InMemoryTable} primitives stay in
- *         the package as scaffolding for the eventual seam_ts in-memory tier per
- *         RFC 123, but Phase 1 does not pin or mutate any in-mem buffer here.</li>
+ *         {@code TableReader} machinery. A seam_ts in-memory tier for sub-FLUSH-cycle
+ *         freshness is deferred to a later phase per RFC 123.</li>
  *     <li>{@link LiveViewStateReader} mirrors the durable contents of {@code _lv.s} —
  *         {@code invalid}, {@code subscribeFromSeqTxn}, {@code lastProcessedSeqTxn},
  *         {@code appliedWatermark}, {@code lvConsumedSeqTxn}. The instance exposes the

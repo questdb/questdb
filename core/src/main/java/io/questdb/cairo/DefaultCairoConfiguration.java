@@ -506,16 +506,6 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
-    public long getLiveViewFlushRetryMaxDurationMicros() {
-        return 60L * Micros.SECOND_MICROS;
-    }
-
-    @Override
-    public int getLiveViewFlushRetryMax() {
-        return 5;
-    }
-
-    @Override
     public long getLiveViewInMemoryMaxMicros() {
         return 60L * Micros.MINUTE_MICROS;
     }

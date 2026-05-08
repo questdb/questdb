@@ -68,7 +68,6 @@ public class LiveViewDefinition {
     private final String baseTableName;
     private final TableToken baseTableToken;
     private final int baseTimestampType;
-    private final boolean backfillRequested;
     // Base-column names the SELECT depends on (filter inputs + window inputs +
     // designated ts). ApplyWal2TableJob's schema-change hook narrows invalidation
     // using this set: only changes touching one of these columns mark the view
@@ -98,7 +97,6 @@ public class LiveViewDefinition {
             char inMemoryIntervalUnit,
             int partitionBy,
             long viewLowerBoundTimestamp,
-            boolean backfillRequested,
             @Nullable LvAnchorSpec anchorSpec,
             ObjList<String> dependencyColumnNames,
             GenericRecordMetadata metadata
@@ -114,7 +112,6 @@ public class LiveViewDefinition {
         this.inMemoryIntervalUnit = inMemoryIntervalUnit;
         this.partitionBy = partitionBy;
         this.viewLowerBoundTimestamp = viewLowerBoundTimestamp;
-        this.backfillRequested = backfillRequested;
         this.anchorSpec = anchorSpec;
         this.dependencyColumnNames = dependencyColumnNames;
         this.metadata = metadata;
@@ -131,7 +128,6 @@ public class LiveViewDefinition {
         block.putChar(definition.inMemoryIntervalUnit);
         block.putInt(definition.partitionBy);
         block.putLong(definition.viewLowerBoundTimestamp);
-        block.putBool(definition.backfillRequested);
         block.putInt(definition.dependencyColumnNames.size());
         for (int i = 0, n = definition.dependencyColumnNames.size(); i < n; i++) {
             block.putStr(definition.dependencyColumnNames.getQuick(i));
@@ -261,7 +257,6 @@ public class LiveViewDefinition {
         char inMemoryIntervalUnit = 0;
         int partitionBy = 0;
         long viewLowerBoundTimestamp = 0;
-        boolean backfillRequested = false;
         ObjList<String> dependencyColumnNames = new ObjList<>();
         LvAnchorSpec anchorSpec = null;
 
@@ -293,8 +288,6 @@ public class LiveViewDefinition {
                 offset += Integer.BYTES;
                 viewLowerBoundTimestamp = block.getLong(offset);
                 offset += Long.BYTES;
-                backfillRequested = block.getBool(offset);
-                offset += Byte.BYTES;
                 int depCount = block.getInt(offset);
                 offset += Integer.BYTES;
                 dependencyColumnNames = new ObjList<>(depCount);
@@ -355,7 +348,6 @@ public class LiveViewDefinition {
                 inMemoryIntervalUnit,
                 partitionBy,
                 viewLowerBoundTimestamp,
-                backfillRequested,
                 anchorSpec,
                 dependencyColumnNames,
                 metadata
@@ -426,9 +418,6 @@ public class LiveViewDefinition {
         return viewLowerBoundTimestamp;
     }
 
-    public boolean isBackfillRequested() {
-        return backfillRequested;
-    }
 
     /**
      * Phase 1 has no ALTER LIVE VIEW, so {@link PartitionBy#NONE} stays as a sentinel

@@ -77,16 +77,11 @@ import static io.questdb.cairo.wal.WalUtils.WAL_NAME_BASE;
  * Disk-only refresh path: walks the base table's sequencer log forward from
  * {@code lastProcessedSeqTxn + 1}, opens each WAL segment via
  * {@link WalSegmentPageFrameCursor}, runs rows through the compiled SELECT's
- * filter + window cursor, writes outputs to:
- * <ul>
- *     <li>The live view's own WAL via {@link WalWriter} for durability — once committed,
- *     the global {@code ApplyWal2TableJob} applies the rows into the LV's on-disk tier.
- *     {@code lvConsumedSeqTxn} advances at WAL commit (the data is durable on disk
- *     irrespective of when the apply job catches up).</li>
- *     <li>The N=2 in-memory tier ({@link DoubleBufferedTable}) so the
- *     {@link io.questdb.griffin.engine.lv.LiveViewRecordCursor} can serve recent rows
- *     without touching disk.</li>
- * </ul>
+ * filter + window cursor, and writes outputs to the live view's own WAL via
+ * {@link WalWriter} for durability. Once committed, the global
+ * {@code ApplyWal2TableJob} applies the rows into the LV's on-disk tier;
+ * {@code lvConsumedSeqTxn} advances at apply time so retention only releases
+ * once the rows are durable.
  * <p>
  * Phase 1 sharp edges (per delta plan §"Phase 1 — disk-only end-to-end"):
  * <ul>
@@ -196,10 +191,6 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                     executionContext.of(localReader);
                 }
                 executionContext.setLiveViewCompile(true);
-                int timestampType = localReader != null
-                        ? localReader.getMetadata().getTimestampType()
-                        : ColumnType.TIMESTAMP_MICRO;
-                executionContext.setRange(Long.MIN_VALUE, Long.MAX_VALUE, timestampType);
                 try (SqlCompiler compiler = engine.getSqlCompiler()) {
                     CompiledQuery cq = compiler.compile(instance.getDefinition().getViewSql(), executionContext);
                     factory = cq.getRecordCursorFactory();
@@ -361,9 +352,6 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
         );
         WalSegmentRecordCursor walRecordCursor = new WalSegmentRecordCursor(addressCache, memoryPool);
         try (WalWriter walWriter = engine.getWalWriter(instance.getLiveViewToken())) {
-            // Phase 1: reads route through the LV's TableReader (delta plan task #3).
-            // The DoubleBufferedTable in-mem tier is parked until the seam_ts routing
-            // for sub-FLUSH-cycle freshness lands; for now we only write to the LV's WAL.
             RecordToRowCopier copier = ensureCopier(instance, windowFactory, walWriter);
             int lvTimestampIndex = walWriter.getMetadata().getTimestampIndex();
             // Window cursor metadata mirrors the LV's _meta, so the timestamp index is

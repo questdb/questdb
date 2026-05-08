@@ -28,28 +28,14 @@ import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.security.AllowAllSecurityContext;
-import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.griffin.engine.functions.bind.BindVariableServiceImpl;
-import io.questdb.griffin.engine.functions.bind.IndexedParameterLinkFunction;
-import io.questdb.griffin.model.IntrinsicModel;
 
 /**
  * Execution context used by {@link LiveViewRefreshJob} when compiling and running
- * the view's base SELECT during bootstrap.
- * <p>
- * Two responsibilities:
- * <ul>
- *     <li>Inject a runtime {@code BETWEEN :1 AND :2} timestamp intrinsic on the base
- *     table so the partition-frame cursor prunes partitions outside the backfill
- *     window. The lower bound is updated per refresh via {@link #setRange}; the
- *     upper bound is fixed to {@link Long#MAX_VALUE} and stored as
- *     {@code Long.MAX_VALUE - 1} per {@code BETWEEN}'s inclusive-hi semantics.</li>
- *     <li>Pin the base table {@link TableReader} for the duration of compile and
- *     cursor execution so SQL machinery's {@code getReader} calls return a
- *     snapshot at a consistent transaction.</li>
- * </ul>
- * Mirrors {@code MatViewRefreshSqlExecutionContext}.
+ * the view's base SELECT during refresh. Pins the base table {@link TableReader}
+ * for the duration of compile and cursor execution so SQL machinery's
+ * {@code getReader} calls return a snapshot at a consistent transaction.
  */
 public class LiveViewRefreshSqlExecutionContext extends SqlExecutionContextImpl {
 
@@ -85,35 +71,7 @@ public class LiveViewRefreshSqlExecutionContext extends SqlExecutionContextImpl 
         return baseTableReader != null;
     }
 
-    @Override
-    public boolean isOverriddenIntrinsics(TableToken tableToken) {
-        return baseTableReader != null && tableToken.equals(baseTableReader.getTableToken());
-    }
-
     public void of(TableReader baseTableReader) {
         this.baseTableReader = baseTableReader;
-    }
-
-    @Override
-    public void overrideWhereIntrinsics(TableToken tableToken, IntrinsicModel intrinsicModel, int timestampType) {
-        if (baseTableReader == null || !tableToken.equals(baseTableReader.getTableToken())) {
-            return;
-        }
-        // Cannot reuse function instances; the planner caches them in the compiled
-        // factory and would resurface them in unrelated execution contexts.
-        intrinsicModel.setBetweenBoundary(new IndexedParameterLinkFunction(1, timestampType, 0));
-        intrinsicModel.setBetweenBoundary(new IndexedParameterLinkFunction(2, timestampType, 0));
-    }
-
-    /**
-     * Updates the BETWEEN intrinsic's lower and upper boundaries.
-     * {@code timestampLo} is inclusive; {@code timestampHi} is exclusive at the
-     * API level and is stored as {@code timestampHi - 1} to match {@code BETWEEN}'s
-     * inclusive-hi semantics. Callers that want strict-greater-than semantics on
-     * the lower end should pass {@code lowerBound + 1}.
-     */
-    public void setRange(long timestampLo, long timestampHi, int timestampType) throws SqlException {
-        getBindVariableService().setTimestampWithType(1, timestampType, timestampLo);
-        getBindVariableService().setTimestampWithType(2, timestampType, timestampHi - 1);
     }
 }

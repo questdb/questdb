@@ -876,7 +876,6 @@ public class CairoEngine implements Closeable, WriterSource {
                         op.getInMemoryIntervalUnit(),
                         partitionBy,
                         viewLowerBoundTimestamp,
-                        false,
                         op.getAnchorSpec(),
                         dependencyColumnNames,
                         metadata
