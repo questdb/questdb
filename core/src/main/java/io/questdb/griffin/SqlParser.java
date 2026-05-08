@@ -1422,6 +1422,13 @@ public class SqlParser {
                     expr.toSink(anchorSink);
                     anchorExpressionSql = anchorSink.toString();
                 }
+            } else if (anchorKind == WindowExpression.ANCHOR_KIND_DAILY) {
+                // Desugar ANCHOR DAILY 'HH:MM' [tz] into the equivalent
+                // timestamp_floor / timestamp_floor_utc expression so the runtime
+                // path that compiles ANCHOR EXPRESSION can drive resetPartition
+                // dispatch identically. The original DAILY fields stay persisted
+                // for round-tripping in SHOW CREATE LIVE VIEW.
+                anchorExpressionSql = desugarDailyAnchor(w);
             }
             ObjList<String> partitionColumnNames = new ObjList<>(w.getPartitionBy().size());
             for (int j = 0, k = w.getPartitionBy().size(); j < k; j++) {
@@ -1442,6 +1449,59 @@ public class SqlParser {
             );
         }
         return null;
+    }
+
+    /**
+     * Builds the desugared {@code timestamp_floor} / {@code timestamp_floor_utc}
+     * expression text equivalent to {@code ANCHOR DAILY 'HH:MM' [tz]}. The runtime
+     * side feeds this through the same {@code ensureAnchorFunction} path that
+     * {@code ANCHOR EXPRESSION} uses, so the actual reset dispatch is identical.
+     * <ul>
+     *     <li>UTC midnight: {@code timestamp_floor('1d', <ts>)}.</li>
+     *     <li>UTC non-midnight: {@code timestamp_floor('1d', <ts>, '1970-01-01THH:MM:00.000000Z'::timestamp)}.</li>
+     *     <li>Tz-aware: {@code timestamp_floor_utc('1d', <ts>, '1970-01-01THH:MM:00.000000Z'::timestamp, '+00:00', '<tz>')}
+     *     using the UTC-encoded variant so DST fall-back keeps bucket distinctness.</li>
+     * </ul>
+     */
+    private static String desugarDailyAnchor(WindowExpression w) throws SqlException {
+        ObjList<ExpressionNode> orderBy = w.getOrderBy();
+        if (orderBy.size() == 0) {
+            throw SqlException.$(w.getAnchorPosition(), "ANCHOR DAILY requires ORDER BY <timestamp column>");
+        }
+        ExpressionNode tsNode = orderBy.getQuick(0);
+        if (tsNode.type != ExpressionNode.LITERAL) {
+            throw SqlException.$(tsNode.position, "ANCHOR DAILY requires ORDER BY a base timestamp column");
+        }
+        long timeUs = w.getAnchorDailyTimeUs();
+        CharSequence tz = w.getAnchorDailyTimeZone();
+        StringSink sink = Misc.getThreadLocalSink();
+        if (tz == null && timeUs == 0) {
+            sink.put("timestamp_floor('1d', ").put(tsNode.token).put(')');
+        } else if (tz == null) {
+            sink.put("timestamp_floor('1d', ").put(tsNode.token).put(", '1970-01-01T");
+            putHHMM(sink, timeUs);
+            sink.put(":00.000000Z'::timestamp)");
+        } else {
+            sink.put("timestamp_floor_utc('1d', ").put(tsNode.token).put(", '1970-01-01T");
+            putHHMM(sink, timeUs);
+            sink.put(":00.000000Z'::timestamp, '+00:00', '").put(tz).put("')");
+        }
+        return sink.toString();
+    }
+
+    private static void putHHMM(StringSink sink, long timeUs) {
+        long totalSeconds = timeUs / 1_000_000;
+        long hours = totalSeconds / 3600;
+        long minutes = (totalSeconds % 3600) / 60;
+        if (hours < 10) {
+            sink.put('0');
+        }
+        sink.put(hours);
+        sink.put(':');
+        if (minutes < 10) {
+            sink.put('0');
+        }
+        sink.put(minutes);
     }
 
     /**

@@ -1070,6 +1070,119 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testAnchorDailyResetsAcrossDstWithTimeZone() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (ts TIMESTAMP, x INT, sym SYMBOL) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            // Europe/London: clocks jump forward at 2026-03-29T01:00Z to 02:00 BST.
+            // ANCHOR DAILY '00:00' Europe/London buckets at local-midnight, which in
+            // UTC means 2026-03-28T00:00 (GMT) and 2026-03-29T00:00 (still GMT, since
+            // the DST spring-forward happens at 01:00 UTC). The two rows on either
+            // side of the boundary live in different anchor buckets even though they
+            // are only an hour apart in wall-clock UTC.
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 1s AS " +
+                    "SELECT ts, sym, sum(x) OVER w AS s FROM base " +
+                    "WINDOW w AS (PARTITION BY sym ORDER BY ts ANCHOR DAILY '00:00' 'Europe/London')");
+
+            execute("INSERT INTO base (ts, x, sym) VALUES " +
+                    "('2026-03-28T23:00:00.000000Z', 10, 'a'), " +
+                    "('2026-03-28T23:30:00.000000Z', 20, 'a'), " +
+                    "('2026-03-29T00:30:00.000000Z', 5, 'a'), " +
+                    "('2026-03-29T01:30:00.000000Z', 15, 'a')");
+            drainWalQueue();
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                drainJob(job);
+            }
+            drainWalQueue();
+
+            // Bucket 2026-03-28 (London local): rows at 23:00Z, 23:30Z -> sums 10, 30.
+            // Bucket 2026-03-29 (London local): rows at 00:30Z, 01:30Z -> sums 5, 20.
+            // (The DST spring-forward at 01:00 UTC does not split a London local day.)
+            assertSql(
+                    "ts\tsym\ts\n" +
+                            "2026-03-28T23:00:00.000000Z\ta\t10.0\n" +
+                            "2026-03-28T23:30:00.000000Z\ta\t30.0\n" +
+                            "2026-03-29T00:30:00.000000Z\ta\t5.0\n" +
+                            "2026-03-29T01:30:00.000000Z\ta\t20.0\n",
+                    "SELECT ts, sym, s FROM lv ORDER BY ts"
+            );
+
+            execute("DROP LIVE VIEW lv");
+        });
+    }
+
+    @Test
+    public void testAnchorDailyResetsAtMidnightUtc() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (ts TIMESTAMP, x INT, sym SYMBOL) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 1s AS " +
+                    "SELECT ts, sym, sum(x) OVER w AS s FROM base " +
+                    "WINDOW w AS (PARTITION BY sym ORDER BY ts ANCHOR DAILY '00:00')");
+
+            // Same shape as testAnchorResetsRunningSumAcrossDayBoundary but exercising
+            // the DAILY desugar path. For UTC midnight the two should be equivalent.
+            execute("INSERT INTO base (ts, x, sym) VALUES " +
+                    "('2026-08-01T00:00:00.000000Z', 10, 'a'), " +
+                    "('2026-08-01T01:00:00.000000Z', 20, 'a'), " +
+                    "('2026-08-02T00:00:00.000000Z', 5, 'a'), " +
+                    "('2026-08-02T01:00:00.000000Z', 15, 'a')");
+            drainWalQueue();
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                drainJob(job);
+            }
+            drainWalQueue();
+
+            assertSql(
+                    "ts\tsym\ts\n" +
+                            "2026-08-01T00:00:00.000000Z\ta\t10.0\n" +
+                            "2026-08-01T01:00:00.000000Z\ta\t30.0\n" +
+                            "2026-08-02T00:00:00.000000Z\ta\t5.0\n" +
+                            "2026-08-02T01:00:00.000000Z\ta\t20.0\n",
+                    "SELECT ts, sym, s FROM lv ORDER BY ts"
+            );
+
+            execute("DROP LIVE VIEW lv");
+        });
+    }
+
+    @Test
+    public void testAnchorDailyResetsAtNonZeroTimeUtc() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (ts TIMESTAMP, x INT, sym SYMBOL) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            // ANCHOR DAILY '09:30' (UTC) buckets at 09:30:00.000000Z each day.
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 1s AS " +
+                    "SELECT ts, sym, sum(x) OVER w AS s FROM base " +
+                    "WINDOW w AS (PARTITION BY sym ORDER BY ts ANCHOR DAILY '09:30')");
+
+            // Bucket 1 (2026-08-01T09:30Z .. 2026-08-02T09:29:59...Z): 09:30 and 18:00 -> 10, 30.
+            // Bucket 2 (2026-08-02T09:30Z .. ): 09:30 and 18:00 -> 5, 20.
+            // The 08:00 row on day 2 still belongs to bucket 1 (before 09:30 cutover).
+            execute("INSERT INTO base (ts, x, sym) VALUES " +
+                    "('2026-08-01T09:30:00.000000Z', 10, 'a'), " +
+                    "('2026-08-01T18:00:00.000000Z', 20, 'a'), " +
+                    "('2026-08-02T08:00:00.000000Z', 7, 'a'), " +
+                    "('2026-08-02T09:30:00.000000Z', 5, 'a'), " +
+                    "('2026-08-02T18:00:00.000000Z', 15, 'a')");
+            drainWalQueue();
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                drainJob(job);
+            }
+            drainWalQueue();
+
+            assertSql(
+                    "ts\tsym\ts\n" +
+                            "2026-08-01T09:30:00.000000Z\ta\t10.0\n" +
+                            "2026-08-01T18:00:00.000000Z\ta\t30.0\n" +
+                            "2026-08-02T08:00:00.000000Z\ta\t37.0\n" +
+                            "2026-08-02T09:30:00.000000Z\ta\t5.0\n" +
+                            "2026-08-02T18:00:00.000000Z\ta\t20.0\n",
+                    "SELECT ts, sym, s FROM lv ORDER BY ts"
+            );
+
+            execute("DROP LIVE VIEW lv");
+        });
+    }
+
+    @Test
     public void testInvalidationSurvivesRestart() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE base (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
