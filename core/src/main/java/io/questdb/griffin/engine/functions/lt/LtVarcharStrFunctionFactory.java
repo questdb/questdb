@@ -62,14 +62,16 @@ public class LtVarcharStrFunctionFactory implements FunctionFactory {
         if (a.isConstant() && !b.isConstant()) {
             CharSequence constValue = a.getStrA(null);
             if (constValue == null) {
-                return new LtStrFunctionFactory.NullSideFunc(b, true);
+                // a is the VARCHAR-side null, arg=b is STR
+                return new LtStrFunctionFactory.StrNullSideFunc(b, true);
             }
             return new LtStrFunctionFactory.ConstOnLeftFunc(constValue, b);
         }
         if (!a.isConstant() && b.isConstant()) {
             Utf8Sequence constValue = b.getVarcharA(null);
             if (constValue == null) {
-                return new LtStrFunctionFactory.NullSideFunc(a, false);
+                // b is the STR-side null, arg=a is VARCHAR
+                return new LtVarcharFunctionFactory.VarcharNullSideFunc(a, false);
             }
             return new ConstOnRightFunc(a, constValue);
         }

@@ -62,14 +62,14 @@ public class LtStrFunctionFactory implements FunctionFactory {
         if (a.isConstant() && !b.isConstant()) {
             CharSequence constValue = a.getStrA(null);
             if (constValue == null) {
-                return new NullSideFunc(b, true);
+                return new StrNullSideFunc(b, true);
             }
             return new ConstOnLeftFunc(constValue, b);
         }
         if (!a.isConstant() && b.isConstant()) {
             CharSequence constValue = b.getStrA(null);
             if (constValue == null) {
-                return new NullSideFunc(a, false);
+                return new StrNullSideFunc(a, false);
             }
             return new ConstOnRightFunc(a, constValue);
         }
@@ -217,19 +217,23 @@ public class LtStrFunctionFactory implements FunctionFactory {
     }
 
     /**
-     * Always-false comparison used when one operand is a NULL constant. Returning
-     * {@link io.questdb.griffin.engine.functions.constants.BooleanConstant#FALSE}
+     * Short-circuit used when one operand is a constant NULL and the other side is a
+     * STRING-typed Function. Returning {@link io.questdb.griffin.engine.functions.constants.BooleanConstant#FALSE}
      * directly would let the wrapping {@code NegatingFunctionFactory} (which builds
-     * {@code <=} and {@code >=} from {@code <} and {@code >}) flip the result to
-     * TRUE. As a {@link NegatableBooleanFunction}, this class swallows the negation
-     * flag and stays at FALSE, matching QuestDB's "null comparisons are always
-     * false" convention used by the runtime {@code Chars.lessThan} path.
+     * {@code <=} and {@code >=} from {@code <} and {@code >}) flip the result; as a
+     * {@link NegatableBooleanFunction}, this class consumes the negation flag itself.
+     * <p>
+     * The semantics mirror the runtime {@link Chars#lessThan(CharSequence, CharSequence, boolean)} path:
+     * {@code <} / {@code >} (negated=false) always return false because at least one
+     * operand is null, and {@code <=} / {@code >=} (negated=true) return true only
+     * when the runtime side is also null (QuestDB's {@code NULL = NULL -> true}
+     * convention).
      */
-    static final class NullSideFunc extends NegatableBooleanFunction implements UnaryFunction {
+    static final class StrNullSideFunc extends NegatableBooleanFunction implements UnaryFunction {
         private final Function arg;
         private final boolean nullOnLeft;
 
-        NullSideFunc(Function arg, boolean nullOnLeft) {
+        StrNullSideFunc(Function arg, boolean nullOnLeft) {
             this.arg = arg;
             this.nullOnLeft = nullOnLeft;
         }
@@ -241,7 +245,7 @@ public class LtStrFunctionFactory implements FunctionFactory {
 
         @Override
         public boolean getBool(Record rec) {
-            return false;
+            return negated && arg.getStrA(rec) == null;
         }
 
         @Override

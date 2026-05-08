@@ -59,15 +59,14 @@ public class LtStrNullReproTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testNullComparisonStaysFalseUnderNegation() throws Exception {
+    public void testNullComparisonAgainstNonNullValueIsAlwaysFalse() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE t (s VARCHAR)");
             execute("INSERT INTO t VALUES ('A')");
-            // All four directions must filter the row out -- the runtime path
-            // (Chars.lessThan with null operand) and the compile-time
-            // short-circuit must agree on QuestDB's "null comparisons are
-            // always false" convention, so NOT-rewriting them to <= or >=
-            // cannot flip the result.
+            // When the table side is non-null and the literal side is null, all
+            // four directions filter the row out: the one-null branch in
+            // Chars.lessThan / Utf8s.lessThan returns false regardless of the
+            // negated flag, and the compile-time short-circuit must agree.
             assertSql("s\n", "SELECT * FROM t WHERE s > null");
             assertSql("s\n", "SELECT * FROM t WHERE s < null");
             assertSql("s\n", "SELECT * FROM t WHERE s >= null");
@@ -76,6 +75,53 @@ public class LtStrNullReproTest extends AbstractCairoTest {
             assertSql("s\n", "SELECT * FROM t WHERE null < s");
             assertSql("s\n", "SELECT * FROM t WHERE null >= s");
             assertSql("s\n", "SELECT * FROM t WHERE null <= s");
+        });
+    }
+
+    @Test
+    public void testNullComparisonAgainstNullValueHonoursEqualityConvention() throws Exception {
+        // Both the literal-null short-circuit (StrNullSideFunc /
+        // VarcharNullSideFunc) and the runtime path (Chars.lessThan /
+        // Utf8s.lessThan) must agree on QuestDB's NULL = NULL convention:
+        //   <  / >  with any null operand  -> false
+        //   <= / >= with both null operands -> true
+        // The literal form goes through the short-circuit; the bind-variable
+        // form goes through the runtime Func. Both must produce the same
+        // single-row outcome over a NULL row.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE tv (s VARCHAR)");
+            execute("INSERT INTO tv VALUES (null), ('A')");
+            // <, > stay false in both directions
+            assertSql("s\n", "SELECT s FROM tv WHERE s > null");
+            assertSql("s\n", "SELECT s FROM tv WHERE s < null");
+            assertSql("s\n", "SELECT s FROM tv WHERE null > s");
+            assertSql("s\n", "SELECT s FROM tv WHERE null < s");
+            // <=, >= return the both-null row only
+            assertSql("s\n\n", "SELECT s FROM tv WHERE s <= null");
+            assertSql("s\n\n", "SELECT s FROM tv WHERE s >= null");
+            assertSql("s\n\n", "SELECT s FROM tv WHERE null <= s");
+            assertSql("s\n\n", "SELECT s FROM tv WHERE null >= s");
+
+            execute("CREATE TABLE ts (s STRING)");
+            execute("INSERT INTO ts VALUES (null), ('A')");
+            assertSql("s\n", "SELECT s FROM ts WHERE s > null");
+            assertSql("s\n", "SELECT s FROM ts WHERE s < null");
+            assertSql("s\n", "SELECT s FROM ts WHERE null > s");
+            assertSql("s\n", "SELECT s FROM ts WHERE null < s");
+            assertSql("s\n\n", "SELECT s FROM ts WHERE s <= null");
+            assertSql("s\n\n", "SELECT s FROM ts WHERE s >= null");
+            assertSql("s\n\n", "SELECT s FROM ts WHERE null <= s");
+            assertSql("s\n\n", "SELECT s FROM ts WHERE null >= s");
+
+            // Bind-variable parity: a NULL bind variable goes through the
+            // runtime Func instead of the short-circuit; the row-set must
+            // still match the literal form.
+            bindVariableService.clear();
+            bindVariableService.setVarchar("b0", null);
+            assertSql("s\n", "SELECT s FROM tv WHERE s > :b0");
+            assertSql("s\n", "SELECT s FROM tv WHERE s < :b0");
+            assertSql("s\n\n", "SELECT s FROM tv WHERE s <= :b0");
+            assertSql("s\n\n", "SELECT s FROM tv WHERE s >= :b0");
         });
     }
 }
