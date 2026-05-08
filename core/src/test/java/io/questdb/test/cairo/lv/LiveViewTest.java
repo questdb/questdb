@@ -224,6 +224,80 @@ public class LiveViewTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testRejectDedupBase() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (sym SYMBOL, val INT, ts TIMESTAMP) " +
+                    "TIMESTAMP(ts) PARTITION BY HOUR WAL DEDUP UPSERT KEYS(ts, sym)");
+            try {
+                execute("CREATE LIVE VIEW lv FLUSH EVERY 1s AS " +
+                        "SELECT sym, val, ts, row_number() OVER () AS rn FROM base");
+                Assert.fail("expected SqlException for DEDUP base");
+            } catch (SqlException e) {
+                Assert.assertTrue(
+                        e.getMessage(),
+                        e.getMessage().contains("live view cannot be created over a base table with DEDUP keys")
+                );
+            }
+        });
+    }
+
+    @Test
+    public void testRejectMissingWindowFunction() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (val INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY HOUR WAL");
+            try {
+                execute("CREATE LIVE VIEW lv FLUSH EVERY 1s AS SELECT val, ts FROM base");
+                Assert.fail("expected SqlException for missing window function");
+            } catch (SqlException e) {
+                Assert.assertTrue(
+                        e.getMessage(),
+                        e.getMessage().contains("live view select must contain at least one window function")
+                );
+            }
+        });
+    }
+
+    @Test
+    public void testRejectTwoPassWindowFunction() throws Exception {
+        // ntile() is a TWO_PASS window function — incremental refresh cannot drive it
+        // because the second pass needs the partition's total row count up front.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (val INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY HOUR WAL");
+            try {
+                execute("CREATE LIVE VIEW lv FLUSH EVERY 1s AS " +
+                        "SELECT val, ts, ntile(4) OVER (PARTITION BY val ORDER BY ts) AS bucket FROM base");
+                Assert.fail("expected SqlException for TWO_PASS window function");
+            } catch (SqlException e) {
+                Assert.assertTrue(
+                        e.getMessage(),
+                        e.getMessage().contains("live view select may only use window functions that support incremental refresh")
+                );
+            }
+        });
+    }
+
+    @Test
+    public void testRejectJoinInLiveViewSelect() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base1 (val INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY HOUR WAL");
+            execute("CREATE TABLE base2 (val INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY HOUR WAL");
+            // The JOIN-shaped factory tree fails the validateLiveViewFactory check
+            // that requires a single WAL base table at the leaf.
+            try {
+                execute("CREATE LIVE VIEW lv FLUSH EVERY 1s AS " +
+                        "SELECT base1.val, base1.ts, row_number() OVER () AS rn FROM base1 " +
+                        "JOIN base2 ON base1.ts = base2.ts");
+                Assert.fail("expected SqlException for JOIN in live view select");
+            } catch (SqlException e) {
+                Assert.assertTrue(
+                        "expected an LV-related rejection, got: " + e.getMessage(),
+                        e.getMessage().contains("live view") || e.getMessage().contains("simple scan")
+                );
+            }
+        });
+    }
+
+    @Test
     public void testShowColumnsReflectsLiveViewSchema() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE base (sym SYMBOL, price DOUBLE, ts TIMESTAMP) " +
