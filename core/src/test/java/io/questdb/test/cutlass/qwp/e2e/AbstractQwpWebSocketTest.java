@@ -86,7 +86,7 @@ public class AbstractQwpWebSocketTest extends AbstractCairoTest {
 
     /**
      * Plain WS sender combining the legacy auto-flush tunables of
-     * {@link #connectWs(int, int, int, long, int)} with a registered async
+     * {@link #connectWs(int, int, int, long)} with a registered async
      * error handler. Used by tests that need to assert on both batching
      * behaviour and async server rejections.
      * <p>
@@ -99,7 +99,6 @@ public class AbstractQwpWebSocketTest extends AbstractCairoTest {
             int autoFlushRows,
             int autoFlushBytes,
             long autoFlushIntervalNanos,
-            int inFlightWindowSize,
             SenderErrorHandler errorHandler
     ) {
         int rows = (autoFlushRows <= 0 || autoFlushRows == Integer.MAX_VALUE) ? 0 : autoFlushRows;
@@ -109,7 +108,6 @@ public class AbstractQwpWebSocketTest extends AbstractCairoTest {
         return (QwpWebSocketSender) Sender.builder(Sender.Transport.WEBSOCKET)
                 .address("localhost:" + port)
                 .errorHandler(errorHandler)
-                .inFlightWindowSize(inFlightWindowSize)
                 .autoFlushRows(rows)
                 .autoFlushBytes(bytes)
                 .autoFlushIntervalMillis(intervalMillis)
@@ -126,26 +124,23 @@ public class AbstractQwpWebSocketTest extends AbstractCairoTest {
     }
 
     /**
-     * Plain WS sender with the legacy auto-flush / window tunables that
-     * existed on {@code QwpWebSocketSender.connect(...)}. Maps to connect-string
-     * keys: {@code auto_flush_rows}, {@code auto_flush_bytes},
-     * {@code auto_flush_interval} (millis), {@code in_flight_window}.
-     * Sentinel translation: {@code Integer.MAX_VALUE} or {@code 0} for
-     * rows/bytes maps to {@code off}; an interval whose milliseconds
-     * exceed {@link Integer#MAX_VALUE} also maps to {@code off}.
+     * Plain WS sender with the legacy auto-flush tunables that existed on
+     * {@code QwpWebSocketSender.connect(...)}. Maps to connect-string keys:
+     * {@code auto_flush_rows}, {@code auto_flush_bytes}, {@code auto_flush_interval}
+     * (millis). Sentinel translation: {@code Integer.MAX_VALUE} or {@code 0} for
+     * rows/bytes maps to {@code off}; an interval whose milliseconds exceed
+     * {@link Integer#MAX_VALUE} also maps to {@code off}.
      */
     protected static QwpWebSocketSender connectWs(
             int port,
             int autoFlushRows,
             int autoFlushBytes,
-            long autoFlushIntervalNanos,
-            int inFlightWindowSize
+            long autoFlushIntervalNanos
     ) {
         StringBuilder cfg = new StringBuilder("ws::addr=localhost:").append(port).append(';');
         appendAutoFlushRows(cfg, autoFlushRows);
         appendAutoFlushBytes(cfg, autoFlushBytes);
         appendAutoFlushInterval(cfg, autoFlushIntervalNanos);
-        cfg.append("in_flight_window=").append(inFlightWindowSize).append(';');
         // Default close drain timeout (5s) is too tight for fuzz tests that
         // push hundreds of batches against a single-worker test server with
         // concurrent ALTERs slowing down WAL apply. 60s is enough headroom

@@ -721,8 +721,7 @@ public class QwpSenderFuzzTest extends AbstractQwpWebSocketTest {
         new Thread(() -> {
             try (QwpWebSocketSender sender = clientAutoFlushRows > 0
                     ? connectWs(port, clientAutoFlushRows, QwpWebSocketSender.DEFAULT_AUTO_FLUSH_BYTES,
-                    QwpWebSocketSender.DEFAULT_AUTO_FLUSH_INTERVAL_NANOS,
-                    QwpWebSocketSender.DEFAULT_IN_FLIGHT_WINDOW_SIZE)
+                    QwpWebSocketSender.DEFAULT_AUTO_FLUSH_INTERVAL_NANOS)
                     : connectWs(port)) {
                 long points = 0;
                 for (int n = 0; n < numOfIterations; n++) {
