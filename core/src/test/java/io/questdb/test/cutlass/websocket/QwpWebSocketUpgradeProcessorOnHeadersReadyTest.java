@@ -381,7 +381,7 @@ public class QwpWebSocketUpgradeProcessorOnHeadersReadyTest extends AbstractCair
     private static String readResponse(long bufferAddr, int size) {
         byte[] bytes = new byte[size];
         for (int i = 0; i < size; i++) {
-            bytes[i] = Unsafe.getUnsafe().getByte(bufferAddr + i);
+            bytes[i] = Unsafe.getByte(bufferAddr + i);
         }
         return new String(bytes, StandardCharsets.US_ASCII);
     }
