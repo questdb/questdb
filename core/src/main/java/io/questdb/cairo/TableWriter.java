@@ -11226,10 +11226,19 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
      * tentative state into the active view, rolls back stale rowids left over
      * from shrinks (O3 split, replace-range, dedup-replace), and then reseals
      * so the on-disk state matches the committed partition size.
+     * <p>
+     * When {@code canSkipRebuild} is true, the caller has determined this
+     * commit is pure-append for {@code partitionTimestamp} (no rewrite, no
+     * split, no shrink), so no rowid in {@code [columnTop, partitionSize)}
+     * could have been reassigned a different value. In that case the cheap
+     * {@link io.questdb.cairo.idx.IndexWriter#rollbackConditionally(long)}
+     * is sufficient and the trailing seal publishes the existing chain. When
+     * false, the chain must be rebuilt from the column .d file because some
+     * earlier write may have left stale {@code (key, rowId)} pairs.
      *
      * @return true if at least one column indexer was touched.
      */
-    private boolean sealPostingIndexForPartition(long partitionTimestamp) {
+    private boolean sealPostingIndexForPartition(long partitionTimestamp, boolean canSkipRebuild) {
         // Range-replace can fully drop a partition during this commit; the
         // sink block still references the defunct partition, but there is
         // nothing left to index.
@@ -11290,34 +11299,74 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                                 getPrimaryColumn(colIdx), columnTop,
                                 partitionTimestamp, partitionNameTxn
                         );
+                        // Tag the rebuild's intermediate commit (the
+                        // discardForRebuild + commit dance below) with
+                        // getTxn()+1, NOT getTxn(). discardForRebuild
+                        // rotates sealTxn so the trailing commit takes
+                        // appendNewEntry rather than mutating the OLD
+                        // entry in place; that fresh REBUILD entry sits
+                        // as the chain head from commit() until
+                        // rebuildSidecars() supersedes it. During that
+                        // window, and afterwards as a prev entry, REBUILD
+                        // has no cover footer (configureCovering runs
+                        // after commit), so any reader that picks it
+                        // resolves all cover columns to NULL. Tagging
+                        // with getTxn()+1 keeps REBUILD invisible to
+                        // every snapshot-isolated reader pinned at any
+                        // committed txn (T_pin <= getTxn() < getTxn()+1):
+                        // the picker walks past it to OLD (which still
+                        // has its proper footer) until rebuildSidecars
+                        // publishes SEAL with txnAtSeal=getTxn() and a
+                        // real footer. recoveryDropAbandoned can also
+                        // drop REBUILD on a partial-publish reopen
+                        // (predicate txnAtSeal > committedTxn fires when
+                        // the rebuild aborts before txWriter.commit).
+                        // The non-covering branch below uses getTxn()
+                        // because it has no covering footer to lose;
+                        // the brief-window picker hit there returns the
+                        // posting index alone, which is correct.
+                        indexer.getWriter().setNextTxnAtSeal(txWriter.getTxn() + 1L);
                         // Fold the fd-based O3 tentative state into
                         // the writer view before the reseal.
                         indexer.mergeTentativeIntoActiveIfAny();
-                        // Rebuild the chain from the column data file.
-                        // rollbackConditionally(partitionSize) only
-                        // evicts entries past the new partition size; it
-                        // leaves stale (key, rowId) pairs within
-                        // [columnTop, partitionSize) that survive
-                        // replace-range, dedup-replace, and O3 splits
-                        // where the same rowid takes a different value
-                        // across writes. discardForRebuild drops the
-                        // in-memory state without rotating .pv or
-                        // rewriting .pk, then index() re-reads sym2.d
-                        // (the source of truth) and the trailing seal
-                        // publishes a fresh single-gen chain entry.
-                        indexer.getWriter().discardForRebuild();
-                        long dataFd = openRO(ff, dFile(path.trimTo(plen), colName, colNameTxn), LOG);
-                        try {
-                            indexer.index(ff, dataFd, columnTop, partitionSize);
-                        } finally {
-                            ff.close(dataFd);
+                        if (canSkipRebuild) {
+                            // Pure-append O3 commit: no rowid in
+                            // [columnTop, partitionSize) was rewritten,
+                            // so the persisted chain has no in-range
+                            // stale (key, rowId) pairs. The cheap
+                            // rollbackConditionally evicts any entries
+                            // past partitionSize (typically a no-op for
+                            // pure append because getMaxValue() <
+                            // partitionSize) and the trailing
+                            // rebuildSidecars publishes the chain as is.
+                            indexer.getWriter().rollbackConditionally(partitionSize);
+                        } else {
+                            // Rebuild the chain from the column data file.
+                            // rollbackConditionally(partitionSize) only
+                            // evicts entries past the new partition size; it
+                            // leaves stale (key, rowId) pairs within
+                            // [columnTop, partitionSize) that survive
+                            // replace-range, dedup-replace, and O3 splits
+                            // where the same rowid takes a different value
+                            // across writes. discardForRebuild drops the
+                            // in-memory state without rotating .pv or
+                            // rewriting .pk, then index() re-reads sym2.d
+                            // (the source of truth) and the trailing seal
+                            // publishes a fresh single-gen chain entry.
+                            indexer.getWriter().discardForRebuild();
+                            long dataFd = openRO(ff, dFile(path.trimTo(plen), colName, colNameTxn), LOG);
+                            try {
+                                indexer.index(ff, dataFd, columnTop, partitionSize);
+                            } finally {
+                                ff.close(dataFd);
+                            }
+                            // Flush pending into gen 0 so rebuildSidecars (and seal in
+                            // the non-covering branch) sees a non-empty chain. add()
+                            // populated pending; commit() runs flushAllPending which
+                            // converts pending into a fresh gen and republishes the
+                            // chain head via extendHead at the same sealTxn.
+                            indexer.getWriter().commit();
                         }
-                        // Flush pending into gen 0 so rebuildSidecars (and seal in
-                        // the non-covering branch) sees a non-empty chain. add()
-                        // populated pending; commit() runs flushAllPending which
-                        // converts pending into a fresh gen and republishes the
-                        // chain head via extendHead at the same sealTxn.
-                        indexer.getWriter().commit();
                         // Pass the writer-space timestamp index so the
                         // O3 reseal preserves the linear-prediction
                         // encoding for the designated-timestamp covering
@@ -11377,15 +11426,20 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     // same trade-off is correct here.
                     indexer.getWriter().setNextTxnAtSeal(txWriter.getTxn());
                     indexer.mergeTentativeIntoActiveIfAny();
-                    // See rebuild-from-data comment in the covering branch.
-                    indexer.getWriter().discardForRebuild();
-                    long dataFd = openRO(ff, dFile(path.trimTo(plen), colName, colNameTxn), LOG);
-                    try {
-                        indexer.index(ff, dataFd, columnTop, partitionSize);
-                    } finally {
-                        ff.close(dataFd);
+                    if (canSkipRebuild) {
+                        // See pure-append fast-path comment in the covering branch above.
+                        indexer.getWriter().rollbackConditionally(partitionSize);
+                    } else {
+                        // See rebuild-from-data comment in the covering branch.
+                        indexer.getWriter().discardForRebuild();
+                        long dataFd = openRO(ff, dFile(path.trimTo(plen), colName, colNameTxn), LOG);
+                        try {
+                            indexer.index(ff, dataFd, columnTop, partitionSize);
+                        } finally {
+                            ff.close(dataFd);
+                        }
+                        indexer.getWriter().commit();
                     }
-                    indexer.getWriter().commit();
                     indexer.seal();
                     indexer.publishPendingPurges(messageBus, tableToken, partitionBy, timestampType, txWriter.getTxn());
                 }
@@ -11422,16 +11476,30 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         while ((blockIndex = o3PartitionUpdateSink.nextBlockIndex(blockIndex)) > -1L) {
             long blockAddress = o3PartitionUpdateSink.getBlockAddress(blockIndex);
             long partitionTimestamp = Unsafe.getLong(blockAddress);
+            long newPartitionSize = Unsafe.getLong(blockAddress + 2 * Long.BYTES);
+            long oldPartitionSize = Unsafe.getLong(blockAddress + 3 * Long.BYTES);
+            boolean partitionMutates = Numbers.decodeLowInt(Unsafe.getLong(blockAddress + 4 * Long.BYTES)) != 0;
+            long o3SplitPartitionSize = Unsafe.getLong(blockAddress + 5 * Long.BYTES);
             // Sink offset 6 holds the original (pre-split) partition ts. Non-split
             // commits leave [0] == [6]; splits overwrite [0] with the new split's
             // ts but leave [6] pointing at the shrunk main partition.
             long dataPartitionTimestamp = Unsafe.getLong(blockAddress + 6 * Long.BYTES);
 
-            if (partitionTimestamp != -1L && sealPostingIndexForPartition(partitionTimestamp)) {
+            // Pure-append O3: no rewrite, no split, partition only grew. In this
+            // case no rowid in [columnTop, partitionSize) was reassigned a new
+            // value, so the persisted chain has no in-range stale entries and
+            // the rebuild can be skipped. The split parent (dataPartitionTimestamp
+            // call below) shrunk and may have rewritten rowids inside the new
+            // size, so it always needs the rebuild.
+            boolean canSkipRebuildForPartition = !partitionMutates
+                    && o3SplitPartitionSize == 0
+                    && newPartitionSize >= oldPartitionSize;
+
+            if (partitionTimestamp != -1L && sealPostingIndexForPartition(partitionTimestamp, canSkipRebuildForPartition)) {
                 anyPartitionProcessed = true;
             }
             if (dataPartitionTimestamp != -1L && dataPartitionTimestamp != partitionTimestamp
-                    && sealPostingIndexForPartition(dataPartitionTimestamp)) {
+                    && sealPostingIndexForPartition(dataPartitionTimestamp, false)) {
                 anyPartitionProcessed = true;
             }
         }

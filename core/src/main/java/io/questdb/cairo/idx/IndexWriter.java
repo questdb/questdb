@@ -104,17 +104,18 @@ public interface IndexWriter extends Closeable, Mutable {
      *     writer.commit();                    // flush as fresh gen 0
      *     writer.seal();                      // rotate the value file
      * </pre>
-     * {@code commit()} extends the existing chain head in place, bumping
-     * GEN_COUNT to 1 so prior gens become unreachable through the chain;
-     * the trailing {@code seal()} rotates the value file at a fresh sealTxn
-     * and queues the old one for purge.
+     * The call rotates the writer's value file to a fresh sealTxn so the
+     * subsequent {@code commit()} appends a new chain entry rather than
+     * mutating the existing head in place. The OLD chain entry stays on
+     * disk as a prev entry until concurrent readers release it; the OLD
+     * value file is queued for the seal-purge job after the new entry
+     * lands. The trailing {@code seal()} rotates again and writes the
+     * dense final form.
      * <p>
-     * Unlike {@link #truncate()}, this call itself does no I/O: it leaves
-     * the value file, key file header, and chain head in place so concurrent
-     * readers with active mmaps stay safe. The subsequent {@code commit()} /
-     * {@code seal()} writes use the chain's established in-place mutation
-     * and rotation protocols and are safe under the same seqlock guarantees
-     * as a normal flush.
+     * Unlike {@link #truncate()}, this call preserves the chain head and
+     * the OLD value file so concurrent readers with active mmaps stay
+     * safe. The .pk header is not rewritten; only the writer's value-file
+     * mapping moves to the new sealTxn.
      * <p>
      * Default is no-op for index types that don't accumulate stale state
      * (e.g. BitmapIndexWriter persists every add immediately and has no

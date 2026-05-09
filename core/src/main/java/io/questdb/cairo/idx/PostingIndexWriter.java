@@ -172,6 +172,13 @@ public class PostingIndexWriter implements IndexWriter {
     private long partitionNameTxn = -1;
     private long partitionTimestamp = Long.MIN_VALUE;
     private long pendingCountsAddr;
+    // Old sealTxn stashed by discardForRebuild after it rotates valueMem to
+    // a fresh sealTxn. Consumed by the next flushAllPending() right after
+    // publishToChain so recordPostingSealPurge sees the post-append chain
+    // shape ([REBUILD@new, OLD@old]) and computes a correct
+    // [OLD.txnAtSeal, REBUILD.txnAtSeal) window for the OLD .pv's purge.
+    // -1 means no rebuild rotation is pending. Cleared in close().
+    private long pendingDiscardOldSealTxn = -1L;
     // Table _txn the next chain entry should record as its txnAtSeal,
     // supplied by TableWriter#syncColumns via setNextTxnAtSeal. -1 means
     // no caller-supplied value; the writer uses 0 as a placeholder so the
@@ -341,6 +348,7 @@ public class PostingIndexWriter implements IndexWriter {
                 coverCount = 0;
                 sealTarget = null;
                 releasePendingPurges();
+                pendingDiscardOldSealTxn = -1L;
                 pendingTxnAtSeal = -1;
                 // currentTableTxn is intentionally not reset here.
                 // path-based of(...) starts with close(), and the setter
@@ -545,25 +553,38 @@ public class PostingIndexWriter implements IndexWriter {
         if (!keyMem.isOpen()) {
             return;
         }
-        // Drop pending and spill in-memory state. Keep valueMem, valueMemSize,
-        // keyMem, sealTxn, and the chain head intact so concurrent readers with
-        // active mmaps stay safe -- this method touches no on-disk files.
+        // Drop pending and spill in-memory state, then rotate sealTxn to a
+        // fresh value so the next commit() takes publishToChain's
+        // appendNewEntry branch instead of mutating the existing head's
+        // gen-dir slot 0 in place via extendHead. extendHead's protocol
+        // assumes newGenCount > oldGenCount; without rotation a partition
+        // whose head carries fast-lag-extended sparse gens (oldGenCount > 1)
+        // would invoke extendHead with newGenCount=1 < oldGenCount, leaving
+        // the previously-published entry's bytes mutated under its original
+        // TXN_AT_SEAL -- visible to torn readers, snapshot-isolated readers
+        // that walk to it as a prev entry, and recoveryDropAbandoned which
+        // cannot detect the mutation (TXN_AT_SEAL is unchanged).
+        //
+        // The rotation mirrors truncate()'s block at the top of this file
+        // but keeps the chain head and the OLD .pv on disk so concurrent
+        // readers with active mmaps stay safe. The OLD .pv's purge is
+        // deferred via pendingDiscardOldSealTxn: the next flushAllPending
+        // records it right after publishToChain, when the chain has shape
+        // [REBUILD@new, OLD@old] and recordPostingSealPurge can compute the
+        // correct [OLD.txnAtSeal, REBUILD.txnAtSeal) window.
         //
         // The caller's republish runs in two steps:
-        //   1. commit() -> flushAllPending appends the new gen to the SAME .pv
-        //      at offset = preserved valueMemSize, then publishToChain takes
-        //      the extendHead branch (sealTxn == chain.getHeadSealTxn()) and
-        //      overwrites gen-dir slot 0 of the existing head in place,
-        //      bumping its GEN_COUNT to 1. Prior gen bytes stay in the .pv
-        //      but become unreachable through the chain. Readers see either
-        //      the old or new state, never a mix: the chain header's seqlock
-        //      plus extendHead's GEN_COUNT-last ordering rule out torn reads.
-        //   2. seal() / rebuildSidecars() rotates to a fresh sealTxn
-        //      (peekNextSealTxn -> newSealTxn), writes a dense single-gen .pv
-        //      at newSealTxn, and publishToChain takes the appendNewEntry
-        //      branch (sealTxn != chain.getHeadSealTxn()), publishing a new
-        //      chain entry that supersedes the in-place-mutated head. The
-        //      old .pv is queued for the seal-purge job.
+        //   1. commit() -> flushAllPending appends the new gen to the
+        //      freshly-opened .pv.{newSealTxn} at offset 0, then
+        //      publishToChain takes the appendNewEntry branch (rotated
+        //      sealTxn > head.sealTxn) and writes a fresh REBUILD chain
+        //      entry. The OLD entry stays intact as the new prev.
+        //   2. seal() / rebuildSidecars() rotates again to a further
+        //      sealTxn, writes a dense single-gen .pv there, and appends a
+        //      SEAL chain entry. REBUILD becomes prev to SEAL; both inherit
+        //      the same txnAtSeal so the picker shadows REBUILD with SEAL,
+        //      letting the seal-purge job remove .pv.{newSealTxn} on its
+        //      next pass with an empty [X, X) window.
         freePendingBuffers();
         freeSpillData();
         keyCapacity = 0;
@@ -572,6 +593,32 @@ public class PostingIndexWriter implements IndexWriter {
         maxValue = -1L;
         hasPendingData = false;
         activeKeyCount = 0;
+        if (chain.hasHead() && partitionPath.size() > 0) {
+            long oldSealTxn = sealTxn;
+            // peekNextSealTxn(), not sealTxn+1: after a recovery drop the
+            // writer's sealTxn lags genCounter, and reusing a dropped
+            // sealTxn would race the still-pending .pv purge.
+            long newSealTxn = Math.max(1, chain.peekNextSealTxn());
+            // Drop sidecar mappings tied to oldSealTxn -- the next
+            // configureCovering / rebuildSidecars reopens them at the new
+            // sealTxn.
+            closeSidecarMems();
+            valueMem.close(false, (byte) 0);
+            Path p = Path.getThreadLocal(partitionPath);
+            LPSZ fileName = PostingIndexUtils.valueFileName(p, indexName, postingColumnNameTxn, newSealTxn);
+            valueMem.of(ff, fileName,
+                    configuration.getDataIndexValueAppendPageSize(), 0L,
+                    MemoryTag.MMAP_INDEX_WRITER, configuration.getWriterFileOpenOpts(), -1);
+            sealTxn = newSealTxn;
+            valueMemSize = 0;
+            // The OLD .pv stays on disk until the deferred purge in
+            // flushAllPending fires. If flushAllPending never runs (caller
+            // closes without commit -- not a production path), the OLD .pv
+            // is still chain-referenced by the OLD entry and the new (empty)
+            // .pv.{newSealTxn} will be re-discovered as an orphan on the
+            // next reopen.
+            pendingDiscardOldSealTxn = oldSealTxn;
+        }
         allocateNativeBuffers();
     }
 
@@ -1313,6 +1360,24 @@ public class PostingIndexWriter implements IndexWriter {
     @Override
     public void setMaxValue(long maxValue) {
         this.maxValue = maxValue;
+        if (pendingDiscardOldSealTxn >= 0) {
+            // discardForRebuild preserved the OLD chain head on disk for
+            // concurrent readers and rotated valueMem to a fresh sealTxn,
+            // but chain.headEntryOffset still points at the OLD entry.
+            // Calling updateHeadMaxValue here would overwrite that
+            // entry's MAX_VALUE field while leaving its other fields
+            // (GEN_COUNT, KEY_COUNT, VALUE_MEM_SIZE, gen-dir slots,
+            // cover footer) describing the pre-rebuild state -- the
+            // OLD entry would become self-inconsistent and stay
+            // visible to snapshot-isolated readers walking the prev
+            // chain after the upcoming commit() turns it into a prev.
+            // The next flushAllPending takes the appendNewEntry branch
+            // (rotated sealTxn > head.sealTxn) and stamps maxValue
+            // into the FRESH entry's header from the in-memory mirror
+            // updated above, so skipping the on-disk republish here is
+            // safe.
+            return;
+        }
         // The head entry's MAX_VALUE field is mutable while the entry is
         // the head of the chain (single-writer, aligned 8-byte store is
         // atomic). updateHeadMaxValue also republishes the chain header so
@@ -2270,6 +2335,16 @@ public class PostingIndexWriter implements IndexWriter {
                 /* overrideMinKey */ minKey,
                 /* overrideMaxKey */ maxKey
         );
+
+        // Record the OLD .pv's purge if discardForRebuild rotated sealTxn
+        // before this flush. The chain shape is now [REBUILD@new, OLD@old]
+        // so recordPostingSealPurge sees second.txnAtSeal = OLD.txnAtSeal
+        // and head.txnAtSeal = REBUILD.txnAtSeal, producing the correct
+        // [OLD.txnAtSeal, REBUILD.txnAtSeal) window.
+        if (pendingDiscardOldSealTxn >= 0) {
+            recordPostingSealPurge(pendingDiscardOldSealTxn);
+            pendingDiscardOldSealTxn = -1L;
+        }
 
         // Clear only the active keys' pending counts (not the entire array)
         for (int i = 0; i < activeKeyCount; i++) {
