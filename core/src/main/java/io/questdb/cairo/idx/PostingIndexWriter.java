@@ -541,6 +541,11 @@ public class PostingIndexWriter implements IndexWriter {
     }
 
     @TestOnly
+    public int getAdaptiveDeltaAtOrAbove() {
+        return encodeCtx.adaptiveDeltaAtOrAbove;
+    }
+
+    @TestOnly
     public RowCursor getCursor(int key) {
         flushAllPending();
 
@@ -626,11 +631,6 @@ public class PostingIndexWriter implements IndexWriter {
         }
 
         return new TestFwdCursor(values);
-    }
-
-    @TestOnly
-    public int getAdaptiveDeltaAtOrAbove() {
-        return encodeCtx.adaptiveDeltaAtOrAbove;
     }
 
     @TestOnly

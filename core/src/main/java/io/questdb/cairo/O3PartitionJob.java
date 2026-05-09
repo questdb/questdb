@@ -108,8 +108,8 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
         final int partitionIndex = tableWriter.getPartitionIndexByTimestamp(partitionTimestamp);
         final long parquetFileSize = tableWriter.getPartitionParquetFileSize(partitionIndex);
         long duplicateCount = 0;
-        long newParquetSize = -1;
-        long newParquetMetaFileSize = -1;
+        long newParquetSize;
+        long newParquetMetaFileSize;
         boolean isRewrite = false;
         CairoConfiguration cairoConfiguration = tableWriter.getConfiguration();
         FilesFacade ff = tableWriter.getFilesFacade();
@@ -3299,8 +3299,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
             );
             final int pLen = path.size();
 
-            IndexWriter indexWriter = null;
-            byte currentWriterType = IndexType.NONE;
+            IndexWriter indexWriter;
             final int columnCount = tableWriterMetadata.getColumnCount();
             for (int columnIndex = 0; columnIndex < columnCount; columnIndex++) {
                 if (tableWriterMetadata.getColumnType(columnIndex) == ColumnType.SYMBOL && tableWriterMetadata.isColumnIndexed(columnIndex)) {
@@ -3316,10 +3315,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
 
                     // Get a fresh writer when index type changes so different index
                     // types can coexist across columns in the same partition.
-                    if (currentWriterType != indexType || indexWriter == null) {
-                        indexWriter = o3Basket.nextIndexer(indexType);
-                        currentWriterType = indexType;
-                    }
+                    indexWriter = o3Basket.nextIndexer(indexType);
 
                     try {
                         final ParquetMetaFileReader parquetMetadata = partitionDecoder.metadata();
@@ -3388,7 +3384,6 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                         }
                     } finally {
                         Misc.free(indexWriter);
-                        indexWriter = null;
                     }
                 }
             }

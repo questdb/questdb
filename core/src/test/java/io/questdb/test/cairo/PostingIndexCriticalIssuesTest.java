@@ -433,9 +433,11 @@ public class PostingIndexCriticalIssuesTest extends AbstractCairoTest {
             );
 
             assertQueryNoLeakCheck(
-                    "ts\tnew_sym\tprice\n"
-                            + "2024-01-01T00:00:00.000000Z\tA\t1.0\n"
-                            + "2024-01-01T01:00:00.000000Z\tB\t2.0\n",
+                    """
+                            ts\tnew_sym\tprice
+                            2024-01-01T00:00:00.000000Z\tA\t1.0
+                            2024-01-01T01:00:00.000000Z\tB\t2.0
+                            """,
                     "SELECT ts, new_sym, price FROM t_rename_live",
                     "ts",
                     true,
@@ -1360,7 +1362,7 @@ public class PostingIndexCriticalIssuesTest extends AbstractCairoTest {
                 final long fakeColBytes = fakeColRows << shift;
                 long fakeColAddr = Unsafe.malloc(fakeColBytes, MemoryTag.NATIVE_DEFAULT);
                 try {
-                    Unsafe.getUnsafe().setMemory(fakeColAddr, fakeColBytes, (byte) 0);
+                    Unsafe.setMemory(fakeColAddr, fakeColBytes, (byte) 0);
 
                     long[] addrs = {fakeColAddr};
                     long[] tops = {0L};
@@ -1464,7 +1466,7 @@ public class PostingIndexCriticalIssuesTest extends AbstractCairoTest {
                 final long fakeColBytes = fakeColRows << shift;
                 long fakeColAddr = Unsafe.malloc(fakeColBytes, MemoryTag.NATIVE_DEFAULT);
                 try {
-                    Unsafe.getUnsafe().setMemory(fakeColAddr, fakeColBytes, (byte) 0);
+                    Unsafe.setMemory(fakeColAddr, fakeColBytes, (byte) 0);
 
                     long[] addrs = {fakeColAddr};
                     long[] tops = {0L};
