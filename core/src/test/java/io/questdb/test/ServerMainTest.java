@@ -566,6 +566,7 @@ public class ServerMainTest extends AbstractBootstrapTest {
                                     "cairo.parallel.index.threshold\tQDB_CAIRO_PARALLEL_INDEX_THRESHOLD\t100000\tdefault\tfalse\tfalse\n" +
                                     "cairo.parallel.indexing.enabled\tQDB_CAIRO_PARALLEL_INDEXING_ENABLED\ttrue\tdefault\tfalse\tfalse\n" +
                                     "cairo.posting.index.auto.include.timestamp\tQDB_CAIRO_POSTING_INDEX_AUTO_INCLUDE_TIMESTAMP\ttrue\tdefault\tfalse\tfalse\n" +
+                                    "cairo.posting.index.indexer.spill.bytes.max\tQDB_CAIRO_POSTING_INDEX_INDEXER_SPILL_BYTES_MAX\t268435456\tdefault\tfalse\tfalse\n" +
                                     "cairo.posting.index.row.id.encoding\tQDB_CAIRO_POSTING_INDEX_ROW_ID_ENCODING\tadaptive\tdefault\tfalse\tfalse\n" +
                                     "cairo.posting.seal.gen.threshold\tQDB_CAIRO_POSTING_SEAL_GEN_THRESHOLD\t16\tdefault\tfalse\tfalse\n" +
                                     "cairo.posting.seal.purge.outbox.max\tQDB_CAIRO_POSTING_SEAL_PURGE_OUTBOX_MAX\t8192\tdefault\tfalse\tfalse\n" +

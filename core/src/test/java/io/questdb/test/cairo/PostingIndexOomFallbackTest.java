@@ -37,6 +37,8 @@ import io.questdb.cairo.idx.PostingIndexFwdReader;
 import io.questdb.cairo.idx.PostingIndexWriter;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cairo.sql.RowCursor;
+import io.questdb.log.Log;
+import io.questdb.log.LogFactory;
 import io.questdb.std.LongList;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
@@ -63,6 +65,8 @@ import static io.questdb.cairo.TableUtils.COLUMN_NAME_TXN_NONE;
  * cannot tell which path generated the bytes on disk.
  */
 public class PostingIndexOomFallbackTest extends AbstractCairoTest {
+
+    private static final Log LOG = LogFactory.getLog(PostingIndexOomFallbackTest.class);
 
     private static LongList collectAllRowIds(PostingIndexFwdReader reader, int keyCount) {
         LongList all = new LongList();
@@ -437,11 +441,12 @@ public class PostingIndexOomFallbackTest extends AbstractCairoTest {
      */
     @Test
     public void testFuzzPeriodicFlushAcrossBudgets() throws Exception {
+        final Rnd rnd = TestUtils.generateRandom(LOG);
+        final int iterations = 8 + rnd.nextInt(16); // 8..23 iterations per CI run
         assertMemoryLeak(() -> {
-            for (long seed = 0; seed < 16; seed++) {
-                Rnd rnd = new Rnd(seed * 17 + 11, seed * 23 + 5);
-                // Budget spans 5 orders of magnitude. Some seeds fire the
-                // flush almost every spill, others never fire it.
+            for (int i = 0; i < iterations; i++) {
+                // Budget spans 5 orders of magnitude. Some iterations fire
+                // the flush almost every spill, others never fire it.
                 long budget = 32L << rnd.nextInt(20);
                 node1.getConfigurationOverrides().setProperty(
                         PropertyKey.CAIRO_POSTING_INDEX_INDEXER_SPILL_BYTES_MAX, budget);
@@ -455,7 +460,7 @@ public class PostingIndexOomFallbackTest extends AbstractCairoTest {
 
                 try (Path path = new Path().of(configuration.getDbRoot())) {
                     final int plen = path.size();
-                    String name = "fuzz_budget_" + seed;
+                    String name = "fuzz_budget_" + i;
                     try (PostingIndexWriter writer = new PostingIndexWriter(configuration, path, name, COLUMN_NAME_TXN_NONE)) {
                         long row = 0;
                         for (int r = 0; r < rowsPerKey; r++) {
@@ -481,13 +486,13 @@ public class PostingIndexOomFallbackTest extends AbstractCairoTest {
                             RowCursor cursor = reader.getCursor(k, 0, Long.MAX_VALUE);
                             int idx = 0;
                             while (cursor.hasNext()) {
-                                Assert.assertTrue("seed=" + seed + " budget=" + budget + " key=" + k + " extra at idx=" + idx,
+                                Assert.assertTrue("iter=" + i + " budget=" + budget + " key=" + k + " extra at idx=" + idx,
                                         idx < expected.size());
-                                Assert.assertEquals("seed=" + seed + " budget=" + budget + " key=" + k + " idx=" + idx,
+                                Assert.assertEquals("iter=" + i + " budget=" + budget + " key=" + k + " idx=" + idx,
                                         expected.getQuick(idx), cursor.next());
                                 idx++;
                             }
-                            Assert.assertEquals("seed=" + seed + " budget=" + budget + " key=" + k + " short-count",
+                            Assert.assertEquals("iter=" + i + " budget=" + budget + " key=" + k + " short-count",
                                     expected.size(), idx);
                             Misc.free(cursor);
                         }
@@ -499,13 +504,13 @@ public class PostingIndexOomFallbackTest extends AbstractCairoTest {
                             RowCursor cursor = reader.getCursor(k, 0, Long.MAX_VALUE);
                             int idx = expected.size() - 1;
                             while (cursor.hasNext()) {
-                                Assert.assertTrue("seed=" + seed + " budget=" + budget + " bwd key=" + k + " extra at idx=" + idx,
+                                Assert.assertTrue("iter=" + i + " budget=" + budget + " bwd key=" + k + " extra at idx=" + idx,
                                         idx >= 0);
-                                Assert.assertEquals("seed=" + seed + " budget=" + budget + " bwd key=" + k + " idx=" + idx,
+                                Assert.assertEquals("iter=" + i + " budget=" + budget + " bwd key=" + k + " idx=" + idx,
                                         expected.getQuick(idx), cursor.next());
                                 idx--;
                             }
-                            Assert.assertEquals("seed=" + seed + " budget=" + budget + " bwd key=" + k + " short-count",
+                            Assert.assertEquals("iter=" + i + " budget=" + budget + " bwd key=" + k + " short-count",
                                     -1, idx);
                             Misc.free(cursor);
                         }
@@ -531,20 +536,21 @@ public class PostingIndexOomFallbackTest extends AbstractCairoTest {
      */
     @Test
     public void testFuzzStreamingMatchesFastPathBaseline() throws Exception {
+        final Rnd rnd = TestUtils.generateRandom(LOG);
+        final int iterations = 8 + rnd.nextInt(8); // 8..15 iterations per CI run
         assertMemoryLeak(() -> {
-            for (long seed = 0; seed < 12; seed++) {
-                Rnd rnd = new Rnd(seed * 41 + 7, seed * 53 + 19);
+            for (int iter = 0; iter < iterations; iter++) {
                 int keys = rnd.nextInt(60) + 4;
                 int rowsPerKey = rnd.nextInt(600) + 16;
 
-                LongList baseline = buildAndCollect("fuzz_base_" + seed, keys, rowsPerKey, /* tight RSS */ false);
-                LongList streaming = buildAndCollect("fuzz_str_" + seed, keys, rowsPerKey, /* tight RSS */ true);
+                LongList baseline = buildAndCollect("fuzz_base_" + iter, keys, rowsPerKey, /* tight RSS */ false);
+                LongList streaming = buildAndCollect("fuzz_str_" + iter, keys, rowsPerKey, /* tight RSS */ true);
 
-                Assert.assertEquals("seed=" + seed + " baseline vs streaming size mismatch",
+                Assert.assertEquals("iter=" + iter + " baseline vs streaming size mismatch",
                         baseline.size(), streaming.size());
                 for (int i = 0; i < baseline.size(); i++) {
                     if (baseline.getQuick(i) != streaming.getQuick(i)) {
-                        Assert.fail("seed=" + seed + " divergence at position " + i +
+                        Assert.fail("iter=" + iter + " divergence at position " + i +
                                 " (key/sentinel sequence): baseline=" + baseline.getQuick(i) +
                                 " streaming=" + streaming.getQuick(i));
                     }
@@ -610,22 +616,40 @@ public class PostingIndexOomFallbackTest extends AbstractCairoTest {
      */
     @Test
     public void testFuzzMixedBudgetAndRssAtSeal() throws Exception {
+        final Rnd rnd = TestUtils.generateRandom(LOG);
+        // Force at least one tight-RSS iteration and one loose-RSS one
+        // so the passes/hardFails sanity assertions stay meaningful
+        // regardless of which seeds the random clock picks.
+        final int iterations = 16 + rnd.nextInt(16); // 16..31 iterations per CI run
+        final int[] passes = {0};
+        final int[] hardFails = {0};
         assertMemoryLeak(() -> {
-            int passes = 0;
-            int hardFails = 0;
-            for (long seed = 0; seed < 24; seed++) {
-                Rnd rnd = new Rnd(seed * 71 + 31, seed * 89 + 13);
+            for (int iter = 0; iter < iterations; iter++) {
                 long budget = 64L << rnd.nextInt(18);
                 node1.getConfigurationOverrides().setProperty(
                         PropertyKey.CAIRO_POSTING_INDEX_INDEXER_SPILL_BYTES_MAX, budget);
-                int keys = rnd.nextInt(80) + 2;
-                int rowsPerKey = rnd.nextInt(500) + 32;
-                // Pick a head-room that ranges from very tight (8 KiB) to
-                // very loose (8 MiB). At the tight end every seed should
-                // hard-fail; at the loose end most should pass. Anchored
-                // to 8 KiB because seal()'s pre-free liberates the spill
-                // and pending arenas (multi-KiB) before pre-flight runs.
-                long sealHeadroomBytes = 8L * 1024L << rnd.nextInt(11); // 8 KiB to 8 MiB
+                // iter 0 pins a shape guaranteed to hard-fail (1 hot key
+                // with 100K rows -> streaming peak >> 8 KiB headroom even
+                // after seal's pre-free), iter 1 pins one guaranteed to
+                // pass (4 keys * 32 rows fits trivially in 8 MiB headroom).
+                // The remaining iterations use random workloads + random
+                // RSS limits to fuzz the boundary.
+                int keys;
+                int rowsPerKey;
+                long sealHeadroomBytes;
+                if (iter == 0) {
+                    keys = 1;
+                    rowsPerKey = 100_000;
+                    sealHeadroomBytes = 8L * 1024L; // tight -> hard-fail
+                } else if (iter == 1) {
+                    keys = 4;
+                    rowsPerKey = 32;
+                    sealHeadroomBytes = 8L * 1024L * 1024L; // loose -> pass
+                } else {
+                    keys = rnd.nextInt(80) + 2;
+                    rowsPerKey = rnd.nextInt(500) + 32;
+                    sealHeadroomBytes = 8L * 1024L << rnd.nextInt(11);
+                }
 
                 ObjList<LongList> oracle = new ObjList<>();
                 for (int k = 0; k < keys; k++) {
@@ -634,7 +658,7 @@ public class PostingIndexOomFallbackTest extends AbstractCairoTest {
 
                 try (Path path = new Path().of(configuration.getDbRoot())) {
                     final int plen = path.size();
-                    String name = "fuzz_mixed_" + seed;
+                    String name = "fuzz_mixed_" + iter;
                     long savedRssLimit = Unsafe.getRssMemLimit();
                     boolean sealSucceeded = false;
                     try (PostingIndexWriter writer = new PostingIndexWriter(configuration, path, name, COLUMN_NAME_TXN_NONE)) {
@@ -663,14 +687,14 @@ public class PostingIndexOomFallbackTest extends AbstractCairoTest {
                             if (!known) {
                                 throw e;
                             }
-                            hardFails++;
+                            hardFails[0]++;
                         } finally {
                             Unsafe.setRssMemLimit(savedRssLimit);
                         }
                     }
 
                     if (sealSucceeded) {
-                        passes++;
+                        passes[0]++;
                         try (PostingIndexFwdReader reader = new PostingIndexFwdReader(
                                 configuration, path.trimTo(plen), name, COLUMN_NAME_TXN_NONE, -1, 0)) {
                             for (int k = 0; k < keys; k++) {
@@ -678,14 +702,14 @@ public class PostingIndexOomFallbackTest extends AbstractCairoTest {
                                 RowCursor cursor = reader.getCursor(k, 0, Long.MAX_VALUE);
                                 int idx = 0;
                                 while (cursor.hasNext()) {
-                                    Assert.assertTrue("seed=" + seed + " budget=" + budget + " seal=" + sealHeadroomBytes
+                                    Assert.assertTrue("iter=" + iter + " budget=" + budget + " seal=" + sealHeadroomBytes
                                                     + " key=" + k + " extra",
                                             idx < expected.size());
-                                    Assert.assertEquals("seed=" + seed + " key=" + k + " idx=" + idx,
+                                    Assert.assertEquals("iter=" + iter + " key=" + k + " idx=" + idx,
                                             expected.getQuick(idx), cursor.next());
                                     idx++;
                                 }
-                                Assert.assertEquals("seed=" + seed + " key=" + k + " short-count",
+                                Assert.assertEquals("iter=" + iter + " key=" + k + " short-count",
                                         expected.size(), idx);
                                 Misc.free(cursor);
                             }
@@ -695,11 +719,10 @@ public class PostingIndexOomFallbackTest extends AbstractCairoTest {
                 node1.getConfigurationOverrides().setProperty(
                         PropertyKey.CAIRO_POSTING_INDEX_INDEXER_SPILL_BYTES_MAX, 256L << 20);
             }
-            // Sanity: across 24 seeds we expect both passes and hard-fails.
-            // If passes == 0 the test is no longer covering the success
-            // path; if hardFails == 0 we never tightened RSS enough.
-            Assert.assertTrue("fuzz never succeeded a seal: passes=" + passes, passes > 0);
-            Assert.assertTrue("fuzz never tightened RSS to hard-fail: hardFails=" + hardFails, hardFails > 0);
+            // Sanity: iter 0 forces tight RSS, iter 1 forces loose, so we
+            // are guaranteed at least one of each.
+            Assert.assertTrue("fuzz never succeeded a seal: passes=" + passes[0], passes[0] > 0);
+            Assert.assertTrue("fuzz never tightened RSS to hard-fail: hardFails=" + hardFails[0], hardFails[0] > 0);
         });
     }
 
@@ -719,11 +742,12 @@ public class PostingIndexOomFallbackTest extends AbstractCairoTest {
      */
     @Test
     public void testFuzzStreamingFixedIncludeMatchesBaseline() throws Exception {
+        final Rnd rnd = TestUtils.generateRandom(LOG);
+        final int iterations = 4 + rnd.nextInt(8); // 4..11 iterations per CI run
         final ColumnVersionReader emptyCvr = new ColumnVersionReader();
         try {
             assertMemoryLeak(() -> {
-                for (long seed = 0; seed < 8; seed++) {
-                    Rnd rnd = new Rnd(seed * 97 + 41, seed * 113 + 29);
+                for (int iter = 0; iter < iterations; iter++) {
                     int keys = rnd.nextInt(40) + 4;
                     int rowsPerKey = rnd.nextInt(400) + 32;
 
@@ -736,14 +760,14 @@ public class PostingIndexOomFallbackTest extends AbstractCairoTest {
                         }
 
                         double[] baseline = collectCoveredDoubles(
-                                "fuzz_cov_base_" + seed, keys, rowsPerKey, covAddr, /* tight RSS */ false, emptyCvr);
+                                "fuzz_cov_base_" + iter, keys, rowsPerKey, covAddr, /* tight RSS */ false, emptyCvr);
                         double[] streaming = collectCoveredDoubles(
-                                "fuzz_cov_str_" + seed, keys, rowsPerKey, covAddr, /* tight RSS */ true, emptyCvr);
+                                "fuzz_cov_str_" + iter, keys, rowsPerKey, covAddr, /* tight RSS */ true, emptyCvr);
 
-                        Assert.assertEquals("seed=" + seed + " covered length mismatch",
+                        Assert.assertEquals("iter=" + iter + " covered length mismatch",
                                 baseline.length, streaming.length);
                         for (int i = 0; i < baseline.length; i++) {
-                            Assert.assertEquals("seed=" + seed + " covered value at i=" + i,
+                            Assert.assertEquals("iter=" + iter + " covered value at i=" + i,
                                     baseline[i], streaming[i], 0.0);
                         }
                     } finally {
