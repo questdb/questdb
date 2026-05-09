@@ -37,7 +37,7 @@ import org.junit.Test;
  * to TRUE -- causing the bind-variable form to admit every row while the
  * literal form was correctly filtered.
  */
-public class LtStrNullReproTest extends AbstractCairoTest {
+public class LtNullComparisonTest extends AbstractCairoTest {
 
     @Test
     public void testFuzzerWhereDivergenceBindMatchesLiteral() throws Exception {

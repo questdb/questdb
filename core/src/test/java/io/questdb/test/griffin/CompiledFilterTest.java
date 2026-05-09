@@ -852,15 +852,21 @@ public class CompiledFilterTest extends AbstractCairoTest {
             //   col = NULL -> Java: <op> propagates NULL, NULL = NULL -> true.
             //   col != NULL -> any of these <op>s yield a different value,
             //                  so the predicate is false.
-            // Need >=4 rows so the AVX2 main loop runs (the bug never reached
-            // the scalar tail path, which preserves lhs).
+            // Need enough rows so each kernel's AVX2 main loop runs at least
+            // once: i64 step=4, i32 step=8. Use 9 rows so both kernels exercise
+            // a main iteration plus a scalar tail (the bug never reached the
+            // scalar tail path, which preserves lhs).
             execute("CREATE TABLE x (l LONG, i INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
             execute("INSERT INTO x VALUES " +
                     "(NULL, NULL, '2024-01-01T00:00:00.000000Z')," +
                     " (1L, 1, '2024-01-01T00:00:01.000000Z')," +
                     " (2L, 2, '2024-01-01T00:00:02.000000Z')," +
                     " (3L, 3, '2024-01-01T00:00:03.000000Z')," +
-                    " (4L, 4, '2024-01-01T00:00:04.000000Z')");
+                    " (4L, 4, '2024-01-01T00:00:04.000000Z')," +
+                    " (5L, 5, '2024-01-01T00:00:05.000000Z')," +
+                    " (6L, 6, '2024-01-01T00:00:06.000000Z')," +
+                    " (7L, 7, '2024-01-01T00:00:07.000000Z')," +
+                    " (8L, 8, '2024-01-01T00:00:08.000000Z')");
 
             sqlExecutionContext.setJitMode(SqlJitMode.JIT_MODE_ENABLED);
 

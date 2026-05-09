@@ -1015,14 +1015,17 @@ public class GroupByTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE t (x INT)");
             execute("INSERT INTO t VALUES (1), (2), (3)");
-            assertSql(
+            assertQueryNoLeakCheck(
                     """
                             e0\ta0
                             1\t1
                             2\t1
                             3\t1
                             """,
-                    "SELECT (x)::STRING AS e0, count() AS a0 FROM t GROUP BY 1 ORDER BY 1"
+                    "SELECT (x)::STRING AS e0, count() AS a0 FROM t GROUP BY 1 ORDER BY 1",
+                    null,
+                    true,
+                    true
             );
         });
     }
@@ -1171,9 +1174,28 @@ public class GroupByTest extends AbstractCairoTest {
                     true\tJ\t1
                     """;
             String body = "FROM (SELECT c2 AS k, count() AS cnt FROM t)\nWHERE k > 'A'\n";
-            assertSql(expected, "SELECT true AS e0, 'J' AS e1, max(cnt) AS a0\n" + body + "GROUP BY e0, e1");
-            assertSql(expected, "SELECT true AS e0, 'J' AS e1, max(cnt) AS a0\n" + body + "GROUP BY e0, 2");
-            assertSql(expected, "SELECT true AS e0, 'J' AS e1, max(cnt) AS a0\n" + body + "GROUP BY 1, 2");
+            assertQueryNoLeakCheck(expected, "SELECT true AS e0, 'J' AS e1, max(cnt) AS a0\n" + body + "GROUP BY e0, e1", null, true, true);
+            assertQueryNoLeakCheck(expected, "SELECT true AS e0, 'J' AS e1, max(cnt) AS a0\n" + body + "GROUP BY e0, 2", null, true, true);
+            assertQueryNoLeakCheck(expected, "SELECT true AS e0, 'J' AS e1, max(cnt) AS a0\n" + body + "GROUP BY 1, 2", null, true, true);
+        });
+    }
+
+    @Test
+    public void testGroupByConstantsOnlySingleKey() throws Exception {
+        // Companion to testGroupByConstantsOnlyMultiKey: the single-key
+        // all-constant shape that originally surfaced the bug. With the
+        // effectively-constant key dropped from the inner GROUP BY, the
+        // optimiser must collapse to a non-keyed aggregate and still emit
+        // the lifted constant in the outer projection.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (x INT)");
+            execute("INSERT INTO t VALUES (1), (2), (3)");
+            String expected = """
+                    e0\ta0
+                    true\t3
+                    """;
+            assertQueryNoLeakCheck(expected, "SELECT true AS e0, max(x) AS a0 FROM t GROUP BY e0", null, true, true);
+            assertQueryNoLeakCheck(expected, "SELECT true AS e0, max(x) AS a0 FROM t GROUP BY 1", null, true, true);
         });
     }
 
@@ -1308,13 +1330,16 @@ public class GroupByTest extends AbstractCairoTest {
             execute("INSERT INTO t VALUES ('A'), ('A'), ('B')");
             bindVariableService.clear();
             bindVariableService.setStr("b0", "X");
-            assertSql(
+            assertQueryNoLeakCheck(
                     """
                             e0\tc\ta0
                             X\tA\t2
                             X\tB\t1
                             """,
-                    "SELECT :b0 AS e0, c, count() AS a0 FROM t GROUP BY c ORDER BY c"
+                    "SELECT :b0 AS e0, c, count() AS a0 FROM t GROUP BY c ORDER BY c",
+                    null,
+                    true,
+                    true
             );
         });
     }
@@ -1346,19 +1371,25 @@ public class GroupByTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE t (v INT) ");
             execute("INSERT INTO t VALUES (1), (2), (3)");
-            assertSql(
+            assertQueryNoLeakCheck(
                     "e0\ta0\n" +
                             "null\t2.0\n",
-                    "SELECT null AS e0, avg(v) AS a0 FROM t GROUP BY 1"
+                    "SELECT null AS e0, avg(v) AS a0 FROM t GROUP BY 1",
+                    null,
+                    true,
+                    true
             );
             // A real key alongside the constant NULL still grouped per real-key value.
             execute("CREATE TABLE t2 (k INT, v INT)");
             execute("INSERT INTO t2 VALUES (1, 10), (1, 20), (2, 30)");
-            assertSql(
+            assertQueryNoLeakCheck(
                     "e0\tk\ta\n" +
                             "null\t1\t15.0\n" +
                             "null\t2\t30.0\n",
-                    "SELECT null AS e0, k, avg(v) AS a FROM t2 GROUP BY 1, k ORDER BY k"
+                    "SELECT null AS e0, k, avg(v) AS a FROM t2 GROUP BY 1, k ORDER BY k",
+                    null,
+                    true,
+                    true
             );
         });
     }
@@ -3063,11 +3094,14 @@ public class GroupByTest extends AbstractCairoTest {
             bindVariableService.clear();
             bindVariableService.setStr("b0", "KNWL");
 
-            assertSql(
+            assertQueryNoLeakCheck(
                     "k\tcnt\n" +
                             "A\t1\n",
                     "SELECT * FROM (SELECT sym AS k, count() AS cnt FROM t)\n" +
-                            "WHERE (cnt IS NOT NULL) AND (:b0::VARCHAR != 'UX')"
+                            "WHERE (cnt IS NOT NULL) AND (:b0::VARCHAR != 'UX')",
+                    null,
+                    true,
+                    false
             );
         });
     }
@@ -3135,9 +3169,12 @@ public class GroupByTest extends AbstractCairoTest {
             execute("INSERT INTO t VALUES (1), (2), (3)");
             bindVariableService.clear();
             bindVariableService.setStr("b0", "5");
-            assertSql(
+            assertQueryNoLeakCheck(
                     "e0\ta0\n6\t3\n",
-                    "SELECT :b0::LONG + 1 AS e0, count() AS a0 FROM t"
+                    "SELECT :b0::LONG + 1 AS e0, count() AS a0 FROM t",
+                    null,
+                    false,
+                    true
             );
         });
     }
@@ -3152,13 +3189,13 @@ public class GroupByTest extends AbstractCairoTest {
             execute("CREATE TABLE t (c2 STRING)");
             execute("INSERT INTO t VALUES ('A'), ('B'), ('C')");
             String expected = "e0\ta0\nX\t3\n";
-            assertSql(expected, "SELECT 'X'::CHAR AS e0, count() AS a0 FROM t");
+            assertQueryNoLeakCheck(expected, "SELECT 'X'::CHAR AS e0, count() AS a0 FROM t", null, false, true);
             bindVariableService.clear();
             bindVariableService.setStr("b0", "X");
-            assertSql(expected, "SELECT :b0::CHAR AS e0, count() AS a0 FROM t");
+            assertQueryNoLeakCheck(expected, "SELECT :b0::CHAR AS e0, count() AS a0 FROM t", null, false, true);
             bindVariableService.clear();
             bindVariableService.setStr("b0", "X");
-            assertSql(expected, "SELECT :b0 AS e0, count() AS a0 FROM t");
+            assertQueryNoLeakCheck(expected, "SELECT :b0 AS e0, count() AS a0 FROM t", null, false, true);
         });
     }
 
@@ -3183,24 +3220,24 @@ public class GroupByTest extends AbstractCairoTest {
                     e0\ta0
                     X\t0
                     """;
-            assertSql(expected, "SELECT 'X'::CHAR AS e0, count() AS a0 FROM t WHERE 1=0");
+            assertQueryNoLeakCheck(expected, "SELECT 'X'::CHAR AS e0, count() AS a0 FROM t WHERE 1=0", null, false, true);
             bindVariableService.clear();
             bindVariableService.setStr("b0", "X");
-            assertSql(expected, "SELECT :b0::CHAR AS e0, count() AS a0 FROM t WHERE 1=0");
+            assertQueryNoLeakCheck(expected, "SELECT :b0::CHAR AS e0, count() AS a0 FROM t WHERE 1=0", null, false, true);
             bindVariableService.clear();
             bindVariableService.setStr("b0", "X");
-            assertSql(expected, "SELECT :b0 AS e0, count() AS a0 FROM t WHERE 1=0");
+            assertQueryNoLeakCheck(expected, "SELECT :b0 AS e0, count() AS a0 FROM t WHERE 1=0", null, false, true);
             // Explicit GROUP BY by a constant-equivalent key keeps the empty-result exception.
             // The grammar accepts column references / aliases / position numbers in GROUP
             // BY, so route the bind cases through their projection alias.
             String expectedEmpty = "e0\ta0\n";
-            assertSql(expectedEmpty, "SELECT 'X'::CHAR AS e0, count() AS a0 FROM t WHERE 1=0 GROUP BY 'X'::CHAR");
+            assertQueryNoLeakCheck(expectedEmpty, "SELECT 'X'::CHAR AS e0, count() AS a0 FROM t WHERE 1=0 GROUP BY 'X'::CHAR", null, true, true);
             bindVariableService.clear();
             bindVariableService.setStr("b0", "X");
-            assertSql(expectedEmpty, "SELECT :b0::CHAR AS e0, count() AS a0 FROM t WHERE 1=0 GROUP BY e0");
+            assertQueryNoLeakCheck(expectedEmpty, "SELECT :b0::CHAR AS e0, count() AS a0 FROM t WHERE 1=0 GROUP BY e0", null, true, true);
             bindVariableService.clear();
             bindVariableService.setStr("b0", "X");
-            assertSql(expectedEmpty, "SELECT :b0 AS e0, count() AS a0 FROM t WHERE 1=0 GROUP BY e0");
+            assertQueryNoLeakCheck(expectedEmpty, "SELECT :b0 AS e0, count() AS a0 FROM t WHERE 1=0 GROUP BY e0", null, true, true);
         });
     }
 

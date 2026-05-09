@@ -26,6 +26,8 @@ package io.questdb.test.griffin;
 
 import io.questdb.griffin.SqlException;
 import io.questdb.test.AbstractCairoTest;
+import io.questdb.test.tools.TestUtils;
+import org.junit.Assert;
 import org.junit.Ignore;
 import org.junit.Test;
 
@@ -424,8 +426,9 @@ public class OrderByExpressionTest extends AbstractCairoTest {
             // NATIVE_TREE_CHAIN allocation.
             try {
                 execute("SELECT null AS e0, c2 AS e1, (c1)::INT AS e2 FROM t ORDER BY 3, 1");
-            } catch (SqlException ignore) {
-                // Expected: ORDER BY on a NULL-typed column is rejected.
+                Assert.fail("expected SqlException");
+            } catch (SqlException expected) {
+                TestUtils.assertContains(expected.getFlyweightMessage(), "column type is not supported for order by: NULL");
             }
         });
     }
