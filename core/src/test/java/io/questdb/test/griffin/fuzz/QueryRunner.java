@@ -314,28 +314,55 @@ public final class QueryRunner {
      * {@link #rowEqualsWithIntOverflowTolerance} cannot help once the
      * surviving row sets differ in size, so the bind axis falls back to
      * this SQL-shape detector.
+     * <p>
+     * Nested arithmetic such as {@code ((-17::BYTE + 125931) * -816546)}
+     * places a non-literal on the outer multiplication's left side and the
+     * regex only matches when both operands are bare integer literals.
+     * Iterating the scan handles this: each pass folds inner non-overflowing
+     * matches to their numeric value and rescans, exposing the next outer
+     * level. The folded value drops the parentheses so the outer subtree's
+     * own parens become the parens the regex needs at the next level.
      */
     private static boolean hasIntOverflowingConstantArithmetic(CharSequence sql) {
-        Matcher m = INT_CONST_ARITH_PATTERN.matcher(sql);
-        while (m.find()) {
-            try {
-                long a = Long.parseLong(m.group(1));
-                long b = Long.parseLong(m.group(3));
-                // The pattern only captures +, -, * in group 2 so the switch
-                // is exhaustive over the matched operators.
-                long result = switch (m.group(2).charAt(0)) {
-                    case '+' -> a + b;
-                    case '-' -> a - b;
-                    case '*' -> a * b;
-                    default -> throw new AssertionError("unreachable: regex group 2 is one of +, -, *");
-                };
-                if (result != (int) result) {
-                    return true;
+        String working = sql.toString();
+        while (true) {
+            Matcher m = INT_CONST_ARITH_PATTERN.matcher(working);
+            StringBuilder sb = null;
+            int last = 0;
+            boolean folded = false;
+            while (m.find()) {
+                try {
+                    long a = Long.parseLong(m.group(1));
+                    long b = Long.parseLong(m.group(3));
+                    // The pattern only captures +, -, * in group 2 so the switch
+                    // is exhaustive over the matched operators.
+                    long result = switch (m.group(2).charAt(0)) {
+                        case '+' -> a + b;
+                        case '-' -> a - b;
+                        case '*' -> a * b;
+                        default -> throw new AssertionError("unreachable: regex group 2 is one of +, -, *");
+                    };
+                    if (result != (int) result) {
+                        return true;
+                    }
+                    if (sb == null) {
+                        sb = new StringBuilder(working.length());
+                    }
+                    sb.append(working, last, m.start()).append(result);
+                    last = m.end();
+                    folded = true;
+                } catch (NumberFormatException ignore) {
+                    // Operand exceeds long range. Leave the match as-is so the
+                    // outer loop terminates; literal-vs-bind divergence on
+                    // out-of-long-range constants is its own concern.
                 }
-            } catch (NumberFormatException ignore) {
             }
+            if (!folded) {
+                return false;
+            }
+            sb.append(working, last, working.length());
+            working = sb.toString();
         }
-        return false;
     }
 
     private static boolean isAcceptedSkip(Throwable t) {
