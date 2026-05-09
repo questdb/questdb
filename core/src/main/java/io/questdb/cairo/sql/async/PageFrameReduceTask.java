@@ -65,6 +65,7 @@ public class PageFrameReduceTask implements QuietCloseable, Mutable {
     // Valid for TYPE_FILTER only. When set, only filteredRowCount field is initialized by the filter,
     // i.e. filteredRows can't be used.
     private boolean isCountOnly;
+    private boolean isInterrupted;
     private boolean isOutOfMemory;
     private byte taskType;
 
@@ -124,7 +125,7 @@ public class PageFrameReduceTask implements QuietCloseable, Mutable {
                     .position(errorMessagePosition)
                     .put(errorMsg)
                     .setCancellation(isCancelled)
-                    .setInterruption(isCancelled)
+                    .setInterruption(isInterrupted)
                     .setOutOfMemory(isOutOfMemory);
         };
     }
@@ -239,6 +240,7 @@ public class PageFrameReduceTask implements QuietCloseable, Mutable {
         errorMessagePosition = 0;
         errorKind = AsyncQueryErrorKind.KIND_NONE;
         isCancelled = false;
+        isInterrupted = false;
         isOutOfMemory = false;
     }
 
@@ -295,6 +297,7 @@ public class PageFrameReduceTask implements QuietCloseable, Mutable {
 
         if (th instanceof CairoException ce) {
             isCancelled = ce.isCancellation();
+            isInterrupted = ce.isInterruption();
             isOutOfMemory = ce.isOutOfMemory();
         }
 

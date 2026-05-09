@@ -89,6 +89,7 @@ public class UnorderedPageFrameSequence<T extends StatefulAtom> implements Close
     private PageFrameCursor frameCursor;
     private long id;
     private boolean isCancelled;
+    private boolean isInterrupted;
     private boolean isOutOfMemory;
     private boolean isReadyToDispatch;
     private boolean isUninterruptible;
@@ -148,7 +149,12 @@ public class UnorderedPageFrameSequence<T extends StatefulAtom> implements Close
                     ImplicitCastException.instance().position(errorMessagePosition).put(errorMsg);
             case AsyncQueryErrorKind.KIND_NUMERIC ->
                     NumericException.instance().position(errorMessagePosition).put(errorMsg);
-            default -> CairoException.nonCritical().position(errorMessagePosition).put(errorMsg);
+            default -> CairoException.nonCritical()
+                    .position(errorMessagePosition)
+                    .put(errorMsg)
+                    .setCancellation(isCancelled)
+                    .setInterruption(isInterrupted)
+                    .setOutOfMemory(isOutOfMemory);
         };
     }
 
@@ -343,6 +349,7 @@ public class UnorderedPageFrameSequence<T extends StatefulAtom> implements Close
             errorMessagePosition = 0;
             errorKind = AsyncQueryErrorKind.KIND_NONE;
             isCancelled = false;
+            isInterrupted = false;
             isOutOfMemory = false;
 
             atom.init(frameCursor, executionContext);
@@ -390,6 +397,7 @@ public class UnorderedPageFrameSequence<T extends StatefulAtom> implements Close
             errorMsg.put(e.getFlyweightMessage());
             errorMessagePosition = e.getPosition();
             isCancelled = e.isCancellation();
+            isInterrupted = e.isInterruption();
             isOutOfMemory = e.isOutOfMemory();
             cancel(e.getInterruptionReason());
         } else if (th instanceof FlyweightMessageContainer fmc) {
