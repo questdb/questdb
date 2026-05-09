@@ -331,6 +331,27 @@ public class PostingIndexBenchmarkSuite {
     @Benchmark
     @BenchmarkMode(Mode.AverageTime)
     @OutputTimeUnit(TimeUnit.MICROSECONDS)
+    public long walFastLagQuery(WalFastLagState s) throws Exception {
+        // Single point query against the table state left by previous
+        // invocations. Compiles fresh because the WAL apply path bumps
+        // table metadata version and invalidates cached factories. The
+        // batchRows axis is irrelevant here but JMH still varies it;
+        // treat those rows as replicate measurements when reading results.
+        String key = s.queryKeys[(s.queryCounter++) & (s.queryKeys.length - 1)];
+        long sum = 0;
+        try (RecordCursorFactory f = s.compiler.compile(
+                "SELECT count() FROM walbench WHERE sym = '" + key + "'", s.ctx
+        ).getRecordCursorFactory()) {
+            try (RecordCursor c = f.getCursor(s.ctx)) {
+                while (c.hasNext()) sum += c.getRecord().getLong(0);
+            }
+        }
+        return sum;
+    }
+
+    @Benchmark
+    @BenchmarkMode(Mode.AverageTime)
+    @OutputTimeUnit(TimeUnit.MICROSECONDS)
     public long walFastLagQueryAtGen(WalFastLagQueryGenState s) throws Exception {
         // Pure point-query against state pre-built to a target unsealed
         // gen count. Setup ran preload + unsealedGens fast-lag commits;
@@ -387,27 +408,6 @@ public class PostingIndexBenchmarkSuite {
     }
 
     @Benchmark
-    @BenchmarkMode(Mode.AverageTime)
-    @OutputTimeUnit(TimeUnit.MICROSECONDS)
-    public long walFastLagQuery(WalFastLagState s) throws Exception {
-        // Single point query against the table state left by previous
-        // invocations. Compiles fresh because the WAL apply path bumps
-        // table metadata version and invalidates cached factories. The
-        // batchRows axis is irrelevant here but JMH still varies it;
-        // treat those rows as replicate measurements when reading results.
-        String key = s.queryKeys[(s.queryCounter++) & (s.queryKeys.length - 1)];
-        long sum = 0;
-        try (RecordCursorFactory f = s.compiler.compile(
-                "SELECT count() FROM walbench WHERE sym = '" + key + "'", s.ctx
-        ).getRecordCursorFactory()) {
-            try (RecordCursor c = f.getCursor(s.ctx)) {
-                while (c.hasNext()) sum += c.getRecord().getLong(0);
-            }
-        }
-        return sum;
-    }
-
-    @Benchmark
     public void writeInsert(WriteState s) throws Exception {
         s.engine.execute(s.ddl, s.ctx);
         s.engine.execute(s.insertSql, s.ctx);
@@ -424,15 +424,24 @@ public class PostingIndexBenchmarkSuite {
         };
     }
 
-    private static int[] buildRoundRobin(int totalRows, int keyCount) {
-        int[] a = new int[totalRows];
-        for (int i = 0; i < totalRows; i++) a[i] = i % keyCount;
-        return a;
+    private static GenericRecordMetadata buildCoverMetadata(int colType) {
+        GenericRecordMetadata meta = new GenericRecordMetadata();
+        for (int i = 0; i <= 2; i++) {
+            int t = (i == 2) ? colType : ColumnType.LONG;
+            meta.add(new TableColumnMetadata("c" + i, t, IndexType.NONE, 0, false, null, i, false));
+        }
+        return meta;
     }
 
     // ==================================================================================
     // Section 3: Covering Sidecar Compression
     // ==================================================================================
+
+    private static int[] buildRoundRobin(int totalRows, int keyCount) {
+        int[] a = new int[totalRows];
+        for (int i = 0; i < totalRows; i++) a[i] = i % keyCount;
+        return a;
+    }
 
     private static int[] buildShuffled(int totalRows, int keyCount) {
         int[] a = new int[totalRows];
@@ -446,6 +455,10 @@ public class PostingIndexBenchmarkSuite {
         }
         return a;
     }
+
+    // ==================================================================================
+    // Section 4: SQL Covering Queries
+    // ==================================================================================
 
     private static int[] buildZipfian(int totalRows, int keyCount) {
         double[] cdf = new double[keyCount];
@@ -465,10 +478,6 @@ public class PostingIndexBenchmarkSuite {
         return a;
     }
 
-    // ==================================================================================
-    // Section 4: SQL Covering Queries
-    // ==================================================================================
-
     private static void deleteDir(String path) {
         File dir = new File(path);
         if (dir.exists()) {
@@ -477,6 +486,10 @@ public class PostingIndexBenchmarkSuite {
             dir.delete();
         }
     }
+
+    // ==================================================================================
+    // Section 5: Write Overhead
+    // ==================================================================================
 
     private static void deleteDirRecursive(File dir) {
         try {
@@ -496,10 +509,6 @@ public class PostingIndexBenchmarkSuite {
         } catch (IOException ignored) {
         }
     }
-
-    // ==================================================================================
-    // Section 5: Write Overhead
-    // ==================================================================================
 
     private static void doCovBaselineRead(CairoConfiguration config, String dir, int[] keys,
                                           long colAddr, CoverType ct) {
@@ -549,15 +558,6 @@ public class PostingIndexBenchmarkSuite {
         }
     }
 
-    private static GenericRecordMetadata buildCoverMetadata(int colType) {
-        GenericRecordMetadata meta = new GenericRecordMetadata();
-        for (int i = 0; i <= 2; i++) {
-            int t = (i == 2) ? colType : ColumnType.LONG;
-            meta.add(new TableColumnMetadata("c" + i, t, IndexType.NONE, 0, false, null, i, false));
-        }
-        return meta;
-    }
-
     // ==================================================================================
     // Shared utilities
     // ==================================================================================
@@ -568,54 +568,6 @@ public class PostingIndexBenchmarkSuite {
         File[] files = dir.listFiles();
         if (files != null) for (File f : files) size += f.length();
         return size;
-    }
-
-    /**
-     * Sidecar files are named {@code <name>.pc<idx>.<colTxn>.<sealTxn>}. Each seal
-     * publishes a new file at a higher sealTxn, but the previous one is normally
-     * removed by a message-bus purge job that this bare-bones benchmark setup does
-     * not run. Call this after {@code writer.seal()} so {@code getDirectorySize}
-     * reflects only the live sidecar.
-     */
-    private static void purgeStaleSidecars(String dir) {
-        File d = new File(dir);
-        File[] files = d.listFiles();
-        if (files == null) return;
-        // group by "<name>.pc<idx>.<colTxn>" prefix; track max sealTxn per group.
-        Map<String, Long> maxSeal = new LinkedHashMap<>();
-        for (File f : files) {
-            String n = f.getName();
-            int pcAt = n.indexOf(".pc");
-            if (pcAt < 0 || n.contains(".pci")) continue;
-            int lastDot = n.lastIndexOf('.');
-            if (lastDot <= pcAt) continue;
-            String prefix = n.substring(0, lastDot);
-            long sealTxn;
-            try {
-                sealTxn = Long.parseLong(n.substring(lastDot + 1));
-            } catch (NumberFormatException e) {
-                continue;
-            }
-            maxSeal.merge(prefix, sealTxn, Math::max);
-        }
-        for (File f : files) {
-            String n = f.getName();
-            int pcAt = n.indexOf(".pc");
-            if (pcAt < 0 || n.contains(".pci")) continue;
-            int lastDot = n.lastIndexOf('.');
-            if (lastDot <= pcAt) continue;
-            String prefix = n.substring(0, lastDot);
-            long sealTxn;
-            try {
-                sealTxn = Long.parseLong(n.substring(lastDot + 1));
-            } catch (NumberFormatException e) {
-                continue;
-            }
-            Long max = maxSeal.get(prefix);
-            if (max != null && sealTxn < max) {
-                f.delete();
-            }
-        }
     }
 
     private static void initPosting(CairoConfiguration config, String dir) {
@@ -742,6 +694,54 @@ public class PostingIndexBenchmarkSuite {
         }
 
         out.println();
+    }
+
+    /**
+     * Sidecar files are named {@code <name>.pc<idx>.<colTxn>.<sealTxn>}. Each seal
+     * publishes a new file at a higher sealTxn, but the previous one is normally
+     * removed by a message-bus purge job that this bare-bones benchmark setup does
+     * not run. Call this after {@code writer.seal()} so {@code getDirectorySize}
+     * reflects only the live sidecar.
+     */
+    private static void purgeStaleSidecars(String dir) {
+        File d = new File(dir);
+        File[] files = d.listFiles();
+        if (files == null) return;
+        // group by "<name>.pc<idx>.<colTxn>" prefix; track max sealTxn per group.
+        Map<String, Long> maxSeal = new LinkedHashMap<>();
+        for (File f : files) {
+            String n = f.getName();
+            int pcAt = n.indexOf(".pc");
+            if (pcAt < 0 || n.contains(".pci")) continue;
+            int lastDot = n.lastIndexOf('.');
+            if (lastDot <= pcAt) continue;
+            String prefix = n.substring(0, lastDot);
+            long sealTxn;
+            try {
+                sealTxn = Long.parseLong(n.substring(lastDot + 1));
+            } catch (NumberFormatException e) {
+                continue;
+            }
+            maxSeal.merge(prefix, sealTxn, Math::max);
+        }
+        for (File f : files) {
+            String n = f.getName();
+            int pcAt = n.indexOf(".pc");
+            if (pcAt < 0 || n.contains(".pci")) continue;
+            int lastDot = n.lastIndexOf('.');
+            if (lastDot <= pcAt) continue;
+            String prefix = n.substring(0, lastDot);
+            long sealTxn;
+            try {
+                sealTxn = Long.parseLong(n.substring(lastDot + 1));
+            } catch (NumberFormatException e) {
+                continue;
+            }
+            Long max = maxSeal.get(prefix);
+            if (max != null && sealTxn < max) {
+                f.delete();
+            }
+        }
     }
 
     private static String resolveKey(SqlCompilerImpl compiler, SqlExecutionContextImpl ctx, String table) throws Exception {
@@ -1611,12 +1611,14 @@ public class PostingIndexBenchmarkSuite {
                 ddl = switch (indexType) {
                     case "no_index" -> "CREATE TABLE walbench (ts TIMESTAMP, sym SYMBOL, price DOUBLE, name VARCHAR) " +
                             "TIMESTAMP(ts) PARTITION BY DAY WAL";
-                    case "bitmap" -> "CREATE TABLE walbench (ts TIMESTAMP, sym SYMBOL INDEX, price DOUBLE, name VARCHAR) " +
-                            "TIMESTAMP(ts) PARTITION BY DAY WAL";
+                    case "bitmap" ->
+                            "CREATE TABLE walbench (ts TIMESTAMP, sym SYMBOL INDEX, price DOUBLE, name VARCHAR) " +
+                                    "TIMESTAMP(ts) PARTITION BY DAY WAL";
                     case "posting" -> "CREATE TABLE walbench (ts TIMESTAMP, sym SYMBOL INDEX TYPE " + POSTING_SQL +
                             ", price DOUBLE, name VARCHAR) TIMESTAMP(ts) PARTITION BY DAY WAL";
-                    case "posting_covering" -> "CREATE TABLE walbench (ts TIMESTAMP, sym SYMBOL INDEX TYPE " + POSTING_SQL +
-                            " INCLUDE (price), price DOUBLE, name VARCHAR) TIMESTAMP(ts) PARTITION BY DAY WAL";
+                    case "posting_covering" ->
+                            "CREATE TABLE walbench (ts TIMESTAMP, sym SYMBOL INDEX TYPE " + POSTING_SQL +
+                                    " INCLUDE (price), price DOUBLE, name VARCHAR) TIMESTAMP(ts) PARTITION BY DAY WAL";
                     case "posting_covering_2cols" ->
                             "CREATE TABLE walbench (ts TIMESTAMP, sym SYMBOL INDEX TYPE " + POSTING_SQL +
                                     " INCLUDE (price, name), price DOUBLE, name VARCHAR) TIMESTAMP(ts) PARTITION BY DAY WAL";
@@ -1739,12 +1741,14 @@ public class PostingIndexBenchmarkSuite {
                 ddl = switch (indexType) {
                     case "no_index" -> "CREATE TABLE walbench (ts TIMESTAMP, sym SYMBOL, price DOUBLE, name VARCHAR) " +
                             "TIMESTAMP(ts) PARTITION BY DAY WAL";
-                    case "bitmap" -> "CREATE TABLE walbench (ts TIMESTAMP, sym SYMBOL INDEX, price DOUBLE, name VARCHAR) " +
-                            "TIMESTAMP(ts) PARTITION BY DAY WAL";
+                    case "bitmap" ->
+                            "CREATE TABLE walbench (ts TIMESTAMP, sym SYMBOL INDEX, price DOUBLE, name VARCHAR) " +
+                                    "TIMESTAMP(ts) PARTITION BY DAY WAL";
                     case "posting" -> "CREATE TABLE walbench (ts TIMESTAMP, sym SYMBOL INDEX TYPE " + POSTING_SQL +
                             ", price DOUBLE, name VARCHAR) TIMESTAMP(ts) PARTITION BY DAY WAL";
-                    case "posting_covering" -> "CREATE TABLE walbench (ts TIMESTAMP, sym SYMBOL INDEX TYPE " + POSTING_SQL +
-                            " INCLUDE (price), price DOUBLE, name VARCHAR) TIMESTAMP(ts) PARTITION BY DAY WAL";
+                    case "posting_covering" ->
+                            "CREATE TABLE walbench (ts TIMESTAMP, sym SYMBOL INDEX TYPE " + POSTING_SQL +
+                                    " INCLUDE (price), price DOUBLE, name VARCHAR) TIMESTAMP(ts) PARTITION BY DAY WAL";
                     case "posting_covering_2cols" ->
                             "CREATE TABLE walbench (ts TIMESTAMP, sym SYMBOL INDEX TYPE " + POSTING_SQL +
                                     " INCLUDE (price, name), price DOUBLE, name VARCHAR) TIMESTAMP(ts) PARTITION BY DAY WAL";
@@ -1869,8 +1873,9 @@ public class PostingIndexBenchmarkSuite {
                 ddl = switch (indexType) {
                     case "no_index" -> "CREATE TABLE walbench (ts TIMESTAMP, sym SYMBOL, price DOUBLE, name VARCHAR) " +
                             "TIMESTAMP(ts) PARTITION BY DAY WAL";
-                    case "bitmap" -> "CREATE TABLE walbench (ts TIMESTAMP, sym SYMBOL INDEX, price DOUBLE, name VARCHAR) " +
-                            "TIMESTAMP(ts) PARTITION BY DAY WAL";
+                    case "bitmap" ->
+                            "CREATE TABLE walbench (ts TIMESTAMP, sym SYMBOL INDEX, price DOUBLE, name VARCHAR) " +
+                                    "TIMESTAMP(ts) PARTITION BY DAY WAL";
                     default -> throw new IllegalArgumentException(indexType);
                 };
                 extraColumns = "price, name";
