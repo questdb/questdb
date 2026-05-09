@@ -125,6 +125,9 @@ public class InCharFunctionFactory implements FunctionFactory {
                 throw SqlException.$(position, "CHAR constant expected");
             }
         } else if (ColumnType.isNull(func.getType())) {
+            // CHAR has no NULL bit pattern; CHAR-zero is the agreed sentinel
+            // for "absent", matching the eager STRING-empty / VARCHAR-empty
+            // handling above and the CHAR null marker used elsewhere.
             set.add(CharConstant.ZERO.getChar(null));
         } else {
             throw SqlException.$(position, "CHAR constant expected");

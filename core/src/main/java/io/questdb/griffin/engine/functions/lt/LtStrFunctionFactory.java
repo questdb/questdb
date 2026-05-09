@@ -253,6 +253,10 @@ public class LtStrFunctionFactory implements FunctionFactory {
             return negated ? ">=" : "<";
         }
 
+        // The printed form reflects the post-Swap orientation, not the user's
+        // original SQL: `s <= null` lands here as Negating(Swapping(<)), which
+        // sets nullOnLeft=true and negated=true, so EXPLAIN reads `null >= s`.
+        // The expression is mathematically equivalent.
         @Override
         public void toPlan(PlanSink sink) {
             if (nullOnLeft) {

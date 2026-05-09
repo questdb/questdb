@@ -42,6 +42,7 @@ import io.questdb.std.CharSequenceHashSet;
 import io.questdb.std.Chars;
 import io.questdb.std.IntHashSet;
 import io.questdb.std.IntList;
+import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 import io.questdb.std.Transient;
 
@@ -151,6 +152,12 @@ public class InSymbolFunctionFactory implements FunctionFactory {
         }
 
         @Override
+        public void close() {
+            UnaryFunction.super.close();
+            Misc.freeObjList(deferredValues);
+        }
+
+        @Override
         public Function getArg() {
             return arg;
         }
@@ -213,6 +220,11 @@ public class InSymbolFunctionFactory implements FunctionFactory {
             }
         }
 
+        // Override required: UnaryFunction's default delegates to
+        // arg.isConstant(), which is true when the LHS is a literal (e.g.
+        // "'A'::SYMBOL IN (:b0)"). FunctionParser would then fold the
+        // function via getBool(null) before init() set testFunc, tripping
+        // an NPE.
         @Override
         public boolean isConstant() {
             if (!arg.isConstant()) {
@@ -243,16 +255,6 @@ public class InSymbolFunctionFactory implements FunctionFactory {
             }
         }
 
-        private static CharSequence deferredValueToString(Function func) {
-            // CHAR-typed bind variables don't expose getStrA; route them through
-            // getChar instead so the deferred set still receives a String key.
-            if (ColumnType.tagOf(func.getType()) == ColumnType.CHAR) {
-                char c = func.getChar(null);
-                return c != 0 ? String.valueOf(c) : null;
-            }
-            return func.getStrA(null);
-        }
-
         private boolean testAsInt(Record rec) {
             return intSet.contains(arg.getInt(rec));
         }
@@ -266,6 +268,16 @@ public class InSymbolFunctionFactory implements FunctionFactory {
                 return deferredSet.contains(symbol);
             }
             return false;
+        }
+
+        private static CharSequence deferredValueToString(Function func) {
+            // CHAR-typed bind variables don't expose getStrA; route them through
+            // getChar instead so the deferred set still receives a String key.
+            if (ColumnType.tagOf(func.getType()) == ColumnType.CHAR) {
+                char c = func.getChar(null);
+                return c != 0 ? String.valueOf(c) : null;
+            }
+            return func.getStrA(null);
         }
     }
 }

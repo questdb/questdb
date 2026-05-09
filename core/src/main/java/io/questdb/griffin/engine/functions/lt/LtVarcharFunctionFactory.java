@@ -108,6 +108,8 @@ public class LtVarcharFunctionFactory implements FunctionFactory {
             return negated ? ">=" : "<";
         }
 
+        // See StrNullSideFunc.toPlan for the swap-form caveat -- EXPLAIN can
+        // read `null >= s` for a user-written `s <= null`.
         @Override
         public void toPlan(PlanSink sink) {
             if (nullOnLeft) {

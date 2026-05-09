@@ -26,6 +26,7 @@ package io.questdb.test.griffin.engine.functions.eq;
 
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.sql.Function;
+import io.questdb.griffin.engine.functions.NegatableBooleanFunction;
 import io.questdb.griffin.engine.functions.constants.Decimal128Constant;
 import io.questdb.griffin.engine.functions.constants.Decimal16Constant;
 import io.questdb.griffin.engine.functions.constants.Decimal256Constant;
@@ -115,6 +116,27 @@ public class EqDecimalFunctionFactoryTest extends AbstractCairoTest {
         createFunctionAndAssert(
                 new Decimal128Constant(Decimals.DECIMAL128_HI_NULL, Decimals.DECIMAL128_LO_NULL, ColumnType.getDecimalType(20, 2)),
                 new Decimal128Constant(Decimals.DECIMAL128_HI_NULL, Decimals.DECIMAL128_LO_NULL, ColumnType.getDecimalType(20, 4)),
+                true
+        );
+    }
+
+    @Test
+    public void testEqDecimal128SlowPathNegatedBothNullIsFalse() {
+        // Negated `=` (i.e. `!=`) on the Decimal128 slow path must mirror the
+        // fast-path semantic: NULL = NULL is true, so NULL != NULL is false.
+        assertNegated(
+                new Decimal128Constant(Decimals.DECIMAL128_HI_NULL, Decimals.DECIMAL128_LO_NULL, ColumnType.getDecimalType(20, 2)),
+                new Decimal128Constant(Decimals.DECIMAL128_HI_NULL, Decimals.DECIMAL128_LO_NULL, ColumnType.getDecimalType(20, 4)),
+                false
+        );
+    }
+
+    @Test
+    public void testEqDecimal128SlowPathNegatedNullVsValueIsTrue() {
+        // `!=` of NULL and a non-null value is true on the slow path.
+        assertNegated(
+                new Decimal128Constant(Decimals.DECIMAL128_HI_NULL, Decimals.DECIMAL128_LO_NULL, ColumnType.getDecimalType(20, 2)),
+                new Decimal128Constant(0, 100, ColumnType.getDecimalType(20, 4)),
                 true
         );
     }
@@ -383,6 +405,39 @@ public class EqDecimalFunctionFactoryTest extends AbstractCairoTest {
                         Decimals.DECIMAL256_LH_NULL, Decimals.DECIMAL256_LL_NULL,
                         ColumnType.getDecimalType(40, 4)
                 ),
+                true
+        );
+    }
+
+    @Test
+    public void testEqDecimal256SlowPathNegatedBothNullIsFalse() {
+        // Negated `=` (i.e. `!=`) on the Decimal256 slow path must mirror the
+        // fast-path semantic: NULL = NULL is true, so NULL != NULL is false.
+        assertNegated(
+                new Decimal256Constant(
+                        Decimals.DECIMAL256_HH_NULL, Decimals.DECIMAL256_HL_NULL,
+                        Decimals.DECIMAL256_LH_NULL, Decimals.DECIMAL256_LL_NULL,
+                        ColumnType.getDecimalType(40, 2)
+                ),
+                new Decimal256Constant(
+                        Decimals.DECIMAL256_HH_NULL, Decimals.DECIMAL256_HL_NULL,
+                        Decimals.DECIMAL256_LH_NULL, Decimals.DECIMAL256_LL_NULL,
+                        ColumnType.getDecimalType(40, 4)
+                ),
+                false
+        );
+    }
+
+    @Test
+    public void testEqDecimal256SlowPathNegatedNullVsValueIsTrue() {
+        // `!=` of NULL and a non-null value is true on the slow path.
+        assertNegated(
+                new Decimal256Constant(
+                        Decimals.DECIMAL256_HH_NULL, Decimals.DECIMAL256_HL_NULL,
+                        Decimals.DECIMAL256_LH_NULL, Decimals.DECIMAL256_LL_NULL,
+                        ColumnType.getDecimalType(40, 2)
+                ),
+                new Decimal256Constant(0, 0, 0, 100, ColumnType.getDecimalType(40, 4)),
                 true
         );
     }
@@ -902,6 +957,16 @@ public class EqDecimalFunctionFactoryTest extends AbstractCairoTest {
                     new Decimal128Constant(0, val + 1, ColumnType.getDecimalType(21, scale)),
                     false
             );
+        }
+    }
+
+    private void assertNegated(Function left, Function right, boolean expected) {
+        args.clear();
+        args.add(left);
+        args.add(right);
+        try (Function func = factory.newInstance(-1, args, null, configuration, sqlExecutionContext)) {
+            ((NegatableBooleanFunction) func).setNegated();
+            Assert.assertEquals(expected, func.getBool(null));
         }
     }
 

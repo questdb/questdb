@@ -120,6 +120,22 @@ public class LtDecimalFunctionFactoryTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testLtDecimal128SlowPathNegatedBothNullIsTrue() {
+        // Slow path (CompareDecimal128Function) with `>=`: same convention as
+        // the fast path -- two NULLs compare equal, one-sided NULL is false.
+        assertNegated(
+                new Decimal128Constant(Decimals.DECIMAL128_HI_NULL, Decimals.DECIMAL128_LO_NULL, ColumnType.getDecimalType(20, 2)),
+                new Decimal128Constant(Decimals.DECIMAL128_HI_NULL, Decimals.DECIMAL128_LO_NULL, ColumnType.getDecimalType(20, 4)),
+                true
+        );
+        assertNegated(
+                new Decimal128Constant(Decimals.DECIMAL128_HI_NULL, Decimals.DECIMAL128_LO_NULL, ColumnType.getDecimalType(20, 2)),
+                new Decimal128Constant(0, 100, ColumnType.getDecimalType(20, 4)),
+                false
+        );
+    }
+
+    @Test
     public void testLtDecimal128SlowPathNullVsValue() {
         // Different scales force the slow path. Without the NULL guard
         // Decimal128.compareTo(NULL, value) returns -1, which would make `c1 < value`
@@ -375,6 +391,34 @@ public class LtDecimalFunctionFactoryTest extends AbstractCairoTest {
                         Decimals.DECIMAL256_LH_NULL, Decimals.DECIMAL256_LL_NULL,
                         ColumnType.getDecimalType(40, 4)
                 ),
+                false
+        );
+    }
+
+    @Test
+    public void testLtDecimal256SlowPathNegatedBothNullIsTrue() {
+        // Slow path (CompareDecimal256Function) with `>=`: same convention as
+        // the fast path -- two NULLs compare equal, one-sided NULL is false.
+        assertNegated(
+                new Decimal256Constant(
+                        Decimals.DECIMAL256_HH_NULL, Decimals.DECIMAL256_HL_NULL,
+                        Decimals.DECIMAL256_LH_NULL, Decimals.DECIMAL256_LL_NULL,
+                        ColumnType.getDecimalType(40, 2)
+                ),
+                new Decimal256Constant(
+                        Decimals.DECIMAL256_HH_NULL, Decimals.DECIMAL256_HL_NULL,
+                        Decimals.DECIMAL256_LH_NULL, Decimals.DECIMAL256_LL_NULL,
+                        ColumnType.getDecimalType(40, 4)
+                ),
+                true
+        );
+        assertNegated(
+                new Decimal256Constant(
+                        Decimals.DECIMAL256_HH_NULL, Decimals.DECIMAL256_HL_NULL,
+                        Decimals.DECIMAL256_LH_NULL, Decimals.DECIMAL256_LL_NULL,
+                        ColumnType.getDecimalType(40, 2)
+                ),
+                new Decimal256Constant(0, 0, 0, 100, ColumnType.getDecimalType(40, 4)),
                 false
         );
     }
