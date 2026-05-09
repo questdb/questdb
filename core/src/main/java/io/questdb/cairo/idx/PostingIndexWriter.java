@@ -1684,6 +1684,61 @@ public class PostingIndexWriter implements IndexWriter {
     }
 
     /**
+     * Decode a single key's values from a dense generation. Used by the
+     * per-key streaming compaction path. {@code stride} is the stride
+     * index in this gen; {@code j} is the key offset within the stride.
+     * Returns the number of values decoded into {@code dstAddr} (0 if the
+     * stride is empty in this gen, or the key has no values).
+     * <p>
+     * Per-key analogue of {@link #decodeDenseGenStride}: same on-disk
+     * layout, just isolated to one key. Mode handling is identical
+     * (FLAT and DELTA), since the gen's stride header carries the mode
+     * for the whole stride.
+     */
+    private int decodeDenseGenSingleKey(
+            long genBase, int genKeyCount, int stride, int j, long dstAddr
+    ) {
+        int siSize = PostingIndexUtils.strideIndexSize(genKeyCount);
+        long strideOff = Unsafe.getLong(genBase + (long) stride * Long.BYTES);
+        long nextStrideOff = Unsafe.getLong(genBase + (long) (stride + 1) * Long.BYTES);
+        if (nextStrideOff == strideOff) {
+            return 0;
+        }
+        long strideAddr = genBase + siSize + strideOff;
+        byte mode = Unsafe.getByte(strideAddr);
+        int genKs = PostingIndexUtils.keysInStride(genKeyCount, stride);
+        if (j >= genKs) {
+            return 0;
+        }
+        if (mode == PostingIndexUtils.STRIDE_MODE_FLAT) {
+            int bitWidth = Unsafe.getByte(strideAddr + 1) & 0xFF;
+            long baseValue = Unsafe.getLong(strideAddr + PostingIndexUtils.STRIDE_FLAT_BASE_OFFSET);
+            long prefixAddr = strideAddr + PostingIndexUtils.STRIDE_FLAT_PREFIX_COUNTS_OFFSET;
+            int flatHeaderSize = PostingIndexUtils.strideFlatHeaderSize(genKs);
+            long flatDataAddr = strideAddr + flatHeaderSize;
+            int startIdx = Unsafe.getInt(prefixAddr + (long) j * Integer.BYTES);
+            int count = Unsafe.getInt(prefixAddr + (long) (j + 1) * Integer.BYTES) - startIdx;
+            if (count == 0) {
+                return 0;
+            }
+            BitpackUtils.unpackValuesFrom(flatDataAddr, startIdx, count, bitWidth, baseValue, dstAddr);
+            return count;
+        } else {
+            long countsAddr = strideAddr + PostingIndexUtils.STRIDE_MODE_PREFIX_SIZE;
+            long genOffsetsBase = countsAddr + (long) genKs * Integer.BYTES;
+            int deltaHeaderSize = PostingIndexUtils.strideDeltaHeaderSize(genKs);
+            int count = Unsafe.getInt(countsAddr + (long) j * Integer.BYTES);
+            if (count == 0) {
+                return 0;
+            }
+            long dataOff = Unsafe.getLong(genOffsetsBase + (long) j * Long.BYTES);
+            long encodedAddr = strideAddr + deltaHeaderSize + dataOff;
+            PostingIndexUtils.decodeKeyToNative(encodedAddr, dstAddr, decodeCtx);
+            return count;
+        }
+    }
+
+    /**
      * Decode a single stride's keys from a dense generation. The dense gen
      * is stride-indexed, so we read stride s directly. genKs may differ from
      * ks if the gen has fewer keys.
@@ -1741,6 +1796,44 @@ public class PostingIndexWriter implements IndexWriter {
                 keyOffsets[j] += count;
             }
         }
+    }
+
+    /**
+     * Decode a single key's values from a sparse generation using binary
+     * search on the sorted keyIds array. Returns the number of values
+     * decoded into {@code dstAddr} (0 if the key is absent from this gen).
+     * <p>
+     * Per-key analogue of {@link #decodeSparseGenStride}: same on-disk
+     * layout, isolated to one key.
+     */
+    private int decodeSparseGenSingleKey(
+            long genBase, int activeKeyCount, int key, long dstAddr
+    ) {
+        long countsBase = genBase + (long) activeKeyCount * Integer.BYTES;
+        long offsetsBase = countsBase + (long) activeKeyCount * Integer.BYTES;
+        int headerSize = PostingIndexUtils.genHeaderSizeSparse(activeKeyCount);
+
+        // Binary search for exact keyId match
+        int lo = 0, hi = activeKeyCount - 1;
+        while (lo <= hi) {
+            int mid = (lo + hi) >>> 1;
+            int midKey = Unsafe.getInt(genBase + (long) mid * Integer.BYTES);
+            if (midKey < key) {
+                lo = mid + 1;
+            } else if (midKey > key) {
+                hi = mid - 1;
+            } else {
+                int count = Unsafe.getInt(countsBase + (long) mid * Integer.BYTES);
+                if (count == 0) {
+                    return 0;
+                }
+                long dataOffset = Unsafe.getLong(offsetsBase + (long) mid * Long.BYTES);
+                long encodedAddr = genBase + headerSize + dataOffset;
+                PostingIndexUtils.decodeKeyToNative(encodedAddr, dstAddr, decodeCtx);
+                return count;
+            }
+        }
+        return 0;
     }
 
     /**
@@ -2997,37 +3090,56 @@ public class PostingIndexWriter implements IndexWriter {
                 // monolithic buffer is acceptable here.
                 reencodeMonolithic(maxValue, maxValueCutoff, totalCountsAddr, totalValueCount);
             } else {
-                // Seal path. Decide between the fast stride-chunked decode and
-                // (in a follow-up commit) a per-key streaming fallback for
-                // partitions where one stride's aggregate exceeds the RSS
-                // headroom. Today: throw a clear error if the fast path would
-                // not fit, so the operator gets an actionable message instead
-                // of an in-the-middle-of-the-allocation OOM.
+                // Seal path. Pick between the fast stride-chunked decode (peak
+                // bounded by the largest single stride's aggregate row count)
+                // and the per-key streaming fallback (peak bounded by the
+                // largest single key's row count) based on RSS headroom. The
+                // fast path is always preferred when it fits because it
+                // amortises encoder setup over a stride and gets to use FLAT
+                // mode where applicable; streaming runs in always-DELTA mode
+                // and is several times slower, so it only kicks in when the
+                // fast path would not run at all.
                 final long maxColValueSize = peakCoverColumnValueSize();
                 final long fastPathPeakBytes = estimateSealPeakBytes(maxStrideTotal, maxKeyCount, maxColValueSize);
+                final long streamingPathPeakBytes = estimateSealPeakBytes(maxKeyCount, maxKeyCount, maxColValueSize);
                 final long rssLimit = Unsafe.getRssMemLimit();
                 final long rssUsed = Unsafe.getRssMemUsed();
                 final long headroom = rssLimit > 0 ? Math.max(0L, rssLimit - rssUsed) : Long.MAX_VALUE;
-                if (fastPathPeakBytes > headroom) {
+
+                if (fastPathPeakBytes <= headroom) {
+                    long strideValsAddr = Unsafe.malloc((long) maxStrideTotal * Long.BYTES, MemoryTag.NATIVE_INDEX_READER);
+                    try {
+                        reencodeWithStrideDecoding(
+                                newSealTxn, maxValue, totalCountsAddr, strideValsAddr
+                        );
+                    } finally {
+                        Unsafe.free(strideValsAddr, (long) maxStrideTotal * Long.BYTES, MemoryTag.NATIVE_INDEX_READER);
+                    }
+                } else if (streamingPathPeakBytes <= headroom) {
+                    LOG.info().$("posting seal falling back to per-key streaming compaction ")
+                            .$("[maxStrideTotal=").$(maxStrideTotal)
+                            .$(", maxKeyCount=").$(maxKeyCount)
+                            .$(", fastPathPeakBytes=").$(fastPathPeakBytes)
+                            .$(", streamingPathPeakBytes=").$(streamingPathPeakBytes)
+                            .$(", headroom=").$(headroom)
+                            .I$();
+                    long keyBuffer = Unsafe.malloc((long) maxKeyCount * Long.BYTES, MemoryTag.NATIVE_INDEX_READER);
+                    try {
+                        reencodeWithPerKeyStreaming(newSealTxn, maxValue, totalCountsAddr, keyBuffer, maxKeyCount);
+                    } finally {
+                        Unsafe.free(keyBuffer, (long) maxKeyCount * Long.BYTES, MemoryTag.NATIVE_INDEX_READER);
+                    }
+                } else {
                     throw CairoException.critical(0)
-                            .put("posting index seal would exceed RSS limit ")
+                            .put("posting index seal would exceed RSS limit even with streaming compaction ")
                             .put("[maxStrideTotal=").put(maxStrideTotal)
                             .put(", maxKeyCount=").put(maxKeyCount)
-                            .put(", peakBytes=").put(fastPathPeakBytes)
+                            .put(", fastPathPeakBytes=").put(fastPathPeakBytes)
+                            .put(", streamingPathPeakBytes=").put(streamingPathPeakBytes)
                             .put(", rssUsed=").put(rssUsed)
                             .put(", rssLimit=").put(rssLimit)
-                            .put("]; reduce partition size or raise RSS_MEM_LIMIT");
-                }
-                // Seal path: chunked stride-by-stride decode+encode. Replaces
-                // the old monolithic allValuesAddr (totalValueCount × 8 bytes)
-                // with a buffer sized for the largest single stride.
-                long strideValsAddr = Unsafe.malloc((long) maxStrideTotal * Long.BYTES, MemoryTag.NATIVE_INDEX_READER);
-                try {
-                    reencodeWithStrideDecoding(
-                            newSealTxn, maxValue, totalCountsAddr, strideValsAddr
-                    );
-                } finally {
-                    Unsafe.free(strideValsAddr, (long) maxStrideTotal * Long.BYTES, MemoryTag.NATIVE_INDEX_READER);
+                            .put("]; the partition has a single symbol value with too many rows for current RSS_MEM_LIMIT, ")
+                            .put("reduce partition size or raise RSS_MEM_LIMIT");
                 }
             }
         } finally {
@@ -3365,6 +3477,238 @@ public class PostingIndexWriter implements IndexWriter {
         } finally {
             Unsafe.free(allValuesAddr, totalValueCount * Long.BYTES, MemoryTag.NATIVE_INDEX_READER);
         }
+    }
+
+    /**
+     * Streaming compaction fallback. Same on-disk output as
+     * {@link #reencodeWithStrideDecoding} (DELTA-mode strides, no FLAT
+     * mode), but bounds peak heap usage by the largest single key's
+     * count rather than the largest stride's aggregate. Selected by the
+     * pre-flight check when the stride-buffered fast path would exceed
+     * RSS headroom.
+     * <p>
+     * Cost: ~3x slower than the fast path on partitions where both
+     * fit, due to per-key (rather than per-stride) decode and the
+     * always-DELTA encoding. Only kicks in when the fast path would
+     * not run at all -- a strict win over the alternative.
+     * <p>
+     * For every output stride:
+     * <ul>
+     *   <li>read per-key counts from {@code totalCountsAddr};</li>
+     *   <li>reserve the DELTA-mode stride header in {@code sealTarget};</li>
+     *   <li>for each key in the stride, decode its values from every
+     *       source generation into {@code keyBuffer}, encode directly
+     *       into {@code sealTarget}, record the per-key encoded size;</li>
+     *   <li>patch the stride header in place.</li>
+     * </ul>
+     * After the row-id index is sealed, sidecars are written via the
+     * streaming variant {@link #writeSidecarsPerColumnStreaming}.
+     *
+     * @param keyBuffer    pre-allocated workspace sized to {@code maxKeyCount * 8} bytes,
+     *                     reused across keys; lifetime owned by the caller
+     */
+    private void reencodeWithPerKeyStreaming(
+            long newSealTxn,
+            long maxValue,
+            long totalCountsAddr,
+            long keyBuffer,
+            int maxKeyCount
+    ) {
+        // Var-size cover columns under streaming would need a two-pass
+        // sidecar write (offsets table requires totalCount up-front, but
+        // we can only learn it by walking each key once). Out of scope
+        // for the first cut; refuse with an actionable error so the
+        // operator gets a clear remediation path instead of a silent
+        // miss.
+        for (int c = 0; c < coverCount; c++) {
+            if (coveredColumnIndices.getQuick(c) < 0) {
+                continue;
+            }
+            int shift = coveredColumnShifts.getQuick(c);
+            if (shift < 0) {
+                throw CairoException.critical(0)
+                        .put("posting index seal needs streaming compaction but INCLUDE column '")
+                        .put(coveredColumnNames.getQuick(c))
+                        .put("' is variable-size; streaming compaction of var-size cover columns is not yet supported. ")
+                        .put("Reduce partition size, drop the var-size INCLUDE column, or raise RSS_MEM_LIMIT");
+            }
+        }
+
+        int sc = PostingIndexUtils.strideCount(keyCount);
+        int siSize = PostingIndexUtils.strideIndexSize(keyCount);
+
+        openSealValueFile(newSealTxn);
+        long sealOffset = sealTarget.getAppendOffset();
+        // Reserve the stride index region; we patch it at the end of the loop.
+        for (int i = 0; i < siSize; i += Long.BYTES) {
+            sealTarget.putLong(0L);
+        }
+
+        long strideIndexBuf = Unsafe.malloc(siSize, MemoryTag.NATIVE_INDEX_READER);
+        int maxDeltaHeaderSize = PostingIndexUtils.strideDeltaHeaderSize(PostingIndexUtils.DENSE_STRIDE);
+        long localHeaderBuf = 0;
+        int[] bpKeySizes = strideBpKeySizes;
+        int[] keyCounts = strideKeyCounts;
+
+        try {
+            localHeaderBuf = Unsafe.malloc(maxDeltaHeaderSize, MemoryTag.NATIVE_INDEX_READER);
+            for (int s = 0; s < sc; s++) {
+                int ks = PostingIndexUtils.keysInStride(keyCount, s);
+                int strideStart = s * PostingIndexUtils.DENSE_STRIDE;
+
+                int strideValCount = 0;
+                for (int j = 0; j < ks; j++) {
+                    int key = strideStart + j;
+                    int count = Unsafe.getInt(totalCountsAddr + (long) key * Integer.BYTES);
+                    keyCounts[j] = count;
+                    strideValCount += count;
+                }
+
+                long strideOff = sealTarget.getAppendOffset() - sealOffset - siSize;
+                Unsafe.putLong(strideIndexBuf + (long) s * Long.BYTES, strideOff);
+
+                if (strideValCount == 0) {
+                    continue;
+                }
+
+                int deltaHeaderSize = PostingIndexUtils.strideDeltaHeaderSize(ks);
+                long headerFilePos = sealTarget.getAppendOffset();
+                // Reserve header bytes; we patch them after the per-key
+                // encode loop knows each key's encoded size.
+                for (int i = 0; i < deltaHeaderSize; i += Integer.BYTES) {
+                    sealTarget.putInt(0);
+                }
+                long dataStart = sealTarget.getAppendOffset();
+
+                for (int j = 0; j < ks; j++) {
+                    int count = keyCounts[j];
+                    if (count == 0) {
+                        bpKeySizes[j] = 0;
+                        continue;
+                    }
+                    if (count > maxKeyCount) {
+                        // Should be impossible -- maxKeyCount was computed
+                        // from the same totalCountsAddr we just read. Defensive.
+                        throw CairoException.critical(0)
+                                .put("posting index streaming key count exceeds buffer [count=").put(count)
+                                .put(", maxKeyCount=").put(maxKeyCount).put(']');
+                    }
+                    // Decode this key from every source generation. Order
+                    // matters: each gen contributes a contiguous run that
+                    // is itself sorted; concatenated, the runs span the
+                    // partition's row-id range in the order rows were
+                    // ingested. Since the indexer feeds row-ids
+                    // monotonically across the whole indexing run, the
+                    // concatenation is itself sorted. flushAllPending's
+                    // gen production preserves the same invariant.
+                    int decodedTotal = 0;
+                    for (int gen = 0; gen < genCount; gen++) {
+                        long dirOffset = PostingIndexChainEntry.resolveGenDirOffset(chain.getHeadEntryOffset(), gen);
+                        long genFileOffset = keyMem.getLong(dirOffset + GEN_DIR_OFFSET_FILE_OFFSET);
+                        int genKeyCount = keyMem.getInt(dirOffset + PostingIndexUtils.GEN_DIR_OFFSET_KEY_COUNT);
+                        long genBase = valueMem.addressOf(genFileOffset);
+                        long appendAddr = keyBuffer + (long) decodedTotal * Long.BYTES;
+                        if (genKeyCount < 0) {
+                            decodedTotal += decodeSparseGenSingleKey(genBase, -genKeyCount, strideStart + j, appendAddr);
+                        } else if (s < PostingIndexUtils.strideCount(genKeyCount)) {
+                            decodedTotal += decodeDenseGenSingleKey(genBase, genKeyCount, s, j, appendAddr);
+                        }
+                    }
+                    if (decodedTotal != count) {
+                        throw CairoException.critical(0)
+                                .put("posting index streaming decode mismatch [key=").put(strideStart + j)
+                                .put(", expected=").put(count)
+                                .put(", decoded=").put(decodedTotal).put(']');
+                    }
+
+                    // Encode directly into sealTarget. Reserve the
+                    // worst-case bytes, encode, then jump back to the
+                    // actual end so the next key starts there.
+                    long maxEnc = PostingIndexUtils.computeMaxEncodedSize(count);
+                    long encStart = sealTarget.getAppendOffset();
+                    sealTarget.jumpTo(encStart + maxEnc);
+                    long dstAddr = sealTarget.addressOf(encStart);
+                    encodeCtx.ensureCapacity(count);
+                    int bytesWritten = PostingIndexUtils.encodeKeyNative(keyBuffer, count, dstAddr, encodeCtx, rowIdEncoding);
+                    sealTarget.jumpTo(encStart + bytesWritten);
+                    bpKeySizes[j] = bytesWritten;
+                }
+
+                // Patch the DELTA stride header now that we know each key's encoded size.
+                Unsafe.setMemory(localHeaderBuf, deltaHeaderSize, (byte) 0);
+                Unsafe.putByte(localHeaderBuf, PostingIndexUtils.STRIDE_MODE_DELTA);
+                long countsBase = localHeaderBuf + PostingIndexUtils.STRIDE_MODE_PREFIX_SIZE;
+                long offsetsBase = countsBase + (long) ks * Integer.BYTES;
+                long dataOffset = 0;
+                for (int j = 0; j < ks; j++) {
+                    Unsafe.putInt(countsBase + (long) j * Integer.BYTES, keyCounts[j]);
+                    Unsafe.putLong(offsetsBase + (long) j * Long.BYTES, dataOffset);
+                    dataOffset += bpKeySizes[j];
+                }
+                Unsafe.putLong(offsetsBase + (long) ks * Long.BYTES, dataOffset);
+                long headerAddr = sealTarget.addressOf(headerFilePos);
+                Unsafe.copyMemory(localHeaderBuf, headerAddr, deltaHeaderSize);
+
+                // Sanity: dataOffset must equal the bytes we appended after the header.
+                assert dataStart + dataOffset == sealTarget.getAppendOffset();
+            }
+
+            long totalStrideBlocksSize = sealTarget.getAppendOffset() - sealOffset - siSize;
+            Unsafe.putLong(strideIndexBuf + (long) sc * Long.BYTES, totalStrideBlocksSize);
+
+            long strideIndexAddr = sealTarget.addressOf(sealOffset);
+            Unsafe.copyMemory(strideIndexBuf, strideIndexAddr, siSize);
+        } finally {
+            if (localHeaderBuf != 0) {
+                Unsafe.free(localHeaderBuf, maxDeltaHeaderSize, MemoryTag.NATIVE_INDEX_READER);
+            }
+            Unsafe.free(strideIndexBuf, siSize, MemoryTag.NATIVE_INDEX_READER);
+        }
+
+        final long outputSize = sealTarget.getAppendOffset() - sealOffset;
+        if (partitionPath.size() == 0) {
+            // fd-based: relocate output down to offset 0 and shrink the file.
+            // Mirrors the same tail in reencodeWithStrideDecoding.
+            if (sealOffset > 0 && outputSize > 0) {
+                long srcAddr = valueMem.addressOf(sealOffset);
+                long dstAddr = valueMem.addressOf(0);
+                Unsafe.copyMemory(srcAddr, dstAddr, outputSize);
+            }
+            valueMem.jumpTo(outputSize);
+            valueMem.setSize(outputSize);
+            valueMemSize = outputSize;
+        } else {
+            valueMemSize = sealTarget.getAppendOffset();
+            sealValueMem.sync(false);
+            switchToSealedValueFile(newSealTxn);
+        }
+        sealTarget = null;
+
+        if (coverCount > 0 && sidecarMems.size() > 0) {
+            writeSidecarsPerColumnStreaming(totalCountsAddr, keyBuffer, maxKeyCount);
+            for (int c = 0, n = sidecarMems.size(); c < n; c++) {
+                MemoryMARW mem = sidecarMems.getQuick(c);
+                if (mem != null && mem.isOpen()) {
+                    mem.sync(false);
+                }
+            }
+            if (sidecarInfoMem != null && sidecarInfoMem.isOpen()) {
+                sidecarInfoMem.sync(false);
+            }
+        }
+
+        Unsafe.storeFence();
+        this.maxValue = maxValue;
+        this.genCount = 1;
+        publishToChain(
+                /* newGenCount */ 1,
+                /* overrideGenIndex */ 0,
+                /* overrideFileOffset */ 0,
+                /* overrideSize */ valueMemSize,
+                /* overrideKeyCount */ keyCount,
+                /* overrideMinKey */ 0,
+                /* overrideMaxKey */ keyCount - 1
+        );
     }
 
     /**
@@ -4626,6 +4970,79 @@ public class PostingIndexWriter implements IndexWriter {
         }
     }
 
+    /**
+     * Streaming counterpart of {@link #writeSidecarFixedStrideForColumn}.
+     * Processes one stride at a time but decodes from the freshly-sealed
+     * dense gen 0 one key at a time into the shared {@code keyBuffer},
+     * so the per-stride sidecarBuf is sized to {@code maxKeyCount *
+     * valueSize} rather than the worst stride's aggregate.
+     * <p>
+     * Output layout matches {@link #writeSidecarFixedStrideForColumn}'s:
+     * per-key compressed blocks with a leading {@code [key_offsets: ks
+     * x 8B]} table per stride. A reader cannot tell whether the
+     * sidecar was produced by the fast path or the streaming path.
+     */
+    private void writeSidecarFixedStreamingForColumn(
+            MemoryMARW mem, int c, long colTop, int colType, int shift,
+            int ks, int strideStart, int[] keyCounts, long keyBuffer,
+            long sidecarBuf, long longWorkspaceAddr, long exceptionWorkspaceAddr,
+            long compressBuf
+    ) {
+        int valueSize = 1 << shift;
+        int keyOffsetsSize = ks * Long.BYTES;
+
+        long keyOffsetsPos = mem.getAppendOffset();
+        for (int j = 0; j < ks; j++) {
+            mem.putLong(0L); // placeholder
+        }
+
+        for (int j = 0; j < ks; j++) {
+            int count = keyCounts[j];
+            long currentPos = mem.getAppendOffset();
+            long keyDataStart = keyOffsetsPos + keyOffsetsSize;
+            long keyOffset = currentPos - keyDataStart;
+            mem.putLong(keyOffsetsPos + (long) j * Long.BYTES, keyOffset);
+
+            if (count == 0) {
+                continue;
+            }
+
+            // Decode this key's row IDs from the freshly-sealed dense gen 0
+            // directly into the shared keyBuffer.
+            int decoded = decodeDenseGenSingleKey(valueMem.addressOf(0), keyCount, strideStart / PostingIndexUtils.DENSE_STRIDE, j, keyBuffer);
+            if (decoded != count) {
+                throw CairoException.critical(0)
+                        .put("posting index streaming sidecar decode mismatch [key=").put(strideStart + j)
+                        .put(", expected=").put(count)
+                        .put(", decoded=").put(decoded).put(']');
+            }
+
+            // Materialise this key's covered values into sidecarBuf, then compress.
+            long rawOffset = 0;
+            for (int i = 0; i < count; i++) {
+                long rowId = Unsafe.getLong(keyBuffer + (long) i * Long.BYTES);
+                if (rowId < colTop) {
+                    writeNullSentinel(sidecarBuf + rawOffset, valueSize, colType);
+                } else {
+                    long srcOffset = (rowId - colTop) << shift;
+                    long addr = getCoveredDataReadAddr(c, srcOffset, valueSize);
+                    if (addr != 0) {
+                        Unsafe.copyMemory(addr, sidecarBuf + rawOffset, valueSize);
+                    } else {
+                        writeNullSentinel(sidecarBuf + rawOffset, valueSize, colType);
+                    }
+                }
+                rawOffset += valueSize;
+            }
+
+            boolean isDesignatedTs = timestampColumnIndex >= 0
+                    && coveredColumnIndices.getQuick(c) == timestampColumnIndex;
+            int compressedSize = compressSidecarBlock(sidecarBuf, count, shift, colType,
+                    isDesignatedTs, compressBuf, longWorkspaceAddr, exceptionWorkspaceAddr);
+            mem.putBlockOfBytes(compressBuf, compressedSize);
+        }
+    }
+
     private void writeSidecarGenData(int totalValues, int genIndex) {
         if (coverCount <= 0 || totalValues == 0
                 || (coveredColumnNames.size() == 0 && coveredColumnAddrs.size() == 0)) {
@@ -4935,6 +5352,132 @@ public class PostingIndexWriter implements IndexWriter {
             }
         }
         mem.putBlockOfBytes(fsstCmpAddr, cmpPos);
+    }
+
+    /**
+     * Streaming sidecar writer. Same per-column orchestration as
+     * {@link #writeSidecarsPerColumn}, but the per-column body uses
+     * {@link #writeSidecarFixedStreamingForColumn} which decodes one
+     * key at a time from the freshly-sealed dense gen 0. Var-size cover
+     * columns are rejected upstream by
+     * {@link #reencodeWithPerKeyStreaming}, so this method only handles
+     * fixed-size columns.
+     *
+     * @param keyBuffer  shared per-key decode buffer (sized to {@code maxKeyCount * 8} bytes)
+     * @param maxKeyCount worst single-key count across the partition
+     */
+    private void writeSidecarsPerColumnStreaming(long totalCountsAddr, long keyBuffer, int maxKeyCount) {
+        unmapCoveredColumnReads();
+
+        int sc = PostingIndexUtils.strideCount(keyCount);
+        int siSize = PostingIndexUtils.strideIndexSize(keyCount);
+        int[] keyCounts = strideKeyCounts;
+
+        if (coveredColumnNames.size() > 0 && coveredPartitionPath.size() > 0) {
+            Path p = Path.getThreadLocal(coveredPartitionPath);
+            for (int c = 0; c < coverCount; c++) {
+                if (coveredColumnIndices.getQuick(c) < 0) {
+                    continue;
+                }
+                try {
+                    mapCoveredColumn(p, c);
+                    writeSidecarForColumnStreaming(c, sc, siSize, totalCountsAddr, keyBuffer, maxKeyCount, keyCounts);
+                } finally {
+                    unmapCoveredColumn(c);
+                }
+            }
+        } else if (coveredColumnAddrs.size() > 0) {
+            ensureCoveredColumnReadMaps();
+            for (int c = 0; c < coverCount; c++) {
+                writeSidecarForColumnStreaming(c, sc, siSize, totalCountsAddr, keyBuffer, maxKeyCount, keyCounts);
+            }
+        }
+    }
+
+    private void writeSidecarForColumnStreaming(
+            int c, int sc, int siSize,
+            long totalCountsAddr, long keyBuffer, int maxKeyCount,
+            int[] keyCounts
+    ) {
+        MemoryMARW mem = sidecarMems.getQuick(c);
+        int colType = coveredColumnTypes.getQuick(c);
+        int shift = coveredColumnShifts.getQuick(c);
+        long colTop = coveredColumnTops.getQuick(c);
+
+        // Streaming path is fixed-size only -- the var-size guard fired in reencodeWithPerKeyStreaming.
+        assert shift >= 0;
+        int valueSize = 1 << shift;
+
+        long sidecarStrideIndexBuf = 0;
+        long sidecarBuf = 0;
+        long longWorkspaceSize = (long) maxKeyCount * Long.BYTES;
+        long longWorkspaceAddr = 0;
+        long exceptionWorkspaceAddr = 0;
+        int compressBufSize = maxKeyCount > 0 ? CoveringCompressor.maxCompressedSize(maxKeyCount, colType) : 0;
+        long compressBuf = 0;
+        long sidecarBufSize = (long) maxKeyCount * valueSize;
+
+        try {
+            sidecarStrideIndexBuf = Unsafe.malloc(siSize, MemoryTag.NATIVE_INDEX_READER);
+            for (int i = 0; i < siSize; i += Long.BYTES) {
+                mem.putLong(0L); // stride index placeholders
+            }
+            if (maxKeyCount > 0) {
+                longWorkspaceAddr = Unsafe.malloc(longWorkspaceSize, MemoryTag.NATIVE_INDEX_READER);
+                exceptionWorkspaceAddr = Unsafe.malloc(maxKeyCount, MemoryTag.NATIVE_INDEX_READER);
+                sidecarBuf = Unsafe.malloc(sidecarBufSize, MemoryTag.NATIVE_INDEX_READER);
+                if (compressBufSize > 0) {
+                    compressBuf = Unsafe.malloc(compressBufSize, MemoryTag.NATIVE_INDEX_READER);
+                }
+            }
+
+            for (int s = 0; s < sc; s++) {
+                int ks = PostingIndexUtils.keysInStride(keyCount, s);
+                int strideStart = s * PostingIndexUtils.DENSE_STRIDE;
+
+                int strideValCount = 0;
+                for (int j = 0; j < ks; j++) {
+                    int key = strideStart + j;
+                    int count = Unsafe.getInt(totalCountsAddr + (long) key * Integer.BYTES);
+                    keyCounts[j] = count;
+                    strideValCount += count;
+                }
+
+                Unsafe.putLong(
+                        sidecarStrideIndexBuf + (long) s * Long.BYTES,
+                        mem.getAppendOffset() - siSize);
+
+                if (strideValCount == 0) {
+                    continue;
+                }
+
+                writeSidecarFixedStreamingForColumn(mem, c, colTop, colType, shift,
+                        ks, strideStart, keyCounts, keyBuffer,
+                        sidecarBuf, longWorkspaceAddr, exceptionWorkspaceAddr, compressBuf);
+            }
+
+            Unsafe.putLong(
+                    sidecarStrideIndexBuf + (long) sc * Long.BYTES,
+                    mem.getAppendOffset() - siSize);
+            long sidecarIdxAddr = mem.addressOf(PostingIndexUtils.PC_HEADER_SIZE);
+            Unsafe.copyMemory(sidecarStrideIndexBuf, sidecarIdxAddr, siSize);
+        } finally {
+            if (sidecarStrideIndexBuf != 0) {
+                Unsafe.free(sidecarStrideIndexBuf, siSize, MemoryTag.NATIVE_INDEX_READER);
+            }
+            if (sidecarBuf != 0) {
+                Unsafe.free(sidecarBuf, sidecarBufSize, MemoryTag.NATIVE_INDEX_READER);
+            }
+            if (longWorkspaceAddr != 0) {
+                Unsafe.free(longWorkspaceAddr, longWorkspaceSize, MemoryTag.NATIVE_INDEX_READER);
+            }
+            if (exceptionWorkspaceAddr != 0) {
+                Unsafe.free(exceptionWorkspaceAddr, maxKeyCount, MemoryTag.NATIVE_INDEX_READER);
+            }
+            if (compressBuf != 0) {
+                Unsafe.free(compressBuf, compressBufSize, MemoryTag.NATIVE_INDEX_READER);
+            }
+        }
     }
 
     private void writeSidecarsPerColumn(long totalCountsAddr, long strideValsAddr) {
