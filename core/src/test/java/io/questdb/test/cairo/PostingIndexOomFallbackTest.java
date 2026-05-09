@@ -27,9 +27,15 @@ package io.questdb.test.cairo;
 import io.questdb.PropertyKey;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.ColumnVersionReader;
+import io.questdb.cairo.GenericRecordMetadata;
+import io.questdb.cairo.IndexType;
+import io.questdb.cairo.TableColumnMetadata;
+import io.questdb.cairo.idx.CoveringRowCursor;
 import io.questdb.cairo.idx.PostingIndexBwdReader;
 import io.questdb.cairo.idx.PostingIndexFwdReader;
 import io.questdb.cairo.idx.PostingIndexWriter;
+import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cairo.sql.RowCursor;
 import io.questdb.std.LongList;
 import io.questdb.std.MemoryTag;
@@ -695,5 +701,137 @@ public class PostingIndexOomFallbackTest extends AbstractCairoTest {
             Assert.assertTrue("fuzz never succeeded a seal: passes=" + passes, passes > 0);
             Assert.assertTrue("fuzz never tightened RSS to hard-fail: hardFails=" + hardFails, hardFails > 0);
         });
+    }
+
+    /**
+     * Fuzz: streaming compaction with a fixed-size DOUBLE INCLUDE
+     * column. Drives random workloads, builds the index twice (fast
+     * path baseline + streaming-forced), reads back covered values
+     * via the covering cursor, and asserts byte-identical results.
+     * <p>
+     * Exercises {@link io.questdb.cairo.idx.PostingIndexWriter}'s
+     * streaming sidecar writer (writeSidecarsPerColumnStreaming +
+     * writeSidecarFixedStreamingForColumn) -- the path that decodes
+     * each key from the freshly-sealed dense gen 0 via
+     * decodeDenseGenSingleKey, then ALP-compresses one key at a
+     * time. Any divergence from the per-stride fast-path output
+     * surfaces here as a covered-value mismatch.
+     */
+    @Test
+    public void testFuzzStreamingFixedIncludeMatchesBaseline() throws Exception {
+        final ColumnVersionReader emptyCvr = new ColumnVersionReader();
+        try {
+            assertMemoryLeak(() -> {
+                for (long seed = 0; seed < 8; seed++) {
+                    Rnd rnd = new Rnd(seed * 97 + 41, seed * 113 + 29);
+                    int keys = rnd.nextInt(40) + 4;
+                    int rowsPerKey = rnd.nextInt(400) + 32;
+
+                    // Backing DOUBLE column: one value per total row.
+                    int totalRows = keys * rowsPerKey;
+                    long covAddr = Unsafe.malloc((long) totalRows * Double.BYTES, MemoryTag.NATIVE_DEFAULT);
+                    try {
+                        for (int i = 0; i < totalRows; i++) {
+                            Unsafe.putDouble(covAddr + (long) i * Double.BYTES, 0.5 + i);
+                        }
+
+                        double[] baseline = collectCoveredDoubles(
+                                "fuzz_cov_base_" + seed, keys, rowsPerKey, covAddr, /* tight RSS */ false, emptyCvr);
+                        double[] streaming = collectCoveredDoubles(
+                                "fuzz_cov_str_" + seed, keys, rowsPerKey, covAddr, /* tight RSS */ true, emptyCvr);
+
+                        Assert.assertEquals("seed=" + seed + " covered length mismatch",
+                                baseline.length, streaming.length);
+                        for (int i = 0; i < baseline.length; i++) {
+                            Assert.assertEquals("seed=" + seed + " covered value at i=" + i,
+                                    baseline[i], streaming[i], 0.0);
+                        }
+                    } finally {
+                        Unsafe.free(covAddr, (long) totalRows * Double.BYTES, MemoryTag.NATIVE_DEFAULT);
+                    }
+                }
+            });
+        } finally {
+            Misc.free(emptyCvr);
+        }
+    }
+
+    private double[] collectCoveredDoubles(
+            String name, int keys, int rowsPerKey, long covAddr,
+            boolean forceStreamingAtSeal, ColumnVersionReader emptyCvr) throws Exception {
+        try (Path path = new Path().of(configuration.getDbRoot())) {
+            final int plen = path.size();
+            long savedRssLimit = Unsafe.getRssMemLimit();
+            try (PostingIndexWriter writer = new PostingIndexWriter(configuration, path, name, COLUMN_NAME_TXN_NONE)) {
+                // shift = 3 -> valueSize = 8 (DOUBLE). writerIndex = 2;
+                // colTop = 0; coverCount = 1; timestampColumnIndex = -1.
+                writer.configureCovering(
+                        new long[]{covAddr},
+                        new long[]{0L},
+                        new int[]{Long.numberOfTrailingZeros(Double.BYTES)},
+                        new int[]{2},
+                        new int[]{ColumnType.DOUBLE},
+                        1
+                );
+                long row = 0;
+                for (int r = 0; r < rowsPerKey; r++) {
+                    for (int k = 0; k < keys; k++) {
+                        writer.add(k, row++);
+                    }
+                }
+                writer.setMaxValue(row - 1);
+                writer.commit();
+                if (forceStreamingAtSeal) {
+                    // 256 KiB headroom: too small for fast-path peak
+                    // (~2 * keys * rowsPerKey * 8 bytes = up to ~250 KiB
+                    // for the bigger fuzz seeds, plus encodeCtx and
+                    // sidecarBuf), large enough for streaming peak
+                    // (~maxKeyCount * (8+8+9+9) = ~14 KiB at the upper
+                    // end). seal() pre-frees spill+pending before the
+                    // pre-flight runs, so effective headroom at
+                    // pre-flight is meaningfully larger -- 256 KiB is
+                    // calibrated to land between fast-path and
+                    // streaming peaks even after the pre-free bonus.
+                    Unsafe.setRssMemLimit(Unsafe.getRssMemUsed() + 256L * 1024L);
+                }
+                try {
+                    writer.seal();
+                } finally {
+                    if (forceStreamingAtSeal) {
+                        Unsafe.setRssMemLimit(savedRssLimit);
+                    }
+                }
+            }
+
+            RecordMetadata meta = coveringMetadata();
+            double[] collected = new double[keys * rowsPerKey];
+            int idx = 0;
+            try (PostingIndexFwdReader reader = new PostingIndexFwdReader(
+                    configuration, path.trimTo(plen), name, COLUMN_NAME_TXN_NONE, -1, 0,
+                    meta, emptyCvr, 0)) {
+                for (int k = 0; k < keys; k++) {
+                    try (RowCursor c = reader.getCursor(k, 0, Long.MAX_VALUE, new int[]{0})) {
+                        Assert.assertTrue("expected CoveringRowCursor for " + name + " key=" + k,
+                                c instanceof CoveringRowCursor);
+                        CoveringRowCursor cc = (CoveringRowCursor) c;
+                        while (cc.hasNext()) {
+                            cc.next();
+                            collected[idx++] = cc.getCoveredDouble(0);
+                        }
+                    }
+                }
+            }
+            Assert.assertEquals("collected length mismatch for " + name, collected.length, idx);
+            return collected;
+        }
+    }
+
+    private static RecordMetadata coveringMetadata() {
+        GenericRecordMetadata m = new GenericRecordMetadata();
+        for (int i = 0; i <= 2; i++) {
+            int type = (i == 2) ? ColumnType.DOUBLE : ColumnType.LONG;
+            m.add(new TableColumnMetadata("c" + i, type, IndexType.NONE, 0, false, null, i, false));
+        }
+        return m;
     }
 }
