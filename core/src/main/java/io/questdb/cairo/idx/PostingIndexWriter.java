@@ -2137,16 +2137,18 @@ public class PostingIndexWriter implements IndexWriter {
     }
 
     /**
-     * Fixed-size auxiliary allocations the fast path makes inside
-     * reencodeWithStrideDecoding that do not scale with stride totals
-     * or key counts: localHeaderBuf (max stride header, bounded by
-     * DENSE_STRIDE * 12 bytes ~= 3 KiB) and strideIndexBuf
-     * (strideCount * 8 bytes -- small unless keyCount is in the
-     * millions). Round up to 8 KiB to absorb both terms across all
-     * realistic shapes.
+     * Auxiliary allocations the seal paths make outside the per-stride
+     * loop: localHeaderBuf (max stride header, bounded by
+     * {@code DENSE_STRIDE * 12} bytes &asymp; 3 KiB regardless of
+     * partition shape) and strideIndexBuf
+     * ({@code (strideCount + 1) * 8} bytes -- this term scales with
+     * keyCount, hitting 32 KiB for keyCount = 1M and unbounded above).
+     * Both fast and streaming paths allocate the same pair.
      */
-    private static long sealAuxiliaryBufferBytes() {
-        return 8192L;
+    private long sealAuxiliaryBufferBytes() {
+        long strideIndexBuf = ((long) PostingIndexUtils.strideCount(keyCount) + 1L) * Long.BYTES;
+        long localHeaderBuf = 4096L; // DENSE_STRIDE delta header rounded up
+        return strideIndexBuf + localHeaderBuf;
     }
 
     /**
@@ -2168,10 +2170,18 @@ public class PostingIndexWriter implements IndexWriter {
     private long estimateFastPathPeakBytes(int maxStrideTotal, int maxKeyCount, long maxStrideTrialSize, long maxColValueSize) {
         long peak = 2L * maxStrideTotal * Long.BYTES;                  // strideVals + packedResiduals
         peak += maxStrideTrialSize;                                    // bpTrialBuf, exact per-stride trial total
+        // FLAT mode strides allocate a packedBuf of size flatDataSize
+        // inside writePackedStride; flatDataSize is bounded by
+        // BitpackUtils.packedDataSize(totalStrideValues, 64) which
+        // hits maxStrideTotal * 8 worst-case (64-bit-per-value
+        // bit-packing). Lives concurrently with bpTrialBuf,
+        // strideVals, and packedResiduals during the encode call.
+        peak += (long) maxStrideTotal * Long.BYTES;                    // packedBuf in writePackedStride (FLAT mode)
         peak += encodeCtxPeakBytes(maxKeyCount);                       // efTrial + efLowMasked + block bufs + fixed scratch
         peak += sealAuxiliaryBufferBytes();                            // localHeaderBuf + strideIndexBuf
         if (coverCount > 0 && maxColValueSize > 0) {
             peak += (long) maxStrideTotal * maxColValueSize;           // worst-case sidecarBuf for the largest cover col
+            peak += peakCoverColumnCompressBufBytes(maxKeyCount);      // ALP compressBuf for the worst cover col
         }
         peak += (long) maxKeyCount * (Long.BYTES + Byte.BYTES);        // longWorkspace + exceptionWorkspace
         peak += (long) keyCount * Integer.BYTES;                       // totalCountsAddr (already allocated, kept in budget)
@@ -2193,6 +2203,7 @@ public class PostingIndexWriter implements IndexWriter {
         peak += sealAuxiliaryBufferBytes();                            // localHeaderBuf + strideIndexBuf
         if (coverCount > 0 && maxColValueSize > 0) {
             peak += (long) maxKeyCount * maxColValueSize;              // streaming sidecarBuf
+            peak += peakCoverColumnCompressBufBytes(maxKeyCount);      // ALP compressBuf for the worst cover col
         }
         peak += (long) maxKeyCount * (Long.BYTES + Byte.BYTES);        // longWorkspace + exceptionWorkspace
         peak += (long) keyCount * Integer.BYTES;                       // totalCountsAddr
@@ -2944,6 +2955,42 @@ public class PostingIndexWriter implements IndexWriter {
         } finally {
             path.trimTo(plen);
         }
+    }
+
+    /**
+     * Worst-case ALP-compressed scratch size across the writer's
+     * fixed-size cover columns at {@code maxKeyCount} values, or 0
+     * when there are none. Each cover column allocates a compressBuf
+     * sized to {@code CoveringCompressor.maxCompressedSize}; for
+     * DOUBLE that's ~20 bytes per value (ALP header + packed +
+     * exceptions worst case), for FLOAT ~12, for LONG/INT/etc. ~8/4
+     * + header. Driven by the worst column type the writer indexes.
+     * <p>
+     * Returns 0 when there are no fixed-size cover columns; combined
+     * with the {@code maxColValueSize} term in
+     * {@link #estimateFastPathPeakBytes} this gives the full cover
+     * footprint on the seal path.
+     */
+    private long peakCoverColumnCompressBufBytes(int maxKeyCount) {
+        if (maxKeyCount <= 0) {
+            return 0L;
+        }
+        long peak = 0L;
+        for (int c = 0; c < coverCount; c++) {
+            if (coveredColumnIndices.getQuick(c) < 0) {
+                continue;
+            }
+            int shift = coveredColumnShifts.getQuick(c);
+            if (shift < 0) {
+                continue; // var-size cover column does not use this scratch
+            }
+            int colType = coveredColumnTypes.getQuick(c);
+            long size = CoveringCompressor.maxCompressedSize(maxKeyCount, colType);
+            if (size > peak) {
+                peak = size;
+            }
+        }
+        return peak;
     }
 
     /**
