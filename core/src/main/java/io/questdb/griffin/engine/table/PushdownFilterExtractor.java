@@ -134,9 +134,15 @@ public class PushdownFilterExtractor implements Mutable {
                     // and trip its assertion.
                     final int colType = condition.getColumnType();
                     if (ColumnType.isDecimal(colType) && ColumnType.isDecimal(f.getType())) {
-                        Function rescaled = f.isConstant()
-                                ? rescaleDecimalForPushdown(f, colType, executionContext)
-                                : null;
+                        final int fType = f.getType();
+                        final boolean tagAndScaleMatch = ColumnType.tagOf(colType) == ColumnType.tagOf(fType)
+                                && ColumnType.getDecimalScale(colType) == ColumnType.getDecimalScale(fType);
+                        Function rescaled = null;
+                        if (tagAndScaleMatch) {
+                            rescaled = f;
+                        } else if (f.isConstant()) {
+                            rescaled = rescaleDecimalForPushdown(f, colType, executionContext);
+                        }
                         if (rescaled == null) {
                             condition.addValueFunction(f);
                             allConstant = false;
@@ -232,9 +238,8 @@ public class PushdownFilterExtractor implements Mutable {
         DecimalUtil.load(d256, d128, f, null);
 
         if (d256.isNull()) {
-            Function nullFunc = DecimalUtil.createNullDecimalConstant(colPrecision, colScale);
             f.close();
-            return nullFunc;
+            return DecimalUtil.createNullDecimalConstant(colPrecision, colScale);
         }
 
         try {
@@ -248,9 +253,8 @@ public class PushdownFilterExtractor implements Mutable {
             return null;
         }
 
-        Function newFunc = DecimalUtil.createDecimalConstant(d256, colPrecision, colScale);
         f.close();
-        return newFunc;
+        return DecimalUtil.createDecimalConstant(d256, colPrecision, colScale);
     }
 
     private void traverse(ArrayDeque<ExpressionNode> stack, ArrayDeque<ExpressionNode> stack2, ExpressionNode node, RecordMetadata metadata) {

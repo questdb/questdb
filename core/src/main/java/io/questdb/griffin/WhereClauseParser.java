@@ -121,6 +121,7 @@ public final class WhereClauseParser implements Mutable {
         stack.clear();
         keyNodes.clear();
         keyExclNodes.clear();
+        orIntrinsicNodes.clear();
         tempNodes.clear();
         tempKeys.clear();
         tempPos.clear();

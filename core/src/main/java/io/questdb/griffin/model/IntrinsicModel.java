@@ -77,10 +77,12 @@ public class IntrinsicModel implements Mutable {
      * Clears only the interval filter state without touching keys, filter
      * expression or intrinsicValue. Used by WhereClauseParser to roll back
      * a partial OR-tree extraction when one branch can't be turned into an
-     * interval intrinsic.
+     * interval intrinsic. Frees Functions accumulated in the dynamic range
+     * list because rollback discards them without transferring ownership to
+     * a built RuntimeIntervalModel.
      */
     public void clearIntervalFilters() {
-        runtimeIntervalBuilder.clear();
+        runtimeIntervalBuilder.freeAndClear();
     }
 
     public boolean hasIntervalFilters() {

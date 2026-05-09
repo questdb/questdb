@@ -443,7 +443,7 @@ public final class ParquetRowGroupFilter {
         }
         // Numbers.INT_NULL == Integer.MIN_VALUE, so a non-null value must not collapse
         // onto the null sentinel after clamping.
-        if (v <= Integer.MIN_VALUE) {
+        if (v < Integer.MIN_VALUE) {
             return Integer.MIN_VALUE + 1;
         }
         return (int) v;
