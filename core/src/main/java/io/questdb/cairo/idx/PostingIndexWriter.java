@@ -2116,35 +2116,48 @@ public class PostingIndexWriter implements IndexWriter {
 
     /**
      * Per-key encoding context overhead: {@code encodeCtx.ensureCapacity}
-     * grows {@code efTrialAddr} (~9 bytes per value) and
-     * {@code efLowMaskedAddr} (~8 bytes per value) plus a few small
-     * fixed-size block buffers as it sees larger counts. The peak is
-     * driven by the largest single key encoded, hence sized to
-     * {@code maxKeyCount} for both the fast path (which trial-encodes
-     * each key) and the streaming path (which encodes each key
-     * directly into sealTarget but still grows the same scratch).
+     * grows {@code efTrialAddr} (max ~9 bytes per value, smaller for
+     * tiny counts where the EF header dominates) and
+     * {@code efLowMaskedAddr} (8 bytes per value), plus block buffers
+     * scaled to {@code count / BLOCK_CAPACITY}, plus fixed-size
+     * residuals/native scratch sized to {@code BLOCK_CAPACITY * 8}
+     * each. The peak is driven by the largest single key encoded, hence
+     * sized to {@code maxKeyCount} for both the fast path (which
+     * trial-encodes each key) and the streaming path (which encodes
+     * each key directly into sealTarget but still grows the same
+     * scratch).
      * <p>
-     * Use 20 as the per-value coefficient: 9 (efTrial) + 8 (efLowMasked)
-     * + 3 (block buffers, ~4B per BLOCK_CAPACITY values amortised)
-     * rounded up.
+     * Per-value coefficient: 9 (efTrial worst-case) + 8 (efLowMasked) +
+     * 1 (block buffers, ~5/64 bytes per value rounded up). Plus a
+     * 2 KiB constant for residuals and native scratch that exist
+     * regardless of count.
      */
     private static long encodeCtxPeakBytes(int maxKeyCount) {
-        return (long) maxKeyCount * 20L;
+        return (long) maxKeyCount * 18L + 2048L;
+    }
+
+    /**
+     * Fixed-size auxiliary allocations the fast path makes inside
+     * reencodeWithStrideDecoding that do not scale with stride totals
+     * or key counts: localHeaderBuf (max stride header, bounded by
+     * DENSE_STRIDE * 12 bytes ~= 3 KiB) and strideIndexBuf
+     * (strideCount * 8 bytes -- small unless keyCount is in the
+     * millions). Round up to 8 KiB to absorb both terms across all
+     * realistic shapes.
+     */
+    private static long sealAuxiliaryBufferBytes() {
+        return 8192L;
     }
 
     /**
      * Conservative upper bound on the anonymous-heap footprint of the
      * fast-path seal compaction. Accounts for: strideVals decode buffer,
      * packedResiduals scratch (FLAT-mode encoder), bpTrialBuf (per-stride
-     * trial DELTA encode), encodeCtx grow-on-demand scratch, worst-case
-     * per-stride sidecar buffer (one cover column at a time), sidecar
-     * workspaces (sized to the worst single key), and the
-     * already-allocated per-key counts table.
-     * <p>
-     * computeMaxEncodedSize is bounded by ~9 bytes per value for the
-     * adaptive encoder; we use 9 directly as a constant rather than
-     * calling computeMaxEncodedSize because the helper takes int and
-     * we want long arithmetic.
+     * trial DELTA encode, sized exactly via the maxStrideTrialSize
+     * computed in Phase 1), encodeCtx grow-on-demand scratch,
+     * worst-case per-stride sidecar buffer (one cover column at a
+     * time), sidecar workspaces (sized to the worst single key), and
+     * the already-allocated per-key counts table.
      * <p>
      * The valueMem and sealValueMem mappings do not count: their RSS
      * footprint is paged in/out by the OS, bounded by working set rather
@@ -2152,10 +2165,11 @@ public class PostingIndexWriter implements IndexWriter {
      * heap mallocs do count -- those are what
      * {@link Unsafe#checkAllocLimit} gates.
      */
-    private long estimateFastPathPeakBytes(int maxStrideTotal, int maxKeyCount, long maxColValueSize) {
+    private long estimateFastPathPeakBytes(int maxStrideTotal, int maxKeyCount, long maxStrideTrialSize, long maxColValueSize) {
         long peak = 2L * maxStrideTotal * Long.BYTES;                  // strideVals + packedResiduals
-        peak += (long) maxStrideTotal * 9L;                            // bpTrialBuf (worst-case ~9 bytes/value DELTA)
-        peak += encodeCtxPeakBytes(maxKeyCount);                       // efTrial + efLowMasked + block bufs
+        peak += maxStrideTrialSize;                                    // bpTrialBuf, exact per-stride trial total
+        peak += encodeCtxPeakBytes(maxKeyCount);                       // efTrial + efLowMasked + block bufs + fixed scratch
+        peak += sealAuxiliaryBufferBytes();                            // localHeaderBuf + strideIndexBuf
         if (coverCount > 0 && maxColValueSize > 0) {
             peak += (long) maxStrideTotal * maxColValueSize;           // worst-case sidecarBuf for the largest cover col
         }
@@ -2175,7 +2189,8 @@ public class PostingIndexWriter implements IndexWriter {
      */
     private long estimateStreamingPathPeakBytes(int maxKeyCount, long maxColValueSize) {
         long peak = (long) maxKeyCount * Long.BYTES;                   // keyBuffer
-        peak += encodeCtxPeakBytes(maxKeyCount);                       // efTrial + efLowMasked + block bufs
+        peak += encodeCtxPeakBytes(maxKeyCount);                       // efTrial + efLowMasked + block bufs + fixed scratch
+        peak += sealAuxiliaryBufferBytes();                            // localHeaderBuf + strideIndexBuf
         if (coverCount > 0 && maxColValueSize > 0) {
             peak += (long) maxKeyCount * maxColValueSize;              // streaming sidecarBuf
         }
@@ -3119,28 +3134,37 @@ public class PostingIndexWriter implements IndexWriter {
             //    fallback's per-key buffer; also drives writeSidecarsPerColumn's
             //    longWorkspace / exceptionWorkspace, which are sized to the
             //    per-partition max key count)
+            //  - maxStrideTrialSize: largest per-stride trial-encode total
+            //    (sizes the fast-path bpTrialBuf). Computed exactly via
+            //    computeMaxEncodedSize because the per-key fixed overhead
+            //    (~22 bytes for delta-mode header, residuals, exception
+            //    accounting) dominates for low-count keys -- a flat
+            //    "maxStrideTotal * 9" approximation underestimates by 2-3x
+            //    when most keys have counts < 3, leaving the budget
+            //    misclassified.
             // strideTotal/maxStrideTotal are long arithmetic to avoid int
             // wrap when compaction merges multiple gens into one stride
-            // whose per-key sum exceeds Integer.MAX_VALUE. Architecture
-            // limit is 2^31 values per encoded key (encodeKeyNative takes
-            // int count), but per-stride aggregate across gens is not so
-            // limited -- the fast path's anonymous-heap allocation would
-            // hit the RSS check before we got there, but a wrap-to-negative
-            // would let us misclassify the budget.
+            // whose per-key sum exceeds Integer.MAX_VALUE.
             long maxStrideTotalL = 0L;
             int maxKeyCount = 0;
+            long maxStrideTrialSize = 0L;
             {
                 int sc0 = PostingIndexUtils.strideCount(keyCount);
                 for (int s0 = 0; s0 < sc0; s0++) {
                     long strideTotal = 0L;
+                    long strideTrialSize = 0L;
                     int ks0 = PostingIndexUtils.keysInStride(keyCount, s0);
                     for (int j0 = 0; j0 < ks0; j0++) {
                         int key0 = s0 * PostingIndexUtils.DENSE_STRIDE + j0;
                         int c = Unsafe.getInt(totalCountsAddr + (long) key0 * Integer.BYTES);
                         strideTotal += c;
                         if (c > maxKeyCount) maxKeyCount = c;
+                        if (c > 0) {
+                            strideTrialSize += PostingIndexUtils.computeMaxEncodedSize(c);
+                        }
                     }
                     if (strideTotal > maxStrideTotalL) maxStrideTotalL = strideTotal;
+                    if (strideTrialSize > maxStrideTrialSize) maxStrideTrialSize = strideTrialSize;
                 }
             }
             if (maxStrideTotalL > Integer.MAX_VALUE) {
@@ -3186,7 +3210,7 @@ public class PostingIndexWriter implements IndexWriter {
                 // previously could itself OOM under tight RSS, defeating the
                 // whole purpose of the pre-flight).
                 final long maxColValueSize = peakCoverColumnValueSize();
-                final long fastPathPeakBytes = estimateFastPathPeakBytes(maxStrideTotal, maxKeyCount, maxColValueSize);
+                final long fastPathPeakBytes = estimateFastPathPeakBytes(maxStrideTotal, maxKeyCount, maxStrideTrialSize, maxColValueSize);
                 final long streamingPathPeakBytes = estimateStreamingPathPeakBytes(maxKeyCount, maxColValueSize);
                 final long rssLimit = Unsafe.getRssMemLimit();
                 final long rssUsed = Unsafe.getRssMemUsed();
