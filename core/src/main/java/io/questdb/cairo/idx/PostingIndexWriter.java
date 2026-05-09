@@ -2001,6 +2001,36 @@ public class PostingIndexWriter implements IndexWriter {
         }
     }
 
+    /**
+     * Conservative upper bound on the anonymous-heap footprint of the seal
+     * compaction step: stride decode buffer + packed-residuals scratch +
+     * worst-case per-stride sidecar buffer (one cover column at a time)
+     * + sidecar workspaces (sized to the worst single key) + the
+     * already-allocated per-key counts table.
+     * <p>
+     * Computed twice in the seal path:
+     * <ul>
+     *   <li>{@code maxStrideTotal} variant for the fast stride-chunked
+     *       decode -- bounded by the largest single stride's aggregate
+     *       row count;</li>
+     *   <li>{@code maxKeyCount} variant for the streaming fallback
+     *       (added in a follow-up commit) -- bounded by the largest
+     *       single key's row count.</li>
+     * </ul>
+     * The valueMem and sealValueMem mappings do not count: their RSS
+     * footprint is paged in/out by the OS, bounded by working set rather
+     * than file size. Same for keyMem and the sidecar mmaps.
+     */
+    private long estimateSealPeakBytes(int maxStrideTotalOrKeyCount, int maxKeyCount, long maxColValueSize) {
+        long peak = 2L * maxStrideTotalOrKeyCount * Long.BYTES;       // strideVals + packedResiduals
+        if (coverCount > 0 && maxColValueSize > 0) {
+            peak += (long) maxStrideTotalOrKeyCount * maxColValueSize; // worst-case sidecarBuf for the largest cover col
+        }
+        peak += (long) maxKeyCount * (Long.BYTES + Byte.BYTES);       // longWorkspace + exceptionWorkspace
+        peak += (long) keyCount * Integer.BYTES;                      // totalCountsAddr (already allocated, but keep in budget)
+        return peak;
+    }
+
     private int estimateMaxPerKey(long gen0Addr, int gen0KeyCount, int gen0SiSize) {
         int max = 0;
         int sc = PostingIndexUtils.strideCount(gen0KeyCount);
@@ -2750,6 +2780,31 @@ public class PostingIndexWriter implements IndexWriter {
     }
 
     /**
+     * Largest fixed-size cover column's value size in bytes, or 0 when
+     * either there are no cover columns or every cover column is var-size
+     * (those use a different sidecar layout that does not allocate the
+     * fixed-size per-stride sidecarBuf). Drives the cover term in
+     * {@link #estimateSealPeakBytes}.
+     */
+    private long peakCoverColumnValueSize() {
+        long peak = 0L;
+        for (int c = 0; c < coverCount; c++) {
+            if (coveredColumnIndices.getQuick(c) < 0) {
+                continue;
+            }
+            int shift = coveredColumnShifts.getQuick(c);
+            if (shift < 0) {
+                continue; // var-size cover column, no fixed sidecarBuf
+            }
+            long size = 1L << shift;
+            if (size > peak) {
+                peak = size;
+            }
+        }
+        return peak;
+    }
+
+    /**
      * Records that the previous-sealTxn files for this column instance are
      * now superseded and eligible for purge. {@link #publishPendingPurges}
      * forwards each entry to the global queue; the background job checks the
@@ -2905,9 +2960,15 @@ public class PostingIndexWriter implements IndexWriter {
                 return;
             }
 
-            // Scan totalCountsAddr to find max per-stride total. This determines
-            // the stride decode buffer size — much smaller than totalValueCount.
+            // Scan totalCountsAddr to find:
+            //  - maxStrideTotal: largest per-stride sum (sizes the fast-path
+            //    stride decode buffer)
+            //  - maxKeyCount: largest single-key count (sizes the streaming
+            //    fallback's per-key buffer; also drives writeSidecarsPerColumn's
+            //    longWorkspace / exceptionWorkspace, which are sized to the
+            //    per-partition max key count)
             int maxStrideTotal = 0;
+            int maxKeyCount = 0;
             {
                 int sc0 = PostingIndexUtils.strideCount(keyCount);
                 for (int s0 = 0; s0 < sc0; s0++) {
@@ -2915,7 +2976,9 @@ public class PostingIndexWriter implements IndexWriter {
                     int ks0 = PostingIndexUtils.keysInStride(keyCount, s0);
                     for (int j0 = 0; j0 < ks0; j0++) {
                         int key0 = s0 * PostingIndexUtils.DENSE_STRIDE + j0;
-                        strideTotal += Unsafe.getInt(totalCountsAddr + (long) key0 * Integer.BYTES);
+                        int c = Unsafe.getInt(totalCountsAddr + (long) key0 * Integer.BYTES);
+                        strideTotal += c;
+                        if (c > maxKeyCount) maxKeyCount = c;
                     }
                     if (strideTotal > maxStrideTotal) maxStrideTotal = strideTotal;
                 }
@@ -2934,6 +2997,27 @@ public class PostingIndexWriter implements IndexWriter {
                 // monolithic buffer is acceptable here.
                 reencodeMonolithic(maxValue, maxValueCutoff, totalCountsAddr, totalValueCount);
             } else {
+                // Seal path. Decide between the fast stride-chunked decode and
+                // (in a follow-up commit) a per-key streaming fallback for
+                // partitions where one stride's aggregate exceeds the RSS
+                // headroom. Today: throw a clear error if the fast path would
+                // not fit, so the operator gets an actionable message instead
+                // of an in-the-middle-of-the-allocation OOM.
+                final long maxColValueSize = peakCoverColumnValueSize();
+                final long fastPathPeakBytes = estimateSealPeakBytes(maxStrideTotal, maxKeyCount, maxColValueSize);
+                final long rssLimit = Unsafe.getRssMemLimit();
+                final long rssUsed = Unsafe.getRssMemUsed();
+                final long headroom = rssLimit > 0 ? Math.max(0L, rssLimit - rssUsed) : Long.MAX_VALUE;
+                if (fastPathPeakBytes > headroom) {
+                    throw CairoException.critical(0)
+                            .put("posting index seal would exceed RSS limit ")
+                            .put("[maxStrideTotal=").put(maxStrideTotal)
+                            .put(", maxKeyCount=").put(maxKeyCount)
+                            .put(", peakBytes=").put(fastPathPeakBytes)
+                            .put(", rssUsed=").put(rssUsed)
+                            .put(", rssLimit=").put(rssLimit)
+                            .put("]; reduce partition size or raise RSS_MEM_LIMIT");
+                }
                 // Seal path: chunked stride-by-stride decode+encode. Replaces
                 // the old monolithic allValuesAddr (totalValueCount × 8 bytes)
                 // with a buffer sized for the largest single stride.
