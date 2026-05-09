@@ -3526,10 +3526,18 @@ public class PostingIndexWriter implements IndexWriter {
             }
             int shift = coveredColumnShifts.getQuick(c);
             if (shift < 0) {
-                throw CairoException.critical(0)
-                        .put("posting index seal needs streaming compaction but INCLUDE column '")
-                        .put(coveredColumnNames.getQuick(c))
-                        .put("' is variable-size; streaming compaction of var-size cover columns is not yet supported. ")
+                CairoException ex = CairoException.critical(0)
+                        .put("posting index seal needs streaming compaction but INCLUDE column ");
+                // Path-based covering populates coveredColumnNames; addr-based
+                // (O3) covering does not -- only coveredColumnIndices is set.
+                // Print whichever identifier is available so the operator can
+                // locate the offending column.
+                if (c < coveredColumnNames.size() && coveredColumnNames.getQuick(c) != null) {
+                    ex.put('\'').put(coveredColumnNames.getQuick(c)).put('\'');
+                } else {
+                    ex.put("[writer index ").put(coveredColumnIndices.getQuick(c)).put(']');
+                }
+                throw ex.put(" is variable-size; streaming compaction of var-size cover columns is not yet supported. ")
                         .put("Reduce partition size, drop the var-size INCLUDE column, or raise RSS_MEM_LIMIT");
             }
         }
