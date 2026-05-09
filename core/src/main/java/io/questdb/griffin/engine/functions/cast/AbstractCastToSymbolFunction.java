@@ -44,18 +44,18 @@ import org.jetbrains.annotations.Nullable;
  * Abstract base class for functions that cast values to symbol.
  */
 public abstract class AbstractCastToSymbolFunction extends SymbolFunction implements CastFunction {
-    // The function argument to cast.
     protected final Function arg;
-    // Sink for building symbol strings.
     protected final StringSink sink = new StringSink();
-    // Map for symbol table shortcuts. The sentinel is Numbers.INT_NULL rather than the
-    // default -1 so that -1 (the value length() returns for a null symbol/string) can be
-    // stored as a key without colliding with the "empty slot" marker. INT_NULL itself
-    // never reaches this map because it is filtered upstream in getInt()/getSymbol().
+    /**
+     * Map for symbol table shortcuts. The sentinel is {@link Numbers#INT_NULL}
+     * rather than the default {@code -1} so that {@code -1} (the value {@code
+     * length()} returns for a null symbol/string) can be stored as a key without
+     * colliding with the "empty slot" marker. {@code INT_NULL} itself never
+     * reaches this map because it is filtered upstream in {@code getInt()} /
+     * {@code getSymbol()}.
+     */
     protected final IntIntHashMap symbolTableShortcut = new IntIntHashMap(16, 0.5, Numbers.INT_NULL);
-    // List of symbol values.
     protected final ObjList<String> symbols = new ObjList<>();
-    // Next symbol index.
     protected int next = 1;
 
     public AbstractCastToSymbolFunction(Function arg) {

@@ -40,8 +40,6 @@ import java.io.BufferedWriter;
 import java.io.FileWriter;
 import java.io.IOException;
 import java.nio.file.Paths;
-import java.util.ArrayList;
-import java.util.List;
 
 /**
  * Seeded random query fuzzer. Generates 1..3 WAL tables with all supported
@@ -123,28 +121,38 @@ public class QueryFuzzTest extends AbstractCairoTest {
                 parallelCtx.initNow();
                 runFuzz(parallelCtx);
             } finally {
-                pool.halt();
+                // Suppress halt-time failures so they don't mask the original
+                // assertion or test exception that's already on its way out.
+                try {
+                    pool.halt();
+                } catch (Throwable t) {
+                    LOG.error().$("worker pool halt failed: ").$(t).$();
+                }
             }
         });
     }
 
-    private static AssertionError buildFailure(List<QueryRunner.Result> failures) {
+    private static AssertionError buildFailure(ObjList<QueryRunner.Result> failures) {
         StringBuilder sb = new StringBuilder("query fuzz found ").append(failures.size())
                 .append(" unexpected failure(s):\n");
-        int i = 0;
-        for (QueryRunner.Result r : failures) {
-            sb.append("  [").append(++i).append("] ")
+        for (int i = 0, n = failures.size(); i < n; i++) {
+            QueryRunner.Result r = failures.getQuick(i);
+            sb.append("  [").append(i + 1).append("] ")
                     .append(r.getFailure().getClass().getSimpleName())
                     .append(": ").append(r.getFailure().getMessage()).append('\n')
                     .append("        sql: ").append(r.getSql()).append('\n');
         }
         // Chain the first cause so the stack trace still points at real source.
-        return new AssertionError(sb.toString(), failures.getFirst().getFailure());
+        return new AssertionError(sb.toString(), failures.getQuick(0).getFailure());
     }
 
     private static void logSchema(FuzzTable t) {
         StringBuilder sb = new StringBuilder("fuzz schema ").append(t.getName())
-                .append(" (parquet=").append(t.getParquetMode()).append("):");
+                .append(" (parquet=").append(t.getParquetMode());
+        if (t.getParquetPartitions() != null) {
+            sb.append(" partitions=[").append(t.getParquetPartitions()).append(']');
+        }
+        sb.append("):");
         for (int j = 0, n = t.getColumnCount(); j < n; j++) {
             FuzzColumn c = t.getColumn(j);
             sb.append(' ').append(c.getName()).append('=').append(c.getType().getDdl());
@@ -204,7 +212,7 @@ public class QueryFuzzTest extends AbstractCairoTest {
         int bindGen = 0;
         int skipped = 0;
         int serial = 0;
-        List<QueryRunner.Result> failures = new ArrayList<>();
+        ObjList<QueryRunner.Result> failures = new ObjList<>();
         try (BufferedWriter dump = openDump(config.getDumpPath())) {
             for (int q = 0; q < config.getNumQueries(); q++) {
                 long preGenS0 = rnd.getSeed0();
@@ -216,6 +224,15 @@ public class QueryFuzzTest extends AbstractCairoTest {
                 // is rewound to the pre-literal state so the tree shape
                 // matches; the BindContext gets its own derived Rnd so the
                 // bind/no-bind decisions are deterministic per seed.
+                //
+                // Determinism invariant: the second QueryGenerator.generate()
+                // call must draw the same number and order of rnd ops as the
+                // first. The two calls only differ in whether they consult
+                // the BindContext (which uses its own seeded Rnd), so adding
+                // any rnd operation to the bind path -- or skipping one on
+                // the literal path -- desynchronises the two trees and the
+                // shapes will diverge. Take care when modifying any code
+                // reachable from QueryGenerator.generate().
                 if (rnd.nextInt(100) < QUERY_BIND_PROBABILITY_PCT) {
                     long bindS0 = rnd.nextLong();
                     long bindS1 = rnd.nextLong();
@@ -271,7 +288,7 @@ public class QueryFuzzTest extends AbstractCairoTest {
                 .$(failures.size()).$(" failures")
                 .$();
 
-        if (!failures.isEmpty()) {
+        if (failures.size() > 0) {
             throw buildFailure(failures);
         }
     }

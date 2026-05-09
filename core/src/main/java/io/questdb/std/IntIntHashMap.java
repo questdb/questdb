@@ -28,6 +28,10 @@ import java.util.Arrays;
 
 
 public class IntIntHashMap extends AbstractIntHashSet {
+    // Sentinel returned by get() / valueAt() for absent keys. Hardcoded to -1
+    // unlike the configurable noEntryKeyValue. Callers that may legitimately
+    // store -1 as a value cannot distinguish "present with value -1" from
+    // "absent" via get() and must use keyIndex() / valueAt(int) instead.
     private static final int noEntryValue = -1;
     private int[] values;
 

@@ -193,23 +193,16 @@ public final class GroupByClause {
 
     private static Aggregate pickAggregate(Rnd rnd, ExpressionGenerator gen) {
         int pick = rnd.nextInt(7);
-        switch (pick) {
-            case 0:
-                return Aggregate.noArg("count");
-            case 1:
-                return Aggregate.withArg("count", gen.generateAnyKind());
-            case 2:
-                return Aggregate.withArg(rnd.nextBoolean() ? "sum" : "avg",
-                        gen.generateOfKind(ColumnKind.NUMERIC));
-            case 3:
-                return Aggregate.withArg(rnd.nextBoolean() ? "min" : "max", gen.generateAnyKind());
-            case 4:
-                return Aggregate.withArg(rnd.nextBoolean() ? "first" : "last", gen.generateAnyKind());
-            case 5:
-                return Aggregate.withArg("count_distinct", gen.generateAnyKind());
-            default:
-                return Aggregate.withArg("approx_count_distinct", gen.generateAnyKind());
-        }
+        return switch (pick) {
+            case 0 -> Aggregate.noArg("count");
+            case 1 -> Aggregate.withArg("count", gen.generateAnyKind());
+            case 2 -> Aggregate.withArg(rnd.nextBoolean() ? "sum" : "avg",
+                    gen.generateOfKind(ColumnKind.NUMERIC));
+            case 3 -> Aggregate.withArg(rnd.nextBoolean() ? "min" : "max", gen.generateAnyKind());
+            case 4 -> Aggregate.withArg(rnd.nextBoolean() ? "first" : "last", gen.generateAnyKind());
+            case 5 -> Aggregate.withArg("count_distinct", gen.generateAnyKind());
+            default -> Aggregate.withArg("approx_count_distinct", gen.generateAnyKind());
+        };
     }
 
     private static ColumnKind pickGroupableKind(Rnd rnd) {

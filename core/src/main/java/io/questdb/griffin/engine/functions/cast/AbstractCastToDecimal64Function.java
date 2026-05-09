@@ -36,17 +36,15 @@ import io.questdb.std.Decimals;
  * Abstract base class for functions that cast values to decimal64.
  */
 public abstract class AbstractCastToDecimal64Function extends Decimal64Function implements CastFunction {
-    // The function argument to cast.
     protected final Function arg;
-    // Reused buffer that {@link #cast(Record)} fills and the {@code getDecimalNN}
-    // accessors read back from. Sharing it across worker threads would race, so
-    // {@link #isThreadSafe()} returns false.
+    /**
+     * Reused buffer that {@link #cast(Record)} fills and the {@code getDecimalNN}
+     * accessors read back from. Sharing it across worker threads would race, so
+     * {@link #isThreadSafe()} returns false.
+     */
     protected final Decimal64 decimal = new Decimal64();
-    // The position in the SQL statement.
     protected final int position;
-    // The target decimal precision.
     protected final int precision;
-    // The target decimal scale.
     protected final int scale;
 
     /**

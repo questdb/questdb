@@ -90,32 +90,35 @@ public final class FuzzTableFactory {
 
         // Convert statements are queued behind the shadow insert in the WAL
         // queue and processed by the second drain.
-        ParquetMode primaryMode = applyParquetConversion(rnd, primaryName, executor);
-        ParquetMode shadowMode = applyParquetConversion(rnd, shadowName, executor);
+        ParquetConversion primaryParquet = applyParquetConversion(rnd, primaryName, executor);
+        ParquetConversion shadowParquet = applyParquetConversion(rnd, shadowName, executor);
         drainWal.run();
 
-        FuzzTable shadow = new FuzzTable(shadowName, shadowColumns, TS_COLUMN, shadowMode, null);
-        return new FuzzTable(primaryName, primaryColumns, TS_COLUMN, primaryMode, shadow);
+        FuzzTable shadow = new FuzzTable(shadowName, shadowColumns, TS_COLUMN,
+                shadowParquet.mode, shadowParquet.partitions, null);
+        return new FuzzTable(primaryName, primaryColumns, TS_COLUMN,
+                primaryParquet.mode, primaryParquet.partitions, shadow);
     }
 
-    private ParquetMode applyParquetConversion(Rnd rnd, String tableName, SqlExecutor executor) throws SqlException {
+    private ParquetConversion applyParquetConversion(Rnd rnd, String tableName, SqlExecutor executor) throws SqlException {
         ParquetMode mode = pickParquetMode(rnd);
+        String partitions = null;
         switch (mode) {
             case NONE -> {
             }
             case ALL -> executor.execute("ALTER TABLE " + tableName
                     + " CONVERT PARTITION TO PARQUET WHERE " + TS_COLUMN + " >= 0");
             case PARTIAL -> {
-                String partitionList = pickPartialPartitionList(rnd);
-                if (partitionList != null) {
+                partitions = pickPartialPartitionList(rnd);
+                if (partitions != null) {
                     executor.execute("ALTER TABLE " + tableName
-                            + " CONVERT PARTITION TO PARQUET LIST " + partitionList);
+                            + " CONVERT PARTITION TO PARQUET LIST " + partitions);
                 } else {
                     mode = ParquetMode.NONE;
                 }
             }
         }
-        return mode;
+        return new ParquetConversion(mode, partitions);
     }
 
     private ObjList<FuzzColumn> buildColumnList(Rnd rnd) {
@@ -233,4 +236,16 @@ public final class FuzzTableFactory {
     }
 
     public enum ParquetMode {NONE, ALL, PARTIAL}
+
+    /**
+     * Result of {@link #applyParquetConversion}: the realised {@link ParquetMode}
+     * (which can downgrade from {@code PARTIAL} to {@code NONE} when the random
+     * draw picks no partitions) and, for {@code PARTIAL}, the comma-separated
+     * quoted ISO dates that went into the {@code CONVERT PARTITION TO PARQUET
+     * LIST} command. The partition list is included in the schema log so a
+     * post-mortem reader can reproduce the exact storage shape from the log
+     * alone.
+     */
+    private record ParquetConversion(ParquetMode mode, String partitions) {
+    }
 }

@@ -117,20 +117,13 @@ public final class SampleByClause {
         // FILL only applies to a few modes and breaks FROM-TO. Keep simple.
         int fillMode = rnd.nextInt(5);
         switch (fillMode) {
-            case 0:
-                sql.put(" FILL(NULL)");
-                break;
-            case 1:
-                sql.put(" FILL(PREV)");
-                break;
-            case 2:
-                sql.put(" FILL(LINEAR)");
-                break;
-            case 3:
-                sql.put(" FILL(0)");
-                break;
-            default:
+            case 0 -> sql.put(" FILL(NULL)");
+            case 1 -> sql.put(" FILL(PREV)");
+            case 2 -> sql.put(" FILL(LINEAR)");
+            case 3 -> sql.put(" FILL(0)");
+            default -> {
                 // no FILL
+            }
         }
 
         if (rnd.nextBoolean()) {

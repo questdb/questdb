@@ -43,18 +43,27 @@ public final class FuzzTable {
     private final ObjList<FuzzColumn> columns;
     private final String name;
     private final ParquetMode parquetMode;
+    private final String parquetPartitions;
     private final FuzzTable shadow;
     private final String tsColumnName;
 
     public FuzzTable(String name, ObjList<FuzzColumn> columns, String tsColumnName) {
-        this(name, columns, tsColumnName, ParquetMode.NONE, null);
+        this(name, columns, tsColumnName, ParquetMode.NONE, null, null);
     }
 
-    public FuzzTable(String name, ObjList<FuzzColumn> columns, String tsColumnName, ParquetMode parquetMode, FuzzTable shadow) {
+    public FuzzTable(
+            String name,
+            ObjList<FuzzColumn> columns,
+            String tsColumnName,
+            ParquetMode parquetMode,
+            String parquetPartitions,
+            FuzzTable shadow
+    ) {
         this.name = name;
         this.columns = columns;
         this.tsColumnName = tsColumnName;
         this.parquetMode = parquetMode;
+        this.parquetPartitions = parquetPartitions;
         this.shadow = shadow;
     }
 
@@ -76,6 +85,15 @@ public final class FuzzTable {
 
     public ParquetMode getParquetMode() {
         return parquetMode;
+    }
+
+    /**
+     * For {@link ParquetMode#PARTIAL} tables, the comma-separated quoted ISO
+     * dates passed to {@code CONVERT PARTITION TO PARQUET LIST}. {@code null}
+     * for the other modes.
+     */
+    public String getParquetPartitions() {
+        return parquetPartitions;
     }
 
     public FuzzTable getShadow() {

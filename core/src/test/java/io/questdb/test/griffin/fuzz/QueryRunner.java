@@ -241,6 +241,11 @@ public final class QueryRunner {
         ObjList<String> names = query.bindNames();
         ObjList<String> values = query.bindValues();
         try {
+            // Two clears are intentional. The leading clear() ensures a clean
+            // slate independent of any caller-side state. The clear() in the
+            // catch handles the partial-population case where setStr threw
+            // mid-loop -- the trailing finally only runs when the second try
+            // is entered, so on the early-skip path we need an explicit reset.
             bvs.clear();
             for (int i = 0, n = values.size(); i < n; i++) {
                 bvs.setStr(names.getQuick(i), values.getQuick(i));
@@ -316,20 +321,14 @@ public final class QueryRunner {
             try {
                 long a = Long.parseLong(m.group(1));
                 long b = Long.parseLong(m.group(3));
-                long result;
-                switch (m.group(2).charAt(0)) {
-                    case '+':
-                        result = a + b;
-                        break;
-                    case '-':
-                        result = a - b;
-                        break;
-                    case '*':
-                        result = a * b;
-                        break;
-                    default:
-                        continue;
-                }
+                // The pattern only captures +, -, * in group 2 so the switch
+                // is exhaustive over the matched operators.
+                long result = switch (m.group(2).charAt(0)) {
+                    case '+' -> a + b;
+                    case '-' -> a - b;
+                    case '*' -> a * b;
+                    default -> throw new AssertionError("unreachable: regex group 2 is one of +, -, *");
+                };
                 if (result != (int) result) {
                     return true;
                 }
@@ -913,7 +912,9 @@ public final class QueryRunner {
             return Outcome.error(e, e.getFlyweightMessage().toString(), usesParquet);
         } catch (NumericException e) {
             return Outcome.error(e, "", usesParquet);
-        } catch (Throwable t) {
+        } catch (Exception t) {
+            // Errors (OOME, StackOverflow, AssertionError, VirtualMachineError) deliberately
+            // propagate: catching them would let the fuzzer keep iterating in a degraded JVM.
             String msg = t.getMessage();
             return Outcome.error(t, msg == null ? "" : msg, usesParquet);
         }
