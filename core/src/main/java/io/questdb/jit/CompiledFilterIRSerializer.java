@@ -1843,6 +1843,12 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
                     break;
                 }
                 case ExpressionNode.BIND_VARIABLE: {
+                    // An unbound or UNDEFINED-typed bind variable is safe to
+                    // skip here because serializeBindVariable consults the
+                    // same BindVariableService in the same serialize() call
+                    // and throws on either condition, aborting JIT compile
+                    // and falling back to the Java filter -- so the IR is
+                    // never emitted with a missing widening signal.
                     Function bindFunction = lookupBindVariable(node.token);
                     if (bindFunction != null) {
                         int typeCode = bindVariableTypeCode(ColumnType.tagOf(bindFunction.getType()));
