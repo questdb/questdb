@@ -152,6 +152,7 @@ public class LastArrayGroupByFunction extends ArrayFunction implements GroupByFu
         mapValue.putLong(valueIndex + 1, 0);
     }
 
+    @Override
     public boolean supportsParallelism() {
         return UnaryFunction.super.supportsParallelism();
     }
