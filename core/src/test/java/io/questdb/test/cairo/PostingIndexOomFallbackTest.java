@@ -27,12 +27,15 @@ package io.questdb.test.cairo;
 import io.questdb.PropertyKey;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.idx.PostingIndexBwdReader;
 import io.questdb.cairo.idx.PostingIndexFwdReader;
 import io.questdb.cairo.idx.PostingIndexWriter;
 import io.questdb.cairo.sql.RowCursor;
 import io.questdb.std.LongList;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
+import io.questdb.std.ObjList;
+import io.questdb.std.Rnd;
 import io.questdb.std.Unsafe;
 import io.questdb.std.str.Path;
 import io.questdb.test.AbstractCairoTest;
@@ -215,11 +218,22 @@ public class PostingIndexOomFallbackTest extends AbstractCairoTest {
      * streaming compaction would not fit, distinguishing the "too tight
      * for fast path" case (where streaming would still run) from the
      * "too tight for either" case the operator must remediate.
+     * <p>
+     * Calibration note: seal() calls freeSpillData + freePendingBuffers
+     * BEFORE reencodeAllGenerations runs the pre-flight, so by the time
+     * the pre-flight reads {@code Unsafe.getRssMemUsed()} the headroom
+     * has grown by roughly (spill arena bytes) + (pending arena bytes)
+     * relative to the snapshot at {@code setRssMemLimit}. Use a workload
+     * with a single hot key whose streaming peak ({@code maxKeyCount}
+     * times ~17 bytes) clearly exceeds even the post-free headroom.
      */
     @Test
     public void testSealHardLimitWhenEvenStreamingDoesNotFit() throws Exception {
-        final int keys = 4;
-        final int rowsPerKey = 8192;
+        // Single hot key: maxKeyCount == rowCount. Streaming peak
+        // = ~17 * rowCount bytes. With 200_000 rows that's ~3.4 MiB,
+        // comfortably above the 256 KiB tight-limit even after seal()
+        // frees the ~1.6 MiB spill arena.
+        final int rowCount = 200_000;
 
         assertMemoryLeak(() -> {
             try (Path path = new Path().of(configuration.getDbRoot())) {
@@ -227,20 +241,13 @@ public class PostingIndexOomFallbackTest extends AbstractCairoTest {
 
                 long savedLimit = Unsafe.getRssMemLimit();
                 try (PostingIndexWriter writer = new PostingIndexWriter(configuration, path, name, COLUMN_NAME_TXN_NONE)) {
-                    long row = 0;
-                    for (int r = 0; r < rowsPerKey; r++) {
-                        for (int k = 0; k < keys; k++) {
-                            writer.add(k, row++);
-                        }
+                    for (int i = 0; i < rowCount; i++) {
+                        writer.add(0, i);
                     }
-                    writer.setMaxValue(row - 1);
+                    writer.setMaxValue(rowCount - 1);
                     writer.commit();
 
-                    // Tight enough that streaming's 2 * maxKeyCount * 8 +
-                    // overhead would exceed headroom. maxKeyCount here is
-                    // rowsPerKey == 8192, so streaming peak is at least
-                    // 2 * 8192 * 8 = 128 KiB; we cap headroom at 32 KiB.
-                    Unsafe.setRssMemLimit(Unsafe.getRssMemUsed() + 32L * 1024L);
+                    Unsafe.setRssMemLimit(Unsafe.getRssMemUsed() + 256L * 1024L);
                     try {
                         writer.seal();
                         Assert.fail("expected CairoException, seal succeeded");
@@ -407,6 +414,286 @@ public class PostingIndexOomFallbackTest extends AbstractCairoTest {
                     }
                 }
             }
+        });
+    }
+
+    /**
+     * Fuzz: vary spill budget across orders of magnitude (32 B to 16 MiB)
+     * over random workloads (random key counts, rows per key, monotonic
+     * row IDs), assert the index round-trips through both forward and
+     * backward readers regardless of how many periodic flushes fired.
+     * <p>
+     * This is the strongest correctness check for the periodic-flush
+     * path: any silent data drop -- whether from a misordered spill,
+     * a missed gen, or the MAX_GEN_COUNT inline seal interaction --
+     * surfaces as a cursor short-count or a value mismatch against
+     * the oracle.
+     */
+    @Test
+    public void testFuzzPeriodicFlushAcrossBudgets() throws Exception {
+        assertMemoryLeak(() -> {
+            for (long seed = 0; seed < 16; seed++) {
+                Rnd rnd = new Rnd(seed * 17 + 11, seed * 23 + 5);
+                // Budget spans 5 orders of magnitude. Some seeds fire the
+                // flush almost every spill, others never fire it.
+                long budget = 32L << rnd.nextInt(20);
+                node1.getConfigurationOverrides().setProperty(
+                        PropertyKey.CAIRO_POSTING_INDEX_INDEXER_SPILL_BYTES_MAX, budget);
+                int keys = rnd.nextInt(150) + 1;
+                int rowsPerKey = rnd.nextInt(800) + 8;
+
+                ObjList<LongList> oracle = new ObjList<>();
+                for (int k = 0; k < keys; k++) {
+                    oracle.add(new LongList());
+                }
+
+                try (Path path = new Path().of(configuration.getDbRoot())) {
+                    final int plen = path.size();
+                    String name = "fuzz_budget_" + seed;
+                    try (PostingIndexWriter writer = new PostingIndexWriter(configuration, path, name, COLUMN_NAME_TXN_NONE)) {
+                        long row = 0;
+                        for (int r = 0; r < rowsPerKey; r++) {
+                            // Each round assigns each row index 0..keys-1 to
+                            // some key; ensure rowIds are monotonically
+                            // increasing per key by always using `row` and
+                            // incrementing.
+                            for (int k = 0; k < keys; k++) {
+                                writer.add(k, row);
+                                oracle.getQuick(k).add(row);
+                                row++;
+                            }
+                        }
+                        writer.setMaxValue(row - 1);
+                        writer.commit();
+                        writer.seal();
+                    }
+
+                    try (PostingIndexFwdReader reader = new PostingIndexFwdReader(
+                            configuration, path.trimTo(plen), name, COLUMN_NAME_TXN_NONE, -1, 0)) {
+                        for (int k = 0; k < keys; k++) {
+                            LongList expected = oracle.getQuick(k);
+                            RowCursor cursor = reader.getCursor(k, 0, Long.MAX_VALUE);
+                            int idx = 0;
+                            while (cursor.hasNext()) {
+                                Assert.assertTrue("seed=" + seed + " budget=" + budget + " key=" + k + " extra at idx=" + idx,
+                                        idx < expected.size());
+                                Assert.assertEquals("seed=" + seed + " budget=" + budget + " key=" + k + " idx=" + idx,
+                                        expected.getQuick(idx), cursor.next());
+                                idx++;
+                            }
+                            Assert.assertEquals("seed=" + seed + " budget=" + budget + " key=" + k + " short-count",
+                                    expected.size(), idx);
+                            Misc.free(cursor);
+                        }
+                    }
+                    try (PostingIndexBwdReader reader = new PostingIndexBwdReader(
+                            configuration, path.trimTo(plen), name, COLUMN_NAME_TXN_NONE, -1, 0, null, null, 0)) {
+                        for (int k = 0; k < keys; k++) {
+                            LongList expected = oracle.getQuick(k);
+                            RowCursor cursor = reader.getCursor(k, 0, Long.MAX_VALUE);
+                            int idx = expected.size() - 1;
+                            while (cursor.hasNext()) {
+                                Assert.assertTrue("seed=" + seed + " budget=" + budget + " bwd key=" + k + " extra at idx=" + idx,
+                                        idx >= 0);
+                                Assert.assertEquals("seed=" + seed + " budget=" + budget + " bwd key=" + k + " idx=" + idx,
+                                        expected.getQuick(idx), cursor.next());
+                                idx--;
+                            }
+                            Assert.assertEquals("seed=" + seed + " budget=" + budget + " bwd key=" + k + " short-count",
+                                    -1, idx);
+                            Misc.free(cursor);
+                        }
+                    }
+                }
+                // Reset the property so the next iteration's setProperty
+                // call observes a deterministic prior state.
+                node1.getConfigurationOverrides().setProperty(
+                        PropertyKey.CAIRO_POSTING_INDEX_INDEXER_SPILL_BYTES_MAX, 256L << 20);
+            }
+        });
+    }
+
+    /**
+     * Fuzz: for each random workload, build the index twice -- once on the
+     * fast path with no RSS budget, once with an RSS limit dialled in so
+     * tightly that the seal must take the streaming path. Read the (key,
+     * rowId) sets back through both forward and backward cursors and
+     * assert they are identical. This is the strongest check that
+     * streaming compaction produces wire-compatible output: any divergence
+     * in the encoded dense gen 0 (DELTA vs FLAT, missing keys, off-by-one
+     * in stride headers) surfaces as a mismatch between the two readers.
+     */
+    @Test
+    public void testFuzzStreamingMatchesFastPathBaseline() throws Exception {
+        assertMemoryLeak(() -> {
+            for (long seed = 0; seed < 12; seed++) {
+                Rnd rnd = new Rnd(seed * 41 + 7, seed * 53 + 19);
+                int keys = rnd.nextInt(60) + 4;
+                int rowsPerKey = rnd.nextInt(600) + 16;
+
+                LongList baseline = buildAndCollect("fuzz_base_" + seed, keys, rowsPerKey, /* tight RSS */ false);
+                LongList streaming = buildAndCollect("fuzz_str_" + seed, keys, rowsPerKey, /* tight RSS */ true);
+
+                Assert.assertEquals("seed=" + seed + " baseline vs streaming size mismatch",
+                        baseline.size(), streaming.size());
+                for (int i = 0; i < baseline.size(); i++) {
+                    if (baseline.getQuick(i) != streaming.getQuick(i)) {
+                        Assert.fail("seed=" + seed + " divergence at position " + i +
+                                " (key/sentinel sequence): baseline=" + baseline.getQuick(i) +
+                                " streaming=" + streaming.getQuick(i));
+                    }
+                }
+            }
+        });
+    }
+
+    private LongList buildAndCollect(String name, int keys, int rowsPerKey, boolean forceStreamingAtSeal) throws Exception {
+        try (Path path = new Path().of(configuration.getDbRoot())) {
+            final int plen = path.size();
+            long savedRssLimit = Unsafe.getRssMemLimit();
+            try (PostingIndexWriter writer = new PostingIndexWriter(configuration, path, name, COLUMN_NAME_TXN_NONE)) {
+                long row = 0;
+                for (int r = 0; r < rowsPerKey; r++) {
+                    for (int k = 0; k < keys; k++) {
+                        writer.add(k, row++);
+                    }
+                }
+                writer.setMaxValue(row - 1);
+                writer.commit();
+                if (forceStreamingAtSeal) {
+                    // Cap headroom small enough to push the pre-flight off
+                    // the fast path. 64 KiB is large enough for streaming
+                    // (peak ~2 * maxKeyCount * 8 = ~10 KiB at rowsPerKey
+                    // up to ~600) and small enough that fast path's
+                    // 2 * keys * rowsPerKey * 8 (~600 KiB at the upper
+                    // end) doesn't fit.
+                    Unsafe.setRssMemLimit(Unsafe.getRssMemUsed() + 64L * 1024L);
+                }
+                try {
+                    writer.seal();
+                } finally {
+                    if (forceStreamingAtSeal) {
+                        Unsafe.setRssMemLimit(savedRssLimit);
+                    }
+                }
+            }
+
+            LongList collected = new LongList();
+            try (PostingIndexFwdReader reader = new PostingIndexFwdReader(
+                    configuration, path.trimTo(plen), name, COLUMN_NAME_TXN_NONE, -1, 0)) {
+                for (int k = 0; k < keys; k++) {
+                    collected.add(k);
+                    collected.add(-1L); // separator
+                    RowCursor cursor = reader.getCursor(k, 0, Long.MAX_VALUE);
+                    while (cursor.hasNext()) {
+                        collected.add(cursor.next());
+                    }
+                    Misc.free(cursor);
+                }
+            }
+            return collected;
+        }
+    }
+
+    /**
+     * Fuzz: combine random spill budgets (forcing periodic flushes during
+     * the indexing loop) with random RSS limits at seal time (forcing
+     * either fast path, streaming, or hard-fail). Any combination must
+     * either succeed with correct read-back or throw with a clear
+     * "RSS limit" / "stride aggregate" diagnostic.
+     */
+    @Test
+    public void testFuzzMixedBudgetAndRssAtSeal() throws Exception {
+        assertMemoryLeak(() -> {
+            int passes = 0;
+            int hardFails = 0;
+            for (long seed = 0; seed < 24; seed++) {
+                Rnd rnd = new Rnd(seed * 71 + 31, seed * 89 + 13);
+                long budget = 64L << rnd.nextInt(18);
+                node1.getConfigurationOverrides().setProperty(
+                        PropertyKey.CAIRO_POSTING_INDEX_INDEXER_SPILL_BYTES_MAX, budget);
+                int keys = rnd.nextInt(80) + 2;
+                int rowsPerKey = rnd.nextInt(500) + 32;
+                // Pick a head-room that ranges from very tight (8 KiB) to
+                // very loose (8 MiB). At the tight end every seed should
+                // hard-fail; at the loose end most should pass. Anchored
+                // to 8 KiB because seal()'s pre-free liberates the spill
+                // and pending arenas (multi-KiB) before pre-flight runs.
+                long sealHeadroomBytes = 8L * 1024L << rnd.nextInt(11); // 8 KiB to 8 MiB
+
+                ObjList<LongList> oracle = new ObjList<>();
+                for (int k = 0; k < keys; k++) {
+                    oracle.add(new LongList());
+                }
+
+                try (Path path = new Path().of(configuration.getDbRoot())) {
+                    final int plen = path.size();
+                    String name = "fuzz_mixed_" + seed;
+                    long savedRssLimit = Unsafe.getRssMemLimit();
+                    boolean sealSucceeded = false;
+                    try (PostingIndexWriter writer = new PostingIndexWriter(configuration, path, name, COLUMN_NAME_TXN_NONE)) {
+                        long row = 0;
+                        for (int r = 0; r < rowsPerKey; r++) {
+                            for (int k = 0; k < keys; k++) {
+                                writer.add(k, row);
+                                oracle.getQuick(k).add(row);
+                                row++;
+                            }
+                        }
+                        writer.setMaxValue(row - 1);
+                        writer.commit();
+                        Unsafe.setRssMemLimit(Unsafe.getRssMemUsed() + sealHeadroomBytes);
+                        try {
+                            writer.seal();
+                            sealSucceeded = true;
+                        } catch (CairoException e) {
+                            String msg = e.getFlyweightMessage().toString();
+                            // Either RSS-related or stride-overflow. Both
+                            // are acceptable hard-fail diagnostics; any
+                            // other message is a bug.
+                            boolean known = msg.contains("RSS limit")
+                                    || msg.contains("stride aggregate exceeds")
+                                    || msg.contains("split commit");
+                            if (!known) {
+                                throw e;
+                            }
+                            hardFails++;
+                        } finally {
+                            Unsafe.setRssMemLimit(savedRssLimit);
+                        }
+                    }
+
+                    if (sealSucceeded) {
+                        passes++;
+                        try (PostingIndexFwdReader reader = new PostingIndexFwdReader(
+                                configuration, path.trimTo(plen), name, COLUMN_NAME_TXN_NONE, -1, 0)) {
+                            for (int k = 0; k < keys; k++) {
+                                LongList expected = oracle.getQuick(k);
+                                RowCursor cursor = reader.getCursor(k, 0, Long.MAX_VALUE);
+                                int idx = 0;
+                                while (cursor.hasNext()) {
+                                    Assert.assertTrue("seed=" + seed + " budget=" + budget + " seal=" + sealHeadroomBytes
+                                                    + " key=" + k + " extra",
+                                            idx < expected.size());
+                                    Assert.assertEquals("seed=" + seed + " key=" + k + " idx=" + idx,
+                                            expected.getQuick(idx), cursor.next());
+                                    idx++;
+                                }
+                                Assert.assertEquals("seed=" + seed + " key=" + k + " short-count",
+                                        expected.size(), idx);
+                                Misc.free(cursor);
+                            }
+                        }
+                    }
+                }
+                node1.getConfigurationOverrides().setProperty(
+                        PropertyKey.CAIRO_POSTING_INDEX_INDEXER_SPILL_BYTES_MAX, 256L << 20);
+            }
+            // Sanity: across 24 seeds we expect both passes and hard-fails.
+            // If passes == 0 the test is no longer covering the success
+            // path; if hardFails == 0 we never tightened RSS enough.
+            Assert.assertTrue("fuzz never succeeded a seal: passes=" + passes, passes > 0);
+            Assert.assertTrue("fuzz never tightened RSS to hard-fail: hardFails=" + hardFails, hardFails > 0);
         });
     }
 }

@@ -2107,32 +2107,72 @@ public class PostingIndexWriter implements IndexWriter {
     }
 
     /**
-     * Conservative upper bound on the anonymous-heap footprint of the seal
-     * compaction step: stride decode buffer + packed-residuals scratch +
-     * worst-case per-stride sidecar buffer (one cover column at a time)
-     * + sidecar workspaces (sized to the worst single key) + the
+     * Per-key encoding context overhead: {@code encodeCtx.ensureCapacity}
+     * grows {@code efTrialAddr} (~9 bytes per value) and
+     * {@code efLowMaskedAddr} (~8 bytes per value) plus a few small
+     * fixed-size block buffers as it sees larger counts. The peak is
+     * driven by the largest single key encoded, hence sized to
+     * {@code maxKeyCount} for both the fast path (which trial-encodes
+     * each key) and the streaming path (which encodes each key
+     * directly into sealTarget but still grows the same scratch).
+     * <p>
+     * Use 20 as the per-value coefficient: 9 (efTrial) + 8 (efLowMasked)
+     * + 3 (block buffers, ~4B per BLOCK_CAPACITY values amortised)
+     * rounded up.
+     */
+    private static long encodeCtxPeakBytes(int maxKeyCount) {
+        return (long) maxKeyCount * 20L;
+    }
+
+    /**
+     * Conservative upper bound on the anonymous-heap footprint of the
+     * fast-path seal compaction. Accounts for: strideVals decode buffer,
+     * packedResiduals scratch (FLAT-mode encoder), bpTrialBuf (per-stride
+     * trial DELTA encode), encodeCtx grow-on-demand scratch, worst-case
+     * per-stride sidecar buffer (one cover column at a time), sidecar
+     * workspaces (sized to the worst single key), and the
      * already-allocated per-key counts table.
      * <p>
-     * Computed twice in the seal path:
-     * <ul>
-     *   <li>{@code maxStrideTotal} variant for the fast stride-chunked
-     *       decode -- bounded by the largest single stride's aggregate
-     *       row count;</li>
-     *   <li>{@code maxKeyCount} variant for the streaming fallback
-     *       (added in a follow-up commit) -- bounded by the largest
-     *       single key's row count.</li>
-     * </ul>
+     * computeMaxEncodedSize is bounded by ~9 bytes per value for the
+     * adaptive encoder; we use 9 directly as a constant rather than
+     * calling computeMaxEncodedSize because the helper takes int and
+     * we want long arithmetic.
+     * <p>
      * The valueMem and sealValueMem mappings do not count: their RSS
      * footprint is paged in/out by the OS, bounded by working set rather
-     * than file size. Same for keyMem and the sidecar mmaps.
+     * than file size. Same for keyMem and the sidecar mmaps. Anonymous-
+     * heap mallocs do count -- those are what
+     * {@link Unsafe#checkAllocLimit} gates.
      */
-    private long estimateSealPeakBytes(int maxStrideTotalOrKeyCount, int maxKeyCount, long maxColValueSize) {
-        long peak = 2L * maxStrideTotalOrKeyCount * Long.BYTES;       // strideVals + packedResiduals
+    private long estimateFastPathPeakBytes(int maxStrideTotal, int maxKeyCount, long maxColValueSize) {
+        long peak = 2L * maxStrideTotal * Long.BYTES;                  // strideVals + packedResiduals
+        peak += (long) maxStrideTotal * 9L;                            // bpTrialBuf (worst-case ~9 bytes/value DELTA)
+        peak += encodeCtxPeakBytes(maxKeyCount);                       // efTrial + efLowMasked + block bufs
         if (coverCount > 0 && maxColValueSize > 0) {
-            peak += (long) maxStrideTotalOrKeyCount * maxColValueSize; // worst-case sidecarBuf for the largest cover col
+            peak += (long) maxStrideTotal * maxColValueSize;           // worst-case sidecarBuf for the largest cover col
         }
-        peak += (long) maxKeyCount * (Long.BYTES + Byte.BYTES);       // longWorkspace + exceptionWorkspace
-        peak += (long) keyCount * Integer.BYTES;                      // totalCountsAddr (already allocated, but keep in budget)
+        peak += (long) maxKeyCount * (Long.BYTES + Byte.BYTES);        // longWorkspace + exceptionWorkspace
+        peak += (long) keyCount * Integer.BYTES;                       // totalCountsAddr (already allocated, kept in budget)
+        return peak;
+    }
+
+    /**
+     * Conservative upper bound on the anonymous-heap footprint of the
+     * streaming compaction. Streaming encodes directly into sealTarget
+     * (mmap, off-budget) so it does not allocate bpTrialBuf or
+     * packedResiduals. The keyBuffer holds one key's decoded values,
+     * encodeCtx still grows on demand to fit the worst key, the
+     * per-stride sidecarBuf is sized to the worst single key, and the
+     * workspaces are unchanged from the fast path.
+     */
+    private long estimateStreamingPathPeakBytes(int maxKeyCount, long maxColValueSize) {
+        long peak = (long) maxKeyCount * Long.BYTES;                   // keyBuffer
+        peak += encodeCtxPeakBytes(maxKeyCount);                       // efTrial + efLowMasked + block bufs
+        if (coverCount > 0 && maxColValueSize > 0) {
+            peak += (long) maxKeyCount * maxColValueSize;              // streaming sidecarBuf
+        }
+        peak += (long) maxKeyCount * (Long.BYTES + Byte.BYTES);        // longWorkspace + exceptionWorkspace
+        peak += (long) keyCount * Integer.BYTES;                       // totalCountsAddr
         return peak;
     }
 
@@ -3071,12 +3111,20 @@ public class PostingIndexWriter implements IndexWriter {
             //    fallback's per-key buffer; also drives writeSidecarsPerColumn's
             //    longWorkspace / exceptionWorkspace, which are sized to the
             //    per-partition max key count)
-            int maxStrideTotal = 0;
+            // strideTotal/maxStrideTotal are long arithmetic to avoid int
+            // wrap when compaction merges multiple gens into one stride
+            // whose per-key sum exceeds Integer.MAX_VALUE. Architecture
+            // limit is 2^31 values per encoded key (encodeKeyNative takes
+            // int count), but per-stride aggregate across gens is not so
+            // limited -- the fast path's anonymous-heap allocation would
+            // hit the RSS check before we got there, but a wrap-to-negative
+            // would let us misclassify the budget.
+            long maxStrideTotalL = 0L;
             int maxKeyCount = 0;
             {
                 int sc0 = PostingIndexUtils.strideCount(keyCount);
                 for (int s0 = 0; s0 < sc0; s0++) {
-                    int strideTotal = 0;
+                    long strideTotal = 0L;
                     int ks0 = PostingIndexUtils.keysInStride(keyCount, s0);
                     for (int j0 = 0; j0 < ks0; j0++) {
                         int key0 = s0 * PostingIndexUtils.DENSE_STRIDE + j0;
@@ -3084,21 +3132,34 @@ public class PostingIndexWriter implements IndexWriter {
                         strideTotal += c;
                         if (c > maxKeyCount) maxKeyCount = c;
                     }
-                    if (strideTotal > maxStrideTotal) maxStrideTotal = strideTotal;
+                    if (strideTotal > maxStrideTotalL) maxStrideTotalL = strideTotal;
                 }
             }
-
-            if (maxStrideTotal > packedResidualsCapacity) {
-                packedResidualsAddr = Unsafe.realloc(packedResidualsAddr,
-                        (long) packedResidualsCapacity * Long.BYTES,
-                        (long) maxStrideTotal * Long.BYTES, MemoryTag.NATIVE_INDEX_READER);
-                packedResidualsCapacity = maxStrideTotal;
+            if (maxStrideTotalL > Integer.MAX_VALUE) {
+                // 2^31 longs in a single 256-key stride is ~17 GiB just for
+                // the decode buffer. There is no path that succeeds; bail
+                // with a clear diagnostic instead of overflowing into the
+                // existing int-typed strideValsAddr sizing.
+                throw CairoException.critical(0)
+                        .put("posting index seal stride aggregate exceeds 2^31 values [maxStrideTotal=").put(maxStrideTotalL)
+                        .put(", keyCount=").put(keyCount)
+                        .put(", maxKeyCount=").put(maxKeyCount)
+                        .put("]; split the partition into smaller commits");
             }
+            int maxStrideTotal = (int) maxStrideTotalL;
 
             if (maxValueCutoff < Long.MAX_VALUE) {
                 // Rollback path: monolithic decode + filter + re-encode to new file.
                 // Rollback is rare and operates on small data volumes, so the
-                // monolithic buffer is acceptable here.
+                // monolithic buffer is acceptable here. Pre-size packedResiduals
+                // for the rollback's downstream encoder; outside the seal
+                // path the auto-grow inside writePackedStride handles it.
+                if (maxStrideTotal > packedResidualsCapacity) {
+                    packedResidualsAddr = Unsafe.realloc(packedResidualsAddr,
+                            (long) packedResidualsCapacity * Long.BYTES,
+                            (long) maxStrideTotal * Long.BYTES, MemoryTag.NATIVE_INDEX_READER);
+                    packedResidualsCapacity = maxStrideTotal;
+                }
                 reencodeMonolithic(maxValue, maxValueCutoff, totalCountsAddr, totalValueCount);
             } else {
                 // Seal path. Pick between the fast stride-chunked decode (peak
@@ -3110,14 +3171,26 @@ public class PostingIndexWriter implements IndexWriter {
                 // mode where applicable; streaming runs in always-DELTA mode
                 // and is several times slower, so it only kicks in when the
                 // fast path would not run at all.
+                //
+                // Allocations gated by the pre-flight result so a streaming
+                // selection does not incur the fast path's packedResidualsAddr
+                // pre-realloc cost (the upstream realloc that lived here
+                // previously could itself OOM under tight RSS, defeating the
+                // whole purpose of the pre-flight).
                 final long maxColValueSize = peakCoverColumnValueSize();
-                final long fastPathPeakBytes = estimateSealPeakBytes(maxStrideTotal, maxKeyCount, maxColValueSize);
-                final long streamingPathPeakBytes = estimateSealPeakBytes(maxKeyCount, maxKeyCount, maxColValueSize);
+                final long fastPathPeakBytes = estimateFastPathPeakBytes(maxStrideTotal, maxKeyCount, maxColValueSize);
+                final long streamingPathPeakBytes = estimateStreamingPathPeakBytes(maxKeyCount, maxColValueSize);
                 final long rssLimit = Unsafe.getRssMemLimit();
                 final long rssUsed = Unsafe.getRssMemUsed();
                 final long headroom = rssLimit > 0 ? Math.max(0L, rssLimit - rssUsed) : Long.MAX_VALUE;
 
                 if (fastPathPeakBytes <= headroom) {
+                    if (maxStrideTotal > packedResidualsCapacity) {
+                        packedResidualsAddr = Unsafe.realloc(packedResidualsAddr,
+                                (long) packedResidualsCapacity * Long.BYTES,
+                                (long) maxStrideTotal * Long.BYTES, MemoryTag.NATIVE_INDEX_READER);
+                        packedResidualsCapacity = maxStrideTotal;
+                    }
                     long strideValsAddr = Unsafe.malloc((long) maxStrideTotal * Long.BYTES, MemoryTag.NATIVE_INDEX_READER);
                     try {
                         reencodeWithStrideDecoding(
@@ -3575,18 +3648,26 @@ public class PostingIndexWriter implements IndexWriter {
                 int ks = PostingIndexUtils.keysInStride(keyCount, s);
                 int strideStart = s * PostingIndexUtils.DENSE_STRIDE;
 
-                int strideValCount = 0;
+                // hasAnyValues rather than a summed count: per-stride
+                // aggregate could exceed Integer.MAX_VALUE on a heavily
+                // compacted partition, and an int sum that wraps to 0
+                // would silently skip a non-empty stride. The pre-flight
+                // check above already throws on this case for the fast
+                // path; defensive here so the streaming path stays
+                // correct even if the pre-flight is bypassed in future
+                // refactors.
+                boolean hasAnyValues = false;
                 for (int j = 0; j < ks; j++) {
                     int key = strideStart + j;
                     int count = Unsafe.getInt(totalCountsAddr + (long) key * Integer.BYTES);
                     keyCounts[j] = count;
-                    strideValCount += count;
+                    if (count > 0) hasAnyValues = true;
                 }
 
                 long strideOff = sealTarget.getAppendOffset() - sealOffset - siSize;
                 Unsafe.putLong(strideIndexBuf + (long) s * Long.BYTES, strideOff);
 
-                if (strideValCount == 0) {
+                if (!hasAnyValues) {
                     continue;
                 }
 
@@ -5454,19 +5535,21 @@ public class PostingIndexWriter implements IndexWriter {
                 int ks = PostingIndexUtils.keysInStride(keyCount, s);
                 int strideStart = s * PostingIndexUtils.DENSE_STRIDE;
 
-                int strideValCount = 0;
+                // hasAnyValues rather than a summed count, see streaming
+                // reencode path for rationale.
+                boolean hasAnyValues = false;
                 for (int j = 0; j < ks; j++) {
                     int key = strideStart + j;
                     int count = Unsafe.getInt(totalCountsAddr + (long) key * Integer.BYTES);
                     keyCounts[j] = count;
-                    strideValCount += count;
+                    if (count > 0) hasAnyValues = true;
                 }
 
                 Unsafe.putLong(
                         sidecarStrideIndexBuf + (long) s * Long.BYTES,
                         mem.getAppendOffset() - siSize);
 
-                if (strideValCount == 0) {
+                if (!hasAnyValues) {
                     continue;
                 }
 
