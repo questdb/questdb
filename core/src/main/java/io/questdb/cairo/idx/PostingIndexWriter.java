@@ -1589,22 +1589,30 @@ public class PostingIndexWriter implements IndexWriter {
      * Mid-stream drain when the per-key spill arena exceeds
      * {@link #indexerSpillBytesMax}. Encodes the in-memory pending+spill
      * state into a fresh sparse generation in {@code valueMem}, publishes
-     * it to the chain, and frees only the per-key spill buffers. Pending
-     * arrays stay live so the {@link #add} call that drove us here can
+     * it to the chain, and frees the per-key spill buffers so the
+     * arena is reclaimed. The {@link #add} call that drove us here can
      * complete its post-{@link #spillKey} write without dereferencing a
-     * freed pointer.
+     * freed pointer because the pending arrays stay live -- with one
+     * exception: {@link #flushAllPending} triggers an inline {@link #seal}
+     * if its {@code genCount} hits {@link #MAX_GEN_COUNT}, and that seal
+     * frees pending. The trailing {@code allocateNativeBuffers} below
+     * re-establishes pending in that case; {@code keyCount} is preserved
+     * by both flush and seal so the post-spillKey write to a key already
+     * past {@link #PENDING_SLOT_CAPACITY} adds (its first add must have
+     * bumped keyCount past it) stays within the new keyCapacity.
      * <p>
-     * Why free spill but not pending: spill grows linearly with rows
-     * indexed for hot keys (the unbounded blow-up the reported OOM
-     * exercised); pending is bounded by symbol cardinality times
-     * {@code PENDING_SLOT_CAPACITY * Long.BYTES}, which is a fixed cost
-     * we pay once per writer lifetime rather than per indexing batch.
-     * Freeing pending here would force a 64-bytes-per-key realloc on
-     * the very next {@link #add}, costing tens of milliseconds per
-     * flush cycle for the high-cardinality cases this fix targets.
-     * {@link #seal} still frees both before the seal-time reencode --
-     * that path is end-of-batch so the realloc cost is amortised across
-     * the entire next batch.
+     * Why free spill on every trigger but pending only when the inline
+     * seal does it: spill grows linearly with rows indexed for hot keys
+     * (the unbounded blow-up the reported OOM exercised); pending is
+     * bounded by symbol cardinality times {@code PENDING_SLOT_CAPACITY *
+     * Long.BYTES}, a fixed cost we pay once per writer lifetime rather
+     * than per indexing batch. Freeing pending on every trigger would
+     * force a 64-bytes-per-key realloc on the very next {@link #add},
+     * costing tens of milliseconds per flush cycle for the
+     * high-cardinality cases this fix targets. {@link #seal} still
+     * frees both before the seal-time reencode -- that path is
+     * end-of-batch so the realloc cost is amortised across the entire
+     * next batch.
      * <p>
      * Called from {@link #spillKey} after the per-key buffer grow.
      * Deliberately not called from the merge-spill grow site inside
