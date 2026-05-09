@@ -149,6 +149,67 @@ public class PostingIndexOomFallbackTest extends AbstractCairoTest {
     }
 
     /**
+     * Pathological-budget regression: a per-key spill budget so tight
+     * that periodic flushes accumulate past MAX_GEN_COUNT (143). Each
+     * flush bumps genCount by one; once it crosses MAX_GEN_COUNT,
+     * flushAllPending fires an inline seal() which frees both pending
+     * and spill buffers. The compactIfOverBudget call site inside
+     * spillKey runs immediately before add()'s post-write to
+     * pendingValuesAddr -- without the explicit pending-realloc the
+     * post-write would dereference a freed pointer.
+     * <p>
+     * Forces the path with a 64-byte budget over 50 keys * 4096 rows.
+     * Each per-key spill grow is ~256 bytes, so the budget trips on
+     * essentially every spill, yielding hundreds of periodic flushes
+     * and at least one MAX_GEN_COUNT-driven seal. Asserts the index is
+     * still readable and round-trips cleanly.
+     */
+    @Test
+    public void testIndexerSurvivesMaxGenCountInlineSeal() throws Exception {
+        // Tiny budget forces a flush on (essentially) every spill.
+        node1.getConfigurationOverrides().setProperty(
+                PropertyKey.CAIRO_POSTING_INDEX_INDEXER_SPILL_BYTES_MAX, 64L);
+        final int keys = 50;
+        final int rowsPerKey = 4096;
+
+        assertMemoryLeak(() -> {
+            try (Path path = new Path().of(configuration.getDbRoot())) {
+                final int plen = path.size();
+                final String name = "max_gen_inline_seal";
+
+                try (PostingIndexWriter writer = new PostingIndexWriter(configuration, path, name, COLUMN_NAME_TXN_NONE)) {
+                    long row = 0;
+                    for (int r = 0; r < rowsPerKey; r++) {
+                        for (int k = 0; k < keys; k++) {
+                            writer.add(k, row++);
+                        }
+                    }
+                    writer.setMaxValue(row - 1);
+                    writer.commit();
+                    writer.seal();
+                }
+
+                // Round-trip the data: with hundreds of inline seals the
+                // chain went through repeated dense-gen rotations. If any
+                // of them lost data, the cursor would short-count.
+                try (PostingIndexFwdReader reader = new PostingIndexFwdReader(
+                        configuration, path.trimTo(plen), name, COLUMN_NAME_TXN_NONE, -1, 0)) {
+                    for (int k = 0; k < keys; k++) {
+                        RowCursor cursor = reader.getCursor(k, 0, Long.MAX_VALUE);
+                        for (int r = 0; r < rowsPerKey; r++) {
+                            Assert.assertTrue("key " + k + " row " + r + ": cursor exhausted", cursor.hasNext());
+                            long expected = (long) r * keys + k;
+                            Assert.assertEquals("key " + k + " row " + r, expected, cursor.next());
+                        }
+                        Assert.assertFalse("key " + k + ": unexpected extra rows", cursor.hasNext());
+                        Misc.free(cursor);
+                    }
+                }
+            }
+        });
+    }
+
+    /**
      * Forces the seal-time pre-flight to refuse via a pathological RSS
      * limit. The error message must explicitly call out that even the
      * streaming compaction would not fit, distinguishing the "too tight

@@ -1635,6 +1635,18 @@ public class PostingIndexWriter implements IndexWriter {
                 .$(", genCount=").$(genCount).I$();
         flushAllPending();
         freeSpillData();
+        // flushAllPending may have triggered the inline seal at MAX_GEN_COUNT,
+        // which calls freePendingBuffers and leaves pendingCountsAddr == 0.
+        // The in-flight spillKey caller (add) is about to write into
+        // pendingValuesAddr after we return; reallocate so it does not
+        // dereference a freed pointer. allocateNativeBuffers preserves
+        // keyCount, so the post-spillKey write to a key that already
+        // existed when spillKey ran (count >= PENDING_SLOT_CAPACITY
+        // means that key was seen at least 8 times, so its first add
+        // bumped keyCount past it) stays within the new keyCapacity.
+        if (pendingCountsAddr == 0) {
+            allocateNativeBuffers();
+        }
     }
 
     private void copyStrideFromGen0(long gen0Addr, int gen0KeyCount, int gen0SiSize, int stride,
@@ -2478,7 +2490,6 @@ public class PostingIndexWriter implements IndexWriter {
         // counter consistent across the rebuild lifecycle without an explicit
         // hook in that helper.
         totalSpillBytes = 0;
-        assert totalSpillBytes >= 0;
     }
 
     private long getCoveredAuxReadAddr(int covIdx, long offset, long needed) {
