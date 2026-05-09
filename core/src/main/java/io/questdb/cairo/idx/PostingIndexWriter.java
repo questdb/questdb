@@ -1585,6 +1585,58 @@ public class PostingIndexWriter implements IndexWriter {
         sidecarInfoMem = Misc.free(sidecarInfoMem);
     }
 
+    /**
+     * Mid-stream drain when the per-key spill arena exceeds
+     * {@link #indexerSpillBytesMax}. Encodes the in-memory pending+spill
+     * state into a fresh sparse generation in {@code valueMem}, publishes
+     * it to the chain, and frees only the per-key spill buffers. Pending
+     * arrays stay live so the {@link #add} call that drove us here can
+     * complete its post-{@link #spillKey} write without dereferencing a
+     * freed pointer.
+     * <p>
+     * Why free spill but not pending: spill grows linearly with rows
+     * indexed for hot keys (the unbounded blow-up the reported OOM
+     * exercised); pending is bounded by symbol cardinality times
+     * {@code PENDING_SLOT_CAPACITY * Long.BYTES}, which is a fixed cost
+     * we pay once per writer lifetime rather than per indexing batch.
+     * Freeing pending here would force a 64-bytes-per-key realloc on
+     * the very next {@link #add}, costing tens of milliseconds per
+     * flush cycle for the high-cardinality cases this fix targets.
+     * {@link #seal} still frees both before the seal-time reencode --
+     * that path is end-of-batch so the realloc cost is amortised across
+     * the entire next batch.
+     * <p>
+     * Called from {@link #spillKey} after the per-key buffer grow.
+     * Deliberately not called from the merge-spill grow site inside
+     * {@link #flushAllPending}: that site only runs while we are already
+     * draining, the encoded data lands in {@code valueMem} immediately
+     * after, and {@link #resetSpill} clears the per-key counts on the
+     * way out. Re-entering {@code flushAllPending} from inside itself
+     * would recurse.
+     * <p>
+     * No-op when:
+     * <ul>
+     *   <li>{@code indexerSpillBytesMax <= 0} (operator disabled the
+     *       back-pressure)</li>
+     *   <li>{@code totalSpillBytes <= indexerSpillBytesMax} (still within
+     *       budget)</li>
+     *   <li>nothing is pending or spilled (defensive)</li>
+     * </ul>
+     */
+    private void compactIfOverBudget() {
+        if (indexerSpillBytesMax <= 0 || totalSpillBytes <= indexerSpillBytesMax) {
+            return;
+        }
+        if (!hasPendingData && !hasSpillData) {
+            return;
+        }
+        LOG.debug().$("posting index periodic flush [totalSpillBytes=").$(totalSpillBytes)
+                .$(", threshold=").$(indexerSpillBytesMax)
+                .$(", genCount=").$(genCount).I$();
+        flushAllPending();
+        freeSpillData();
+    }
+
     private void copyStrideFromGen0(long gen0Addr, int gen0KeyCount, int gen0SiSize, int stride,
                                     long copyBuf, long copyBufSize) {
         // If this stride existed in gen 0, copy it; otherwise write empty
@@ -3984,6 +4036,13 @@ public class PostingIndexWriter implements IndexWriter {
         hasSpillData = true;
         // Reset pending count
         Unsafe.putInt(pendingCountsAddr + (long) key * Integer.BYTES, 0);
+        // Bound peak RSS: if the spill arena has grown past the configured
+        // budget, drain pending+spill into a fresh sparse generation now and
+        // free the anonymous-heap buffers. Cheap when within budget (one
+        // long compare + branch). Critical for ALTER ADD INDEX, IndexBuilder,
+        // and per-O3-seal rebuilds (PR 7077) where the loop above could
+        // otherwise accumulate the whole partition in heap memory.
+        compactIfOverBudget();
     }
 
     private void switchToSealedValueFile(long newTxn) {
