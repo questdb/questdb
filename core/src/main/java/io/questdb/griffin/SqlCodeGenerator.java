@@ -10096,7 +10096,11 @@ public class SqlCodeGenerator implements Mutable, Closeable {
 
                     boolean orderByKeyColumn = false;
                     int indexDirection = IndexReader.DIR_FORWARD;
-                    if (intervalHitsOnlyOnePartition) {
+                    // Skip the order-by-key-column shortcut when an outer time-series join
+                    // needs the master in timestamp order. Honoring the order-by advice would
+                    // strip the timestamp index and let a sym-ordered cursor feed a SPLICE/ASOF
+                    // /LT/WINDOW merge that assumes ts order.
+                    if (intervalHitsOnlyOnePartition && !executionContext.isTimestampRequired()) {
                         final ObjList<ExpressionNode> orderByAdvice = model.getOrderByAdvice();
                         final int orderByAdviceSize = orderByAdvice.size();
                         if (orderByAdviceSize > 0 && orderByAdviceSize < 3) {
@@ -10364,7 +10368,12 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     }
                 }
 
-                if (intervalHitsOnlyOnePartition && intrinsicModel.filter == null) {
+                // Skip the symbol-index sort optimization when an outer time-series
+                // join needs the master in timestamp order. SortedSymbolIndexRecordCursorFactory
+                // emits rows in symbol order and zeroes the timestamp index, which would
+                // either trip "no timestamp" validation downstream or, worse, feed sym-ordered
+                // input into a SPLICE/ASOF/LT/WINDOW merge that assumes ts order.
+                if (intervalHitsOnlyOnePartition && intrinsicModel.filter == null && !executionContext.isTimestampRequired()) {
                     final ObjList<ExpressionNode> orderByAdvice = model.getOrderByAdvice();
                     final int orderByAdviceSize = orderByAdvice.size();
                     if (orderByAdviceSize > 0 && orderByAdviceSize < 3 && intrinsicModel.hasIntervalFilters()) {

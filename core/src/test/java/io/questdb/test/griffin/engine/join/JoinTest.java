@@ -6372,6 +6372,36 @@ public class JoinTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testSpliceJoinIndexedSymbolMasterWithOrderByPreservesTimestamp() throws Exception {
+        // Regression for a query-fuzzer divergence: a SPLICE JOIN whose master
+        // table has an indexed SYMBOL column and an interval WHERE on ts, with
+        // the outer query ordering by that indexed symbol, used to compile the
+        // master as SortedSymbolIndexRecordCursorFactory. That factory emits
+        // rows in symbol order and zeroes the timestamp index, so the SPLICE
+        // join validation either threw "left side of time series join has no
+        // timestamp" or, with the timestamp restored, would have fed
+        // sym-ordered input into a merge that assumes ts order. The codegen
+        // now skips the symbol-index sort path when the parent join requires
+        // a timestamp on the master.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x_idx (sym SYMBOL INDEX, val DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE y_tab (sym SYMBOL, val DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO x_idx SELECT 'a', x::DOUBLE, ('2024-01-01T00:00:00'::TIMESTAMP + x * 1_000_000) FROM long_sequence(3)");
+            execute("INSERT INTO y_tab SELECT 'b', x::DOUBLE, ('2024-01-01T00:00:00'::TIMESTAMP + x * 1_000_000) FROM long_sequence(3)");
+            assertQueryNoLeakCheck(
+                    "e0\te1\te2\n" +
+                            "1.0\tb\ta\n" +
+                            "2.0\tb\ta\n" +
+                            "3.0\tb\ta\n",
+                    "SELECT b.val AS e0, b.sym AS e1, a.sym AS e2 FROM x_idx a SPLICE JOIN y_tab b WHERE a.ts IN '2024-01-01' ORDER BY 3",
+                    null,
+                    null,
+                    true
+            );
+        });
+    }
+
+    @Test
     public void testSpliceJoinLeftTimestampDescOrder() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table x as (select cast(x as int) i, rnd_symbol('msft','ibm', 'googl') sym, round(rnd_double(0)*100, 3) amt, to_timestamp('2018-01', 'yyyy-MM') + x * 720000000 timestamp from long_sequence(10)) timestamp(timestamp)");
