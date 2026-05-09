@@ -160,6 +160,15 @@ public class PostingIndexWriter implements IndexWriter {
     private int genCount;
     private boolean hasPendingData;
     private boolean hasSpillData;
+    // Memory budget for the per-key spill arena. When the running
+    // totalSpillBytes accountant crosses this watermark inside spillKey,
+    // the writer drains pending+spill via flushAllPending and frees the
+    // anonymous-heap buffers, bounding peak RSS during long indexing
+    // runs (ALTER ADD INDEX TYPE POSTING, IndexBuilder, the
+    // discardForRebuild + index-loop path on each O3 seal). Cached from
+    // CairoConfiguration.getPostingIndexerSpillBytesMax(); 0 or negative
+    // disables back-pressure entirely (legacy "accumulate until seal").
+    private final long indexerSpillBytesMax;
     private int keyCapacity;
     private int keyCount;
     // In-memory mirror of the head entry's MAX_VALUE field. setMaxValue
@@ -194,6 +203,14 @@ public class PostingIndexWriter implements IndexWriter {
     private long spillKeyCapacitiesAddr;
     private long spillKeyCountsAddr;
     private int timestampColumnIndex = -1;
+    // Running tally of bytes held in the per-key spill arena. Bumped on
+    // every spillKey realloc that grows a per-key buffer, and inside
+    // flushAllPending's merge-spill grow site; reset to 0 inside
+    // freeSpillData. Drives compactIfOverBudget's mid-stream flush
+    // decision. Tracks NATIVE_INDEX_READER bytes attributable to the
+    // spill arena only -- pending buffers, fsst scratch, etc. live under
+    // the same memory tag but are separately bounded.
+    private long totalSpillBytes;
     private long unpackBatchAddr;
     private int unpackBatchCapacity;
     private long valueMemSize;
@@ -206,6 +223,7 @@ public class PostingIndexWriter implements IndexWriter {
         this.alignedBitWidthThreshold = configuration.getPostingIndexAlignedBitWidthThreshold();
         this.configuration = configuration;
         this.ff = configuration.getFilesFacade();
+        this.indexerSpillBytesMax = configuration.getPostingIndexerSpillBytesMax();
         this.rowIdEncoding = rowIdEncoding;
     }
 
@@ -2078,13 +2096,24 @@ public class PostingIndexWriter implements IndexWriter {
                     int needed = spillCount + pendingCount;
                     int curCap = Unsafe.getInt(spillKeyCapacitiesAddr + (long) key * Integer.BYTES);
                     if (needed > curCap) {
-                        int newCap = Math.max(needed, curCap * 2);
+                        // Long-arithmetic doubling, see spillKey for rationale.
+                        long doubled = (long) curCap * 2L;
+                        long want = Math.max((long) needed, doubled);
+                        if (want > Integer.MAX_VALUE) {
+                            throw CairoException.critical(0)
+                                    .put("posting index spill capacity exceeds 2^31 entries [key=").put(key)
+                                    .put(", needed=").put(needed)
+                                    .put(", curCap=").put(curCap)
+                                    .put("]; split commit into smaller batches");
+                        }
+                        int newCap = (int) want;
                         long oldSize = (long) curCap * Long.BYTES;
                         long newSize = (long) newCap * Long.BYTES;
                         long oldAddr = Unsafe.getLong(spillKeyAddrsAddr + (long) key * Long.BYTES);
                         long newAddr = Unsafe.realloc(oldAddr, oldSize, newSize, MemoryTag.NATIVE_INDEX_READER);
                         Unsafe.putLong(spillKeyAddrsAddr + (long) key * Long.BYTES, newAddr);
                         Unsafe.putInt(spillKeyCapacitiesAddr + (long) key * Integer.BYTES, newCap);
+                        totalSpillBytes += newSize - oldSize;
                     }
                     // Append pending values after spill values
                     long pendingSrc = pendingValuesAddr + (long) key * PENDING_SLOT_CAPACITY * Long.BYTES;
@@ -2269,6 +2298,12 @@ public class PostingIndexWriter implements IndexWriter {
             spillArraysCapacity = 0;
             hasSpillData = false;
         }
+        // The arena is gone, so the byte counter must follow. discardForRebuild
+        // (PR 7077) calls freeSpillData directly, so resetting here keeps the
+        // counter consistent across the rebuild lifecycle without an explicit
+        // hook in that helper.
+        totalSpillBytes = 0;
+        assert totalSpillBytes >= 0;
     }
 
     private long getCoveredAuxReadAddr(int covIdx, long offset, long needed) {
@@ -2341,7 +2376,16 @@ public class PostingIndexWriter implements IndexWriter {
     }
 
     private void growKeyBuffers(int minCapacity) {
-        int newCapacity = Math.max(keyCapacity * 2, minCapacity);
+        // Long-arithmetic doubling, see spillKey for rationale.
+        long doubled = (long) keyCapacity * 2L;
+        long want = Math.max((long) minCapacity, doubled);
+        if (want > Integer.MAX_VALUE) {
+            throw CairoException.critical(0)
+                    .put("posting index key capacity exceeds 2^31 [minCapacity=").put(minCapacity)
+                    .put(", keyCapacity=").put(keyCapacity)
+                    .put("]; split commit into smaller batches");
+        }
+        int newCapacity = (int) want;
 
         long oldCountSize = (long) keyCapacity * Integer.BYTES;
         long newCountSize = (long) newCapacity * Integer.BYTES;
@@ -3906,14 +3950,30 @@ public class PostingIndexWriter implements IndexWriter {
         // Grow per-key spill buffer if needed
         int curCap = Unsafe.getInt(spillKeyCapacitiesAddr + (long) key * Integer.BYTES);
         if (needed > curCap) {
-            int newCap = Math.max(needed, curCap * 2);
-            newCap = Math.max(newCap, 32); // minimum 32 values
+            // Long-arithmetic doubling: curCap * 2 wraps to negative once
+            // curCap >= 2^30, which would let Math.max pick `needed` and
+            // silently break the doubling-amortization invariant. Clamp
+            // to Integer.MAX_VALUE; if `needed` itself overflows int, the
+            // sealCheck above (totalValues > Integer.MAX_VALUE) is the
+            // long-term ceiling and would have already fired -- but
+            // assert here for the unit-test case.
+            long doubled = (long) curCap * 2L;
+            long want = Math.max((long) needed, doubled);
+            if (want > Integer.MAX_VALUE) {
+                throw CairoException.critical(0)
+                        .put("posting index spill capacity exceeds 2^31 entries [key=").put(key)
+                        .put(", needed=").put(needed)
+                        .put(", curCap=").put(curCap)
+                        .put("]; split commit into smaller batches");
+            }
+            int newCap = (int) Math.max(want, 32L); // minimum 32 values
             long oldSize = (long) curCap * Long.BYTES;
             long newSize = (long) newCap * Long.BYTES;
             long oldAddr = Unsafe.getLong(spillKeyAddrsAddr + (long) key * Long.BYTES);
             long newAddr = Unsafe.realloc(oldAddr, oldSize, newSize, MemoryTag.NATIVE_INDEX_READER);
             Unsafe.putLong(spillKeyAddrsAddr + (long) key * Long.BYTES, newAddr);
             Unsafe.putInt(spillKeyCapacitiesAddr + (long) key * Integer.BYTES, newCap);
+            totalSpillBytes += newSize - oldSize;
         }
         // Copy values from pending buffer to this key's spill
         long srcAddr = pendingValuesAddr + (long) key * PENDING_SLOT_CAPACITY * Long.BYTES;
