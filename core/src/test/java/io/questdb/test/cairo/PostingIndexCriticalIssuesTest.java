@@ -885,54 +885,577 @@ public class PostingIndexCriticalIssuesTest extends AbstractCairoTest {
     }
 
     /**
-     * Re-review Critical #1, end-to-end reachability via SQL — proves
-     * the bug's chain-state signature is produced from ordinary user
-     * input plus a plausible OS failure.
+     * Re-review Critical #1 — {@link PostingIndexWriter#discardForRebuild}
+     * preserves the writer's {@code sealTxn}, {@code valueMemSize} and
+     * chain head on disk. The next {@link PostingIndexWriter#commit()}
+     * therefore reaches {@code publishToChain} with
+     * {@code this.sealTxn == chain.getHeadSealTxn()}, which routes to
+     * {@link PostingIndexChainWriter#extendHead}. After
+     * {@code discardForRebuild} reset {@code genCount} to 0,
+     * {@code flushAllPending} bumps it to 1 and calls
+     * {@code publishToChain(newGenCount=1, overrideGenIndex=0, ...)}.
      * <p>
-     * Recipe:
+     * {@code extendHead}'s protocol assumes
+     * {@code newGenCount > oldGenCount}: the caller writes a fresh
+     * gen-dir slot at index {@code oldGenCount} (past the visible end),
+     * fences, then bumps {@code GEN_COUNT} last. The caller in
+     * {@code TableWriter.sealPostingIndexForPartition} (covering branch
+     * around TableWriter.java:11308-11320, non-covering branch around
+     * 11381-11388) violates that contract whenever the partition's
+     * pre-rebuild head had {@code GEN_COUNT > 1} (e.g., after WAL
+     * fast-lag commits chained {@code extendHead} on the same sealTxn):
+     * {@code publishToChain} writes gen-dir slot 0 — already occupied —
+     * shrinks {@code LEN}, and pulls {@code GEN_COUNT} from {@code K}
+     * down to 1. The previously-published head entry is mutated in
+     * place; the entry's {@code TXN_AT_SEAL} stays unchanged because
+     * {@code extendHead} never touches that field.
+     * <p>
+     * Three downstream consequences:
      * <ol>
-     *   <li>Posting-indexed table partitioned by day, BYPASS WAL.</li>
-     *   <li>In-order baseline INSERT into two days. The chain entries
-     *       are committed via {@code syncColumns}, which does call
-     *       {@code setNextTxnAtSeal} — these baseline entries carry a
-     *       sane {@code txnAtSeal}.</li>
-     *   <li>O3 INSERT spanning the same two days. This routes through
-     *       {@code finishO3Commit} → {@code sealPostingIndexesForO3Partitions}
-     *       (TableWriter.java:5801) → {@code sealPostingIndexForPartition}
-     *       (TableWriter.java:10739, 10777). Neither call site invokes
-     *       {@code setNextTxnAtSeal} before {@code seal()}; the seal
-     *       publishes a fresh chain entry via {@code publishToChain}
-     *       (PostingIndexWriter.java:4045) with the fallback
-     *       {@code txnAtSeal=0L}.</li>
-     *   <li>A {@code FilesFacade} fault fails the second seal-time
-     *       {@code openRW} of a {@code .pv.{N+1}} file (the
-     *       {@code !.pv.0} filter skips the pre-seal column files).
-     *       The first partition's seal completes — its
-     *       {@code .pv.{N+1}} file lands on disk and the chain head
-     *       advances to it. The second partition's seal throws; the
-     *       {@code finishO3Commit} catch (TableWriter.java:5802-5818)
-     *       marks the writer distressed, and the encompassing
-     *       {@code txWriter.commit} never runs.</li>
-     *   <li>{@code engine.releaseAllWriters()} drops the distressed
-     *       writer from the pool.</li>
-     *   <li>Open the affected partition's {@code .pk} and read the
-     *       chain head. Run {@code recoveryDropAbandoned} with
-     *       {@code currentTableTxn} set to the last committed table
-     *       {@code _txn} the recovery walk would observe on a fresh
-     *       writer reopen (TableWriter.java:7585 / 10739 / 10777
-     *       wire {@code setCurrentTableTxn(txWriter.getTxn())}).
-     *       A working recovery walk drops the abandoned head; with
-     *       the bug it drops zero entries.</li>
+     *   <li><b>Torn read.</b> A concurrent reader that latches the OLD
+     *       {@code GEN_COUNT=K} under
+     *       {@link PostingIndexChainEntry#read}'s {@code loadFence} walks
+     *       slots {@code [0, K)} where slot 0 carries the new
+     *       post-rebuild bytes and slots {@code [1, K)} still reference
+     *       the OLD gens. {@code extendHead}'s {@code GEN_COUNT}-last
+     *       store ordering only protects {@code newGenCount > oldGenCount}.</li>
+     *   <li><b>Snapshot-isolation violation.</b> After the trailing
+     *       {@code seal()} appends a fresh head, the in-place-mutated
+     *       entry becomes a {@code prev} entry. Its bytes now describe
+     *       the post-rebuild state, but its {@code TXN_AT_SEAL} still
+     *       belongs to the pre-rebuild snapshot.
+     *       {@link PostingIndexChainPicker#pick} for any reader pinned
+     *       between the OLD entry's {@code txnAtSeal} and the new entry's
+     *       {@code txnAtSeal} stops at the mutated OLD entry and observes
+     *       post-rebuild data through what should be a pre-rebuild
+     *       snapshot.</li>
+     *   <li><b>Crash recovery hole.</b> A crash between
+     *       {@code commit()} and the trailing {@code seal()} leaves the
+     *       OLD entry mutated but with its original {@code TXN_AT_SEAL}.
+     *       {@link PostingIndexChainWriter#recoveryDropAbandoned}'s
+     *       predicate is {@code txnAtSeal > currentTableTxn}; the
+     *       mutation is invisible to it, so the corrupted entry survives
+     *       recovery as the new head.</li>
      * </ol>
      * <p>
-     * The on-disk {@code .pv.{N+1}} file is also leaked — but only if
-     * the affected partition is never written to again. If the user
-     * does write to it later the next seal supersedes the abandoned
-     * chain head via {@code recordPostingSealPurge}, which cleans the
-     * file up incidentally. So the file-existence check is too noisy
-     * to use as a discriminator — the chain-head state is the
-     * deterministic signal.
+     * Suggested fixes (the test passes if either is in place):
+     * <ul>
+     *   <li>{@code discardForRebuild} rotates {@code sealTxn} (e.g.,
+     *       {@code closeSidecarMems()} + reopen {@code valueMem} at
+     *       {@link PostingIndexChainWriter#peekNextSealTxn}, the same
+     *       shape as {@link PostingIndexWriter#truncate}) so the next
+     *       {@code commit()} takes the {@code appendNewEntry} branch.</li>
+     *   <li>Or, {@code publishToChain} detects
+     *       {@code newGenCount < oldGenCount} and forces
+     *       {@code appendNewEntry}.</li>
+     * </ul>
+     * <p>
+     * The test models the rebuild flow with a writer fixture instead of a
+     * full SQL-level reproduction: the production trigger is an O3 commit
+     * that re-routes through {@code sealPostingIndexForPartition} on a
+     * partition whose chain head already carries
+     * {@code GEN_COUNT >= 2}. Phase 1 builds that pre-rebuild shape via
+     * three {@code commit()}s at the same sealTxn (each takes
+     * {@code extendHead} after the first); Phase 2 replays
+     * {@code discardForRebuild() -> add() -> commit()} as the rebuild
+     * dance and asserts that none of the protocol-preserving outcomes
+     * fired.
      */
+    @Test
+    public void testReviewFindingC1_DiscardForRebuildMutatesAlreadyPublishedHeadInPlace() throws Exception {
+        assertMemoryLeak(() -> {
+            try (Path path = new Path().of(configuration.getDbRoot())) {
+                String name = "c1_discard_for_rebuild_mutates_head";
+                int plen = path.size();
+                FilesFacade ff = configuration.getFilesFacade();
+
+                // Phase 1: build a chain head with GEN_COUNT >= 2 by
+                // committing three times at the same sealTxn. The first
+                // commit takes appendNewEntry; the next two take extendHead
+                // and bump GEN_COUNT in the protocol-conforming direction
+                // (newGenCount > oldGenCount).
+                try (PostingIndexWriter writer = new PostingIndexWriter(
+                        configuration, path.trimTo(plen), name, COLUMN_NAME_TXN_NONE)) {
+                    writer.setNextTxnAtSeal(10L);
+                    writer.add(0, 0);
+                    writer.add(1, 1);
+                    writer.add(2, 2);
+                    writer.setMaxValue(2);
+                    writer.commit(); // appendNewEntry -> head GEN_COUNT=1
+
+                    writer.add(0, 3);
+                    writer.add(1, 4);
+                    writer.setMaxValue(4);
+                    writer.commit(); // extendHead -> GEN_COUNT=2
+
+                    writer.add(2, 5);
+                    writer.add(0, 6);
+                    writer.setMaxValue(6);
+                    writer.commit(); // extendHead -> GEN_COUNT=3
+                    Assert.assertEquals(
+                            "test setup gap: in-memory genCount must reach 3 "
+                                    + "before the rebuild so the buggy path is "
+                                    + "newGenCount=1 < oldGenCount=3",
+                            3, writer.getGenCount()
+                    );
+                }
+
+                // Snapshot the pre-rebuild head entry directly from the .pk
+                // file — close() trimmed keyMem to chain.getRegionLimit so
+                // the on-disk view matches the live writer's last published
+                // state.
+                PostingIndexChainEntry.Snapshot preSnap = new PostingIndexChainEntry.Snapshot();
+                long preEntryCount;
+                {
+                    LPSZ keyFile = PostingIndexUtils.keyFileName(
+                            path.trimTo(plen), name, COLUMN_NAME_TXN_NONE);
+                    long fileSize = ff.length(keyFile);
+                    try (MemoryCMARWImpl mem = new MemoryCMARWImpl(
+                            ff, keyFile, ff.getPageSize(), fileSize,
+                            MemoryTag.MMAP_DEFAULT, /* opts */ 0)) {
+                        PostingIndexChainWriter chain = new PostingIndexChainWriter();
+                        chain.openExisting(mem);
+                        Assert.assertTrue("phase 1 must leave a head entry", chain.hasHead());
+                        preEntryCount = chain.getEntryCount();
+                        chain.loadHeadEntry(mem, preSnap);
+                    }
+                    Assert.assertTrue(
+                            "test setup gap: pre-rebuild head must have "
+                                    + "GEN_COUNT >= 2 to exercise the "
+                                    + "newGenCount < oldGenCount path; got "
+                                    + preSnap.genCount,
+                            preSnap.genCount >= 2
+                    );
+                    Assert.assertEquals(
+                            "pre-rebuild head must carry the txnAtSeal supplied "
+                                    + "via setNextTxnAtSeal — this is what "
+                                    + "recoveryDropAbandoned compares against on "
+                                    + "the next reopen",
+                            10L, preSnap.txnAtSeal
+                    );
+                }
+
+                // Phase 2: reopen and run the rebuild dance:
+                // setNextTxnAtSeal + discardForRebuild + add + commit. This
+                // mirrors the call shape inside both branches of
+                // sealPostingIndexForPartition (TableWriter.java:11308-11320
+                // and 11381-11388). The trailing seal() is intentionally
+                // omitted — the protocol violation lands during commit(),
+                // so the on-disk head bytes already encode the bug.
+                try (PostingIndexWriter writer = new PostingIndexWriter(configuration)) {
+                    writer.of(path.trimTo(plen), name, COLUMN_NAME_TXN_NONE, /* init */ false);
+                    writer.setNextTxnAtSeal(20L);
+                    writer.discardForRebuild();
+                    writer.add(0, 100);
+                    writer.add(2, 101);
+                    writer.setMaxValue(101);
+                    writer.commit();
+                }
+
+                // Snapshot the post-rebuild head entry.
+                PostingIndexChainEntry.Snapshot postSnap = new PostingIndexChainEntry.Snapshot();
+                long postEntryCount;
+                {
+                    LPSZ keyFile = PostingIndexUtils.keyFileName(
+                            path.trimTo(plen), name, COLUMN_NAME_TXN_NONE);
+                    long fileSize = ff.length(keyFile);
+                    try (MemoryCMARWImpl mem = new MemoryCMARWImpl(
+                            ff, keyFile, ff.getPageSize(), fileSize,
+                            MemoryTag.MMAP_DEFAULT, /* opts */ 0)) {
+                        PostingIndexChainWriter chain = new PostingIndexChainWriter();
+                        chain.openExisting(mem);
+                        Assert.assertTrue("phase 2 must leave a head entry", chain.hasHead());
+                        postEntryCount = chain.getEntryCount();
+                        chain.loadHeadEntry(mem, postSnap);
+                    }
+                }
+
+                // Red assertions. The fix must produce at least ONE of the
+                // following — each is a way to honor extendHead's
+                // newGenCount > oldGenCount precondition:
+                //   (a) entryCount grew      -> appendNewEntry was taken;
+                //   (b) sealTxn rotated      -> discardForRebuild rotated
+                //                               .pv to a fresh sealTxn;
+                //   (c) txnAtSeal advanced   -> a fresh chain entry was
+                //                               published carrying the new
+                //                               commit-in-progress txn;
+                //   (d) genCount preserved   -> publishToChain detected
+                //                               newGenCount < oldGenCount
+                //                               and skipped the in-place
+                //                               shrink.
+                // Currently (a)-(d) all fail: the same chain entry's
+                // GEN_COUNT collapsed from preSnap.genCount to 1, sealTxn
+                // and txnAtSeal are unchanged, and entryCount is the same.
+                boolean newEntryAppended = postEntryCount > preEntryCount;
+                boolean sealTxnRotated = postSnap.sealTxn != preSnap.sealTxn;
+                boolean txnAtSealAdvanced = postSnap.txnAtSeal != preSnap.txnAtSeal;
+                boolean genCountPreserved = postSnap.genCount >= preSnap.genCount;
+
+                Assert.assertTrue(
+                        "discardForRebuild + commit invoked extendHead with "
+                                + "newGenCount=" + postSnap.genCount
+                                + " < oldGenCount=" + preSnap.genCount
+                                + " on the same chain entry "
+                                + "[entryCount " + preEntryCount + " -> " + postEntryCount
+                                + ", sealTxn " + preSnap.sealTxn + " -> " + postSnap.sealTxn
+                                + ", txnAtSeal " + preSnap.txnAtSeal + " -> " + postSnap.txnAtSeal
+                                + "]. The fix must rotate sealTxn so commit() "
+                                + "takes appendNewEntry, or force appendNewEntry "
+                                + "when newGenCount < oldGenCount; either way, the "
+                                + "previously-published head entry must not be "
+                                + "mutated in place and its TXN_AT_SEAL must not be "
+                                + "left referencing pre-rebuild data alongside "
+                                + "post-rebuild bytes.",
+                        newEntryAppended
+                                || sealTxnRotated
+                                || txnAtSealAdvanced
+                                || genCountPreserved
+                );
+            }
+        });
+    }
+
+    /**
+     * Critical #C2: SymbolColumnIndexer.index ends with
+     * writer.setMaxValue(hiRow - 1). When the caller already invoked
+     * discardForRebuild (TableWriter.sealPostingIndexForPartition,
+     * lines 11308 and 11381), discardForRebuild preserved the chain
+     * head on disk (genCount, keyCount, valueMemSize, gen-dir slots)
+     * but reset the writer's in-memory genCount/keyCount/maxValue.
+     * setMaxValue then calls chain.updateHeadMaxValue, which writes
+     * the NEW maxValue into the OLD head entry's MAX_VALUE field on
+     * disk and republishes the chain header. After the trailing
+     * commit, the OLD entry survives as a prev with MAX_VALUE = NEW
+     * while every other field describes the OLD state -- a
+     * self-inconsistent chain entry visible to snapshot-isolated
+     * readers walking the prev chain.
+     */
+    @Test
+    public void testReviewFindingC2_SetMaxValueAfterDiscardForRebuildMutatesPrevEntry() throws Exception {
+        assertMemoryLeak(() -> {
+            try (Path path = new Path().of(configuration.getDbRoot())) {
+                String name = "c2_setmaxvalue_after_discard";
+                int plen = path.size();
+                FilesFacade ff = configuration.getFilesFacade();
+
+                // Phase 1: build a chain head with a known MAX_VALUE.
+                try (PostingIndexWriter writer = new PostingIndexWriter(
+                        configuration, path.trimTo(plen), name, COLUMN_NAME_TXN_NONE)) {
+                    writer.setNextTxnAtSeal(10L);
+                    writer.add(0, 0);
+                    writer.add(1, 1);
+                    writer.add(2, 2);
+                    writer.setMaxValue(2);
+                    writer.commit();
+                }
+
+                // Snapshot the pre-rebuild head entry directly from the .pk
+                // file so we have the authoritative on-disk fields.
+                final PostingIndexChainEntry.Snapshot preSnap = new PostingIndexChainEntry.Snapshot();
+                {
+                    LPSZ keyFile = PostingIndexUtils.keyFileName(
+                            path.trimTo(plen), name, COLUMN_NAME_TXN_NONE);
+                    long fileSize = ff.length(keyFile);
+                    try (MemoryCMARWImpl mem = new MemoryCMARWImpl(
+                            ff, keyFile, ff.getPageSize(), fileSize,
+                            MemoryTag.MMAP_DEFAULT, /* opts */ 0)) {
+                        PostingIndexChainWriter chain = new PostingIndexChainWriter();
+                        chain.openExisting(mem);
+                        Assert.assertTrue("phase 1 must leave a head entry", chain.hasHead());
+                        chain.loadHeadEntry(mem, preSnap);
+                    }
+                }
+                Assert.assertEquals("phase 1 head must record MAX_VALUE=2", 2L, preSnap.maxValue);
+
+                // Phase 2: replay the rebuild dance from
+                // sealPostingIndexForPartition. SymbolColumnIndexer.index
+                // ends with writer.setMaxValue(hiRow - 1); in production
+                // hiRow is partitionSize, which after an O3 grow is larger
+                // than the OLD head's MAX_VALUE. Pick a NEW max well past
+                // the OLD one so the in-place mutation is unambiguous.
+                final long newMax = 99L;
+                try (PostingIndexWriter writer = new PostingIndexWriter(configuration)) {
+                    writer.of(path.trimTo(plen), name, COLUMN_NAME_TXN_NONE, /* init */ false);
+                    writer.setNextTxnAtSeal(20L);
+                    writer.discardForRebuild();
+                    // Mirror SymbolColumnIndexer.index: add(...) loop, then
+                    // setMaxValue. discardForRebuild reset in-memory
+                    // genCount/keyCount but kept chain.headEntryOffset
+                    // pointing at the OLD on-disk entry, so this
+                    // setMaxValue's chain.updateHeadMaxValue lands on the
+                    // OLD entry's MAX_VALUE field.
+                    writer.add(0, 50);
+                    writer.add(2, 99);
+                    writer.setMaxValue(newMax);
+                    // commit() takes the appendNewEntry branch (sealTxn was
+                    // rotated by discardForRebuild), so the OLD entry
+                    // survives as the new head's prev with its mutated
+                    // MAX_VALUE persisted on disk.
+                    writer.commit();
+                }
+
+                // Phase 3: load the (now-prev) OLD entry and check it.
+                final PostingIndexChainEntry.Snapshot prevSnap = new PostingIndexChainEntry.Snapshot();
+                {
+                    LPSZ keyFile = PostingIndexUtils.keyFileName(
+                            path.trimTo(plen), name, COLUMN_NAME_TXN_NONE);
+                    long fileSize = ff.length(keyFile);
+                    try (MemoryCMARWImpl mem = new MemoryCMARWImpl(
+                            ff, keyFile, ff.getPageSize(), fileSize,
+                            MemoryTag.MMAP_DEFAULT, /* opts */ 0)) {
+                        PostingIndexChainWriter chain = new PostingIndexChainWriter();
+                        chain.openExisting(mem);
+                        Assert.assertTrue("phase 2 must leave a head entry", chain.hasHead());
+                        Assert.assertEquals(
+                                "rebuild must produce two chain entries (NEW head + OLD prev)",
+                                2L, chain.getEntryCount()
+                        );
+                        PostingIndexChainEntry.Snapshot headSnap = new PostingIndexChainEntry.Snapshot();
+                        chain.loadHeadEntry(mem, headSnap);
+                        long prevOffset = headSnap.prevEntryOffset;
+                        Assert.assertNotEquals(
+                                "rebuild must link the NEW head's prev to the OLD entry",
+                                PostingIndexUtils.V2_NO_HEAD, prevOffset
+                        );
+                        PostingIndexChainEntry.read(mem, prevOffset, prevSnap);
+                    }
+                }
+
+                // Coherence: the prev IS the old head. Identity-bearing
+                // fields untouched by setMaxValue must match preSnap. If
+                // these diverge, the test premise is wrong (the prev is
+                // not the OLD entry) and the MAX_VALUE assertion below
+                // would be meaningless.
+                Assert.assertEquals(
+                        "prev must be the old head -- sealTxn",
+                        preSnap.sealTxn, prevSnap.sealTxn
+                );
+                Assert.assertEquals(
+                        "prev must be the old head -- txnAtSeal",
+                        preSnap.txnAtSeal, prevSnap.txnAtSeal
+                );
+                Assert.assertEquals(
+                        "prev must be the old head -- keyCount",
+                        preSnap.keyCount, prevSnap.keyCount
+                );
+                Assert.assertEquals(
+                        "prev must be the old head -- valueMemSize",
+                        preSnap.valueMemSize, prevSnap.valueMemSize
+                );
+                Assert.assertEquals(
+                        "prev must be the old head -- genCount",
+                        preSnap.genCount, prevSnap.genCount
+                );
+
+                // Red. setMaxValue between discardForRebuild and commit
+                // wrote newMax into the OLD entry's MAX_VALUE field. The
+                // prev now claims to cover rowIds up to newMax while its
+                // gen-dir, KEY_COUNT, VALUE_MEM_SIZE all describe the
+                // OLD smaller range -- internally inconsistent and
+                // visible to readers walking back through the prev chain
+                // under snapshot isolation. The fix must either skip
+                // updateHeadMaxValue when the chain head is still the
+                // pre-rebuild (preserved) entry, or rotate
+                // chain.headEntryOffset to a fresh entry inside
+                // discardForRebuild so subsequent setMaxValue writes
+                // land somewhere new instead of overwriting preserved
+                // history.
+                Assert.assertEquals(
+                        "OLD entry's MAX_VALUE must remain " + preSnap.maxValue
+                                + " (matching its preserved sibling fields). "
+                                + "setMaxValue called after discardForRebuild "
+                                + "wrote " + newMax + " into MAX_VALUE while "
+                                + "leaving GEN_COUNT=" + prevSnap.genCount
+                                + ", KEY_COUNT=" + prevSnap.keyCount
+                                + ", VALUE_MEM_SIZE=" + prevSnap.valueMemSize
+                                + " stale.",
+                        preSnap.maxValue, prevSnap.maxValue
+                );
+            }
+        });
+    }
+
+    /**
+     * Review finding M2: the rebuild dance in
+     * TableWriter.sealPostingIndexForPartition}'s covering branch
+     * publishes an intermediate chain entry that has both:
+     * <ul>
+     *   <li>no cover footer (because {@code configureFollowerAndWriter
+     *       -> writer.of(...)} reset {@code coverCount = 0} and
+     *       {@code configureCovering} runs AFTER the rebuild commit);</li>
+     *   <li>{@code txnAtSeal} that does not exclude current readers
+     *       (because {@code setNextTxnAtSeal} also runs after the
+     *       rebuild commit).</li>
+     * </ul>
+     * The combination means readers that walk past the trailing
+     * {@code rebuildSidecars} head can land on the intermediate entry,
+     * see {@code coverFileEndOffsets} clamped to all-zeros by
+     * {@link PostingIndexChainEntry#read}'s footer-bound clamp, and
+     * resolve every cover column to NULL.
+     * <p>
+     * The fix hoists {@code setNextTxnAtSeal(txWriter.getTxn() + 1L)}
+     * BEFORE the rebuild commit so the intermediate REBUILD entry is
+     * tagged out of every current reader's visibility window
+     * ({@code T_pin <= getTxn() < getTxn()+1}). The trailing
+     * {@code setNextTxnAtSeal(txWriter.getTxn())} for the SEAL entry
+     * keeps its existing tag.
+     * <p>
+     * This test mirrors the FIXED call order at the writer-fixture
+     * level and verifies the chain shape: REBUILD inherits the
+     * caller's pre-commit {@code setNextTxnAtSeal} value and the OLD
+     * entry survives as its prev with original fields intact. A
+     * regression in TableWriter that drops the pre-commit
+     * {@code setNextTxnAtSeal} hoist would cause production to publish
+     * REBUILD with {@code txnAtSeal=0}; this test does not detect that
+     * directly (it would still pass because the test sets
+     * {@code pendingTxnAtSeal} explicitly), but together with
+     * {@code testReviewFindingC1_DiscardForRebuildMutatesAlreadyPublishedHeadInPlace}
+     * and {@code testReviewFindingC2_SetMaxValueAfterDiscardForRebuildMutatesPrevEntry}
+     * it pins the writer-API contract the fix relies on.
+     */
+    @Test
+    public void testReviewFindingM2_RebuildCommitTagsEntryWithMeaningfulTxnAtSeal() throws Exception {
+        assertMemoryLeak(() -> {
+            try (Path path = new Path().of(configuration.getDbRoot())) {
+                String name = "m2_rebuild_meaningful_txn_at_seal";
+                int plen = path.size();
+                FilesFacade ff = configuration.getFilesFacade();
+
+                // Phase 1: lay down the OLD chain entry tagged with a
+                // known txnAtSeal so the post-rebuild prev pointer can
+                // be checked for coherence in phase 3.
+                final long oldTxnAtSeal = 10L;
+                try (PostingIndexWriter writer = new PostingIndexWriter(
+                        configuration, path.trimTo(plen), name, COLUMN_NAME_TXN_NONE)) {
+                    writer.setNextTxnAtSeal(oldTxnAtSeal);
+                    writer.add(0, 0);
+                    writer.add(1, 1);
+                    writer.setMaxValue(1);
+                    writer.commit();
+                }
+
+                PostingIndexChainEntry.Snapshot preSnap = new PostingIndexChainEntry.Snapshot();
+                {
+                    LPSZ keyFile = PostingIndexUtils.keyFileName(
+                            path.trimTo(plen), name, COLUMN_NAME_TXN_NONE);
+                    long fileSize = ff.length(keyFile);
+                    try (MemoryCMARWImpl mem = new MemoryCMARWImpl(
+                            ff, keyFile, ff.getPageSize(), fileSize,
+                            MemoryTag.MMAP_DEFAULT, /* opts */ 0)) {
+                        PostingIndexChainWriter chain = new PostingIndexChainWriter();
+                        chain.openExisting(mem);
+                        Assert.assertTrue("phase 1 must leave a head entry", chain.hasHead());
+                        chain.loadHeadEntry(mem, preSnap);
+                    }
+                }
+                Assert.assertEquals(
+                        "phase 1 head must record the supplied txnAtSeal",
+                        oldTxnAtSeal, preSnap.txnAtSeal
+                );
+
+                // Phase 2: replay the FIXED rebuild dance from
+                // sealPostingIndexForPartition's covering branch:
+                //
+                //   configureFollowerAndWriter -> writer.of(...)
+                //   setNextTxnAtSeal(txWriter.getTxn() + 1L)  <-- the M2 fix
+                //   discardForRebuild
+                //   index -> add(...) + setMaxValue
+                //   commit                  <-- entry under test
+                //
+                // The post-commit configureCovering / rebuildSidecars
+                // calls are not modeled here: this phase isolates the
+                // intermediate REBUILD entry the rebuild commit
+                // publishes.
+                final long preCommitTxn = 20L;
+                final long expectedRebuildTxnAtSeal = preCommitTxn + 1L;
+                try (PostingIndexWriter writer = new PostingIndexWriter(configuration)) {
+                    writer.of(path.trimTo(plen), name, COLUMN_NAME_TXN_NONE, /* init */ false);
+                    // M2 fix: the caller hoists setNextTxnAtSeal above
+                    // the rebuild dance so the intermediate entry is
+                    // invisible to every current reader (T_pin <=
+                    // preCommitTxn < expectedRebuildTxnAtSeal) and
+                    // droppable by recoveryDropAbandoned on a partial
+                    // publish.
+                    writer.setNextTxnAtSeal(expectedRebuildTxnAtSeal);
+                    writer.discardForRebuild();
+                    writer.add(0, 100);
+                    writer.add(1, 101);
+                    writer.setMaxValue(101);
+                    writer.commit();
+                }
+
+                // Phase 3: walk the chain. discardForRebuild rotated
+                // sealTxn so commit() took appendNewEntry; the new
+                // entry is the head, the OLD entry is its prev.
+                PostingIndexChainEntry.Snapshot headSnap = new PostingIndexChainEntry.Snapshot();
+                PostingIndexChainEntry.Snapshot prevSnap = new PostingIndexChainEntry.Snapshot();
+                {
+                    LPSZ keyFile = PostingIndexUtils.keyFileName(
+                            path.trimTo(plen), name, COLUMN_NAME_TXN_NONE);
+                    long fileSize = ff.length(keyFile);
+                    try (MemoryCMARWImpl mem = new MemoryCMARWImpl(
+                            ff, keyFile, ff.getPageSize(), fileSize,
+                            MemoryTag.MMAP_DEFAULT, /* opts */ 0)) {
+                        PostingIndexChainWriter chain = new PostingIndexChainWriter();
+                        chain.openExisting(mem);
+                        Assert.assertEquals(
+                                "rebuild must produce two chain entries (NEW head + OLD prev)",
+                                2L, chain.getEntryCount()
+                        );
+                        chain.loadHeadEntry(mem, headSnap);
+                        Assert.assertNotEquals(
+                                "head must link back to the OLD entry",
+                                PostingIndexUtils.V2_NO_HEAD, headSnap.prevEntryOffset
+                        );
+                        PostingIndexChainEntry.read(mem, headSnap.prevEntryOffset, prevSnap);
+                    }
+                }
+
+                // Coherence: prev IS the OLD entry, untouched by the
+                // rebuild dance. If these diverge, the test premise is
+                // wrong and the txnAtSeal assertion below would be
+                // meaningless.
+                Assert.assertEquals(
+                        "prev must be the OLD entry -- sealTxn",
+                        preSnap.sealTxn, prevSnap.sealTxn
+                );
+                Assert.assertEquals(
+                        "prev must be the OLD entry -- txnAtSeal",
+                        preSnap.txnAtSeal, prevSnap.txnAtSeal
+                );
+                Assert.assertEquals(
+                        "prev must be the OLD entry -- maxValue",
+                        preSnap.maxValue, prevSnap.maxValue
+                );
+
+                // The fix's contract: REBUILD inherits the caller's
+                // pre-commit setNextTxnAtSeal value, NOT the
+                // pendingTxnAtSeal=-1 fallback (txnAtSeal=0). With this
+                // value > preCommitTxn, every current reader walks past
+                // REBUILD to OLD, and recoveryDropAbandoned can drop
+                // REBUILD on a partial-publish reopen
+                // (txnAtSeal > committedTxn fires when committedTxn ==
+                // preCommitTxn).
+                Assert.assertEquals(
+                        "REBUILD must inherit the caller's pre-commit "
+                                + "setNextTxnAtSeal (got " + headSnap.txnAtSeal
+                                + ", expected " + expectedRebuildTxnAtSeal + "). "
+                                + "The 0L fallback would make REBUILD visible "
+                                + "to every snapshot-isolated reader and "
+                                + "undroppable by recoveryDropAbandoned.",
+                        expectedRebuildTxnAtSeal, headSnap.txnAtSeal
+                );
+                Assert.assertTrue(
+                        "REBUILD's txnAtSeal must exceed the pre-commit table "
+                                + "txn so the picker walks past it for any "
+                                + "current reader (got " + headSnap.txnAtSeal
+                                + " vs preCommitTxn " + preCommitTxn + ")",
+                        headSnap.txnAtSeal > preCommitTxn
+                );
+            }
+        });
+    }
+
     @Test
     public void testReviewFindingC1_O3PartialSealPublishesUndroppableChainHead() throws Exception {
         final AtomicBoolean failArmed = new AtomicBoolean(false);

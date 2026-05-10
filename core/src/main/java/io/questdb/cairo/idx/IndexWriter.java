@@ -98,6 +98,41 @@ public interface IndexWriter extends Closeable, Mutable {
     }
 
     /**
+     * Discards the writer's in-memory state so the caller can re-add entries
+     * from authoritative source data. Used to evict stale (key, rowId) pairs
+     * left by replace-range, dedup-replace, or O3 splits where the same row
+     * id takes a different value across writes -- cases the chain cannot
+     * surgically rewind because the stale entries sit inside the live row
+     * range.
+     * <p>
+     * Expected caller pattern:
+     * <pre>
+     *     writer.discardForRebuild();
+     *     for (...) writer.add(key, rowId);   // re-add from .d file
+     *     writer.commit();                    // flush as fresh gen 0
+     *     writer.seal();                      // rotate the value file
+     * </pre>
+     * The call rotates the writer's value file to a fresh sealTxn so the
+     * subsequent {@code commit()} appends a new chain entry rather than
+     * mutating the existing head in place. The OLD chain entry stays on
+     * disk as a prev entry until concurrent readers release it; the OLD
+     * value file is queued for the seal-purge job after the new entry
+     * lands. The trailing {@code seal()} rotates again and writes the
+     * dense final form.
+     * <p>
+     * Unlike {@link #truncate()}, this call preserves the chain head and
+     * the OLD value file so concurrent readers with active mmaps stay
+     * safe. The .pk header is not rewritten; only the writer's value-file
+     * mapping moves to the new sealTxn.
+     * <p>
+     * Default is no-op for index types that don't accumulate stale state
+     * (e.g. BitmapIndexWriter persists every add immediately and has no
+     * chain).
+     */
+    default void discardForRebuild() {
+    }
+
+    /**
      * Returns the index type for this writer.
      *
      * @return the index type constant from {@link IndexType}
