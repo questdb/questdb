@@ -473,6 +473,56 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testParallelApproxPercentileFuzz() throws Exception {
+        Assume.assumeTrue(enableParallelGroupBy);
+        assertMemoryLeak(() -> {
+            final WorkerPool pool = new WorkerPool(() -> 4);
+            TestUtils.execute(
+                    pool,
+                    (engine, compiler, sqlExecutionContext) -> {
+                        sqlExecutionContext.setJitMode(
+                                enableJitCompiler ? SqlJitMode.JIT_MODE_ENABLED : SqlJitMode.JIT_MODE_DISABLED);
+
+                        execute(
+                                compiler,
+                                "create table tab as (select x from long_sequence(" + ROW_COUNT + "))",
+                                sqlExecutionContext);
+
+                        final String query = "SELECT approx_percentile(x, 0.5) FROM tab";
+
+                        sqlExecutionContext.setParallelGroupByEnabled(false);
+                        try {
+                            TestUtils.printSql(
+                                    engine,
+                                    sqlExecutionContext,
+                                    query,
+                                    sink);
+                        } finally {
+                            sqlExecutionContext.setParallelGroupByEnabled(
+                                    engine.getConfiguration().isSqlParallelGroupByEnabled());
+                        }
+
+                        sqlExecutionContext.setParallelGroupByEnabled(true);
+                        final StringSink sinkB = new StringSink();
+                        try {
+                            TestUtils.printSql(
+                                    engine,
+                                    sqlExecutionContext,
+                                    query,
+                                    sinkB);
+                        } finally {
+                            sqlExecutionContext.setParallelGroupByEnabled(
+                                    engine.getConfiguration().isSqlParallelGroupByEnabled());
+                        }
+
+                        TestUtils.assertEquals(sink, sinkB);
+                    },
+                    configuration,
+                    LOG);
+        });
+    }
+
+    @Test
     public void testParallelCountOverMultiKeyGroupBy() throws Exception {
         testParallelMultiSymbolKeyGroupBy(
                 "SELECT count(*) FROM (SELECT key1, key2 FROM tab GROUP BY key1, key2 ORDER BY key1, key2)",
