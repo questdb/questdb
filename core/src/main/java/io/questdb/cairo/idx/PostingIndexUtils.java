@@ -192,8 +192,6 @@ public final class PostingIndexUtils {
     public static final int PACKED_BATCH_SIZE = BLOCK_CAPACITY;
     public static final long PAGE_A_OFFSET = 0;
     public static final long PAGE_B_OFFSET = 4096;
-    public static final int PAGE_SIZE = 4096;
-    public static final int PC_HEADER_SIZE = MAX_GEN_COUNT * Long.BYTES; // 1144
     // Vestigial v1 page-offset constants. Production code no longer reads
     // these — every value listed here either has a v2 equivalent in the
     // V2_HEADER_OFFSET_* / V2_ENTRY_OFFSET_* set or is meaningless under
@@ -208,6 +206,18 @@ public final class PostingIndexUtils {
     public static final int PAGE_OFFSET_SEQUENCE_END = 4088;
     public static final int PAGE_OFFSET_SEQUENCE_START = 0;
     public static final int PAGE_OFFSET_VALUE_MEM_SIZE = 8;
+    public static final int PAGE_SIZE = 4096;
+    public static final int PC_HEADER_SIZE = MAX_GEN_COUNT * Long.BYTES; // 1144
+    public static final byte SIGNATURE = (byte) 0xfb;
+    public static final double SPARSE_SBBF_DEFAULT_FPP = 0.01;
+    public static final int SPARSE_SBBF_NUM_BLOCKS_FOOTER_SIZE = Integer.BYTES;
+    public static final int STRIDE_IDX_BYTES = Long.BYTES;
+    // Stride block mode constants - see class javadoc for when each mode wins
+    public static final byte STRIDE_MODE_DELTA = 0;
+    public static final byte STRIDE_MODE_FLAT = 1;
+    public static final int STRIDE_MODE_PREFIX_SIZE = 4; // mode(1B) + bitWidth/reserved(1B) + padding(2B)
+    public static final int STRIDE_FLAT_BASE_OFFSET = STRIDE_MODE_PREFIX_SIZE; // baseValue(8B) follows mode prefix
+    public static final int STRIDE_FLAT_PREFIX_COUNTS_OFFSET = STRIDE_MODE_PREFIX_SIZE + Long.BYTES; // = 12
     // v2 chain layout — append-only chain of immutable seal entries.
     // The two header pages (A/B) at offsets 0 and 4096 are seqlock-protected
     // and contain only the chain head pointer and counters. Each entry lives
@@ -283,16 +293,6 @@ public final class PostingIndexUtils {
     public static final int V2_HEADER_OFFSET_SEQUENCE_END = 4088;
     public static final int V2_HEADER_OFFSET_SEQUENCE_START = 0;
     public static final long V2_NO_HEAD = -1L;
-    public static final byte SIGNATURE = (byte) 0xfb;
-    public static final double SPARSE_SBBF_DEFAULT_FPP = 0.01;
-    public static final int SPARSE_SBBF_NUM_BLOCKS_FOOTER_SIZE = Integer.BYTES;
-    public static final int STRIDE_IDX_BYTES = Long.BYTES;
-    // Stride block mode constants — see class javadoc for when each mode wins
-    public static final byte STRIDE_MODE_DELTA = 0;
-    public static final byte STRIDE_MODE_FLAT = 1;
-    public static final int STRIDE_MODE_PREFIX_SIZE = 4; // mode(1B) + bitWidth/reserved(1B) + padding(2B)
-    public static final int STRIDE_FLAT_BASE_OFFSET = STRIDE_MODE_PREFIX_SIZE; // baseValue(8B) follows mode prefix
-    public static final int STRIDE_FLAT_PREFIX_COUNTS_OFFSET = STRIDE_MODE_PREFIX_SIZE + Long.BYTES; // = 12
     // EF header: sentinel(4B) + count(4B) + L(1B) + universe(8B) = 17B
     static final int EF_HEADER_SIZE = 17;
     private static final long PARSE_FAIL = Long.MIN_VALUE;
@@ -1299,6 +1299,14 @@ public final class PostingIndexUtils {
             Unsafe.putInt(destAddr, 0);
             return 4;
         }
+        // Adaptive threshold: above ctx.adaptiveDeltaAtOrAbove force DELTA and
+        // skip the EF trial. EF and DELTA produce similar byte sizes at large
+        // counts so the size-only race becomes a coin flip, but DELTA reads
+        // markedly faster (per-block unpack vs EF's bitmap walk). See
+        // CairoConfiguration#getPostingIndexAdaptiveDeltaAtOrAbove.
+        if (count >= ctx.adaptiveDeltaAtOrAbove) {
+            return encodeKeyNativeDeltaFoR(srcAddr, count, destAddr, ctx);
+        }
         int efSize = encodeKeyEF(srcAddr, count, ctx.efTrialAddr, ctx);
         int deltaSize = encodeKeyNativeDeltaFoR(srcAddr, count, destAddr, ctx);
         if (efSize < deltaSize) {
@@ -1629,6 +1637,13 @@ public final class PostingIndexUtils {
      * Reusable workspace for encodeKey to avoid per-call allocations.
      */
     public static class EncodeContext implements QuietCloseable {
+        // Threshold above (inclusive) which the adaptive encoder forces DELTA
+        // instead of running the size-only EF-vs-DELTA race. Defaults to
+        // Integer.MAX_VALUE so an EncodeContext built without a CairoConfiguration
+        // (e.g. unit tests) keeps the prior pure-size behaviour. The
+        // production default of 2000 is set by PostingIndexWriter when it
+        // reads CairoConfiguration#getPostingIndexAdaptiveDeltaAtOrAbove.
+        int adaptiveDeltaAtOrAbove = Integer.MAX_VALUE;
         long blockBitWidthsAddr;
         long blockFirstValuesAddr;
         long blockMinDeltasAddr;
@@ -1644,6 +1659,10 @@ public final class PostingIndexUtils {
         long residualsAddr;
         private int blockCapacity;
         private int residualsCapacity;
+
+        public void setAdaptiveDeltaAtOrAbove(int threshold) {
+            this.adaptiveDeltaAtOrAbove = threshold > 0 ? threshold : Integer.MAX_VALUE;
+        }
 
         public void close() {
             if (deltasAddr != 0) {
