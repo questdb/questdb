@@ -503,19 +503,19 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
                         }
 
                         sqlExecutionContext.setParallelGroupByEnabled(true);
-                        final StringSink sinkB = new StringSink();
+                        final StringSink parallelSink = new StringSink();
                         try {
                             TestUtils.printSql(
                                     engine,
                                     sqlExecutionContext,
                                     query,
-                                    sinkB);
+                                    parallelSink);
                         } finally {
                             sqlExecutionContext.setParallelGroupByEnabled(
                                     engine.getConfiguration().isSqlParallelGroupByEnabled());
                         }
 
-                        TestUtils.assertEquals(sink, sinkB);
+                        TestUtils.assertEquals(sink, parallelSink);
                     },
                     configuration,
                     LOG);
