@@ -90,6 +90,14 @@ public interface IndexWriter extends Closeable, Mutable {
     }
 
     /**
+     * See {@link io.questdb.cairo.idx.PostingIndexWriter#diffAgainstChainHead}.
+     * Default no-op for index types that don't accumulate stale state (e.g.
+     * BitmapIndexWriter persists every add immediately and has no chain).
+     */
+    default void diffAgainstChainHead(io.questdb.std.FilesFacade ff, long dataColumnFd, long columnTop, long partitionSize) {
+    }
+
+    /**
      * Returns the index type for this writer.
      *
      * @return the index type constant from {@link IndexType}

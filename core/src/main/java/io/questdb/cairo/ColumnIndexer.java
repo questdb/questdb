@@ -88,6 +88,14 @@ public interface ColumnIndexer extends QuietCloseable {
             long partitionNameTxn
     );
 
+    /**
+     * See {@link io.questdb.cairo.idx.PostingIndexWriter#diffAgainstChainHead}.
+     * Default no-op for index types that don't accumulate stale state (e.g.
+     * BitmapIndexWriter persists every add immediately).
+     */
+    default void diffAgainstChainHead(FilesFacade ff, long dataColumnFd, long columnTop, long partitionSize) {
+    }
+
     default void discardAndClose() {
         close();
     }

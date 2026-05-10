@@ -164,6 +164,11 @@ public class SymbolColumnIndexer implements ColumnIndexer, Mutable {
     }
 
     @Override
+    public void diffAgainstChainHead(FilesFacade ff, long dataColumnFd, long columnTop, long partitionSize) {
+        writer.diffAgainstChainHead(ff, dataColumnFd, columnTop, partitionSize);
+    }
+
+    @Override
     public void distress() {
         distressed = true;
     }
