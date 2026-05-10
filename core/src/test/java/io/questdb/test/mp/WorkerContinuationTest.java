@@ -105,7 +105,13 @@ public class WorkerContinuationTest {
             cont.scheduleResume();
 
             Assert.assertTrue("continuation resume timed out", doneLatch.await(5, TimeUnit.SECONDS));
-            Assert.assertTrue(cont.isDone());
+            // Body counts down the latch as its last statement, but the worker may
+            // still be unwinding out of cont.run() — isDone() only flips once that returns.
+            long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(20);
+            while (!cont.isDone() && System.nanoTime() < deadline) {
+                Thread.sleep(1);
+            }
+            Assert.assertTrue("cont must be marked done after body completion", cont.isDone());
             Assert.assertNotNull(threadAfterResume.get());
             Assert.assertNotSame(
                     "resumed body must run on a worker thread, not the caller",
