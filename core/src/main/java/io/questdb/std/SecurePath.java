@@ -35,6 +35,6 @@ public class SecurePath {
     static final CarrierLocal<Path> PATH = new CarrierLocal<>(Path::new);
 
     public static void clearThreadLocals() {
-        PATH.close();
+        PATH.removeAndFree();
     }
 }

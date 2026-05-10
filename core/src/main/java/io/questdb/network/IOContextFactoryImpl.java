@@ -57,11 +57,6 @@ public class IOContextFactoryImpl<C extends IOContext<C>> implements IOContextFa
         }
     }
 
-    public void freeThreadLocal() {
-        // helper call, it will free only thread-local instance and not others
-        Misc.free(contextPool);
-    }
-
     public C newInstance(long fd) {
         WeakMutableObjectPool<C> pool = contextPool.get();
         C context = pool.pop();

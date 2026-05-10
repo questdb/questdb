@@ -32,9 +32,9 @@ import io.questdb.mp.ConcurrentQueue;
 import io.questdb.mp.Queue;
 import io.questdb.mp.ValueHolder;
 import io.questdb.mp.continuation.TxnWaiter;
+import io.questdb.std.CarrierLocal;
 import io.questdb.std.Unsafe;
 import org.jetbrains.annotations.TestOnly;
-import io.questdb.std.CarrierLocal;
 
 public class SeqTxnTracker {
     public static final long UNINITIALIZED_TXN = -1;
@@ -256,7 +256,7 @@ public class SeqTxnTracker {
      * whose table has become suspended/dropped. Non-ready waiters are re-enqueued. Fired
      * waiters are CAS'd PENDING -> FIRED and the winning thread enqueues the continuation
      * on the waiter's resume job.
-     *
+     * <p>
      * Race: {@code waiters.sizeDirty()} can lag a concurrent registerWaiter and miss
      * its enqueue. Closed by dropped / suspendedState / writerTxn being volatile --
      * callers must write one of these before calling here, which orders the enqueue.

@@ -130,10 +130,6 @@ public class PGServer implements Closeable {
                     return dispatcher.processIOQueue(processor);
                 }
             });
-
-            // context factory has thread local pools
-            // therefore we need each thread to clean their thread locals individually
-            sharedPoolNetwork.assignThreadLocalCleaner(i, contextFactory::freeThreadLocal);
         }
     }
 

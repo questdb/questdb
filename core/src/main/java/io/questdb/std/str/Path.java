@@ -98,8 +98,8 @@ public class Path implements Utf8Sink, DirectUtf8Sequence, Closeable {
         // when running tests. Despite all the effort to find the exact cause, it was not possible
         // and this is the best solution so far. This approach will remove the thread local
         // on close and the next time a new object is created.
-        PATH.close();
-        PATH2.close();
+        PATH.removeAndFree();
+        PATH2.removeAndFree();
         SecurePath.clearThreadLocals();
     }
 

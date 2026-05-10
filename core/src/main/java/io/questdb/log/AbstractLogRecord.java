@@ -227,8 +227,6 @@ abstract class AbstractLogRecord implements LogRecord, Log {
     @Override
     public void $() {
         CursorHolder h = tl.get();
-        assert h.isLogRecordInProgress : "Log record not in progress, wtf?. Current carrier id:"
-                + CarrierIdentity.current() + ", log record creator carrier id:" + h.carrierId;
         LogRecordUtf8Sink sink = h.ring.get(h.cursor);
         sink.putEOL();
         try {
