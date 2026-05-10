@@ -11341,25 +11341,31 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                             // rebuildSidecars publishes the chain as is.
                             indexer.getWriter().rollbackConditionally(partitionSize);
                         } else {
-                            // Diff the existing chain against the column .d file
-                            // and emit a fresh dense chain entry containing only
-                            // the kept (key, rowId) pairs. Stale entries inside
-                            // [columnTop, partitionSize) are evicted in a single
-                            // stride-by-stride pass with bounded peak memory --
-                            // unlike the discardForRebuild + index + commit
-                            // sequence (kept above for reference), the diff does
-                            // not accumulate every (key, rowId) in private spill
-                            // memory and therefore scales to billion-row
-                            // partitions. coverCount is 0 at this point because
-                            // configureCovering runs below; the diff publishes
-                            // an entry without a cover footer, which the trailing
-                            // rebuildSidecars supersedes.
+                            // Rebuild the chain from the column data file.
+                            // rollbackConditionally(partitionSize) only
+                            // evicts entries past the new partition size; it
+                            // leaves stale (key, rowId) pairs within
+                            // [columnTop, partitionSize) that survive
+                            // replace-range, dedup-replace, and O3 splits
+                            // where the same rowid takes a different value
+                            // across writes. discardForRebuild drops the
+                            // in-memory state without rotating .pv or
+                            // rewriting .pk, then index() re-reads sym2.d
+                            // (the source of truth) and the trailing seal
+                            // publishes a fresh single-gen chain entry.
+                            indexer.getWriter().discardForRebuild();
                             long dataFd = openRO(ff, dFile(path.trimTo(plen), colName, colNameTxn), LOG);
                             try {
-                                indexer.diffAgainstChainHead(ff, dataFd, columnTop, partitionSize);
+                                indexer.index(ff, dataFd, columnTop, partitionSize);
                             } finally {
                                 ff.close(dataFd);
                             }
+                            // Flush pending into gen 0 so rebuildSidecars (and seal in
+                            // the non-covering branch) sees a non-empty chain. add()
+                            // populated pending; commit() runs flushAllPending which
+                            // converts pending into a fresh gen and republishes the
+                            // chain head via extendHead at the same sealTxn.
+                            indexer.getWriter().commit();
                         }
                         // Pass the writer-space timestamp index so the
                         // O3 reseal preserves the linear-prediction
@@ -11424,16 +11430,15 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                         // See pure-append fast-path comment in the covering branch above.
                         indexer.getWriter().rollbackConditionally(partitionSize);
                     } else {
-                        // See diff comment in the covering branch above. Non-covering
-                        // posting indexes have no cover columns to configure -- the diff
-                        // publishes the canonical entry directly; the trailing seal()
-                        // re-encodes into the dense form at a fresh sealTxn.
+                        // See rebuild-from-data comment in the covering branch.
+                        indexer.getWriter().discardForRebuild();
                         long dataFd = openRO(ff, dFile(path.trimTo(plen), colName, colNameTxn), LOG);
                         try {
-                            indexer.diffAgainstChainHead(ff, dataFd, columnTop, partitionSize);
+                            indexer.index(ff, dataFd, columnTop, partitionSize);
                         } finally {
                             ff.close(dataFd);
                         }
+                        indexer.getWriter().commit();
                     }
                     indexer.seal();
                     indexer.publishPendingPurges(messageBus, tableToken, partitionBy, timestampType, txWriter.getTxn());
