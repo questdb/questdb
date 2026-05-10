@@ -540,6 +540,302 @@ public class PostingIndexWriter implements IndexWriter {
         configureCovering(addrs, null, tops, shifts, indices, types, coverCount, timestampColumnIndex);
     }
 
+    /**
+     * Validate every (key, rowId) in the chain head's gens against the column
+     * data file and emit a fresh dense chain entry containing only the kept
+     * entries. Used by O3 commits to evict stale (key, rowId) pairs left by
+     * replace-range, dedup-replace, or split commits where the same rowid takes
+     * a different value across writes -- entries that {@code rollbackConditionally}
+     * cannot detect because their rowIds are inside [columnTop, partitionSize).
+     * <p>
+     * Algorithm:
+     * <ol>
+     *     <li>Phase 1 -- walk every gen of the head entry, decoding each key's
+     *     rowIds and validating against the .d file. Count kept entries per key.</li>
+     *     <li>Rotate {@code sealTxn} and open a fresh .pv at the new txn (mirrors
+     *     {@link #truncate()}). The OLD chain head and OLD .pv stay on disk for
+     *     concurrent readers; the OLD .pv is queued for the seal-purge job after
+     *     the new entry lands.</li>
+     *     <li>Phase 2 -- stride-by-stride decode + filter + encode into the new
+     *     .pv, mirroring {@link #sealIncremental} with all strides treated as
+     *     dirty and the per-key merge filtered through the .d validator.
+     *     Sidecar stride blocks are rebuilt from the cover .d files via
+     *     {@link #writeSidecarStrideData} for kept entries.</li>
+     *     <li>{@link #publishToChain} appends a new chain entry (rotated sealTxn
+     *     forces the {@code appendNewEntry} branch -- never {@code extendHead},
+     *     which would corrupt the OLD entry in place).</li>
+     * </ol>
+     * <p>
+     * Memory peak is bounded by the largest single stride's value count, never
+     * by total partition rows -- the diff streams gen -> validate -> encode
+     * stride-by-stride and never accumulates (key, rowId) pairs in private
+     * spill memory the way a full add()-driven rebuild would.
+     *
+     * @param ff             {@link FilesFacade} for the .d file read
+     * @param dataColumnFd   open RO fd of the column's .d file (caller owns,
+     *                       writer does not close)
+     * @param columnTop      partition row at which this column's data begins
+     * @param partitionSize  current partition row count; rowIds &gt;= partitionSize
+     *                       are evicted as a side effect (mirrors
+     *                       {@code rollbackConditionally(partitionSize)}).
+     */
+    public void diffAgainstChainHead(FilesFacade ff, long dataColumnFd, long columnTop, long partitionSize) {
+        if (!keyMem.isOpen()) {
+            return;
+        }
+        flushAllPending();
+        if (genCount == 0 || keyCount == 0) {
+            setMaxValue(Math.max(partitionSize - 1, -1));
+            return;
+        }
+
+        // Phase 1: walk every gen, validate each (key, rowId), count kept per key.
+        // The kept counts drive Phase 2's stride sizing and detect the empty-result
+        // case (no rowId in any gen survives validation) which short-circuits to
+        // truncate().
+        long keptCountsSize = (long) keyCount * Integer.BYTES;
+        long keptCountsAddr = Unsafe.malloc(keptCountsSize, MemoryTag.NATIVE_INDEX_READER);
+        // Per-key decode scratch -- sized for the largest single key after
+        // we've seen all gens. Reallocated on demand inside the loop.
+        long perKeyDecodeAddr = 0;
+        long perKeyDecodeCapacity = 0;
+        // Sliding read cache over .d so sequential rowIds within a key
+        // amortize ff.read calls. 256 KB = 64 K rowIds for SYMBOL (4-byte).
+        final int dReadCacheSize = 256 * 1024;
+        long dReadCacheAddr = Unsafe.malloc(dReadCacheSize, MemoryTag.NATIVE_INDEX_READER);
+        long dReadCacheStart = -1L;
+        long dReadCacheLen = 0L;
+        long totalKept = 0;
+        try {
+            Unsafe.setMemory(keptCountsAddr, keptCountsSize, (byte) 0);
+
+            for (int gen = 0; gen < genCount; gen++) {
+                long dirOffset = PostingIndexChainEntry.resolveGenDirOffset(chain.getHeadEntryOffset(), gen);
+                long genFileOffset = keyMem.getLong(dirOffset + GEN_DIR_OFFSET_FILE_OFFSET);
+                int genKeyCount = keyMem.getInt(dirOffset + PostingIndexUtils.GEN_DIR_OFFSET_KEY_COUNT);
+                long genBase = valueMem.addressOf(genFileOffset);
+
+                if (genKeyCount < 0) {
+                    // Sparse gen
+                    int activeKeyCount = -genKeyCount;
+                    int headerSize = PostingIndexUtils.genHeaderSizeSparse(activeKeyCount);
+                    long countsBase = genBase + (long) activeKeyCount * Integer.BYTES;
+                    long offsetsBase = countsBase + (long) activeKeyCount * Integer.BYTES;
+                    for (int i = 0; i < activeKeyCount; i++) {
+                        int key = Unsafe.getInt(genBase + (long) i * Integer.BYTES);
+                        int count = Unsafe.getInt(countsBase + (long) i * Integer.BYTES);
+                        if (count == 0) continue;
+                        if (count > perKeyDecodeCapacity) {
+                            int newCap = Math.max(count, (int) Math.min(perKeyDecodeCapacity * 2, Integer.MAX_VALUE));
+                            perKeyDecodeAddr = Unsafe.realloc(perKeyDecodeAddr,
+                                    perKeyDecodeCapacity * Long.BYTES,
+                                    (long) newCap * Long.BYTES, MemoryTag.NATIVE_INDEX_READER);
+                            perKeyDecodeCapacity = newCap;
+                        }
+                        long dataOffset = Unsafe.getLong(offsetsBase + (long) i * Long.BYTES);
+                        PostingIndexUtils.decodeKeyToNative(genBase + headerSize + dataOffset, perKeyDecodeAddr, decodeCtx);
+                        // Validate this key's values; bump keptCounts[key] per kept rowId.
+                        long[] cacheState = {dReadCacheStart, dReadCacheLen};
+                        int kept = filterKeyValuesAgainstD(
+                                key, perKeyDecodeAddr, count,
+                                ff, dataColumnFd, columnTop, partitionSize,
+                                dReadCacheAddr, dReadCacheSize, cacheState
+                        );
+                        dReadCacheStart = cacheState[0];
+                        dReadCacheLen = cacheState[1];
+                        int existing = Unsafe.getInt(keptCountsAddr + (long) key * Integer.BYTES);
+                        Unsafe.putInt(keptCountsAddr + (long) key * Integer.BYTES, existing + kept);
+                        totalKept += kept;
+                    }
+                } else {
+                    // Dense gen
+                    int sc = PostingIndexUtils.strideCount(genKeyCount);
+                    int siSize = PostingIndexUtils.strideIndexSize(genKeyCount);
+                    for (int s = 0; s < sc; s++) {
+                        long strideOff = Unsafe.getLong(genBase + (long) s * Long.BYTES);
+                        long nextStrideOff = Unsafe.getLong(genBase + (long) (s + 1) * Long.BYTES);
+                        if (nextStrideOff == strideOff) continue;
+                        long strideAddr = genBase + siSize + strideOff;
+                        int ks = PostingIndexUtils.keysInStride(genKeyCount, s);
+                        byte mode = Unsafe.getByte(strideAddr);
+
+                        if (mode == PostingIndexUtils.STRIDE_MODE_FLAT) {
+                            int bitWidth = Unsafe.getByte(strideAddr + 1) & 0xFF;
+                            long baseValue = Unsafe.getLong(strideAddr + PostingIndexUtils.STRIDE_FLAT_BASE_OFFSET);
+                            long prefixAddr = strideAddr + PostingIndexUtils.STRIDE_FLAT_PREFIX_COUNTS_OFFSET;
+                            int flatHdrSize = PostingIndexUtils.strideFlatHeaderSize(ks);
+                            long flatDataAddr = strideAddr + flatHdrSize;
+                            for (int j = 0; j < ks; j++) {
+                                int key = s * PostingIndexUtils.DENSE_STRIDE + j;
+                                int startIdx = Unsafe.getInt(prefixAddr + (long) j * Integer.BYTES);
+                                int count = Unsafe.getInt(prefixAddr + (long) (j + 1) * Integer.BYTES) - startIdx;
+                                if (count == 0) continue;
+                                if (count > perKeyDecodeCapacity) {
+                                    int newCap = Math.max(count, (int) Math.min(perKeyDecodeCapacity * 2, Integer.MAX_VALUE));
+                                    perKeyDecodeAddr = Unsafe.realloc(perKeyDecodeAddr,
+                                            perKeyDecodeCapacity * Long.BYTES,
+                                            (long) newCap * Long.BYTES, MemoryTag.NATIVE_INDEX_READER);
+                                    perKeyDecodeCapacity = newCap;
+                                }
+                                BitpackUtils.unpackValuesFrom(flatDataAddr, startIdx, count, bitWidth, baseValue, perKeyDecodeAddr);
+                                long[] cacheState = {dReadCacheStart, dReadCacheLen};
+                                int kept = filterKeyValuesAgainstD(
+                                        key, perKeyDecodeAddr, count,
+                                        ff, dataColumnFd, columnTop, partitionSize,
+                                        dReadCacheAddr, dReadCacheSize, cacheState
+                                );
+                                dReadCacheStart = cacheState[0];
+                                dReadCacheLen = cacheState[1];
+                                int existing = Unsafe.getInt(keptCountsAddr + (long) key * Integer.BYTES);
+                                Unsafe.putInt(keptCountsAddr + (long) key * Integer.BYTES, existing + kept);
+                                totalKept += kept;
+                            }
+                        } else {
+                            long countsAddr = strideAddr + PostingIndexUtils.STRIDE_MODE_PREFIX_SIZE;
+                            long offsetsBase = countsAddr + (long) ks * Integer.BYTES;
+                            int deltaHdrSize = PostingIndexUtils.strideDeltaHeaderSize(ks);
+                            for (int j = 0; j < ks; j++) {
+                                int key = s * PostingIndexUtils.DENSE_STRIDE + j;
+                                int count = Unsafe.getInt(countsAddr + (long) j * Integer.BYTES);
+                                if (count == 0) continue;
+                                if (count > perKeyDecodeCapacity) {
+                                    int newCap = Math.max(count, (int) Math.min(perKeyDecodeCapacity * 2, Integer.MAX_VALUE));
+                                    perKeyDecodeAddr = Unsafe.realloc(perKeyDecodeAddr,
+                                            perKeyDecodeCapacity * Long.BYTES,
+                                            (long) newCap * Long.BYTES, MemoryTag.NATIVE_INDEX_READER);
+                                    perKeyDecodeCapacity = newCap;
+                                }
+                                long dataOff = Unsafe.getLong(offsetsBase + (long) j * Long.BYTES);
+                                PostingIndexUtils.decodeKeyToNative(strideAddr + deltaHdrSize + dataOff, perKeyDecodeAddr, decodeCtx);
+                                long[] cacheState = {dReadCacheStart, dReadCacheLen};
+                                int kept = filterKeyValuesAgainstD(
+                                        key, perKeyDecodeAddr, count,
+                                        ff, dataColumnFd, columnTop, partitionSize,
+                                        dReadCacheAddr, dReadCacheSize, cacheState
+                                );
+                                dReadCacheStart = cacheState[0];
+                                dReadCacheLen = cacheState[1];
+                                int existing = Unsafe.getInt(keptCountsAddr + (long) key * Integer.BYTES);
+                                Unsafe.putInt(keptCountsAddr + (long) key * Integer.BYTES, existing + kept);
+                                totalKept += kept;
+                            }
+                        }
+                    }
+                }
+            }
+
+            // No entries survived validation; the partition's index is now empty
+            // for this column. truncate() rotates sealTxn and queues purge.
+            if (totalKept == 0) {
+                Unsafe.free(keptCountsAddr, keptCountsSize, MemoryTag.NATIVE_INDEX_READER);
+                if (perKeyDecodeAddr != 0) {
+                    Unsafe.free(perKeyDecodeAddr, perKeyDecodeCapacity * Long.BYTES, MemoryTag.NATIVE_INDEX_READER);
+                }
+                Unsafe.free(dReadCacheAddr, dReadCacheSize, MemoryTag.NATIVE_INDEX_READER);
+                truncate();
+                setMaxValue(Math.max(partitionSize - 1, -1));
+                return;
+            }
+
+            // TODO Phase 2: rotate sealTxn, encode kept entries into a fresh .pv
+            // stride-by-stride mirroring sealIncremental's all-strides-dirty pattern,
+            // emit per-stride sidecars via writeSidecarStrideData, then publishToChain
+            // through the appendNewEntry branch. Until Phase 2 is implemented, fall
+            // back to the existing reencode-from-gens path which is correct (it
+            // re-reads from valueMem, which still holds pre-validation gens) but
+            // does NOT evict stale entries -- the diff is incomplete.
+            //
+            // The Phase 2 implementation must:
+            //   1. closeSidecarMems(); openSealValueFile(newSealTxn);
+            //      openSidecarFiles(...) at newSealTxn if coverCount > 0.
+            //   2. Reserve siSize bytes at the head of sealTarget for the stride
+            //      index. Allocate strideIndexBuf, bpTrialBuf, localHeaderBuf,
+            //      mergedValuesAddr (sized by max-stride-after-filter).
+            //   3. For each stride: decode each key from gen 0 + sparse gens via
+            //      mergeKeyValues, then filter via filterKeyValuesAgainstD into
+            //      the same buffer. Trial-encode delta and flat, pick smaller,
+            //      emit. writeSidecarStrideData against the kept rowIds.
+            //   4. switchToSealedValueFile(newSealTxn). publishToChain takes the
+            //      appendNewEntry branch automatically (sealTxn rotated).
+            //   5. recordPostingSealPurge(oldSealTxn).
+            //
+            // Until then, throw to surface that the diff is not yet wired to its
+            // Phase 2 emit.
+            throw new UnsupportedOperationException(
+                    "diffAgainstChainHead Phase 2 (encode + sidecar + publish) not yet implemented; "
+                            + "Phase 1 validation produced " + totalKept + " kept entries."
+            );
+        } finally {
+            Unsafe.free(keptCountsAddr, keptCountsSize, MemoryTag.NATIVE_INDEX_READER);
+            if (perKeyDecodeAddr != 0) {
+                Unsafe.free(perKeyDecodeAddr, perKeyDecodeCapacity * Long.BYTES, MemoryTag.NATIVE_INDEX_READER);
+            }
+            Unsafe.free(dReadCacheAddr, dReadCacheSize, MemoryTag.NATIVE_INDEX_READER);
+        }
+    }
+
+    /**
+     * Validate {@code count} rowIds at {@code valuesAddr} for an expected key,
+     * compress kept rowIds to the front of the buffer, and return the kept
+     * count. A rowId is kept iff it falls in {@code [columnTop, partitionSize)}
+     * AND {@code TableUtils.toIndexKey(.d[rowId]) == expectedKey}.
+     * <p>
+     * Maintains a small sliding cache over the .d file in {@code dCacheAddr} so
+     * sequential rowIds within a key amortize {@code ff.read()} calls.
+     * {@code cacheState[0]} is the cache's start offset within .d (-1 = empty);
+     * {@code cacheState[1]} is the byte length of the cache content.
+     */
+    private int filterKeyValuesAgainstD(
+            int expectedKey,
+            long valuesAddr,
+            int count,
+            FilesFacade ff,
+            long dataColumnFd,
+            long columnTop,
+            long partitionSize,
+            long dCacheAddr,
+            int dCacheSize,
+            long[] cacheState
+    ) {
+        long cacheStart = cacheState[0];
+        long cacheLen = cacheState[1];
+        int writeIdx = 0;
+        for (int readIdx = 0; readIdx < count; readIdx++) {
+            long rowId = Unsafe.getLong(valuesAddr + (long) readIdx * Long.BYTES);
+            if (rowId < columnTop || rowId >= partitionSize) {
+                continue;
+            }
+            long dFileOffset = (rowId - columnTop) * 4L;
+            // Refill cache if dFileOffset .. dFileOffset+4 isn't covered.
+            if (cacheStart < 0 || dFileOffset < cacheStart || dFileOffset + 4 > cacheStart + cacheLen) {
+                long bytesRemaining = (partitionSize - columnTop) * 4L - dFileOffset;
+                long bytesToRead = Math.min(dCacheSize, bytesRemaining);
+                long read = ff.read(dataColumnFd, dCacheAddr, bytesToRead, dFileOffset);
+                if (read < 4) {
+                    throw CairoException.critical(ff.errno())
+                            .put("could not read column data file during posting index diff [fd=").put(dataColumnFd)
+                            .put(", offset=").put(dFileOffset)
+                            .put(", expected>=4, actual=").put(read).put(']');
+                }
+                cacheStart = dFileOffset;
+                cacheLen = read;
+            }
+            int actualSym = Unsafe.getInt(dCacheAddr + (dFileOffset - cacheStart));
+            int actualKey = TableUtils.toIndexKey(actualSym);
+            if (actualKey != expectedKey) {
+                continue;
+            }
+            // Kept; compress to write position.
+            if (writeIdx != readIdx) {
+                Unsafe.putLong(valuesAddr + (long) writeIdx * Long.BYTES, rowId);
+            }
+            writeIdx++;
+        }
+        cacheState[0] = cacheStart;
+        cacheState[1] = cacheLen;
+        return writeIdx;
+    }
+
     @TestOnly
     public int getAdaptiveDeltaAtOrAbove() {
         return encodeCtx.adaptiveDeltaAtOrAbove;
