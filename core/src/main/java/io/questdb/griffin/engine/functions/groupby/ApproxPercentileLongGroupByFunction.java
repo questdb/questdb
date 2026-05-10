@@ -92,7 +92,11 @@ public class ApproxPercentileLongGroupByFunction extends DoubleFunction implemen
         if (ptr == 0) {
             return Double.NaN;
         }
-        return histogramA.of(ptr).getValueAtPercentile(percentile * 100);
+        GroupByHistogram h = histogramA.of(ptr);
+        if (h.getTotalCount() == 0) {
+            return Double.NaN;
+        }
+        return h.getValueAtPercentile(percentile * 100);
     }
 
     @Override

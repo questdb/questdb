@@ -485,10 +485,10 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
 
                         execute(
                                 compiler,
-                                "create table tab as (select x from long_sequence(" + ROW_COUNT + "))",
+                                "create table tab as (select x, x % 4 as g from long_sequence(" + ROW_COUNT + "))",
                                 sqlExecutionContext);
 
-                        final String query = "SELECT approx_percentile(x, 0.5) FROM tab";
+                        final String query = "SELECT g, approx_percentile(x, 0.5) FROM tab GROUP BY g";
 
                         sqlExecutionContext.setParallelGroupByEnabled(false);
                         try {
