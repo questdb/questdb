@@ -155,7 +155,10 @@ public class ApproxPercentileLongGroupByFunction extends DoubleFunction implemen
 
         long destPtr = destValue.getLong(valueIndex);
         if (destPtr == 0) {
-            destValue.putLong(valueIndex, srcPtr);
+            histogramA.of(0);
+            histogramB.of(srcPtr);
+            histogramA.merge(histogramB);
+            destValue.putLong(valueIndex, histogramA.ptr());
             return;
         }
 
