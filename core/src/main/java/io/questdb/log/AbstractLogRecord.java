@@ -29,7 +29,6 @@ import io.questdb.cairo.TimestampDriver;
 import io.questdb.mp.RingQueue;
 import io.questdb.mp.Sequence;
 import io.questdb.network.Net;
-import io.questdb.mp.CarrierIdentity;
 import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjHashSet;
@@ -60,7 +59,7 @@ abstract class AbstractLogRecord implements LogRecord, Log {
     protected final Sequence errorSeq;
     protected final RingQueue<LogRecordUtf8Sink> infoRing;
     protected final Sequence infoSeq;
-    protected final CarrierLocal<CursorHolder> tl = CarrierLocal.withInitial(() -> new CursorHolder(CarrierIdentity.current()));
+    protected final CarrierLocal<CursorHolder> tl = CarrierLocal.withInitial(CursorHolder::new);
     private final Clock clock;
     private final CharSequence name;
 
@@ -607,15 +606,10 @@ abstract class AbstractLogRecord implements LogRecord, Log {
 
     protected static class CursorHolder {
         final LogError abandonedLogRecordError = createAbandonedLogError();
-        final int carrierId;
         protected long cursor;
         protected RingQueue<LogRecordUtf8Sink> ring;
         protected Sequence seq;
         boolean isLogRecordInProgress;
-
-        CursorHolder(int carrierId) {
-            this.carrierId = carrierId;
-        }
 
         private static @NotNull LogError createAbandonedLogError() {
             if (LOG_PARANOIA_MODE == LOG_PARANOIA_MODE_AGGRESSIVE)

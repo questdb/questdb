@@ -120,9 +120,7 @@ FFI-binds against `libquestdbr`.
 The FFI primitive is observable - if a future C2 change starts hoisting the
 downcall, the failure mode reappears as `ABANDONED LOG RECORD` markers in
 the log or as the assertion `h.isLogRecordInProgress` in
-`AbstractLogRecord.$()` firing. The assertion message prints both
-`CarrierIdentity.current()` and `h.carrierId`; a mismatch indicates
-cross-carrier holder aliasing.
+`AbstractLogRecord.$()` firing.
 
 To rule out hoisting on a particular JDK, run with
 `-XX:+UnlockDiagnosticVMOptions -XX:+PrintInlining` and confirm

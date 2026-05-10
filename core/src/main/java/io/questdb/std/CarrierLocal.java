@@ -89,8 +89,7 @@ public class CarrierLocal<T> extends java.lang.ThreadLocal<T> {
     }
 
     /**
-     * Frees every closeable value stored in the row for the given carrier id,
-     * then detaches the row so it can be GC'd. Called by
+     * Detaches the row for the given carrier id so it can be GC'd. Called by
      * {@link CarrierIdentity#unbind()} when a carrier-bound thread exits, so
      * {@link #rows} does not grow unbounded across thread churn.
      */
@@ -99,19 +98,6 @@ public class CarrierLocal<T> extends java.lang.ThreadLocal<T> {
             CarrierLocalMap[] r = rows;
             if (id < 0 || id >= r.length) {
                 return;
-            }
-            CarrierLocalMap map = r[id];
-            if (map == null) {
-                return;
-            }
-            CarrierLocalMap.Entry[] tab = map.table;
-            if (tab != null) {
-                for (CarrierLocalMap.Entry e : tab) {
-                    if (e != null) {
-                        Misc.freeIfCloseable(e.value);
-                        e.value = null;
-                    }
-                }
             }
             r[id] = null;
             rows = r;
@@ -299,7 +285,6 @@ public class CarrierLocal<T> extends java.lang.ThreadLocal<T> {
             Entry[] tab = table;
             int len = tab.length;
 
-            Misc.freeIfCloseable(tab[staleSlot].value);
             tab[staleSlot].value = null;
             tab[staleSlot] = null;
             size--;
@@ -311,7 +296,6 @@ public class CarrierLocal<T> extends java.lang.ThreadLocal<T> {
                  i = nextIndex(i, len)) {
                 CarrierLocal<?> k = e.get();
                 if (k == null) {
-                    Misc.freeIfCloseable(e.value);
                     e.value = null;
                     tab[i] = null;
                     size--;
@@ -424,7 +408,6 @@ public class CarrierLocal<T> extends java.lang.ThreadLocal<T> {
                 }
             }
 
-            Misc.freeIfCloseable(tab[staleSlot].value);
             tab[staleSlot].value = null;
             tab[staleSlot] = new Entry(key, value);
 

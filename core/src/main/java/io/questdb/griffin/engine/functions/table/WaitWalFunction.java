@@ -52,6 +52,20 @@ class WaitWalFunction extends BooleanFunction implements Function {
     }
 
     @Override
+    public void close() {
+        if (seqTxnArg != null) {
+            seqTxnArg.close();
+        }
+    }
+
+    @Override
+    public void cursorClosed() {
+        if (seqTxnArg != null) {
+            seqTxnArg.cursorClosed();
+        }
+    }
+
+    @Override
     public boolean getBool(Record rec) {
         if (seqTxnTracker == null) {
             return true;

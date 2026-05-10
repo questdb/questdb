@@ -123,6 +123,10 @@ public class HttpServer implements Closeable {
                     return useful;
                 }
             });
+
+            // http context factory has thread local pools
+            // therefore we need each thread to clean their thread locals individually
+            networkSharedPool.assignThreadLocalCleaner(i, httpContextFactory::freeThreadLocal);
         }
     }
 

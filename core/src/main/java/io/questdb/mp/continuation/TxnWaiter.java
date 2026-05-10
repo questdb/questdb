@@ -37,7 +37,7 @@ import java.util.concurrent.TimeUnit;
  * the tracker's {@code writerTxn} to reach {@link #targetWriterTxn}.
  *
  * <p>Allocated once per {@code wait_wal_table} call and reused across the wake/sleep
- * loop via {@link #reset(long)}: a fresh instance binds the carrier's
+ * loop via {@link #reset()}: a fresh instance binds the carrier's
  * {@link WorkerContinuation} via {@link #tryBindCurrent}, then each iteration calls
  * reset to flip {@link #state} from FIRED back to PENDING and publish a new target
  * before re-registering. The waiter is not pooled across calls; the cost is one
@@ -107,7 +107,7 @@ public final class TxnWaiter implements DelayedFireable {
     /**
      * Timer-shard pop. State-driven: if PENDING, CAS to FIRED and resume the body
      * so the loop top observes the timeout. Never reads {@link #registeredAtMillis}; a
-     * stale heap entry from a previous {@link #reset(long)} cycle finds either a fresh
+     * stale heap entry from a previous {@link #reset()} cycle finds either a fresh
      * PENDING (fires it; the new wait was on the same waiter and is now timed out),
      * or a terminal state (no-op).
      */

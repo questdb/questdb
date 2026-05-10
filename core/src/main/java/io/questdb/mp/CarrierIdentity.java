@@ -36,7 +36,7 @@ import java.util.concurrent.atomic.AtomicInteger;
 
 /**
  * Carrier identity for cont-aware carrier-local storage. {@link #current()}
- * returns the integer assigned by the most recent {@link #bind(int)} on the
+ * returns the integer assigned by the most recent {@link #bind()} on the
  * <em>actual OS-level carrier executing now</em>, even when called from inside
  * a continuation that has been yielded and resumed on a different carrier.
  * <p>
@@ -49,7 +49,7 @@ import java.util.concurrent.atomic.AtomicInteger;
  * because we cannot apply {@code @ChangesCurrentThread} from outside the boot
  * loader; this primitive sidesteps that hazard entirely.
  * <p>
- * Threads that never call {@link #bind(int)} report {@link #UNBOUND}.
+ * Threads that never call {@link #bind()} report {@link #UNBOUND}.
  */
 public final class CarrierIdentity {
     public static final int UNBOUND = -1;
