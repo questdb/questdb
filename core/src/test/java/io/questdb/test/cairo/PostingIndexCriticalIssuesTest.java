@@ -42,6 +42,7 @@ import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.RowCursor;
 import io.questdb.cairo.vm.MemoryCMARWImpl;
+import io.questdb.std.DirectBitSet;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.LongList;
 import io.questdb.std.MemoryTag;
@@ -301,6 +302,54 @@ public class PostingIndexCriticalIssuesTest extends AbstractCairoTest {
     }
 
     /**
+     * Review C2: the full-partition SELECT DISTINCT path calls
+     * collectDistinctKeys(), not collectDistinctKeysInRange(). The no-range
+     * helper must still honor the chain entry's MAX_VALUE; otherwise a key
+     * whose only encoded rows are dirty rows past MAX_VALUE is reported as
+     * present in the partition.
+     */
+    @Test
+    public void testCollectDistinctKeysDoesNotExposeKeysPastEntryMaxValue() throws Exception {
+        assertMemoryLeak(() -> {
+            final String name = "posting_distinct_max_value_clamp";
+            try (Path path = new Path().of(configuration.getDbRoot())) {
+                final int plen = path.size();
+                final int liveKey = 1;
+                final int dirtyOnlyKey = 2;
+
+                try (PostingIndexWriter writer = new PostingIndexWriter(
+                        configuration, path.trimTo(plen), name, COLUMN_NAME_TXN_NONE)) {
+                    for (long rowId = 0; rowId < 50; rowId++) {
+                        writer.add(liveKey, rowId);
+                    }
+                    for (long rowId = 50; rowId < 100; rowId++) {
+                        writer.add(dirtyOnlyKey, rowId);
+                    }
+                    writer.setMaxValue(99);
+                    writer.commit();
+                    writer.setMaxValue(49);
+                }
+
+                try (PostingIndexFwdReader reader = new PostingIndexFwdReader(
+                        configuration, path.trimTo(plen), name,
+                        COLUMN_NAME_TXN_NONE, /* partitionTxn */ 0, /* columnTop */ 0);
+                     DirectBitSet foundKeys = new DirectBitSet(8)) {
+                    Assert.assertEquals(
+                            "only the key with rowids at or below MAX_VALUE=49 is live",
+                            1,
+                            reader.collectDistinctKeys(foundKeys)
+                    );
+                    Assert.assertTrue(foundKeys.get(liveKey));
+                    Assert.assertFalse(
+                            "collectDistinctKeys must not expose a key whose only rows are past entryMaxValue",
+                            foundKeys.get(dirtyOnlyKey)
+                    );
+                }
+            }
+        });
+    }
+
+    /**
      * Reader must clamp returned rowids by the picked chain entry's
      * V2_ENTRY_OFFSET_MAX_VALUE field. Writers can leave dirty
      * (key, rowid) pairs in .pv past the chain's tracked coverage --
@@ -380,33 +429,30 @@ public class PostingIndexCriticalIssuesTest extends AbstractCairoTest {
                     );
                 }
 
+                // Oracle: key 0 was added at rowids 0, 5, 10, ..., 95
+                // (loop rowId % 5 == 0). After the clamp to MAX_VALUE=49,
+                // the cursor must emit exactly the rowids in [0, 49] for
+                // key 0: 0, 5, 10, 15, 20, 25, 30, 35, 40, 45 -- ten rowids,
+                // ascending for Fwd, descending for Bwd.
+                LongList expectedFwd = new LongList();
+                for (long r = 0; r <= 49; r += 5) {
+                    expectedFwd.add(r);
+                }
+                LongList expectedBwd = new LongList();
+                for (long r = 45; r >= 0; r -= 5) {
+                    expectedBwd.add(r);
+                }
+
                 try (PostingIndexFwdReader reader = new PostingIndexFwdReader(
                         configuration, path.trimTo(plen), name,
                         COLUMN_NAME_TXN_NONE, /* partitionTxn */ 0, /* columnTop */ 0)) {
-                    int leaked = 0;
-                    long maxReturned = -1L;
-                    long count = 0;
+                    LongList actual = new LongList();
                     try (RowCursor cursor = reader.getCursor(0, 0L, Long.MAX_VALUE)) {
                         while (cursor.hasNext()) {
-                            long rowId = cursor.next();
-                            if (rowId > maxReturned) maxReturned = rowId;
-                            if (rowId > 49) leaked++;
-                            count++;
+                            actual.add(cursor.next());
                         }
                     }
-                    Assert.assertTrue(
-                            "Fwd reader returned no rowids -- key 0 has 20 entries "
-                                    + "(rowids 0,5,...,95) so cursor must emit at least "
-                                    + "the entries at or below MAX_VALUE=49",
-                            count > 0
-                    );
-                    Assert.assertEquals(
-                            "Fwd reader leaked " + leaked + " rowids past chain "
-                                    + "MAX_VALUE=49 (max returned=" + maxReturned + "). "
-                                    + "Cursor must clamp to entryMaxValue when the .pv "
-                                    + "encodes more rowids than the chain claims to cover.",
-                            0, leaked
-                    );
+                    TestUtils.assertEquals(expectedFwd, actual);
                 }
 
                 try (PostingIndexBwdReader reader = new PostingIndexBwdReader(
@@ -414,29 +460,63 @@ public class PostingIndexCriticalIssuesTest extends AbstractCairoTest {
                         COLUMN_NAME_TXN_NONE, /* partitionTxn */ 0, /* columnTop */ 0,
                         /* metadata */ null, /* columnVersionReader */ null,
                         /* partitionTimestamp */ 0)) {
-                    int leaked = 0;
-                    long maxReturned = -1L;
-                    long count = 0;
+                    LongList actual = new LongList();
                     try (RowCursor cursor = reader.getCursor(0, 0L, Long.MAX_VALUE)) {
                         while (cursor.hasNext()) {
-                            long rowId = cursor.next();
-                            if (rowId > maxReturned) maxReturned = rowId;
-                            if (rowId > 49) leaked++;
-                            count++;
+                            actual.add(cursor.next());
                         }
                     }
-                    Assert.assertTrue(
-                            "Bwd reader returned no rowids -- key 0 has 20 entries "
-                                    + "and the cursor must emit at least the entries at "
-                                    + "or below MAX_VALUE=49",
-                            count > 0
-                    );
+                    TestUtils.assertEquals(expectedBwd, actual);
+                }
+            }
+        });
+    }
+
+    /**
+     * Review C1: once readers clamp iteration to the chain entry's MAX_VALUE,
+     * RowCursor.size() must not keep advertising the unclamped encoded count.
+     * Returning -1 is acceptable because the SQL count fast path will then
+     * fall back to hasNext()/next() iteration.
+     */
+    @Test
+    public void testReaderSizeDoesNotOutrunEntryMaxValueClamp() throws Exception {
+        assertMemoryLeak(() -> {
+            final String name = "posting_size_max_value_clamp";
+            try (Path path = new Path().of(configuration.getDbRoot())) {
+                final int plen = path.size();
+
+                try (PostingIndexWriter writer = new PostingIndexWriter(
+                        configuration, path.trimTo(plen), name, COLUMN_NAME_TXN_NONE)) {
+                    for (long rowId = 0; rowId < 100; rowId++) {
+                        writer.add((int) (rowId % 5), rowId);
+                    }
+                    writer.setMaxValue(99);
+                    writer.commit();
+                    writer.setMaxValue(49);
+                }
+
+                try (PostingIndexFwdReader reader = new PostingIndexFwdReader(
+                        configuration, path.trimTo(plen), name,
+                        COLUMN_NAME_TXN_NONE, /* partitionTxn */ 0, /* columnTop */ 0)) {
+                    long advertisedSize;
+                    long iterated = 0;
+                    try (RowCursor cursor = reader.getCursor(0, 0L, Long.MAX_VALUE)) {
+                        advertisedSize = cursor.size();
+                        while (cursor.hasNext()) {
+                            cursor.next();
+                            iterated++;
+                        }
+                    }
+
                     Assert.assertEquals(
-                            "Bwd reader leaked " + leaked + " rowids past chain "
-                                    + "MAX_VALUE=49 (max returned=" + maxReturned + "). "
-                                    + "Cursor must clamp to entryMaxValue when the .pv "
-                                    + "encodes more rowids than the chain claims to cover.",
-                            0, leaked
+                            "test setup gap: key 0 has rowids 0,5,...,45 at or below MAX_VALUE=49",
+                            10,
+                            iterated
+                    );
+                    Assert.assertTrue(
+                            "RowCursor.size() must either decline the fast path or match clamped iteration "
+                                    + "[size=" + advertisedSize + ", iterated=" + iterated + "]",
+                            advertisedSize < 0 || advertisedSize == iterated
                     );
                 }
             }

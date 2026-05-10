@@ -920,7 +920,8 @@ public class PostingIndexBwdReader extends AbstractPostingIndexReader {
             // and never mutates during iteration; using it directly avoids the
             // Cursor.maxValue field, which now holds the entryMaxValue-clamped
             // bound and would under-count nulls when entryMaxValue < columnTop.
-            return super.size() + Math.max(0L, nullCount - minValue);
+            long indexSize = super.size();
+            return indexSize < 0 ? -1 : indexSize + Math.max(0L, nullCount - minValue);
         }
     }
 }

@@ -142,6 +142,13 @@ public abstract class AbstractPostingIndexReader implements IndexReader {
         if (genCount == 0 || keyCount == 0) {
             return 0;
         }
+        if (entryMaxValue >= 0) {
+            // The key-directory fast path can only tell that a key has encoded
+            // row ids somewhere in .pv; it cannot tell whether all of them sit
+            // past the picked chain entry's MAX_VALUE. Use the ranged scanner
+            // so full-partition DISTINCT observes the same clamp as cursors.
+            return collectDistinctKeysInRange(foundKeys, 0, Long.MAX_VALUE);
+        }
         int newlyFound = 0;
         for (int g = 0; g < genCount; g++) {
             int genKeyCount = genLookup.getGenKeyCount(g);
@@ -1219,6 +1226,12 @@ public abstract class AbstractPostingIndexReader implements IndexReader {
         public long size() {
             if (requestedKey < 0) {
                 return 0;
+            }
+            if (entryMaxValue >= 0) {
+                // Raw per-gen counts do not know whether encoded row ids sit
+                // past the chain entry's tracked coverage. Decline the fast
+                // path so callers count via the same clamped hasNext() path.
+                return -1;
             }
             long total = 0;
             for (int g = 0; g < cursorGenCount; g++) {
