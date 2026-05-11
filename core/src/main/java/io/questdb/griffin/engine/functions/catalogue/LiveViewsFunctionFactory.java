@@ -220,7 +220,14 @@ public class LiveViewsFunctionFactory implements FunctionFactory {
                         case COLUMN_LAST_PROCESSED_SEQTXN -> instance.getLastProcessedSeqTxn();
                         case COLUMN_APPLIED_WATERMARK -> instance.getStateReader().getAppliedWatermark();
                         case COLUMN_LV_CONSUMED_SEQTXN -> instance.getStateReader().getLvConsumedSeqTxn();
-                        case COLUMN_VIEW_LOWER_BOUND_TIMESTAMP -> definition.getViewLowerBoundTimestamp();
+                        case COLUMN_VIEW_LOWER_BOUND_TIMESTAMP ->
+                                // Persisted in base-table units (RFC 123 §"On-disk tier"); convert back to
+                                // TIMESTAMP_MICRO per the catalogue column's declared type. Identity for
+                                // MICRO bases; rounds NS bases down to the MICRO grid (RFC §"Catalogue
+                                // function live_views()").
+                                io.questdb.cairo.ColumnType
+                                        .getTimestampDriver(definition.getBaseTimestampType())
+                                        .toMicros(definition.getViewLowerBoundTimestamp());
                         // Phase 1a has no in-mem tier and therefore no slow-path stall; Phase 1b
                         // wires this from the writer's stall_start tracking.
                         case COLUMN_WRITER_STALL_MICROS -> 0L;

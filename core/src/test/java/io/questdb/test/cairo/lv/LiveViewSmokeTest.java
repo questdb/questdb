@@ -1740,6 +1740,64 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testViewLowerBoundTimestampPersistsInBaseUnitsForMicroBase() throws Exception {
+        // Pins the identity path: for MICRO bases, the persisted value equals the
+        // wall-clock micros at CREATE because the driver's fromMicros is the identity.
+        // Acts as a guard against future refactors to the conversion shape.
+        assertMemoryLeak(() -> {
+            setCurrentMicros(1_700_000_000_000_000L);
+            execute("CREATE TABLE base (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 1s AS " +
+                    "SELECT ts, x, row_number() OVER () AS rn FROM base WHERE x > 0");
+
+            LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("lv");
+            Assert.assertNotNull(instance);
+            Assert.assertEquals(
+                    "MICRO base persists wall-clock micros as-is",
+                    1_700_000_000_000_000L,
+                    instance.getDefinition().getViewLowerBoundTimestamp()
+            );
+
+            execute("DROP LIVE VIEW lv");
+        });
+    }
+
+    @Test
+    public void testViewLowerBoundTimestampPersistsInBaseUnitsForNanoBase() throws Exception {
+        // Regression: viewLowerBoundTimestamp used to be persisted in wall-clock
+        // micros regardless of the base's timestamp unit, so a TIMESTAMP_NS base
+        // ended up with a value 1000x smaller than any base-table ts. The persisted
+        // value is now scaled to base units so the eventual O3 reject in Phase 2
+        // can compare it against late_row.ts directly. The catalogue column stays
+        // TIMESTAMP_MICRO (RFC 123 §"Catalogue function live_views()") and rounds
+        // NS values back to the MICRO grid at display time.
+        assertMemoryLeak(() -> {
+            setCurrentMicros(1_700_000_000_000_000L);
+            execute("CREATE TABLE base (ts TIMESTAMP_NS, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 1s AS " +
+                    "SELECT ts, x, row_number() OVER () AS rn FROM base WHERE x > 0");
+
+            LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("lv");
+            Assert.assertNotNull(instance);
+            Assert.assertEquals(
+                    "NS base persists wall-clock value scaled to nanoseconds",
+                    1_700_000_000_000_000_000L,
+                    instance.getDefinition().getViewLowerBoundTimestamp()
+            );
+
+            // Catalogue column commits to TIMESTAMP_MICRO; toMicros rounds NS back
+            // to the MICRO grid (lossless here since the source is wall-clock micros).
+            assertSql(
+                    "view_name\tview_lower_bound_timestamp\n" +
+                            "lv\t2023-11-14T22:13:20.000000Z\n",
+                    "SELECT view_name, view_lower_bound_timestamp FROM live_views()"
+            );
+
+            execute("DROP LIVE VIEW lv");
+        });
+    }
+
+    @Test
     public void testLiveViewsCatalogueExposesOperationalColumns() throws Exception {
         // Pin the clock so lag_micros is deterministic across runs.
         assertMemoryLeak(() -> {

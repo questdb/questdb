@@ -809,9 +809,14 @@ public class CairoEngine implements Closeable, WriterSource {
             }
             baseTimestampType = baseMetadata.getColumnType(tsIndex);
         }
-        // viewLowerBoundTimestamp is the floor for O3 reachability. Phase 1 (no BACKFILL)
-        // takes the wall-clock CREATE moment.
-        viewLowerBoundTimestamp = configuration.getMicrosecondClock().getTicks();
+        // viewLowerBoundTimestamp is the floor for O3 reachability and is compared
+        // against late_row.ts in base-table units. Phase 1 (no BACKFILL) takes the
+        // wall-clock CREATE moment, scaled into base units via the base's driver
+        // so MICRO and NANO bases both produce a comparable value. The catalogue
+        // converts back to TIMESTAMP_MICRO at display time per RFC 123 §"Catalogue
+        // function live_views()".
+        viewLowerBoundTimestamp = ColumnType.getTimestampDriver(baseTimestampType)
+                .fromMicros(configuration.getMicrosecondClock().getTicks());
 
         // compile the SELECT to validate and get metadata. The live-view-compile flag
         // suppresses indexed-symbol key extraction in WhereClauseParser so the planner
