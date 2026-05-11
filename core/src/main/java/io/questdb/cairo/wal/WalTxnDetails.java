@@ -72,6 +72,7 @@ public class WalTxnDetails implements QuietCloseable {
     public static final int TXN_METADATA_LONGS_SIZE = WAL_TXN_MAT_VIEW_PERIOD_HI + 1;
     private static final int SYMBOL_MAP_COLUMN_RECORD_HEADER_INTS = 6;
     private static final int SYMBOL_MAP_RECORD_HEADER_INTS = 4;
+    private final MicrosecondClock clock;
     private final CairoConfiguration config;
     private final long maxLookaheadRows;
     private final SymbolMapDiffCursorImpl symbolMapDiffCursor = new SymbolMapDiffCursorImpl();
@@ -103,6 +104,7 @@ public class WalTxnDetails implements QuietCloseable {
     public WalTxnDetails(CairoConfiguration configuration, long maxLookaheadRows) {
         walEventReader = new WalEventReader(configuration);
         this.config = configuration;
+        this.clock = configuration.getMicrosecondClock();
         this.maxLookaheadRows = maxLookaheadRows;
     }
 
@@ -536,7 +538,6 @@ public class WalTxnDetails implements QuietCloseable {
         long rowsToLoad;
 
         int initialSize = transactionMeta.size();
-        final MicrosecondClock clock = config.getMicrosecondClock();
         do {
             long rowsLoaded = loadTransactionDetails(tempPath, transactionLogCursor, loadFromSeqTxn, rootLen, txnLoadCount);
             totalRowsLoadedToApply += rowsLoaded;

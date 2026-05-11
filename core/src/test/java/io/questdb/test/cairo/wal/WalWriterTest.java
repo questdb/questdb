@@ -1083,6 +1083,32 @@ public class WalWriterTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testApplyMakesProgressWithZeroTimeQuota() throws Exception {
+        // With the apply time quota set to zero, every WAL apply pass enters with a
+        // deadline at "now": the lookahead's do-while exits after a single small batch,
+        // and the apply loop's main while-condition fails after the firstRun txn. Despite
+        // both budgets being immediately exhausted, the firstRun guard plus repeated
+        // job invocations must still drain the entire backlog correctly.
+        node1.setProperty(PropertyKey.CAIRO_WAL_APPLY_TABLE_TIME_QUOTA, 0);
+        node1.setProperty(PropertyKey.CAIRO_WAL_APPLY_LOOK_AHEAD_TXN_COUNT, 1);
+
+        assertMemoryLeak(() -> {
+            String tableName = testName.getMethodName();
+            execute("CREATE TABLE " + tableName + " (val INT, ts TIMESTAMP)" +
+                    " TIMESTAMP(ts) PARTITION BY DAY WAL");
+            for (int i = 0; i < 20; i++) {
+                execute("INSERT INTO " + tableName + " VALUES (" + i +
+                        ", '2024-01-01T00:00:" + String.format("%02d", i) + ".000000Z')");
+            }
+            drainWalQueue();
+            assertSql(
+                    "count\n20\n",
+                    "SELECT count(*) FROM " + tableName
+            );
+        });
+    }
+
+    @Test
     public void testApplyManySmallCommits2Writers() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table sm (id int, ts timestamp, y long, s string, v varchar, m symbol) timestamp(ts) partition by DAY WAL");
@@ -4712,32 +4738,6 @@ public class WalWriterTest extends AbstractCairoTest {
                             5\t2022-02-27T07:00:00.000000Z
                             """,
                     tableName
-            );
-        });
-    }
-
-    @Test
-    public void testTruncateLookaheadDeadlineApplyMakesProgress() throws Exception {
-        // With the apply time quota set to zero, every WAL apply pass enters with a
-        // deadline at "now": the lookahead's do-while exits after a single small batch,
-        // and the apply loop's main while-condition fails after the firstRun txn. Despite
-        // both budgets being immediately exhausted, the firstRun guard plus repeated
-        // job invocations must still drain the entire backlog correctly.
-        node1.setProperty(PropertyKey.CAIRO_WAL_APPLY_TABLE_TIME_QUOTA, 0);
-        node1.setProperty(PropertyKey.CAIRO_WAL_APPLY_LOOK_AHEAD_TXN_COUNT, 1);
-
-        assertMemoryLeak(() -> {
-            String tableName = testName.getMethodName();
-            execute("CREATE TABLE " + tableName + " (val INT, ts TIMESTAMP)" +
-                    " TIMESTAMP(ts) PARTITION BY DAY WAL");
-            for (int i = 0; i < 20; i++) {
-                execute("INSERT INTO " + tableName + " VALUES (" + i +
-                        ", '2024-01-01T00:00:" + String.format("%02d", i) + ".000000Z')");
-            }
-            drainWalQueue();
-            assertSql(
-                    "count\n20\n",
-                    "SELECT count(*) FROM " + tableName
             );
         });
     }
