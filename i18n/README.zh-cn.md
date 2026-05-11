@@ -107,7 +107,9 @@ QuestDB 开箱即用地支持 AI 编程智能体。安装
 流式数据写入、物化视图和实时分析，无需手动编写代码。
 
 <div align="center">
-  <video src="https://github.com/questdb/questdb/raw/master/.github/agents-demo.mp4" width="600" controls></video>
+  <a href="https://questdb.com/agents/">
+    <img alt="AI 编程智能体将外汇数据流式写入 QuestDB 并分析流动性" src="../.github/agents-demo.jpg" width="600"/>
+  </a>
 </div>
 
 ## 快速开始

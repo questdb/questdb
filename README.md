@@ -114,7 +114,9 @@ production in under 60 seconds: streaming ingestion, materialized views, and
 real-time analytics with zero manual code.
 
 <div align="center">
-  <video src="https://github.com/questdb/questdb/raw/master/.github/agents-demo.mp4" width="600" controls></video>
+  <a href="https://questdb.com/agents/">
+    <img alt="AI coding agent streaming FX data into QuestDB and analyzing liquidity" src=".github/agents-demo.jpg" width="600"/>
+  </a>
 </div>
 
 ## Get started
