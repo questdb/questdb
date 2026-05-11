@@ -82,7 +82,15 @@ public class PostingIndexWriter implements IndexWriter {
     private static final int MAX_GEN_COUNT = PostingIndexUtils.MAX_GEN_COUNT;
     private static final int PENDING_SLOT_CAPACITY = 8;
     private final double alignedBitWidthThreshold;
+    // v2 chain helper: owns the in-memory mirror of the chain header,
+    // exposes append/extend/recovery primitives. Single instance per writer
+    // reused across reopens via resetState().
+    private final PostingIndexChainWriter chain = new PostingIndexChainWriter();
     private final CairoConfiguration configuration;
+    // Reusable scratch list passed to PostingIndexChainWriter.appendNewEntry /
+    // extendHead, built once per chain publish from each cover column's
+    // current sidecar append offset. Reused across calls to avoid allocations.
+    private final LongList coverEndOffsetsScratch = new LongList();
     // O3 addr-based covering: caller-provided native memory addresses
     private final LongList coveredColumnAddrs = new LongList();
     private final LongList coveredColumnAuxAddrs = new LongList();
@@ -101,6 +109,13 @@ public class PostingIndexWriter implements IndexWriter {
     private final Utf8StringSink partitionPath = new Utf8StringSink();
     private final ObjList<PendingSealPurge> pendingPurgePool = new ObjList<>();
     private final ObjList<PendingSealPurge> pendingPurges = new ObjList<>();
+    // Reusable scratch list for sealTxns that recoveryDropAbandoned dropped
+    // out of the chain on writer-open. Populated by of(...) when
+    // currentTableTxn was supplied via setCurrentTableTxn; the orphan
+    // sealTxns are then forwarded to the seal-purge outbox so the
+    // background job removes the .pv.{N} / .pc{i}.{N} files. Cleared on
+    // every of() call to avoid leaking entries across reopens.
+    private final LongList recoveryOrphanScratch = new LongList();
     private final byte rowIdEncoding;
     private final MemoryMARW sealValueMem = Vm.getCMARWInstance();
     private final ObjList<MemoryMARW> sidecarMems = new ObjList<>();
@@ -115,21 +130,6 @@ public class PostingIndexWriter implements IndexWriter {
     private int activeKeyCount;
     private int[] activeKeyIds = new int[INITIAL_KEY_CAPACITY];
     private int blockCapacity;
-    // v2 chain helper: owns the in-memory mirror of the chain header,
-    // exposes append/extend/recovery primitives. Single instance per writer
-    // — reused across reopens via resetState().
-    private final PostingIndexChainWriter chain = new PostingIndexChainWriter();
-    // Reusable scratch list for sealTxns that recoveryDropAbandoned dropped
-    // out of the chain on writer-open. Populated by of(...) when
-    // currentTableTxn was supplied via setCurrentTableTxn; the orphan
-    // sealTxns are then forwarded to the seal-purge outbox so the
-    // background job removes the .pv.{N} / .pc{i}.{N} files. Cleared on
-    // every of() call to avoid leaking entries across reopens.
-    private final LongList recoveryOrphanScratch = new LongList();
-    // Reusable scratch list passed to PostingIndexChainWriter.appendNewEntry /
-    // extendHead — built once per chain publish from each cover column's
-    // current sidecar append offset. Reused across calls to avoid allocations.
-    private final LongList coverEndOffsetsScratch = new LongList();
     private int coverCount;
     private long[] coveredAuxReadAddrs;
     private long[] coveredAuxReadSizes;
@@ -172,6 +172,13 @@ public class PostingIndexWriter implements IndexWriter {
     private long partitionNameTxn = -1;
     private long partitionTimestamp = Long.MIN_VALUE;
     private long pendingCountsAddr;
+    // Old sealTxn stashed by discardForRebuild after it rotates valueMem to
+    // a fresh sealTxn. Consumed by the next flushAllPending() right after
+    // publishToChain so recordPostingSealPurge sees the post-append chain
+    // shape ([REBUILD@new, OLD@old]) and computes a correct
+    // [OLD.txnAtSeal, REBUILD.txnAtSeal) window for the OLD .pv's purge.
+    // -1 means no rebuild rotation is pending. Cleared in close().
+    private long pendingDiscardOldSealTxn = -1L;
     // Table _txn the next chain entry should record as its txnAtSeal,
     // supplied by TableWriter#syncColumns via setNextTxnAtSeal. -1 means
     // no caller-supplied value; the writer uses 0 as a placeholder so the
@@ -207,6 +214,7 @@ public class PostingIndexWriter implements IndexWriter {
         this.configuration = configuration;
         this.ff = configuration.getFilesFacade();
         this.rowIdEncoding = rowIdEncoding;
+        this.encodeCtx.setAdaptiveDeltaAtOrAbove(configuration.getPostingIndexAdaptiveDeltaAtOrAbove());
     }
 
     @TestOnly
@@ -294,9 +302,7 @@ public class PostingIndexWriter implements IndexWriter {
     }
 
     public void clearCovering() {
-        unmapCoveredColumnReads();
-        this.coveredColumnAddrs.clear();
-        this.coveredColumnAuxAddrs.clear();
+        releaseCoveredColumnReadMappings();
         this.coveredPartitionPath.clear();
         this.coveredColumnNames.clear();
         this.coveredColumnNameTxns.clear();
@@ -342,6 +348,7 @@ public class PostingIndexWriter implements IndexWriter {
                 coverCount = 0;
                 sealTarget = null;
                 releasePendingPurges();
+                pendingDiscardOldSealTxn = -1L;
                 pendingTxnAtSeal = -1;
                 // currentTableTxn is intentionally not reset here.
                 // path-based of(...) starts with close(), and the setter
@@ -541,6 +548,85 @@ public class PostingIndexWriter implements IndexWriter {
         configureCovering(addrs, null, tops, shifts, indices, types, coverCount, timestampColumnIndex);
     }
 
+    @Override
+    public void discardForRebuild() {
+        if (!keyMem.isOpen()) {
+            return;
+        }
+        // Drop pending and spill in-memory state, then rotate sealTxn to a
+        // fresh value so the next commit() takes publishToChain's
+        // appendNewEntry branch instead of mutating the existing head's
+        // gen-dir slot 0 in place via extendHead. extendHead's protocol
+        // assumes newGenCount > oldGenCount; without rotation a partition
+        // whose head carries fast-lag-extended sparse gens (oldGenCount > 1)
+        // would invoke extendHead with newGenCount=1 < oldGenCount, leaving
+        // the previously-published entry's bytes mutated under its original
+        // TXN_AT_SEAL -- visible to torn readers, snapshot-isolated readers
+        // that walk to it as a prev entry, and recoveryDropAbandoned which
+        // cannot detect the mutation (TXN_AT_SEAL is unchanged).
+        //
+        // The rotation mirrors truncate()'s block at the top of this file
+        // but keeps the chain head and the OLD .pv on disk so concurrent
+        // readers with active mmaps stay safe. The OLD .pv's purge is
+        // deferred via pendingDiscardOldSealTxn: the next flushAllPending
+        // records it right after publishToChain, when the chain has shape
+        // [REBUILD@new, OLD@old] and recordPostingSealPurge can compute the
+        // correct [OLD.txnAtSeal, REBUILD.txnAtSeal) window.
+        //
+        // The caller's republish runs in two steps:
+        //   1. commit() -> flushAllPending appends the new gen to the
+        //      freshly-opened .pv.{newSealTxn} at offset 0, then
+        //      publishToChain takes the appendNewEntry branch (rotated
+        //      sealTxn > head.sealTxn) and writes a fresh REBUILD chain
+        //      entry. The OLD entry stays intact as the new prev.
+        //   2. seal() / rebuildSidecars() rotates again to a further
+        //      sealTxn, writes a dense single-gen .pv there, and appends a
+        //      SEAL chain entry. REBUILD becomes prev to SEAL; both inherit
+        //      the same txnAtSeal so the picker shadows REBUILD with SEAL,
+        //      letting the seal-purge job remove .pv.{newSealTxn} on its
+        //      next pass with an empty [X, X) window.
+        freePendingBuffers();
+        freeSpillData();
+        keyCapacity = 0;
+        keyCount = 0;
+        genCount = 0;
+        maxValue = -1L;
+        hasPendingData = false;
+        activeKeyCount = 0;
+        if (chain.hasHead() && partitionPath.size() > 0) {
+            long oldSealTxn = sealTxn;
+            // peekNextSealTxn(), not sealTxn+1: after a recovery drop the
+            // writer's sealTxn lags genCounter, and reusing a dropped
+            // sealTxn would race the still-pending .pv purge.
+            long newSealTxn = Math.max(1, chain.peekNextSealTxn());
+            // Drop sidecar mappings tied to oldSealTxn -- the next
+            // configureCovering / rebuildSidecars reopens them at the new
+            // sealTxn.
+            closeSidecarMems();
+            valueMem.close(false, (byte) 0);
+            Path p = Path.getThreadLocal(partitionPath);
+            LPSZ fileName = PostingIndexUtils.valueFileName(p, indexName, postingColumnNameTxn, newSealTxn);
+            valueMem.of(ff, fileName,
+                    configuration.getDataIndexValueAppendPageSize(), 0L,
+                    MemoryTag.MMAP_INDEX_WRITER, configuration.getWriterFileOpenOpts(), -1);
+            sealTxn = newSealTxn;
+            valueMemSize = 0;
+            // The OLD .pv stays on disk until the deferred purge in
+            // flushAllPending fires. If flushAllPending never runs (caller
+            // closes without commit -- not a production path), the OLD .pv
+            // is still chain-referenced by the OLD entry and the new (empty)
+            // .pv.{newSealTxn} will be re-discovered as an orphan on the
+            // next reopen.
+            pendingDiscardOldSealTxn = oldSealTxn;
+        }
+        allocateNativeBuffers();
+    }
+
+    @TestOnly
+    public int getAdaptiveDeltaAtOrAbove() {
+        return encodeCtx.adaptiveDeltaAtOrAbove;
+    }
+
     @TestOnly
     public RowCursor getCursor(int key) {
         flushAllPending();
@@ -650,16 +736,6 @@ public class PostingIndexWriter implements IndexWriter {
     }
 
     /**
-     * Number of pending purge entries that have not yet been forwarded to
-     * the global PostingSealPurge queue. Tests use this to verify that the
-     * outbox is bounded under saturation.
-     */
-    @TestOnly
-    public int getPendingPurgesSizeForTesting() {
-        return pendingPurges.size();
-    }
-
-    /**
      * Read-only access to a queued purge entry's
      * {@code [fromTableTxn, toTableTxn)} window for testing. Returns
      * {@code -1} components if the index is out of range. Tests use this
@@ -680,6 +756,16 @@ public class PostingIndexWriter implements IndexWriter {
             return -1L;
         }
         return pendingPurges.getQuick(idx).toTableTxn;
+    }
+
+    /**
+     * Number of pending purge entries that have not yet been forwarded to
+     * the global PostingSealPurge queue. Tests use this to verify that the
+     * outbox is bounded under saturation.
+     */
+    @TestOnly
+    public int getPendingPurgesSizeForTesting() {
+        return pendingPurges.size();
     }
 
     @TestOnly
@@ -1036,6 +1122,36 @@ public class PostingIndexWriter implements IndexWriter {
         }
     }
 
+    /**
+     * Release the read-side state set up for the most recent seal: the
+     * covered-column read mappings and the borrowed source-column addresses
+     * passed in via {@link #configureCovering}. Keeps the covering schema
+     * (coverCount, coveredColumnIndices, coveredColumnNames,
+     * coveredColumnNameTxns, coveredColumnTops, coveredColumnShifts,
+     * coveredColumnTypes, sidecarMems) intact so a subsequent commit() can
+     * still publish a chain entry with a correctly-sized cover footer
+     * sourced from {@link #sidecarMems}' append offsets at the last seal.
+     * <p>
+     * Called from {@code TableWriter}'s post-seal finally blocks where the
+     * caller is about to munmap the covered-column files it mapped RO for
+     * the seal. Without dropping the borrowed pointers held in
+     * {@code coveredColumnAddrs} / {@code coveredColumnAuxAddrs} here, a
+     * subsequent ensureCoveredColumnReadMaps would dereference garbage.
+     * <p>
+     * Use {@link #clearCovering()} only when truly tearing down covering
+     * (writer discard, swap to a different cover schema). For the typical
+     * "seal done, release temporary read mmaps, keep schema" lifecycle,
+     * use this method - {@code clearCovering()} would zero {@code
+     * coverCount} and the next {@code commit()}'s {@code
+     * captureCoverEndOffsets} would short-circuit, dropping the cover
+     * footer from the published chain entry.
+     */
+    public void releaseCoveredColumnReadMappings() {
+        unmapCoveredColumnReads();
+        this.coveredColumnAddrs.clear();
+        this.coveredColumnAuxAddrs.clear();
+    }
+
     @Override
     public void rollbackConditionally(long row) {
         if (row < 0) {
@@ -1214,6 +1330,14 @@ public class PostingIndexWriter implements IndexWriter {
                 recordPostingSealPurge(oldSealTxn);
             }
         }
+
+        // Pair with sealFull/sealIncremental's path-based sync block: those
+        // sync sealValueMem + sidecar + .pci only when partitionPath is set;
+        // syncing .pk while .pv is still in mmap dirty pages would let a
+        // power-loss reader see chain entries that reference unflushed data.
+        if (partitionPath.size() > 0 && keyMem.isOpen()) {
+            keyMem.sync(false);
+        }
     }
 
     @Override
@@ -1236,6 +1360,24 @@ public class PostingIndexWriter implements IndexWriter {
     @Override
     public void setMaxValue(long maxValue) {
         this.maxValue = maxValue;
+        if (pendingDiscardOldSealTxn >= 0) {
+            // discardForRebuild preserved the OLD chain head on disk for
+            // concurrent readers and rotated valueMem to a fresh sealTxn,
+            // but chain.headEntryOffset still points at the OLD entry.
+            // Calling updateHeadMaxValue here would overwrite that
+            // entry's MAX_VALUE field while leaving its other fields
+            // (GEN_COUNT, KEY_COUNT, VALUE_MEM_SIZE, gen-dir slots,
+            // cover footer) describing the pre-rebuild state -- the
+            // OLD entry would become self-inconsistent and stay
+            // visible to snapshot-isolated readers walking the prev
+            // chain after the upcoming commit() turns it into a prev.
+            // The next flushAllPending takes the appendNewEntry branch
+            // (rotated sealTxn > head.sealTxn) and stamps maxValue
+            // into the FRESH entry's header from the in-memory mirror
+            // updated above, so skipping the on-disk republish here is
+            // safe.
+            return;
+        }
         // The head entry's MAX_VALUE field is mutable while the entry is
         // the head of the chain (single-writer, aligned 8-byte store is
         // atomic). updateHeadMaxValue also republishes the chain header so
@@ -1560,6 +1702,31 @@ public class PostingIndexWriter implements IndexWriter {
         Unsafe.setMemory(pendingCountsAddr, countBufSize, (byte) 0);
 
         activeKeyIds = new int[keyCapacity];
+    }
+
+    /**
+     * Refresh {@link #coverEndOffsetsScratch} so it has exactly {@code coverCount}
+     * entries and each slot reflects the current append offset of the matching
+     * {@code sidecarMems} entry (or 0 when the slot is tombstoned / unopened).
+     * The result is the authoritative valid-byte extent of each .pcN at the
+     * moment the chain entry is republished.
+     */
+    private void captureCoverEndOffsets() {
+        coverEndOffsetsScratch.clear();
+        if (coverCount <= 0) {
+            return;
+        }
+        coverEndOffsetsScratch.setPos(coverCount);
+        for (int c = 0; c < coverCount; c++) {
+            long endOffset = 0L;
+            if (c < sidecarMems.size()) {
+                MemoryMARW mem = sidecarMems.getQuick(c);
+                if (mem != null && mem.isOpen()) {
+                    endOffset = mem.getAppendOffset();
+                }
+            }
+            coverEndOffsetsScratch.setQuick(c, endOffset);
+        }
     }
 
     private void closeSidecarMems() {
@@ -2169,6 +2336,16 @@ public class PostingIndexWriter implements IndexWriter {
                 /* overrideMaxKey */ maxKey
         );
 
+        // Record the OLD .pv's purge if discardForRebuild rotated sealTxn
+        // before this flush. The chain shape is now [REBUILD@new, OLD@old]
+        // so recordPostingSealPurge sees second.txnAtSeal = OLD.txnAtSeal
+        // and head.txnAtSeal = REBUILD.txnAtSeal, producing the correct
+        // [OLD.txnAtSeal, REBUILD.txnAtSeal) window.
+        if (pendingDiscardOldSealTxn >= 0) {
+            recordPostingSealPurge(pendingDiscardOldSealTxn);
+            pendingDiscardOldSealTxn = -1L;
+        }
+
         // Clear only the active keys' pending counts (not the entire array)
         for (int i = 0; i < activeKeyCount; i++) {
             int key = activeKeyIds[i];
@@ -2650,6 +2827,114 @@ public class PostingIndexWriter implements IndexWriter {
             throw e;
         } finally {
             path.trimTo(plen);
+        }
+    }
+
+    /**
+     * Persist the writer's in-memory state to the v2 chain. Writes the
+     * supplied gen-dir entry to the right slot, then either extends the
+     * head entry (when the .pv file matches the head's sealTxn) or
+     * appends a brand-new chain entry (when {@code sealTxn} has just
+     * advanced past the head's sealTxn, i.e. a path-based seal).
+     * <p>
+     * The new entry's bytes go to {@code chain.getRegionLimit()}; the
+     * extended head entry's bytes mutate at {@code chain.getHeadEntryOffset()}.
+     * In both cases the chain header is republished under its A/B seqlock so
+     * concurrent readers observe a consistent snapshot.
+     *
+     * @param newGenCount        gen-dir entry count after the publish
+     * @param overrideGenIndex   slot to write the new gen-dir entry to
+     * @param overrideFileOffset {@code .pv} offset of the new gen
+     * @param overrideSize       byte size of the new gen
+     * @param overrideKeyCount   distinct keys in the new gen (negative for sparse)
+     * @param overrideMinKey     min key in the new gen
+     * @param overrideMaxKey     max key in the new gen
+     */
+    private void publishToChain(int newGenCount, int overrideGenIndex,
+                                long overrideFileOffset, long overrideSize,
+                                int overrideKeyCount, int overrideMinKey, int overrideMaxKey) {
+        // The writer's sealTxn always points at the .pv file currently
+        // mapped through valueMem. When chain.getHeadSealTxn() == sealTxn
+        // (head matches the same .pv file) we extend the head entry. When
+        // sealTxn advances past the head's sealTxn (a seal switched .pv),
+        // we append a fresh entry. The same applies to the empty-chain
+        // case (headSealTxn = -1 < sealTxn): first flush after init/
+        // truncate. The comparison is against the head's sealTxn rather
+        // than chain.getGenCounter() because recoveryDropAbandoned can
+        // leave the chain with headSealTxn < genCounter (the dropped
+        // sealTxn .pv files are still on disk awaiting purge, so
+        // genCounter cannot be safely rewound). Using genCounter here
+        // would force a newEntry append at this.sealTxn = head.sealTxn,
+        // tripping the appendNewEntry monotonicity assertion.
+        boolean newEntry = !chain.hasHead() || this.sealTxn != chain.getHeadSealTxn();
+        long entryBase = newEntry ? chain.getRegionLimit() : chain.getHeadEntryOffset();
+
+        long dirOffset = PostingIndexChainEntry.resolveGenDirOffset(entryBase, overrideGenIndex);
+        keyMem.putLong(dirOffset + GEN_DIR_OFFSET_FILE_OFFSET, overrideFileOffset);
+        keyMem.putLong(dirOffset + GEN_DIR_OFFSET_SIZE, overrideSize);
+        keyMem.putInt(dirOffset + PostingIndexUtils.GEN_DIR_OFFSET_KEY_COUNT, overrideKeyCount);
+        keyMem.putInt(dirOffset + PostingIndexUtils.GEN_DIR_OFFSET_MIN_KEY, overrideMinKey);
+        keyMem.putInt(dirOffset + PostingIndexUtils.GEN_DIR_OFFSET_MAX_KEY, overrideMaxKey);
+
+        // Snapshot the current append offset of each open sidecar. Tombstoned
+        // and not-yet-opened slots publish 0; readers treat them as "no file
+        // / nothing to map", consistent with how isCoveredAvailable handles
+        // missing sidecars.
+        captureCoverEndOffsets();
+
+        if (newEntry) {
+            // pendingTxnAtSeal supplied by the upstream caller is the
+            // table _txn this seal's chain entry should be tagged with.
+            // The required value depends on the context:
+            //   - commit-in-progress paths (TableWriter syncColumns,
+            //     sealPostingIndexesForO3Partitions, ALTER ADD COLUMN/INDEX
+            //     index build): txnAtSeal = txWriter.getTxn() + 1, so a
+            //     writer-open recovery walk after a partial-publish
+            //     failure can drop entries with txnAtSeal > committedTxn.
+            //   - current-state paths (switchPartitionToLast rollback,
+            //     IndexBuilder REINDEX, TableSnapshotRestore, the O3
+            //     covering rebuildSidecars branch): txnAtSeal = current
+            //     committed _txn, so recovery does NOT drop the
+            //     legitimately published entry on the next reopen.
+            //   - WAL fast-lag commit
+            //     (publishPostingIndexesForLastPartitionFastLag): commit
+            //     is in-progress, but txnAtSeal = txWriter.getTxn() (the
+            //     pre-commit committed txn), NOT getTxn()+1. The chain
+            //     walk therefore does NOT drop a partial entry on the
+            //     next reopen. That is fine because the partition stays
+            //     attached: openPartition runs
+            //     rollbackConditionally(committed transientRowCount) on
+            //     each posting writer, which evicts the orphan rowids
+            //     directly. Contrast with switchPartition, where the
+            //     retired partition is not reopened and the chain walk
+            //     is the only recovery -- hence its getTxn()+1 tag.
+            //     Note also that commit() takes the extendHead branch
+            //     while a chain head exists, so this value only ends up
+            //     on disk on the first commit after a fresh / truncated
+            //     chain.
+            // -1 (unset) means the caller didn't wire the setter; fall
+            // back to txnAtSeal=0 so the entry is visible to every pinned
+            // reader. The recovery walk cannot drop a 0-tagged entry
+            // (predicate `0 > committedTxn` never fires), so a partial
+            // publish on this path turns into an undroppable orphan. The
+            // wiring in TableWriter eliminates this for the production
+            // paths that matter; this fallback exists only for legacy
+            // test fixtures and the no-arg of(...) used by O3CopyJob.
+            long txnAtSeal = pendingTxnAtSeal >= 0 ? pendingTxnAtSeal : 0L;
+            chain.appendNewEntry(
+                    keyMem,
+                    /* sealTxn */ this.sealTxn,
+                    /* txnAtSeal */ txnAtSeal,
+                    /* valueMemSize */ valueMemSize,
+                    /* maxValue */ maxValue,
+                    /* keyCount */ keyCount,
+                    /* genCount */ newGenCount,
+                    /* blockCapacity */ blockCapacity,
+                    /* coveringFormat */ 0,
+                    coverEndOffsetsScratch
+            );
+        } else {
+            chain.extendHead(keyMem, newGenCount, keyCount, valueMemSize, maxValue, coverEndOffsetsScratch);
         }
     }
 
@@ -3470,6 +3755,24 @@ public class PostingIndexWriter implements IndexWriter {
         hasSpillData = false;
     }
 
+    private void rollbackToMaxValue(long maxValue) {
+        // Rollback writes to a NEW .pv file (like seal) so concurrent readers
+        // with active mmaps on the old .pv don't SIGSEGV. Allocate the rollback
+        // sealTxn the same way seal() does so the new .pv stays distinct from
+        // any prior sealed generation on disk.
+        // peekNextSealTxn(), not sealTxn+1: after a recovery drop the
+        // writer's sealTxn lags genCounter, and reusing a dropped
+        // sealTxn would race the still-pending .pv purge.
+        final long oldSealTxn = sealTxn;
+        final long newSealTxn = Math.max(1, chain.peekNextSealTxn());
+        reencodeAllGenerations(newSealTxn, maxValue, maxValue);
+        // Skip when reencode bypassed via truncate(): that path already
+        // recorded its own purge entry.
+        if (sealTxn != oldSealTxn) {
+            recordPostingSealPurge(oldSealTxn);
+        }
+    }
+
     /**
      * Run the v2 chain recovery walk if {@link #setCurrentTableTxn} was
      * called with a non-negative value before this {@code of(...)}. Drops
@@ -3515,24 +3818,6 @@ public class PostingIndexWriter implements IndexWriter {
             scheduleOrphanPurge(orphanSealTxn);
         }
         recoveryOrphanScratch.clear();
-    }
-
-    private void rollbackToMaxValue(long maxValue) {
-        // Rollback writes to a NEW .pv file (like seal) so concurrent readers
-        // with active mmaps on the old .pv don't SIGSEGV. Allocate the rollback
-        // sealTxn the same way seal() does so the new .pv stays distinct from
-        // any prior sealed generation on disk.
-        // peekNextSealTxn(), not sealTxn+1: after a recovery drop the
-        // writer's sealTxn lags genCounter, and reusing a dropped
-        // sealTxn would race the still-pending .pv purge.
-        final long oldSealTxn = sealTxn;
-        final long newSealTxn = Math.max(1, chain.peekNextSealTxn());
-        reencodeAllGenerations(newSealTxn, maxValue, maxValue);
-        // Skip when reencode bypassed via truncate() — that path already
-        // recorded its own purge entry.
-        if (sealTxn != oldSealTxn) {
-            recordPostingSealPurge(oldSealTxn);
-        }
     }
 
     /**
@@ -4064,123 +4349,6 @@ public class PostingIndexWriter implements IndexWriter {
 
         long headerAddr = sealTarget.addressOf(headerFilePos);
         Unsafe.copyMemory(localHeaderBuf, headerAddr, deltaHeaderSize);
-    }
-
-    /**
-     * Persist the writer's in-memory state to the v2 chain. Writes the
-     * supplied gen-dir entry to the right slot, then either extends the
-     * head entry (when the .pv file matches the head's sealTxn) or
-     * appends a brand-new chain entry (when {@code sealTxn} has just
-     * advanced past the head's sealTxn — i.e. a path-based seal).
-     * <p>
-     * The new entry's bytes go to {@code chain.getRegionLimit()}; the
-     * extended head entry's bytes mutate at {@code chain.getHeadEntryOffset()}.
-     * In both cases the chain header is republished under its A/B seqlock so
-     * concurrent readers observe a consistent snapshot.
-     *
-     * @param newGenCount        gen-dir entry count after the publish
-     * @param overrideGenIndex   slot to write the new gen-dir entry to
-     * @param overrideFileOffset {@code .pv} offset of the new gen
-     * @param overrideSize       byte size of the new gen
-     * @param overrideKeyCount   distinct keys in the new gen (negative for sparse)
-     * @param overrideMinKey     min key in the new gen
-     * @param overrideMaxKey     max key in the new gen
-     */
-    private void publishToChain(int newGenCount, int overrideGenIndex,
-                                long overrideFileOffset, long overrideSize,
-                                int overrideKeyCount, int overrideMinKey, int overrideMaxKey) {
-        // The writer's sealTxn always points at the .pv file currently
-        // mapped through valueMem. When chain.getHeadSealTxn() == sealTxn
-        // (head matches the same .pv file) we extend the head entry. When
-        // sealTxn advances past the head's sealTxn (a seal switched .pv),
-        // we append a fresh entry. The same applies to the empty-chain
-        // case (headSealTxn = -1 < sealTxn) — first flush after init/
-        // truncate. The comparison is against the head's sealTxn rather
-        // than chain.getGenCounter() because recoveryDropAbandoned can
-        // leave the chain with headSealTxn < genCounter (the dropped
-        // sealTxn .pv files are still on disk awaiting purge, so
-        // genCounter cannot be safely rewound). Using genCounter here
-        // would force a newEntry append at this.sealTxn = head.sealTxn,
-        // tripping the appendNewEntry monotonicity assertion.
-        boolean newEntry = !chain.hasHead() || this.sealTxn != chain.getHeadSealTxn();
-        long entryBase = newEntry ? chain.getRegionLimit() : chain.getHeadEntryOffset();
-
-        long dirOffset = PostingIndexChainEntry.resolveGenDirOffset(entryBase, overrideGenIndex);
-        keyMem.putLong(dirOffset + GEN_DIR_OFFSET_FILE_OFFSET, overrideFileOffset);
-        keyMem.putLong(dirOffset + GEN_DIR_OFFSET_SIZE, overrideSize);
-        keyMem.putInt(dirOffset + PostingIndexUtils.GEN_DIR_OFFSET_KEY_COUNT, overrideKeyCount);
-        keyMem.putInt(dirOffset + PostingIndexUtils.GEN_DIR_OFFSET_MIN_KEY, overrideMinKey);
-        keyMem.putInt(dirOffset + PostingIndexUtils.GEN_DIR_OFFSET_MAX_KEY, overrideMaxKey);
-
-        // Snapshot the current append offset of each open sidecar. Tombstoned
-        // and not-yet-opened slots publish 0 — readers treat them as "no file
-        // / nothing to map", consistent with how isCoveredAvailable handles
-        // missing sidecars.
-        captureCoverEndOffsets();
-
-        if (newEntry) {
-            // pendingTxnAtSeal supplied by the upstream caller is the
-            // table _txn this seal's chain entry should be tagged with.
-            // The required value depends on the context:
-            //   - commit-in-progress paths (TableWriter syncColumns,
-            //     sealPostingIndexesForO3Partitions, ALTER ADD COLUMN/INDEX
-            //     index build): txnAtSeal = txWriter.getTxn() + 1, so a
-            //     writer-open recovery walk after a partial-publish
-            //     failure can drop entries with txnAtSeal > committedTxn.
-            //   - current-state paths (switchPartitionToLast rollback,
-            //     IndexBuilder REINDEX, TableSnapshotRestore, the O3
-            //     covering rebuildSidecars branch): txnAtSeal = current
-            //     committed _txn, so recovery does NOT drop the
-            //     legitimately published entry on the next reopen.
-            // -1 (unset) means the caller didn't wire the setter; fall
-            // back to txnAtSeal=0 so the entry is visible to every pinned
-            // reader. The recovery walk cannot drop a 0-tagged entry
-            // (predicate `0 > committedTxn` never fires), so a partial
-            // publish on this path turns into an undroppable orphan. The
-            // wiring in TableWriter eliminates this for the production
-            // paths that matter; this fallback exists only for legacy
-            // test fixtures and the no-arg of(...) used by O3CopyJob.
-            long txnAtSeal = pendingTxnAtSeal >= 0 ? pendingTxnAtSeal : 0L;
-            chain.appendNewEntry(
-                    keyMem,
-                    /* sealTxn */ this.sealTxn,
-                    /* txnAtSeal */ txnAtSeal,
-                    /* valueMemSize */ valueMemSize,
-                    /* maxValue */ maxValue,
-                    /* keyCount */ keyCount,
-                    /* genCount */ newGenCount,
-                    /* blockCapacity */ blockCapacity,
-                    /* coveringFormat */ 0,
-                    coverEndOffsetsScratch
-            );
-        } else {
-            chain.extendHead(keyMem, newGenCount, keyCount, valueMemSize, maxValue, coverEndOffsetsScratch);
-        }
-    }
-
-    /**
-     * Refresh {@link #coverEndOffsetsScratch} so it has exactly {@code coverCount}
-     * entries and each slot reflects the current append offset of the matching
-     * {@code sidecarMems} entry (or 0 when the slot is tombstoned / unopened).
-     * The result is the authoritative valid-byte extent of each .pcN at the
-     * moment the chain entry is republished.
-     */
-    private void captureCoverEndOffsets() {
-        coverEndOffsetsScratch.clear();
-        if (coverCount <= 0) {
-            return;
-        }
-        coverEndOffsetsScratch.setPos(coverCount);
-        for (int c = 0; c < coverCount; c++) {
-            long endOffset = 0L;
-            if (c < sidecarMems.size()) {
-                MemoryMARW mem = sidecarMems.getQuick(c);
-                if (mem != null && mem.isOpen()) {
-                    endOffset = mem.getAppendOffset();
-                }
-            }
-            coverEndOffsetsScratch.setQuick(c, endOffset);
-        }
     }
 
     private void writePackedStride(int ks, int[] keyCounts, long[] keyOffsets,
