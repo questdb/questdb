@@ -366,10 +366,6 @@ public class PostingIndexWriter implements IndexWriter {
                 chain.resetState();
                 partitionPath.clear();
                 indexName.clear();
-                o3CtxPartitionPath.clear();
-                o3CtxName.clear();
-                o3CtxColumnNameTxn = 0;
-                o3CtxUpcomingTxn = -1L;
             }
         }
     }
