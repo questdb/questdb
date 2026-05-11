@@ -1360,11 +1360,20 @@ public class SqlParser {
                 tok = tok(lexer, "next clause or 'as'");
             } else if (isPartitionKeyword(tok)) {
                 expectTok(lexer, "by");
-                tok = tok(lexer, "year month week day hour none");
+                tok = tok(lexer, "year month week day hour");
                 int partPos = lexer.lastTokenPosition();
                 int partitionBy = PartitionBy.fromString(tok);
                 if (partitionBy < 0) {
-                    throw SqlException.$(partPos, "'NONE', 'HOUR', 'DAY', 'WEEK', 'MONTH' or 'YEAR' expected");
+                    throw SqlException.$(partPos, "'HOUR', 'DAY', 'WEEK', 'MONTH' or 'YEAR' expected");
+                }
+                // The LV's on-disk tier is a WAL-backed table, and WAL tables
+                // require a partition scheme. Explicit PARTITION BY NONE would
+                // fail downstream with a confusing "WAL is only supported for
+                // partitioned tables" error; reject up front with an LV-specific
+                // message instead.
+                if (partitionBy == PartitionBy.NONE) {
+                    throw SqlException.$(partPos,
+                            "live view PARTITION BY NONE is not supported; live views must be partitioned");
                 }
                 builder.setPartitionBy(partitionBy);
                 tok = tok(lexer, "next clause or 'as'");

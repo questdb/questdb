@@ -1808,6 +1808,68 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testRejectExplicitPartitionByNone() throws Exception {
+        // Regression: the parser sentinel for "PARTITION BY omitted" used to be
+        // PartitionBy.NONE — the same value the user-facing grammar produces for
+        // explicit PARTITION BY NONE. LiveViewTableStructure.resolvePartitionBy
+        // collapsed both into the base table's scheme, so a user asking for "no
+        // partitioning on the LV" silently got the base's scheme instead.
+        // Honouring the user's choice instead would fail downstream with the
+        // generic "WAL is only supported for partitioned tables"; the LV's
+        // WAL-backed on-disk tier requires a partition scheme. Reject up front
+        // with an LV-specific message at parse time.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            try {
+                execute("CREATE LIVE VIEW lv FLUSH EVERY 1s PARTITION BY NONE AS " +
+                        "SELECT ts, x, row_number() OVER () AS rn FROM base WHERE x > 0");
+                Assert.fail("expected SqlException rejecting PARTITION BY NONE");
+            } catch (SqlException e) {
+                Assert.assertTrue(
+                        "wrong message [msg=" + e.getFlyweightMessage() + ']',
+                        Chars.contains(e.getFlyweightMessage(),
+                                "live view PARTITION BY NONE is not supported")
+                );
+            }
+            // Confirm no partial-CREATE residue: re-creating with a valid scheme works.
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 1s AS " +
+                    "SELECT ts, x, row_number() OVER () AS rn FROM base WHERE x > 0");
+            execute("DROP LIVE VIEW lv");
+        });
+    }
+
+    @Test
+    public void testShowCreateEmitsResolvedPartitionByForDefault() throws Exception {
+        // When PARTITION BY is omitted, the LV inherits the base's scheme. SHOW
+        // CREATE emits the resolved value (not a missing clause), so re-executing
+        // the output produces an LV with the same partition scheme regardless of
+        // any later change to the base.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 1s AS " +
+                    "SELECT ts, x, row_number() OVER () AS rn FROM base WHERE x > 0");
+
+            LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("lv");
+            Assert.assertNotNull(instance);
+            Assert.assertEquals(
+                    "omitted PARTITION BY must inherit base's DAY scheme",
+                    io.questdb.cairo.PartitionBy.DAY,
+                    instance.getDefinition().getPartitionBy()
+            );
+
+            assertSql(
+                    "ddl\n" +
+                            "CREATE LIVE VIEW 'lv' FLUSH EVERY 1s IN MEMORY 1s PARTITION BY DAY AS (\n" +
+                            "SELECT ts, x, row_number() OVER () AS rn FROM base WHERE x > 0\n" +
+                            ");\n",
+                    "SHOW CREATE LIVE VIEW lv"
+            );
+
+            execute("DROP LIVE VIEW lv");
+        });
+    }
+
+    @Test
     public void testAcceptAnchorExpression() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE base (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");

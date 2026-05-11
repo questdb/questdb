@@ -28,7 +28,6 @@ import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.GenericRecordMetadata;
 import io.questdb.cairo.MicrosTimestampDriver;
-import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.file.AppendableBlock;
 import io.questdb.cairo.file.BlockFileReader;
@@ -422,24 +421,6 @@ public class LiveViewDefinition {
 
     public long getViewLowerBoundTimestamp() {
         return viewLowerBoundTimestamp;
-    }
-
-
-    /**
-     * Phase 1 has no ALTER LIVE VIEW, so {@link PartitionBy#NONE} stays as a sentinel
-     * meaning "inherit base partition scheme". Resolved at CREATE against the base table
-     * once the token is known.
-     */
-    public boolean inheritsPartitionByFromBase() {
-        return partitionBy == PartitionBy.NONE;
-    }
-
-    public static int defaultPartitionBy() {
-        // No PartitionBy.NONE constant means "inherit"; we use a NONE-shaped sentinel.
-        // PartitionBy.NONE itself maps to "no partitioning at all", so be explicit at
-        // CREATE: callers that want the inherit semantics must pass NONE here and the
-        // engine resolves later.
-        return PartitionBy.NONE;
     }
 
     /**

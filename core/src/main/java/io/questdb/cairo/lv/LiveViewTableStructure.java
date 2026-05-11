@@ -27,8 +27,8 @@ package io.questdb.cairo.lv;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.GenericRecordMetadata;
 import io.questdb.cairo.IndexType;
-import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.TableStructure;
+import io.questdb.std.Numbers;
 
 /**
  * Adapts a live view's metadata to {@link TableStructure} so the engine can
@@ -139,12 +139,15 @@ public class LiveViewTableStructure implements TableStructure {
     }
 
     /**
-     * Returns the default partition scheme used when {@code PARTITION BY} is omitted at
-     * CREATE. The caller resolves "inherit" by reading the base table's metadata before
-     * constructing the structure.
+     * Resolves an LV's partition scheme at CREATE. {@code explicit} comes from
+     * the parser via {@code CreateLiveViewOperation.getPartitionBy()} and is
+     * {@code Numbers.INT_NULL} when the user omitted the {@code PARTITION BY}
+     * clause; in that case we inherit {@code baseTablePartitionBy}. Any other
+     * value (including {@code PartitionBy.NONE} for explicit "no partitioning")
+     * is honoured as-is.
      */
     public static int resolvePartitionBy(int explicit, int baseTablePartitionBy) {
-        if (explicit == PartitionBy.NONE) {
+        if (explicit == Numbers.INT_NULL) {
             return baseTablePartitionBy;
         }
         return explicit;

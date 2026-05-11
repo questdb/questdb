@@ -193,9 +193,12 @@ public class ShowCreateLiveViewRecordCursorFactory extends AbstractRecordCursorF
                 sink.putAscii(" IN MEMORY ").put(inMemoryValue);
                 appendUnitGrammar(inMemoryUnit);
             }
-            if (partitionBy != io.questdb.cairo.PartitionBy.NONE) {
-                sink.putAscii(" PARTITION BY ").put(io.questdb.cairo.PartitionBy.toString(partitionBy));
-            }
+            // Always emit PARTITION BY: the persisted value is the resolved scheme
+            // (parser sentinel collapsed at CREATE), so the round-trip target is
+            // whatever the LV actually has on disk. Includes the explicit
+            // PARTITION BY NONE case, which would otherwise round-trip to base's
+            // scheme if the clause were omitted from SHOW CREATE.
+            sink.putAscii(" PARTITION BY ").put(io.questdb.cairo.PartitionBy.toString(partitionBy));
             sink.putAscii(" AS (\n")
                     .put(viewSql)
                     .putAscii('\n');

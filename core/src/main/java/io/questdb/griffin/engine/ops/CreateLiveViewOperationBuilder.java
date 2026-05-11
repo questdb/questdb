@@ -24,11 +24,11 @@
 
 package io.questdb.griffin.engine.ops;
 
-import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.lv.LiveViewDefinition;
 import io.questdb.griffin.model.ExecutionModel;
 import io.questdb.griffin.model.IQueryModel;
 import io.questdb.std.Mutable;
+import io.questdb.std.Numbers;
 import org.jetbrains.annotations.Nullable;
 
 public class CreateLiveViewOperationBuilder implements ExecutionModel, Mutable {
@@ -39,8 +39,13 @@ public class CreateLiveViewOperationBuilder implements ExecutionModel, Mutable {
     private boolean ignoreIfExists;
     private long inMemoryInterval;
     private char inMemoryIntervalUnit;
-    // PartitionBy.NONE means "inherit from base"; resolved at CREATE in CairoEngine.
-    private int partitionBy = PartitionBy.NONE;
+    // Numbers.INT_NULL means "user did not specify PARTITION BY; inherit from base."
+    // Cannot reuse PartitionBy.NONE as the sentinel because the user-facing grammar
+    // accepts PARTITION BY NONE as the explicit "no partitioning" choice — collapsing
+    // the two would silently override an explicit NONE with the base's scheme.
+    // CairoEngine.createLiveView resolves this to a real PartitionBy value before
+    // persisting to _lv.
+    private int partitionBy = Numbers.INT_NULL;
     private IQueryModel selectModel;
     private String selectSql;
     private String viewName;
@@ -71,7 +76,7 @@ public class CreateLiveViewOperationBuilder implements ExecutionModel, Mutable {
         flushEveryIntervalUnit = 0;
         inMemoryInterval = 0;
         inMemoryIntervalUnit = 0;
-        partitionBy = PartitionBy.NONE;
+        partitionBy = Numbers.INT_NULL;
         selectModel = null;
         selectSql = null;
         viewName = null;
