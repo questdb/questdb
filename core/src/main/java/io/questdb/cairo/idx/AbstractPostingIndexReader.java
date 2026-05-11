@@ -82,6 +82,15 @@ public abstract class AbstractPostingIndexReader implements IndexReader {
     protected long columnTop;
     protected int coverCount;
     protected boolean[] coveredAvailable;
+    // Highest row id the picked chain entry's index data covers
+    // (V2_ENTRY_OFFSET_MAX_VALUE). Cursor reads must not surface row ids
+    // beyond this value: the writer can leave dirty entries in .pv past
+    // the chain's tracked maxValue (e.g. after an O3 split shrinks the
+    // partition before the next reseal evicts them).
+    // readIndexMetadataFromChain() refreshes this field on each success;
+    // -1 indicates the picker has no visible chain entry, in which case
+    // the cursor degrades to the empty path and ignores entryMaxValue.
+    protected long entryMaxValue = -1L;
     protected int genCount;
     protected int keyCount;
     protected RecordMetadata metadata;
@@ -123,6 +132,7 @@ public abstract class AbstractPostingIndexReader implements IndexReader {
         genCount = 0;
         valueMemSize = -1;
         chainSequence = 0;
+        entryMaxValue = -1L;
         headEntryOffset = PostingIndexUtils.V2_NO_HEAD;
         pinnedTableTxn = Long.MAX_VALUE;
     }
@@ -131,6 +141,13 @@ public abstract class AbstractPostingIndexReader implements IndexReader {
     public int collectDistinctKeys(DirectBitSet foundKeys) {
         if (genCount == 0 || keyCount == 0) {
             return 0;
+        }
+        if (entryMaxValue >= 0) {
+            // The key-directory fast path can only tell that a key has encoded
+            // row ids somewhere in .pv; it cannot tell whether all of them sit
+            // past the picked chain entry's MAX_VALUE. Use the ranged scanner
+            // so full-partition DISTINCT observes the same clamp as cursors.
+            return collectDistinctKeysInRange(foundKeys, 0, Long.MAX_VALUE);
         }
         int newlyFound = 0;
         for (int g = 0; g < genCount; g++) {
@@ -148,6 +165,16 @@ public abstract class AbstractPostingIndexReader implements IndexReader {
     @Override
     public int collectDistinctKeysInRange(DirectBitSet foundKeys, long rowLo, long rowHi) {
         if (genCount == 0 || keyCount == 0) {
+            return 0;
+        }
+        // Clamp rowHi to the picked chain entry's MAX_VALUE for the same
+        // reason PostingIndexFwdReader#getCursor does: dirty (key, rowId)
+        // pairs in .pv past the entry's coverage must not surface as
+        // keys "present in range".
+        if (entryMaxValue >= 0 && rowHi > entryMaxValue) {
+            rowHi = entryMaxValue;
+        }
+        if (rowHi < rowLo) {
             return 0;
         }
         int newlyFound = 0;
@@ -752,6 +779,7 @@ public abstract class AbstractPostingIndexReader implements IndexReader {
 
                 this.headEntryOffset = entryScratch.offset;
                 this.chainSequence = headerScratch.sequence;
+                this.entryMaxValue = entryScratch.maxValue;
                 this.valueMemSize = entryScratch.valueMemSize;
                 this.keyCount = entryScratch.keyCount;
                 this.genCount = entryScratch.genCount;
@@ -776,6 +804,7 @@ public abstract class AbstractPostingIndexReader implements IndexReader {
             // the .pv file in of().
             this.headEntryOffset = PostingIndexUtils.V2_NO_HEAD;
             this.chainSequence = headerScratch.sequence;
+            this.entryMaxValue = -1L;
             this.valueMemSize = 0;
             this.keyCount = 0;
             this.genCount = 0;
@@ -1197,6 +1226,12 @@ public abstract class AbstractPostingIndexReader implements IndexReader {
         public long size() {
             if (requestedKey < 0) {
                 return 0;
+            }
+            if (entryMaxValue >= 0) {
+                // Raw per-gen counts do not know whether encoded row ids sit
+                // past the chain entry's tracked coverage. Decline the fast
+                // path so callers count via the same clamped hasNext() path.
+                return -1;
             }
             long total = 0;
             for (int g = 0; g < cursorGenCount; g++) {
