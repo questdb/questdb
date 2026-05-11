@@ -942,7 +942,7 @@ public class PostingIndexWriter implements IndexWriter {
 
     @Override
     public void openFromO3Context(boolean init) {
-        assert o3CtxPartitionPath.size() > 0 && o3CtxName.length() > 0
+        assert o3CtxPartitionPath.size() > 0 && !o3CtxName.isEmpty()
                 : "setO3PathContext must be called before openFromO3Context";
         Path p = Path.getThreadLocal(o3CtxPartitionPath);
         of(p, o3CtxName, o3CtxColumnNameTxn, init);
@@ -2202,7 +2202,6 @@ public class PostingIndexWriter implements IndexWriter {
             int naturalBitWidth = strideRange <= 0 ? 1 : BitpackUtils.bitsNeeded(strideRange);
             int alignedBitWidth = maybeAlignBitWidth(naturalBitWidth, alignedBitWidthThreshold);
             int naturalFlatDataSize = BitpackUtils.packedDataSize(totalStrideValues, naturalBitWidth);
-            int naturalFlatSize = flatHeaderSize + naturalFlatDataSize;
 
             if (alignedBitWidth != naturalBitWidth) {
                 int alignedFlatDataSize = BitpackUtils.packedDataSize(totalStrideValues, alignedBitWidth);
@@ -2344,8 +2343,7 @@ public class PostingIndexWriter implements IndexWriter {
      * The valueMem and sealValueMem mappings do not count: their RSS
      * footprint is paged in/out by the OS, bounded by working set rather
      * than file size. Same for keyMem and the sidecar mmaps. Anonymous-
-     * heap mallocs do count -- those are what
-     * {@link Unsafe#checkAllocLimit} gates.
+     * heap mallocs do count -- those are what gates.
      */
     private long estimateFastPathPeakBytes(int maxStrideTotal, int maxKeyCount, long maxStrideTrialSize, long maxColValueSize) {
         long peak = 2L * maxStrideTotal * Long.BYTES;                  // strideVals + packedResiduals
@@ -2539,7 +2537,7 @@ public class PostingIndexWriter implements IndexWriter {
                     if (needed > curCap) {
                         // Long-arithmetic doubling, see spillKey for rationale.
                         long doubled = (long) curCap * 2L;
-                        long want = Math.max((long) needed, doubled);
+                        long want = Math.max(needed, doubled);
                         if (want > Integer.MAX_VALUE) {
                             throw CairoException.critical(0)
                                     .put("posting index spill capacity exceeds 2^31 entries [key=").put(key)
@@ -2745,7 +2743,6 @@ public class PostingIndexWriter implements IndexWriter {
             long localHeaderBuf = 0;
             long bpTrialBuf = 0;
             long bpTrialBufSize = 0;
-            int[] bpKeySizes = strideBpKeySizes;
             int[] keyCounts = strideKeyCounts;
             long[] keyOffsets = strideKeyOffsets;
 
@@ -2805,7 +2802,7 @@ public class PostingIndexWriter implements IndexWriter {
 
                     long strideOff = valueMem.getAppendOffset() - genOffset - siSize;
                     Unsafe.putLong(strideIndexBuf + (long) s * Long.BYTES, strideOff);
-                    encodeStrideBlock(ks, keyCounts, keyOffsets, strideValsAddr, bpKeySizes, bpTrialBuf, localHeaderBuf);
+                    encodeStrideBlock(ks, keyCounts, keyOffsets, strideValsAddr, strideBpKeySizes, bpTrialBuf, localHeaderBuf);
                 }
 
                 long totalStrideBlocksSize = valueMem.getAppendOffset() - genOffset - siSize;
@@ -3023,7 +3020,7 @@ public class PostingIndexWriter implements IndexWriter {
     private void growKeyBuffers(int minCapacity) {
         // Long-arithmetic doubling, see spillKey for rationale.
         long doubled = (long) keyCapacity * 2L;
-        long want = Math.max((long) minCapacity, doubled);
+        long want = Math.max(minCapacity, doubled);
         if (want > Integer.MAX_VALUE) {
             throw CairoException.critical(0)
                     .put("posting index key capacity exceeds 2^31 [minCapacity=").put(minCapacity)
@@ -3382,8 +3379,7 @@ public class PostingIndexWriter implements IndexWriter {
      * Largest fixed-size cover column's value size in bytes, or 0 when
      * either there are no cover columns or every cover column is var-size
      * (those use a different sidecar layout that does not allocate the
-     * fixed-size per-stride sidecarBuf). Drives the cover term in
-     * {@link #estimateSealPeakBytes}.
+     * fixed-size per-stride sidecarBuf).
      */
     private long peakCoverColumnValueSize() {
         long peak = 0L;
@@ -4413,7 +4409,6 @@ public class PostingIndexWriter implements IndexWriter {
         int maxLocalHeaderSize = Math.max(maxDeltaHeaderSize, maxFlatHeaderSize);
         long localHeaderBuf = 0;
 
-        int[] bpKeySizes = strideBpKeySizes;
         int[] keyCounts = strideKeyCounts;
         long[] keyOffsets = strideKeyOffsets;
         long bpTrialBuf = 0;
@@ -4479,7 +4474,7 @@ public class PostingIndexWriter implements IndexWriter {
 
                 long strideOff = sealTarget.getAppendOffset() - sealOffset - siSize;
                 Unsafe.putLong(strideIndexBuf + (long) s * Long.BYTES, strideOff);
-                encodeStrideBlock(ks, keyCounts, keyOffsets, strideValsAddr, bpKeySizes, bpTrialBuf, localHeaderBuf);
+                encodeStrideBlock(ks, keyCounts, keyOffsets, strideValsAddr, strideBpKeySizes, bpTrialBuf, localHeaderBuf);
             }
 
             long totalStrideBlocksSize = sealTarget.getAppendOffset() - sealOffset - siSize;
@@ -5041,7 +5036,7 @@ public class PostingIndexWriter implements IndexWriter {
             // long-term ceiling and would have already fired -- but
             // assert here for the unit-test case.
             long doubled = (long) curCap * 2L;
-            long want = Math.max((long) needed, doubled);
+            long want = Math.max(needed, doubled);
             if (want > Integer.MAX_VALUE) {
                 throw CairoException.critical(0)
                         .put("posting index spill capacity exceeds 2^31 entries [key=").put(key)
