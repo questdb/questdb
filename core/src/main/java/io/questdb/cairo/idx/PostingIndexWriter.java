@@ -441,6 +441,7 @@ public class PostingIndexWriter implements IndexWriter {
     // Sync order is .pv before .pk: a torn write must never leave the chain head
     // (keyMem) pointing at unsynced gen bytes in valueMem.
     public void commitDense() {
+        assert coverCount == 0 : "commitDense writes per-gen sidecars; use seal()/commit() for covering indexes";
         flushAllPendingDense();
         int commitMode = configuration.getCommitMode();
         if (commitMode != CommitMode.NOSYNC) {

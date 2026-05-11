@@ -1130,16 +1130,16 @@ public class O3FailureTest extends AbstractO3Test {
     }
 
     private static TestFilesFacadeImpl newIndexFileFaultFF(boolean isKey) {
-        final String bitmapSuffix = "1970-01-08.17/sym." + (isKey ? "k" : "v");
-        final String postingSuffix = isKey ? "1970-01-08.17/sym.pk" : "1970-01-08.17/sym.pv.0";
+        final String bitmapSuffix = "1970-01-08.17" + Files.SEPARATOR + "sym." + (isKey ? "k" : "v");
+        final String postingSuffix = "1970-01-08.17" + Files.SEPARATOR + "sym." + (isKey ? "pk" : "pv.0");
         return new TestFilesFacadeImpl() {
-            private boolean armed = true;
+            private boolean isArmed = true;
             private long targetFd = -1;
 
             @Override
             public boolean allocate(long fd, long size) {
-                if (armed && fd == targetFd) {
-                    armed = false;
+                if (isArmed && fd == targetFd) {
+                    isArmed = false;
                     return false;
                 }
                 return super.allocate(fd, size);
@@ -1148,7 +1148,7 @@ public class O3FailureTest extends AbstractO3Test {
             @Override
             public long openRW(LPSZ name, int opts) {
                 long fd = super.openRW(name, opts);
-                if (armed && fd > -1
+                if (isArmed && fd > -1
                         && (Utf8s.endsWithAscii(name, bitmapSuffix) || Utf8s.endsWithAscii(name, postingSuffix))) {
                     targetFd = fd;
                 }
@@ -1157,8 +1157,8 @@ public class O3FailureTest extends AbstractO3Test {
 
             @Override
             public boolean truncate(long fd, long size) {
-                if (armed && size == 0 && fd == targetFd) {
-                    armed = false;
+                if (isArmed && size == 0 && fd == targetFd) {
+                    isArmed = false;
                     return false;
                 }
                 return super.truncate(fd, size);
