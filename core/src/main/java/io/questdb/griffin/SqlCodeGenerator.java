@@ -1058,7 +1058,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         }
         if (f.canPeelForTopK()) {
             RecordCursorFactory base = f.getBaseFactory();
-            return base != null && (base.supportsPageFrameCursor() || base.supportsFilterStealing());
+            return base != null && !base.canPeelForTopK() && (base.supportsPageFrameCursor() || base.supportsFilterStealing());
         }
         return false;
     }
