@@ -3952,8 +3952,8 @@ public class PostingIndexWriter implements IndexWriter {
      * After the row-id index is sealed, sidecars are written via the
      * streaming variant {@link #writeSidecarsPerColumnStreaming}.
      *
-     * @param keyBuffer    pre-allocated workspace sized to {@code maxKeyCount * 8} bytes,
-     *                     reused across keys; lifetime owned by the caller
+     * @param keyBuffer pre-allocated workspace sized to {@code maxKeyCount * 8} bytes,
+     *                  reused across keys; lifetime owned by the caller
      */
     private void reencodeWithPerKeyStreaming(
             long newSealTxn,
@@ -5710,7 +5710,7 @@ public class PostingIndexWriter implements IndexWriter {
      * {@link #reencodeWithPerKeyStreaming}, so this method only handles
      * fixed-size columns.
      *
-     * @param keyBuffer  shared per-key decode buffer (sized to {@code maxKeyCount * 8} bytes)
+     * @param keyBuffer   shared per-key decode buffer (sized to {@code maxKeyCount * 8} bytes)
      * @param maxKeyCount worst single-key count across the partition
      */
     private void writeSidecarsPerColumnStreaming(long totalCountsAddr, long keyBuffer, int maxKeyCount) {
