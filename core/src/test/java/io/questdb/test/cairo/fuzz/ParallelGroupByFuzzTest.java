@@ -485,10 +485,62 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
 
                         execute(
                                 compiler,
-                                "create table tab as (select x, x % 4 as g from long_sequence(" + ROW_COUNT + "))",
+                                "CREATE TABLE tab AS (SELECT x, x % 4 AS g FROM long_sequence(" + ROW_COUNT + "))",
                                 sqlExecutionContext);
 
                         final String query = "SELECT g, approx_percentile(x, 0.5) FROM tab GROUP BY g";
+
+                        sqlExecutionContext.setParallelGroupByEnabled(false);
+                        try {
+                            TestUtils.printSql(
+                                    engine,
+                                    sqlExecutionContext,
+                                    query,
+                                    sink);
+                        } finally {
+                            sqlExecutionContext.setParallelGroupByEnabled(
+                                    engine.getConfiguration().isSqlParallelGroupByEnabled());
+                        }
+
+                        sqlExecutionContext.setParallelGroupByEnabled(true);
+                        final StringSink parallelSink = new StringSink();
+                        try {
+                            TestUtils.printSql(
+                                    engine,
+                                    sqlExecutionContext,
+                                    query,
+                                    parallelSink);
+                        } finally {
+                            sqlExecutionContext.setParallelGroupByEnabled(
+                                    engine.getConfiguration().isSqlParallelGroupByEnabled());
+                        }
+
+                        TestUtils.assertEquals(sink, parallelSink);
+                    },
+                    configuration,
+                    LOG);
+        });
+    }
+
+    @Test
+    public void testParallelApproxPercentileFuzzWithNulls() throws Exception {
+        Assume.assumeTrue(enableParallelGroupBy);
+        assertMemoryLeak(() -> {
+            final WorkerPool pool = new WorkerPool(() -> 4);
+            TestUtils.execute(
+                    pool,
+                    (engine, compiler, sqlExecutionContext) -> {
+                        sqlExecutionContext.setJitMode(
+                                enableJitCompiler ? SqlJitMode.JIT_MODE_ENABLED : SqlJitMode.JIT_MODE_DISABLED);
+
+                        execute(
+                                compiler,
+                                "CREATE TABLE tab AS ("
+                                        + "SELECT x, x % 4 AS g, CASE WHEN x % 2 = 0 THEN x ELSE NULL END AS x_with_nulls "
+                                        + "FROM long_sequence(" + ROW_COUNT + "))",
+                                sqlExecutionContext);
+
+                        final String query = "SELECT g, approx_percentile(x_with_nulls, 0.5) FROM tab GROUP BY g ORDER BY g";
 
                         sqlExecutionContext.setParallelGroupByEnabled(false);
                         try {

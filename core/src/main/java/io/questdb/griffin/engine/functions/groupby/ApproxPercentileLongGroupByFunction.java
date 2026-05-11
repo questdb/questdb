@@ -136,7 +136,7 @@ public class ApproxPercentileLongGroupByFunction extends DoubleFunction implemen
 
     @Override
     public void initValueTypes(ArrayColumnTypes columnTypes) {
-        this.valueIndex = columnTypes.getColumnCount();
+        initValueIndex(columnTypes.getColumnCount());
         columnTypes.add(ColumnType.LONG);
     }
 
@@ -157,16 +157,7 @@ public class ApproxPercentileLongGroupByFunction extends DoubleFunction implemen
             return;
         }
 
-        long destPtr = destValue.getLong(valueIndex);
-        if (destPtr == 0) {
-            histogramA.of(0);
-            histogramB.of(srcPtr);
-            histogramA.merge(histogramB);
-            destValue.putLong(valueIndex, histogramA.ptr());
-            return;
-        }
-
-        histogramA.of(destPtr);
+        histogramA.of(destValue.getLong(valueIndex));
         histogramB.of(srcPtr);
         histogramA.merge(histogramB);
         destValue.putLong(valueIndex, histogramA.ptr());
