@@ -851,21 +851,16 @@ public class PostingIndexWriter implements IndexWriter {
                     }
                 }
 
-                // Snapshot OLD gen 0 metadata for mergeKeyValues.
+                // Snapshot OLD gen 0 metadata for mergeKeyValues. gen0KeyCount is
+                // kept signed: negative means sparse, in which case mergeKeyValues
+                // walks gen 0 via its sparse-gen loop. The diff is the only caller
+                // that reaches mergeKeyValues with a sparse gen 0 (it is the
+                // post-O3CopyJob shape: a single sparse gen produced by
+                // flushAllPending and not yet sealed).
                 long gen0DirOffset = PostingIndexChainEntry.resolveGenDirOffset(chain.getHeadEntryOffset(), 0);
                 long gen0FileOffset = keyMem.getLong(gen0DirOffset + GEN_DIR_OFFSET_FILE_OFFSET);
                 int gen0KeyCount = keyMem.getInt(gen0DirOffset + PostingIndexUtils.GEN_DIR_OFFSET_KEY_COUNT);
-                int gen0SiSize;
-                if (gen0KeyCount < 0) {
-                    // gen 0 is sparse (rare; usually dense after seal). Treat
-                    // it like the other sparse gens by setting gen0KeyCount=0
-                    // so mergeKeyValues skips its dense branch and instead
-                    // walks all gens via the sparse path.
-                    gen0KeyCount = 0;
-                    gen0SiSize = 0;
-                } else {
-                    gen0SiSize = PostingIndexUtils.strideIndexSize(gen0KeyCount);
-                }
+                int gen0SiSize = gen0KeyCount > 0 ? PostingIndexUtils.strideIndexSize(gen0KeyCount) : 0;
 
                 // Per-stride decode + filter + encode loop.
                 int[] keyCounts = strideKeyCounts;
@@ -3287,8 +3282,13 @@ public class PostingIndexWriter implements IndexWriter {
     private int mergeKeyValues(int key, long gen0Addr, int gen0KeyCount, int gen0SiSize, long destAddr) {
         int totalCount = 0;
 
-        // Decode from gen 0 (dense)
-        if (key < gen0KeyCount) {
+        // Decode from gen 0. When gen 0 is dense, do a direct dense-format read;
+        // when it is sparse (sealIncremental never reaches this branch, but
+        // diffAgainstChainHead does when O3CopyJob's commit leaves a sparse-only
+        // gen 0 on disk), fall through to the sparse-gen loop below by widening
+        // its starting index to 0.
+        final int sparseStartGen = gen0KeyCount < 0 ? 0 : 1;
+        if (gen0KeyCount > 0 && key < gen0KeyCount) {
             int stride = key / PostingIndexUtils.DENSE_STRIDE;
             int localKey = key % PostingIndexUtils.DENSE_STRIDE;
             long strideOff = Unsafe.getLong(gen0Addr + (long) stride * Long.BYTES);
@@ -3338,8 +3338,9 @@ public class PostingIndexWriter implements IndexWriter {
             }
         }
 
-        // Decode from sparse gens 1..N
-        for (int g = 1; g < genCount; g++) {
+        // Decode from sparse gens. Starts at 0 if gen 0 itself is sparse,
+        // otherwise at 1 (gen 0 was handled by the dense branch above).
+        for (int g = sparseStartGen; g < genCount; g++) {
             long dirOffset = PostingIndexChainEntry.resolveGenDirOffset(chain.getHeadEntryOffset(), g);
             long genFileOffset = keyMem.getLong(dirOffset + GEN_DIR_OFFSET_FILE_OFFSET);
             int genKeyCount = keyMem.getInt(dirOffset + PostingIndexUtils.GEN_DIR_OFFSET_KEY_COUNT);
