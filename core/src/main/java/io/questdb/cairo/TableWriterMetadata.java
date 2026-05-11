@@ -161,6 +161,7 @@ public class TableWriterMetadata extends AbstractRecordMetadata implements Table
         long offset = TableUtils.getColumnNameOffset(columnCount);
         this.symbolMapCount = 0;
         columnNameIndexMap.clear();
+        boolean isMetaFormatUpToDate = TableUtils.isMetaFormatUpToDate(metaMem);
         // don't create strings in this loop, we already have them in columnNameIndexMap
         for (int i = 0; i < columnCount; i++) {
             CharSequence name = metaMem.getStrA(offset);
@@ -180,7 +181,7 @@ public class TableWriterMetadata extends AbstractRecordMetadata implements Table
                     TableUtils.getReplacingColumnIndex(metaMem, i),
                     TableUtils.isSymbolCached(metaMem, i)
             );
-            colMeta.setParquetEncodingConfig(TableUtils.getParquetEncodingConfig(metaMem, i));
+            colMeta.setParquetEncodingConfig(isMetaFormatUpToDate ? TableUtils.getParquetEncodingConfig(metaMem, i) : 0);
             columnMetadata.add(colMeta);
             if (type > -1) {
                 columnNameIndexMap.put(nameStr, i);
