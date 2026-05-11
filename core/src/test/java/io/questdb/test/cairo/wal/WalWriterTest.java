@@ -1079,6 +1079,32 @@ public class WalWriterTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testApplyMakesProgressWithZeroTimeQuota() throws Exception {
+        // With the apply time quota set to zero, every WAL apply pass enters with a
+        // deadline at "now": the lookahead's do-while exits after a single small batch,
+        // and the apply loop's main while-condition fails after the firstRun txn. Despite
+        // both budgets being immediately exhausted, the firstRun guard plus repeated
+        // job invocations must still drain the entire backlog correctly.
+        node1.setProperty(PropertyKey.CAIRO_WAL_APPLY_TABLE_TIME_QUOTA, 0);
+        node1.setProperty(PropertyKey.CAIRO_WAL_APPLY_LOOK_AHEAD_TXN_COUNT, 1);
+
+        assertMemoryLeak(() -> {
+            String tableName = testName.getMethodName();
+            execute("CREATE TABLE " + tableName + " (val INT, ts TIMESTAMP)" +
+                    " TIMESTAMP(ts) PARTITION BY DAY WAL");
+            for (int i = 0; i < 20; i++) {
+                execute("INSERT INTO " + tableName + " VALUES (" + i +
+                        ", '2024-01-01T00:00:" + String.format("%02d", i) + ".000000Z')");
+            }
+            drainWalQueue();
+            assertSql(
+                    "count\n20\n",
+                    "SELECT count(*) FROM " + tableName
+            );
+        });
+    }
+
+    @Test
     public void testApplyManySmallCommits2Writers() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table sm (id int, ts timestamp, y long, s string, v varchar, m symbol) timestamp(ts) partition by DAY WAL");
@@ -2648,6 +2674,52 @@ public class WalWriterTest extends AbstractCairoTest {
     @Test
     public void testReadMatViewStateV2() throws Exception {
         assertMemoryLeak(() -> testReadMatViewState(2));
+    }
+
+    @Test
+    public void testReadWalTxnDetailsBoundedByDeadline() throws Exception {
+        // The lookahead pre-read in WalTxnDetails.readObservableTxnMeta normally tries
+        // to fill the row budget by re-iterating loadTransactionDetails until it reaches
+        // maxLookaheadRows or runs out of sequencer transactions. For tables with very
+        // small commits this can spin for a long time on a large backlog, holding up
+        // the apply worker before any commit happens. The deadline parameter caps how
+        // much wall-clock time the lookahead loop is allowed to spend.
+        final int batchSize = 3;
+        final int totalTxns = 20;
+        node1.setProperty(PropertyKey.CAIRO_WAL_APPLY_LOOK_AHEAD_TXN_COUNT, batchSize);
+
+        assertMemoryLeak(() -> {
+            String tableName = testName.getMethodName();
+            execute("CREATE TABLE " + tableName + " (val INT, ts TIMESTAMP)" +
+                    " TIMESTAMP(ts) PARTITION BY DAY WAL");
+            TableToken tableToken = engine.verifyTableName(tableName);
+
+            for (int i = 0; i < totalTxns; i++) {
+                execute("INSERT INTO " + tableName + " VALUES (" + i +
+                        ", '2024-01-01T00:00:" + String.format("%02d", i) + ".000000Z')");
+            }
+
+            // Freeze the test clock so the deadline check is fully deterministic.
+            setCurrentMicros(1_000_000L);
+            try (TableWriter writer = getWriter(tableToken)) {
+                long applied = writer.getAppliedSeqTxn();
+
+                // Deadline already at "now" so the do-while runs exactly one iteration of
+                // size CAIRO_WAL_APPLY_LOOK_AHEAD_TXN_COUNT and then bails out.
+                try (TransactionLogCursor cursor = engine.getTableSequencerAPI().getCursor(
+                        tableToken, applied)) {
+                    writer.readWalTxnDetails(cursor, currentMicros);
+                }
+                Assert.assertEquals(applied + batchSize, writer.getWalTnxDetails().getLastSeqTxn());
+
+                // No deadline. The remaining txns load on top of the already-loaded prefix.
+                try (TransactionLogCursor cursor = engine.getTableSequencerAPI().getCursor(
+                        tableToken, applied)) {
+                    writer.readWalTxnDetails(cursor, Long.MAX_VALUE);
+                }
+                Assert.assertEquals(applied + totalTxns, writer.getWalTnxDetails().getLastSeqTxn());
+            }
+        });
     }
 
     @Test
