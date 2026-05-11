@@ -24,6 +24,7 @@
 
 package io.questdb.test.cairo;
 
+import io.questdb.PropertyKey;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.TableToken;
 import io.questdb.griffin.engine.QueryProgress;
@@ -150,6 +151,44 @@ public class RssMemoryLimitTest extends AbstractCairoTest {
                 drainWalQueue();
                 assertTableSuspended();
             }, 600);
+        });
+    }
+
+    /**
+     * End-to-end check that ALTER TABLE ... ADD INDEX TYPE POSTING on a
+     * large partition does not OOM under a tight RSS limit. Without the
+     * spill back-pressure introduced alongside this test, a 200_000 row
+     * partition with a small spill budget would accumulate the entire
+     * partition's row IDs in anonymous heap before the seal, blowing the
+     * RSS_MEM_LIMIT during spillKey's per-key buffer doubling. With the
+     * back-pressure, mid-stream flushes drain into mmap'd .pv files and
+     * the indexing run completes within budget. Queries against the
+     * index must still return correct row counts after the alter.
+     */
+    @Test
+    public void testAlterAddPostingIndexUnderRssLimit() throws Exception {
+        // 1 MiB spill budget forces the periodic flush to fire repeatedly
+        // during ALTER ADD INDEX. The default budget would absorb the
+        // whole 200_000-row partition and never fire.
+        node1.getConfigurationOverrides().setProperty(
+                PropertyKey.CAIRO_POSTING_INDEX_INDEXER_SPILL_BYTES_MAX, 1L * 1024L * 1024L);
+        // 96 MiB RSS limit: large enough for create+insert and the post-fix
+        // indexing path (which holds at most ~1 MiB of spill at a time);
+        // far too small for the unbounded pre-fix path (which would peak
+        // at ~1.6 MiB raw + doubling overhead per hot key, well past the
+        // limit when summed across a few hundred keys).
+        long limitMiB = 96;
+        assertMemoryLeak(limitMiB, () -> {
+            execute("create table t (ts timestamp, sym symbol, v double) timestamp(ts) partition by day wal;");
+            execute("insert into t select " +
+                    " timestamp_sequence('2024-01-01T00:00:00.000000Z', 1) ts," +
+                    " rnd_symbol('A','B','C','D','E','F','G','H','I','J') sym," +
+                    " rnd_double() v" +
+                    " from long_sequence(200_000)");
+            drainWalQueue();
+            execute("alter table t alter column sym add index type posting");
+            drainWalQueue();
+            assertSql("count\n200000\n", "select count() from t where sym = 'A' or sym = 'B' or sym = 'C' or sym = 'D' or sym = 'E' or sym = 'F' or sym = 'G' or sym = 'H' or sym = 'I' or sym = 'J'");
         });
     }
 
