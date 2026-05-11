@@ -226,7 +226,7 @@ abstract class AbstractLogRecord implements LogRecord, Log {
     @Override
     public void $() {
         CursorHolder h = tl.get();
-        LogRecordUtf8Sink sink = h.ring.get(h.cursor);
+        LogRecordUtf8Sink sink = h.sink;
         sink.putEOL();
         try {
             if (LOG_PARANOIA_MODE != LOG_PARANOIA_MODE_NONE) {
@@ -578,6 +578,7 @@ abstract class AbstractLogRecord implements LogRecord, Log {
         h.seq = seq;
         h.ring = ring;
         LogRecordUtf8Sink sink = ring.get(cursor);
+        h.sink = sink;
         sink.setLevel(level);
         sink.clear();
         if (logError == null) {
@@ -592,8 +593,7 @@ abstract class AbstractLogRecord implements LogRecord, Log {
     }
 
     protected LogRecordUtf8Sink sink() {
-        CursorHolder h = tl.get();
-        return h.ring.get(h.cursor);
+        return tl.get().sink;
     }
 
     protected LogRecord xAdvisoryW() {
@@ -609,6 +609,7 @@ abstract class AbstractLogRecord implements LogRecord, Log {
         protected long cursor;
         protected RingQueue<LogRecordUtf8Sink> ring;
         protected Sequence seq;
+        protected LogRecordUtf8Sink sink;
         boolean isLogRecordInProgress;
 
         private static @NotNull LogError createAbandonedLogError() {

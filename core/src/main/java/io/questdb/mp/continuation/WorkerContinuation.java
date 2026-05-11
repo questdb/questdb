@@ -24,10 +24,10 @@
 
 package io.questdb.mp.continuation;
 
+import io.questdb.std.CarrierLocal;
 import io.questdb.std.Unsafe;
 import jdk.internal.vm.Continuation;
 import jdk.internal.vm.ContinuationScope;
-import io.questdb.std.CarrierLocal;
 
 /**
  * Thin wrapper over {@link jdk.internal.vm.Continuation} that hides the JDK-internal API
@@ -115,7 +115,7 @@ public final class WorkerContinuation {
      * a refused {@link #suspend()} is dropped instead of busy-spinning the peer.
      *
      * <p>Idempotent: a single set is consumed by exactly one observer. The CAS
-     * enforces this contract — if two threads race to consume, only the winner
+     * enforces this contract -- if two threads race to consume, only the winner
      * sees {@code true} and clears the flag; the loser sees {@code false}.
      */
     public boolean consumeParkRefused() {

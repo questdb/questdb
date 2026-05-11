@@ -56,21 +56,27 @@ public final class CarrierIdentity {
     private static final MethodHandle BIND;
     private static final MethodHandle CURRENT;
     private static final AtomicInteger NEXT_ID = new AtomicInteger();
+    private static final ConcurrentQueue<IdHolder> RECYCLED = ConcurrentQueue.createConcurrentQueue(IdHolder::new);
 
     private CarrierIdentity() {
     }
 
     /**
-     * Allocates a globally-unique carrier id and pins it to the current OS
-     * thread. Returns the assigned id so callers can log or store it.
-     * Each call allocates a fresh id; thread reuse re-assigns.
+     * Allocates a carrier id and pins it to the current OS thread. Returns the
+     * assigned id so callers can log or store it. Each call allocates a fresh
+     * id, except that ids freed by {@link #unbind()} are recycled here first
+     * to bound the {@link CarrierLocal} row index over the JVM lifetime.
+     * Reused ids are safe: the slot is nulled under the {@link CarrierLocal}
+     * monitor before the id is pushed back, and a new {@link CarrierLocal} map
+     * is created on first access under the same lock.
      * <p>
      * Pool-local worker ids are NOT safe to use here because every QuestDB
      * worker pool numbers its workers from 0; two workers in different pools
      * would alias to the same row in {@link CarrierLocal}.
      */
     public static int bind() {
-        int id = NEXT_ID.getAndIncrement();
+        IdHolder holder = new IdHolder();
+        int id = RECYCLED.tryDequeue(holder) ? holder.id : NEXT_ID.getAndIncrement();
         try {
             BIND.invokeExact(id);
         } catch (Throwable t) {
@@ -104,6 +110,26 @@ public final class CarrierIdentity {
             BIND.invokeExact(UNBOUND);
         } catch (Throwable t) {
             throw new AssertionError(t);
+        }
+        // Order matters: push to RECYCLED only AFTER releaseRow has nulled the
+        // slot and the per-thread Rust TLS has been reset. A concurrent bind()
+        // that pops this id would otherwise observe a stale CarrierLocal map.
+        IdHolder holder = new IdHolder();
+        holder.id = id;
+        RECYCLED.enqueue(holder);
+    }
+
+    private static final class IdHolder implements ValueHolder<IdHolder> {
+        int id;
+
+        @Override
+        public void clear() {
+            id = 0;
+        }
+
+        @Override
+        public void copyTo(IdHolder dest) {
+            dest.id = id;
         }
     }
 

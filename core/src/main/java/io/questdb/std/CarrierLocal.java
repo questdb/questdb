@@ -52,12 +52,6 @@ import java.util.function.Supplier;
  * back to a per-{@link Thread} store; those threads do not run inside the cont
  * scheduler, so the hoist hazard does not apply to them.
  * <p>
- * The class extends {@code java.lang.ThreadLocal} for source compatibility
- * with callers that hold the field as a {@code java.lang.ThreadLocal<T>}, but
- * the parent's per-{@link Thread} storage map is never used for bound carriers
- * - all reads and writes go through the carrier-keyed table below. The
- * inheritance is purely a type assignment compatibility shim.
- * <p>
  * For the full problem analysis (C2 hoisting of {@code _currentThread} across
  * cont yield/resume) and the rationale for the FFI-backed carrier identity,
  * see {@code io/questdb/mp/continuation/CARRIER_LOCAL.md}.
