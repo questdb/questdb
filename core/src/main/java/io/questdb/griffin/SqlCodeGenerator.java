@@ -1648,11 +1648,16 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         if (filter != null && !filter.isThreadSafe() && sharedQueryWorkerCount > 0) {
             assert filterExpr != null;
             ObjList<Function> workerFilters = new ObjList<>();
-            for (int i = 0; i < sharedQueryWorkerCount; i++) {
-                restoreWhereClause(filterExpr); // restore original filters in node query models
-                Function workerFilter = compileBooleanFilter(filterExpr, metadata, executionContext);
-                workerFilters.extendAndSet(i, workerFilter);
-                assert filter.getClass() == workerFilter.getClass();
+            try {
+                for (int i = 0; i < sharedQueryWorkerCount; i++) {
+                    restoreWhereClause(filterExpr); // restore original filters in node query models
+                    Function workerFilter = compileBooleanFilter(filterExpr, metadata, executionContext);
+                    workerFilters.extendAndSet(i, workerFilter);
+                    assert filter.getClass() == workerFilter.getClass();
+                }
+            } catch (Throwable th) {
+                Misc.freeObjList(workerFilters);
+                throw th;
             }
             return workerFilters;
         }
