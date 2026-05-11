@@ -231,6 +231,8 @@ public class LiveViewInstance implements QuietCloseable {
         stateReader.setLastProcessedSeqTxn(source.getLastProcessedSeqTxn());
         stateReader.setAppliedWatermark(source.getAppliedWatermark());
         stateReader.setLvConsumedSeqTxn(source.getLvConsumedSeqTxn());
+        stateReader.setBackfillState(source.getBackfillState());
+        stateReader.setBackfillTargetSeqTxn(source.getBackfillTargetSeqTxn());
     }
 
     public boolean isDropped() {

@@ -35,6 +35,7 @@ import io.questdb.griffin.SqlException;
 import io.questdb.mp.Job;
 import io.questdb.std.Chars;
 import io.questdb.std.FilesFacade;
+import io.questdb.std.Numbers;
 import io.questdb.std.datetime.microtime.Micros;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
@@ -561,6 +562,62 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
             // _meta + applied WAL. The on-disk tier survives restart so the row count
             // should reflect what the refresh wrote before the registry was cleared.
             assertSql("count\n2\n", "SELECT count() FROM lv");
+
+            execute("DROP LIVE VIEW lv");
+        });
+    }
+
+    @Test
+    public void testBackfillFieldsRoundTripAsActiveDefault() throws Exception {
+        // Phase 1a rejects BACKFILL at the parser, so backfillRequested in _lv and
+        // backfillState / backfillTargetSeqTxn in _lv.s are always written as the
+        // ACTIVE / LONG_NULL defaults. Preallocated in CORE_DEFINITION / CORE_STATE
+        // so Phase 3 can land BACKFILL semantics without a schema bump (RFC 123
+        // §"Persistent formats / _lv" and §"Persistent formats / _lv.s"). This test
+        // pins the round-trip across restart so a future writer that drops the fields
+        // breaks visibly.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 1s AS " +
+                    "SELECT ts, x, row_number() OVER () AS rn FROM base WHERE x > 0");
+
+            LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("lv");
+            Assert.assertNotNull(instance);
+            Assert.assertFalse(
+                    "backfillRequested must default to false in Phase 1a",
+                    instance.getDefinition().getBackfillRequested()
+            );
+            Assert.assertEquals(
+                    "backfillState must default to ACTIVE in Phase 1a",
+                    LiveViewState.BACKFILL_STATE_ACTIVE,
+                    instance.getStateReader().getBackfillState()
+            );
+            Assert.assertEquals(
+                    "backfillTargetSeqTxn must default to LONG_NULL in Phase 1a",
+                    Numbers.LONG_NULL,
+                    instance.getStateReader().getBackfillTargetSeqTxn()
+            );
+
+            // Round-trip across a simulated restart.
+            engine.getLiveViewRegistry().clear();
+            engine.buildViewGraphs();
+
+            LiveViewInstance reloaded = engine.getLiveViewRegistry().getViewInstance("lv");
+            Assert.assertNotNull("live view must be re-registered after restart", reloaded);
+            Assert.assertFalse(
+                    "backfillRequested must round-trip via _lv",
+                    reloaded.getDefinition().getBackfillRequested()
+            );
+            Assert.assertEquals(
+                    "backfillState must round-trip via _lv.s",
+                    LiveViewState.BACKFILL_STATE_ACTIVE,
+                    reloaded.getStateReader().getBackfillState()
+            );
+            Assert.assertEquals(
+                    "backfillTargetSeqTxn must round-trip via _lv.s",
+                    Numbers.LONG_NULL,
+                    reloaded.getStateReader().getBackfillTargetSeqTxn()
+            );
 
             execute("DROP LIVE VIEW lv");
         });

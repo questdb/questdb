@@ -414,6 +414,8 @@ public class CairoEngine implements Closeable, WriterSource {
                         reader.getLastProcessedSeqTxn(),
                         reader.getAppliedWatermark(),
                         maxBaseSeqTxn,
+                        reader.getBackfillState(),
+                        reader.getBackfillTargetSeqTxn(),
                         blockFileWriter
                 );
             } catch (Throwable t) {
@@ -936,12 +938,19 @@ public class CairoEngine implements Closeable, WriterSource {
                         op.getInMemoryIntervalUnit(),
                         partitionBy,
                         viewLowerBoundTimestamp,
+                        // Phase 1a rejects BACKFILL at the parser, so always false on disk.
+                        // Preallocated in CORE_DEFINITION so Phase 3 can land BACKFILL
+                        // semantics without a _lv schema bump.
+                        false,
                         op.getAnchorSpec(),
                         dependencyColumnNames,
                         metadata
                 );
 
                 // write _lv.s state file with subscribeFromSeqTxn captured above.
+                // Phase 1a always writes BACKFILL_STATE_ACTIVE / Numbers.LONG_NULL — BACKFILL
+                // is rejected at CREATE; the fields are preallocated for Phase 3 (RFC 123
+                // §"Persistent formats / _lv.s").
                 path.of(configuration.getDbRoot()).concat(liveViewToken);
                 blockFileWriter.of(path.concat(LiveViewState.LIVE_VIEW_STATE_FILE_NAME).$());
                 LiveViewState.append(
@@ -952,6 +961,8 @@ public class CairoEngine implements Closeable, WriterSource {
                         subscribeFromSeqTxn - 1,
                         -1L,
                         subscribeFromSeqTxn - 1,
+                        LiveViewState.BACKFILL_STATE_ACTIVE,
+                        Numbers.LONG_NULL,
                         blockFileWriter
                 );
 

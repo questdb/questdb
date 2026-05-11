@@ -61,6 +61,11 @@ public class LiveViewStateReader implements Mutable {
     // worker code paths; written by the refresh worker. Volatile so lock-free readers see
     // a published value rather than a torn long.
     private volatile long appliedWatermark = -1L;
+    // Phase 1a always BACKFILL_STATE_ACTIVE / Numbers.LONG_NULL (BACKFILL rejected at
+    // CREATE). Preallocated in CORE_STATE so Phase 3 can land BACKFILL semantics without
+    // an _lv.s schema bump (RFC 123 §"Persistent formats / _lv.s").
+    private byte backfillState = LiveViewState.BACKFILL_STATE_ACTIVE;
+    private long backfillTargetSeqTxn = Numbers.LONG_NULL;
     private boolean invalid;
     private long invalidationTimestampUs = Numbers.LONG_NULL;
     // Same lock-free-read pattern as appliedWatermark. Refresh worker advances this after
@@ -80,10 +85,20 @@ public class LiveViewStateReader implements Mutable {
         lastProcessedSeqTxn = -1L;
         appliedWatermark = -1L;
         lvConsumedSeqTxn = -1L;
+        backfillState = LiveViewState.BACKFILL_STATE_ACTIVE;
+        backfillTargetSeqTxn = Numbers.LONG_NULL;
     }
 
     public long getAppliedWatermark() {
         return appliedWatermark;
+    }
+
+    public byte getBackfillState() {
+        return backfillState;
+    }
+
+    public long getBackfillTargetSeqTxn() {
+        return backfillTargetSeqTxn;
     }
 
     @Nullable
@@ -143,6 +158,10 @@ public class LiveViewStateReader implements Mutable {
                 appliedWatermark = block.getLong(offset);
                 offset += Long.BYTES;
                 lvConsumedSeqTxn = block.getLong(offset);
+                offset += Long.BYTES;
+                backfillState = block.getByte(offset);
+                offset += Byte.BYTES;
+                backfillTargetSeqTxn = block.getLong(offset);
                 return this;
             }
         }
@@ -156,6 +175,16 @@ public class LiveViewStateReader implements Mutable {
 
     public LiveViewStateReader setAppliedWatermark(long appliedWatermark) {
         this.appliedWatermark = appliedWatermark;
+        return this;
+    }
+
+    public LiveViewStateReader setBackfillState(byte backfillState) {
+        this.backfillState = backfillState;
+        return this;
+    }
+
+    public LiveViewStateReader setBackfillTargetSeqTxn(long backfillTargetSeqTxn) {
+        this.backfillTargetSeqTxn = backfillTargetSeqTxn;
         return this;
     }
 

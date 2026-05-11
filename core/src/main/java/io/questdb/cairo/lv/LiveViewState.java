@@ -36,12 +36,17 @@ import org.jetbrains.annotations.Nullable;
  * Mirrors {@link io.questdb.cairo.mv.MatViewState}'s file shape: BlockFile with
  * typed blocks, rewritten on every state change, durable across restarts.
  * <p>
- * Phase 1 holds CORE_STATE only. Backfill state (BACKFILLING / backfillTargetSeqTxn)
- * is omitted because Phase 1 rejects BACKFILL at CREATE.
+ * Phase 1 holds CORE_STATE only. {@code backfillState} / {@code backfillTargetSeqTxn}
+ * are preallocated as {@code ACTIVE} / {@code Numbers.LONG_NULL} (BACKFILL is
+ * rejected at CREATE in 1a) so Phase 3 can land BACKFILL semantics without a
+ * {@code _lv.s} schema bump (RFC 123 §"Persistent formats / _lv.s").
  */
 public class LiveViewState {
     public static final String LIVE_VIEW_STATE_FILE_NAME = "_lv.s";
     public static final int LIVE_VIEW_STATE_CORE_MSG_TYPE = 0;
+
+    public static final byte BACKFILL_STATE_ACTIVE = 0;
+    public static final byte BACKFILL_STATE_BACKFILLING = 1;
 
     /**
      * Writes the CORE_STATE block from a {@link LiveViewStateReader} snapshot, or
@@ -57,6 +62,8 @@ public class LiveViewState {
                     reader.getLastProcessedSeqTxn(),
                     reader.getAppliedWatermark(),
                     reader.getLvConsumedSeqTxn(),
+                    reader.getBackfillState(),
+                    reader.getBackfillTargetSeqTxn(),
                     writer
             );
         } else {
@@ -68,6 +75,8 @@ public class LiveViewState {
                     -1L,
                     -1L,
                     -1L,
+                    BACKFILL_STATE_ACTIVE,
+                    Numbers.LONG_NULL,
                     writer
             );
         }
@@ -81,6 +90,8 @@ public class LiveViewState {
             long lastProcessedSeqTxn,
             long appliedWatermark,
             long lvConsumedSeqTxn,
+            byte backfillState,
+            long backfillTargetSeqTxn,
             @NotNull BlockFileWriter writer
     ) {
         AppendableBlock block = writer.append();
@@ -91,6 +102,8 @@ public class LiveViewState {
         block.putLong(lastProcessedSeqTxn);
         block.putLong(appliedWatermark);
         block.putLong(lvConsumedSeqTxn);
+        block.putByte(backfillState);
+        block.putLong(backfillTargetSeqTxn);
         block.commit(LIVE_VIEW_STATE_CORE_MSG_TYPE);
         writer.commit();
     }

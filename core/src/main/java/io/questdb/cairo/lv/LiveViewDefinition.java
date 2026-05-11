@@ -64,6 +64,11 @@ public class LiveViewDefinition {
     public static final int LIVE_VIEW_DEFINITION_CORE_MSG_TYPE = 0;
 
     private final @Nullable LvAnchorSpec anchorSpec;
+    // BACKFILL was specified at CREATE. Phase 1a rejects the BACKFILL clause at
+    // the parser, so this is always false on disk today. The field is preallocated
+    // in CORE_DEFINITION so Phase 3 can land the backfill semantics without a _lv
+    // schema bump (RFC 123 §"Persistent formats / _lv").
+    private final boolean backfillRequested;
     private final String baseTableName;
     private final TableToken baseTableToken;
     private final int baseTimestampType;
@@ -102,6 +107,7 @@ public class LiveViewDefinition {
             char inMemoryIntervalUnit,
             int partitionBy,
             long viewLowerBoundTimestamp,
+            boolean backfillRequested,
             @Nullable LvAnchorSpec anchorSpec,
             ObjList<String> dependencyColumnNames,
             GenericRecordMetadata metadata
@@ -117,6 +123,7 @@ public class LiveViewDefinition {
         this.inMemoryIntervalUnit = inMemoryIntervalUnit;
         this.partitionBy = partitionBy;
         this.viewLowerBoundTimestamp = viewLowerBoundTimestamp;
+        this.backfillRequested = backfillRequested;
         this.anchorSpec = anchorSpec;
         this.dependencyColumnNames = dependencyColumnNames;
         this.metadata = metadata;
@@ -133,6 +140,7 @@ public class LiveViewDefinition {
         block.putChar(definition.inMemoryIntervalUnit);
         block.putInt(definition.partitionBy);
         block.putLong(definition.viewLowerBoundTimestamp);
+        block.putBool(definition.backfillRequested);
         block.putInt(definition.dependencyColumnNames.size());
         for (int i = 0, n = definition.dependencyColumnNames.size(); i < n; i++) {
             block.putStr(definition.dependencyColumnNames.getQuick(i));
@@ -262,6 +270,7 @@ public class LiveViewDefinition {
         char inMemoryIntervalUnit = 0;
         int partitionBy = 0;
         long viewLowerBoundTimestamp = 0;
+        boolean backfillRequested = false;
         ObjList<String> dependencyColumnNames = new ObjList<>();
         LvAnchorSpec anchorSpec = null;
 
@@ -293,6 +302,8 @@ public class LiveViewDefinition {
                 offset += Integer.BYTES;
                 viewLowerBoundTimestamp = block.getLong(offset);
                 offset += Long.BYTES;
+                backfillRequested = block.getBool(offset);
+                offset += Byte.BYTES;
                 int depCount = block.getInt(offset);
                 offset += Integer.BYTES;
                 dependencyColumnNames = new ObjList<>(depCount);
@@ -353,6 +364,7 @@ public class LiveViewDefinition {
                 inMemoryIntervalUnit,
                 partitionBy,
                 viewLowerBoundTimestamp,
+                backfillRequested,
                 anchorSpec,
                 dependencyColumnNames,
                 metadata
@@ -361,6 +373,10 @@ public class LiveViewDefinition {
 
     public @Nullable LvAnchorSpec getAnchorSpec() {
         return anchorSpec;
+    }
+
+    public boolean getBackfillRequested() {
+        return backfillRequested;
     }
 
     public String getBaseTableName() {
