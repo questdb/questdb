@@ -46,7 +46,6 @@ import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.mp.RingQueue;
 import io.questdb.mp.Sequence;
-import io.questdb.std.Chars;
 import io.questdb.std.Decimals;
 import io.questdb.std.Files;
 import io.questdb.std.FilesFacade;
@@ -61,7 +60,6 @@ import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
 import io.questdb.std.str.Utf8StringSink;
-import io.questdb.std.str.Utf8s;
 import io.questdb.tasks.PostingSealPurgeTask;
 import org.jetbrains.annotations.TestOnly;
 
@@ -374,6 +372,7 @@ public class PostingIndexWriter implements IndexWriter {
                 releasePendingPurges();
                 pendingDiscardOldSealTxn = -1L;
                 pendingTxnAtSeal = -1;
+                o3CtxUpcomingTxn = -1L;
                 // currentTableTxn is intentionally not reset here.
                 // path-based of(...) starts with close(), and the setter
                 // contract is "call setCurrentTableTxn before of() so
@@ -1342,11 +1341,7 @@ public class PostingIndexWriter implements IndexWriter {
 
     @Override
     public void setO3PathContext(Path path, CharSequence name, long columnNameTxn, long upcomingTxn) {
-        if (keyMem.isOpen() && !(Utf8s.equals(partitionPath, path)
-                && Chars.equals(indexName, name)
-                && postingColumnNameTxn == columnNameTxn)) {
-            close();
-        }
+        assert !keyMem.isOpen();
         o3CtxPartitionPath.clear();
         o3CtxPartitionPath.put(path);
         o3CtxName.clear();
@@ -1357,14 +1352,14 @@ public class PostingIndexWriter implements IndexWriter {
 
     @Override
     public void sync(boolean async) {
-        // Flush pending data from native buffers to mmap'd files before syncing,
-        // otherwise readers won't see buffered values.
+        // .pv before .pk: a torn write must never leave the chain head (keyMem)
+        // pointing at unsynced gen bytes in valueMem.
         flushAllPending();
-        if (keyMem.isOpen()) {
-            keyMem.sync(async);
-        }
         if (valueMem.isOpen()) {
             valueMem.sync(async);
+        }
+        if (keyMem.isOpen()) {
+            keyMem.sync(async);
         }
     }
 
