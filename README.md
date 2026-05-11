@@ -113,7 +113,9 @@ QuestDB works out of the box with AI coding agents. Install the
 production in under 60 seconds: streaming ingestion, materialized views, and
 real-time analytics with zero manual code.
 
-https://github.com/questdb/questdb/raw/master/.github/agents-demo.mp4
+<div align="center">
+  <video src="https://github.com/questdb/questdb/raw/master/.github/agents-demo.mp4" width="600" controls></video>
+</div>
 
 ## Get started
 
