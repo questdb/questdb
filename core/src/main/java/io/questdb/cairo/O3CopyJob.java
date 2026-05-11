@@ -806,12 +806,16 @@ public class O3CopyJob extends AbstractQueueConsumerJob<O3CopyTask> {
             IndexWriter indexWriter,
             int indexBlockCapacity
     ) {
-        // dstKFd & dstVFd are closed by the indexer
+        // dstKFd & dstVFd are closed by the indexer (BITMAP path); POSTING ignores them and opens path-based.
         try {
             long row = dstIndexOffset / Integer.BYTES;
             boolean closed = !indexWriter.isOpen();
             if (closed) {
-                indexWriter.of(tableWriter.getConfiguration(), dstKFd, dstVFd, row == 0, indexBlockCapacity);
+                if (IndexType.isPosting(indexWriter.getIndexType())) {
+                    indexWriter.openFromO3Context(row == 0);
+                } else {
+                    indexWriter.of(tableWriter.getConfiguration(), dstKFd, dstVFd, row == 0, indexBlockCapacity);
+                }
             }
             try {
                 updateIndex(dstFixAddr, Math.abs(dstFixSize), indexWriter, dstIndexOffset / Integer.BYTES, dstIndexAdjust);

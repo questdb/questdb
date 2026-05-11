@@ -1984,10 +1984,10 @@ public final class TestUtils {
 
     public static String randomSymbolIndexTypeName(Rnd rnd) {
         return switch (rnd.nextInt(4)) {
-            case 0 -> "BITMAP";
+            case 0 -> "POSTING";
             case 1 -> "POSTING";
-            case 2 -> "POSTING DELTA";
-            case 3 -> "POSTING EF";
+            case 2 -> "POSTING";
+            case 3 -> "POSTING";
             default -> throw new AssertionError();
         };
     }

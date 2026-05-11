@@ -11429,6 +11429,9 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     if (canSkipRebuild) {
                         // See pure-append fast-path comment in the covering branch above.
                         indexer.getWriter().rollbackConditionally(partitionSize);
+                        // Defer compaction to switchPartition's threshold rather than seal eagerly:
+                        // pool writer's sparse gens are already the correct final state for a pure-append O3.
+                        indexer.getWriter().sealIfMultiGen(configuration.getPostingSealGenThreshold());
                     } else {
                         // See rebuild-from-data comment in the covering branch.
                         indexer.getWriter().discardForRebuild();
@@ -11438,9 +11441,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                         } finally {
                             ff.close(dataFd);
                         }
-                        indexer.getWriter().commit();
+                        indexer.getWriter().commitDense();
                     }
-                    indexer.seal();
                     indexer.publishPendingPurges(messageBus, tableToken, partitionBy, timestampType, txWriter.getTxn());
                 }
             }

@@ -66,6 +66,10 @@ public interface IndexWriter extends Closeable, Mutable {
      */
     void commit();
 
+    default void commitDense() {
+        commit();
+    }
+
     default void configureCovering(
             ObjList<CharSequence> coveredColumnNames,
             LongList coveredColumnNameTxns,
@@ -174,7 +178,8 @@ public interface IndexWriter extends Closeable, Mutable {
      * @param init          true to initialize a new index, false to open existing
      * @param blockCapacity the value block capacity (for new index initialization)
      */
-    void of(CairoConfiguration configuration, long keyFd, long valueFd, boolean init, int blockCapacity);
+    default void of(CairoConfiguration configuration, long keyFd, long valueFd, boolean init, int blockCapacity) {
+    }
 
     /**
      * Opens the index writer for the given column using file paths.
@@ -216,6 +221,16 @@ public interface IndexWriter extends Closeable, Mutable {
     default void of(Path path, CharSequence name, long columnNameTxn, boolean create) {
         // Default implementation opens without create flag
         of(path, name, columnNameTxn);
+    }
+
+    /**
+     * Opens the writer using path context previously installed via
+     * {@link #setO3PathContext}. Used by the O3 copy path for index types
+     * (currently POSTING) that prefer path-based file management to fd
+     * preopen. Default is no-op; index types that don't override stick to
+     * fd-based {@link #of(CairoConfiguration, long, long, boolean, int)}.
+     */
+    default void openFromO3Context(boolean init) {
     }
 
     default void publishPendingPurges(
@@ -303,6 +318,19 @@ public interface IndexWriter extends Closeable, Mutable {
      * setter is called again.
      */
     default void setNextTxnAtSeal(long txnAtSeal) {
+    }
+
+    /**
+     * Installs partition path, column name, columnNameTxn and the upcoming
+     * table txn that the next {@link #openFromO3Context} call will consume.
+     * Lets the O3 copy path defer the actual {@code of(...)} to the worker
+     * while plumbing path information from the publisher.
+     * <p>
+     * Default is no-op: BitmapIndexWriter still uses fd-based of() in the
+     * O3 path. POSTING overrides to stash these for the path-based open
+     * that follows in {@link #openFromO3Context}.
+     */
+    default void setO3PathContext(Path path, CharSequence name, long columnNameTxn, long upcomingTxn) {
     }
 
     /**

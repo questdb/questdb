@@ -1861,9 +1861,18 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
 
             if (indexBlockCapacity > -1 && !indexWriter.isOpen()) {
                 byte indexType = indexWriter.getIndexType();
-                dstKFd = openRW(ff, IndexFactory.keyFileName(indexType, pathToNewPartition.trimTo(pNewLen), columnName, columnNameTxn), LOG, tableWriter.getConfiguration().getWriterFileOpenOpts());
-                long valueTxn = resolvePostingValueFileTxn(ff, dstKFd, indexType, columnNameTxn);
-                dstVFd = openRW(ff, IndexFactory.valueFileName(indexType, pathToNewPartition.trimTo(pNewLen), columnName, columnNameTxn, valueTxn), LOG, tableWriter.getConfiguration().getWriterFileOpenOpts());
+                if (IndexType.isPosting(indexType)) {
+                    indexWriter.setO3PathContext(
+                            pathToNewPartition.trimTo(pNewLen),
+                            columnName,
+                            columnNameTxn,
+                            tableWriter.getTxn() + 1L
+                    );
+                } else {
+                    dstKFd = openRW(ff, IndexFactory.keyFileName(indexType, pathToNewPartition.trimTo(pNewLen), columnName, columnNameTxn), LOG, tableWriter.getConfiguration().getWriterFileOpenOpts());
+                    long valueTxn = resolvePostingValueFileTxn(ff, dstKFd, indexType, columnNameTxn);
+                    dstVFd = openRW(ff, IndexFactory.valueFileName(indexType, pathToNewPartition.trimTo(pNewLen), columnName, columnNameTxn, valueTxn), LOG, tableWriter.getConfiguration().getWriterFileOpenOpts());
+                }
             }
         } catch (Throwable e) {
             LOG.error().$("append fix error [table=").$(tableWriter.getTableToken())
@@ -2192,9 +2201,18 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
                 dstFixAddr = mapRW(ff, dstFixFd, dstFixSize, MemoryTag.MMAP_O3);
                 if (indexBlockCapacity > -1) {
                     byte indexType = indexWriter.getIndexType();
-                    dstKFd = openRW(ff, IndexFactory.keyFileName(indexType, pathToNewPartition.trimTo(pNewLen), columnName, columnNameTxn), LOG, tableWriter.getConfiguration().getWriterFileOpenOpts());
-                    long valueTxn = resolvePostingValueFileTxn(ff, dstKFd, indexType, columnNameTxn);
-                    dstVFd = openRW(ff, IndexFactory.valueFileName(indexType, pathToNewPartition.trimTo(pNewLen), columnName, columnNameTxn, valueTxn), LOG, tableWriter.getConfiguration().getWriterFileOpenOpts());
+                    if (IndexType.isPosting(indexType)) {
+                        indexWriter.setO3PathContext(
+                                pathToNewPartition.trimTo(pNewLen),
+                                columnName,
+                                columnNameTxn,
+                                tableWriter.getTxn() + 1L
+                        );
+                    } else {
+                        dstKFd = openRW(ff, IndexFactory.keyFileName(indexType, pathToNewPartition.trimTo(pNewLen), columnName, columnNameTxn), LOG, tableWriter.getConfiguration().getWriterFileOpenOpts());
+                        long valueTxn = resolvePostingValueFileTxn(ff, dstKFd, indexType, columnNameTxn);
+                        dstVFd = openRW(ff, IndexFactory.valueFileName(indexType, pathToNewPartition.trimTo(pNewLen), columnName, columnNameTxn, valueTxn), LOG, tableWriter.getConfiguration().getWriterFileOpenOpts());
+                    }
                 }
             }
         } catch (Throwable e) {
@@ -2556,9 +2574,18 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
 
             if (indexBlockCapacity > -1) {
                 byte indexType = indexWriter.getIndexType();
-                dstKFd = openRW(ff, IndexFactory.keyFileName(indexType, pathToNewPartition.trimTo(pNewLen), columnName, columnNameTxn), LOG, tableWriter.getConfiguration().getWriterFileOpenOpts());
-                long valueTxn = resolvePostingValueFileTxn(ff, dstKFd, indexType, columnNameTxn);
-                dstVFd = openRW(ff, IndexFactory.valueFileName(indexType, pathToNewPartition.trimTo(pNewLen), columnName, columnNameTxn, valueTxn), LOG, tableWriter.getConfiguration().getWriterFileOpenOpts());
+                if (IndexType.isPosting(indexType)) {
+                    indexWriter.setO3PathContext(
+                            pathToNewPartition.trimTo(pNewLen),
+                            columnName,
+                            columnNameTxn,
+                            tableWriter.getTxn() + 1L
+                    );
+                } else {
+                    dstKFd = openRW(ff, IndexFactory.keyFileName(indexType, pathToNewPartition.trimTo(pNewLen), columnName, columnNameTxn), LOG, tableWriter.getConfiguration().getWriterFileOpenOpts());
+                    long valueTxn = resolvePostingValueFileTxn(ff, dstKFd, indexType, columnNameTxn);
+                    dstVFd = openRW(ff, IndexFactory.valueFileName(indexType, pathToNewPartition.trimTo(pNewLen), columnName, columnNameTxn, valueTxn), LOG, tableWriter.getConfiguration().getWriterFileOpenOpts());
+                }
             }
 
             if (prefixType != O3_BLOCK_NONE) {

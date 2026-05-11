@@ -24,8 +24,10 @@
 
 package io.questdb.test.cairo;
 
+import io.questdb.PropertyKey;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.idx.BitpackUtils;
@@ -61,6 +63,7 @@ import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
 
 import static io.questdb.cairo.TableUtils.COLUMN_NAME_TXN_NONE;
+import static io.questdb.cairo.TableUtils.setPathForNativePartition;
 
 /**
  * Red tests for the critical findings raised in the PR review of #6861.
@@ -69,6 +72,54 @@ import static io.questdb.cairo.TableUtils.COLUMN_NAME_TXN_NONE;
  * conditions are marked with comments describing what they need.
  */
 public class PostingIndexCriticalIssuesTest extends AbstractCairoTest {
+
+    /**
+     * Review C2: the full-partition SELECT DISTINCT path calls
+     * collectDistinctKeys(), not collectDistinctKeysInRange(). The no-range
+     * helper must still honor the chain entry's MAX_VALUE; otherwise a key
+     * whose only encoded rows are dirty rows past MAX_VALUE is reported as
+     * present in the partition.
+     */
+    @Test
+    public void testCollectDistinctKeysDoesNotExposeKeysPastEntryMaxValue() throws Exception {
+        assertMemoryLeak(() -> {
+            final String name = "posting_distinct_max_value_clamp";
+            try (Path path = new Path().of(configuration.getDbRoot())) {
+                final int plen = path.size();
+                final int liveKey = 1;
+                final int dirtyOnlyKey = 2;
+
+                try (PostingIndexWriter writer = new PostingIndexWriter(
+                        configuration, path.trimTo(plen), name, COLUMN_NAME_TXN_NONE)) {
+                    for (long rowId = 0; rowId < 50; rowId++) {
+                        writer.add(liveKey, rowId);
+                    }
+                    for (long rowId = 50; rowId < 100; rowId++) {
+                        writer.add(dirtyOnlyKey, rowId);
+                    }
+                    writer.setMaxValue(99);
+                    writer.commit();
+                    writer.setMaxValue(49);
+                }
+
+                try (PostingIndexFwdReader reader = new PostingIndexFwdReader(
+                        configuration, path.trimTo(plen), name,
+                        COLUMN_NAME_TXN_NONE, /* partitionTxn */ 0, /* columnTop */ 0);
+                     DirectBitSet foundKeys = new DirectBitSet(8)) {
+                    Assert.assertEquals(
+                            "only the key with rowids at or below MAX_VALUE=49 is live",
+                            1,
+                            reader.collectDistinctKeys(foundKeys)
+                    );
+                    Assert.assertTrue(foundKeys.get(liveKey));
+                    Assert.assertFalse(
+                            "collectDistinctKeys must not expose a key whose only rows are past entryMaxValue",
+                            foundKeys.get(dirtyOnlyKey)
+                    );
+                }
+            }
+        });
+    }
 
     /**
      * Critical #8: ExpressionNode.deepClone restoration in the covering
@@ -301,49 +352,75 @@ public class PostingIndexCriticalIssuesTest extends AbstractCairoTest {
         });
     }
 
-    /**
-     * Review C2: the full-partition SELECT DISTINCT path calls
-     * collectDistinctKeys(), not collectDistinctKeysInRange(). The no-range
-     * helper must still honor the chain entry's MAX_VALUE; otherwise a key
-     * whose only encoded rows are dirty rows past MAX_VALUE is reported as
-     * present in the partition.
-     */
     @Test
-    public void testCollectDistinctKeysDoesNotExposeKeysPastEntryMaxValue() throws Exception {
+    public void testParquetIndexWriteUsesCommitDense() throws Exception {
+        // O3PartitionJob.updateParquetIndexes goes through commitDense for POSTING.
+        // That path runs when O3 mutates an already-parquet partition. Convert the
+        // first partition to parquet, then O3-insert into it to trigger the rewrite.
+        // After that, the chain head must hold a single dense gen.
         assertMemoryLeak(() -> {
-            final String name = "posting_distinct_max_value_clamp";
-            try (Path path = new Path().of(configuration.getDbRoot())) {
-                final int plen = path.size();
-                final int liveKey = 1;
-                final int dirtyOnlyKey = 2;
+            execute("""
+                    CREATE TABLE t_parquet_posting (
+                        ts TIMESTAMP,
+                        sym SYMBOL INDEX TYPE POSTING
+                    ) TIMESTAMP(ts) PARTITION BY DAY WAL
+                    """);
+            execute("""
+                    INSERT INTO t_parquet_posting
+                    SELECT
+                        dateadd('s', x::INT, '2024-01-01T00:00:00Z'::TIMESTAMP),
+                        rnd_symbol('A', 'B', 'C', 'D', 'E')
+                    FROM long_sequence(1000)
+                    """);
+            execute("""
+                    INSERT INTO t_parquet_posting
+                    SELECT
+                        dateadd('s', x::INT, '2024-01-02T00:00:00Z'::TIMESTAMP),
+                        rnd_symbol('A', 'B', 'C', 'D', 'E')
+                    FROM long_sequence(1000)
+                    """);
+            drainWalQueue();
+            execute("ALTER TABLE t_parquet_posting CONVERT PARTITION TO PARQUET LIST '2024-01-01'");
+            drainWalQueue();
+            execute("""
+                    INSERT INTO t_parquet_posting VALUES
+                    ('2024-01-01T00:30:00Z', 'F'),
+                    ('2024-01-01T01:30:00Z', 'G')
+                    """);
+            drainWalQueue();
+            engine.releaseAllWriters();
 
-                try (PostingIndexWriter writer = new PostingIndexWriter(
-                        configuration, path.trimTo(plen), name, COLUMN_NAME_TXN_NONE)) {
-                    for (long rowId = 0; rowId < 50; rowId++) {
-                        writer.add(liveKey, rowId);
-                    }
-                    for (long rowId = 50; rowId < 100; rowId++) {
-                        writer.add(dirtyOnlyKey, rowId);
-                    }
-                    writer.setMaxValue(99);
-                    writer.commit();
-                    writer.setMaxValue(49);
-                }
-
-                try (PostingIndexFwdReader reader = new PostingIndexFwdReader(
-                        configuration, path.trimTo(plen), name,
-                        COLUMN_NAME_TXN_NONE, /* partitionTxn */ 0, /* columnTop */ 0);
-                     DirectBitSet foundKeys = new DirectBitSet(8)) {
-                    Assert.assertEquals(
-                            "only the key with rowids at or below MAX_VALUE=49 is live",
-                            1,
-                            reader.collectDistinctKeys(foundKeys)
-                    );
-                    Assert.assertTrue(foundKeys.get(liveKey));
-                    Assert.assertFalse(
-                            "collectDistinctKeys must not expose a key whose only rows are past entryMaxValue",
-                            foundKeys.get(dirtyOnlyKey)
-                    );
+            TableToken token = engine.getTableTokenIfExists("t_parquet_posting");
+            Assert.assertNotNull("table must exist", token);
+            long partitionTs;
+            long partitionNameTxn;
+            try (TableReader reader = engine.getReader(token)) {
+                partitionTs = reader.getTxFile().getPartitionTimestampByIndex(0);
+                partitionNameTxn = reader.getTxFile().getPartitionNameTxn(0);
+            }
+            FilesFacade rawFf = configuration.getFilesFacade();
+            try (Path path = new Path()) {
+                path.of(configuration.getDbRoot()).concat(token);
+                setPathForNativePartition(
+                        path, ColumnType.TIMESTAMP, io.questdb.cairo.PartitionBy.DAY, partitionTs, partitionNameTxn);
+                int plen = path.size();
+                LPSZ keyFile = PostingIndexUtils.keyFileName(
+                        path.trimTo(plen), "sym", COLUMN_NAME_TXN_NONE);
+                long fileSize = rawFf.length(keyFile);
+                Assert.assertTrue(".pk file must exist in parquet partition dir, path=" + keyFile, fileSize > 0);
+                try (MemoryCMARWImpl mem = new MemoryCMARWImpl(
+                        rawFf, keyFile, rawFf.getPageSize(), fileSize,
+                        MemoryTag.MMAP_DEFAULT, /* opts */ 0)) {
+                    PostingIndexChainWriter chain = new PostingIndexChainWriter();
+                    chain.openExisting(mem);
+                    Assert.assertTrue("chain must have head after parquet rewrite", chain.hasHead());
+                    PostingIndexChainEntry.Snapshot head = new PostingIndexChainEntry.Snapshot();
+                    chain.loadHeadEntry(mem, head);
+                    Assert.assertEquals("single dense gen expected after commitDense", 1, head.genCount);
+                    long gen0DirOffset = PostingIndexChainEntry.resolveGenDirOffset(head.offset, 0);
+                    int gen0KeyCount = mem.getInt(gen0DirOffset + PostingIndexUtils.GEN_DIR_OFFSET_KEY_COUNT);
+                    Assert.assertTrue("gen 0 must be dense (positive KEY_COUNT), got " + gen0KeyCount,
+                            gen0KeyCount > 0);
                 }
             }
         });
@@ -1341,6 +1418,322 @@ public class PostingIndexCriticalIssuesTest extends AbstractCairoTest {
         });
     }
 
+    @Test
+    public void testReviewFindingC1_O3PartialSealPublishesUndroppableChainHead() throws Exception {
+        final AtomicBoolean failArmed = new AtomicBoolean(false);
+        final AtomicInteger sealedPvOpens = new AtomicInteger(0);
+        ff = new TestFilesFacadeImpl() {
+            @Override
+            public long openRW(LPSZ name, int opts) {
+                if (failArmed.get() && name != null
+                        && Utf8s.containsAscii(name, ".pv.")
+                        && !Utf8s.endsWithAscii(name, ".pv.0")) {
+                    int n = sealedPvOpens.incrementAndGet();
+                    if (n >= 2) {
+                        return -1;
+                    }
+                }
+                return super.openRW(name, opts);
+            }
+        };
+
+        node1.setProperty(PropertyKey.CAIRO_POSTING_SEAL_GEN_THRESHOLD, 0);
+
+        assertMemoryLeak(ff, () -> {
+            execute("""
+                    CREATE TABLE t_c1_chain_head (
+                        ts TIMESTAMP,
+                        sym SYMBOL INDEX TYPE POSTING
+                    ) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL
+                    """);
+            execute("""
+                    INSERT INTO t_c1_chain_head VALUES
+                    ('2024-01-01T00:00:00', 'A'),
+                    ('2024-01-02T00:00:00', 'B')
+                    """);
+
+            // Capture the committed _txn before the failed O3. After
+            // the partial-seal failure _txn does not advance, so the
+            // recovery walk's currentTableTxn (set from
+            // txWriter.getTxn() at TableWriter.java:7585 / 10739 /
+            // 10777) is exactly this value on the next writer reopen.
+            long committedTxnBeforeFailure;
+            try (TableWriter w = getWriter("t_c1_chain_head")) {
+                committedTxnBeforeFailure = w.getTxn();
+            }
+
+            sealedPvOpens.set(0);
+            failArmed.set(true);
+            boolean threw = false;
+            try {
+                execute("""
+                        INSERT INTO t_c1_chain_head VALUES
+                        ('2024-01-01T12:00:00', 'C'),
+                        ('2024-01-02T12:00:00', 'D')
+                        """);
+            } catch (Throwable expected) {
+                threw = true;
+            }
+            failArmed.set(false);
+            Assert.assertTrue(
+                    "fault injection must fire: O3 commit must throw on the "
+                            + "second seal-time .pv openRW",
+                    threw
+            );
+
+            engine.releaseAllWriters();
+
+            TableToken token = engine.getTableTokenIfExists("t_c1_chain_head");
+            Assert.assertNotNull("test table must exist", token);
+            FilesFacade rawFf = configuration.getFilesFacade();
+
+            try (Path path = new Path()) {
+                path.of(configuration.getDbRoot()).concat(token).concat("2024-01-01").slash();
+                int plen = path.size();
+                LPSZ keyFile = PostingIndexUtils.keyFileName(
+                        path.trimTo(plen), "sym", COLUMN_NAME_TXN_NONE);
+                long fileSize = rawFf.length(keyFile);
+                Assert.assertTrue(
+                        "D1's .pk file must exist after the partial-seal failure",
+                        fileSize > 0
+                );
+
+                long preRecoveryHeadSealTxn;
+                long preRecoveryHeadTxnAtSeal;
+                int dropped;
+                try (MemoryCMARWImpl mem = new MemoryCMARWImpl(
+                        rawFf, keyFile, rawFf.getPageSize(), fileSize,
+                        MemoryTag.MMAP_DEFAULT, /* opts */ 0)) {
+                    PostingIndexChainWriter chain = new PostingIndexChainWriter();
+                    chain.openExisting(mem);
+                    Assert.assertTrue(
+                            "D1's chain must have a head after the partial seal",
+                            chain.hasHead()
+                    );
+                    PostingIndexChainEntry.Snapshot head = new PostingIndexChainEntry.Snapshot();
+                    chain.loadHeadEntry(mem, head);
+                    preRecoveryHeadSealTxn = head.sealTxn;
+                    preRecoveryHeadTxnAtSeal = head.txnAtSeal;
+
+                    Assert.assertTrue(
+                            "test setup gap: D1's chain head sealTxn must have "
+                                    + "advanced past the in-order baseline (.pv.0). "
+                                    + "If not, the FF counter likely fired on the "
+                                    + "wrong file. Got sealTxn="
+                                    + preRecoveryHeadSealTxn,
+                            preRecoveryHeadSealTxn > 0
+                    );
+
+                    LongList orphans = new LongList();
+                    dropped = chain.recoveryDropAbandoned(
+                            mem, committedTxnBeforeFailure, orphans);
+                }
+
+                // End-to-end smoke check for the C1 fix: after a partial
+                // seal failure during O3 commit, the recovery walk should
+                // be able to drop any chain entries with txnAtSeal >
+                // currentTableTxn. The exact entry left behind depends on
+                // when the fault fires relative to the seal's
+                // publishToChain (head may be the original first-INSERT
+                // entry if the fault aborts before any new entry is
+                // published, or a partial-publish entry if the fault
+                // lands after publish). The unit-level Half 1 of
+                // testReviewFindingC1_SealLoopChainEntryIsRecoverable
+                // verifies the wiring directly; this test just asserts
+                // that the recovery walk does not corrupt the chain.
+                Assert.assertTrue(
+                        "recoveryDropAbandoned must not drop a legitimate "
+                                + "previously-committed chain entry; got dropped="
+                                + dropped + ", entry sealTxn="
+                                + preRecoveryHeadSealTxn + ", txnAtSeal="
+                                + preRecoveryHeadTxnAtSeal
+                                + ", currentTableTxn="
+                                + committedTxnBeforeFailure,
+                        dropped >= 0
+                );
+            }
+        });
+    }
+
+    /**
+     * Re-review Critical #1 — every seal-path callsite outside
+     * {@code TableWriter.syncColumns} reaches {@code PostingIndexWriter.seal()}
+     * without first calling {@code setNextTxnAtSeal}. The set includes
+     * {@code sealPostingIndexForPartition} (TableWriter.java:10739, 10777),
+     * {@code sealPostingIndexesForO3Partitions}, the
+     * {@code closeNoTruncate} flush, {@code IndexBuilder} (REINDEX), and
+     * {@code TableSnapshotRestore}.
+     * <p>
+     * On those paths {@code pendingTxnAtSeal} stays at {@code -1} and
+     * {@code publishToChain} (PostingIndexWriter.java:4045) falls back to
+     * {@code txnAtSeal = 0L} when it appends a new chain entry. The
+     * {@code recoveryDropAbandoned} predicate then is
+     * {@code txnAtSeal > currentTableTxn}, i.e. {@code 0 > N}, which is
+     * false for every non-negative {@code N}. The recovery walk can never
+     * drop these entries, so the v2 chain redesign's structural recovery
+     * property (POSTING_INDEX_CHAIN_DESIGN.md, Finding #7) is not
+     * delivered: an O3 commit whose seal loop fails midway leaves the
+     * already-published partition's chain entry pinned forever, the
+     * matching {@code .pv.{N+1}} / {@code .pc{i}.{N+1}} files on disk
+     * permanently visible, and {@code scheduleOrphanPurge} blind to them.
+     * <p>
+     * The test exercises the same path those callsites use: open a fresh
+     * {@code PostingIndexWriter}, write some keys, then drive the
+     * {@code commit/seal} sequence WITHOUT calling
+     * {@code setNextTxnAtSeal}. It then opens the {@code .pk} file and
+     * checks the head entry's {@code TXN_AT_SEAL} field, plus runs
+     * {@code recoveryDropAbandoned} with a non-negative
+     * {@code currentTableTxn} that, post-fix, must drop the head.
+     */
+    @Test
+    public void testReviewFindingC1_SealLoopChainEntryIsRecoverable() throws Exception {
+        // Half 1: when the caller wires setNextTxnAtSeal, publishToChain
+        // tags the chain entry with that value and the recovery walk can
+        // drop it for any currentTableTxn below it. This mirrors what
+        // every TableWriter seal callsite (sealPostingIndexForPartition,
+        // sealPostingIndexesForO3Partitions, ALTER ADD COLUMN/INDEX,
+        // closeNoTruncate flush, IndexBuilder REINDEX,
+        // TableSnapshotRestore) does after the C1 fix.
+        // Half 2: when the caller forgets the setter, publishToChain's
+        // assert fires and the operation aborts loudly instead of silently
+        // stranding the chain entry with txnAtSeal=0. This locks the
+        // contract in place so a future regression cannot quietly bring
+        // back the v1-era undroppable-entry vector.
+        assertMemoryLeak(() -> {
+            final long upcomingCommitTxn = 42L;
+
+            try (Path path = new Path().of(configuration.getDbRoot())) {
+                String name = "c1_seal_loop_with_set_next_txn";
+                int plen = path.size();
+                FilesFacade ff = configuration.getFilesFacade();
+
+                try (PostingIndexWriter writer = new PostingIndexWriter(
+                        configuration, path.trimTo(plen), name, COLUMN_NAME_TXN_NONE)) {
+                    for (int i = 0; i < 8; i++) {
+                        writer.add(i % 4, i);
+                    }
+                    writer.setMaxValue(7);
+                    // The C1 fix: every seal-path callsite must set
+                    // pendingTxnAtSeal before publishing. The TableWriter
+                    // wiring uses txWriter.getTxn() + 1 for commit-in-progress
+                    // paths; we model that here with a fixed positive value.
+                    writer.setNextTxnAtSeal(upcomingCommitTxn);
+                    writer.commit();
+                    writer.setNextTxnAtSeal(upcomingCommitTxn);
+                    writer.seal();
+                }
+
+                LPSZ keyFile = PostingIndexUtils.keyFileName(
+                        path.trimTo(plen), name, COLUMN_NAME_TXN_NONE);
+                long fileSize = ff.length(keyFile);
+                Assert.assertTrue("seal must have written a .pk file", fileSize > 0);
+
+                try (MemoryCMARWImpl mem = new MemoryCMARWImpl(
+                        ff, keyFile, ff.getPageSize(), fileSize,
+                        MemoryTag.MMAP_DEFAULT, /* opts */ 0)) {
+                    PostingIndexChainWriter chain = new PostingIndexChainWriter();
+                    chain.openExisting(mem);
+                    Assert.assertTrue(
+                            "writer.seal() must have appended at least one chain entry",
+                            chain.hasHead()
+                    );
+                    PostingIndexChainEntry.Snapshot head = new PostingIndexChainEntry.Snapshot();
+                    chain.loadHeadEntry(mem, head);
+
+                    Assert.assertEquals(
+                            "head.txnAtSeal must equal the value supplied via "
+                                    + "setNextTxnAtSeal — the publishToChain "
+                                    + "fallback ternary is gone, the field is "
+                                    + "consumed verbatim",
+                            upcomingCommitTxn, head.txnAtSeal
+                    );
+
+                    // The writer performed both a commit() (which appends an
+                    // unsealed entry at sealTxn=0) and a seal() (which appends
+                    // a sealed entry at sealTxn=1). Both carry txnAtSeal=
+                    // upcomingCommitTxn because the same logical
+                    // commit-in-progress wired setNextTxnAtSeal before each.
+                    // Recovery with currentTableTxn=upcomingCommitTxn-1 must
+                    // drop them both — they all belong to the same never-landed
+                    // commit.
+                    LongList orphans = new LongList();
+                    int dropped = chain.recoveryDropAbandoned(
+                            mem, /* currentTableTxn */ upcomingCommitTxn - 1, orphans);
+                    Assert.assertEquals(
+                            "with proper wiring, recovery drops every entry "
+                                    + "produced during the never-landed commit",
+                            chain.getEntryCount() + dropped, dropped + chain.getEntryCount()
+                    );
+                    Assert.assertTrue(
+                            "with proper wiring, recovery drops at least one "
+                                    + "entry from the never-landed commit",
+                            dropped >= 1
+                    );
+                    Assert.assertEquals(
+                            "all entries from the never-landed commit are dropped",
+                            0L, chain.getEntryCount()
+                    );
+                }
+            }
+
+            try (Path path = new Path().of(configuration.getDbRoot())) {
+                String name = "c1_seal_loop_unset_fallback";
+                int plen = path.size();
+                FilesFacade ff = configuration.getFilesFacade();
+                try (PostingIndexWriter writer = new PostingIndexWriter(
+                        configuration, path.trimTo(plen), name, COLUMN_NAME_TXN_NONE)) {
+                    for (int i = 0; i < 8; i++) {
+                        writer.add(i % 4, i);
+                    }
+                    writer.setMaxValue(7);
+                    // The @TestOnly constructor seeds pendingTxnAtSeal=0 so
+                    // generic test fixtures don't need to think about it.
+                    // Override with the unset sentinel to model a production
+                    // caller that forgot to wire setNextTxnAtSeal. The
+                    // publishToChain ternary kicks in: txnAtSeal=0L. That is
+                    // the legacy fallback we live with for now (an explicit
+                    // assert here would fire on test fixtures that legally
+                    // run without the setter, e.g. PostingIndexStressTest's
+                    // direct of(..., false) reopens). Document the resulting
+                    // chain state so a future tightening of this contract
+                    // can replace this branch with an assert.
+                    writer.setNextTxnAtSeal(-1L);
+                    writer.commit();
+                    writer.setNextTxnAtSeal(-1L);
+                    writer.seal();
+                }
+
+                LPSZ keyFile = PostingIndexUtils.keyFileName(
+                        path.trimTo(plen), name, COLUMN_NAME_TXN_NONE);
+                long fileSize = ff.length(keyFile);
+                try (MemoryCMARWImpl mem = new MemoryCMARWImpl(
+                        ff, keyFile, ff.getPageSize(), fileSize,
+                        MemoryTag.MMAP_DEFAULT, /* opts */ 0)) {
+                    PostingIndexChainWriter chain = new PostingIndexChainWriter();
+                    chain.openExisting(mem);
+                    PostingIndexChainEntry.Snapshot head = new PostingIndexChainEntry.Snapshot();
+                    chain.loadHeadEntry(mem, head);
+                    Assert.assertEquals(
+                            "without the setter, publishToChain falls back to "
+                                    + "txnAtSeal=0L (the legacy v1-era value)",
+                            0L, head.txnAtSeal
+                    );
+                    LongList orphans = new LongList();
+                    int dropped = chain.recoveryDropAbandoned(
+                            mem, /* currentTableTxn */ 5L, orphans);
+                    Assert.assertEquals(
+                            "the 0L fallback makes the entry undroppable for "
+                                    + "any non-negative currentTableTxn (the "
+                                    + "predicate `0 > N` never fires); this is "
+                                    + "the failure mode the C1 wiring was meant "
+                                    + "to fix at production callsites",
+                            0, dropped
+                    );
+                }
+            }
+        });
+    }
+
     /**
      * Critical #C2: SymbolColumnIndexer.index ends with
      * writer.setMaxValue(hiRow - 1). When the caller already invoked
@@ -1678,325 +2071,6 @@ public class PostingIndexCriticalIssuesTest extends AbstractCairoTest {
                                 + " vs preCommitTxn " + preCommitTxn + ")",
                         headSnap.txnAtSeal > preCommitTxn
                 );
-            }
-        });
-    }
-
-    @Test
-    public void testReviewFindingC1_O3PartialSealPublishesUndroppableChainHead() throws Exception {
-        final AtomicBoolean failArmed = new AtomicBoolean(false);
-        final AtomicInteger sealedPvOpens = new AtomicInteger(0);
-        ff = new TestFilesFacadeImpl() {
-            @Override
-            public long openRW(LPSZ name, int opts) {
-                // The pre-seal .pv.0 files pre-exist for both
-                // partitions from the in-order baseline; only count
-                // the seal-time .pv.{>=1} opens. Failing the second
-                // one lets the first partition's seal complete and
-                // abandons the chain head.
-                if (failArmed.get() && name != null
-                        && Utf8s.containsAscii(name, ".pv.")
-                        && !Utf8s.endsWithAscii(name, ".pv.0")) {
-                    int n = sealedPvOpens.incrementAndGet();
-                    if (n >= 2) {
-                        return -1;
-                    }
-                }
-                return super.openRW(name, opts);
-            }
-        };
-
-        assertMemoryLeak(ff, () -> {
-            execute("""
-                    CREATE TABLE t_c1_chain_head (
-                        ts TIMESTAMP,
-                        sym SYMBOL INDEX TYPE POSTING
-                    ) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL
-                    """);
-            execute("""
-                    INSERT INTO t_c1_chain_head VALUES
-                    ('2024-01-01T00:00:00', 'A'),
-                    ('2024-01-02T00:00:00', 'B')
-                    """);
-
-            // Capture the committed _txn before the failed O3. After
-            // the partial-seal failure _txn does not advance, so the
-            // recovery walk's currentTableTxn (set from
-            // txWriter.getTxn() at TableWriter.java:7585 / 10739 /
-            // 10777) is exactly this value on the next writer reopen.
-            long committedTxnBeforeFailure;
-            try (TableWriter w = getWriter("t_c1_chain_head")) {
-                committedTxnBeforeFailure = w.getTxn();
-            }
-
-            sealedPvOpens.set(0);
-            failArmed.set(true);
-            boolean threw = false;
-            try {
-                execute("""
-                        INSERT INTO t_c1_chain_head VALUES
-                        ('2024-01-01T12:00:00', 'C'),
-                        ('2024-01-02T12:00:00', 'D')
-                        """);
-            } catch (Throwable expected) {
-                threw = true;
-            }
-            failArmed.set(false);
-            Assert.assertTrue(
-                    "fault injection must fire: O3 commit must throw on the "
-                            + "second seal-time .pv openRW",
-                    threw
-            );
-
-            engine.releaseAllWriters();
-
-            TableToken token = engine.getTableTokenIfExists("t_c1_chain_head");
-            Assert.assertNotNull("test table must exist", token);
-            FilesFacade rawFf = configuration.getFilesFacade();
-
-            try (Path path = new Path()) {
-                path.of(configuration.getDbRoot()).concat(token).concat("2024-01-01").slash();
-                int plen = path.size();
-                LPSZ keyFile = PostingIndexUtils.keyFileName(
-                        path.trimTo(plen), "sym", COLUMN_NAME_TXN_NONE);
-                long fileSize = rawFf.length(keyFile);
-                Assert.assertTrue(
-                        "D1's .pk file must exist after the partial-seal failure",
-                        fileSize > 0
-                );
-
-                long preRecoveryHeadSealTxn;
-                long preRecoveryHeadTxnAtSeal;
-                int dropped;
-                try (MemoryCMARWImpl mem = new MemoryCMARWImpl(
-                        rawFf, keyFile, rawFf.getPageSize(), fileSize,
-                        MemoryTag.MMAP_DEFAULT, /* opts */ 0)) {
-                    PostingIndexChainWriter chain = new PostingIndexChainWriter();
-                    chain.openExisting(mem);
-                    Assert.assertTrue(
-                            "D1's chain must have a head after the partial seal",
-                            chain.hasHead()
-                    );
-                    PostingIndexChainEntry.Snapshot head = new PostingIndexChainEntry.Snapshot();
-                    chain.loadHeadEntry(mem, head);
-                    preRecoveryHeadSealTxn = head.sealTxn;
-                    preRecoveryHeadTxnAtSeal = head.txnAtSeal;
-
-                    Assert.assertTrue(
-                            "test setup gap: D1's chain head sealTxn must have "
-                                    + "advanced past the in-order baseline (.pv.0). "
-                                    + "If not, the FF counter likely fired on the "
-                                    + "wrong file. Got sealTxn="
-                                    + preRecoveryHeadSealTxn,
-                            preRecoveryHeadSealTxn > 0
-                    );
-
-                    LongList orphans = new LongList();
-                    dropped = chain.recoveryDropAbandoned(
-                            mem, committedTxnBeforeFailure, orphans);
-                }
-
-                // End-to-end smoke check for the C1 fix: after a partial
-                // seal failure during O3 commit, the recovery walk should
-                // be able to drop any chain entries with txnAtSeal >
-                // currentTableTxn. The exact entry left behind depends on
-                // when the fault fires relative to the seal's
-                // publishToChain (head may be the original first-INSERT
-                // entry if the fault aborts before any new entry is
-                // published, or a partial-publish entry if the fault
-                // lands after publish). The unit-level Half 1 of
-                // testReviewFindingC1_SealLoopChainEntryIsRecoverable
-                // verifies the wiring directly; this test just asserts
-                // that the recovery walk does not corrupt the chain.
-                Assert.assertTrue(
-                        "recoveryDropAbandoned must not drop a legitimate "
-                                + "previously-committed chain entry; got dropped="
-                                + dropped + ", entry sealTxn="
-                                + preRecoveryHeadSealTxn + ", txnAtSeal="
-                                + preRecoveryHeadTxnAtSeal
-                                + ", currentTableTxn="
-                                + committedTxnBeforeFailure,
-                        dropped >= 0
-                );
-            }
-        });
-    }
-
-    /**
-     * Re-review Critical #1 — every seal-path callsite outside
-     * {@code TableWriter.syncColumns} reaches {@code PostingIndexWriter.seal()}
-     * without first calling {@code setNextTxnAtSeal}. The set includes
-     * {@code sealPostingIndexForPartition} (TableWriter.java:10739, 10777),
-     * {@code sealPostingIndexesForO3Partitions}, the
-     * {@code closeNoTruncate} flush, {@code IndexBuilder} (REINDEX), and
-     * {@code TableSnapshotRestore}.
-     * <p>
-     * On those paths {@code pendingTxnAtSeal} stays at {@code -1} and
-     * {@code publishToChain} (PostingIndexWriter.java:4045) falls back to
-     * {@code txnAtSeal = 0L} when it appends a new chain entry. The
-     * {@code recoveryDropAbandoned} predicate then is
-     * {@code txnAtSeal > currentTableTxn}, i.e. {@code 0 > N}, which is
-     * false for every non-negative {@code N}. The recovery walk can never
-     * drop these entries, so the v2 chain redesign's structural recovery
-     * property (POSTING_INDEX_CHAIN_DESIGN.md, Finding #7) is not
-     * delivered: an O3 commit whose seal loop fails midway leaves the
-     * already-published partition's chain entry pinned forever, the
-     * matching {@code .pv.{N+1}} / {@code .pc{i}.{N+1}} files on disk
-     * permanently visible, and {@code scheduleOrphanPurge} blind to them.
-     * <p>
-     * The test exercises the same path those callsites use: open a fresh
-     * {@code PostingIndexWriter}, write some keys, then drive the
-     * {@code commit/seal} sequence WITHOUT calling
-     * {@code setNextTxnAtSeal}. It then opens the {@code .pk} file and
-     * checks the head entry's {@code TXN_AT_SEAL} field, plus runs
-     * {@code recoveryDropAbandoned} with a non-negative
-     * {@code currentTableTxn} that, post-fix, must drop the head.
-     */
-    @Test
-    public void testReviewFindingC1_SealLoopChainEntryIsRecoverable() throws Exception {
-        // Half 1: when the caller wires setNextTxnAtSeal, publishToChain
-        // tags the chain entry with that value and the recovery walk can
-        // drop it for any currentTableTxn below it. This mirrors what
-        // every TableWriter seal callsite (sealPostingIndexForPartition,
-        // sealPostingIndexesForO3Partitions, ALTER ADD COLUMN/INDEX,
-        // closeNoTruncate flush, IndexBuilder REINDEX,
-        // TableSnapshotRestore) does after the C1 fix.
-        // Half 2: when the caller forgets the setter, publishToChain's
-        // assert fires and the operation aborts loudly instead of silently
-        // stranding the chain entry with txnAtSeal=0. This locks the
-        // contract in place so a future regression cannot quietly bring
-        // back the v1-era undroppable-entry vector.
-        assertMemoryLeak(() -> {
-            final long upcomingCommitTxn = 42L;
-
-            try (Path path = new Path().of(configuration.getDbRoot())) {
-                String name = "c1_seal_loop_with_set_next_txn";
-                int plen = path.size();
-                FilesFacade ff = configuration.getFilesFacade();
-
-                try (PostingIndexWriter writer = new PostingIndexWriter(
-                        configuration, path.trimTo(plen), name, COLUMN_NAME_TXN_NONE)) {
-                    for (int i = 0; i < 8; i++) {
-                        writer.add(i % 4, i);
-                    }
-                    writer.setMaxValue(7);
-                    // The C1 fix: every seal-path callsite must set
-                    // pendingTxnAtSeal before publishing. The TableWriter
-                    // wiring uses txWriter.getTxn() + 1 for commit-in-progress
-                    // paths; we model that here with a fixed positive value.
-                    writer.setNextTxnAtSeal(upcomingCommitTxn);
-                    writer.commit();
-                    writer.setNextTxnAtSeal(upcomingCommitTxn);
-                    writer.seal();
-                }
-
-                LPSZ keyFile = PostingIndexUtils.keyFileName(
-                        path.trimTo(plen), name, COLUMN_NAME_TXN_NONE);
-                long fileSize = ff.length(keyFile);
-                Assert.assertTrue("seal must have written a .pk file", fileSize > 0);
-
-                try (MemoryCMARWImpl mem = new MemoryCMARWImpl(
-                        ff, keyFile, ff.getPageSize(), fileSize,
-                        MemoryTag.MMAP_DEFAULT, /* opts */ 0)) {
-                    PostingIndexChainWriter chain = new PostingIndexChainWriter();
-                    chain.openExisting(mem);
-                    Assert.assertTrue(
-                            "writer.seal() must have appended at least one chain entry",
-                            chain.hasHead()
-                    );
-                    PostingIndexChainEntry.Snapshot head = new PostingIndexChainEntry.Snapshot();
-                    chain.loadHeadEntry(mem, head);
-
-                    Assert.assertEquals(
-                            "head.txnAtSeal must equal the value supplied via "
-                                    + "setNextTxnAtSeal — the publishToChain "
-                                    + "fallback ternary is gone, the field is "
-                                    + "consumed verbatim",
-                            upcomingCommitTxn, head.txnAtSeal
-                    );
-
-                    // The writer performed both a commit() (which appends an
-                    // unsealed entry at sealTxn=0) and a seal() (which appends
-                    // a sealed entry at sealTxn=1). Both carry txnAtSeal=
-                    // upcomingCommitTxn because the same logical
-                    // commit-in-progress wired setNextTxnAtSeal before each.
-                    // Recovery with currentTableTxn=upcomingCommitTxn-1 must
-                    // drop them both — they all belong to the same never-landed
-                    // commit.
-                    LongList orphans = new LongList();
-                    int dropped = chain.recoveryDropAbandoned(
-                            mem, /* currentTableTxn */ upcomingCommitTxn - 1, orphans);
-                    Assert.assertEquals(
-                            "with proper wiring, recovery drops every entry "
-                                    + "produced during the never-landed commit",
-                            chain.getEntryCount() + dropped, dropped + chain.getEntryCount()
-                    );
-                    Assert.assertTrue(
-                            "with proper wiring, recovery drops at least one "
-                                    + "entry from the never-landed commit",
-                            dropped >= 1
-                    );
-                    Assert.assertEquals(
-                            "all entries from the never-landed commit are dropped",
-                            0L, chain.getEntryCount()
-                    );
-                }
-            }
-
-            try (Path path = new Path().of(configuration.getDbRoot())) {
-                String name = "c1_seal_loop_unset_fallback";
-                int plen = path.size();
-                FilesFacade ff = configuration.getFilesFacade();
-                try (PostingIndexWriter writer = new PostingIndexWriter(
-                        configuration, path.trimTo(plen), name, COLUMN_NAME_TXN_NONE)) {
-                    for (int i = 0; i < 8; i++) {
-                        writer.add(i % 4, i);
-                    }
-                    writer.setMaxValue(7);
-                    // The @TestOnly constructor seeds pendingTxnAtSeal=0 so
-                    // generic test fixtures don't need to think about it.
-                    // Override with the unset sentinel to model a production
-                    // caller that forgot to wire setNextTxnAtSeal. The
-                    // publishToChain ternary kicks in: txnAtSeal=0L. That is
-                    // the legacy fallback we live with for now (an explicit
-                    // assert here would fire on test fixtures that legally
-                    // run without the setter, e.g. PostingIndexStressTest's
-                    // direct of(..., false) reopens). Document the resulting
-                    // chain state so a future tightening of this contract
-                    // can replace this branch with an assert.
-                    writer.setNextTxnAtSeal(-1L);
-                    writer.commit();
-                    writer.setNextTxnAtSeal(-1L);
-                    writer.seal();
-                }
-
-                LPSZ keyFile = PostingIndexUtils.keyFileName(
-                        path.trimTo(plen), name, COLUMN_NAME_TXN_NONE);
-                long fileSize = ff.length(keyFile);
-                try (MemoryCMARWImpl mem = new MemoryCMARWImpl(
-                        ff, keyFile, ff.getPageSize(), fileSize,
-                        MemoryTag.MMAP_DEFAULT, /* opts */ 0)) {
-                    PostingIndexChainWriter chain = new PostingIndexChainWriter();
-                    chain.openExisting(mem);
-                    PostingIndexChainEntry.Snapshot head = new PostingIndexChainEntry.Snapshot();
-                    chain.loadHeadEntry(mem, head);
-                    Assert.assertEquals(
-                            "without the setter, publishToChain falls back to "
-                                    + "txnAtSeal=0L (the legacy v1-era value)",
-                            0L, head.txnAtSeal
-                    );
-                    LongList orphans = new LongList();
-                    int dropped = chain.recoveryDropAbandoned(
-                            mem, /* currentTableTxn */ 5L, orphans);
-                    Assert.assertEquals(
-                            "the 0L fallback makes the entry undroppable for "
-                                    + "any non-negative currentTableTxn (the "
-                                    + "predicate `0 > N` never fires); this is "
-                                    + "the failure mode the C1 wiring was meant "
-                                    + "to fix at production callsites",
-                            0, dropped
-                    );
-                }
             }
         });
     }
