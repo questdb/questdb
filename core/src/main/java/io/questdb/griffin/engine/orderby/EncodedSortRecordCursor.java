@@ -84,9 +84,8 @@ class EncodedSortRecordCursor implements DelegatingRecordCursor {
                     configuration.getSqlSortValueMaxPages()
             );
             this.isOpen = true;
-        } catch (Throwable th) {
-            close();
-            throw th;
+        } finally {
+            if (!this.isOpen) forceClose();
         }
     }
 
@@ -94,11 +93,15 @@ class EncodedSortRecordCursor implements DelegatingRecordCursor {
     public void close() {
         if (isOpen) {
             isOpen = false;
-            Misc.free(entryMem);
-            Misc.free(encoder);
-            Misc.free(recordChain);
-            baseCursor = Misc.free(baseCursor);
+            forceClose();
         }
+    }
+
+    private void forceClose() {
+        Misc.free(entryMem);
+        Misc.free(encoder);
+        Misc.free(recordChain);
+        baseCursor = Misc.free(baseCursor);
     }
 
     @Override
@@ -143,6 +146,8 @@ class EncodedSortRecordCursor implements DelegatingRecordCursor {
         if (!isOpen) {
             isOpen = true;
             entryMem.reopen();
+        } else {
+            recordChain.clear();
         }
         recordChain.setSymbolTableResolver(baseCursor);
         keyType = encoder.init(baseCursor);

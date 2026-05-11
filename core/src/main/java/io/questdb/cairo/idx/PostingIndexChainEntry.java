@@ -59,41 +59,6 @@ import io.questdb.std.Unsafe;
  */
 public final class PostingIndexChainEntry {
 
-    /**
-     * Reusable read snapshot. Fields populated by {@link #read}.
-     */
-    public static final class Snapshot {
-        public int blockCapacity;
-        public final LongList coverFileEndOffsets = new LongList();
-        public int coveringFormat;
-        public int genCount;
-        public long genDirOffset;
-        public int keyCount;
-        public long len;
-        public long maxValue;
-        public long offset;
-        public long prevEntryOffset;
-        public long sealTxn;
-        public long txnAtSeal;
-        public long valueMemSize;
-
-        public void reset() {
-            this.offset = 0;
-            this.len = 0;
-            this.sealTxn = 0;
-            this.txnAtSeal = 0;
-            this.valueMemSize = 0;
-            this.maxValue = 0;
-            this.keyCount = 0;
-            this.genCount = 0;
-            this.blockCapacity = 0;
-            this.coveringFormat = 0;
-            this.prevEntryOffset = PostingIndexUtils.V2_NO_HEAD;
-            this.genDirOffset = 0;
-            this.coverFileEndOffsets.clear();
-        }
-    }
-
     private PostingIndexChainEntry() {
     }
 
@@ -162,12 +127,26 @@ public final class PostingIndexChainEntry {
         into.coverFileEndOffsets.clear();
         if (coverCount > 0) {
             long footerOffset = resolveCoverFooterOffset(entryOffset, into.genCount);
+            // Self-bound the footer reads against the entry's own LEN. If the
+            // entry was sealed with fewer cover slots than the reader expects
+            // (e.g., the writer's coverCount was 0 at seal time but the .pci
+            // sidecar later advertised covers), reading all of coverCount
+            // slots would step past entryOffset + len and, when the entry
+            // hugs the end of the mapping, past the mmap itself - producing
+            // a SIGSEGV in MemoryCR.getLong. Treat absent footer slots as
+            // "no published bytes" (0) so the reader leaves the corresponding
+            // sidecars unmapped instead of dereferencing past the entry.
+            long footerBytesAvailable = Math.max(0L, entryOffset + into.len - footerOffset);
+            int writtenCovers = (int) Math.min(coverCount, footerBytesAvailable / PostingIndexUtils.COVER_END_OFFSET_ENTRY_SIZE);
             into.coverFileEndOffsets.setPos(coverCount);
-            for (int c = 0; c < coverCount; c++) {
+            for (int c = 0; c < writtenCovers; c++) {
                 into.coverFileEndOffsets.setQuick(
                         c,
                         keyMem.getLong(footerOffset + (long) c * PostingIndexUtils.COVER_END_OFFSET_ENTRY_SIZE)
                 );
+            }
+            for (int c = writtenCovers; c < coverCount; c++) {
+                into.coverFileEndOffsets.setQuick(c, 0L);
             }
         }
         return entryOffset + into.len;
@@ -268,6 +247,41 @@ public final class PostingIndexChainEntry {
                         coverEndOffsets.getQuick(c)
                 );
             }
+        }
+    }
+
+    /**
+     * Reusable read snapshot. Fields populated by {@link #read}.
+     */
+    public static final class Snapshot {
+        public final LongList coverFileEndOffsets = new LongList();
+        public int blockCapacity;
+        public int coveringFormat;
+        public int genCount;
+        public long genDirOffset;
+        public int keyCount;
+        public long len;
+        public long maxValue;
+        public long offset;
+        public long prevEntryOffset;
+        public long sealTxn;
+        public long txnAtSeal;
+        public long valueMemSize;
+
+        public void reset() {
+            this.offset = 0;
+            this.len = 0;
+            this.sealTxn = 0;
+            this.txnAtSeal = 0;
+            this.valueMemSize = 0;
+            this.maxValue = 0;
+            this.keyCount = 0;
+            this.genCount = 0;
+            this.blockCapacity = 0;
+            this.coveringFormat = 0;
+            this.prevEntryOffset = PostingIndexUtils.V2_NO_HEAD;
+            this.genDirOffset = 0;
+            this.coverFileEndOffsets.clear();
         }
     }
 }

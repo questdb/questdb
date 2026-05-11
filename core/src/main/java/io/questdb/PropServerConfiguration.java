@@ -32,6 +32,7 @@ import io.questdb.cairo.CommitMode;
 import io.questdb.cairo.IndexType;
 import io.questdb.cairo.MicrosTimestampDriver;
 import io.questdb.cairo.PartitionBy;
+import io.questdb.cairo.SampleBySortStrategy;
 import io.questdb.cairo.SecurityContext;
 import io.questdb.cairo.SqlJitMode;
 import io.questdb.cairo.TableUtils;
@@ -325,6 +326,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final DateLocale logTimestampLocale;
     private final String logTimestampTimezone;
     private final TimeZoneRules logTimestampTimezoneRules;
+    private final boolean matViewCoveringIndexEnabled;
     private final boolean matViewEnabled;
     private final long matViewInsertAsSelectBatchSize;
     private final int matViewMaxRefreshIntervals;
@@ -402,6 +404,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final int poolSegmentSize;
     private final String posthogApiKey;
     private final boolean posthogEnabled;
+    private final int postingIndexAdaptiveDeltaAtOrAbove;
     private final boolean postingIndexAutoIncludeTimestamp;
     private final byte postingIndexRowIdEncoding;
     private final int postingSealGenThreshold;
@@ -518,6 +521,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final int sqlQueryRegistryPoolSize;
     private final int sqlRenameTableModelPoolCapacity;
     private final boolean sqlSampleByDefaultAlignment;
+    private final int sqlSampleByFillSortStrategy;
     private final int sqlSampleByIndexSearchPageSize;
     private final boolean sqlSampleByValidateFillType;
     private final int sqlSmallMapKeyCapacity;
@@ -1565,6 +1569,7 @@ public class PropServerConfiguration implements ServerConfiguration {
                 case "delta" -> PostingIndexUtils.ENCODING_DELTA;
                 default -> PostingIndexUtils.ENCODING_ADAPTIVE;
             };
+            this.postingIndexAdaptiveDeltaAtOrAbove = getInt(properties, env, PropertyKey.CAIRO_POSTING_INDEX_ADAPTIVE_DELTA_AT_OR_ABOVE, 2000);
             this.postingSealGenThreshold = getInt(properties, env, PropertyKey.CAIRO_POSTING_SEAL_GEN_THRESHOLD, 16);
             this.postingSealPurgeOutboxMax = getInt(properties, env, PropertyKey.CAIRO_POSTING_SEAL_PURGE_OUTBOX_MAX, 8192);
             this.sqlJoinMetadataPageSize = getIntSize(properties, env, PropertyKey.CAIRO_SQL_JOIN_METADATA_PAGE_SIZE, 16384);
@@ -1619,6 +1624,7 @@ public class PropServerConfiguration implements ServerConfiguration {
 
             this.sqlSampleByIndexSearchPageSize = getIntSize(properties, env, PropertyKey.CAIRO_SQL_SAMPLEBY_PAGE_SIZE, 0);
             this.sqlSampleByDefaultAlignment = getBoolean(properties, env, PropertyKey.CAIRO_SQL_SAMPLEBY_DEFAULT_ALIGNMENT_CALENDAR, true);
+            this.sqlSampleByFillSortStrategy = getSampleByFillSortStrategy(properties, env);
             this.sqlGroupByMapCapacity = getInt(properties, env, PropertyKey.CAIRO_SQL_GROUPBY_MAP_CAPACITY, 1024);
             this.sqlGroupByAllocatorChunkSize = getLongSize(properties, env, PropertyKey.CAIRO_SQL_GROUPBY_ALLOCATOR_DEFAULT_CHUNK_SIZE, 128 * 1024);
             this.sqlGroupByAllocatorMaxChunkSize = getLongSize(properties, env, PropertyKey.CAIRO_SQL_GROUPBY_ALLOCATOR_MAX_CHUNK_SIZE, 4 * Numbers.SIZE_1GB);
@@ -2105,6 +2111,7 @@ public class PropServerConfiguration implements ServerConfiguration {
 
             this.walParallelExecutionEnabled = getBoolean(properties, env, PropertyKey.CAIRO_WAL_APPLY_PARALLEL_SQL_ENABLED, true);
             this.matViewParallelExecutionEnabled = getBoolean(properties, env, PropertyKey.CAIRO_MAT_VIEW_PARALLEL_SQL_ENABLED, cpuAvailable >= 4);
+            this.matViewCoveringIndexEnabled = getBoolean(properties, env, PropertyKey.CAIRO_MAT_VIEW_COVERING_INDEX_ENABLED, false);
             this.sqlParallelWorkStealingThreshold = getInt(properties, env, PropertyKey.CAIRO_SQL_PARALLEL_WORK_STEALING_THRESHOLD, 16);
             this.sqlParallelWorkStealingSpinTimeout = getNanos(properties, env, PropertyKey.CAIRO_SQL_PARALLEL_WORK_STEALING_SPIN_TIMEOUT, 50_000);
             this.sqlParquetFrameCacheCapacity = Math.max(getInt(properties, env, PropertyKey.CAIRO_SQL_PARQUET_FRAME_CACHE_CAPACITY, 8), 8);
@@ -2402,6 +2409,38 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         return SqlJitMode.JIT_MODE_ENABLED;
+    }
+
+    private int getSampleByFillSortStrategy(Properties properties, @Nullable Map<String, String> env) throws ServerConfigurationException {
+        final ConfigPropertyKey key = PropertyKey.CAIRO_SQL_SAMPLEBY_FILL_SORT_STRATEGY;
+        final String strategy = getString(properties, env, key, "light_encoded");
+
+        // must not be null because we provided non-null default value
+        assert strategy != null;
+
+        // Empty value falls back to the default. Strict validation still
+        // applies to non-empty unknown values below.
+        if (strategy.isEmpty()) {
+            return SampleBySortStrategy.LIGHT_ENCODED;
+        }
+
+        if (Chars.equalsLowerCaseAscii(strategy, "light_encoded")) {
+            return SampleBySortStrategy.LIGHT_ENCODED;
+        }
+
+        if (Chars.equalsLowerCaseAscii(strategy, "full_encoded")) {
+            return SampleBySortStrategy.FULL_ENCODED;
+        }
+
+        if (Chars.equalsLowerCaseAscii(strategy, "light_recordchain")) {
+            return SampleBySortStrategy.LIGHT_RECORDCHAIN;
+        }
+
+        if (Chars.equalsLowerCaseAscii(strategy, "full_recordchain")) {
+            return SampleBySortStrategy.FULL_RECORDCHAIN;
+        }
+
+        throw ServerConfigurationException.forInvalidKey(key.getPropertyPath(), strategy);
     }
 
     private int getWalWriterMadviseMode(Properties properties, @Nullable Map<String, String> env, ConfigPropertyKey key) throws ServerConfigurationException {
@@ -4139,6 +4178,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
+        public int getPostingIndexAdaptiveDeltaAtOrAbove() {
+            return postingIndexAdaptiveDeltaAtOrAbove;
+        }
+
+        @Override
         public int getPostingSealGenThreshold() {
             return postingSealGenThreshold;
         }
@@ -4201,6 +4245,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public boolean getSampleByDefaultAlignmentCalendar() {
             return sqlSampleByDefaultAlignment;
+        }
+
+        @Override
+        public int getSampleByFillSortStrategy() {
+            return sqlSampleByFillSortStrategy;
         }
 
         @Override
@@ -4856,6 +4905,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public boolean isIOURingEnabled() {
             return ioURingEnabled;
+        }
+
+        @Override
+        public boolean isMatViewCoveringIndexEnabled() {
+            return matViewCoveringIndexEnabled;
         }
 
         @Override
