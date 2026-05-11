@@ -49,6 +49,72 @@ import static io.questdb.cairo.TableUtils.COLUMN_NAME_TXN_NONE;
 public class PostingIndexDiffTest extends AbstractCairoTest {
 
     /**
+     * Every existing chain entry fails validation (the .d file has been
+     * fully rewritten, so {@code totalKept == 0}). The diff must take the
+     * empty-result short-circuit, calling {@code truncate()} without
+     * double-freeing the Phase 1 scratch buffers it allocated.
+     */
+    @Test
+    public void testDiffAllEvictedShortCircuit() throws Exception {
+        assertMemoryLeak(() -> {
+            try (Path path = new Path().of(configuration.getDbRoot())) {
+                String name = "diff_all_evicted";
+                int plen = path.size();
+                FilesFacade ff = configuration.getFilesFacade();
+
+                long dataFd;
+                try (Path dpath = new Path().of(configuration.getDbRoot()).concat("sym_all_evicted.d")) {
+                    LPSZ dFilePath = dpath.$();
+                    long buf = Unsafe.malloc(16, MemoryTag.NATIVE_DEFAULT);
+                    try {
+                        Unsafe.putInt(buf, 9);
+                        Unsafe.putInt(buf + 4, 9);
+                        Unsafe.putInt(buf + 8, 9);
+                        Unsafe.putInt(buf + 12, 9);
+                        long writeFd = ff.openRW(dFilePath, configuration.getWriterFileOpenOpts());
+                        Assert.assertTrue("could not create test .d file", writeFd > 0);
+                        long written = ff.write(writeFd, buf, 16, 0);
+                        Assert.assertEquals(16, written);
+                        ff.close(writeFd);
+                    } finally {
+                        Unsafe.free(buf, 16, MemoryTag.NATIVE_DEFAULT);
+                    }
+                    dataFd = ff.openRO(dFilePath);
+                    Assert.assertTrue("could not open test .d file", dataFd > 0);
+                }
+
+                try {
+                    try (PostingIndexWriter writer = new PostingIndexWriter(
+                            configuration, path.trimTo(plen), name, COLUMN_NAME_TXN_NONE)) {
+                        writer.setNextTxnAtSeal(10L);
+                        writer.add(2, 0);
+                        writer.add(2, 1);
+                        writer.add(2, 2);
+                        writer.add(2, 3);
+                        writer.setMaxValue(3);
+                        writer.commit();
+                        writer.setNextTxnAtSeal(10L);
+                        writer.seal();
+                    }
+
+                    try (PostingIndexWriter writer = new PostingIndexWriter(configuration)) {
+                        writer.of(path.trimTo(plen), name, COLUMN_NAME_TXN_NONE, /* init */ false);
+                        writer.setNextTxnAtSeal(20L);
+                        writer.diffAgainstChainHead(ff, dataFd, /* columnTop */ 0, /* partitionSize */ 4);
+                        RowCursor key2 = writer.getCursor(2);
+                        Assert.assertFalse(
+                                "key=2 must yield no rows: every entry was evicted as stale",
+                                key2.hasNext()
+                        );
+                    }
+                } finally {
+                    ff.close(dataFd);
+                }
+            }
+        });
+    }
+
+    /**
      * Happy path: chain has both an OLD (key, rowId) pair from a pre-O3
      * write and a NEW (key, rowId) pair from an O3 commit that rewrote the
      * same rowId with a different symbol. The .d file reflects the post-O3

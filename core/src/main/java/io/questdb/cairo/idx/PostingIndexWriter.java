@@ -734,12 +734,10 @@ public class PostingIndexWriter implements IndexWriter {
 
             // No entries survived validation; the partition's index is now empty
             // for this column. truncate() rotates sealTxn and queues purge.
+            // keptCountsAddr / perKeyDecodeAddr / dReadCacheAddr are freed by
+            // the outer finally below; the previous version freed them here as
+            // well, which caused a libmalloc double-free abort on this path.
             if (totalKept == 0) {
-                Unsafe.free(keptCountsAddr, keptCountsSize, MemoryTag.NATIVE_INDEX_READER);
-                if (perKeyDecodeAddr != 0) {
-                    Unsafe.free(perKeyDecodeAddr, perKeyDecodeCapacity * Long.BYTES, MemoryTag.NATIVE_INDEX_READER);
-                }
-                Unsafe.free(dReadCacheAddr, dReadCacheSize, MemoryTag.NATIVE_INDEX_READER);
                 truncate();
                 setMaxValue(Math.max(partitionSize - 1, -1));
                 return;
