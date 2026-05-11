@@ -74,7 +74,6 @@ class WaitWalFunction extends BooleanFunction implements Function {
 
         // Fast path: already caught up.
         if (seqTxnTracker.getWriterTxn() >= seqTxn) {
-            throwIfTerminated();
             return true;
         }
 
