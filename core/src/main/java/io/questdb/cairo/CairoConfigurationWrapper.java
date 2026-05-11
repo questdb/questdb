@@ -808,6 +808,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
+    public long getPostingIndexerSpillBytesMax() {
+        return getDelegate().getPostingIndexerSpillBytesMax();
+    }
+
+    @Override
     public int getPostingSealGenThreshold() {
         return getDelegate().getPostingSealGenThreshold();
     }
