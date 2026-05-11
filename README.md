@@ -11,23 +11,7 @@
 
 <p align="center">
   English |
-  <a href="./i18n/README.zh-cn.md">简体中文</a> |
-  <a href="./i18n/README.zh-hk.md">繁體中文</a> |
-  <a href="./i18n/README.ar-dz.md">العربية</a> |
-  <a href="./i18n/README.it-it.md">Italiano</a> |
-  <a href="./i18n/README.ua-ua.md">Українська</a> |
-  <a href="./i18n/README.es-es.md">Español</a> |
-  <a href="./i18n/README.pt.md">Português</a> |
-  <a href="./i18n/README.fr-fr.md">Français</a> |
-  <a href="./i18n/README.de-de.md">Deutsch</a> |
-  <a href="./i18n/README.ja-ja.md">日本語</a> |
-  <a href="./i18n/README.ko-kr.md">한국어</a> |
-  <a href="./i18n/README.he-il.md">עברית</a> |
-  <a href="./i18n/README.nl-nl.md">Nederlands</a> |
-  <a href="./i18n/README.tr-tr.md">Türkçe</a> |
-  <a href="./i18n/README.hn-in.md">हिंदी</a> |
-  <a href="./i18n/README.vi-vn.md">Tiếng Việt</a> |
-  <a href="./i18n/README.ms-my.md">Bahasa Melayu</a>
+  <a href="./i18n/README.zh-cn.md">简体中文</a>
 </p>
 
 ---
@@ -49,7 +33,7 @@ QuestDB is hardware efficient, with quick setup and operational efficiency.
 
 <div align="center">
   <a href="https://demo.questdb.com/">
-    <img alt="QuestDB Web Console showing a SQL statement and query result" src="https://raw.githubusercontent.com/questdb/questdb/master/.github/console.png" width="900" />
+    <img alt="QuestDB Web Console showing a SQL statement and query result" src=".github/console.webp" width="900" />
   </a>
   <p><em>QuestDB Web Console - click to launch demo</em></p>
 </div>
@@ -65,16 +49,17 @@ Feature highlights include:
 - SIMD-accelerated, parallel execution
 - Multi-tier storage: WAL → native columnar → Parquet (time-partitioned and time-ordered)
 - Postgres protocol (PGwire) and REST API
-- Materialized views and n-dimensional arrays (incl. 2D arrays for order books)
+- Views, materialized views, and n-dimensional arrays (incl. 2D arrays for order books)
 - Web console for queries and data management
 - Apache 2.0 open source and open formats — no vendor lock-in
-- [Finance functions](https://questdb.com/docs/reference/function/finance/) and [orderbook analytics](https://questdb.com/docs/guides/order-book/)
+- [Finance functions](https://questdb.com/docs/query/functions/finance/) and [orderbook analytics](https://questdb.com/docs/tutorials/order-book/)
 
 QuestDB excels with:
 
 - financial market data (tick data, trades, order books, OHLC)
 - Sensor/telemetry data with high data cardinality
 - real-time dashboards and monitoring
+- [AI coding agents](https://questdb.com/agents/) for automated data pipelines and analytics
 
 And why use a time-series database?
 
@@ -98,7 +83,7 @@ QuestDB release and sample datasets:
 - Trips: 10 years of NYC taxi trips with 1.6 billion rows
 
 We also have some public, real-time demo dashboards using
-our [Grafana-native](https://questdb.com/docs/third-party-tools/grafana/) plugin:
+our [Grafana-native](https://questdb.com/docs/integrations/visualization/grafana/) plugin:
 
 - [Real-time crypto trades:](https://questdb.com/dashboards/crypto/) executed
   trades on OKX from more than 20 assets in real time
@@ -118,8 +103,17 @@ For deep dives into internals and performance, see the following blog posts:
 As always, we encourage you to run your own benchmarks.
 
 <div align="center">
-  <img alt="A chart comparing the ingestion rate of QuestDB, InfluxDB and TimescaleDB." src=".github/readme-benchmark.png" width="600"/>
+  <img alt="A chart comparing the ingestion rate of QuestDB, InfluxDB and TimescaleDB." src=".github/readme-benchmark.webp" width="600"/>
 </div>
+
+## AI coding agents
+
+QuestDB works out of the box with AI coding agents. Install the
+[QuestDB agent skill](https://questdb.com/agents/) and go from prompt to
+production in under 60 seconds: streaming ingestion, materialized views, and
+real-time analytics with zero manual code.
+
+https://github.com/questdb/questdb/raw/master/.github/agents-demo.mp4
 
 ## Get started
 
@@ -142,58 +136,58 @@ questdb stop
 ```
 
 Alternatively, to kickoff the full onboarding journey, start with our concise
-[quick start guide](https://questdb.com/docs/quick-start/).
+[quick start guide](https://questdb.com/docs/getting-started/quick-start/).
 
 ### First-party ingestion clients
 
 QuestDB clients for ingesting data via the InfluxDB Line Protocol:
 
-- [Python](https://questdb.com/docs/clients/ingest-python/)
-- [.NET](https://questdb.com/docs/clients/ingest-dotnet/)
-- [C/C++](https://questdb.com/docs/clients/ingest-c-and-cpp/)
-- [Go](https://questdb.com/docs/clients/ingest-go/)
-- [Java](https://questdb.com/docs/clients/java-ilp/)
-- [NodeJS](https://questdb.com/docs/clients/ingest-node/)
-- [Rust](https://questdb.com/docs/clients/ingest-rust/)
+- [Python](https://questdb.com/docs/ingestion/clients/python/)
+- [.NET](https://questdb.com/docs/ingestion/clients/dotnet/)
+- [C/C++](https://questdb.com/docs/ingestion/clients/c-and-cpp/)
+- [Go](https://questdb.com/docs/ingestion/clients/go/)
+- [Java](https://questdb.com/docs/ingestion/clients/java/)
+- [NodeJS](https://questdb.com/docs/ingestion/clients/nodejs/)
+- [Rust](https://questdb.com/docs/ingestion/clients/rust/)
 
 ### Connect to QuestDB
 
 Interact with QuestDB and your data via the following interfaces:
 
-- [Web Console](https://questdb.com/docs/web-console/) for an interactive SQL
+- [Web Console](https://questdb.com/docs/getting-started/web-console/overview/) for an interactive SQL
   editor and CSV import on port `9000`
-- [InfluxDB Line Protocol](https://questdb.com/docs/reference/api/ilp/overview/)
+- [InfluxDB Line Protocol](https://questdb.com/docs/ingestion/ilp/overview/)
   for streaming ingestion on port `9000`
-- [PostgreSQL Wire Protocol](https://questdb.com/docs/reference/api/postgres/)
+- [PostgreSQL Wire Protocol](https://questdb.com/docs/query/pgwire/overview/)
   for programmatic queries on port `8812`
-- [REST API](https://questdb.com/docs/reference/api/rest/) for CSV import and
+- [REST API](https://questdb.com/docs/query/rest-api/) for CSV import and
   cURL on port `9000`
 
 ### Popular third-party tools
 
 Popular tools that integrate with QuestDB include:
 
-- [Kafka](https://questdb.com/docs/third-party-tools/kafka/)
-- [Redpanda](https://questdb.com/docs/third-party-tools/redpanda/)
-- [Grafana](https://questdb.com/docs/third-party-tools/grafana/)
-- [Polars](https://questdb.com/docs/third-party-tools/polars/)
-- [Pandas](https://questdb.com/docs/third-party-tools/pandas/)
-- [PowerBI](https://questdb.com/docs/third-party-tools/powerbi/)
-- [Superset](https://questdb.com/docs/third-party-tools/superset/)
-- [Apache Flink](https://questdb.com/docs/third-party-tools/flink/)
-- [Telegraf](https://questdb.com/docs/third-party-tools/telegraf/)
-- [MindsDB](https://questdb.com/docs/third-party-tools/mindsdb/)
+- [Kafka](https://questdb.com/docs/ingestion/message-brokers/kafka/)
+- [Redpanda](https://questdb.com/docs/ingestion/message-brokers/redpanda/)
+- [Grafana](https://questdb.com/docs/integrations/visualization/grafana/)
+- [Polars](https://questdb.com/docs/integrations/data-processing/polars/)
+- [Pandas](https://questdb.com/docs/integrations/data-processing/pandas/)
+- [PowerBI](https://questdb.com/docs/integrations/visualization/powerbi/)
+- [Superset](https://questdb.com/docs/integrations/visualization/superset/)
+- [Apache Flink](https://questdb.com/docs/ingestion/message-brokers/flink/)
+- [Telegraf](https://questdb.com/docs/ingestion/message-brokers/telegraf/)
+- [MindsDB](https://questdb.com/docs/integrations/other/mindsdb/)
 
 ### End-to-end code scaffolds
 
 From streaming ingestion to visualization with Grafana, start with code
-scaffolds in from our
+scaffolds from our
 [quickstart repository](https://github.com/questdb/questdb-quickstart).
 
 ### Configure QuestDB for production workloads
 
 Find our
-[capacity planning](https://questdb.com/docs/deployment/capacity-planning/) to
+[capacity planning](https://questdb.com/docs/getting-started/capacity-planning/) to
 fine-tune QuestDB for production workloads.
 
 ### QuestDB Enterprise
@@ -202,7 +196,7 @@ For secure operation at greater scale or within larger organizations.
 
 Additional features include:
 
-- high Availablity and read replica(s)
+- high availability and read replica(s)
 - multi-primary ingestion
 - cold storage integration
 - role-based access control
@@ -236,11 +230,11 @@ and contact information.
 
 ### 🚢 Deploy QuestDB
 
-- [AWS AMI](https://questdb.com/docs/guides/aws-official-ami)
-- [Google Cloud Platform](https://questdb.com/docs/guides/google-cloud-platform)
-- [Official Docker image](https://questdb.com/docs/get-started/docker)
-- [DigitalOcean droplets](https://questdb.com/docs/guides/digitalocean)
-- [Kubernetes Helm charts](https://questdb.com/docs/guides/kubernetes)
+- [AWS](https://questdb.com/docs/deployment/aws/)
+- [Google Cloud Platform](https://questdb.com/docs/deployment/gcp/)
+- [Official Docker image](https://questdb.com/docs/deployment/docker/)
+- [DigitalOcean](https://questdb.com/docs/deployment/digital-ocean/)
+- [Kubernetes Helm charts](https://questdb.com/docs/deployment/kubernetes/)
 
 ## Contribute
 
@@ -268,7 +262,7 @@ To get started with contributing:
   of QuestDB and submit a pull request with your proposed changes
 - Stuck? Join our [public Slack](https://slack.questdb.com/) for assistance
 
-✨ As a sign of our gratitude, we send QuestDB swagto our contributors!
+✨ As a sign of our gratitude, we send QuestDB swag to our contributors!
 
 A big thanks goes to the following wonderful people who have contributed to
 QuestDB [emoji key](https://allcontributors.org/docs/en/emoji-key):
