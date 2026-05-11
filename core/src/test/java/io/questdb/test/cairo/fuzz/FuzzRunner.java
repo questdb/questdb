@@ -1022,7 +1022,6 @@ public class FuzzRunner {
             int opIndex;
 
             try {
-                String updatedTableName = tableName;
                 Rnd tempRnd = new Rnd();
                 while (errors.isEmpty() && (opIndex = nextOperation.incrementAndGet()) < transactions.size() && errors.isEmpty()) {
                     FuzzTransaction transaction = transactions.getQuick(opIndex);
@@ -1058,15 +1057,6 @@ public class FuzzRunner {
                     }
 
                     boolean increment = false;
-
-                    if (transaction.reopenTable) {
-                        TableToken updatedTableToken = engine.getTableTokenByDirName(walWriter.getTableToken().getDirName());
-                        if (updatedTableToken == null) {
-                            throw new IllegalStateException("table is missing after reopen [table=" + tableName + "]");
-                        }
-                        updatedTableName = updatedTableToken.getTableName();
-                    }
-
                     for (int operationIndex = 0; operationIndex < transaction.operationList.size(); operationIndex++) {
                         FuzzTransactionOperation operation = transaction.operationList.getQuick(operationIndex);
                         increment |= operation.apply(tempRnd, engine, walWriter, -1, null);
@@ -1074,10 +1064,11 @@ public class FuzzRunner {
 
                     if (transaction.reopenTable) {
                         synchronized (writers) {
+                            // Table is dropped, reload all writers
                             for (int ii = 0; ii < writers.size(); ii++) {
-                                if (writers.get(ii).getTableToken().getTableName().equals(updatedTableName)) {
+                                if (writers.get(ii).getTableToken().getTableName().equals(tableName)) {
                                     writers.get(ii).close();
-                                    writers.setQuick(ii, (WalWriter) engine.getTableWriterAPI(updatedTableName, "apply trans test"));
+                                    writers.setQuick(ii, (WalWriter) engine.getTableWriterAPI(tableName, "apply trans test"));
                                 }
                             }
                         }
@@ -1113,13 +1104,6 @@ public class FuzzRunner {
             } catch (Throwable e) {
                 e.printStackTrace(System.out);
                 errors.add(e);
-                // Unblock peers waiting on a barrier this worker was supposed to advance.
-                // Without this, peers spin in the Os.sleep loop above because their wait
-                // condition (waitBarrierVersion < target) stays true; the errors check
-                // inside the loop relies on Os.sleep returning, which under heavy load
-                // can be delayed indefinitely. Overshooting to MAX guarantees the wait
-                // condition flips so peers reach the errors.isEmpty() check and return.
-                waitBarrierVersion.set(Long.MAX_VALUE);
             } finally {
                 Path.clearThreadLocals();
             }
