@@ -1699,6 +1699,27 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testLiveViewsCatalogueExposesMillisecondUnit() throws Exception {
+        // Regression: getIntervalUnit had no arm for the internal 'T' (millisecond)
+        // unit char, so flush_every_interval_unit / in_memory_interval_unit returned
+        // NULL for any LV created with a ms-granularity FLUSH EVERY or IN MEMORY.
+        // Since FLUSH EVERY's minimum is 100ms, this hit the most common LV shape.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 200ms IN MEMORY 500ms AS " +
+                    "SELECT ts, x, row_number() OVER () AS rn FROM base WHERE x > 0");
+
+            assertSql(
+                    "view_name\tflush_every_interval\tflush_every_interval_unit\tin_memory_interval\tin_memory_interval_unit\n" +
+                            "lv\t200\tMILLISECOND\t500\tMILLISECOND\n",
+                    "SELECT view_name, flush_every_interval, flush_every_interval_unit, in_memory_interval, in_memory_interval_unit FROM live_views()"
+            );
+
+            execute("DROP LIVE VIEW lv");
+        });
+    }
+
+    @Test
     public void testLiveViewsCatalogueExposesViewLowerBoundTimestamp() throws Exception {
         assertMemoryLeak(() -> {
             // Pin the microsecond clock so view_lower_bound_timestamp captures the
@@ -1777,7 +1798,7 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
                     "SELECT ts, x, row_number() OVER () AS rn FROM base WHERE x > 0");
             assertSql(
                     "ddl\n" +
-                            "CREATE LIVE VIEW 'lv' FLUSH EVERY 200T IN MEMORY 5s PARTITION BY DAY AS (\n" +
+                            "CREATE LIVE VIEW 'lv' FLUSH EVERY 200ms IN MEMORY 5s PARTITION BY DAY AS (\n" +
                             "SELECT ts, x, row_number() OVER () AS rn FROM base WHERE x > 0\n" +
                             ");\n",
                     "SHOW CREATE LIVE VIEW lv"

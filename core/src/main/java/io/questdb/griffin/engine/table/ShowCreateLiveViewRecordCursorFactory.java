@@ -186,10 +186,12 @@ public class ShowCreateLiveViewRecordCursorFactory extends AbstractRecordCursorF
                     .put(viewToken.getTableName())
                     .putAscii('\'');
             if (flushEveryValue > 0) {
-                sink.putAscii(" FLUSH EVERY ").put(flushEveryValue).putAscii(flushEveryUnit);
+                sink.putAscii(" FLUSH EVERY ").put(flushEveryValue);
+                appendUnitGrammar(flushEveryUnit);
             }
             if (inMemoryValue > 0) {
-                sink.putAscii(" IN MEMORY ").put(inMemoryValue).putAscii(inMemoryUnit);
+                sink.putAscii(" IN MEMORY ").put(inMemoryValue);
+                appendUnitGrammar(inMemoryUnit);
             }
             if (partitionBy != io.questdb.cairo.PartitionBy.NONE) {
                 sink.putAscii(" PARTITION BY ").put(io.questdb.cairo.PartitionBy.toString(partitionBy));
@@ -198,6 +200,26 @@ public class ShowCreateLiveViewRecordCursorFactory extends AbstractRecordCursorF
                     .put(viewSql)
                     .putAscii('\n');
             sink.putAscii(");");
+        }
+
+        /**
+         * Maps the internal duration-unit char ({@code 's'}, {@code 'm'}, {@code 'h'},
+         * {@code 'd'}, {@code 'T'} for milliseconds) to the grammar token
+         * {@code LiveViewDefinition.parseDurationUnit} accepts. Mirrors
+         * {@code parseDurationUnit}'s set so the SHOW CREATE output round-trips back
+         * through CREATE LIVE VIEW.
+         * <p>
+         * The {@code SqlParser.displayDurationUnit} helper used in error messages
+         * cannot be reused here because it returns {@code "min"} for {@code 'm'} —
+         * readable in errors but rejected by the parser, which only accepts the
+         * single-char {@code 'm'} form for minutes.
+         */
+        private void appendUnitGrammar(char unit) {
+            if (unit == 'T') {
+                sink.putAscii("ms");
+            } else {
+                sink.putAscii(unit);
+            }
         }
 
         private class ShowCreateLiveViewRecord implements Record {

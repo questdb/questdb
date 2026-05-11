@@ -68,6 +68,7 @@ public class LiveViewsFunctionFactory implements FunctionFactory {
 
     static String getIntervalUnit(char unit) {
         return switch (unit) {
+            case 'T' -> "MILLISECOND";
             case 's' -> "SECOND";
             case 'm' -> "MINUTE";
             case 'h' -> "HOUR";
