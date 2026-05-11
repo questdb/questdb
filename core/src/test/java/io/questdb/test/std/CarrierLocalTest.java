@@ -159,9 +159,10 @@ public class CarrierLocalTest {
             Assert.assertNull("entry removed: subsequent get returns the default (null)", tl.get());
 
             tl.set(b);
-            // unbind's releaseRow will close 'b'.
+            // releaseRow does NOT close 'b' -- matches JDK ThreadLocal: values
+            // left in the table at thread death are unreachable, not closed.
         });
-        Assert.assertEquals(1, b.closes);
+        Assert.assertEquals("releaseRow leaves b unclosed (JDK ThreadLocal parity)", 0, b.closes);
         Assert.assertEquals("a freed by removeAndFree, releaseRow must not double-close", 1, a.closes);
     }
 
@@ -179,12 +180,15 @@ public class CarrierLocalTest {
     }
 
     @Test
-    public void testStaleEntryReleaseRowFreesCloseables() throws Exception {
-        // After a worker unbinds, releaseRow must close every Closeable value
-        // held in the carrier's table -- including those whose CarrierLocal
-        // keys were already GC'd before unbind. The strict "expunge fired
-        // mid-operation" assertion is intentionally absent: GC is
-        // non-deterministic, so we only verify the steady-state outcome.
+    public void testStaleEntryReleaseRowDoesNotCloseMatchingJdkSemantics() throws Exception {
+        // After a worker unbinds, releaseRow drops the row but does NOT close
+        // the stored values -- it matches JDK ThreadLocal, where values left in
+        // the table on thread death are simply unreachable, not actively
+        // closed. Callers that hold native resources are expected to register a
+        // worker-pool thread-local cleaner that calls removeAndFree() before
+        // unbind. Auto-closing here would race with close callbacks that touch
+        // other carrier-local slots (e.g. LOG.debug from a pool's close()),
+        // because the table iteration runs in hash-bucket order.
         final int N = 16;
         CountingCloseable[] closeables = new CountingCloseable[N];
         for (int i = 0; i < N; i++) {
@@ -206,10 +210,9 @@ public class CarrierLocalTest {
             }
         });
 
-        // releaseRow on unbind catches anything that wasn't already expunged.
         for (int i = 0; i < N; i++) {
-            Assert.assertEquals("closeable " + i + " freed exactly once",
-                    1, closeables[i].closes);
+            Assert.assertEquals("closeable " + i + " not closed by releaseRow",
+                    0, closeables[i].closes);
         }
     }
 
@@ -500,7 +503,11 @@ public class CarrierLocalTest {
     }
 
     @Test
-    public void testReleaseRowFreesCloseables() throws Exception {
+    public void testReleaseRowDoesNotCloseMatchingJdkSemantics() throws Exception {
+        // releaseRow detaches the row but does NOT close stored values, matching
+        // JDK ThreadLocal. Callers that hold native resources must release them
+        // explicitly via removeAndFree() (typically wired as a worker-pool
+        // thread-local cleaner running before unbind).
         CountingCloseable a = new CountingCloseable();
         CountingCloseable b = new CountingCloseable();
         CountingCloseable c = new CountingCloseable();
@@ -514,10 +521,9 @@ public class CarrierLocalTest {
             tlB.set(b);
             tlC.set(c);
         });
-        // unbind has happened; releaseRow should have closed all three
-        Assert.assertEquals("a closed", 1, a.closes);
-        Assert.assertEquals("b closed", 1, b.closes);
-        Assert.assertEquals("c closed", 1, c.closes);
+        Assert.assertEquals("a not closed by releaseRow", 0, a.closes);
+        Assert.assertEquals("b not closed by releaseRow", 0, b.closes);
+        Assert.assertEquals("c not closed by releaseRow", 0, c.closes);
     }
 
     @Test
