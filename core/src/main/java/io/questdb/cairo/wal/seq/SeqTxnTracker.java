@@ -28,8 +28,7 @@ import io.questdb.Metrics;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.ErrorTag;
 import io.questdb.cairo.wal.TableWriterPressureControl;
-import io.questdb.mp.ConcurrentQueue;
-import io.questdb.mp.Queue;
+import io.questdb.mp.CountedConcurrentQueue;
 import io.questdb.mp.ValueHolder;
 import io.questdb.mp.continuation.TxnWaiter;
 import io.questdb.std.CarrierLocal;
@@ -45,7 +44,7 @@ public class SeqTxnTracker {
     private static final long WRITER_TXN_OFFSET = Unsafe.getFieldOffset(SeqTxnTracker.class, "writerTxn");
     private final Metrics metrics;
     private final TableWriterPressureControlImpl pressureControl;
-    private final Queue<WaiterHolder> waiters = ConcurrentQueue.createConcurrentQueue(WaiterHolder::new);
+    private final CountedConcurrentQueue<WaiterHolder> waiters = CountedConcurrentQueue.create(WaiterHolder::new);
     private volatile long dirtyWriterTxn;
     // Volatile because fireWaiters() and registerWaiter() can race. See comments there
     private volatile boolean dropped;

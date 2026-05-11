@@ -419,7 +419,6 @@ public class CarrierLocal<T> {
                 if (e != null) {
                     CarrierLocal<?> k = e.get();
                     if (k == null) {
-                        Misc.freeIfCloseable(e.value);
                         e.value = null;
                     } else {
                         int h = k.carrierLocalHashCode & (newLen - 1);

@@ -35,6 +35,7 @@ import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.BooleanFunction;
+import io.questdb.std.Numbers;
 import io.questdb.std.Os;
 import org.jetbrains.annotations.Nullable;
 
@@ -167,7 +168,9 @@ class WaitWalFunction extends BooleanFunction implements Function {
         TableToken tt = executionContext.getCairoEngine().verifyTableName(tableName);
         if (tt.isWal()) {
             seqTxnTracker = executionContext.getCairoEngine().getTableSequencerAPI().getTxnTracker(tt);
-            seqTxn = seqTxnArg != null ? seqTxnArg.getLong(null) : seqTxnTracker.getSeqTxn();
+            // NULL argument behaves like the no-arg form: wait for the seqTxn observed at call time.
+            long providedSeqTxn = seqTxnArg != null ? seqTxnArg.getLong(null) : Numbers.LONG_NULL;
+            seqTxn = providedSeqTxn != Numbers.LONG_NULL ? providedSeqTxn : seqTxnTracker.getSeqTxn();
             tableToken = tt;
             this.executionContext = executionContext;
         } else {

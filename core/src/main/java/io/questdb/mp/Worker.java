@@ -60,6 +60,11 @@ public class Worker extends Thread {
     private final ObjHashSet<? extends Job> jobs;
     private final AtomicReference<WorkerLifecycle> lifecycle = new AtomicReference<>(WorkerLifecycle.BORN);
     private final Log log;
+    // Bound method reference reused for every WorkerContinuation in the outer
+    // driver loop. Avoids a fresh `this::loopBody` lambda allocation per yield
+    // episode; the Continuation and its native stack chunk are still allocated
+    // per iteration because the JDK API does not expose a reset.
+    private final Runnable loopBodyRef = this::loopBody;
     private final Metrics metrics;
     private final long napThreshold;
     private final OnHaltAction onHaltAction;
@@ -186,7 +191,7 @@ public class Worker extends Thread {
                 // to per-mount state must travel with the cont, not be aliased to
                 // a specific Worker instance.
                 while (lifecycle.get() == WorkerLifecycle.RUNNING) {
-                    WorkerContinuation cont = new WorkerContinuation(this::loopBody, continuationQueue);
+                    WorkerContinuation cont = new WorkerContinuation(loopBodyRef, continuationQueue);
                     cont.run();
                     if (cont.isDone()) {
                         // loopBody returned, which only happens when this worker

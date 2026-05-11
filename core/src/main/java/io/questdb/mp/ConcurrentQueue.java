@@ -26,8 +26,6 @@ package io.questdb.mp;
 
 import io.questdb.std.ObjectFactory;
 
-import java.util.concurrent.atomic.AtomicInteger;
-
 // This is stripped down version taken from the .NET Core source code at
 // https://github.com/dotnet/runtime/blob/main/src/libraries/System.Private.CoreLib/src/System/Collections/Concurrent/ConcurrentQueue.cs
 // Licensed to the .NET Foundation under one or more agreements.
@@ -66,7 +64,6 @@ public class ConcurrentQueue<T> implements Queue<T> {
     // and any operations that need to get a consistent view of them.
     private final Object crossSegmentLock = new Object();
     private final ObjectFactory<T> factory;
-    private final AtomicInteger length = new AtomicInteger();
     private final ConcurrentSegmentManipulator<T> queueManipulator;
     // The current head segment.
     private volatile ConcurrentQueueSegment<T> head;
@@ -139,11 +136,6 @@ public class ConcurrentQueue<T> implements Queue<T> {
             // try to add a new tail segment.
             enqueueSlow(item);
         }
-        length.incrementAndGet();
-    }
-
-    public int sizeDirty() {
-        return length.get();
     }
 
     /**
@@ -190,7 +182,6 @@ public class ConcurrentQueue<T> implements Queue<T> {
         // Try to take. If we're successful, we're done.
         T val = head.tryDequeue(maybeTarget);
         if (val != null) {
-            length.decrementAndGet();
             return val;
         }
 
@@ -245,7 +236,6 @@ public class ConcurrentQueue<T> implements Queue<T> {
             // Try to take. If we're successful, we're done.
             T val = head.tryDequeue(container);
             if (val != null) {
-                length.decrementAndGet();
                 return val;
             }
 
@@ -263,7 +253,6 @@ public class ConcurrentQueue<T> implements Queue<T> {
             assert head.frozenForEnqueues;
             val = head.tryDequeue(container);
             if (val != null) {
-                length.decrementAndGet();
                 return val;
             }
 
@@ -277,7 +266,7 @@ public class ConcurrentQueue<T> implements Queue<T> {
         }
     }
 
-    private static class ValueHolderManipulator<T extends ValueHolder<T>> implements ConcurrentSegmentManipulator<T> {
+    static class ValueHolderManipulator<T extends ValueHolder<T>> implements ConcurrentSegmentManipulator<T> {
         @Override
         public T dequeue(ConcurrentQueueSegment.Slot<T>[] slots, int slotsIndex, T target) {
             slots[slotsIndex].item.copyTo(target);

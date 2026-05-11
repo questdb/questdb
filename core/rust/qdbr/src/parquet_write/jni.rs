@@ -1667,64 +1667,72 @@ fn convert_row_group_buffers_to_partition(
 #[cfg(all(test, unix))]
 mod tests {
     use super::*;
-    use std::os::unix::io::AsRawFd;
-    use tempfile::NamedTempFile;
 
-    /// Returns true iff `fd` still refers to an open file descriptor in this
-    /// process.
-    fn fd_is_open(fd: i32) -> bool {
-        // SAFETY: fcntl(F_GETFD) returns -1 and sets errno=EBADF for a closed
-        // fd; the call has no side effects on still-open fds.
-        unsafe { libc::fcntl(fd, libc::F_GETFD) != -1 }
+    /// Creates a pipe and returns `(observer_read_end, write_end)`.
+    /// The write end is handed to the code under test; the observer end stays
+    /// with the test. When the code closes the write end, reading from the
+    /// observer returns EOF. The kernel tracks closure on the pipe object, so
+    /// this signal is race-free under fd-number reuse by other parallel tests.
+    fn make_pipe() -> (i32, i32) {
+        let mut fds = [0i32; 2];
+        let rc = unsafe { libc::pipe(fds.as_mut_ptr()) };
+        assert_eq!(rc, 0, "pipe() failed");
+        (fds[0], fds[1])
+    }
+
+    /// Returns true iff reading from `observer` returns 0 bytes (EOF), which
+    /// means the write end has been closed.
+    fn write_end_closed(observer: i32) -> bool {
+        let mut buf = [0u8; 1];
+        let n = unsafe { libc::read(observer, buf.as_mut_ptr() as *mut _, 1) };
+        n == 0
+    }
+
+    fn close_fd(fd: i32) {
+        unsafe { libc::close(fd) };
     }
 
     #[test]
     fn reader_writer_fd_aliased_returns_err_and_closes_fd() {
-        let tmp = NamedTempFile::new().unwrap();
-        let fd = tmp.as_file().as_raw_fd();
-        // Leak the temp-file handle so we retain the fd after close detection;
-        // the Rust side is expected to close it on the error path.
-        let _file_retained = tmp.into_file();
-        std::mem::forget(_file_retained);
+        let (observer, fd) = make_pipe();
 
         let result = take_partition_updater_fds(fd, fd, -1);
         assert!(result.is_err(), "expected Err for aliased fds");
         assert!(
-            !fd_is_open(fd),
+            write_end_closed(observer),
             "aliased reader/writer fd was not closed by the error path"
         );
+
+        close_fd(observer);
     }
 
     #[test]
     fn reader_writer_fd_aliased_also_closes_parquet_meta_fd() {
-        let tmp1 = NamedTempFile::new().unwrap();
-        let tmp2 = NamedTempFile::new().unwrap();
-        let shared_fd = tmp1.as_file().as_raw_fd();
-        let parquet_meta_fd_handle = tmp2.as_file().as_raw_fd();
-        // Retain both handles as owned fds and detach them.
-        std::mem::forget(tmp1.into_file());
-        std::mem::forget(tmp2.into_file());
+        let (shared_observer, shared_fd) = make_pipe();
+        let (meta_observer, parquet_meta_fd_handle) = make_pipe();
 
         let result = take_partition_updater_fds(shared_fd, shared_fd, parquet_meta_fd_handle);
         assert!(
             result.is_err(),
             "expected Err for aliased reader/writer fds"
         );
-        assert!(!fd_is_open(shared_fd), "shared fd was not closed");
         assert!(
-            !fd_is_open(parquet_meta_fd_handle),
+            write_end_closed(shared_observer),
+            "shared fd was not closed"
+        );
+        assert!(
+            write_end_closed(meta_observer),
             "parquet_meta fd was not closed on the error path"
         );
+
+        close_fd(shared_observer);
+        close_fd(meta_observer);
     }
 
     #[test]
     fn distinct_fds_return_ok_and_retain_ownership() {
-        let tmp_reader = NamedTempFile::new().unwrap();
-        let tmp_writer = NamedTempFile::new().unwrap();
-        let reader_fd = tmp_reader.as_file().as_raw_fd();
-        let writer_fd = tmp_writer.as_file().as_raw_fd();
-        std::mem::forget(tmp_reader.into_file());
-        std::mem::forget(tmp_writer.into_file());
+        let (reader_observer, reader_fd) = make_pipe();
+        let (writer_observer, writer_fd) = make_pipe();
 
         let result = take_partition_updater_fds(reader_fd, writer_fd, -1);
         let (reader_file, writer_file, parquet_meta_fd_handle) =
@@ -1734,7 +1742,10 @@ mod tests {
         // given us ownership.
         drop(reader_file);
         drop(writer_file);
-        assert!(!fd_is_open(reader_fd));
-        assert!(!fd_is_open(writer_fd));
+        assert!(write_end_closed(reader_observer));
+        assert!(write_end_closed(writer_observer));
+
+        close_fd(reader_observer);
+        close_fd(writer_observer);
     }
 }
