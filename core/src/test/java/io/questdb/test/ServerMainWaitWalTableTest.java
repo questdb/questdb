@@ -28,13 +28,16 @@ import io.questdb.PropertyKey;
 import io.questdb.ServerMain;
 import io.questdb.cairo.ErrorTag;
 import io.questdb.cairo.wal.seq.SeqTxnTracker;
+import io.questdb.cairo.wal.seq.TableTransactionLog;
 import io.questdb.client.cutlass.http.client.Fragment;
 import io.questdb.client.cutlass.http.client.HttpClient;
 import io.questdb.client.cutlass.http.client.HttpClientFactory;
 import io.questdb.client.cutlass.http.client.Response;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
+import io.questdb.std.Misc;
 import io.questdb.std.Rnd;
+import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
 import io.questdb.std.str.Utf8s;
 import io.questdb.test.tools.TestUtils;
@@ -152,12 +155,16 @@ public class ServerMainWaitWalTableTest extends AbstractBootstrapTest {
                 // this the implicit-target wait would only end via the wake-cycle
                 // breaker check (timeout / cancel / disconnect).
                 Thread drainer = new Thread(() -> {
-                    while (!stopBackground.get()) {
-                        try {
-                            TestUtils.drainWalQueue(serverMain.getEngine());
-                            Thread.sleep(20);
-                        } catch (Throwable ignored) {
+                    try {
+                        while (!stopBackground.get()) {
+                            try {
+                                TestUtils.drainWalQueue(serverMain.getEngine());
+                                Thread.sleep(20);
+                            } catch (Throwable ignored) {
+                            }
                         }
+                    } finally {
+                        Path.clearThreadLocals();
                     }
                 }, "wait-fuzz-drainer");
                 drainer.setDaemon(true);
@@ -242,6 +249,7 @@ public class ServerMainWaitWalTableTest extends AbstractBootstrapTest {
                         } catch (Throwable outer) {
                             failures.add(outer);
                         } finally {
+                            Path.clearThreadLocals();
                             doneLatch.countDown();
                         }
                     }, "wait-wal-fuzz-" + threadId);
