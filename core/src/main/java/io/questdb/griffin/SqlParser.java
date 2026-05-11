@@ -489,6 +489,12 @@ public class SqlParser {
         };
     }
 
+    private static boolean isZeroOffsetToken(CharSequence token) {
+        return Chars.equals(token, ZERO_OFFSET.token)
+                || Chars.equals(token, "'+00:00'")
+                || Chars.equals(token, "'-00:00'");
+    }
+
     private static CreateMatViewOperationBuilder parseCreateMatViewExt(
             GenericLexer lexer,
             SqlExecutionContext executionContext,
@@ -5169,7 +5175,10 @@ public class SqlParser {
     private CharSequence parseWithOffset(GenericLexer lexer, IQueryModel model, SqlParserCallback sqlParserCallback) throws SqlException {
         CharSequence tok;
         expectOffset(lexer);
-        model.setSampleByOffset(expectExpr(lexer, sqlParserCallback, model.getDecls()));
+        ExpressionNode offsetExpr = expectExpr(lexer, sqlParserCallback, model.getDecls());
+        // Normalize explicit zero offsets ('00:00', '+00:00', '-00:00') to the canonical
+        // ZERO_OFFSET singleton so that identity checks against ZERO_OFFSET work consistently in the optimizer.
+        model.setSampleByOffset(isZeroOffsetToken(offsetExpr.token) ? ZERO_OFFSET : offsetExpr);
         tok = optTok(lexer);
         return tok;
     }

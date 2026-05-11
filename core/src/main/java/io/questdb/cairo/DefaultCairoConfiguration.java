@@ -905,6 +905,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
+    public int getSampleByFillSortStrategy() {
+        return SampleBySortStrategy.LIGHT_ENCODED;
+    }
+
+    @Override
     public int getSampleByIndexSearchPageSize() {
         return 0;
     }
