@@ -48,7 +48,7 @@ import java.util.Set;
 import static io.questdb.ParanoiaState.*;
 
 abstract class AbstractLogRecord implements LogRecord, Log {
-    private static final CarrierLocal<ObjHashSet<Throwable>> tlSet = CarrierLocal.withInitial(() -> new ObjHashSet<>());
+    private static final CarrierLocal<ObjHashSet<Throwable>> tlSet = CarrierLocal.withInitial(ObjHashSet::new);
     protected final RingQueue<LogRecordUtf8Sink> advisoryRing;
     protected final Sequence advisorySeq;
     protected final RingQueue<LogRecordUtf8Sink> criticalRing;

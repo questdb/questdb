@@ -57,6 +57,16 @@ import java.util.concurrent.TimeUnit;
  * <p>Late-registration race: if {@link #register} is called after {@link #shutdown}, the
  * entry is sent straight to its {@code shutdown()} hook instead of being inserted into
  * a (possibly already-drained) shard.
+ *
+ * <p><b>Thread-safety contract:</b> single-use, single-threaded init. {@link #start()}
+ * must run to completion before any other method ({@link #register}, {@link #shutdown},
+ * {@link #halt}, {@link #size}) is called from any thread. {@code start()} reads
+ * {@code running} and writes the {@code threads[]} array without synchronization and is
+ * not safe to race against itself or any other entry point. In practice
+ * {@code CairoEngine} owns the only instance and drives the lifecycle from a single
+ * bootstrap thread; after {@code start()} returns, the instance is published to the
+ * rest of the engine and concurrent {@code register}/{@code shutdown}/{@code halt}
+ * calls are safe.
  */
 public final class TimerShards {
     private final Log log;

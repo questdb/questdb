@@ -64,6 +64,7 @@ class WaitWalFunction extends BooleanFunction implements Function {
         if (seqTxnArg != null) {
             seqTxnArg.cursorClosed();
         }
+        super.cursorClosed();
     }
 
     @Override

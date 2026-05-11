@@ -65,8 +65,11 @@ public class CarrierLocal<T> {
     // the volatile write to `rows`.
     private static volatile CarrierLocalMap[] rows = new CarrierLocalMap[0];
     private final int carrierLocalHashCode = nextHashCode.getAndAdd(HASH_INCREMENT);
-    private final java.lang.ThreadLocal<T> fallback;
     private final ObjectFactory<T> initial;
+    // Lazy-init: only allocated when an unbound thread (CarrierIdentity.current() < 0)
+    // touches this instance. The production case is carrier-bound access, which never
+    // touches this field. Worth deferring with ~70 CarrierLocal call sites in the codebase.
+    private volatile java.lang.ThreadLocal<T> fallback;
 
     public CarrierLocal() {
         this(() -> null);
@@ -74,7 +77,6 @@ public class CarrierLocal<T> {
 
     public CarrierLocal(ObjectFactory<T> factory) {
         this.initial = factory;
-        this.fallback = java.lang.ThreadLocal.withInitial(factory::newInstance);
     }
 
     /**
@@ -101,7 +103,7 @@ public class CarrierLocal<T> {
     public T get() {
         int id = CarrierIdentity.current();
         if (id < 0) {
-            return fallback.get();
+            return fallback().get();
         }
         CarrierLocalMap map = mapForOrNull(id);
         if (map != null) {
@@ -122,7 +124,10 @@ public class CarrierLocal<T> {
     public void remove() {
         int id = CarrierIdentity.current();
         if (id < 0) {
-            fallback.remove();
+            java.lang.ThreadLocal<T> f = fallback;
+            if (f != null) {
+                f.remove();
+            }
             return;
         }
         CarrierLocalMap map = mapForOrNull(id);
@@ -149,8 +154,11 @@ public class CarrierLocal<T> {
     public void removeAndFree() {
         int id = CarrierIdentity.current();
         if (id < 0) {
-            Misc.freeIfCloseable(fallback.get());
-            fallback.remove();
+            java.lang.ThreadLocal<T> f = fallback;
+            if (f != null) {
+                Misc.freeIfCloseable(f.get());
+                f.remove();
+            }
             return;
         }
         CarrierLocalMap map = mapForOrNull(id);
@@ -167,10 +175,24 @@ public class CarrierLocal<T> {
     public void set(T value) {
         int id = CarrierIdentity.current();
         if (id < 0) {
-            fallback.set(value);
+            fallback().set(value);
             return;
         }
         setOrCreate(id, value);
+    }
+
+    private java.lang.ThreadLocal<T> fallback() {
+        java.lang.ThreadLocal<T> f = fallback;
+        if (f == null) {
+            synchronized (this) {
+                f = fallback;
+                if (f == null) {
+                    f = java.lang.ThreadLocal.withInitial(initial::newInstance);
+                    fallback = f;
+                }
+            }
+        }
+        return f;
     }
 
     private static CarrierLocalMap createMap(int id, CarrierLocal<?> firstKey, Object firstValue) {

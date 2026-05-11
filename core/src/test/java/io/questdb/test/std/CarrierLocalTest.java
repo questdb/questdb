@@ -527,6 +527,122 @@ public class CarrierLocalTest {
     }
 
     @Test
+    public void testRecycledIdSeesFreshSlotNotPriorValue() throws Exception {
+        // Thread A binds, sets CarrierLocal<String> to "value-from-A", unbinds
+        // (which calls releaseRow then enqueues the id into RECYCLED). Thread B
+        // binds and reads the same CarrierLocal: it must observe the supplier's
+        // initial value, NOT A's stale value. This is the round-trip that
+        // guards the ordering invariant in CarrierIdentity.unbind: releaseRow
+        // MUST null the per-carrier map before the id is pushed to RECYCLED.
+        // If the order were reversed, B could pop A's id from RECYCLED while
+        // A's map row was still attached.
+        //
+        // Note: whether B actually receives A's recycled id depends on the
+        // global RECYCLED queue state at the time of B's bind (other tests in
+        // this suite may have left entries). The invariant being tested is
+        // freshness, not id equality -- whatever id B got, its slot must be
+        // unoccupied.
+        final String F1 = "value-from-A";
+        CarrierLocal<String> tl = CarrierLocal.withInitial(() -> "init");
+
+        AtomicInteger aId = new AtomicInteger(-1);
+        AtomicInteger bId = new AtomicInteger(-1);
+        AtomicReference<String> bSaw = new AtomicReference<>();
+        AtomicReference<Throwable> err = new AtomicReference<>();
+        CountDownLatch aDone = new CountDownLatch(1);
+        CountDownLatch bDone = new CountDownLatch(1);
+
+        Thread a = new Thread(() -> {
+            try {
+                int id = CarrierIdentity.bind();
+                aId.set(id);
+                tl.set(F1);
+                Assert.assertEquals(F1, tl.get());
+                CarrierIdentity.unbind();
+            } catch (Throwable th) {
+                err.compareAndSet(null, th);
+            } finally {
+                aDone.countDown();
+            }
+        }, "recycle-A");
+        a.start();
+        Assert.assertTrue("A timed out", aDone.await(DEFAULT_TIMEOUT_S, TimeUnit.SECONDS));
+        if (err.get() != null) {
+            throw new AssertionError(err.get());
+        }
+
+        Thread b = new Thread(() -> {
+            try {
+                int id = CarrierIdentity.bind();
+                bId.set(id);
+                bSaw.set(tl.get());
+                CarrierIdentity.unbind();
+            } catch (Throwable th) {
+                err.compareAndSet(null, th);
+            } finally {
+                bDone.countDown();
+            }
+        }, "recycle-B");
+        b.start();
+        Assert.assertTrue("B timed out", bDone.await(DEFAULT_TIMEOUT_S, TimeUnit.SECONDS));
+        if (err.get() != null) {
+            throw new AssertionError(err.get());
+        }
+
+        Assert.assertNotEquals(
+                "B must not observe A's stale value (B id=" + bId.get() + ", A id=" + aId.get() + ")",
+                F1, bSaw.get());
+        Assert.assertEquals(
+                "B must see the supplier's initial value on a fresh slot",
+                "init", bSaw.get());
+    }
+
+    @Test
+    public void testTightRecycleCycleEachCycleSeesFreshSlot() throws Exception {
+        // Single thread cycles bind -> get -> set -> unbind many times. Each
+        // bind pops from RECYCLED (after the first few cycles when the queue
+        // has filled with the thread's own released ids). Every cycle must
+        // start with the slot fresh: the supplier's initial value is observed
+        // before the cycle's set takes effect, and the prior cycle's set is
+        // not visible. Exercises the recycle path deterministically without
+        // depending on inter-test RECYCLED state.
+        final int cycles = 256;
+        CarrierLocal<String> tl = CarrierLocal.withInitial(() -> "init");
+
+        AtomicReference<Throwable> err = new AtomicReference<>();
+        CountDownLatch done = new CountDownLatch(1);
+
+        Thread t = new Thread(() -> {
+            try {
+                for (int i = 0; i < cycles; i++) {
+                    int id = CarrierIdentity.bind();
+                    try {
+                        String observed = tl.get();
+                        if (!"init".equals(observed)) {
+                            throw new AssertionError(
+                                    "cycle " + i + ", id " + id +
+                                            ": expected fresh 'init' on rebind, got '" + observed + "'");
+                        }
+                        tl.set("dirty-" + i);
+                        Assert.assertEquals("dirty-" + i, tl.get());
+                    } finally {
+                        CarrierIdentity.unbind();
+                    }
+                }
+            } catch (Throwable th) {
+                err.compareAndSet(null, th);
+            } finally {
+                done.countDown();
+            }
+        }, "tight-recycle");
+        t.start();
+        Assert.assertTrue("tight recycle timed out", done.await(DEFAULT_TIMEOUT_S, TimeUnit.SECONDS));
+        if (err.get() != null) {
+            throw new AssertionError(err.get());
+        }
+    }
+
+    @Test
     public void testReleaseRowOnInvalidIdIsNoop() {
         // No exception, no side effect.
         CarrierLocal.releaseRow(-1);

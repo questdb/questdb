@@ -214,8 +214,8 @@ If `TimerShards` is ever reused (e.g. an engine-restart scenario, or a
 second `start()` after `halt()`), make `start()` `synchronized` (or
 introduce a lifecycle CAS) and have it `join` any preceding threads
 before launching new ones. As long as the contract stays "single-use,
-single-threaded init," leave it alone -- the comment on the class needs
-to make that contract explicit, though.
+single-threaded init," leave it alone -- the contract is now spelled
+out in the `TimerShards` class Javadoc under "Thread-safety contract."
 
 ## Cleanup hook contract for closeable-valued `CarrierLocal`
 
