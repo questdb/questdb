@@ -803,6 +803,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
+    public int getPostingIndexAdaptiveDeltaAtOrAbove() {
+        return getDelegate().getPostingIndexAdaptiveDeltaAtOrAbove();
+    }
+
+    @Override
     public int getPostingSealGenThreshold() {
         return getDelegate().getPostingSealGenThreshold();
     }

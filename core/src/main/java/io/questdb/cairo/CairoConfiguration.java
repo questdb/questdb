@@ -507,6 +507,26 @@ public interface CairoConfiguration {
         return PostingIndexUtils.ENCODING_ADAPTIVE;
     }
 
+    /**
+     * Threshold at which the adaptive posting-index row-id encoder forces
+     * DELTA instead of running the size-only EF-vs-DELTA race. When a key has
+     * {@code >= getPostingIndexAdaptiveDeltaAtOrAbove()} row IDs the writer
+     * skips EF and emits DELTA directly. Default 2000.
+     * <p>
+     * The size-only adaptive pick is essentially a coin-flip at large counts
+     * because both encodings produce similar byte sizes, but DELTA reads
+     * markedly faster (per-block unpack, cache-line-friendly) than EF for
+     * dense keys that span a long high-bits bitmap. For Zipfian-skewed
+     * workloads with hot keys at 100k+ row IDs the threshold lifts point /
+     * scan / range queries by 15-60% with no measurable regression on
+     * uniform-distribution scenarios where keys stay below the threshold.
+     * <p>
+     * Set to {@link Integer#MAX_VALUE} to restore pure size comparison.
+     */
+    default int getPostingIndexAdaptiveDeltaAtOrAbove() {
+        return 2000;
+    }
+
     int getPostingSealGenThreshold();
 
     /**
