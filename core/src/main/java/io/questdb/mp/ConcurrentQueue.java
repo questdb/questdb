@@ -66,10 +66,10 @@ public class ConcurrentQueue<T> implements Queue<T> {
     // and any operations that need to get a consistent view of them.
     private final Object crossSegmentLock = new Object();
     private final ObjectFactory<T> factory;
+    private final AtomicInteger length = new AtomicInteger();
     private final ConcurrentSegmentManipulator<T> queueManipulator;
     // The current head segment.
     private volatile ConcurrentQueueSegment<T> head;
-    private final AtomicInteger length = new AtomicInteger();
     // The current tail segment.
     private volatile ConcurrentQueueSegment<T> tail;
 

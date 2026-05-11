@@ -76,9 +76,10 @@ public class SleepFunctionFactoryTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testSecondsOverflowingLong() throws Exception {
+    public void testSecondsVeryLarge() throws Exception {
         assertMemoryLeak(() -> {
-            // 1e15 seconds is finite and non-negative, but * 1000 overflows long range.
+            // 1e15 seconds is finite and non-negative; * 1000 is 1e18 ms (well under Long.MAX_VALUE),
+            // so the long conversion does not saturate. The cap check rejects it as exceeding 24h.
             try (RecordCursorFactory factory = select("sleep(1e15)")) {
                 try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
                     cursor.hasNext();

@@ -187,7 +187,7 @@ class WaitWalFunction extends BooleanFunction implements Function {
     public void toPlan(PlanSink sink) {
         sink.val("wait_wal_table(").val(tableName);
         if (seqTxnArg != null) {
-            sink.val(',').val(seqTxnArg);
+            sink.val(", ").val(seqTxnArg);
         }
         sink.val(')');
     }

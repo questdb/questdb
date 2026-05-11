@@ -28,7 +28,6 @@ import io.questdb.mp.CarrierIdentity;
 
 import java.lang.ref.WeakReference;
 import java.util.concurrent.atomic.AtomicInteger;
-import java.util.function.IntFunction;
 import java.util.function.Supplier;
 
 /**
@@ -63,7 +62,7 @@ import java.util.function.Supplier;
  * cont yield/resume) and the rationale for the FFI-backed carrier identity,
  * see {@code io/questdb/mp/continuation/CARRIER_LOCAL.md}.
  */
-public class CarrierLocal<T> extends java.lang.ThreadLocal<T> {
+public class CarrierLocal<T> {
     private static final int HASH_INCREMENT = 0x61c88647;
     private static final AtomicInteger nextHashCode = new AtomicInteger();
     // Per-carrier maps. Outer is indexed by carrier id; each inner map is
@@ -73,19 +72,15 @@ public class CarrierLocal<T> extends java.lang.ThreadLocal<T> {
     private static volatile CarrierLocalMap[] rows = new CarrierLocalMap[0];
     private final int carrierLocalHashCode = nextHashCode.getAndAdd(HASH_INCREMENT);
     private final java.lang.ThreadLocal<T> fallback;
-    private final IntFunction<? extends T> initial;
+    private final ObjectFactory<T> initial;
 
     public CarrierLocal() {
-        this(id -> null);
+        this(() -> null);
     }
 
     public CarrierLocal(ObjectFactory<T> factory) {
-        this(id -> factory.newInstance());
-    }
-
-    private CarrierLocal(IntFunction<? extends T> initial) {
-        this.initial = initial;
-        this.fallback = java.lang.ThreadLocal.withInitial(() -> initial.apply(CarrierIdentity.UNBOUND));
+        this.initial = factory;
+        this.fallback = java.lang.ThreadLocal.withInitial(factory::newInstance);
     }
 
     /**
@@ -105,10 +100,9 @@ public class CarrierLocal<T> extends java.lang.ThreadLocal<T> {
     }
 
     public static <T> CarrierLocal<T> withInitial(Supplier<? extends T> initial) {
-        return new CarrierLocal<>(id -> initial.get());
+        return new CarrierLocal<>(initial::get);
     }
 
-    @Override
     @SuppressWarnings("unchecked")
     public T get() {
         int id = CarrierIdentity.current();
@@ -131,7 +125,6 @@ public class CarrierLocal<T> extends java.lang.ThreadLocal<T> {
      * {@link #removeAndFree()} if the value is {@link java.io.Closeable} and
      * eager release is needed.
      */
-    @Override
     public void remove() {
         int id = CarrierIdentity.current();
         if (id < 0) {
@@ -177,7 +170,6 @@ public class CarrierLocal<T> extends java.lang.ThreadLocal<T> {
         }
     }
 
-    @Override
     public void set(T value) {
         int id = CarrierIdentity.current();
         if (id < 0) {
@@ -220,7 +212,7 @@ public class CarrierLocal<T> extends java.lang.ThreadLocal<T> {
     }
 
     private T setInitialValue(int id) {
-        T value = initial.apply(id);
+        T value = initial.newInstance();
         setOrCreate(id, value);
         return value;
     }

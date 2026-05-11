@@ -26,10 +26,17 @@ package io.questdb.test;
 
 import io.questdb.PropertyKey;
 import io.questdb.ServerMain;
+import io.questdb.cairo.CairoEngine;
+import io.questdb.cairo.security.AllowAllSecurityContext;
+import io.questdb.cairo.sql.AtomicBooleanCircuitBreaker;
+import io.questdb.cairo.sql.RecordCursor;
+import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.client.cutlass.http.client.Fragment;
 import io.questdb.client.cutlass.http.client.HttpClient;
 import io.questdb.client.cutlass.http.client.HttpClientFactory;
 import io.questdb.client.cutlass.http.client.Response;
+import io.questdb.griffin.SqlCompiler;
+import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.mp.continuation.TimerCont;
@@ -80,6 +87,7 @@ import static io.questdb.test.tools.TestUtils.unchecked;
  */
 public class ServerMainSleepTest extends AbstractBootstrapTest {
     private static final Log LOG = LogFactory.getLog(ServerMainSleepTest.class);
+    private static final AtomicLong cancelFuzzSeq = new AtomicLong();
 
     @Before
     public void setUp() {
@@ -478,7 +486,7 @@ public class ServerMainSleepTest extends AbstractBootstrapTest {
                                         runHappyPgSleep(0.25 + tr.nextDouble() * 0.25, happyCount, totalSleptMillis);
                                         break;
                                     case 4:
-                                        runStatementCancelFuzz(tr, cancelledCount);
+                                        runStatementCancelFuzz(serverMain.getEngine(), cancelledCount);
                                         break;
                                     case 5:
                                         runConnectionDropFuzz(tr, droppedCount);
@@ -707,31 +715,37 @@ public class ServerMainSleepTest extends AbstractBootstrapTest {
         }
     }
 
-    private static void runStatementCancelFuzz(Rnd tr, AtomicInteger counter) throws Exception {
+    private static void runStatementCancelFuzz(CairoEngine engine, AtomicInteger counter) throws Exception {
+        // Per-call unique sleep argument: query_activity() exposes the SQL text
+        // verbatim, so this lets us pick out exactly our own in-flight call.
+        // An integer literal keeps the lexical form stable across locales.
+        final long uniqId = cancelFuzzSeq.incrementAndGet();
+        final String sleepSql = "sleep(2." + (1_000_000 + uniqId) + ")";
+        final String activitySql = "select query_id from query_activity() where query = '" + sleepSql + "'";
+
+        // Thread-owned SQL context: the fuzz worker drives observation through
+        // the engine's published SQL surface (CairoEngine.select +
+        // query_activity()) instead of touching the QueryRegistry's pooled
+        // StringSink directly. Going through SQL keeps us off the entry pool's
+        // recycle path and matches how an operator would inspect activity.
+        final SqlExecutionContextImpl observerCtx = new SqlExecutionContextImpl(engine, 1)
+                .with(AllowAllSecurityContext.INSTANCE);
+        observerCtx.with(new AtomicBooleanCircuitBreaker(engine));
+
         try (
                 Connection conn = DriverManager.getConnection(PG_CONNECTION_URI, PG_CONNECTION_PROPERTIES);
-                Statement stmt = conn.createStatement()
+                Statement stmt = conn.createStatement();
+                SqlCompiler compiler = engine.getSqlCompiler();
+                RecordCursorFactory activityFactory = CairoEngine.select(compiler, activitySql, observerCtx)
         ) {
             CountDownLatch started = new CountDownLatch(1);
             AtomicReference<Throwable> outcome = new AtomicReference<>();
             Thread runner = new Thread(() -> {
                 try {
                     started.countDown();
-                    // Long enough that stmt.cancel() (sent ~50-300 ms in)
-                    // generally races ahead of the deadline; short enough that
-                    // a missed cancel doesn't blow the whole fuzz budget.
-                    // The PG cancel protocol silently drops a CancelRequest
-                    // that arrives before the server has bound a breaker to
-                    // the connection's in-flight query (the parse phase
-                    // hasn't transitioned to execute yet). Under a 64-thread
-                    // / 2-worker load that race fires occasionally and the
-                    // sleep runs to completion. We treat both outcomes as
-                    // success: the load-bearing invariant we're stressing is
-                    // that the runner exits in bounded time, not that every
-                    // cancel signal is honoured.
-                    stmt.executeQuery("sleep(2.1)");
+                    stmt.executeQuery(sleepSql);
                 } catch (PSQLException expected) {
-                    // cancel landed in time
+                    // good: cancel landed and the body unwound
                 } catch (Throwable t) {
                     outcome.set(t);
                 }
@@ -739,10 +753,35 @@ public class ServerMainSleepTest extends AbstractBootstrapTest {
             runner.setDaemon(true);
             runner.start();
             Assert.assertTrue(started.await(5, TimeUnit.SECONDS));
-            Thread.sleep(50 + tr.nextInt(300));
+
+            // QueryRegistry.register() is the moment that wires the
+            // cancelledFlag through to the circuit breaker. A PG CancelRequest
+            // that arrives before this point is silently dropped. Waiting
+            // until our sleep is visible in query_activity() means the next
+            // wake-interval breaker probe (within ~100ms) will see the cancel.
+            final long pollDeadlineNs = System.nanoTime() + TimeUnit.SECONDS.toNanos(20);
+            boolean observed = false;
+            while (!observed && System.nanoTime() < pollDeadlineNs) {
+                try (RecordCursor cursor = activityFactory.getCursor(observerCtx)) {
+                    if (cursor.hasNext()) {
+                        observed = true;
+                    }
+                }
+                if (!observed) {
+                    Thread.sleep(2);
+                }
+            }
+            Assert.assertTrue(
+                    "sleep was not registered within 20s [sql=" + sleepSql + "]",
+                    observed
+            );
+
             stmt.cancel();
-            runner.join(10_000);
-            Assert.assertFalse("cancelled sleep runner did not exit", runner.isAlive());
+            // With the breaker bound, the runner exit is gated only by one
+            // wake-interval probe + response RTT; the long join is slack for
+            // slow CI hardware, not cover for a missed cancel.
+            runner.join(30_000);
+            Assert.assertFalse("cancelled sleep runner did not exit [sql=" + sleepSql + "]", runner.isAlive());
             if (outcome.get() != null) {
                 throw new AssertionError("statement cancel scenario failed", outcome.get());
             }
