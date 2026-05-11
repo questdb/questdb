@@ -29,16 +29,20 @@ import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.idx.BitpackUtils;
+import io.questdb.cairo.idx.PostingIndexBwdReader;
 import io.questdb.cairo.idx.PostingIndexChainEntry;
 import io.questdb.cairo.idx.PostingIndexChainHeader;
 import io.questdb.cairo.idx.PostingIndexChainPicker;
 import io.questdb.cairo.idx.PostingIndexChainWriter;
+import io.questdb.cairo.idx.PostingIndexFwdReader;
 import io.questdb.cairo.idx.PostingIndexNative;
 import io.questdb.cairo.idx.PostingIndexUtils;
 import io.questdb.cairo.idx.PostingIndexWriter;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
+import io.questdb.cairo.sql.RowCursor;
 import io.questdb.cairo.vm.MemoryCMARWImpl;
+import io.questdb.std.DirectBitSet;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.LongList;
 import io.questdb.std.MemoryTag;
@@ -293,6 +297,228 @@ public class PostingIndexCriticalIssuesTest extends AbstractCairoTest {
             } finally {
                 Unsafe.free(src, 64, MemoryTag.NATIVE_DEFAULT);
                 Unsafe.free(dst, (long) count * Long.BYTES, MemoryTag.NATIVE_DEFAULT);
+            }
+        });
+    }
+
+    /**
+     * Review C2: the full-partition SELECT DISTINCT path calls
+     * collectDistinctKeys(), not collectDistinctKeysInRange(). The no-range
+     * helper must still honor the chain entry's MAX_VALUE; otherwise a key
+     * whose only encoded rows are dirty rows past MAX_VALUE is reported as
+     * present in the partition.
+     */
+    @Test
+    public void testCollectDistinctKeysDoesNotExposeKeysPastEntryMaxValue() throws Exception {
+        assertMemoryLeak(() -> {
+            final String name = "posting_distinct_max_value_clamp";
+            try (Path path = new Path().of(configuration.getDbRoot())) {
+                final int plen = path.size();
+                final int liveKey = 1;
+                final int dirtyOnlyKey = 2;
+
+                try (PostingIndexWriter writer = new PostingIndexWriter(
+                        configuration, path.trimTo(plen), name, COLUMN_NAME_TXN_NONE)) {
+                    for (long rowId = 0; rowId < 50; rowId++) {
+                        writer.add(liveKey, rowId);
+                    }
+                    for (long rowId = 50; rowId < 100; rowId++) {
+                        writer.add(dirtyOnlyKey, rowId);
+                    }
+                    writer.setMaxValue(99);
+                    writer.commit();
+                    writer.setMaxValue(49);
+                }
+
+                try (PostingIndexFwdReader reader = new PostingIndexFwdReader(
+                        configuration, path.trimTo(plen), name,
+                        COLUMN_NAME_TXN_NONE, /* partitionTxn */ 0, /* columnTop */ 0);
+                     DirectBitSet foundKeys = new DirectBitSet(8)) {
+                    Assert.assertEquals(
+                            "only the key with rowids at or below MAX_VALUE=49 is live",
+                            1,
+                            reader.collectDistinctKeys(foundKeys)
+                    );
+                    Assert.assertTrue(foundKeys.get(liveKey));
+                    Assert.assertFalse(
+                            "collectDistinctKeys must not expose a key whose only rows are past entryMaxValue",
+                            foundKeys.get(dirtyOnlyKey)
+                    );
+                }
+            }
+        });
+    }
+
+    /**
+     * Reader must clamp returned rowids by the picked chain entry's
+     * V2_ENTRY_OFFSET_MAX_VALUE field. Writers can leave dirty
+     * (key, rowid) pairs in .pv past the chain's tracked coverage --
+     * for example after an O3 split shrinks a partition before the
+     * next reseal evicts them, or after a stale generation a
+     * sparse-gen append later supersedes. The chain entry's MAX_VALUE
+     * is the boundary between clean and dirty rows; the reader is the
+     * only place that can skip them without a full reseal.
+     * <p>
+     * Reproducer (no race, no fault injection): write 100 rowids
+     * across 5 keys to a fresh chain and commit -- the chain head now
+     * has MAX_VALUE=99 with valueMemSize covering all 100 rowids in
+     * .pv. Then call {@code setMaxValue(49)}, which writes 49 into
+     * the head entry's MAX_VALUE field via
+     * {@code PostingIndexChainWriter.updateHeadMaxValue} without
+     * touching .pv or the gen-dir. The on-disk state is the canonical
+     * dirty-data signature: chain claims coverage up to 49, but the
+     * encoded gen still walks rowids 0..99.
+     * <p>
+     * Open a fresh PostingIndexFwdReader / PostingIndexBwdReader and
+     * request key 0 (rowids 0, 5, 10, ..., 95) with caller-supplied
+     * max=Long.MAX_VALUE. Without the fix, the cursor walks every
+     * encoded value because it ignores entryMaxValue and clamps only
+     * by the caller-supplied bound. With the fix,
+     * {@code indexMaxValue = min(callerMax, entryMaxValue) = 49} and
+     * the cursor stops emitting values above 49.
+     */
+    @Test
+    public void testReaderClampsCursorToChainEntryMaxValue() throws Exception {
+        assertMemoryLeak(() -> {
+            final String name = "posting_max_value_clamp";
+            try (Path path = new Path().of(configuration.getDbRoot())) {
+                final int plen = path.size();
+                final FilesFacade ff = configuration.getFilesFacade();
+
+                try (PostingIndexWriter writer = new PostingIndexWriter(
+                        configuration, path.trimTo(plen), name, COLUMN_NAME_TXN_NONE)) {
+                    // Five keys, rowids 0..99. add() requires per-key
+                    // ascending rowids; using rowid as the loop index
+                    // satisfies that for every key.
+                    for (long rowId = 0; rowId < 100; rowId++) {
+                        writer.add((int) (rowId % 5), rowId);
+                    }
+                    writer.setMaxValue(99);
+                    writer.commit();
+                    // Lower MAX_VALUE in place. updateHeadMaxValue
+                    // writes V2_ENTRY_OFFSET_MAX_VALUE atomically and
+                    // republishes the chain header -- it does not
+                    // touch valueMem or the gen-dir, so the encoded
+                    // gen still walks rowids 0..99.
+                    writer.setMaxValue(49);
+                }
+
+                LPSZ keyFile = PostingIndexUtils.keyFileName(
+                        path.trimTo(plen), name, COLUMN_NAME_TXN_NONE);
+                try (MemoryCMARWImpl mem = new MemoryCMARWImpl(
+                        ff, keyFile, ff.getPageSize(), ff.length(keyFile),
+                        MemoryTag.MMAP_DEFAULT, /* opts */ 0)) {
+                    PostingIndexChainWriter chain = new PostingIndexChainWriter();
+                    chain.openExisting(mem);
+                    Assert.assertTrue(
+                            "test setup gap: chain head must exist after commit()",
+                            chain.hasHead()
+                    );
+                    PostingIndexChainEntry.Snapshot head = new PostingIndexChainEntry.Snapshot();
+                    chain.loadHeadEntry(mem, head);
+                    Assert.assertEquals(
+                            "test setup gap: head MAX_VALUE must reflect the lowered value "
+                                    + "after setMaxValue(49)",
+                            49L, head.maxValue
+                    );
+                    Assert.assertTrue(
+                            "test setup gap: head valueMemSize must still cover the encoded "
+                                    + "data for rowids 0..99 -- updateHeadMaxValue must not "
+                                    + "shrink it",
+                            head.valueMemSize > 0
+                    );
+                }
+
+                // Oracle: key 0 was added at rowids 0, 5, 10, ..., 95
+                // (loop rowId % 5 == 0). After the clamp to MAX_VALUE=49,
+                // the cursor must emit exactly the rowids in [0, 49] for
+                // key 0: 0, 5, 10, 15, 20, 25, 30, 35, 40, 45 -- ten rowids,
+                // ascending for Fwd, descending for Bwd.
+                LongList expectedFwd = new LongList();
+                for (long r = 0; r <= 49; r += 5) {
+                    expectedFwd.add(r);
+                }
+                LongList expectedBwd = new LongList();
+                for (long r = 45; r >= 0; r -= 5) {
+                    expectedBwd.add(r);
+                }
+
+                try (PostingIndexFwdReader reader = new PostingIndexFwdReader(
+                        configuration, path.trimTo(plen), name,
+                        COLUMN_NAME_TXN_NONE, /* partitionTxn */ 0, /* columnTop */ 0)) {
+                    LongList actual = new LongList();
+                    try (RowCursor cursor = reader.getCursor(0, 0L, Long.MAX_VALUE)) {
+                        while (cursor.hasNext()) {
+                            actual.add(cursor.next());
+                        }
+                    }
+                    TestUtils.assertEquals(expectedFwd, actual);
+                }
+
+                try (PostingIndexBwdReader reader = new PostingIndexBwdReader(
+                        configuration, path.trimTo(plen), name,
+                        COLUMN_NAME_TXN_NONE, /* partitionTxn */ 0, /* columnTop */ 0,
+                        /* metadata */ null, /* columnVersionReader */ null,
+                        /* partitionTimestamp */ 0)) {
+                    LongList actual = new LongList();
+                    try (RowCursor cursor = reader.getCursor(0, 0L, Long.MAX_VALUE)) {
+                        while (cursor.hasNext()) {
+                            actual.add(cursor.next());
+                        }
+                    }
+                    TestUtils.assertEquals(expectedBwd, actual);
+                }
+            }
+        });
+    }
+
+    /**
+     * Review C1: once readers clamp iteration to the chain entry's MAX_VALUE,
+     * RowCursor.size() must not keep advertising the unclamped encoded count.
+     * Returning -1 is acceptable because the SQL count fast path will then
+     * fall back to hasNext()/next() iteration.
+     */
+    @Test
+    public void testReaderSizeDoesNotOutrunEntryMaxValueClamp() throws Exception {
+        assertMemoryLeak(() -> {
+            final String name = "posting_size_max_value_clamp";
+            try (Path path = new Path().of(configuration.getDbRoot())) {
+                final int plen = path.size();
+
+                try (PostingIndexWriter writer = new PostingIndexWriter(
+                        configuration, path.trimTo(plen), name, COLUMN_NAME_TXN_NONE)) {
+                    for (long rowId = 0; rowId < 100; rowId++) {
+                        writer.add((int) (rowId % 5), rowId);
+                    }
+                    writer.setMaxValue(99);
+                    writer.commit();
+                    writer.setMaxValue(49);
+                }
+
+                try (PostingIndexFwdReader reader = new PostingIndexFwdReader(
+                        configuration, path.trimTo(plen), name,
+                        COLUMN_NAME_TXN_NONE, /* partitionTxn */ 0, /* columnTop */ 0)) {
+                    long advertisedSize;
+                    long iterated = 0;
+                    try (RowCursor cursor = reader.getCursor(0, 0L, Long.MAX_VALUE)) {
+                        advertisedSize = cursor.size();
+                        while (cursor.hasNext()) {
+                            cursor.next();
+                            iterated++;
+                        }
+                    }
+
+                    Assert.assertEquals(
+                            "test setup gap: key 0 has rowids 0,5,...,45 at or below MAX_VALUE=49",
+                            10,
+                            iterated
+                    );
+                    Assert.assertTrue(
+                            "RowCursor.size() must either decline the fast path or match clamped iteration "
+                                    + "[size=" + advertisedSize + ", iterated=" + iterated + "]",
+                            advertisedSize < 0 || advertisedSize == iterated
+                    );
+                }
             }
         });
     }
