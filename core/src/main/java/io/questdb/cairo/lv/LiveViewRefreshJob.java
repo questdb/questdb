@@ -347,6 +347,10 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
         buildColumnMappings(baseMetadata, baseToken);
 
         long advanceTo = -1;
+        // Hoisted out of the try-with-resources so the post-loop branch can decide
+        // whether the apply path will publish the new lvConsumedSeqTxn (rows emitted)
+        // or whether we must publish it directly (no LIVE_VIEW_DATA block written).
+        long appendedRows = 0;
         WalSegmentPageFrameCursor frameCursor = new WalSegmentPageFrameCursor(
                 engine.getConfiguration(), columnIndexes, columnSizeShifts
         );
@@ -363,7 +367,6 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                         .put(instance.getDefinition().getViewName()).put(']');
             }
 
-            long appendedRows = 0;
             try (TransactionLogCursor txnCursor = engine.getTableSequencerAPI().getCursor(baseToken, fromSeqTxn)) {
                 while (txnCursor.hasNext()) {
                     long txn = txnCursor.getTxn();
@@ -451,8 +454,35 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             // appliedWatermark mirrors lastProcessed for now; sub-FLUSH-cycle freshness via
             // the in-mem tier is parked, so the seam_ts is anchored at the WAL commit boundary.
             instance.setAppliedWatermark(advanceTo);
-            // lvConsumedSeqTxn is advanced from the apply path (CairoEngine.advanceLiveViewConsumedSeqTxn).
-            persistState(instance);
+            boolean lvConsumedAdvanced = false;
+            if (appendedRows == 0) {
+                // No LIVE_VIEW_DATA block was emitted (every base seqTxn was non-DATA —
+                // schema change, DROP PARTITION, TRUNCATE, base TTL — or every row was
+                // rejected by the WHERE filter). Without a block, ApplyWal2TableJob has
+                // nothing to consume and lvConsumedSeqTxn would stall, holding base WAL
+                // retention forever. Advance it directly: there is nothing left to make
+                // durable past the in-memory state, so this is the correct moment to
+                // publish the floor (RFC 123 §"Lifecycle / Invalidation - Base-table
+                // data removal").
+                try {
+                    engine.advanceLiveViewConsumedSeqTxn(instance.getLiveViewToken(), advanceTo);
+                    lvConsumedAdvanced = true;
+                } catch (CairoException e) {
+                    LOG.critical().$("could not advance live view consumed seqTxn on no-row cycle [view=")
+                            .$(instance.getDefinition().getViewName())
+                            .$(", advanceTo=").$(advanceTo)
+                            .$(", error=").$safe(e.getFlyweightMessage()).I$();
+                }
+            }
+            // Rows-emitted branch: ApplyWal2TableJob will rewrite _lv.s with the new
+            // lvConsumedSeqTxn alongside our in-memory advance, but persist now so the
+            // lastProcessed/appliedWatermark advance survives a crash before apply runs.
+            // No-row branch on advance success: advanceLiveViewConsumedSeqTxn already
+            // rewrote _lv.s with the new in-memory snapshot, so persistState would just
+            // duplicate the write.
+            if (!lvConsumedAdvanced) {
+                persistState(instance);
+            }
         }
     }
 

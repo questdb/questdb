@@ -261,6 +261,96 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testLvConsumedAdvancesPastNonDataCommit() throws Exception {
+        // Regression: an ALTER on the base table rides through the WAL as a non-DATA
+        // event. The LV refresh worker walks past the seqTxn (no rows to process) and
+        // emits no LIVE_VIEW_DATA block, so the apply path has nothing to consume.
+        // Pre-fix, lvConsumedSeqTxn stayed at the CREATE-time floor and held base WAL
+        // retention forever. Post-fix, the no-row branch advances lvConsumedSeqTxn
+        // directly via engine.advanceLiveViewConsumedSeqTxn (RFC 123 §"Lifecycle /
+        // Invalidation - Base-table data removal").
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 1s AS " +
+                    "SELECT ts, x, row_number() OVER () AS rn FROM base");
+
+            LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("lv");
+            Assert.assertNotNull(instance);
+            long baselineFloor = instance.getStateReader().getLvConsumedSeqTxn();
+
+            // ALTER ADD COLUMN of a column the LV does not reference: dependency-set
+            // narrowing keeps the LV ACTIVE; the SQL seqTxn lands on the base sequencer.
+            execute("ALTER TABLE base ADD COLUMN y INT");
+            drainWalQueue();
+            Assert.assertFalse(
+                    "LV must stay valid after ALTER touching only non-dependency columns",
+                    instance.isInvalid()
+            );
+
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                drainJob(job);
+            }
+            // Apply runs even though no LV WAL block was written, so we drain to make
+            // sure the assertion does not race the post-cycle state publication.
+            drainWalQueue();
+
+            long postFloor = instance.getStateReader().getLvConsumedSeqTxn();
+            Assert.assertTrue(
+                    "lvConsumedSeqTxn must advance past the non-DATA seqTxn [baseline=" + baselineFloor
+                            + ", post=" + postFloor + ']',
+                    postFloor > baselineFloor
+            );
+            Assert.assertEquals(
+                    "lvConsumedSeqTxn must catch up to lastProcessedSeqTxn",
+                    instance.getLastProcessedSeqTxn(),
+                    postFloor
+            );
+
+            execute("DROP LIVE VIEW lv");
+        });
+    }
+
+    @Test
+    public void testLvConsumedAdvancesWhenAllRowsFilteredOut() throws Exception {
+        // Regression: a DATA commit whose rows the LV's WHERE clause rejects produces
+        // zero output rows. Pre-fix, no LIVE_VIEW_DATA block was emitted and
+        // lvConsumedSeqTxn stalled, holding the base WAL segment that contained the
+        // filtered seqTxn. Post-fix, the no-row branch advances lvConsumedSeqTxn so
+        // base WAL purge can release the segment.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 1s AS " +
+                    "SELECT ts, x, row_number() OVER () AS rn FROM base WHERE x > 1000000");
+
+            LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("lv");
+            Assert.assertNotNull(instance);
+            long baselineFloor = instance.getStateReader().getLvConsumedSeqTxn();
+
+            execute("INSERT INTO base (ts, x) VALUES ('2026-04-01T00:00:00.000000Z', 5)");
+            drainWalQueue();
+
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                drainJob(job);
+            }
+            drainWalQueue();
+
+            long postFloor = instance.getStateReader().getLvConsumedSeqTxn();
+            Assert.assertTrue(
+                    "lvConsumedSeqTxn must advance past the all-rows-filtered seqTxn [baseline="
+                            + baselineFloor + ", post=" + postFloor + ']',
+                    postFloor > baselineFloor
+            );
+            Assert.assertEquals(
+                    "lvConsumedSeqTxn must catch up to lastProcessedSeqTxn",
+                    instance.getLastProcessedSeqTxn(),
+                    postFloor
+            );
+
+            execute("DROP LIVE VIEW lv");
+        });
+    }
+
+    @Test
     public void testApplyPersistFailureDoesNotAdvanceFloor() throws Exception {
         // Regression: pre-fix, advanceLiveViewConsumedSeqTxn mutated the in-memory
         // floor before persisting _lv.s and silently swallowed any persist error,
