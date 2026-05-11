@@ -600,25 +600,6 @@ public class PostingIndexCriticalIssuesTest extends AbstractCairoTest {
         });
     }
 
-    // Critical findings #2 (setMaxValue seqlock), #6 ([0, Long.MAX_VALUE)
-    // conservative purge interval) and #7 (seal-loop partial failure
-    // recovery) were RED placeholders during the v1 era. They are now
-    // addressed structurally by the v2 chain redesign:
-    //   #2 — chain.updateHeadMaxValue publishes via the chain header
-    //        seqlock, so any reader of MAX_VALUE goes through the same
-    //        consistency protocol as keyCount/genCount.
-    //   #6 — recordPostingSealPurge derives [fromTxn, toTxn) from the
-    //        chain entries themselves; the residual [0, MAX) branch only
-    //        fires for the empty-chain edge case, which the
-    //        writer-open recovery walk picks up on the next reopen.
-    //   #7 — recoveryDropAbandoned (run from PostingIndexWriter.of after
-    //        setCurrentTableTxn) drops every chain entry whose txnAtSeal
-    //        was published before the encompassing txWriter.commit
-    //        landed.
-    // Critical finding #9 (ColumnPurgeOperator retry cap on Windows) is
-    // orthogonal to the posting-index chain rewrite and remains tracked
-    // separately.
-
     /**
      * {@code TableWriter.linkPostingIndexAuxFiles} must hardlink only the
      * live seal generation's {@code .pc<N>} files to the dst column's
@@ -920,25 +901,6 @@ public class PostingIndexCriticalIssuesTest extends AbstractCairoTest {
             }
         });
     }
-
-    // =========================================================================
-    // Red tests for the v2 review of PR #6861 (current pass).
-    //
-    // Each test below maps to a finding from the review report. Tests that
-    // require fault injection use TestFilesFacadeImpl; tests that require
-    // concurrency simulate the race by mutating ff.length() between mmap
-    // setup and chain access. Findings that can only manifest from sources
-    // FilesFacade does not see (Unsafe.realloc OOM, queue-pool exhaustion)
-    // are documented in trailing comments.
-    // =========================================================================
-
-    // Review finding #1 (sidecar mem fd leak in openSidecarFiles) was
-    // dropped after verification: MemoryCMARWImpl.extend0 (line 403) and
-    // map0 (line 417) both close the fd on mmap/mremap failure inside
-    // jumpTo(). The "orphan mem" identified in the review never holds an
-    // open fd by the time the outer catch fires — it is already closed
-    // internally by the memory-mapping helper.
-    // Documented for traceability; no JUnit red test.
 
     /**
      * Review finding #4 — {@code BitpackUtils.unpackValuesFrom} Java
@@ -1425,6 +1387,11 @@ public class PostingIndexCriticalIssuesTest extends AbstractCairoTest {
         ff = new TestFilesFacadeImpl() {
             @Override
             public long openRW(LPSZ name, int opts) {
+                // The pre-seal .pv.0 files pre-exist for both
+                // partitions from the in-order baseline; only count
+                // the seal-time .pv.{>=1} opens. Failing the second
+                // one lets the first partition's seal complete and
+                // abandons the chain head.
                 if (failArmed.get() && name != null
                         && Utf8s.containsAscii(name, ".pv.")
                         && !Utf8s.endsWithAscii(name, ".pv.0")) {
@@ -1436,8 +1403,6 @@ public class PostingIndexCriticalIssuesTest extends AbstractCairoTest {
                 return super.openRW(name, opts);
             }
         };
-
-        node1.setProperty(PropertyKey.CAIRO_POSTING_SEAL_GEN_THRESHOLD, 0);
 
         assertMemoryLeak(ff, () -> {
             execute("""
@@ -2071,6 +2036,574 @@ public class PostingIndexCriticalIssuesTest extends AbstractCairoTest {
                                 + " vs preCommitTxn " + preCommitTxn + ")",
                         headSnap.txnAtSeal > preCommitTxn
                 );
+            }
+        });
+    }
+
+    // Critical findings #2 (setMaxValue seqlock), #6 ([0, Long.MAX_VALUE)
+    // conservative purge interval) and #7 (seal-loop partial failure
+    // recovery) were RED placeholders during the v1 era. They are now
+    // addressed structurally by the v2 chain redesign:
+    //   #2 — chain.updateHeadMaxValue publishes via the chain header
+    //        seqlock, so any reader of MAX_VALUE goes through the same
+    //        consistency protocol as keyCount/genCount.
+    //   #6 — recordPostingSealPurge derives [fromTxn, toTxn) from the
+    //        chain entries themselves; the residual [0, MAX) branch only
+    //        fires for the empty-chain edge case, which the
+    //        writer-open recovery walk picks up on the next reopen.
+    //   #7 — recoveryDropAbandoned (run from PostingIndexWriter.of after
+    //        setCurrentTableTxn) drops every chain entry whose txnAtSeal
+    //        was published before the encompassing txWriter.commit
+    //        landed.
+    // Critical finding #9 (ColumnPurgeOperator retry cap on Windows) is
+    // orthogonal to the posting-index chain rewrite and remains tracked
+    // separately.
+
+    /**
+     * Locks in the multi-gen short-circuit semantics: when a CLEAN gen
+     * processed first contributes to {@code total} and a later gen turns out
+     * to be MIXED, the running sum is discarded and {@code size()} returns
+     * {@code -1}. The caller iterates the whole reader, which is the only
+     * way to reconcile the partial sum with the clamped emit set across
+     * gens.
+     */
+    @Test
+    public void testSizeBailsOnCleanThenMixedGenSequence() throws Exception {
+        assertMemoryLeak(() -> {
+            final String name = "posting_size_clean_then_mixed";
+            try (Path path = new Path().of(configuration.getDbRoot())) {
+                final int plen = path.size();
+                try (PostingIndexWriter writer = new PostingIndexWriter(
+                        configuration, path.trimTo(plen), name, COLUMN_NAME_TXN_NONE)) {
+                    // gen 1: rowids 0..49, all <= MAX_VALUE -> CLEAN.
+                    for (long rowId = 0; rowId < 50; rowId++) {
+                        writer.add(0, rowId);
+                    }
+                    writer.commit();
+                    // gen 2: rowids 50..99, straddles MAX_VALUE=75 -> MIXED.
+                    for (long rowId = 50; rowId < 100; rowId++) {
+                        writer.add(0, rowId);
+                    }
+                    writer.commit();
+                    writer.setMaxValue(75);
+                }
+
+                try (PostingIndexFwdReader reader = new PostingIndexFwdReader(
+                        configuration, path.trimTo(plen), name,
+                        COLUMN_NAME_TXN_NONE, /* partitionTxn */ 0, /* columnTop */ 0)) {
+                    long iterated = 0;
+                    long advertised;
+                    try (RowCursor cursor = reader.getCursor(0, 0L, Long.MAX_VALUE)) {
+                        advertised = cursor.size();
+                        while (cursor.hasNext()) {
+                            cursor.next();
+                            iterated++;
+                        }
+                    }
+                    Assert.assertEquals(
+                            "gen 1 emits 0..49 (50 rows) and gen 2 emits clamped 50..75 (26 rows)",
+                            76,
+                            iterated
+                    );
+                    Assert.assertEquals(
+                            "MIXED detected after a CLEAN gen must discard the partial sum and bail",
+                            -1L,
+                            advertised
+                    );
+                }
+            }
+        });
+    }
+
+    /**
+     * The {@code Cursor.size()} fast path must bail to iteration when a single
+     * gen straddles {@code entryMaxValue}, because the per-gen count includes
+     * encoded row ids past the chain's tracked coverage. The bail manifests as
+     * {@code size() == -1}; the iterated count then becomes the source of
+     * truth (and matches the clamped emit set).
+     */
+    @Test
+    public void testSizeBailsOnMixedGen() throws Exception {
+        assertMemoryLeak(() -> {
+            final String name = "posting_size_mixed_gen";
+            try (Path path = new Path().of(configuration.getDbRoot())) {
+                final int plen = path.size();
+                try (PostingIndexWriter writer = new PostingIndexWriter(
+                        configuration, path.trimTo(plen), name, COLUMN_NAME_TXN_NONE)) {
+                    for (long rowId = 0; rowId < 100; rowId++) {
+                        writer.add(0, rowId);
+                    }
+                    writer.commit();
+                    writer.setMaxValue(49);
+                }
+
+                try (PostingIndexFwdReader reader = new PostingIndexFwdReader(
+                        configuration, path.trimTo(plen), name,
+                        COLUMN_NAME_TXN_NONE, /* partitionTxn */ 0, /* columnTop */ 0)) {
+                    long iterated = 0;
+                    long advertised;
+                    try (RowCursor cursor = reader.getCursor(0, 0L, Long.MAX_VALUE)) {
+                        advertised = cursor.size();
+                        while (cursor.hasNext()) {
+                            cursor.next();
+                            iterated++;
+                        }
+                    }
+                    Assert.assertEquals(
+                            "key 0 has rowids 0..49 at or below MAX_VALUE=49",
+                            50,
+                            iterated
+                    );
+                    Assert.assertEquals(
+                            "single-gen MIXED classification must bail to iteration",
+                            -1L,
+                            advertised
+                    );
+                }
+            }
+        });
+    }
+
+    // =========================================================================
+    // Red tests for the v2 review of PR #6861 (current pass).
+    //
+    // Each test below maps to a finding from the review report. Tests that
+    // require fault injection use TestFilesFacadeImpl; tests that require
+    // concurrency simulate the race by mutating ff.length() between mmap
+    // setup and chain access. Findings that can only manifest from sources
+    // FilesFacade does not see (Unsafe.realloc OOM, queue-pool exhaustion)
+    // are documented in trailing comments.
+    // =========================================================================
+
+    // Review finding #1 (sidecar mem fd leak in openSidecarFiles) was
+    // dropped after verification: MemoryCMARWImpl.extend0 (line 403) and
+    // map0 (line 417) both close the fd on mmap/mremap failure inside
+    // jumpTo(). The "orphan mem" identified in the review never holds an
+    // open fd by the time the outer catch fires — it is already closed
+    // internally by the memory-mapping helper.
+    // Documented for traceability; no JUnit red test.
+
+    /**
+     * The DELTA-mode upper bound from {@code peekDeltaKeyMaxValueUpperBound}
+     * is exact only when the last block has {@code bitWidth == 0}; otherwise
+     * it assumes every delta packs to {@code (1<<bw)-1}, which can sit far
+     * above the true last value. This test pins down that conservative bound
+     * by setting MAX_VALUE between the actual maximum and the slack bound:
+     * iteration emits every row (all real values are under MAX_VALUE) but the
+     * fast path must still bail with {@code -1} because it cannot prove the
+     * gen is CLEAN without decoding values.
+     */
+    @Test
+    public void testSizeBailsWhenSlackBoundClassifiesCleanGenAsMixed() throws Exception {
+        // Force DELTA encoding so the per-key blob exercises the slack
+        // upper-bound branch in peekDeltaKeyMaxValueUpperBound. Under EF the
+        // max bound is exact (universe - 1) and would (correctly) classify
+        // this case as CLEAN, hiding the slack-bound behavior.
+        node1.setProperty(PropertyKey.CAIRO_POSTING_INDEX_ROW_ID_ENCODING, "delta");
+        assertMemoryLeak(() -> {
+            final String name = "posting_size_slack_mixed";
+            try (Path path = new Path().of(configuration.getDbRoot())) {
+                final int plen = path.size();
+                try (PostingIndexWriter writer = new PostingIndexWriter(
+                        configuration, path.trimTo(plen), name, COLUMN_NAME_TXN_NONE)) {
+                    // 192 contiguous rowids fill blocks 0..2 (BLOCK_CAPACITY=64,
+                    // bitWidth=0). The last block holds 4 sparse outliers with
+                    // non-uniform deltas (800, 500, 500), forcing bitWidth>0
+                    // and a slack max well above the true max of 2000.
+                    for (long rowId = 0; rowId < 192; rowId++) {
+                        writer.add(0, rowId);
+                    }
+                    writer.add(0, 200);
+                    writer.add(0, 1000);
+                    writer.add(0, 1500);
+                    writer.add(0, 2000);
+                    writer.commit();
+                    // MAX_VALUE sits above the true max (2000) but below the
+                    // slack upper bound (~3233 = 200 + 3 * (500 + (1<<9) - 1)).
+                    writer.setMaxValue(2500);
+                }
+
+                try (PostingIndexFwdReader reader = new PostingIndexFwdReader(
+                        configuration, path.trimTo(plen), name,
+                        COLUMN_NAME_TXN_NONE, /* partitionTxn */ 0, /* columnTop */ 0)) {
+                    long iterated = 0;
+                    long advertised;
+                    try (RowCursor cursor = reader.getCursor(0, 0L, Long.MAX_VALUE)) {
+                        advertised = cursor.size();
+                        while (cursor.hasNext()) {
+                            cursor.next();
+                            iterated++;
+                        }
+                    }
+                    Assert.assertEquals(
+                            "every encoded row id sits at or below MAX_VALUE=2500",
+                            196,
+                            iterated
+                    );
+                    Assert.assertEquals(
+                            "slack upper bound forces MIXED even though the gen is truly CLEAN",
+                            -1L,
+                            advertised
+                    );
+                }
+            }
+        });
+    }
+
+    /**
+     * When the head entry's MAX_VALUE sits below every encoded row id for the
+     * requested key in a gen, that gen is ALL_DIRTY: it must contribute zero to
+     * {@code Cursor.size()} without forcing a full bail. Mirrors the iterated
+     * cursor, which also returns no rows because the clamp filters them all
+     * out.
+     */
+    @Test
+    public void testSizeBypassesAllDirtyGen() throws Exception {
+        assertMemoryLeak(() -> {
+            final String name = "posting_size_all_dirty";
+            try (Path path = new Path().of(configuration.getDbRoot())) {
+                final int plen = path.size();
+                try (PostingIndexWriter writer = new PostingIndexWriter(
+                        configuration, path.trimTo(plen), name, COLUMN_NAME_TXN_NONE)) {
+                    for (long rowId = 50; rowId < 100; rowId++) {
+                        writer.add(0, rowId);
+                    }
+                    writer.commit();
+                    writer.setMaxValue(49);
+                }
+
+                try (PostingIndexFwdReader reader = new PostingIndexFwdReader(
+                        configuration, path.trimTo(plen), name,
+                        COLUMN_NAME_TXN_NONE, /* partitionTxn */ 0, /* columnTop */ 0)) {
+                    long iterated = 0;
+                    long advertised;
+                    try (RowCursor cursor = reader.getCursor(0, 0L, Long.MAX_VALUE)) {
+                        advertised = cursor.size();
+                        while (cursor.hasNext()) {
+                            cursor.next();
+                            iterated++;
+                        }
+                    }
+                    Assert.assertEquals("clamp drops every encoded row past MAX_VALUE", 0, iterated);
+                    Assert.assertEquals(
+                            "ALL_DIRTY gen must contribute 0 without bailing the fast path",
+                            0L,
+                            advertised
+                    );
+                }
+            }
+        });
+    }
+
+    /**
+     * Exercises the FLAT-mode branch in {@code peekDenseKeyMinValue} and
+     * {@code peekDenseKeyMaxValueUpperBound}. With many keys carrying a
+     * single row id each in one stride, the writer's stride mode chooser
+     * picks FLAT (stride-wide FoR is much smaller than per-key DELTA blobs).
+     * Both peek helpers must address into the FLAT prefix-counts and the
+     * bit-packed data correctly to return the lone row id as both min and
+     * upper-bound max.
+     */
+    @Test
+    public void testSizeFastPathOnDenseFlatStride() throws Exception {
+        assertMemoryLeak(() -> {
+            final String name = "posting_size_fast_dense_flat";
+            try (Path path = new Path().of(configuration.getDbRoot())) {
+                final int plen = path.size();
+                try (PostingIndexWriter writer = new PostingIndexWriter(
+                        configuration, path.trimTo(plen), name, COLUMN_NAME_TXN_NONE)) {
+                    // 200 distinct keys, one row id each. All keys land in
+                    // stride 0 (DENSE_STRIDE = 256). Per-key DELTA blob
+                    // overhead (~22 bytes/key) loses to FLAT (one bit-packed
+                    // 8-bit slot per key), so seal picks FLAT for stride 0.
+                    for (int key = 0; key < 200; key++) {
+                        writer.add(key, key);
+                    }
+                    writer.commit();
+                    writer.seal();
+                }
+
+                try (PostingIndexFwdReader reader = new PostingIndexFwdReader(
+                        configuration, path.trimTo(plen), name,
+                        COLUMN_NAME_TXN_NONE, /* partitionTxn */ 0, /* columnTop */ 0)) {
+                    long iterated = 0;
+                    long advertised;
+                    // Pick a key in the middle of the stride so the FLAT
+                    // prefix-counts read at localKey > 0 and the unpackValue
+                    // at end-1 hits a non-zero offset.
+                    try (RowCursor cursor = reader.getCursor(100, 0L, Long.MAX_VALUE)) {
+                        advertised = cursor.size();
+                        while (cursor.hasNext()) {
+                            cursor.next();
+                            iterated++;
+                        }
+                    }
+                    Assert.assertEquals("key 100 must surface its single row id", 1, iterated);
+                    Assert.assertEquals(
+                            "FLAT-mode CLEAN dense gen must take the fast path",
+                            iterated,
+                            advertised
+                    );
+                }
+            }
+        });
+    }
+
+    /**
+     * Primary perf-recovery regression test: with no dirty data and the head
+     * entry's MAX_VALUE pointing at the encoded maximum, every gen is CLEAN
+     * and {@code Cursor.size()} must return the iterated count, not -1.
+     * Exercises the dense (sealed) gen path.
+     */
+    @Test
+    public void testSizeFastPathOnDenseGen() throws Exception {
+        assertMemoryLeak(() -> {
+            final String name = "posting_size_fast_dense";
+            try (Path path = new Path().of(configuration.getDbRoot())) {
+                final int plen = path.size();
+                try (PostingIndexWriter writer = new PostingIndexWriter(
+                        configuration, path.trimTo(plen), name, COLUMN_NAME_TXN_NONE)) {
+                    for (long rowId = 0; rowId < 200; rowId++) {
+                        writer.add(0, rowId);
+                    }
+                    writer.commit();
+                    // Explicit seal collapses the sparse gens into a single dense
+                    // gen so size() goes through the dense peek path.
+                    writer.seal();
+                }
+
+                try (PostingIndexFwdReader reader = new PostingIndexFwdReader(
+                        configuration, path.trimTo(plen), name,
+                        COLUMN_NAME_TXN_NONE, /* partitionTxn */ 0, /* columnTop */ 0)) {
+                    long iterated = 0;
+                    long advertised;
+                    try (RowCursor cursor = reader.getCursor(0, 0L, Long.MAX_VALUE)) {
+                        advertised = cursor.size();
+                        while (cursor.hasNext()) {
+                            cursor.next();
+                            iterated++;
+                        }
+                    }
+                    Assert.assertEquals("expect every encoded row id to surface", 200, iterated);
+                    Assert.assertEquals(
+                            "CLEAN dense gen must take the fast path",
+                            iterated,
+                            advertised
+                    );
+                }
+            }
+        });
+    }
+
+    /**
+     * Forces the per-key blob into Elias-Fano so the EF branches in both
+     * peek helpers run end to end:
+     * <ul>
+     *   <li>{@code peekDeltaKeyMaxValueUpperBound} detects the EF sentinel
+     *       and reads {@code universe - 1} as the exact max;</li>
+     *   <li>{@code peekDeltaKeyMinValue} dispatches to
+     *       {@code peekEFKeyMinValue}, which decodes the first set bit of
+     *       the high-bit stream plus the corresponding low chunk to recover
+     *       the smallest encoded value.</li>
+     * </ul>
+     * Sparsely-spaced row ids keep the EF blob smaller than DELTA so the
+     * choice would not flip even without the property override; the override
+     * is defence in depth.
+     */
+    @Test
+    public void testSizeFastPathOnEliasFanoEncodedGen() throws Exception {
+        node1.setProperty(PropertyKey.CAIRO_POSTING_INDEX_ROW_ID_ENCODING, "ef");
+        assertMemoryLeak(() -> {
+            final String name = "posting_size_fast_ef";
+            try (Path path = new Path().of(configuration.getDbRoot())) {
+                final int plen = path.size();
+                try (PostingIndexWriter writer = new PostingIndexWriter(
+                        configuration, path.trimTo(plen), name, COLUMN_NAME_TXN_NONE)) {
+                    // 100 sparsely-spaced row ids (0, 11, 22, ..., 1089) so
+                    // the universe (1090) is large enough to make EF the
+                    // natural pick.
+                    for (long rowId = 0; rowId <= 1_089; rowId += 11) {
+                        writer.add(0, rowId);
+                    }
+                    writer.commit();
+                    // No seal: keep the sparse gen so the per-key EF blob is
+                    // exactly what peekSparseKeyM*Value sees.
+                }
+
+                try (PostingIndexFwdReader reader = new PostingIndexFwdReader(
+                        configuration, path.trimTo(plen), name,
+                        COLUMN_NAME_TXN_NONE, /* partitionTxn */ 0, /* columnTop */ 0)) {
+                    long iterated = 0;
+                    long advertised;
+                    try (RowCursor cursor = reader.getCursor(0, 0L, Long.MAX_VALUE)) {
+                        advertised = cursor.size();
+                        while (cursor.hasNext()) {
+                            cursor.next();
+                            iterated++;
+                        }
+                    }
+                    Assert.assertEquals("expect every encoded EF row id to surface", 100, iterated);
+                    Assert.assertEquals(
+                            "CLEAN EF-encoded gen must take the fast path",
+                            iterated,
+                            advertised
+                    );
+                }
+            }
+        });
+    }
+
+    /**
+     * Same shape as {@link #testSizeFastPathOnDenseGen} but the writer is
+     * closed without an explicit {@link PostingIndexWriter#seal()}, so the
+     * head entry carries sparse gens. Locks in the sparse-side peek path.
+     */
+    @Test
+    public void testSizeFastPathOnSparseGen() throws Exception {
+        assertMemoryLeak(() -> {
+            final String name = "posting_size_fast_sparse";
+            try (Path path = new Path().of(configuration.getDbRoot())) {
+                final int plen = path.size();
+                try (PostingIndexWriter writer = new PostingIndexWriter(
+                        configuration, path.trimTo(plen), name, COLUMN_NAME_TXN_NONE)) {
+                    for (long rowId = 0; rowId < 200; rowId++) {
+                        writer.add(0, rowId);
+                    }
+                    writer.commit();
+                    // No seal: chain head's gen is sparse (negative key count).
+                }
+
+                try (PostingIndexFwdReader reader = new PostingIndexFwdReader(
+                        configuration, path.trimTo(plen), name,
+                        COLUMN_NAME_TXN_NONE, /* partitionTxn */ 0, /* columnTop */ 0)) {
+                    long iterated = 0;
+                    long advertised;
+                    try (RowCursor cursor = reader.getCursor(0, 0L, Long.MAX_VALUE)) {
+                        advertised = cursor.size();
+                        while (cursor.hasNext()) {
+                            cursor.next();
+                            iterated++;
+                        }
+                    }
+                    Assert.assertEquals("expect every encoded row id to surface", 200, iterated);
+                    Assert.assertEquals(
+                            "CLEAN sparse gen must take the fast path",
+                            iterated,
+                            advertised
+                    );
+                }
+            }
+        });
+    }
+
+    /**
+     * Pairs with {@link #testSizeBailsWhenSlackBoundClassifiesCleanGenAsMixed}
+     * and pins down the CLEAN side of the slack upper bound: with MAX_VALUE
+     * comfortably above the slack max ({@code firstValue + numDeltas *
+     * (minDelta + (1<<bitWidth) - 1)}), the bitWidth>0 branch in
+     * {@code peekDeltaKeyMaxValueUpperBound} runs the full overflow-guarded
+     * arithmetic and classifies the gen CLEAN.
+     */
+    @Test
+    public void testSizeFastPathWithSlackBoundDeltaCleanGen() throws Exception {
+        // Force DELTA so the slack upper bound is the path under test (EF
+        // would compute the exact max via universe - 1 and skip the slack
+        // arithmetic entirely).
+        node1.setProperty(PropertyKey.CAIRO_POSTING_INDEX_ROW_ID_ENCODING, "delta");
+        assertMemoryLeak(() -> {
+            final String name = "posting_size_slack_clean";
+            try (Path path = new Path().of(configuration.getDbRoot())) {
+                final int plen = path.size();
+                try (PostingIndexWriter writer = new PostingIndexWriter(
+                        configuration, path.trimTo(plen), name, COLUMN_NAME_TXN_NONE)) {
+                    // Same data shape as the slack-MIXED test: 192 contiguous
+                    // rowids in blocks 0..2 (bitWidth=0) and 4 sparse outliers
+                    // in block 3 with non-uniform deltas (forcing bitWidth=9
+                    // and a slack max of ~3233).
+                    for (long rowId = 0; rowId < 192; rowId++) {
+                        writer.add(0, rowId);
+                    }
+                    writer.add(0, 200);
+                    writer.add(0, 1000);
+                    writer.add(0, 1500);
+                    writer.add(0, 2000);
+                    writer.commit();
+                    // MAX_VALUE comfortably above the slack upper bound so the
+                    // bitWidth>0 branch returns CLEAN.
+                    writer.setMaxValue(5_000);
+                }
+
+                try (PostingIndexFwdReader reader = new PostingIndexFwdReader(
+                        configuration, path.trimTo(plen), name,
+                        COLUMN_NAME_TXN_NONE, /* partitionTxn */ 0, /* columnTop */ 0)) {
+                    long iterated = 0;
+                    long advertised;
+                    try (RowCursor cursor = reader.getCursor(0, 0L, Long.MAX_VALUE)) {
+                        advertised = cursor.size();
+                        while (cursor.hasNext()) {
+                            cursor.next();
+                            iterated++;
+                        }
+                    }
+                    Assert.assertEquals("expect every encoded row id to surface", 196, iterated);
+                    Assert.assertEquals(
+                            "slack upper bound below MAX_VALUE must classify CLEAN",
+                            iterated,
+                            advertised
+                    );
+                }
+            }
+        });
+    }
+
+    /**
+     * Mixed per-gen classification: gen 1 is CLEAN (max <= MAX_VALUE), gen 2
+     * is ALL_DIRTY (min > MAX_VALUE). {@code Cursor.size()} should sum the
+     * CLEAN contribution and skip ALL_DIRTY without bailing. Exact match
+     * against the iterated count proves no over- or under-count.
+     */
+    @Test
+    public void testSizeMultiGenMixedClassification() throws Exception {
+        assertMemoryLeak(() -> {
+            final String name = "posting_size_multigen_mixed";
+            try (Path path = new Path().of(configuration.getDbRoot())) {
+                final int plen = path.size();
+                try (PostingIndexWriter writer = new PostingIndexWriter(
+                        configuration, path.trimTo(plen), name, COLUMN_NAME_TXN_NONE)) {
+                    for (long rowId = 0; rowId < 50; rowId++) {
+                        writer.add(0, rowId);
+                    }
+                    writer.commit();
+                    for (long rowId = 50; rowId < 100; rowId++) {
+                        writer.add(0, rowId);
+                    }
+                    writer.commit();
+                    writer.setMaxValue(49);
+                }
+
+                try (PostingIndexFwdReader reader = new PostingIndexFwdReader(
+                        configuration, path.trimTo(plen), name,
+                        COLUMN_NAME_TXN_NONE, /* partitionTxn */ 0, /* columnTop */ 0)) {
+                    long iterated = 0;
+                    long advertised;
+                    try (RowCursor cursor = reader.getCursor(0, 0L, Long.MAX_VALUE)) {
+                        advertised = cursor.size();
+                        while (cursor.hasNext()) {
+                            cursor.next();
+                            iterated++;
+                        }
+                    }
+                    Assert.assertEquals(
+                            "gen 1 contributes rowids 0..49 = 50 rows under MAX_VALUE=49",
+                            50,
+                            iterated
+                    );
+                    Assert.assertEquals(
+                            "CLEAN+ALL_DIRTY combination must take the fast path",
+                            iterated,
+                            advertised
+                    );
+                }
             }
         });
     }
