@@ -178,8 +178,7 @@ public interface IndexWriter extends Closeable, Mutable {
      * @param init          true to initialize a new index, false to open existing
      * @param blockCapacity the value block capacity (for new index initialization)
      */
-    default void of(CairoConfiguration configuration, long keyFd, long valueFd, boolean init, int blockCapacity) {
-    }
+    void of(CairoConfiguration configuration, long keyFd, long valueFd, boolean init, int blockCapacity);
 
     /**
      * Opens the index writer for the given column using file paths.

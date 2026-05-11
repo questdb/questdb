@@ -46,6 +46,7 @@ import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.mp.RingQueue;
 import io.questdb.mp.Sequence;
+import io.questdb.std.Chars;
 import io.questdb.std.Decimals;
 import io.questdb.std.Files;
 import io.questdb.std.FilesFacade;
@@ -60,6 +61,7 @@ import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
 import io.questdb.std.str.Utf8StringSink;
+import io.questdb.std.str.Utf8s;
 import io.questdb.tasks.PostingSealPurgeTask;
 import org.jetbrains.annotations.TestOnly;
 
@@ -364,6 +366,10 @@ public class PostingIndexWriter implements IndexWriter {
                 chain.resetState();
                 partitionPath.clear();
                 indexName.clear();
+                o3CtxPartitionPath.clear();
+                o3CtxName.clear();
+                o3CtxColumnNameTxn = 0;
+                o3CtxUpcomingTxn = -1L;
             }
         }
     }
@@ -812,6 +818,11 @@ public class PostingIndexWriter implements IndexWriter {
     }
 
     @Override
+    public void of(CairoConfiguration configuration, long keyFd, long valueFd, boolean init, int blockCapacity) {
+        throw new UnsupportedOperationException("fd-based open not supported for posting indexes");
+    }
+
+    @Override
     public void of(Path path, CharSequence name, long columnNameTxn) {
         of(path, name, columnNameTxn, false);
     }
@@ -917,6 +928,8 @@ public class PostingIndexWriter implements IndexWriter {
 
     @Override
     public void openFromO3Context(boolean init) {
+        assert o3CtxPartitionPath.size() > 0 && o3CtxName.length() > 0
+                : "setO3PathContext must be called before openFromO3Context";
         Path p = Path.getThreadLocal(o3CtxPartitionPath);
         of(p, o3CtxName, o3CtxColumnNameTxn, init);
         if (o3CtxUpcomingTxn >= 0) {
@@ -1315,6 +1328,11 @@ public class PostingIndexWriter implements IndexWriter {
 
     @Override
     public void setO3PathContext(Path path, CharSequence name, long columnNameTxn, long upcomingTxn) {
+        if (keyMem.isOpen() && !(Utf8s.equals(partitionPath, path)
+                && Chars.equals(indexName, name)
+                && postingColumnNameTxn == columnNameTxn)) {
+            close();
+        }
         o3CtxPartitionPath.clear();
         o3CtxPartitionPath.put(path);
         o3CtxName.clear();
@@ -1665,6 +1683,14 @@ public class PostingIndexWriter implements IndexWriter {
         sidecarInfoMem = Misc.free(sidecarInfoMem);
     }
 
+    private long computeStrideTrialBufSize(int ks, int[] keyCounts) {
+        long total = 0;
+        for (int j = 0; j < ks; j++) {
+            total += PostingIndexUtils.computeMaxEncodedSize(keyCounts[j]);
+        }
+        return total;
+    }
+
     private void copyStrideFromGen0(long gen0Addr, int gen0KeyCount, int gen0SiSize, int stride,
                                     long copyBuf, long copyBufSize) {
         // If this stride existed in gen 0, copy it; otherwise write empty
@@ -1928,6 +1954,85 @@ public class PostingIndexWriter implements IndexWriter {
         }
     }
 
+    private void encodeStrideBlock(
+            int ks, int[] keyCounts, long[] keyOffsets, long strideValsAddr,
+            int[] bpKeySizes, long bpTrialBuf, long localHeaderBuf
+    ) {
+        int bpDataTotal = 0;
+        for (int j = 0; j < ks; j++) {
+            int count = keyCounts[j];
+            if (count > 0) {
+                long keyAddr = strideValsAddr + keyOffsets[j] * Long.BYTES;
+                encodeCtx.ensureCapacity(count);
+                bpKeySizes[j] = PostingIndexUtils.encodeKeyNative(keyAddr, count, bpTrialBuf + bpDataTotal, encodeCtx, rowIdEncoding);
+            } else {
+                bpKeySizes[j] = 0;
+            }
+            bpDataTotal += bpKeySizes[j];
+        }
+
+        int deltaHeaderSize = PostingIndexUtils.strideDeltaHeaderSize(ks);
+        int deltaSize = deltaHeaderSize + bpDataTotal;
+        int flatHeaderSize = PostingIndexUtils.strideFlatHeaderSize(ks);
+
+        long totalStrideValuesL = 0;
+        long strideMinValue = Long.MAX_VALUE;
+        long strideMaxValue = Long.MIN_VALUE;
+        for (int j = 0; j < ks; j++) {
+            int count = keyCounts[j];
+            totalStrideValuesL += count;
+            long keyAddr = strideValsAddr + keyOffsets[j] * Long.BYTES;
+            for (int i = 0; i < count; i++) {
+                long val = Unsafe.getLong(keyAddr + (long) i * Long.BYTES);
+                if (val < strideMinValue) strideMinValue = val;
+                if (val > strideMaxValue) strideMaxValue = val;
+            }
+        }
+        if (totalStrideValuesL == 0) {
+            strideMinValue = 0;
+            strideMaxValue = 0;
+        }
+
+        boolean useFlat;
+        int localBitWidth = 0;
+        int flatDataSize = 0;
+
+        if (totalStrideValuesL > Integer.MAX_VALUE) {
+            useFlat = false;
+        } else {
+            int totalStrideValues = (int) totalStrideValuesL;
+            long strideRange = strideMaxValue - strideMinValue;
+            int naturalBitWidth = strideRange <= 0 ? 1 : BitpackUtils.bitsNeeded(strideRange);
+            int alignedBitWidth = maybeAlignBitWidth(naturalBitWidth, alignedBitWidthThreshold);
+            int naturalFlatDataSize = BitpackUtils.packedDataSize(totalStrideValues, naturalBitWidth);
+            int naturalFlatSize = flatHeaderSize + naturalFlatDataSize;
+
+            if (alignedBitWidth != naturalBitWidth) {
+                int alignedFlatDataSize = BitpackUtils.packedDataSize(totalStrideValues, alignedBitWidth);
+                int alignedFlatSize = flatHeaderSize + alignedFlatDataSize;
+                if (alignedFlatSize < deltaSize) {
+                    localBitWidth = alignedBitWidth;
+                    flatDataSize = alignedFlatDataSize;
+                } else {
+                    localBitWidth = naturalBitWidth;
+                    flatDataSize = naturalFlatDataSize;
+                }
+            } else {
+                localBitWidth = naturalBitWidth;
+                flatDataSize = naturalFlatDataSize;
+            }
+            int flatSize = flatHeaderSize + flatDataSize;
+            useFlat = flatSize < deltaSize;
+        }
+
+        if (useFlat) {
+            writePackedStride(ks, keyCounts, keyOffsets, localBitWidth, strideMinValue,
+                    flatHeaderSize, flatDataSize, localHeaderBuf, strideValsAddr);
+        } else {
+            writeDeltaStride(ks, keyCounts, deltaHeaderSize, bpTrialBuf, bpKeySizes, localHeaderBuf);
+        }
+    }
+
     /**
      * Lazily creates read-only mmaps of the covered column files.
      * MemoryPMARImpl (the writer's column memory) maps one page at a time,
@@ -2058,93 +2163,6 @@ public class PostingIndexWriter implements IndexWriter {
             }
         }
         return max;
-    }
-
-    private long computeStrideTrialBufSize(int ks, int[] keyCounts) {
-        long total = 0;
-        for (int j = 0; j < ks; j++) {
-            total += PostingIndexUtils.computeMaxEncodedSize(keyCounts[j]);
-        }
-        return total;
-    }
-
-    private void encodeStrideBlock(
-            int ks, int[] keyCounts, long[] keyOffsets, long strideValsAddr,
-            int[] bpKeySizes, long bpTrialBuf, long localHeaderBuf
-    ) {
-        int bpDataTotal = 0;
-        for (int j = 0; j < ks; j++) {
-            int count = keyCounts[j];
-            if (count > 0) {
-                long keyAddr = strideValsAddr + keyOffsets[j] * Long.BYTES;
-                encodeCtx.ensureCapacity(count);
-                bpKeySizes[j] = PostingIndexUtils.encodeKeyNative(keyAddr, count, bpTrialBuf + bpDataTotal, encodeCtx, rowIdEncoding);
-            } else {
-                bpKeySizes[j] = 0;
-            }
-            bpDataTotal += bpKeySizes[j];
-        }
-
-        int deltaHeaderSize = PostingIndexUtils.strideDeltaHeaderSize(ks);
-        int deltaSize = deltaHeaderSize + bpDataTotal;
-        int flatHeaderSize = PostingIndexUtils.strideFlatHeaderSize(ks);
-
-        long totalStrideValuesL = 0;
-        long strideMinValue = Long.MAX_VALUE;
-        long strideMaxValue = Long.MIN_VALUE;
-        for (int j = 0; j < ks; j++) {
-            int count = keyCounts[j];
-            totalStrideValuesL += count;
-            long keyAddr = strideValsAddr + keyOffsets[j] * Long.BYTES;
-            for (int i = 0; i < count; i++) {
-                long val = Unsafe.getLong(keyAddr + (long) i * Long.BYTES);
-                if (val < strideMinValue) strideMinValue = val;
-                if (val > strideMaxValue) strideMaxValue = val;
-            }
-        }
-        if (totalStrideValuesL == 0) {
-            strideMinValue = 0;
-            strideMaxValue = 0;
-        }
-
-        boolean useFlat;
-        int localBitWidth = 0;
-        int flatDataSize = 0;
-
-        if (totalStrideValuesL > Integer.MAX_VALUE) {
-            useFlat = false;
-        } else {
-            int totalStrideValues = (int) totalStrideValuesL;
-            long strideRange = strideMaxValue - strideMinValue;
-            int naturalBitWidth = strideRange <= 0 ? 1 : BitpackUtils.bitsNeeded(strideRange);
-            int alignedBitWidth = maybeAlignBitWidth(naturalBitWidth, alignedBitWidthThreshold);
-            int naturalFlatDataSize = BitpackUtils.packedDataSize(totalStrideValues, naturalBitWidth);
-            int naturalFlatSize = flatHeaderSize + naturalFlatDataSize;
-
-            if (alignedBitWidth != naturalBitWidth) {
-                int alignedFlatDataSize = BitpackUtils.packedDataSize(totalStrideValues, alignedBitWidth);
-                int alignedFlatSize = flatHeaderSize + alignedFlatDataSize;
-                if (alignedFlatSize < deltaSize) {
-                    localBitWidth = alignedBitWidth;
-                    flatDataSize = alignedFlatDataSize;
-                } else {
-                    localBitWidth = naturalBitWidth;
-                    flatDataSize = naturalFlatDataSize;
-                }
-            } else {
-                localBitWidth = naturalBitWidth;
-                flatDataSize = naturalFlatDataSize;
-            }
-            int flatSize = flatHeaderSize + flatDataSize;
-            useFlat = flatSize < deltaSize;
-        }
-
-        if (useFlat) {
-            writePackedStride(ks, keyCounts, keyOffsets, localBitWidth, strideMinValue,
-                    flatHeaderSize, flatDataSize, localHeaderBuf, strideValsAddr);
-        } else {
-            writeDeltaStride(ks, keyCounts, deltaHeaderSize, bpTrialBuf, bpKeySizes, localHeaderBuf);
-        }
     }
 
     private void flushAllPending() {

@@ -806,7 +806,9 @@ public class O3CopyJob extends AbstractQueueConsumerJob<O3CopyTask> {
             IndexWriter indexWriter,
             int indexBlockCapacity
     ) {
-        // dstKFd & dstVFd are closed by the indexer (BITMAP path); POSTING ignores them and opens path-based.
+        // BITMAP: O3OpenColumnJob opened dstKFd / dstVFd and ownership transfers to indexWriter.of(...) below.
+        // POSTING: O3OpenColumnJob took the setO3PathContext branch and left dstKFd = dstVFd = 0; openFromO3Context
+        // re-opens path-based and dstKFd / dstVFd are unused here.
         try {
             long row = dstIndexOffset / Integer.BYTES;
             boolean closed = !indexWriter.isOpen();
