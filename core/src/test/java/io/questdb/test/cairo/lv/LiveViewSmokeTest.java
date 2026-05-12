@@ -219,7 +219,58 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testApplyAdvancesLvConsumedSeqTxn() throws Exception {
+    public void testGlobalApplyDoesNotTouchLiveView() throws Exception {
+        // RFC 123 Phase 1b: the global ApplyWal2TableJob.doRun skips LV tokens. We
+        // ingest into the base, write a LIVE_VIEW_DATA block via the refresh worker,
+        // then capture the LV's applied seqTxn. A subsequent drainWalQueue must NOT
+        // advance the LV's _txn, since global apply ignores LV notifications.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 1s AS " +
+                    "SELECT ts, x, row_number() OVER () AS rn FROM base WHERE x > 0");
+            execute("INSERT INTO base (ts, x) VALUES ('2026-05-12T00:00:00.000000Z', 11)");
+            drainWalQueue();
+
+            LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("lv");
+            Assert.assertNotNull(instance);
+            // Refresh writes + applies inline.
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                drainJob(job);
+            }
+            long lvConsumedAfterInline = instance.getStateReader().getLvConsumedSeqTxn();
+            long lastProcessedAfterInline = instance.getLastProcessedSeqTxn();
+            Assert.assertEquals(
+                    "inline apply must advance lvConsumed to lastProcessed",
+                    lastProcessedAfterInline,
+                    lvConsumedAfterInline
+            );
+
+            // Run global apply repeatedly — must be a no-op for the LV.
+            for (int i = 0; i < 8; i++) {
+                drainWalQueue();
+            }
+            Assert.assertEquals(
+                    "global apply must not advance lvConsumed for LV tokens",
+                    lvConsumedAfterInline,
+                    instance.getStateReader().getLvConsumedSeqTxn()
+            );
+            Assert.assertEquals(
+                    "global apply must not advance lastProcessed",
+                    lastProcessedAfterInline,
+                    instance.getLastProcessedSeqTxn()
+            );
+
+            execute("DROP LIVE VIEW lv");
+        });
+    }
+
+    @Test
+    public void testRefreshAppliesInlineAndAdvancesLvConsumedSeqTxn() throws Exception {
+        // RFC 123 Phase 1b: LV apply runs inline on the refresh worker after the
+        // LIVE_VIEW_DATA block is written. The global ApplyWal2TableJob.doRun skips
+        // LV tokens, so drainWalQueue is a no-op for the LV's own WAL. The temporal
+        // contract: lvConsumedSeqTxn advances within a single refresh cycle, not on
+        // a subsequent global apply tick.
         assertMemoryLeak(() -> {
             execute("CREATE TABLE base (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
             execute("CREATE LIVE VIEW lv FLUSH EVERY 1s AS " +
@@ -232,28 +283,26 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
             Assert.assertNotNull(instance);
             long preLvConsumed = instance.getStateReader().getLvConsumedSeqTxn();
 
-            // Refresh writes the LV's WAL block but does not advance lvConsumedSeqTxn —
-            // that's deferred to apply time so retention only releases once the rows are
-            // durable in the LV's own table (RFC 123 §Flush).
             try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
                 drainJob(job);
             }
-            Assert.assertEquals(
-                    "lvConsumedSeqTxn must not advance until apply runs",
-                    preLvConsumed,
-                    instance.getStateReader().getLvConsumedSeqTxn()
-            );
             Assert.assertTrue(
                     "lastProcessedSeqTxn must advance after refresh",
                     instance.getLastProcessedSeqTxn() > preLvConsumed
             );
+            Assert.assertEquals(
+                    "lvConsumedSeqTxn must advance inline with refresh in Phase 1b",
+                    instance.getLastProcessedSeqTxn(),
+                    instance.getStateReader().getLvConsumedSeqTxn()
+            );
 
-            // ApplyWal2TableJob reads maxBaseSeqTxnInBlock from the LV's WAL block and
-            // bumps lvConsumedSeqTxn.
+            // drainWalQueue is a no-op for the LV's own WAL in Phase 1b — global apply
+            // skips LV tokens. Calling it must not change anything.
+            long lvConsumedPostRefresh = instance.getStateReader().getLvConsumedSeqTxn();
             drainWalQueue();
             Assert.assertEquals(
-                    "lvConsumedSeqTxn must equal lastProcessedSeqTxn after apply",
-                    instance.getLastProcessedSeqTxn(),
+                    "lvConsumedSeqTxn must not change on global drainWalQueue",
+                    lvConsumedPostRefresh,
                     instance.getStateReader().getLvConsumedSeqTxn()
             );
 
@@ -624,7 +673,13 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testRestartPicksUpUnappliedLvWalBlock() throws Exception {
+    public void testRestartRoundTripsLvConsumedSeqTxn() throws Exception {
+        // RFC 123 Phase 1b: refresh writes + applies inline, so a successful refresh
+        // cycle leaves no unapplied LV WAL block in steady state. This pins the
+        // round-trip of lvConsumedSeqTxn and lastProcessedSeqTxn through restart.
+        // (Recovery from a crash mid-cycle — between commitLiveView and the inline
+        // apply — is a narrow window covered by the durability ordering inside
+        // engine.advanceLiveViewConsumedSeqTxn and lives outside the smoke suite.)
         assertMemoryLeak(() -> {
             execute("CREATE TABLE base (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
             execute("CREATE LIVE VIEW lv FLUSH EVERY 1s AS " +
@@ -634,48 +689,35 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
             drainWalQueue();
 
             LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("lv");
-            long preLvConsumed = instance.getStateReader().getLvConsumedSeqTxn();
-
-            // Refresh writes the LV's WAL block but lvConsumed only advances at apply
-            // time. We deliberately do NOT drainWalQueue here, so the LV's own WAL has
-            // a committed-but-unapplied block when restart happens.
             try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
                 drainJob(job);
             }
-            long postRefreshLastProcessed = instance.getLastProcessedSeqTxn();
-            Assert.assertTrue(
-                    "refresh must advance lastProcessedSeqTxn",
-                    postRefreshLastProcessed > preLvConsumed
-            );
+            long postLastProcessed = instance.getLastProcessedSeqTxn();
+            long postLvConsumed = instance.getStateReader().getLvConsumedSeqTxn();
+            Assert.assertTrue("refresh must advance lastProcessedSeqTxn", postLastProcessed > 0);
             Assert.assertEquals(
-                    "lvConsumedSeqTxn must NOT advance until apply runs",
-                    preLvConsumed,
-                    instance.getStateReader().getLvConsumedSeqTxn()
+                    "inline apply must advance lvConsumed to lastProcessed",
+                    postLastProcessed,
+                    postLvConsumed
             );
 
-            // Simulate restart with the LV WAL block still pending apply.
+            // Simulate restart.
             engine.getLiveViewRegistry().clear();
             engine.buildViewGraphs();
             LiveViewInstance reloaded = engine.getLiveViewRegistry().getViewInstance("lv");
             Assert.assertNotNull("live view must be re-registered after restart", reloaded);
             Assert.assertEquals(
-                    "lvConsumed must round-trip at the pre-apply value",
-                    preLvConsumed,
+                    "lvConsumed must round-trip at the post-apply value",
+                    postLvConsumed,
                     reloaded.getStateReader().getLvConsumedSeqTxn()
             );
             Assert.assertEquals(
-                    "lastProcessed must round-trip at the post-refresh value",
-                    postRefreshLastProcessed,
+                    "lastProcessed must round-trip at the post-apply value",
+                    postLastProcessed,
                     reloaded.getLastProcessedSeqTxn()
             );
 
-            // Apply now picks up the still-pending LV WAL block and bumps lvConsumed.
-            drainWalQueue();
-            Assert.assertEquals(
-                    "post-restart apply must catch lvConsumed up to lastProcessed",
-                    postRefreshLastProcessed,
-                    reloaded.getStateReader().getLvConsumedSeqTxn()
-            );
+            // Data must already be visible without further apply.
             assertSql("count\n2\n", "SELECT count() FROM lv");
 
             execute("DROP LIVE VIEW lv");

@@ -42,6 +42,7 @@ import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.RecordMetadata;
+import io.questdb.cairo.wal.ApplyWal2TableJob;
 import io.questdb.cairo.wal.WalEventCursor;
 import io.questdb.cairo.wal.WalEventReader;
 import io.questdb.cairo.wal.WalTxnDetails;
@@ -78,10 +79,11 @@ import static io.questdb.cairo.wal.WalUtils.WAL_NAME_BASE;
  * {@code lastProcessedSeqTxn + 1}, opens each WAL segment via
  * {@link WalSegmentPageFrameCursor}, runs rows through the compiled SELECT's
  * filter + window cursor, and writes outputs to the live view's own WAL via
- * {@link WalWriter} for durability. Once committed, the global
- * {@code ApplyWal2TableJob} applies the rows into the LV's on-disk tier;
- * {@code lvConsumedSeqTxn} advances at apply time so retention only releases
- * once the rows are durable.
+ * {@link WalWriter}. Phase 1b applies the just-written WAL block inline on
+ * this worker via a dedicated {@link ApplyWal2TableJob} — the global apply
+ * job's {@code doRun} skips LV tokens so it never races the inline apply.
+ * Once apply commits, {@code lvConsumedSeqTxn} advances and {@code _lv.s}
+ * persists atomically through {@code engine.advanceLiveViewConsumedSeqTxn}.
  * <p>
  * Phase 1 sharp edges (per delta plan §"Phase 1 — disk-only end-to-end"):
  * <ul>
@@ -91,19 +93,20 @@ import static io.questdb.cairo.wal.WalUtils.WAL_NAME_BASE;
  *     and the fallback scan retries on the next worker tick. Under high-rate base
  *     ingestion this batches many base notifications into one LV commit per FLUSH
  *     EVERY interval.</li>
- *     <li>Schema-change detection still routes through {@code ApplyWal2TableJob} —
- *     non-DATA WAL events on the base are walked past by this job without modifying
- *     state, while invalidation flows via
+ *     <li>Schema-change detection still routes through {@code ApplyWal2TableJob} on
+ *     the base table — non-DATA WAL events on the base are walked past by this job
+ *     without modifying state, while invalidation flows via
  *     {@link CairoEngine#invalidateLiveViewsForBaseTable}.</li>
  *     <li>The LV's WAL block carries {@code maxBaseSeqTxnInBlock} on a dedicated
- *     {@code WalTxnType#LIVE_VIEW_DATA} event; {@code ApplyWal2TableJob} reads it back
- *     and bumps {@code lvConsumedSeqTxn} at apply time so retention only releases once
- *     the rows are durable in the LV's own table (RFC 123 §Flush).</li>
+ *     {@code WalTxnType#LIVE_VIEW_DATA} event; the inline apply on this worker
+ *     reads it back and bumps {@code lvConsumedSeqTxn} after the rows are durable
+ *     in the LV's own table (RFC 123 §Flush).</li>
  * </ul>
  */
 public class LiveViewRefreshJob implements Job, QuietCloseable {
     private static final Log LOG = LogFactory.getLog(LiveViewRefreshJob.class);
     private final PageFrameAddressCache addressCache = new PageFrameAddressCache();
+    private final ApplyWal2TableJob applyJob;
     private final BlockFileWriter blockFileWriter;
     private final EntityColumnFilter columnFilter = new EntityColumnFilter();
     private final IntList columnIndexes = new IntList();
@@ -129,6 +132,11 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
         this.walEventReader = new WalEventReader(engine.getConfiguration());
         this.stateStore = engine.getLiveViewStateStore();
         this.blockFileWriter = new BlockFileWriter(engine.getConfiguration().getFilesFacade(), engine.getConfiguration().getCommitMode());
+        // Each refresh worker owns a dedicated ApplyWal2TableJob so the inline LV
+        // apply on this thread does not contend with global apply pool workers'
+        // private state. The global ApplyWal2TableJob.doRun skips LV tokens; this
+        // instance is invoked only via applyWalDirect from incrementalRefresh.
+        this.applyJob = new ApplyWal2TableJob(engine, sharedQueryWorkerCount);
     }
 
     @Override
@@ -141,6 +149,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
         Misc.free(blockFileWriter);
         Misc.free(addressCache);
         Misc.free(memoryPool);
+        Misc.free(applyJob);
     }
 
     @Override
@@ -439,10 +448,12 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             }
 
             if (appendedRows > 0) {
-                // The LV-data block carries advanceTo as maxBaseSeqTxnInBlock. ApplyWal2TableJob
-                // reads it back at apply time and bumps lvConsumedSeqTxn / persists _lv.s, so base
-                // WAL retention only releases once the rows are durable in the LV's own table
-                // (RFC 123 strict semantics).
+                // RFC 123 Phase 1b: the block carries advanceTo as
+                // maxBaseSeqTxnInBlock. The inline apply below picks it up and
+                // bumps lvConsumedSeqTxn through the LIVE_VIEW_DATA branch of
+                // ApplyWal2TableJob.processWalCommit, which persists _lv.s
+                // atomically. Base WAL retention only releases once the rows
+                // are durable in the LV's own table.
                 walWriter.commitLiveView(advanceTo);
             }
         } finally {
@@ -450,15 +461,29 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
         }
 
         if (advanceTo > instance.getLastProcessedSeqTxn()) {
+            // Set the in-memory advances first so the apply step's
+            // advanceLiveViewConsumedSeqTxn writes a single _lv.s with all
+            // watermarks current (lastProcessed + appliedWatermark + lvConsumed).
             instance.setLastProcessedSeqTxn(advanceTo);
             // appliedWatermark mirrors lastProcessed for now; sub-FLUSH-cycle freshness via
             // the in-mem tier is parked, so the seam_ts is anchored at the WAL commit boundary.
             instance.setAppliedWatermark(advanceTo);
-            boolean lvConsumedAdvanced = false;
-            if (appendedRows == 0) {
+            boolean lvConsumedPersistedByApply = false;
+            if (appendedRows > 0) {
+                // RFC 123 Phase 1b: LV apply runs inline on this thread. The
+                // global ApplyWal2TableJob.doRun skips LV tokens, so if we did
+                // not run apply here the LIVE_VIEW_DATA block would sit
+                // unapplied and lvConsumedSeqTxn would never advance.
+                applyJob.applyWalDirect(instance.getLiveViewToken(), Job.RUNNING_STATUS);
+                // applyWalDirect catches internal failures (e.g. _lv.s open
+                // failure) and logs/suspends without rethrowing. Detect the
+                // missing advance so the fallback persistState below runs and
+                // surfaces the failure to the flush-retry budget.
+                lvConsumedPersistedByApply = instance.getStateReader().getLvConsumedSeqTxn() >= advanceTo;
+            } else {
                 // No LIVE_VIEW_DATA block was emitted (every base seqTxn was non-DATA —
                 // schema change, DROP PARTITION, TRUNCATE, base TTL — or every row was
-                // rejected by the WHERE filter). Without a block, ApplyWal2TableJob has
+                // rejected by the WHERE filter). Without a block, the apply path has
                 // nothing to consume and lvConsumedSeqTxn would stall, holding base WAL
                 // retention forever. Advance it directly: there is nothing left to make
                 // durable past the in-memory state, so this is the correct moment to
@@ -466,7 +491,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                 // data removal").
                 try {
                     engine.advanceLiveViewConsumedSeqTxn(instance.getLiveViewToken(), advanceTo);
-                    lvConsumedAdvanced = true;
+                    lvConsumedPersistedByApply = true;
                 } catch (CairoException e) {
                     LOG.critical().$("could not advance live view consumed seqTxn on no-row cycle [view=")
                             .$(instance.getDefinition().getViewName())
@@ -474,13 +499,13 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                             .$(", error=").$safe(e.getFlyweightMessage()).I$();
                 }
             }
-            // Rows-emitted branch: ApplyWal2TableJob will rewrite _lv.s with the new
-            // lvConsumedSeqTxn alongside our in-memory advance, but persist now so the
-            // lastProcessed/appliedWatermark advance survives a crash before apply runs.
-            // No-row branch on advance success: advanceLiveViewConsumedSeqTxn already
-            // rewrote _lv.s with the new in-memory snapshot, so persistState would just
-            // duplicate the write.
-            if (!lvConsumedAdvanced) {
+            if (!lvConsumedPersistedByApply) {
+                // Apply swallowed a persist failure or the no-row direct
+                // advance threw. Persist the in-memory lastProcessed +
+                // appliedWatermark advance so the next cycle does not redo the
+                // walked-past seqTxns. If this also fails, the exception
+                // propagates to refreshInstance's handleRefreshFailure which
+                // ticks the flush-retry budget (RFC 123 §Flush).
                 persistState(instance);
             }
         }

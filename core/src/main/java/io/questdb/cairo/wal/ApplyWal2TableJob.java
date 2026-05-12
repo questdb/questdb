@@ -929,9 +929,27 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
     }
 
     /**
-     * Returns transaction number, which is always > -1. Negative values are used as status code.
+     * Convenience entry for direct (non-queue-driven) callers — runs the apply loop
+     * for the given token using the job's own {@code engine} and
+     * {@code operationExecutor}. Used by {@code LiveViewRefreshJob} to apply an
+     * LV's own WAL inline after a {@code LIVE_VIEW_DATA} block has been committed
+     * (RFC 123 Phase 1b). The notification-driven
+     * {@link #doRun(int, long, RunStatus)} path skips live-view tokens so a global
+     * pool worker never races the LV's own refresh worker.
      */
-    void applyWal(
+    public void applyWalDirect(@NotNull TableToken tableToken, Job.RunStatus runStatus) {
+        applyWal(tableToken, engine, operationExecutor, runStatus);
+    }
+
+    /**
+     * Returns transaction number, which is always > -1. Negative values are used as status code.
+     * <p>
+     * Public so that {@code LiveViewRefreshJob} can drive the same apply machinery
+     * inline after writing a {@code LIVE_VIEW_DATA} block. The notification-driven
+     * {@link #doRun(int, long, RunStatus)} path skips live-view tokens (RFC 123
+     * Phase 1b) so a global pool worker never races the LV's own refresh worker.
+     */
+    public void applyWal(
             @NotNull TableToken tableToken,
             CairoEngine engine,
             OperationExecutor operationExecutor,
@@ -1009,6 +1027,14 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
         } finally {
             // Do not hold the queue while transactions are applied to the table
             subSeq.done(cursor);
+        }
+
+        // RFC 123 Phase 1b: live views apply their own WAL inline on the refresh
+        // worker, so a global apply task on this token would race the LV's own
+        // TableWriter acquire. Notifications still land on the queue (WalWriter
+        // emits them unconditionally on commit) — just drop them here.
+        if (tableToken.isLiveView()) {
+            return true;
         }
 
         applyWal(tableToken, engine, operationExecutor, runStatus);
