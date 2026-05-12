@@ -1203,6 +1203,73 @@ public class PostingIndexStressTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testDenseFlushMatchesSealOutputHighCardinality() throws Exception {
+        // Companion to testDenseFlushMatchesSealOutput at higher cardinality.
+        // valsPerKey > PENDING_SLOT_CAPACITY (8) drives every key through
+        // spillKey, so flushAllPendingDense exercises its pending+spill
+        // merge path rather than the pending-only fast path the low-card
+        // variant covers.
+        assertMemoryLeak(() -> {
+            final int keys = 10_000;
+            final int valsPerKey = 20;
+            try (Path pathA = new Path().of(configuration.getDbRoot());
+                 Path pathB = new Path().of(configuration.getDbRoot())) {
+                final int plenA = pathA.size();
+                final int plenB = pathB.size();
+                final String nameA = "dense_flush_hc_a";
+                final String nameB = "dense_flush_hc_b";
+
+                try (PostingIndexWriter writer = new PostingIndexWriter(configuration, pathA, nameA, COLUMN_NAME_TXN_NONE)) {
+                    long rowId = 0;
+                    for (int k = 0; k < keys; k++) {
+                        for (int v = 0; v < valsPerKey; v++) {
+                            writer.add(k, rowId++);
+                        }
+                    }
+                    writer.setMaxValue(rowId - 1);
+                    writer.commitDense();
+                }
+
+                try (PostingIndexWriter writer = new PostingIndexWriter(configuration, pathB, nameB, COLUMN_NAME_TXN_NONE)) {
+                    long rowId = 0;
+                    for (int k = 0; k < keys; k++) {
+                        for (int v = 0; v < valsPerKey; v++) {
+                            writer.add(k, rowId++);
+                        }
+                    }
+                    writer.setMaxValue(rowId - 1);
+                    writer.commit();
+                    writer.seal();
+                }
+
+                try (PostingIndexFwdReader rA = new PostingIndexFwdReader(
+                        configuration, pathA.trimTo(plenA), nameA, COLUMN_NAME_TXN_NONE, -1, 0);
+                     PostingIndexFwdReader rB = new PostingIndexFwdReader(
+                             configuration, pathB.trimTo(plenB), nameB, COLUMN_NAME_TXN_NONE, -1, 0)) {
+                    for (int k = 0; k < keys; k++) {
+                        RowCursor cA = rA.getCursor(k, 0, Long.MAX_VALUE);
+                        RowCursor cB = rB.getCursor(k, 0, Long.MAX_VALUE);
+                        try {
+                            for (int v = 0; v < valsPerKey; v++) {
+                                Assert.assertTrue("key " + k + " val " + v + ": A short", cA.hasNext());
+                                Assert.assertTrue("key " + k + " val " + v + ": B short", cB.hasNext());
+                                long a = cA.next();
+                                long b = cB.next();
+                                Assert.assertEquals("key " + k + " val " + v, a, b);
+                            }
+                            Assert.assertFalse("key " + k + ": A overran", cA.hasNext());
+                            Assert.assertFalse("key " + k + ": B overran", cB.hasNext());
+                        } finally {
+                            Misc.free(cA);
+                            Misc.free(cB);
+                        }
+                    }
+                }
+            }
+        });
+    }
+
+    @Test
     public void testEdgeConstantDeltas() throws Exception {
         assertMemoryLeak(() -> {
             // All deltas are identical → bitWidth should be 0 (constant FoR).

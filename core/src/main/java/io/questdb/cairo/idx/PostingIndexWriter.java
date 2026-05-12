@@ -440,6 +440,14 @@ public class PostingIndexWriter implements IndexWriter {
 
     // Sync order is .pv before .pk: a torn write must never leave the chain head
     // (keyMem) pointing at unsynced gen bytes in valueMem.
+    //
+    // The coverCount == 0 precondition holds on the covering rebuild path
+    // (TableWriter.sealPostingIndexForPartition) only because
+    // configureFollowerAndWriter forces close(), which resets coverCount to 0,
+    // and configureCovering runs AFTER commitDense on that path. Do not move
+    // configureCovering before commitDense: per-gen sidecars written here would
+    // get overwritten by rebuildSidecars at a different sealTxn, leaving stale
+    // bytes on disk in non-assert builds.
     public void commitDense() {
         assert coverCount == 0 : "commitDense writes per-gen sidecars; use seal()/commit() for covering indexes";
         flushAllPendingDense();
@@ -832,7 +840,7 @@ public class PostingIndexWriter implements IndexWriter {
     }
 
     @Override
-    public void of(CairoConfiguration configuration, long keyFd, long valueFd, boolean init, int blockCapacity) {
+    public void of(CairoConfiguration configuration, long keyFd, long valueFd, boolean isInit, int blockCapacity) {
         throw new UnsupportedOperationException("fd-based open not supported for posting indexes");
     }
 
@@ -1062,106 +1070,6 @@ public class PostingIndexWriter implements IndexWriter {
         } else {
             seal();
         }
-    }
-
-    private void rebuildSidecarsByCopy(long newSealTxn) {
-        openSealValueFile(newSealTxn);
-        long srcFd = valueMem.getFd();
-        long dstFd = sealValueMem.getFd();
-        long copied = ff.copyData(srcFd, dstFd, 0, valueMemSize);
-        if (copied != valueMemSize) {
-            throw CairoException.critical(ff.errno())
-                    .put("incomplete .pv copy [expected=").put(valueMemSize)
-                    .put(", actual=").put(copied)
-                    .put(']');
-        }
-        sealValueMem.jumpTo(valueMemSize);
-
-        openSidecarFiles(Path.getThreadLocal(partitionPath), indexName, postingColumnNameTxn, newSealTxn);
-        switchToSealedValueFile(newSealTxn);
-
-        long totalCountsSize = (long) keyCount * Integer.BYTES;
-        long totalCountsAddr = Unsafe.malloc(totalCountsSize, MemoryTag.NATIVE_INDEX_READER);
-        long strideValsAddr = 0;
-        long strideValsBytes = 0;
-        try {
-            Unsafe.setMemory(totalCountsAddr, totalCountsSize, (byte) 0);
-            int maxStrideTotal = accumulateDenseGen0Counts(totalCountsAddr);
-            strideValsBytes = Math.max(1L, (long) maxStrideTotal * Long.BYTES);
-            strideValsAddr = Unsafe.malloc(strideValsBytes, MemoryTag.NATIVE_INDEX_READER);
-            writeSidecarsPerColumn(totalCountsAddr, strideValsAddr);
-        } finally {
-            if (strideValsAddr != 0) {
-                Unsafe.free(strideValsAddr, strideValsBytes, MemoryTag.NATIVE_INDEX_READER);
-            }
-            Unsafe.free(totalCountsAddr, totalCountsSize, MemoryTag.NATIVE_INDEX_READER);
-        }
-
-        for (int c = 0, n = sidecarMems.size(); c < n; c++) {
-            MemoryMARW mem = sidecarMems.getQuick(c);
-            if (mem != null && mem.isOpen()) {
-                mem.sync(false);
-            }
-        }
-        if (sidecarInfoMem != null && sidecarInfoMem.isOpen()) {
-            sidecarInfoMem.sync(false);
-        }
-
-        Unsafe.storeFence();
-        this.genCount = 1;
-        publishToChain(
-                /* newGenCount */ 1,
-                /* overrideGenIndex */ 0,
-                /* overrideFileOffset */ 0,
-                /* overrideSize */ valueMemSize,
-                /* overrideKeyCount */ keyCount,
-                /* overrideMinKey */ 0,
-                /* overrideMaxKey */ keyCount - 1
-        );
-        if (keyMem.isOpen()) {
-            keyMem.sync(false);
-        }
-    }
-
-    private int accumulateDenseGen0Counts(long totalCountsAddr) {
-        long dirOffset = PostingIndexChainEntry.resolveGenDirOffset(chain.getHeadEntryOffset(), 0);
-        long genFileOffset = keyMem.getLong(dirOffset + GEN_DIR_OFFSET_FILE_OFFSET);
-        int genKeyCount = keyMem.getInt(dirOffset + PostingIndexUtils.GEN_DIR_OFFSET_KEY_COUNT);
-        long keyIdsBase = valueMem.addressOf(genFileOffset);
-        int sc = PostingIndexUtils.strideCount(genKeyCount);
-        int siSize = PostingIndexUtils.strideIndexSize(genKeyCount);
-        int maxStrideTotal = 0;
-        for (int s = 0; s < sc; s++) {
-            long strideOff = Unsafe.getLong(keyIdsBase + (long) s * Long.BYTES);
-            long nextStrideOff = Unsafe.getLong(keyIdsBase + (long) (s + 1) * Long.BYTES);
-            if (nextStrideOff == strideOff) continue;
-            long strideAddr = keyIdsBase + siSize + strideOff;
-            int ks = PostingIndexUtils.keysInStride(genKeyCount, s);
-            byte mode = Unsafe.getByte(strideAddr);
-            int strideTotal = 0;
-            if (mode == PostingIndexUtils.STRIDE_MODE_FLAT) {
-                long prefixAddr = strideAddr + PostingIndexUtils.STRIDE_FLAT_PREFIX_COUNTS_OFFSET;
-                for (int j = 0; j < ks; j++) {
-                    int key = s * PostingIndexUtils.DENSE_STRIDE + j;
-                    int count = Unsafe.getInt(prefixAddr + (long) (j + 1) * Integer.BYTES)
-                            - Unsafe.getInt(prefixAddr + (long) j * Integer.BYTES);
-                    Unsafe.putInt(totalCountsAddr + (long) key * Integer.BYTES, count);
-                    strideTotal += count;
-                }
-            } else {
-                long countsAddr = strideAddr + PostingIndexUtils.STRIDE_MODE_PREFIX_SIZE;
-                for (int j = 0; j < ks; j++) {
-                    int key = s * PostingIndexUtils.DENSE_STRIDE + j;
-                    int count = Unsafe.getInt(countsAddr + (long) j * Integer.BYTES);
-                    Unsafe.putInt(totalCountsAddr + (long) key * Integer.BYTES, count);
-                    strideTotal += count;
-                }
-            }
-            if (strideTotal > maxStrideTotal) {
-                maxStrideTotal = strideTotal;
-            }
-        }
-        return maxStrideTotal;
     }
 
     /**
@@ -1763,6 +1671,47 @@ public class PostingIndexWriter implements IndexWriter {
         } else {
             mem.putInt(offsetsStart + (long) ordinal * Integer.BYTES, (int) value);
         }
+    }
+
+    private int accumulateDenseGen0Counts(long totalCountsAddr) {
+        long dirOffset = PostingIndexChainEntry.resolveGenDirOffset(chain.getHeadEntryOffset(), 0);
+        long genFileOffset = keyMem.getLong(dirOffset + GEN_DIR_OFFSET_FILE_OFFSET);
+        int genKeyCount = keyMem.getInt(dirOffset + PostingIndexUtils.GEN_DIR_OFFSET_KEY_COUNT);
+        long keyIdsBase = valueMem.addressOf(genFileOffset);
+        int sc = PostingIndexUtils.strideCount(genKeyCount);
+        int siSize = PostingIndexUtils.strideIndexSize(genKeyCount);
+        int maxStrideTotal = 0;
+        for (int s = 0; s < sc; s++) {
+            long strideOff = Unsafe.getLong(keyIdsBase + (long) s * Long.BYTES);
+            long nextStrideOff = Unsafe.getLong(keyIdsBase + (long) (s + 1) * Long.BYTES);
+            if (nextStrideOff == strideOff) continue;
+            long strideAddr = keyIdsBase + siSize + strideOff;
+            int ks = PostingIndexUtils.keysInStride(genKeyCount, s);
+            byte mode = Unsafe.getByte(strideAddr);
+            int strideTotal = 0;
+            if (mode == PostingIndexUtils.STRIDE_MODE_FLAT) {
+                long prefixAddr = strideAddr + PostingIndexUtils.STRIDE_FLAT_PREFIX_COUNTS_OFFSET;
+                for (int j = 0; j < ks; j++) {
+                    int key = s * PostingIndexUtils.DENSE_STRIDE + j;
+                    int count = Unsafe.getInt(prefixAddr + (long) (j + 1) * Integer.BYTES)
+                            - Unsafe.getInt(prefixAddr + (long) j * Integer.BYTES);
+                    Unsafe.putInt(totalCountsAddr + (long) key * Integer.BYTES, count);
+                    strideTotal += count;
+                }
+            } else {
+                long countsAddr = strideAddr + PostingIndexUtils.STRIDE_MODE_PREFIX_SIZE;
+                for (int j = 0; j < ks; j++) {
+                    int key = s * PostingIndexUtils.DENSE_STRIDE + j;
+                    int count = Unsafe.getInt(countsAddr + (long) j * Integer.BYTES);
+                    Unsafe.putInt(totalCountsAddr + (long) key * Integer.BYTES, count);
+                    strideTotal += count;
+                }
+            }
+            if (strideTotal > maxStrideTotal) {
+                maxStrideTotal = strideTotal;
+            }
+        }
+        return maxStrideTotal;
     }
 
     private void allocateNativeBuffers() {
@@ -3596,6 +3545,65 @@ public class PostingIndexWriter implements IndexWriter {
             );
         } else {
             chain.extendHead(keyMem, newGenCount, keyCount, valueMemSize, maxValue, coverEndOffsetsScratch);
+        }
+    }
+
+    private void rebuildSidecarsByCopy(long newSealTxn) {
+        openSealValueFile(newSealTxn);
+        long srcFd = valueMem.getFd();
+        long dstFd = sealValueMem.getFd();
+        long copied = ff.copyData(srcFd, dstFd, 0, valueMemSize);
+        if (copied != valueMemSize) {
+            throw CairoException.critical(ff.errno())
+                    .put("incomplete .pv copy [expected=").put(valueMemSize)
+                    .put(", actual=").put(copied)
+                    .put(']');
+        }
+        sealValueMem.jumpTo(valueMemSize);
+
+        openSidecarFiles(Path.getThreadLocal(partitionPath), indexName, postingColumnNameTxn, newSealTxn);
+        switchToSealedValueFile(newSealTxn);
+
+        long totalCountsSize = (long) keyCount * Integer.BYTES;
+        long totalCountsAddr = Unsafe.malloc(totalCountsSize, MemoryTag.NATIVE_INDEX_READER);
+        long strideValsAddr = 0;
+        long strideValsBytes = 0;
+        try {
+            Unsafe.setMemory(totalCountsAddr, totalCountsSize, (byte) 0);
+            int maxStrideTotal = accumulateDenseGen0Counts(totalCountsAddr);
+            strideValsBytes = Math.max(1L, (long) maxStrideTotal * Long.BYTES);
+            strideValsAddr = Unsafe.malloc(strideValsBytes, MemoryTag.NATIVE_INDEX_READER);
+            writeSidecarsPerColumn(totalCountsAddr, strideValsAddr);
+        } finally {
+            if (strideValsAddr != 0) {
+                Unsafe.free(strideValsAddr, strideValsBytes, MemoryTag.NATIVE_INDEX_READER);
+            }
+            Unsafe.free(totalCountsAddr, totalCountsSize, MemoryTag.NATIVE_INDEX_READER);
+        }
+
+        for (int c = 0, n = sidecarMems.size(); c < n; c++) {
+            MemoryMARW mem = sidecarMems.getQuick(c);
+            if (mem != null && mem.isOpen()) {
+                mem.sync(false);
+            }
+        }
+        if (sidecarInfoMem != null && sidecarInfoMem.isOpen()) {
+            sidecarInfoMem.sync(false);
+        }
+
+        Unsafe.storeFence();
+        this.genCount = 1;
+        publishToChain(
+                /* newGenCount */ 1,
+                /* overrideGenIndex */ 0,
+                /* overrideFileOffset */ 0,
+                /* overrideSize */ valueMemSize,
+                /* overrideKeyCount */ keyCount,
+                /* overrideMinKey */ 0,
+                /* overrideMaxKey */ keyCount - 1
+        );
+        if (keyMem.isOpen()) {
+            keyMem.sync(false);
         }
     }
 

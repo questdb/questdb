@@ -353,6 +353,104 @@ public class PostingIndexCriticalIssuesTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testO3CoveringRebuildSidecarsPreservesCoveredValues() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE t_cov_o3 (
+                        ts TIMESTAMP,
+                        sym SYMBOL INDEX TYPE POSTING INCLUDE (price),
+                        price DOUBLE
+                    ) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL
+                    """);
+            execute("""
+                    INSERT INTO t_cov_o3 VALUES
+                    ('2024-01-01T00:00:00Z', 'A', 1.0),
+                    ('2024-01-01T01:00:00Z', 'B', 2.0),
+                    ('2024-01-01T02:00:00Z', 'A', 3.0),
+                    ('2024-01-01T03:00:00Z', 'C', 4.0)
+                    """);
+            execute("""
+                    INSERT INTO t_cov_o3 VALUES
+                    ('2024-01-01T00:30:00Z', 'A', 5.0),
+                    ('2024-01-01T01:30:00Z', 'B', 6.0),
+                    ('2024-01-01T02:30:00Z', 'C', 7.0)
+                    """);
+
+            assertQueryNoLeakCheck(
+                    """
+                            ts\tsym\tprice
+                            2024-01-01T00:00:00.000000Z\tA\t1.0
+                            2024-01-01T00:30:00.000000Z\tA\t5.0
+                            2024-01-01T02:00:00.000000Z\tA\t3.0
+                            """,
+                    "SELECT ts, sym, price FROM t_cov_o3 WHERE sym = 'A' ORDER BY ts",
+                    "ts",
+                    false,
+                    true
+            );
+            assertQueryNoLeakCheck(
+                    """
+                            ts\tsym\tprice
+                            2024-01-01T01:00:00.000000Z\tB\t2.0
+                            2024-01-01T01:30:00.000000Z\tB\t6.0
+                            """,
+                    "SELECT ts, sym, price FROM t_cov_o3 WHERE sym = 'B' ORDER BY ts",
+                    "ts",
+                    false,
+                    true
+            );
+            assertQueryNoLeakCheck(
+                    """
+                            ts\tsym\tprice
+                            2024-01-01T02:30:00.000000Z\tC\t7.0
+                            2024-01-01T03:00:00.000000Z\tC\t4.0
+                            """,
+                    "SELECT ts, sym, price FROM t_cov_o3 WHERE sym = 'C' ORDER BY ts",
+                    "ts",
+                    false,
+                    true
+            );
+        });
+    }
+
+    @Test
+    public void testOpenFromO3ContextPropagatesUpcomingTxn() throws Exception {
+        assertMemoryLeak(() -> {
+            final String name = "posting_o3_upcoming_txn";
+            final long upcomingTxn = 42L;
+            try (Path path = new Path().of(configuration.getDbRoot())) {
+                final int plen = path.size();
+                try (PostingIndexWriter writer = new PostingIndexWriter(configuration)) {
+                    writer.setO3PathContext(path.trimTo(plen), name, COLUMN_NAME_TXN_NONE, upcomingTxn);
+                    writer.openFromO3Context(/* isInit */ true);
+                    writer.add(0, 0);
+                    writer.add(1, 1);
+                    writer.setMaxValue(1);
+                    writer.commit();
+                }
+                FilesFacade rawFf = configuration.getFilesFacade();
+                LPSZ keyFile = PostingIndexUtils.keyFileName(
+                        path.trimTo(plen), name, COLUMN_NAME_TXN_NONE);
+                long fileSize = rawFf.length(keyFile);
+                try (MemoryCMARWImpl mem = new MemoryCMARWImpl(
+                        rawFf, keyFile, rawFf.getPageSize(), fileSize,
+                        MemoryTag.MMAP_DEFAULT, /* opts */ 0)) {
+                    PostingIndexChainWriter chain = new PostingIndexChainWriter();
+                    chain.openExisting(mem);
+                    Assert.assertTrue("chain must have head", chain.hasHead());
+                    PostingIndexChainEntry.Snapshot head = new PostingIndexChainEntry.Snapshot();
+                    chain.loadHeadEntry(mem, head);
+                    Assert.assertEquals(
+                            "openFromO3Context must propagate o3CtxUpcomingTxn into the published chain entry",
+                            upcomingTxn,
+                            head.txnAtSeal
+                    );
+                }
+            }
+        });
+    }
+
+    @Test
     public void testParquetIndexWriteUsesCommitDense() throws Exception {
         // O3PartitionJob.updateParquetIndexes goes through commitDense for POSTING.
         // That path runs when O3 mutates an already-parquet partition. Convert the
@@ -426,43 +524,6 @@ public class PostingIndexCriticalIssuesTest extends AbstractCairoTest {
                             path.trimTo(plen), "sym", COLUMN_NAME_TXN_NONE, 1);
                     Assert.assertFalse("rotated .pv.1 must not exist after commitDense, path=" + pvRotated,
                             rawFf.exists(pvRotated));
-                }
-            }
-        });
-    }
-
-    @Test
-    public void testOpenFromO3ContextPropagatesUpcomingTxn() throws Exception {
-        assertMemoryLeak(() -> {
-            final String name = "posting_o3_upcoming_txn";
-            final long upcomingTxn = 42L;
-            try (Path path = new Path().of(configuration.getDbRoot())) {
-                final int plen = path.size();
-                try (PostingIndexWriter writer = new PostingIndexWriter(configuration)) {
-                    writer.setO3PathContext(path.trimTo(plen), name, COLUMN_NAME_TXN_NONE, upcomingTxn);
-                    writer.openFromO3Context(/* isInit */ true);
-                    writer.add(0, 0);
-                    writer.add(1, 1);
-                    writer.setMaxValue(1);
-                    writer.commit();
-                }
-                FilesFacade rawFf = configuration.getFilesFacade();
-                LPSZ keyFile = PostingIndexUtils.keyFileName(
-                        path.trimTo(plen), name, COLUMN_NAME_TXN_NONE);
-                long fileSize = rawFf.length(keyFile);
-                try (MemoryCMARWImpl mem = new MemoryCMARWImpl(
-                        rawFf, keyFile, rawFf.getPageSize(), fileSize,
-                        MemoryTag.MMAP_DEFAULT, /* opts */ 0)) {
-                    PostingIndexChainWriter chain = new PostingIndexChainWriter();
-                    chain.openExisting(mem);
-                    Assert.assertTrue("chain must have head", chain.hasHead());
-                    PostingIndexChainEntry.Snapshot head = new PostingIndexChainEntry.Snapshot();
-                    chain.loadHeadEntry(mem, head);
-                    Assert.assertEquals(
-                            "openFromO3Context must propagate o3CtxUpcomingTxn into the published chain entry",
-                            upcomingTxn,
-                            head.txnAtSeal
-                    );
                 }
             }
         });
