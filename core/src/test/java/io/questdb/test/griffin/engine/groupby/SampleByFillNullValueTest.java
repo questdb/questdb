@@ -1916,6 +1916,61 @@ public class SampleByFillNullValueTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testFillValueAppliesAfterAggregateArithmetic() throws Exception {
+        // FILL(v) over sum(col*K) must show v in empty buckets, not v*K. Earlier
+        // SqlOptimiser.rewriteAggregate split sum(x*10) into sum(x)*10, so the fill
+        // landed on sum(x) and empty buckets returned 420. Coverage: ALIGN TO CALENDAR
+        // and ALIGN TO FIRST OBSERVATION, each in non-keyed and keyed form.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE tab (ts TIMESTAMP, k SYMBOL, x INT) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO tab VALUES
+                    ('2024-01-01T00:00:00.000000Z', 'a', 5),
+                    ('2024-01-01T03:00:00.000000Z', 'a', 7)
+                    """);
+            final String expectedNonKeyed = "ts\ttotal\n" +
+                    "2024-01-01T00:00:00.000000Z\t50\n" +
+                    "2024-01-01T01:00:00.000000Z\t42\n" +
+                    "2024-01-01T02:00:00.000000Z\t42\n" +
+                    "2024-01-01T03:00:00.000000Z\t70\n";
+            final String expectedKeyed = "ts\tk\ttotal\n" +
+                    "2024-01-01T00:00:00.000000Z\ta\t50\n" +
+                    "2024-01-01T01:00:00.000000Z\ta\t42\n" +
+                    "2024-01-01T02:00:00.000000Z\ta\t42\n" +
+                    "2024-01-01T03:00:00.000000Z\ta\t70\n";
+
+            assertQueryNoLeakCheck(
+                    expectedNonKeyed,
+                    "SELECT ts, sum(x * 10) total FROM tab SAMPLE BY 1h FILL(42) ALIGN TO CALENDAR",
+                    "ts",
+                    false,
+                    false
+            );
+            assertQueryNoLeakCheck(
+                    expectedKeyed,
+                    "SELECT ts, k, sum(x * 10) total FROM tab SAMPLE BY 1h FILL(42) ALIGN TO CALENDAR",
+                    "ts",
+                    false,
+                    false
+            );
+            assertQueryNoLeakCheck(
+                    expectedNonKeyed,
+                    "SELECT ts, sum(x * 10) total FROM tab SAMPLE BY 1h FILL(42) ALIGN TO FIRST OBSERVATION",
+                    "ts",
+                    false,
+                    false
+            );
+            assertQueryNoLeakCheck(
+                    expectedKeyed,
+                    "SELECT ts, k, sum(x * 10) total FROM tab SAMPLE BY 1h FILL(42) ALIGN TO FIRST OBSERVATION",
+                    "ts",
+                    false,
+                    false
+            );
+        });
+    }
+
+    @Test
     public void testFillValueKeyed() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE weather (city STRING, temp DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
