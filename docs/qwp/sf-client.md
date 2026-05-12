@@ -80,6 +80,7 @@ Key files:
 | Segment ring + rotation | `SegmentRing.java` |
 | Manager thread + cap | `SegmentManager.java` |
 | Slot lock | `SlotLock.java` |
+| Ack watermark (`.ack-watermark`) | `AckWatermark.java` |
 | Orphan adoption | `OrphanScanner.java`, `BackgroundDrainerPool.java`, `BackgroundDrainer.java` |
 | Engine (lifecycle, recovery) | `CursorSendEngine.java` |
 | I/O thread (wire) | `CursorWebSocketSendLoop.java` |
@@ -193,6 +194,7 @@ In SF mode the substrate writes all files under one slot directory:
 ├── .lock              # advisory exclusive lock (kernel-released on process exit)
 ├── .lock.pid          # UTF-8 text: holder PID + '\n' (diagnostic only)
 ├── .failed            # OPTIONAL: drainer-failure sentinel (UTF-8 reason text)
+├── .ack-watermark     # OPTIONAL: 16-byte mmap'd durable-ack high-water mark
 ├── sf-<gen>.sfa       # segment files (one or more)
 └── sf-<gen>.sfa
 ```
@@ -241,6 +243,90 @@ scanner and skipped during max-gen computation.
 
 Empty slot directories (`*.sfa`-less) are NOT auto-cleaned; the substrate
 never deletes the slot directory itself.
+
+### 5.4 `.ack-watermark`
+
+Optional 16-byte file that persists the cumulative durable-ack FSN
+across process restarts. Without it, recovery seeds
+`ackedFsn = lowestSurvivingBaseSeq - 1` (see §6.5) — which guarantees no
+data loss but cannot tell **within** the lowest surviving sealed segment
+which frames the previous sender had already received durable acks for.
+Replay therefore re-sends every frame in that segment, producing
+row-level duplicates against a still-alive server unless the target
+table dedupes them.
+
+With `.ack-watermark`, recovery seeds
+`ackedFsn = max(lowestSurvivingBaseSeq - 1, watermark)` — the `max`
+clamp absorbs either order of the manager's "persist then trim" tick:
+
+- Persist crashed before trim: segments still on disk are `>= lowest`,
+  watermark is correct; `max` picks watermark.
+- Trim ran before persist: segments are gone (so `lowestBase` is
+  higher than watermark), watermark is stale; `max` picks
+  `lowestBase - 1`.
+
+Recovery MUST additionally bound-check: if the watermark exceeds
+`publishedFsn` of the recovered ring, treat it as corrupt and fall
+back to `lowestBase - 1`. A correctly operating prior session cannot
+produce a watermark above the on-disk frame ceiling, so an excess
+value is bit-rot or filesystem corruption; trusting it would seed
+`ackedFsn = publishedFsn` (after the ring's own clamp), positioning
+the cursor past every un-acked frame and silently dropping the
+un-acked tail.
+
+**Format** (16 bytes, little-endian, mmap'd RW for the engine's
+lifetime):
+
+```
+Offset  Size  Type    Field            Description
+──────────────────────────────────────────────────────────────────
+0       4     uint32  magic            0x31574B41 ("AKW1" little-endian)
+4       4     uint32  reserved         Must be 0
+8       8     int64   fsn              Cumulative durable-ack high-water mark
+```
+
+A magic value other than `0x31574B41` means "no usable watermark";
+recovery falls back to the bare `lowestBase - 1` seed. The most common
+cause is a freshly created file from the previous session's first
+`open()` where no write landed before crash — the OS zero-filled the
+file at creation, so magic is `0` until the first write stamps it.
+
+**Write protocol** (single-writer, segment-manager thread):
+
+1. Hot-path write is a single 8-byte aligned `putLong` to offset 8
+   against the mapped region. No alloc, no syscall, no fsync. Atomic
+   at the CPU level on x86_64 and arm64, and disk-atomic within one
+   sector (the file is 16 bytes — trivially within one sector).
+2. On the **first** write of a fresh file in a session, the writer
+   also stamps the magic at offset 0 (after the FSN store, in
+   program order). On subsequent writes within the same session and
+   for cross-session reopens that observed magic already set at
+   `open()` time, the magic store is skipped.
+3. The writer SHOULD persist on every advance of the in-memory
+   `ackedFsn` — typically debounced via "only write if
+   `current > lastPersisted`". Frequency is bounded by the manager
+   tick cadence, not the inbound durable-ack rate.
+
+**fsync cadence:** NOT performed. Host crash falls back to the
+segment-derived seed (no regression vs the no-watermark behaviour). A
+client MAY add periodic fsync as a quality-of-service knob; the spec
+permits but does not require it.
+
+**Lifecycle:** opened in `engine.open` after the slot lock is
+acquired; mmap is held for the engine's lifetime. Closed during
+engine shutdown after the manager has stopped (the manager is the
+sole writer). A clean shutdown that drained all segments MAY unlink
+`.ack-watermark`; the substrate does today as part of
+`unlinkAllSegmentFiles` semantics. Otherwise the file persists for
+the next session's recovery to read.
+
+**Interop:** `.ack-watermark` is OPTIONAL. A client that does not
+implement it MUST still produce on-disk state that the reference
+recovery scanner can read — i.e. absence of `.ack-watermark` is
+explicitly handled (§6.5). A drainer (orphan-adoption path) opening a
+slot from a different client that did write `.ack-watermark` MUST
+honour it on recovery; ignoring it is allowed but defeats the
+optimisation.
 
 ## 6. Segment File Format
 
@@ -356,8 +442,12 @@ After scanning all files, sort segments by `baseSeq` ascending and verify
 A gap is a fatal recovery error — refuse to start. The highest-`baseSeq`
 segment becomes active; the rest are sealed and drained in order.
 
-The substrate seeds `ackedFsn = lowest baseSeq − 1` so recovery does not
-re-replay frames that were already trimmed before the previous shutdown.
+The substrate seeds `ackedFsn = max(lowestBaseSeq − 1, watermark)` where
+`watermark` is the FSN read from `.ack-watermark` (§5.4) if present and
+valid, or absent otherwise. `lowestBaseSeq − 1` alone guarantees no data
+loss; the watermark additionally suppresses re-replay of frames inside
+the lowest surviving segment that the previous sender had already been
+told were durable. See §5.4 for the `max` ordering rationale.
 
 ## 7. Frame-Sequence-Number (FSN) Model
 
@@ -929,13 +1019,24 @@ On engine open in SF mode:
 
 1. Acquire `<sf_dir>/<sender_id>/.lock`. Refuse to start on contention.
 2. Run §6.5 recovery scan over the slot's `*.sfa` files.
-3. Seed `ackedFsn = lowestBaseSeq − 1`.
-4. Seed segment manager `fileGeneration = max(existing-gen) + 1`.
-5. Bump connection generation so the I/O loop, on first connect,
+3. Open `.ack-watermark` (§5.4) if implemented. Read its FSN, or
+   record `INVALID` if the file is missing / has bad magic / fails to
+   map. Keep the mmap held for the engine's lifetime so the manager
+   can write through it without reopening.
+4. Seed `ackedFsn = max(lowestBaseSeq − 1, watermark)`, with the
+   additional bound `watermark <= publishedFsn` (see §5.4). A
+   `watermark` of `INVALID` or one exceeding `publishedFsn` reduces
+   to the bare `lowestBaseSeq − 1` seed (legacy behaviour, no
+   regression).
+5. Seed segment manager `fileGeneration = max(existing-gen) + 1`.
+6. Bump connection generation so the I/O loop, on first connect,
    replays from disk against a fresh wireSeq window.
 
 A clean shutdown that drained all data is indistinguishable from a
-fresh start — no segments, no replay, just `ackedFsn = -1`.
+fresh start — no segments, no replay, just `ackedFsn = -1`. A stale
+`.ack-watermark` from a prior fully-drained session is unlinked at
+this point so the new session starts with the expected "no
+watermark yet" state.
 
 ### 18.2 Orphan adoption (opt-in)
 
@@ -986,6 +1087,12 @@ Mandatory for every conformant SF client:
   a slot on a network filesystem.
 - **`.failed` sentinel** (§5.2): presence (not contents) is the auto-drain
   exclusion signal.
+- **`.ack-watermark`** (§5.4): the file is OPTIONAL — a conformant client
+  MAY skip implementing it. When present, the format is normative (16
+  bytes, magic `0x31574B41`, FSN at offset 8, little-endian). A drainer
+  adopting a slot another client populated MUST honour the watermark on
+  recovery (apply the `max` clamp); ignoring it is allowed but produces
+  the duplicate-row behaviour the watermark was designed to suppress.
 - **FSN model** (§7): `fsn = fsnAtZero + wireSeq`. Strict in-order send
   on the wire.
 - **Self-sufficient frames** (§12): mandatory. Schema refs and
@@ -1050,10 +1157,15 @@ Items intentionally out of scope today, tracked for future revisions:
 4. **`on_*_error` connect-string keys**: normatively defined in §4.4 but
    not yet recognised by the Java parser; only the fluent
    `LineSenderBuilder` API exposes them today.
-5. **Per-segment partial-ack tracking**: would let trim drop the acked
-   prefix of a partially-acked sealed segment, instead of waiting until
-   the entire segment is acked. Improves disk efficiency under tail-heavy
-   ack patterns; not implemented.
+5. **Disk reclaim inside partially-acked sealed segments**: today the
+   whole segment file stays on disk until every frame in it is durably
+   acked, even though `.ack-watermark` (§5.4) already records which
+   prefix is safe. Options for a future revision: rewrite-and-rotate
+   (copy un-acked frames into a fresh segment, unlink the old),
+   `fallocate(FALLOC_FL_PUNCH_HOLE)` on Linux (no Windows equivalent),
+   or a `<segment>.ack-offset` sidecar consulted by the trim path.
+   Reduces effective disk consumption under slow durable-ack cadence;
+   does not affect correctness.
 6. **`resumeAfterHalt()` API**: clears the latched terminal error and
    restarts the I/O loop without rebuilding the sender. The reference
    loop is one-shot today; users work around with `close()` + rebuild.
@@ -1064,3 +1176,4 @@ Items intentionally out of scope today, tracked for future revisions:
 |------|--------|--------|
 | 2026-05-05 | client `1125b0b` / oss `dc108e66ff` | Initial spec extracted from Java reference. |
 | 2026-05-08 | (pending) | Align with `failover.md`. §13.3 + §8.2: rewrite HTTP-status terminal classification to defer to `failover.md` §6 (only `401`/`403` are terminal; `421` is topology, handled in-round; `404`/`426`/`503` are transient and consume the reconnect budget). §4.5 + §21: drop "multi-host failover deferred" — `failover.md` is the normative spec. §4.2 + §13.4: clarify `initial_connect_retry=on` is canonical; `sync` and `true` are aliases. §13.2: replace inlined backoff math with a forward-pointer to `failover.md` §3 / §3.1 to avoid drift. |
+| 2026-05-12 | (pending) | Add `.ack-watermark` (§5.4): optional mmap'd 16-byte FSN watermark that suppresses re-replay of already-durable-acked frames inside the lowest surviving sealed segment on process restart. §6.5 and §18.1 updated to seed `ackedFsn = max(lowestBaseSeq - 1, watermark)`. §19 adds the interop bullet (file is optional but format is normative). §21 item 5 narrowed from "partial-ack tracking" to "disk reclaim inside partially-acked segments" — the re-replay half of that follow-up is now addressed by the watermark. |
