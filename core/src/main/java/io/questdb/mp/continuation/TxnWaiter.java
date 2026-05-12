@@ -222,18 +222,22 @@ public final class TxnWaiter implements DelayedFireable {
      * if the CAS won, in which case the caller is responsible for calling
      * {@code cont.scheduleResume()} so the parked body can observe the cancellation.
      *
-     * <p>If the CAS loses, a racer has already fired this waiter and a scheduleResume
-     * has enqueued the cont onto the resume queue while the cont is still mounted on
-     * the carrier. Mirror {@link #abortContinuation()}: mark parkRefused so the peer
-     * worker that dequeues the phantom drops it instead of busy-spinning on
-     * IllegalStateException until cont.isDone().
+     * <p>DO NOT call {@code cont.markParkRefused()} when the CAS loses. The losing path
+     * is the normal happy-path tail of {@link io.questdb.griffin.engine.functions.table.WaitWalFunction#getBool}:
+     * a racer fired the waiter, scheduleResume already woke the body via a peer worker,
+     * the body resumed and finished its loop, and is now running the finally block on
+     * a fully remounted, healthy cont. Setting parkRefused here poisons the cont for
+     * its NEXT yield -- {@link io.questdb.mp.Worker#mountForeignCont} consumes the flag
+     * and silently drops the dequeue, so the next legitimate resume is dropped and the
+     * cont is parked forever. This bricked binary_dedup.test (three back-to-back
+     * wait_wal_table calls on one PGWire connection: first works, second hangs).
+     * See DESIGN_NOTES.md "tryCancel() in WaitWalFunction.getBool's finally" for the
+     * full rationale: parkRefused is only valid as a defense against the phantom
+     * window where suspend() returned false after scheduleResume had already enqueued
+     * the cont -- it is NOT a generic "I lost a race" signal.
      */
     public boolean tryCancel() {
-        if (Unsafe.cas(this, STATE_OFFSET, STATE_PENDING, STATE_CANCELLED)) {
-            return true;
-        }
-        cont.markParkRefused();
-        return false;
+        return Unsafe.cas(this, STATE_OFFSET, STATE_PENDING, STATE_CANCELLED);
     }
 
     public void tryFire() {

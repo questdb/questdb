@@ -146,6 +146,29 @@ public class CarrierLocalTest {
     }
 
     @Test
+    public void testRemoveOnUnsetKeyInPopulatedMapIsNoop() throws Exception {
+        // Populate the carrier's map with one CarrierLocal, then call remove on
+        // a different CarrierLocal that has no entry. The map is non-null but
+        // getEntry returns null for the unset key, so remove must short-circuit
+        // without touching the populated entry and without running b's initial
+        // supplier.
+        CarrierLocal<String> a = CarrierLocal.withInitial(() -> "a-init");
+        AtomicInteger bInitCalls = new AtomicInteger();
+        CarrierLocal<String> b = CarrierLocal.withInitial(() -> {
+            bInitCalls.incrementAndGet();
+            return "b-init";
+        });
+        runBound(id -> {
+            a.set("a-set");
+            b.remove();
+            Assert.assertEquals("remove on missing entry must not run initial supplier",
+                    0, bInitCalls.get());
+            Assert.assertEquals("a-set", a.get());
+            Assert.assertEquals("b-init", b.get());
+        });
+    }
+
+    @Test
     public void testRemoveAndFreeFreesCloseableValueOnCurrentCarrier() throws Exception {
         CountingCloseable a = new CountingCloseable();
         CountingCloseable b = new CountingCloseable();
@@ -176,6 +199,26 @@ public class CarrierLocalTest {
             CountingCloseable c = tl.get();
             Assert.assertNotNull(c);
             Assert.assertEquals("initial value not closed by removeAndFree on a missing entry", 0, c.closes);
+        });
+    }
+
+    @Test
+    public void testRemoveAndFreeOnUnsetKeyInPopulatedMapIsNoop() throws Exception {
+        // Map exists (populated by 'a'), but 'b' has no entry. removeAndFree
+        // must short-circuit on the e == null check without running b's
+        // supplier and without affecting a's slot.
+        CarrierLocal<String> a = CarrierLocal.withInitial(() -> "a-init");
+        AtomicInteger bInitCalls = new AtomicInteger();
+        CarrierLocal<CountingCloseable> b = CarrierLocal.withInitial(() -> {
+            bInitCalls.incrementAndGet();
+            return new CountingCloseable();
+        });
+        runBound(id -> {
+            a.set("a-set");
+            b.removeAndFree();
+            Assert.assertEquals("removeAndFree on missing entry must not run supplier",
+                    0, bInitCalls.get());
+            Assert.assertEquals("a-set", a.get());
         });
     }
 
@@ -650,6 +693,59 @@ public class CarrierLocalTest {
     }
 
     @Test
+    public void testReleaseRowWhileBoundDetachesMap() throws Exception {
+        // releaseRow detaches the carrier's row from the outer array. The next
+        // access from the still-bound carrier sees mapForOrNull return null and
+        // falls into createMap again, observing the supplier's initial value.
+        CarrierLocal<String> tl = CarrierLocal.withInitial(() -> "init");
+        runBound(id -> {
+            tl.set("before-release");
+            Assert.assertEquals("before-release", tl.get());
+            CarrierLocal.releaseRow(id);
+            Assert.assertEquals("releaseRow must detach the map", "init", tl.get());
+            tl.set("after-release");
+            Assert.assertEquals("map is reusable after releaseRow", "after-release", tl.get());
+        });
+    }
+
+    @Test
+    public void testStaleEntryChurnExercisesExpungePaths() throws Exception {
+        // Churn short-lived CarrierLocals while a long-lived anchor does
+        // set/get against the same per-carrier map. As GC clears the
+        // doomed weak refs, the anchor's probes walk over their slots and
+        // trigger cleanSomeSlots / expungeStaleEntry / replaceStaleEntry.
+        // The assertion is only that the map stays consistent under churn;
+        // coverage of those branches is best-effort because GC timing is
+        // JVM dependent.
+        final int cycles = 128;
+        runBound(id -> {
+            CarrierLocal<String> anchor = CarrierLocal.withInitial(() -> "anchor-init");
+            anchor.set("anchor-0");
+            for (int c = 0; c < cycles; c++) {
+                WeakReference<CarrierLocal<String>> ref;
+                {
+                    CarrierLocal<String> doomed = CarrierLocal.withInitial(() -> "doomed");
+                    doomed.set("cycle-" + c);
+                    if (!("cycle-" + c).equals(doomed.get())) {
+                        throw new AssertionError("doomed readback mismatch at cycle " + c);
+                    }
+                    ref = new WeakReference<>(doomed);
+                    doomed = null;
+                }
+                for (int gc = 0; gc < 20 && ref.get() != null; gc++) {
+                    System.gc();
+                }
+                String tag = "anchor-" + (c + 1);
+                anchor.set(tag);
+                if (!tag.equals(anchor.get())) {
+                    throw new AssertionError("anchor lost its value at cycle " + c);
+                }
+            }
+            Assert.assertEquals("anchor-" + cycles, anchor.get());
+        });
+    }
+
+    @Test
     public void testStaleEntryReclaimedAfterCarrierLocalUnreachable() throws Exception {
         // Create a CarrierLocal in a way where only a WeakReference remains.
         // After GC, the entry stored in the carrier's map should be eligible
@@ -785,6 +881,51 @@ public class CarrierLocalTest {
     }
 
     @Test
+    public void testUnboundRemoveAndFreeAfterSetClosesCloseable() throws Exception {
+        // Run on a dedicated unbound thread so the fallback ThreadLocal's
+        // per-thread slot is observed in isolation. removeAndFree must call
+        // Misc.freeIfCloseable on the stored value and then clear the slot.
+        CarrierLocal<CountingCloseable> tl = new CarrierLocal<>();
+        AtomicReference<Throwable> err = new AtomicReference<>();
+        CountDownLatch done = new CountDownLatch(1);
+        Thread t = new Thread(() -> {
+            try {
+                CountingCloseable c = new CountingCloseable();
+                tl.set(c);
+                tl.removeAndFree();
+                Assert.assertEquals("removeAndFree closes the unbound value", 1, c.closes);
+                // tl has no supplier -> next get returns null (slot cleared).
+                Assert.assertNull("slot is empty after removeAndFree", tl.get());
+                Assert.assertEquals("subsequent get must not double-close", 1, c.closes);
+            } catch (Throwable th) {
+                err.set(th);
+            } finally {
+                done.countDown();
+            }
+        }, "unbound-removeAndFree");
+        t.start();
+        Assert.assertTrue(done.await(DEFAULT_TIMEOUT_S, TimeUnit.SECONDS));
+        if (err.get() != null) {
+            throw new AssertionError(err.get());
+        }
+    }
+
+    @Test
+    public void testUnboundRemoveAndFreeWithoutPriorAccessIsNoop() {
+        // No prior set/get on this thread: the fallback ThreadLocal is null.
+        // removeAndFree must return without allocating the fallback and
+        // without running the initial supplier.
+        AtomicInteger initCalls = new AtomicInteger();
+        CarrierLocal<CountingCloseable> tl = CarrierLocal.withInitial(() -> {
+            initCalls.incrementAndGet();
+            return new CountingCloseable();
+        });
+        tl.removeAndFree();
+        Assert.assertEquals("removeAndFree on unset must not run initial supplier",
+                0, initCalls.get());
+    }
+
+    @Test
     public void testUnboundRemoveThenGetReinitializes() {
         AtomicInteger counter = new AtomicInteger();
         CarrierLocal<Integer> tl = CarrierLocal.withInitial(counter::incrementAndGet);
@@ -792,6 +933,23 @@ public class CarrierLocalTest {
         Assert.assertEquals(Integer.valueOf(1), tl.get());
         tl.remove();
         Assert.assertEquals(Integer.valueOf(2), tl.get());
+    }
+
+    @Test
+    public void testUnboundRemoveWithoutPriorAccessIsNoop() {
+        // remove() on an unbound thread that never touched the CarrierLocal:
+        // fallback is null, the method returns early without allocating it.
+        // First get() afterwards must observe a freshly evaluated initial.
+        AtomicInteger initCalls = new AtomicInteger();
+        CarrierLocal<String> tl = CarrierLocal.withInitial(() -> {
+            initCalls.incrementAndGet();
+            return "init";
+        });
+        tl.remove();
+        Assert.assertEquals("remove on unset must not run initial supplier",
+                0, initCalls.get());
+        Assert.assertEquals("init", tl.get());
+        Assert.assertEquals(1, initCalls.get());
     }
 
     @Test
