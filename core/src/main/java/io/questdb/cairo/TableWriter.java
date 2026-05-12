@@ -11925,8 +11925,22 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         // getTxn()+1 would corrupt covering reads). After seal, restore the
         // table's indexers to lastOpenPartitionTs so the next append writes to
         // the active partition rather than the just-sealed target.
-        if (sealPostingIndexForPartition(targetPartition, false)) {
-            restorePostingIndexersToLastPartition();
+        // Mirror finishO3Commit's seal-failure handling: at this point txWriter,
+        // columnVersionWriter and the in-memory partition tables already reflect
+        // the squash (removeAttachedPartitions, squashPartition,
+        // updatePartitionSizeByTimestamp, transient/fixed row count adjustments
+        // all ran above) but neither commit() has fired yet. A throw here would
+        // leave the writer with in-memory state diverged from the on-disk _txn,
+        // so distress it before propagating so the pool replaces it instead of
+        // handing it back to the next caller.
+        try {
+            if (sealPostingIndexForPartition(targetPartition, false)) {
+                restorePostingIndexersToLastPartition();
+            }
+        } catch (Throwable e) {
+            LOG.critical().$("squash succeeded but posting-index reseal failed `").$(e).$('`').$();
+            distressed = true;
+            throw e;
         }
 
         // Commit the new transaction with the partitions squashed
