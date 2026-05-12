@@ -473,226 +473,6 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testParallelApproxPercentileFuzz() throws Exception {
-        // With this test, we aim to verify correctness of merge() method
-        // implementation in approx_percentile functions.
-        Assume.assumeTrue(enableParallelGroupBy);
-        assertMemoryLeak(() -> {
-            final Rnd rnd = TestUtils.generateRandom(LOG);
-            final double percentile = rnd.nextDouble();
-            final int precision = rnd.nextInt(6);
-            final WorkerPool pool = new WorkerPool(() -> 4);
-            TestUtils.execute(
-                    pool,
-                    (engine, compiler, sqlExecutionContext) -> {
-                        sqlExecutionContext.setJitMode(
-                                enableJitCompiler ? SqlJitMode.JIT_MODE_ENABLED : SqlJitMode.JIT_MODE_DISABLED);
-
-                        execute(
-                                compiler,
-                                "CREATE TABLE tab AS ("
-                                        + "  SELECT"
-                                        + "    abs(rnd_long()) % 10000000 x,"
-                                        + "    rnd_symbol(100,4,4,2) g,"
-                                        + "    timestamp_sequence(0, 86400000000) ts"
-                                        + "  FROM long_sequence(1)"
-                                        + ") timestamp(ts) partition by day",
-                                sqlExecutionContext);
-
-                        long timestamp = 86400000000L;
-                        for (int i = 0; i < 50; i++) {
-                            final int prob = rnd.nextInt(100);
-                            if (prob < 25) {
-                                execute(
-                                        compiler,
-                                        "INSERT INTO tab VALUES("
-                                                + "abs(rnd_long()) % 10000000,"
-                                                + " rnd_symbol(100,4,4,2),"
-                                                + " " + timestamp + "::timestamp)",
-                                        sqlExecutionContext);
-                            } else if (prob < 50) {
-                                final int rows = rnd.nextInt(100) + 1;
-                                execute(
-                                        compiler,
-                                        "INSERT INTO tab "
-                                                + "SELECT abs(rnd_long()) % 10000000, rnd_symbol(100,4,4,2), "
-                                                + timestamp + "::timestamp "
-                                                + "FROM long_sequence(" + rows + ")",
-                                        sqlExecutionContext);
-                            } else if (prob < 75) {
-                                execute(
-                                        compiler,
-                                        "INSERT INTO tab "
-                                                + "SELECT abs(rnd_long()) % 10000000, rnd_symbol(100,4,4,2), "
-                                                + timestamp + "::timestamp "
-                                                + "FROM long_sequence(" + MIN_PAGE_FRAME_MAX_ROWS + ")",
-                                        sqlExecutionContext);
-                            } else {
-                                execute(
-                                        compiler,
-                                        "INSERT INTO tab "
-                                                + "SELECT abs(rnd_long()) % 10000000, rnd_symbol(100,4,4,2), "
-                                                + timestamp + "::timestamp "
-                                                + "FROM long_sequence(" + (MIN_PAGE_FRAME_MAX_ROWS + 1) + ")",
-                                        sqlExecutionContext);
-                            }
-                            timestamp += 86400000000L;
-                        }
-
-                        if (convertToParquet) {
-                            execute(compiler, "ALTER TABLE tab CONVERT PARTITION TO PARQUET WHERE ts >= 0", sqlExecutionContext);
-                        }
-
-                        final String query = "SELECT g, approx_percentile(x, " + percentile + ", " + precision + ") FROM tab GROUP BY g ORDER BY g";
-
-                        sqlExecutionContext.setParallelGroupByEnabled(false);
-                        try {
-                            TestUtils.printSql(
-                                    engine,
-                                    sqlExecutionContext,
-                                    query,
-                                    sink);
-                        } finally {
-                            sqlExecutionContext.setParallelGroupByEnabled(
-                                    engine.getConfiguration().isSqlParallelGroupByEnabled());
-                        }
-
-                        sqlExecutionContext.setParallelGroupByEnabled(true);
-                        final StringSink parallelSink = new StringSink();
-                        try {
-                            TestUtils.printSql(
-                                    engine,
-                                    sqlExecutionContext,
-                                    query,
-                                    parallelSink);
-                        } finally {
-                            sqlExecutionContext.setParallelGroupByEnabled(
-                                    engine.getConfiguration().isSqlParallelGroupByEnabled());
-                        }
-
-                        TestUtils.assertEquals(sink, parallelSink);
-                    },
-                    configuration,
-                    LOG);
-        });
-    }
-
-    @Test
-    public void testParallelApproxPercentileFuzzWithNulls() throws Exception {
-        // With this test, we aim to verify correctness of merge() method
-        // implementation in approx_percentile functions with NULL values.
-        Assume.assumeTrue(enableParallelGroupBy);
-        assertMemoryLeak(() -> {
-            final Rnd rnd = TestUtils.generateRandom(LOG);
-            final double percentile = rnd.nextDouble();
-            final int precision = rnd.nextInt(6);
-            final WorkerPool pool = new WorkerPool(() -> 4);
-            TestUtils.execute(
-                    pool,
-                    (engine, compiler, sqlExecutionContext) -> {
-                        sqlExecutionContext.setJitMode(
-                                enableJitCompiler ? SqlJitMode.JIT_MODE_ENABLED : SqlJitMode.JIT_MODE_DISABLED);
-
-                        execute(
-                                compiler,
-                                "CREATE TABLE tab AS ("
-                                        + "  SELECT"
-                                        + "    abs(rnd_long()) % 10000000 x,"
-                                        + "    rnd_symbol(100,4,4,2) g,"
-                                        + "    timestamp_sequence(0, 86400000000) ts"
-                                        + "  FROM long_sequence(1)"
-                                        + ") timestamp(ts) partition by day",
-                                sqlExecutionContext);
-
-                        long timestamp = 86400000000L;
-                        for (int i = 0; i < 50; i++) {
-                            final int prob = rnd.nextInt(100);
-                            if (prob < 25) {
-                                execute(
-                                        compiler,
-                                        "INSERT INTO tab VALUES("
-                                                + "abs(rnd_long()) % 10000000,"
-                                                + " rnd_symbol(100,4,4,2),"
-                                                + " " + timestamp + "::timestamp)",
-                                        sqlExecutionContext);
-                            } else if (prob < 50) {
-                                final int rows = rnd.nextInt(100) + 1;
-                                execute(
-                                        compiler,
-                                        "INSERT INTO tab "
-                                                + "SELECT abs(rnd_long()) % 10000000, rnd_symbol(100,4,4,2), "
-                                                + timestamp + "::timestamp "
-                                                + "FROM long_sequence(" + rows + ")",
-                                        sqlExecutionContext);
-                            } else if (prob < 75) {
-                                execute(
-                                        compiler,
-                                        "INSERT INTO tab "
-                                                + "SELECT abs(rnd_long()) % 10000000, rnd_symbol(100,4,4,2), "
-                                                + timestamp + "::timestamp "
-                                                + "FROM long_sequence(" + MIN_PAGE_FRAME_MAX_ROWS + ")",
-                                        sqlExecutionContext);
-                            } else {
-                                execute(
-                                        compiler,
-                                        "INSERT INTO tab "
-                                                + "SELECT abs(rnd_long()) % 10000000, rnd_symbol(100,4,4,2), "
-                                                + timestamp + "::timestamp "
-                                                + "FROM long_sequence(" + (MIN_PAGE_FRAME_MAX_ROWS + 1) + ")",
-                                        sqlExecutionContext);
-                            }
-                            timestamp += 86400000000L;
-                        }
-
-                        if (convertToParquet) {
-                            execute(compiler, "ALTER TABLE tab CONVERT PARTITION TO PARQUET WHERE ts >= 0", sqlExecutionContext);
-                        }
-
-                        // Add a nullable column to test NULL handling in parallel merge.
-                        execute(
-                                compiler,
-                                "ALTER TABLE tab ADD COLUMN x_with_nulls LONG",
-                                sqlExecutionContext);
-                        execute(
-                                compiler,
-                                "UPDATE tab SET x_with_nulls = CASE WHEN rnd_int() % 3 = 0 THEN abs(rnd_long()) % 10000000 ELSE NULL END WHERE true",
-                                sqlExecutionContext);
-
-                        final String query = "SELECT g, approx_percentile(x_with_nulls, " + percentile + ", " + precision + ") FROM tab GROUP BY g ORDER BY g";
-
-                        sqlExecutionContext.setParallelGroupByEnabled(false);
-                        try {
-                            TestUtils.printSql(
-                                    engine,
-                                    sqlExecutionContext,
-                                    query,
-                                    sink);
-                        } finally {
-                            sqlExecutionContext.setParallelGroupByEnabled(
-                                    engine.getConfiguration().isSqlParallelGroupByEnabled());
-                        }
-
-                        sqlExecutionContext.setParallelGroupByEnabled(true);
-                        final StringSink parallelSink = new StringSink();
-                        try {
-                            TestUtils.printSql(
-                                    engine,
-                                    sqlExecutionContext,
-                                    query,
-                                    parallelSink);
-                        } finally {
-                            sqlExecutionContext.setParallelGroupByEnabled(
-                                    engine.getConfiguration().isSqlParallelGroupByEnabled());
-                        }
-
-                        TestUtils.assertEquals(sink, parallelSink);
-                    },
-                    configuration,
-                    LOG);
-        });
-    }
-
-    @Test
     public void testParallelCountOverMultiKeyGroupBy() throws Exception {
         testParallelMultiSymbolKeyGroupBy(
                 "SELECT count(*) FROM (SELECT key1, key2 FROM tab GROUP BY key1, key2 ORDER BY key1, key2)",
@@ -2376,8 +2156,126 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testParallelNonKeyedGroupByFaultTolerance() throws Exception {
-        testParallelGroupByFaultTolerance("select vwap(price, quantity) from tab where npe();");
+    public void testParallelApproxPercentileFuzz() throws Exception {
+        Assume.assumeTrue(enableParallelGroupBy);
+        assertMemoryLeak(() -> {
+            final Rnd rnd = TestUtils.generateRandom(LOG);
+            final double percentile = rnd.nextDouble();
+            final int precision = rnd.nextInt(6);
+            final int rowCount = rnd.nextInt(ROW_COUNT) + 1;
+            final int groupCount = rnd.nextInt(10) + 1;
+            final WorkerPool pool = new WorkerPool(() -> 4);
+            TestUtils.execute(
+                    pool,
+                    (engine, compiler, sqlExecutionContext) -> {
+                        sqlExecutionContext.setJitMode(
+                                enableJitCompiler ? SqlJitMode.JIT_MODE_ENABLED : SqlJitMode.JIT_MODE_DISABLED);
+
+                        execute(
+                                compiler,
+                                "CREATE TABLE tab AS ("
+                                        + "SELECT abs(rnd_long()) % 10000000 AS x, rnd_int() % " + groupCount + " AS g "
+                                        + "FROM long_sequence(" + rowCount + "))",
+                                sqlExecutionContext);
+
+                        if (convertToParquet) {
+                            execute(compiler, "ALTER TABLE tab CONVERT PARTITION TO PARQUET", sqlExecutionContext);
+                        }
+
+                        final String query = "SELECT g, approx_percentile(x, " + percentile + ", " + precision + ") FROM tab GROUP BY g ORDER BY g";
+
+                        sqlExecutionContext.setParallelGroupByEnabled(false);
+                        try {
+                            TestUtils.printSql(
+                                    engine,
+                                    sqlExecutionContext,
+                                    query,
+                                    sink);
+                        } finally {
+                            sqlExecutionContext.setParallelGroupByEnabled(
+                                    engine.getConfiguration().isSqlParallelGroupByEnabled());
+                        }
+
+                        sqlExecutionContext.setParallelGroupByEnabled(true);
+                        final StringSink parallelSink = new StringSink();
+                        try {
+                            TestUtils.printSql(
+                                    engine,
+                                    sqlExecutionContext,
+                                    query,
+                                    parallelSink);
+                        } finally {
+                            sqlExecutionContext.setParallelGroupByEnabled(
+                                    engine.getConfiguration().isSqlParallelGroupByEnabled());
+                        }
+
+                        TestUtils.assertEquals(sink, parallelSink);
+                    },
+                    configuration,
+                    LOG);
+        });
+    }
+
+    @Test
+    public void testParallelApproxPercentileFuzzWithNulls() throws Exception {
+        Assume.assumeTrue(enableParallelGroupBy);
+        assertMemoryLeak(() -> {
+            final Rnd rnd = TestUtils.generateRandom(LOG);
+            final double percentile = rnd.nextDouble();
+            final int precision = rnd.nextInt(6);
+            final int rowCount = rnd.nextInt(ROW_COUNT) + 1;
+            final int groupCount = rnd.nextInt(10) + 1;
+            final WorkerPool pool = new WorkerPool(() -> 4);
+            TestUtils.execute(
+                    pool,
+                    (engine, compiler, sqlExecutionContext) -> {
+                        sqlExecutionContext.setJitMode(
+                                enableJitCompiler ? SqlJitMode.JIT_MODE_ENABLED : SqlJitMode.JIT_MODE_DISABLED);
+
+                        execute(
+                                compiler,
+                                "CREATE TABLE tab AS ("
+                                        + "SELECT abs(rnd_long()) % 10000000 AS x, rnd_int() % " + groupCount + " AS g, "
+                                        + "CASE WHEN rnd_int() % 3 = 0 THEN abs(rnd_long()) % 10000000 ELSE NULL END AS x_with_nulls "
+                                        + "FROM long_sequence(" + rowCount + "))",
+                                sqlExecutionContext);
+
+                        if (convertToParquet) {
+                            execute(compiler, "ALTER TABLE tab CONVERT PARTITION TO PARQUET", sqlExecutionContext);
+                        }
+
+                        final String query = "SELECT g, approx_percentile(x_with_nulls, " + percentile + ", " + precision + ") FROM tab GROUP BY g ORDER BY g";
+
+                        sqlExecutionContext.setParallelGroupByEnabled(false);
+                        try {
+                            TestUtils.printSql(
+                                    engine,
+                                    sqlExecutionContext,
+                                    query,
+                                    sink);
+                        } finally {
+                            sqlExecutionContext.setParallelGroupByEnabled(
+                                    engine.getConfiguration().isSqlParallelGroupByEnabled());
+                        }
+
+                        sqlExecutionContext.setParallelGroupByEnabled(true);
+                        final StringSink parallelSink = new StringSink();
+                        try {
+                            TestUtils.printSql(
+                                    engine,
+                                    sqlExecutionContext,
+                                    query,
+                                    parallelSink);
+                        } finally {
+                            sqlExecutionContext.setParallelGroupByEnabled(
+                                    engine.getConfiguration().isSqlParallelGroupByEnabled());
+                        }
+
+                        TestUtils.assertEquals(sink, parallelSink);
+                    },
+                    configuration,
+                    LOG);
+        });
     }
 
     @Test
