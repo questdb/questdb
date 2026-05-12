@@ -141,11 +141,14 @@ public abstract class AbstractArrayAggDoubleGroupByFunction extends ArrayFunctio
         // resets the cache via Misc.clearObjList(groupByFunctions) on the
         // owning cursor close, but a shared cursor (LATERAL join) reuses the
         // same factory across executions and only sees cursorClosed() on its
-        // lifecycle hook. Without this override, allocator address recycling
-        // between executions could short-circuit getArray() to a freed
-        // cachedRenderPtr and silently return stale array bytes.
-        cachedRenderPtr = 0;
-        cachedSrcPtr = 0;
+        // lifecycle hook. The cache lives on the primary (see getArray()),
+        // so route the reset through owner: writes to this.cached* on a
+        // shared instance would be dead. Without this, allocator address
+        // recycling between executions could short-circuit getArray() to a
+        // freed cachedRenderPtr and silently return stale array bytes.
+        AbstractArrayAggDoubleGroupByFunction owner = (primary != null) ? primary : this;
+        owner.cachedRenderPtr = 0;
+        owner.cachedSrcPtr = 0;
         UnaryFunction.super.cursorClosed();
     }
 
