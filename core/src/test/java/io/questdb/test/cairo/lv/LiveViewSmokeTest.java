@@ -353,6 +353,45 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testLiveViewsExposesInMemBytes() throws Exception {
+        // RFC 123 §"Catalogue function live_views()": in_mem_bytes reports the
+        // current footprint of both N=2 slots. Zero before any refresh; > 0
+        // once a refresh has populated the tier.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 1s AS " +
+                    "SELECT ts, x, row_number() OVER () AS rn FROM base WHERE x > 0");
+
+            // Before any refresh: tier is unallocated; in_mem_bytes must read 0.
+            assertSql(
+                    "in_mem_bytes\n0\n",
+                    "SELECT in_mem_bytes FROM live_views() WHERE view_name = 'lv'"
+            );
+
+            execute("INSERT INTO base (ts, x) VALUES " +
+                    "('2026-05-12T00:00:00.000001Z', 1), " +
+                    "('2026-05-12T00:00:00.000002Z', 2)");
+            drainWalQueue();
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                drainJob(job);
+            }
+
+            // After refresh, the tier is non-empty and footprint must be > 0.
+            LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("lv");
+            Assert.assertNotNull(instance);
+            Assert.assertNotNull("tier must be allocated after refresh", instance.getInMemoryTier());
+            long footprint = instance.getInMemoryTier().footprintBytes();
+            Assert.assertTrue("footprint must be > 0 after a refresh", footprint > 0);
+            assertSql(
+                    "in_mem_bytes\n" + footprint + "\n",
+                    "SELECT in_mem_bytes FROM live_views() WHERE view_name = 'lv'"
+            );
+
+            execute("DROP LIVE VIEW lv");
+        });
+    }
+
+    @Test
     public void testInMemTierReceivesRowsAfterRefresh() throws Exception {
         // RFC 123 Phase 1b: refresh worker mirrors LV outputs into a worker-local
         // staging buffer and runs a slow-path swap into the LV's N=2 in-mem

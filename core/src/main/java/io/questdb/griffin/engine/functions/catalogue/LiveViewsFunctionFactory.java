@@ -99,23 +99,24 @@ public class LiveViewsFunctionFactory implements FunctionFactory {
     }
 
     private static class LiveViewsCursorFactory implements RecordCursorFactory {
-        private static final int COLUMN_APPLIED_WATERMARK = 13;
+        private static final int COLUMN_APPLIED_WATERMARK = 14;
         private static final int COLUMN_BASE_TABLE_NAME = 2;
         private static final int COLUMN_FLUSH_EVERY_INTERVAL = 5;
         private static final int COLUMN_FLUSH_EVERY_INTERVAL_UNIT = 6;
         private static final int COLUMN_INVALIDATION_REASON = 4;
         private static final int COLUMN_IN_MEMORY_INTERVAL = 7;
         private static final int COLUMN_IN_MEMORY_INTERVAL_UNIT = 8;
-        private static final int COLUMN_LAG_MICROS = 11;
-        private static final int COLUMN_LAG_SEQTXN = 10;
-        private static final int COLUMN_LAST_PROCESSED_SEQTXN = 12;
-        private static final int COLUMN_LV_CONSUMED_SEQTXN = 14;
-        private static final int COLUMN_VIEW_LOWER_BOUND_TIMESTAMP = 15;
+        private static final int COLUMN_IN_MEM_BYTES = 9;
+        private static final int COLUMN_LAG_MICROS = 12;
+        private static final int COLUMN_LAG_SEQTXN = 11;
+        private static final int COLUMN_LAST_PROCESSED_SEQTXN = 13;
+        private static final int COLUMN_LV_CONSUMED_SEQTXN = 15;
+        private static final int COLUMN_VIEW_LOWER_BOUND_TIMESTAMP = 16;
         private static final int COLUMN_VIEW_NAME = 0;
-        private static final int COLUMN_VIEW_SQL = 9;
+        private static final int COLUMN_VIEW_SQL = 10;
         private static final int COLUMN_VIEW_STATUS = 3;
         private static final int COLUMN_VIEW_TABLE_DIR_NAME = 1;
-        private static final int COLUMN_WRITER_STALL_MICROS = 16;
+        private static final int COLUMN_WRITER_STALL_MICROS = 17;
         private static final RecordMetadata METADATA;
         private final LiveViewsListCursor cursor = new LiveViewsListCursor();
 
@@ -196,6 +197,14 @@ public class LiveViewsFunctionFactory implements FunctionFactory {
                     return switch (col) {
                         case COLUMN_FLUSH_EVERY_INTERVAL -> definition.getFlushEveryInterval();
                         case COLUMN_IN_MEMORY_INTERVAL -> definition.getInMemoryInterval();
+                        case COLUMN_IN_MEM_BYTES -> {
+                            // RFC 123 §"Catalogue function live_views()": current in-mem
+                            // tier footprint (sum across both N=2 slots). Zero when the
+                            // tier has not been allocated yet (LV has not refreshed, or
+                            // schema is var-length and the tier is unused).
+                            io.questdb.cairo.lv.LiveViewInMemoryTier tier = instance.getInMemoryTier();
+                            yield tier == null ? 0L : tier.footprintBytes();
+                        }
                         case COLUMN_LAG_SEQTXN -> {
                             // base.sequencer.head - last_processed
                             SeqTxnTracker tracker = engine.getTableSequencerAPI()
@@ -288,14 +297,15 @@ public class LiveViewsFunctionFactory implements FunctionFactory {
             metadata.add(new TableColumnMetadata("flush_every_interval_unit", ColumnType.STRING));          // 6
             metadata.add(new TableColumnMetadata("in_memory_interval", ColumnType.LONG));                   // 7
             metadata.add(new TableColumnMetadata("in_memory_interval_unit", ColumnType.STRING));            // 8
-            metadata.add(new TableColumnMetadata("view_sql", ColumnType.STRING));                           // 9
-            metadata.add(new TableColumnMetadata("lag_seqtxn", ColumnType.LONG));                           // 10
-            metadata.add(new TableColumnMetadata("lag_micros", ColumnType.LONG));                           // 11
-            metadata.add(new TableColumnMetadata("last_processed_seqtxn", ColumnType.LONG));                // 12
-            metadata.add(new TableColumnMetadata("applied_watermark", ColumnType.LONG));                    // 13
-            metadata.add(new TableColumnMetadata("lv_consumed_seqtxn", ColumnType.LONG));                   // 14
-            metadata.add(new TableColumnMetadata("view_lower_bound_timestamp", ColumnType.TIMESTAMP_MICRO));// 15
-            metadata.add(new TableColumnMetadata("writer_stall_micros", ColumnType.LONG));                  // 16
+            metadata.add(new TableColumnMetadata("in_mem_bytes", ColumnType.LONG));                         // 9
+            metadata.add(new TableColumnMetadata("view_sql", ColumnType.STRING));                           // 10
+            metadata.add(new TableColumnMetadata("lag_seqtxn", ColumnType.LONG));                           // 11
+            metadata.add(new TableColumnMetadata("lag_micros", ColumnType.LONG));                           // 12
+            metadata.add(new TableColumnMetadata("last_processed_seqtxn", ColumnType.LONG));                // 13
+            metadata.add(new TableColumnMetadata("applied_watermark", ColumnType.LONG));                    // 14
+            metadata.add(new TableColumnMetadata("lv_consumed_seqtxn", ColumnType.LONG));                   // 15
+            metadata.add(new TableColumnMetadata("view_lower_bound_timestamp", ColumnType.TIMESTAMP_MICRO));// 16
+            metadata.add(new TableColumnMetadata("writer_stall_micros", ColumnType.LONG));                  // 17
             METADATA = metadata;
         }
     }

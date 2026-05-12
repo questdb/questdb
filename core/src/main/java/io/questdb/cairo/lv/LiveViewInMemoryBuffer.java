@@ -255,13 +255,16 @@ public class LiveViewInMemoryBuffer implements QuietCloseable {
     }
 
     /**
-     * Returns the sum of all column buffers' high-water-mark addresses in bytes.
-     * Used by {@code live_views().in_mem_bytes} to report the slot's footprint.
+     * Returns the sum of all column buffers' allocated sizes in bytes. Reports
+     * the slot's native memory footprint for {@code live_views().in_mem_bytes}
+     * — i.e. what the operator should see as the LV's RAM cost, not the
+     * logical row content size. {@link MemoryCARWImpl} grows by page so the
+     * value lands on the next page boundary after each write.
      */
     public long footprintBytes() {
         long sum = 0;
         for (int i = 0, n = columns.size(); i < n; i++) {
-            sum += columns.getQuick(i).getAppendOffset();
+            sum += columns.getQuick(i).size();
         }
         return sum;
     }
