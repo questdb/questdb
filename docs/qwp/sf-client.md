@@ -1131,11 +1131,22 @@ A conformant client SHOULD expose, at minimum:
 | `getTotalErrorNotificationsDelivered()` | Count delivered to the user handler. |
 | `getTotalBackpressureStalls()` | Count of producer threads that hit the cap. |
 | `getLastTerminalError()` | The latched `SenderError` (or null). |
-| `getBackgroundDrainers()` | Snapshot of `{slotDir, framesPending, framesAcked, lastError, isFailed}` per drainer. |
+| `getActiveBackgroundDrainers()` | Current count of running orphan-slot drainers. Same lax-cleanup race as the underlying pool snapshot: a drainer that finished moments ago may still count for a few ms. |
+| `getTotalBackgroundDrainersSucceeded()` | Cumulative count of drainers that exited after fully draining their slot. |
+| `getTotalBackgroundDrainersFailed()` | Cumulative count of drainers that exited by dropping a `.failed` sentinel. |
 
 The default error handler MUST log every received `SenderError`. Silence is
 forbidden by the contract: a buggy or no-op handler hides data loss
 indistinguishably from a healthy connection.
+
+Per-drainer event observation (progress watermark, durable-ack-mismatch
+escalation, terminal outcome) is delivered through the existing
+`BackgroundDrainerListener` callback at the pool, not through a
+sender-level snapshot accessor. The three counters above cover
+dashboards and post-startup health checks ("did my orphans get
+adopted?"); the listener covers everything that wants per-drainer
+event-time visibility. On-disk `.failed` sentinels remain the canonical
+record of giveup events surviving sender restart.
 
 ## 21. Deferred Items
 
@@ -1177,3 +1188,4 @@ Items intentionally out of scope today, tracked for future revisions:
 | 2026-05-05 | client `1125b0b` / oss `dc108e66ff` | Initial spec extracted from Java reference. |
 | 2026-05-08 | (pending) | Align with `failover.md`. §13.3 + §8.2: rewrite HTTP-status terminal classification to defer to `failover.md` §6 (only `401`/`403` are terminal; `421` is topology, handled in-round; `404`/`426`/`503` are transient and consume the reconnect budget). §4.5 + §21: drop "multi-host failover deferred" — `failover.md` is the normative spec. §4.2 + §13.4: clarify `initial_connect_retry=on` is canonical; `sync` and `true` are aliases. §13.2: replace inlined backoff math with a forward-pointer to `failover.md` §3 / §3.1 to avoid drift. |
 | 2026-05-12 | (pending) | Add `.ack-watermark` (§5.4): optional mmap'd 16-byte FSN watermark that suppresses re-replay of already-durable-acked frames inside the lowest surviving sealed segment on process restart. §6.5 and §18.1 updated to seed `ackedFsn = max(lowestBaseSeq - 1, watermark)`. §19 adds the interop bullet (file is optional but format is normative). §21 item 5 narrowed from "partial-ack tracking" to "disk reclaim inside partially-acked segments" — the re-replay half of that follow-up is now addressed by the watermark. |
+| 2026-05-12 | (pending) | §20: replace the structured `getBackgroundDrainers()` snapshot accessor with three single-`long` counters — `getActiveBackgroundDrainers()`, `getTotalBackgroundDrainersSucceeded()`, `getTotalBackgroundDrainersFailed()`. The structured accessor allocated per call, exposed a lifecycle-bounded view through the same surface as the lifetime-cumulative counters, and overlapped with the existing `BackgroundDrainerListener` callback path. The simpler counters align with the rest of §20, give dashboards a "did my orphans get adopted?" signal, and leave per-drainer event-time visibility to the listener (which is the canonical extension point for drainer observation). On-disk `.failed` sentinels are unchanged and remain the canonical giveup record across sender restarts. |
