@@ -39,7 +39,9 @@ import io.questdb.std.str.Path;
 import org.jetbrains.annotations.NotNull;
 import org.openjdk.jmh.annotations.Benchmark;
 import org.openjdk.jmh.annotations.BenchmarkMode;
+import org.openjdk.jmh.annotations.Fork;
 import org.openjdk.jmh.annotations.Level;
+import org.openjdk.jmh.annotations.Measurement;
 import org.openjdk.jmh.annotations.Mode;
 import org.openjdk.jmh.annotations.OutputTimeUnit;
 import org.openjdk.jmh.annotations.Param;
@@ -47,6 +49,7 @@ import org.openjdk.jmh.annotations.Scope;
 import org.openjdk.jmh.annotations.Setup;
 import org.openjdk.jmh.annotations.State;
 import org.openjdk.jmh.annotations.TearDown;
+import org.openjdk.jmh.annotations.Warmup;
 import org.openjdk.jmh.results.RunResult;
 import org.openjdk.jmh.results.format.ResultFormatType;
 import org.openjdk.jmh.runner.Runner;
@@ -107,7 +110,7 @@ public class PostingIndexBenchmarkSuite {
         //   "io":              page-fault analysis only (skip JMH benchmarks)
         //   anything else:     literal regex body, expanded to
         //                      "PostingIndexBenchmarkSuite\.(<token>)$"
-        String filter = System.getProperty("questdb.suite.bench", "wal_o3");
+        String filter = System.getProperty("questdb.suite.bench", "all");
         String suiteName = PostingIndexBenchmarkSuite.class.getSimpleName();
         String includePattern = switch (filter) {
             case "all" -> suiteName + "\\.";
@@ -121,14 +124,19 @@ public class PostingIndexBenchmarkSuite {
 
         Collection<RunResult> results;
         if (includePattern != null) {
-            results = new Runner(new OptionsBuilder()
+            org.openjdk.jmh.runner.options.ChainedOptionsBuilder builder = new OptionsBuilder()
                     .include(includePattern)
-                    .warmupIterations(2).warmupTime(org.openjdk.jmh.runner.options.TimeValue.seconds(1))
-                    .measurementIterations(3).measurementTime(org.openjdk.jmh.runner.options.TimeValue.seconds(1))
-                    .forks(0)
-                    .resultFormat(ResultFormatType.TEXT)
-                    .build()
-            ).run();
+                    .resultFormat(ResultFormatType.TEXT);
+            if ("wal_o3".equals(filter)) {
+                builder.forks(1)
+                        .warmupIterations(1)
+                        .measurementIterations(2);
+            } else {
+                builder.warmupIterations(2).warmupTime(org.openjdk.jmh.runner.options.TimeValue.seconds(1))
+                        .measurementIterations(3).measurementTime(org.openjdk.jmh.runner.options.TimeValue.seconds(1))
+                        .forks(0);
+            }
+            results = new Runner(builder.build()).run();
             printSummary(results);
         }
         runPageFaultAnalysis();
@@ -392,17 +400,22 @@ public class PostingIndexBenchmarkSuite {
     }
 
     @Benchmark
-    @BenchmarkMode(Mode.AverageTime)
+    @BenchmarkMode(Mode.SingleShotTime)
     @OutputTimeUnit(TimeUnit.MILLISECONDS)
+    @Fork(1)
+    @Warmup(iterations = 1)
+    @Measurement(iterations = 2)
     public void walLargePartitionO3Insert(WalLargePartitionO3State s) throws Exception {
-        // O3 insert: 100k rows with timestamps spread randomly within the
-        // preloaded partition's time range. Forces sealPostingIndexForPartition
-        // down the canSkipRebuild=false path:
-        //   - covering branch: discardForRebuild + index() + commitDense +
-        //                      configureCovering + rebuildSidecars (single
-        //                      dense gen -> rebuildSidecarsByCopy memcpy)
-        //   - non-covering branch: discardForRebuild + index() + commitDense
-        // This is the heaviest O3 commit path for POSTING indexes.
+        // O3 insert: BATCH_ROWS rows with timestamps spread randomly within
+        // the preloaded partition's time range. Forces
+        // sealPostingIndexForPartition's canSkipRebuild=false branch:
+        //   - covering: discardForRebuild + index + commitDense +
+        //               configureCovering + rebuildSidecars (single dense gen
+        //               -> rebuildSidecarsByCopy memcpy)
+        //   - non-covering: discardForRebuild + index + commitDense
+        // Each iteration is a single shot on a freshly preloaded partition
+        // (Level.Iteration setup), isolating the measurement from
+        // partition-size growth and from JIT/GC/page-cache state.
         String sql = "INSERT INTO walbench(ts, sym, " + s.extraColumns + ") " +
                 "SELECT dateadd('u', rnd_int(1, " + WalLargePartitionO3State.PRELOAD_TS_LIMIT_US +
                 ", 0), '2024-01-01T00:00:00.000000Z'::TIMESTAMP), " +
@@ -1830,12 +1843,11 @@ public class PostingIndexBenchmarkSuite {
      * O3 commit path for POSTING indexes.
      */
     @State(Scope.Benchmark)
-    @BenchmarkMode(Mode.AverageTime)
+    @BenchmarkMode(Mode.SingleShotTime)
     @OutputTimeUnit(TimeUnit.MILLISECONDS)
     public static class WalLargePartitionO3State {
         static final int BATCH_ROWS = 100_000;
         static final int PRELOAD_TS_LIMIT_US = 200_000_000;
-        static final int QUERY_KEY_POOL = 32;
 
         ApplyWal2TableJob applyJob;
         CheckWalTransactionsJob checkJob;
@@ -1847,13 +1859,11 @@ public class PostingIndexBenchmarkSuite {
         @Param({"no_index", "bitmap", "posting", "posting_covering", "posting_covering_10cols"})
         String indexType;
         int keyCount = 1000;
-        @Param({"1000000", "10000000"})
+        @Param({"1000000", "10000000", "10000000"})
         int partitionSize;
-        int queryCounter;
-        String[] queryKeys;
         java.nio.file.Path tmpDir;
 
-        @Setup(Level.Trial)
+        @Setup(Level.Iteration)
         public void setup() throws Exception {
             tmpDir = Files.createTempDirectory("suite-largepart-o3");
             CairoConfiguration config = new DefaultCairoConfiguration(tmpDir.toString()) {
@@ -1923,12 +1933,9 @@ public class PostingIndexBenchmarkSuite {
                 checkJob.run(0);
                 applyJob.drain(0);
             }
-
-            queryKeys = sampleKeys(compiler, ctx, "walbench", QUERY_KEY_POOL);
-            queryCounter = 0;
         }
 
-        @TearDown(Level.Trial)
+        @TearDown(Level.Iteration)
         public void tearDown() {
             Misc.free(applyJob);
             Misc.free(compiler);
