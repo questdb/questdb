@@ -25,6 +25,12 @@
 package io.questdb.test.griffin;
 
 import io.questdb.cairo.CairoException;
+import io.questdb.cairo.MetadataCacheWriter;
+import io.questdb.cairo.TableToken;
+import io.questdb.cairo.TableUtils;
+import io.questdb.cairo.vm.Vm;
+import io.questdb.cairo.vm.api.MemoryMARW;
+import io.questdb.std.MemoryTag;
 import io.questdb.std.Os;
 import io.questdb.std.str.Path;
 import io.questdb.test.AbstractCairoTest;
@@ -372,6 +378,50 @@ public class ShowCreateTableTest extends AbstractCairoTest {
                             \ta INT PARQUET(bloom_filter),
                             \tb VARCHAR PARQUET(delta_length_byte_array, bloom_filter),
                             \tc DOUBLE
+                            ) timestamp(ts) PARTITION BY DAY BYPASS WAL;
+                            """,
+                    "SHOW CREATE TABLE foo");
+        });
+    }
+
+    @Test
+    public void testParquetIgnoredOnLegacyMetaFormat() throws Exception {
+        // Per-column parquet config lives at offset 20 of each column entry, which earlier
+        // meta layouts used for unrelated data (e.g., the upper half of the removed columnHash).
+        // SHOW CREATE TABLE must not emit PARQUET(...) for columns whose meta format predates
+        // the field, otherwise the output is invalid DDL like PARQUET(unknown(133), ...).
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE foo (ts TIMESTAMP, a INT, b LONG) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
+
+            TableToken token = engine.verifyTableName("foo");
+            try (
+                    MemoryMARW mem = Vm.getCMARWInstance();
+                    Path path = new Path()
+            ) {
+                path.of(engine.getConfiguration().getDbRoot()).concat(token).concat(TableUtils.META_FILE_NAME);
+                mem.smallFile(configuration.getFilesFacade(), path.$(), MemoryTag.MMAP_DEFAULT);
+                int columnCount = mem.getInt(TableUtils.META_OFFSET_COUNT);
+                for (int i = 0; i < columnCount; i++) {
+                    long off = TableUtils.META_OFFSET_COLUMN_TYPES + i * TableUtils.META_COLUMN_DATA_SIZE + 20;
+                    // bit 24 set (explicit flag), arbitrary bytes for encoding/compression/level
+                    mem.putInt(off, 0x035ACA85);
+                }
+                // Force isMetaFormatUpToDate() to return false so the legacy-format guard kicks in.
+                mem.putInt(TableUtils.META_OFFSET_META_FORMAT_MINOR_VERSION, 0);
+            }
+
+            engine.releaseAllReaders();
+            try (MetadataCacheWriter w = engine.getMetadataCache().writeLock()) {
+                w.clearCache();
+            }
+            engine.getMetadataCache().onStartupAsyncHydrator();
+
+            assertSql("""
+                            ddl
+                            CREATE TABLE 'foo' (\s
+                            \tts TIMESTAMP,
+                            \ta INT,
+                            \tb LONG
                             ) timestamp(ts) PARTITION BY DAY BYPASS WAL;
                             """,
                     "SHOW CREATE TABLE foo");
