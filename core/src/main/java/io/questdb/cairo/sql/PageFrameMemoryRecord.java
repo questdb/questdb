@@ -82,23 +82,18 @@ public class PageFrameMemoryRecord implements Record, StableStringSource, QuietC
     protected final ObjList<DirectString> csViewsB = new ObjList<>();
     protected final ObjList<Long256Impl> longs256A = new ObjList<>();
     protected final ObjList<Long256Impl> longs256B = new ObjList<>();
+    // Per-column sinks for lazy fixed/var->string conversion. Per-column to avoid
+    // violating the Record flyweight contract that getStrA(c1) followed by getStrA(c2)
+    // must not invalidate the c1 return value.
+    protected final ObjList<StringSink> stringSinksA = new ObjList<>();
+    protected final ObjList<StringSink> stringSinksB = new ObjList<>();
     protected final ObjList<SymbolTable> symbolTableCache = new ObjList<>();
     protected final ObjList<Utf8SplitString> utf8ViewsA = new ObjList<>();
     protected final ObjList<Utf8SplitString> utf8ViewsB = new ObjList<>();
-    // Reusable decimal instances for lazy var->decimal conversion.
-    private final Decimal128 decimal128Buf = new Decimal128();
-    private final Decimal256 decimal256Buf = new Decimal256();
-    private final Decimal64 decimal64Buf = new Decimal64();
-    // Reusable sinks for lazy fixed->varchar conversion.
-    private final StringSink stringSinkA = new StringSink();
-    private final StringSink stringSinkB = new StringSink();
-    // Dedicated sink for UTF-8 -> UTF-16 decoding when reading a parquet VARCHAR value
-    // for a lazy var->fixed / var->decimal conversion. Kept separate from stringSinkA/B
-    // because those are used as the return buffer of getStrA/getStrB and must not be
-    // clobbered by the decode step inside readVarValueForConversion.
-    private final StringSink utf16DecodeSink = new StringSink();
-    private final Utf8StringSink varcharSinkA = new Utf8StringSink();
-    private final Utf8StringSink varcharSinkB = new Utf8StringSink();
+    // Per-column sinks for lazy fixed->varchar conversion. Same flyweight reasoning
+    // as stringSinksA/B.
+    protected final ObjList<Utf8StringSink> varcharSinksA = new ObjList<>();
+    protected final ObjList<Utf8StringSink> varcharSinksB = new ObjList<>();
     protected DirectLongList auxPageAddresses;
     protected DirectLongList auxPageSizes;
     protected int columnOffset;
@@ -118,6 +113,15 @@ public class PageFrameMemoryRecord implements Record, StableStringSource, QuietC
     protected IntList sourceColumnTypes;
     protected boolean stableStrings;
     protected SymbolTableSource symbolTableSource;
+    // Reusable decimal instances for lazy var->decimal conversion.
+    private final Decimal128 decimal128Buf = new Decimal128();
+    private final Decimal256 decimal256Buf = new Decimal256();
+    private final Decimal64 decimal64Buf = new Decimal64();
+    // Dedicated sink for UTF-8 -> UTF-16 decoding when reading a parquet VARCHAR value
+    // for a lazy var->fixed / var->decimal conversion. Kept separate from the per-column
+    // string sinks because those are used as the return buffer of getStrA/getStrB and
+    // must not be clobbered by the decode step inside readVarValueForConversion.
+    private final StringSink utf16DecodeSink = new StringSink();
 
     public PageFrameMemoryRecord() {
     }
@@ -139,6 +143,13 @@ public class PageFrameMemoryRecord implements Record, StableStringSource, QuietC
         this.columnOffset = other.columnOffset;
         this.stableStrings = other.stableStrings;
         this.hasTypeCasts = other.hasTypeCasts;
+        // Deep-copy the per-column conversion state. Sharing the reference would race
+        // with init()'s in-place mutation when this record is later navigated to a
+        // different frame. A null source list with hasTypeCasts == true would NPE in
+        // any typecast-aware getter called before the first navigateTo() on Record B.
+        if (other.sourceColumnTypes != null) {
+            this.sourceColumnTypes = new IntList(other.sourceColumnTypes);
+        }
         this.letter = letter;
     }
 
@@ -152,6 +163,14 @@ public class PageFrameMemoryRecord implements Record, StableStringSource, QuietC
         auxPageAddresses = null;
         pageSizes = null;
         auxPageSizes = null;
+        // Reset the type-cast gate and its backing data symmetrically: in steady state
+        // the gate is what protects readers from a stale sourceColumnTypes, but clearing
+        // both keeps the cleared-state invariant honest and avoids relying on every
+        // future caller to re-init before the next read.
+        hasTypeCasts = false;
+        if (sourceColumnTypes != null) {
+            sourceColumnTypes.clear();
+        }
     }
 
     @Override
@@ -605,10 +624,10 @@ public class PageFrameMemoryRecord implements Record, StableStringSource, QuietC
         if (hasTypeCasts) {
             int srcTag = sourceColumnTypes.getQuick(columnIndex);
             if (srcTag >= 0) {
-                return convertFixedToStr(srcTag, columnIndex, stringSinkA);
+                return convertFixedToStr(srcTag, columnIndex, stringSinkA(columnIndex));
             }
             if (srcTag < -1) {
-                return convertVarToStr(-srcTag, columnIndex, stringSinkA);
+                return convertVarToStr(-srcTag, columnIndex, stringSinkA(columnIndex));
             }
         }
         return getStr0(columnIndex, csViewA(columnIndex));
@@ -619,10 +638,10 @@ public class PageFrameMemoryRecord implements Record, StableStringSource, QuietC
         if (hasTypeCasts) {
             int srcTag = sourceColumnTypes.getQuick(columnIndex);
             if (srcTag >= 0) {
-                return convertFixedToStr(srcTag, columnIndex, stringSinkB);
+                return convertFixedToStr(srcTag, columnIndex, stringSinkB(columnIndex));
             }
             if (srcTag < -1) {
-                return convertVarToStr(-srcTag, columnIndex, stringSinkB);
+                return convertVarToStr(-srcTag, columnIndex, stringSinkB(columnIndex));
             }
         }
         return getStr0(columnIndex, csViewB(columnIndex));
@@ -633,7 +652,7 @@ public class PageFrameMemoryRecord implements Record, StableStringSource, QuietC
         if (hasTypeCasts) {
             int srcTag = sourceColumnTypes.getQuick(columnIndex);
             if (srcTag >= 0) {
-                final CharSequence result = convertFixedToStr(srcTag, columnIndex, stringSinkA);
+                final CharSequence result = convertFixedToStr(srcTag, columnIndex, stringSinkA(columnIndex));
                 return result != null ? result.length() : TableUtils.NULL_LEN;
             }
             if (srcTag < -1) {
@@ -708,7 +727,7 @@ public class PageFrameMemoryRecord implements Record, StableStringSource, QuietC
     @Override
     public Utf8Sequence getVarcharA(int columnIndex) {
         if (hasTypeCasts && sourceColumnTypes.getQuick(columnIndex) >= 0) {
-            return convertFixedToVarchar(sourceColumnTypes.getQuick(columnIndex), columnIndex, varcharSinkA);
+            return convertFixedToVarchar(sourceColumnTypes.getQuick(columnIndex), columnIndex, varcharSinkA(columnIndex));
         }
         return getVarchar(columnIndex, utf8ViewA(columnIndex));
     }
@@ -716,7 +735,7 @@ public class PageFrameMemoryRecord implements Record, StableStringSource, QuietC
     @Override
     public Utf8Sequence getVarcharB(int columnIndex) {
         if (hasTypeCasts && sourceColumnTypes.getQuick(columnIndex) >= 0) {
-            return convertFixedToVarchar(sourceColumnTypes.getQuick(columnIndex), columnIndex, varcharSinkB);
+            return convertFixedToVarchar(sourceColumnTypes.getQuick(columnIndex), columnIndex, varcharSinkB(columnIndex));
         }
         return getVarchar(columnIndex, utf8ViewB(columnIndex));
     }
@@ -724,7 +743,7 @@ public class PageFrameMemoryRecord implements Record, StableStringSource, QuietC
     @Override
     public int getVarcharSize(int columnIndex) {
         if (hasTypeCasts && sourceColumnTypes.getQuick(columnIndex) >= 0) {
-            final Utf8Sequence result = convertFixedToVarchar(sourceColumnTypes.getQuick(columnIndex), columnIndex, varcharSinkA);
+            final Utf8Sequence result = convertFixedToVarchar(sourceColumnTypes.getQuick(columnIndex), columnIndex, varcharSinkA(columnIndex));
             return result != null ? result.size() : TableUtils.NULL_LEN;
         }
         final long auxPageAddress = auxPageAddresses.get(columnOffset + columnIndex);
@@ -1093,6 +1112,11 @@ public class PageFrameMemoryRecord implements Record, StableStringSource, QuietC
         CharSequence cs = readVarValueForConversion(srcTag, columnIndex);
         if (cs != null) {
             try {
+                // checkDashesAndLength must run first: Uuid.parseHi indexes charAt up to
+                // UUID_LENGTH unconditionally and would throw IndexOutOfBoundsException on
+                // a short input (NumericException-only catch would not handle it). Matches
+                // the native ColumnTypeConverter.str2Uuid contract: malformed input is null.
+                Uuid.checkDashesAndLength(cs);
                 return Uuid.parseHi(cs);
             } catch (NumericException ignore) {
             }
@@ -1104,6 +1128,7 @@ public class PageFrameMemoryRecord implements Record, StableStringSource, QuietC
         CharSequence cs = readVarValueForConversion(srcTag, columnIndex);
         if (cs != null) {
             try {
+                Uuid.checkDashesAndLength(cs);
                 return Uuid.parseLo(cs);
             } catch (NumericException ignore) {
             }
@@ -1170,6 +1195,24 @@ public class PageFrameMemoryRecord implements Record, StableStringSource, QuietC
         }
     }
 
+    private @NotNull StringSink stringSinkA(int columnIndex) {
+        StringSink sink = stringSinksA.getQuiet(columnIndex);
+        if (sink != null) {
+            return sink;
+        }
+        stringSinksA.extendAndSet(columnIndex, sink = new StringSink());
+        return sink;
+    }
+
+    private @NotNull StringSink stringSinkB(int columnIndex) {
+        StringSink sink = stringSinksB.getQuiet(columnIndex);
+        if (sink != null) {
+            return sink;
+        }
+        stringSinksB.extendAndSet(columnIndex, sink = new StringSink());
+        return sink;
+    }
+
     private @NotNull Utf8SplitString utf8ViewA(int columnIndex) {
         Utf8SplitString view = utf8ViewsA.getQuiet(columnIndex);
         if (view != null) {
@@ -1186,6 +1229,24 @@ public class PageFrameMemoryRecord implements Record, StableStringSource, QuietC
         }
         utf8ViewsB.extendAndSet(columnIndex, view = new Utf8SplitString(this));
         return view;
+    }
+
+    private @NotNull Utf8StringSink varcharSinkA(int columnIndex) {
+        Utf8StringSink sink = varcharSinksA.getQuiet(columnIndex);
+        if (sink != null) {
+            return sink;
+        }
+        varcharSinksA.extendAndSet(columnIndex, sink = new Utf8StringSink());
+        return sink;
+    }
+
+    private @NotNull Utf8StringSink varcharSinkB(int columnIndex) {
+        Utf8StringSink sink = varcharSinksB.getQuiet(columnIndex);
+        if (sink != null) {
+            return sink;
+        }
+        varcharSinksB.extendAndSet(columnIndex, sink = new Utf8StringSink());
+        return sink;
     }
 
     protected @NotNull BorrowedArray borrowedArray(int columnIndex) {

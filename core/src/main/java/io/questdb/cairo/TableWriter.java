@@ -2235,9 +2235,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
     /**
      * Reads parquet metadata to determine the stored type of a column in the given
-     * parquet partition. The parquet file may store the original writer index (prior to
-     * type conversions) as field_id, so the method falls back to originalWriterIndex
-     * when the current writerIndex is not found.
+     * parquet partition. Looks the column up by its originalWriterIndex, which is what
+     * the parquet write path stores as the per-column id.
      *
      * @param partitionIndex        partition to inspect (must be a parquet partition)
      * @param metadataColumnIndex   current table metadata column index
@@ -2255,17 +2254,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             // so this stays usable when the sidecar is missing or stale.
             parquetFileDecoder.of(parquetAddr, parquetSize, MemoryTag.NATIVE_TABLE_WRITER);
             final ParquetFileDecoder.Metadata parquetMetadata = parquetFileDecoder.metadata();
-
-            int parquetIdx = findParquetColumnIndex(parquetMetadata, metadataColumnIndex);
-
-            if (parquetIdx < 0) {
-                // Try original writer index for type-converted columns.
-                final int origIdx = metadata.getColumnMetadata(metadataColumnIndex).getOriginalWriterIndex();
-                if (origIdx != metadata.getColumnMetadata(metadataColumnIndex).getWriterIndex()) {
-                    parquetIdx = findParquetColumnIndexByColumnId(parquetMetadata, origIdx);
-                }
-            }
-
+            final int parquetIdx = findParquetColumnIndex(parquetMetadata, metadataColumnIndex);
             return parquetIdx >= 0 ? parquetMetadata.getColumnType(parquetIdx) : ColumnType.UNDEFINED;
         } finally {
             path.trimTo(pathSize);
@@ -5975,10 +5964,15 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         return Long.MAX_VALUE;
     }
 
+    // The parquet file stores column_id == originalWriterIndex (see the write path in
+    // TableUtils.partitionDescriptor.addColumn and convertParquetPartitionToNative).
+    // Looking up by the current writerIndex misses for any column that has been ALTER'd,
+    // because that re-keys writerIndex while leaving originalWriterIndex pointing at the
+    // chain root.
     private int findParquetColumnIndex(ParquetMetaFileReader parquetMetadata, int metadataColumnIndex) {
-        final int writerIndex = metadata.getColumnMetadata(metadataColumnIndex).getWriterIndex();
+        final int columnId = metadata.getColumnMetadata(metadataColumnIndex).getOriginalWriterIndex();
         for (int idx = 0, cnt = parquetMetadata.getColumnCount(); idx < cnt; idx++) {
-            if (parquetMetadata.getColumnId(idx) == writerIndex) {
+            if (parquetMetadata.getColumnId(idx) == columnId) {
                 return idx;
             }
         }
@@ -5986,8 +5980,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     }
 
     private int findParquetColumnIndex(ParquetFileDecoder.Metadata parquetMetadata, int metadataColumnIndex) {
-        final int writerIndex = metadata.getColumnMetadata(metadataColumnIndex).getWriterIndex();
-        return findParquetColumnIndexByColumnId(parquetMetadata, writerIndex);
+        final int columnId = metadata.getColumnMetadata(metadataColumnIndex).getOriginalWriterIndex();
+        return findParquetColumnIndexByColumnId(parquetMetadata, columnId);
     }
 
     private int findParquetColumnIndexByColumnId(ParquetMetaFileReader parquetMetadata, int columnId) {

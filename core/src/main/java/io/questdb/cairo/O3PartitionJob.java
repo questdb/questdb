@@ -60,6 +60,7 @@ import io.questdb.std.Vect;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
 import io.questdb.std.str.Utf8StringSink;
+import io.questdb.std.str.Utf8s;
 import io.questdb.tasks.O3OpenColumnTask;
 import io.questdb.tasks.O3PartitionTask;
 
@@ -3846,8 +3847,10 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                 // truncating extras, matching ColumnTypeConverter's STRING->DATE/TIMESTAMP path.
                 case ColumnType.DATE ->
                         Unsafe.getUnsafe().putLong(dstPtr + ((long) rowIndex << 3), MillisTimestampDriver.INSTANCE.parseFloorLiteral(value));
+                // tagOf collapses TIMESTAMP_MICRO and TIMESTAMP_NANO to the same TIMESTAMP tag,
+                // so dispatch on the full dstType to pick the correct driver.
                 case ColumnType.TIMESTAMP ->
-                        Unsafe.getUnsafe().putLong(dstPtr + ((long) rowIndex << 3), MicrosTimestampDriver.INSTANCE.parseFloorLiteral(value));
+                        Unsafe.getUnsafe().putLong(dstPtr + ((long) rowIndex << 3), ColumnType.getTimestampDriver(dstType).parseFloorLiteral(value));
                 case ColumnType.IPv4 ->
                         Unsafe.getUnsafe().putInt(dstPtr + ((long) rowIndex << 2), Numbers.parseIPv4Quiet(value));
                 case ColumnType.UUID -> {
@@ -3977,6 +3980,9 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
     ) {
         boolean isVarchar = ColumnType.isVarchar(srcType);
         Utf8StringSink utf8Sink = isVarchar ? new Utf8StringSink() : null;
+        // utf16Sink is the fallback decode buffer for non-ASCII varchar values.
+        // utf8ToUtf16OrView returns a zero-alloc view on the ASCII fast path.
+        StringSink utf16Sink = isVarchar ? new StringSink() : null;
         StringSink strSink = !isVarchar ? new StringSink() : null;
 
         for (int i = 0; i < rowCount; i++) {
@@ -3995,7 +4001,11 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                 for (int j = 0; j < size; j++) {
                     utf8Sink.putAny(Unsafe.getUnsafe().getByte(ptr + j));
                 }
-                value = utf8Sink.asAsciiCharSequence();
+                // Decode UTF-8 to UTF-16. The previous asAsciiCharSequence() exposed each
+                // raw UTF-8 byte as a char, corrupting non-ASCII (e.g. 'e-acute' 0xC3 0xA9
+                // became two Latin-1 chars instead of U+00E9). Same fix as
+                // ColumnTypeConverter.convertFromVarcharToFixed.
+                value = Utf8s.utf8ToUtf16OrView(utf8Sink, utf16Sink);
             } else {
                 // Read STRING format: 8-byte aux entries (offsets), data has [len_i32][chars...].
                 long offset = Unsafe.getUnsafe().getLong(auxPtr + (long) i * Long.BYTES);

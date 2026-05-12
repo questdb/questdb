@@ -574,14 +574,6 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
         }
 
         @Override
-        public int getSourceColumnType(int columnIndex) {
-            if (frameFormat == PartitionFormat.PARQUET && hasTypeCasts) {
-                return sourceColumnTypes.getQuick(columnIndex);
-            }
-            return -1;
-        }
-
-        @Override
         public long getPageAddress(int columnIndex) {
             return pageAddresses.get(columnOffset + columnIndex);
         }
@@ -604,6 +596,14 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
         @Override
         public long getRowIdOffset() {
             return addressCache.getRowIdOffset(frameIndex);
+        }
+
+        @Override
+        public int getSourceColumnType(int columnIndex) {
+            if (frameFormat == PartitionFormat.PARQUET && hasTypeCasts) {
+                return sourceColumnTypes.getQuick(columnIndex);
+            }
+            return -1;
         }
 
         @Override

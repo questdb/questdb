@@ -532,6 +532,50 @@ public class ParquetColumnTypeConversionTest extends AbstractCairoTest {
     }
 
     /**
+     * Same absolute-oracle approach for the O3PartitionJob.convertVarColumnToFixed
+     * path, which is taken by CONVERT PARTITION TO NATIVE (and by O3 merge into a
+     * parquet partition whose column was ALTERed to a fixed type). The previous code
+     * accumulated UTF-8 bytes into a Utf8StringSink and exposed them via
+     * asAsciiCharSequence(), so the multi-byte sequence for 'é' (0xC3 0xA9) became
+     * two Latin-1 chars (U+00C3, U+00A9) and CHAR materialized as 'Ã' on disk.
+     * The differential assertConversion helper does not catch this because both
+     * native and the lazy parquet read path use a proper UTF-8 decode now, while
+     * this materialization path is only reachable through the O3 merge / convert
+     * pipeline.
+     */
+    @Test
+    public void testVarcharToCharNonAsciiThroughConvertToNative() throws Exception {
+        assertMemoryLeak(() -> {
+            try {
+                execute("CREATE TABLE pt (val VARCHAR, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+                execute("""
+                        INSERT INTO pt VALUES
+                        ('a', '2024-01-01T00:00:01.000000Z'),
+                        ('élite', '2024-01-01T00:00:02.000000Z'),
+                        ('日本', '2024-01-01T00:00:03.000000Z'),
+                        (NULL, '2024-01-01T00:00:04.000000Z')""");
+                drainWalQueue();
+                execute("ALTER TABLE pt CONVERT PARTITION TO PARQUET LIST '2024-01-01'");
+                drainWalQueue();
+                execute("ALTER TABLE pt ALTER COLUMN val TYPE CHAR");
+                drainWalQueue();
+                // Materializes the var->fixed conversion through O3PartitionJob, so
+                // the bytes on disk are whatever writeFixedParsedValue wrote. The
+                // SELECT below reads native files, not the lazy parquet path.
+                execute("ALTER TABLE pt CONVERT PARTITION TO NATIVE LIST '2024-01-01'");
+                drainWalQueue();
+
+                assertSql(
+                        "val\na\né\n日\n\n",
+                        "SELECT val FROM pt ORDER BY ts"
+                );
+            } finally {
+                tryDrop("pt");
+            }
+        });
+    }
+
+    /**
      * Same absolute-oracle approach for VARCHAR-&gt;VARCHAR/STRING paths that go through
      * the lazy per-row Java conversion. The native path performs a proper UTF-8 decode,
      * so this test pins the expected behaviour regardless of what the peer native path does.
@@ -675,12 +719,69 @@ public class ParquetColumnTypeConversionTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testStringToTimestampNano() throws Exception {
+        assertMemoryLeak(() -> {
+            for (String source : new String[]{"STRING", "VARCHAR"}) {
+                try {
+                    execute("CREATE TABLE pt (val " + source + ", ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+                    execute("""
+                            INSERT INTO pt VALUES
+                            ('2020-06-15T12:30:00.123456789Z', '2024-01-01T00:00:01.000000Z'),
+                            ('1970-01-01T00:00:00.000000001Z', '2024-01-01T00:00:02.000000Z'),
+                            (NULL, '2024-01-01T00:00:03.000000Z')""");
+                    drainWalQueue();
+                    execute("ALTER TABLE pt CONVERT PARTITION TO PARQUET LIST '2024-01-01'");
+                    drainWalQueue();
+                    execute("ALTER TABLE pt ALTER COLUMN val TYPE TIMESTAMP_NS");
+                    drainWalQueue();
+                    execute("ALTER TABLE pt CONVERT PARTITION TO NATIVE LIST '2024-01-01'");
+                    drainWalQueue();
+
+                    assertSql(
+                            """
+                                    val\tts
+                                    2020-06-15T12:30:00.123456789Z\t2024-01-01T00:00:01.000000Z
+                                    1970-01-01T00:00:00.000000001Z\t2024-01-01T00:00:02.000000Z
+                                    \t2024-01-01T00:00:03.000000Z
+                                    """,
+                            "SELECT val, ts FROM pt"
+                    );
+                } finally {
+                    tryDrop("pt");
+                }
+            }
+        });
+    }
+
+    @Test
     public void testStringToUuid() throws Exception {
         assertMemoryLeak(() -> {
             String values = """
                     ('a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11', '2024-01-01T00:00:01.000000Z'),
                     ('11111111-1111-1111-1111-111111111111', '2024-01-01T00:00:02.000000Z'),
                     (NULL, '2024-01-01T00:00:03.000000Z')""";
+            assertConversion("STRING", "UUID", values);
+            assertConversion("VARCHAR", "UUID", values);
+        });
+    }
+
+    @Test
+    public void testStringToUuidWithInvalidValues() throws Exception {
+        // Non-UUID strings must produce NULL on the lazy parquet path, matching the native
+        // str2Uuid converter (which calls Uuid.checkDashesAndLength first and treats failure
+        // as null). Without the length/dash pre-check, Uuid.parseHi/parseLo index past the
+        // end of short strings and raise IndexOutOfBoundsException, which the
+        // NumericException-only catch in convertVarToUuidHi/Lo does not handle, propagating
+        // the exception out of the Record API.
+        assertMemoryLeak(() -> {
+            String values = """
+                    ('a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11', '2024-01-01T00:00:01.000000Z'),
+                    ('not-a-uuid', '2024-01-01T00:00:02.000000Z'),
+                    ('', '2024-01-01T00:00:03.000000Z'),
+                    ('short', '2024-01-01T00:00:04.000000Z'),
+                    ('a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11-extra', '2024-01-01T00:00:05.000000Z'),
+                    ('zzzzzzzz-zzzz-zzzz-zzzz-zzzzzzzzzzzz', '2024-01-01T00:00:06.000000Z'),
+                    (NULL, '2024-01-01T00:00:07.000000Z')""";
             assertConversion("STRING", "UUID", values);
             assertConversion("VARCHAR", "UUID", values);
         });
