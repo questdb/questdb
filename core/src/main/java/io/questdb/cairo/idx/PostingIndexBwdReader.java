@@ -78,6 +78,13 @@ public class PostingIndexBwdReader extends AbstractPostingIndexReader {
     public RowCursor getCursor(int key, long minValue, long maxValue, int[] requiredCoverColumns) {
         reloadConditionally();
 
+        // See PostingIndexFwdReader.getCursor: clamp the index-walked
+        // upper bound to the picked chain entry's MAX_VALUE so dirty
+        // (key, rowId) entries in .pv past the entry's coverage are
+        // not surfaced. Implicit nulls (rows before columnTop) stay
+        // clamped by columnTop only.
+        long indexMaxValue = entryMaxValue >= 0 ? Math.min(maxValue, entryMaxValue) : maxValue;
+
         if (key == 0 && columnTop > 0 && minValue < columnTop) {
             NullCursor nc;
             if (freeNullCursors.size() > 0) {
@@ -86,9 +93,10 @@ public class PostingIndexBwdReader extends AbstractPostingIndexReader {
             } else {
                 nc = new NullCursor();
             }
-            nc.of(key, minValue, maxValue);
+            nc.of(key, minValue, indexMaxValue);
             final long hi = maxValue == Long.MAX_VALUE ? Long.MAX_VALUE : maxValue + 1;
             nc.nullCount = Math.min(columnTop, hi);
+            nc.nullPos = nc.nullCount;
             return nc;
         }
 
@@ -101,7 +109,7 @@ public class PostingIndexBwdReader extends AbstractPostingIndexReader {
             } else {
                 c = new Cursor();
             }
-            c.of(key, minValue, maxValue);
+            c.of(key, minValue, indexMaxValue);
             return c;
         }
 
@@ -875,6 +883,7 @@ public class PostingIndexBwdReader extends AbstractPostingIndexReader {
 
     private class NullCursor extends Cursor {
         private long nullCount;
+        private long nullPos;
 
         @Override
         public void close() {
@@ -898,8 +907,8 @@ public class PostingIndexBwdReader extends AbstractPostingIndexReader {
             if (super.hasNext()) {
                 return true;
             }
-            if (--nullCount >= minValue) {
-                next = nullCount;
+            if (--nullPos >= minValue) {
+                next = nullPos;
                 return true;
             }
             return false;
@@ -907,10 +916,12 @@ public class PostingIndexBwdReader extends AbstractPostingIndexReader {
 
         @Override
         public long size() {
-            long hi = maxValue == Long.MAX_VALUE ? Long.MAX_VALUE : maxValue + 1;
-            long nullLimit = Math.min(columnTop, hi);
-            long nulls = Math.max(0L, nullLimit - minValue);
-            return super.size() + nulls;
+            // nullCount is set in getCursor from the unclamped caller maxValue
+            // and never mutates during iteration; using it directly avoids the
+            // Cursor.maxValue field, which now holds the entryMaxValue-clamped
+            // bound and would under-count nulls when entryMaxValue < columnTop.
+            long indexSize = super.size();
+            return indexSize < 0 ? -1 : indexSize + Math.max(0L, nullCount - minValue);
         }
     }
 }

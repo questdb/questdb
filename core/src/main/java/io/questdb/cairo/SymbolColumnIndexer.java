@@ -240,6 +240,11 @@ public class SymbolColumnIndexer implements ColumnIndexer, Mutable {
         index(ff, fd, loRow, hiRow);
     }
 
+    @Override
+    public void releaseCoveredColumnReadMappings() {
+        writer.releaseCoveredColumnReadMappings();
+    }
+
     public void releaseIndexWriter() {
         Misc.free(writer);
     }
