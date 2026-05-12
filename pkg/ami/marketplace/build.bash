@@ -30,7 +30,7 @@ QUESTDB_DATA_DIR=/var/lib/questdb
 # Install dependencies
 sudo dnf update -y -q
 sudo dnf install -y -q \
-    java-11-amazon-corretto-headless \
+    java-17-amazon-corretto-headless \
     ec2-instance-connect \
     amazon-ssm-agent \
     amazon-cloudwatch-agent \
