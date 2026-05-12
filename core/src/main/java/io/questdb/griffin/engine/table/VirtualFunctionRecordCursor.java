@@ -92,12 +92,17 @@ public class VirtualFunctionRecordCursor implements RecordCursor {
     }
 
     public int getLongTopKColumnIndex(int columnIndex) {
-        if (supportsRandomAccess && functions.getQuick(columnIndex) instanceof ColumnFunction columnFunction) {
-            final int virtualColumnIndex = columnFunction.getColumnIndex();
-            final int columnType = priorityMetadata.getColumnType(virtualColumnIndex);
-            if (columnType == ColumnType.LONG || ColumnType.isTimestamp(columnType)) {
-                return priorityMetadata.getBaseColumnIndex(virtualColumnIndex);
-            }
+        if (!supportsRandomAccess) {
+            return -1;
+        }
+        ColumnFunction columnFunction = ColumnFunction.unwrap(functions.getQuick(columnIndex));
+        if (columnFunction == null) {
+            return -1;
+        }
+        final int virtualColumnIndex = columnFunction.getColumnIndex();
+        final int columnType = priorityMetadata.getColumnType(virtualColumnIndex);
+        if (columnType == ColumnType.LONG || ColumnType.isTimestamp(columnType)) {
+            return priorityMetadata.getBaseColumnIndex(virtualColumnIndex);
         }
         return -1;
     }
