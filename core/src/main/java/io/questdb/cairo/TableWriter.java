@@ -11904,19 +11904,27 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             openLastPartition();
         }
 
-        // The squash grew the target partition's .d files via FrameAlgebra.append,
-        // which uses its own short-lived IndexWriter to append POSTING entries
-        // during the data copy. That writer leaves a chain head tagged with its
-        // own internal sealTxn rather than the table txn, so for any indexed
-        // column whose columnTop sits below the post-squash row count -- i.e.
-        // the column has .d data covering some prefix of the merged-in rows --
-        // readers still resolve through the pre-squash chain head, which has
-        // no entries for the rows squash merged in. Reseal the target
-        // partition's POSTING indexes from .d so the published chain head
-        // covers the full post-squash row range with a txn tag consistent with
-        // the upcoming txWriter.commit() below. After seal, point the table's
-        // indexers back at the active partition so the next append uses the
-        // active partition's index files rather than the just-sealed target.
+        // The squash grew the target partition's .d files via FrameAlgebra.append.
+        // FrameAlgebra's short-lived IndexWriter calls commit() after the per-row
+        // add() loop, and that commit() does publish entries to the chain: via
+        // extendHead in the non-copy squash (chain already open, head sealTxn
+        // matches) or via appendNewEntry with txnAtSeal=0 in the copy squash
+        // (fresh chain; pendingTxnAtSeal is never set, so the fallback at
+        // PostingIndexWriter#publishToChain fires). The IndexWriter never sees
+        // configureCovering, however, so coverCount=0 when captureCoverEndOffsets
+        // runs and the new gens land with an empty cover footer. For COVERING
+        // POSTING indexes this is what drops rows from indexed predicates: the
+        // reader can resolve the index key but cannot resolve the covering
+        // columns for any rowid the squash merged in, so the rows fall out of
+        // the result.
+        //
+        // Reseal the target's POSTING indexes from .d. That republishes the
+        // chain head with a real cover footer captured from the live MA columns
+        // and tags the entry with txWriter.getTxn() -- the current committed
+        // txn, not the upcoming one (see sealPostingIndexForPartition for why
+        // getTxn()+1 would corrupt covering reads). After seal, restore the
+        // table's indexers to lastOpenPartitionTs so the next append writes to
+        // the active partition rather than the just-sealed target.
         if (sealPostingIndexForPartition(targetPartition, false)) {
             restorePostingIndexersToLastPartition();
         }
