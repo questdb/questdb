@@ -178,7 +178,7 @@ public class PostingIndexWriter implements IndexWriter {
     // to mmap. Persisted to the head entry on every chain publish (or via
     // chain.updateHeadMaxValue between flushes).
     private long maxValue;
-    private long o3CtxColumnNameTxn;
+    private long o3CtxColumnNameTxn = TableUtils.COLUMN_NAME_TXN_NONE;
     private long o3CtxUpcomingTxn = -1L;
     private long packedResidualsAddr;
     private int packedResidualsCapacity;
@@ -373,6 +373,13 @@ public class PostingIndexWriter implements IndexWriter {
                 pendingDiscardOldSealTxn = -1L;
                 pendingTxnAtSeal = -1;
                 o3CtxUpcomingTxn = -1L;
+                // o3CtxName / o3CtxPartitionPath / o3CtxColumnNameTxn are
+                // intentionally NOT cleared here. of(path, name, txn, isInit)
+                // calls close() internally and then continues reading its
+                // CharSequence `name` parameter — when callers pass o3CtxName
+                // through (the openFromO3Context path), clearing it mid-call
+                // would empty the name arg. openFromO3Context clears these
+                // fields itself once of() has finished consuming them.
                 // currentTableTxn is intentionally not reset here.
                 // path-based of(...) starts with close(), and the setter
                 // contract is "call setCurrentTableTxn before of() so
@@ -449,7 +456,7 @@ public class PostingIndexWriter implements IndexWriter {
     // get overwritten by rebuildSidecars at a different sealTxn, leaving stale
     // bytes on disk in non-assert builds.
     public void commitDense() {
-        assert coverCount == 0 : "commitDense writes per-gen sidecars; use seal()/commit() for covering indexes";
+        assert coverCount == 0 : "commitDense does not write covered sidecars; use seal()/commit() for covering indexes";
         flushAllPendingDense();
         int commitMode = configuration.getCommitMode();
         if (commitMode != CommitMode.NOSYNC) {
@@ -950,14 +957,30 @@ public class PostingIndexWriter implements IndexWriter {
 
     @Override
     public void openFromO3Context(boolean isInit) {
-        assert o3CtxPartitionPath.size() > 0 && !o3CtxName.isEmpty()
-                : "setO3PathContext must be called before openFromO3Context";
+        // Defense-in-depth: openFromO3Context clears the o3Ctx fields after of()
+        // finishes, so a stale call without a matching setO3PathContext lands
+        // here with zero-length name/path. Fail loud in production -- the
+        // alternative is a silent open at the previous partition's path, which
+        // would corrupt that partition's index.
+        if (o3CtxPartitionPath.size() == 0 || o3CtxName.isEmpty()) {
+            throw CairoException.critical(0)
+                    .put("setO3PathContext must be called before openFromO3Context [indexName=").put(indexName)
+                    .put(']');
+        }
         Path p = Path.getThreadLocal(o3CtxPartitionPath);
         // of() internally calls close(), which resets o3CtxUpcomingTxn to -1.
+        // The other o3Ctx fields survive close() because of() reads `name` from
+        // o3CtxName mid-call; this method clears them after of() returns.
         long upcomingTxn = o3CtxUpcomingTxn;
-        of(p, o3CtxName, o3CtxColumnNameTxn, isInit);
-        if (upcomingTxn >= 0) {
-            setNextTxnAtSeal(upcomingTxn);
+        try {
+            of(p, o3CtxName, o3CtxColumnNameTxn, isInit);
+            if (upcomingTxn >= 0) {
+                setNextTxnAtSeal(upcomingTxn);
+            }
+        } finally {
+            o3CtxName.clear();
+            o3CtxPartitionPath.clear();
+            o3CtxColumnNameTxn = TableUtils.COLUMN_NAME_TXN_NONE;
         }
     }
 
@@ -3548,66 +3571,101 @@ public class PostingIndexWriter implements IndexWriter {
     }
 
     private void rebuildSidecarsByCopy(long newSealTxn) {
+        // Two-phase cleanup boundary. Before switchToSealedValueFile the new
+        // .pv / .pc* files are on disk but not reachable by any reader (the
+        // chain still references oldSealTxn), so a throw here can safely
+        // unlink them directly. After the switch, valueMem and sidecarMems
+        // are mapped to the new files; we cannot unmap-and-restore the old
+        // valueMem in-place, so we queue an orphan purge instead. Real
+        // unlink lands once the writer reaches a successful commit that
+        // drains publishPendingPurges; if the caller closes without that
+        // commit, the orphan files leak -- same window as the pre-PR
+        // behaviour, just now narrower (only post-switch throws).
         openSealValueFile(newSealTxn);
-        long srcFd = valueMem.getFd();
-        long dstFd = sealValueMem.getFd();
-        long copied = ff.copyData(srcFd, dstFd, 0, valueMemSize);
-        if (copied != valueMemSize) {
-            throw CairoException.critical(ff.errno())
-                    .put("incomplete .pv copy [expected=").put(valueMemSize)
-                    .put(", actual=").put(copied)
-                    .put(']');
-        }
-        sealValueMem.jumpTo(valueMemSize);
-
-        openSidecarFiles(Path.getThreadLocal(partitionPath), indexName, postingColumnNameTxn, newSealTxn);
-        switchToSealedValueFile(newSealTxn);
-
-        long totalCountsSize = (long) keyCount * Integer.BYTES;
-        long totalCountsAddr = Unsafe.malloc(totalCountsSize, MemoryTag.NATIVE_INDEX_READER);
-        long strideValsAddr = 0;
-        long strideValsBytes = 0;
+        boolean isSwitched = false;
         try {
-            Unsafe.setMemory(totalCountsAddr, totalCountsSize, (byte) 0);
-            int maxStrideTotal = accumulateDenseGen0Counts(totalCountsAddr);
-            strideValsBytes = Math.max(1L, (long) maxStrideTotal * Long.BYTES);
-            strideValsAddr = Unsafe.malloc(strideValsBytes, MemoryTag.NATIVE_INDEX_READER);
-            writeSidecarsPerColumn(totalCountsAddr, strideValsAddr);
-        } finally {
-            if (strideValsAddr != 0) {
-                Unsafe.free(strideValsAddr, strideValsBytes, MemoryTag.NATIVE_INDEX_READER);
+            long srcFd = valueMem.getFd();
+            long dstFd = sealValueMem.getFd();
+            long copied = ff.copyData(srcFd, dstFd, 0, valueMemSize);
+            if (copied != valueMemSize) {
+                throw CairoException.critical(ff.errno())
+                        .put("incomplete .pv copy [expected=").put(valueMemSize)
+                        .put(", actual=").put(copied)
+                        .put(']');
             }
-            Unsafe.free(totalCountsAddr, totalCountsSize, MemoryTag.NATIVE_INDEX_READER);
-        }
+            sealValueMem.jumpTo(valueMemSize);
 
-        // .pv before .pk: copyData's bytes must be durable before publishing
-        // a chain head that references them. Mirrors sealIncremental.
-        if (valueMem.isOpen()) {
-            valueMem.sync(false);
-        }
-        for (int c = 0, n = sidecarMems.size(); c < n; c++) {
-            MemoryMARW mem = sidecarMems.getQuick(c);
-            if (mem != null && mem.isOpen()) {
-                mem.sync(false);
+            openSidecarFiles(Path.getThreadLocal(partitionPath), indexName, postingColumnNameTxn, newSealTxn);
+            switchToSealedValueFile(newSealTxn);
+            isSwitched = true;
+
+            long totalCountsSize = (long) keyCount * Integer.BYTES;
+            long totalCountsAddr = Unsafe.malloc(totalCountsSize, MemoryTag.NATIVE_INDEX_READER);
+            long strideValsAddr = 0;
+            long strideValsBytes = 0;
+            try {
+                Unsafe.setMemory(totalCountsAddr, totalCountsSize, (byte) 0);
+                int maxStrideTotal = accumulateDenseGen0Counts(totalCountsAddr);
+                strideValsBytes = Math.max(1L, (long) maxStrideTotal * Long.BYTES);
+                strideValsAddr = Unsafe.malloc(strideValsBytes, MemoryTag.NATIVE_INDEX_READER);
+                writeSidecarsPerColumn(totalCountsAddr, strideValsAddr);
+            } finally {
+                if (strideValsAddr != 0) {
+                    Unsafe.free(strideValsAddr, strideValsBytes, MemoryTag.NATIVE_INDEX_READER);
+                }
+                Unsafe.free(totalCountsAddr, totalCountsSize, MemoryTag.NATIVE_INDEX_READER);
             }
-        }
-        if (sidecarInfoMem != null && sidecarInfoMem.isOpen()) {
-            sidecarInfoMem.sync(false);
-        }
 
-        Unsafe.storeFence();
-        this.genCount = 1;
-        publishToChain(
-                /* newGenCount */ 1,
-                /* overrideGenIndex */ 0,
-                /* overrideFileOffset */ 0,
-                /* overrideSize */ valueMemSize,
-                /* overrideKeyCount */ keyCount,
-                /* overrideMinKey */ 0,
-                /* overrideMaxKey */ keyCount - 1
-        );
-        if (keyMem.isOpen()) {
-            keyMem.sync(false);
+            // .pv before .pk: copyData's bytes must be durable before publishing
+            // a chain head that references them. Mirrors sealIncremental.
+            if (valueMem.isOpen()) {
+                valueMem.sync(false);
+            }
+            for (int c = 0, n = sidecarMems.size(); c < n; c++) {
+                MemoryMARW mem = sidecarMems.getQuick(c);
+                if (mem != null && mem.isOpen()) {
+                    mem.sync(false);
+                }
+            }
+            if (sidecarInfoMem != null && sidecarInfoMem.isOpen()) {
+                sidecarInfoMem.sync(false);
+            }
+
+            Unsafe.storeFence();
+            this.genCount = 1;
+            publishToChain(
+                    /* newGenCount */ 1,
+                    /* overrideGenIndex */ 0,
+                    /* overrideFileOffset */ 0,
+                    /* overrideSize */ valueMemSize,
+                    /* overrideKeyCount */ keyCount,
+                    /* overrideMinKey */ 0,
+                    /* overrideMaxKey */ keyCount - 1
+            );
+            if (keyMem.isOpen()) {
+                keyMem.sync(false);
+            }
+        } catch (Throwable th) {
+            if (isSwitched) {
+                // valueMem / sidecarMems are now mapped to .{newSealTxn}; the
+                // chain still references oldSealTxn so no reader can ever pin
+                // them. Defer cleanup to the seal-purge job with the widest
+                // safe window. Picked up on the next publishPendingPurges drain.
+                LOG.error().$("posting index rebuildSidecarsByCopy post-switch failure, scheduling orphan purge [")
+                        .$("indexName=").$(indexName)
+                        .$(", newSealTxn=").$(newSealTxn)
+                        .$(']').$();
+                scheduleOrphanPurge(newSealTxn);
+            } else {
+                // No chain mutation, no mapping survives into the writer's
+                // valueMem swap -- safe to unlink the staging files directly.
+                // sealValueMem and any opened sidecarMems are closed inline so
+                // the unlinks land before any retry can race on the same name.
+                Misc.free(sealValueMem);
+                closeSidecarMems();
+                unlinkOrphanSealFiles(newSealTxn);
+            }
+            throw th;
         }
     }
 
@@ -5198,6 +5256,47 @@ public class PostingIndexWriter implements IndexWriter {
         ((MemoryCMARWImpl) valueMem).swapState((MemoryCMARWImpl) stagingValueMem);
         Misc.free(stagingValueMem);
         sealTxn = newTxn;
+    }
+
+    /**
+     * Best-effort removal of the {@code .pv.{newSealTxn}} and any matching
+     * {@code .pc{c}.{...}.{newSealTxn}} sidecar files when a
+     * {@link #rebuildSidecarsByCopy} attempt aborted before
+     * {@link #switchToSealedValueFile}. The chain never advertised these
+     * files, so no reader can have pinned them; unlink errors are logged
+     * and ignored rather than masking the original throw.
+     */
+    private void unlinkOrphanSealFiles(long newSealTxn) {
+        if (partitionPath.size() == 0) {
+            return;
+        }
+        Path p = Path.getThreadLocal(partitionPath);
+        int plen = p.size();
+        try {
+            LPSZ pv = PostingIndexUtils.valueFileName(p, indexName, postingColumnNameTxn, newSealTxn);
+            if (ff.exists(pv) && !ff.removeQuiet(pv)) {
+                LOG.error().$("could not unlink staged .pv [path=").$(pv).$(']').$();
+            }
+        } catch (Throwable ignore) {
+            // path construction is unlikely to throw; swallow so we don't
+            // mask the caller's original exception.
+        }
+        for (int c = 0; c < coverCount; c++) {
+            int colIdx = coveredColumnIndices.getQuick(c);
+            if (colIdx < 0) {
+                continue;
+            }
+            try {
+                long covT = getCoveredColumnNameTxn(c);
+                LPSZ pc = PostingIndexUtils.coverDataFileName(p.trimTo(plen), indexName, c, postingColumnNameTxn, covT, newSealTxn);
+                if (ff.exists(pc) && !ff.removeQuiet(pc)) {
+                    LOG.error().$("could not unlink staged .pc [path=").$(pc).$(']').$();
+                }
+            } catch (Throwable ignore) {
+                // see above
+            }
+        }
+        p.trimTo(plen);
     }
 
     private void unmapCoveredColumn(int c) {
