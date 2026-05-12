@@ -36,8 +36,10 @@ import org.jetbrains.annotations.NotNull;
 
 /**
  * Concatenates {@code DOUBLE[]} arrays into a single flat {@code DOUBLE[]} during
- * GROUP BY / SAMPLE BY. See {@link AbstractArrayAggDoubleGroupByFunction} for the
- * shared parallelism strategy and buffer layout.
+ * GROUP BY / SAMPLE BY. NULL and empty input arrays are skipped; null elements
+ * inside a non-null input array are preserved.
+ * See {@link AbstractArrayAggDoubleGroupByFunction} for the shared parallelism
+ * strategy and buffer layout.
  */
 public class ArrayAggDoubleArrayGroupByFunction extends AbstractArrayAggDoubleGroupByFunction {
 
@@ -48,6 +50,7 @@ public class ArrayAggDoubleArrayGroupByFunction extends AbstractArrayAggDoubleGr
     @Override
     public void computeFirst(MapValue mapValue, Record record, long rowId) {
         ArrayView arr = arg.getArray(record);
+        // NULL and empty inputs contribute zero elements (concat identity).
         if (arr.isNull()) {
             mapValue.putLong(valueIndex, 0);
             return;

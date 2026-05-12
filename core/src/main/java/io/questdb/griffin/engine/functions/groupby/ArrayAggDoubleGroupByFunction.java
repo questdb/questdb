@@ -33,6 +33,7 @@ import org.jetbrains.annotations.NotNull;
 
 /**
  * Collects double values into a 1D {@code DOUBLE[]} array during GROUP BY / SAMPLE BY.
+ * NULL inputs are preserved as null elements in the output array.
  * See {@link AbstractArrayAggDoubleGroupByFunction} for the shared parallelism strategy
  * and buffer layout.
  */

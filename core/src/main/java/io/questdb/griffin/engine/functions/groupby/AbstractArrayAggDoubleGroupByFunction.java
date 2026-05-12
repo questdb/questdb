@@ -46,7 +46,10 @@ import org.jetbrains.annotations.NotNull;
 /**
  * Shared base for {@code array_agg(D)} and {@code array_agg(D[])}: collects
  * double values (or array elements) into a 1D {@code DOUBLE[]} during
- * GROUP BY / SAMPLE BY.
+ * GROUP BY / SAMPLE BY. NULL handling differs between the two variants: the
+ * scalar variant preserves NULL inputs as null elements; the array variant
+ * skips NULL and empty input arrays (concat identity). See the respective
+ * subclass javadoc.
  * <p>
  * <b>Parallelism strategy.</b> Same pattern as {@link TwapGroupByFunction} and
  * {@link SparklineGroupByFunction}. Each worker accumulates its observations
