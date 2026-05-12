@@ -115,6 +115,7 @@ public final class TableUtils {
     public static final long META_COLUMN_DATA_SIZE = 32;
     public static final String META_FILE_NAME = "_meta";
     public static final short META_FORMAT_MINOR_VERSION_LATEST = 1;
+    public static final short META_FORMAT_MINOR_VERSION_PARQUET_ENCODING_CONFIG = 1;
     public static final long META_OFFSET_COLUMN_TYPES = 128;
     public static final long META_OFFSET_COUNT = 0;
     public static final long META_OFFSET_MAX_UNCOMMITTED_ROWS = 20; // INT
@@ -1064,6 +1065,18 @@ public final class TableUtils {
         }
     }
 
+    /**
+     * Returns true when the meta file's minor version is at least
+     * {@link #META_FORMAT_MINOR_VERSION_PARQUET_ENCODING_CONFIG}, i.e. the per-column parquet
+     * encoding config field at column-entry offset 20 can be read without picking up stale
+     * bytes from older meta layouts. Spelled separately from {@link #isMetaFormatUpToDate}
+     * because a future bump of {@code META_FORMAT_MINOR_VERSION_LATEST} must not silently
+     * invalidate this field for 9.3.4 / 9.3.5 tables that legitimately have it set.
+     */
+    public static boolean hasParquetEncodingConfig(MemoryR metaMem) {
+        return isMetaFormatAtLeast(metaMem, META_FORMAT_MINOR_VERSION_PARQUET_ENCODING_CONFIG);
+    }
+
     public static LPSZ iFile(Path path, CharSequence columnName, long columnTxn) {
         path.concat(columnName).put(FILE_SUFFIX_I);
         if (columnTxn > COLUMN_NAME_TXN_NONE) {
@@ -1115,14 +1128,7 @@ public final class TableUtils {
      * Table storage itself is forward- and backward-compatible, so it's safe to read regardless of this version.
      */
     public static boolean isMetaFormatUpToDate(MemoryR metaMem) {
-        int metaFormatMinorVersionField = metaMem.getInt(META_OFFSET_META_FORMAT_MINOR_VERSION);
-        short savedChecksum = Numbers.decodeLowShort(metaFormatMinorVersionField);
-        short actualChecksum = checksumForMetaFormatMinorVersionField(
-                metaMem.getLong(TableUtils.META_OFFSET_METADATA_VERSION),
-                metaMem.getInt(TableUtils.META_OFFSET_COUNT)
-        );
-        short savedMetaFormatMinorVersion = Numbers.decodeHighShort(metaFormatMinorVersionField);
-        return savedChecksum == actualChecksum && savedMetaFormatMinorVersion >= META_FORMAT_MINOR_VERSION_LATEST;
+        return isMetaFormatAtLeast(metaMem, META_FORMAT_MINOR_VERSION_LATEST);
     }
 
     /**
@@ -2612,6 +2618,17 @@ public final class TableUtils {
             throw CairoException.critical(0).put("File is too small, size=").put(memSize).put(", required=").put(offset + storageLength);
         }
         return metaMem.getStrA(offset);
+    }
+
+    private static boolean isMetaFormatAtLeast(MemoryR metaMem, short minorVersion) {
+        int metaFormatMinorVersionField = metaMem.getInt(META_OFFSET_META_FORMAT_MINOR_VERSION);
+        short savedChecksum = Numbers.decodeLowShort(metaFormatMinorVersionField);
+        short actualChecksum = checksumForMetaFormatMinorVersionField(
+                metaMem.getLong(TableUtils.META_OFFSET_METADATA_VERSION),
+                metaMem.getInt(TableUtils.META_OFFSET_COUNT)
+        );
+        short savedMetaFormatMinorVersion = Numbers.decodeHighShort(metaFormatMinorVersionField);
+        return savedChecksum == actualChecksum && savedMetaFormatMinorVersion >= minorVersion;
     }
 
     // Utility method for debugging. This method is not used in production.

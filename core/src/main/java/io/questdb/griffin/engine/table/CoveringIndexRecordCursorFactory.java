@@ -25,6 +25,7 @@
 package io.questdb.griffin.engine.table;
 
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.EmptySymbolMapReader;
 import io.questdb.cairo.GeoHashes;
 import io.questdb.cairo.SymbolMapReader;
 import io.questdb.cairo.TableReader;
@@ -52,7 +53,6 @@ import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.griffin.engine.table.parquet.ParquetDecoder;
 import io.questdb.std.BinarySequence;
 import io.questdb.std.Decimal128;
 import io.questdb.std.Decimal256;
@@ -184,7 +184,6 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
                 }
                 SymbolMapReader smr = frameCursor.getTableReader().getSymbolMapReader(indexColumnIndex);
                 multiKeyCursor.multiKeys.clear();
-                boolean hasAnyKey = false;
                 for (int i = 0, n = resolvedKeys.size(); i < n; i++) {
                     int key = resolvedKeys.getQuick(i);
                     if (key == SymbolTable.VALUE_NOT_FOUND && keyValueFuncs != null) {
@@ -193,14 +192,13 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
                     }
                     if (key != SymbolTable.VALUE_NOT_FOUND) {
                         multiKeyCursor.multiKeys.add(key);
-                        hasAnyKey = true;
                     }
                 }
-                if (!hasAnyKey) {
-                    Misc.free(frameCursor);
-                    multiKeyCursor.ofEmpty();
-                    return multiKeyCursor;
-                }
+                // Always wire up the frame cursor and table reader, even when no
+                // keys resolve. Callers wrap us in operators (e.g. ORDER BY on a
+                // SYMBOL column) that probe baseCursor.getSymbolTable() during
+                // init, before any iteration. An empty multiKeys list naturally
+                // makes advanceKey() report no rows.
                 multiKeyCursor.of(frameCursor);
                 multiKeyCursor.latestByFilter = latestByFilter;
                 if (latestByFilter != null) {
@@ -217,11 +215,6 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
                 SymbolMapReader symbolMapReader = frameCursor.getTableReader().getSymbolMapReader(indexColumnIndex);
                 CharSequence symValue = symbolFunction.getStrA(null);
                 resolvedKey = symValue != null ? symbolMapReader.keyOf(symValue) : SymbolTable.VALUE_NOT_FOUND;
-            }
-            if (resolvedKey == SymbolTable.VALUE_NOT_FOUND) {
-                Misc.free(frameCursor);
-                singleKeyCursor.ofEmpty();
-                return singleKeyCursor;
             }
             singleKeyCursor.resolveKey(resolvedKey);
             singleKeyCursor.of(frameCursor);
@@ -269,11 +262,8 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
                         multiKeyPageFrameCursor.multiKeys.add(key);
                     }
                 }
-                if (multiKeyPageFrameCursor.multiKeys.size() == 0) {
-                    Misc.free(frameCursor);
-                    multiKeyPageFrameCursor.ofEmpty();
-                    return multiKeyPageFrameCursor;
-                }
+                // Always wire the frame cursor; callers may probe getSymbolTable()
+                // before iteration. Empty multiKeys list yields no frames.
                 multiKeyPageFrameCursor.of(frameCursor);
                 return multiKeyPageFrameCursor;
             }
@@ -286,11 +276,6 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
                 SymbolMapReader smr = reader.getSymbolMapReader(indexColumnIndex);
                 CharSequence symValue = symbolFunction.getStrA(null);
                 resolvedKey = symValue != null ? smr.keyOf(symValue) : SymbolTable.VALUE_NOT_FOUND;
-            }
-            if (resolvedKey == SymbolTable.VALUE_NOT_FOUND) {
-                Misc.free(frameCursor);
-                singleKeyPageFrameCursor.ofEmpty();
-                return singleKeyPageFrameCursor;
             }
             singleKeyPageFrameCursor.resolvedKey = resolvedKey;
             singleKeyPageFrameCursor.of(frameCursor);
@@ -438,6 +423,9 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
 
         @Override
         public SymbolTable getSymbolTable(int columnIndex) {
+            if (frameCursor == null) {
+                return EmptySymbolMapReader.INSTANCE;
+            }
             return frameCursor.getSymbolTable(columnIndexes.getQuick(columnIndex));
         }
 
@@ -462,6 +450,9 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
 
         @Override
         public SymbolTable newSymbolTable(int columnIndex) {
+            if (frameCursor == null) {
+                return EmptySymbolMapReader.INSTANCE;
+            }
             return frameCursor.newSymbolTable(columnIndexes.getQuick(columnIndex));
         }
 
@@ -567,13 +558,6 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
             }
         }
 
-        void ofEmpty() {
-            this.frameCursor = null;
-            this.tableReader = null;
-            this.currentRowCursor = Misc.free(this.currentRowCursor);
-            this.coveringRecord.of(null);
-        }
-
         abstract void resetIterationState();
 
         boolean tryOpenKey(int partitionIndex, int rawSymbolKey, long rowLo, long rowHi) {
@@ -658,11 +642,6 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
         @Override
         public long getPageSize(int columnIndex) {
             return pageSizes[columnIndex];
-        }
-
-        @Override
-        public ParquetDecoder getParquetDecoder() {
-            return null;
         }
 
         @Override
@@ -973,7 +952,8 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
                             addr + (long) count * Double.BYTES, crc.getCoveredDouble(includeIdx));
                     case ColumnType.FLOAT -> Unsafe.putFloat(
                             addr + (long) count * Float.BYTES, crc.getCoveredFloat(includeIdx));
-                    case ColumnType.LONG, ColumnType.TIMESTAMP, ColumnType.DATE, ColumnType.GEOLONG ->
+                    case ColumnType.LONG, ColumnType.TIMESTAMP, ColumnType.DATE, ColumnType.GEOLONG,
+                         ColumnType.DECIMAL64 ->
                             Unsafe.putLong(addr + (long) count * Long.BYTES, crc.getCoveredLong(includeIdx));
                     case ColumnType.INT, ColumnType.IPv4, ColumnType.GEOINT, ColumnType.SYMBOL ->
                             Unsafe.putInt(addr + (long) count * Integer.BYTES, crc.getCoveredInt(includeIdx));
@@ -981,8 +961,6 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
                             Unsafe.putShort(addr + (long) count * Short.BYTES, crc.getCoveredShort(includeIdx));
                     case ColumnType.BYTE, ColumnType.BOOLEAN, ColumnType.GEOBYTE ->
                             Unsafe.putByte(addr + count, crc.getCoveredByte(includeIdx));
-                    case ColumnType.DECIMAL64 ->
-                            Unsafe.putLong(addr + (long) count * Long.BYTES, crc.getCoveredLong(includeIdx));
                     case ColumnType.DECIMAL32 ->
                             Unsafe.putInt(addr + (long) count * Integer.BYTES, crc.getCoveredInt(includeIdx));
                     case ColumnType.DECIMAL16 ->
@@ -1218,13 +1196,6 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
                 columnMapping.addColumn(columnIndexes.getQuick(i), columnIndexes.getQuick(i), columnIndexes.getQuick(i));
             }
             freeBuffers();
-        }
-
-        void ofEmpty() {
-            this.frameCursor = null;
-            this.tableReader = null;
-            this.isExhausted = true;
-            resetIterationState();
         }
 
         abstract void resetIterationState();
@@ -1677,6 +1648,9 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
 
         @Override
         boolean advanceKey() {
+            if (multiKeys.size() == 0) {
+                return false;
+            }
             if (cachedPartitionIndex >= 0) {
                 currentKeyIdx++;
                 while (currentKeyIdx < multiKeys.size()) {
@@ -1745,6 +1719,10 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
         @Override
         @Nullable
         PageFrame nextImpl() {
+            if (multiKeys.size() == 0) {
+                isExhausted = true;
+                return null;
+            }
             while (true) {
                 while (currentKeyIdx < multiKeys.size()) {
                     if (cachedPartFrame != null) {
@@ -1827,6 +1805,12 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
 
         @Override
         boolean advanceKey() {
+            // Skip iteration entirely when the literal did not resolve to any
+            // known symbol; otherwise we would open every partition's index
+            // reader to read empty cursors.
+            if (symbolKey == SymbolTable.VALUE_NOT_FOUND) {
+                return false;
+            }
             while (true) {
                 PartitionFrame frame = frameCursor.next();
                 if (frame == null) {
@@ -1840,7 +1824,7 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
 
         @Override
         boolean hasNextLatestBy() {
-            if (isLatestByDone) {
+            if (isLatestByDone || symbolKey == SymbolTable.VALUE_NOT_FOUND) {
                 return false;
             }
             if (findLatestRow(symbolKey)) {
@@ -1881,6 +1865,13 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
         @Override
         @Nullable
         PageFrame nextImpl() {
+            // See SingleKeyCoveringCursor.advanceKey(): skip iteration when
+            // the literal did not resolve, instead of scanning every partition
+            // for empty cursors.
+            if (resolvedKey == SymbolTable.VALUE_NOT_FOUND) {
+                isExhausted = true;
+                return null;
+            }
             while (true) {
                 PartitionFrame partFrame = frameCursor.next();
                 if (partFrame == null) {

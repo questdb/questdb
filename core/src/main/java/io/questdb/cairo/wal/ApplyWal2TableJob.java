@@ -362,12 +362,15 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
 
                 tempPath.of(engine.getConfiguration().getDbRoot()).concat(tableToken).slash();
 
+                final long timeLimit = microClock.getTicks() + tableTimeQuotaMicros;
+
                 // Populate transactionMeta with timestamps of future transactions
                 // to avoid O3 commits by pre-calculating safe to commit timestamp for every commit.
-                writer.readWalTxnDetails(transactionLogCursor);
+                // The lookahead pre-read is bounded by timeLimit so a huge backlog cannot
+                // monopolize the apply worker for arbitrarily long before any commit happens.
+                writer.readWalTxnDetails(transactionLogCursor, timeLimit);
                 transactionLogCursor.toTop();
                 isTerminating = runStatus.isTerminating();
-                final long timeLimit = microClock.getTicks() + tableTimeQuotaMicros;
                 boolean firstRun = true;
 
                 try {
@@ -471,7 +474,7 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
                                     // Last few transactions left to process from the list
                                     // of observed transactions built upfront in the beginning of the loop.
                                     // Read more transactions from the sequencer into readWalTxnDetails to continue
-                                    writer.readWalTxnDetails(transactionLogCursor);
+                                    writer.readWalTxnDetails(transactionLogCursor, timeLimit);
                                     transactionLogCursor.setPosition(seqTxn);
                                 }
 
@@ -628,6 +631,10 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
         WalTxnDetails txnDetails = writer.getWalTnxDetails();
         final byte walTxnType = txnDetails.getWalTxnType(seqTxn);
         final long start = microClock.getTicks();
+
+        // Reset per iteration: branches that don't internally reset (skip, no-op SQL, mat view
+        // invalidate, view def, truncate) would otherwise re-read the prior iter's count.
+        writer.resetWalApplyCounters();
 
         switch (walTxnType) {
             case DATA:

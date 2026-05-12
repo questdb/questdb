@@ -316,6 +316,7 @@ public class TableReaderMetadata extends AbstractRecordMetadata implements Table
         TableUtils.buildColumnListFromMetadataFile(mem, columnCount, columnOrderList);
         this.columnNameIndexMap.clear();
 
+        boolean hasParquetEncodingConfig = TableUtils.hasParquetEncodingConfig(mem);
         for (int i = 0, n = columnOrderList.size(); i < n; i += 3) {
             int writerIndex = columnOrderList.get(i);
             if (writerIndex < 0) {
@@ -351,7 +352,7 @@ public class TableReaderMetadata extends AbstractRecordMetadata implements Table
                         TableUtils.getSymbolCapacity(mem, writerIndex),
                         origWriterIndex
                 );
-                colMeta.setParquetEncodingConfig(TableUtils.getParquetEncodingConfig(mem, writerIndex));
+                colMeta.setParquetEncodingConfig(hasParquetEncodingConfig ? TableUtils.getParquetEncodingConfig(mem, writerIndex) : 0);
                 columnMetadata.add(colMeta);
                 int denseIndex = columnMetadata.size() - 1;
                 if (!columnNameIndexMap.put(colName, denseIndex)) {

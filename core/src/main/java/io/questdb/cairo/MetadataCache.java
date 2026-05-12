@@ -215,6 +215,7 @@ public class MetadataCache implements QuietCloseable {
 
             TableUtils.buildColumnListFromMetadataFile(metaMem, columnCount, table.columnOrderList);
             boolean isMetaFormatUpToDate = TableUtils.isMetaFormatUpToDate(metaMem);
+            boolean hasParquetEncodingConfig = TableUtils.hasParquetEncodingConfig(metaMem);
             // populate columns
             for (int i = 0, n = table.columnOrderList.size(); i < n; i += 3) {
                 int writerIndex = table.columnOrderList.get(i);
@@ -246,7 +247,9 @@ public class MetadataCache implements QuietCloseable {
                 column.setIndexBlockCapacity(TableUtils.getIndexBlockCapacity(metaMem, writerIndex));
                 column.setSymbolTableStaticFlag(true);
                 column.setDedupKeyFlag(TableUtils.isColumnDedupKey(metaMem, writerIndex));
-                column.setParquetEncodingConfig(TableUtils.getParquetEncodingConfig(metaMem, writerIndex));
+                // Pre-9.3.4 _meta files can carry non-zero bytes at column-entry offset 20 from
+                // older layouts (e.g. Mig608 wrote a random column hash at 20-27); read 0 there.
+                column.setParquetEncodingConfig(hasParquetEncodingConfig ? TableUtils.getParquetEncodingConfig(metaMem, writerIndex) : 0);
                 column.setWriterIndex(writerIndex);
 
                 boolean isDesignated = writerIndex == timestampWriterIndex;

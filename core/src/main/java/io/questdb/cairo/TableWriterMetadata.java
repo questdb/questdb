@@ -161,6 +161,7 @@ public class TableWriterMetadata extends AbstractRecordMetadata implements Table
         long offset = TableUtils.getColumnNameOffset(columnCount);
         this.symbolMapCount = 0;
         columnNameIndexMap.clear();
+        boolean hasParquetEncodingConfig = TableUtils.hasParquetEncodingConfig(metaMem);
         // don't create strings in this loop, we already have them in columnNameIndexMap
         for (int i = 0; i < columnCount; i++) {
             CharSequence name = metaMem.getStrA(offset);
@@ -190,7 +191,7 @@ public class TableWriterMetadata extends AbstractRecordMetadata implements Table
                     TableUtils.isSymbolCached(metaMem, i),
                     origWriterIndex
             );
-            colMeta.setParquetEncodingConfig(TableUtils.getParquetEncodingConfig(metaMem, i));
+            colMeta.setParquetEncodingConfig(hasParquetEncodingConfig ? TableUtils.getParquetEncodingConfig(metaMem, i) : 0);
             columnMetadata.add(colMeta);
             if (type > -1) {
                 columnNameIndexMap.put(nameStr, i);
