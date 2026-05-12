@@ -2199,7 +2199,7 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
                 dstFixFd = openRW(ff, dFile(pathToNewPartition.trimTo(pNewLen), columnName, columnNameTxn), LOG, tableWriter.getConfiguration().getWriterFileOpenOpts());
                 dstFixSize = (srcOooHi - srcOooLo + 1) << ColumnType.pow2SizeOf(Math.abs(columnType));
                 dstFixAddr = mapRW(ff, dstFixFd, dstFixSize, MemoryTag.MMAP_O3);
-                if (indexBlockCapacity > -1) {
+                if (indexBlockCapacity > -1 && !indexWriter.isOpen()) {
                     byte indexType = indexWriter.getIndexType();
                     if (IndexType.isPosting(indexType)) {
                         indexWriter.setO3PathContext(
@@ -2572,7 +2572,7 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
                 suffixLo -= srcDataTop;
             }
 
-            if (indexBlockCapacity > -1) {
+            if (indexBlockCapacity > -1 && !indexWriter.isOpen()) {
                 byte indexType = indexWriter.getIndexType();
                 if (IndexType.isPosting(indexType)) {
                     indexWriter.setO3PathContext(

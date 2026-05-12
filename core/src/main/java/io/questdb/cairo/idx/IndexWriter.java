@@ -229,7 +229,7 @@ public interface IndexWriter extends Closeable, Mutable {
      * preopen. Default is no-op; index types that don't override stick to
      * fd-based {@link #of(CairoConfiguration, long, long, boolean, int)}.
      */
-    default void openFromO3Context(boolean init) {
+    default void openFromO3Context(boolean isInit) {
     }
 
     default void publishPendingPurges(

@@ -812,14 +812,14 @@ public class O3CopyJob extends AbstractQueueConsumerJob<O3CopyTask> {
         try {
             long row = dstIndexOffset / Integer.BYTES;
             boolean closed = !indexWriter.isOpen();
-            if (closed) {
-                if (IndexType.isPosting(indexWriter.getIndexType())) {
-                    indexWriter.openFromO3Context(row == 0);
-                } else {
-                    indexWriter.of(tableWriter.getConfiguration(), dstKFd, dstVFd, row == 0, indexBlockCapacity);
-                }
-            }
             try {
+                if (closed) {
+                    if (IndexType.isPosting(indexWriter.getIndexType())) {
+                        indexWriter.openFromO3Context(row == 0);
+                    } else {
+                        indexWriter.of(tableWriter.getConfiguration(), dstKFd, dstVFd, row == 0, indexBlockCapacity);
+                    }
+                }
                 updateIndex(dstFixAddr, Math.abs(dstFixSize), indexWriter, dstIndexOffset / Integer.BYTES, dstIndexAdjust);
                 indexWriter.commit();
             } finally {

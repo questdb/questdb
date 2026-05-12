@@ -11364,12 +11364,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                             } finally {
                                 ff.close(dataFd);
                             }
-                            // Flush pending into gen 0 so rebuildSidecars (and seal in
-                            // the non-covering branch) sees a non-empty chain. add()
-                            // populated pending; commit() runs flushAllPending which
-                            // converts pending into a fresh gen and republishes the
-                            // chain head via extendHead at the same sealTxn.
-                            indexer.getWriter().commit();
+                            indexer.getWriter().commitDense();
                         }
                         // Pass the writer-space timestamp index so the
                         // O3 reseal preserves the linear-prediction

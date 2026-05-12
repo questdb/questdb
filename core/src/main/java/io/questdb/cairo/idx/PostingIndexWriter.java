@@ -848,7 +848,7 @@ public class PostingIndexWriter implements IndexWriter {
         of(path, name, columnNameTxn, false);
     }
 
-    public void of(Path path, CharSequence name, long columnNameTxn, boolean init) {
+    public void of(Path path, CharSequence name, long columnNameTxn, boolean isInit) {
         // close() releases resources but does NOT flush pending add() calls,
         // so the caller must have already committed or sealed. On the
         // TableWriter path this is guaranteed by commit() in switchPartition
@@ -866,7 +866,7 @@ public class PostingIndexWriter implements IndexWriter {
         try {
             LPSZ keyFile = PostingIndexUtils.keyFileName(path, name, columnNameTxn);
 
-            if (init) {
+            if (isInit) {
                 keyMem.of(ff, keyFile, configuration.getDataIndexKeyAppendPageSize(), 0L, MemoryTag.MMAP_INDEX_WRITER);
                 this.blockCapacity = BLOCK_CAPACITY;
                 initKeyMemory(keyMem);
@@ -889,7 +889,7 @@ public class PostingIndexWriter implements IndexWriter {
             }
             kFdUnassigned = false;
 
-            if (init) {
+            if (isInit) {
                 chain.resetState();
                 this.maxValue = -1L;
                 this.keyCount = 0;
@@ -920,11 +920,11 @@ public class PostingIndexWriter implements IndexWriter {
                     ff,
                     PostingIndexUtils.valueFileName(path.trimTo(plen), name, postingColumnNameTxn, this.sealTxn),
                     configuration.getDataIndexValueAppendPageSize(),
-                    init ? 0 : valueMemSize,
+                    isInit ? 0 : valueMemSize,
                     MemoryTag.MMAP_INDEX_WRITER
             );
 
-            if (!init && valueMemSize > 0) {
+            if (!isInit && valueMemSize > 0) {
                 valueMem.jumpTo(valueMemSize);
             }
 
@@ -941,13 +941,15 @@ public class PostingIndexWriter implements IndexWriter {
     }
 
     @Override
-    public void openFromO3Context(boolean init) {
+    public void openFromO3Context(boolean isInit) {
         assert o3CtxPartitionPath.size() > 0 && !o3CtxName.isEmpty()
                 : "setO3PathContext must be called before openFromO3Context";
         Path p = Path.getThreadLocal(o3CtxPartitionPath);
-        of(p, o3CtxName, o3CtxColumnNameTxn, init);
-        if (o3CtxUpcomingTxn >= 0) {
-            setNextTxnAtSeal(o3CtxUpcomingTxn);
+        // of() internally calls close(), which resets o3CtxUpcomingTxn to -1.
+        long upcomingTxn = o3CtxUpcomingTxn;
+        of(p, o3CtxName, o3CtxColumnNameTxn, isInit);
+        if (upcomingTxn >= 0) {
+            setNextTxnAtSeal(upcomingTxn);
         }
     }
 
@@ -1038,36 +1040,128 @@ public class PostingIndexWriter implements IndexWriter {
         if (coverCount <= 0 || genCount == 0 || keyCount == 0) {
             return;
         }
-        // Open new sidecar files at a fresh sealTxn so the previous-sealTxn
-        // files on disk are never overwritten. The same sealTxn is reused for
-        // both the .pv and every .pc<N> the seal produces.
         if (sidecarMems.size() > 0) {
             closeSidecarMems();
         }
         long gen0DirOffset = PostingIndexChainEntry.resolveGenDirOffset(chain.getHeadEntryOffset(), 0);
         int gen0KeyCount = keyMem.getInt(gen0DirOffset + PostingIndexUtils.GEN_DIR_OFFSET_KEY_COUNT);
-        if (gen0KeyCount >= 0) {
-            // Already dense — just rewrite sidecars at a new sealTxn.
-            // peekNextSealTxn(), not sealTxn+1: after a recovery drop the
-            // writer's sealTxn lags genCounter, and reusing a dropped
-            // sealTxn would race the still-pending .pv purge.
+
+        if (gen0KeyCount >= 0 && genCount == 1 && partitionPath.size() > 0) {
+            // peekNextSealTxn(), not sealTxn+1: after a recovery drop the writer's
+            // sealTxn lags genCounter, and reusing a dropped sealTxn would race
+            // the still-pending .pv purge.
             final long oldSealTxn = sealTxn;
             final long newSealTxn = Math.max(1, chain.peekNextSealTxn());
-            if (partitionPath.size() > 0) {
-                openSidecarFiles(Path.getThreadLocal(partitionPath), indexName, postingColumnNameTxn, newSealTxn);
-            }
             try {
-                sealFull(newSealTxn);
+                rebuildSidecarsByCopy(newSealTxn);
             } finally {
                 if (sealTxn != oldSealTxn) {
                     recordPostingSealPurge(oldSealTxn);
                 }
             }
         } else {
-            // Sparse — full seal() handles its own sealTxn allocation and
-            // sidecar opening at newSealTxn.
             seal();
         }
+    }
+
+    private void rebuildSidecarsByCopy(long newSealTxn) {
+        openSealValueFile(newSealTxn);
+        long srcFd = valueMem.getFd();
+        long dstFd = sealValueMem.getFd();
+        long copied = ff.copyData(srcFd, dstFd, 0, valueMemSize);
+        if (copied != valueMemSize) {
+            throw CairoException.critical(ff.errno())
+                    .put("incomplete .pv copy [expected=").put(valueMemSize)
+                    .put(", actual=").put(copied)
+                    .put(']');
+        }
+        sealValueMem.jumpTo(valueMemSize);
+
+        openSidecarFiles(Path.getThreadLocal(partitionPath), indexName, postingColumnNameTxn, newSealTxn);
+        switchToSealedValueFile(newSealTxn);
+
+        long totalCountsSize = (long) keyCount * Integer.BYTES;
+        long totalCountsAddr = Unsafe.malloc(totalCountsSize, MemoryTag.NATIVE_INDEX_READER);
+        long strideValsAddr = 0;
+        long strideValsBytes = 0;
+        try {
+            Unsafe.setMemory(totalCountsAddr, totalCountsSize, (byte) 0);
+            int maxStrideTotal = accumulateDenseGen0Counts(totalCountsAddr);
+            strideValsBytes = Math.max(1L, (long) maxStrideTotal * Long.BYTES);
+            strideValsAddr = Unsafe.malloc(strideValsBytes, MemoryTag.NATIVE_INDEX_READER);
+            writeSidecarsPerColumn(totalCountsAddr, strideValsAddr);
+        } finally {
+            if (strideValsAddr != 0) {
+                Unsafe.free(strideValsAddr, strideValsBytes, MemoryTag.NATIVE_INDEX_READER);
+            }
+            Unsafe.free(totalCountsAddr, totalCountsSize, MemoryTag.NATIVE_INDEX_READER);
+        }
+
+        for (int c = 0, n = sidecarMems.size(); c < n; c++) {
+            MemoryMARW mem = sidecarMems.getQuick(c);
+            if (mem != null && mem.isOpen()) {
+                mem.sync(false);
+            }
+        }
+        if (sidecarInfoMem != null && sidecarInfoMem.isOpen()) {
+            sidecarInfoMem.sync(false);
+        }
+
+        Unsafe.storeFence();
+        this.genCount = 1;
+        publishToChain(
+                /* newGenCount */ 1,
+                /* overrideGenIndex */ 0,
+                /* overrideFileOffset */ 0,
+                /* overrideSize */ valueMemSize,
+                /* overrideKeyCount */ keyCount,
+                /* overrideMinKey */ 0,
+                /* overrideMaxKey */ keyCount - 1
+        );
+        if (keyMem.isOpen()) {
+            keyMem.sync(false);
+        }
+    }
+
+    private int accumulateDenseGen0Counts(long totalCountsAddr) {
+        long dirOffset = PostingIndexChainEntry.resolveGenDirOffset(chain.getHeadEntryOffset(), 0);
+        long genFileOffset = keyMem.getLong(dirOffset + GEN_DIR_OFFSET_FILE_OFFSET);
+        int genKeyCount = keyMem.getInt(dirOffset + PostingIndexUtils.GEN_DIR_OFFSET_KEY_COUNT);
+        long keyIdsBase = valueMem.addressOf(genFileOffset);
+        int sc = PostingIndexUtils.strideCount(genKeyCount);
+        int siSize = PostingIndexUtils.strideIndexSize(genKeyCount);
+        int maxStrideTotal = 0;
+        for (int s = 0; s < sc; s++) {
+            long strideOff = Unsafe.getLong(keyIdsBase + (long) s * Long.BYTES);
+            long nextStrideOff = Unsafe.getLong(keyIdsBase + (long) (s + 1) * Long.BYTES);
+            if (nextStrideOff == strideOff) continue;
+            long strideAddr = keyIdsBase + siSize + strideOff;
+            int ks = PostingIndexUtils.keysInStride(genKeyCount, s);
+            byte mode = Unsafe.getByte(strideAddr);
+            int strideTotal = 0;
+            if (mode == PostingIndexUtils.STRIDE_MODE_FLAT) {
+                long prefixAddr = strideAddr + PostingIndexUtils.STRIDE_FLAT_PREFIX_COUNTS_OFFSET;
+                for (int j = 0; j < ks; j++) {
+                    int key = s * PostingIndexUtils.DENSE_STRIDE + j;
+                    int count = Unsafe.getInt(prefixAddr + (long) (j + 1) * Integer.BYTES)
+                            - Unsafe.getInt(prefixAddr + (long) j * Integer.BYTES);
+                    Unsafe.putInt(totalCountsAddr + (long) key * Integer.BYTES, count);
+                    strideTotal += count;
+                }
+            } else {
+                long countsAddr = strideAddr + PostingIndexUtils.STRIDE_MODE_PREFIX_SIZE;
+                for (int j = 0; j < ks; j++) {
+                    int key = s * PostingIndexUtils.DENSE_STRIDE + j;
+                    int count = Unsafe.getInt(countsAddr + (long) j * Integer.BYTES);
+                    Unsafe.putInt(totalCountsAddr + (long) key * Integer.BYTES, count);
+                    strideTotal += count;
+                }
+            }
+            if (strideTotal > maxStrideTotal) {
+                maxStrideTotal = strideTotal;
+            }
+        }
+        return maxStrideTotal;
     }
 
     /**
@@ -2343,7 +2437,8 @@ public class PostingIndexWriter implements IndexWriter {
      * The valueMem and sealValueMem mappings do not count: their RSS
      * footprint is paged in/out by the OS, bounded by working set rather
      * than file size. Same for keyMem and the sidecar mmaps. Anonymous-
-     * heap mallocs do count -- those are what gates.
+     * heap mallocs do count -- those are what {@link Unsafe#checkAllocLimit}
+     * gates.
      */
     private long estimateFastPathPeakBytes(int maxStrideTotal, int maxKeyCount, long maxStrideTrialSize, long maxColValueSize) {
         long peak = 2L * maxStrideTotal * Long.BYTES;                  // strideVals + packedResiduals
@@ -2793,11 +2888,8 @@ public class PostingIndexWriter implements IndexWriter {
 
                     long trialBufNeeded = computeStrideTrialBufSize(ks, keyCounts);
                     if (trialBufNeeded > bpTrialBufSize) {
-                        if (bpTrialBuf != 0) {
-                            Unsafe.free(bpTrialBuf, bpTrialBufSize, MemoryTag.NATIVE_INDEX_READER);
-                        }
+                        bpTrialBuf = Unsafe.realloc(bpTrialBuf, bpTrialBufSize, trialBufNeeded, MemoryTag.NATIVE_INDEX_READER);
                         bpTrialBufSize = trialBufNeeded;
-                        bpTrialBuf = Unsafe.malloc(bpTrialBufSize, MemoryTag.NATIVE_INDEX_READER);
                     }
 
                     long strideOff = valueMem.getAppendOffset() - genOffset - siSize;
@@ -4465,11 +4557,8 @@ public class PostingIndexWriter implements IndexWriter {
 
                 long trialBufNeeded = computeStrideTrialBufSize(ks, keyCounts);
                 if (trialBufNeeded > bpTrialBufSize) {
-                    if (bpTrialBuf != 0) {
-                        Unsafe.free(bpTrialBuf, bpTrialBufSize, MemoryTag.NATIVE_INDEX_READER);
-                    }
+                    bpTrialBuf = Unsafe.realloc(bpTrialBuf, bpTrialBufSize, trialBufNeeded, MemoryTag.NATIVE_INDEX_READER);
                     bpTrialBufSize = trialBufNeeded;
-                    bpTrialBuf = Unsafe.malloc(bpTrialBufSize, MemoryTag.NATIVE_INDEX_READER);
                 }
 
                 long strideOff = sealTarget.getAppendOffset() - sealOffset - siSize;

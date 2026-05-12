@@ -421,6 +421,48 @@ public class PostingIndexCriticalIssuesTest extends AbstractCairoTest {
                     int gen0KeyCount = mem.getInt(gen0DirOffset + PostingIndexUtils.GEN_DIR_OFFSET_KEY_COUNT);
                     Assert.assertTrue("gen 0 must be dense (positive KEY_COUNT), got " + gen0KeyCount,
                             gen0KeyCount > 0);
+                    Assert.assertEquals("commitDense must not rotate sealTxn", 0, head.sealTxn);
+                    LPSZ pvRotated = PostingIndexUtils.valueFileName(
+                            path.trimTo(plen), "sym", COLUMN_NAME_TXN_NONE, 1);
+                    Assert.assertFalse("rotated .pv.1 must not exist after commitDense, path=" + pvRotated,
+                            rawFf.exists(pvRotated));
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testOpenFromO3ContextPropagatesUpcomingTxn() throws Exception {
+        assertMemoryLeak(() -> {
+            final String name = "posting_o3_upcoming_txn";
+            final long upcomingTxn = 42L;
+            try (Path path = new Path().of(configuration.getDbRoot())) {
+                final int plen = path.size();
+                try (PostingIndexWriter writer = new PostingIndexWriter(configuration)) {
+                    writer.setO3PathContext(path.trimTo(plen), name, COLUMN_NAME_TXN_NONE, upcomingTxn);
+                    writer.openFromO3Context(/* isInit */ true);
+                    writer.add(0, 0);
+                    writer.add(1, 1);
+                    writer.setMaxValue(1);
+                    writer.commit();
+                }
+                FilesFacade rawFf = configuration.getFilesFacade();
+                LPSZ keyFile = PostingIndexUtils.keyFileName(
+                        path.trimTo(plen), name, COLUMN_NAME_TXN_NONE);
+                long fileSize = rawFf.length(keyFile);
+                try (MemoryCMARWImpl mem = new MemoryCMARWImpl(
+                        rawFf, keyFile, rawFf.getPageSize(), fileSize,
+                        MemoryTag.MMAP_DEFAULT, /* opts */ 0)) {
+                    PostingIndexChainWriter chain = new PostingIndexChainWriter();
+                    chain.openExisting(mem);
+                    Assert.assertTrue("chain must have head", chain.hasHead());
+                    PostingIndexChainEntry.Snapshot head = new PostingIndexChainEntry.Snapshot();
+                    chain.loadHeadEntry(mem, head);
+                    Assert.assertEquals(
+                            "openFromO3Context must propagate o3CtxUpcomingTxn into the published chain entry",
+                            upcomingTxn,
+                            head.txnAtSeal
+                    );
                 }
             }
         });
