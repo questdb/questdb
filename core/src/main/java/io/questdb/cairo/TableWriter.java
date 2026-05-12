@@ -6421,6 +6421,16 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         }
     }
 
+    private boolean hasPostingIndex() {
+        for (int i = 0; i < columnCount; i++) {
+            if (metadata.getColumnType(i) > 0 && metadata.isColumnIndexed(i)
+                    && IndexType.isPosting(metadata.getColumnIndexType(i))) {
+                return true;
+            }
+        }
+        return false;
+    }
+
     /**
      * House keeps table after commit. The tricky bit is to run this housekeeping on each commit. Commit() itself
      * has a contract that if exception is thrown, the data is not committed. However, if this housekeeping fails,
@@ -11290,6 +11300,12 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
      * @return true if at least one column indexer was touched.
      */
     private boolean sealPostingIndexForPartition(long partitionTimestamp, boolean canSkipRebuild) {
+        // Tables without any POSTING index incur per-call filesystem and
+        // metadata work below, including a stat(2). Bail out before any of
+        // that when no POSTING index column exists.
+        if (!hasPostingIndex()) {
+            return false;
+        }
         // Range-replace can fully drop a partition during this commit; the
         // sink block still references the defunct partition, but there is
         // nothing left to index.
@@ -11511,15 +11527,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         if (o3PartitionUpdateSink == null) {
             return;
         }
-        boolean hasPostingIndex = false;
-        for (int i = 0; i < columnCount; i++) {
-            if (metadata.getColumnType(i) > 0 && metadata.isColumnIndexed(i)
-                    && IndexType.isPosting(metadata.getColumnIndexType(i))) {
-                hasPostingIndex = true;
-                break;
-            }
-        }
-        if (!hasPostingIndex) {
+        if (!hasPostingIndex()) {
             return;
         }
 
@@ -11896,15 +11904,15 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             openLastPartition();
         }
 
-        // The squash grew the target partition via FrameAlgebra.append, which uses
-        // its own short-lived IndexWriter to append entries during the data copy.
-        // For POSTING indexes that is not enough: the writer publishes a chain
-        // entry tagged with its own internal sealTxn (not the table txn), and any
-        // column whose .d data exists in the target partition but whose column
-        // top was set above the new combined row count (e.g. a column added after
-        // the latest pre-squash seal) is still resolved via the pre-squash chain
-        // head -- which has no entries for the newly-merged rows. Reseal the
-        // target partition's POSTING indexes from .d so the published chain head
+        // The squash grew the target partition's .d files via FrameAlgebra.append,
+        // which uses its own short-lived IndexWriter to append POSTING entries
+        // during the data copy. That writer leaves a chain head tagged with its
+        // own internal sealTxn rather than the table txn, so for any indexed
+        // column whose columnTop sits below the post-squash row count -- i.e.
+        // the column has .d data covering some prefix of the merged-in rows --
+        // readers still resolve through the pre-squash chain head, which has
+        // no entries for the rows squash merged in. Reseal the target
+        // partition's POSTING indexes from .d so the published chain head
         // covers the full post-squash row range with a txn tag consistent with
         // the upcoming txWriter.commit() below. After seal, point the table's
         // indexers back at the active partition so the next append uses the
