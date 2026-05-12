@@ -1,4 +1,4 @@
-w# DelayHeap (replacement for `java.util.concurrent.DelayQueue`)
+# DelayHeap (replacement for `java.util.concurrent.DelayQueue`)
 
 Why `TimerShards` uses `io.questdb.mp.continuation.DelayHeap` instead of
 `java.util.concurrent.DelayQueue`. Read this if you are touching `DelayHeap`,
