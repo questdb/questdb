@@ -96,21 +96,16 @@ public abstract class AbstractTableNameRegistry implements TableNameRegistry {
     @Override
     public boolean isTableDropped(TableToken tableToken) {
         if (tableToken.isWal()) {
-            // Strict ofDropped marker. TableConverter relies on this exact
-            // semantic to distinguish convert-midway from truly-dropped.
-            if (isWalTableDropped(tableToken.getDirName())) {
-                return true;
+            ReverseTableMapItem rmi = dirNameToTableTokenMap.get(tableToken.getDirName());
+            if (rmi != null) {
+                if (rmi.isDropped()) {
+                    return true;
+                }
+                return tableNameToTableTokenMap.get(tableToken.getTableName()) == LOCKED_DROP_TOKEN;
             }
-            // current can be:
-            //   LOCKED_TOKEN      -> concurrent create on the same name, not dropped
-            //   LOCKED_DROP_TOKEN -> dropTable() mid-flight on this token
-            //   null              -> purgeToken swept the reverse-map entry
-            //   different token   -> same name recreated under a new tableId
-            TableToken current = tableNameToTableTokenMap.get(tableToken.getTableName());
-            return current != LOCKED_TOKEN && current != tableToken;
+            return tableNameToTableTokenMap.get(tableToken.getTableName()) != LOCKED_TOKEN;
         }
-        TableToken currentTableToken = tableNameToTableTokenMap.get(tableToken.getTableName());
-        return currentTableToken == LOCKED_DROP_TOKEN;
+        return tableNameToTableTokenMap.get(tableToken.getTableName()) == LOCKED_DROP_TOKEN;
     }
 
     @Override
