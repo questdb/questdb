@@ -337,6 +337,20 @@ A segment file consists of a 24-byte header followed by zero or more
 frames. The file is pre-allocated at create time to its full size
 (`sf_max_bytes`); the tail is zero-filled until written.
 
+**Pre-allocation semantics.** The reference implementation reserves real
+disk blocks at create time via `posix_fallocate` on Linux and
+`F_PREALLOCATE`/`F_ALLOCATEALL` on macOS, so ENOSPC surfaces as a clean
+create-time failure (the partial file is unlinked and the caller falls
+back to backpressure). Setting only the logical size via `ftruncate` is
+NOT sufficient: the resulting file is sparse and a later store into the
+mmap'd region will deliver a `SIGBUS` that tears down the process. On
+filesystems whose underlying reservation call is unsupported and the
+native layer falls back to `ftruncate`, this SIGBUS risk re-emerges for
+that filesystem only — operators running on such filesystems should
+size `sf_max_bytes` conservatively against free space. Clients that
+implement their own segment files MUST treat block reservation as a
+core invariant of the create path.
+
 ### 6.1 Header (24 bytes, fixed)
 
 ```
