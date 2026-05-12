@@ -1242,7 +1242,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         return null;
     }
 
-private static int getOrderByDirectionOrDefault(IQueryModel model, int index) {
+    private static int getOrderByDirectionOrDefault(IQueryModel model, int index) {
         final IntList direction = model.getOrderByDirectionAdvice();
         return index >= direction.size() ? IQueryModel.ORDER_DIRECTION_ASCENDING : direction.getQuick(index);
     }
