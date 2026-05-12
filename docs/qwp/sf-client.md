@@ -172,7 +172,6 @@ spec — and treat them with the precedence rules in §14.
 | `init_buf_size` | size | `64K` | Initial encode buffer capacity. |
 | `max_buf_size` | size | `100M` | Max encode buffer capacity. |
 | `max_name_len` | int | `127` | Local validation cap for table/column names. |
-| `in_flight_window` | int (>1) | `128` | Max concurrent unacked batches. |
 | `max_schemas_per_connection` | int | `65535` | Per-connection schema-id ceiling. |
 
 ### 4.6 Validation
