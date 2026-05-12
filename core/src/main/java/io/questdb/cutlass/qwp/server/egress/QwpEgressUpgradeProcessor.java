@@ -252,6 +252,12 @@ public class QwpEgressUpgradeProcessor implements HttpRequestProcessor, QuietClo
     @Override
     public void onConnectionClosed(HttpConnectionContext context) {
         LOG.info().$("Egress WebSocket connection closed [fd=").$(context.getFd()).I$();
+        try {
+            engine.getQwpEgressExtension().onConnectionClosed(context);
+        } catch (Throwable t) {
+            LOG.error().$("Egress extension onConnectionClosed failed [fd=").$(context.getFd())
+                    .$(", error=").$(t).I$();
+        }
         QwpEgressProcessorState state = LV.get(context);
         if (state == null) {
             return;
@@ -437,6 +443,19 @@ public class QwpEgressUpgradeProcessor implements HttpRequestProcessor, QuietClo
                 throw ServerDisconnectException.INSTANCE;
             }
             if (read == 0) {
+                // No inbound bytes. Default behaviour is to throw PSW so
+                // the dispatcher re-arms READ for the next inbound frame.
+                // But if the extension has queued outbound work that was
+                // stranded by the dispatcher's last-arm-wins race in the
+                // interest queue (a publisher's WRITE register lost to a
+                // subsequent READ register), throw PISR instead so the
+                // dispatcher arms WRITE for the next round. The actual
+                // drain stays on the WRITE-event path; we just need ONE
+                // dispatched event in the right direction to break the
+                // READ-only loop the connection is otherwise stuck in.
+                if (engine.getQwpEgressExtension().hasPendingOutboundWork(context)) {
+                    throw PeerIsSlowToReadException.INSTANCE;
+                }
                 throw PeerIsSlowToWriteException.INSTANCE;
             }
 
@@ -492,10 +511,13 @@ public class QwpEgressUpgradeProcessor implements HttpRequestProcessor, QuietClo
         }
 
         if (state == null || !state.isStreamingActive()) {
-            // Nothing to drive -- the deferred flush above was the last thing
-            // this connection had queued: either a QUERY_ERROR after endStreaming,
-            // or the RESULT_END frame (streamResults calls endStreaming before the
-            // final send, so a parked RESULT_END leaves streaming inactive).
+            // Nothing locally to drive -- the deferred flush above was the last
+            // thing this connection had queued: either a QUERY_ERROR after
+            // endStreaming, or the RESULT_END frame (streamResults calls
+            // endStreaming before the final send, so a parked RESULT_END leaves
+            // streaming inactive). The extension may still have outbound
+            // work; let it drive.
+            driveExtensionResumeSend(context, state);
             return;
         }
 
@@ -533,6 +555,24 @@ public class QwpEgressUpgradeProcessor implements HttpRequestProcessor, QuietClo
                 throw sendFail;
             } catch (Throwable ignored) {
             }
+        }
+
+        // Once query streaming has settled (cleanly, parked, or torn
+        // down), let the extension drive its own pending writes. Wrapped
+        // separately so an extension-side failure does not retroactively
+        // trip the query teardown path above.
+        driveExtensionResumeSend(context, state);
+    }
+
+    private void driveExtensionResumeSend(HttpConnectionContext context, QwpEgressProcessorState state)
+            throws PeerDisconnectedException, PeerIsSlowToReadException, ServerDisconnectException {
+        try {
+            engine.getQwpEgressExtension().resumeSend(context, state);
+        } catch (PeerDisconnectedException | PeerIsSlowToReadException | ServerDisconnectException e) {
+            throw e;
+        } catch (Throwable t) {
+            LOG.error().$("Egress extension resumeSend failed [fd=").$(context.getFd())
+                    .$(", error=").$(t).I$();
         }
     }
 
@@ -676,6 +716,9 @@ public class QwpEgressUpgradeProcessor implements HttpRequestProcessor, QuietClo
             case QwpEgressMsgKind.CANCEL -> handleCancel(context, state, payload, length);
             case QwpEgressMsgKind.CREDIT -> handleCredit(context, state, payload, length);
             default -> {
+                if (engine.getQwpEgressExtension().handleMessage(context, state, msgKind, payload, length)) {
+                    return;
+                }
                 LOG.error().$("Egress unknown msg_kind [fd=").$(context.getFd())
                         .$(", kind=0x").$(Integer.toHexString(msgKind & 0xFF)).I$();
                 throw ServerDisconnectException.INSTANCE;
@@ -1200,6 +1243,15 @@ public class QwpEgressUpgradeProcessor implements HttpRequestProcessor, QuietClo
         // connection drains. Applying the reset first keeps server and client
         // views aligned even on the parked-send path.
         state.applyCacheReset(resetMask);
+        // Notify the extension before the frame goes on the wire so any
+        // extension-side termination it triggers ships AFTER the CACHE_RESET
+        // (the resumeSend pump emits termination frames on the next pass).
+        try {
+            engine.getQwpEgressExtension().onCacheReset(context, state, resetMask);
+        } catch (Throwable t) {
+            LOG.error().$("Egress extension onCacheReset failed [fd=").$(context.getFd())
+                    .$(", error=").$(t).I$();
+        }
         if ((resetMask & QwpEgressMsgKind.RESET_MASK_DICT) != 0) {
             metrics.markCacheResetDict();
         }

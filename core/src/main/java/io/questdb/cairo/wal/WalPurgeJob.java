@@ -79,6 +79,8 @@ public class WalPurgeJob extends SynchronizedJob implements Closeable {
     private final WalLocker walLocker;
     private final DirectUtf8StringZ walName = new DirectUtf8StringZ();
     private long last = 0;
+    private int pinnedSegmentsAcrossSweep;
+    private int pinnedTablesAcrossSweep;
     private TableToken tableToken;
 
     public WalPurgeJob(CairoEngine engine, FilesFacade ff, Clock clock) {
@@ -172,7 +174,17 @@ public class WalPurgeJob extends SynchronizedJob implements Closeable {
      * By locking first, we ensure the sequencer returns a consistent "safe to delete" view.
      */
     private void broadSweep() {
+        pinnedSegmentsAcrossSweep = 0;
+        pinnedTablesAcrossSweep = 0;
         engine.getTableSequencerAPI().forAllWalTables(tableTokenBucket, true, broadSweepRef);
+        if (pinnedSegmentsAcrossSweep > 0) {
+            // Aggregate operator signal that a SegmentPurgeBlocker is
+            // holding segments back. One INFO line per sweep regardless of
+            // table count - drill down via DEBUG (per-segment lines in
+            // {@link Logic#run}) when investigating a specific incident.
+            LOG.info().$("WAL purge held back by SegmentPurgeBlocker [tables=").$(pinnedTablesAcrossSweep)
+                    .$(", pinnedSegments=").$(pinnedSegmentsAcrossSweep).I$();
+        }
     }
 
     private void broadSweep(int tableId, final TableToken tableToken, long lastTxn) {
@@ -204,6 +216,11 @@ public class WalPurgeJob extends SynchronizedJob implements Closeable {
                 // Note that this also handles cases where a wal directory was created shortly before a crash and thus
                 // never recorded and tracked by the sequencer for that table.
                 logic.run();
+                int pinnedHere = logic.getPinnedSegmentsThisCycle();
+                if (pinnedHere > 0) {
+                    pinnedSegmentsAcrossSweep += pinnedHere;
+                    pinnedTablesAcrossSweep++;
+                }
             }
 
             if (tableDropped || (lastTxn < 0 && engine.isTableDropped(tableToken))) {
@@ -576,6 +593,16 @@ public class WalPurgeJob extends SynchronizedJob implements Closeable {
 
         void deleteWalDirectory(int walId);
 
+        /**
+         * Consulted before the per-segment delete in {@link Logic#run()}.
+         * Returning {@code true} preserves the segment for the current cycle.
+         * Default returns {@code false} so the pre-SPI purge behaviour
+         * is unchanged when no blocker has been registered.
+         */
+        default boolean isSegmentInUse(int walId, int segmentId) {
+            return false;
+        }
+
         default boolean isSeqPartInUse(long seqPart) {
             return false;
         }
@@ -593,6 +620,7 @@ public class WalPurgeJob extends SynchronizedJob implements Closeable {
         private long backupLockedPart;
         private long currentSeqPart;
         private boolean logged;
+        private int pinnedSegmentsThisCycle;
         private TableToken tableToken;
 
         public Logic(Deleter deleter, int waitBeforeDelete) {
@@ -631,6 +659,7 @@ public class WalPurgeJob extends SynchronizedJob implements Closeable {
             backupLockedPart = -1;
             currentSeqPart = -1;
             logged = false;
+            pinnedSegmentsThisCycle = 0;
         }
 
         public void run() {
@@ -660,8 +689,38 @@ public class WalPurgeJob extends SynchronizedJob implements Closeable {
 
                     if (maxSegmentLocked == WalUtils.SEG_NONE_ID && nextToApplySegmentId == -1) {
                         // No locked segments and no pending segments to apply, delete whole wal directory
-                        logDebugInfo();
-                        deleter.deleteWalDirectory(walId);
+                        // unless something has pinned a specific segment within. Falling back to
+                        // per-segment iteration in that case so the pinned segment survives.
+                        // The pre-scan only decides between whole-WAL vs per-segment teardown -
+                        // counting / logging happen in the per-segment loop below to avoid
+                        // double-counting the first pinned segment.
+                        boolean walPinned = false;
+                        for (int s = 0; s < nSegments; s++) {
+                            final int segmentId = (int) discovered.get(i + 3 + s);
+                            if (segmentId > -1 && deleter.isSegmentInUse(walId, segmentId)) {
+                                walPinned = true;
+                                break;
+                            }
+                        }
+                        if (!walPinned) {
+                            logDebugInfo();
+                            deleter.deleteWalDirectory(walId);
+                        } else {
+                            for (int s = 0; s < nSegments; s++) {
+                                final int segmentId = (int) discovered.get(i + 3 + s);
+                                if (segmentId > -1) {
+                                    if (!deleter.isSegmentInUse(walId, segmentId)) {
+                                        logDebugInfo();
+                                        deleter.deleteSegmentDirectory(walId, segmentId);
+                                    } else {
+                                        pinnedSegmentsThisCycle++;
+                                        LOG.debug().$("WAL purge skipped pinned segment [table=").$(tableToken)
+                                                .$(", walId=").$(walId)
+                                                .$(", segmentId=").$(segmentId).I$();
+                                    }
+                                }
+                            }
+                        }
                     } else {
                         // Check segments individually
                         for (int s = 0; s < nSegments; s++) {
@@ -669,8 +728,15 @@ public class WalPurgeJob extends SynchronizedJob implements Closeable {
                             if (segmentId > -1) {
                                 final boolean segmentAlreadyApplied = (nextToApplySegmentId == -1) || (nextToApplySegmentId > segmentId);
                                 if (segmentAlreadyApplied) {
-                                    logDebugInfo();
-                                    deleter.deleteSegmentDirectory(walId, segmentId);
+                                    if (!deleter.isSegmentInUse(walId, segmentId)) {
+                                        logDebugInfo();
+                                        deleter.deleteSegmentDirectory(walId, segmentId);
+                                    } else {
+                                        pinnedSegmentsThisCycle++;
+                                        LOG.debug().$("WAL purge skipped pinned segment [table=").$(tableToken)
+                                                .$(", walId=").$(walId)
+                                                .$(", segmentId=").$(segmentId).I$();
+                                    }
                                 }
                             }
                         }
@@ -692,7 +758,20 @@ public class WalPurgeJob extends SynchronizedJob implements Closeable {
                         i += 2;
                     }
                 }
+                if (pinnedSegmentsThisCycle > 0) {
+                    // Per-table debug detail. The cross-table aggregate INFO
+                    // line is emitted once per broadSweep cycle by the
+                    // surrounding {@link WalPurgeJob#broadSweep()} so an
+                    // operator gets a default-on signal that a blocker is
+                    // active without a 10k-line spam at high table counts.
+                    LOG.debug().$("WAL purge held back by SegmentPurgeBlocker [table=").$(tableToken)
+                            .$(", pinnedSegments=").$(pinnedSegmentsThisCycle).I$();
+                }
             }
+        }
+
+        public int getPinnedSegmentsThisCycle() {
+            return pinnedSegmentsThisCycle;
         }
 
         public void trackBackupLockedPart(long partNo) {
@@ -816,6 +895,11 @@ public class WalPurgeJob extends SynchronizedJob implements Closeable {
                     .$(", walId=").$(walId)
                     .I$();
             recursiveDelete(setWalPath(tableToken, walId));
+        }
+
+        @Override
+        public boolean isSegmentInUse(int walId, int segmentId) {
+            return engine.getSegmentPurgeBlocker().isSegmentInUse(tableToken, walId, segmentId);
         }
 
         @Override

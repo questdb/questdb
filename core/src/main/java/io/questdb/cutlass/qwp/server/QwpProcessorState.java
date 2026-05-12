@@ -88,6 +88,15 @@ public class QwpProcessorState implements QuietCloseable, ConnectionAware {
     private byte deferredErrorStatus;
     private boolean durableAckEnabled;
     private long fd = -1;
+    /**
+     * Per-connection opt-in flag for STATUS_OK_WITH_HINTS ack frames.
+     * Set at handshake time when the client sends
+     * {@code X-QWP-Request-Hints: credits}; once enabled, all subsequent
+     * acks include a producer-credits trailer queried from the engine's
+     * QWP egress extension. False by default keeps the wire format
+     * unchanged for clients that haven't opted in.
+     */
+    private boolean hintsEnabled;
     private long highestProcessedSequence = -1;
     private long lastAckedSequence = -1;
     private long messageSequence;
@@ -286,6 +295,10 @@ public class QwpProcessorState implements QuietCloseable, ConnectionAware {
         return durableAckEnabled;
     }
 
+    public boolean isHintsEnabled() {
+        return hintsEnabled;
+    }
+
     public boolean isOk() {
         return currentStatus == Status.OK;
     }
@@ -406,6 +419,7 @@ public class QwpProcessorState implements QuietCloseable, ConnectionAware {
         // Drop any durable-ack state; the connection is going away, so even if
         // uploads complete later, there is nobody left to notify.
         durableAckEnabled = false;
+        hintsEnabled = false;
         pendingAckSeqTxns.clear();
         pendingDurableDirNames.clear();
         pendingDurableSeqTxns.clear();
@@ -558,6 +572,10 @@ public class QwpProcessorState implements QuietCloseable, ConnectionAware {
 
     public void setDurableAckEnabled(boolean durableAckEnabled) {
         this.durableAckEnabled = durableAckEnabled;
+    }
+
+    public void setHintsEnabled(boolean hintsEnabled) {
+        this.hintsEnabled = hintsEnabled;
     }
 
     public void setHighestProcessedSequence(long highestProcessedSequence) {

@@ -173,6 +173,20 @@ public final class QwpConstants {
      */
     public static final byte STATUS_OK = 0x00;
     /**
+     * Status: Same as {@link #STATUS_OK} but the response frame carries a
+     * trailing 4-byte producer-credit hint after the table-entries section.
+     * Emitted only on connections that negotiated hints support at the
+     * WebSocket handshake (header {@code X-QWP-Request-Hints: credits}).
+     * Old clients never see this status; opt-in clients use the hint to
+     * self-pace ingest in response to downstream back-pressure.
+     */
+    public static final byte STATUS_OK_WITH_HINTS = 0x0C;
+    /**
+     * Size in bytes of the trailing credits field appended to
+     * {@link #STATUS_OK_WITH_HINTS} ack frames.
+     */
+    public static final int CREDITS_TRAILER_SIZE = 4;
+    /**
      * Status: Malformed message.
      */
     public static final byte STATUS_PARSE_ERROR = 0x05;

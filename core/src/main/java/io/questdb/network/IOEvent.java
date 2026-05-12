@@ -26,5 +26,15 @@ package io.questdb.network;
 
 public class IOEvent<C extends IOContext<?>> {
     public C context;
+    /**
+     * When true, this event was enqueued by a worker that found the per-context
+     * in-flight gate held while it was about to deliver an op from
+     * {@code ioEventQueue}. The dispatcher consumes the entry from
+     * {@code interestQueue}, bypasses the kernel-arming path, and forwards the
+     * stash directly via {@code publishOperation}. This keeps {@code ioEventPubSeq}
+     * single-producer (dispatcher-only) while still letting workers re-deliver
+     * stashed ops cross-thread.
+     */
+    public boolean deferredRepublish;
     public int operation;
 }

@@ -222,6 +222,16 @@ public class ServerMain implements Closeable {
         throw CairoException.nonCritical().put("http server is not running");
     }
 
+    /**
+     * Returns the running HTTP server, or {@code null} if it has not been
+     * started yet (or HTTP is disabled). Subclasses use this to wire
+     * server-initiated push handlers that need access to the dispatcher
+     * to wake idle connections.
+     */
+    protected HttpServer getHttpServer() {
+        return httpServer;
+    }
+
     public int getPgWireServerPort() {
         if (pgServer != null) {
             return pgServer.getPort();
