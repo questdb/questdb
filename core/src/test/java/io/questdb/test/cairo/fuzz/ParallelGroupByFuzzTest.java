@@ -2178,10 +2178,6 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
                                         + "FROM long_sequence(" + rowCount + "))",
                                 sqlExecutionContext);
 
-                        if (convertToParquet) {
-                            execute(compiler, "ALTER TABLE tab CONVERT PARTITION TO PARQUET", sqlExecutionContext);
-                        }
-
                         final String query = "SELECT g, approx_percentile(x, " + percentile + ", " + precision + ") FROM tab GROUP BY g ORDER BY g";
 
                         sqlExecutionContext.setParallelGroupByEnabled(false);
@@ -2239,10 +2235,6 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
                                         + "CASE WHEN rnd_int() % 3 = 0 THEN abs(rnd_long()) % 10000000 ELSE NULL END AS x_with_nulls "
                                         + "FROM long_sequence(" + rowCount + "))",
                                 sqlExecutionContext);
-
-                        if (convertToParquet) {
-                            execute(compiler, "ALTER TABLE tab CONVERT PARTITION TO PARQUET", sqlExecutionContext);
-                        }
 
                         final String query = "SELECT g, approx_percentile(x_with_nulls, " + percentile + ", " + precision + ") FROM tab GROUP BY g ORDER BY g";
 
