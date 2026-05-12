@@ -133,7 +133,7 @@ binary multipliers).
 | `reconnect_initial_backoff_millis` | int (ms) | `100` | Initial backoff. |
 | `reconnect_max_backoff_millis` | int (ms) | `5000` | Backoff ceiling. |
 | `initial_connect_retry` | enum | `off` | `off` (canonical; alias `false`) = terminal on first failure; `on` (canonical; aliases `sync`, `true`) = same retry loop as reconnect, blocking; `async` = same retry loop in the I/O thread, non-blocking. See §13.4 (initial connect) and §13.6 (the loop pseudocode that consumes this knob). |
-| `close_flush_timeout_millis` | int (ms) | `5000` | `close()` blocks up to this long waiting for `ackedFsn >= publishedFsn`. `0` or `-1` skips the drain entirely AND skips pre-drain `checkError()`. |
+| `close_flush_timeout_millis` | int (ms) | `5000` | `close()` blocks up to this long waiting for `ackedFsn >= publishedFsn`. `0` or `-1` skips the drain entirely; the pre-drain `checkError()` safety net still runs (it does no I/O and only rethrows when the error has not reached the user through any other channel). |
 
 ### 4.3 Durable-ack
 
@@ -997,19 +997,34 @@ returns segment bytes to the available pool when `ackedFsn` crosses
 - Default (`5000`): block waiting for `engine.ackedFsn() >= engine.publishedFsn()`
   for up to 5 seconds. If the wait succeeds, all data is acked. If the
   timeout fires, log a WARN and proceed; pending data remains on disk
-  (SF mode) or is lost (Memory mode). Then run `checkError()` and
-  rethrow any latched terminal error.
-- `0` or `-1`: skip the drain entirely AND skip the pre-drain
-  `checkError()`. Pending data is lost (Memory) or persists (SF). Users
-  opting out observe outcomes only via the async `SenderProgressHandler`
-  / `SenderErrorHandler` callbacks.
+  (SF mode) or is lost (Memory mode).
+- `0` or `-1`: skip the drain entirely. Pending data is lost (Memory)
+  or persists for the next sender to recover (SF). Producer state is
+  still flushed into the engine before close() returns; only the wait
+  for server ACK is skipped.
 - Any other positive value: that timeout in milliseconds.
 
+Regardless of which branch above runs, `close()` then performs a
+non-blocking safety-net `checkError()` and rethrows any latched
+terminal error, with two guards that prevent double-signalling:
+
+1. Skip the rethrow if a custom `SenderErrorHandler` has already been
+   delivered an error during this sender's lifetime (the user has
+   already owned the failure asynchronously).
+2. Skip the rethrow if a producer-thread call (`flush()` / `at()` /
+   `atNow()`) has already seen the latched error synchronously.
+
+The safety net is non-blocking (a volatile read plus a throw) so it
+does not violate the "fast close" intent of the opt-out branch. Its
+purpose is to keep latched terminal errors visible to users who only
+ever call `close()` and have not installed an async handler — without
+it, the default no-op handler would silently swallow real failures.
+
 Implementations MUST always release the slot lock and unmap segments on
-`close()`, regardless of timeout outcome. Implementations MUST rethrow
-any latched terminal error from `close()` unless the user explicitly
-opted out — otherwise a user who only ever calls `close()` could
-silently lose data.
+`close()`, regardless of timeout outcome or whether the safety net
+threw. Implementations MUST NOT skip the safety-net `checkError()` on
+the basis of `close_flush_timeout_millis` alone; only the two guards
+above suppress it.
 
 ## 18. Recovery and Orphan Adoption
 
