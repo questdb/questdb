@@ -751,10 +751,10 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                                 "                    Row forward scan\n" +
                                 "                    Frame forward scan on: y1\n" +
                                 "        Hash\n" +
-                                "            Async Top K lo: 1 workers: 1\n" +
-                                "              filter: null\n" +
-                                "              keys: [LAST desc]\n" +
-                                "                SelectedRecord\n" +
+                                "            SelectedRecord\n" +
+                                "                Async Top K lo: 1 workers: 1\n" +
+                                "                  filter: null\n" +
+                                "                  keys: [ts desc]\n" +
                                 "                    PageFrame\n" +
                                 "                        Row forward scan\n" +
                                 "                        Frame forward scan on: y2\n"
@@ -2783,10 +2783,10 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                                                 Row forward scan
                                                 Frame forward scan on: y1
                                     Hash
-                                        Async Top K lo: 1 workers: 1
-                                          filter: null
-                                          keys: [LAST desc]
-                                            SelectedRecord
+                                        SelectedRecord
+                                            Async Top K lo: 1 workers: 1
+                                              filter: null
+                                              keys: [ts desc]
                                                 PageFrame
                                                     Row forward scan
                                                     Frame forward scan on: y2
