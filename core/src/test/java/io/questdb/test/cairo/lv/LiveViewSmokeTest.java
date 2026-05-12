@@ -28,6 +28,8 @@ import io.questdb.PropertyKey;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.lv.LiveViewDefinition;
+import io.questdb.cairo.lv.LiveViewInMemoryBuffer;
+import io.questdb.cairo.lv.LiveViewInMemoryTier;
 import io.questdb.cairo.lv.LiveViewInstance;
 import io.questdb.cairo.lv.LiveViewRefreshJob;
 import io.questdb.cairo.lv.LiveViewState;
@@ -213,6 +215,180 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
             engine.releaseInactive();
             drainPurgeJob();
             assertSegmentExistence(false, "base", 1, 0);
+
+            execute("DROP LIVE VIEW lv");
+        });
+    }
+
+    @Test
+    public void testWriterStallWhenBothSlotsPinned() throws Exception {
+        // RFC 123 §"Stall behavior": when both slots are reader-pinned, the
+        // slow-path tryAcquireWrite returns null and the refresh worker
+        // records the start of the stall streak. writer_stall_micros surfaces
+        // the duration via live_views(). We pin both slots through the test
+        // by manipulating the tier directly, then run a refresh — the in-mem
+        // populate path stalls but the on-disk apply still advances.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms IN MEMORY 5s AS " +
+                    "SELECT ts, x, row_number() OVER () AS rn FROM base WHERE x > 0");
+
+            // Seed the tier via an initial refresh so both slots have valid
+            // shapes (the second slot is allocated but never written-to without
+            // this seed; the test pins the seeded slot + the other one).
+            setCurrentMicros(0L);
+            execute("INSERT INTO base (ts, x) VALUES ('2026-05-12T00:00:00.000001Z', 1)");
+            drainWalQueue();
+            LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("lv");
+            Assert.assertNotNull(instance);
+
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                drainJob(job);
+                LiveViewInMemoryTier tier = instance.getInMemoryTier();
+                Assert.assertNotNull(tier);
+                int publishedAfterSeed = tier.getPublishedIdx();
+
+                // A second cycle so both slots have been writer-touched
+                // (publishedIdx flips on each swap, so this seeds the
+                // currently-non-published slot).
+                setCurrentMicros(200_000L);
+                execute("INSERT INTO base (ts, x) VALUES ('2026-05-12T00:00:00.000002Z', 2)");
+                drainWalQueue();
+                drainJob(job);
+                Assert.assertNotEquals("publishedIdx flipped after second cycle",
+                        publishedAfterSeed, tier.getPublishedIdx());
+
+                // Pin both slots — first the currently-published one, then
+                // flip publishedIdx via a noop pseudo-publish (we just pin
+                // both). Standard usage doesn't expose this state, but the
+                // test mirrors what concurrent long readers do in production.
+                int pinA = tier.acquireRead();
+                int pinB;
+                // Force a "phantom" reader on the OTHER slot by manipulating
+                // publishedIdx via a write+swap cycle while still pinning A.
+                // The simplest way is: take write sentinel on otherIdx, swap,
+                // then acquireRead on the now-current slot.
+                int otherIdx = 1 - pinA;
+                LiveViewInMemoryBuffer otherWrite = tier.tryAcquireWrite(otherIdx);
+                Assert.assertNotNull("seed write on other slot must succeed", otherWrite);
+                tier.publishSwap(otherIdx);
+                pinB = tier.acquireRead();
+                Assert.assertEquals("pinB must land on the now-published slot",
+                        otherIdx, pinB);
+
+                try {
+                    // Now both slots are reader-pinned. A new refresh cycle
+                    // cannot take the writer sentinel on either. The on-disk
+                    // tier still advances; only the in-mem swap stalls.
+                    Assert.assertEquals("writer_stall_micros must start at 0",
+                            Numbers.LONG_NULL, instance.getWriterStallStartUs());
+
+                    setCurrentMicros(500_000L);
+                    execute("INSERT INTO base (ts, x) VALUES ('2026-05-12T00:00:00.000003Z', 3)");
+                    drainWalQueue();
+                    drainJob(job);
+
+                    Assert.assertEquals(
+                            "writerStallStartUs must equal the wall-clock at refresh time",
+                            500_000L,
+                            instance.getWriterStallStartUs()
+                    );
+
+                    // live_views() must surface the stall duration (now - stallStart).
+                    setCurrentMicros(700_000L);
+                    assertSql(
+                            "writer_stall_micros\n200000\n",
+                            "SELECT writer_stall_micros FROM live_views() WHERE view_name = 'lv'"
+                    );
+                } finally {
+                    tier.releaseRead(pinA);
+                    tier.releaseRead(pinB);
+                }
+            }
+
+            execute("DROP LIVE VIEW lv");
+        });
+    }
+
+    @Test
+    public void testInMemEvictionPastInMemoryWindow() throws Exception {
+        // RFC 123 Phase 1b: rows whose ts falls below latest - IN_MEMORY are
+        // not copied into the new write slot during the slow-path swap. With
+        // IN MEMORY 100ms and a 200ms gap between the two inserts (data ts),
+        // the first row's ts is below the eviction threshold by the time the
+        // second refresh cycle runs, so only the second row survives.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms IN MEMORY 100ms AS " +
+                    "SELECT ts, x, row_number() OVER () AS rn FROM base WHERE x > 0");
+
+            LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("lv");
+            Assert.assertNotNull(instance);
+
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                setCurrentMicros(0L);
+                execute("INSERT INTO base (ts, x) VALUES ('2026-05-12T00:00:00.000000Z', 1)");
+                drainWalQueue();
+                drainJob(job);
+
+                LiveViewInMemoryTier tier = instance.getInMemoryTier();
+                Assert.assertNotNull(tier);
+                Assert.assertEquals("first cycle: one row in tier", 1, tier.getSlot(tier.getPublishedIdx()).rowCount());
+
+                // Second insert: data ts 200ms after the first, so latest -
+                // IN_MEMORY = +100ms is past the first row's ts. Advance the
+                // wall clock by 200ms so the FLUSH EVERY 100ms gate passes.
+                setCurrentMicros(200_000L);
+                execute("INSERT INTO base (ts, x) VALUES ('2026-05-12T00:00:00.200000Z', 2)");
+                drainWalQueue();
+                drainJob(job);
+
+                LiveViewInMemoryBuffer published = tier.getSlot(tier.getPublishedIdx());
+                Assert.assertEquals("post-second-cycle: only the new row survives", 1, published.rowCount());
+                Assert.assertEquals("surviving row is the second insert", 2, published.getInt(0, 1));
+            }
+
+            execute("DROP LIVE VIEW lv");
+        });
+    }
+
+    @Test
+    public void testInMemTierReceivesRowsAfterRefresh() throws Exception {
+        // RFC 123 Phase 1b: refresh worker mirrors LV outputs into a worker-local
+        // staging buffer and runs a slow-path swap into the LV's N=2 in-mem
+        // tier after the inline apply commits. Two rows match the WHERE
+        // filter; both must show up in the published slot, in ts-ascending
+        // order, with seamTs = the lowest ts.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 1s IN MEMORY 5s AS " +
+                    "SELECT ts, x, row_number() OVER () AS rn FROM base WHERE x > 0");
+            execute("INSERT INTO base (ts, x) VALUES " +
+                    "('2026-05-12T00:00:00.000001Z', 1), " +
+                    "('2026-05-12T00:00:00.000002Z', 2), " +
+                    "('2026-05-12T00:00:00.000003Z', -1)");
+            drainWalQueue();
+
+            LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("lv");
+            Assert.assertNotNull(instance);
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                drainJob(job);
+            }
+            LiveViewInMemoryTier tier = instance.getInMemoryTier();
+            Assert.assertNotNull("in-mem tier must be allocated after refresh", tier);
+            LiveViewInMemoryBuffer published = tier.getSlot(tier.getPublishedIdx());
+            Assert.assertEquals("published slot must have two rows", 2, published.rowCount());
+            // ts column is col 0; matches the LV's designated ts.
+            long ts0 = published.getLong(0, 0);
+            long ts1 = published.getLong(1, 0);
+            Assert.assertTrue("rows must be ordered by ts", ts0 < ts1);
+            Assert.assertEquals("seamTs must equal the lowest retained ts", ts0, published.seamTs());
+            // x column is col 1 — survived the WHERE filter (x > 0)
+            Assert.assertEquals(1, published.getInt(0, 1));
+            Assert.assertEquals(2, published.getInt(1, 1));
+            // row_number outputs at col 2 — the SELECT's third column
+            Assert.assertEquals(1L, published.getLong(0, 2));
+            Assert.assertEquals(2L, published.getLong(1, 2));
 
             execute("DROP LIVE VIEW lv");
         });

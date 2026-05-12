@@ -25,6 +25,7 @@
 package io.questdb.cairo.lv;
 
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.vm.MemoryCARWImpl;
 import io.questdb.std.IntList;
 import io.questdb.std.MemoryTag;
@@ -98,12 +99,159 @@ public class LiveViewInMemoryBuffer implements QuietCloseable {
         columnTypeSizes.clear();
     }
 
+    /**
+     * Returns true iff every column type in {@code columnTypes} is supported by
+     * the in-memory tier. Phase 1b ships fixed-width-only — variable-length
+     * STRING / VARCHAR / BINARY columns and ARRAY return false. SYMBOL is
+     * supported (stored as INT). Used by {@code LiveViewRefreshJob} to decide
+     * whether to populate the tier for a given LV; unsupported schemas fall
+     * back to disk-only reads.
+     */
+    public static boolean areColumnTypesSupported(IntList columnTypes) {
+        for (int i = 0, n = columnTypes.size(); i < n; i++) {
+            int type = ColumnType.tagOf(columnTypes.getQuick(i));
+            if (!isFixedWidthSupported(type)) {
+                return false;
+            }
+        }
+        return true;
+    }
+
     public int columnCount() {
         return columnTypes.size();
     }
 
     public int columnType(int col) {
         return columnTypes.getQuick(col);
+    }
+
+    private static boolean isFixedWidthSupported(int type) {
+        switch (type) {
+            case ColumnType.LONG:
+            case ColumnType.TIMESTAMP:
+            case ColumnType.DATE:
+            case ColumnType.GEOLONG:
+            case ColumnType.INT:
+            case ColumnType.SYMBOL:
+            case ColumnType.GEOINT:
+            case ColumnType.IPv4:
+            case ColumnType.DOUBLE:
+            case ColumnType.FLOAT:
+            case ColumnType.SHORT:
+            case ColumnType.GEOSHORT:
+            case ColumnType.CHAR:
+            case ColumnType.BYTE:
+            case ColumnType.GEOBYTE:
+            case ColumnType.BOOLEAN:
+                return true;
+            default:
+                return false;
+        }
+    }
+
+    /**
+     * Copies one row's fixed-width values, column by column, from {@code src}
+     * into this buffer. Caller is responsible for advancing
+     * {@link #setRowCount(long)} after the row is written. Throws
+     * {@link UnsupportedOperationException} on var-length column types, which
+     * Phase 1b does not support — callers should check
+     * {@link #areColumnTypesSupported(IntList)} before deciding to use the tier.
+     */
+    public void copyRowFrom(LiveViewInMemoryBuffer src, long srcRow, long dstRow) {
+        for (int c = 0, n = columnTypes.size(); c < n; c++) {
+            int type = ColumnType.tagOf(columnTypes.getQuick(c));
+            switch (type) {
+                case ColumnType.LONG:
+                case ColumnType.TIMESTAMP:
+                case ColumnType.DATE:
+                case ColumnType.GEOLONG:
+                    putLong(dstRow, c, src.getLong(srcRow, c));
+                    break;
+                case ColumnType.INT:
+                case ColumnType.SYMBOL:
+                case ColumnType.GEOINT:
+                case ColumnType.IPv4:
+                    putInt(dstRow, c, src.getInt(srcRow, c));
+                    break;
+                case ColumnType.DOUBLE:
+                    putDouble(dstRow, c, src.getDouble(srcRow, c));
+                    break;
+                case ColumnType.FLOAT:
+                    putFloat(dstRow, c, src.getFloat(srcRow, c));
+                    break;
+                case ColumnType.SHORT:
+                case ColumnType.GEOSHORT:
+                case ColumnType.CHAR:
+                    putShort(dstRow, c, src.getShort(srcRow, c));
+                    break;
+                case ColumnType.BYTE:
+                case ColumnType.GEOBYTE:
+                case ColumnType.BOOLEAN:
+                    putByte(dstRow, c, src.getByte(srcRow, c));
+                    break;
+                default:
+                    throw new UnsupportedOperationException(
+                            "live view in-memory tier does not support column type: " + ColumnType.nameOf(columnTypes.getQuick(c))
+                    );
+            }
+        }
+    }
+
+    /**
+     * Copies one row's fixed-width values from the given {@code record} into
+     * this buffer. The {@code metadata} must match {@link #columnTypes} the
+     * buffer was constructed with — the caller is responsible for ensuring
+     * shape compatibility (this is the staging-buffer path in
+     * {@code LiveViewRefreshJob}). SYMBOL columns store the record's int value
+     * directly without translation; the in-mem tier consumer (Phase 1b Commit 4
+     * cursor) handles symbol-id resolution.
+     */
+    public void copyRowFromRecord(Record record, long dstRow) {
+        for (int c = 0, n = columnTypes.size(); c < n; c++) {
+            int type = ColumnType.tagOf(columnTypes.getQuick(c));
+            switch (type) {
+                case ColumnType.LONG:
+                case ColumnType.GEOLONG:
+                    putLong(dstRow, c, record.getLong(c));
+                    break;
+                case ColumnType.TIMESTAMP:
+                    putLong(dstRow, c, record.getTimestamp(c));
+                    break;
+                case ColumnType.DATE:
+                    putLong(dstRow, c, record.getDate(c));
+                    break;
+                case ColumnType.INT:
+                case ColumnType.GEOINT:
+                case ColumnType.IPv4:
+                case ColumnType.SYMBOL:
+                    putInt(dstRow, c, record.getInt(c));
+                    break;
+                case ColumnType.DOUBLE:
+                    putDouble(dstRow, c, record.getDouble(c));
+                    break;
+                case ColumnType.FLOAT:
+                    putFloat(dstRow, c, record.getFloat(c));
+                    break;
+                case ColumnType.SHORT:
+                case ColumnType.GEOSHORT:
+                    putShort(dstRow, c, record.getShort(c));
+                    break;
+                case ColumnType.CHAR:
+                    putShort(dstRow, c, (short) record.getChar(c));
+                    break;
+                case ColumnType.BYTE:
+                case ColumnType.GEOBYTE:
+                    putByte(dstRow, c, record.getByte(c));
+                    break;
+                case ColumnType.BOOLEAN:
+                    putBool(dstRow, c, record.getBool(c));
+                    break;
+                default:
+                    throw new UnsupportedOperationException(
+                            "live view in-memory tier does not support column type: " + ColumnType.nameOf(columnTypes.getQuick(c))
+                    );
+            }
+        }
     }
 
     /**

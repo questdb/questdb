@@ -228,9 +228,18 @@ public class LiveViewsFunctionFactory implements FunctionFactory {
                                 io.questdb.cairo.ColumnType
                                         .getTimestampDriver(definition.getBaseTimestampType())
                                         .toMicros(definition.getViewLowerBoundTimestamp());
-                        // Phase 1a has no in-mem tier and therefore no slow-path stall; Phase 1b
-                        // wires this from the writer's stall_start tracking.
-                        case COLUMN_WRITER_STALL_MICROS -> 0L;
+                        case COLUMN_WRITER_STALL_MICROS -> {
+                            // RFC 123 §"Stall behavior": current uninterrupted stall duration.
+                            // writerStallStartUs is set when the in-mem tier's slow-path
+                            // tryAcquireWrite fails (both slots reader-pinned); cleared on
+                            // the next successful publish. Zero when not stalled.
+                            long stallStart = instance.getWriterStallStartUs();
+                            if (stallStart == Numbers.LONG_NULL) {
+                                yield 0L;
+                            }
+                            long nowUs = engine.getConfiguration().getMicrosecondClock().getTicks();
+                            yield Math.max(0, nowUs - stallStart);
+                        }
                         default -> 0;
                     };
                 }

@@ -516,6 +516,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
+    public long getLiveViewInMemoryBufferInitialBytes() {
+        return 64L * 1024L;
+    }
+
+    @Override
     public long getLiveViewInMemoryMaxMicros() {
         return 60L * Micros.MINUTE_MICROS;
     }

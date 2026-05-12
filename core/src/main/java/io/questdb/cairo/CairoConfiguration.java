@@ -343,6 +343,8 @@ public interface CairoConfiguration {
 
     long getLiveViewFlushRetryMaxDurationMicros();
 
+    long getLiveViewInMemoryBufferInitialBytes();
+
     long getLiveViewInMemoryMaxMicros();
 
     int getLiveViewRefreshTurnMaxCommits();

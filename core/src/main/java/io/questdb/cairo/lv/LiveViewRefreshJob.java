@@ -34,6 +34,7 @@ import io.questdb.cairo.MetadataCacheReader;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableWriter;
+import io.questdb.cairo.TimestampDriver;
 import io.questdb.cairo.file.BlockFileWriter;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.PageFrameAddressCache;
@@ -109,6 +110,14 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
     private final ApplyWal2TableJob applyJob;
     private final BlockFileWriter blockFileWriter;
     private final EntityColumnFilter columnFilter = new EntityColumnFilter();
+    // Per-worker staging buffer reused across cycles. Allocated lazily on the
+    // first refresh of an LV whose output schema is fully supported by the
+    // in-mem tier; reshaped (freed + reallocated) if the next LV's schema
+    // differs. Null when no LV has driven a populate-the-tier path yet.
+    // Memory-tagged NATIVE_LIVE_VIEW_IN_MEM via LiveViewInMemoryBuffer.
+    private LiveViewInMemoryBuffer stagingBuffer;
+    private final IntList stagingColumnTypes = new IntList();
+    private int stagingTimestampColumnIndex = -1;
     private final IntList columnIndexes = new IntList();
     private final IntList columnSizeShifts = new IntList();
     private final CairoEngine engine;
@@ -150,6 +159,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
         Misc.free(addressCache);
         Misc.free(memoryPool);
         Misc.free(applyJob);
+        stagingBuffer = Misc.free(stagingBuffer);
     }
 
     @Override
@@ -355,11 +365,27 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
         RecordMetadata baseMetadata = pageFrameFactory.getMetadata();
         buildColumnMappings(baseMetadata, baseToken);
 
+        // RFC 123 Phase 1b: decide whether the in-memory tier can be populated
+        // for this LV. Only LVs whose output schema is fully fixed-width are
+        // supported in this phase; var-length columns fall back to disk-only.
+        // The staging buffer is reshaped on schema-mismatch; the LV's tier is
+        // lazily allocated on first use.
+        RecordMetadata outMetadata = windowFactory.getMetadata();
+        int cursorTimestampIndex = outMetadata.getTimestampIndex();
+        if (cursorTimestampIndex < 0) {
+            throw CairoException.nonCritical()
+                    .put("live view requires a designated timestamp [view=")
+                    .put(instance.getDefinition().getViewName()).put(']');
+        }
+        boolean populateTier = ensureStagingAndTier(instance, outMetadata, cursorTimestampIndex);
+
         long advanceTo = -1;
         // Hoisted out of the try-with-resources so the post-loop branch can decide
         // whether the apply path will publish the new lvConsumedSeqTxn (rows emitted)
         // or whether we must publish it directly (no LIVE_VIEW_DATA block written).
         long appendedRows = 0;
+        long stagingMaxTs = Numbers.LONG_NULL;
+        long stagingMinTs = Numbers.LONG_NULL;
         WalSegmentPageFrameCursor frameCursor = new WalSegmentPageFrameCursor(
                 engine.getConfiguration(), columnIndexes, columnSizeShifts
         );
@@ -367,10 +393,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
         try (WalWriter walWriter = engine.getWalWriter(instance.getLiveViewToken())) {
             RecordToRowCopier copier = ensureCopier(instance, windowFactory, walWriter);
             int lvTimestampIndex = walWriter.getMetadata().getTimestampIndex();
-            // Window cursor metadata mirrors the LV's _meta, so the timestamp index is
-            // the same in both sources.
-            int cursorTimestampIndex = windowFactory.getMetadata().getTimestampIndex();
-            if (lvTimestampIndex < 0 || cursorTimestampIndex < 0) {
+            if (lvTimestampIndex < 0) {
                 throw CairoException.nonCritical()
                         .put("live view requires a designated timestamp [view=")
                         .put(instance.getDefinition().getViewName()).put(']');
@@ -439,6 +462,19 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                             TableWriter.Row row = walWriter.newRow(ts);
                             copier.copy(executionContext, outRecord, row);
                             row.append();
+                            if (populateTier) {
+                                // Mirror the row into the worker-local staging
+                                // buffer. The slow-path swap below (after apply
+                                // commits) copies retained published-slot rows
+                                // and appends staging on top.
+                                stagingBuffer.copyRowFromRecord(outRecord, appendedRows);
+                                if (stagingMinTs == Numbers.LONG_NULL) {
+                                    stagingMinTs = ts;
+                                }
+                                if (stagingMaxTs == Numbers.LONG_NULL || ts > stagingMaxTs) {
+                                    stagingMaxTs = ts;
+                                }
+                            }
                             appendedRows++;
                         }
                     } finally {
@@ -455,6 +491,10 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                 // atomically. Base WAL retention only releases once the rows
                 // are durable in the LV's own table.
                 walWriter.commitLiveView(advanceTo);
+                if (populateTier) {
+                    stagingBuffer.setRowCount(appendedRows);
+                    stagingBuffer.setSeamTs(stagingMinTs);
+                }
             }
         } finally {
             Misc.free(frameCursor);
@@ -508,6 +548,149 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                 // ticks the flush-retry budget (RFC 123 §Flush).
                 persistState(instance);
             }
+            if (lvConsumedPersistedByApply && populateTier && appendedRows > 0) {
+                // Phase 1b slow-path swap: copy retained rows from the published
+                // slot, append staging on top, publishSwap. Failure to acquire
+                // the write slot is a non-fatal stall — the on-disk tier still
+                // advanced, the in-mem tier just trails for this cycle.
+                publishToInMemoryTier(instance, stagingMaxTs);
+            }
+        }
+    }
+
+    /**
+     * Prepares the worker-local staging buffer and the LV's own in-memory tier
+     * for the upcoming cycle. Returns {@code true} when both are usable for
+     * this LV (all output column types are fixed-width-supported); {@code false}
+     * when any column type is var-length or otherwise unsupported, in which case
+     * the cycle still writes to the on-disk tier but the in-mem tier stays
+     * empty / unallocated and reads fall back to {@code TableReader}.
+     */
+    private boolean ensureStagingAndTier(LiveViewInstance instance, RecordMetadata outMetadata, int tsColIdx) {
+        // Build a transient IntList of column types for shape comparison.
+        IntList currentTypes = new IntList(outMetadata.getColumnCount());
+        for (int i = 0, n = outMetadata.getColumnCount(); i < n; i++) {
+            currentTypes.add(outMetadata.getColumnType(i));
+        }
+        if (!LiveViewInMemoryBuffer.areColumnTypesSupported(currentTypes)) {
+            // LV output schema contains a var-length / unsupported column type;
+            // skip the in-mem tier population for this LV. The cursor reads
+            // disk-only via TableReader (Phase 1a behaviour).
+            // Free any previously-allocated staging buffer so its memory does
+            // not linger across worker cycles for a different (now-unsupported)
+            // LV's shape.
+            return false;
+        }
+        long pageSize = engine.getConfiguration().getLiveViewInMemoryBufferInitialBytes();
+        if (stagingBuffer == null || !stagingColumnTypes.equals(currentTypes)) {
+            // Shape changed (or first use on this worker) — reshape the
+            // staging buffer. The previous buffer's allocations are released
+            // by Misc.free before the new one is constructed.
+            stagingBuffer = Misc.free(stagingBuffer);
+            stagingColumnTypes.clear();
+            for (int i = 0, n = currentTypes.size(); i < n; i++) {
+                stagingColumnTypes.add(currentTypes.getQuick(i));
+            }
+            stagingBuffer = new LiveViewInMemoryBuffer(stagingColumnTypes, tsColIdx, pageSize);
+            stagingTimestampColumnIndex = tsColIdx;
+        }
+        stagingBuffer.reset();
+        // Allocate the per-LV in-mem tier on first use; subsequent cycles reuse
+        // it. The tier's shape is fixed at allocation — if a downstream commit
+        // changes the LV's _meta (not in V1, but reserved for ALTER LIVE VIEW
+        // later) the tier would need to be reshaped too. For Phase 1b _meta is
+        // immutable post-CREATE.
+        if (instance.getInMemoryTier() == null) {
+            instance.setInMemoryTier(new LiveViewInMemoryTier(currentTypes, tsColIdx, pageSize));
+        }
+        return true;
+    }
+
+    /**
+     * Runs the slow-path swap into the LV's in-memory tier. After the inline
+     * apply commits the WAL block to the on-disk tier, this method takes the
+     * non-published slot via {@code tryAcquireWrite}, copies retained rows
+     * from the published slot (those still within the {@code IN MEMORY}
+     * window relative to {@code stagingMaxTs}), appends the staging rows on
+     * top, and publishes the swap.
+     * <p>
+     * On {@code tryAcquireWrite} failure (both slots reader-pinned) the
+     * writer stalls: the in-mem tier trails for this cycle, the disk tier is
+     * still up to date, and {@code writerStallStartUs} is set so
+     * {@code live_views().writer_stall_micros} surfaces the stall duration.
+     */
+    private void publishToInMemoryTier(LiveViewInstance instance, long stagingMaxTs) {
+        LiveViewInMemoryTier tier = instance.getInMemoryTier();
+        if (tier == null) {
+            return;
+        }
+        int publishedIdx = tier.getPublishedIdx();
+        int writeIdx = 1 - publishedIdx;
+        LiveViewInMemoryBuffer writeSlot = tier.tryAcquireWrite(writeIdx);
+        if (writeSlot == null) {
+            // Both slots reader-pinned: the view trails this cycle. Record the
+            // start of the stall streak; a subsequent successful acquire clears
+            // it. RFC 123 §"Stall behavior".
+            if (instance.getWriterStallStartUs() == Numbers.LONG_NULL) {
+                instance.setWriterStallStartUs(engine.getConfiguration().getMicrosecondClock().getTicks());
+            }
+            LOG.info().$("live view in-mem tier stalled, both slots pinned [view=")
+                    .$(instance.getDefinition().getViewName()).I$();
+            return;
+        }
+        try {
+            writeSlot.reset();
+            int tsCol = stagingTimestampColumnIndex;
+            // Compute the eviction threshold in the base table's timestamp
+            // units. IN MEMORY is stored in micros; scale to base units once.
+            TimestampDriver driver = ColumnType.getTimestampDriver(instance.getDefinition().getBaseTimestampType());
+            long inMemoryInBaseUnits = driver.fromMicros(instance.getDefinition().getInMemoryMicros());
+            long retainThreshold = stagingMaxTs - inMemoryInBaseUnits;
+
+            // Copy retained rows from the currently-published slot (those with
+            // ts >= retainThreshold). Rows in the slot are stored in
+            // ts-ascending order, so we can simply skip leading rows until the
+            // first retained one is found.
+            LiveViewInMemoryBuffer pubSlot = tier.getSlot(publishedIdx);
+            long writeRow = 0;
+            long writeSeamTs = Numbers.LONG_NULL;
+            for (long r = 0, rn = pubSlot.rowCount(); r < rn; r++) {
+                long srcTs = pubSlot.getLong(r, tsCol);
+                if (srcTs < retainThreshold) {
+                    continue;
+                }
+                if (writeSeamTs == Numbers.LONG_NULL) {
+                    writeSeamTs = srcTs;
+                }
+                writeSlot.copyRowFrom(pubSlot, r, writeRow);
+                writeRow++;
+            }
+            // Append staging rows on top.
+            for (long r = 0, rn = stagingBuffer.rowCount(); r < rn; r++) {
+                long srcTs = stagingBuffer.getLong(r, tsCol);
+                if (writeSeamTs == Numbers.LONG_NULL) {
+                    writeSeamTs = srcTs;
+                }
+                writeSlot.copyRowFrom(stagingBuffer, r, writeRow);
+                writeRow++;
+            }
+            writeSlot.setRowCount(writeRow);
+            writeSlot.setSeamTs(writeSeamTs);
+            tier.publishSwap(writeIdx);
+            // Clear any prior stall streak — this cycle made progress.
+            instance.setWriterStallStartUs(Numbers.LONG_NULL);
+        } catch (Throwable t) {
+            // Best-effort: release the sentinel even on failure so the slot
+            // doesn't stay stuck at -1. The publishSwap on the same slot is the
+            // documented release path; it flips publishedIdx but the data is
+            // potentially partial. Subsequent reads see whatever was copied.
+            // Don't swallow — propagate so the retry budget ticks.
+            try {
+                tier.publishSwap(writeIdx);
+            } catch (Throwable ignore) {
+                // Sentinel may have been released already; nothing to do.
+            }
+            throw t;
         }
     }
 

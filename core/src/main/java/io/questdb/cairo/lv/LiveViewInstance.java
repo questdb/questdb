@@ -91,6 +91,13 @@ public class LiveViewInstance implements QuietCloseable {
     // streak; Numbers.LONG_NULL when no streak is in progress. Same write-only
     // discipline as flushRetryCount.
     private long flushRetryStartUs = Numbers.LONG_NULL;
+    // N=2 in-memory tier (RFC 123 §"In-memory tier"); lazily allocated on the
+    // first refresh cycle after the LV's compiled factory + projected metadata
+    // are known. Reads route through it via LiveViewRecordCursor (Phase 1b
+    // Commit 4); the refresh worker drives the slow-path swap from
+    // LiveViewRefreshJob. Null when no refresh has happened yet, or when the LV
+    // was just constructed at startup.
+    private volatile LiveViewInMemoryTier inMemoryTier;
     private volatile boolean isClosed;
     // Wall-clock (micros) of the most recent successful LV WAL commit. Used by
     // LiveViewRefreshJob to enforce FLUSH EVERY: a refresh that arrives within
@@ -107,6 +114,12 @@ public class LiveViewInstance implements QuietCloseable {
     // moves past recordRowCopierMetadataVersion. Accessed only while the refresh latch is held.
     private RecordToRowCopier recordToRowCopier;
     private long recordRowCopierMetadataVersion = -1;
+    // Wall-clock (micros) when the in-mem tier's slow-path tryAcquireWrite first
+    // observed both slots reader-pinned. Numbers.LONG_NULL when not stalled.
+    // Cleared on the next successful acquire. Surfaces via
+    // live_views().writer_stall_micros for operator visibility per RFC 123
+    // §"Stall behavior".
+    private volatile long writerStallStartUs = Numbers.LONG_NULL;
 
     public LiveViewInstance(LiveViewDefinition definition, TableToken liveViewToken) {
         this.definition = definition;
@@ -122,6 +135,7 @@ public class LiveViewInstance implements QuietCloseable {
             compiledFactory = Misc.free(compiledFactory);
             anchorWindow = Misc.free(anchorWindow);
             anchorFunction = Misc.free(anchorFunction);
+            inMemoryTier = Misc.free(inMemoryTier);
         }
     }
 
@@ -173,6 +187,10 @@ public class LiveViewInstance implements QuietCloseable {
         return flushRetryStartUs;
     }
 
+    public LiveViewInMemoryTier getInMemoryTier() {
+        return inMemoryTier;
+    }
+
     public CharSequence getInvalidationReason() {
         return stateReader.getInvalidationReason();
     }
@@ -217,6 +235,10 @@ public class LiveViewInstance implements QuietCloseable {
 
     public LiveViewStateReader getStateReader() {
         return stateReader;
+    }
+
+    public long getWriterStallStartUs() {
+        return writerStallStartUs;
     }
 
     /**
@@ -304,6 +326,19 @@ public class LiveViewInstance implements QuietCloseable {
         }
     }
 
+    /**
+     * Installs the in-memory tier. Single-shot — the tier is constructed once
+     * on the first refresh cycle and lives for the LV's lifetime. Safe to call
+     * with the existing tier passed back in (no-op); a different non-null tier
+     * frees the old one first, mirroring {@link #setCompiledFactory}.
+     */
+    public void setInMemoryTier(LiveViewInMemoryTier tier) {
+        if (inMemoryTier != tier) {
+            Misc.free(inMemoryTier);
+            inMemoryTier = tier;
+        }
+    }
+
     public void setLastFlushTimeUs(long lastFlushTimeUs) {
         this.lastFlushTimeUs = lastFlushTimeUs;
     }
@@ -329,6 +364,10 @@ public class LiveViewInstance implements QuietCloseable {
         stateReader.setSubscribeFromSeqTxn(subscribeFromSeqTxn);
     }
 
+    public void setWriterStallStartUs(long writerStallStartUs) {
+        this.writerStallStartUs = writerStallStartUs;
+    }
+
     public void tryCloseIfDropped() {
         if (!dropped) {
             return;
@@ -343,6 +382,7 @@ public class LiveViewInstance implements QuietCloseable {
                 compiledFactory = Misc.free(compiledFactory);
                 anchorWindow = Misc.free(anchorWindow);
                 anchorFunction = Misc.free(anchorFunction);
+                inMemoryTier = Misc.free(inMemoryTier);
             }
         } finally {
             refreshLatch.set(false);

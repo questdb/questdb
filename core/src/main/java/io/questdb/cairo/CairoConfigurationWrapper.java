@@ -493,6 +493,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
+    public long getLiveViewInMemoryBufferInitialBytes() {
+        return getDelegate().getLiveViewInMemoryBufferInitialBytes();
+    }
+
+    @Override
     public long getLiveViewInMemoryMaxMicros() {
         return getDelegate().getLiveViewInMemoryMaxMicros();
     }
