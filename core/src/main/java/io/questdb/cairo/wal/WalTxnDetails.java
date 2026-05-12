@@ -41,6 +41,7 @@ import io.questdb.std.Numbers;
 import io.questdb.std.QuietCloseable;
 import io.questdb.std.ThreadLocal;
 import io.questdb.std.Vect;
+import io.questdb.std.datetime.MicrosecondClock;
 import io.questdb.std.str.DirectString;
 import io.questdb.std.str.Path;
 import org.jetbrains.annotations.Nullable;
@@ -71,6 +72,7 @@ public class WalTxnDetails implements QuietCloseable {
     public static final int TXN_METADATA_LONGS_SIZE = WAL_TXN_MAT_VIEW_PERIOD_HI + 1;
     private static final int SYMBOL_MAP_COLUMN_RECORD_HEADER_INTS = 6;
     private static final int SYMBOL_MAP_RECORD_HEADER_INTS = 4;
+    private final MicrosecondClock clock;
     private final CairoConfiguration config;
     private final long maxLookaheadRows;
     private final SymbolMapDiffCursorImpl symbolMapDiffCursor = new SymbolMapDiffCursorImpl();
@@ -102,6 +104,7 @@ public class WalTxnDetails implements QuietCloseable {
     public WalTxnDetails(CairoConfiguration configuration, long maxLookaheadRows) {
         walEventReader = new WalEventReader(configuration);
         this.config = configuration;
+        this.clock = configuration.getMicrosecondClock();
         this.maxLookaheadRows = maxLookaheadRows;
     }
 
@@ -493,7 +496,8 @@ public class WalTxnDetails implements QuietCloseable {
             final TransactionLogCursor transactionLogCursor,
             final int rootLen,
             long appliedSeqTxn,
-            final long maxCommittedTimestamp
+            final long maxCommittedTimestamp,
+            final long deadlineMicros
     ) {
         final long lastLoadedSeqTxn = getLastSeqTxn();
         long loadFromSeqTxn = appliedSeqTxn + 1;
@@ -548,7 +552,9 @@ public class WalTxnDetails implements QuietCloseable {
                         maxLookaheadTxn
                 );
             }
-        } while (rowsToLoad > 0 && getLastSeqTxn() < transactionLogCursor.getMaxTxn());
+        } while (rowsToLoad > 0
+                && getLastSeqTxn() < transactionLogCursor.getMaxTxn()
+                && clock.getTicks() < deadlineMicros);
 
         if (transactionMeta.size() == initialSize) {
             // No transactions loaded, no need to do anything
