@@ -29,18 +29,20 @@ import io.questdb.log.Log;
 import io.questdb.mp.CarrierIdentity;
 import org.jetbrains.annotations.NotNull;
 
-import java.util.concurrent.DelayQueue;
 import java.util.concurrent.TimeUnit;
 
 /**
- * Fixed array of {@link DelayQueue} shards, each drained by a daemon thread that fires
+ * Fixed array of {@link DelayHeap} shards, each drained by a daemon thread that fires
  * {@link DelayedFireable#expire()} on each entry whose deadline has popped. Replaces
  * the older periodic O(N) sweep over every parked SQL waiter with a per-entry blocking
  * wait sized exactly to the next deadline.
  *
- * <p>Sharding spreads the JDK-internal {@code DelayQueue} lock across cores; the shard
- * count is fixed at construction and never resized. Distribution uses identity hash, so
- * a pooled entry that re-registers always lands in the same shard.
+ * <p>Sharding spreads the per-heap monitor across cores; the shard count is fixed at
+ * construction and never resized. Distribution uses identity hash, so a pooled entry
+ * that re-registers always lands in the same shard. {@link DelayHeap} is used instead
+ * of {@link java.util.concurrent.DelayQueue} because the latter's internal
+ * {@link java.util.concurrent.locks.ReentrantLock} corrupts (IMSE, then permanent lock
+ * hold) when called from inside a raw {@link jdk.internal.vm.Continuation} body.
  *
  * <p>Lifecycle:
  * <ul>
@@ -70,7 +72,7 @@ import java.util.concurrent.TimeUnit;
  */
 public final class TimerShards {
     private final Log log;
-    private final DelayQueue<DelayedFireable>[] shards;
+    private final DelayHeap<DelayedFireable>[] shards;
     private final Thread[] threads;
     private final String threadNamePrefix;
     private volatile boolean running;
@@ -80,9 +82,9 @@ public final class TimerShards {
         if (shardCount < 1) {
             throw new IllegalArgumentException("shardCount must be >= 1, got " + shardCount);
         }
-        this.shards = (DelayQueue<DelayedFireable>[]) new DelayQueue<?>[shardCount];
+        this.shards = (DelayHeap<DelayedFireable>[]) new DelayHeap<?>[shardCount];
         for (int i = 0; i < shardCount; i++) {
-            this.shards[i] = new DelayQueue<>();
+            this.shards[i] = new DelayHeap<>();
         }
         this.threads = new Thread[shardCount];
         this.threadNamePrefix = threadNamePrefix;
@@ -120,7 +122,7 @@ public final class TimerShards {
             entry.shutdown();
             return;
         }
-        final DelayQueue<DelayedFireable> shard = shards[shardFor(entry)];
+        final DelayHeap<DelayedFireable> shard = shards[shardFor(entry)];
         shard.offer(entry);
         if (!running) {
             // Won't fix: a concurrent shutdown() may have already drained the shard, so this
@@ -147,11 +149,10 @@ public final class TimerShards {
             shards[i].offer(PoisonSentinel.INSTANCE);
         }
         joinThreadsQuietly();
-        // Cannot use DelayQueue.drainTo: it only drains entries whose deadline has
-        // already popped. We need every entry, regardless of deadline. Snapshot via
-        // toArray (which sees the full heap) then clear.
+        // Snapshot via toArray (which sees the full heap, including unexpired
+        // entries) then clear. We need every entry regardless of deadline.
         for (int i = 0, n = shards.length; i < n; i++) {
-            DelayQueue<DelayedFireable> shard = shards[i];
+            DelayHeap<DelayedFireable> shard = shards[i];
             Object[] snapshot = shard.toArray();
             shard.clear();
             for (int j = 0, m = snapshot.length; j < m; j++) {
@@ -190,7 +191,7 @@ public final class TimerShards {
         }
         running = true;
         for (int i = 0; i < shards.length; i++) {
-            final DelayQueue<DelayedFireable> shard = shards[i];
+            final DelayHeap<DelayedFireable> shard = shards[i];
             Thread t = new Thread(() -> runShard(shard), threadNamePrefix + "-" + i);
             t.setDaemon(true);
             threads[i] = t;
@@ -213,7 +214,7 @@ public final class TimerShards {
         }
     }
 
-    private void runShard(DelayQueue<DelayedFireable> shard) {
+    private void runShard(DelayHeap<DelayedFireable> shard) {
         CarrierIdentity.bind();
         try {
             while (running) {
@@ -244,7 +245,7 @@ public final class TimerShards {
     }
 
     /**
-     * Single instance used to wake a {@link DelayQueue#take()} blocked thread when
+     * Single instance used to wake a {@link DelayHeap#take()} blocked thread when
      * {@link #halt()} or {@link #shutdown()} runs. Its delay is always negative so the
      * blocking take returns immediately; both lifecycle hooks are no-ops.
      */

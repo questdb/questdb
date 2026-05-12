@@ -40,6 +40,9 @@ public class WaitWalTableSeqTxnFunctionFactory implements FunctionFactory {
 
     @Override
     public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) throws SqlException {
+        if (args.getQuick(0).isNullConstant()) {
+            throw SqlException.$(argPositions.getQuick(0), "tableName cannot be NULL");
+        }
         final CharSequence tableName = args.getQuick(0).getStrA(null);
         final Function seqTxnArg = args.getQuick(1);
         if (!seqTxnArg.isConstant() && !seqTxnArg.isRuntimeConstant()) {

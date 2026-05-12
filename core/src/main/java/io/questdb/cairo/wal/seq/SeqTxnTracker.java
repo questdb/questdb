@@ -261,10 +261,17 @@ public class SeqTxnTracker {
      * callers must write one of these before calling here, which orders the enqueue.
      */
     private void fireWaiters() {
-        WaiterHolder holder = HOLDER.get();
+        int size = waiters.sizeDirty();
+        if (size == 0) {
+            // Fast path on the WAL commit hot path: HOLDER.get() goes through a
+            // CarrierLocal FFI downcall; skipping it when there is nothing to
+            // fire keeps updateWriterTxns -> fireWaiters allocation- and FFI-free.
+            // A racing registerWaiter that we miss here will fire its own enqueue.
+            return;
+        }
         long wtxn = this.writerTxn;
         boolean terminal = isSuspended() || dropped;
-        int size = waiters.sizeDirty();
+        WaiterHolder holder = HOLDER.get();
         for (int i = 0; i < size && waiters.tryDequeue(holder); i++) {
             TxnWaiter w = holder.waiter;
             holder.waiter = null;
