@@ -102,16 +102,19 @@ public class PostingIndexBenchmarkSuite {
         //   "core":            commitProfile, decode, index*, sidecarRead,
         //                      sqlQuery, writeInsert (the printSummary set)
         //   "wal":             walFastLag* and walLargePartition*
+        //   "wal_o3":          walLargePartitionO3* — O3 commit paths
+        //                      (commitDense + rebuildSidecarsByCopy)
         //   "io":              page-fault analysis only (skip JMH benchmarks)
         //   anything else:     literal regex body, expanded to
         //                      "PostingIndexBenchmarkSuite\.(<token>)$"
-        String filter = System.getProperty("questdb.suite.bench", "all");
+        String filter = System.getProperty("questdb.suite.bench", "wal_o3");
         String suiteName = PostingIndexBenchmarkSuite.class.getSimpleName();
         String includePattern = switch (filter) {
             case "all" -> suiteName + "\\.";
             case "core" -> suiteName + "\\.(commitProfile|decode|indexPointRead|indexScanRead|"
                     + "indexRangeRead|sidecarRead|sqlQuery|writeInsert)$";
             case "wal" -> suiteName + "\\.(walFastLag|walLargePartition).*";
+            case "wal_o3" -> suiteName + "\\.walLargePartitionO3.*";
             case "io" -> null;
             default -> suiteName + "\\.(" + filter + ")$";
         };
@@ -382,6 +385,29 @@ public class PostingIndexBenchmarkSuite {
                 "SELECT dateadd('u', x::INT + " + batchOffsetUs + ", '2024-01-01T00:00:00.000000Z'::TIMESTAMP), " +
                 "rnd_symbol(" + s.keyCount + ", 4, 8, 0), " + s.extraValues + " " +
                 "FROM long_sequence(" + WalLargePartitionState.BATCH_ROWS + ")";
+        s.engine.execute(sql, s.ctx);
+        s.applyJob.drain(0);
+        s.checkJob.run(0);
+        s.applyJob.drain(0);
+    }
+
+    @Benchmark
+    @BenchmarkMode(Mode.AverageTime)
+    @OutputTimeUnit(TimeUnit.MILLISECONDS)
+    public void walLargePartitionO3Insert(WalLargePartitionO3State s) throws Exception {
+        // O3 insert: 100k rows with timestamps spread randomly within the
+        // preloaded partition's time range. Forces sealPostingIndexForPartition
+        // down the canSkipRebuild=false path:
+        //   - covering branch: discardForRebuild + index() + commitDense +
+        //                      configureCovering + rebuildSidecars (single
+        //                      dense gen -> rebuildSidecarsByCopy memcpy)
+        //   - non-covering branch: discardForRebuild + index() + commitDense
+        // This is the heaviest O3 commit path for POSTING indexes.
+        String sql = "INSERT INTO walbench(ts, sym, " + s.extraColumns + ") " +
+                "SELECT dateadd('u', rnd_int(1, " + WalLargePartitionO3State.PRELOAD_TS_LIMIT_US +
+                ", 0), '2024-01-01T00:00:00.000000Z'::TIMESTAMP), " +
+                "rnd_symbol(" + s.keyCount + ", 4, 8, 0), " + s.extraValues + " " +
+                "FROM long_sequence(" + WalLargePartitionO3State.BATCH_ROWS + ")";
         s.engine.execute(sql, s.ctx);
         s.applyJob.drain(0);
         s.checkJob.run(0);
@@ -1796,6 +1822,122 @@ public class PostingIndexBenchmarkSuite {
     }
 
     /**
+     * State for walLargePartitionO3Insert: preload a partition then have
+     * each invocation insert a 100k-row batch with timestamps spread
+     * randomly across the preloaded range. The interleaving forces
+     * partitionMutates=true, taking sealPostingIndexForPartition's
+     * canSkipRebuild=false branch (rebuild-from-data) — the heaviest
+     * O3 commit path for POSTING indexes.
+     */
+    @State(Scope.Benchmark)
+    @BenchmarkMode(Mode.AverageTime)
+    @OutputTimeUnit(TimeUnit.MILLISECONDS)
+    public static class WalLargePartitionO3State {
+        static final int BATCH_ROWS = 100_000;
+        static final int PRELOAD_TS_LIMIT_US = 200_000_000;
+        static final int QUERY_KEY_POOL = 32;
+
+        ApplyWal2TableJob applyJob;
+        CheckWalTransactionsJob checkJob;
+        SqlCompilerImpl compiler;
+        SqlExecutionContextImpl ctx;
+        CairoEngine engine;
+        String extraColumns;
+        String extraValues;
+        @Param({"no_index", "bitmap", "posting", "posting_covering", "posting_covering_10cols"})
+        String indexType;
+        int keyCount = 1000;
+        @Param({"1000000", "10000000"})
+        int partitionSize;
+        int queryCounter;
+        String[] queryKeys;
+        java.nio.file.Path tmpDir;
+
+        @Setup(Level.Trial)
+        public void setup() throws Exception {
+            tmpDir = Files.createTempDirectory("suite-largepart-o3");
+            CairoConfiguration config = new DefaultCairoConfiguration(tmpDir.toString()) {
+                @Override
+                public byte getPostingIndexRowIdEncoding() {
+                    return IS_DELTA ? PostingIndexUtils.ENCODING_DELTA : PostingIndexUtils.ENCODING_ADAPTIVE;
+                }
+
+                @Override
+                public int getRndFunctionMemoryMaxPages() {
+                    return 4096;
+                }
+            };
+            engine = new CairoEngine(config);
+            ctx = new SqlExecutionContextImpl(engine, 1)
+                    .with(config.getFactoryProvider().getSecurityContextFactory().getRootContext(),
+                            null, null, -1, null);
+            compiler = new SqlCompilerImpl(engine);
+
+            String ddl;
+            if ("posting_covering_10cols".equals(indexType)) {
+                ddl = "CREATE TABLE walbench (ts TIMESTAMP, sym SYMBOL INDEX TYPE " + POSTING_SQL +
+                        " INCLUDE (c1, c2, c3, c4, c5, c6, c7, c8, c9, c10), " +
+                        "c1 DOUBLE, c2 FLOAT, c3 LONG, c4 INT, c5 SHORT, c6 BYTE, " +
+                        "c7 DOUBLE, c8 LONG, c9 INT, c10 FLOAT) " +
+                        "TIMESTAMP(ts) PARTITION BY DAY WAL";
+                extraColumns = "c1, c2, c3, c4, c5, c6, c7, c8, c9, c10";
+                extraValues = "rnd_double() * 1000, rnd_float() * 100, " +
+                        "rnd_long(1, 1000000, 0), rnd_int(0, 10000, 0), " +
+                        "rnd_short(), rnd_byte(0, 127), " +
+                        "rnd_double() * 1000, rnd_long(1, 1000000, 0), " +
+                        "rnd_int(0, 10000, 0), rnd_float() * 100";
+            } else {
+                ddl = switch (indexType) {
+                    case "no_index" -> "CREATE TABLE walbench (ts TIMESTAMP, sym SYMBOL, price DOUBLE, name VARCHAR) " +
+                            "TIMESTAMP(ts) PARTITION BY DAY WAL";
+                    case "bitmap" ->
+                            "CREATE TABLE walbench (ts TIMESTAMP, sym SYMBOL INDEX, price DOUBLE, name VARCHAR) " +
+                                    "TIMESTAMP(ts) PARTITION BY DAY WAL";
+                    case "posting" -> "CREATE TABLE walbench (ts TIMESTAMP, sym SYMBOL INDEX TYPE " + POSTING_SQL +
+                            ", price DOUBLE, name VARCHAR) TIMESTAMP(ts) PARTITION BY DAY WAL";
+                    case "posting_covering" ->
+                            "CREATE TABLE walbench (ts TIMESTAMP, sym SYMBOL INDEX TYPE " + POSTING_SQL +
+                                    " INCLUDE (price), price DOUBLE, name VARCHAR) TIMESTAMP(ts) PARTITION BY DAY WAL";
+                    default -> throw new IllegalArgumentException(indexType);
+                };
+                extraColumns = "price, name";
+                extraValues = "rnd_double() * 1000, rnd_varchar(10, 20, 0)";
+            }
+            engine.execute(ddl, ctx);
+            applyJob = new ApplyWal2TableJob(engine, 0);
+            checkJob = new CheckWalTransactionsJob(engine);
+
+            // Preload partitionSize rows in 100k-row batches at strictly
+            // increasing timestamps within [1us, PRELOAD_TS_LIMIT_US].
+            // The benchmark body then interleaves new rows across this
+            // entire range, forcing O3 mutation on every commit.
+            int batches = partitionSize / BATCH_ROWS;
+            for (int i = 0; i < batches; i++) {
+                int batchOffsetUs = i * BATCH_ROWS + 1;
+                String batchSql = "INSERT INTO walbench(ts, sym, " + extraColumns + ") " +
+                        "SELECT dateadd('u', x::INT + " + batchOffsetUs + ", '2024-01-01T00:00:00.000000Z'::TIMESTAMP), " +
+                        "rnd_symbol(" + keyCount + ", 4, 8, 0), " + extraValues + " " +
+                        "FROM long_sequence(" + BATCH_ROWS + ")";
+                engine.execute(batchSql, ctx);
+                applyJob.drain(0);
+                checkJob.run(0);
+                applyJob.drain(0);
+            }
+
+            queryKeys = sampleKeys(compiler, ctx, "walbench", QUERY_KEY_POOL);
+            queryCounter = 0;
+        }
+
+        @TearDown(Level.Trial)
+        public void tearDown() {
+            Misc.free(applyJob);
+            Misc.free(compiler);
+            Misc.free(engine);
+            deleteDirRecursive(tmpDir.toFile());
+        }
+    }
+
+    /**
      * State for {@code walLargePartitionInsert} and {@code walLargePartitionQuery}:
      * preload the table with {@code partitionSize} rows in {@link #BATCH_ROWS}-row
      * batches (i.e. {@code partitionSize / 100_000} fast-lag commits) before any
@@ -1824,7 +1966,12 @@ public class PostingIndexBenchmarkSuite {
         CairoEngine engine;
         String extraColumns;
         String extraValues;
-        @Param({"no_index", "bitmap", "posting_covering_10cols"})
+        // posting (non-covering) and posting_covering exercise the
+        // sealPostingIndexForPartition fast-path's non-covering
+        // sealIfMultiGen branch and the covering rebuildSidecarsByCopy
+        // memcpy path respectively. posting_covering_10cols hits
+        // rebuildSidecarsByCopy with the widest sidecar footprint.
+        @Param({"no_index", "bitmap", "posting", "posting_covering", "posting_covering_10cols"})
         String indexType;
         // Bench keeps the per-batch sym cardinality at 1000 so each batch
         // touches a sizeable subset of keys without exploding compile cost
@@ -1876,6 +2023,11 @@ public class PostingIndexBenchmarkSuite {
                     case "bitmap" ->
                             "CREATE TABLE walbench (ts TIMESTAMP, sym SYMBOL INDEX, price DOUBLE, name VARCHAR) " +
                                     "TIMESTAMP(ts) PARTITION BY DAY WAL";
+                    case "posting" -> "CREATE TABLE walbench (ts TIMESTAMP, sym SYMBOL INDEX TYPE " + POSTING_SQL +
+                            ", price DOUBLE, name VARCHAR) TIMESTAMP(ts) PARTITION BY DAY WAL";
+                    case "posting_covering" ->
+                            "CREATE TABLE walbench (ts TIMESTAMP, sym SYMBOL INDEX TYPE " + POSTING_SQL +
+                                    " INCLUDE (price), price DOUBLE, name VARCHAR) TIMESTAMP(ts) PARTITION BY DAY WAL";
                     default -> throw new IllegalArgumentException(indexType);
                 };
                 extraColumns = "price, name";

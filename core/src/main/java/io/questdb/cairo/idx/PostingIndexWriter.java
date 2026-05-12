@@ -1060,12 +1060,11 @@ public class PostingIndexWriter implements IndexWriter {
             // the still-pending .pv purge.
             final long oldSealTxn = sealTxn;
             final long newSealTxn = Math.max(1, chain.peekNextSealTxn());
-            try {
-                rebuildSidecarsByCopy(newSealTxn);
-            } finally {
-                if (sealTxn != oldSealTxn) {
-                    recordPostingSealPurge(oldSealTxn);
-                }
+            rebuildSidecarsByCopy(newSealTxn);
+            // Record purge only after the new chain head is durably published;
+            // an exception mid-rebuild must not queue oldSealTxn for unlink.
+            if (sealTxn != oldSealTxn) {
+                recordPostingSealPurge(oldSealTxn);
             }
         } else {
             seal();
@@ -3581,6 +3580,11 @@ public class PostingIndexWriter implements IndexWriter {
             Unsafe.free(totalCountsAddr, totalCountsSize, MemoryTag.NATIVE_INDEX_READER);
         }
 
+        // .pv before .pk: copyData's bytes must be durable before publishing
+        // a chain head that references them. Mirrors sealIncremental.
+        if (valueMem.isOpen()) {
+            valueMem.sync(false);
+        }
         for (int c = 0, n = sidecarMems.size(); c < n; c++) {
             MemoryMARW mem = sidecarMems.getQuick(c);
             if (mem != null && mem.isOpen()) {
