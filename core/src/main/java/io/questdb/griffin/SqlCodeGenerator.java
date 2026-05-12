@@ -9802,26 +9802,37 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             supportsRandomAccess = true;
         }
 
-        // Live views are WAL-backed tables: queries route through the standard
-        // TableReader cursor over the LV's _meta + _txn + applied WAL. Phase 1 has
-        // no separate in-memory routing layer (the in-mem freshness tier is
-        // populated for future seam_ts routing per RFC 123 but not read yet).
+        // Live views are WAL-backed tables: the base factory is a standard
+        // PageFrameRecordCursorFactory over the LV's _meta + _txn + applied WAL.
+        // RFC 123 Phase 1b wraps it in a LiveViewRecordCursorFactory that
+        // pins the in-memory tier at cursor-open and routes by seam_ts.
         final TableToken tableToken = executionContext.getTableToken(tableName);
+        RecordCursorFactory result;
         if (model.isUpdate() && !executionContext.isWalApplication() && executionContext.getCairoEngine().isWalTable(tableToken)) {
             // two phase update execution, this is client-side branch. It has to execute against the sequencer metadata
             // to allow the client to succeed even if WAL apply does not run.
             try (TableRecordMetadata metadata = executionContext.getMetadataForWrite(tableToken, model.getMetadataVersion())) {
                 // it is not enough to rely on execution context to be different for WAL APPLY;
                 // in WAL APPLY we also must supply reader, outside of WAL APPLY reader is null
-                return generateTableQuery0(model, executionContext, latestBy, supportsRandomAccess, null, metadata);
+                result = generateTableQuery0(model, executionContext, latestBy, supportsRandomAccess, null, metadata);
             }
         } else {
             // this is server side execution of the update. It executes against the reader metadata, which by now
             // has to be fully up-to-date due to WAL apply execution order.
             try (TableReader reader = executionContext.getReader(tableToken, model.getMetadataVersion())) {
-                return generateTableQuery0(model, executionContext, latestBy, supportsRandomAccess, reader, reader.getMetadata());
+                result = generateTableQuery0(model, executionContext, latestBy, supportsRandomAccess, reader, reader.getMetadata());
             }
         }
+        if (tableToken.isLiveView() && !model.isUpdate()) {
+            // Wrap for read queries only; UPDATE goes through a different
+            // execution path that doesn't open the LV cursor.
+            return new io.questdb.griffin.engine.lv.LiveViewRecordCursorFactory(
+                    executionContext.getCairoEngine(),
+                    tableToken,
+                    result
+            );
+        }
+        return result;
     }
 
     private RecordCursorFactory generateTableQuery0(
