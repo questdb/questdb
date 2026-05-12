@@ -225,7 +225,7 @@ public class GroupByHistogram implements Mutable {
         }
     }
 
-    void resize(long newHighestTrackableValue) {
+    public void resize(long newHighestTrackableValue) {
         int oldNormalizingIndexOffset = (ptr != 0) ? Unsafe.getUnsafe().getInt(ptr + normalizingIndexOffsetPosition) : 0;
         int oldNormalizedZeroIndex = normalizeIndex(0, oldNormalizingIndexOffset, countsArrayLength);
         int oldCountsArrayLength = countsArrayLength;

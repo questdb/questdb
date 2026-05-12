@@ -66,7 +66,9 @@ public class ApproxPercentileLongGroupByFunction extends DoubleFunction implemen
     public void computeFirst(MapValue mapValue, Record record, long rowId) {
         final long val = exprFunc.getLong(record);
         if (val != Numbers.LONG_NULL) {
-            histogramA.of(0).recordValue(val);
+            histogramA.of(0);
+            histogramA.resize(1000);
+            histogramA.recordValue(val);
             mapValue.putLong(valueIndex, histogramA.ptr());
         } else {
             mapValue.putLong(valueIndex, 0);
@@ -157,7 +159,13 @@ public class ApproxPercentileLongGroupByFunction extends DoubleFunction implemen
             return;
         }
 
-        histogramA.of(destValue.getLong(valueIndex));
+        long destPtr = destValue.getLong(valueIndex);
+        if (destPtr == 0) {
+            destValue.putLong(valueIndex, srcPtr);
+            return;
+        }
+
+        histogramA.of(destPtr);
         histogramB.of(srcPtr);
         histogramA.merge(histogramB);
         destValue.putLong(valueIndex, histogramA.ptr());
@@ -167,11 +175,6 @@ public class ApproxPercentileLongGroupByFunction extends DoubleFunction implemen
     public void setAllocator(GroupByAllocator allocator) {
         histogramA.setAllocator(allocator);
         histogramB.setAllocator(allocator);
-    }
-
-    @Override
-    public void setEmpty(MapValue mapValue) {
-        mapValue.putLong(valueIndex, 0);
     }
 
     @Override
