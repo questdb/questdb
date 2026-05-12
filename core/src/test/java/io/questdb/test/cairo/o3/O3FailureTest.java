@@ -594,38 +594,12 @@ public class O3FailureTest extends AbstractO3Test {
 
     @Test
     public void testFailOnTruncateKeyIndexContended() throws Exception {
-        counter.set(0);
-        executeWithPool(
-                0, O3FailureTest::testColumnTopLastOOOPrefixFailRetry0, new TestFilesFacadeImpl() {
-                    @Override
-                    public boolean truncate(long fd, long size) {
-                        // First two calls to truncate are for varchar column
-                        if (size == 0 && counter.getAndIncrement() == 3) {
-                            return false;
-                        }
-                        return super.truncate(fd, size);
-                    }
-                }
-        );
+        executeWithPool(0, O3FailureTest::testColumnTopLastOOOPrefixFailRetry0, newIndexFileFaultFF(true));
     }
 
     @Test
     public void testFailOnTruncateKeyValueContended() throws Exception {
-        counter.set(0);
-        // different number of calls to "truncate" on Windows and *Nix
-        // the number targets truncate of key file in BitmapIndexWriter
-        executeWithPool(
-                0, O3FailureTest::testColumnTopLastOOOPrefixFailRetry0, new TestFilesFacadeImpl() {
-                    @Override
-                    public boolean truncate(long fd, long size) {
-                        // First two calls to truncate are for varchar column
-                        if (size == 0 && counter.getAndIncrement() == 3) {
-                            return false;
-                        }
-                        return super.truncate(fd, size);
-                    }
-                }
-        );
+        executeWithPool(0, O3FailureTest::testColumnTopLastOOOPrefixFailRetry0, newIndexFileFaultFF(false));
     }
 
     @Test
@@ -1151,6 +1125,43 @@ public class O3FailureTest extends AbstractO3Test {
                     return -1;
                 }
                 return super.openRW(name, opts);
+            }
+        };
+    }
+
+    private static TestFilesFacadeImpl newIndexFileFaultFF(boolean isKey) {
+        final String bitmapSuffix = "1970-01-08.17" + Files.SEPARATOR + "sym." + (isKey ? "k" : "v");
+        final String postingSuffix = "1970-01-08.17" + Files.SEPARATOR + "sym." + (isKey ? "pk" : "pv.0");
+        return new TestFilesFacadeImpl() {
+            private boolean isArmed = true;
+            private long targetFd = -1;
+
+            @Override
+            public boolean allocate(long fd, long size) {
+                if (isArmed && fd == targetFd) {
+                    isArmed = false;
+                    return false;
+                }
+                return super.allocate(fd, size);
+            }
+
+            @Override
+            public long openRW(LPSZ name, int opts) {
+                long fd = super.openRW(name, opts);
+                if (isArmed && fd > -1
+                        && (Utf8s.endsWithAscii(name, bitmapSuffix) || Utf8s.endsWithAscii(name, postingSuffix))) {
+                    targetFd = fd;
+                }
+                return fd;
+            }
+
+            @Override
+            public boolean truncate(long fd, long size) {
+                if (isArmed && size == 0 && fd == targetFd) {
+                    isArmed = false;
+                    return false;
+                }
+                return super.truncate(fd, size);
             }
         };
     }

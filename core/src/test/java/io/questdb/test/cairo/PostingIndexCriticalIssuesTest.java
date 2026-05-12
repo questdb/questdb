@@ -24,16 +24,27 @@
 
 package io.questdb.test.cairo;
 
+import io.questdb.PropertyKey;
+import io.questdb.cairo.CairoException;
+import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.idx.BitpackUtils;
+import io.questdb.cairo.idx.PostingIndexBwdReader;
 import io.questdb.cairo.idx.PostingIndexChainEntry;
+import io.questdb.cairo.idx.PostingIndexChainHeader;
+import io.questdb.cairo.idx.PostingIndexChainPicker;
 import io.questdb.cairo.idx.PostingIndexChainWriter;
+import io.questdb.cairo.idx.PostingIndexFwdReader;
 import io.questdb.cairo.idx.PostingIndexNative;
 import io.questdb.cairo.idx.PostingIndexUtils;
 import io.questdb.cairo.idx.PostingIndexWriter;
+import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
+import io.questdb.cairo.sql.RowCursor;
 import io.questdb.cairo.vm.MemoryCMARWImpl;
+import io.questdb.std.DirectBitSet;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.LongList;
 import io.questdb.std.MemoryTag;
@@ -50,9 +61,9 @@ import org.junit.Test;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
-import java.util.concurrent.atomic.AtomicReference;
 
 import static io.questdb.cairo.TableUtils.COLUMN_NAME_TXN_NONE;
+import static io.questdb.cairo.TableUtils.setPathForNativePartition;
 
 /**
  * Red tests for the critical findings raised in the PR review of #6861.
@@ -61,6 +72,54 @@ import static io.questdb.cairo.TableUtils.COLUMN_NAME_TXN_NONE;
  * conditions are marked with comments describing what they need.
  */
 public class PostingIndexCriticalIssuesTest extends AbstractCairoTest {
+
+    /**
+     * Review C2: the full-partition SELECT DISTINCT path calls
+     * collectDistinctKeys(), not collectDistinctKeysInRange(). The no-range
+     * helper must still honor the chain entry's MAX_VALUE; otherwise a key
+     * whose only encoded rows are dirty rows past MAX_VALUE is reported as
+     * present in the partition.
+     */
+    @Test
+    public void testCollectDistinctKeysDoesNotExposeKeysPastEntryMaxValue() throws Exception {
+        assertMemoryLeak(() -> {
+            final String name = "posting_distinct_max_value_clamp";
+            try (Path path = new Path().of(configuration.getDbRoot())) {
+                final int plen = path.size();
+                final int liveKey = 1;
+                final int dirtyOnlyKey = 2;
+
+                try (PostingIndexWriter writer = new PostingIndexWriter(
+                        configuration, path.trimTo(plen), name, COLUMN_NAME_TXN_NONE)) {
+                    for (long rowId = 0; rowId < 50; rowId++) {
+                        writer.add(liveKey, rowId);
+                    }
+                    for (long rowId = 50; rowId < 100; rowId++) {
+                        writer.add(dirtyOnlyKey, rowId);
+                    }
+                    writer.setMaxValue(99);
+                    writer.commit();
+                    writer.setMaxValue(49);
+                }
+
+                try (PostingIndexFwdReader reader = new PostingIndexFwdReader(
+                        configuration, path.trimTo(plen), name,
+                        COLUMN_NAME_TXN_NONE, /* partitionTxn */ 0, /* columnTop */ 0);
+                     DirectBitSet foundKeys = new DirectBitSet(8)) {
+                    Assert.assertEquals(
+                            "only the key with rowids at or below MAX_VALUE=49 is live",
+                            1,
+                            reader.collectDistinctKeys(foundKeys)
+                    );
+                    Assert.assertTrue(foundKeys.get(liveKey));
+                    Assert.assertFalse(
+                            "collectDistinctKeys must not expose a key whose only rows are past entryMaxValue",
+                            foundKeys.get(dirtyOnlyKey)
+                    );
+                }
+            }
+        });
+    }
 
     /**
      * Critical #8: ExpressionNode.deepClone restoration in the covering
@@ -293,24 +352,356 @@ public class PostingIndexCriticalIssuesTest extends AbstractCairoTest {
         });
     }
 
-    // Critical findings #2 (setMaxValue seqlock), #6 ([0, Long.MAX_VALUE)
-    // conservative purge interval) and #7 (seal-loop partial failure
-    // recovery) were RED placeholders during the v1 era. They are now
-    // addressed structurally by the v2 chain redesign:
-    //   #2 — chain.updateHeadMaxValue publishes via the chain header
-    //        seqlock, so any reader of MAX_VALUE goes through the same
-    //        consistency protocol as keyCount/genCount.
-    //   #6 — recordPostingSealPurge derives [fromTxn, toTxn) from the
-    //        chain entries themselves; the residual [0, MAX) branch only
-    //        fires for the empty-chain edge case, which the
-    //        writer-open recovery walk picks up on the next reopen.
-    //   #7 — recoveryDropAbandoned (run from PostingIndexWriter.of after
-    //        setCurrentTableTxn) drops every chain entry whose txnAtSeal
-    //        was published before the encompassing txWriter.commit
-    //        landed.
-    // Critical finding #9 (ColumnPurgeOperator retry cap on Windows) is
-    // orthogonal to the posting-index chain rewrite and remains tracked
-    // separately.
+    @Test
+    public void testO3CoveringRebuildSidecarsPreservesCoveredValues() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE t_cov_o3 (
+                        ts TIMESTAMP,
+                        sym SYMBOL INDEX TYPE POSTING INCLUDE (price),
+                        price DOUBLE
+                    ) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL
+                    """);
+            execute("""
+                    INSERT INTO t_cov_o3 VALUES
+                    ('2024-01-01T00:00:00Z', 'A', 1.0),
+                    ('2024-01-01T01:00:00Z', 'B', 2.0),
+                    ('2024-01-01T02:00:00Z', 'A', 3.0),
+                    ('2024-01-01T03:00:00Z', 'C', 4.0)
+                    """);
+            execute("""
+                    INSERT INTO t_cov_o3 VALUES
+                    ('2024-01-01T00:30:00Z', 'A', 5.0),
+                    ('2024-01-01T01:30:00Z', 'B', 6.0),
+                    ('2024-01-01T02:30:00Z', 'C', 7.0)
+                    """);
+
+            assertQueryNoLeakCheck(
+                    """
+                            ts\tsym\tprice
+                            2024-01-01T00:00:00.000000Z\tA\t1.0
+                            2024-01-01T00:30:00.000000Z\tA\t5.0
+                            2024-01-01T02:00:00.000000Z\tA\t3.0
+                            """,
+                    "SELECT ts, sym, price FROM t_cov_o3 WHERE sym = 'A' ORDER BY ts",
+                    "ts",
+                    false,
+                    true
+            );
+            assertQueryNoLeakCheck(
+                    """
+                            ts\tsym\tprice
+                            2024-01-01T01:00:00.000000Z\tB\t2.0
+                            2024-01-01T01:30:00.000000Z\tB\t6.0
+                            """,
+                    "SELECT ts, sym, price FROM t_cov_o3 WHERE sym = 'B' ORDER BY ts",
+                    "ts",
+                    false,
+                    true
+            );
+            assertQueryNoLeakCheck(
+                    """
+                            ts\tsym\tprice
+                            2024-01-01T02:30:00.000000Z\tC\t7.0
+                            2024-01-01T03:00:00.000000Z\tC\t4.0
+                            """,
+                    "SELECT ts, sym, price FROM t_cov_o3 WHERE sym = 'C' ORDER BY ts",
+                    "ts",
+                    false,
+                    true
+            );
+        });
+    }
+
+    @Test
+    public void testOpenFromO3ContextPropagatesUpcomingTxn() throws Exception {
+        assertMemoryLeak(() -> {
+            final String name = "posting_o3_upcoming_txn";
+            final long upcomingTxn = 42L;
+            try (Path path = new Path().of(configuration.getDbRoot())) {
+                final int plen = path.size();
+                try (PostingIndexWriter writer = new PostingIndexWriter(configuration)) {
+                    writer.setO3PathContext(path.trimTo(plen), name, COLUMN_NAME_TXN_NONE, upcomingTxn);
+                    writer.openFromO3Context(/* isInit */ true);
+                    writer.add(0, 0);
+                    writer.add(1, 1);
+                    writer.setMaxValue(1);
+                    writer.commit();
+                }
+                FilesFacade rawFf = configuration.getFilesFacade();
+                LPSZ keyFile = PostingIndexUtils.keyFileName(
+                        path.trimTo(plen), name, COLUMN_NAME_TXN_NONE);
+                long fileSize = rawFf.length(keyFile);
+                try (MemoryCMARWImpl mem = new MemoryCMARWImpl(
+                        rawFf, keyFile, rawFf.getPageSize(), fileSize,
+                        MemoryTag.MMAP_DEFAULT, /* opts */ 0)) {
+                    PostingIndexChainWriter chain = new PostingIndexChainWriter();
+                    chain.openExisting(mem);
+                    Assert.assertTrue("chain must have head", chain.hasHead());
+                    PostingIndexChainEntry.Snapshot head = new PostingIndexChainEntry.Snapshot();
+                    chain.loadHeadEntry(mem, head);
+                    Assert.assertEquals(
+                            "openFromO3Context must propagate o3CtxUpcomingTxn into the published chain entry",
+                            upcomingTxn,
+                            head.txnAtSeal
+                    );
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testParquetIndexWriteUsesCommitDense() throws Exception {
+        // O3PartitionJob.updateParquetIndexes goes through commitDense for POSTING.
+        // That path runs when O3 mutates an already-parquet partition. Convert the
+        // first partition to parquet, then O3-insert into it to trigger the rewrite.
+        // After that, the chain head must hold a single dense gen.
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE t_parquet_posting (
+                        ts TIMESTAMP,
+                        sym SYMBOL INDEX TYPE POSTING
+                    ) TIMESTAMP(ts) PARTITION BY DAY WAL
+                    """);
+            execute("""
+                    INSERT INTO t_parquet_posting
+                    SELECT
+                        dateadd('s', x::INT, '2024-01-01T00:00:00Z'::TIMESTAMP),
+                        rnd_symbol('A', 'B', 'C', 'D', 'E')
+                    FROM long_sequence(1000)
+                    """);
+            execute("""
+                    INSERT INTO t_parquet_posting
+                    SELECT
+                        dateadd('s', x::INT, '2024-01-02T00:00:00Z'::TIMESTAMP),
+                        rnd_symbol('A', 'B', 'C', 'D', 'E')
+                    FROM long_sequence(1000)
+                    """);
+            drainWalQueue();
+            execute("ALTER TABLE t_parquet_posting CONVERT PARTITION TO PARQUET LIST '2024-01-01'");
+            drainWalQueue();
+            execute("""
+                    INSERT INTO t_parquet_posting VALUES
+                    ('2024-01-01T00:30:00Z', 'F'),
+                    ('2024-01-01T01:30:00Z', 'G')
+                    """);
+            drainWalQueue();
+            engine.releaseAllWriters();
+
+            TableToken token = engine.getTableTokenIfExists("t_parquet_posting");
+            Assert.assertNotNull("table must exist", token);
+            long partitionTs;
+            long partitionNameTxn;
+            try (TableReader reader = engine.getReader(token)) {
+                partitionTs = reader.getTxFile().getPartitionTimestampByIndex(0);
+                partitionNameTxn = reader.getTxFile().getPartitionNameTxn(0);
+            }
+            FilesFacade rawFf = configuration.getFilesFacade();
+            try (Path path = new Path()) {
+                path.of(configuration.getDbRoot()).concat(token);
+                setPathForNativePartition(
+                        path, ColumnType.TIMESTAMP, io.questdb.cairo.PartitionBy.DAY, partitionTs, partitionNameTxn);
+                int plen = path.size();
+                LPSZ keyFile = PostingIndexUtils.keyFileName(
+                        path.trimTo(plen), "sym", COLUMN_NAME_TXN_NONE);
+                long fileSize = rawFf.length(keyFile);
+                Assert.assertTrue(".pk file must exist in parquet partition dir, path=" + keyFile, fileSize > 0);
+                try (MemoryCMARWImpl mem = new MemoryCMARWImpl(
+                        rawFf, keyFile, rawFf.getPageSize(), fileSize,
+                        MemoryTag.MMAP_DEFAULT, /* opts */ 0)) {
+                    PostingIndexChainWriter chain = new PostingIndexChainWriter();
+                    chain.openExisting(mem);
+                    Assert.assertTrue("chain must have head after parquet rewrite", chain.hasHead());
+                    PostingIndexChainEntry.Snapshot head = new PostingIndexChainEntry.Snapshot();
+                    chain.loadHeadEntry(mem, head);
+                    Assert.assertEquals("single dense gen expected after commitDense", 1, head.genCount);
+                    long gen0DirOffset = PostingIndexChainEntry.resolveGenDirOffset(head.offset, 0);
+                    int gen0KeyCount = mem.getInt(gen0DirOffset + PostingIndexUtils.GEN_DIR_OFFSET_KEY_COUNT);
+                    Assert.assertTrue("gen 0 must be dense (positive KEY_COUNT), got " + gen0KeyCount,
+                            gen0KeyCount > 0);
+                    Assert.assertEquals("commitDense must not rotate sealTxn", 0, head.sealTxn);
+                    LPSZ pvRotated = PostingIndexUtils.valueFileName(
+                            path.trimTo(plen), "sym", COLUMN_NAME_TXN_NONE, 1);
+                    Assert.assertFalse("rotated .pv.1 must not exist after commitDense, path=" + pvRotated,
+                            rawFf.exists(pvRotated));
+                }
+            }
+        });
+    }
+
+    /**
+     * Reader must clamp returned rowids by the picked chain entry's
+     * V2_ENTRY_OFFSET_MAX_VALUE field. Writers can leave dirty
+     * (key, rowid) pairs in .pv past the chain's tracked coverage --
+     * for example after an O3 split shrinks a partition before the
+     * next reseal evicts them, or after a stale generation a
+     * sparse-gen append later supersedes. The chain entry's MAX_VALUE
+     * is the boundary between clean and dirty rows; the reader is the
+     * only place that can skip them without a full reseal.
+     * <p>
+     * Reproducer (no race, no fault injection): write 100 rowids
+     * across 5 keys to a fresh chain and commit -- the chain head now
+     * has MAX_VALUE=99 with valueMemSize covering all 100 rowids in
+     * .pv. Then call {@code setMaxValue(49)}, which writes 49 into
+     * the head entry's MAX_VALUE field via
+     * {@code PostingIndexChainWriter.updateHeadMaxValue} without
+     * touching .pv or the gen-dir. The on-disk state is the canonical
+     * dirty-data signature: chain claims coverage up to 49, but the
+     * encoded gen still walks rowids 0..99.
+     * <p>
+     * Open a fresh PostingIndexFwdReader / PostingIndexBwdReader and
+     * request key 0 (rowids 0, 5, 10, ..., 95) with caller-supplied
+     * max=Long.MAX_VALUE. Without the fix, the cursor walks every
+     * encoded value because it ignores entryMaxValue and clamps only
+     * by the caller-supplied bound. With the fix,
+     * {@code indexMaxValue = min(callerMax, entryMaxValue) = 49} and
+     * the cursor stops emitting values above 49.
+     */
+    @Test
+    public void testReaderClampsCursorToChainEntryMaxValue() throws Exception {
+        assertMemoryLeak(() -> {
+            final String name = "posting_max_value_clamp";
+            try (Path path = new Path().of(configuration.getDbRoot())) {
+                final int plen = path.size();
+                final FilesFacade ff = configuration.getFilesFacade();
+
+                try (PostingIndexWriter writer = new PostingIndexWriter(
+                        configuration, path.trimTo(plen), name, COLUMN_NAME_TXN_NONE)) {
+                    // Five keys, rowids 0..99. add() requires per-key
+                    // ascending rowids; using rowid as the loop index
+                    // satisfies that for every key.
+                    for (long rowId = 0; rowId < 100; rowId++) {
+                        writer.add((int) (rowId % 5), rowId);
+                    }
+                    writer.setMaxValue(99);
+                    writer.commit();
+                    // Lower MAX_VALUE in place. updateHeadMaxValue
+                    // writes V2_ENTRY_OFFSET_MAX_VALUE atomically and
+                    // republishes the chain header -- it does not
+                    // touch valueMem or the gen-dir, so the encoded
+                    // gen still walks rowids 0..99.
+                    writer.setMaxValue(49);
+                }
+
+                LPSZ keyFile = PostingIndexUtils.keyFileName(
+                        path.trimTo(plen), name, COLUMN_NAME_TXN_NONE);
+                try (MemoryCMARWImpl mem = new MemoryCMARWImpl(
+                        ff, keyFile, ff.getPageSize(), ff.length(keyFile),
+                        MemoryTag.MMAP_DEFAULT, /* opts */ 0)) {
+                    PostingIndexChainWriter chain = new PostingIndexChainWriter();
+                    chain.openExisting(mem);
+                    Assert.assertTrue(
+                            "test setup gap: chain head must exist after commit()",
+                            chain.hasHead()
+                    );
+                    PostingIndexChainEntry.Snapshot head = new PostingIndexChainEntry.Snapshot();
+                    chain.loadHeadEntry(mem, head);
+                    Assert.assertEquals(
+                            "test setup gap: head MAX_VALUE must reflect the lowered value "
+                                    + "after setMaxValue(49)",
+                            49L, head.maxValue
+                    );
+                    Assert.assertTrue(
+                            "test setup gap: head valueMemSize must still cover the encoded "
+                                    + "data for rowids 0..99 -- updateHeadMaxValue must not "
+                                    + "shrink it",
+                            head.valueMemSize > 0
+                    );
+                }
+
+                // Oracle: key 0 was added at rowids 0, 5, 10, ..., 95
+                // (loop rowId % 5 == 0). After the clamp to MAX_VALUE=49,
+                // the cursor must emit exactly the rowids in [0, 49] for
+                // key 0: 0, 5, 10, 15, 20, 25, 30, 35, 40, 45 -- ten rowids,
+                // ascending for Fwd, descending for Bwd.
+                LongList expectedFwd = new LongList();
+                for (long r = 0; r <= 49; r += 5) {
+                    expectedFwd.add(r);
+                }
+                LongList expectedBwd = new LongList();
+                for (long r = 45; r >= 0; r -= 5) {
+                    expectedBwd.add(r);
+                }
+
+                try (PostingIndexFwdReader reader = new PostingIndexFwdReader(
+                        configuration, path.trimTo(plen), name,
+                        COLUMN_NAME_TXN_NONE, /* partitionTxn */ 0, /* columnTop */ 0)) {
+                    LongList actual = new LongList();
+                    try (RowCursor cursor = reader.getCursor(0, 0L, Long.MAX_VALUE)) {
+                        while (cursor.hasNext()) {
+                            actual.add(cursor.next());
+                        }
+                    }
+                    TestUtils.assertEquals(expectedFwd, actual);
+                }
+
+                try (PostingIndexBwdReader reader = new PostingIndexBwdReader(
+                        configuration, path.trimTo(plen), name,
+                        COLUMN_NAME_TXN_NONE, /* partitionTxn */ 0, /* columnTop */ 0,
+                        /* metadata */ null, /* columnVersionReader */ null,
+                        /* partitionTimestamp */ 0)) {
+                    LongList actual = new LongList();
+                    try (RowCursor cursor = reader.getCursor(0, 0L, Long.MAX_VALUE)) {
+                        while (cursor.hasNext()) {
+                            actual.add(cursor.next());
+                        }
+                    }
+                    TestUtils.assertEquals(expectedBwd, actual);
+                }
+            }
+        });
+    }
+
+    /**
+     * Review C1: once readers clamp iteration to the chain entry's MAX_VALUE,
+     * RowCursor.size() must not keep advertising the unclamped encoded count.
+     * Returning -1 is acceptable because the SQL count fast path will then
+     * fall back to hasNext()/next() iteration.
+     */
+    @Test
+    public void testReaderSizeDoesNotOutrunEntryMaxValueClamp() throws Exception {
+        assertMemoryLeak(() -> {
+            final String name = "posting_size_max_value_clamp";
+            try (Path path = new Path().of(configuration.getDbRoot())) {
+                final int plen = path.size();
+
+                try (PostingIndexWriter writer = new PostingIndexWriter(
+                        configuration, path.trimTo(plen), name, COLUMN_NAME_TXN_NONE)) {
+                    for (long rowId = 0; rowId < 100; rowId++) {
+                        writer.add((int) (rowId % 5), rowId);
+                    }
+                    writer.setMaxValue(99);
+                    writer.commit();
+                    writer.setMaxValue(49);
+                }
+
+                try (PostingIndexFwdReader reader = new PostingIndexFwdReader(
+                        configuration, path.trimTo(plen), name,
+                        COLUMN_NAME_TXN_NONE, /* partitionTxn */ 0, /* columnTop */ 0)) {
+                    long advertisedSize;
+                    long iterated = 0;
+                    try (RowCursor cursor = reader.getCursor(0, 0L, Long.MAX_VALUE)) {
+                        advertisedSize = cursor.size();
+                        while (cursor.hasNext()) {
+                            cursor.next();
+                            iterated++;
+                        }
+                    }
+
+                    Assert.assertEquals(
+                            "test setup gap: key 0 has rowids 0,5,...,45 at or below MAX_VALUE=49",
+                            10,
+                            iterated
+                    );
+                    Assert.assertTrue(
+                            "RowCursor.size() must either decline the fast path or match clamped iteration "
+                                    + "[size=" + advertisedSize + ", iterated=" + iterated + "]",
+                            advertisedSize < 0 || advertisedSize == iterated
+                    );
+                }
+            }
+        });
+    }
 
     /**
      * {@code TableWriter.linkPostingIndexAuxFiles} must hardlink only the
@@ -429,9 +820,11 @@ public class PostingIndexCriticalIssuesTest extends AbstractCairoTest {
             );
 
             assertQueryNoLeakCheck(
-                    "ts\tnew_sym\tprice\n"
-                            + "2024-01-01T00:00:00.000000Z\tA\t1.0\n"
-                            + "2024-01-01T01:00:00.000000Z\tB\t2.0\n",
+                    """
+                            ts\tnew_sym\tprice
+                            2024-01-01T00:00:00.000000Z\tA\t1.0
+                            2024-01-01T01:00:00.000000Z\tB\t2.0
+                            """,
                     "SELECT ts, new_sym, price FROM t_rename_live",
                     "ts",
                     true,
@@ -572,13 +965,13 @@ public class PostingIndexCriticalIssuesTest extends AbstractCairoTest {
                 try {
                     try (RecordCursorFactory factory = select(
                             "SELECT count(*) AS c FROM (SELECT DISTINCT sym FROM t_stale_pk)")) {
-                        try (io.questdb.cairo.sql.RecordCursor c = factory.getCursor(sqlExecutionContext)) {
+                        try (RecordCursor c = factory.getCursor(sqlExecutionContext)) {
                             if (c.hasNext()) {
                                 count = c.getRecord().getLong(0);
                             }
                         }
                     }
-                } catch (io.questdb.cairo.CairoException ok) {
+                } catch (CairoException ok) {
                     // Acceptable post-fix outcome: clean error surfaced.
                     return;
                 } catch (AssertionError jvmAssert) {
@@ -611,25 +1004,6 @@ public class PostingIndexCriticalIssuesTest extends AbstractCairoTest {
             }
         });
     }
-
-    // =========================================================================
-    // Red tests for the v2 review of PR #6861 (current pass).
-    //
-    // Each test below maps to a finding from the review report. Tests that
-    // require fault injection use TestFilesFacadeImpl; tests that require
-    // concurrency simulate the race by mutating ff.length() between mmap
-    // setup and chain access. Findings that can only manifest from sources
-    // FilesFacade does not see (Unsafe.realloc OOM, queue-pool exhaustion)
-    // are documented in trailing comments.
-    // =========================================================================
-
-    // Review finding #1 (sidecar mem fd leak in openSidecarFiles) was
-    // dropped after verification: MemoryCMARWImpl.extend0 (line 403) and
-    // map0 (line 417) both close the fd on mmap/mremap failure inside
-    // jumpTo(). The "orphan mem" identified in the review never holds an
-    // open fd by the time the outer catch fires — it is already closed
-    // internally by the memory-mapping helper.
-    // Documented for traceability; no JUnit red test.
 
     /**
      * Review finding #4 — {@code BitpackUtils.unpackValuesFrom} Java
@@ -796,7 +1170,7 @@ public class PostingIndexCriticalIssuesTest extends AbstractCairoTest {
                             INSERT INTO t_truncate_half VALUES
                             ('2024-01-02T00:00:00', 'C')
                             """);
-                } catch (io.questdb.cairo.CairoException expected) {
+                } catch (CairoException expected) {
                     // OK — this is the clean failure mode.
                 } catch (NullPointerException | AssertionError leaked) {
                     Assert.fail(
@@ -879,54 +1253,236 @@ public class PostingIndexCriticalIssuesTest extends AbstractCairoTest {
     }
 
     /**
-     * Re-review Critical #1, end-to-end reachability via SQL — proves
-     * the bug's chain-state signature is produced from ordinary user
-     * input plus a plausible OS failure.
+     * Re-review Critical #1 — {@link PostingIndexWriter#discardForRebuild}
+     * preserves the writer's {@code sealTxn}, {@code valueMemSize} and
+     * chain head on disk. The next {@link PostingIndexWriter#commit()}
+     * therefore reaches {@code publishToChain} with
+     * {@code this.sealTxn == chain.getHeadSealTxn()}, which routes to
+     * {@link PostingIndexChainWriter#extendHead}. After
+     * {@code discardForRebuild} reset {@code genCount} to 0,
+     * {@code flushAllPending} bumps it to 1 and calls
+     * {@code publishToChain(newGenCount=1, overrideGenIndex=0, ...)}.
      * <p>
-     * Recipe:
+     * {@code extendHead}'s protocol assumes
+     * {@code newGenCount > oldGenCount}: the caller writes a fresh
+     * gen-dir slot at index {@code oldGenCount} (past the visible end),
+     * fences, then bumps {@code GEN_COUNT} last. The caller in
+     * {@code TableWriter.sealPostingIndexForPartition} (covering branch
+     * around TableWriter.java:11308-11320, non-covering branch around
+     * 11381-11388) violates that contract whenever the partition's
+     * pre-rebuild head had {@code GEN_COUNT > 1} (e.g., after WAL
+     * fast-lag commits chained {@code extendHead} on the same sealTxn):
+     * {@code publishToChain} writes gen-dir slot 0 — already occupied —
+     * shrinks {@code LEN}, and pulls {@code GEN_COUNT} from {@code K}
+     * down to 1. The previously-published head entry is mutated in
+     * place; the entry's {@code TXN_AT_SEAL} stays unchanged because
+     * {@code extendHead} never touches that field.
+     * <p>
+     * Three downstream consequences:
      * <ol>
-     *   <li>Posting-indexed table partitioned by day, BYPASS WAL.</li>
-     *   <li>In-order baseline INSERT into two days. The chain entries
-     *       are committed via {@code syncColumns}, which does call
-     *       {@code setNextTxnAtSeal} — these baseline entries carry a
-     *       sane {@code txnAtSeal}.</li>
-     *   <li>O3 INSERT spanning the same two days. This routes through
-     *       {@code finishO3Commit} → {@code sealPostingIndexesForO3Partitions}
-     *       (TableWriter.java:5801) → {@code sealPostingIndexForPartition}
-     *       (TableWriter.java:10739, 10777). Neither call site invokes
-     *       {@code setNextTxnAtSeal} before {@code seal()}; the seal
-     *       publishes a fresh chain entry via {@code publishToChain}
-     *       (PostingIndexWriter.java:4045) with the fallback
-     *       {@code txnAtSeal=0L}.</li>
-     *   <li>A {@code FilesFacade} fault fails the second seal-time
-     *       {@code openRW} of a {@code .pv.{N+1}} file (the
-     *       {@code !.pv.0} filter skips the pre-seal column files).
-     *       The first partition's seal completes — its
-     *       {@code .pv.{N+1}} file lands on disk and the chain head
-     *       advances to it. The second partition's seal throws; the
-     *       {@code finishO3Commit} catch (TableWriter.java:5802-5818)
-     *       marks the writer distressed, and the encompassing
-     *       {@code txWriter.commit} never runs.</li>
-     *   <li>{@code engine.releaseAllWriters()} drops the distressed
-     *       writer from the pool.</li>
-     *   <li>Open the affected partition's {@code .pk} and read the
-     *       chain head. Run {@code recoveryDropAbandoned} with
-     *       {@code currentTableTxn} set to the last committed table
-     *       {@code _txn} the recovery walk would observe on a fresh
-     *       writer reopen (TableWriter.java:7585 / 10739 / 10777
-     *       wire {@code setCurrentTableTxn(txWriter.getTxn())}).
-     *       A working recovery walk drops the abandoned head; with
-     *       the bug it drops zero entries.</li>
+     *   <li><b>Torn read.</b> A concurrent reader that latches the OLD
+     *       {@code GEN_COUNT=K} under
+     *       {@link PostingIndexChainEntry#read}'s {@code loadFence} walks
+     *       slots {@code [0, K)} where slot 0 carries the new
+     *       post-rebuild bytes and slots {@code [1, K)} still reference
+     *       the OLD gens. {@code extendHead}'s {@code GEN_COUNT}-last
+     *       store ordering only protects {@code newGenCount > oldGenCount}.</li>
+     *   <li><b>Snapshot-isolation violation.</b> After the trailing
+     *       {@code seal()} appends a fresh head, the in-place-mutated
+     *       entry becomes a {@code prev} entry. Its bytes now describe
+     *       the post-rebuild state, but its {@code TXN_AT_SEAL} still
+     *       belongs to the pre-rebuild snapshot.
+     *       {@link PostingIndexChainPicker#pick} for any reader pinned
+     *       between the OLD entry's {@code txnAtSeal} and the new entry's
+     *       {@code txnAtSeal} stops at the mutated OLD entry and observes
+     *       post-rebuild data through what should be a pre-rebuild
+     *       snapshot.</li>
+     *   <li><b>Crash recovery hole.</b> A crash between
+     *       {@code commit()} and the trailing {@code seal()} leaves the
+     *       OLD entry mutated but with its original {@code TXN_AT_SEAL}.
+     *       {@link PostingIndexChainWriter#recoveryDropAbandoned}'s
+     *       predicate is {@code txnAtSeal > currentTableTxn}; the
+     *       mutation is invisible to it, so the corrupted entry survives
+     *       recovery as the new head.</li>
      * </ol>
      * <p>
-     * The on-disk {@code .pv.{N+1}} file is also leaked — but only if
-     * the affected partition is never written to again. If the user
-     * does write to it later the next seal supersedes the abandoned
-     * chain head via {@code recordPostingSealPurge}, which cleans the
-     * file up incidentally. So the file-existence check is too noisy
-     * to use as a discriminator — the chain-head state is the
-     * deterministic signal.
+     * Suggested fixes (the test passes if either is in place):
+     * <ul>
+     *   <li>{@code discardForRebuild} rotates {@code sealTxn} (e.g.,
+     *       {@code closeSidecarMems()} + reopen {@code valueMem} at
+     *       {@link PostingIndexChainWriter#peekNextSealTxn}, the same
+     *       shape as {@link PostingIndexWriter#truncate}) so the next
+     *       {@code commit()} takes the {@code appendNewEntry} branch.</li>
+     *   <li>Or, {@code publishToChain} detects
+     *       {@code newGenCount < oldGenCount} and forces
+     *       {@code appendNewEntry}.</li>
+     * </ul>
+     * <p>
+     * The test models the rebuild flow with a writer fixture instead of a
+     * full SQL-level reproduction: the production trigger is an O3 commit
+     * that re-routes through {@code sealPostingIndexForPartition} on a
+     * partition whose chain head already carries
+     * {@code GEN_COUNT >= 2}. Phase 1 builds that pre-rebuild shape via
+     * three {@code commit()}s at the same sealTxn (each takes
+     * {@code extendHead} after the first); Phase 2 replays
+     * {@code discardForRebuild() -> add() -> commit()} as the rebuild
+     * dance and asserts that none of the protocol-preserving outcomes
+     * fired.
      */
+    @Test
+    public void testReviewFindingC1_DiscardForRebuildMutatesAlreadyPublishedHeadInPlace() throws Exception {
+        assertMemoryLeak(() -> {
+            try (Path path = new Path().of(configuration.getDbRoot())) {
+                String name = "c1_discard_for_rebuild_mutates_head";
+                int plen = path.size();
+                FilesFacade ff = configuration.getFilesFacade();
+
+                // Phase 1: build a chain head with GEN_COUNT >= 2 by
+                // committing three times at the same sealTxn. The first
+                // commit takes appendNewEntry; the next two take extendHead
+                // and bump GEN_COUNT in the protocol-conforming direction
+                // (newGenCount > oldGenCount).
+                try (PostingIndexWriter writer = new PostingIndexWriter(
+                        configuration, path.trimTo(plen), name, COLUMN_NAME_TXN_NONE)) {
+                    writer.setNextTxnAtSeal(10L);
+                    writer.add(0, 0);
+                    writer.add(1, 1);
+                    writer.add(2, 2);
+                    writer.setMaxValue(2);
+                    writer.commit(); // appendNewEntry -> head GEN_COUNT=1
+
+                    writer.add(0, 3);
+                    writer.add(1, 4);
+                    writer.setMaxValue(4);
+                    writer.commit(); // extendHead -> GEN_COUNT=2
+
+                    writer.add(2, 5);
+                    writer.add(0, 6);
+                    writer.setMaxValue(6);
+                    writer.commit(); // extendHead -> GEN_COUNT=3
+                    Assert.assertEquals(
+                            "test setup gap: in-memory genCount must reach 3 "
+                                    + "before the rebuild so the buggy path is "
+                                    + "newGenCount=1 < oldGenCount=3",
+                            3, writer.getGenCount()
+                    );
+                }
+
+                // Snapshot the pre-rebuild head entry directly from the .pk
+                // file — close() trimmed keyMem to chain.getRegionLimit so
+                // the on-disk view matches the live writer's last published
+                // state.
+                PostingIndexChainEntry.Snapshot preSnap = new PostingIndexChainEntry.Snapshot();
+                long preEntryCount;
+                {
+                    LPSZ keyFile = PostingIndexUtils.keyFileName(
+                            path.trimTo(plen), name, COLUMN_NAME_TXN_NONE);
+                    long fileSize = ff.length(keyFile);
+                    try (MemoryCMARWImpl mem = new MemoryCMARWImpl(
+                            ff, keyFile, ff.getPageSize(), fileSize,
+                            MemoryTag.MMAP_DEFAULT, /* opts */ 0)) {
+                        PostingIndexChainWriter chain = new PostingIndexChainWriter();
+                        chain.openExisting(mem);
+                        Assert.assertTrue("phase 1 must leave a head entry", chain.hasHead());
+                        preEntryCount = chain.getEntryCount();
+                        chain.loadHeadEntry(mem, preSnap);
+                    }
+                    Assert.assertTrue(
+                            "test setup gap: pre-rebuild head must have "
+                                    + "GEN_COUNT >= 2 to exercise the "
+                                    + "newGenCount < oldGenCount path; got "
+                                    + preSnap.genCount,
+                            preSnap.genCount >= 2
+                    );
+                    Assert.assertEquals(
+                            "pre-rebuild head must carry the txnAtSeal supplied "
+                                    + "via setNextTxnAtSeal — this is what "
+                                    + "recoveryDropAbandoned compares against on "
+                                    + "the next reopen",
+                            10L, preSnap.txnAtSeal
+                    );
+                }
+
+                // Phase 2: reopen and run the rebuild dance:
+                // setNextTxnAtSeal + discardForRebuild + add + commit. This
+                // mirrors the call shape inside both branches of
+                // sealPostingIndexForPartition (TableWriter.java:11308-11320
+                // and 11381-11388). The trailing seal() is intentionally
+                // omitted — the protocol violation lands during commit(),
+                // so the on-disk head bytes already encode the bug.
+                try (PostingIndexWriter writer = new PostingIndexWriter(configuration)) {
+                    writer.of(path.trimTo(plen), name, COLUMN_NAME_TXN_NONE, /* init */ false);
+                    writer.setNextTxnAtSeal(20L);
+                    writer.discardForRebuild();
+                    writer.add(0, 100);
+                    writer.add(2, 101);
+                    writer.setMaxValue(101);
+                    writer.commit();
+                }
+
+                // Snapshot the post-rebuild head entry.
+                PostingIndexChainEntry.Snapshot postSnap = new PostingIndexChainEntry.Snapshot();
+                long postEntryCount;
+                {
+                    LPSZ keyFile = PostingIndexUtils.keyFileName(
+                            path.trimTo(plen), name, COLUMN_NAME_TXN_NONE);
+                    long fileSize = ff.length(keyFile);
+                    try (MemoryCMARWImpl mem = new MemoryCMARWImpl(
+                            ff, keyFile, ff.getPageSize(), fileSize,
+                            MemoryTag.MMAP_DEFAULT, /* opts */ 0)) {
+                        PostingIndexChainWriter chain = new PostingIndexChainWriter();
+                        chain.openExisting(mem);
+                        Assert.assertTrue("phase 2 must leave a head entry", chain.hasHead());
+                        postEntryCount = chain.getEntryCount();
+                        chain.loadHeadEntry(mem, postSnap);
+                    }
+                }
+
+                // Red assertions. The fix must produce at least ONE of the
+                // following — each is a way to honor extendHead's
+                // newGenCount > oldGenCount precondition:
+                //   (a) entryCount grew      -> appendNewEntry was taken;
+                //   (b) sealTxn rotated      -> discardForRebuild rotated
+                //                               .pv to a fresh sealTxn;
+                //   (c) txnAtSeal advanced   -> a fresh chain entry was
+                //                               published carrying the new
+                //                               commit-in-progress txn;
+                //   (d) genCount preserved   -> publishToChain detected
+                //                               newGenCount < oldGenCount
+                //                               and skipped the in-place
+                //                               shrink.
+                // Currently (a)-(d) all fail: the same chain entry's
+                // GEN_COUNT collapsed from preSnap.genCount to 1, sealTxn
+                // and txnAtSeal are unchanged, and entryCount is the same.
+                boolean newEntryAppended = postEntryCount > preEntryCount;
+                boolean sealTxnRotated = postSnap.sealTxn != preSnap.sealTxn;
+                boolean txnAtSealAdvanced = postSnap.txnAtSeal != preSnap.txnAtSeal;
+                boolean genCountPreserved = postSnap.genCount >= preSnap.genCount;
+
+                Assert.assertTrue(
+                        "discardForRebuild + commit invoked extendHead with "
+                                + "newGenCount=" + postSnap.genCount
+                                + " < oldGenCount=" + preSnap.genCount
+                                + " on the same chain entry "
+                                + "[entryCount " + preEntryCount + " -> " + postEntryCount
+                                + ", sealTxn " + preSnap.sealTxn + " -> " + postSnap.sealTxn
+                                + ", txnAtSeal " + preSnap.txnAtSeal + " -> " + postSnap.txnAtSeal
+                                + "]. The fix must rotate sealTxn so commit() "
+                                + "takes appendNewEntry, or force appendNewEntry "
+                                + "when newGenCount < oldGenCount; either way, the "
+                                + "previously-published head entry must not be "
+                                + "mutated in place and its TXN_AT_SEAL must not be "
+                                + "left referencing pre-rebuild data alongside "
+                                + "post-rebuild bytes.",
+                        newEntryAppended
+                                || sealTxnRotated
+                                || txnAtSealAdvanced
+                                || genCountPreserved
+                );
+            }
+        });
+    }
+
     @Test
     public void testReviewFindingC1_O3PartialSealPublishesUndroppableChainHead() throws Exception {
         final AtomicBoolean failArmed = new AtomicBoolean(false);
@@ -1247,23 +1803,1287 @@ public class PostingIndexCriticalIssuesTest extends AbstractCairoTest {
     }
 
     /**
-     * Critical #4 and #5 are style violations enforced by static
-     * analysis, not JUnit. They cannot be expressed as red unit tests.
-     * Reference checks:
-     * #4 Banner comments forbidden by CLAUDE.md:
-     * grep -rn "// ===\|// ---" core/src/test/java/io/questdb/test/cairo/PostingIndex*.java
-     * grep -rn "// ===\|// ---" core/src/test/java/io/questdb/test/cairo/CoveringIndex*.java
-     * Both must return zero matches.
-     * #5 assertSql vs assertQueryNoLeakCheck:
-     * grep -c "assertSql\b" core/src/test/java/io/questdb/test/cairo/CoveringIndexTest.java
-     * Must be zero (or only inside helper methods).
-     * These are noted here so the red-test set covers all critical findings,
-     * even those that are not JUnit-testable.
+     * Critical #C2: SymbolColumnIndexer.index ends with
+     * writer.setMaxValue(hiRow - 1). When the caller already invoked
+     * discardForRebuild (TableWriter.sealPostingIndexForPartition,
+     * lines 11308 and 11381), discardForRebuild preserved the chain
+     * head on disk (genCount, keyCount, valueMemSize, gen-dir slots)
+     * but reset the writer's in-memory genCount/keyCount/maxValue.
+     * setMaxValue then calls chain.updateHeadMaxValue, which writes
+     * the NEW maxValue into the OLD head entry's MAX_VALUE field on
+     * disk and republishes the chain header. After the trailing
+     * commit, the OLD entry survives as a prev with MAX_VALUE = NEW
+     * while every other field describes the OLD state -- a
+     * self-inconsistent chain entry visible to snapshot-isolated
+     * readers walking the prev chain.
      */
-    @SuppressWarnings("unused")
-    private void styleCheckPlaceholder() {
-        // Kept as documentation; no JUnit test.
-        AtomicReference<String> ignore = new AtomicReference<>();
-        ignore.set("see method javadoc");
+    @Test
+    public void testReviewFindingC2_SetMaxValueAfterDiscardForRebuildMutatesPrevEntry() throws Exception {
+        assertMemoryLeak(() -> {
+            try (Path path = new Path().of(configuration.getDbRoot())) {
+                String name = "c2_setmaxvalue_after_discard";
+                int plen = path.size();
+                FilesFacade ff = configuration.getFilesFacade();
+
+                // Phase 1: build a chain head with a known MAX_VALUE.
+                try (PostingIndexWriter writer = new PostingIndexWriter(
+                        configuration, path.trimTo(plen), name, COLUMN_NAME_TXN_NONE)) {
+                    writer.setNextTxnAtSeal(10L);
+                    writer.add(0, 0);
+                    writer.add(1, 1);
+                    writer.add(2, 2);
+                    writer.setMaxValue(2);
+                    writer.commit();
+                }
+
+                // Snapshot the pre-rebuild head entry directly from the .pk
+                // file so we have the authoritative on-disk fields.
+                final PostingIndexChainEntry.Snapshot preSnap = new PostingIndexChainEntry.Snapshot();
+                {
+                    LPSZ keyFile = PostingIndexUtils.keyFileName(
+                            path.trimTo(plen), name, COLUMN_NAME_TXN_NONE);
+                    long fileSize = ff.length(keyFile);
+                    try (MemoryCMARWImpl mem = new MemoryCMARWImpl(
+                            ff, keyFile, ff.getPageSize(), fileSize,
+                            MemoryTag.MMAP_DEFAULT, /* opts */ 0)) {
+                        PostingIndexChainWriter chain = new PostingIndexChainWriter();
+                        chain.openExisting(mem);
+                        Assert.assertTrue("phase 1 must leave a head entry", chain.hasHead());
+                        chain.loadHeadEntry(mem, preSnap);
+                    }
+                }
+                Assert.assertEquals("phase 1 head must record MAX_VALUE=2", 2L, preSnap.maxValue);
+
+                // Phase 2: replay the rebuild dance from
+                // sealPostingIndexForPartition. SymbolColumnIndexer.index
+                // ends with writer.setMaxValue(hiRow - 1); in production
+                // hiRow is partitionSize, which after an O3 grow is larger
+                // than the OLD head's MAX_VALUE. Pick a NEW max well past
+                // the OLD one so the in-place mutation is unambiguous.
+                final long newMax = 99L;
+                try (PostingIndexWriter writer = new PostingIndexWriter(configuration)) {
+                    writer.of(path.trimTo(plen), name, COLUMN_NAME_TXN_NONE, /* init */ false);
+                    writer.setNextTxnAtSeal(20L);
+                    writer.discardForRebuild();
+                    // Mirror SymbolColumnIndexer.index: add(...) loop, then
+                    // setMaxValue. discardForRebuild reset in-memory
+                    // genCount/keyCount but kept chain.headEntryOffset
+                    // pointing at the OLD on-disk entry, so this
+                    // setMaxValue's chain.updateHeadMaxValue lands on the
+                    // OLD entry's MAX_VALUE field.
+                    writer.add(0, 50);
+                    writer.add(2, 99);
+                    writer.setMaxValue(newMax);
+                    // commit() takes the appendNewEntry branch (sealTxn was
+                    // rotated by discardForRebuild), so the OLD entry
+                    // survives as the new head's prev with its mutated
+                    // MAX_VALUE persisted on disk.
+                    writer.commit();
+                }
+
+                // Phase 3: load the (now-prev) OLD entry and check it.
+                final PostingIndexChainEntry.Snapshot prevSnap = new PostingIndexChainEntry.Snapshot();
+                {
+                    LPSZ keyFile = PostingIndexUtils.keyFileName(
+                            path.trimTo(plen), name, COLUMN_NAME_TXN_NONE);
+                    long fileSize = ff.length(keyFile);
+                    try (MemoryCMARWImpl mem = new MemoryCMARWImpl(
+                            ff, keyFile, ff.getPageSize(), fileSize,
+                            MemoryTag.MMAP_DEFAULT, /* opts */ 0)) {
+                        PostingIndexChainWriter chain = new PostingIndexChainWriter();
+                        chain.openExisting(mem);
+                        Assert.assertTrue("phase 2 must leave a head entry", chain.hasHead());
+                        Assert.assertEquals(
+                                "rebuild must produce two chain entries (NEW head + OLD prev)",
+                                2L, chain.getEntryCount()
+                        );
+                        PostingIndexChainEntry.Snapshot headSnap = new PostingIndexChainEntry.Snapshot();
+                        chain.loadHeadEntry(mem, headSnap);
+                        long prevOffset = headSnap.prevEntryOffset;
+                        Assert.assertNotEquals(
+                                "rebuild must link the NEW head's prev to the OLD entry",
+                                PostingIndexUtils.V2_NO_HEAD, prevOffset
+                        );
+                        PostingIndexChainEntry.read(mem, prevOffset, prevSnap);
+                    }
+                }
+
+                // Coherence: the prev IS the old head. Identity-bearing
+                // fields untouched by setMaxValue must match preSnap. If
+                // these diverge, the test premise is wrong (the prev is
+                // not the OLD entry) and the MAX_VALUE assertion below
+                // would be meaningless.
+                Assert.assertEquals(
+                        "prev must be the old head -- sealTxn",
+                        preSnap.sealTxn, prevSnap.sealTxn
+                );
+                Assert.assertEquals(
+                        "prev must be the old head -- txnAtSeal",
+                        preSnap.txnAtSeal, prevSnap.txnAtSeal
+                );
+                Assert.assertEquals(
+                        "prev must be the old head -- keyCount",
+                        preSnap.keyCount, prevSnap.keyCount
+                );
+                Assert.assertEquals(
+                        "prev must be the old head -- valueMemSize",
+                        preSnap.valueMemSize, prevSnap.valueMemSize
+                );
+                Assert.assertEquals(
+                        "prev must be the old head -- genCount",
+                        preSnap.genCount, prevSnap.genCount
+                );
+
+                // Red. setMaxValue between discardForRebuild and commit
+                // wrote newMax into the OLD entry's MAX_VALUE field. The
+                // prev now claims to cover rowIds up to newMax while its
+                // gen-dir, KEY_COUNT, VALUE_MEM_SIZE all describe the
+                // OLD smaller range -- internally inconsistent and
+                // visible to readers walking back through the prev chain
+                // under snapshot isolation. The fix must either skip
+                // updateHeadMaxValue when the chain head is still the
+                // pre-rebuild (preserved) entry, or rotate
+                // chain.headEntryOffset to a fresh entry inside
+                // discardForRebuild so subsequent setMaxValue writes
+                // land somewhere new instead of overwriting preserved
+                // history.
+                Assert.assertEquals(
+                        "OLD entry's MAX_VALUE must remain " + preSnap.maxValue
+                                + " (matching its preserved sibling fields). "
+                                + "setMaxValue called after discardForRebuild "
+                                + "wrote " + newMax + " into MAX_VALUE while "
+                                + "leaving GEN_COUNT=" + prevSnap.genCount
+                                + ", KEY_COUNT=" + prevSnap.keyCount
+                                + ", VALUE_MEM_SIZE=" + prevSnap.valueMemSize
+                                + " stale.",
+                        preSnap.maxValue, prevSnap.maxValue
+                );
+            }
+        });
+    }
+
+    /**
+     * Review finding M2: the rebuild dance in
+     * TableWriter.sealPostingIndexForPartition}'s covering branch
+     * publishes an intermediate chain entry that has both:
+     * <ul>
+     *   <li>no cover footer (because {@code configureFollowerAndWriter
+     *       -> writer.of(...)} reset {@code coverCount = 0} and
+     *       {@code configureCovering} runs AFTER the rebuild commit);</li>
+     *   <li>{@code txnAtSeal} that does not exclude current readers
+     *       (because {@code setNextTxnAtSeal} also runs after the
+     *       rebuild commit).</li>
+     * </ul>
+     * The combination means readers that walk past the trailing
+     * {@code rebuildSidecars} head can land on the intermediate entry,
+     * see {@code coverFileEndOffsets} clamped to all-zeros by
+     * {@link PostingIndexChainEntry#read}'s footer-bound clamp, and
+     * resolve every cover column to NULL.
+     * <p>
+     * The fix hoists {@code setNextTxnAtSeal(txWriter.getTxn() + 1L)}
+     * BEFORE the rebuild commit so the intermediate REBUILD entry is
+     * tagged out of every current reader's visibility window
+     * ({@code T_pin <= getTxn() < getTxn()+1}). The trailing
+     * {@code setNextTxnAtSeal(txWriter.getTxn())} for the SEAL entry
+     * keeps its existing tag.
+     * <p>
+     * This test mirrors the FIXED call order at the writer-fixture
+     * level and verifies the chain shape: REBUILD inherits the
+     * caller's pre-commit {@code setNextTxnAtSeal} value and the OLD
+     * entry survives as its prev with original fields intact. A
+     * regression in TableWriter that drops the pre-commit
+     * {@code setNextTxnAtSeal} hoist would cause production to publish
+     * REBUILD with {@code txnAtSeal=0}; this test does not detect that
+     * directly (it would still pass because the test sets
+     * {@code pendingTxnAtSeal} explicitly), but together with
+     * {@code testReviewFindingC1_DiscardForRebuildMutatesAlreadyPublishedHeadInPlace}
+     * and {@code testReviewFindingC2_SetMaxValueAfterDiscardForRebuildMutatesPrevEntry}
+     * it pins the writer-API contract the fix relies on.
+     */
+    @Test
+    public void testReviewFindingM2_RebuildCommitTagsEntryWithMeaningfulTxnAtSeal() throws Exception {
+        assertMemoryLeak(() -> {
+            try (Path path = new Path().of(configuration.getDbRoot())) {
+                String name = "m2_rebuild_meaningful_txn_at_seal";
+                int plen = path.size();
+                FilesFacade ff = configuration.getFilesFacade();
+
+                // Phase 1: lay down the OLD chain entry tagged with a
+                // known txnAtSeal so the post-rebuild prev pointer can
+                // be checked for coherence in phase 3.
+                final long oldTxnAtSeal = 10L;
+                try (PostingIndexWriter writer = new PostingIndexWriter(
+                        configuration, path.trimTo(plen), name, COLUMN_NAME_TXN_NONE)) {
+                    writer.setNextTxnAtSeal(oldTxnAtSeal);
+                    writer.add(0, 0);
+                    writer.add(1, 1);
+                    writer.setMaxValue(1);
+                    writer.commit();
+                }
+
+                PostingIndexChainEntry.Snapshot preSnap = new PostingIndexChainEntry.Snapshot();
+                {
+                    LPSZ keyFile = PostingIndexUtils.keyFileName(
+                            path.trimTo(plen), name, COLUMN_NAME_TXN_NONE);
+                    long fileSize = ff.length(keyFile);
+                    try (MemoryCMARWImpl mem = new MemoryCMARWImpl(
+                            ff, keyFile, ff.getPageSize(), fileSize,
+                            MemoryTag.MMAP_DEFAULT, /* opts */ 0)) {
+                        PostingIndexChainWriter chain = new PostingIndexChainWriter();
+                        chain.openExisting(mem);
+                        Assert.assertTrue("phase 1 must leave a head entry", chain.hasHead());
+                        chain.loadHeadEntry(mem, preSnap);
+                    }
+                }
+                Assert.assertEquals(
+                        "phase 1 head must record the supplied txnAtSeal",
+                        oldTxnAtSeal, preSnap.txnAtSeal
+                );
+
+                // Phase 2: replay the FIXED rebuild dance from
+                // sealPostingIndexForPartition's covering branch:
+                //
+                //   configureFollowerAndWriter -> writer.of(...)
+                //   setNextTxnAtSeal(txWriter.getTxn() + 1L)  <-- the M2 fix
+                //   discardForRebuild
+                //   index -> add(...) + setMaxValue
+                //   commit                  <-- entry under test
+                //
+                // The post-commit configureCovering / rebuildSidecars
+                // calls are not modeled here: this phase isolates the
+                // intermediate REBUILD entry the rebuild commit
+                // publishes.
+                final long preCommitTxn = 20L;
+                final long expectedRebuildTxnAtSeal = preCommitTxn + 1L;
+                try (PostingIndexWriter writer = new PostingIndexWriter(configuration)) {
+                    writer.of(path.trimTo(plen), name, COLUMN_NAME_TXN_NONE, /* init */ false);
+                    // M2 fix: the caller hoists setNextTxnAtSeal above
+                    // the rebuild dance so the intermediate entry is
+                    // invisible to every current reader (T_pin <=
+                    // preCommitTxn < expectedRebuildTxnAtSeal) and
+                    // droppable by recoveryDropAbandoned on a partial
+                    // publish.
+                    writer.setNextTxnAtSeal(expectedRebuildTxnAtSeal);
+                    writer.discardForRebuild();
+                    writer.add(0, 100);
+                    writer.add(1, 101);
+                    writer.setMaxValue(101);
+                    writer.commit();
+                }
+
+                // Phase 3: walk the chain. discardForRebuild rotated
+                // sealTxn so commit() took appendNewEntry; the new
+                // entry is the head, the OLD entry is its prev.
+                PostingIndexChainEntry.Snapshot headSnap = new PostingIndexChainEntry.Snapshot();
+                PostingIndexChainEntry.Snapshot prevSnap = new PostingIndexChainEntry.Snapshot();
+                {
+                    LPSZ keyFile = PostingIndexUtils.keyFileName(
+                            path.trimTo(plen), name, COLUMN_NAME_TXN_NONE);
+                    long fileSize = ff.length(keyFile);
+                    try (MemoryCMARWImpl mem = new MemoryCMARWImpl(
+                            ff, keyFile, ff.getPageSize(), fileSize,
+                            MemoryTag.MMAP_DEFAULT, /* opts */ 0)) {
+                        PostingIndexChainWriter chain = new PostingIndexChainWriter();
+                        chain.openExisting(mem);
+                        Assert.assertEquals(
+                                "rebuild must produce two chain entries (NEW head + OLD prev)",
+                                2L, chain.getEntryCount()
+                        );
+                        chain.loadHeadEntry(mem, headSnap);
+                        Assert.assertNotEquals(
+                                "head must link back to the OLD entry",
+                                PostingIndexUtils.V2_NO_HEAD, headSnap.prevEntryOffset
+                        );
+                        PostingIndexChainEntry.read(mem, headSnap.prevEntryOffset, prevSnap);
+                    }
+                }
+
+                // Coherence: prev IS the OLD entry, untouched by the
+                // rebuild dance. If these diverge, the test premise is
+                // wrong and the txnAtSeal assertion below would be
+                // meaningless.
+                Assert.assertEquals(
+                        "prev must be the OLD entry -- sealTxn",
+                        preSnap.sealTxn, prevSnap.sealTxn
+                );
+                Assert.assertEquals(
+                        "prev must be the OLD entry -- txnAtSeal",
+                        preSnap.txnAtSeal, prevSnap.txnAtSeal
+                );
+                Assert.assertEquals(
+                        "prev must be the OLD entry -- maxValue",
+                        preSnap.maxValue, prevSnap.maxValue
+                );
+
+                // The fix's contract: REBUILD inherits the caller's
+                // pre-commit setNextTxnAtSeal value, NOT the
+                // pendingTxnAtSeal=-1 fallback (txnAtSeal=0). With this
+                // value > preCommitTxn, every current reader walks past
+                // REBUILD to OLD, and recoveryDropAbandoned can drop
+                // REBUILD on a partial-publish reopen
+                // (txnAtSeal > committedTxn fires when committedTxn ==
+                // preCommitTxn).
+                Assert.assertEquals(
+                        "REBUILD must inherit the caller's pre-commit "
+                                + "setNextTxnAtSeal (got " + headSnap.txnAtSeal
+                                + ", expected " + expectedRebuildTxnAtSeal + "). "
+                                + "The 0L fallback would make REBUILD visible "
+                                + "to every snapshot-isolated reader and "
+                                + "undroppable by recoveryDropAbandoned.",
+                        expectedRebuildTxnAtSeal, headSnap.txnAtSeal
+                );
+                Assert.assertTrue(
+                        "REBUILD's txnAtSeal must exceed the pre-commit table "
+                                + "txn so the picker walks past it for any "
+                                + "current reader (got " + headSnap.txnAtSeal
+                                + " vs preCommitTxn " + preCommitTxn + ")",
+                        headSnap.txnAtSeal > preCommitTxn
+                );
+            }
+        });
+    }
+
+    // Critical findings #2 (setMaxValue seqlock), #6 ([0, Long.MAX_VALUE)
+    // conservative purge interval) and #7 (seal-loop partial failure
+    // recovery) were RED placeholders during the v1 era. They are now
+    // addressed structurally by the v2 chain redesign:
+    //   #2 — chain.updateHeadMaxValue publishes via the chain header
+    //        seqlock, so any reader of MAX_VALUE goes through the same
+    //        consistency protocol as keyCount/genCount.
+    //   #6 — recordPostingSealPurge derives [fromTxn, toTxn) from the
+    //        chain entries themselves; the residual [0, MAX) branch only
+    //        fires for the empty-chain edge case, which the
+    //        writer-open recovery walk picks up on the next reopen.
+    //   #7 — recoveryDropAbandoned (run from PostingIndexWriter.of after
+    //        setCurrentTableTxn) drops every chain entry whose txnAtSeal
+    //        was published before the encompassing txWriter.commit
+    //        landed.
+    // Critical finding #9 (ColumnPurgeOperator retry cap on Windows) is
+    // orthogonal to the posting-index chain rewrite and remains tracked
+    // separately.
+
+    /**
+     * Locks in the multi-gen short-circuit semantics: when a CLEAN gen
+     * processed first contributes to {@code total} and a later gen turns out
+     * to be MIXED, the running sum is discarded and {@code size()} returns
+     * {@code -1}. The caller iterates the whole reader, which is the only
+     * way to reconcile the partial sum with the clamped emit set across
+     * gens.
+     */
+    @Test
+    public void testSizeBailsOnCleanThenMixedGenSequence() throws Exception {
+        assertMemoryLeak(() -> {
+            final String name = "posting_size_clean_then_mixed";
+            try (Path path = new Path().of(configuration.getDbRoot())) {
+                final int plen = path.size();
+                try (PostingIndexWriter writer = new PostingIndexWriter(
+                        configuration, path.trimTo(plen), name, COLUMN_NAME_TXN_NONE)) {
+                    // gen 1: rowids 0..49, all <= MAX_VALUE -> CLEAN.
+                    for (long rowId = 0; rowId < 50; rowId++) {
+                        writer.add(0, rowId);
+                    }
+                    writer.commit();
+                    // gen 2: rowids 50..99, straddles MAX_VALUE=75 -> MIXED.
+                    for (long rowId = 50; rowId < 100; rowId++) {
+                        writer.add(0, rowId);
+                    }
+                    writer.commit();
+                    writer.setMaxValue(75);
+                }
+
+                try (PostingIndexFwdReader reader = new PostingIndexFwdReader(
+                        configuration, path.trimTo(plen), name,
+                        COLUMN_NAME_TXN_NONE, /* partitionTxn */ 0, /* columnTop */ 0)) {
+                    long iterated = 0;
+                    long advertised;
+                    try (RowCursor cursor = reader.getCursor(0, 0L, Long.MAX_VALUE)) {
+                        advertised = cursor.size();
+                        while (cursor.hasNext()) {
+                            cursor.next();
+                            iterated++;
+                        }
+                    }
+                    Assert.assertEquals(
+                            "gen 1 emits 0..49 (50 rows) and gen 2 emits clamped 50..75 (26 rows)",
+                            76,
+                            iterated
+                    );
+                    Assert.assertEquals(
+                            "MIXED detected after a CLEAN gen must discard the partial sum and bail",
+                            -1L,
+                            advertised
+                    );
+                }
+            }
+        });
+    }
+
+    /**
+     * The {@code Cursor.size()} fast path must bail to iteration when a single
+     * gen straddles {@code entryMaxValue}, because the per-gen count includes
+     * encoded row ids past the chain's tracked coverage. The bail manifests as
+     * {@code size() == -1}; the iterated count then becomes the source of
+     * truth (and matches the clamped emit set).
+     */
+    @Test
+    public void testSizeBailsOnMixedGen() throws Exception {
+        assertMemoryLeak(() -> {
+            final String name = "posting_size_mixed_gen";
+            try (Path path = new Path().of(configuration.getDbRoot())) {
+                final int plen = path.size();
+                try (PostingIndexWriter writer = new PostingIndexWriter(
+                        configuration, path.trimTo(plen), name, COLUMN_NAME_TXN_NONE)) {
+                    for (long rowId = 0; rowId < 100; rowId++) {
+                        writer.add(0, rowId);
+                    }
+                    writer.commit();
+                    writer.setMaxValue(49);
+                }
+
+                try (PostingIndexFwdReader reader = new PostingIndexFwdReader(
+                        configuration, path.trimTo(plen), name,
+                        COLUMN_NAME_TXN_NONE, /* partitionTxn */ 0, /* columnTop */ 0)) {
+                    long iterated = 0;
+                    long advertised;
+                    try (RowCursor cursor = reader.getCursor(0, 0L, Long.MAX_VALUE)) {
+                        advertised = cursor.size();
+                        while (cursor.hasNext()) {
+                            cursor.next();
+                            iterated++;
+                        }
+                    }
+                    Assert.assertEquals(
+                            "key 0 has rowids 0..49 at or below MAX_VALUE=49",
+                            50,
+                            iterated
+                    );
+                    Assert.assertEquals(
+                            "single-gen MIXED classification must bail to iteration",
+                            -1L,
+                            advertised
+                    );
+                }
+            }
+        });
+    }
+
+    // =========================================================================
+    // Red tests for the v2 review of PR #6861 (current pass).
+    //
+    // Each test below maps to a finding from the review report. Tests that
+    // require fault injection use TestFilesFacadeImpl; tests that require
+    // concurrency simulate the race by mutating ff.length() between mmap
+    // setup and chain access. Findings that can only manifest from sources
+    // FilesFacade does not see (Unsafe.realloc OOM, queue-pool exhaustion)
+    // are documented in trailing comments.
+    // =========================================================================
+
+    // Review finding #1 (sidecar mem fd leak in openSidecarFiles) was
+    // dropped after verification: MemoryCMARWImpl.extend0 (line 403) and
+    // map0 (line 417) both close the fd on mmap/mremap failure inside
+    // jumpTo(). The "orphan mem" identified in the review never holds an
+    // open fd by the time the outer catch fires — it is already closed
+    // internally by the memory-mapping helper.
+    // Documented for traceability; no JUnit red test.
+
+    /**
+     * The DELTA-mode upper bound from {@code peekDeltaKeyMaxValueUpperBound}
+     * is exact only when the last block has {@code bitWidth == 0}; otherwise
+     * it assumes every delta packs to {@code (1<<bw)-1}, which can sit far
+     * above the true last value. This test pins down that conservative bound
+     * by setting MAX_VALUE between the actual maximum and the slack bound:
+     * iteration emits every row (all real values are under MAX_VALUE) but the
+     * fast path must still bail with {@code -1} because it cannot prove the
+     * gen is CLEAN without decoding values.
+     */
+    @Test
+    public void testSizeBailsWhenSlackBoundClassifiesCleanGenAsMixed() throws Exception {
+        // Force DELTA encoding so the per-key blob exercises the slack
+        // upper-bound branch in peekDeltaKeyMaxValueUpperBound. Under EF the
+        // max bound is exact (universe - 1) and would (correctly) classify
+        // this case as CLEAN, hiding the slack-bound behavior.
+        node1.setProperty(PropertyKey.CAIRO_POSTING_INDEX_ROW_ID_ENCODING, "delta");
+        assertMemoryLeak(() -> {
+            final String name = "posting_size_slack_mixed";
+            try (Path path = new Path().of(configuration.getDbRoot())) {
+                final int plen = path.size();
+                try (PostingIndexWriter writer = new PostingIndexWriter(
+                        configuration, path.trimTo(plen), name, COLUMN_NAME_TXN_NONE)) {
+                    // 192 contiguous rowids fill blocks 0..2 (BLOCK_CAPACITY=64,
+                    // bitWidth=0). The last block holds 4 sparse outliers with
+                    // non-uniform deltas (800, 500, 500), forcing bitWidth>0
+                    // and a slack max well above the true max of 2000.
+                    for (long rowId = 0; rowId < 192; rowId++) {
+                        writer.add(0, rowId);
+                    }
+                    writer.add(0, 200);
+                    writer.add(0, 1000);
+                    writer.add(0, 1500);
+                    writer.add(0, 2000);
+                    writer.commit();
+                    // MAX_VALUE sits above the true max (2000) but below the
+                    // slack upper bound (~3233 = 200 + 3 * (500 + (1<<9) - 1)).
+                    writer.setMaxValue(2500);
+                }
+
+                try (PostingIndexFwdReader reader = new PostingIndexFwdReader(
+                        configuration, path.trimTo(plen), name,
+                        COLUMN_NAME_TXN_NONE, /* partitionTxn */ 0, /* columnTop */ 0)) {
+                    long iterated = 0;
+                    long advertised;
+                    try (RowCursor cursor = reader.getCursor(0, 0L, Long.MAX_VALUE)) {
+                        advertised = cursor.size();
+                        while (cursor.hasNext()) {
+                            cursor.next();
+                            iterated++;
+                        }
+                    }
+                    Assert.assertEquals(
+                            "every encoded row id sits at or below MAX_VALUE=2500",
+                            196,
+                            iterated
+                    );
+                    Assert.assertEquals(
+                            "slack upper bound forces MIXED even though the gen is truly CLEAN",
+                            -1L,
+                            advertised
+                    );
+                }
+            }
+        });
+    }
+
+    /**
+     * When the head entry's MAX_VALUE sits below every encoded row id for the
+     * requested key in a gen, that gen is ALL_DIRTY: it must contribute zero to
+     * {@code Cursor.size()} without forcing a full bail. Mirrors the iterated
+     * cursor, which also returns no rows because the clamp filters them all
+     * out.
+     */
+    @Test
+    public void testSizeBypassesAllDirtyGen() throws Exception {
+        assertMemoryLeak(() -> {
+            final String name = "posting_size_all_dirty";
+            try (Path path = new Path().of(configuration.getDbRoot())) {
+                final int plen = path.size();
+                try (PostingIndexWriter writer = new PostingIndexWriter(
+                        configuration, path.trimTo(plen), name, COLUMN_NAME_TXN_NONE)) {
+                    for (long rowId = 50; rowId < 100; rowId++) {
+                        writer.add(0, rowId);
+                    }
+                    writer.commit();
+                    writer.setMaxValue(49);
+                }
+
+                try (PostingIndexFwdReader reader = new PostingIndexFwdReader(
+                        configuration, path.trimTo(plen), name,
+                        COLUMN_NAME_TXN_NONE, /* partitionTxn */ 0, /* columnTop */ 0)) {
+                    long iterated = 0;
+                    long advertised;
+                    try (RowCursor cursor = reader.getCursor(0, 0L, Long.MAX_VALUE)) {
+                        advertised = cursor.size();
+                        while (cursor.hasNext()) {
+                            cursor.next();
+                            iterated++;
+                        }
+                    }
+                    Assert.assertEquals("clamp drops every encoded row past MAX_VALUE", 0, iterated);
+                    Assert.assertEquals(
+                            "ALL_DIRTY gen must contribute 0 without bailing the fast path",
+                            0L,
+                            advertised
+                    );
+                }
+            }
+        });
+    }
+
+    /**
+     * Exercises the FLAT-mode branch in {@code peekDenseKeyMinValue} and
+     * {@code peekDenseKeyMaxValueUpperBound}. With many keys carrying a
+     * single row id each in one stride, the writer's stride mode chooser
+     * picks FLAT (stride-wide FoR is much smaller than per-key DELTA blobs).
+     * Both peek helpers must address into the FLAT prefix-counts and the
+     * bit-packed data correctly to return the lone row id as both min and
+     * upper-bound max.
+     */
+    @Test
+    public void testSizeFastPathOnDenseFlatStride() throws Exception {
+        assertMemoryLeak(() -> {
+            final String name = "posting_size_fast_dense_flat";
+            try (Path path = new Path().of(configuration.getDbRoot())) {
+                final int plen = path.size();
+                try (PostingIndexWriter writer = new PostingIndexWriter(
+                        configuration, path.trimTo(plen), name, COLUMN_NAME_TXN_NONE)) {
+                    // 200 distinct keys, one row id each. All keys land in
+                    // stride 0 (DENSE_STRIDE = 256). Per-key DELTA blob
+                    // overhead (~22 bytes/key) loses to FLAT (one bit-packed
+                    // 8-bit slot per key), so seal picks FLAT for stride 0.
+                    for (int key = 0; key < 200; key++) {
+                        writer.add(key, key);
+                    }
+                    writer.commit();
+                    writer.seal();
+                }
+
+                try (PostingIndexFwdReader reader = new PostingIndexFwdReader(
+                        configuration, path.trimTo(plen), name,
+                        COLUMN_NAME_TXN_NONE, /* partitionTxn */ 0, /* columnTop */ 0)) {
+                    long iterated = 0;
+                    long advertised;
+                    // Pick a key in the middle of the stride so the FLAT
+                    // prefix-counts read at localKey > 0 and the unpackValue
+                    // at end-1 hits a non-zero offset.
+                    try (RowCursor cursor = reader.getCursor(100, 0L, Long.MAX_VALUE)) {
+                        advertised = cursor.size();
+                        while (cursor.hasNext()) {
+                            cursor.next();
+                            iterated++;
+                        }
+                    }
+                    Assert.assertEquals("key 100 must surface its single row id", 1, iterated);
+                    Assert.assertEquals(
+                            "FLAT-mode CLEAN dense gen must take the fast path",
+                            iterated,
+                            advertised
+                    );
+                }
+            }
+        });
+    }
+
+    /**
+     * Primary perf-recovery regression test: with no dirty data and the head
+     * entry's MAX_VALUE pointing at the encoded maximum, every gen is CLEAN
+     * and {@code Cursor.size()} must return the iterated count, not -1.
+     * Exercises the dense (sealed) gen path.
+     */
+    @Test
+    public void testSizeFastPathOnDenseGen() throws Exception {
+        assertMemoryLeak(() -> {
+            final String name = "posting_size_fast_dense";
+            try (Path path = new Path().of(configuration.getDbRoot())) {
+                final int plen = path.size();
+                try (PostingIndexWriter writer = new PostingIndexWriter(
+                        configuration, path.trimTo(plen), name, COLUMN_NAME_TXN_NONE)) {
+                    for (long rowId = 0; rowId < 200; rowId++) {
+                        writer.add(0, rowId);
+                    }
+                    writer.commit();
+                    // Explicit seal collapses the sparse gens into a single dense
+                    // gen so size() goes through the dense peek path.
+                    writer.seal();
+                }
+
+                try (PostingIndexFwdReader reader = new PostingIndexFwdReader(
+                        configuration, path.trimTo(plen), name,
+                        COLUMN_NAME_TXN_NONE, /* partitionTxn */ 0, /* columnTop */ 0)) {
+                    long iterated = 0;
+                    long advertised;
+                    try (RowCursor cursor = reader.getCursor(0, 0L, Long.MAX_VALUE)) {
+                        advertised = cursor.size();
+                        while (cursor.hasNext()) {
+                            cursor.next();
+                            iterated++;
+                        }
+                    }
+                    Assert.assertEquals("expect every encoded row id to surface", 200, iterated);
+                    Assert.assertEquals(
+                            "CLEAN dense gen must take the fast path",
+                            iterated,
+                            advertised
+                    );
+                }
+            }
+        });
+    }
+
+    /**
+     * Forces the per-key blob into Elias-Fano so the EF branches in both
+     * peek helpers run end to end:
+     * <ul>
+     *   <li>{@code peekDeltaKeyMaxValueUpperBound} detects the EF sentinel
+     *       and reads {@code universe - 1} as the exact max;</li>
+     *   <li>{@code peekDeltaKeyMinValue} dispatches to
+     *       {@code peekEFKeyMinValue}, which decodes the first set bit of
+     *       the high-bit stream plus the corresponding low chunk to recover
+     *       the smallest encoded value.</li>
+     * </ul>
+     * Sparsely-spaced row ids keep the EF blob smaller than DELTA so the
+     * choice would not flip even without the property override; the override
+     * is defence in depth.
+     */
+    @Test
+    public void testSizeFastPathOnEliasFanoEncodedGen() throws Exception {
+        node1.setProperty(PropertyKey.CAIRO_POSTING_INDEX_ROW_ID_ENCODING, "ef");
+        assertMemoryLeak(() -> {
+            final String name = "posting_size_fast_ef";
+            try (Path path = new Path().of(configuration.getDbRoot())) {
+                final int plen = path.size();
+                try (PostingIndexWriter writer = new PostingIndexWriter(
+                        configuration, path.trimTo(plen), name, COLUMN_NAME_TXN_NONE)) {
+                    // 100 sparsely-spaced row ids (0, 11, 22, ..., 1089) so
+                    // the universe (1090) is large enough to make EF the
+                    // natural pick.
+                    for (long rowId = 0; rowId <= 1_089; rowId += 11) {
+                        writer.add(0, rowId);
+                    }
+                    writer.commit();
+                    // No seal: keep the sparse gen so the per-key EF blob is
+                    // exactly what peekSparseKeyM*Value sees.
+                }
+
+                try (PostingIndexFwdReader reader = new PostingIndexFwdReader(
+                        configuration, path.trimTo(plen), name,
+                        COLUMN_NAME_TXN_NONE, /* partitionTxn */ 0, /* columnTop */ 0)) {
+                    long iterated = 0;
+                    long advertised;
+                    try (RowCursor cursor = reader.getCursor(0, 0L, Long.MAX_VALUE)) {
+                        advertised = cursor.size();
+                        while (cursor.hasNext()) {
+                            cursor.next();
+                            iterated++;
+                        }
+                    }
+                    Assert.assertEquals("expect every encoded EF row id to surface", 100, iterated);
+                    Assert.assertEquals(
+                            "CLEAN EF-encoded gen must take the fast path",
+                            iterated,
+                            advertised
+                    );
+                }
+            }
+        });
+    }
+
+    /**
+     * Same shape as {@link #testSizeFastPathOnDenseGen} but the writer is
+     * closed without an explicit {@link PostingIndexWriter#seal()}, so the
+     * head entry carries sparse gens. Locks in the sparse-side peek path.
+     */
+    @Test
+    public void testSizeFastPathOnSparseGen() throws Exception {
+        assertMemoryLeak(() -> {
+            final String name = "posting_size_fast_sparse";
+            try (Path path = new Path().of(configuration.getDbRoot())) {
+                final int plen = path.size();
+                try (PostingIndexWriter writer = new PostingIndexWriter(
+                        configuration, path.trimTo(plen), name, COLUMN_NAME_TXN_NONE)) {
+                    for (long rowId = 0; rowId < 200; rowId++) {
+                        writer.add(0, rowId);
+                    }
+                    writer.commit();
+                    // No seal: chain head's gen is sparse (negative key count).
+                }
+
+                try (PostingIndexFwdReader reader = new PostingIndexFwdReader(
+                        configuration, path.trimTo(plen), name,
+                        COLUMN_NAME_TXN_NONE, /* partitionTxn */ 0, /* columnTop */ 0)) {
+                    long iterated = 0;
+                    long advertised;
+                    try (RowCursor cursor = reader.getCursor(0, 0L, Long.MAX_VALUE)) {
+                        advertised = cursor.size();
+                        while (cursor.hasNext()) {
+                            cursor.next();
+                            iterated++;
+                        }
+                    }
+                    Assert.assertEquals("expect every encoded row id to surface", 200, iterated);
+                    Assert.assertEquals(
+                            "CLEAN sparse gen must take the fast path",
+                            iterated,
+                            advertised
+                    );
+                }
+            }
+        });
+    }
+
+    /**
+     * Pairs with {@link #testSizeBailsWhenSlackBoundClassifiesCleanGenAsMixed}
+     * and pins down the CLEAN side of the slack upper bound: with MAX_VALUE
+     * comfortably above the slack max ({@code firstValue + numDeltas *
+     * (minDelta + (1<<bitWidth) - 1)}), the bitWidth>0 branch in
+     * {@code peekDeltaKeyMaxValueUpperBound} runs the full overflow-guarded
+     * arithmetic and classifies the gen CLEAN.
+     */
+    @Test
+    public void testSizeFastPathWithSlackBoundDeltaCleanGen() throws Exception {
+        // Force DELTA so the slack upper bound is the path under test (EF
+        // would compute the exact max via universe - 1 and skip the slack
+        // arithmetic entirely).
+        node1.setProperty(PropertyKey.CAIRO_POSTING_INDEX_ROW_ID_ENCODING, "delta");
+        assertMemoryLeak(() -> {
+            final String name = "posting_size_slack_clean";
+            try (Path path = new Path().of(configuration.getDbRoot())) {
+                final int plen = path.size();
+                try (PostingIndexWriter writer = new PostingIndexWriter(
+                        configuration, path.trimTo(plen), name, COLUMN_NAME_TXN_NONE)) {
+                    // Same data shape as the slack-MIXED test: 192 contiguous
+                    // rowids in blocks 0..2 (bitWidth=0) and 4 sparse outliers
+                    // in block 3 with non-uniform deltas (forcing bitWidth=9
+                    // and a slack max of ~3233).
+                    for (long rowId = 0; rowId < 192; rowId++) {
+                        writer.add(0, rowId);
+                    }
+                    writer.add(0, 200);
+                    writer.add(0, 1000);
+                    writer.add(0, 1500);
+                    writer.add(0, 2000);
+                    writer.commit();
+                    // MAX_VALUE comfortably above the slack upper bound so the
+                    // bitWidth>0 branch returns CLEAN.
+                    writer.setMaxValue(5_000);
+                }
+
+                try (PostingIndexFwdReader reader = new PostingIndexFwdReader(
+                        configuration, path.trimTo(plen), name,
+                        COLUMN_NAME_TXN_NONE, /* partitionTxn */ 0, /* columnTop */ 0)) {
+                    long iterated = 0;
+                    long advertised;
+                    try (RowCursor cursor = reader.getCursor(0, 0L, Long.MAX_VALUE)) {
+                        advertised = cursor.size();
+                        while (cursor.hasNext()) {
+                            cursor.next();
+                            iterated++;
+                        }
+                    }
+                    Assert.assertEquals("expect every encoded row id to surface", 196, iterated);
+                    Assert.assertEquals(
+                            "slack upper bound below MAX_VALUE must classify CLEAN",
+                            iterated,
+                            advertised
+                    );
+                }
+            }
+        });
+    }
+
+    /**
+     * Mixed per-gen classification: gen 1 is CLEAN (max <= MAX_VALUE), gen 2
+     * is ALL_DIRTY (min > MAX_VALUE). {@code Cursor.size()} should sum the
+     * CLEAN contribution and skip ALL_DIRTY without bailing. Exact match
+     * against the iterated count proves no over- or under-count.
+     */
+    @Test
+    public void testSizeMultiGenMixedClassification() throws Exception {
+        assertMemoryLeak(() -> {
+            final String name = "posting_size_multigen_mixed";
+            try (Path path = new Path().of(configuration.getDbRoot())) {
+                final int plen = path.size();
+                try (PostingIndexWriter writer = new PostingIndexWriter(
+                        configuration, path.trimTo(plen), name, COLUMN_NAME_TXN_NONE)) {
+                    for (long rowId = 0; rowId < 50; rowId++) {
+                        writer.add(0, rowId);
+                    }
+                    writer.commit();
+                    for (long rowId = 50; rowId < 100; rowId++) {
+                        writer.add(0, rowId);
+                    }
+                    writer.commit();
+                    writer.setMaxValue(49);
+                }
+
+                try (PostingIndexFwdReader reader = new PostingIndexFwdReader(
+                        configuration, path.trimTo(plen), name,
+                        COLUMN_NAME_TXN_NONE, /* partitionTxn */ 0, /* columnTop */ 0)) {
+                    long iterated = 0;
+                    long advertised;
+                    try (RowCursor cursor = reader.getCursor(0, 0L, Long.MAX_VALUE)) {
+                        advertised = cursor.size();
+                        while (cursor.hasNext()) {
+                            cursor.next();
+                            iterated++;
+                        }
+                    }
+                    Assert.assertEquals(
+                            "gen 1 contributes rowids 0..49 = 50 rows under MAX_VALUE=49",
+                            50,
+                            iterated
+                    );
+                    Assert.assertEquals(
+                            "CLEAN+ALL_DIRTY combination must take the fast path",
+                            iterated,
+                            advertised
+                    );
+                }
+            }
+        });
+    }
+
+    /**
+     * Reproduces the SIGSEGV from the JMH walFastLag bench (hs_err_pid19555):
+     * MemoryCR.getLong over-read inside PostingIndexChainEntry.read on a
+     * covering posting index. The bench ran walFastLagInsertAndQuery in a
+     * tight INSERT/drain/SELECT loop; a chain entry sealed with coverCount=0
+     * (because PostingIndexWriter's coverCount field is reset to 0 by the
+     * post-fast-lag-seal clearCovering(), and a subsequent commit() flushes
+     * pending data via extendHead with coverCount=0) ended up flush against
+     * the end of the .pk mmap. The reader, opened with coverCount=1 from
+     * the .pci sidecar, stepped past the entry's LEN reading the cover
+     * footer and SIGSEGV'd when the read crossed the mapping boundary.
+     * <p>
+     * This test mirrors the bench shape (covering posting index, WAL
+     * INSERT, drain, SELECT, repeat). With the picker/read fix in place,
+     * the cover-mismatched entries no longer crash readers - readers see
+     * zero-filled cover end offsets for those entries, fall back to the
+     * non-covering path, and queries return correct row counts. Without
+     * the fix, this test crashes the JVM (no AssertionError, just SIGSEGV).
+     */
+    @Test
+    public void testWalFastLagCoveringPostingDoesNotCrashReader() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE walbench (
+                        ts TIMESTAMP,
+                        sym SYMBOL INDEX TYPE POSTING INCLUDE (price),
+                        price DOUBLE
+                    ) TIMESTAMP(ts) PARTITION BY DAY WAL
+                    """);
+            execute("""
+                    INSERT INTO walbench(ts, sym, price)
+                    SELECT dateadd('u', x::INT, '2024-01-01T00:00:00.000000Z'::TIMESTAMP),
+                           rnd_symbol(50, 4, 8, 0), rnd_double() * 1000
+                    FROM long_sequence(2_000)
+                    """);
+            drainWalQueue();
+
+            // Sample a few keys that exist in the preloaded data so the
+            // SELECT below has something to count.
+            String[] sampleKeys = {"AAAA", "BBBB", "CCCC"};
+            try (RecordCursorFactory f = select("SELECT DISTINCT sym FROM walbench LIMIT 3")) {
+                int idx = 0;
+                try (RecordCursor c = f.getCursor(sqlExecutionContext)) {
+                    while (c.hasNext() && idx < sampleKeys.length) {
+                        sampleKeys[idx++] = c.getRecord().getSymA(0).toString();
+                    }
+                }
+            }
+
+            // Loop the bench's per-iteration shape: INSERT batch -> drain ->
+            // SELECT count. The fast-lag commit path runs inside drainWalQueue,
+            // so each iteration pushes a new chain entry that, on the buggy
+            // writer, has coverCount=0 even though .pci advertises 1 cover.
+            for (int iter = 0; iter < 64; iter++) {
+                int batchOffset = iter + 1;
+                execute("INSERT INTO walbench(ts, sym, price) " +
+                        "SELECT dateadd('u', x::INT, dateadd('s', " + batchOffset + ", '2024-01-01T00:00:00.000000Z'::TIMESTAMP)), " +
+                        "rnd_symbol(50, 4, 8, 0), rnd_double() * 1000 " +
+                        "FROM long_sequence(200)");
+                drainWalQueue();
+
+                String key = sampleKeys[iter % sampleKeys.length];
+                long count = -1;
+                try (RecordCursorFactory f = select(
+                        "SELECT count() FROM walbench WHERE sym = '" + key + "'")) {
+                    try (RecordCursor c = f.getCursor(sqlExecutionContext)) {
+                        if (c.hasNext()) {
+                            count = c.getRecord().getLong(0);
+                        }
+                    }
+                }
+                Assert.assertTrue(
+                        "iter=" + iter + ", key=" + key + ", count=" + count
+                                + " - sampleKeys are sourced from the preloaded "
+                                + "2_000-row batch (DISTINCT sym LIMIT 3), so "
+                                + "each must have count>0; a zero or negative "
+                                + "count means the chain walk skipped or "
+                                + "mis-read the entries holding this symbol",
+                        count > 0
+                );
+            }
+        });
+    }
+
+    /**
+     * Validates the Fix B writer-side change: after a seal, the
+     * post-seal finally block now calls
+     * {@link PostingIndexWriter#releaseCoveredColumnReadMappings()}
+     * instead of {@link PostingIndexWriter#clearCovering()}, preserving
+     * the writer's covering schema (coverCount, sidecarMems) so a
+     * subsequent commit() between seals still publishes a chain entry
+     * with a correctly-sized cover footer. This is the symmetric
+     * counterpart to {@link #testWriterEntrysCoverFooterShrinksAfterClearCoveringCommit},
+     * which documents that the old clearCovering()-then-commit() flow
+     * shrinks the footer.
+     */
+    @Test
+    public void testWriterEntrysCoverFooterPersistsAfterReleaseReadMappingsCommit() throws Exception {
+        assertMemoryLeak(() -> {
+            try (Path path = new Path().of(configuration.getDbRoot())) {
+                String name = "writer_release_read_mappings_then_commit";
+                int plen = path.size();
+                FilesFacade ff = configuration.getFilesFacade();
+
+                final int coverCount = 1;
+                final long fakeColRows = 32;
+                final int shift = 3;
+                final long fakeColBytes = fakeColRows << shift;
+                long fakeColAddr = Unsafe.malloc(fakeColBytes, MemoryTag.NATIVE_DEFAULT);
+                try {
+                    Unsafe.setMemory(fakeColAddr, fakeColBytes, (byte) 0);
+
+                    long[] addrs = {fakeColAddr};
+                    long[] tops = {0L};
+                    int[] shifts = {shift};
+                    int[] indices = {1};
+                    int[] types = {ColumnType.LONG};
+
+                    try (PostingIndexWriter writer = new PostingIndexWriter(
+                            configuration, path.trimTo(plen), name, COLUMN_NAME_TXN_NONE)) {
+                        writer.configureCovering(addrs, tops, shifts, indices, types, coverCount);
+                        for (int i = 0; i < 8; i++) {
+                            writer.add(i % 4, i);
+                        }
+                        writer.setMaxValue(7);
+                        writer.setNextTxnAtSeal(1L);
+                        writer.seal();
+
+                        // Models the production post-seal finally block:
+                        // release the borrowed read-side addrs but keep
+                        // the covering schema (coverCount, sidecarMems).
+                        writer.releaseCoveredColumnReadMappings();
+
+                        for (int i = 0; i < 4; i++) {
+                            writer.add(i, 100 + i);
+                        }
+                        writer.setMaxValue(103);
+                        writer.setNextTxnAtSeal(2L);
+                        writer.commit();
+
+                        LPSZ keyFile = PostingIndexUtils.keyFileName(
+                                path.trimTo(plen), name, COLUMN_NAME_TXN_NONE);
+                        long fileSize = ff.length(keyFile);
+                        try (MemoryCMARWImpl mem = new MemoryCMARWImpl(
+                                ff, keyFile, ff.getPageSize(), fileSize,
+                                MemoryTag.MMAP_DEFAULT, /* opts */ 0)) {
+                            PostingIndexChainWriter chain = new PostingIndexChainWriter();
+                            chain.openExisting(mem);
+                            PostingIndexChainEntry.Snapshot head = new PostingIndexChainEntry.Snapshot();
+                            chain.loadHeadEntry(mem, head);
+                            Assert.assertEquals(
+                                    "Fix B: with releaseCoveredColumnReadMappings the "
+                                            + "writer's coverCount stays > 0 across the "
+                                            + "post-seal release, so the next commit's "
+                                            + "extendHead writes a LEN that includes the "
+                                            + "cover footer",
+                                    PostingIndexChainEntry.entrySize(head.genCount, coverCount),
+                                    head.len
+                            );
+                            Assert.assertNotEquals(
+                                    "Fix B: the head LEN must NOT match the no-cover sizing",
+                                    PostingIndexChainEntry.entrySize(head.genCount, 0),
+                                    head.len
+                            );
+                        }
+                    }
+                } finally {
+                    Unsafe.free(fakeColAddr, fakeColBytes, MemoryTag.NATIVE_DEFAULT);
+                }
+            }
+        });
+    }
+
+    /**
+     * Reproduces the writer-side root cause of the GraalVM SIGSEGV in
+     * hs_err_pid19555 (PostingIndexBenchmarkSuite.walFastLagInsertAndQuery
+     * on bench/posting-wal-fastlag): a covering posting index whose chain
+     * head had LEN=96 (= entrySize(genCount=1, coverCount=0)) while .pci
+     * advertised coverCount=1. This test drives PostingIndexWriter through
+     * the same lifecycle the WAL fast-lag path follows in production:
+     * <ol>
+     * <li> configureCovering(...) -> coverCount=1 on the writer.
+     * <li> add() rows, seal() -> publishes a chain entry with cover footer.
+     * <li> clearCovering() -> writer's coverCount field is reset to 0
+     *     (this is what TableWriter does in the finally block of
+     *     sealPostingIndexesForLastPartitionFastLag, line 11367).
+     * <li> add() more rows, commit() -> flushAllPending() publishes via
+     *     extendHead, which rewrites the head entry's LEN using
+     *     entrySize(genCount, coverCount=0), DROPPING the cover footer.
+     * </ol>
+     * After step 4, the chain head's LEN no longer accommodates a cover
+     * footer slot, even though the table's covering schema (mirrored in
+     * .pci) still says one cover. A reader sourcing coverCount=1 from the
+     * .pci sidecar and walking the chain steps past the entry's LEN to
+     * read the (non-existent) footer - in production this surfaces as a
+     * SIGSEGV when the entry hugs the end of the .pk mmap. With the
+     * picker/read clamp fix in place the read self-bounds against the
+     * entry's LEN and zero-fills the missing cover slot, so the reader
+     * recovers gracefully.
+     */
+    @Test
+    public void testWriterEntrysCoverFooterShrinksAfterClearCoveringCommit() throws Exception {
+        assertMemoryLeak(() -> {
+            try (Path path = new Path().of(configuration.getDbRoot())) {
+                String name = "writer_clear_covering_then_commit";
+                int plen = path.size();
+                FilesFacade ff = configuration.getFilesFacade();
+
+                final int coverCount = 1;
+                final long fakeColRows = 32;
+                final int shift = 3; // 8 bytes per row (LONG-shaped covered column)
+                final long fakeColBytes = fakeColRows << shift;
+                long fakeColAddr = Unsafe.malloc(fakeColBytes, MemoryTag.NATIVE_DEFAULT);
+                try {
+                    Unsafe.setMemory(fakeColAddr, fakeColBytes, (byte) 0);
+
+                    long[] addrs = {fakeColAddr};
+                    long[] tops = {0L};
+                    int[] shifts = {shift};
+                    int[] indices = {1}; // dummy writer-side index
+                    int[] types = {ColumnType.LONG};
+
+                    try (PostingIndexWriter writer = new PostingIndexWriter(
+                            configuration, path.trimTo(plen), name, COLUMN_NAME_TXN_NONE)) {
+                        // Step 1+2: configure covering, add rows, seal.
+                        // The seal publishes the first chain entry with a
+                        // proper cover footer (LEN includes coverCount=1).
+                        writer.configureCovering(addrs, tops, shifts, indices, types, coverCount);
+                        for (int i = 0; i < 8; i++) {
+                            writer.add(i % 4, i);
+                        }
+                        writer.setMaxValue(7);
+                        writer.setNextTxnAtSeal(1L);
+                        writer.seal();
+
+                        long lenAfterSeal;
+                        long sealedSealTxn;
+                        {
+                            LPSZ keyFile = PostingIndexUtils.keyFileName(
+                                    path.trimTo(plen), name, COLUMN_NAME_TXN_NONE);
+                            long fileSize = ff.length(keyFile);
+                            try (MemoryCMARWImpl mem = new MemoryCMARWImpl(
+                                    ff, keyFile, ff.getPageSize(), fileSize,
+                                    MemoryTag.MMAP_DEFAULT, /* opts */ 0)) {
+                                PostingIndexChainWriter chain = new PostingIndexChainWriter();
+                                chain.openExisting(mem);
+                                PostingIndexChainEntry.Snapshot head = new PostingIndexChainEntry.Snapshot();
+                                chain.loadHeadEntry(mem, head);
+                                lenAfterSeal = head.len;
+                                sealedSealTxn = head.sealTxn;
+                            }
+                        }
+                        Assert.assertEquals(
+                                "post-seal head LEN must include the cover footer "
+                                        + "(64 header + genCount*28 gen-dir + coverCount*8 footer, "
+                                        + "padded to 8): expected entrySize(genCount=1, coverCount=1)=104",
+                                PostingIndexChainEntry.entrySize(1, coverCount), lenAfterSeal
+                        );
+
+                        // Step 3: clearCovering - models the finally block in
+                        // TableWriter.sealPostingIndexesForLastPartitionFastLag.
+                        // This resets the writer's coverCount field to 0
+                        // even though the table's covering schema remains
+                        // unchanged.
+                        writer.clearCovering();
+
+                        // Step 4: add more rows, commit. commit() ->
+                        // flushAllPending() -> publishToChain() ->
+                        // chain.extendHead with coverEndOffsetsScratch empty
+                        // (because captureCoverEndOffsets short-circuits when
+                        // coverCount<=0). extendHead rewrites the head's LEN
+                        // using entrySize(newGenCount, 0).
+                        for (int i = 0; i < 4; i++) {
+                            writer.add(i, 100 + i);
+                        }
+                        writer.setMaxValue(103);
+                        writer.setNextTxnAtSeal(2L);
+                        writer.commit();
+
+                        long lenAfterCommit;
+                        int genCountAfterCommit;
+                        {
+                            LPSZ keyFile = PostingIndexUtils.keyFileName(
+                                    path.trimTo(plen), name, COLUMN_NAME_TXN_NONE);
+                            long fileSize = ff.length(keyFile);
+                            try (MemoryCMARWImpl mem = new MemoryCMARWImpl(
+                                    ff, keyFile, ff.getPageSize(), fileSize,
+                                    MemoryTag.MMAP_DEFAULT, /* opts */ 0)) {
+                                PostingIndexChainWriter chain = new PostingIndexChainWriter();
+                                chain.openExisting(mem);
+                                PostingIndexChainEntry.Snapshot head = new PostingIndexChainEntry.Snapshot();
+                                chain.loadHeadEntry(mem, head);
+                                lenAfterCommit = head.len;
+                                genCountAfterCommit = head.genCount;
+                                Assert.assertEquals(
+                                        "extendHead reuses the same chain entry "
+                                                + "(same sealTxn since commit() does not "
+                                                + "advance sealTxn) - confirms the bad LEN "
+                                                + "was written into the head sealed at "
+                                                + "txn=" + sealedSealTxn,
+                                        sealedSealTxn, head.sealTxn
+                                );
+                            }
+                        }
+                        Assert.assertEquals(
+                                "RED: with the writer-side bug, the head's LEN no "
+                                        + "longer includes the cover footer because "
+                                        + "extendHead used coverCount=0 for the size "
+                                        + "calculation. Expected coverCount=1 sized "
+                                        + "entry, observed coverCount=0 sized entry.",
+                                PostingIndexChainEntry.entrySize(genCountAfterCommit, 0),
+                                lenAfterCommit
+                        );
+                        Assert.assertNotEquals(
+                                "RED: the schema-correct LEN would include cover footer "
+                                        + "bytes, but the writer dropped them",
+                                PostingIndexChainEntry.entrySize(genCountAfterCommit, coverCount),
+                                lenAfterCommit
+                        );
+
+                        // Final: prove Fix A keeps the reader from
+                        // dereferencing past the entry on this corrupted-footer
+                        // entry. Plant a sentinel byte pattern into the bytes
+                        // immediately past the entry's LEN - the (mis-computed)
+                        // cover footer offset for coverCount=1 lands on these
+                        // bytes. Without the picker/read clamp, getLong reads
+                        // the sentinel and assigns it as the cover end offset.
+                        // With the clamp, the read self-bounds against the
+                        // entry's LEN and zero-fills the missing slot.
+                        LPSZ keyFile = PostingIndexUtils.keyFileName(
+                                path.trimTo(plen), name, COLUMN_NAME_TXN_NONE);
+                        long fileSize = ff.length(keyFile);
+                        try (MemoryCMARWImpl mem = new MemoryCMARWImpl(
+                                ff, keyFile, ff.getPageSize(), fileSize,
+                                MemoryTag.MMAP_DEFAULT, /* opts */ 0)) {
+                            PostingIndexChainWriter chain = new PostingIndexChainWriter();
+                            chain.openExisting(mem);
+                            PostingIndexChainEntry.Snapshot head = new PostingIndexChainEntry.Snapshot();
+                            chain.loadHeadEntry(mem, head);
+                            // The unfixed cover loop would read at offset
+                            // (header + genCount * GEN_DIR_ENTRY_SIZE) for
+                            // each cover slot. Plant a sentinel there so a
+                            // failing clamp surfaces as a non-zero value.
+                            long footerOffset = PostingIndexChainEntry.resolveCoverFooterOffset(
+                                    head.offset, head.genCount);
+                            final long sentinel = 0xDEAD_BEEF_CAFE_BABEL;
+                            mem.putLong(footerOffset, sentinel);
+
+                            PostingIndexChainHeader.Snapshot header = new PostingIndexChainHeader.Snapshot();
+                            PostingIndexChainEntry.Snapshot entry = new PostingIndexChainEntry.Snapshot();
+                            int rc = PostingIndexChainPicker.pick(
+                                    mem, /* pinnedTableTxn */ Long.MAX_VALUE,
+                                    /* coverCount */ coverCount, header, entry);
+                            Assert.assertEquals(
+                                    PostingIndexChainPicker.RESULT_OK, rc);
+                            Assert.assertEquals(
+                                    "Fix A: missing cover slot is zero-filled instead "
+                                            + "of dereferencing past the entry",
+                                    coverCount, entry.coverFileEndOffsets.size());
+                            Assert.assertEquals(
+                                    "RED without Fix A: the picker would read the planted "
+                                            + "sentinel " + Long.toHexString(sentinel)
+                                            + "L as the cover end offset because the cover "
+                                            + "footer loop is not clamped against the entry's "
+                                            + "own LEN field. With Fix A, the clamp returns 0 "
+                                            + "instead.",
+                                    0L, entry.coverFileEndOffsets.getQuick(0));
+                        }
+                    }
+                } finally {
+                    Unsafe.free(fakeColAddr, fakeColBytes, MemoryTag.NATIVE_DEFAULT);
+                }
+            }
+        });
     }
 }

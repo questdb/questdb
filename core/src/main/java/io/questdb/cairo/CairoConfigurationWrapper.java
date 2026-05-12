@@ -803,6 +803,16 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
+    public int getPostingIndexAdaptiveDeltaAtOrAbove() {
+        return getDelegate().getPostingIndexAdaptiveDeltaAtOrAbove();
+    }
+
+    @Override
+    public long getPostingIndexerSpillBytesMax() {
+        return getDelegate().getPostingIndexerSpillBytesMax();
+    }
+
+    @Override
     public int getPostingSealGenThreshold() {
         return getDelegate().getPostingSealGenThreshold();
     }
@@ -870,6 +880,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     @Override
     public boolean getSampleByDefaultAlignmentCalendar() {
         return getDelegate().getSampleByDefaultAlignmentCalendar();
+    }
+
+    @Override
+    public int getSampleByFillSortStrategy() {
+        return getDelegate().getSampleByFillSortStrategy();
     }
 
     @Override
@@ -1525,6 +1540,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     @Override
     public boolean isIOURingEnabled() {
         return getDelegate().isIOURingEnabled();
+    }
+
+    @Override
+    public boolean isMatViewCoveringIndexEnabled() {
+        return getDelegate().isMatViewCoveringIndexEnabled();
     }
 
     @Override
