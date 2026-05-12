@@ -126,6 +126,38 @@ To rule out hoisting on a particular JDK, run with
 `-XX:+UnlockDiagnosticVMOptions -XX:+PrintInlining` and confirm
 `CarrierIdentity.current` shows as a real call rather than an inlined leaf.
 
+## Testing the hoist regression
+
+The specific failure mode this module exists to prevent - C2 hoisting
+`Thread.currentThread()` across `Continuation.yield()` so a body reading a
+thread-local after resume on a different carrier sees the original carrier's
+slot - is difficult to exercise from a focused unit test.
+
+C2 does not compile `Worker.loopBody` until it has been interpreted /
+C1-compiled tens of thousands of times. A small JUnit case that suspends a
+cont, resumes it on a different carrier, and reads a `ThreadLocal` will run
+entirely in the interpreter (or in C1, which does not perform the loop-invariant
+hoist that motivated this work) and therefore cannot reproduce the bug, even
+though it looks like it should. Forcing C2 compilation via
+`-XX:-TieredCompilation` or `-XX:CompileThreshold` on a synthetic loop is
+also unreliable: the hoist depends on the exact shape of `loopBody` and the
+surrounding inlining context, both of which the test would have to reproduce
+faithfully.
+
+The original incident was reproducible by running `ParquetTest` driving
+sqllogictest scenarios with debug logging enabled - that combination warms
+`loopBody` enough for C2 to compile it, drives the cont scheduler through
+real cross-carrier suspend/resume traffic, and amplifies the corruption into
+visible `ABANDONED LOG RECORD` markers from the log subsystem (which calls
+`tl.get()` on the hot path).
+
+As a result, the structural pieces (rebind cycles, recycled ids, cross-carrier
+isolation in `CarrierLocalTest`; different carrier across resume in
+`WorkerContinuationTest.testSuspendResumeOnDifferentThread`) are unit-tested,
+but the end-to-end "JIT-hoisted ThreadLocal sees stale carrier" assertion is
+covered indirectly by the sqllogictest + logging stress run. Anyone changing
+this code should re-run that scenario before trusting the unit suite alone.
+
 ## Files
 
 - `core/rust/qdbr/src/carrier.rs` - native side.

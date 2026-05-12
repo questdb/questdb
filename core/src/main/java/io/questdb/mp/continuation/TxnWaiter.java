@@ -221,9 +221,19 @@ public final class TxnWaiter implements DelayedFireable {
      * Attempts to transition this waiter from PENDING to CANCELLED. Returns {@code true}
      * if the CAS won, in which case the caller is responsible for calling
      * {@code cont.scheduleResume()} so the parked body can observe the cancellation.
+     *
+     * <p>If the CAS loses, a racer has already fired this waiter and a scheduleResume
+     * has enqueued the cont onto the resume queue while the cont is still mounted on
+     * the carrier. Mirror {@link #abortContinuation()}: mark parkRefused so the peer
+     * worker that dequeues the phantom drops it instead of busy-spinning on
+     * IllegalStateException until cont.isDone().
      */
     public boolean tryCancel() {
-        return Unsafe.cas(this, STATE_OFFSET, STATE_PENDING, STATE_CANCELLED);
+        if (Unsafe.cas(this, STATE_OFFSET, STATE_PENDING, STATE_CANCELLED)) {
+            return true;
+        }
+        cont.markParkRefused();
+        return false;
     }
 
     public void tryFire() {
