@@ -738,6 +738,25 @@ public class ArrayAggDoubleArrayGroupByFunctionFactoryTest extends AbstractCairo
     }
 
     @Test
+    public void testSampleByFillLinearRejectedNonKeyed() throws Exception {
+        // Mirror of testSampleByFillValueRejectedNonKeyed for FILL(LINEAR) on the
+        // array_agg(D[]) variant.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE tab (ts TIMESTAMP, arr DOUBLE[]) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO tab VALUES
+                    ('2024-01-01T00:00:00', ARRAY[1.0]),
+                    ('2024-01-01T02:00:00', ARRAY[2.0])
+                    """);
+            assertExceptionNoLeakCheck(
+                    "SELECT ts, array_agg(arr) agg FROM tab SAMPLE BY 1h FILL(LINEAR)",
+                    11,
+                    "support for LINEAR fill is not yet implemented"
+            );
+        });
+    }
+
+    @Test
     public void testSampleByFillValueRejectedNonKeyed() throws Exception {
         // Non-keyed SAMPLE BY goes through SqlOptimiser.rewriteSampleBy which converts
         // SAMPLE BY into GROUP BY + FillRangeRecordCursorFactory. The rewrite path must

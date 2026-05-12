@@ -179,7 +179,6 @@ import io.questdb.griffin.engine.groupby.SampleByFillNullNotKeyedRecordCursorFac
 import io.questdb.griffin.engine.groupby.SampleByFillNullRecordCursorFactory;
 import io.questdb.griffin.engine.groupby.SampleByFillPrevNotKeyedRecordCursorFactory;
 import io.questdb.griffin.engine.groupby.SampleByFillPrevRecordCursorFactory;
-import io.questdb.griffin.engine.groupby.SampleByFillRecord;
 import io.questdb.griffin.engine.groupby.SampleByFillRecordCursorFactory;
 import io.questdb.griffin.engine.groupby.SampleByFillValueNotKeyedRecordCursorFactory;
 import io.questdb.griffin.engine.groupby.SampleByFillValueRecordCursorFactory;
@@ -1220,35 +1219,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         return null;
     }
 
-    /**
-     * Walks the nested model chain to find the rewritten {@code FILL} list when
-     * {@link io.questdb.griffin.SqlOptimiser#rewriteSampleBy} converted a non-keyed
-     * {@code SAMPLE BY ... FILL(...)} into {@code GROUP BY} + {@link SampleByFillValueRecordCursorFactory}.
-     * The rewrite stores the fill list on the nested model via {@code setFillValues}
-     * and stamps {@code fillStride}, but {@code rewriteSelectClause0.moveSampleByFrom}
-     * does not propagate the list to the outer {@code groupByModel}. Recovering it here
-     * lets {@link GroupByUtils#assembleGroupByFunctions} reject fill modes the aggregate's
-     * {@link GroupByFunction#getSampleByFlags()} does not advertise, instead of crashing
-     * at runtime in {@link SampleByFillRecord#getArray} on the parsed fill constant.
-     * <p>
-     * The walk stops at a subquery boundary so the outer aggregates of a query like
-     * {@code SELECT array_agg(x) FROM (... SAMPLE BY ... FILL(VALUE) ...)} are not
-     * falsely validated against the inner subquery's fill list - the inner subquery's
-     * fill applies only to its own aggregates, not to the outer aggregates that consume
-     * the subquery's output.
-     */
-    private static ObjList<ExpressionNode> findRewrittenSampleByFill(IQueryModel model) {
-        IQueryModel curr = model;
-        while (curr != null && curr.getFillStride() == null) {
-            if (curr.isNestedModelIsSubQuery()) {
-                return null;
-            }
-            curr = curr.getNestedModel();
-        }
-        return curr != null ? curr.getFillValues() : null;
-    }
-
-    private static int getOrderByDirectionOrDefault(IQueryModel model, int index) {
+private static int getOrderByDirectionOrDefault(IQueryModel model, int index) {
         final IntList direction = model.getOrderByDirectionAdvice();
         return index >= direction.size() ? IQueryModel.ORDER_DIRECTION_ASCENDING : direction.getQuick(index);
     }
@@ -8659,7 +8630,12 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 }
             }
 
-            final ObjList<ExpressionNode> rewrittenSampleByFill = findRewrittenSampleByFill(model);
+            // SqlOptimiser.rewriteSelectClause0 propagates the rewritten FILL list onto
+            // groupByModel.sampleByFill when rewriteSampleBy has converted a non-keyed
+            // SAMPLE BY ... FILL(...) into GROUP BY + FillRangeRecordCursorFactory. Read
+            // the list directly here so each aggregate's getSampleByFlags() can be
+            // validated against the chosen fill mode.
+            final ObjList<ExpressionNode> rewrittenSampleByFill = model.getSampleByFill();
 
             GroupByUtils.assembleGroupByFunctions(
                     functionParser,

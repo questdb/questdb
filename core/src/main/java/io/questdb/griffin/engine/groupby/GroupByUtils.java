@@ -227,9 +227,12 @@ public class GroupByUtils {
                         outGroupByFunctions.add(groupByFunc);
                         outGroupByFunctionPositions.add(node.position);
                         if (fillCount > 0) {
-                            // index of the function relative to the list of fill values
-                            // we might have the same fill value for all functions
-                            int funcIndex = outGroupByFunctions.size();
+                            // 0-based index of the just-added function in outGroupByFunctions
+                            // (the add() on the line above appended it). When there are fewer
+                            // fill entries than aggregates, the clamp Math.min(..., fillCount - 1)
+                            // reuses the last fill value for the remaining aggregates, matching
+                            // the "single fill applies to all aggregates" convention.
+                            int funcIndex = outGroupByFunctions.size() - 1;
                             int sampleByFlags = groupByFunc.getSampleByFlags();
                             ExpressionNode fillNode = sampleByFill.getQuick(Math.min(funcIndex, fillCount - 1));
                             if (validateFill) {

@@ -9270,6 +9270,25 @@ public class SqlOptimiser implements Mutable {
         if (sampleBy != null) {
             // move sample by to group by model
             groupByModel.moveSampleByFrom(baseModel);
+        } else if (baseModel.getFillStride() != null) {
+            // rewriteSampleBy already converted a non-keyed SAMPLE BY ... FILL(...) into
+            // GROUP BY + FillRangeRecordCursorFactory and stamped the fill list onto
+            // baseModel.fillValues (sampleBy was cleared in the same block). Copy the
+            // list into groupByModel.sampleByFill so generateSelectGroupBy can validate
+            // each aggregate's getSampleByFlags() against the chosen fill mode. Without
+            // this, a downward walk from generateSelectGroupBy would have to cross
+            // optimizer wrappers and subquery boundaries to recover the list, which
+            // proved unreliable (see testOuterAggregateOverNonKeyedSampleByFill*).
+            // Using sampleByFill rather than fillValues here keeps the rewritten model
+            // tree shape stable: QueryModel.toSink only emits "fill(...)" for
+            // sampleByFill when sampleBy is also set, so this propagation is invisible
+            // to model-serialization-based tests.
+            final ObjList<ExpressionNode> baseFill = baseModel.getFillValues();
+            if (baseFill != null) {
+                final ObjList<ExpressionNode> dest = groupByModel.getSampleByFill();
+                dest.clear();
+                dest.addAll(baseFill);
+            }
         }
 
         if (baseModel.getGroupBy().size() > 0) {

@@ -441,17 +441,70 @@ public class SampleByTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testOuterAggregateOverNonKeyedSampleByFillSubqueryNoJoin() throws Exception {
+        // Cross-boundary regression without a JOIN. Earlier versions of the SAMPLE BY
+        // fill walker recovered the fill list via a downward walk that was supposed to
+        // stop at subquery boundaries. The boundary signal (isNestedModelIsSubQuery)
+        // was unreliable across optimizer-inserted intermediate wrappers, so the walker
+        // descended past the inner SAMPLE BY ... FILL(0) and falsely validated the
+        // outer array_agg against the inner FILL. Replaced by explicit fill-list
+        // propagation in SqlOptimiser.rewriteSelectClause0; the outer GROUP BY model
+        // now picks up fill state only when its own baseModel carries it.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE tabA (ts TIMESTAMP, val INT) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO tabA VALUES
+                    ('2024-01-01T00:00:00', 10),
+                    ('2024-01-01T01:00:00', 20),
+                    ('2024-01-01T02:00:00', 30)
+                    """);
+            assertQueryNoLeakCheck(
+                    "agg\n[10.0,20.0,30.0]\n",
+                    "SELECT array_agg(sumval::double) agg "
+                            + "FROM (SELECT ts, sum(val) sumval FROM tabA SAMPLE BY 1h FILL(0)) sub",
+                    null,
+                    false,
+                    true
+            );
+        });
+    }
+
+    @Test
+    public void testOuterAggregateOverNonKeyedSampleByFillCte() throws Exception {
+        // CTE form of the same cross-boundary regression. The CTE inliner in the parser
+        // does not always set nestedModelIsSubQuery=true on the reference, so a walker
+        // relying on that flag would silently descend past the CTE boundary. Fix routes
+        // fill state explicitly through rewriteSelectClause0, eliminating the walker.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE tabA (ts TIMESTAMP, val INT) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO tabA VALUES
+                    ('2024-01-01T00:00:00', 10),
+                    ('2024-01-01T01:00:00', 20),
+                    ('2024-01-01T02:00:00', 30)
+                    """);
+            assertQueryNoLeakCheck(
+                    "agg\n[10.0,20.0,30.0]\n",
+                    "WITH sampled AS (SELECT ts, sum(val) sumval FROM tabA SAMPLE BY 1h FILL(0)) "
+                            + "SELECT array_agg(sumval::double) agg FROM sampled",
+                    null,
+                    false,
+                    true
+            );
+        });
+    }
+
+    @Test
     public void testOuterAggregateOverNonKeyedSampleByFillSubquery() throws Exception {
         // Cross-boundary regression. A non-keyed SAMPLE BY ... FILL(value) inside an
         // inner subquery sets fillStride and fillValues on its own model. The outer
         // aggregate is unrelated to the inner FILL and must not be validated against
-        // the inner fill list. findRewrittenSampleByFill must stop the walk at the
-        // model whose fillStride is set (the inner one), and the outer GROUP BY must
-        // see fill = null.
-        // Without the fillStride gate, the walker would descend through the subquery
-        // boundary, recover the inner FILL(0) list, and falsely reject the outer
-        // aggregate whose getSampleByFlags() omits SAMPLE_BY_FILL_VALUE - e.g.
-        // last(D[]), first(D[]), array_agg.
+        // the inner fill list. The outer GROUP BY must see fill = null.
+        // Earlier walker implementations descended through the subquery boundary,
+        // recovered the inner FILL(0) list, and falsely rejected the outer aggregate
+        // whose getSampleByFlags() omits SAMPLE_BY_FILL_VALUE - e.g. last(D[]),
+        // first(D[]), array_agg. Replaced by explicit fill-list propagation in
+        // SqlOptimiser.rewriteSelectClause0.
         assertMemoryLeak(() -> {
             execute("CREATE TABLE tabA (ts TIMESTAMP, grp SYMBOL, val INT) TIMESTAMP(ts) PARTITION BY DAY");
             execute("CREATE TABLE tabB (grp SYMBOL, arr DOUBLE[])");
@@ -473,6 +526,40 @@ public class SampleByTest extends AbstractCairoTest {
                     null,
                     true,
                     true
+            );
+        });
+    }
+
+    @Test
+    public void testMultiFillValidatedPerAggregate() throws Exception {
+        // Regression for the off-by-one in GroupByUtils.assembleGroupByFunctions where
+        // the per-aggregate fill index was read AFTER outGroupByFunctions.add(). Earlier
+        // code used outGroupByFunctions.size() as a 0-based index, but size() reflects
+        // the count INCLUDING the just-added function, shifting every aggregate's fill
+        // validation by one. With the off-by-one and FILL(NULL, 0):
+        //   - array_agg (col 0) would be validated against fill[1]=0 (VALUE) and
+        //     rejected because its getSampleByFlags() lacks SAMPLE_BY_FILL_VALUE.
+        // With the fix:
+        //   - array_agg (col 0) is validated against fill[0]=NULL (has FILL_NULL),
+        //   - sum (col 1) is validated against fill[1]=0 (has FILL_VALUE).
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE tab (ts TIMESTAMP, grp SYMBOL, val DOUBLE) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO tab VALUES
+                    ('2024-01-01T00:00:00', 'a', 1.0),
+                    ('2024-01-01T00:30:00', 'a', 2.0),
+                    ('2024-01-01T02:00:00', 'a', 3.0)
+                    """);
+            assertQueryNoLeakCheck(
+                    "ts\tgrp\tarr\ts\n" +
+                            "2024-01-01T00:00:00.000000Z\ta\t[1.0,2.0]\t3.0\n" +
+                            "2024-01-01T01:00:00.000000Z\ta\tnull\t0.0\n" +
+                            "2024-01-01T02:00:00.000000Z\ta\t[3.0]\t3.0\n",
+                    "SELECT ts, grp, array_agg(val) arr, sum(val) s FROM tab "
+                            + "SAMPLE BY 1h FILL(NULL, 0) ALIGN TO CALENDAR",
+                    "ts",
+                    false,
+                    false
             );
         });
     }
