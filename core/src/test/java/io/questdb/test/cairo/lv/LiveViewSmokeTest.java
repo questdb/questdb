@@ -28,6 +28,7 @@ import io.questdb.PropertyKey;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.file.BlockFileWriter;
+import io.questdb.cairo.lv.LiveViewCheckpointWriter;
 import io.questdb.cairo.lv.LiveViewDefinition;
 import io.questdb.cairo.lv.LiveViewInMemoryBuffer;
 import io.questdb.cairo.lv.LiveViewInMemoryTier;
@@ -89,6 +90,33 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
             execute("CREATE LIVE VIEW lv FLUSH EVERY 500ms AS " +
                     "SELECT ts, x, row_number() OVER () AS rn FROM base");
             execute("DROP LIVE VIEW lv");
+        });
+    }
+
+    @Test
+    public void testCreateLiveViewMakesCheckpointsDir() throws Exception {
+        // RFC 123 Phase 2a.3: CREATE LIVE VIEW must materialize _checkpoints/
+        // inside the LV directory so the flush cycle's checkpoint write hook
+        // (Phase 2a.4) has a target directory ready.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 1s AS " +
+                    "SELECT ts, x, row_number() OVER () AS rn FROM base");
+            try {
+                TableToken token = engine.verifyTableName("lv");
+                FilesFacade ff = engine.getConfiguration().getFilesFacade();
+                try (Path path = new Path()) {
+                    path.of(engine.getConfiguration().getDbRoot())
+                            .concat(token)
+                            .concat(LiveViewCheckpointWriter.CHECKPOINT_DIR_NAME);
+                    Assert.assertTrue(
+                            "_checkpoints/ must exist after CREATE LIVE VIEW [path=" + path + ']',
+                            ff.exists(path.$())
+                    );
+                }
+            } finally {
+                execute("DROP LIVE VIEW lv");
+            }
         });
     }
 

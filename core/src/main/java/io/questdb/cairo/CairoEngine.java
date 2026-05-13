@@ -32,6 +32,7 @@ import io.questdb.Telemetry;
 import io.questdb.cairo.file.BlockFileReader;
 import io.questdb.cairo.file.BlockFileWriter;
 import io.questdb.cairo.frm.file.FrameFactory;
+import io.questdb.cairo.lv.LiveViewCheckpointWriter;
 import io.questdb.cairo.lv.LiveViewDefinition;
 import io.questdb.cairo.lv.LiveViewInstance;
 import io.questdb.cairo.lv.LiveViewRegistry;
@@ -954,6 +955,21 @@ public class CairoEngine implements Closeable, WriterSource {
                         dependencyColumnNames,
                         metadata
                 );
+
+                // _checkpoints/ subdirectory holds the rolling head checkpoint
+                // (RFC 123 §"On-disk tier"). Created before _lv.s so the rollback
+                // path in dropTableOrViewOrMatView below covers it; _lv stays the
+                // atomic CREATE commit marker. mkdirs() is used (not mkdir()) so
+                // an IF NOT EXISTS CREATE against a pre-existing LV - whose
+                // directory and _checkpoints/ are already present - re-enters this
+                // path idempotently rather than failing with EEXIST.
+                path.of(configuration.getDbRoot()).concat(liveViewToken)
+                        .concat(LiveViewCheckpointWriter.CHECKPOINT_DIR_NAME).slash();
+                if (configuration.getFilesFacade().mkdirs(path, configuration.getMkDirMode()) != 0) {
+                    throw CairoException.critical(configuration.getFilesFacade().errno())
+                            .put("could not create live view checkpoints directory [path=")
+                            .put(path).put(']');
+                }
 
                 // write _lv.s state file with subscribeFromSeqTxn captured above.
                 // Phase 1a always writes BACKFILL_STATE_ACTIVE / Numbers.LONG_NULL — BACKFILL
