@@ -26,11 +26,14 @@ package io.questdb.griffin.engine.window;
 
 import io.questdb.cairo.ArrayColumnTypes;
 import io.questdb.cairo.arr.ArrayView;
+import io.questdb.cairo.map.Map;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cairo.sql.WindowSPI;
+import io.questdb.cairo.vm.api.MemoryA;
+import io.questdb.cairo.vm.api.MemoryR;
 import io.questdb.griffin.SqlCodeGenerator;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.model.ExpressionNode;
@@ -44,6 +47,7 @@ import io.questdb.std.ObjList;
 import io.questdb.std.str.CharSink;
 import io.questdb.std.str.Utf8Sequence;
 import org.jetbrains.annotations.NotNull;
+import org.jetbrains.annotations.Nullable;
 
 public interface WindowFunction extends Function {
     int ONE_PASS = 1;
@@ -230,6 +234,24 @@ public interface WindowFunction extends Function {
     }
 
     /**
+     * Exposes the per-instance partition-state {@link Map} used by the live-view
+     * tombstone-compaction routine to rebuild the function's state container.
+     * Returns {@code null} by default; window functions that maintain per-partition
+     * state in a Map keyed by the named window's PARTITION BY columns override this
+     * once they sign up for full compaction (per the RFC 123 Phase 2b function
+     * migration train).
+     * <p>
+     * Phase 2a only consumes the anchor-map compaction trigger; per-function map
+     * rebuild lands as each group's 2b commit overrides this method. While the
+     * default returns {@code null}, the function's Map continues to grow and is
+     * reclaimed only when the live view is dropped.
+     */
+    @Nullable
+    default Map getPartitionMap() {
+        return null;
+    }
+
+    /**
      * @return pass1 scan direction.
      * Some {@link #ONE_PASS} and {@link #TWO_PASS} window functions may be more efficient when using a backward scan.
      */
@@ -381,10 +403,79 @@ public interface WindowFunction extends Function {
     default void resetPartition(Record record) {
     }
 
+    /**
+     * Rehydrates per-partition accumulator state previously written by {@link #snapshot(MemoryA)}.
+     * The {@code formatVersion} is the per-function {@code snapshotFormatVersion()} the snapshot
+     * was written under; implementations dispatch to a version-matching decoder, zero-fill any
+     * new fields, and discard removed ones. A version lower than
+     * {@link #snapshotMinSupportedVersion()} must not reach this method — the live view caller
+     * unlinks the head checkpoint and falls into the head-miss path instead of attempting
+     * restore (RFC 123 §"Per-window-function snapshot framework").
+     * <p>
+     * The default throws — only window functions that {@link #supportsSnapshot()} override.
+     * Functions on the default-throw path force their containing live view onto the head-miss
+     * replay path (visible in {@code live_views()} as
+     * {@code head_checkpoint_lv_seqtxn = LONG_NULL}).
+     */
+    default void restore(MemoryR source, int formatVersion) {
+        throw new UnsupportedOperationException(
+                "restore not implemented for " + getClass().getName()
+        );
+    }
+
     /*
       Set index of record chain column used to store window function result.
      */
     void setColumnIndex(int columnIndex);
+
+    /**
+     * Serialises the function's per-partition accumulator state into {@code sink} for later
+     * {@link #restore(MemoryR, int)}. The framework writes the resulting bytes into the live
+     * view's head {@code _checkpoints/<lvSeqTxn>.cp} file (RFC 123 §"Checkpoint manifest" —
+     * FUNCTION_SNAPSHOT block).
+     * <p>
+     * The default throws — only window functions that {@link #supportsSnapshot()} override.
+     * The live-view refresh path checks {@link #supportsSnapshot()} at first refresh and
+     * computes a per-LV {@code snapshotCapability} flag from the AND of every function's
+     * answer; LVs whose flag is {@code false} emit no checkpoints and route restart and O3
+     * through the head-miss replay path.
+     */
+    default void snapshot(MemoryA sink) {
+        throw new UnsupportedOperationException(
+                "snapshot not implemented for " + getClass().getName()
+        );
+    }
+
+    /**
+     * @return the snapshot layout version this build writes. The framework records this in the
+     * FUNCTION_SNAPSHOT block header so future builds can dispatch through
+     * {@link #restore(MemoryR, int)} to the correct decoder. Bump on any state-layout change.
+     */
+    default int snapshotFormatVersion() {
+        return 0;
+    }
+
+    /**
+     * @return the lowest snapshot {@code formatVersion} this build can {@link #restore(MemoryR, int)}.
+     * A head checkpoint whose recorded version is strictly less than this value cannot be replayed;
+     * the live view layer surfaces it as {@code "checkpoint format version unsupported"} via the
+     * unified invalidation path (RFC 123 §"Per-window-function snapshot framework — Function
+     * contract additions").
+     */
+    default int snapshotMinSupportedVersion() {
+        return 0;
+    }
+
+    /**
+     * Reports whether {@link #snapshot(MemoryA)} / {@link #restore(MemoryR, int)} are implemented.
+     * The live view refresh worker ANDs this across every window function in the compiled SELECT
+     * at first refresh; the LV's per-instance {@code snapshotCapability} flag is the result.
+     * Default {@code false} keeps unmigrated functions out of the checkpoint pipeline without
+     * a try/catch — the cheaper probe.
+     */
+    default boolean supportsSnapshot() {
+        return false;
+    }
 
     enum Pass1ScanDirection {
         FORWARD, BACKWARD
