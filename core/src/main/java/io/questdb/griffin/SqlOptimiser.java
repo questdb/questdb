@@ -9277,7 +9277,22 @@ public class SqlOptimiser implements Mutable {
             // can validate each aggregate's getSampleByFlags() against the fill mode.
             // sampleByFill (not fillValues) keeps toSink output stable: with sampleBy
             // cleared, QueryModel.toSink skips the fill(...) branch entirely.
-            groupByModel.setSampleByFill(baseModel.getFillValues());
+            // Skip the re-expose when every token is NONE: validation for NONE is a
+            // no-op (every getSampleByFlags() includes SAMPLE_BY_FILL_NONE), and the
+            // gates below treat any non-empty sampleByFill as "carries a fill that
+            // breaks dedup". Letting FILL(NONE) take that branch would disable
+            // duplicate-aggregate detection unnecessarily.
+            final ObjList<ExpressionNode> baseFill = baseModel.getFillValues();
+            boolean hasNonNoneFill = false;
+            for (int i = 0, n = baseFill.size(); i < n; i++) {
+                if (!isNoneKeyword(baseFill.getQuick(i).token)) {
+                    hasNonNoneFill = true;
+                    break;
+                }
+            }
+            if (hasNonNoneFill) {
+                groupByModel.setSampleByFill(baseFill);
+            }
         }
 
         if (baseModel.getGroupBy().size() > 0) {

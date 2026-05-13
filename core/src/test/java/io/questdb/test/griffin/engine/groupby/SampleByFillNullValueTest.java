@@ -46,6 +46,39 @@ import static org.junit.Assert.fail;
 public class SampleByFillNullValueTest extends AbstractCairoTest {
 
     @Test
+    public void testFillNonePreservesDuplicateAggregateDedup() throws Exception {
+        // After rewriteSampleBy clears sampleBy, rewriteSelectClause0 re-exposes
+        // the rewritten fill list on groupByModel.sampleByFill so per-aggregate
+        // fill validation can run. The re-expose is skipped for FILL(NONE)
+        // because every aggregate's getSampleByFlags() includes
+        // SAMPLE_BY_FILL_NONE -- validation is a strict no-op -- and an
+        // unconditional re-expose would defeat detectDuplicateAggregates on the
+        // calendar-align path. This test pins the dedup: count(x) appears once
+        // in the inner Async Group By, not twice.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO t VALUES ('2024-01-01T00:00:00.000000Z', 1)");
+            assertPlanNoLeakCheck(
+                    "SELECT count(x), count(x), ts FROM t SAMPLE BY 1h FILL(NONE) ALIGN TO CALENDAR",
+                    """
+                            Encode sort light
+                              keys: [ts]
+                                VirtualRecord
+                                  functions: [count,count,ts]
+                                    Async Group By workers: 1
+                                      keys: [ts]
+                                      keyFunctions: [timestamp_floor_utc('1h',ts)]
+                                      values: [count(x)]
+                                      filter: null
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: t
+                            """
+            );
+        });
+    }
+
+    @Test
     public void testFillNullCastMultiKey() throws Exception {
         // FILL(NULL) variant of the multi-key inline-function classifier
         // regression: an inline cast x::STRING is a FUNCTION-form key and must
