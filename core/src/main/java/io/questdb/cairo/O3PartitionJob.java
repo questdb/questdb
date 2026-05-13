@@ -3749,7 +3749,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                         }
 
                         if (IndexType.isPosting(indexType)) {
-                            indexWriter.seal();
+                            indexWriter.commitDense();
                         } else {
                             indexWriter.commit();
                         }
