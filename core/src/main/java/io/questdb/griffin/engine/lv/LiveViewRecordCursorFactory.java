@@ -38,44 +38,50 @@ import io.questdb.std.Misc;
 
 /**
  * Live-view read path (RFC 123 Phase 1b Commit 4). Wraps the standard
- * {@code PageFrameRecordCursorFactory} that {@code SqlCodeGenerator} builds for
- * the LV's WAL-backed table, and adds the in-memory tier seam-routing on top.
+ * {@code PageFrameRecordCursorFactory} that {@code SqlCodeGenerator} builds
+ * for the LV's WAL-backed table, and pins the LV's in-memory tier slot for
+ * the cursor's lifetime so the refresh worker's slow-path
+ * {@code tryAcquireWrite} sees the reader (RFC 123 §"Stall behavior").
  * <p>
- * At {@link #getCursor} time:
- * <ul>
- *     <li>The wrapped factory's cursor is opened (the disk side).</li>
- *     <li>The LV's in-memory tier is looked up via {@link CairoEngine#getLiveViewRegistry}.
- *     If the tier exists and is non-empty, a slot is pinned via
- *     {@code acquireRead}; the cursor's {@code seamTs} is set from the slot's
- *     {@code seamTs}. Otherwise the cursor runs disk-only (seam = MAX,
- *     no in-mem reads).</li>
- *     <li>Sequential reads ({@code hasNext} / {@code getRecord}) walk disk
- *     rows whose ts is strictly below the seam, then exhaust the pinned slot
- *     from the seam forward. ASOF JOIN as RHS uses
- *     {@link #getTimeFrameCursor} which routes to the base factory's
- *     disk-only time-frame cursor — correct in Phase 1b because every in-mem
- *     row is also durable on disk.</li>
- * </ul>
+ * Phase 1b reads still come entirely from the disk cursor: the inline apply
+ * (Phase 1b Commit 1) commits the LV WAL block synchronously with the
+ * refresh worker's compute step, so every row visible in the in-mem tier is
+ * also durable on disk and the disk cursor returns the complete picture.
+ * The tier pin is therefore scaffolding for §"Stall behavior" and for the
+ * future seam-routing cursor (Phase 4 hand-off ring with deferred apply),
+ * not a read source today.
+ * <p>
+ * Each {@link #getCursor(SqlExecutionContext)} call allocates a fresh
+ * {@link LiveViewRecordCursor}: the cursor pins a tier slot until
+ * {@code close()}, so reusing a single cursor across consecutive
+ * {@code getCursor} calls would release the previous reader's pin if both
+ * cursors are still live (e.g. a plan-explain probe over the same factory).
+ * Allocation here is once per query, not on the row hot path, so the cost
+ * is negligible.
  */
 public class LiveViewRecordCursorFactory extends AbstractRecordCursorFactory {
     private final RecordCursorFactory base;
     private final CairoEngine engine;
     private final TableToken liveViewToken;
-    private final LiveViewRecordCursor cursor;
 
     public LiveViewRecordCursorFactory(CairoEngine engine, TableToken liveViewToken, RecordCursorFactory base) {
         super(base.getMetadata());
         this.engine = engine;
         this.liveViewToken = liveViewToken;
         this.base = base;
-        this.cursor = new LiveViewRecordCursor();
     }
 
     @Override
     public RecordCursor getCursor(SqlExecutionContext executionContext) throws SqlException {
         RecordCursor diskCursor = base.getCursor(executionContext);
         LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance(liveViewToken.getTableName());
-        cursor.of(diskCursor, instance);
+        LiveViewRecordCursor cursor = new LiveViewRecordCursor();
+        try {
+            cursor.of(diskCursor, instance);
+        } catch (Throwable t) {
+            Misc.free(cursor);
+            throw t;
+        }
         return cursor;
     }
 
@@ -124,6 +130,5 @@ public class LiveViewRecordCursorFactory extends AbstractRecordCursorFactory {
     @Override
     protected void _close() {
         Misc.free(base);
-        Misc.free(cursor);
     }
 }

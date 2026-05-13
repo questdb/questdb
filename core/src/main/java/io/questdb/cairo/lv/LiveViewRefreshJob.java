@@ -118,6 +118,10 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
     private LiveViewInMemoryBuffer stagingBuffer;
     private final IntList stagingColumnTypes = new IntList();
     private int stagingTimestampColumnIndex = -1;
+    // Reusable shape buffer for ensureStagingAndTier — alpha-ordered alongside
+    // the other staging-related fields so the per-FLUSH-cycle code path can
+    // mutate without per-call allocation.
+    private final IntList tierColumnTypes = new IntList();
     private final IntList columnIndexes = new IntList();
     private final IntList columnSizeShifts = new IntList();
     private final CairoEngine engine;
@@ -484,12 +488,10 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             }
 
             if (appendedRows > 0) {
-                // RFC 123 Phase 1b: the block carries advanceTo as
-                // maxBaseSeqTxnInBlock. The inline apply below picks it up and
-                // bumps lvConsumedSeqTxn through the LIVE_VIEW_DATA branch of
-                // ApplyWal2TableJob.processWalCommit, which persists _lv.s
-                // atomically. Base WAL retention only releases once the rows
-                // are durable in the LV's own table.
+                // RFC 123 Phase 1b: the LV WAL block carries advanceTo as
+                // maxBaseSeqTxnInBlock. The inline apply below makes the rows
+                // durable in the LV's on-disk table; only then do we advance
+                // lvConsumedSeqTxn so base WAL retention releases.
                 walWriter.commitLiveView(advanceTo);
                 if (populateTier) {
                     stagingBuffer.setRowCount(appendedRows);
@@ -501,37 +503,52 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
         }
 
         if (advanceTo > instance.getLastProcessedSeqTxn()) {
-            // Set the in-memory advances first so the apply step's
-            // advanceLiveViewConsumedSeqTxn writes a single _lv.s with all
-            // watermarks current (lastProcessed + appliedWatermark + lvConsumed).
+            // Advance the in-memory watermarks first; both advanceLiveViewConsumedSeqTxn
+            // and persistState below read these to write a single, consistent _lv.s.
             instance.setLastProcessedSeqTxn(advanceTo);
             // appliedWatermark mirrors lastProcessed for now; sub-FLUSH-cycle freshness via
             // the in-mem tier is parked, so the seam_ts is anchored at the WAL commit boundary.
             instance.setAppliedWatermark(advanceTo);
-            boolean lvConsumedPersistedByApply = false;
+            boolean lvConsumedPersisted = false;
             if (appendedRows > 0) {
                 // RFC 123 Phase 1b: LV apply runs inline on this thread. The
-                // global ApplyWal2TableJob.doRun skips LV tokens, so if we did
-                // not run apply here the LIVE_VIEW_DATA block would sit
-                // unapplied and lvConsumedSeqTxn would never advance.
+                // global ApplyWal2TableJob.doRun skips LV tokens, so without
+                // applyWalDirect here the LIVE_VIEW_DATA block would sit
+                // unapplied and the on-disk tier would not catch up.
                 applyJob.applyWalDirect(instance.getLiveViewToken(), Job.RUNNING_STATUS);
-                // applyWalDirect catches internal failures (e.g. _lv.s open
-                // failure) and logs/suspends without rethrowing. Detect the
-                // missing advance so the fallback persistState below runs and
-                // surfaces the failure to the flush-retry budget.
-                lvConsumedPersistedByApply = instance.getStateReader().getLvConsumedSeqTxn() >= advanceTo;
+                // Apply has committed the _txn (the durability cut for the rows).
+                // Now publish the new lvConsumedSeqTxn floor and persist _lv.s
+                // through the refresh worker's reusable BlockFileWriter + Path so
+                // base WAL retention can release the consumed segments.
+                try {
+                    engine.advanceLiveViewConsumedSeqTxn(
+                            instance.getLiveViewToken(),
+                            advanceTo,
+                            blockFileWriter,
+                            path
+                    );
+                    lvConsumedPersisted = true;
+                } catch (CairoException e) {
+                    LOG.critical().$("could not advance live view consumed seqTxn after apply [view=")
+                            .$(instance.getDefinition().getViewName())
+                            .$(", advanceTo=").$(advanceTo)
+                            .$(", error=").$safe(e.getFlyweightMessage()).I$();
+                }
             } else {
                 // No LIVE_VIEW_DATA block was emitted (every base seqTxn was non-DATA —
                 // schema change, DROP PARTITION, TRUNCATE, base TTL — or every row was
-                // rejected by the WHERE filter). Without a block, the apply path has
-                // nothing to consume and lvConsumedSeqTxn would stall, holding base WAL
-                // retention forever. Advance it directly: there is nothing left to make
-                // durable past the in-memory state, so this is the correct moment to
-                // publish the floor (RFC 123 §"Lifecycle / Invalidation - Base-table
+                // rejected by the WHERE filter). There is nothing to apply, but
+                // lvConsumedSeqTxn must still advance or base WAL retention would
+                // stall forever (RFC 123 §"Lifecycle / Invalidation - Base-table
                 // data removal").
                 try {
-                    engine.advanceLiveViewConsumedSeqTxn(instance.getLiveViewToken(), advanceTo);
-                    lvConsumedPersistedByApply = true;
+                    engine.advanceLiveViewConsumedSeqTxn(
+                            instance.getLiveViewToken(),
+                            advanceTo,
+                            blockFileWriter,
+                            path
+                    );
+                    lvConsumedPersisted = true;
                 } catch (CairoException e) {
                     LOG.critical().$("could not advance live view consumed seqTxn on no-row cycle [view=")
                             .$(instance.getDefinition().getViewName())
@@ -539,16 +556,16 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                             .$(", error=").$safe(e.getFlyweightMessage()).I$();
                 }
             }
-            if (!lvConsumedPersistedByApply) {
-                // Apply swallowed a persist failure or the no-row direct
-                // advance threw. Persist the in-memory lastProcessed +
-                // appliedWatermark advance so the next cycle does not redo the
-                // walked-past seqTxns. If this also fails, the exception
-                // propagates to refreshInstance's handleRefreshFailure which
-                // ticks the flush-retry budget (RFC 123 §Flush).
+            if (!lvConsumedPersisted) {
+                // advanceLiveViewConsumedSeqTxn threw before publishing the new
+                // floor. Persist lastProcessed + appliedWatermark anyway so the
+                // next cycle does not redo the walked-past seqTxns. If this also
+                // fails, the exception propagates to refreshInstance's
+                // handleRefreshFailure which ticks the flush-retry budget
+                // (RFC 123 §Flush).
                 persistState(instance);
             }
-            if (lvConsumedPersistedByApply && populateTier && appendedRows > 0) {
+            if (lvConsumedPersisted && populateTier && appendedRows > 0) {
                 // Phase 1b slow-path swap: copy retained rows from the published
                 // slot, append staging on top, publishSwap. Failure to acquire
                 // the write slot is a non-fatal stall — the on-disk tier still
@@ -565,31 +582,35 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
      * when any column type is var-length or otherwise unsupported, in which case
      * the cycle still writes to the on-disk tier but the in-mem tier stays
      * empty / unallocated and reads fall back to {@code TableReader}.
+     * <p>
+     * The reusable {@code tierColumnTypes} member captures the output schema for
+     * this cycle, doubling as the staging buffer's shape and the LV tier's
+     * shape on first allocation. No per-cycle {@code IntList} is allocated.
      */
     private boolean ensureStagingAndTier(LiveViewInstance instance, RecordMetadata outMetadata, int tsColIdx) {
-        // Build a transient IntList of column types for shape comparison.
-        IntList currentTypes = new IntList(outMetadata.getColumnCount());
+        // Capture the output column types into the reusable IntList; this
+        // doubles as the unsupported-type probe and the shape-mismatch check
+        // against the cached staging buffer. Member-resident so the per-FLUSH-
+        // cycle path stays allocation-free.
+        tierColumnTypes.clear();
         for (int i = 0, n = outMetadata.getColumnCount(); i < n; i++) {
-            currentTypes.add(outMetadata.getColumnType(i));
+            tierColumnTypes.add(outMetadata.getColumnType(i));
         }
-        if (!LiveViewInMemoryBuffer.areColumnTypesSupported(currentTypes)) {
+        if (!LiveViewInMemoryBuffer.areColumnTypesSupported(tierColumnTypes)) {
             // LV output schema contains a var-length / unsupported column type;
             // skip the in-mem tier population for this LV. The cursor reads
             // disk-only via TableReader (Phase 1a behaviour).
-            // Free any previously-allocated staging buffer so its memory does
-            // not linger across worker cycles for a different (now-unsupported)
-            // LV's shape.
             return false;
         }
         long pageSize = engine.getConfiguration().getLiveViewInMemoryBufferInitialBytes();
-        if (stagingBuffer == null || !stagingColumnTypes.equals(currentTypes)) {
+        if (stagingBuffer == null || !stagingColumnTypes.equals(tierColumnTypes)) {
             // Shape changed (or first use on this worker) — reshape the
             // staging buffer. The previous buffer's allocations are released
             // by Misc.free before the new one is constructed.
             stagingBuffer = Misc.free(stagingBuffer);
             stagingColumnTypes.clear();
-            for (int i = 0, n = currentTypes.size(); i < n; i++) {
-                stagingColumnTypes.add(currentTypes.getQuick(i));
+            for (int i = 0, n = tierColumnTypes.size(); i < n; i++) {
+                stagingColumnTypes.add(tierColumnTypes.getQuick(i));
             }
             stagingBuffer = new LiveViewInMemoryBuffer(stagingColumnTypes, tsColIdx, pageSize);
             stagingTimestampColumnIndex = tsColIdx;
@@ -601,7 +622,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
         // later) the tier would need to be reshaped too. For Phase 1b _meta is
         // immutable post-CREATE.
         if (instance.getInMemoryTier() == null) {
-            instance.setInMemoryTier(new LiveViewInMemoryTier(currentTypes, tsColIdx, pageSize));
+            instance.setInMemoryTier(new LiveViewInMemoryTier(tierColumnTypes, tsColIdx, pageSize));
         }
         return true;
     }
@@ -680,16 +701,13 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             // Clear any prior stall streak — this cycle made progress.
             instance.setWriterStallStartUs(Numbers.LONG_NULL);
         } catch (Throwable t) {
-            // Best-effort: release the sentinel even on failure so the slot
-            // doesn't stay stuck at -1. The publishSwap on the same slot is the
-            // documented release path; it flips publishedIdx but the data is
-            // potentially partial. Subsequent reads see whatever was copied.
-            // Don't swallow — propagate so the retry budget ticks.
-            try {
-                tier.publishSwap(writeIdx);
-            } catch (Throwable ignore) {
-                // Sentinel may have been released already; nothing to do.
-            }
+            // Release the writer sentinel without flipping publishedIdx so
+            // readers continue to see the previously-published slot. Flipping
+            // here would expose a half-populated slot (rowCount=0 since
+            // setRowCount runs only on the success path) and silently regress
+            // queries that previously saw N rows to seeing 0 rows. Propagate
+            // the failure so the flush-retry budget ticks (RFC 123 §Flush).
+            tier.releaseWriteWithoutPublish(writeIdx);
             throw t;
         }
     }

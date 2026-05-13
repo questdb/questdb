@@ -373,17 +373,28 @@ public class CairoEngine implements Closeable, WriterSource {
      * Advances the live view's {@code lvConsumedSeqTxn} to {@code maxBaseSeqTxn} after
      * the LV's own WAL block has been applied to its on-disk table. The advance is
      * monotonic and persisted to {@code _lv.s} so WAL purge sees the latest floor across
-     * restarts. Called by {@link io.questdb.cairo.wal.ApplyWal2TableJob} on each
-     * {@code LIVE_VIEW_DATA} apply. Synchronizes on the instance to coordinate with the
-     * refresh worker, which also rewrites {@code _lv.s} for {@code lastProcessedSeqTxn}
-     * bookkeeping.
+     * restarts. Called by {@link io.questdb.cairo.lv.LiveViewRefreshJob} after each
+     * inline apply, and again on the no-row branch when the refresh cycle walks past
+     * non-DATA / all-filtered seqTxns and emits no LV WAL block. Synchronizes on the
+     * instance to coordinate with the refresh worker's own {@code _lv.s} rewrites for
+     * {@code lastProcessedSeqTxn} bookkeeping.
      * <p>
      * Persists the new value to {@code _lv.s} before mutating in-memory state — disk is
      * the contract with {@code WalPurgeJob}. On persist failure, throws
      * {@link CairoException}; the in-memory floor stays at the prior durable value so the
      * next apply re-attempts the advance from the same point.
+     * <p>
+     * The {@code blockFileWriter} and {@code path} are caller-supplied so the per-FLUSH-
+     * cycle hot path can reuse a single instance instead of allocating both per call.
+     * The caller retains ownership and may use them again after this method returns; the
+     * method does not call {@code close()} on either.
      */
-    public void advanceLiveViewConsumedSeqTxn(TableToken liveViewToken, long maxBaseSeqTxn) {
+    public void advanceLiveViewConsumedSeqTxn(
+            TableToken liveViewToken,
+            long maxBaseSeqTxn,
+            BlockFileWriter blockFileWriter,
+            Path path
+    ) {
         if (maxBaseSeqTxn < 0) {
             return;
         }
@@ -400,10 +411,7 @@ public class CairoEngine implements Closeable, WriterSource {
             // WalPurgeJob; the in-memory floor must trail disk. Persist the new value first,
             // then publish in-memory. If persist fails, the in-memory value stays at the old
             // durable floor, so the next apply re-attempts the advance from the same point.
-            try (
-                    BlockFileWriter blockFileWriter = new BlockFileWriter(configuration.getFilesFacade(), configuration.getCommitMode());
-                    Path path = new Path()
-            ) {
+            try {
                 path.of(configuration.getDbRoot()).concat(liveViewToken).concat(LiveViewState.LIVE_VIEW_STATE_FILE_NAME);
                 blockFileWriter.of(path.$());
                 LiveViewState.append(

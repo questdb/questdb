@@ -31,6 +31,8 @@ import io.questdb.std.Os;
 import io.questdb.std.QuietCloseable;
 import io.questdb.std.Unsafe;
 
+import java.util.concurrent.atomic.AtomicInteger;
+
 /**
  * N=2 double-buffered in-memory tier for a live view (RFC 123 §"In-memory tier").
  * One slot is published for readers; the other is available for the writer to
@@ -47,24 +49,34 @@ import io.questdb.std.Unsafe;
  * Refcounts live in a 16-byte off-heap region (one long per slot) so all CAS
  * traffic uses {@link Os#compareAndSwap(long, long, long)} — no
  * {@code AtomicIntegerArray} on the hot path. Native memory is tagged
- * {@link MemoryTag#NATIVE_LIVE_VIEW_IN_MEM}; freeing happens in {@link #close()}.
+ * {@link MemoryTag#NATIVE_LIVE_VIEW_IN_MEM}.
  * <p>
  * The {@code rc == -1} sentinel means "writer in flight on this slot." A reader
  * that observes {@code rc < 0} during its acquire spins until the writer
  * releases (the slow path is bounded by a single column-slab copy, so the spin
  * is short).
  * <p>
- * No production caller wires this in yet — Phase 1b Commit 2 ships only the
- * data structures + unit tests. Commit 3 drives this from
- * {@code LiveViewRefreshJob}.
+ * Close is <strong>deferred</strong>: a {@link #close()} call only marks the
+ * tier closed and prevents new {@link #acquireRead()} pins; native memory
+ * frees on the last {@link #releaseRead(int)} that returns the live pin
+ * count to zero. This is the RFC 123 §"DROP LIVE VIEW" step 4 "modulo cursor
+ * pins" clause — a cursor holding a slot pin can outlive the LV's DROP and
+ * still call {@code releaseRead} safely.
  */
 public class LiveViewInMemoryTier implements QuietCloseable {
 
+    private static final int CLOSED_BIT = 1 << 31;
     private static final long REFCOUNTS_BYTES = 2L * Long.BYTES;
     private static final long RC_WRITER_SENTINEL = -1L;
     private final LiveViewInMemoryBuffer[] slots;
-    private long refCountsAddr;
+    // High bit = close requested; low 31 bits = active read-pin count. A
+    // single atomic lets acquireRead reject post-close (and bound the close-
+    // race window) while still freeing native memory eagerly when no cursor
+    // is pinning a slot. The 31-bit counter is more than enough for any
+    // realistic reader concurrency.
+    private final AtomicInteger state = new AtomicInteger(0);
     private volatile int publishedIdx;
+    private long refCountsAddr;
 
     public LiveViewInMemoryTier(IntList columnTypes, int timestampColumnIndex, long pageSize) {
         this.slots = new LiveViewInMemoryBuffer[2];
@@ -76,7 +88,7 @@ public class LiveViewInMemoryTier implements QuietCloseable {
             Unsafe.getUnsafe().putLong(refCountsAddr + Long.BYTES, 0L);
         } catch (Throwable t) {
             // Defensive: any partial alloc must not leak.
-            close();
+            freeNativeMemory();
             throw t;
         }
         this.publishedIdx = 0;
@@ -84,7 +96,9 @@ public class LiveViewInMemoryTier implements QuietCloseable {
 
     /**
      * Acquires a read pin on the currently published slot. Returns the slot
-     * index that was pinned; the caller must release with the same index via
+     * index that was pinned, or {@code -1} if the tier has already been
+     * closed (in which case the caller must NOT call {@link #releaseRead(int)}).
+     * The caller releases a successful pin with the same index via
      * {@link #releaseRead(int)}.
      * <p>
      * Spins while the published slot is held by a writer ({@code rc < 0}).
@@ -92,6 +106,12 @@ public class LiveViewInMemoryTier implements QuietCloseable {
      * {@code publishedIdx} and retries on the new slot.
      */
     public int acquireRead() {
+        // Bump the live-pin counter first so a concurrent close() cannot free
+        // native memory underneath the about-to-happen Unsafe writes. If the
+        // tier is already closed, bail out before touching refCountsAddr.
+        if (!tryIncrementPinCount()) {
+            return -1;
+        }
         while (true) {
             int idx = publishedIdx;
             long addr = refCountsAddr + ((long) idx) * Long.BYTES;
@@ -105,25 +125,41 @@ public class LiveViewInMemoryTier implements QuietCloseable {
             }
             if (Os.compareAndSwap(addr, current, current + 1) == current) {
                 // Re-check publishedIdx: a swap may have moved away from this slot
-                // between the publishedIdx read and the CAS. If so, release and
-                // retry on the new slot. (Re-reading is cheap; this is the rare
-                // race window during a slow-path swap.)
+                // between the publishedIdx read and the CAS. If so, release the
+                // per-slot rc directly (we still hold the global pin lease, which
+                // the next acquireRead iteration consumes) and retry on the new
+                // slot.
                 if (publishedIdx == idx) {
                     return idx;
                 }
-                releaseRead(idx);
+                releasePerSlotRc(idx);
             }
         }
     }
 
+    /**
+     * Marks the tier closed. New {@link #acquireRead()} calls return {@code -1}
+     * from this point. If no cursor currently holds a pin, native memory is
+     * freed synchronously; otherwise the last {@link #releaseRead(int)} that
+     * drains the pin count to zero performs the free. Idempotent.
+     */
     @Override
     public void close() {
-        Misc.free(slots[0]);
-        Misc.free(slots[1]);
-        slots[0] = null;
-        slots[1] = null;
-        if (refCountsAddr != 0) {
-            refCountsAddr = Unsafe.free(refCountsAddr, REFCOUNTS_BYTES, MemoryTag.NATIVE_LIVE_VIEW_IN_MEM);
+        while (true) {
+            int s = state.get();
+            if ((s & CLOSED_BIT) != 0) {
+                // Another caller already marked the tier closed; the free will
+                // happen exactly once via either the racing close() or the last
+                // releaseRead.
+                return;
+            }
+            if (state.compareAndSet(s, s | CLOSED_BIT)) {
+                if ((s & ~CLOSED_BIT) == 0) {
+                    // No active read pins: safe to free native memory here.
+                    freeNativeMemory();
+                }
+                return;
+            }
         }
     }
 
@@ -179,6 +215,68 @@ public class LiveViewInMemoryTier implements QuietCloseable {
     }
 
     public void releaseRead(int slotIdx) {
+        releasePerSlotRc(slotIdx);
+        // Drop the global lease taken at acquireRead; if this was the last
+        // pin and close() has been requested in the meantime, free now.
+        int after = state.decrementAndGet();
+        if (after == CLOSED_BIT) {
+            freeNativeMemory();
+        }
+    }
+
+    /**
+     * Drops the writer sentinel on {@code slotIdx} without flipping
+     * {@code publishedIdx}. Used by the refresh worker's slow-path error
+     * branch: if a copy throws mid-swap, we want to release the sentinel
+     * (so the slot can be retried next cycle) without exposing partial /
+     * zero-row contents to readers as the new published state.
+     */
+    public void releaseWriteWithoutPublish(int slotIdx) {
+        long addr = refCountsAddr + ((long) slotIdx) * Long.BYTES;
+        long observed = Os.compareAndSwap(addr, RC_WRITER_SENTINEL, 0L);
+        if (observed != RC_WRITER_SENTINEL) {
+            throw new IllegalStateException(
+                    "releaseWriteWithoutPublish: writer sentinel not held [slot=" + slotIdx
+                            + ", observed=" + observed + "]"
+            );
+        }
+    }
+
+    /**
+     * Attempts to take the writer sentinel on the requested slot via a
+     * {@code 0 -> -1} CAS. Returns the slot's buffer on success, or
+     * {@code null} on failure (some reader has the slot pinned). The caller
+     * must follow up with {@link #publishSwap(int)} on success to publish the
+     * new slot and release the sentinel, or
+     * {@link #releaseWriteWithoutPublish(int)} to release the sentinel
+     * without flipping {@code publishedIdx}.
+     */
+    public LiveViewInMemoryBuffer tryAcquireWrite(int slotIdx) {
+        long addr = refCountsAddr + ((long) slotIdx) * Long.BYTES;
+        if (Os.compareAndSwap(addr, 0L, RC_WRITER_SENTINEL) == 0L) {
+            return slots[slotIdx];
+        }
+        return null;
+    }
+
+    /**
+     * Frees the column buffers and the off-heap refcount block. Called either
+     * synchronously from {@link #close()} (when no pins are active) or from
+     * the last {@link #releaseRead(int)} that drains the pin count.
+     * Idempotent within a single tier instance — the AtomicInteger CAS
+     * protocol guarantees exactly one caller reaches here.
+     */
+    private void freeNativeMemory() {
+        Misc.free(slots[0]);
+        Misc.free(slots[1]);
+        slots[0] = null;
+        slots[1] = null;
+        if (refCountsAddr != 0) {
+            refCountsAddr = Unsafe.free(refCountsAddr, REFCOUNTS_BYTES, MemoryTag.NATIVE_LIVE_VIEW_IN_MEM);
+        }
+    }
+
+    private void releasePerSlotRc(int slotIdx) {
         long addr = refCountsAddr + ((long) slotIdx) * Long.BYTES;
         while (true) {
             long current = Unsafe.getLongVolatile(addr);
@@ -193,17 +291,15 @@ public class LiveViewInMemoryTier implements QuietCloseable {
         }
     }
 
-    /**
-     * Attempts to take the writer sentinel on the requested slot via a
-     * {@code 0 -> -1} CAS. Returns the slot's buffer on success, or
-     * {@code null} on failure (some reader has the slot pinned). The caller
-     * must follow up with {@link #publishSwap(int)} to release the sentinel.
-     */
-    public LiveViewInMemoryBuffer tryAcquireWrite(int slotIdx) {
-        long addr = refCountsAddr + ((long) slotIdx) * Long.BYTES;
-        if (Os.compareAndSwap(addr, 0L, RC_WRITER_SENTINEL) == 0L) {
-            return slots[slotIdx];
+    private boolean tryIncrementPinCount() {
+        while (true) {
+            int s = state.get();
+            if ((s & CLOSED_BIT) != 0) {
+                return false;
+            }
+            if (state.compareAndSet(s, s + 1)) {
+                return true;
+            }
         }
-        return null;
     }
 }

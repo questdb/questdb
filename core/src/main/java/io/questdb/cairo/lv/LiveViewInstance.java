@@ -295,6 +295,15 @@ public class LiveViewInstance implements QuietCloseable {
     /**
      * Resets the consecutive-failure counter and the streak start. Called after each
      * successful refresh cycle so the retry budget is per-streak, not lifetime.
+     * <p>
+     * Does <em>not</em> clear {@code writerStallStartUs}: stall is a property of
+     * the in-mem tier's slot pinning, not of refresh-cycle success. A zero-row
+     * cycle ({@code populateTier && appendedRows == 0}) skips
+     * {@code publishToInMemoryTier} entirely, but if the slot remained pinned
+     * by a long-running reader the stall is still happening; clearing here
+     * would understate it. The clear lives on the populate-tier success
+     * path in {@link io.questdb.cairo.lv.LiveViewRefreshJob#publishToInMemoryTier}
+     * where we know the writer made tier progress (RFC 123 §"Stall behavior").
      */
     public void recordRefreshSuccess() {
         flushRetryCount = 0;

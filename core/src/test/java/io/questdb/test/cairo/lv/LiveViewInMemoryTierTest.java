@@ -275,6 +275,108 @@ public class LiveViewInMemoryTierTest extends AbstractCairoTest {
         });
     }
 
+    @Test
+    public void testAcquireReadAfterCloseReturnsMinusOne() throws Exception {
+        // RFC 123 §"DROP LIVE VIEW" step 4 — once close() is observed, no new
+        // cursor should be able to pin a slot. Returning -1 from acquireRead
+        // lets the caller fall through to disk-only reads without segfaulting
+        // on freed native memory.
+        assertMemoryLeak(() -> {
+            IntList types = singleLongCol();
+            LiveViewInMemoryTier tier = new LiveViewInMemoryTier(types, 0, PAGE_SIZE);
+            tier.close();
+            // Native memory has been freed (no pins were active); subsequent
+            // acquireRead must reject cleanly rather than read through the
+            // freed refcount block.
+            Assert.assertEquals(-1, tier.acquireRead());
+            // close() is idempotent.
+            tier.close();
+        });
+    }
+
+    @Test
+    public void testDeferredCloseFreesWhenLastPinReleases() throws Exception {
+        // RFC 123 §"DROP LIVE VIEW" step 4 "modulo cursor pins": close() while a
+        // cursor holds a pin must defer native memory free until the cursor
+        // releases. Verifies the cursor-side releaseRead path remains safe
+        // after the LV's DROP has marked the tier closed.
+        assertMemoryLeak(() -> {
+            IntList types = singleLongCol();
+            LiveViewInMemoryTier tier = new LiveViewInMemoryTier(types, 0, PAGE_SIZE);
+            try {
+                // Seed and pin.
+                int writeIdx = 1 - tier.getPublishedIdx();
+                LiveViewInMemoryBuffer write = tier.tryAcquireWrite(writeIdx);
+                Assert.assertNotNull(write);
+                write.putLong(0, 0, 42L);
+                write.setRowCount(1);
+                tier.publishSwap(writeIdx);
+                int pin = tier.acquireRead();
+                Assert.assertTrue(pin >= 0);
+
+                // Request close — cannot free yet because the pin is live.
+                tier.close();
+                // Reader still observes the pinned slot's contents — no UAF.
+                Assert.assertEquals(42L, tier.getSlot(pin).getLong(0, 0));
+                // New acquires reject post-close.
+                Assert.assertEquals(-1, tier.acquireRead());
+
+                // Last release drains the pin count and triggers the actual free.
+                tier.releaseRead(pin);
+            } catch (Throwable t) {
+                // Defensive: ensure native memory does not leak if assertions fail.
+                tier.close();
+                throw t;
+            }
+            // assertMemoryLeak verifies the native refcount block + slot
+            // buffers were ultimately freed.
+        });
+    }
+
+    @Test
+    public void testReleaseWriteWithoutPublishKeepsPriorSlotPublished() throws Exception {
+        // RFC 123 Phase 1b: a copy failure mid-swap must not flip publishedIdx,
+        // otherwise readers would silently regress from N rows to 0 rows.
+        // releaseWriteWithoutPublish drops the writer sentinel while leaving
+        // publishedIdx pointing at the prior (still-populated) slot.
+        assertMemoryLeak(() -> {
+            IntList types = singleLongCol();
+            try (LiveViewInMemoryTier tier = new LiveViewInMemoryTier(types, 0, PAGE_SIZE)) {
+                // Seed the initially-published slot with one row.
+                int initialPublished = tier.getPublishedIdx();
+                LiveViewInMemoryBuffer pub = tier.getSlot(initialPublished);
+                pub.putLong(0, 0, 11L);
+                pub.setRowCount(1);
+
+                // Acquire write on the OTHER slot, do nothing (simulating a
+                // partial copy that threw), then release without publishing.
+                int writeIdx = 1 - initialPublished;
+                LiveViewInMemoryBuffer write = tier.tryAcquireWrite(writeIdx);
+                Assert.assertNotNull(write);
+                // Note: we deliberately do NOT call setRowCount — the slot's
+                // contents are partial / zero-row.
+                tier.releaseWriteWithoutPublish(writeIdx);
+
+                // publishedIdx must still point at the original slot.
+                Assert.assertEquals(initialPublished, tier.getPublishedIdx());
+                int pin = tier.acquireRead();
+                Assert.assertEquals("reader still sees the previously-published slot",
+                        initialPublished, pin);
+                Assert.assertEquals(1L, tier.getSlot(pin).rowCount());
+                Assert.assertEquals(11L, tier.getSlot(pin).getLong(0, 0));
+                tier.releaseRead(pin);
+
+                // The write slot must be re-acquirable (sentinel cleared).
+                LiveViewInMemoryBuffer second = tier.tryAcquireWrite(writeIdx);
+                Assert.assertNotNull("write slot must be re-acquirable after release-without-publish",
+                        second);
+                second.putLong(0, 0, 22L);
+                second.setRowCount(1);
+                tier.publishSwap(writeIdx);
+            }
+        });
+    }
+
     private static IntList singleLongCol() {
         IntList types = new IntList(1);
         types.add(ColumnType.LONG);

@@ -36,7 +36,7 @@ import io.questdb.std.Misc;
  * in-memory tier slot at open and releases it on close — RFC 123 §"Stall
  * behavior" relies on this to keep readers visible to the refresh worker's
  * slow-path {@code tryAcquireWrite} so the writer trails rather than
- * progresses past a slow reader.
+ * progressing past a slow reader.
  * <p>
  * Phase 1b reads still come entirely from the disk cursor. Every in-mem row
  * is also durable on disk because the inline apply (Phase 1b Commit 1) commits
@@ -44,6 +44,10 @@ import io.questdb.std.Misc;
  * picture. Seam-routing reads layer onto this scaffolding once a later phase
  * makes the in-mem tier strictly fresher than disk (e.g. Phase 4 hand-off ring
  * with deferred apply).
+ * <p>
+ * Single-shot lifecycle: the factory allocates a fresh instance per
+ * {@link LiveViewRecordCursorFactory#getCursor(io.questdb.griffin.SqlExecutionContext)}.
+ * {@link #of} is invoked exactly once during construction.
  */
 public class LiveViewRecordCursor implements RecordCursor {
 
@@ -87,8 +91,16 @@ public class LiveViewRecordCursor implements RecordCursor {
         if (instance != null) {
             LiveViewInMemoryTier candidate = instance.getInMemoryTier();
             if (candidate != null) {
-                this.tier = candidate;
-                this.slotIdx = candidate.acquireRead();
+                int pin = candidate.acquireRead();
+                if (pin >= 0) {
+                    // acquireRead succeeded: keep the tier reference so close()
+                    // can call releaseRead with the matching index. A return of
+                    // -1 means the tier was concurrently closed (LV dropped);
+                    // in that case we hold neither the global pin lease nor a
+                    // per-slot rc and must not touch the tier again.
+                    this.tier = candidate;
+                    this.slotIdx = pin;
+                }
             }
         }
     }
@@ -117,6 +129,10 @@ public class LiveViewRecordCursor implements RecordCursor {
 
     private void releaseSlot() {
         if (tier != null && slotIdx >= 0) {
+            // Safe even after the LV's DROP marked the tier closed: the deferred-
+            // close protocol on LiveViewInMemoryTier keeps native memory alive
+            // until the last pin drains (RFC 123 §"DROP LIVE VIEW" step 4
+            // "modulo cursor pins").
             tier.releaseRead(slotIdx);
         }
         tier = null;

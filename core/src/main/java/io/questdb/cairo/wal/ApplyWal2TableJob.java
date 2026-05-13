@@ -705,23 +705,12 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
                             break; // we've found the latest mat view state, not need to check earlier transactions
                         }
                     }
-                } else if (writer.getTableToken().isLiveView()) {
-                    for (long s = lastCommittedSeqTxn; s >= seqTxn; s--) {
-                        byte txnType = txnDetails.getWalTxnType(s);
-                        if (txnType == LIVE_VIEW_DATA) {
-                            long maxBaseSeqTxn = txnDetails.getLiveViewMaxBaseSeqTxn(s);
-                            try {
-                                engine.advanceLiveViewConsumedSeqTxn(writer.getTableToken(), maxBaseSeqTxn);
-                            } catch (CairoException e) {
-                                LOG.error().$("could not update state for live view [view=").$(writer.getTableToken())
-                                        .$(", msg=").$safe(e.getFlyweightMessage())
-                                        .$(", errno=").$(e.getErrno())
-                                        .I$();
-                            }
-                            break; // latest LV-data txn carries the highest base seqTxn in this commit batch
-                        }
-                    }
                 }
+                // RFC 123 Phase 1b: lvConsumedSeqTxn advance for LV tokens lives in
+                // LiveViewRefreshJob, which runs immediately after applyWalDirect
+                // returns. That keeps the per-FLUSH-cycle BlockFileWriter + Path
+                // amortised on the refresh worker (no per-cycle allocations) and
+                // removes the only LV-specific branch from this method.
 
                 return (int) (lastCommittedSeqTxn - seqTxn + 1);
             case SQL:

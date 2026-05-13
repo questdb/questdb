@@ -27,6 +27,7 @@ package io.questdb.test.cairo.lv;
 import io.questdb.PropertyKey;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.TableToken;
+import io.questdb.cairo.file.BlockFileWriter;
 import io.questdb.cairo.lv.LiveViewDefinition;
 import io.questdb.cairo.lv.LiveViewInMemoryBuffer;
 import io.questdb.cairo.lv.LiveViewInMemoryTier;
@@ -434,6 +435,103 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testCursorPinKeepsTierAliveAcrossDrop() throws Exception {
+        // RFC 123 §"DROP LIVE VIEW" step 4 "modulo cursor pins": a reader
+        // holding an in-mem tier pin must survive a concurrent DROP LIVE VIEW
+        // without segfault. The tier's deferred-close protocol marks it
+        // closed on DROP but keeps native memory alive until the last pin
+        // drains. Without the protocol, tier.releaseRead after DROP would
+        // dereference a freed Unsafe pointer.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 1s IN MEMORY 5s AS " +
+                    "SELECT ts, x, row_number() OVER () AS rn FROM base WHERE x > 0");
+            execute("INSERT INTO base (ts, x) VALUES ('2026-05-12T00:00:00.000001Z', 7)");
+            drainWalQueue();
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                drainJob(job);
+            }
+
+            LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("lv");
+            Assert.assertNotNull(instance);
+            LiveViewInMemoryTier tier = instance.getInMemoryTier();
+            Assert.assertNotNull("tier must be allocated after refresh", tier);
+
+            // Acquire a pin manually — stands in for a LiveViewRecordCursor
+            // that opens before DROP and finishes its scan after.
+            int pin = tier.acquireRead();
+            Assert.assertTrue("acquireRead must succeed before DROP", pin >= 0);
+            // Sanity: contents reachable while pinned.
+            Assert.assertEquals(1L, tier.getSlot(pin).rowCount());
+            Assert.assertEquals(7, tier.getSlot(pin).getInt(0, 1));
+
+            // DROP LIVE VIEW now: liveViewRegistry.removeView -> markAsDropped ->
+            // tryCloseIfDropped -> tier.close(). With deferred close the native
+            // memory stays alive because the pin count is 1.
+            execute("DROP LIVE VIEW lv");
+
+            // Reader can still inspect the pinned slot — no use-after-free.
+            Assert.assertEquals("pinned slot contents survive DROP",
+                    7, tier.getSlot(pin).getInt(0, 1));
+            // New acquires reject cleanly post-close.
+            Assert.assertEquals("post-close acquireRead must return -1",
+                    -1, tier.acquireRead());
+
+            // Releasing the last pin triggers the actual native free.
+            // assertMemoryLeak verifies no leak — the deferred-free path runs.
+            tier.releaseRead(pin);
+        });
+    }
+
+    @Test
+    public void testInMemTierBypassedForVarLengthOutputSchema() throws Exception {
+        // RFC 123 Phase 1b: LiveViewInMemoryBuffer supports fixed-width column
+        // types only; an LV that projects a var-length column (VARCHAR,
+        // STRING, etc.) falls through to disk-only reads.
+        // ensureStagingAndTier returns false, no tier is allocated, but the
+        // on-disk path still produces correct results via TableReader.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (ts TIMESTAMP, sym VARCHAR, x INT) " +
+                    "TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 1s AS " +
+                    "SELECT ts, sym, x, row_number() OVER (PARTITION BY sym ORDER BY ts) AS rn FROM base");
+            execute("INSERT INTO base (ts, sym, x) VALUES " +
+                    "('2026-05-12T00:00:00.000001Z', 'a', 10), " +
+                    "('2026-05-12T00:00:00.000002Z', 'b', 20), " +
+                    "('2026-05-12T00:00:00.000003Z', 'a', 30)");
+            drainWalQueue();
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                drainJob(job);
+            }
+            drainWalQueue();
+
+            LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("lv");
+            Assert.assertNotNull(instance);
+            Assert.assertNull(
+                    "var-length output schema must skip in-mem tier allocation",
+                    instance.getInMemoryTier()
+            );
+
+            // Reads still return correct results from disk.
+            assertSql(
+                    "ts\tsym\tx\trn\n" +
+                            "2026-05-12T00:00:00.000001Z\ta\t10\t1\n" +
+                            "2026-05-12T00:00:00.000002Z\tb\t20\t1\n" +
+                            "2026-05-12T00:00:00.000003Z\ta\t30\t2\n",
+                    "SELECT ts, sym, x, rn FROM lv ORDER BY ts"
+            );
+
+            // in_mem_bytes must read 0 since no tier was allocated.
+            assertSql(
+                    "in_mem_bytes\n0\n",
+                    "SELECT in_mem_bytes FROM live_views() WHERE view_name = 'lv'"
+            );
+
+            execute("DROP LIVE VIEW lv");
+        });
+    }
+
+    @Test
     public void testGlobalApplyDoesNotTouchLiveView() throws Exception {
         // RFC 123 Phase 1b: the global ApplyWal2TableJob.doRun skips LV tokens. We
         // ingest into the base, write a LIVE_VIEW_DATA block via the refresh worker,
@@ -653,34 +751,42 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
             // Inject persist failure and call advance directly with a strictly higher value.
             // Pre-fix the in-memory floor would advance and the persist error would be
             // swallowed; post-fix the call throws and the in-memory floor stays put.
-            failPersist.set(true);
-            try {
-                long target = baselineFloor + 10;
-                try {
-                    engine.advanceLiveViewConsumedSeqTxn(token, target);
-                    Assert.fail("expected CairoException from failed _lv.s persist");
-                } catch (CairoException e) {
-                    Assert.assertTrue(
-                            "exception must mention the view name [msg=" + e.getFlyweightMessage() + "]",
-                            Chars.contains(e.getFlyweightMessage(), token.getTableName())
+            try (
+                    BlockFileWriter blockFileWriter = new BlockFileWriter(
+                            engine.getConfiguration().getFilesFacade(),
+                            engine.getConfiguration().getCommitMode()
                     );
+                    Path path = new Path()
+            ) {
+                failPersist.set(true);
+                try {
+                    long target = baselineFloor + 10;
+                    try {
+                        engine.advanceLiveViewConsumedSeqTxn(token, target, blockFileWriter, path);
+                        Assert.fail("expected CairoException from failed _lv.s persist");
+                    } catch (CairoException e) {
+                        Assert.assertTrue(
+                                "exception must mention the view name [msg=" + e.getFlyweightMessage() + "]",
+                                Chars.contains(e.getFlyweightMessage(), token.getTableName())
+                        );
+                    }
+                    Assert.assertEquals(
+                            "in-memory lvConsumedSeqTxn must not advance when _lv.s persist fails",
+                            baselineFloor,
+                            instance.getStateReader().getLvConsumedSeqTxn()
+                    );
+                } finally {
+                    failPersist.set(false);
                 }
+
+                // Sanity: with the failure flag cleared, the same advance succeeds and the
+                // in-memory floor publishes the new value.
+                engine.advanceLiveViewConsumedSeqTxn(token, baselineFloor + 10, blockFileWriter, path);
                 Assert.assertEquals(
-                        "in-memory lvConsumedSeqTxn must not advance when _lv.s persist fails",
-                        baselineFloor,
+                        baselineFloor + 10,
                         instance.getStateReader().getLvConsumedSeqTxn()
                 );
-            } finally {
-                failPersist.set(false);
             }
-
-            // Sanity: with the failure flag cleared, the same advance succeeds and the
-            // in-memory floor publishes the new value.
-            engine.advanceLiveViewConsumedSeqTxn(token, baselineFloor + 10);
-            Assert.assertEquals(
-                    baselineFloor + 10,
-                    instance.getStateReader().getLvConsumedSeqTxn()
-            );
 
             execute("DROP LIVE VIEW lv");
         });

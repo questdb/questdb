@@ -264,6 +264,7 @@ import io.questdb.griffin.engine.join.UnnestSource;
 import io.questdb.griffin.engine.join.VarcharToSymbolJoinKeyMapping;
 import io.questdb.griffin.engine.join.WindowJoinFastRecordCursorFactory;
 import io.questdb.griffin.engine.join.WindowJoinRecordCursorFactory;
+import io.questdb.griffin.engine.lv.LiveViewRecordCursorFactory;
 import io.questdb.griffin.engine.orderby.EncodedSortLightRecordCursorFactory;
 import io.questdb.griffin.engine.orderby.EncodedSortRecordCursorFactory;
 import io.questdb.griffin.engine.orderby.LimitedSizeSortedLightRecordCursorFactory;
@@ -9826,7 +9827,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         if (tableToken.isLiveView() && !model.isUpdate()) {
             // Wrap for read queries only; UPDATE goes through a different
             // execution path that doesn't open the LV cursor.
-            return new io.questdb.griffin.engine.lv.LiveViewRecordCursorFactory(
+            return new LiveViewRecordCursorFactory(
                     executionContext.getCairoEngine(),
                     tableToken,
                     result
