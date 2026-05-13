@@ -192,6 +192,42 @@ public class GroupByUtils {
                 projectionMetadata.add(m);
             }
 
+            // When the user provided more than one FILL entry but fewer than the
+            // aggregate count, reject up front with the precise "not enough fill
+            // values" error. The per-aggregate validator below would otherwise
+            // clamp later aggregates onto fill[fillCount - 1] and could fire a
+            // misleading "support for X fill is not yet implemented" for any
+            // aggregate that does not accept the clamped fill type. The same
+            // count condition is re-checked in SqlCodeGenerator.generateFill as
+            // a backstop for the non-keyed FILL(value) rewrite path. Defer when
+            // FILL(NONE) is mixed with other fills -- that case has a more
+            // specific error ("FILL(NONE) cannot be combined with other fill
+            // values") that fires later in generateFill and should win. Only
+            // outerProjectionFunctions has been populated by this point, so the
+            // count uses GroupByFunction instances from that list (key columns
+            // and CAST-wrapped column functions never report as GroupByFunction
+            // per findColumnKeyIndex).
+            if (validateFill && fillCount > 1) {
+                boolean hasNoneMixed = false;
+                for (int i = 0; i < fillCount; i++) {
+                    if (SqlKeywords.isNoneKeyword(sampleByFill.getQuick(i).token)) {
+                        hasNoneMixed = true;
+                        break;
+                    }
+                }
+                if (!hasNoneMixed) {
+                    int aggregateCount = 0;
+                    for (int i = 0, n = outerProjectionFunctions.size(); i < n; i++) {
+                        if (outerProjectionFunctions.getQuick(i) instanceof GroupByFunction) {
+                            aggregateCount++;
+                        }
+                    }
+                    if (fillCount < aggregateCount) {
+                        throw SqlException.$(sampleByFill.getQuick(0).position, "not enough fill values");
+                    }
+                }
+            }
+
             // There are two iterations over the model's columns. The first iterations create value
             // slots for the group-by functions. They are added first because each group-by function is likely
             // to require several slots. The number of slots for each function is not known upfront and
@@ -227,11 +263,12 @@ public class GroupByUtils {
                         outGroupByFunctions.add(groupByFunc);
                         outGroupByFunctionPositions.add(node.position);
                         if (fillCount > 0) {
-                            // 0-based index of the just-added function in outGroupByFunctions
-                            // (the add() on the line above appended it). When there are fewer
-                            // fill entries than aggregates, the clamp Math.min(..., fillCount - 1)
-                            // reuses the last fill value for the remaining aggregates, matching
-                            // the "single fill applies to all aggregates" convention.
+                            // 0-based index of the just-added aggregate. The Math.min clamp
+                            // below covers only the single-fill broadcast case (FILL(NULL)
+                            // applied to N aggregates -- every iteration lands on fill[0]).
+                            // The multi-fill count mismatch (fillCount > 1, fillCount <
+                            // aggregateCount) is rejected as "not enough fill values" up
+                            // front, so it cannot reach this loop.
                             int funcIndex = outGroupByFunctions.size() - 1;
                             int sampleByFlags = groupByFunc.getSampleByFlags();
                             ExpressionNode fillNode = sampleByFill.getQuick(Math.min(funcIndex, fillCount - 1));

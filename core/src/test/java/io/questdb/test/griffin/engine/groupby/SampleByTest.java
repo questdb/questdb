@@ -412,6 +412,30 @@ public class SampleByTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testMultiFillCountMismatchPrecedesCapability() throws Exception {
+        // When FILL(...) provides more than one value but fewer than the
+        // aggregate count, GroupByUtils.assembleGroupByFunctions used to clamp
+        // later aggregates onto fill[fillCount - 1] and could fire a
+        // misleading "support for X fill is not yet implemented" before the
+        // downstream count check ran. The validator now does the count check
+        // up front and produces "not enough fill values" pointing at the
+        // first fill expression.
+        //
+        // Before the fix, the query below failed at the 0 token with
+        // "support for VALUE fill is not yet implemented [function=array_agg(val)]"
+        // because array_agg(val) at position 1 in the SELECT list landed on
+        // fill[1]=0 and array_agg's getSampleByFlags() lacks SAMPLE_BY_FILL_VALUE.
+        // The count mismatch (3 aggregates vs 2 fills) was the actual issue.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE tab (ts TIMESTAMP, grp SYMBOL, val DOUBLE) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO tab VALUES ('2024-01-01T00:00:00', 'a', 1.0)");
+            final String sql = "SELECT ts, grp, array_agg(val), array_agg(val), array_agg(val) "
+                    + "FROM tab SAMPLE BY 1h FILL(NULL, 0)";
+            assertException(sql, sql.indexOf("NULL"), "not enough fill values");
+        });
+    }
+
+    @Test
     public void testMultiFillValidatedPerAggregate() throws Exception {
         // Regression for the off-by-one in GroupByUtils.assembleGroupByFunctions where
         // the per-aggregate fill index was read AFTER outGroupByFunctions.add(). Earlier
