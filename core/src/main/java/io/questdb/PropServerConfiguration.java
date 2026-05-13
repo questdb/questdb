@@ -414,6 +414,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final int postingIndexAdaptiveDeltaAtOrAbove;
     private final boolean postingIndexAutoIncludeTimestamp;
     private final byte postingIndexRowIdEncoding;
+    private final long postingIndexerSpillBytesMax;
     private final int postingSealGenThreshold;
     private final int postingSealPurgeOutboxMax;
     private final int preferencesStringPoolCapacity;
@@ -1586,6 +1587,7 @@ public class PropServerConfiguration implements ServerConfiguration {
                 default -> PostingIndexUtils.ENCODING_ADAPTIVE;
             };
             this.postingIndexAdaptiveDeltaAtOrAbove = getInt(properties, env, PropertyKey.CAIRO_POSTING_INDEX_ADAPTIVE_DELTA_AT_OR_ABOVE, 2000);
+            this.postingIndexerSpillBytesMax = getLongSize(properties, env, PropertyKey.CAIRO_POSTING_INDEX_INDEXER_SPILL_BYTES_MAX, 256L << 20);
             this.postingSealGenThreshold = getInt(properties, env, PropertyKey.CAIRO_POSTING_SEAL_GEN_THRESHOLD, 16);
             this.postingSealPurgeOutboxMax = getInt(properties, env, PropertyKey.CAIRO_POSTING_SEAL_PURGE_OUTBOX_MAX, 8192);
             this.sqlJoinMetadataPageSize = getIntSize(properties, env, PropertyKey.CAIRO_SQL_JOIN_METADATA_PAGE_SIZE, 16384);
@@ -4216,6 +4218,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public int getPoolSegmentSize() {
             return poolSegmentSize;
+        }
+
+        @Override
+        public long getPostingIndexerSpillBytesMax() {
+            return postingIndexerSpillBytesMax;
         }
 
         @Override
