@@ -26,15 +26,27 @@
 
 set -euxo pipefail
 QUESTDB_DATA_DIR=/var/lib/questdb
+GRAALVM_VERSION=25.0.2
+GRAALVM_HOME=/usr/lib/jvm/graalvm-community-java25
+GRAALVM_TARBALL=graalvm-community-jdk-${GRAALVM_VERSION}_linux-x64_bin.tar.gz
 
 # Install dependencies
 sudo dnf update -y -q
 sudo dnf install -y -q \
-    java-17-amazon-corretto-headless \
     ec2-instance-connect \
     amazon-ssm-agent \
     amazon-cloudwatch-agent \
     jq
+
+# Install GraalVM Community JDK 25 and make it the system default JVM.
+wget -q https://github.com/graalvm/graalvm-ce-builds/releases/download/jdk-${GRAALVM_VERSION}/${GRAALVM_TARBALL}
+sudo mkdir -p ${GRAALVM_HOME}
+sudo tar -xzf ${GRAALVM_TARBALL} --strip-components=1 -C ${GRAALVM_HOME}
+rm -f ${GRAALVM_TARBALL}
+sudo alternatives --install /usr/bin/java java ${GRAALVM_HOME}/bin/java 250000
+sudo alternatives --set java ${GRAALVM_HOME}/bin/java
+sudo alternatives --install /usr/bin/javac javac ${GRAALVM_HOME}/bin/javac 250000
+sudo alternatives --set javac ${GRAALVM_HOME}/bin/javac
 
 sudo mv /tmp/scripts/1-per-boot.sh /var/lib/cloud/scripts/per-boot/
 sudo mv /tmp/assets/99-questdb.conf /etc/sysctl.d/
