@@ -7643,8 +7643,9 @@ public class SampleByNanoTimestampTest extends AbstractCairoTest {
 
     @Test
     public void testSampleFillLinearBadType() throws Exception {
+        final String sql = "select b, sum_t(b), k from x sample by 3h fill(linear)";
         assertException(
-                "select b, sum_t(b), k from x sample by 3h fill(linear)",
+                sql,
                 "create table x as " +
                         "(" +
                         "select" +
@@ -7654,7 +7655,7 @@ public class SampleByNanoTimestampTest extends AbstractCairoTest {
                         " from" +
                         " long_sequence(20)" +
                         ") timestamp(k) partition by NONE",
-                10,
+                sql.indexOf("linear"),
                 "support for LINEAR fill is not yet implemented"
         );
     }
@@ -14550,8 +14551,9 @@ public class SampleByNanoTimestampTest extends AbstractCairoTest {
 
     @Test
     public void testDecimalInterpolated() throws Exception {
+        final String sql = "select k, first(b) from x sample by 3h fill(linear)";
         assertException(
-                "select k, first(b) from x sample by 3h fill(linear)",
+                sql,
                 "create table x as " +
                         "(" +
                         "select" +
@@ -14561,7 +14563,7 @@ public class SampleByNanoTimestampTest extends AbstractCairoTest {
                         " from" +
                         " long_sequence(20)" +
                         ") timestamp(k) partition by NONE",
-                10,
+                sql.indexOf("linear"),
                 "support for LINEAR fill is not yet implemented"
         );
     }

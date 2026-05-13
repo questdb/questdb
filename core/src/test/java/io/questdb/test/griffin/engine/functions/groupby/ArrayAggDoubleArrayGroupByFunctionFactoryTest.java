@@ -698,9 +698,10 @@ public class ArrayAggDoubleArrayGroupByFunctionFactoryTest extends AbstractCairo
         assertMemoryLeak(() -> {
             execute("CREATE TABLE tab (ts TIMESTAMP, grp SYMBOL, arr DOUBLE[]) TIMESTAMP(ts) PARTITION BY DAY");
             execute("INSERT INTO tab VALUES ('2024-01-01T00:00:00', 'a', ARRAY[1.0])");
+            final String sql = "SELECT ts, grp, array_agg(arr) agg FROM tab SAMPLE BY 1h FILL(LINEAR)";
             assertExceptionNoLeakCheck(
-                    "SELECT ts, grp, array_agg(arr) agg FROM tab SAMPLE BY 1h FILL(LINEAR)",
-                    16,
+                    sql,
+                    sql.indexOf("LINEAR"),
                     "support for LINEAR fill is not yet implemented"
             );
         });
@@ -717,9 +718,10 @@ public class ArrayAggDoubleArrayGroupByFunctionFactoryTest extends AbstractCairo
                     ('2024-01-01T00:00:00', ARRAY[1.0]),
                     ('2024-01-01T02:00:00', ARRAY[2.0])
                     """);
+            final String sql = "SELECT ts, array_agg(arr) agg FROM tab SAMPLE BY 1h FILL(LINEAR)";
             assertExceptionNoLeakCheck(
-                    "SELECT ts, array_agg(arr) agg FROM tab SAMPLE BY 1h FILL(LINEAR)",
-                    11,
+                    sql,
+                    sql.indexOf("LINEAR"),
                     "support for LINEAR fill is not yet implemented"
             );
         });
@@ -800,9 +802,10 @@ public class ArrayAggDoubleArrayGroupByFunctionFactoryTest extends AbstractCairo
         assertMemoryLeak(() -> {
             execute("CREATE TABLE tab (ts TIMESTAMP, grp SYMBOL, arr DOUBLE[]) TIMESTAMP(ts) PARTITION BY DAY");
             execute("INSERT INTO tab VALUES ('2024-01-01T00:00:00', 'a', ARRAY[1.0])");
+            final String sql = "SELECT ts, grp, array_agg(arr) agg FROM tab SAMPLE BY 1h FILL(42)";
             assertExceptionNoLeakCheck(
-                    "SELECT ts, grp, array_agg(arr) agg FROM tab SAMPLE BY 1h FILL(42)",
-                    16,
+                    sql,
+                    sql.indexOf("42"),
                     "support for VALUE fill is not yet implemented"
             );
         });
@@ -821,9 +824,10 @@ public class ArrayAggDoubleArrayGroupByFunctionFactoryTest extends AbstractCairo
                     ('2024-01-01T00:00:00', ARRAY[1.0]),
                     ('2024-01-01T02:00:00', ARRAY[2.0])
                     """);
+            final String sql = "SELECT ts, array_agg(arr) agg FROM tab SAMPLE BY 1h FILL(42)";
             assertExceptionNoLeakCheck(
-                    "SELECT ts, array_agg(arr) agg FROM tab SAMPLE BY 1h FILL(42)",
-                    11,
+                    sql,
+                    sql.indexOf("42"),
                     "support for VALUE fill is not yet implemented"
             );
         });
