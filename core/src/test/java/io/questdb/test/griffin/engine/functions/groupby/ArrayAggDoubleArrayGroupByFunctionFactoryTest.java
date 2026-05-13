@@ -88,35 +88,6 @@ public class ArrayAggDoubleArrayGroupByFunctionFactoryTest extends AbstractCairo
     }
 
     @Test
-    public void testRenderCacheReuseOnRepeatedGetArray() throws Exception {
-        // getArray() renders a fresh allocator-backed flat buffer the first time
-        // a given group is read and caches the (srcPtr -> renderPtr) mapping per
-        // instance. Project the aggregate alongside derivations so the outer
-        // expression reads it more than once on the same group, exercising the
-        // cache-hit path for the second and third reads.
-        assertMemoryLeak(() -> {
-            execute("CREATE TABLE tab (grp SYMBOL, arr DOUBLE[])");
-            execute("""
-                    INSERT INTO tab VALUES
-                    ('a', ARRAY[1.0, 2.0]),
-                    ('a', ARRAY[3.0, 4.0, 5.0]),
-                    ('b', ARRAY[10.0]),
-                    ('b', ARRAY[20.0, 30.0])
-                    """);
-            assertQueryNoLeakCheck(
-                    "grp\tagg\tcnt\tsum\n" +
-                            "a\t[1.0,2.0,3.0,4.0,5.0]\t5\t15.0\n" +
-                            "b\t[10.0,20.0,30.0]\t3\t60.0\n",
-                    "SELECT grp, agg, array_count(agg) cnt, array_sum(agg) sum " +
-                            "FROM (SELECT grp, array_agg(arr) agg FROM tab) ORDER BY grp",
-                    null,
-                    true,
-                    true
-            );
-        });
-    }
-
-    @Test
     public void testConcatenation() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE tab (arr DOUBLE[])");
@@ -269,6 +240,58 @@ public class ArrayAggDoubleArrayGroupByFunctionFactoryTest extends AbstractCairo
                     true,
                     true
             );
+        });
+    }
+
+    @Test
+    public void testGroupByNullKeyParallel() throws Exception {
+        // NULL-key buckets must accumulate consistently across worker boundaries
+        // and survive the parallel merge phase. Run on a 4-worker pool with small
+        // page frames so the NULL group is touched by every worker, then assert
+        // both element count and array_sum (order-independent value check) for
+        // each group including NULL.
+        setProperty(PropertyKey.CAIRO_SQL_PAGE_FRAME_MAX_ROWS, 100);
+        assertMemoryLeak(() -> {
+            final WorkerPool pool = new WorkerPool(() -> 4);
+            TestUtils.execute(pool, (engine, compiler, sqlExecutionContext) -> {
+                engine.execute("CREATE TABLE tab (grp SYMBOL, arr DOUBLE[])", sqlExecutionContext);
+                // 2000 rows: every 3rd has a NULL key (positions 0, 3, 6, ...).
+                // grp values cycle through g0..g4 for non-null rows.
+                // Each row contributes a 2-element array, so a group with N rows
+                // contributes 2*N elements.
+                StringBuilder sb = new StringBuilder("INSERT INTO tab VALUES\n");
+                int nullRows = 0;
+                int[] grpRows = new int[5];
+                for (int i = 0; i < 2_000; i++) {
+                    if (i > 0) {
+                        sb.append(",\n");
+                    }
+                    if (i % 3 == 0) {
+                        sb.append("(null, ARRAY[").append(i).append(".0, ").append(i + 1).append(".0])");
+                        nullRows++;
+                    } else {
+                        int g = (i % 5);
+                        sb.append("('g").append(g).append("', ARRAY[")
+                                .append(i).append(".0, ").append(i + 1).append(".0])");
+                        grpRows[g]++;
+                    }
+                }
+                engine.execute(sb.toString(), sqlExecutionContext);
+                // Build expected per-group counts. array_sum of [i, i+1] over the
+                // group rows equals sum of (2*i + 1) across that group's row positions.
+                StringBuilder expected = new StringBuilder("grp\tcnt\n");
+                expected.append('\t').append(nullRows * 2).append('\n');
+                for (int g = 0; g < 5; g++) {
+                    expected.append('g').append(g).append('\t').append(grpRows[g] * 2).append('\n');
+                }
+                TestUtils.assertSql(
+                        engine,
+                        sqlExecutionContext,
+                        "SELECT grp, array_count(array_agg(arr)) cnt FROM tab ORDER BY grp",
+                        sink,
+                        expected
+                );
+            }, configuration, LOG);
         });
     }
 
@@ -619,6 +642,35 @@ public class ArrayAggDoubleArrayGroupByFunctionFactoryTest extends AbstractCairo
     }
 
     @Test
+    public void testRenderCacheReuseOnRepeatedGetArray() throws Exception {
+        // getArray() renders a fresh allocator-backed flat buffer the first time
+        // a given group is read and caches the (srcPtr -> renderPtr) mapping per
+        // instance. Project the aggregate alongside derivations so the outer
+        // expression reads it more than once on the same group, exercising the
+        // cache-hit path for the second and third reads.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE tab (grp SYMBOL, arr DOUBLE[])");
+            execute("""
+                    INSERT INTO tab VALUES
+                    ('a', ARRAY[1.0, 2.0]),
+                    ('a', ARRAY[3.0, 4.0, 5.0]),
+                    ('b', ARRAY[10.0]),
+                    ('b', ARRAY[20.0, 30.0])
+                    """);
+            assertQueryNoLeakCheck(
+                    "grp\tagg\tcnt\tsum\n" +
+                            "a\t[1.0,2.0,3.0,4.0,5.0]\t5\t15.0\n" +
+                            "b\t[10.0,20.0,30.0]\t3\t60.0\n",
+                    "SELECT grp, agg, array_count(agg) cnt, array_sum(agg) sum " +
+                            "FROM (SELECT grp, array_agg(arr) agg FROM tab) ORDER BY grp",
+                    null,
+                    true,
+                    true
+            );
+        });
+    }
+
+    @Test
     public void testSampleBy() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE tab (ts TIMESTAMP, arr DOUBLE[]) TIMESTAMP(ts) PARTITION BY DAY");
@@ -649,6 +701,25 @@ public class ArrayAggDoubleArrayGroupByFunctionFactoryTest extends AbstractCairo
             assertExceptionNoLeakCheck(
                     "SELECT ts, grp, array_agg(arr) agg FROM tab SAMPLE BY 1h FILL(LINEAR)",
                     16,
+                    "support for LINEAR fill is not yet implemented"
+            );
+        });
+    }
+
+    @Test
+    public void testSampleByFillLinearRejectedNonKeyed() throws Exception {
+        // Mirror of testSampleByFillValueRejectedNonKeyed for FILL(LINEAR) on the
+        // array_agg(D[]) variant.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE tab (ts TIMESTAMP, arr DOUBLE[]) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO tab VALUES
+                    ('2024-01-01T00:00:00', ARRAY[1.0]),
+                    ('2024-01-01T02:00:00', ARRAY[2.0])
+                    """);
+            assertExceptionNoLeakCheck(
+                    "SELECT ts, array_agg(arr) agg FROM tab SAMPLE BY 1h FILL(LINEAR)",
+                    11,
                     "support for LINEAR fill is not yet implemented"
             );
         });
@@ -733,25 +804,6 @@ public class ArrayAggDoubleArrayGroupByFunctionFactoryTest extends AbstractCairo
                     "SELECT ts, grp, array_agg(arr) agg FROM tab SAMPLE BY 1h FILL(42)",
                     16,
                     "support for VALUE fill is not yet implemented"
-            );
-        });
-    }
-
-    @Test
-    public void testSampleByFillLinearRejectedNonKeyed() throws Exception {
-        // Mirror of testSampleByFillValueRejectedNonKeyed for FILL(LINEAR) on the
-        // array_agg(D[]) variant.
-        assertMemoryLeak(() -> {
-            execute("CREATE TABLE tab (ts TIMESTAMP, arr DOUBLE[]) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("""
-                    INSERT INTO tab VALUES
-                    ('2024-01-01T00:00:00', ARRAY[1.0]),
-                    ('2024-01-01T02:00:00', ARRAY[2.0])
-                    """);
-            assertExceptionNoLeakCheck(
-                    "SELECT ts, array_agg(arr) agg FROM tab SAMPLE BY 1h FILL(LINEAR)",
-                    11,
-                    "support for LINEAR fill is not yet implemented"
             );
         });
     }

@@ -93,36 +93,6 @@ public class ArrayAggDoubleGroupByFunctionFactoryTest extends AbstractCairoTest 
     }
 
     @Test
-    public void testRenderCacheReuseOnRepeatedGetArray() throws Exception {
-        // getArray() renders a fresh allocator-backed flat buffer the first time
-        // a given group is read and caches the (srcPtr -> renderPtr) mapping per
-        // instance. Project the aggregate alongside derivations so the outer
-        // expression reads it more than once on the same group, exercising the
-        // cache-hit path for the second and third reads.
-        assertMemoryLeak(() -> {
-            execute("CREATE TABLE tab (grp SYMBOL, val DOUBLE)");
-            execute("""
-                    INSERT INTO tab VALUES
-                    ('a', 1.0),
-                    ('a', 2.0),
-                    ('a', 3.0),
-                    ('b', 10.0),
-                    ('b', 20.0)
-                    """);
-            assertQueryNoLeakCheck(
-                    "grp\tarr\tcnt\tsum\n" +
-                            "a\t[1.0,2.0,3.0]\t3\t6.0\n" +
-                            "b\t[10.0,20.0]\t2\t30.0\n",
-                    "SELECT grp, arr, array_count(arr) cnt, array_sum(arr) sum " +
-                            "FROM (SELECT grp, array_agg(val) arr FROM tab) ORDER BY grp",
-                    null,
-                    true,
-                    true
-            );
-        });
-    }
-
-    @Test
     public void testConstantInput() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE tab (x INT)");
@@ -385,6 +355,30 @@ public class ArrayAggDoubleGroupByFunctionFactoryTest extends AbstractCairoTest 
     }
 
     @Test
+    public void testNaNFromArithmeticRendersAsNull() throws Exception {
+        // The NULL DOUBLE sentinel and an arithmetic NaN share the same IEEE 754 bit
+        // pattern; both must render as null in array output. testNonFiniteInputsRenderAsNull
+        // covers Infinity but not NaN produced via arithmetic - this guards the bit-pattern
+        // round-trip path explicitly.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE tab (val DOUBLE)");
+            execute("""
+                    INSERT INTO tab VALUES
+                    (1.0),
+                    (0.0/0.0),
+                    (3.0)
+                    """);
+            assertQueryNoLeakCheck(
+                    "arr\n[1.0,null,3.0]\n",
+                    "SELECT array_agg(val) arr FROM tab",
+                    null,
+                    false,
+                    true
+            );
+        });
+    }
+
+    @Test
     public void testNestedReAggregationCrossVariant() throws Exception {
         // The output of the inner scalar array_agg(D) flows into the outer
         // array array_agg(D[]) via the array variant's computeFirst/computeNext.
@@ -409,30 +403,6 @@ public class ArrayAggDoubleGroupByFunctionFactoryTest extends AbstractCairoTest 
                     "SELECT array_agg(arr) concat, array_sum(array_agg(arr)) sum FROM (" +
                             "  SELECT array_agg(val) arr FROM tab" +
                             ")",
-                    null,
-                    false,
-                    true
-            );
-        });
-    }
-
-    @Test
-    public void testNaNFromArithmeticRendersAsNull() throws Exception {
-        // The NULL DOUBLE sentinel and an arithmetic NaN share the same IEEE 754 bit
-        // pattern; both must render as null in array output. testNonFiniteInputsRenderAsNull
-        // covers Infinity but not NaN produced via arithmetic - this guards the bit-pattern
-        // round-trip path explicitly.
-        assertMemoryLeak(() -> {
-            execute("CREATE TABLE tab (val DOUBLE)");
-            execute("""
-                    INSERT INTO tab VALUES
-                    (1.0),
-                    (0.0/0.0),
-                    (3.0)
-                    """);
-            assertQueryNoLeakCheck(
-                    "arr\n[1.0,null,3.0]\n",
-                    "SELECT array_agg(val) arr FROM tab",
                     null,
                     false,
                     true
@@ -667,6 +637,36 @@ public class ArrayAggDoubleGroupByFunctionFactoryTest extends AbstractCairoTest 
     }
 
     @Test
+    public void testRenderCacheReuseOnRepeatedGetArray() throws Exception {
+        // getArray() renders a fresh allocator-backed flat buffer the first time
+        // a given group is read and caches the (srcPtr -> renderPtr) mapping per
+        // instance. Project the aggregate alongside derivations so the outer
+        // expression reads it more than once on the same group, exercising the
+        // cache-hit path for the second and third reads.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE tab (grp SYMBOL, val DOUBLE)");
+            execute("""
+                    INSERT INTO tab VALUES
+                    ('a', 1.0),
+                    ('a', 2.0),
+                    ('a', 3.0),
+                    ('b', 10.0),
+                    ('b', 20.0)
+                    """);
+            assertQueryNoLeakCheck(
+                    "grp\tarr\tcnt\tsum\n" +
+                            "a\t[1.0,2.0,3.0]\t3\t6.0\n" +
+                            "b\t[10.0,20.0]\t2\t30.0\n",
+                    "SELECT grp, arr, array_count(arr) cnt, array_sum(arr) sum " +
+                            "FROM (SELECT grp, array_agg(val) arr FROM tab) ORDER BY grp",
+                    null,
+                    true,
+                    true
+            );
+        });
+    }
+
+    @Test
     public void testSampleBy() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE tab (ts TIMESTAMP, val DOUBLE) TIMESTAMP(ts) PARTITION BY DAY");
@@ -721,6 +721,27 @@ public class ArrayAggDoubleGroupByFunctionFactoryTest extends AbstractCairoTest 
             assertExceptionNoLeakCheck(
                     "SELECT ts, grp, array_agg(val) arr FROM tab SAMPLE BY 1h FILL(LINEAR)",
                     16,
+                    "support for LINEAR fill is not yet implemented"
+            );
+        });
+    }
+
+    @Test
+    public void testSampleByFillLinearRejectedNonKeyed() throws Exception {
+        // Mirror of testSampleByFillValueRejectedNonKeyed for FILL(LINEAR). Both fill
+        // modes route through the same SqlOptimiser.rewriteSampleBy + rewriteSelectClause0
+        // path that propagates fillValues onto groupByModel; either could regress
+        // independently if the LINEAR-specific gate at SqlOptimiser.hasLinearFill changed.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE tab (ts TIMESTAMP, val DOUBLE) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO tab VALUES
+                    ('2024-01-01T00:00:00', 1.0),
+                    ('2024-01-01T02:00:00', 2.0)
+                    """);
+            assertExceptionNoLeakCheck(
+                    "SELECT ts, array_agg(val) arr FROM tab SAMPLE BY 1h FILL(LINEAR)",
+                    11,
                     "support for LINEAR fill is not yet implemented"
             );
         });
@@ -807,27 +828,6 @@ public class ArrayAggDoubleGroupByFunctionFactoryTest extends AbstractCairoTest 
                     "SELECT ts, grp, array_agg(val) arr FROM tab SAMPLE BY 1h FILL(42)",
                     16,
                     "support for VALUE fill is not yet implemented"
-            );
-        });
-    }
-
-    @Test
-    public void testSampleByFillLinearRejectedNonKeyed() throws Exception {
-        // Mirror of testSampleByFillValueRejectedNonKeyed for FILL(LINEAR). Both fill
-        // modes route through the same SqlOptimiser.rewriteSampleBy + rewriteSelectClause0
-        // path that propagates fillValues onto groupByModel; either could regress
-        // independently if the LINEAR-specific gate at SqlOptimiser.hasLinearFill changed.
-        assertMemoryLeak(() -> {
-            execute("CREATE TABLE tab (ts TIMESTAMP, val DOUBLE) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("""
-                    INSERT INTO tab VALUES
-                    ('2024-01-01T00:00:00', 1.0),
-                    ('2024-01-01T02:00:00', 2.0)
-                    """);
-            assertExceptionNoLeakCheck(
-                    "SELECT ts, array_agg(val) arr FROM tab SAMPLE BY 1h FILL(LINEAR)",
-                    11,
-                    "support for LINEAR fill is not yet implemented"
             );
         });
     }
