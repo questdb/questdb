@@ -396,8 +396,15 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
         final ColumnMapping columnMapping = addressCache.getColumnMapping();
 
         final int readParquetColumnCount = columnMapping.getColumnCount();
-        sourceColumnTypes.setAll(readParquetColumnCount, -1);
-        hasTypeCasts = false;
+        if (include) {
+            // First-pass navigation: start from a clean slate.
+            sourceColumnTypes.setAll(readParquetColumnCount, -1);
+            hasTypeCasts = false;
+        }
+        // include=false is populateRemainingColumns: retain sourceColumnTypes / hasTypeCasts
+        // set by the prior include=true call so that lazy conversion metadata for filter
+        // columns survives. Without this, PageFrameMemoryRecord re-snapshots a stale -1
+        // for filter columns and reads VARCHAR_SLICE bytes as the target fixed type.
         for (int i = 0; i < readParquetColumnCount; i++) {
             if (include && columnIndexes.contains(i) || (!include && !columnIndexes.contains(i))) {
                 resolveParquetColumn(i, columnMapping, activeDecoder);

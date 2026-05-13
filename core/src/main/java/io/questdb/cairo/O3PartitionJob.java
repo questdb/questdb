@@ -3802,19 +3802,19 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
 
     private static void writeFixedNull(int dstType, long dstPtr, int rowIndex) {
         switch (ColumnType.tagOf(dstType)) {
-            case ColumnType.BOOLEAN, ColumnType.BYTE -> Unsafe.getUnsafe().putByte(dstPtr + rowIndex, (byte) 0);
-            case ColumnType.SHORT -> Unsafe.getUnsafe().putShort(dstPtr + ((long) rowIndex << 1), (short) 0);
-            case ColumnType.CHAR -> Unsafe.getUnsafe().putChar(dstPtr + ((long) rowIndex << 1), (char) 0);
+            case ColumnType.BOOLEAN, ColumnType.BYTE -> Unsafe.putByte(dstPtr + rowIndex, (byte) 0);
+            case ColumnType.SHORT -> Unsafe.putShort(dstPtr + ((long) rowIndex << 1), (short) 0);
+            case ColumnType.CHAR -> Unsafe.putChar(dstPtr + ((long) rowIndex << 1), (char) 0);
             case ColumnType.INT, ColumnType.IPv4 ->
-                    Unsafe.getUnsafe().putInt(dstPtr + ((long) rowIndex << 2), Numbers.INT_NULL);
+                    Unsafe.putInt(dstPtr + ((long) rowIndex << 2), Numbers.INT_NULL);
             case ColumnType.LONG, ColumnType.DATE, ColumnType.TIMESTAMP ->
-                    Unsafe.getUnsafe().putLong(dstPtr + ((long) rowIndex << 3), Numbers.LONG_NULL);
-            case ColumnType.FLOAT -> Unsafe.getUnsafe().putFloat(dstPtr + ((long) rowIndex << 2), Float.NaN);
-            case ColumnType.DOUBLE -> Unsafe.getUnsafe().putDouble(dstPtr + ((long) rowIndex << 3), Double.NaN);
+                    Unsafe.putLong(dstPtr + ((long) rowIndex << 3), Numbers.LONG_NULL);
+            case ColumnType.FLOAT -> Unsafe.putFloat(dstPtr + ((long) rowIndex << 2), Float.NaN);
+            case ColumnType.DOUBLE -> Unsafe.putDouble(dstPtr + ((long) rowIndex << 3), Double.NaN);
             case ColumnType.UUID -> {
                 long addr = dstPtr + ((long) rowIndex << 4);
-                Unsafe.getUnsafe().putLong(addr, Numbers.LONG_NULL);
-                Unsafe.getUnsafe().putLong(addr + Long.BYTES, Numbers.LONG_NULL);
+                Unsafe.putLong(addr, Numbers.LONG_NULL);
+                Unsafe.putLong(addr + Long.BYTES, Numbers.LONG_NULL);
             }
         }
     }
@@ -3824,37 +3824,37 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
             switch (ColumnType.tagOf(dstType)) {
                 case ColumnType.BOOLEAN -> {
                     boolean b = SqlKeywords.isTrueKeyword(value);
-                    Unsafe.getUnsafe().putByte(dstPtr + rowIndex, (byte) (b ? 1 : 0));
+                    Unsafe.putByte(dstPtr + rowIndex, (byte) (b ? 1 : 0));
                 }
-                case ColumnType.BYTE -> Unsafe.getUnsafe().putByte(dstPtr + rowIndex, (byte) Numbers.parseInt(value));
+                case ColumnType.BYTE -> Unsafe.putByte(dstPtr + rowIndex, (byte) Numbers.parseInt(value));
                 case ColumnType.SHORT ->
-                        Unsafe.getUnsafe().putShort(dstPtr + ((long) rowIndex << 1), (short) Numbers.parseInt(value));
+                        Unsafe.putShort(dstPtr + ((long) rowIndex << 1), (short) Numbers.parseInt(value));
                 case ColumnType.CHAR -> {
                     char c = value.length() > 0 ? value.charAt(0) : 0;
-                    Unsafe.getUnsafe().putChar(dstPtr + ((long) rowIndex << 1), c);
+                    Unsafe.putChar(dstPtr + ((long) rowIndex << 1), c);
                 }
                 case ColumnType.INT ->
-                        Unsafe.getUnsafe().putInt(dstPtr + ((long) rowIndex << 2), Numbers.parseInt(value));
+                        Unsafe.putInt(dstPtr + ((long) rowIndex << 2), Numbers.parseInt(value));
                 case ColumnType.LONG ->
-                        Unsafe.getUnsafe().putLong(dstPtr + ((long) rowIndex << 3), Numbers.parseLong(value));
+                        Unsafe.putLong(dstPtr + ((long) rowIndex << 3), Numbers.parseLong(value));
                 case ColumnType.FLOAT ->
-                        Unsafe.getUnsafe().putFloat(dstPtr + ((long) rowIndex << 2), Numbers.parseFloat(value));
+                        Unsafe.putFloat(dstPtr + ((long) rowIndex << 2), Numbers.parseFloat(value));
                 case ColumnType.DOUBLE ->
-                        Unsafe.getUnsafe().putDouble(dstPtr + ((long) rowIndex << 3), Numbers.parseDouble(value));
+                        Unsafe.putDouble(dstPtr + ((long) rowIndex << 3), Numbers.parseDouble(value));
                 // parseFloorLiteral accepts higher-precision input (micros/nanos) by
                 // truncating extras, matching ColumnTypeConverter's STRING->DATE/TIMESTAMP path.
                 case ColumnType.DATE ->
-                        Unsafe.getUnsafe().putLong(dstPtr + ((long) rowIndex << 3), MillisTimestampDriver.INSTANCE.parseFloorLiteral(value));
+                        Unsafe.putLong(dstPtr + ((long) rowIndex << 3), MillisTimestampDriver.INSTANCE.parseFloorLiteral(value));
                 // tagOf collapses TIMESTAMP_MICRO and TIMESTAMP_NANO to the same TIMESTAMP tag,
                 // so dispatch on the full dstType to pick the correct driver.
                 case ColumnType.TIMESTAMP ->
-                        Unsafe.getUnsafe().putLong(dstPtr + ((long) rowIndex << 3), ColumnType.getTimestampDriver(dstType).parseFloorLiteral(value));
+                        Unsafe.putLong(dstPtr + ((long) rowIndex << 3), ColumnType.getTimestampDriver(dstType).parseFloorLiteral(value));
                 case ColumnType.IPv4 ->
-                        Unsafe.getUnsafe().putInt(dstPtr + ((long) rowIndex << 2), Numbers.parseIPv4Quiet(value));
+                        Unsafe.putInt(dstPtr + ((long) rowIndex << 2), Numbers.parseIPv4Quiet(value));
                 case ColumnType.UUID -> {
                     long addr = dstPtr + ((long) rowIndex << 4);
-                    Unsafe.getUnsafe().putLong(addr, Uuid.parseLo(value));
-                    Unsafe.getUnsafe().putLong(addr + Long.BYTES, Uuid.parseHi(value));
+                    Unsafe.putLong(addr, Uuid.parseLo(value));
+                    Unsafe.putLong(addr + Long.BYTES, Uuid.parseHi(value));
                 }
                 default -> writeFixedNull(dstType, dstPtr, rowIndex);
             }
@@ -3874,7 +3874,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
         long dataOffset = 0;
 
         // STRING aux starts with initial offset 0.
-        Unsafe.getUnsafe().putLong(auxAddr, 0L);
+        Unsafe.putLong(auxAddr, 0L);
 
         // Resolve the per-type formatter once so the inner loop is a direct virtual
         // call instead of a 12-way switch per row.
@@ -3888,18 +3888,18 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
 
             if (!hasValue) {
                 // Null: write -1 as length prefix.
-                Unsafe.getUnsafe().putInt(dataAddr + dataOffset, -1);
+                Unsafe.putInt(dataAddr + dataOffset, -1);
                 dataOffset += Integer.BYTES;
             } else {
                 int charCount = sink.length();
-                Unsafe.getUnsafe().putInt(dataAddr + dataOffset, charCount);
+                Unsafe.putInt(dataAddr + dataOffset, charCount);
                 dataOffset += Integer.BYTES;
                 for (int j = 0; j < charCount; j++) {
-                    Unsafe.getUnsafe().putChar(dataAddr + dataOffset + (long) j * Character.BYTES, sink.charAt(j));
+                    Unsafe.putChar(dataAddr + dataOffset + (long) j * Character.BYTES, sink.charAt(j));
                 }
                 dataOffset += (long) charCount * Character.BYTES;
             }
-            Unsafe.getUnsafe().putLong(auxAddr + (long) (i + 1) * Long.BYTES, dataOffset);
+            Unsafe.putLong(auxAddr + (long) (i + 1) * Long.BYTES, dataOffset);
         }
     }
 
@@ -3926,11 +3926,11 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
             long auxEntryAddr = auxAddr + (long) i * VarcharTypeDriver.VARCHAR_AUX_WIDTH_BYTES;
 
             if (isNull) {
-                Unsafe.getUnsafe().putInt(auxEntryAddr, VarcharTypeDriver.VARCHAR_HEADER_FLAG_NULL);
-                Unsafe.getUnsafe().putInt(auxEntryAddr + 4, 0);
-                Unsafe.getUnsafe().putShort(auxEntryAddr + 8, (short) 0);
-                Unsafe.getUnsafe().putShort(auxEntryAddr + 10, (short) dataOffset);
-                Unsafe.getUnsafe().putInt(auxEntryAddr + 12, (int) (dataOffset >> 16));
+                Unsafe.putInt(auxEntryAddr, VarcharTypeDriver.VARCHAR_HEADER_FLAG_NULL);
+                Unsafe.putInt(auxEntryAddr + 4, 0);
+                Unsafe.putShort(auxEntryAddr + 8, (short) 0);
+                Unsafe.putShort(auxEntryAddr + 10, (short) dataOffset);
+                Unsafe.putInt(auxEntryAddr + 12, (int) (dataOffset >> 16));
             } else {
                 int size = sink.size();
                 boolean ascii = sink.isAscii();
@@ -3941,26 +3941,26 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                     if (ascii) {
                         flags |= 2; // HEADER_FLAG_ASCII
                     }
-                    Unsafe.getUnsafe().putByte(auxEntryAddr, (byte) ((size << 4) | flags));
+                    Unsafe.putByte(auxEntryAddr, (byte) ((size << 4) | flags));
                     for (int j = 0; j < size; j++) {
-                        Unsafe.getUnsafe().putByte(auxEntryAddr + 1 + j, sink.byteAt(j));
+                        Unsafe.putByte(auxEntryAddr + 1 + j, sink.byteAt(j));
                     }
                     for (int j = size; j < VarcharTypeDriver.VARCHAR_MAX_BYTES_FULLY_INLINED; j++) {
-                        Unsafe.getUnsafe().putByte(auxEntryAddr + 1 + j, (byte) 0);
+                        Unsafe.putByte(auxEntryAddr + 1 + j, (byte) 0);
                     }
-                    Unsafe.getUnsafe().putShort(auxEntryAddr + 10, (short) dataOffset);
-                    Unsafe.getUnsafe().putInt(auxEntryAddr + 12, (int) (dataOffset >> 16));
+                    Unsafe.putShort(auxEntryAddr + 10, (short) dataOffset);
+                    Unsafe.putInt(auxEntryAddr + 12, (int) (dataOffset >> 16));
                 } else {
                     // Spill: header int + 6-byte prefix in aux, full value in data.
                     int flags = ascii ? 2 : 0; // HEADER_FLAG_ASCII, not INLINED
-                    Unsafe.getUnsafe().putInt(auxEntryAddr, (size << 4) | flags);
+                    Unsafe.putInt(auxEntryAddr, (size << 4) | flags);
                     for (int j = 0; j < VarcharTypeDriver.VARCHAR_INLINED_PREFIX_BYTES; j++) {
-                        Unsafe.getUnsafe().putByte(auxEntryAddr + 4 + j, sink.byteAt(j));
+                        Unsafe.putByte(auxEntryAddr + 4 + j, sink.byteAt(j));
                     }
-                    Unsafe.getUnsafe().putShort(auxEntryAddr + 10, (short) dataOffset);
-                    Unsafe.getUnsafe().putInt(auxEntryAddr + 12, (int) (dataOffset >> 16));
+                    Unsafe.putShort(auxEntryAddr + 10, (short) dataOffset);
+                    Unsafe.putInt(auxEntryAddr + 12, (int) (dataOffset >> 16));
                     for (int j = 0; j < size; j++) {
-                        Unsafe.getUnsafe().putByte(dataAddr + dataOffset + j, sink.byteAt(j));
+                        Unsafe.putByte(dataAddr + dataOffset + j, sink.byteAt(j));
                     }
                     dataOffset += size;
                 }
@@ -3988,16 +3988,16 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
             if (isVarchar) {
                 // Read VARCHAR_SLICE format: 16-byte aux entries with pointer at offset 8.
                 long auxEntryAddr = auxPtr + (long) i * VarcharTypeDriver.VARCHAR_AUX_WIDTH_BYTES;
-                int header = Unsafe.getUnsafe().getInt(auxEntryAddr);
+                int header = Unsafe.getInt(auxEntryAddr);
                 if ((header & VarcharTypeDriver.VARCHAR_HEADER_FLAG_NULL) != 0) {
                     writeFixedNull(dstType, dstPtr, i);
                     continue;
                 }
                 int size = header >>> 4;
-                long ptr = Unsafe.getUnsafe().getLong(auxEntryAddr + 8);
+                long ptr = Unsafe.getLong(auxEntryAddr + 8);
                 utf8Sink.clear();
                 for (int j = 0; j < size; j++) {
-                    utf8Sink.putAny(Unsafe.getUnsafe().getByte(ptr + j));
+                    utf8Sink.putAny(Unsafe.getByte(ptr + j));
                 }
                 // Decode UTF-8 to UTF-16. The previous asAsciiCharSequence() exposed each
                 // raw UTF-8 byte as a char, corrupting non-ASCII (e.g. 'e-acute' 0xC3 0xA9
@@ -4006,8 +4006,8 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                 value = Utf8s.utf8ToUtf16OrView(utf8Sink, utf16Sink);
             } else {
                 // Read STRING format: 8-byte aux entries (offsets), data has [len_i32][chars...].
-                long offset = Unsafe.getUnsafe().getLong(auxPtr + (long) i * Long.BYTES);
-                int len = Unsafe.getUnsafe().getInt(dataPtr + offset);
+                long offset = Unsafe.getLong(auxPtr + (long) i * Long.BYTES);
+                int len = Unsafe.getInt(dataPtr + offset);
                 if (len < 0) {
                     writeFixedNull(dstType, dstPtr, i);
                     continue;
@@ -4015,7 +4015,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                 strSink.clear();
                 long charAddr = dataPtr + offset + Integer.BYTES;
                 for (int j = 0; j < len; j++) {
-                    strSink.put(Unsafe.getUnsafe().getChar(charAddr + (long) j * Character.BYTES));
+                    strSink.put(Unsafe.getChar(charAddr + (long) j * Character.BYTES));
                 }
                 value = strSink;
             }

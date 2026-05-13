@@ -1194,6 +1194,128 @@ public class ParquetColumnTypeConversionTest extends AbstractCairoTest {
     }
 
     /**
+     * The async not-keyed group-by factory runs an aggregation without a {@code GROUP BY}
+     * clause. Its inner loop checks {@code frameMemory.needsColumnTypeCast()} and falls back
+     * to a row-by-row update path when {@code true}; the batched / vectorized aggregation
+     * path reads raw page addresses and would silently produce wrong values if the parquet
+     * column needs lazy conversion. The control table {@code nt} is native; {@code pt} is a
+     * parquet partition with {@code val} ALTER'd from STRING to INT, which sets
+     * {@code hasTypeCasts=true} (var to fixed). Results across both tables must match.
+     */
+    @Test
+    public void testAsyncGroupByNotKeyedOverAlteredParquetColumn() throws Exception {
+        assertMemoryLeak(() -> assertAsyncFactoryParity(
+                "SELECT min(val) mn, max(val) mx, sum(val) s, avg(val) a, count() c FROM $T WHERE val > 50"
+        ));
+    }
+
+    /**
+     * The async keyed group-by factory. Same {@code needsColumnTypeCast()} gate. The
+     * difference vs the not-keyed variant is that a {@code GROUP BY} key is materialized
+     * per row and the per-key aggregation update path runs.
+     */
+    @Test
+    public void testAsyncGroupByKeyedOverAlteredParquetColumn() throws Exception {
+        assertMemoryLeak(() -> assertAsyncFactoryParity(
+                "SELECT sym, min(val) mn, max(val) mx, sum(val) s, count() c FROM $T WHERE val > 50 GROUP BY sym ORDER BY sym"
+        ));
+    }
+
+    /**
+     * The async top-K factory orders by {@code val} with a {@code LIMIT}. Its vectorized
+     * comparator path reads {@code val} via the column page address; with a lazy var to
+     * fixed conversion in parquet, only the scalar fallback materializes the converted
+     * integer.
+     */
+    @Test
+    public void testAsyncTopKOverAlteredParquetColumn() throws Exception {
+        assertMemoryLeak(() -> assertAsyncFactoryParity(
+                "SELECT val, sym FROM $T WHERE val > 50 ORDER BY val DESC, sym LIMIT 10"
+        ));
+    }
+
+    /**
+     * The async JIT-filtered factory. When parquet needs a lazy conversion, the JIT'ed
+     * filter cannot be applied directly to the parquet page bytes -- the factory must
+     * fall back to scalar filter evaluation through {@code PageFrameMemoryRecord}.
+     */
+    @Test
+    public void testAsyncJitFilteredOverAlteredParquetColumn() throws Exception {
+        assertMemoryLeak(() -> assertAsyncFactoryParity(
+                "SELECT val, sym FROM $T WHERE val > 50 AND val < 150 ORDER BY ts"
+        ));
+    }
+
+    /**
+     * The async horizon-join factory with no {@code GROUP BY} keys -- a single aggregated
+     * output row. The left side is the parquet+ALTER'd table; the right side is a native
+     * shared {@code prices} table. The aggregation references the lazy-converted {@code val}.
+     */
+    @Test
+    public void testAsyncHorizonJoinNotKeyedOverAlteredParquetColumn() throws Exception {
+        assertMemoryLeak(() -> assertAsyncJoinFactoryParity(
+                """
+                        SELECT count() n, sum(t.val) sum_val, avg(p.price) avg_price
+                        FROM $T t
+                        HORIZON JOIN prices p ON (t.sym = p.sym) LIST (0s, 5s, 30s) AS h
+                        WHERE t.val > 50"""
+        ));
+    }
+
+    /**
+     * The async horizon-join factory with {@code GROUP BY} keys. Same gate, plus the keyed
+     * grouping path is exercised.
+     */
+    @Test
+    public void testAsyncHorizonJoinKeyedOverAlteredParquetColumn() throws Exception {
+        assertMemoryLeak(() -> assertAsyncJoinFactoryParity(
+                """
+                        SELECT t.sym, h.offset, count() n, sum(t.val) sum_val, avg(p.price) avg_price
+                        FROM $T t
+                        HORIZON JOIN prices p ON (t.sym = p.sym) LIST (0s, 5s, 30s) AS h
+                        WHERE t.val > 50
+                        GROUP BY t.sym, h.offset
+                        ORDER BY t.sym, h.offset"""
+        ));
+    }
+
+    /**
+     * The async window-join FAST factory ({@code WINDOW JOIN ... ON (key)}). The left
+     * frame is the parquet+ALTER'd table; the join key is the symbol column. Aggregation
+     * references both the lazy-converted left column {@code t.val} and the right table's
+     * {@code p.price}.
+     */
+    @Test
+    public void testAsyncWindowJoinFastOverAlteredParquetColumn() throws Exception {
+        assertMemoryLeak(() -> assertAsyncJoinFactoryParity(
+                """
+                        SELECT t.sym, t.val, t.ts, sum(p.price) p_sum
+                        FROM $T t
+                        WINDOW JOIN prices p ON (t.sym = p.sym)
+                        RANGE BETWEEN 30 SECONDS PRECEDING AND 30 SECONDS FOLLOWING EXCLUDE PREVAILING
+                        WHERE t.val > 50
+                        ORDER BY t.ts, t.sym"""
+        ));
+    }
+
+    /**
+     * The async window-join SLOW factory ({@code WINDOW JOIN} without {@code ON}). Same
+     * fallback gate as the fast variant.
+     */
+    @Test
+    public void testAsyncWindowJoinOverAlteredParquetColumn() throws Exception {
+        assertMemoryLeak(() -> assertAsyncJoinFactoryParity(
+                """
+                        SELECT t.sym, t.val, t.ts, sum(p.price) p_sum
+                        FROM $T t
+                        WINDOW JOIN prices p
+                        RANGE BETWEEN 30 SECONDS PRECEDING AND 30 SECONDS FOLLOWING EXCLUDE PREVAILING
+                        WHERE t.val > 50
+                        ORDER BY t.ts, t.sym"""
+        ));
+    }
+
+    /**
      * Verifies snapshot isolation across {@code ALTER TABLE ... ALTER COLUMN TYPE} on a
      * parquet-backed partition. A cursor opened against the pre-ALTER transaction must
      * continue to see the original column type and values for its entire lifetime, while
@@ -1283,6 +1405,82 @@ public class ParquetColumnTypeConversionTest extends AbstractCairoTest {
      *     <li>Asserts both produce identical query results</li>
      * </ol>
      */
+    /**
+     * Builds a native control table {@code nt} and a parquet-backed table {@code pt} with
+     * identical data, then ALTERs {@code val} from STRING to INT on both. On {@code pt} the
+     * parquet keeps the STRING storage so reads go through lazy var to fixed conversion,
+     * setting {@code needsColumnTypeCast()=true} on every parquet frame. The supplied
+     * query template (with {@code $T} placeholder) runs against both tables and must
+     * produce identical cursors.
+     */
+    private void assertAsyncFactoryParity(String queryTemplate) throws Exception {
+        try {
+            execute("CREATE TABLE nt (val STRING, sym SYMBOL, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE TABLE pt (val STRING, sym SYMBOL, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            String insert = """
+                    INSERT INTO $T
+                    SELECT x::STRING AS val,
+                           ('s' || (x % 5)::STRING)::SYMBOL AS sym,
+                           timestamp_sequence('2024-01-01T00:00:00.000000Z', 60_000_000) AS ts
+                    FROM long_sequence(200)""";
+            execute(insert.replace("$T", "nt"));
+            execute(insert.replace("$T", "pt"));
+            drainWalQueue();
+            execute("ALTER TABLE pt CONVERT PARTITION TO PARQUET LIST '2024-01-01'");
+            drainWalQueue();
+            execute("ALTER TABLE nt ALTER COLUMN val TYPE INT");
+            execute("ALTER TABLE pt ALTER COLUMN val TYPE INT");
+            drainWalQueue();
+            assertSqlCursors(
+                    queryTemplate.replace("$T", "nt"),
+                    queryTemplate.replace("$T", "pt")
+            );
+        } finally {
+            tryDrop("nt");
+            tryDrop("pt");
+        }
+    }
+
+    /**
+     * Same as {@link #assertAsyncFactoryParity(String)} but also builds a shared native
+     * {@code prices} table used as the right side of HORIZON JOIN / WINDOW JOIN queries.
+     */
+    private void assertAsyncJoinFactoryParity(String queryTemplate) throws Exception {
+        try {
+            execute("CREATE TABLE nt (val STRING, sym SYMBOL, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE TABLE pt (val STRING, sym SYMBOL, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE TABLE prices (price DOUBLE, sym SYMBOL, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            String insertLeft = """
+                    INSERT INTO $T
+                    SELECT x::STRING AS val,
+                           ('s' || (x % 5)::STRING)::SYMBOL AS sym,
+                           timestamp_sequence('2024-01-01T00:00:00.000000Z', 60_000_000) AS ts
+                    FROM long_sequence(100)""";
+            execute(insertLeft.replace("$T", "nt"));
+            execute(insertLeft.replace("$T", "pt"));
+            execute("""
+                    INSERT INTO prices
+                    SELECT (x * 1.5) AS price,
+                           ('s' || (x % 5)::STRING)::SYMBOL AS sym,
+                           timestamp_sequence('2024-01-01T00:00:00.000000Z', 30_000_000) AS ts
+                    FROM long_sequence(200)""");
+            drainWalQueue();
+            execute("ALTER TABLE pt CONVERT PARTITION TO PARQUET LIST '2024-01-01'");
+            drainWalQueue();
+            execute("ALTER TABLE nt ALTER COLUMN val TYPE INT");
+            execute("ALTER TABLE pt ALTER COLUMN val TYPE INT");
+            drainWalQueue();
+            assertSqlCursors(
+                    queryTemplate.replace("$T", "nt"),
+                    queryTemplate.replace("$T", "pt")
+            );
+        } finally {
+            tryDrop("nt");
+            tryDrop("pt");
+            tryDrop("prices");
+        }
+    }
+
     private void assertConversion(String sourceType, String targetType, String values) throws Exception {
         assertConversionWithEncoding(sourceType, targetType, values, null);
     }

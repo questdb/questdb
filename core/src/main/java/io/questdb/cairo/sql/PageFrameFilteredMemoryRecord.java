@@ -164,6 +164,9 @@ public class PageFrameFilteredMemoryRecord extends PageFrameMemoryRecord {
 
     @Override
     public boolean getBool(int columnIndex) {
+        if (needsLazyConversion(columnIndex)) {
+            return super.getBool(columnIndex);
+        }
         final long address = pageAddresses.get(columnOffset + columnIndex);
         if (address != 0) {
             return Unsafe.getByte(address + getRowIndex(columnIndex)) == 1;
@@ -173,6 +176,9 @@ public class PageFrameFilteredMemoryRecord extends PageFrameMemoryRecord {
 
     @Override
     public byte getByte(int columnIndex) {
+        if (needsLazyConversion(columnIndex)) {
+            return super.getByte(columnIndex);
+        }
         final long address = pageAddresses.get(columnOffset + columnIndex);
         if (address != 0) {
             return Unsafe.getByte(address + getRowIndex(columnIndex));
@@ -182,6 +188,9 @@ public class PageFrameFilteredMemoryRecord extends PageFrameMemoryRecord {
 
     @Override
     public char getChar(int columnIndex) {
+        if (needsLazyConversion(columnIndex)) {
+            return super.getChar(columnIndex);
+        }
         final long address = pageAddresses.get(columnOffset + columnIndex);
         if (address != 0) {
             return Unsafe.getChar(address + (getRowIndex(columnIndex) << 1));
@@ -191,6 +200,10 @@ public class PageFrameFilteredMemoryRecord extends PageFrameMemoryRecord {
 
     @Override
     public void getDecimal128(int columnIndex, Decimal128 sink) {
+        if (needsLazyConversion(columnIndex)) {
+            super.getDecimal128(columnIndex, sink);
+            return;
+        }
         long address = pageAddresses.get(columnOffset + columnIndex);
         if (address != 0) {
             address += (getRowIndex(columnIndex) << 4);
@@ -205,6 +218,9 @@ public class PageFrameFilteredMemoryRecord extends PageFrameMemoryRecord {
 
     @Override
     public short getDecimal16(int columnIndex) {
+        if (needsLazyConversion(columnIndex)) {
+            return super.getDecimal16(columnIndex);
+        }
         long address = pageAddresses.get(columnOffset + columnIndex);
         if (address != 0) {
             return Unsafe.getShort(address + (getRowIndex(columnIndex) << 1));
@@ -214,6 +230,10 @@ public class PageFrameFilteredMemoryRecord extends PageFrameMemoryRecord {
 
     @Override
     public void getDecimal256(int columnIndex, Decimal256 sink) {
+        if (needsLazyConversion(columnIndex)) {
+            super.getDecimal256(columnIndex, sink);
+            return;
+        }
         long address = pageAddresses.get(columnOffset + columnIndex);
         if (address != 0) {
             sink.ofRawAddress(address + (getRowIndex(columnIndex) << 5));
@@ -224,6 +244,9 @@ public class PageFrameFilteredMemoryRecord extends PageFrameMemoryRecord {
 
     @Override
     public int getDecimal32(int columnIndex) {
+        if (needsLazyConversion(columnIndex)) {
+            return super.getDecimal32(columnIndex);
+        }
         long address = pageAddresses.get(columnOffset + columnIndex);
         if (address != 0) {
             return Unsafe.getInt(address + (getRowIndex(columnIndex) << 2));
@@ -233,6 +256,9 @@ public class PageFrameFilteredMemoryRecord extends PageFrameMemoryRecord {
 
     @Override
     public long getDecimal64(int columnIndex) {
+        if (needsLazyConversion(columnIndex)) {
+            return super.getDecimal64(columnIndex);
+        }
         long address = pageAddresses.get(columnOffset + columnIndex);
         if (address != 0) {
             return Unsafe.getLong(address + (getRowIndex(columnIndex) << 3));
@@ -242,6 +268,9 @@ public class PageFrameFilteredMemoryRecord extends PageFrameMemoryRecord {
 
     @Override
     public byte getDecimal8(int columnIndex) {
+        if (needsLazyConversion(columnIndex)) {
+            return super.getDecimal8(columnIndex);
+        }
         long address = pageAddresses.get(columnOffset + columnIndex);
         if (address != 0) {
             return Unsafe.getByte(address + getRowIndex(columnIndex));
@@ -251,6 +280,9 @@ public class PageFrameFilteredMemoryRecord extends PageFrameMemoryRecord {
 
     @Override
     public double getDouble(int columnIndex) {
+        if (needsLazyConversion(columnIndex)) {
+            return super.getDouble(columnIndex);
+        }
         final long address = pageAddresses.get(columnOffset + columnIndex);
         if (address != 0) {
             return Unsafe.getDouble(address + (getRowIndex(columnIndex) << 3));
@@ -260,6 +292,9 @@ public class PageFrameFilteredMemoryRecord extends PageFrameMemoryRecord {
 
     @Override
     public float getFloat(int columnIndex) {
+        if (needsLazyConversion(columnIndex)) {
+            return super.getFloat(columnIndex);
+        }
         final long address = pageAddresses.get(columnOffset + columnIndex);
         if (address != 0) {
             return Unsafe.getFloat(address + (getRowIndex(columnIndex) << 2));
@@ -305,6 +340,9 @@ public class PageFrameFilteredMemoryRecord extends PageFrameMemoryRecord {
 
     @Override
     public int getIPv4(int columnIndex) {
+        if (needsLazyConversion(columnIndex)) {
+            return super.getIPv4(columnIndex);
+        }
         final long address = pageAddresses.get(columnOffset + columnIndex);
         if (address != 0) {
             return Unsafe.getInt(address + (getRowIndex(columnIndex) << 2));
@@ -314,6 +352,9 @@ public class PageFrameFilteredMemoryRecord extends PageFrameMemoryRecord {
 
     @Override
     public int getInt(int columnIndex) {
+        if (needsLazyConversion(columnIndex)) {
+            return super.getInt(columnIndex);
+        }
         final long address = pageAddresses.get(columnOffset + columnIndex);
         if (address != 0) {
             return Unsafe.getInt(address + (getRowIndex(columnIndex) << 2));
@@ -323,6 +364,9 @@ public class PageFrameFilteredMemoryRecord extends PageFrameMemoryRecord {
 
     @Override
     public long getLong(int columnIndex) {
+        if (needsLazyConversion(columnIndex)) {
+            return super.getLong(columnIndex);
+        }
         final long address = pageAddresses.get(columnOffset + columnIndex);
         if (address != 0) {
             return Unsafe.getLong(address + (getRowIndex(columnIndex) << 3));
@@ -332,6 +376,9 @@ public class PageFrameFilteredMemoryRecord extends PageFrameMemoryRecord {
 
     @Override
     public long getLong128Hi(int columnIndex) {
+        if (needsLazyConversion(columnIndex)) {
+            return super.getLong128Hi(columnIndex);
+        }
         long address = pageAddresses.get(columnOffset + columnIndex);
         if (address != 0) {
             return Unsafe.getLong(address + (getRowIndex(columnIndex) << 4) + Long.BYTES);
@@ -341,6 +388,9 @@ public class PageFrameFilteredMemoryRecord extends PageFrameMemoryRecord {
 
     @Override
     public long getLong128Lo(int columnIndex) {
+        if (needsLazyConversion(columnIndex)) {
+            return super.getLong128Lo(columnIndex);
+        }
         long address = pageAddresses.get(columnOffset + columnIndex);
         if (address != 0) {
             return Unsafe.getLong(address + (getRowIndex(columnIndex) << 4));
@@ -360,6 +410,9 @@ public class PageFrameFilteredMemoryRecord extends PageFrameMemoryRecord {
 
     @Override
     public short getShort(int columnIndex) {
+        if (needsLazyConversion(columnIndex)) {
+            return super.getShort(columnIndex);
+        }
         final long address = pageAddresses.get(columnOffset + columnIndex);
         if (address != 0) {
             return Unsafe.getShort(address + (getRowIndex(columnIndex) << 1));
@@ -467,6 +520,17 @@ public class PageFrameFilteredMemoryRecord extends PageFrameMemoryRecord {
     @Override
     public void setRowIndex(long rowIndex) {
         throw new UnsupportedOperationException("PageFrameFilteredMemoryRecord requires setFilteredRowIndex(rowIndex, compactedRowIndex)");
+    }
+
+    /**
+     * Returns true when this column needs lazy parquet type conversion on read --
+     * Var-to-Fixed, Fixed-to-Var, or Symbol-to-non-Symbol (excluding Symbol-to-Var).
+     * The fast direct-read path bypasses the converter and would return raw bytes,
+     * so callers must instead delegate to the parent class which routes through the
+     * overridden {@link #getStr0} / {@link #getVarchar} and respects {@link #getRowIndex}.
+     */
+    private boolean needsLazyConversion(int columnIndex) {
+        return hasTypeCasts && sourceColumnTypes.getQuick(columnIndex) != -1;
     }
 
     private long getRowIndex(int columnIndex) {

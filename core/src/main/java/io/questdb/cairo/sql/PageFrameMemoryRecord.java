@@ -817,36 +817,36 @@ public class PageFrameMemoryRecord implements Record, StableStringSource, QuietC
         final int scale = ColumnType.getDecimalScale(srcType);
         switch (tag) {
             case ColumnType.DECIMAL8 -> {
-                byte val = Unsafe.getUnsafe().getByte(address + rowIndex);
+                byte val = Unsafe.getByte(address + rowIndex);
                 if (val == Decimals.DECIMAL8_NULL) {
                     return false;
                 }
                 Decimals.appendNonNull(val, precision, scale, sink);
             }
             case ColumnType.DECIMAL16 -> {
-                short val = Unsafe.getUnsafe().getShort(address + (rowIndex << 1));
+                short val = Unsafe.getShort(address + (rowIndex << 1));
                 if (val == Decimals.DECIMAL16_NULL) {
                     return false;
                 }
                 Decimals.appendNonNull(val, precision, scale, sink);
             }
             case ColumnType.DECIMAL32 -> {
-                int val = Unsafe.getUnsafe().getInt(address + (rowIndex << 2));
+                int val = Unsafe.getInt(address + (rowIndex << 2));
                 if (val == Decimals.DECIMAL32_NULL) {
                     return false;
                 }
                 Decimals.appendNonNull(val, precision, scale, sink);
             }
             case ColumnType.DECIMAL64 -> {
-                long val = Unsafe.getUnsafe().getLong(address + (rowIndex << 3));
+                long val = Unsafe.getLong(address + (rowIndex << 3));
                 if (val == Decimals.DECIMAL64_NULL) {
                     return false;
                 }
                 Decimals.appendNonNull(val, precision, scale, sink);
             }
             case ColumnType.DECIMAL128 -> {
-                long hi = Unsafe.getUnsafe().getLong(address + (rowIndex << 4));
-                long lo = Unsafe.getUnsafe().getLong(address + (rowIndex << 4) + Long.BYTES);
+                long hi = Unsafe.getLong(address + (rowIndex << 4));
+                long lo = Unsafe.getLong(address + (rowIndex << 4) + Long.BYTES);
                 if (Decimal128.isNull(hi, lo)) {
                     return false;
                 }
@@ -854,10 +854,10 @@ public class PageFrameMemoryRecord implements Record, StableStringSource, QuietC
             }
             case ColumnType.DECIMAL256 -> {
                 long base = address + (rowIndex << 5);
-                long hh = Unsafe.getUnsafe().getLong(base);
-                long hl = Unsafe.getUnsafe().getLong(base + 8L);
-                long lh = Unsafe.getUnsafe().getLong(base + 16L);
-                long ll = Unsafe.getUnsafe().getLong(base + 24L);
+                long hh = Unsafe.getLong(base);
+                long hl = Unsafe.getLong(base + 8L);
+                long lh = Unsafe.getLong(base + 16L);
+                long ll = Unsafe.getLong(base + 24L);
                 if (Decimal256.isNull(hh, hl, lh, ll)) {
                     return false;
                 }
