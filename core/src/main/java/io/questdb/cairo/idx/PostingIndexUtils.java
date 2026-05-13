@@ -1249,19 +1249,25 @@ public final class PostingIndexUtils {
      * unreadable AND a .pv file matching {@code postingColumnNameTxn} exists
      * in the partition directory.
      * <p>
-     * Disambiguation walks two retries of the tri-state reader
+     * Disambiguation walks the tri-state reader
      * ({@link #readSealTxnFromKeyFileTriState}):
      * <ul>
-     *   <li>If either retry returns a non-negative sealTxn, the chain has
+     *   <li>If either attempt returns a non-negative sealTxn, the chain has
      *       data and that value wins. A one-shot transient read failure
      *       (FilesFacade fault injection, pread EINTR, etc.) clears between
      *       opens, so the second read sees the true file state.</li>
-     *   <li>If the second retry returns {@link #V2_NO_HEAD}, the chain is
-     *       confirmed empty -- no .pv to link, no throw.</li>
-     *   <li>If the second retry also returns {@link #READ_FAILURE}, the
-     *       failure is persistent (file corrupt, hardware error). Only then
-     *       does the .pv-existence check gate the throw: with .pv files
-     *       present, dropping the link would lose sealed data.</li>
+     *   <li>If the first attempt returns {@link #V2_NO_HEAD}, the chain is
+     *       confirmed empty and we short-circuit. V2_NO_HEAD is only
+     *       returned after a clean format-version read, a stable seqlock
+     *       pair across the head-pointer observation, and sane region
+     *       descriptors -- under the writer lock that answer is
+     *       authoritative and a second read cannot legitimately disagree.</li>
+     *   <li>If the first attempt returns {@link #READ_FAILURE}, retry once.
+     *       If the retry returns {@link #V2_NO_HEAD}, the chain is empty.
+     *       If the retry also returns {@link #READ_FAILURE}, the failure is
+     *       persistent (file corrupt, hardware error). Only then does the
+     *       .pv-existence check gate the throw: with .pv files present,
+     *       dropping the link would lose sealed data.</li>
      * </ul>
      */
     public static long readLiveSealTxnFromKeyFileOrThrow(
@@ -1276,16 +1282,21 @@ public final class PostingIndexUtils {
         if (firstAttempt >= 0) {
             return firstAttempt;
         }
-        if (firstAttempt == V2_NO_HEAD && !ff.exists(keyFilePath)) {
-            // Defensive: V2_NO_HEAD requires a present, well-formed file; if
-            // the file disappeared between open and now, treat as no data.
+        if (firstAttempt == V2_NO_HEAD) {
+            // Authoritative empty-chain answer: the tri-state reader only
+            // returns V2_NO_HEAD when format version, region descriptors
+            // and the seqlock pair around the head-pointer read all check
+            // out. Under the writer lock no concurrent writer can publish
+            // a head, so a retry cannot produce a different answer. Falling
+            // through to a second attempt would risk a spurious throw if
+            // an injected one-shot read failure trips the retry while a
+            // pre-seal .pv.<colTxn>.0 sidecar exists in the partition.
             return -1;
         }
-        // Retry once. A one-shot read failure (FF injection, pread EINTR,
-        // brief seqlock stall during a concurrent purge before the writer
-        // lock was reacquired) clears on a second open of the .pk file. The
-        // second read reveals whether the chain truly has data, is genuinely
-        // empty, or the .pk file is persistently unreadable.
+        // firstAttempt == READ_FAILURE: retry once. A one-shot read failure
+        // (FF injection, pread EINTR) clears on a second open of the .pk
+        // file. The second read reveals whether the chain truly has data,
+        // is genuinely empty, or the .pk file is persistently unreadable.
         long secondAttempt = readSealTxnFromKeyFileTriState(ff, keyFilePath);
         if (secondAttempt >= 0) {
             return secondAttempt;
