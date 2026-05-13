@@ -551,14 +551,17 @@ public class RoutingFilesFacade implements FilesFacade {
         if (!Files.notDots(pUtf8NameZ)) {
             return false;
         }
-        int savedLen = path.size();
+        // Match Files.typeDirOrSoftLinkDirNoDots: leave path at <root>/<name>
+        // so callers like TableConverter.convertTables can extend it. Saving
+        // and restoring path.size() across the call leaves stale bytes in the
+        // buffer that subsequent .concat() calls write mid-buffer over,
+        // producing paths with interior \0 bytes.
         path.trimTo(rootLen).concat(pUtf8NameZ).$();
         boolean isDir = isDirOrSoftLinkDir(path.$());
         if (isDir && nameSink != null) {
             nameSink.clear();
             nameSink.put(path, rootLen, path.size());
         }
-        path.trimTo(savedLen);
         return isDir;
     }
 
