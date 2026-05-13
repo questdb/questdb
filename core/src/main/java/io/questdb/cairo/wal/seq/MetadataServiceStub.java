@@ -95,6 +95,11 @@ public interface MetadataServiceStub extends MetadataService {
     }
 
     @Override
+    default int getDefaultPartitionFormat() {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
     default int getMetaMaxUncommittedRows() {
         throw new UnsupportedOperationException();
     }
@@ -147,6 +152,11 @@ public interface MetadataServiceStub extends MetadataService {
     @Override
     default void setMatViewRefreshTimer(long startUs, int interval, char unit) {
         throw CairoException.critical(0).put("change of materialized view refresh timer does not update sequencer metadata");
+    }
+
+    @Override
+    default void setMetaDefaultPartitionFormat(int defaultPartitionFormat) {
+        throw CairoException.critical(0).put("change of default partition format does not update sequencer metadata");
     }
 
     @Override

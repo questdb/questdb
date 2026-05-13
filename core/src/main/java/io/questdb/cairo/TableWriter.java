@@ -2190,6 +2190,11 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         return dataAppendPageSize;
     }
 
+    @Override
+    public int getDefaultPartitionFormat() {
+        return metadata.getDefaultPartitionFormat();
+    }
+
     public DedupColumnCommitAddresses getDedupCommitAddresses() {
         return dedupColumnCommitAddresses;
     }
@@ -3087,6 +3092,21 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
         final MatViewDefinition newDefinition = oldDefinition.updateTimer(interval, unit, startUs);
         updateMatViewDefinition(newDefinition);
+    }
+
+    @Override
+    public void setMetaDefaultPartitionFormat(int defaultPartitionFormat) {
+        if (defaultPartitionFormat == TableUtils.DEFAULT_PARTITION_FORMAT_PARQUET) {
+            if (!metadata.isWalEnabled()) {
+                throw CairoException.nonCritical().put("FORMAT PARQUET is only supported on WAL tables");
+            }
+            if (tableToken.isMatView()) {
+                throw CairoException.nonCritical().put("FORMAT PARQUET is not supported on materialized views");
+            }
+        }
+        commit();
+        metadata.setDefaultPartitionFormat(defaultPartitionFormat);
+        writeMetadataToDisk();
     }
 
     @Override
@@ -11108,6 +11128,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             ddlMem.putBool(metadata.isWalEnabled());
             ddlMem.putInt(TableUtils.calculateMetaFormatMinorVersionField(version, columnCount));
             ddlMem.putInt(metadata.getTtlHoursOrMonths());
+            ddlMem.putInt(metadata.getDefaultPartitionFormat());
 
             ddlMem.jumpTo(META_OFFSET_COLUMN_TYPES);
             for (int i = 0; i < columnCount; i++) {

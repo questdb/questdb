@@ -161,6 +161,8 @@ public interface MetadataService {
 
     void forceRemovePartitions(LongList partitionTimestamps);
 
+    int getDefaultPartitionFormat();
+
     int getMetaMaxUncommittedRows();
 
     TableRecordMetadata getMetadata();
@@ -232,6 +234,13 @@ public interface MetadataService {
      * Sets incremental refresh timer values for materialized view.
      */
     void setMatViewRefreshTimer(long startUs, int interval, char unit);
+
+    /**
+     * Sets the default storage format for new partitions of this table.
+     * See {@link io.questdb.cairo.TableUtils#DEFAULT_PARTITION_FORMAT_NATIVE} and
+     * {@link io.questdb.cairo.TableUtils#DEFAULT_PARTITION_FORMAT_PARQUET}.
+     */
+    void setMetaDefaultPartitionFormat(int defaultPartitionFormat);
 
     void setMetaMaxUncommittedRows(int maxUncommittedRows);
 

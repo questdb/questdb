@@ -56,6 +56,8 @@ public class CreateTableOperationBuilderImpl implements CreateTableOperationBuil
     private final ObjList<CharSequence> columnNames = new ObjList<>();
     private long batchO3MaxLag = -1;
     private long batchSize = -1;
+    private int defaultPartitionFormat = TableUtils.DEFAULT_PARTITION_FORMAT_NATIVE;
+    private int defaultPartitionFormatPosition;
     private int defaultSymbolCapacity;
     private boolean ignoreIfExists = false;
     private ExpressionNode likeTableNameExpr;
@@ -108,6 +110,7 @@ public class CreateTableOperationBuilderImpl implements CreateTableOperationBuil
                     volumePosition,
                     ttlHoursOrMonths,
                     ttlPosition,
+                    defaultPartitionFormat,
                     walEnabled,
                     defaultSymbolCapacity,
                     maxUncommittedRows,
@@ -155,6 +158,7 @@ public class CreateTableOperationBuilderImpl implements CreateTableOperationBuil
                 maxUncommittedRows,
                 ttlHoursOrMonths,
                 ttlPosition,
+                defaultPartitionFormat,
                 walEnabled,
                 autoIncludeTs
         );
@@ -167,6 +171,8 @@ public class CreateTableOperationBuilderImpl implements CreateTableOperationBuil
         columnModels.clear();
         batchO3MaxLag = -1;
         batchSize = -1;
+        defaultPartitionFormat = TableUtils.DEFAULT_PARTITION_FORMAT_NATIVE;
+        defaultPartitionFormatPosition = 0;
         defaultSymbolCapacity = 0;
         ignoreIfExists = false;
         likeTableNameExpr = null;
@@ -189,6 +195,14 @@ public class CreateTableOperationBuilderImpl implements CreateTableOperationBuil
 
     public int getColumnCount() {
         return columnNames.size();
+    }
+
+    public int getDefaultPartitionFormat() {
+        return defaultPartitionFormat;
+    }
+
+    public int getDefaultPartitionFormatPosition() {
+        return defaultPartitionFormatPosition;
     }
 
     public int getColumnIndex(CharSequence columnName) {
@@ -264,6 +278,14 @@ public class CreateTableOperationBuilderImpl implements CreateTableOperationBuil
 
     public void setBatchSize(long batchSize) {
         this.batchSize = batchSize;
+    }
+
+    public void setDefaultPartitionFormat(int defaultPartitionFormat) {
+        this.defaultPartitionFormat = defaultPartitionFormat;
+    }
+
+    public void setDefaultPartitionFormatPosition(int defaultPartitionFormatPosition) {
+        this.defaultPartitionFormatPosition = defaultPartitionFormatPosition;
     }
 
     public void setDefaultSymbolCapacity(int defaultSymbolCapacity) {
@@ -404,6 +426,7 @@ public class CreateTableOperationBuilderImpl implements CreateTableOperationBuil
         if (partitionByExpr != null) {
             sink.putAscii(" partition by ").put(partitionByExpr.token);
             ttlToSink(sink);
+            ShowCreateTableRecordCursorFactory.defaultPartitionFormatToSink(defaultPartitionFormat, sink);
             if (walEnabled) {
                 sink.putAscii(" wal");
             }

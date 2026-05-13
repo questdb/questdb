@@ -1655,6 +1655,41 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         }
     }
 
+    private void alterTableSetFormat(
+            TableToken tableToken, int tableNamePosition, TableRecordMetadata tableMetadata
+    ) throws SqlException {
+        final int formatPos = lexer.getPosition();
+        CharSequence tok = expectToken(lexer, "'parquet' or 'native'");
+        final int format;
+        if (isParquetKeyword(tok)) {
+            format = TableUtils.DEFAULT_PARTITION_FORMAT_PARQUET;
+        } else if (isNativeKeyword(tok)) {
+            format = TableUtils.DEFAULT_PARTITION_FORMAT_NATIVE;
+        } else {
+            throw SqlException.$(lexer.lastTokenPosition(), "'parquet' or 'native' expected");
+        }
+        if (format == TableUtils.DEFAULT_PARTITION_FORMAT_PARQUET) {
+            try (TableMetadata metadata = engine.getTableMetadata(tableToken)) {
+                if (!PartitionBy.isPartitioned(metadata.getPartitionBy())) {
+                    throw SqlException.$(formatPos, "FORMAT PARQUET is only supported on partitioned tables");
+                }
+                if (!metadata.isWalEnabled()) {
+                    throw SqlException.$(formatPos, "FORMAT PARQUET is only supported on WAL tables");
+                }
+            }
+            if (tableToken.isMatView()) {
+                throw SqlException.$(formatPos, "FORMAT PARQUET is not supported on materialized views");
+            }
+        }
+        final AlterOperationBuilder setFormat = alterOperationBuilder.ofSetDefaultPartitionFormat(
+                tableNamePosition,
+                tableToken,
+                tableMetadata.getTableId(),
+                format
+        );
+        compiledQuery.ofAlter(setFormat.build());
+    }
+
     private void alterTableSetParam(
             CharSequence paramName, CharSequence value, int paramNamePosition,
             TableToken tableToken, int tableNamePosition, int tableId
@@ -2524,7 +2559,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                 }
             } else if (isSetKeyword(tok)) {
                 tok = SqlUtil.fetchNext(lexer);
-                if (tok == null || (!isParamKeyword(tok) && !isTtlKeyword(tok) && !isTypeKeyword(tok))) {
+                if (tok == null || (!isParamKeyword(tok) && !isTtlKeyword(tok) && !isTypeKeyword(tok) && !isFormatKeyword(tok))) {
                     compileAlterTableSetExt(securityContext, tok, tableToken, tableNamePosition);
                     return;
                 }
@@ -2542,6 +2577,8 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                     }
                 } else if (isTtlKeyword(tok)) {
                     alterTableOrMatViewSetTtl(tableToken, tableNamePosition, tableMetadata);
+                } else if (isFormatKeyword(tok)) {
+                    alterTableSetFormat(tableToken, tableNamePosition, tableMetadata);
                 } else if (isTypeKeyword(tok)) {
                     tok = expectToken(lexer, "'bypass' or 'wal'");
                     if (isBypassKeyword(tok)) {
@@ -5239,9 +5276,9 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                 .$(", tableNamePosition=").$(tableNamePosition)
                 .$(']').$();
         if (tok == null) {
-            throw SqlException.$(lexer.getPosition(), "'param', 'ttl' or 'type' expected");
+            throw SqlException.$(lexer.getPosition(), "'param', 'ttl', 'format' or 'type' expected");
         }
-        throw SqlException.$(lexer.lastTokenPosition(), "'param', 'ttl' or 'type' expected");
+        throw SqlException.$(lexer.lastTokenPosition(), "'param', 'ttl', 'format' or 'type' expected");
     }
 
     protected void compileBackup(SqlExecutionContext executionContext, @Transient CharSequence sqlText) throws SqlException {

@@ -77,6 +77,7 @@ public class AlterOperation extends AbstractOperation implements Mutable {
     public final static short SET_MAT_VIEW_REFRESH_TIMER = SET_MAT_VIEW_REFRESH_LIMIT + 1; // 24
     public final static short SET_MAT_VIEW_REFRESH = SET_MAT_VIEW_REFRESH_TIMER + 1; // 25
     public final static short SET_PARQUET_ENCODING = SET_MAT_VIEW_REFRESH + 1; // 26
+    public final static short SET_DEFAULT_PARTITION_FORMAT = SET_PARQUET_ENCODING + 1; // 27
     // V2 layout (this branch onwards): index type fits in low 3 bits, dedup
     // key sits at bit 3, and bit 63 is the format-version marker that
     // distinguishes v2 payloads from any pre-v2 ALTER message still queued in
@@ -207,7 +208,7 @@ public class AlterOperation extends AbstractOperation implements Mutable {
                     securityContext.authorizeAlterTableDropPartition(tableToken);
             case ATTACH_PARTITION -> securityContext.authorizeAlterTableAttachPartition(tableToken);
             case DETACH_PARTITION -> securityContext.authorizeAlterTableDetachPartition(tableToken);
-            case SET_PARAM_MAX_UNCOMMITTED_ROWS, SET_PARAM_COMMIT_LAG, SET_TTL ->
+            case SET_PARAM_MAX_UNCOMMITTED_ROWS, SET_PARAM_COMMIT_LAG, SET_TTL, SET_DEFAULT_PARTITION_FORMAT ->
                     securityContext.authorizeAlterTableSetParam(tableToken);
             case SET_DEDUP_ENABLE -> securityContext.authorizeAlterTableDedupEnable(tableToken);
             case SET_DEDUP_DISABLE -> securityContext.authorizeAlterTableDedupDisable(tableToken);
@@ -637,6 +638,16 @@ public class AlterOperation extends AbstractOperation implements Mutable {
         );
     }
 
+    private void applyDefaultPartitionFormat(MetadataService svc) {
+        final int defaultPartitionFormat = (int) extraInfo.get(0);
+        try {
+            svc.setMetaDefaultPartitionFormat(defaultPartitionFormat);
+        } catch (CairoException e) {
+            e.position(tableNamePosition);
+            throw e;
+        }
+    }
+
     private void applyTtl(MetadataService svc) {
         final int ttlHoursOrMonths = (int) extraInfo.get(0);
         try {
@@ -781,6 +792,9 @@ public class AlterOperation extends AbstractOperation implements Mutable {
                 break;
             case SET_PARQUET_ENCODING:
                 setParquetEncoding(svc);
+                break;
+            case SET_DEFAULT_PARTITION_FORMAT:
+                applyDefaultPartitionFormat(svc);
                 break;
             default:
                 LOG.error()

@@ -36,6 +36,7 @@ public class CairoTable implements Sinkable {
     public final IntList columnOrderList;
     public final ObjList<CairoColumn> columns;
     private boolean dedup;
+    private int defaultPartitionFormat;
     private boolean hasParquetPartitions;
     private int matViewRefreshLimitHoursOrMonths;
     private int matViewTimerInterval;
@@ -73,6 +74,7 @@ public class CairoTable implements Sinkable {
         o3MaxLag = fromTab.getO3MaxLag();
         timestampIndex = fromTab.getTimestampIndex();
         ttlHoursOrMonths = fromTab.getTtlHoursOrMonths();
+        defaultPartitionFormat = fromTab.getDefaultPartitionFormat();
         softLink = fromTab.isSoftLink();
         dedup = fromTab.hasDedup();
         hasParquetPartitions = fromTab.hasParquetPartitions();
@@ -101,6 +103,10 @@ public class CairoTable implements Sinkable {
 
     public CairoColumn getColumnQuiet(int position) {
         return columns.getQuiet(position);
+    }
+
+    public int getDefaultPartitionFormat() {
+        return defaultPartitionFormat;
     }
 
     public String getDirectoryName() {
@@ -199,6 +205,10 @@ public class CairoTable implements Sinkable {
 
     public void setDedupFlag(boolean dedup) {
         this.dedup = dedup;
+    }
+
+    public void setDefaultPartitionFormat(int defaultPartitionFormat) {
+        this.defaultPartitionFormat = defaultPartitionFormat;
     }
 
     public void setHasParquetPartitions(boolean hasParquetPartitions) {

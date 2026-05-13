@@ -103,6 +103,8 @@ public final class TableUtils {
     public static final String CHECKPOINT_SEQ_TXN_FILE_NAME = "_txn";
     public static final long COLUMN_NAME_TXN_NONE = -1L;
     public static final String COLUMN_VERSION_FILE_NAME = "_cv";
+    public static final int DEFAULT_PARTITION_FORMAT_NATIVE = 0;
+    public static final int DEFAULT_PARTITION_FORMAT_PARQUET = 1;
     public static final String DEFAULT_PARTITION_NAME = "default";
     public static final String DETACHED_DIR_MARKER = ".detached";
     public static final long ESTIMATED_VAR_COL_SIZE = 28;
@@ -114,8 +116,10 @@ public final class TableUtils {
     public static final int LONGS_PER_TX_ATTACHED_PARTITION_MSB = Numbers.msb(LONGS_PER_TX_ATTACHED_PARTITION);
     public static final long META_COLUMN_DATA_SIZE = 32;
     public static final String META_FILE_NAME = "_meta";
-    public static final short META_FORMAT_MINOR_VERSION_LATEST = 1;
+    public static final short META_FORMAT_MINOR_VERSION_DEFAULT_PARTITION_FORMAT = 2;
+    public static final short META_FORMAT_MINOR_VERSION_LATEST = 2;
     public static final short META_FORMAT_MINOR_VERSION_PARQUET_ENCODING_CONFIG = 1;
+    public static final short META_FORMAT_MINOR_VERSION_TTL = 1;
     public static final long META_OFFSET_COLUMN_TYPES = 128;
     public static final long META_OFFSET_COUNT = 0;
     public static final long META_OFFSET_MAX_UNCOMMITTED_ROWS = 20; // INT
@@ -130,6 +134,7 @@ public final class TableUtils {
     public static final long META_OFFSET_WAL_ENABLED = 40; // BOOLEAN
     public static final long META_OFFSET_META_FORMAT_MINOR_VERSION = META_OFFSET_WAL_ENABLED + 1; // INT
     public static final long META_OFFSET_TTL_HOURS_OR_MONTHS = META_OFFSET_META_FORMAT_MINOR_VERSION + 4; // INT
+    public static final long META_OFFSET_DEFAULT_PARTITION_FORMAT = META_OFFSET_TTL_HOURS_OR_MONTHS + 4; // INT
     public static final String META_PREV_FILE_NAME = "_meta.prev";
     public static final String META_SWAP_FILE_NAME = "_meta.swp";
     public static final int MIN_INDEX_VALUE_BLOCK_SIZE = Numbers.ceilPow2(2);
@@ -2548,6 +2553,7 @@ public final class TableUtils {
         mem.putBool(tableStruct.isWalEnabled());
         mem.putInt(TableUtils.calculateMetaFormatMinorVersionField(0, count));
         mem.putInt(tableStruct.getTtlHoursOrMonths());
+        mem.putInt(tableStruct.getDefaultPartitionFormat());
 
         mem.jumpTo(TableUtils.META_OFFSET_COLUMN_TYPES);
         assert count > 0;
@@ -2755,8 +2761,16 @@ public final class TableUtils {
         return metaMem.getInt(META_OFFSET_COLUMN_TYPES + columnIndex * META_COLUMN_DATA_SIZE + 4 + 8);
     }
 
+    static int getDefaultPartitionFormat(MemoryR metaMem) {
+        return isMetaFormatAtLeast(metaMem, META_FORMAT_MINOR_VERSION_DEFAULT_PARTITION_FORMAT)
+                ? metaMem.getInt(TableUtils.META_OFFSET_DEFAULT_PARTITION_FORMAT)
+                : DEFAULT_PARTITION_FORMAT_NATIVE;
+    }
+
     static int getTtlHoursOrMonths(MemoryR metaMem) {
-        return isMetaFormatUpToDate(metaMem) ? metaMem.getInt(TableUtils.META_OFFSET_TTL_HOURS_OR_MONTHS) : 0;
+        return isMetaFormatAtLeast(metaMem, META_FORMAT_MINOR_VERSION_TTL)
+                ? metaMem.getInt(TableUtils.META_OFFSET_TTL_HOURS_OR_MONTHS)
+                : 0;
     }
 
     static boolean isColumnCovering(MemoryR metaMem, int columnIndex) {

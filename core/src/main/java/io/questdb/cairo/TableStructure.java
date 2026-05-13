@@ -62,6 +62,15 @@ public interface TableStructure {
     int getTimestampIndex();
 
     /**
+     * Returns the default storage format for new partitions.
+     * {@link TableUtils#DEFAULT_PARTITION_FORMAT_NATIVE} (default) or
+     * {@link TableUtils#DEFAULT_PARTITION_FORMAT_PARQUET}.
+     */
+    default int getDefaultPartitionFormat() {
+        return TableUtils.DEFAULT_PARTITION_FORMAT_NATIVE;
+    }
+
+    /**
      * Returns the time-to-live (TTL) of the data in this table:
      * if positive, it's in hours;
      * if negative, it's in months (and the actual value is positive);
