@@ -181,8 +181,8 @@ public abstract class AbstractArrayAggDoubleGroupByFunction extends ArrayFunctio
             // cursor's read-only flyweight.
             long renderPtr = owner.allocator.malloc((long) count * Double.BYTES);
             for (int i = 0; i < count; i++) {
-                double v = Unsafe.getUnsafe().getDouble(ptr + HEADER_SIZE + (long) i * ENTRY_SIZE + VALUE_OFFSET);
-                Unsafe.getUnsafe().putDouble(renderPtr + (long) i * Double.BYTES, v);
+                double v = Unsafe.getDouble(ptr + HEADER_SIZE + (long) i * ENTRY_SIZE + VALUE_OFFSET);
+                Unsafe.putDouble(renderPtr + (long) i * Double.BYTES, v);
             }
             owner.cachedRenderPtr = renderPtr;
             owner.cachedSrcPtr = ptr;

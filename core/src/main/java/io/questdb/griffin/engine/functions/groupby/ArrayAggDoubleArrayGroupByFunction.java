@@ -63,8 +63,8 @@ public class ArrayAggDoubleArrayGroupByFunction extends AbstractArrayAggDoubleGr
         checkCapacityLimit(len);
         int capacity = Math.max(INITIAL_CAPACITY, Numbers.ceilPow2(len));
         long ptr = allocator.malloc(HEADER_SIZE + (long) capacity * ENTRY_SIZE);
-        Unsafe.getUnsafe().putInt(ptr, len);
-        Unsafe.getUnsafe().putInt(ptr + CAPACITY_OFFSET, capacity);
+        Unsafe.putInt(ptr, len);
+        Unsafe.putInt(ptr + CAPACITY_OFFSET, capacity);
         copyArrayElements(arr, len, ptr + HEADER_SIZE, rowId);
         mapValue.putLong(valueIndex, ptr);
     }
@@ -85,8 +85,8 @@ public class ArrayAggDoubleArrayGroupByFunction extends AbstractArrayAggDoubleGr
             computeFirst(mapValue, record, rowId);
             return;
         }
-        int count = Unsafe.getUnsafe().getInt(ptr);
-        int capacity = Unsafe.getUnsafe().getInt(ptr + CAPACITY_OFFSET);
+        int count = Unsafe.getInt(ptr);
+        int capacity = Unsafe.getInt(ptr + CAPACITY_OFFSET);
         int newCount = count + len;
         if (newCount < 0) {
             throw CairoException.nonCritical().put("array_agg: array size exceeds maximum supported size");
@@ -100,11 +100,11 @@ public class ArrayAggDoubleArrayGroupByFunction extends AbstractArrayAggDoubleGr
             long oldSize = HEADER_SIZE + (long) capacity * ENTRY_SIZE;
             long newSize = HEADER_SIZE + (long) newCapacity * ENTRY_SIZE;
             ptr = allocator.realloc(ptr, oldSize, newSize);
-            Unsafe.getUnsafe().putInt(ptr + CAPACITY_OFFSET, newCapacity);
+            Unsafe.putInt(ptr + CAPACITY_OFFSET, newCapacity);
             mapValue.putLong(valueIndex, ptr);
         }
         copyArrayElements(arr, len, ptr + HEADER_SIZE + (long) count * ENTRY_SIZE, rowId);
-        Unsafe.getUnsafe().putInt(ptr, newCount);
+        Unsafe.putInt(ptr, newCount);
     }
 
     private static void copyArrayElements(ArrayView arr, int len, long destAddr, long rowId) {
@@ -116,9 +116,9 @@ public class ArrayAggDoubleArrayGroupByFunction extends AbstractArrayAggDoubleGr
             // gets clobbered.
             arr.flatView().appendPlainDoubleValue(destAddr, arr.getFlatViewOffset(), len);
             for (int i = len - 1; i >= 0; i--) {
-                double v = Unsafe.getUnsafe().getDouble(destAddr + (long) i * Double.BYTES);
-                Unsafe.getUnsafe().putLong(destAddr + (long) i * ENTRY_SIZE, rowId);
-                Unsafe.getUnsafe().putDouble(destAddr + (long) i * ENTRY_SIZE + VALUE_OFFSET, v);
+                double v = Unsafe.getDouble(destAddr + (long) i * Double.BYTES);
+                Unsafe.putLong(destAddr + (long) i * ENTRY_SIZE, rowId);
+                Unsafe.putDouble(destAddr + (long) i * ENTRY_SIZE + VALUE_OFFSET, v);
             }
         } else {
             // Non-vanilla 1D view (e.g., a column slice of a 2D array). Apply the
@@ -130,8 +130,8 @@ public class ArrayAggDoubleArrayGroupByFunction extends AbstractArrayAggDoubleGr
             final int stride = arr.getStride(0);
             for (int i = 0; i < len; i++) {
                 final double v = flatView.getDoubleAtAbsIndex(flatOffset + i * stride);
-                Unsafe.getUnsafe().putLong(destAddr + (long) i * ENTRY_SIZE, rowId);
-                Unsafe.getUnsafe().putDouble(destAddr + (long) i * ENTRY_SIZE + VALUE_OFFSET, v);
+                Unsafe.putLong(destAddr + (long) i * ENTRY_SIZE, rowId);
+                Unsafe.putDouble(destAddr + (long) i * ENTRY_SIZE + VALUE_OFFSET, v);
             }
         }
     }

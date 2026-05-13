@@ -46,19 +46,19 @@ public class ArrayAggDoubleGroupByFunction extends AbstractArrayAggDoubleGroupBy
     @Override
     public void computeFirst(MapValue mapValue, Record record, long rowId) {
         long ptr = allocator.malloc(HEADER_SIZE + INITIAL_CAPACITY * ENTRY_SIZE);
-        Unsafe.getUnsafe().putInt(ptr, 1);
-        Unsafe.getUnsafe().putInt(ptr + CAPACITY_OFFSET, INITIAL_CAPACITY);
-        Unsafe.getUnsafe().putLong(ptr + HEADER_SIZE, rowId);
-        Unsafe.getUnsafe().putDouble(ptr + HEADER_SIZE + VALUE_OFFSET, arg.getDouble(record));
+        Unsafe.putInt(ptr, 1);
+        Unsafe.putInt(ptr + CAPACITY_OFFSET, INITIAL_CAPACITY);
+        Unsafe.putLong(ptr + HEADER_SIZE, rowId);
+        Unsafe.putDouble(ptr + HEADER_SIZE + VALUE_OFFSET, arg.getDouble(record));
         mapValue.putLong(valueIndex, ptr);
     }
 
     @Override
     public void computeNext(MapValue mapValue, Record record, long rowId) {
         long ptr = mapValue.getLong(valueIndex);
-        int count = Unsafe.getUnsafe().getInt(ptr);
+        int count = Unsafe.getInt(ptr);
         checkCapacityLimit(count + 1);
-        int capacity = Unsafe.getUnsafe().getInt(ptr + CAPACITY_OFFSET);
+        int capacity = Unsafe.getInt(ptr + CAPACITY_OFFSET);
         if (count == capacity) {
             if (capacity > (Integer.MAX_VALUE >> 1)) {
                 throw CairoException.nonCritical().put("array_agg: array size exceeds maximum supported size");
@@ -67,11 +67,11 @@ public class ArrayAggDoubleGroupByFunction extends AbstractArrayAggDoubleGroupBy
             long oldSize = HEADER_SIZE + (long) capacity * ENTRY_SIZE;
             long newSize = HEADER_SIZE + (long) newCapacity * ENTRY_SIZE;
             ptr = allocator.realloc(ptr, oldSize, newSize);
-            Unsafe.getUnsafe().putInt(ptr + CAPACITY_OFFSET, newCapacity);
+            Unsafe.putInt(ptr + CAPACITY_OFFSET, newCapacity);
             mapValue.putLong(valueIndex, ptr);
         }
-        Unsafe.getUnsafe().putLong(ptr + HEADER_SIZE + (long) count * ENTRY_SIZE, rowId);
-        Unsafe.getUnsafe().putDouble(ptr + HEADER_SIZE + (long) count * ENTRY_SIZE + VALUE_OFFSET, arg.getDouble(record));
-        Unsafe.getUnsafe().putInt(ptr, count + 1);
+        Unsafe.putLong(ptr + HEADER_SIZE + (long) count * ENTRY_SIZE, rowId);
+        Unsafe.putDouble(ptr + HEADER_SIZE + (long) count * ENTRY_SIZE + VALUE_OFFSET, arg.getDouble(record));
+        Unsafe.putInt(ptr, count + 1);
     }
 }
