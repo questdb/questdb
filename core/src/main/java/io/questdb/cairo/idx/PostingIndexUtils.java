@@ -296,6 +296,12 @@ public final class PostingIndexUtils {
     // EF header: sentinel(4B) + count(4B) + L(1B) + universe(8B) = 17B
     static final int EF_HEADER_SIZE = 17;
     private static final long PARSE_FAIL = Long.MIN_VALUE;
+    /**
+     * Tri-state sentinel returned by {@link #readSealTxnFromKeyFdTriState} to
+     * mark a read-or-corruption failure. Distinct from {@link #V2_NO_HEAD},
+     * which signals a well-formed file with an explicitly empty chain.
+     */
+    static final long READ_FAILURE = Long.MIN_VALUE;
     // Bounded retry budget for the seqlock loop in readSealTxnFromKeyFd. The
     // writer always leaves one of the two pages stable across a write, so a
     // consistent snapshot is normally found within one or two iterations.
@@ -1069,12 +1075,56 @@ public final class PostingIndexUtils {
      * <p>
      * Returns {@code -1} if the file is too short, the format version is
      * not v2, the chain is empty, both header pages fail seqlock
-     * validation, or every retry observes a torn read.
+     * validation, or every retry observes a torn read. Writer-locked
+     * callers that must distinguish "empty chain" from "read failure"
+     * should call {@link #readSealTxnFromKeyFdTriState} instead.
      */
     public static long readSealTxnFromKeyFd(FilesFacade ff, long keyFd) {
+        long result = readSealTxnFromKeyFdTriState(ff, keyFd);
+        return result == READ_FAILURE ? -1 : result;
+    }
+
+    /**
+     * Reads the current {@code sealTxn} from a .pk file. Returns -1 if the file
+     * cannot be opened or both metadata pages fail the seq-lock validation.
+     * <p>
+     * Callers use this when they need to construct the path of the live .pv or
+     * .pc&lt;N&gt; files but only have the {@code postingColumnNameTxn}.
+     */
+    public static long readSealTxnFromKeyFile(FilesFacade ff, LPSZ keyFilePath) {
+        long fd = ff.openRO(keyFilePath);
+        if (fd < 0) {
+            return -1;
+        }
+        try {
+            return readSealTxnFromKeyFd(ff, fd);
+        } finally {
+            ff.close(fd);
+        }
+    }
+
+    /**
+     * Tri-state companion of {@link #readSealTxnFromKeyFd}. Returns:
+     * <ul>
+     *   <li>{@code >= 0} the live sealTxn for the head chain entry.</li>
+     *   <li>{@link #V2_NO_HEAD} (-1) when the file is well-formed and the
+     *       chain is explicitly empty. Distinguished from a read failure by
+     *       a clean format version read and a stable seqlock pair around
+     *       the head-pointer observation.</li>
+     *   <li>{@link #READ_FAILURE} when the .pk file is too short, the
+     *       format version mismatches, the head pointer lies outside the
+     *       entry region, the region descriptors look unreadable, or every
+     *       retry observes a torn seqlock.</li>
+     * </ul>
+     * {@link #readSealTxnFromKeyFd} collapses the last two into {@code -1},
+     * which is sufficient for read-mostly callers; only the strict
+     * writer-side caller needs the distinction to avoid throwing on a
+     * legitimately empty chain.
+     */
+    static long readSealTxnFromKeyFdTriState(FilesFacade ff, long keyFd) {
         long fileSize = ff.length(keyFd);
         if (fileSize < KEY_FILE_RESERVED) {
-            return -1;
+            return READ_FAILURE;
         }
         for (int attempt = 0; attempt < SEAL_TXN_READ_ATTEMPTS; attempt++) {
             long seqA = ff.readNonNegativeLong(keyFd, PAGE_A_OFFSET + V2_HEADER_OFFSET_SEQUENCE_START);
@@ -1110,23 +1160,52 @@ public final class PostingIndexUtils {
             // Verify format and head-entry pointer, then read the head
             // entry's sealTxn. ff.readNonNegativeLong returns -1 on
             // negative or unreadable values, so V2_NO_HEAD (-1) and any
-            // I/O error fold into a single sentinel here.
+            // I/O error fold into the same -1 -- the post-seqlock check
+            // plus the region-descriptor sanity below disambiguates them.
             long formatVersion = ff.readNonNegativeLong(keyFd, pageOffset + V2_HEADER_OFFSET_FORMAT_VERSION);
             if (formatVersion != V2_FORMAT_VERSION) {
-                return -1;
+                return READ_FAILURE;
             }
             long headEntryOffset = ff.readNonNegativeLong(keyFd, pageOffset + V2_HEADER_OFFSET_HEAD_ENTRY_OFFSET);
             long regionBase = ff.readNonNegativeLong(keyFd, pageOffset + V2_HEADER_OFFSET_REGION_BASE);
             long regionLimit = ff.readNonNegativeLong(keyFd, pageOffset + V2_HEADER_OFFSET_REGION_LIMIT);
 
-            // Empty chain or unreadable pointer.
-            if (headEntryOffset < 0 || headEntryOffset < regionBase || headEntryOffset >= regionLimit) {
+            // Region descriptors must be sensible -- base sits past the
+            // reserved header pages and limit is at least equal to base
+            // (limit == base is the legitimate empty-region shape that a
+            // freshly initialised .pk publishes before its first seal).
+            // An unreadable descriptor (folded to -1) or an inverted pair
+            // flunks here and is treated as a read failure.
+            if (regionBase < KEY_FILE_RESERVED || regionLimit < regionBase) {
                 long postSeqStart = ff.readNonNegativeLong(keyFd, pageOffset + V2_HEADER_OFFSET_SEQUENCE_START);
                 long postSeqEnd = ff.readNonNegativeLong(keyFd, pageOffset + V2_HEADER_OFFSET_SEQUENCE_END);
                 if (postSeqStart != expectedSeq || postSeqEnd != expectedSeq) {
                     continue;
                 }
-                return -1;
+                return READ_FAILURE;
+            }
+
+            if (headEntryOffset < 0) {
+                // V2_NO_HEAD: explicit empty chain. The format and region
+                // descriptors all read cleanly, so the -1 we see for the
+                // head pointer cannot be a read error -- the only way to
+                // get a negative head pointer here is the on-disk
+                // V2_NO_HEAD sentinel.
+                long postSeqStart = ff.readNonNegativeLong(keyFd, pageOffset + V2_HEADER_OFFSET_SEQUENCE_START);
+                long postSeqEnd = ff.readNonNegativeLong(keyFd, pageOffset + V2_HEADER_OFFSET_SEQUENCE_END);
+                if (postSeqStart != expectedSeq || postSeqEnd != expectedSeq) {
+                    continue;
+                }
+                return V2_NO_HEAD;
+            }
+            if (headEntryOffset < regionBase || headEntryOffset >= regionLimit) {
+                // Out-of-region head pointer: torn read or corruption.
+                long postSeqStart = ff.readNonNegativeLong(keyFd, pageOffset + V2_HEADER_OFFSET_SEQUENCE_START);
+                long postSeqEnd = ff.readNonNegativeLong(keyFd, pageOffset + V2_HEADER_OFFSET_SEQUENCE_END);
+                if (postSeqStart != expectedSeq || postSeqEnd != expectedSeq) {
+                    continue;
+                }
+                return READ_FAILURE;
             }
 
             long sealTxn = ff.readNonNegativeLong(keyFd, headEntryOffset + V2_ENTRY_OFFSET_SEAL_TXN);
@@ -1140,23 +1219,20 @@ public final class PostingIndexUtils {
                 return sealTxn;
             }
         }
-        return -1;
+        return READ_FAILURE;
     }
 
     /**
-     * Reads the current {@code sealTxn} from a .pk file. Returns -1 if the file
-     * cannot be opened or both metadata pages fail the seq-lock validation.
-     * <p>
-     * Callers use this when they need to construct the path of the live .pv or
-     * .pc&lt;N&gt; files but only have the {@code postingColumnNameTxn}.
+     * Tri-state companion of {@link #readSealTxnFromKeyFile}. See
+     * {@link #readSealTxnFromKeyFdTriState} for return semantics.
      */
-    public static long readSealTxnFromKeyFile(FilesFacade ff, LPSZ keyFilePath) {
+    static long readSealTxnFromKeyFileTriState(FilesFacade ff, LPSZ keyFilePath) {
         long fd = ff.openRO(keyFilePath);
         if (fd < 0) {
-            return -1;
+            return READ_FAILURE;
         }
         try {
-            return readSealTxnFromKeyFd(ff, fd);
+            return readSealTxnFromKeyFdTriState(ff, fd);
         } finally {
             ff.close(fd);
         }
@@ -1164,19 +1240,29 @@ public final class PostingIndexUtils {
 
     /**
      * Strict variant of {@link #readSealTxnFromKeyFile} for writer-locked contexts
-     * (column rename, parquet conversion) where a -1 return cannot be silently
-     * swallowed. The .pk file is expected to be present and seqlock-stable. Returns
-     * the live sealTxn on success; throws {@link CairoException#critical} when
-     * {@link #readSealTxnFromKeyFd} returns -1 and a .pv file matching
-     * {@code postingColumnNameTxn} exists in the directory -- that combination
-     * means the chain has data we cannot afford to silently drop. A truly empty
-     * chain (no .pv files in the directory) still returns -1.
+     * (column rename, parquet conversion) where a silent -1 from the
+     * non-strict reader would let the caller hard-link {@code .d} and
+     * {@code .pk} files without their referenced {@code .pv} sidecar,
+     * corrupting the renamed column. Returns the live sealTxn on success and
+     * {@code -1} when the chain is truly empty; throws
+     * {@link CairoException#critical} only when the .pk file is persistently
+     * unreadable AND a .pv file matching {@code postingColumnNameTxn} exists
+     * in the partition directory.
      * <p>
-     * The .pv-presence check disambiguates the overloaded -1 sentinel of
-     * {@link #readSealTxnFromKeyFd}: a transient read failure (e.g. pread returning
-     * EINTR, or a FilesFacade wrapper injecting -1) is indistinguishable from a
-     * legitimately empty chain at the key-file level, but the directory listing
-     * is authoritative for whether sealed data exists.
+     * Disambiguation walks two retries of the tri-state reader
+     * ({@link #readSealTxnFromKeyFileTriState}):
+     * <ul>
+     *   <li>If either retry returns a non-negative sealTxn, the chain has
+     *       data and that value wins. A one-shot transient read failure
+     *       (FilesFacade fault injection, pread EINTR, etc.) clears between
+     *       opens, so the second read sees the true file state.</li>
+     *   <li>If the second retry returns {@link #V2_NO_HEAD}, the chain is
+     *       confirmed empty -- no .pv to link, no throw.</li>
+     *   <li>If the second retry also returns {@link #READ_FAILURE}, the
+     *       failure is persistent (file corrupt, hardware error). Only then
+     *       does the .pv-existence check gate the throw: with .pv files
+     *       present, dropping the link would lose sealed data.</li>
+     * </ul>
      */
     public static long readLiveSealTxnFromKeyFileOrThrow(
             FilesFacade ff,
@@ -1186,11 +1272,40 @@ public final class PostingIndexUtils {
             long postingColumnNameTxn,
             LPSZ keyFilePath
     ) {
-        long sealTxn = readSealTxnFromKeyFile(ff, keyFilePath);
-        if (sealTxn >= 0) {
-            return sealTxn;
+        long firstAttempt = readSealTxnFromKeyFileTriState(ff, keyFilePath);
+        if (firstAttempt >= 0) {
+            return firstAttempt;
         }
+        if (firstAttempt == V2_NO_HEAD && !ff.exists(keyFilePath)) {
+            // Defensive: V2_NO_HEAD requires a present, well-formed file; if
+            // the file disappeared between open and now, treat as no data.
+            return -1;
+        }
+        // Retry once. A one-shot read failure (FF injection, pread EINTR,
+        // brief seqlock stall during a concurrent purge before the writer
+        // lock was reacquired) clears on a second open of the .pk file. The
+        // second read reveals whether the chain truly has data, is genuinely
+        // empty, or the .pk file is persistently unreadable.
+        long secondAttempt = readSealTxnFromKeyFileTriState(ff, keyFilePath);
+        if (secondAttempt >= 0) {
+            return secondAttempt;
+        }
+        if (secondAttempt == V2_NO_HEAD) {
+            return -1;
+        }
+        // secondAttempt == READ_FAILURE: persistent failure. Capture errno
+        // before ff.exists() and scanSealedFiles()'s iterateDir() overwrite
+        // the thread-local errno set by the failing .pk read.
+        final int savedErrno = ff.errno();
         if (!ff.exists(keyFilePath)) {
+            return -1;
+        }
+        // The .pk file exists but the reader cannot produce a stable
+        // header snapshot. Distinguish "file is initialised but the read
+        // path is genuinely failing" from "file is mid-init or leftover
+        // garbage from a failed earlier init" -- the latter has no chain
+        // and no on-disk sealTxn to lose, so no .pv link is required.
+        if (!hasInitialisedKeyFileHeader(ff, keyFilePath)) {
             return -1;
         }
         final boolean[] hasPv = {false};
@@ -1207,10 +1322,13 @@ public final class PostingIndexUtils {
             }
         });
         if (hasPv[0]) {
-            throw CairoException.critical(ff.errno())
+            // scanSealedFiles trimmed path back to the partition dir, so the
+            // keyFilePath LPSZ now points at the partition dir rather than at
+            // the .pk.<txn> file. Rebuild the full path for the diagnostic.
+            throw CairoException.critical(savedErrno)
                     .put("could not read live sealTxn from posting key file but .pv files exist; ")
-                    .put("treating as I/O error to avoid silently dropping sealed data [path=")
-                    .put(keyFilePath).put(']');
+                    .put("file is unreadable or corrupt, refusing to drop sealed data [path=")
+                    .put(keyFileName(path.trimTo(pathTrimTo), columnName, postingColumnNameTxn)).put(']');
         }
         return -1;
     }

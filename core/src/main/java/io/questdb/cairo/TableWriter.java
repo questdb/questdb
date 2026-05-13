@@ -4779,9 +4779,12 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                         long fromPk = PostingIndexUtils.readLiveSealTxnFromKeyFileOrThrow(
                                 ff, path, srcDirLen, columnName, columnNameTxn,
                                 keyFileName(indexType, path.trimTo(srcDirLen), columnName, columnNameTxn));
-                        if (fromPk >= 0) {
-                            linkSealTxn = fromPk;
-                        }
+                        // Live data sits at sealTxn=0 in the pre-seal state
+                        // (chain empty). Fall back to 0 instead of leaving
+                        // linkSealTxn at the columnNameTxn, which would point
+                        // valueFileName at .pv.<col>.<col> -- a path that
+                        // never exists.
+                        linkSealTxn = fromPk >= 0 ? fromPk : 0L;
                     }
                     if (
                             !linkFile(ff,
@@ -6811,12 +6814,19 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 ff, path, srcDirLen, srcColumnName, srcColumnNameTxn,
                 keyFileName(IndexType.POSTING, path.trimTo(srcDirLen), srcColumnName, srcColumnNameTxn)
         );
-        if (liveSealTxn >= 0) {
-            LPSZ srcPv = IndexFactory.valueFileName(IndexType.POSTING, path.trimTo(srcDirLen), srcColumnName, srcColumnNameTxn, liveSealTxn);
-            LPSZ dstPv = IndexFactory.valueFileName(IndexType.POSTING, other.trimTo(dstDirLen), dstColumnName, dstColumnNameTxn, liveSealTxn);
-            if (ff.exists(srcPv) && !ff.exists(dstPv)) {
-                linkFile(ff, srcPv, dstPv);
-            }
+        // When the chain is empty (liveSealTxn < 0) the column is in its
+        // pre-seal state: the live unsealed values sit in .pv.<colTxn>.0
+        // rather than under a chain-published sealTxn. ADD COLUMN creates
+        // this file before any seal runs, so a rename arriving before the
+        // first seal must still hardlink it -- otherwise the renamed
+        // column reads empty for every key. We fall back to sealTxn=0 in
+        // that case; ff.exists() naturally guards columns that have no
+        // posting data at all (no .pv.<colTxn>.0 on disk).
+        final long pvSealTxn = liveSealTxn >= 0 ? liveSealTxn : 0L;
+        LPSZ srcPv = IndexFactory.valueFileName(IndexType.POSTING, path.trimTo(srcDirLen), srcColumnName, srcColumnNameTxn, pvSealTxn);
+        LPSZ dstPv = IndexFactory.valueFileName(IndexType.POSTING, other.trimTo(dstDirLen), dstColumnName, dstColumnNameTxn, pvSealTxn);
+        if (ff.exists(srcPv) && !ff.exists(dstPv)) {
+            linkFile(ff, srcPv, dstPv);
         }
         // Sidecar info file (.pci) is not subject to seal purge and is one per
         // posting column instance, so it is linked unconditionally.
@@ -6833,7 +6843,10 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         PostingIndexUtils.scanSealedFiles(ff, path, srcDirLen, srcColumnName, new PostingIndexUtils.SealedFileVisitor() {
             @Override
             public void onCoverDataFile(int includeIdx, long postingColumnNameTxn, long coveredColumnNameTxn, long sealTxn) {
-                if (postingColumnNameTxn != srcColumnNameTxn || sealTxn != liveSealTxn) {
+                // Match the live generation. pvSealTxn folds the empty
+                // chain into sealTxn=0 so pre-seal .pc<N>.<col>.0.* files
+                // are linked alongside the live .pv.<col>.0.
+                if (postingColumnNameTxn != srcColumnNameTxn || sealTxn != pvSealTxn) {
                     return;
                 }
                 linkFile(ff,

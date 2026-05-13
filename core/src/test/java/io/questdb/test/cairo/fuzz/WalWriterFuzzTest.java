@@ -235,8 +235,9 @@ public class WalWriterFuzzTest extends AbstractFuzzTest {
     // .pv.<columnNameTxn>.<sealTxn>. Seeds captured from a CI failure of
     // testConvertPartitionToParquet. The fuzz harness's FailureFileFacade
     // injects the .pk read failure that the silent-skip code path used to
-    // swallow; with the strict variant in place, the writer distresses and
-    // the harness records an expected I/O failure.
+    // swallow; the strict reader's tri-state retry now re-opens the .pk on
+    // the second attempt, sees the real chain head, and links the matching
+    // .pv before the rename commits.
     @Test
     public void testConvertPartitionToParquetRenameMissingPostingValue() throws Exception {
         Rnd rnd = generateRandom(LOG, 7_759_823_511_215_046L, 1_778_689_403_692L);
