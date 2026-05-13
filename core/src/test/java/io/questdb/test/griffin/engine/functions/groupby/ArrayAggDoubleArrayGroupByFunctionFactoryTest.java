@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -43,8 +43,10 @@ public class ArrayAggDoubleArrayGroupByFunctionFactoryTest extends AbstractCairo
                     (null)
                     """);
             assertQueryNoLeakCheck(
-                    "agg\n" +
-                            "null\n",
+                    """
+                            agg
+                            null
+                            """,
                     "SELECT array_agg(arr) agg FROM tab",
                     null,
                     false,
@@ -98,8 +100,10 @@ public class ArrayAggDoubleArrayGroupByFunctionFactoryTest extends AbstractCairo
                     (ARRAY[5.0])
                     """);
             assertQueryNoLeakCheck(
-                    "agg\n" +
-                            "[1.0,2.0,3.0,4.0,5.0]\n",
+                    """
+                            agg
+                            [1.0,2.0,3.0,4.0,5.0]
+                            """,
                     "SELECT array_agg(arr) agg FROM tab",
                     null,
                     false,
@@ -119,8 +123,10 @@ public class ArrayAggDoubleArrayGroupByFunctionFactoryTest extends AbstractCairo
                     (ARRAY[5.0, 6.0])
                     """);
             assertQueryNoLeakCheck(
-                    "agg\n" +
-                            "[1.0,2.0,3.0,4.0,5.0,6.0]\n",
+                    """
+                            agg
+                            [1.0,2.0,3.0,4.0,5.0,6.0]
+                            """,
                     "SELECT array_agg(arr) agg FROM tab",
                     null,
                     false,
@@ -140,8 +146,10 @@ public class ArrayAggDoubleArrayGroupByFunctionFactoryTest extends AbstractCairo
                     (ARRAY[3.0, 4.0])
                     """);
             assertQueryNoLeakCheck(
-                    "agg\n" +
-                            "[1.0,2.0,3.0,4.0]\n",
+                    """
+                            agg
+                            [1.0,2.0,3.0,4.0]
+                            """,
                     "SELECT array_agg(arr) agg FROM tab",
                     null,
                     false,
@@ -155,8 +163,10 @@ public class ArrayAggDoubleArrayGroupByFunctionFactoryTest extends AbstractCairo
         assertMemoryLeak(() -> {
             execute("CREATE TABLE tab (arr DOUBLE[])");
             assertQueryNoLeakCheck(
-                    "agg\n" +
-                            "null\n",
+                    """
+                            agg
+                            null
+                            """,
                     "SELECT array_agg(arr) agg FROM tab",
                     null,
                     false,
@@ -183,10 +193,12 @@ public class ArrayAggDoubleArrayGroupByFunctionFactoryTest extends AbstractCairo
                     ('eu', 'de', ARRAY[20.0, 30.0])
                     """);
             assertQueryNoLeakCheck(
-                    "region\tcountry\tagg\n" +
-                            "eu\tde\t[10.0,20.0,30.0]\n" +
-                            "eu\tfr\t[1.0,2.0,3.0]\n" +
-                            "na\tus\t[100.0,200.0]\n",
+                    """
+                            region\tcountry\tagg
+                            eu\tde\t[10.0,20.0,30.0]
+                            eu\tfr\t[1.0,2.0,3.0]
+                            na\tus\t[100.0,200.0]
+                            """,
                     "SELECT region, country, array_agg(arr) agg FROM tab GROUP BY region, country ORDER BY region, country",
                     null,
                     true,
@@ -207,9 +219,11 @@ public class ArrayAggDoubleArrayGroupByFunctionFactoryTest extends AbstractCairo
                     ('b', ARRAY[30.0, 40.0, 50.0])
                     """);
             assertQueryNoLeakCheck(
-                    "grp\tagg\n" +
-                            "a\t[1.0,2.0,3.0]\n" +
-                            "b\t[10.0,20.0,30.0,40.0,50.0]\n",
+                    """
+                            grp\tagg
+                            a\t[1.0,2.0,3.0]
+                            b\t[10.0,20.0,30.0,40.0,50.0]
+                            """,
                     "SELECT grp, array_agg(arr) agg FROM tab ORDER BY grp",
                     null,
                     true,
@@ -232,9 +246,11 @@ public class ArrayAggDoubleArrayGroupByFunctionFactoryTest extends AbstractCairo
                     (null, ARRAY[5.0, 6.0])
                     """);
             assertQueryNoLeakCheck(
-                    "grp\tagg\n" +
-                            "\t[3.0,5.0,6.0]\n" +
-                            "a\t[1.0,2.0,4.0]\n",
+                    """
+                            grp\tagg
+                            \t[3.0,5.0,6.0]
+                            a\t[1.0,2.0,4.0]
+                            """,
                     "SELECT grp, array_agg(arr) agg FROM tab ORDER BY grp",
                     null,
                     true,
@@ -253,7 +269,7 @@ public class ArrayAggDoubleArrayGroupByFunctionFactoryTest extends AbstractCairo
         setProperty(PropertyKey.CAIRO_SQL_PAGE_FRAME_MAX_ROWS, 100);
         assertMemoryLeak(() -> {
             final WorkerPool pool = new WorkerPool(() -> 4);
-            TestUtils.execute(pool, (engine, compiler, sqlExecutionContext) -> {
+            TestUtils.execute(pool, (engine, _, sqlExecutionContext) -> {
                 engine.execute("CREATE TABLE tab (grp SYMBOL, arr DOUBLE[])", sqlExecutionContext);
                 // 2000 rows: every 3rd has a NULL key (positions 0, 3, 6, ...).
                 // grp values cycle through g0..g4 for non-null rows.
@@ -324,7 +340,7 @@ public class ArrayAggDoubleArrayGroupByFunctionFactoryTest extends AbstractCairo
         setProperty(PropertyKey.CAIRO_SQL_MAX_ARRAY_ELEMENT_COUNT, 49_999);
         assertMemoryLeak(() -> {
             final WorkerPool pool = new WorkerPool(() -> 4);
-            TestUtils.execute(pool, (engine, compiler, sqlExecutionContext) -> {
+            TestUtils.execute(pool, (engine, _, sqlExecutionContext) -> {
                 engine.execute("CREATE TABLE tab (arr DOUBLE[])", sqlExecutionContext);
                 StringBuilder sb = new StringBuilder("INSERT INTO tab VALUES\n");
                 for (int i = 0; i < 10_000; i++) {
@@ -368,9 +384,11 @@ public class ArrayAggDoubleArrayGroupByFunctionFactoryTest extends AbstractCairo
                     ('b', ARRAY[4.0, 5.0], 30.0)
                     """);
             assertQueryNoLeakCheck(
-                    "grp\tagg\tavg\n" +
-                            "a\t[1.0,2.0,3.0]\t15.0\n" +
-                            "b\t[4.0,5.0]\t30.0\n",
+                    """
+                            grp\tagg\tavg
+                            a\t[1.0,2.0,3.0]\t15.0
+                            b\t[4.0,5.0]\t30.0
+                            """,
                     "SELECT grp, array_agg(arr) agg, avg(val) avg FROM tab ORDER BY grp",
                     null,
                     true,
@@ -393,8 +411,10 @@ public class ArrayAggDoubleArrayGroupByFunctionFactoryTest extends AbstractCairo
                     (ARRAY[[50.0, 60.0], [70.0, 80.0]])
                     """);
             assertQueryNoLeakCheck(
-                    "agg\n" +
-                            "[10.0,30.0,50.0,70.0]\n",
+                    """
+                            agg
+                            [10.0,30.0,50.0,70.0]
+                            """,
                     "SELECT array_agg(transpose(m)[1]) agg FROM tab",
                     null,
                     false,
@@ -414,8 +434,10 @@ public class ArrayAggDoubleArrayGroupByFunctionFactoryTest extends AbstractCairo
                     (ARRAY[3.0, 4.0])
                     """);
             assertQueryNoLeakCheck(
-                    "agg\n" +
-                            "[1.0,2.0,3.0,4.0]\n",
+                    """
+                            agg
+                            [1.0,2.0,3.0,4.0]
+                            """,
                     "SELECT array_agg(arr) agg FROM tab",
                     null,
                     false,
@@ -434,8 +456,10 @@ public class ArrayAggDoubleArrayGroupByFunctionFactoryTest extends AbstractCairo
                     (ARRAY[null, 4.0])
                     """);
             assertQueryNoLeakCheck(
-                    "agg\n" +
-                            "[1.0,null,null,4.0]\n",
+                    """
+                            agg
+                            [1.0,null,null,4.0]
+                            """,
                     "SELECT array_agg(arr) agg FROM tab",
                     null,
                     false,
@@ -456,8 +480,10 @@ public class ArrayAggDoubleArrayGroupByFunctionFactoryTest extends AbstractCairo
                     (ARRAY[3.0])
                     """);
             assertQueryNoLeakCheck(
-                    "agg\n" +
-                            "[1.0,2.0,3.0]\n",
+                    """
+                            agg
+                            [1.0,2.0,3.0]
+                            """,
                     "SELECT array_agg(arr) agg FROM tab",
                     null,
                     false,
@@ -473,7 +499,7 @@ public class ArrayAggDoubleArrayGroupByFunctionFactoryTest extends AbstractCairo
         setProperty(PropertyKey.CAIRO_SQL_PAGE_FRAME_MAX_ROWS, 100);
         assertMemoryLeak(() -> {
             final WorkerPool pool = new WorkerPool(() -> 4);
-            TestUtils.execute(pool, (engine, compiler, sqlExecutionContext) -> {
+            TestUtils.execute(pool, (engine, _, sqlExecutionContext) -> {
                 engine.execute("CREATE TABLE tab (grp SYMBOL, arr DOUBLE[])", sqlExecutionContext);
                 StringBuilder sb = new StringBuilder("INSERT INTO tab VALUES\n");
                 for (int i = 0; i < 1000; i++) {
@@ -489,12 +515,14 @@ public class ArrayAggDoubleArrayGroupByFunctionFactoryTest extends AbstractCairo
                         sqlExecutionContext,
                         "SELECT grp, array_count(array_agg(arr)) cnt, array_sum(array_agg(arr)) total FROM tab ORDER BY grp",
                         sink,
-                        "grp\tcnt\ttotal\n" +
-                                "g0\t400\t199200.0\n" +
-                                "g1\t400\t199600.0\n" +
-                                "g2\t400\t200000.0\n" +
-                                "g3\t400\t200400.0\n" +
-                                "g4\t400\t200800.0\n"
+                        """
+                                grp\tcnt\ttotal
+                                g0\t400\t199200.0
+                                g1\t400\t199600.0
+                                g2\t400\t200000.0
+                                g3\t400\t200400.0
+                                g4\t400\t200800.0
+                                """
                 );
             }, configuration, LOG);
         });
@@ -507,7 +535,7 @@ public class ArrayAggDoubleArrayGroupByFunctionFactoryTest extends AbstractCairo
         setProperty(PropertyKey.CAIRO_SQL_PAGE_FRAME_MAX_ROWS, 100);
         assertMemoryLeak(() -> {
             final WorkerPool pool = new WorkerPool(() -> 4);
-            TestUtils.execute(pool, (engine, compiler, sqlExecutionContext) -> {
+            TestUtils.execute(pool, (engine, _, sqlExecutionContext) -> {
                 engine.execute("CREATE TABLE tab (grp SYMBOL, arr DOUBLE[])", sqlExecutionContext);
                 // 10 groups x 1000 single-element arrays. Row i goes to group g(i%10) with ARRAY[i.0].
                 // Group gN receives elements N.0, (N+10).0, ..., (N+9990).0 in insertion order.
@@ -658,9 +686,11 @@ public class ArrayAggDoubleArrayGroupByFunctionFactoryTest extends AbstractCairo
                     ('b', ARRAY[20.0, 30.0])
                     """);
             assertQueryNoLeakCheck(
-                    "grp\tagg\tcnt\tsum\n" +
-                            "a\t[1.0,2.0,3.0,4.0,5.0]\t5\t15.0\n" +
-                            "b\t[10.0,20.0,30.0]\t3\t60.0\n",
+                    """
+                            grp\tagg\tcnt\tsum
+                            a\t[1.0,2.0,3.0,4.0,5.0]\t5\t15.0
+                            b\t[10.0,20.0,30.0]\t3\t60.0
+                            """,
                     "SELECT grp, agg, array_count(agg) cnt, array_sum(agg) sum " +
                             "FROM (SELECT grp, array_agg(arr) agg FROM tab) ORDER BY grp",
                     null,
@@ -682,9 +712,11 @@ public class ArrayAggDoubleArrayGroupByFunctionFactoryTest extends AbstractCairo
                     ('2024-01-01T01:30:00', ARRAY[6.0])
                     """);
             assertQueryNoLeakCheck(
-                    "ts\tagg\n" +
-                            "2024-01-01T00:00:00.000000Z\t[1.0,2.0,3.0]\n" +
-                            "2024-01-01T01:00:00.000000Z\t[4.0,5.0,6.0]\n",
+                    """
+                            ts\tagg
+                            2024-01-01T00:00:00.000000Z\t[1.0,2.0,3.0]
+                            2024-01-01T01:00:00.000000Z\t[4.0,5.0,6.0]
+                            """,
                     "SELECT ts, array_agg(arr) agg FROM tab SAMPLE BY 1h ALIGN TO CALENDAR",
                     "ts",
                     true,
@@ -742,10 +774,12 @@ public class ArrayAggDoubleArrayGroupByFunctionFactoryTest extends AbstractCairo
             // Two gaps (01:00-03:00 and 04:00-06:00) must be omitted.
             // Null array at 00:45 is skipped by array_agg, not by FILL(NONE).
             assertQueryNoLeakCheck(
-                    "ts\tagg\n" +
-                            "2024-01-01T00:00:00.000000Z\t[1.0,2.0,3.0]\n" +
-                            "2024-01-01T03:00:00.000000Z\t[4.0,5.0]\n" +
-                            "2024-01-01T06:00:00.000000Z\t[6.0]\n",
+                    """
+                            ts\tagg
+                            2024-01-01T00:00:00.000000Z\t[1.0,2.0,3.0]
+                            2024-01-01T03:00:00.000000Z\t[4.0,5.0]
+                            2024-01-01T06:00:00.000000Z\t[6.0]
+                            """,
                     "SELECT ts, array_agg(arr) agg FROM tab SAMPLE BY 1h FILL(NONE)",
                     "ts",
                     true,
@@ -764,10 +798,12 @@ public class ArrayAggDoubleArrayGroupByFunctionFactoryTest extends AbstractCairo
                     ('2024-01-01T02:00:00', ARRAY[3.0, 4.0])
                     """);
             assertQueryNoLeakCheck(
-                    "ts\tagg\n" +
-                            "2024-01-01T00:00:00.000000Z\t[1.0,2.0]\n" +
-                            "2024-01-01T01:00:00.000000Z\tnull\n" +
-                            "2024-01-01T02:00:00.000000Z\t[3.0,4.0]\n",
+                    """
+                            ts\tagg
+                            2024-01-01T00:00:00.000000Z\t[1.0,2.0]
+                            2024-01-01T01:00:00.000000Z\tnull
+                            2024-01-01T02:00:00.000000Z\t[3.0,4.0]
+                            """,
                     "SELECT ts, array_agg(arr) agg FROM tab SAMPLE BY 1h FILL(NULL)",
                     "ts",
                     false,
@@ -787,10 +823,12 @@ public class ArrayAggDoubleArrayGroupByFunctionFactoryTest extends AbstractCairo
                     ('2024-01-01T04:00:00', ARRAY[4.0, 5.0])
                     """);
             assertQueryNoLeakCheck(
-                    "ts\tagg\n" +
-                            "2024-01-01T00:00:00.000000Z\t[1.0,2.0,3.0]\n" +
-                            "2024-01-01T02:00:00.000000Z\t[1.0,2.0,3.0]\n" +
-                            "2024-01-01T04:00:00.000000Z\t[4.0,5.0]\n",
+                    """
+                            ts\tagg
+                            2024-01-01T00:00:00.000000Z\t[1.0,2.0,3.0]
+                            2024-01-01T02:00:00.000000Z\t[1.0,2.0,3.0]
+                            2024-01-01T04:00:00.000000Z\t[4.0,5.0]
+                            """,
                     "SELECT ts, array_agg(arr) agg FROM tab SAMPLE BY 2h FILL(PREV)",
                     "ts"
             );
@@ -839,8 +877,10 @@ public class ArrayAggDoubleArrayGroupByFunctionFactoryTest extends AbstractCairo
             execute("CREATE TABLE tab (arr DOUBLE[])");
             execute("INSERT INTO tab VALUES (ARRAY[1.0, 2.0, 3.0])");
             assertQueryNoLeakCheck(
-                    "agg\n" +
-                            "[1.0,2.0,3.0]\n",
+                    """
+                            agg
+                            [1.0,2.0,3.0]
+                            """,
                     "SELECT array_agg(arr) agg FROM tab",
                     null,
                     false,
@@ -864,8 +904,10 @@ public class ArrayAggDoubleArrayGroupByFunctionFactoryTest extends AbstractCairo
                     (ARRAY[0.0, -0.0, 3.141592653589793])
                     """);
             assertQueryNoLeakCheck(
-                    "agg\n" +
-                            "[1.7976931348623157E308,-1.7976931348623157E308,2.2250738585072014E-308,5.0E-324,0.0,-0.0,3.141592653589793]\n",
+                    """
+                            agg
+                            [1.7976931348623157E308,-1.7976931348623157E308,2.2250738585072014E-308,5.0E-324,0.0,-0.0,3.141592653589793]
+                            """,
                     "SELECT array_agg(arr) agg FROM tab",
                     null,
                     false,

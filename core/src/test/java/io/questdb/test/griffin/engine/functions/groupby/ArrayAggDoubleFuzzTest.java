@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -228,7 +228,7 @@ public class ArrayAggDoubleFuzzTest extends AbstractCairoTest {
         setProperty(PropertyKey.CAIRO_SQL_PAGE_FRAME_MAX_ROWS, 100);
         assertMemoryLeak(() -> {
             final WorkerPool pool = new WorkerPool(() -> 4);
-            TestUtils.execute(pool, (engine, compiler, sqlExecutionContext) -> {
+            TestUtils.execute(pool, (engine, _, sqlExecutionContext) -> {
                 for (int iter = 0; iter < ITERATIONS; iter++) {
                     int numGroups = rnd.nextInt(5) + 1;
                     int rowsPerGroup = rnd.nextInt(20) + 1;

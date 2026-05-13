@@ -36,8 +36,10 @@ public class FirstArrayGroupByFunctionFactoryTest extends AbstractCairoTest {
             execute("insert into tab values (ARRAY[1.0, 2.0])");
             execute("insert into tab values (ARRAY[3.0, 4.0])");
             assertQuery(
-                    "arr\n" +
-                            "[1.0,2.0]\n",
+                    """
+                            arr
+                            [1.0,2.0]
+                            """,
                     "select first(arr) arr from tab",
                     null,
                     false,
@@ -56,9 +58,11 @@ public class FirstArrayGroupByFunctionFactoryTest extends AbstractCairoTest {
             execute("insert into tab values (2, ARRAY[40.0, 41.0])");
             execute("insert into tab values (2, ARRAY[50.0, 51.0])");
             assertQuery(
-                    "grp\tarr\n" +
-                            "1\t[10.0,11.0]\n" +
-                            "2\t[40.0,41.0]\n",
+                    """
+                            grp\tarr
+                            1\t[10.0,11.0]
+                            2\t[40.0,41.0]
+                            """,
                     "select grp, first(arr) arr from tab order by grp",
                     null,
                     true,
@@ -74,8 +78,10 @@ public class FirstArrayGroupByFunctionFactoryTest extends AbstractCairoTest {
             execute("insert into tab values (null)");
             execute("insert into tab values (ARRAY[1.0, 2.0])");
             assertQuery(
-                    "arr\n" +
-                            "null\n",
+                    """
+                            arr
+                            null
+                            """,
                     "select first(arr) arr from tab",
                     null,
                     false,
@@ -91,8 +97,10 @@ public class FirstArrayGroupByFunctionFactoryTest extends AbstractCairoTest {
             execute("insert into tab values (ARRAY[])");
             execute("insert into tab values (ARRAY[1.0, 2.0])");
             assertQuery(
-                    "arr\n" +
-                            "[]\n",
+                    """
+                            arr
+                            []
+                            """,
                     "select first(arr) arr from tab",
                     null,
                     false,
@@ -108,8 +116,10 @@ public class FirstArrayGroupByFunctionFactoryTest extends AbstractCairoTest {
             execute("insert into tab values (ARRAY[3.0, null, 5.0])");
             execute("insert into tab values (ARRAY[1.0, 2.0])");
             assertQuery(
-                    "arr\n" +
-                            "[3.0,null,5.0]\n",
+                    """
+                            arr
+                            [3.0,null,5.0]
+                            """,
                     "select first(arr) arr from tab",
                     null,
                     false,
@@ -124,8 +134,10 @@ public class FirstArrayGroupByFunctionFactoryTest extends AbstractCairoTest {
             execute("create table tab (arr double[])");
             execute("insert into tab values (ARRAY[1.0, 2.0])");
             assertQuery(
-                    "arr\n" +
-                            "[1.0,2.0]\n",
+                    """
+                            arr
+                            [1.0,2.0]
+                            """,
                     "select first(arr) arr from tab",
                     null,
                     false,
@@ -141,8 +153,10 @@ public class FirstArrayGroupByFunctionFactoryTest extends AbstractCairoTest {
             execute("insert into tab values (null)");
             execute("insert into tab values (null)");
             assertQuery(
-                    "arr\n" +
-                            "null\n",
+                    """
+                            arr
+                            null
+                            """,
                     "select first(arr) arr from tab",
                     null,
                     false,
@@ -160,9 +174,11 @@ public class FirstArrayGroupByFunctionFactoryTest extends AbstractCairoTest {
             execute("insert into tab values (2, ARRAY[20.0, 21.0])");
             execute("insert into tab values (2, null)");
             assertQuery(
-                    "grp\tarr\n" +
-                            "1\tnull\n" +
-                            "2\t[20.0,21.0]\n",
+                    """
+                            grp\tarr
+                            1\tnull
+                            2\t[20.0,21.0]
+                            """,
                     "select grp, first(arr) arr from tab order by grp",
                     null,
                     true,
@@ -220,8 +236,10 @@ public class FirstArrayGroupByFunctionFactoryTest extends AbstractCairoTest {
             execute("insert into tab values (ARRAY[2.0, 3.0, 4.0])");
             execute("insert into tab values (ARRAY[1.0])");
             assertQuery(
-                    "arr\n" +
-                            "[2.0,3.0,4.0]\n",
+                    """
+                            arr
+                            [2.0,3.0,4.0]
+                            """,
                     "select first(arr) arr from tab",
                     null,
                     false,
