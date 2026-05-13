@@ -34,6 +34,9 @@ import io.questdb.cairo.lv.LiveViewInMemoryTier;
 import io.questdb.cairo.lv.LiveViewInstance;
 import io.questdb.cairo.lv.LiveViewRefreshJob;
 import io.questdb.cairo.lv.LiveViewState;
+import io.questdb.cairo.sql.Record;
+import io.questdb.cairo.sql.RecordCursor;
+import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.griffin.SqlException;
 import io.questdb.mp.Job;
 import io.questdb.std.Chars;
@@ -480,6 +483,191 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
             // Releasing the last pin triggers the actual native free.
             // assertMemoryLeak verifies no leak — the deferred-free path runs.
             tier.releaseRead(pin);
+        });
+    }
+
+    @Test
+    public void testSlowPathSwapFailureKeepsPreviousSlotPublished() throws Exception {
+        // RFC 123 Phase 1b end-to-end: when publishToInMemoryTier's slow-path
+        // swap throws after a successful tryAcquireWrite, the catch block must
+        // call releaseWriteWithoutPublish so the previously-published slot
+        // stays visible to readers and the held sentinel does not deadlock the
+        // next refresh. The unit-level test
+        // testReleaseWriteWithoutPublishKeepsPriorSlotPublished pins the tier
+        // contract; this smoke test drives the same recovery via the refresh
+        // worker so the production catch path itself is exercised.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms IN MEMORY 5s AS " +
+                    "SELECT ts, x, row_number() OVER () AS rn FROM base WHERE x > 0");
+
+            // First refresh populates the tier with a known row. Establishes
+            // the "previously-published" state the recovery path must preserve.
+            setCurrentMicros(0L);
+            execute("INSERT INTO base (ts, x) VALUES ('2026-05-12T00:00:00.000001Z', 7)");
+            drainWalQueue();
+            LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("lv");
+            Assert.assertNotNull(instance);
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                drainJob(job);
+
+                LiveViewInMemoryTier tier = instance.getInMemoryTier();
+                Assert.assertNotNull("tier must be allocated after first refresh", tier);
+                int publishedBeforeFailure = tier.getPublishedIdx();
+                LiveViewInMemoryBuffer pubSlotBeforeFailure = tier.getSlot(publishedBeforeFailure);
+                Assert.assertEquals("first refresh seeded one row", 1, pubSlotBeforeFailure.rowCount());
+                Assert.assertEquals(7, pubSlotBeforeFailure.getInt(0, 1));
+                int retriesBefore = instance.getFlushRetryCount();
+                Assert.assertEquals("no retries before injection", 0, retriesBefore);
+
+                // Arm a one-shot publishSwap failure. Wall-clock advance so the
+                // FLUSH EVERY gate (100ms) opens for the next refresh cycle.
+                tier.setFailNextPublishSwap(new RuntimeException("test: simulated mid-swap failure"));
+                setCurrentMicros(200_000L);
+                execute("INSERT INTO base (ts, x) VALUES ('2026-05-12T00:00:00.000002Z', 13)");
+                drainWalQueue();
+                drainJob(job);
+
+                // Recovery contract:
+                //   1. Previously-published slot still holds the original row;
+                //      readers never observe a zero-row slot.
+                //   2. publishedIdx did not flip.
+                //   3. Sentinel on the write slot is cleared, so a subsequent
+                //      refresh can take it.
+                Assert.assertEquals(
+                        "publishedIdx must not flip after failed swap",
+                        publishedBeforeFailure,
+                        tier.getPublishedIdx()
+                );
+                LiveViewInMemoryBuffer pubSlotAfterFailure = tier.getSlot(tier.getPublishedIdx());
+                Assert.assertEquals(
+                        "previously-published slot must still hold the original row",
+                        1,
+                        pubSlotAfterFailure.rowCount()
+                );
+                Assert.assertEquals(7, pubSlotAfterFailure.getInt(0, 1));
+                Assert.assertTrue(
+                        "in-mem-tier swap failure must tick the flush retry counter",
+                        instance.getFlushRetryCount() > retriesBefore
+                );
+
+                // The on-disk tier did advance — the inline apply committed
+                // before publishToInMemoryTier ran. Both base rows must be
+                // visible through SELECT (which reads from disk in Phase 1b).
+                assertSql(
+                        "x\trn\n" +
+                                "7\t1\n" +
+                                "13\t2\n",
+                        "SELECT x, rn FROM lv ORDER BY ts"
+                );
+
+                // A subsequent refresh must succeed normally: the sentinel was
+                // released, the staging buffer is repopulated from the next
+                // commit, and publishSwap flips the tier into a slot containing
+                // the retained row from the previously-published slot plus the
+                // new staging row.
+                //
+                // Phase 1b note: the row processed by the failed refresh cycle
+                // (x=13) is durable on disk via the inline apply that committed
+                // before publishToInMemoryTier ran, but it never made it into
+                // the in-mem tier — the slow-path swap that would have copied
+                // it threw. The tier therefore lags the on-disk tier by one
+                // row until that row ages out of the IN MEMORY window. Reads
+                // route through disk in Phase 1b, so this gap is invisible to
+                // SELECT; once seam_ts routing lands, the recovery path will
+                // need to re-source the missed rows from disk (or reset the
+                // seam) on the next successful swap. Documented here so the
+                // assertion doesn't drift silently when that lands.
+                setCurrentMicros(400_000L);
+                execute("INSERT INTO base (ts, x) VALUES ('2026-05-12T00:00:00.000003Z', 21)");
+                drainWalQueue();
+                drainJob(job);
+                Assert.assertNotEquals(
+                        "third refresh must successfully flip publishedIdx",
+                        publishedBeforeFailure,
+                        tier.getPublishedIdx()
+                );
+                LiveViewInMemoryBuffer pubSlotAfterRecovery = tier.getSlot(tier.getPublishedIdx());
+                Assert.assertEquals(
+                        "post-recovery slot holds the retained row plus the new staging row",
+                        2,
+                        pubSlotAfterRecovery.rowCount()
+                );
+                Assert.assertEquals(7, pubSlotAfterRecovery.getInt(0, 1));
+                Assert.assertEquals(21, pubSlotAfterRecovery.getInt(1, 1));
+                Assert.assertEquals(0, instance.getFlushRetryCount());
+            }
+
+            execute("DROP LIVE VIEW lv");
+        });
+    }
+
+    @Test
+    public void testSqlCursorPinKeepsTierAliveAcrossDrop() throws Exception {
+        // RFC 123 §"DROP LIVE VIEW" step 4 "modulo cursor pins": a SQL
+        // RecordCursor opened against an LV pins the in-mem tier slot for its
+        // lifetime; concurrent DROP LIVE VIEW marks the tier closed but
+        // deferred-frees native memory until the cursor releases. The unit-
+        // adjacent test testCursorPinKeepsTierAliveAcrossDrop drives the pin
+        // directly through the tier API; this smoke test exercises the same
+        // contract through the SQL path that production cursors take
+        // (LiveViewRecordCursorFactory.getCursor -> LiveViewRecordCursor.of
+        // -> tier.acquireRead, then on close -> tier.releaseRead).
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 1s IN MEMORY 5s AS " +
+                    "SELECT ts, x, row_number() OVER () AS rn FROM base WHERE x > 0");
+            execute("INSERT INTO base (ts, x) VALUES " +
+                    "('2026-05-12T00:00:00.000001Z', 4), " +
+                    "('2026-05-12T00:00:00.000002Z', 9)");
+            drainWalQueue();
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                drainJob(job);
+            }
+
+            LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("lv");
+            Assert.assertNotNull(instance);
+            LiveViewInMemoryTier tier = instance.getInMemoryTier();
+            Assert.assertNotNull("tier must be allocated after refresh", tier);
+
+            // Open the cursor via the SQL path. LiveViewRecordCursorFactory
+            // wraps the disk factory and pins the tier slot at getCursor; the
+            // pin survives until cursor.close().
+            try (RecordCursorFactory factory = select("SELECT x FROM lv ORDER BY ts")) {
+                RecordCursor cursor = factory.getCursor(sqlExecutionContext);
+                try {
+                    // Consume the first row to confirm the cursor is live.
+                    Assert.assertTrue("cursor must yield first row", cursor.hasNext());
+                    Record record = cursor.getRecord();
+                    Assert.assertEquals(4, record.getInt(0));
+
+                    // DROP while the cursor is mid-scan. Registry-level
+                    // visibility is gone immediately; the tier is marked
+                    // closed but native memory is held by the cursor's pin.
+                    execute("DROP LIVE VIEW lv");
+
+                    // A fresh acquireRead after DROP must reject cleanly.
+                    Assert.assertEquals(
+                            "post-DROP acquireRead must return -1",
+                            -1,
+                            tier.acquireRead()
+                    );
+
+                    // The cursor still works: the disk-side TableReader holds
+                    // its partition versions independently of the LV
+                    // registry, and DROP defers physical deletion until all
+                    // readers release.
+                    Assert.assertTrue("cursor must yield second row after DROP", cursor.hasNext());
+                    Assert.assertEquals(9, record.getInt(0));
+                    Assert.assertFalse("cursor must terminate after the second row", cursor.hasNext());
+                } finally {
+                    // Closing the cursor releases the tier pin; deferred-free
+                    // runs because no other reader holds the tier. assertMemoryLeak
+                    // verifies the native refcount block and column buffers are
+                    // ultimately freed.
+                    cursor.close();
+                }
+            }
         });
     }
 

@@ -107,9 +107,18 @@ import static io.questdb.cairo.wal.WalUtils.WAL_NAME_BASE;
 public class LiveViewRefreshJob implements Job, QuietCloseable {
     private static final Log LOG = LogFactory.getLog(LiveViewRefreshJob.class);
     private final PageFrameAddressCache addressCache = new PageFrameAddressCache();
+    private final AnchorDispatchingCursor anchorDispatchingCursor = new AnchorDispatchingCursor();
     private final ApplyWal2TableJob applyJob;
     private final BlockFileWriter blockFileWriter;
     private final EntityColumnFilter columnFilter = new EntityColumnFilter();
+    private final IntList columnIndexes = new IntList();
+    private final IntList columnSizeShifts = new IntList();
+    private final CairoEngine engine;
+    private final LiveViewRefreshSqlExecutionContext executionContext;
+    private final FilteringRecordCursor filteringCursor = new FilteringRecordCursor();
+    private final PageFrameMemoryPool memoryPool = new PageFrameMemoryPool(0);
+    private final Path path = new Path();
+    private final LiveViewRefreshTask refreshTask = new LiveViewRefreshTask();
     // Per-worker staging buffer reused across cycles. Allocated lazily on the
     // first refresh of an LV whose output schema is fully supported by the
     // in-mem tier; reshaped (freed + reallocated) if the next LV's schema
@@ -118,24 +127,22 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
     private LiveViewInMemoryBuffer stagingBuffer;
     private final IntList stagingColumnTypes = new IntList();
     private int stagingTimestampColumnIndex = -1;
+    private final LiveViewStateStore stateStore;
     // Reusable shape buffer for ensureStagingAndTier — alpha-ordered alongside
     // the other staging-related fields so the per-FLUSH-cycle code path can
     // mutate without per-call allocation.
     private final IntList tierColumnTypes = new IntList();
-    private final IntList columnIndexes = new IntList();
-    private final IntList columnSizeShifts = new IntList();
-    private final CairoEngine engine;
-    private final LiveViewRefreshSqlExecutionContext executionContext;
-    private final AnchorDispatchingCursor anchorDispatchingCursor = new AnchorDispatchingCursor();
-    private final FilteringRecordCursor filteringCursor = new FilteringRecordCursor();
-    private final PageFrameMemoryPool memoryPool = new PageFrameMemoryPool(0);
-    private final Path path = new Path();
-    private final LiveViewRefreshTask refreshTask = new LiveViewRefreshTask();
-    private final LiveViewStateStore stateStore;
     private final ObjList<LiveViewInstance> viewInstanceSink = new ObjList<>();
     private final WalEventReader walEventReader;
+    // Reusable WAL-segment cursors hoisted out of incrementalRefresh — each
+    // refresh cycle rebinds them via of() instead of allocating fresh
+    // instances. WalSegmentPageFrameCursor owns the WalReader + extracted-
+    // timestamp scratch buffer; WalSegmentRecordCursor adapts the page frame
+    // into a RecordCursor for the compiled SELECT's filter / window cursor.
+    private final WalSegmentPageFrameCursor walFrameCursor;
     private final StringSink walNameSink = new StringSink();
     private final Path walPath = new Path();
+    private final WalSegmentRecordCursor walRecordCursor;
     private final int workerId;
 
     public LiveViewRefreshJob(int workerId, CairoEngine engine, int sharedQueryWorkerCount) {
@@ -150,6 +157,8 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
         // private state. The global ApplyWal2TableJob.doRun skips LV tokens; this
         // instance is invoked only via applyWalDirect from incrementalRefresh.
         this.applyJob = new ApplyWal2TableJob(engine, sharedQueryWorkerCount);
+        this.walFrameCursor = new WalSegmentPageFrameCursor(engine.getConfiguration());
+        this.walRecordCursor = new WalSegmentRecordCursor(addressCache, memoryPool);
     }
 
     @Override
@@ -160,6 +169,8 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
         Misc.free(walPath);
         Misc.free(path);
         Misc.free(blockFileWriter);
+        Misc.free(walFrameCursor);
+        Misc.free(walRecordCursor);
         Misc.free(addressCache);
         Misc.free(memoryPool);
         Misc.free(applyJob);
@@ -390,10 +401,6 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
         long appendedRows = 0;
         long stagingMaxTs = Numbers.LONG_NULL;
         long stagingMinTs = Numbers.LONG_NULL;
-        WalSegmentPageFrameCursor frameCursor = new WalSegmentPageFrameCursor(
-                engine.getConfiguration(), columnIndexes, columnSizeShifts
-        );
-        WalSegmentRecordCursor walRecordCursor = new WalSegmentRecordCursor(addressCache, memoryPool);
         try (WalWriter walWriter = engine.getWalWriter(instance.getLiveViewToken())) {
             RecordToRowCopier copier = ensureCopier(instance, windowFactory, walWriter);
             int lvTimestampIndex = walWriter.getMetadata().getTimestampIndex();
@@ -441,8 +448,19 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
 
                     walNameSink.clear();
                     walNameSink.put(WAL_NAME_BASE).put(walId);
-                    frameCursor.of(baseToken, walNameSink, segmentId, endRow, startRow, endRow, baseMetadata, dataInfo);
-                    walRecordCursor.of(frameCursor, baseMetadata);
+                    walFrameCursor.of(
+                            baseToken,
+                            walNameSink,
+                            segmentId,
+                            endRow,
+                            startRow,
+                            endRow,
+                            baseMetadata,
+                            columnIndexes,
+                            columnSizeShifts,
+                            dataInfo
+                    );
+                    walRecordCursor.of(walFrameCursor, baseMetadata);
 
                     RecordCursor source = walRecordCursor;
                     if (filter != null) {
@@ -498,8 +516,6 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                     stagingBuffer.setSeamTs(stagingMinTs);
                 }
             }
-        } finally {
-            Misc.free(frameCursor);
         }
 
         if (advanceTo > instance.getLastProcessedSeqTxn()) {

@@ -77,10 +77,9 @@ import org.jetbrains.annotations.Nullable;
  */
 public class WalSegmentPageFrameCursor implements PageFrameCursor {
     private static final long TIMESTAMP_PAIR_BYTES = 16L;
-    private final int columnCount;
-    private final IntList columnIndexes;
+    private final IntList columnIndexes = new IntList();
     private final ColumnMapping columnMapping = new ColumnMapping();
-    private final IntList columnSizeShifts;
+    private final IntList columnSizeShifts = new IntList();
     private final CairoConfiguration configuration;
     private final MemoryCARWImpl extractedTimestampMem;
     private final SingleFrame frame = new SingleFrame();
@@ -96,23 +95,17 @@ public class WalSegmentPageFrameCursor implements PageFrameCursor {
     // A null entry at a given index means that column had no diff in this
     // transaction, so resolution falls through to the reader.
     private final ObjList<DirectSymbolMap> txnSymbolDiffs = new ObjList<>();
+    // Number of base-table columns the current of() call projects; rebound on
+    // each of() invocation. Internal capacity lists (pageAddresses, pageSizes,
+    // symbolTables) grow lazily to match.
+    private int columnCount;
     private boolean consumed;
     private WalReader reader;
     private long rowHi;
     private long rowLo;
 
-    public WalSegmentPageFrameCursor(
-            @NotNull CairoConfiguration configuration,
-            @Transient @NotNull IntList columnIndexes,
-            @Transient @NotNull IntList columnSizeShifts
-    ) {
-        assert columnIndexes.size() == columnSizeShifts.size();
+    public WalSegmentPageFrameCursor(@NotNull CairoConfiguration configuration) {
         this.configuration = configuration;
-        this.columnCount = columnIndexes.size();
-        this.columnIndexes = new IntList(columnCount);
-        this.columnIndexes.addAll(columnIndexes);
-        this.columnSizeShifts = new IntList(columnCount);
-        this.columnSizeShifts.addAll(columnSizeShifts);
         // Pinned scratch buffer for extracted timestamps. 64 KiB base page is
         // small enough to start cheap and doubles as needed.
         this.extractedTimestampMem = new MemoryCARWImpl(
@@ -177,9 +170,13 @@ public class WalSegmentPageFrameCursor implements PageFrameCursor {
      * prepares a single-frame view of rows {@code [rowLo, rowHi)}. The segment must
      * have been physically written with at least {@code segmentRowCount} rows.
      * <p>
-     * The {@code metadata} argument supplies the {@code writerIndex} for each query
-     * column in {@link #getColumnMapping()}; pass the live view's base-table
-     * {@link RecordMetadata}.
+     * {@code columnIndexes} / {@code columnSizeShifts} define the projection: each
+     * SQL output position {@code i} reads base-table writer index
+     * {@code columnIndexes[i]} and (for fixed-width columns) shifts row index by
+     * {@code columnSizeShifts[i]}. Both lists are copied internally so callers may
+     * mutate them between calls. The {@code metadata} argument supplies column types
+     * and {@link RecordMetadata#getColumnIndexQuiet}; pass the live view's base-table
+     * metadata.
      * <p>
      * {@code txnDiffs}, when non-null, supplies the current transaction's
      * {@link SymbolMapDiff} entries. The cursor consumes the cursor into a per-column
@@ -202,9 +199,19 @@ public class WalSegmentPageFrameCursor implements PageFrameCursor {
             long rowLo,
             long rowHi,
             @NotNull RecordMetadata metadata,
+            @Transient @NotNull IntList columnIndexes,
+            @Transient @NotNull IntList columnSizeShifts,
             @Nullable SymbolMapDiffCursor txnDiffs
     ) {
         assert rowLo >= 0 && rowHi >= rowLo && rowHi <= segmentRowCount;
+        assert columnIndexes.size() == columnSizeShifts.size();
+        // Refresh the column-layout snapshot. Internal IntLists are reused across
+        // calls; their contents track the most recent of() invocation.
+        this.columnIndexes.clear();
+        this.columnIndexes.addAll(columnIndexes);
+        this.columnSizeShifts.clear();
+        this.columnSizeShifts.addAll(columnSizeShifts);
+        this.columnCount = columnIndexes.size();
         // Lazily allocate the WalReader once and rebind per segment. Each of() call opens the
         // segment via dataCursor.of(this) and mmaps the column files; openSegment's finally
         // trims path back to the WAL directory after that, which is also why we don't call it

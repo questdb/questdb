@@ -30,6 +30,7 @@ import io.questdb.std.Misc;
 import io.questdb.std.Os;
 import io.questdb.std.QuietCloseable;
 import io.questdb.std.Unsafe;
+import org.jetbrains.annotations.TestOnly;
 
 import java.util.concurrent.atomic.AtomicInteger;
 
@@ -75,6 +76,16 @@ public class LiveViewInMemoryTier implements QuietCloseable {
     // is pinning a slot. The 31-bit counter is more than enough for any
     // realistic reader concurrency.
     private final AtomicInteger state = new AtomicInteger(0);
+    // Test-only failure injection for {@link #publishSwap}. Production code
+    // never sets this. When non-null, the next publishSwap call throws the
+    // stored exception instead of flipping publishedIdx and releasing the
+    // writer sentinel; the field is cleared at the same time so subsequent
+    // calls succeed. The caller (LiveViewRefreshJob.publishToInMemoryTier)
+    // must release the sentinel via releaseWriteWithoutPublish in its catch
+    // block — this is exactly the contract the production catch path relies
+    // on, so the injection exercises the recovery path end-to-end.
+    @TestOnly
+    private volatile RuntimeException failNextPublishSwap;
     private volatile int publishedIdx;
     private long refCountsAddr;
 
@@ -203,6 +214,15 @@ public class LiveViewInMemoryTier implements QuietCloseable {
      * code path: the slot the writer filled is the slot to release.
      */
     public void publishSwap(int newPublishedIdx) {
+        RuntimeException injected = failNextPublishSwap;
+        if (injected != null) {
+            // Single-shot: clear so a subsequent publishSwap on the same tier
+            // succeeds normally. The sentinel stays held on newPublishedIdx;
+            // the caller's catch block clears it via
+            // releaseWriteWithoutPublish (the production contract).
+            failNextPublishSwap = null;
+            throw injected;
+        }
         publishedIdx = newPublishedIdx;
         long addr = refCountsAddr + ((long) newPublishedIdx) * Long.BYTES;
         long observed = Os.compareAndSwap(addr, RC_WRITER_SENTINEL, 0L);
@@ -240,6 +260,18 @@ public class LiveViewInMemoryTier implements QuietCloseable {
                             + ", observed=" + observed + "]"
             );
         }
+    }
+
+    /**
+     * Test-only hook: arms a one-shot failure injection on the next
+     * {@link #publishSwap(int)} call. Used by smoke tests to drive
+     * {@code LiveViewRefreshJob.publishToInMemoryTier}'s catch block via the
+     * actual refresh worker without racing concurrent threads. The injection
+     * fires once and self-clears; production code never sets this.
+     */
+    @TestOnly
+    public void setFailNextPublishSwap(RuntimeException failure) {
+        this.failNextPublishSwap = failure;
     }
 
     /**
