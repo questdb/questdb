@@ -298,6 +298,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             LiveViewWindow window = LiveViewWindow.build(
                     engine.getConfiguration(),
                     compiler.getAsm(),
+                    spec.windowName,
                     projectedMeta,
                     spec.partitionColumnNames,
                     fn,

@@ -84,22 +84,35 @@ public class LiveViewWindow implements QuietCloseable {
     // intrinsic isNew() flips to false on first access; we use this explicit flag
     // so the live-view processRow can distinguish "first row of a partition" from
     // "anchor changed between rows."
+    // Slot 2: byte tombstone — 0 means "alive" (partition saw a row recently), 1
+    // means "stale" (anchor crossed and no follow-up row visited the partition
+    // since). RFC 123 §"Tombstone tracking and periodic compaction" — the
+    // anchor-map compaction trigger in Phase 2a.11 reclaims tombstoned entries.
     private static final int SLOT_ANCHOR_VALUE = 0;
     private static final int SLOT_INITIALIZED = 1;
+    private static final int SLOT_TOMBSTONE = 2;
 
     private final Function anchorExpression;
     private final Map anchorMap;
     private final int anchorValueType;
     private final ObjList<WindowFunction> functions;
     private final RecordSink partitionKeySink;
+    private final String windowName;
+    // Number of anchor-map entries currently flagged SLOT_TOMBSTONE = 1. Mutated
+    // only on the refresh-worker thread inside processRow / toTop; not volatile.
+    // Phase 2a.11 consumes this to decide when to fire compaction (threshold
+    // configured via cairo.live.view.partition.compact.threshold).
+    private long tombstoneCount;
 
     public LiveViewWindow(
+            @NotNull String windowName,
             @NotNull Function anchorExpression,
             int anchorValueType,
             @NotNull Map anchorMap,
             @NotNull RecordSink partitionKeySink,
             @NotNull ObjList<WindowFunction> functions
     ) {
+        this.windowName = windowName;
         this.anchorExpression = anchorExpression;
         this.anchorValueType = anchorValueType;
         this.anchorMap = anchorMap;
@@ -132,6 +145,7 @@ public class LiveViewWindow implements QuietCloseable {
     public static LiveViewWindow build(
             @NotNull CairoConfiguration configuration,
             @NotNull BytecodeAssembler asm,
+            @NotNull String windowName,
             @NotNull RecordMetadata projectedMetadata,
             @NotNull ObjList<String> partitionColumnNames,
             @NotNull Function anchorExpression,
@@ -173,7 +187,7 @@ public class LiveViewWindow implements QuietCloseable {
                     .put("live-view ANCHOR EXPRESSION must return TIMESTAMP or LONG, got ")
                     .put(ColumnType.nameOf(returnType));
         }
-        return new LiveViewWindow(anchorExpression, returnType, map, sink, functions);
+        return new LiveViewWindow(windowName, anchorExpression, returnType, map, sink, functions);
     }
 
     @Override
@@ -187,6 +201,24 @@ public class LiveViewWindow implements QuietCloseable {
 
     public ObjList<WindowFunction> getFunctions() {
         return functions;
+    }
+
+    /**
+     * @return number of anchor-map entries currently marked tombstoned
+     * (SLOT_TOMBSTONE == 1). Consumed by the Phase 2a.11 compaction trigger.
+     */
+    public long getTombstoneCount() {
+        return tombstoneCount;
+    }
+
+    /**
+     * @return the user-facing name of the WINDOW clause this object drives.
+     * Phase 1 enforces a single anchored WINDOW per live view; the name is
+     * persisted into the WINDOW_ANCHOR checkpoint block so future restores
+     * can match by-name rather than by-position.
+     */
+    public String getWindowName() {
+        return windowName;
     }
 
     /**
@@ -210,14 +242,24 @@ public class LiveViewWindow implements QuietCloseable {
 
         long currentAnchor = readAnchorValue(record);
         boolean shouldReset;
+        boolean isNewPartition = value.isNew();
 
-        if (value.isNew()) {
+        if (isNewPartition) {
             // First row for this partition — anchor map didn't carry it yet. Functions
             // either have no per-partition state yet (in which case resetPartition is
             // a no-op) or have stale state from a prior partition that was evicted —
             // resetting it is the safe default.
+            // Tombstone is implicitly 0 (the Map zero-fills new value bytes); the new
+            // partition is alive by definition since this row is creating it.
             shouldReset = true;
         } else {
+            // Visiting an existing partition is evidence the partition is alive again -
+            // clear any prior tombstone so the compaction trigger does not reclaim it.
+            // RFC 123 §"Tombstone tracking and periodic compaction".
+            if (value.getByte(SLOT_TOMBSTONE) == 1) {
+                value.putByte(SLOT_TOMBSTONE, (byte) 0);
+                tombstoneCount--;
+            }
             byte initialized = value.getByte(SLOT_INITIALIZED);
             long lastAnchor = value.getLong(SLOT_ANCHOR_VALUE);
             shouldReset = initialized == 0 || lastAnchor != currentAnchor;
@@ -229,6 +271,18 @@ public class LiveViewWindow implements QuietCloseable {
             }
             value.putLong(SLOT_ANCHOR_VALUE, currentAnchor);
             value.putByte(SLOT_INITIALIZED, (byte) 1);
+            // Tombstone semantics: an anchor crossing on an EXISTING partition resets
+            // its accumulator to identity. We mark the entry as tombstoned, on the
+            // assumption that the partition might go silent after the crossing. A
+            // subsequent row visiting the partition clears the bit in the branch
+            // above; if no row arrives within the residence window, the compaction
+            // trigger (Phase 2a.11) reclaims the entry. Fresh partitions (isNew=true)
+            // are not tombstoned - the first row that creates them is also reviving
+            // them.
+            if (!isNewPartition) {
+                value.putByte(SLOT_TOMBSTONE, (byte) 1);
+                tombstoneCount++;
+            }
         }
     }
 
@@ -240,6 +294,7 @@ public class LiveViewWindow implements QuietCloseable {
      */
     public void toTop() {
         anchorMap.clear();
+        tombstoneCount = 0;
         anchorExpression.toTop();
     }
 
@@ -263,7 +318,7 @@ public class LiveViewWindow implements QuietCloseable {
 
         @Override
         public int getColumnCount() {
-            return 2;
+            return 3;
         }
 
         @Override
@@ -272,6 +327,8 @@ public class LiveViewWindow implements QuietCloseable {
                 case SLOT_ANCHOR_VALUE:
                     return ColumnType.LONG;
                 case SLOT_INITIALIZED:
+                    return ColumnType.BYTE;
+                case SLOT_TOMBSTONE:
                     return ColumnType.BYTE;
                 default:
                     throw new IndexOutOfBoundsException();
