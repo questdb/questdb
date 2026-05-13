@@ -24,6 +24,7 @@
 
 package io.questdb.griffin.engine.functions.groupby;
 
+import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.arr.ArrayView;
 import io.questdb.cairo.arr.FlatArrayView;
@@ -43,8 +44,8 @@ import org.jetbrains.annotations.NotNull;
  */
 public class ArrayAggDoubleArrayGroupByFunction extends AbstractArrayAggDoubleGroupByFunction {
 
-    public ArrayAggDoubleArrayGroupByFunction(@NotNull Function arg, int maxArrayElementCount) {
-        super(arg, maxArrayElementCount);
+    public ArrayAggDoubleArrayGroupByFunction(@NotNull Function arg, @NotNull CairoConfiguration configuration) {
+        super(arg, configuration);
     }
 
     @Override

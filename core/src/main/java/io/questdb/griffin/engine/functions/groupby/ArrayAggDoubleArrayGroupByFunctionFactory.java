@@ -62,6 +62,6 @@ public class ArrayAggDoubleArrayGroupByFunctionFactory implements FunctionFactor
         if (dims != 1) {
             throw SqlException.position(argPositions.getQuick(0)).put("array is not one-dimensional");
         }
-        return new ArrayAggDoubleArrayGroupByFunction(arg, configuration.maxArrayElementCount());
+        return new ArrayAggDoubleArrayGroupByFunction(arg, configuration);
     }
 }

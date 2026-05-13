@@ -25,10 +25,11 @@
 package io.questdb.griffin.engine.functions.groupby;
 
 import io.questdb.cairo.ArrayColumnTypes;
+import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.arr.ArrayView;
-import io.questdb.cairo.arr.BorrowedArray;
+import io.questdb.cairo.arr.DirectArray;
 import io.questdb.cairo.map.MapValue;
 import io.questdb.cairo.sql.ArrayFunction;
 import io.questdb.cairo.sql.Function;
@@ -67,90 +68,76 @@ import org.jetbrains.annotations.NotNull;
  * <pre>
  * | count: INT (4 bytes) | capacity: INT (4 bytes) | (rowId: LONG, value: DOUBLE) * N |
  * </pre>
- * {@link #getArray} produces a fresh allocator-backed flat {@code DOUBLE[]}
- * buffer the first time a group is rendered and caches the
- * {@code (srcPtr -> renderPtr)} mapping per instance. The build buffer is
- * never written to during render, so the read path is safe to call from a
- * shared cursor's GroupByFunction whose {@code initSharedFrom} hands back a
- * read-only flyweight over the same {@link MapValue}.
- * <p>
- * The count field at offset 0 of the build buffer doubles as the shape
- * descriptor for {@link io.questdb.cairo.arr.BorrowedArray}, and
- * {@link #getArray} passes it as the shape address while pointing the value
- * address at the rendered flat buffer.
+ * {@link #getArray} renders into a per-function-instance {@link DirectArray}
+ * the first time a group is read and caches the source build-buffer pointer.
+ * The scratch buffer is grow-only (1.5x reallocation), and its native memory
+ * is owned by the {@code DirectArray} instance and freed on {@link #close()},
+ * not by the {@link GroupByAllocator}. The build buffer is never written to
+ * during render, so the read path is safe to call from a shared cursor's
+ * GroupByFunction whose {@code initSharedFrom} hands back a read-only
+ * flyweight over the same {@link MapValue}; shared instances reuse the
+ * primary's scratch through a back-reference, so a single render serves all
+ * readers of a given group.
  * <p>
  * A single LONG slot in the map value stores the build buffer pointer
  * (0 = null/empty group).
  */
 public abstract class AbstractArrayAggDoubleGroupByFunction extends ArrayFunction implements GroupByFunction, UnaryFunction {
-    // Element count must fit in int when multiplied by Double.BYTES because
-    // BorrowedArray.of() takes valueSize as int. Clamp the configured max
-    // to keep narrowing casts in getArray() safe under all configurations.
     protected static final int BYTE_SAFE_ELEMENT_LIMIT = Integer.MAX_VALUE / Double.BYTES;
     protected static final int CAPACITY_OFFSET = Integer.BYTES;
     protected static final long ENTRY_SIZE = 16L;
     protected static final int HEADER_SIZE = 2 * Integer.BYTES;
     protected static final int INITIAL_CAPACITY = 16;
     protected static final int VALUE_OFFSET = Long.BYTES;
-    protected final Function arg;
-    protected final BorrowedArray borrowedArray = new BorrowedArray();
-    protected final int maxArrayElementCount;
     protected GroupByAllocator allocator;
-    // Single-slot render cache, owned by the primary. The first getArray() call
-    // for a given build buffer copies the values into a fresh flat buffer in
-    // the allocator and remembers the mapping. Shared instances (created by
-    // initSharedFrom for shared cursors like LATERAL joins) read and write
-    // these fields through the primary, so the cache is reset by primary's
-    // clear() on cursor close - matching the StringAgg / ApproxPercentile
-    // shared-container convention.
-    protected long cachedRenderPtr;
+    protected final Function arg;
+
+    // Build-buffer pointer that the scratch currently holds rendered values for.
+    // Lives logically on the primary; shared instances read and write through
+    // owner = primary so a single render is shared with all readers.
     protected long cachedSrcPtr;
+    protected final int maxArrayElementCount;
     // Set on shared instances to redirect cache and allocator access through
     // the primary. Null on the primary itself.
     protected AbstractArrayAggDoubleGroupByFunction primary;
+    protected final DirectArray scratch;
     protected int valueIndex;
 
-    protected AbstractArrayAggDoubleGroupByFunction(@NotNull Function arg, int maxArrayElementCount) {
+    protected AbstractArrayAggDoubleGroupByFunction(@NotNull Function arg, @NotNull CairoConfiguration configuration) {
         this.arg = arg;
         this.type = ColumnType.encodeArrayType(ColumnType.DOUBLE, 1);
-        this.maxArrayElementCount = Math.min(maxArrayElementCount, BYTE_SAFE_ELEMENT_LIMIT);
+        this.maxArrayElementCount = Math.min(configuration.maxArrayElementCount(), BYTE_SAFE_ELEMENT_LIMIT);
+        this.scratch = new DirectArray(configuration);
+        this.scratch.setType(this.type);
     }
 
     @Override
     public void clear() {
-        // Skip on shared instances: cache and allocator live on the primary,
-        // and clear() runs on the primary via Misc.clearObjList(groupByFunctions)
-        // when the cursor closes. Same convention as StringAggGroupByFunction.
+        // Skip on shared instances: cache lives on the primary, and clear()
+        // runs on the primary via Misc.clearObjList(groupByFunctions) on
+        // cursor close. Same convention as StringAggGroupByFunction.
         if (primary != null) {
             return;
         }
-        // Render cache holds native pointers into the GroupByAllocator. When
-        // the enclosing factory is reused across cursor runs, the allocator is
-        // reset and the same addresses may be handed out again - stale cache
-        // entries would then point at freed memory.
-        cachedRenderPtr = 0;
         cachedSrcPtr = 0;
     }
 
     @Override
     public void close() {
         Misc.free(arg);
+        Misc.free(scratch);
     }
 
     @Override
     public void cursorClosed() {
-        // Defence-in-depth: reset the render cache on every instance (primary
-        // and shared) when the cursor closes. The primary's clear() already
-        // resets the cache via Misc.clearObjList(groupByFunctions) on the
-        // owning cursor close, but a shared cursor (LATERAL join) reuses the
-        // same factory across executions and only sees cursorClosed() on its
-        // lifecycle hook. The cache lives on the primary (see getArray()),
-        // so route the reset through owner: writes to this.cached* on a
-        // shared instance would be dead. Without this, allocator address
-        // recycling between executions could short-circuit getArray() to a
-        // freed cachedRenderPtr and silently return stale array bytes.
+        // Defence-in-depth: reset the render cache key on every instance
+        // (primary and shared) on cursor close. A shared cursor (LATERAL join)
+        // reuses the same factory across executions and only sees
+        // cursorClosed() on its lifecycle hook; route through owner so writes
+        // hit the primary's field. Without this, allocator address recycling
+        // between executions could short-circuit getArray() to a stale srcPtr
+        // and silently return wrong array bytes.
         AbstractArrayAggDoubleGroupByFunction owner = (primary != null) ? primary : this;
-        owner.cachedRenderPtr = 0;
         owner.cachedSrcPtr = 0;
         UnaryFunction.super.cursorClosed();
     }
@@ -170,26 +157,18 @@ public abstract class AbstractArrayAggDoubleGroupByFunction extends ArrayFunctio
         if (count == 0) {
             return ArrayConstant.NULL;
         }
-        // Cache and allocator live on the primary. On a shared instance we
-        // read and write through the primary so primary.clear() on cursor
-        // close resets the cache uniformly across shared and primary reads.
         AbstractArrayAggDoubleGroupByFunction owner = (primary != null) ? primary : this;
         if (ptr != owner.cachedSrcPtr) {
-            // Render: copy values from the (rowId, value) pair layout into a
-            // fresh flat buffer in the allocator. The build buffer is never
-            // written to, so the read path is safe to invoke from a shared
-            // cursor's read-only flyweight.
-            long renderPtr = owner.allocator.malloc((long) count * Double.BYTES);
+            owner.scratch.setDimLen(0, count);
+            owner.scratch.applyShape();
+            long dst = owner.scratch.ptr();
             for (int i = 0; i < count; i++) {
                 double v = Unsafe.getDouble(ptr + HEADER_SIZE + (long) i * ENTRY_SIZE + VALUE_OFFSET);
-                Unsafe.putDouble(renderPtr + (long) i * Double.BYTES, v);
+                Unsafe.putDouble(dst + (long) i * Double.BYTES, v);
             }
-            owner.cachedRenderPtr = renderPtr;
             owner.cachedSrcPtr = ptr;
         }
-        // Reuse the build buffer's count int (at offset 0) as the 1D shape
-        // descriptor; the value bytes live in the rendered flat buffer.
-        return borrowedArray.of(type, ptr, owner.cachedRenderPtr, (int) ((long) count * Double.BYTES));
+        return owner.scratch;
     }
 
     @Override
@@ -215,7 +194,8 @@ public abstract class AbstractArrayAggDoubleGroupByFunction extends ArrayFunctio
         // primary; clear() is only called on the primary. Holding a primary
         // back-reference keeps shared and primary in sync without duplicate
         // state on the shared instance, matching the StringAgg / ApproxPercentile
-        // shared-container pattern.
+        // shared-container pattern. The shared instance's own scratch field is
+        // never grown - getArray() always routes through owner = primary.
         this.valueIndex = primary.getValueIndex();
         this.primary = (AbstractArrayAggDoubleGroupByFunction) primary;
     }

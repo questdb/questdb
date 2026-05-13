@@ -779,12 +779,11 @@ public class LateralJoinSharedCursorTest extends AbstractCairoTest {
             // Hold a single factory across multiple getCursor() calls and grow the
             // input table between calls. The shared GroupByFunction instance for the
             // keyed group-by survives across executions; AbstractArrayAggDoubleGroupByFunction
-            // overrides cursorClosed() to reset cachedRenderPtr / cachedSrcPtr to 0 on
-            // every instance (primary and shared). Without that reset, allocator address
-            // recycling between executions could short-circuit getArray() to a freed
-            // cachedRenderPtr and silently return stale array bytes from a previous run.
-            // Different counts per iteration ensure that any stale render would leak
-            // visibly.
+            // overrides cursorClosed() to reset cachedSrcPtr to 0 on every instance
+            // (primary and shared). Without that reset, build-buffer address recycling
+            // between executions could short-circuit getArray() to a stale cachedSrcPtr
+            // match and return stale rendered bytes from a previous run. Different
+            // counts per iteration ensure that any stale render would leak visibly.
             final String query = """
                     SELECT o.category, o.arr, sub.rate
                     FROM (
