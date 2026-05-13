@@ -273,6 +273,8 @@ public class GroupByUtils {
                             int sampleByFlags = groupByFunc.getSampleByFlags();
                             ExpressionNode fillNode = sampleByFill.getQuick(Math.min(funcIndex, fillCount - 1));
                             if (validateFill) {
+                                assert (sampleByFlags & GroupByFunction.SAMPLE_BY_FILL_NONE) != 0 :
+                                        "aggregate must support FILL(NONE): " + groupByFunc.getClass().getName();
                                 if (SqlKeywords.isNullKeyword(fillNode.token) && (sampleByFlags & GroupByFunction.SAMPLE_BY_FILL_NULL) == 0) {
                                     throw SqlException.$(fillNode.position, "support for NULL fill is not yet implemented [function=").put(node)
                                             .put(", class=").put(groupByFunc.getClass().getName())
@@ -283,10 +285,6 @@ public class GroupByUtils {
                                             .put(']');
                                 } else if (SqlKeywords.isLinearKeyword(fillNode.token) && (sampleByFlags & GroupByFunction.SAMPLE_BY_FILL_LINEAR) == 0) {
                                     throw SqlException.$(fillNode.position, "support for LINEAR fill is not yet implemented [function=").put(node)
-                                            .put(", class=").put(groupByFunc.getClass().getName())
-                                            .put(']');
-                                } else if (SqlKeywords.isNoneKeyword(fillNode.token) && (sampleByFlags & GroupByFunction.SAMPLE_BY_FILL_NONE) == 0) {
-                                    throw SqlException.$(fillNode.position, "support for NONE fill is not yet implemented [function=").put(node)
                                             .put(", class=").put(groupByFunc.getClass().getName())
                                             .put(']');
                                 } else if (
