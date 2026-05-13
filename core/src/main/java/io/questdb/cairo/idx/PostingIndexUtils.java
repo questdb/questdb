@@ -1163,6 +1163,59 @@ public final class PostingIndexUtils {
     }
 
     /**
+     * Strict variant of {@link #readSealTxnFromKeyFile} for writer-locked contexts
+     * (column rename, parquet conversion) where a -1 return cannot be silently
+     * swallowed. The .pk file is expected to be present and seqlock-stable. Returns
+     * the live sealTxn on success; throws {@link CairoException#critical} when
+     * {@link #readSealTxnFromKeyFd} returns -1 and a .pv file matching
+     * {@code postingColumnNameTxn} exists in the directory -- that combination
+     * means the chain has data we cannot afford to silently drop. A truly empty
+     * chain (no .pv files in the directory) still returns -1.
+     * <p>
+     * The .pv-presence check disambiguates the overloaded -1 sentinel of
+     * {@link #readSealTxnFromKeyFd}: a transient read failure (e.g. pread returning
+     * EINTR, or a FilesFacade wrapper injecting -1) is indistinguishable from a
+     * legitimately empty chain at the key-file level, but the directory listing
+     * is authoritative for whether sealed data exists.
+     */
+    public static long readLiveSealTxnFromKeyFileOrThrow(
+            FilesFacade ff,
+            Path path,
+            int pathTrimTo,
+            CharSequence columnName,
+            long postingColumnNameTxn,
+            LPSZ keyFilePath
+    ) {
+        long sealTxn = readSealTxnFromKeyFile(ff, keyFilePath);
+        if (sealTxn >= 0) {
+            return sealTxn;
+        }
+        if (!ff.exists(keyFilePath)) {
+            return -1;
+        }
+        final boolean[] hasPv = {false};
+        scanSealedFiles(ff, path, pathTrimTo, columnName, new SealedFileVisitor() {
+            @Override
+            public void onCoverDataFile(int includeIdx, long filePostingColumnNameTxn, long coveredColumnNameTxn, long fileSealTxn) {
+            }
+
+            @Override
+            public void onValueFile(long filePostingColumnNameTxn, long fileSealTxn) {
+                if (filePostingColumnNameTxn == postingColumnNameTxn) {
+                    hasPv[0] = true;
+                }
+            }
+        });
+        if (hasPv[0]) {
+            throw CairoException.critical(ff.errno())
+                    .put("could not read live sealTxn from posting key file but .pv files exist; ")
+                    .put("treating as I/O error to avoid silently dropping sealed data [path=")
+                    .put(keyFilePath).put(']');
+        }
+        return -1;
+    }
+
+    /**
      * Removes the .pci file plus every sealed .pv.* and .pc&lt;N&gt;.*.* file that
      * belongs to the given posting-column-name txn.
      *

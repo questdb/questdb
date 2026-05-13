@@ -4773,8 +4773,12 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     // No column top change (or posting index): hard link existing index files.
                     long linkSealTxn = columnNameTxn;
                     if (IndexType.isPosting(indexType)) {
-                        long fromPk = PostingIndexUtils.readSealTxnFromKeyFile(
-                                ff, keyFileName(indexType, path.trimTo(srcDirLen), columnName, columnNameTxn));
+                        // Strict read: throw if .pk header is unreadable while .pv files
+                        // exist in the partition (silent fallback to columnNameTxn would
+                        // make linkFile target a path that does not exist).
+                        long fromPk = PostingIndexUtils.readLiveSealTxnFromKeyFileOrThrow(
+                                ff, path, srcDirLen, columnName, columnNameTxn,
+                                keyFileName(indexType, path.trimTo(srcDirLen), columnName, columnNameTxn));
                         if (fromPk >= 0) {
                             linkSealTxn = fromPk;
                         }
@@ -6797,8 +6801,15 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         //      get purged by their queued tasks, but the dst copies would survive
         //      until the dst column is dropped (no purge task targets the dst
         //      namespace).
-        final long liveSealTxn = PostingIndexUtils.readSealTxnFromKeyFile(
-                ff, keyFileName(IndexType.POSTING, path.trimTo(srcDirLen), srcColumnName, srcColumnNameTxn)
+        // Use the strict variant: if the .pk header read fails (e.g. a transient
+        // pread error returning -1) AND .pv files for this column exist in the
+        // partition, the function throws rather than silently skipping the link.
+        // Silent skip would leave the renamed column with .d + .pk but no .pv,
+        // and any later indexed read would fail with "file does not exist" on
+        // the chain's referenced .pv.{sealTxn}.
+        final long liveSealTxn = PostingIndexUtils.readLiveSealTxnFromKeyFileOrThrow(
+                ff, path, srcDirLen, srcColumnName, srcColumnNameTxn,
+                keyFileName(IndexType.POSTING, path.trimTo(srcDirLen), srcColumnName, srcColumnNameTxn)
         );
         if (liveSealTxn >= 0) {
             LPSZ srcPv = IndexFactory.valueFileName(IndexType.POSTING, path.trimTo(srcDirLen), srcColumnName, srcColumnNameTxn, liveSealTxn);
