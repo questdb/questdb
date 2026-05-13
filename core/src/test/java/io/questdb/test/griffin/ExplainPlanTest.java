@@ -6618,11 +6618,11 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
             assertPlanNoLeakCheck("select first(i) from a sample by 1h fill(null) align to calendar with offset '10:00'", """
                     SelectedRecord
-                        Encode sort
-                          keys: [ts]
-                            Fill Range
-                              stride: '1h'
-                              values: [null]
+                        Sample By Fill
+                          stride: '1h'
+                          fill: null
+                            Encode sort light
+                              keys: [ts]
                                 Async Group By workers: 1
                                   keys: [ts]
                                   keyFunctions: [timestamp_floor_utc('1h',ts,'1970-01-01T10:00:00.000Z')]
@@ -6636,11 +6636,11 @@ public class ExplainPlanTest extends AbstractCairoTest {
             // with rewrite
             assertPlanNoLeakCheck("select first(i) from a sample by 1h fill(null) align to calendar", """
                     SelectedRecord
-                        Encode sort
-                          keys: [ts]
-                            Fill Range
-                              stride: '1h'
-                              values: [null]
+                        Sample By Fill
+                          stride: '1h'
+                          fill: null
+                            Encode sort light
+                              keys: [ts]
                                 Async Group By workers: 1
                                   keys: [ts]
                                   keyFunctions: [timestamp_floor_utc('1h',ts)]
@@ -6667,14 +6667,45 @@ public class ExplainPlanTest extends AbstractCairoTest {
                     """);
 
             assertPlanNoLeakCheck("select s, first(i) from a sample by 1h fill(prev) align to calendar", """
-                    Sample By
-                      fill: prev
-                      keys: [s]
-                      values: [first(i)]
-                        PageFrame
-                            Row forward scan
-                            Frame forward scan on: a
+                    SelectedRecord
+                        Sample By Fill
+                          stride: '1h'
+                          fill: prev
+                            Encode sort light
+                              keys: [ts]
+                                Async Group By workers: 1
+                                  keys: [s,ts]
+                                  keyFunctions: [timestamp_floor_utc('1h',ts)]
+                                  values: [first(i)]
+                                  filter: null
+                                    PageFrame
+                                        Row forward scan
+                                        Frame forward scan on: a
                     """);
+
+            // PREV(col_ref) cross-column: fill aggregate `a` with prev value of aggregate `s`.
+            // Mirrors the FillRecordDispatchTest.testDoubleCrossColumnPrevToAggregate scenario.
+            assertPlanNoLeakCheck("create table b (i int, j int, k symbol, ts timestamp) timestamp(ts);", "select k, first(i) AS s, first(j) AS a from b sample by 1h fill(prev, prev(s)) align to calendar", """
+                    SelectedRecord
+                        Sample By Fill
+                          stride: '1h'
+                          fill: prev
+                            Encode sort light
+                              keys: [ts]
+                                Async Group By workers: 1
+                                  keys: [k,ts]
+                                  keyFunctions: [timestamp_floor_utc('1h',ts)]
+                                  values: [first(i),first(j)]
+                                  filter: null
+                                    PageFrame
+                                        Row forward scan
+                                        Frame forward scan on: b
+                    """);
+
+            // Negative: PREV references an alias that does not exist in the select list.
+            assertExceptionNoLeakCheck("select k, first(i) AS s, first(j) AS a from b sample by 1h fill(prev, prev(nonexistent)) align to calendar",
+                    75,
+                    "PREV(col): column not found in output: nonexistent");
         });
     }
 
@@ -6691,27 +6722,65 @@ public class ExplainPlanTest extends AbstractCairoTest {
                     """);
 
             assertPlanNoLeakCheck("select first(i) from a sample by 1h fill(prev) align to calendar", """
-                    Sample By
-                      fill: prev
-                      values: [first(i)]
-                        PageFrame
-                            Row forward scan
-                            Frame forward scan on: a
+                    SelectedRecord
+                        Sample By Fill
+                          stride: '1h'
+                          fill: prev
+                            Encode sort light
+                              keys: [ts]
+                                Async Group By workers: 1
+                                  keys: [ts]
+                                  keyFunctions: [timestamp_floor_utc('1h',ts)]
+                                  values: [first(i)]
+                                  filter: null
+                                    PageFrame
+                                        Row forward scan
+                                        Frame forward scan on: a
                     """);
 
             assertPlanNoLeakCheck("select first(a1.i) from a a1 asof join a a2 sample by 1h fill(prev) align to calendar", """
-                    Sample By
-                      fill: prev
-                      values: [first(i)]
-                        SelectedRecord
-                            AsOf Join Fast
-                                PageFrame
-                                    Row forward scan
-                                    Frame forward scan on: a
-                                PageFrame
-                                    Row forward scan
-                                    Frame forward scan on: a
+                    SelectedRecord
+                        Sample By Fill
+                          stride: '1h'
+                          fill: prev
+                            Encode sort light
+                              keys: [ts]
+                                GroupBy vectorized: false
+                                  keys: [ts]
+                                  values: [first(i)]
+                                    SelectedRecord
+                                        AsOf Join Fast
+                                            PageFrame
+                                                Row forward scan
+                                                Frame forward scan on: a
+                                            PageFrame
+                                                Row forward scan
+                                                Frame forward scan on: a
                     """);
+
+            // PREV(col_ref) cross-column on a non-keyed query: fill aggregate `b`
+            // with prev value of aggregate `s`.
+            assertPlanNoLeakCheck("create table c (i int, j int, ts timestamp) timestamp(ts);", "select first(i) AS s, first(j) AS b from c sample by 1h fill(prev, prev(s)) align to calendar", """
+                    SelectedRecord
+                        Sample By Fill
+                          stride: '1h'
+                          fill: prev
+                            Encode sort light
+                              keys: [ts]
+                                Async Group By workers: 1
+                                  keys: [ts]
+                                  keyFunctions: [timestamp_floor_utc('1h',ts)]
+                                  values: [first(i),first(j)]
+                                  filter: null
+                                    PageFrame
+                                        Row forward scan
+                                        Frame forward scan on: c
+                    """);
+
+            // Negative: PREV references an alias that does not exist in the select list.
+            assertExceptionNoLeakCheck("select first(i) AS s, first(j) AS b from c sample by 1h fill(prev, prev(missing)) align to calendar",
+                    72,
+                    "PREV(col): column not found in output: missing");
         });
     }
 
@@ -6729,13 +6798,20 @@ public class ExplainPlanTest extends AbstractCairoTest {
                     """);
 
             assertPlanNoLeakCheck("select s, first(i) from a sample by 1h fill(1) align to calendar", """
-                    Sample By
-                      fill: value
-                      keys: [s]
-                      values: [first(i)]
-                        PageFrame
-                            Row forward scan
-                            Frame forward scan on: a
+                    SelectedRecord
+                        Sample By Fill
+                          stride: '1h'
+                          fill: value
+                            Encode sort light
+                              keys: [ts]
+                                Async Group By workers: 1
+                                  keys: [s,ts]
+                                  keyFunctions: [timestamp_floor_utc('1h',ts)]
+                                  values: [first(i)]
+                                  filter: null
+                                    PageFrame
+                                        Row forward scan
+                                        Frame forward scan on: a
                     """);
         });
     }
@@ -6754,11 +6830,11 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
             assertPlanNoLeakCheck("select first(i) from a sample by 1h fill(1) align to calendar with offset '10:00'", """
                     SelectedRecord
-                        Encode sort
-                          keys: [ts]
-                            Fill Range
-                              stride: '1h'
-                              values: [1]
+                        Sample By Fill
+                          stride: '1h'
+                          fill: value
+                            Encode sort light
+                              keys: [ts]
                                 Async Group By workers: 1
                                   keys: [ts]
                                   keyFunctions: [timestamp_floor_utc('1h',ts,'1970-01-01T10:00:00.000Z')]
@@ -6772,15 +6848,64 @@ public class ExplainPlanTest extends AbstractCairoTest {
             // with rewrite
             assertPlanNoLeakCheck("select first(i) from a sample by 1h fill(1) align to calendar", """
                     SelectedRecord
-                        Encode sort
-                          keys: [ts]
-                            Fill Range
-                              stride: '1h'
-                              values: [1]
+                        Sample By Fill
+                          stride: '1h'
+                          fill: value
+                            Encode sort light
+                              keys: [ts]
                                 Async Group By workers: 1
                                   keys: [ts]
                                   keyFunctions: [timestamp_floor_utc('1h',ts)]
                                   values: [first(i)]
+                                  filter: null
+                                    PageFrame
+                                        Row forward scan
+                                        Frame forward scan on: a
+                    """);
+        });
+    }
+
+    @Test
+    public void testSampleByFillWithConstantProjection() throws Exception {
+        // Locks in that SELECT-list CONSTANT projections hoist into the outer
+        // VirtualRecord and never reach the inner sample-by bottomUpColumns.
+        // SqlCodeGenerator.generateFill walks bottomUpColumns to map factory
+        // columns to user-fill value slots; if a constant ever leaked into
+        // bottomUpColumns, aggNonKeyCount would over-count and per-column FILL
+        // values would shift onto the wrong aggregate. The plan makes the
+        // separation visible: 'tag' lives in VirtualRecord.functions, while
+        // the inner Async Group By values: lists only the aggregates.
+        assertMemoryLeak(() -> {
+            assertPlanNoLeakCheck("create table a (i int, j int, ts timestamp) timestamp(ts);", "select ts, 'tag' as c, first(i) as a, sum(j) as b from a sample by 1h fill(-1, 99) align to calendar", """
+                    VirtualRecord
+                      functions: [ts,'tag',a,b]
+                        Sample By Fill
+                          stride: '1h'
+                          fill: value
+                            Encode sort light
+                              keys: [ts]
+                                Async Group By workers: 1
+                                  keys: [ts]
+                                  keyFunctions: [timestamp_floor_utc('1h',ts)]
+                                  values: [first(i),sum(j)]
+                                  filter: null
+                                    PageFrame
+                                        Row forward scan
+                                        Frame forward scan on: a
+                    """);
+
+            assertPlanNoLeakCheck("select ts, 'tag' as c, first(i) as a, sum(j) as b from a sample by 1h fill(prev) align to calendar", """
+                    VirtualRecord
+                      functions: [ts,'tag',a,b]
+                        Sample By Fill
+                          stride: '1h'
+                          fill: prev
+                            Encode sort light
+                              keys: [ts]
+                                Async Group By workers: 1
+                                  keys: [ts]
+                                  keyFunctions: [timestamp_floor_utc('1h',ts)]
+                                  values: [first(i),sum(j)]
                                   filter: null
                                     PageFrame
                                         Row forward scan
@@ -7033,13 +7158,20 @@ public class ExplainPlanTest extends AbstractCairoTest {
                     """);
 
             assertPlanNoLeakCheck("select l, first(i) from a sample by 1h fill(null) align to calendar", """
-                    Sample By
-                      fill: null
-                      keys: [l]
-                      values: [first(i)]
-                        PageFrame
-                            Row forward scan
-                            Frame forward scan on: a
+                    SelectedRecord
+                        Sample By Fill
+                          stride: '1h'
+                          fill: null
+                            Encode sort light
+                              keys: [ts]
+                                Async Group By workers: 1
+                                  keys: [l,ts]
+                                  keyFunctions: [timestamp_floor_utc('1h',ts)]
+                                  values: [first(i)]
+                                  filter: null
+                                    PageFrame
+                                        Row forward scan
+                                        Frame forward scan on: a
                     """);
         });
     }
@@ -7070,6 +7202,31 @@ public class ExplainPlanTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testSampleByKeyed3MultiKeyLinear() throws Exception {
+        assertMemoryLeak(() -> {
+            assertPlanNoLeakCheck("create table a (i int, l long, m long, ts timestamp) timestamp(ts);", "select l, m, first(i) from a sample by 1d fill(linear) align to first observation", """
+                    Sample By
+                      fill: linear
+                      keys: [l,m]
+                      values: [first(i)]
+                        PageFrame
+                            Row forward scan
+                            Frame forward scan on: a
+                    """);
+
+            assertPlanNoLeakCheck("select l, m, first(i) from a sample by 1d fill(linear) align to calendar", """
+                    Sample By
+                      fill: linear
+                      keys: [l,m]
+                      values: [first(i)]
+                        PageFrame
+                            Row forward scan
+                            Frame forward scan on: a
+                    """);
+        });
+    }
+
+    @Test
     public void testSampleByKeyed4() throws Exception {
         assertMemoryLeak(() -> {
             assertPlanNoLeakCheck("create table a ( i int, l long, ts timestamp) timestamp(ts);", "select l, first(i), last(i) from a sample by 1d fill(1,2) align to first observation", """
@@ -7083,13 +7240,20 @@ public class ExplainPlanTest extends AbstractCairoTest {
                     """);
 
             assertPlanNoLeakCheck("select l, first(i), last(i) from a sample by 1d fill(1,2) align to calendar", """
-                    Sample By
-                      fill: value
-                      keys: [l]
-                      values: [first(i),last(i)]
-                        PageFrame
-                            Row forward scan
-                            Frame forward scan on: a
+                    SelectedRecord
+                        Sample By Fill
+                          stride: '1d'
+                          fill: value
+                            Encode sort light
+                              keys: [ts]
+                                Async Group By workers: 1
+                                  keys: [l,ts]
+                                  keyFunctions: [timestamp_floor_utc('1d',ts)]
+                                  values: [first(i),last(i)]
+                                  filter: null
+                                    PageFrame
+                                        Row forward scan
+                                        Frame forward scan on: a
                     """);
         });
     }
@@ -7108,13 +7272,20 @@ public class ExplainPlanTest extends AbstractCairoTest {
                     """);
 
             assertPlanNoLeakCheck("select l, first(i), last(i) from a sample by 1d fill(prev,prev) align to calendar", """
-                    Sample By
-                      fill: value
-                      keys: [l]
-                      values: [first(i),last(i)]
-                        PageFrame
-                            Row forward scan
-                            Frame forward scan on: a
+                    SelectedRecord
+                        Sample By Fill
+                          stride: '1d'
+                          fill: prev
+                            Encode sort light
+                              keys: [ts]
+                                Async Group By workers: 1
+                                  keys: [l,ts]
+                                  keyFunctions: [timestamp_floor_utc('1d',ts)]
+                                  values: [first(i),last(i)]
+                                  filter: null
+                                    PageFrame
+                                        Row forward scan
+                                        Frame forward scan on: a
                     """);
         });
     }
@@ -8768,6 +8939,165 @@ public class ExplainPlanTest extends AbstractCairoTest {
                     PageFrame
                         Row forward scan
                         Frame forward scan on: xx
+                """);
+    }
+
+    @Test // projection wrapper + JIT filter still hits top-K (issue #6528)
+    public void testSelectWhereOrderByLimit4() throws Exception {
+        assertPlan("create table xx ( x long, str varchar ) ", "select x, * from xx where str is not null order by str desc limit 10", """
+                SelectedRecord
+                    Async JIT Top K lo: 10 workers: 1
+                      filter: str is not null
+                      keys: [str desc]
+                        PageFrame
+                            Row forward scan
+                            Frame forward scan on: xx
+                """);
+    }
+
+    @Test // virtual-column projection + JIT filter still hits top-K
+    public void testSelectWhereOrderByLimit5() throws Exception {
+        assertPlan("create table xx ( x long, str varchar ) ", "select x + 1 as xp from xx where str is not null order by str desc limit 10", """
+                SelectedRecord
+                    VirtualRecord
+                      functions: [x+1,str]
+                        Async JIT Top K lo: 10 workers: 1
+                          filter: str is not null
+                          keys: [str desc]
+                            PageFrame
+                                Row forward scan
+                                Frame forward scan on: xx
+                """);
+    }
+
+    @Test // bare virtual-column wrapper (no outer SelectedRecord) still hits top-K
+    public void testSelectWhereOrderByLimit6() throws Exception {
+        assertPlan("create table xx ( x long, str varchar ) ", "select x + 1 as xp, * from xx where str is not null order by str desc limit 10", """
+                VirtualRecord
+                  functions: [x+1,x,str]
+                    Async JIT Top K lo: 10 workers: 1
+                      filter: str is not null
+                      keys: [str desc]
+                        PageFrame
+                            Row forward scan
+                            Frame forward scan on: xx
+                """);
+    }
+
+    @Test // projection without filter: peel SelectedRecord, run top-K on base, rewrap projection
+    public void testSelectWhereOrderByLimit7() throws Exception {
+        assertPlan("create table xx ( x long, str varchar ) ", "select x, * from xx order by str desc limit 10", """
+                SelectedRecord
+                    Async Top K lo: 10 workers: 1
+                      filter: null
+                      keys: [str desc]
+                        PageFrame
+                            Row forward scan
+                            Frame forward scan on: xx
+                """);
+    }
+
+    @Test // ORDER BY on a computed column must fall back to Sort light
+    public void testSelectWhereOrderByLimit8() throws Exception {
+        assertPlan("create table xx ( x long, str varchar ) ", "select x + 1 as xp from xx where str is not null order by xp desc limit 10", """
+                Sort light lo: 10
+                  keys: [xp desc]
+                    VirtualRecord
+                      functions: [x+1]
+                        Async JIT Filter workers: 1
+                          filter: str is not null
+                            PageFrame
+                                Row forward scan
+                                Frame forward scan on: xx
+                """);
+    }
+
+    @Test // VirtualRecord over JIT filter: projection peel reaches leaf; outer SelectedRecord is added later
+    public void testSelectWhereOrderByLimit_virtualRecordPeel() throws Exception {
+        // ORDER BY str references a column absent from the SELECT list, forcing the
+        // optimizer to keep str inside VirtualRecord for the sort but project it away on top.
+        // The top-K gate fires while recordCursorFactory is the VirtualRecord wrapper:
+        // translateOrderByColumnToBase peels VirtualRecord -> JIT filter leaf in a single step.
+        // The outer SelectedRecord visible in the plan is added afterwards by generateSelectChoose
+        // and is not what the gate inspects.
+        assertPlan(
+                "create table xx ( x long, str varchar ) ",
+                "select x + 1 as xp, x from xx where str is not null order by str desc limit 10",
+                """
+                        SelectedRecord
+                            VirtualRecord
+                              functions: [x+1,x,str]
+                                Async JIT Top K lo: 10 workers: 1
+                                  filter: str is not null
+                                  keys: [str desc]
+                                    PageFrame
+                                        Row forward scan
+                                        Frame forward scan on: xx
+                        """);
+    }
+
+    @Test // two-bound LIMIT is not a top-K candidate; Sort light handles it
+    public void testSelectWhereOrderByLimit9() throws Exception {
+        assertPlan("create table xx ( x long, str varchar ) ", "select x, * from xx where str is not null order by str desc limit 10, 20", """
+                Sort light lo: 10 hi: 20
+                  keys: [str desc]
+                    SelectedRecord
+                        Async JIT Filter workers: 1
+                          filter: str is not null
+                            PageFrame
+                                Row forward scan
+                                Frame forward scan on: xx
+                """);
+    }
+
+    @Test // multi-key ORDER BY translates every key through a SelectedRecord wrapper
+    public void testSelectWhereOrderByLimit_multiKeyThroughSelectedRecord() throws Exception {
+        assertPlan("create table xx ( x long, str varchar ) ", "select x, * from xx where str is not null order by str desc, x asc limit 10", """
+                SelectedRecord
+                    Async JIT Top K lo: 10 workers: 1
+                      filter: str is not null
+                      keys: [str desc, x]
+                        PageFrame
+                            Row forward scan
+                            Frame forward scan on: xx
+                """);
+    }
+
+    @Test // memoized passthrough column at ORDER BY position must still hit top-K
+    public void testSelectWhereOrderByLimit_memoizedPassthrough() throws Exception {
+        // generateSelectVirtual wraps slot 0's `x` ColumnFunction in a memoizer
+        // because alias `a` is referenced more than once. translateOrderByColumnToBase
+        // and getLongTopKColumnIndex must peel the wrapper via ColumnFunction.unwrap;
+        // otherwise the gate falls back to Sort light.
+        allowFunctionMemoization();
+        assertPlan(
+                "create table xx ( x long, str varchar ) ",
+                "select x + 1 as xp, x as a, x as b, str from xx where str is not null order by a desc limit 10",
+                """
+                        VirtualRecord
+                          functions: [x+1,memoize(x),x,str]
+                            Async JIT Top K lo: 10 workers: 1
+                              filter: str is not null
+                              keys: [x desc]
+                                PageFrame
+                                    Row forward scan
+                                    Frame forward scan on: xx
+                        """
+        );
+    }
+
+    @Test // multi-key ORDER BY translates every key through a VirtualRecord wrapper
+    public void testSelectWhereOrderByLimit_multiKeyThroughVirtualRecord() throws Exception {
+        assertPlan("create table xx ( x long, str varchar ) ", "select x + 1 as xp, x from xx where str is not null order by str desc, x asc limit 10", """
+                SelectedRecord
+                    VirtualRecord
+                      functions: [x+1,x,str]
+                        Async JIT Top K lo: 10 workers: 1
+                          filter: str is not null
+                          keys: [str desc, x]
+                            PageFrame
+                                Row forward scan
+                                Frame forward scan on: xx
                 """);
     }
 

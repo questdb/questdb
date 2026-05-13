@@ -43,8 +43,8 @@ public class ArgMaxTimestampDoubleGroupByFunction extends TimestampFunction impl
     private final Function valueArg;
     private int valueIndex;
 
-    public ArgMaxTimestampDoubleGroupByFunction(@NotNull Function valueArg, @NotNull Function keyArg) {
-        super(ColumnType.TIMESTAMP);
+    public ArgMaxTimestampDoubleGroupByFunction(@NotNull Function valueArg, @NotNull Function keyArg, int timestampType) {
+        super(timestampType);
         this.valueArg = valueArg;
         this.keyArg = keyArg;
     }

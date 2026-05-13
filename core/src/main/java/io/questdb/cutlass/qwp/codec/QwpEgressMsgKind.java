@@ -24,6 +24,8 @@
 
 package io.questdb.cutlass.qwp.codec;
 
+import java.nio.charset.StandardCharsets;
+
 /**
  * QWP egress message-kind discriminator. The first byte of every egress payload
  * identifies which of the egress message types it carries. See
@@ -103,7 +105,32 @@ public final class QwpEgressMsgKind {
      * {@link #CACHE_RESET}; SERVER_INFO lives at 0x18.
      */
     public static final byte SERVER_INFO = 0x18;
+    private static final byte[] ROLE_NAME_BYTES_PRIMARY = "PRIMARY".getBytes(StandardCharsets.US_ASCII);
+    private static final byte[] ROLE_NAME_BYTES_PRIMARY_CATCHUP = "PRIMARY_CATCHUP".getBytes(StandardCharsets.US_ASCII);
+    private static final byte[] ROLE_NAME_BYTES_REPLICA = "REPLICA".getBytes(StandardCharsets.US_ASCII);
+    private static final byte[] ROLE_NAME_BYTES_STANDALONE = "STANDALONE".getBytes(StandardCharsets.US_ASCII);
+    private static final byte[] ROLE_NAME_BYTES_UNKNOWN = "UNKNOWN".getBytes(StandardCharsets.US_ASCII);
 
     private QwpEgressMsgKind() {
+    }
+
+    public static String roleName(byte role) {
+        return switch (role) {
+            case ROLE_STANDALONE -> "STANDALONE";
+            case ROLE_PRIMARY -> "PRIMARY";
+            case ROLE_REPLICA -> "REPLICA";
+            case ROLE_PRIMARY_CATCHUP -> "PRIMARY_CATCHUP";
+            default -> "UNKNOWN";
+        };
+    }
+
+    public static byte[] roleNameBytes(byte role) {
+        return switch (role) {
+            case ROLE_STANDALONE -> ROLE_NAME_BYTES_STANDALONE;
+            case ROLE_PRIMARY -> ROLE_NAME_BYTES_PRIMARY;
+            case ROLE_REPLICA -> ROLE_NAME_BYTES_REPLICA;
+            case ROLE_PRIMARY_CATCHUP -> ROLE_NAME_BYTES_PRIMARY_CATCHUP;
+            default -> ROLE_NAME_BYTES_UNKNOWN;
+        };
     }
 }

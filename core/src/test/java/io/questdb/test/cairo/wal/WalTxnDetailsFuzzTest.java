@@ -89,7 +89,7 @@ public class WalTxnDetailsFuzzTest extends AbstractCairoTest {
 
         try (TableWriter writer = getWriter(tableToken)) {
             try (TransactionLogCursor cursor = engine.getTableSequencerAPI().getCursor(tableToken, writer.getAppliedSeqTxn())) {
-                writer.readWalTxnDetails(cursor);
+                readWalTxnDetailsFuzzy(writer, cursor);
                 int startTxn = (int) writer.getAppliedSeqTxn();
                 WalTxnDetails walTnxDetails = writer.getWalTnxDetails();
 
@@ -118,7 +118,7 @@ public class WalTxnDetailsFuzzTest extends AbstractCairoTest {
 
         try (TableWriter writer = getWriter(tableToken)) {
             try (TransactionLogCursor cursor = engine.getTableSequencerAPI().getCursor(tableToken, writer.getAppliedSeqTxn())) {
-                writer.readWalTxnDetails(cursor);
+                readWalTxnDetailsFuzzy(writer, cursor);
                 long startTxn = writer.getAppliedSeqTxn();
 
                 WalTxnDetails walTnxDetails = writer.getWalTnxDetails();
@@ -190,7 +190,7 @@ public class WalTxnDetailsFuzzTest extends AbstractCairoTest {
 
         try (TableWriter writer = getWriter(tableToken)) {
             try (TransactionLogCursor cursor = engine.getTableSequencerAPI().getCursor(tableToken, writer.getAppliedSeqTxn())) {
-                writer.readWalTxnDetails(cursor);
+                readWalTxnDetailsFuzzy(writer, cursor);
                 int startTxn = (int) writer.getAppliedSeqTxn();
                 WalTxnDetails walTnxDetails = writer.getWalTnxDetails();
                 for (int i = 0; i < startTxn + txnCount; i++) {
@@ -243,7 +243,7 @@ public class WalTxnDetailsFuzzTest extends AbstractCairoTest {
             startTxn = (int) writer.getAppliedSeqTxn();
 
             try (TransactionLogCursor cursor = engine.getTableSequencerAPI().getCursor(tableToken, writer.getAppliedSeqTxn())) {
-                writer.readWalTxnDetails(cursor);
+                readWalTxnDetailsFuzzy(writer, cursor);
                 WalTxnDetails walTnxDetails = writer.getWalTnxDetails();
 
                 Assert.assertEquals(Long.MIN_VALUE, walTnxDetails.getCommitToTimestamp(startTxn + 1));
@@ -263,7 +263,7 @@ public class WalTxnDetailsFuzzTest extends AbstractCairoTest {
 
         try (TableWriter writer = getWriter(tableToken)) {
             try (TransactionLogCursor cursor = engine.getTableSequencerAPI().getCursor(tableToken, writer.getAppliedSeqTxn() + 5)) {
-                writer.readWalTxnDetails(cursor);
+                readWalTxnDetailsFuzzy(writer, cursor);
 
                 WalTxnDetails walTnxDetails = writer.getWalTnxDetails();
                 Assert.assertEquals(Long.MIN_VALUE, walTnxDetails.getCommitToTimestamp(startTxn + 2));
@@ -293,7 +293,7 @@ public class WalTxnDetailsFuzzTest extends AbstractCairoTest {
             int startTxn = (int) writer.getAppliedSeqTxn();
 
             try (TransactionLogCursor cursor = engine.getTableSequencerAPI().getCursor(tableToken, writer.getAppliedSeqTxn())) {
-                writer.readWalTxnDetails(cursor);
+                readWalTxnDetailsFuzzy(writer, cursor);
                 WalTxnDetails walTnxDetails = writer.getWalTnxDetails();
 
                 Assert.assertEquals(Long.MIN_VALUE, walTnxDetails.getCommitToTimestamp(startTxn + 1));
@@ -308,7 +308,7 @@ public class WalTxnDetailsFuzzTest extends AbstractCairoTest {
             commitWalRows(tableToken, 200, "2022-02-24T15", "2022-02-24T18");
 
             try (TransactionLogCursor cursor = engine.getTableSequencerAPI().getCursor(tableToken, writer.getAppliedSeqTxn() + 5)) {
-                writer.readWalTxnDetails(cursor);
+                readWalTxnDetailsFuzzy(writer, cursor);
 
                 WalTxnDetails walTnxDetails = writer.getWalTnxDetails();
                 Assert.assertEquals(Long.MIN_VALUE, walTnxDetails.getCommitToTimestamp(startTxn + 1));
@@ -378,6 +378,23 @@ public class WalTxnDetailsFuzzTest extends AbstractCairoTest {
 
         TableModel model = defaultModel(tableName);
         return TestUtils.createTable(engine, model);
+    }
+
+    private void readWalTxnDetailsFuzzy(TableWriter writer, TransactionLogCursor cursor) {
+        if (rnd.nextBoolean()) {
+            writer.readWalTxnDetails(cursor);
+            return;
+        }
+        // Force the deadline branch with random jitter. Loop until everything is loaded
+        // so deterministic assertions are unaffected by partial loads.
+        long maxTxn = cursor.getMaxTxn();
+        int safety = 10_000;
+        do {
+            if (--safety < 0) {
+                throw new AssertionError("readWalTxnDetails did not finish loading");
+            }
+            writer.readWalTxnDetails(cursor, configuration.getMicrosecondClock().getTicks() + rnd.nextLong(50));
+        } while (writer.getWalTnxDetails().getLastSeqTxn() < maxTxn);
     }
 
     public enum SequencerType {

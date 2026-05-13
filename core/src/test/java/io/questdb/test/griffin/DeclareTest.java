@@ -613,7 +613,7 @@ public class DeclareTest extends AbstractSqlParserTest {
         assertMemoryLeak(() -> {
             execute(TRADES_DDL);
             drainWalQueue();
-            assertModel("select-group-by timestamp, symbol, avg(price) avg from (select [timestamp, symbol, price] from trades timestamp (timestamp) where timestamp >= '2008-12-28' and timestamp < '2009-01-05') sample by 1h from '2008-12-28' to '2009-01-05' fill(null) align to calendar with offset '00:00'",
+            assertModel("select-group-by timestamp_floor_utc('1h', timestamp, '2008-12-28', '00:00', null) timestamp, symbol, avg(price) avg from (select [timestamp, symbol, price] from trades timestamp (timestamp) where timestamp >= '2008-12-28' and timestamp < '2009-01-05' fill(null) from '2008-12-28' to '2009-01-05' stride 1h) order by timestamp",
                     "DECLARE @unit := 1h, @from := '2008-12-28', @to := '2009-01-05', @fill := null SELECT timestamp, symbol, avg(price) FROM trades SAMPLE BY @unit FROM @from TO @to FILL(@fill)", ExecutionModel.QUERY);
         });
     }
@@ -623,7 +623,7 @@ public class DeclareTest extends AbstractSqlParserTest {
         assertMemoryLeak(() -> {
             execute(TRADES_DDL);
             drainWalQueue();
-            assertModel("select-group-by timestamp_floor_utc('1h', timestamp, null, '10:00', null) timestamp, symbol, avg(price) avg from (select [timestamp, symbol, price] from trades timestamp (timestamp) stride 1h) order by timestamp",
+            assertModel("select-group-by timestamp_floor_utc('1h', timestamp, null, '10:00', null) timestamp, symbol, avg(price) avg from (select [timestamp, symbol, price] from trades timestamp (timestamp) offset '10:00' stride 1h) order by timestamp",
                     "DECLARE @offset := '10:00' SELECT timestamp, symbol, avg(price) FROM trades SAMPLE BY 1h ALIGN TO CALENDAR WITH OFFSET @offset", ExecutionModel.QUERY);
         });
     }
