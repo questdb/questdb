@@ -27,6 +27,7 @@ package io.questdb.test.cairo;
 import io.questdb.PropertyKey;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.idx.BitpackUtils;
@@ -62,6 +63,7 @@ import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
 
 import static io.questdb.cairo.TableUtils.COLUMN_NAME_TXN_NONE;
+import static io.questdb.cairo.TableUtils.setPathForNativePartition;
 
 /**
  * Red tests for the critical findings raised in the PR review of #6861.
@@ -346,6 +348,183 @@ public class PostingIndexCriticalIssuesTest extends AbstractCairoTest {
             } finally {
                 Unsafe.free(src, 64, MemoryTag.NATIVE_DEFAULT);
                 Unsafe.free(dst, (long) count * Long.BYTES, MemoryTag.NATIVE_DEFAULT);
+            }
+        });
+    }
+
+    @Test
+    public void testO3CoveringRebuildSidecarsPreservesCoveredValues() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE t_cov_o3 (
+                        ts TIMESTAMP,
+                        sym SYMBOL INDEX TYPE POSTING INCLUDE (price),
+                        price DOUBLE
+                    ) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL
+                    """);
+            execute("""
+                    INSERT INTO t_cov_o3 VALUES
+                    ('2024-01-01T00:00:00Z', 'A', 1.0),
+                    ('2024-01-01T01:00:00Z', 'B', 2.0),
+                    ('2024-01-01T02:00:00Z', 'A', 3.0),
+                    ('2024-01-01T03:00:00Z', 'C', 4.0)
+                    """);
+            execute("""
+                    INSERT INTO t_cov_o3 VALUES
+                    ('2024-01-01T00:30:00Z', 'A', 5.0),
+                    ('2024-01-01T01:30:00Z', 'B', 6.0),
+                    ('2024-01-01T02:30:00Z', 'C', 7.0)
+                    """);
+
+            assertQueryNoLeakCheck(
+                    """
+                            ts\tsym\tprice
+                            2024-01-01T00:00:00.000000Z\tA\t1.0
+                            2024-01-01T00:30:00.000000Z\tA\t5.0
+                            2024-01-01T02:00:00.000000Z\tA\t3.0
+                            """,
+                    "SELECT ts, sym, price FROM t_cov_o3 WHERE sym = 'A' ORDER BY ts",
+                    "ts",
+                    false,
+                    true
+            );
+            assertQueryNoLeakCheck(
+                    """
+                            ts\tsym\tprice
+                            2024-01-01T01:00:00.000000Z\tB\t2.0
+                            2024-01-01T01:30:00.000000Z\tB\t6.0
+                            """,
+                    "SELECT ts, sym, price FROM t_cov_o3 WHERE sym = 'B' ORDER BY ts",
+                    "ts",
+                    false,
+                    true
+            );
+            assertQueryNoLeakCheck(
+                    """
+                            ts\tsym\tprice
+                            2024-01-01T02:30:00.000000Z\tC\t7.0
+                            2024-01-01T03:00:00.000000Z\tC\t4.0
+                            """,
+                    "SELECT ts, sym, price FROM t_cov_o3 WHERE sym = 'C' ORDER BY ts",
+                    "ts",
+                    false,
+                    true
+            );
+        });
+    }
+
+    @Test
+    public void testOpenFromO3ContextPropagatesUpcomingTxn() throws Exception {
+        assertMemoryLeak(() -> {
+            final String name = "posting_o3_upcoming_txn";
+            final long upcomingTxn = 42L;
+            try (Path path = new Path().of(configuration.getDbRoot())) {
+                final int plen = path.size();
+                try (PostingIndexWriter writer = new PostingIndexWriter(configuration)) {
+                    writer.setO3PathContext(path.trimTo(plen), name, COLUMN_NAME_TXN_NONE, upcomingTxn);
+                    writer.openFromO3Context(/* isInit */ true);
+                    writer.add(0, 0);
+                    writer.add(1, 1);
+                    writer.setMaxValue(1);
+                    writer.commit();
+                }
+                FilesFacade rawFf = configuration.getFilesFacade();
+                LPSZ keyFile = PostingIndexUtils.keyFileName(
+                        path.trimTo(plen), name, COLUMN_NAME_TXN_NONE);
+                long fileSize = rawFf.length(keyFile);
+                try (MemoryCMARWImpl mem = new MemoryCMARWImpl(
+                        rawFf, keyFile, rawFf.getPageSize(), fileSize,
+                        MemoryTag.MMAP_DEFAULT, /* opts */ 0)) {
+                    PostingIndexChainWriter chain = new PostingIndexChainWriter();
+                    chain.openExisting(mem);
+                    Assert.assertTrue("chain must have head", chain.hasHead());
+                    PostingIndexChainEntry.Snapshot head = new PostingIndexChainEntry.Snapshot();
+                    chain.loadHeadEntry(mem, head);
+                    Assert.assertEquals(
+                            "openFromO3Context must propagate o3CtxUpcomingTxn into the published chain entry",
+                            upcomingTxn,
+                            head.txnAtSeal
+                    );
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testParquetIndexWriteUsesCommitDense() throws Exception {
+        // O3PartitionJob.updateParquetIndexes goes through commitDense for POSTING.
+        // That path runs when O3 mutates an already-parquet partition. Convert the
+        // first partition to parquet, then O3-insert into it to trigger the rewrite.
+        // After that, the chain head must hold a single dense gen.
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE t_parquet_posting (
+                        ts TIMESTAMP,
+                        sym SYMBOL INDEX TYPE POSTING
+                    ) TIMESTAMP(ts) PARTITION BY DAY WAL
+                    """);
+            execute("""
+                    INSERT INTO t_parquet_posting
+                    SELECT
+                        dateadd('s', x::INT, '2024-01-01T00:00:00Z'::TIMESTAMP),
+                        rnd_symbol('A', 'B', 'C', 'D', 'E')
+                    FROM long_sequence(1000)
+                    """);
+            execute("""
+                    INSERT INTO t_parquet_posting
+                    SELECT
+                        dateadd('s', x::INT, '2024-01-02T00:00:00Z'::TIMESTAMP),
+                        rnd_symbol('A', 'B', 'C', 'D', 'E')
+                    FROM long_sequence(1000)
+                    """);
+            drainWalQueue();
+            execute("ALTER TABLE t_parquet_posting CONVERT PARTITION TO PARQUET LIST '2024-01-01'");
+            drainWalQueue();
+            execute("""
+                    INSERT INTO t_parquet_posting VALUES
+                    ('2024-01-01T00:30:00Z', 'F'),
+                    ('2024-01-01T01:30:00Z', 'G')
+                    """);
+            drainWalQueue();
+            engine.releaseAllWriters();
+
+            TableToken token = engine.getTableTokenIfExists("t_parquet_posting");
+            Assert.assertNotNull("table must exist", token);
+            long partitionTs;
+            long partitionNameTxn;
+            try (TableReader reader = engine.getReader(token)) {
+                partitionTs = reader.getTxFile().getPartitionTimestampByIndex(0);
+                partitionNameTxn = reader.getTxFile().getPartitionNameTxn(0);
+            }
+            FilesFacade rawFf = configuration.getFilesFacade();
+            try (Path path = new Path()) {
+                path.of(configuration.getDbRoot()).concat(token);
+                setPathForNativePartition(
+                        path, ColumnType.TIMESTAMP, io.questdb.cairo.PartitionBy.DAY, partitionTs, partitionNameTxn);
+                int plen = path.size();
+                LPSZ keyFile = PostingIndexUtils.keyFileName(
+                        path.trimTo(plen), "sym", COLUMN_NAME_TXN_NONE);
+                long fileSize = rawFf.length(keyFile);
+                Assert.assertTrue(".pk file must exist in parquet partition dir, path=" + keyFile, fileSize > 0);
+                try (MemoryCMARWImpl mem = new MemoryCMARWImpl(
+                        rawFf, keyFile, rawFf.getPageSize(), fileSize,
+                        MemoryTag.MMAP_DEFAULT, /* opts */ 0)) {
+                    PostingIndexChainWriter chain = new PostingIndexChainWriter();
+                    chain.openExisting(mem);
+                    Assert.assertTrue("chain must have head after parquet rewrite", chain.hasHead());
+                    PostingIndexChainEntry.Snapshot head = new PostingIndexChainEntry.Snapshot();
+                    chain.loadHeadEntry(mem, head);
+                    Assert.assertEquals("single dense gen expected after commitDense", 1, head.genCount);
+                    long gen0DirOffset = PostingIndexChainEntry.resolveGenDirOffset(head.offset, 0);
+                    int gen0KeyCount = mem.getInt(gen0DirOffset + PostingIndexUtils.GEN_DIR_OFFSET_KEY_COUNT);
+                    Assert.assertTrue("gen 0 must be dense (positive KEY_COUNT), got " + gen0KeyCount,
+                            gen0KeyCount > 0);
+                    Assert.assertEquals("commitDense must not rotate sealTxn", 0, head.sealTxn);
+                    LPSZ pvRotated = PostingIndexUtils.valueFileName(
+                            path.trimTo(plen), "sym", COLUMN_NAME_TXN_NONE, 1);
+                    Assert.assertFalse("rotated .pv.1 must not exist after commitDense, path=" + pvRotated,
+                            rawFf.exists(pvRotated));
+                }
             }
         });
     }
