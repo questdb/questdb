@@ -8733,11 +8733,9 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 }
             }
 
-            // SqlOptimiser.rewriteSelectClause0 propagates the rewritten FILL list onto
-            // groupByModel.sampleByFill when rewriteSampleBy has converted a non-keyed
-            // SAMPLE BY ... FILL(...) into GROUP BY + FillRangeRecordCursorFactory. Read
-            // the list directly here so each aggregate's getSampleByFlags() can be
-            // validated against the chosen fill mode.
+            // After rewriteSampleBy clears sampleBy, SqlOptimiser.rewriteSelectClause0
+            // re-exposes the fill list here via setSampleByFill so each aggregate's
+            // getSampleByFlags() can be validated against the fill mode.
             final ObjList<ExpressionNode> rewrittenSampleByFill = model.getSampleByFill();
 
             GroupByUtils.assembleGroupByFunctions(

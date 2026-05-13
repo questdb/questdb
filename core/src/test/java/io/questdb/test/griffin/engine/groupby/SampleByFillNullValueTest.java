@@ -2077,6 +2077,62 @@ public class SampleByFillNullValueTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testFillValuePerColumnPreservedAcrossDuplicates() throws Exception {
+        // FILL(0, 42) over duplicate aggregates must apply 0 to the first column and
+        // 42 to the second. Before fill-list propagation reached groupByModel.sampleByFill
+        // on the calendar-align path, SqlOptimiser.detectDuplicateAggregates collapsed
+        // sum(x) AS a and sum(x) AS b into a single inner aggregate and codegen mapped
+        // the FILL list against the collapsed count, silently dropping the 42.
+        // Coverage: ALIGN TO CALENDAR and ALIGN TO FIRST OBSERVATION, each in non-keyed
+        // and keyed form.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (ts TIMESTAMP, k SYMBOL, x INT) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO t VALUES
+                    ('2024-01-01T00:00:00.000000Z', 'a', 5),
+                    ('2024-01-01T02:00:00.000000Z', 'a', 7)
+                    """);
+            final String expectedNonKeyed = "ts\ta\tb\n" +
+                    "2024-01-01T00:00:00.000000Z\t5\t5\n" +
+                    "2024-01-01T01:00:00.000000Z\t0\t42\n" +
+                    "2024-01-01T02:00:00.000000Z\t7\t7\n";
+            final String expectedKeyed = "ts\tk\ta\tb\n" +
+                    "2024-01-01T00:00:00.000000Z\ta\t5\t5\n" +
+                    "2024-01-01T01:00:00.000000Z\ta\t0\t42\n" +
+                    "2024-01-01T02:00:00.000000Z\ta\t7\t7\n";
+
+            assertQueryNoLeakCheck(
+                    expectedNonKeyed,
+                    "SELECT ts, sum(x) AS a, sum(x) AS b FROM t SAMPLE BY 1h FILL(0, 42) ALIGN TO CALENDAR",
+                    "ts",
+                    false,
+                    false
+            );
+            assertQueryNoLeakCheck(
+                    expectedKeyed,
+                    "SELECT ts, k, sum(x) AS a, sum(x) AS b FROM t SAMPLE BY 1h FILL(0, 42) ALIGN TO CALENDAR",
+                    "ts",
+                    false,
+                    false
+            );
+            assertQueryNoLeakCheck(
+                    expectedNonKeyed,
+                    "SELECT ts, sum(x) AS a, sum(x) AS b FROM t SAMPLE BY 1h FILL(0, 42) ALIGN TO FIRST OBSERVATION",
+                    "ts",
+                    false,
+                    false
+            );
+            assertQueryNoLeakCheck(
+                    expectedKeyed,
+                    "SELECT ts, k, sum(x) AS a, sum(x) AS b FROM t SAMPLE BY 1h FILL(0, 42) ALIGN TO FIRST OBSERVATION",
+                    "ts",
+                    false,
+                    false
+            );
+        });
+    }
+
+    @Test
     public void testFillValuePlanShape() throws Exception {
         // Pin the "fill: value" plan attribute. SampleByFillRecordCursorFactory
         // toPlan emits one of "null", "prev", "value", or "mixed"; the "value"
