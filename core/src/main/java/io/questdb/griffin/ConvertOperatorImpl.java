@@ -221,7 +221,7 @@ public class ConvertOperatorImpl implements Closeable {
 
             // Pre-pass: convert parquet partitions to native when needed.
             // Case 1: chained conversion (e.g. INT -> STRING -> DATE) where parquet stores an
-            //         older type — convert so the two-step path matches native behavior.
+            //         older type - convert so the two-step path matches native behavior.
             // Case 2: target type is Symbol — symbol maps cannot be built from parquet.
             boolean hasPriorConversion = tableWriter.getMetadata()
                     .getColumnMetadata(existingColIndex).getReplacingIndex() >= 0;

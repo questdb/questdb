@@ -24,6 +24,7 @@
 
 package io.questdb.test.cairo.parquet;
 
+import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
@@ -135,6 +136,31 @@ public class ParquetColumnTypeConversionTest extends AbstractCairoTest {
                     (NULL, '2024-01-01T00:00:04.000000Z')""";
             for (String target : new String[]{"STRING", "VARCHAR"}) {
                 assertConversion("DECIMAL(18, 4)", target, values);
+            }
+        });
+    }
+
+    /**
+     * Pins lazy parquet behavior for DOUBLE-&gt;LONG/DATE/TIMESTAMP at the upper i64
+     * boundary. The Rust converter in
+     * {@code core/rust/qdbr/src/parquet_read/decode.rs} stores the bound as
+     * {@code i64::MAX as f64}. Since {@code i64::MAX = 2^63 - 1} requires 63
+     * mantissa bits and f64 only has 53, that cast rounds up to {@code 2^63}.
+     * A f64 value equal to {@code 2^63} is strictly greater than {@code i64::MAX}
+     * but passes the {@code v <= max} guard, then saturates to {@code i64::MAX}
+     * under the {@code as} cast — silently producing wrong data instead of the
+     * documented NULL sentinel. Differential assertion against the native (JNI)
+     * path does not catch this because the C++ kernel has analogous undefined
+     * behavior for out-of-range floats, so this test asserts the contract
+     * directly: out-of-range floats read back as NULL.
+     */
+    @Test
+    public void testDoubleToLongBoundaryPrecisionLoss() throws Exception {
+        assertMemoryLeak(() -> {
+            // 9.223372036854776e18 == 2^63 exactly in f64. 2^63 is strictly
+            // greater than i64::MAX = 2^63 - 1, so the contract is NULL.
+            for (String targetType : new String[]{"LONG", "DATE", "TIMESTAMP"}) {
+                assertParquetFloatOutOfRangeNull("DOUBLE", targetType, "9.223372036854776e18");
             }
         });
     }
@@ -309,6 +335,37 @@ public class ParquetColumnTypeConversionTest extends AbstractCairoTest {
         });
     }
 
+    /**
+     * Pins lazy parquet behavior for FLOAT-&gt;LONG/DATE/TIMESTAMP at the upper i64
+     * boundary. The Rust converter in
+     * {@code core/rust/qdbr/src/parquet_read/decode.rs} stores the upper bound as
+     * {@code i64::MAX as f32}. Since {@code i64::MAX = 2^63 - 1} is not
+     * representable in f32 (only 23 mantissa bits available, 63 needed), that
+     * cast rounds up to {@code 2^63} - one ULP above {@code i64::MAX}. A f32
+     * value equal to {@code 2^63} is strictly greater than {@code i64::MAX} but
+     * passes the {@code v <= max} guard, then saturates to {@code i64::MAX} under
+     * the {@code as} cast - silently producing wrong data instead of the
+     * documented NULL sentinel. The differential helper {@link #assertConversion}
+     * does not catch this because the native (JNI) {@code convert_from_type_to_type}
+     * kernel has analogous undefined behavior for out-of-range floats. This test
+     * asserts the contract directly: floats strictly above {@code i64::MAX} read
+     * back as NULL.
+     * <p>
+     * At the f32 magnitude of {@code 2^63}, adjacent representable values are
+     * spaced by {@code 2^40}, so {@code 2^63} is the only f32 in the open
+     * interval {@code (i64::MAX, 2^63]}.
+     */
+    @Test
+    public void testFloatToLongBoundaryPrecisionLoss() throws Exception {
+        assertMemoryLeak(() -> {
+            // 9.223372036854776e18 == 2^63 exactly when stored as f32.
+            // 2^63 is strictly greater than i64::MAX = 2^63 - 1, so the contract is NULL.
+            for (String targetType : new String[]{"LONG", "DATE", "TIMESTAMP"}) {
+                assertParquetFloatOutOfRangeNull("FLOAT", targetType, "cast(9.223372036854776e18 as float)");
+            }
+        });
+    }
+
     @Test
     public void testFloatToOtherFixedTypes() throws Exception {
         assertMemoryLeak(() -> {
@@ -382,6 +439,31 @@ public class ParquetColumnTypeConversionTest extends AbstractCairoTest {
             assertParquetIntToDecimalOverflowNull("DECIMAL(4, 2)", "1_000_000");
             assertParquetIntToDecimalOverflowNull("DECIMAL(9, 4)", "1_000_000");
         });
+    }
+
+    private void assertParquetFloatOutOfRangeNull(String sourceType, String targetType, String floatExpr) throws Exception {
+        // CursorPrinter renders INT/LONG null as the literal "null"
+        // (Numbers.append special-cases the null sentinel), while DATE/TIMESTAMP
+        // null renders as an empty cell (DateFormatUtils/TimestampFormatUtils
+        // early-return on MIN_VALUE).
+        String nullRendering = switch (targetType.toUpperCase()) {
+            case "INT", "LONG" -> "null";
+            case "DATE", "TIMESTAMP" -> "";
+            default -> throw new IllegalArgumentException("unsupported target: " + targetType);
+        };
+        try {
+            execute("CREATE TABLE pt (val " + sourceType + ", ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("INSERT INTO pt VALUES (" + floatExpr + ", '2024-01-01T00:00:01.000000Z')");
+            drainWalQueue();
+            execute("ALTER TABLE pt CONVERT PARTITION TO PARQUET LIST '2024-01-01'");
+            drainWalQueue();
+            execute("ALTER TABLE pt ALTER COLUMN val TYPE " + targetType);
+            drainWalQueue();
+            // Out-of-range floats must read back as the target type's NULL sentinel.
+            assertSql("val\n" + nullRendering + "\n", "SELECT val FROM pt");
+        } finally {
+            tryDrop("pt");
+        }
     }
 
     private void assertParquetIntToDecimalOverflowNull(String targetType, String overflowValue) throws Exception {
@@ -1068,23 +1150,22 @@ public class ParquetColumnTypeConversionTest extends AbstractCairoTest {
     @Test
     public void testDoubleToLongBoundary() throws Exception {
         assertMemoryLeak(() -> {
-            // 9.223372036854775807E18 parses to the nearest double, 2^63 (one ULP
-            // above Long.MAX_VALUE).
-            String values = """
-                    (9.223372036854775807E18, '2024-01-01T00:00:01.000000Z'),
-                    (1.0, '2024-01-01T00:00:02.000000Z')""";
-            assertConversion("DOUBLE", "LONG", values);
+            // 9.223372036854775807E18 parses to the nearest f64, 2^63 (one ULP
+            // above Long.MAX_VALUE). Contract: the parquet path must emit NULL
+            // rather than letting `as i64` saturate to Long.MAX_VALUE.
+            // Asserted via absolute oracle because the native (JNI) path has
+            // an analogous precision-loss bug and would diverge from parquet.
+            assertParquetFloatOutOfRangeNull("DOUBLE", "LONG", "9.223372036854775807E18");
         });
     }
 
     @Test
     public void testFloatToIntBoundary() throws Exception {
         assertMemoryLeak(() -> {
-            // 2.147483647E9 parses to the nearest float, 2^31 (one ULP above INT_MAX).
-            String values = """
-                    (2.147483647E9, '2024-01-01T00:00:01.000000Z'),
-                    (1.0, '2024-01-01T00:00:02.000000Z')""";
-            assertConversion("FLOAT", "INT", values);
+            // 2.147483647E9 parses to the nearest f32, 2^31 (one ULP above INT_MAX).
+            // Contract: the parquet path must emit NULL rather than letting
+            // `as i32` saturate to Integer.MAX_VALUE.
+            assertParquetFloatOutOfRangeNull("FLOAT", "INT", "cast(2.147483647E9 as float)");
         });
     }
 
@@ -1110,6 +1191,86 @@ public class ParquetColumnTypeConversionTest extends AbstractCairoTest {
                 ('emoji \ud83e\udd86 \ud83d\ude00 mixed', '2024-01-01T00:00:06.000000Z'),
                 ('ascii then \u00e9', '2024-01-01T00:00:07.000000Z'),
                 (NULL, '2024-01-01T00:00:08.000000Z')"""));
+    }
+
+    /**
+     * Verifies snapshot isolation across {@code ALTER TABLE ... ALTER COLUMN TYPE} on a
+     * parquet-backed partition. A cursor opened against the pre-ALTER transaction must
+     * continue to see the original column type and values for its entire lifetime, while
+     * a fresh cursor opened after the ALTER has been applied via the WAL must see the
+     * converted type. This pins the contract between the page frame pool's
+     * {@code sourceColumnTypes} snapshot, the parquet frame cache, and cursor state
+     * across a schema change.
+     */
+    @Test
+    public void testReaderOpenedBeforeAlterSeesOldSchema() throws Exception {
+        assertMemoryLeak(() -> {
+            try {
+                execute("CREATE TABLE pt (val INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+                execute("""
+                        INSERT INTO pt VALUES
+                        (1, '2024-01-01T00:00:01.000000Z'),
+                        (2, '2024-01-01T00:00:02.000000Z'),
+                        (3, '2024-01-01T00:00:03.000000Z')""");
+                drainWalQueue();
+                execute("ALTER TABLE pt CONVERT PARTITION TO PARQUET LIST '2024-01-01'");
+                drainWalQueue();
+
+                try (
+                        RecordCursorFactory oldFactory = select("SELECT val FROM pt ORDER BY ts");
+                        RecordCursor oldCursor = oldFactory.getCursor(sqlExecutionContext)
+                ) {
+                    Assert.assertEquals(
+                            ColumnType.INT,
+                            ColumnType.tagOf(oldFactory.getMetadata().getColumnType(0))
+                    );
+
+                    execute("ALTER TABLE pt ALTER COLUMN val TYPE STRING");
+                    drainWalQueue();
+
+                    // The pre-ALTER cursor still sees INT values from its snapshot.
+                    Record oldRecord = oldCursor.getRecord();
+                    int expected = 1;
+                    while (oldCursor.hasNext()) {
+                        Assert.assertEquals("row " + expected, expected, oldRecord.getInt(0));
+                        expected++;
+                    }
+                    Assert.assertEquals(4, expected);
+
+                    // A fresh cursor opened after the ALTER sees the converted STRING values.
+                    try (
+                            RecordCursorFactory newFactory = select("SELECT val FROM pt ORDER BY ts");
+                            RecordCursor newCursor = newFactory.getCursor(sqlExecutionContext)
+                    ) {
+                        Assert.assertEquals(
+                                ColumnType.STRING,
+                                ColumnType.tagOf(newFactory.getMetadata().getColumnType(0))
+                        );
+                        Record newRecord = newCursor.getRecord();
+                        StringSink sink = new StringSink();
+                        int newExpected = 1;
+                        while (newCursor.hasNext()) {
+                            sink.clear();
+                            sink.put(newRecord.getStrA(0));
+                            TestUtils.assertEquals(Integer.toString(newExpected), sink);
+                            newExpected++;
+                        }
+                        Assert.assertEquals(4, newExpected);
+                    }
+
+                    // Re-read the held cursor: still INT, still the original values.
+                    oldCursor.toTop();
+                    expected = 1;
+                    while (oldCursor.hasNext()) {
+                        Assert.assertEquals("re-read row " + expected, expected, oldRecord.getInt(0));
+                        expected++;
+                    }
+                    Assert.assertEquals(4, expected);
+                }
+            } finally {
+                tryDrop("pt");
+            }
+        });
     }
 
     /**

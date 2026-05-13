@@ -6,6 +6,9 @@ use crate::parquet_read::decode::{
     decode_page, decode_page_filtered, decompress_sliced_data, decompress_sliced_dict,
     page_row_count, sliced_page_row_count,
 };
+use crate::parquet_read::decoders::{
+    F32_MAX_SAFE_FOR_I32, F32_MAX_SAFE_FOR_I64, F64_MAX_SAFE_FOR_I64,
+};
 use crate::parquet_read::page::{DataPage, DictPage};
 use crate::parquet_read::{
     ColumnChunkBuffers, ColumnFilterPacked, ColumnFilterValues, ColumnMeta, DecodeContext,
@@ -340,7 +343,7 @@ pub(super) fn post_convert(
         (ColumnTypeTag::Float, ColumnTypeTag::Int) => {
             convert_numeric_in_place::<f32, i32>(
                 &mut bufs.data_vec,
-                |v| v.is_nan() || v > i32::MAX as f32 || v < i32::MIN as f32,
+                |v| v.is_nan() || v > F32_MAX_SAFE_FOR_I32 || v < i32::MIN as f32,
                 nulls::INT,
                 |v| v as i32,
             )?;
@@ -351,7 +354,7 @@ pub(super) fn post_convert(
         ) => {
             convert_numeric_in_place::<f32, i64>(
                 &mut bufs.data_vec,
-                |v| v.is_nan() || v > i64::MAX as f32 || v < i64::MIN as f32,
+                |v| v.is_nan() || v > F32_MAX_SAFE_FOR_I64 || v < i64::MIN as f32,
                 nulls::LONG,
                 |v| v as i64,
             )?;
@@ -387,7 +390,7 @@ pub(super) fn post_convert(
         ) => {
             convert_numeric_in_place::<f64, i64>(
                 &mut bufs.data_vec,
-                |v| v.is_nan() || v > i64::MAX as f64 || v < i64::MIN as f64,
+                |v| v.is_nan() || v > F64_MAX_SAFE_FOR_I64 || v < i64::MIN as f64,
                 nulls::LONG,
                 |v| v as i64,
             )?;
@@ -1131,6 +1134,14 @@ impl ParquetDecoder {
         let mut decoded = 0usize;
         for (dest_col_idx, &(column_idx, to_column_type)) in columns.iter().enumerate() {
             let column_idx = column_idx as usize;
+            if column_idx >= self.col_count as usize {
+                return Err(fmt_err!(
+                    InvalidType,
+                    "column index {} out of range [0,{})",
+                    column_idx,
+                    self.col_count
+                ));
+            }
             let mut column_type = self.columns[column_idx].column_type.ok_or_else(|| {
                 fmt_err!(
                     InvalidType,
@@ -1294,6 +1305,14 @@ impl ParquetDecoder {
         for (i, &(column_idx, to_column_type)) in columns.iter().enumerate() {
             let dest_col_idx = dest_col_offset + i;
             let column_idx = column_idx as usize;
+            if column_idx >= self.col_count as usize {
+                return Err(fmt_err!(
+                    InvalidType,
+                    "column index {} out of range [0,{})",
+                    column_idx,
+                    self.col_count
+                ));
+            }
             let mut column_type = self.columns[column_idx].column_type.ok_or_else(|| {
                 fmt_err!(
                     InvalidType,

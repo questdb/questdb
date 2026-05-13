@@ -57,11 +57,41 @@ where
     }
 }
 
+/// Largest f32 value `v` such that `v as i64` does not saturate to `i64::MAX`.
+///
+/// `i64::MAX = 2^63 - 1` is not representable in f32 (only 23 mantissa bits;
+/// 63 needed), so `i64::MAX as f32` rounds up to `2^63` - one ULP above
+/// `i64::MAX`. Using `i64::MAX as f32` as the upper bound with a non-strict
+/// `<=` check therefore admits values equal to `2^63`, which then saturate to
+/// `i64::MAX` under Rust's `as` cast and silently produce wrong data instead of
+/// the NULL sentinel. Use this constant instead: it is the f32 immediately
+/// below `2^63`, equal to `2^63 - 2^39`.
+pub const F32_MAX_SAFE_FOR_I64: f32 = f32::from_bits(0x5EFF_FFFF);
+
+/// f64 analog of [`F32_MAX_SAFE_FOR_I64`].
+///
+/// f64 has 52 explicit mantissa bits, still short of the 63 needed for
+/// `i64::MAX`, so `i64::MAX as f64` also rounds up to `2^63`. This constant is
+/// the f64 immediately below `2^63`, equal to `2^63 - 2^10`.
+pub const F64_MAX_SAFE_FOR_I64: f64 = f64::from_bits(0x43DF_FFFF_FFFF_FFFF);
+
+/// Largest f32 value `v` such that `v as i32` does not saturate to `i32::MAX`.
+///
+/// `i32::MAX = 2^31 - 1` exceeds f32 precision (23 mantissa bits, 31 needed),
+/// so `i32::MAX as f32` rounds up to `2^31`. This constant is the f32
+/// immediately below `2^31`, equal to `2^31 - 2^7`.
+pub const F32_MAX_SAFE_FOR_I32: f32 = f32::from_bits(0x4EFF_FFFF);
+
 /// Range-checked float-to-integer conversion.
 ///
 /// Values that are NaN or outside `[min_val, max_val]` produce `null_value`
 /// instead of saturating (which is what Rust's `as` cast does).
 /// This matches the C++ `convert_from_type_to_type` behaviour for float→int.
+///
+/// Callers must pass an `max_val` that is itself in the destination integer's
+/// range. For `(F, I)` pairs where `I::MAX as F` rounds up beyond `I::MAX` -
+/// `(f32, i64)`, `(f64, i64)`, `(f32, i32)` - use the `F*_MAX_SAFE_FOR_I*`
+/// constants above instead of `I::MAX as F`.
 pub struct FloatToIntRangeCheckConverter<F, I> {
     null_value: I,
     max_val: F,

@@ -18,6 +18,7 @@ use crate::parquet_read::decoders::{
     DeltaLAVarcharSliceDecoder, FixedDictDecoder, FloatToIntRangeCheckConverter,
     PlainBooleanDecoder, PlainPrimitiveDecoder, PrimitiveConverter, RleBooleanDecoder,
     RleDictVarcharSliceDecoder, RleDictionaryDecoder, RleLocalIsGlobalSymbolDictDecoder,
+    F32_MAX_SAFE_FOR_I32, F32_MAX_SAFE_FOR_I64, F64_MAX_SAFE_FOR_I64,
 };
 use crate::parquet_read::page::{split_buffer, DataPage, DictPage};
 use crate::parquet_read::slicer::rle::RleDictionarySlicer;
@@ -1873,7 +1874,7 @@ fn decode_double_dispatch<const FILTERED: bool, const FILL_NULLS: bool>(
                     nulls::LONG,
                     FloatToIntRangeCheckConverter::<f64, i64>::new(
                         nulls::LONG,
-                        i64::MAX as f64,
+                        F64_MAX_SAFE_FOR_I64,
                         i64::MIN as f64,
                     ),
                 ),
@@ -1890,7 +1891,7 @@ fn decode_double_dispatch<const FILTERED: bool, const FILL_NULLS: bool>(
                 dict_page,
                 FloatToIntRangeCheckConverter::<f64, i64>::new(
                     nulls::LONG,
-                    i64::MAX as f64,
+                    F64_MAX_SAFE_FOR_I64,
                     i64::MIN as f64,
                 ),
             )?;
@@ -2147,7 +2148,7 @@ fn decode_other_fixed_dispatch<const FILTERED: bool, const FILL_NULLS: bool>(
                     nulls::INT,
                     FloatToIntRangeCheckConverter::<f32, i32>::new(
                         nulls::INT,
-                        i32::MAX as f32,
+                        F32_MAX_SAFE_FOR_I32,
                         i32::MIN as f32,
                     ),
                 ),
@@ -2164,7 +2165,7 @@ fn decode_other_fixed_dispatch<const FILTERED: bool, const FILL_NULLS: bool>(
                 dict_page,
                 FloatToIntRangeCheckConverter::<f32, i32>::new(
                     nulls::INT,
-                    i32::MAX as f32,
+                    F32_MAX_SAFE_FOR_I32,
                     i32::MIN as f32,
                 ),
             )?;
@@ -2197,7 +2198,7 @@ fn decode_other_fixed_dispatch<const FILTERED: bool, const FILL_NULLS: bool>(
                     nulls::LONG,
                     FloatToIntRangeCheckConverter::<f32, i64>::new(
                         nulls::LONG,
-                        i64::MAX as f32,
+                        F32_MAX_SAFE_FOR_I64,
                         i64::MIN as f32,
                     ),
                 ),
@@ -2214,7 +2215,7 @@ fn decode_other_fixed_dispatch<const FILTERED: bool, const FILL_NULLS: bool>(
                 dict_page,
                 FloatToIntRangeCheckConverter::<f32, i64>::new(
                     nulls::LONG,
-                    i64::MAX as f32,
+                    F32_MAX_SAFE_FOR_I64,
                     i64::MIN as f32,
                 ),
             )?;
