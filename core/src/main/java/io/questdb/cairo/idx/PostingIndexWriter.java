@@ -431,6 +431,7 @@ public class PostingIndexWriter implements IndexWriter {
                     hasPendingData = false;
                     activeKeyCount = 0;
                     coverCount = 0;
+                    pendingTxnAtSeal = -1;
                     chain.resetState();
                 }
             }
@@ -2722,8 +2723,8 @@ public class PostingIndexWriter implements IndexWriter {
         hasPendingData = false;
         activeKeyCount = 0;
 
-        // Seal at >= MAX_GEN_COUNT (not >). Entry MAX_GEN_COUNT-1 (index 124)
-        // ends at page offset 4064. Entry 125 would overlap sequence_end at 4088.
+        // Soft cap on per-entry gen count; trades seal frequency against
+        // entry size.
         if (genCount >= MAX_GEN_COUNT) {
             seal();
         }
@@ -3502,11 +3503,18 @@ public class PostingIndexWriter implements IndexWriter {
         long entryBase = newEntry ? chain.getRegionLimit() : chain.getHeadEntryOffset();
 
         long dirOffset = PostingIndexChainEntry.resolveGenDirOffset(entryBase, overrideGenIndex);
+        long slotTxnAtSeal = pendingTxnAtSeal >= 0 ? pendingTxnAtSeal : 0L;
         keyMem.putLong(dirOffset + GEN_DIR_OFFSET_FILE_OFFSET, overrideFileOffset);
         keyMem.putLong(dirOffset + GEN_DIR_OFFSET_SIZE, overrideSize);
         keyMem.putInt(dirOffset + PostingIndexUtils.GEN_DIR_OFFSET_KEY_COUNT, overrideKeyCount);
         keyMem.putInt(dirOffset + PostingIndexUtils.GEN_DIR_OFFSET_MIN_KEY, overrideMinKey);
         keyMem.putInt(dirOffset + PostingIndexUtils.GEN_DIR_OFFSET_MAX_KEY, overrideMaxKey);
+        keyMem.putLong(dirOffset + PostingIndexUtils.GEN_DIR_OFFSET_MAX_VALUE, maxValue);
+        // storeFence pairs with the loadFence in trimInFlightTailGens so a
+        // recovery walk that finds slot.TXN_AT_SEAL > currentTableTxn sees
+        // the matching slot payload too.
+        Unsafe.storeFence();
+        keyMem.putLong(dirOffset + PostingIndexUtils.GEN_DIR_OFFSET_TXN_AT_SEAL, slotTxnAtSeal);
 
         // Snapshot the current append offset of each open sidecar. Tombstoned
         // and not-yet-opened slots publish 0; readers treat them as "no file
@@ -3708,12 +3716,13 @@ public class PostingIndexWriter implements IndexWriter {
         // pendingTxnAtSeal is intentionally NOT reset here: a single logical
         // TableWriter operation (e.g. sealPostingIndexForPartition) calls
         // setNextTxnAtSeal once and then runs through rollbackConditionally,
-        // rebuildSidecars/seal in sequence — every one of which may reach
-        // publishToChain. The publishToChain assert catches the
-        // never-set case (pendingTxnAtSeal=-1 after open or close); leaving
-        // the value live across sub-operations preserves the right
-        // txnAtSeal. close() resets the field so a future of(...) starts
-        // clean.
+        // rebuildSidecars/seal in sequence -- every one of which may reach
+        // publishToChain. Leaving the value live across sub-operations
+        // preserves the right txnAtSeal. close() resets the field to -1
+        // so a future of(...) starts clean; publishToChain's fallback
+        // turns the never-set case (-1) into slot.TXN_AT_SEAL=0, leaving
+        // the entry undroppable by recovery -- a deliberate trade-off for
+        // test/legacy paths that never wire the setter.
         // Cap the in-memory outbox to prevent unbounded growth when the
         // global PostingSealPurge job is disabled, the queue is permanently
         // saturated, or publishPendingPurges() is never called. When at the
@@ -4773,20 +4782,23 @@ public class PostingIndexWriter implements IndexWriter {
         }
         recoveryOrphanScratch.clear();
         int dropped;
+        boolean isHeadTrimmed;
         try {
             dropped = chain.recoveryDropAbandoned(keyMem, currentTableTxn, recoveryOrphanScratch);
+            isHeadTrimmed = chain.isHeadTrimmedOnLastRecovery();
         } finally {
             // Single-shot consumption — next reopen must call the setter
             // again or recovery is skipped.
             currentTableTxn = -1L;
         }
-        if (dropped <= 0) {
+        if (dropped <= 0 && !isHeadTrimmed) {
             return;
         }
-        LOG.info().$("posting index recovery dropped abandoned chain entries [")
+        LOG.info().$("posting index recovery [")
                 .$("indexName=").$(indexName)
                 .$(", postingColumnNameTxn=").$(postingColumnNameTxn)
                 .$(", dropped=").$(dropped)
+                .$(", isHeadTrimmed=").$(isHeadTrimmed)
                 .$(']').$();
         // Conservatively schedule each orphan .pv.{N} (and .pc{i}.{N}) for
         // purge with the widest possible reader window. Orphans were
