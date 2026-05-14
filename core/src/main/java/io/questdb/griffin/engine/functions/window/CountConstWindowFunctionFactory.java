@@ -107,7 +107,8 @@ public class CountConstWindowFunctionFactory extends AbstractWindowFunctionFacto
                             partitionByRecord,
                             partitionBySink,
                             null,
-                            isRecordNotNull
+                            isRecordNotNull,
+                            partitionByKeyTypes
                     );
                 } // range between [unbounded | x] preceding and [x preceding | current row], except unbounded preceding to current row
                 else {
@@ -164,7 +165,8 @@ public class CountConstWindowFunctionFactory extends AbstractWindowFunctionFacto
                             partitionByRecord,
                             partitionBySink,
                             null,
-                            isRecordNotNull
+                            isRecordNotNull,
+                            partitionByKeyTypes
                     );
                 } // between current row and current row
                 else if (rowsLo == 0 && rowsHi == 0) {

@@ -31,6 +31,7 @@ import io.questdb.cairo.GenericRecordMetadata;
 import io.questdb.cairo.TableColumnMetadata;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.lv.LiveViewDefinition;
+import io.questdb.cairo.lv.LiveViewInMemoryTier;
 import io.questdb.cairo.lv.LiveViewInstance;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.NoRandomAccessRecordCursor;
@@ -203,7 +204,7 @@ public class LiveViewsFunctionFactory implements FunctionFactory {
                             // tier footprint (sum across both N=2 slots). Zero when the
                             // tier has not been allocated yet (LV has not refreshed, or
                             // schema is var-length and the tier is unused).
-                            io.questdb.cairo.lv.LiveViewInMemoryTier tier = instance.getInMemoryTier();
+                            LiveViewInMemoryTier tier = instance.getInMemoryTier();
                             yield tier == null ? 0L : tier.footprintBytes();
                         }
                         case COLUMN_LAG_SEQTXN -> {
@@ -238,7 +239,7 @@ public class LiveViewsFunctionFactory implements FunctionFactory {
                             // "no head" sentinel.
                             long raw = instance.getHeadCheckpointMaxTs();
                             yield raw == Numbers.LONG_NULL ? Numbers.LONG_NULL :
-                                    io.questdb.cairo.ColumnType
+                                    ColumnType
                                             .getTimestampDriver(definition.getBaseTimestampType())
                                             .toMicros(raw);
                         }
@@ -248,7 +249,7 @@ public class LiveViewsFunctionFactory implements FunctionFactory {
                                 // TIMESTAMP_MICRO per the catalogue column's declared type. Identity for
                                 // MICRO bases; rounds NS bases down to the MICRO grid (RFC §"Catalogue
                                 // function live_views()").
-                                io.questdb.cairo.ColumnType
+                                ColumnType
                                         .getTimestampDriver(definition.getBaseTimestampType())
                                         .toMicros(definition.getViewLowerBoundTimestamp());
                         case COLUMN_WRITER_STALL_MICROS -> {

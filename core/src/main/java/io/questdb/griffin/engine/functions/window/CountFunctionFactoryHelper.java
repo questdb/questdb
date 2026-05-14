@@ -30,16 +30,21 @@ import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.ColumnTypes;
 import io.questdb.cairo.RecordSink;
 import io.questdb.cairo.Reopenable;
+import io.questdb.cairo.lv.LiveViewSnapshotKeyCodec;
 import io.questdb.cairo.map.Map;
 import io.questdb.cairo.map.MapFactory;
 import io.questdb.cairo.map.MapKey;
+import io.questdb.cairo.map.MapRecord;
+import io.questdb.cairo.map.MapRecordCursor;
 import io.questdb.cairo.map.MapValue;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.VirtualRecord;
 import io.questdb.cairo.sql.WindowSPI;
 import io.questdb.cairo.vm.Vm;
+import io.questdb.cairo.vm.api.MemoryA;
 import io.questdb.cairo.vm.api.MemoryARW;
+import io.questdb.cairo.vm.api.MemoryR;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
@@ -113,7 +118,8 @@ public class CountFunctionFactoryHelper {
                             partitionByRecord,
                             partitionBySink,
                             args.get(0),
-                            isRecordNotNull
+                            isRecordNotNull,
+                            partitionByKeyTypes
                     );
                 } // range between [unbounded | x] preceding and [x preceding | current row], except unbounded preceding to current row
                 else {
@@ -170,7 +176,8 @@ public class CountFunctionFactoryHelper {
                             partitionByRecord,
                             partitionBySink,
                             args.get(0),
-                            isRecordNotNull
+                            isRecordNotNull,
+                            partitionByKeyTypes
                     );
                 } // between current row and current row
                 else if (rowsLo == 0 && rowsHi == 0) {
@@ -1132,11 +1139,23 @@ public class CountFunctionFactoryHelper {
 // Doesn't require ts buffering.
     static class CountOverUnboundedPartitionRowsFrameFunction extends BasePartitionedWindowFunction implements WindowLongFunction {
         private final IsRecordNotNull isRecordNotNull;
+        private final ArrayColumnTypes keyColumnTypes;
         private long count;
 
-        public CountOverUnboundedPartitionRowsFrameFunction(Map map, VirtualRecord partitionByRecord, RecordSink partitionBySink, Function arg, IsRecordNotNull isRecordNotNull) {
+        public CountOverUnboundedPartitionRowsFrameFunction(
+                Map map,
+                VirtualRecord partitionByRecord,
+                RecordSink partitionBySink,
+                Function arg,
+                IsRecordNotNull isRecordNotNull,
+                ColumnTypes partitionByKeyTypes
+        ) {
             super(map, partitionByRecord, partitionBySink, arg);
             this.isRecordNotNull = isRecordNotNull;
+            this.keyColumnTypes = new ArrayColumnTypes();
+            for (int i = 0, n = partitionByKeyTypes.getColumnCount(); i < n; i++) {
+                this.keyColumnTypes.add(partitionByKeyTypes.getColumnType(i));
+            }
         }
 
         @Override
@@ -1171,6 +1190,10 @@ public class CountFunctionFactoryHelper {
             return WindowFunction.ZERO_PASS;
         }
 
+        @Override
+        public Map getPartitionMap() {
+            return map;
+        }
 
         @Override
         public void pass1(Record record, long recordOffset, WindowSPI spi) {
@@ -1188,6 +1211,49 @@ public class CountFunctionFactoryHelper {
             if (value != null) {
                 value.putLong(0, 0L);
             }
+        }
+
+        @Override
+        public void restore(MemoryR source, int formatVersion) {
+            map.clear();
+            long offset = 0;
+            final long partitionCount = source.getLong(offset);
+            offset += Long.BYTES;
+            for (long p = 0; p < partitionCount; p++) {
+                MapKey key = map.withKey();
+                offset = LiveViewSnapshotKeyCodec.readKey(key, source, offset, keyColumnTypes);
+                MapValue value = key.createValue();
+                value.putLong(0, source.getLong(offset));
+                offset += Long.BYTES;
+            }
+        }
+
+        @Override
+        public void snapshot(MemoryA sink) {
+            sink.putLong(map.size());
+            MapRecordCursor cursor = map.getCursor();
+            MapRecord record = map.getRecord();
+            // count has a single LONG value slot, so the key sits at record
+            // index 1 in the [values, key] layout.
+            while (cursor.hasNext()) {
+                LiveViewSnapshotKeyCodec.writeKey(sink, record, keyColumnTypes, 1);
+                sink.putLong(record.getValue().getLong(0));
+            }
+        }
+
+        @Override
+        public int snapshotFormatVersion() {
+            return 1;
+        }
+
+        @Override
+        public int snapshotMinSupportedVersion() {
+            return 1;
+        }
+
+        @Override
+        public boolean supportsSnapshot() {
+            return LiveViewSnapshotKeyCodec.isAllTypesSupported(keyColumnTypes);
         }
 
         @Override

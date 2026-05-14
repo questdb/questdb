@@ -36,14 +36,22 @@ import io.questdb.cairo.lv.LiveViewInMemoryTier;
 import io.questdb.cairo.lv.LiveViewInstance;
 import io.questdb.cairo.lv.LiveViewRefreshJob;
 import io.questdb.cairo.lv.LiveViewState;
+import io.questdb.cairo.map.Map;
+import io.questdb.cairo.map.MapRecord;
+import io.questdb.cairo.map.MapRecordCursor;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
+import io.questdb.cairo.vm.Vm;
+import io.questdb.cairo.vm.api.MemoryCARW;
 import io.questdb.griffin.SqlException;
+import io.questdb.griffin.engine.window.WindowFunction;
 import io.questdb.mp.Job;
 import io.questdb.std.Chars;
 import io.questdb.std.FilesFacade;
+import io.questdb.std.MemoryTag;
 import io.questdb.std.Numbers;
+import io.questdb.std.ObjList;
 import io.questdb.std.datetime.microtime.Micros;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
@@ -2582,6 +2590,105 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testCountOverUnboundedPartitionRowsSnapshotRoundTrip() throws Exception {
+        // Phase 2a.5 Group #2: count() over unbounded partition rows + ANCHOR.
+        // State per partition is a single LONG count. Round-trip via direct
+        // snapshot to in-memory sink + toTop + restore; verify counts match.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (ts TIMESTAMP, x INT, sym SYMBOL) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms AS " +
+                    "SELECT ts, sym, count(*) OVER w AS c FROM base " +
+                    "WINDOW w AS (PARTITION BY sym ORDER BY ts ANCHOR EXPRESSION timestamp_floor('1d', ts))");
+
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                setCurrentMicros(0L);
+                execute("INSERT INTO base (ts, x, sym) VALUES " +
+                        "('2026-08-01T00:00:00.000000Z', 1, 'a'), " +
+                        "('2026-08-01T01:00:00.000000Z', 2, 'a'), " +
+                        "('2026-08-01T02:00:00.000000Z', 3, 'a'), " +
+                        "('2026-08-01T00:00:00.000000Z', 4, 'b')");
+                drainWalQueue();
+                drainJob(job);
+                drainWalQueue();
+
+                LiveViewInstance lv = engine.getLiveViewRegistry().getViewInstance("lv");
+                WindowFunction countFunc = lv.getAnchorWindow().getFunctions().getQuick(0);
+                Assert.assertTrue(countFunc.supportsSnapshot());
+                Map fnMap = countFunc.getPartitionMap();
+                Assert.assertEquals("two partitions seeded", 2L, fnMap.size());
+
+                try (MemoryCARW sink = Vm.getCARWInstance(4096L, Integer.MAX_VALUE, MemoryTag.NATIVE_DEFAULT)) {
+                    countFunc.snapshot(sink);
+                    countFunc.toTop();
+                    Assert.assertEquals(0L, fnMap.size());
+                    countFunc.restore(sink, 1);
+                    Assert.assertEquals(2L, fnMap.size());
+
+                    // 'a' partition had 3 rows, 'b' had 1. Total 4.
+                    MapRecordCursor mc = fnMap.getCursor();
+                    MapRecord rec = fnMap.getRecord();
+                    long total = 0;
+                    while (mc.hasNext()) {
+                        total += rec.getValue().getLong(0);
+                    }
+                    Assert.assertEquals(4L, total);
+                }
+            }
+
+            execute("DROP LIVE VIEW lv");
+        });
+    }
+
+    @Test
+    public void testSumOverUnboundedPartitionRowsSnapshotRoundTrip() throws Exception {
+        // Phase 2a.5 Group #2: sum() over unbounded partition rows + ANCHOR.
+        // State per partition is [sum: DOUBLE, count: LONG] - same shape as
+        // avg. Round-trip via direct snapshot + toTop + restore.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (ts TIMESTAMP, x DOUBLE, sym SYMBOL) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms AS " +
+                    "SELECT ts, sym, sum(x) OVER w AS s FROM base " +
+                    "WINDOW w AS (PARTITION BY sym ORDER BY ts ANCHOR EXPRESSION timestamp_floor('1d', ts))");
+
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                setCurrentMicros(0L);
+                execute("INSERT INTO base (ts, x, sym) VALUES " +
+                        "('2026-08-01T00:00:00.000000Z', 10.0, 'a'), " +
+                        "('2026-08-01T01:00:00.000000Z', 30.0, 'a'), " +
+                        "('2026-08-01T00:00:00.000000Z', 5.0, 'b')");
+                drainWalQueue();
+                drainJob(job);
+                drainWalQueue();
+
+                LiveViewInstance lv = engine.getLiveViewRegistry().getViewInstance("lv");
+                WindowFunction sumFunc = lv.getAnchorWindow().getFunctions().getQuick(0);
+                Assert.assertTrue(sumFunc.supportsSnapshot());
+                Map fnMap = sumFunc.getPartitionMap();
+                Assert.assertEquals("two partitions seeded", 2L, fnMap.size());
+
+                try (MemoryCARW sink = Vm.getCARWInstance(4096L, Integer.MAX_VALUE, MemoryTag.NATIVE_DEFAULT)) {
+                    sumFunc.snapshot(sink);
+                    sumFunc.toTop();
+                    Assert.assertEquals(0L, fnMap.size());
+                    sumFunc.restore(sink, 1);
+                    Assert.assertEquals(2L, fnMap.size());
+
+                    // 'a' partition sum is 40.0, 'b' sum is 5.0. Total 45.0.
+                    MapRecordCursor mc = fnMap.getCursor();
+                    MapRecord rec = fnMap.getRecord();
+                    double total = 0;
+                    while (mc.hasNext()) {
+                        total += rec.getValue().getDouble(0);
+                    }
+                    Assert.assertEquals(45.0, total, 0.0);
+                }
+            }
+
+            execute("DROP LIVE VIEW lv");
+        });
+    }
+
+    @Test
     public void testAvgOverUnboundedPartitionRowsSnapshotRoundTrip() throws Exception {
         // Phase 2a.5 Group #2: avg() over (PARTITION BY ... ROWS UNBOUNDED
         // PRECEDING ... ANCHOR ...) implements snapshot/restore. State per
@@ -2604,19 +2711,14 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
                 drainWalQueue();
 
                 LiveViewInstance lv = engine.getLiveViewRegistry().getViewInstance("lv");
-                io.questdb.std.ObjList<io.questdb.griffin.engine.window.WindowFunction> funcs =
-                        lv.getAnchorWindow().getFunctions();
-                io.questdb.griffin.engine.window.WindowFunction avgFunc = funcs.getQuick(0);
+                ObjList<WindowFunction> funcs = lv.getAnchorWindow().getFunctions();
+                WindowFunction avgFunc = funcs.getQuick(0);
                 Assert.assertTrue("avg supports snapshot for SYMBOL key", avgFunc.supportsSnapshot());
-                io.questdb.cairo.map.Map fnMap = avgFunc.getPartitionMap();
+                Map fnMap = avgFunc.getPartitionMap();
                 Assert.assertNotNull(fnMap);
                 Assert.assertEquals("two partitions seeded", 2L, fnMap.size());
 
-                try (io.questdb.cairo.vm.api.MemoryCARW sink = io.questdb.cairo.vm.Vm.getCARWInstance(
-                        4096L,
-                        Integer.MAX_VALUE,
-                        io.questdb.std.MemoryTag.NATIVE_DEFAULT
-                )) {
+                try (MemoryCARW sink = Vm.getCARWInstance(4096L, Integer.MAX_VALUE, MemoryTag.NATIVE_DEFAULT)) {
                     avgFunc.snapshot(sink);
                     avgFunc.toTop();
                     Assert.assertEquals(0L, fnMap.size());
@@ -2624,8 +2726,8 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
                     Assert.assertEquals(2L, fnMap.size());
 
                     // Sum of all sums must equal 10+30+5 = 45, total count = 3.
-                    io.questdb.cairo.map.MapRecordCursor mc = fnMap.getCursor();
-                    io.questdb.cairo.map.MapRecord rec = fnMap.getRecord();
+                    MapRecordCursor mc = fnMap.getCursor();
+                    MapRecord rec = fnMap.getRecord();
                     double totalSum = 0;
                     long totalCount = 0;
                     while (mc.hasNext()) {
@@ -2668,24 +2770,19 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
                 drainWalQueue();
 
                 LiveViewInstance lv = engine.getLiveViewRegistry().getViewInstance("lv");
-                io.questdb.std.ObjList<io.questdb.griffin.engine.window.WindowFunction> funcs =
-                        lv.getAnchorWindow().getFunctions();
-                io.questdb.griffin.engine.window.WindowFunction rowNumberFunc = funcs.getQuick(0);
+                ObjList<WindowFunction> funcs = lv.getAnchorWindow().getFunctions();
+                WindowFunction rowNumberFunc = funcs.getQuick(0);
                 Assert.assertTrue(
                         "row_number must support snapshot for SYMBOL partition keys",
                         rowNumberFunc.supportsSnapshot()
                 );
                 Assert.assertEquals(1, rowNumberFunc.snapshotFormatVersion());
-                io.questdb.cairo.map.Map fnMap = rowNumberFunc.getPartitionMap();
+                Map fnMap = rowNumberFunc.getPartitionMap();
                 Assert.assertNotNull("getPartitionMap exposes the function's partition Map", fnMap);
                 Assert.assertEquals("two partitions seeded", 2L, fnMap.size());
 
                 // Snapshot the entire partition Map into an in-memory sink.
-                try (io.questdb.cairo.vm.api.MemoryCARW sink = io.questdb.cairo.vm.Vm.getCARWInstance(
-                        4096L,
-                        Integer.MAX_VALUE,
-                        io.questdb.std.MemoryTag.NATIVE_DEFAULT
-                )) {
+                try (MemoryCARW sink = Vm.getCARWInstance(4096L, Integer.MAX_VALUE, MemoryTag.NATIVE_DEFAULT)) {
                     rowNumberFunc.snapshot(sink);
 
                     // Reset wipes the Map. After reset the function has no
@@ -2703,8 +2800,8 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
                     // The restored Map's partition values must match the
                     // pre-snapshot counters: partition 'a' had two rows
                     // (rn=2 final), partition 'b' had one (rn=1 final).
-                    io.questdb.cairo.map.MapRecordCursor mc = fnMap.getCursor();
-                    io.questdb.cairo.map.MapRecord rec = fnMap.getRecord();
+                    MapRecordCursor mc = fnMap.getCursor();
+                    MapRecord rec = fnMap.getRecord();
                     long sumRn = 0;
                     long minRn = Long.MAX_VALUE;
                     long maxRn = Long.MIN_VALUE;

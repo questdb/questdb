@@ -29,6 +29,7 @@ import io.questdb.cairo.file.BlockFileReader;
 import io.questdb.cairo.file.BlockFileWriter;
 import io.questdb.cairo.lv.LiveViewCheckpointWriter;
 import io.questdb.cairo.lv.LiveViewDefinition;
+import io.questdb.cairo.lv.LiveViewInstance;
 import io.questdb.cairo.lv.LiveViewState;
 import io.questdb.cairo.mv.DependentViewGraph;
 import io.questdb.cairo.mv.MatViewDefinition;
@@ -329,7 +330,7 @@ public class DatabaseCheckpointAgent implements DatabaseCheckpointStatus, QuietC
                             // refresh-worker state. Refresh worker observes
                             // isFreezeInProgress() at the top of refreshInstance and skips
                             // the cycle.
-                            io.questdb.cairo.lv.LiveViewInstance freezeLvInstance = null;
+                            LiveViewInstance freezeLvInstance = null;
                             try {
                             for (; ; ) {
                                 if (engine.isTableDropped(tableToken)) {

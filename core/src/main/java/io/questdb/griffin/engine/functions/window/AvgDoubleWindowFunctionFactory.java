@@ -30,10 +30,12 @@ import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.ColumnTypes;
 import io.questdb.cairo.RecordSink;
 import io.questdb.cairo.Reopenable;
+import io.questdb.cairo.lv.LiveViewSnapshotKeyCodec;
 import io.questdb.cairo.map.Map;
 import io.questdb.cairo.map.MapFactory;
 import io.questdb.cairo.map.MapKey;
 import io.questdb.cairo.map.MapRecord;
+import io.questdb.cairo.map.MapRecordCursor;
 import io.questdb.cairo.map.MapValue;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
@@ -41,7 +43,9 @@ import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.VirtualRecord;
 import io.questdb.cairo.sql.WindowSPI;
 import io.questdb.cairo.vm.Vm;
+import io.questdb.cairo.vm.api.MemoryA;
 import io.questdb.cairo.vm.api.MemoryARW;
+import io.questdb.cairo.vm.api.MemoryR;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
@@ -1386,14 +1390,14 @@ public class AvgDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
         }
 
         @Override
-        public void restore(io.questdb.cairo.vm.api.MemoryR source, int formatVersion) {
+        public void restore(MemoryR source, int formatVersion) {
             map.clear();
             long offset = 0;
             final long partitionCount = source.getLong(offset);
             offset += Long.BYTES;
             for (long p = 0; p < partitionCount; p++) {
                 MapKey key = map.withKey();
-                offset = io.questdb.cairo.lv.LiveViewSnapshotKeyCodec.readKey(key, source, offset, keyColumnTypes);
+                offset = LiveViewSnapshotKeyCodec.readKey(key, source, offset, keyColumnTypes);
                 MapValue value = key.createValue();
                 value.putDouble(0, source.getDouble(offset));
                 offset += Double.BYTES;
@@ -1403,15 +1407,15 @@ public class AvgDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
         }
 
         @Override
-        public void snapshot(io.questdb.cairo.vm.api.MemoryA sink) {
+        public void snapshot(MemoryA sink) {
             sink.putLong(map.size());
-            io.questdb.cairo.map.MapRecordCursor cursor = map.getCursor();
-            io.questdb.cairo.map.MapRecord record = map.getRecord();
+            MapRecordCursor cursor = map.getCursor();
+            MapRecord record = map.getRecord();
             // AVG_COLUMN_TYPES = [DOUBLE sum, LONG count], so the key column
             // sits at record index 2 in the Map's [values, key] record layout.
             final int keyStartIndex = AVG_COLUMN_TYPES.getColumnCount();
             while (cursor.hasNext()) {
-                io.questdb.cairo.lv.LiveViewSnapshotKeyCodec.writeKey(sink, record, keyColumnTypes, keyStartIndex);
+                LiveViewSnapshotKeyCodec.writeKey(sink, record, keyColumnTypes, keyStartIndex);
                 final MapValue value = record.getValue();
                 sink.putDouble(value.getDouble(0));
                 sink.putLong(value.getLong(1));
@@ -1430,7 +1434,7 @@ public class AvgDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
 
         @Override
         public boolean supportsSnapshot() {
-            return io.questdb.cairo.lv.LiveViewSnapshotKeyCodec.isAllTypesSupported(keyColumnTypes);
+            return LiveViewSnapshotKeyCodec.isAllTypesSupported(keyColumnTypes);
         }
 
         @Override
