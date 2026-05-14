@@ -603,15 +603,25 @@ public class ArrayAggDoubleArrayGroupByFunctionFactoryTest extends AbstractCairo
         // parallel framework folds per-worker maps into the destination map,
         // the resulting merge() call can see either side at ptr=0:
         //   - srcPtr==0: a worker that observed only NULL inputs for the key
-        //   - destPtr==0: the destination accumulator started with a NULL-only
-        //     worker for the key, and a later worker brings real data.
+        //   - destPtr==0: the destination accumulator (owner fragment) holds
+        //     ptr=0 for the key when a later worker brings real data.
         //
-        // Layout: 4 page frames under a single group key. Frames 0 and 2 hold
-        // NULL arrays (worker stays at ptr=0); frames 1 and 3 hold real values
-        // (worker reaches ptr=data). The exact merge order depends on the
-        // worker pool, but with both empty-worker and real-worker maps in the
-        // pool at least one merge call hits srcPtr==0 and at least one hits
-        // destPtr==0.
+        // Layout: 4 page frames under a single group key, one frame per
+        // worker. Three frames hold NULL arrays (worker stays at ptr=0);
+        // one frame holds real values (worker reaches ptr=data). With this
+        // 3:1 skew the per-worker map collection contains three NULL-state
+        // entries and one real-state entry. Whichever of the four worker
+        // slots is iterated first into the (initially empty) destination
+        // map dictates which branch of merge() fires for the others:
+        //   - if a NULL-state worker is iterated first, the destination
+        //     accumulator stays at ptr=0 and the real-state worker triggers
+        //     the destPtr==0 deep-copy branch;
+        //   - if the real-state worker is iterated first, the accumulator
+        //     starts at ptr=data and the three NULL-state workers each
+        //     trigger the srcPtr==0 early return.
+        // Either way at least one of the two empty-state branches in
+        // merge() is exercised. The exact branch is governed by work-
+        // stealing and is not strictly deterministic.
         setProperty(PropertyKey.CAIRO_SQL_PAGE_FRAME_MAX_ROWS, 100);
         assertMemoryLeak(() -> {
             final WorkerPool pool = new WorkerPool(() -> 4);
@@ -622,16 +632,16 @@ public class ArrayAggDoubleArrayGroupByFunctionFactoryTest extends AbstractCairo
                     if (i > 0) {
                         sb.append(",\n");
                     }
-                    int frame = i / 100;
-                    if (frame % 2 == 0) {
+                    // Frames 0, 1, 2 are NULL; frame 3 is real.
+                    if (i < 300) {
                         sb.append("('g0', null::double[])");
                     } else {
                         sb.append("('g0', ARRAY[").append(i).append(".0])");
                     }
                 }
                 engine.execute(sb.toString(), sqlExecutionContext);
-                // Only frames 1 and 3 (200 real values) contribute to the result.
-                // sum = (100+199)*100/2 + (300+399)*100/2 = 14_950 + 34_950 = 49_900
+                // 100 real values: rows 300..399.
+                // sum = (300+399)*100/2 = 34950
                 TestUtils.assertSql(
                         engine,
                         sqlExecutionContext,
@@ -639,7 +649,7 @@ public class ArrayAggDoubleArrayGroupByFunctionFactoryTest extends AbstractCairo
                         sink,
                         """
                                 grp\tcnt\ttotal
-                                g0\t200\t49900.0
+                                g0\t100\t34950.0
                                 """
                 );
             }, configuration, LOG);
