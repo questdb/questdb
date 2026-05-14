@@ -497,6 +497,141 @@ public class PostingIndexChainWriterTest {
     }
 
     @Test
+    public void testRecoveryDropsPartialSealEntryAtGetTxnPlusOne() {
+        // Models the SEAL branch in TableWriter.sealPostingIndexForPartition:
+        // a chain entry is published with txnAtSeal = txWriter.getTxn() + 1,
+        // then the surrounding O3 / parquet-rewrite path fails before
+        // txWriter.commit lands. The next writer-open runs recovery with
+        // currentTableTxn still at the pre-fail committed _txn; the
+        // (T+1 > T) predicate must drop the partial SEAL entry.
+        PostingIndexChainWriter w = new PostingIndexChainWriter();
+        w.initialiseEmpty(mem);
+
+        final long committedTxn = 42L;
+        long survivor = w.appendNewEntry(mem, 1, committedTxn, 0, 0, 0, 1, 64, 0);
+        w.appendNewEntry(mem, 2, committedTxn + 1L, 0, 0, 0, 1, 64, 0);
+
+        LongList orphans = new LongList();
+        int dropped = w.recoveryDropAbandoned(mem, committedTxn, orphans);
+
+        Assert.assertEquals(1, dropped);
+        Assert.assertEquals(1, orphans.size());
+        Assert.assertEquals(2L, orphans.getQuick(0));
+        Assert.assertEquals(1L, w.getEntryCount());
+        Assert.assertEquals(survivor, w.getHeadEntryOffset());
+        Assert.assertFalse(w.isHeadTrimmedOnLastRecovery());
+
+        PostingIndexChainHeader.Snapshot header = new PostingIndexChainHeader.Snapshot();
+        PostingIndexChainEntry.Snapshot picked = new PostingIndexChainEntry.Snapshot();
+        Assert.assertEquals(PostingIndexChainPicker.RESULT_OK,
+                PostingIndexChainPicker.pick(mem, Long.MAX_VALUE, header, picked));
+        Assert.assertEquals(1L, picked.sealTxn);
+        Assert.assertEquals(committedTxn, picked.txnAtSeal);
+    }
+
+    @Test
+    public void testRecoveryHeadTrimDropsAllTailGensKeepingSlot0Only() {
+        PostingIndexChainWriter w = new PostingIndexChainWriter();
+        w.initialiseEmpty(mem);
+
+        long entryOffset = w.appendNewEntry(
+                mem,
+                /* sealTxn */ 1, /* txnAtSeal */ 5,
+                /* valueMemSize */ 0, /* maxValue */ -1,
+                /* keyCount */ 0, /* genCount */ 5,
+                /* blockCapacity */ 64, /* coveringFormat */ 0
+        );
+        long slot0 = entryOffset + PostingIndexUtils.V2_ENTRY_HEADER_SIZE;
+        mem.putLong(slot0 + PostingIndexUtils.GEN_DIR_OFFSET_FILE_OFFSET, 0L);
+        mem.putLong(slot0 + PostingIndexUtils.GEN_DIR_OFFSET_SIZE, 80L);
+        mem.putLong(slot0 + PostingIndexUtils.GEN_DIR_OFFSET_MAX_VALUE, 7L);
+        mem.putInt(slot0 + PostingIndexUtils.GEN_DIR_OFFSET_MAX_KEY, 2);
+        for (int g = 1; g < 5; g++) {
+            long slot = entryOffset + PostingIndexUtils.V2_ENTRY_HEADER_SIZE
+                    + (long) g * PostingIndexUtils.GEN_DIR_ENTRY_SIZE;
+            mem.putLong(slot + PostingIndexUtils.GEN_DIR_OFFSET_TXN_AT_SEAL, 5L + g);
+        }
+
+        int dropped = w.recoveryDropAbandoned(mem, /* currentTableTxn */ 5L, new LongList());
+
+        Assert.assertEquals(0, dropped);
+        Assert.assertTrue(w.isHeadTrimmedOnLastRecovery());
+        Assert.assertEquals(1, mem.getInt(entryOffset + PostingIndexUtils.V2_ENTRY_OFFSET_GEN_COUNT));
+        Assert.assertEquals(
+                PostingIndexChainEntry.entrySize(1, 0),
+                mem.getLong(entryOffset + PostingIndexUtils.V2_ENTRY_OFFSET_LEN)
+        );
+        Assert.assertEquals(7L, mem.getLong(entryOffset + PostingIndexUtils.V2_ENTRY_OFFSET_MAX_VALUE));
+        Assert.assertEquals(80L, mem.getLong(entryOffset + PostingIndexUtils.V2_ENTRY_OFFSET_VALUE_MEM_SIZE));
+        Assert.assertEquals(3, mem.getInt(entryOffset + PostingIndexUtils.V2_ENTRY_OFFSET_KEY_COUNT));
+        Assert.assertEquals(entryOffset + PostingIndexChainEntry.entrySize(1, 0), w.getRegionLimit());
+    }
+
+    @Test
+    public void testRecoveryHeadTrimKeepsMultipleGensWithCover() {
+        PostingIndexChainWriter w = new PostingIndexChainWriter();
+        w.initialiseEmpty(mem);
+
+        LongList coverEnds = new LongList();
+        coverEnds.add(1111L);
+        coverEnds.add(2222L);
+        long entryOffset = w.appendNewEntry(
+                mem,
+                /* sealTxn */ 1, /* txnAtSeal */ 10,
+                /* valueMemSize */ 0, /* maxValue */ -1,
+                /* keyCount */ 0, /* genCount */ 5,
+                /* blockCapacity */ 64, /* coveringFormat */ 0,
+                coverEnds
+        );
+        for (int g = 0; g < 5; g++) {
+            long slot = entryOffset + PostingIndexUtils.V2_ENTRY_HEADER_SIZE
+                    + (long) g * PostingIndexUtils.GEN_DIR_ENTRY_SIZE;
+            mem.putLong(slot + PostingIndexUtils.GEN_DIR_OFFSET_FILE_OFFSET, (long) g * 100);
+            mem.putLong(slot + PostingIndexUtils.GEN_DIR_OFFSET_SIZE, 100L);
+            mem.putLong(slot + PostingIndexUtils.GEN_DIR_OFFSET_MAX_VALUE, (long) (g + 1) * 50);
+            mem.putInt(slot + PostingIndexUtils.GEN_DIR_OFFSET_MAX_KEY, g);
+        }
+        // slot[0] keeps TXN_AT_SEAL=10 from appendNewEntry; the rest mix
+        // visible (slot[1..2]) and in-flight (slot[3..4]).
+        long slot1 = entryOffset + PostingIndexUtils.V2_ENTRY_HEADER_SIZE
+                + (long) PostingIndexUtils.GEN_DIR_ENTRY_SIZE;
+        long slot2 = slot1 + PostingIndexUtils.GEN_DIR_ENTRY_SIZE;
+        long slot3 = slot2 + PostingIndexUtils.GEN_DIR_ENTRY_SIZE;
+        long slot4 = slot3 + PostingIndexUtils.GEN_DIR_ENTRY_SIZE;
+        mem.putLong(slot1 + PostingIndexUtils.GEN_DIR_OFFSET_TXN_AT_SEAL, 10L);
+        mem.putLong(slot2 + PostingIndexUtils.GEN_DIR_OFFSET_TXN_AT_SEAL, 10L);
+        mem.putLong(slot3 + PostingIndexUtils.GEN_DIR_OFFSET_TXN_AT_SEAL, 11L);
+        mem.putLong(slot4 + PostingIndexUtils.GEN_DIR_OFFSET_TXN_AT_SEAL, 12L);
+
+        int dropped = w.recoveryDropAbandoned(mem, /* currentTableTxn */ 10L, new LongList());
+
+        Assert.assertEquals(0, dropped);
+        Assert.assertTrue(w.isHeadTrimmedOnLastRecovery());
+        Assert.assertEquals(3, mem.getInt(entryOffset + PostingIndexUtils.V2_ENTRY_OFFSET_GEN_COUNT));
+        Assert.assertEquals(
+                PostingIndexChainEntry.entrySize(3, 2),
+                mem.getLong(entryOffset + PostingIndexUtils.V2_ENTRY_OFFSET_LEN)
+        );
+        Assert.assertEquals(150L, mem.getLong(entryOffset + PostingIndexUtils.V2_ENTRY_OFFSET_MAX_VALUE));
+        Assert.assertEquals(300L, mem.getLong(entryOffset + PostingIndexUtils.V2_ENTRY_OFFSET_VALUE_MEM_SIZE));
+        Assert.assertEquals(3, mem.getInt(entryOffset + PostingIndexUtils.V2_ENTRY_OFFSET_KEY_COUNT));
+
+        long newFooterOffset = entryOffset + PostingIndexUtils.V2_ENTRY_HEADER_SIZE
+                + 3L * PostingIndexUtils.GEN_DIR_ENTRY_SIZE;
+        Assert.assertEquals(1111L, mem.getLong(newFooterOffset));
+        Assert.assertEquals(2222L, mem.getLong(newFooterOffset + PostingIndexUtils.COVER_END_OFFSET_ENTRY_SIZE));
+
+        PostingIndexChainHeader.Snapshot header = new PostingIndexChainHeader.Snapshot();
+        PostingIndexChainEntry.Snapshot picked = new PostingIndexChainEntry.Snapshot();
+        Assert.assertEquals(PostingIndexChainPicker.RESULT_OK,
+                PostingIndexChainPicker.pick(mem, Long.MAX_VALUE, /* coverCount */ 2, header, picked));
+        Assert.assertEquals(3, picked.genCount);
+        Assert.assertEquals(2, picked.coverFileEndOffsets.size());
+        Assert.assertEquals(1111L, picked.coverFileEndOffsets.getQuick(0));
+        Assert.assertEquals(2222L, picked.coverFileEndOffsets.getQuick(1));
+    }
+
+    @Test
     public void testRecoveryWholeEntryDroppedWhenSlot0InFlight() {
         PostingIndexChainWriter w = new PostingIndexChainWriter();
         w.initialiseEmpty(mem);

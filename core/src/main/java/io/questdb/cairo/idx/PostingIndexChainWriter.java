@@ -71,7 +71,6 @@ public final class PostingIndexChainWriter {
     private long entryCount;
     private long genCounter;
     private long headEntryOffset;
-    private boolean isHeadTrimmedOnLastRecovery;
     // Cached sealTxn of the current head entry. Distinct from genCounter:
     // recoveryDropAbandoned can rewind headEntryOffset to a surviving
     // entry whose sealTxn is below the high-water genCounter (it cannot
@@ -80,6 +79,7 @@ public final class PostingIndexChainWriter {
     // instead of genCounter so post-recovery writes extend the survivor
     // rather than tripping the appendNewEntry monotonicity assertion.
     private long headSealTxn;
+    private boolean isHeadTrimmedOnLastRecovery;
     private long regionBase;
     private long regionLimit;
 
