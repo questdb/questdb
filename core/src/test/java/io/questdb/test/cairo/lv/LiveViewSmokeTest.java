@@ -26,6 +26,7 @@ package io.questdb.test.cairo.lv;
 
 import io.questdb.PropertyKey;
 import io.questdb.cairo.CairoException;
+import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.file.BlockFileWriter;
 import io.questdb.cairo.lv.LiveViewCheckpointWriter;
@@ -2962,6 +2963,82 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
                     Assert.assertEquals("partition counters sum to 1+2=3", 3L, sumRn);
                     Assert.assertEquals("smallest counter is 1 (partition 'b')", 1L, minRn);
                     Assert.assertEquals("largest counter is 2 (partition 'a')", 2L, maxRn);
+                }
+            }
+
+            execute("DROP LIVE VIEW lv");
+        });
+    }
+
+    @Test
+    public void testLiveViewWindowSnapshotRoundTrip() throws Exception {
+        // Phase 2a.6 (deferred half): LiveViewWindow's anchor map serialises into
+        // the WINDOW_ANCHOR block payload via snapshot() and rehydrates via
+        // restore(). The format mirrors the codec used by the migrated window
+        // functions in 2a.5 - typed key columns + a single LONG anchor value
+        // per partition. End-to-end checkpoint integration is gated on the
+        // 2a.4 write hook and the 2a.7 restart restore path; this test
+        // exercises the codec in isolation.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (ts TIMESTAMP, sym SYMBOL, x DOUBLE) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms AS " +
+                    "SELECT ts, sym, sum(x) OVER w AS s FROM base " +
+                    "WINDOW w AS (PARTITION BY sym ORDER BY ts ANCHOR EXPRESSION timestamp_floor('1d', ts))");
+
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                setCurrentMicros(0L);
+                // One row per partition - no anchor crossings - so the anchor
+                // map ends with exactly two live entries, no tombstones.
+                execute("INSERT INTO base (ts, sym, x) VALUES " +
+                        "('2026-08-01T00:00:00.000000Z', 'a', 1.0), " +
+                        "('2026-08-01T00:00:00.000000Z', 'b', 3.0)");
+                drainWalQueue();
+                drainJob(job);
+                drainWalQueue();
+
+                LiveViewInstance lv = engine.getLiveViewRegistry().getViewInstance("lv");
+                Assert.assertNotNull(lv);
+                LiveViewWindow window = lv.getAnchorWindow();
+                Assert.assertNotNull("anchored LV exposes the window driver", window);
+                Assert.assertEquals("two partitions seeded", 2L, window.getAnchorMapSize());
+
+                try (MemoryCARW sink = Vm.getCARWInstance(4096L, Integer.MAX_VALUE, MemoryTag.NATIVE_DEFAULT)) {
+                    window.snapshot(sink);
+
+                    // Sanity-check the documented payload prefix:
+                    //   STR windowName (INT len + len * CHAR), INT keyCount=1,
+                    //   INT keyType=SYMBOL, INT anchorValueType=TIMESTAMP,
+                    //   LONG partitionCount=2.
+                    long off = 0;
+                    final int nameLen = sink.getInt(off);
+                    off += Integer.BYTES;
+                    Assert.assertEquals("window name 'w' is one char", 1, nameLen);
+                    Assert.assertEquals('w', sink.getChar(off));
+                    off += (long) nameLen * Character.BYTES;
+                    Assert.assertEquals("single key column", 1, sink.getInt(off));
+                    off += Integer.BYTES;
+                    Assert.assertEquals("key column is SYMBOL", ColumnType.SYMBOL, sink.getInt(off));
+                    off += Integer.BYTES;
+                    Assert.assertEquals("anchor value type is TIMESTAMP", ColumnType.TIMESTAMP, sink.getInt(off));
+                    off += Integer.BYTES;
+                    Assert.assertEquals("partition count is 2", 2L, sink.getLong(off));
+
+                    // toTop() wipes the anchor map; the round-trip must rebuild it.
+                    window.toTop();
+                    Assert.assertEquals(0L, window.getAnchorMapSize());
+
+                    window.restore(sink);
+                    Assert.assertEquals("restore brought back both partitions", 2L, window.getAnchorMapSize());
+                    Assert.assertEquals("no tombstones post-restore", 0L, window.getTombstoneCount());
+
+                    // The restored anchor map drives processRow's "existing
+                    // partition, anchor unchanged" branch on the very next row,
+                    // confirming we built valid SLOT_INITIALIZED=1 entries.
+                    setCurrentMicros(200_000L);
+                    execute("INSERT INTO base (ts, sym, x) VALUES ('2026-08-01T02:00:00.000000Z', 'a', 4.0)");
+                    drainWalQueue();
+                    drainJob(job);
+                    drainWalQueue();
                 }
             }
 

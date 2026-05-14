@@ -42,6 +42,8 @@ import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordMetadata;
+import io.questdb.cairo.vm.api.MemoryA;
+import io.questdb.cairo.vm.api.MemoryR;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.window.WindowFunction;
@@ -310,6 +312,143 @@ public class LiveViewWindow implements QuietCloseable {
                 value.putByte(SLOT_TOMBSTONE, (byte) 1);
                 tombstoneCount++;
             }
+        }
+    }
+
+    /**
+     * Rehydrates the anchor map from a checkpoint block written by
+     * {@link #snapshot(MemoryA)}. Clears the existing map, then walks the
+     * serialised partition list and reinserts each entry with
+     * {@code initialized=1, tombstone=0}.
+     * <p>
+     * Validates the recorded {@code windowName}, partition-key column count,
+     * per-column types, and anchor value type against this window's static
+     * shape; any mismatch throws {@link CairoException}, which the caller
+     * (the checkpoint restore path) treats as corruption -- the head
+     * {@code .cp} is unlinked and the LV falls through to the head-miss
+     * replay path. Same disposition as a CRC failure on the file as a whole.
+     */
+    public void restore(MemoryR source) {
+        long offset = 0;
+        final CharSequence storedName = source.getStrA(offset);
+        if (storedName == null || !storedName.toString().equals(windowName)) {
+            throw CairoException.nonCritical()
+                    .put("live view checkpoint anchor block window name mismatch [expected=")
+                    .put(windowName)
+                    .put(", got=")
+                    .put(storedName)
+                    .put(']');
+        }
+        // STR encoding is [INT length, length * CHAR].
+        final int nameLen = source.getInt(offset);
+        offset += Integer.BYTES + (long) nameLen * Character.BYTES;
+
+        final int storedKeyColumnCount = source.getInt(offset);
+        offset += Integer.BYTES;
+        final int expectedKeyColumnCount = partitionKeyTypes.getColumnCount();
+        if (storedKeyColumnCount != expectedKeyColumnCount) {
+            throw CairoException.nonCritical()
+                    .put("live view checkpoint anchor block key column count mismatch [expected=")
+                    .put(expectedKeyColumnCount)
+                    .put(", got=")
+                    .put(storedKeyColumnCount)
+                    .put(']');
+        }
+        for (int i = 0; i < storedKeyColumnCount; i++) {
+            final int storedType = source.getInt(offset);
+            offset += Integer.BYTES;
+            final int expectedType = partitionKeyTypes.getColumnType(i);
+            if (storedType != expectedType) {
+                throw CairoException.nonCritical()
+                        .put("live view checkpoint anchor block key column type mismatch [index=")
+                        .put(i)
+                        .put(", expected=")
+                        .put(ColumnType.nameOf(expectedType))
+                        .put(", got=")
+                        .put(ColumnType.nameOf(storedType))
+                        .put(']');
+            }
+        }
+        final int storedAnchorValueType = source.getInt(offset);
+        offset += Integer.BYTES;
+        if (storedAnchorValueType != anchorValueType) {
+            throw CairoException.nonCritical()
+                    .put("live view checkpoint anchor block anchor value type mismatch [expected=")
+                    .put(ColumnType.nameOf(anchorValueType))
+                    .put(", got=")
+                    .put(ColumnType.nameOf(storedAnchorValueType))
+                    .put(']');
+        }
+        final long partitionCount = source.getLong(offset);
+        offset += Long.BYTES;
+
+        anchorMap.clear();
+        tombstoneCount = 0;
+        for (long i = 0; i < partitionCount; i++) {
+            MapKey key = anchorMap.withKey();
+            offset = LiveViewSnapshotKeyCodec.readKey(key, source, offset, partitionKeyTypes);
+            MapValue value = key.createValue();
+            value.putLong(SLOT_ANCHOR_VALUE, source.getLong(offset));
+            value.putByte(SLOT_INITIALIZED, (byte) 1);
+            value.putByte(SLOT_TOMBSTONE, (byte) 0);
+            offset += Long.BYTES;
+        }
+    }
+
+    /**
+     * Serialises the anchor map's live entries (tombstoned entries are
+     * skipped) into {@code sink} as a WINDOW_ANCHOR block payload. The
+     * framework calls this from
+     * {@link LiveViewCheckpointWriter#beginBlock(int)} /
+     * {@code endBlock} bracketed by the refresh worker, so {@code sink} is
+     * positioned right after the 8-byte block header.
+     * <p>
+     * Payload shape:
+     * <pre>
+     *   windowName: STR
+     *   partitionKeyColumnCount: INT
+     *   per key column: columnType: INT
+     *   anchorValueType: INT
+     *   partitionCount: LONG          (live entries only)
+     *   per partition:
+     *     per key column: keyValue    (LiveViewSnapshotKeyCodec)
+     *     lastAnchorValue: LONG
+     * </pre>
+     */
+    public void snapshot(MemoryA sink) {
+        sink.putStr(windowName);
+        final int keyColumnCount = partitionKeyTypes.getColumnCount();
+        sink.putInt(keyColumnCount);
+        for (int i = 0; i < keyColumnCount; i++) {
+            sink.putInt(partitionKeyTypes.getColumnType(i));
+        }
+        sink.putInt(anchorValueType);
+        final long liveCount = anchorMap.size() - tombstoneCount;
+        sink.putLong(liveCount);
+
+        // MapRecord column layout is [value0, value1, value2, key0, ..., keyN-1] - keys
+        // sit after the three value slots (anchor LONG, initialized BYTE, tombstone BYTE).
+        // The codec needs the key-start index to address them via record.getXxx(columnIndex).
+        final int keyStartIndex = AnchorMapValueTypes.INSTANCE.getColumnCount();
+        MapRecordCursor cursor = anchorMap.getCursor();
+        MapRecord record = anchorMap.getRecord();
+        long emitted = 0;
+        while (cursor.hasNext()) {
+            MapValue value = record.getValue();
+            if (value.getByte(SLOT_TOMBSTONE) == 1) {
+                continue;
+            }
+            LiveViewSnapshotKeyCodec.writeKey(sink, record, partitionKeyTypes, keyStartIndex);
+            sink.putLong(value.getLong(SLOT_ANCHOR_VALUE));
+            emitted++;
+        }
+        if (emitted != liveCount) {
+            throw CairoException.critical(0)
+                    .put("live view anchor snapshot live-count mismatch [expected=")
+                    .put(liveCount)
+                    .put(", emitted=")
+                    .put(emitted)
+                    .put(']');
         }
     }
 
