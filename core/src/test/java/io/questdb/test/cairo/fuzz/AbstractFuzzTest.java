@@ -229,6 +229,10 @@ public class AbstractFuzzTest extends AbstractCairoTest {
         });
     }
 
+    protected void setCreateWalAsParquet(boolean createWalAsParquet) {
+        fuzzer.setCreateWalAsParquet(createWalAsParquet);
+    }
+
     protected void setFuzzCounts(
             boolean isO3,
             int fuzzRowCount,
@@ -325,6 +329,37 @@ public class AbstractFuzzTest extends AbstractCairoTest {
                 colAddProb, colRemoveProb, colRenameProb, colTypeChangeProb, dataAddProb,
                 equalTsRowsProb, partitionDropProb, partitionToParquetProb, partitionToNativeProb, truncateProb, tableDropProb, setTtlProb,
                 replaceProb, symbolAccessProb, queryProb, setParquetEncodingProb
+        );
+    }
+
+    protected void setFuzzProbabilities(
+            double cancelRowsProb,
+            double notSetProb,
+            double nullSetProb,
+            double rollbackProb,
+            double colAddProb,
+            double colRemoveProb,
+            double colRenameProb,
+            double colTypeChangeProb,
+            double dataAddProb,
+            double equalTsRowsProb,
+            double partitionDropProb,
+            double partitionToParquetProb,
+            double partitionToNativeProb,
+            double truncateProb,
+            double tableDropProb,
+            double setTtlProb,
+            double replaceProb,
+            double symbolAccessProb,
+            double queryProb,
+            double setParquetEncodingProb,
+            double setDefaultPartitionFormatProb
+    ) {
+        fuzzer.setFuzzProbabilities(
+                cancelRowsProb, notSetProb, nullSetProb, rollbackProb,
+                colAddProb, colRemoveProb, colRenameProb, colTypeChangeProb, dataAddProb,
+                equalTsRowsProb, partitionDropProb, partitionToParquetProb, partitionToNativeProb, truncateProb, tableDropProb, setTtlProb,
+                replaceProb, symbolAccessProb, queryProb, setParquetEncodingProb, setDefaultPartitionFormatProb
         );
     }
 

@@ -33,7 +33,9 @@ import io.questdb.cairo.vm.api.MemoryMA;
 import io.questdb.cairo.vm.api.MemoryR;
 import io.questdb.griffin.engine.table.parquet.ParquetCompression;
 import io.questdb.griffin.engine.table.parquet.ParquetPartitionDecoder;
+import io.questdb.griffin.engine.table.parquet.MappedMemoryPartitionDescriptor;
 import io.questdb.griffin.engine.table.parquet.PartitionDescriptor;
+import io.questdb.griffin.engine.table.parquet.PartitionEncoder;
 import io.questdb.griffin.engine.table.parquet.PartitionUpdater;
 import io.questdb.griffin.engine.table.parquet.RowGroupBuffers;
 import io.questdb.log.Log;
@@ -695,6 +697,30 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
         final TimestampDriver timestampDriver = ColumnType.getTimestampDriver(metadata.getTimestampType());
 
         if (isParquet) {
+            if (srcDataMax < 1) {
+                // Brand-new partition on a FORMAT PARQUET table: there is no
+                // existing parquet file to update, so the standard parquet O3
+                // path (which assumes a file + _pm exist) cannot run. Emit a
+                // fresh parquet file directly from the O3 buffers instead.
+                writeFreshParquetFromO3(
+                        pathToTable,
+                        tableWriter.getMetadata().getTimestampType(),
+                        partitionBy,
+                        oooColumns,
+                        srcOooLo,
+                        srcOooHi,
+                        o3TimestampMin,
+                        partitionTimestamp,
+                        sortedTimestampsAddr,
+                        tableWriter,
+                        txn,
+                        partitionUpdateSinkAddr,
+                        o3Basket,
+                        newPartitionSize,
+                        columnCounter
+                );
+                return;
+            }
             processParquetPartition(
                     pathToTable,
                     tableWriter.getMetadata().getTimestampType(),
@@ -3427,6 +3453,315 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
         Unsafe.putLong(partitionUpdateSinkAddr + 4 * Long.BYTES, partitionMutates); // partitionMutates
         Unsafe.putLong(partitionUpdateSinkAddr + 5 * Long.BYTES, 0); // o3SplitPartitionSize
         Unsafe.putLong(partitionUpdateSinkAddr + 7 * Long.BYTES, -1); // update parquet partition file size
+    }
+
+    /**
+     * Emits a fresh parquet file for a brand-new partition on a FORMAT PARQUET
+     * table, sourcing data directly from the O3 in-memory column buffers. Unlike
+     * {@link #processParquetPartition}, this path does not assume an existing
+     * parquet file or _pm sidecar.
+     * <p>
+     * First-cut implementation: only fixed-width column types are supported.
+     * Tables containing SYMBOL or variable-length columns will throw — those
+     * code paths land in follow-up commits.
+     */
+    private static void writeFreshParquetFromO3(
+            Path pathToTable,
+            int timestampType,
+            int partitionBy,
+            ReadOnlyObjList<? extends MemoryCR> oooColumns,
+            long srcOooLo,
+            long srcOooHi,
+            long o3TimestampMin,
+            long partitionTimestamp,
+            long sortedTimestampsAddr,
+            TableWriter tableWriter,
+            long txn,
+            long partitionUpdateSinkAddr,
+            O3Basket o3Basket,
+            long newPartitionSize,
+            AtomicInteger columnCounter
+    ) {
+        assert !tableWriter.getTableToken().isMatView() : "FORMAT PARQUET should be rejected on mat views at SQL level";
+
+        final TableRecordMetadata metadata = tableWriter.getMetadata();
+        final int partitionRowCount = (int) (srcOooHi - srcOooLo + 1);
+        final FilesFacade ff = tableWriter.getFilesFacade();
+        final CairoConfiguration configuration = tableWriter.getConfiguration();
+        final long partitionNameTxn = txn - 1;
+        final long mergeIndexAddr = sortedTimestampsAddr + srcOooLo * TableWriter.TIMESTAMP_MERGE_ENTRY_BYTES;
+
+        final Path path = Path.getThreadLocal(pathToTable);
+        final int pathSize = path.size();
+        final Path parquetPath = Path.getThreadLocal2(pathToTable);
+
+        // Track buffers we malloc so we can free them on success/error.
+        // Layout: pairs of (addr, size) per column.
+        final LongList allocatedBuffers = new LongList();
+
+        long parquetFileSize = 0;
+        long parquetMetaFd = -1;
+        boolean partitionDirCreated = false;
+        try {
+            setPathForNativePartition(path.trimTo(pathSize), timestampType, partitionBy, partitionTimestamp, partitionNameTxn);
+            createDirsOrFail(ff, path.slash(), configuration.getMkDirMode());
+            partitionDirCreated = true;
+
+            // Plain PartitionDescriptor (not MappedMemoryPartitionDescriptor):
+            // our column buffers are malloc'd via Unsafe and freed in finally,
+            // not mmap'd, so the descriptor must not call munmap on close.
+            try (PartitionDescriptor descriptor = new PartitionDescriptor()) {
+                final int readerTimestampIndex = metadata.getTimestampIndex();
+                final int writerTimestampIndex = readerTimestampIndex >= 0
+                        ? metadata.getColumnMetadata(readerTimestampIndex).getWriterIndex()
+                        : -1;
+                descriptor.of(tableWriter.getTableToken().getTableName(), partitionRowCount, writerTimestampIndex);
+
+                final int columnCount = metadata.getColumnCount();
+                for (int columnIndex = 0; columnIndex < columnCount; columnIndex++) {
+                    final int columnType = metadata.getColumnType(columnIndex);
+                    if (columnType <= 0) {
+                        continue;
+                    }
+                    final String columnName = metadata.getColumnName(columnIndex);
+                    final int columnId = metadata.getColumnMetadata(columnIndex).getWriterIndex();
+                    final int parquetEncodingConfig = metadata.getColumnMetadata(columnIndex).getParquetEncodingConfig();
+                    final boolean notTheTimestamp = columnIndex != readerTimestampIndex;
+
+                    if (ColumnType.isVarSize(columnType)) {
+                        // Variable-length columns: primary holds raw payload,
+                        // auxiliary holds offsets/lengths. Allocate both, run
+                        // mergeCopy to assemble a sorted contiguous pair, hand
+                        // both to the descriptor.
+                        final MemoryCR oooDataMem = oooColumns.getQuick(TableWriter.getPrimaryColumnIndex(columnIndex));
+                        final MemoryCR oooAuxMem = oooColumns.getQuick(TableWriter.getSecondaryColumnIndex(columnIndex));
+                        final long srcOooDataAddr = oooDataMem.addressOf(0);
+                        final long srcOooAuxAddr = oooAuxMem.addressOf(0);
+
+                        final ColumnTypeDriver ctd = ColumnType.getDriver(columnType);
+                        final long dstAuxSize = ctd.getAuxVectorSize(partitionRowCount);
+                        // Source aux holds entries for srcOooLo..srcOooHi; data
+                        // size is bounded by the offsets at those entries.
+                        final long dstDataSize = ctd.getDataVectorSize(srcOooAuxAddr, srcOooLo, srcOooHi);
+
+                        final long dstAuxAddr = Unsafe.malloc(dstAuxSize, MemoryTag.NATIVE_O3);
+                        allocatedBuffers.add(dstAuxAddr);
+                        allocatedBuffers.add(dstAuxSize);
+                        final long dstDataAddr = Unsafe.malloc(dstDataSize, MemoryTag.NATIVE_O3);
+                        allocatedBuffers.add(dstDataAddr);
+                        allocatedBuffers.add(dstDataSize);
+
+                        O3CopyJob.mergeCopy(
+                                columnType,
+                                mergeIndexAddr,
+                                partitionRowCount,
+                                0, // srcDataAuxAddr - not accessed (bit 63 = 0)
+                                0, // srcDataVarAddr - not accessed
+                                srcOooAuxAddr,
+                                srcOooDataAddr,
+                                dstAuxAddr,
+                                dstDataAddr,
+                                0
+                        );
+
+                        descriptor.addColumn(
+                                columnName,
+                                columnType,
+                                columnId,
+                                0,
+                                dstDataAddr,
+                                dstDataSize,
+                                dstAuxAddr,
+                                dstAuxSize,
+                                0,
+                                0,
+                                parquetEncodingConfig
+                        );
+                        continue;
+                    }
+
+                    // mergeCopy reorders rows according to the merge index.
+                    // Even for in-order in-WAL data, this gives us a clean
+                    // contiguous column buffer to hand to PartitionEncoder
+                    // and uniformly handles backdated/O3 input.
+                    final MemoryCR oooMem1 = oooColumns.getQuick(TableWriter.getPrimaryColumnIndex(columnIndex));
+                    final long srcOooFixAddr = oooMem1.addressOf(0);
+                    final long dstFixSize = (long) partitionRowCount * ColumnType.sizeOf(columnType);
+                    final long dstFixAddr = Unsafe.malloc(dstFixSize, MemoryTag.NATIVE_O3);
+                    allocatedBuffers.add(dstFixAddr);
+                    allocatedBuffers.add(dstFixSize);
+
+                    O3CopyJob.mergeCopy(
+                            notTheTimestamp ? columnType : ColumnType.setDesignatedTimestampBit(columnType, true),
+                            mergeIndexAddr,
+                            partitionRowCount,
+                            0, // srcDataFixAddr - not accessed (bit 63 = 0)
+                            0,
+                            srcOooFixAddr,
+                            0,
+                            dstFixAddr,
+                            0,
+                            0
+                    );
+
+                    if (ColumnType.isSymbol(columnType)) {
+                        // Symbol columns store int keys in dstFixAddr; the symbol
+                        // dictionary (offsets + values) comes from the table-wide
+                        // SymbolMapWriter, which the WAL apply driver has already
+                        // updated for this transaction's new symbols via SymbolMapDiff.
+                        final MapWriter symbolMapWriter = tableWriter.getSymbolMapWriter(columnIndex);
+                        final MemoryR offsetsMem = symbolMapWriter.getSymbolOffsetsMemory();
+                        final MemoryR valuesMem = symbolMapWriter.getSymbolValuesMemory();
+                        final int symbolCount = symbolMapWriter.getSymbolCount();
+                        final long offset = SymbolMapWriter.keyToOffset(symbolCount);
+                        assert offset - SymbolMapWriter.HEADER_SIZE <= offsetsMem.size();
+                        final long valuesMemSize = offsetsMem.getLong(offset);
+                        assert valuesMemSize <= valuesMem.size();
+
+                        int encodeColumnType = columnType;
+                        if (!symbolMapWriter.getNullFlag()) {
+                            encodeColumnType |= PARQUET_SYMBOL_NOT_NULL_HINT;
+                        }
+                        descriptor.addColumn(
+                                columnName,
+                                encodeColumnType,
+                                columnId,
+                                0,
+                                dstFixAddr,
+                                dstFixSize,
+                                valuesMem.addressOf(0),
+                                valuesMemSize,
+                                // Skip 8-byte header. Pass element count, not byte size.
+                                offsetsMem.addressOf(SymbolMapWriter.HEADER_SIZE),
+                                symbolCount,
+                                parquetEncodingConfig
+                        );
+                    } else {
+                        descriptor.addColumn(
+                                columnName,
+                                columnType,
+                                columnId,
+                                0,
+                                dstFixAddr,
+                                dstFixSize,
+                                0,
+                                0,
+                                0,
+                                0,
+                                parquetEncodingConfig
+                        );
+                    }
+                }
+
+                // Open _pm so the Rust encoder writes parquet metadata alongside
+                // the data file.
+                setPathForParquetPartitionMetadata(parquetPath.trimTo(pathSize), timestampType, partitionBy, partitionTimestamp, partitionNameTxn);
+                parquetMetaFd = TableUtils.openRW(ff, parquetPath.$(), LOG, configuration.getWriterFileOpenOpts());
+
+                setPathForParquetPartition(parquetPath.trimTo(pathSize), timestampType, partitionBy, partitionTimestamp, partitionNameTxn);
+
+                final int compressionCodec = configuration.getPartitionEncoderParquetCompressionCodec();
+                final int compressionLevel = configuration.getPartitionEncoderParquetCompressionLevel();
+                final int rowGroupSize = configuration.getPartitionEncoderParquetRowGroupSize();
+                final int dataPageSize = configuration.getPartitionEncoderParquetDataPageSize();
+                final boolean statisticsEnabled = configuration.isPartitionEncoderParquetStatisticsEnabled();
+                final boolean rawArrayEncoding = configuration.isPartitionEncoderParquetRawArrayEncoding();
+                final int parquetVersion = configuration.getPartitionEncoderParquetVersion();
+                final double minCompressionRatio = configuration.getPartitionEncoderParquetMinCompressionRatio();
+
+                PartitionEncoder.encodeWithOptions(
+                        descriptor,
+                        parquetPath,
+                        ParquetCompression.packCompressionCodecLevel(compressionCodec, compressionLevel),
+                        statisticsEnabled,
+                        rawArrayEncoding,
+                        rowGroupSize,
+                        dataPageSize,
+                        parquetVersion,
+                        0,
+                        0,
+                        configuration.getPartitionEncoderParquetBloomFilterFpp(),
+                        minCompressionRatio,
+                        Files.toOsFd(parquetMetaFd),
+                        -1L
+                );
+
+                parquetFileSize = ff.length(parquetPath.$());
+
+                if (configuration.getCommitMode() != CommitMode.NOSYNC) {
+                    ff.fsync(parquetMetaFd);
+                }
+            }
+
+            // Stat _pm size and release the writer fd before mmap RO for indexing.
+            setPathForParquetPartitionMetadata(parquetPath.trimTo(pathSize), timestampType, partitionBy, partitionTimestamp, partitionNameTxn);
+            final long parquetMetaFileSize = ff.length(parquetPath.$());
+            ff.close(parquetMetaFd);
+            parquetMetaFd = -1;
+
+            // Build .pk/.k index files for indexed SYMBOL columns by decoding
+            // the just-written parquet. processParquetPartition does this for
+            // existing parquet partitions via updateParquetIndexes; the fresh
+            // path must do the same or readers will SIGABRT trying to open
+            // missing index files on the first query against this partition.
+            setPathForParquetPartition(parquetPath.trimTo(pathSize), timestampType, partitionBy, partitionTimestamp, partitionNameTxn);
+            final O3ParquetMergeContext idxCtx = PARQUET_MERGE_CONTEXT.get();
+            idxCtx.clear();
+            updateParquetIndexes(
+                    partitionBy,
+                    partitionTimestamp,
+                    tableWriter,
+                    partitionNameTxn,
+                    o3Basket,
+                    partitionRowCount,
+                    parquetFileSize,
+                    parquetMetaFileSize,
+                    pathToTable,
+                    parquetPath,
+                    ff,
+                    idxCtx.getPartitionDecoder(),
+                    metadata,
+                    idxCtx.getParquetColumns(),
+                    idxCtx.getRowGroupBuffers(),
+                    true
+            );
+
+            // Hand off to the consumer via the partition update sink. The
+            // consumer (o3ConsumePartitionUpdateSink) will register the
+            // partition in txWriter and mark it as parquet.
+            Unsafe.putLong(partitionUpdateSinkAddr, partitionTimestamp);
+            Unsafe.putLong(partitionUpdateSinkAddr + Long.BYTES, o3TimestampMin);
+            Unsafe.putLong(partitionUpdateSinkAddr + 2 * Long.BYTES, newPartitionSize);
+            Unsafe.putLong(partitionUpdateSinkAddr + 3 * Long.BYTES, 0L); // oldPartitionSize
+            // partitionMutates=0 — this is a fresh write, not an in-place mutation.
+            Unsafe.putLong(partitionUpdateSinkAddr + 4 * Long.BYTES, Numbers.encodeLowHighInts(0, 0));
+            Unsafe.putLong(partitionUpdateSinkAddr + 5 * Long.BYTES, 0L); // o3SplitPartitionSize
+            Unsafe.putLong(partitionUpdateSinkAddr + 7 * Long.BYTES, parquetFileSize);
+        } catch (Throwable th) {
+            LOG.error().$("could not write fresh parquet partition [table=").$(tableWriter.getTableToken())
+                    .$(", ts=").$ts(partitionTimestamp)
+                    .$(", e=").$(th)
+                    .I$();
+            if (partitionDirCreated) {
+                setPathForNativePartition(path.trimTo(pathSize), timestampType, partitionBy, partitionTimestamp, partitionNameTxn);
+                if (!ff.rmdir(path.slash())) {
+                    LOG.error().$("could not remove fresh parquet partition dir [path=").$(path).I$();
+                }
+            }
+            tableWriter.o3BumpErrorCount(CairoException.isCairoOomError(th));
+            throw th;
+        } finally {
+            for (int i = 0, n = allocatedBuffers.size(); i < n; i += 2) {
+                Unsafe.free(allocatedBuffers.getQuick(i), allocatedBuffers.getQuick(i + 1), MemoryTag.NATIVE_O3);
+            }
+            if (parquetMetaFd != -1) {
+                ff.close(parquetMetaFd);
+            }
+            path.trimTo(pathSize);
+            parquetPath.trimTo(pathSize);
+            tableWriter.o3ClockDownPartitionUpdateCount();
+            tableWriter.o3CountDownDoneLatch();
+        }
     }
 
     @Override

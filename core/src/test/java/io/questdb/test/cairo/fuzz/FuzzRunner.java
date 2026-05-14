@@ -115,6 +115,8 @@ public class FuzzRunner {
     private double rollbackProb;
     private long s0;
     private long s1;
+    private boolean createWalAsParquet;
+    private double setDefaultPartitionFormatProb;
     private double setParquetEncodingProb;
     private double setTtlProb;
     private SqlExecutionContext sqlExecutionContext;
@@ -503,7 +505,8 @@ public class FuzzRunner {
                 strLen,
                 generateSymbols(rnd, rnd.nextInt(Math.max(1, symbolCountMax - 5)) + 5, symbolStrLenMax, tableName),
                 (int) sequencerMetadata.getMetadataVersion(),
-                setParquetEncodingProb
+                setParquetEncodingProb,
+                setDefaultPartitionFormatProb
         );
     }
 
@@ -546,6 +549,14 @@ public class FuzzRunner {
         } else {
             return (int) (20 * randomDriver);
         }
+    }
+
+    /**
+     * When true, fuzz-created WAL tables get FORMAT PARQUET in their CREATE TABLE
+     * statement so every partition is born parquet from the very first WAL apply.
+     */
+    public void setCreateWalAsParquet(boolean createWalAsParquet) {
+        this.createWalAsParquet = createWalAsParquet;
     }
 
     public void setFuzzCounts(
@@ -704,6 +715,54 @@ public class FuzzRunner {
             double queryProb,
             double setParquetEncodingProb
     ) {
+        setFuzzProbabilities(
+                cancelRowsProb,
+                notSetProb,
+                nullSetProb,
+                rollbackProb,
+                colAddProb,
+                colRemoveProb,
+                colRenameProb,
+                colTypeChangeProb,
+                dataAddProb,
+                equalTsRowsProb,
+                partitionDropProb,
+                partitionToParquetProb,
+                partitionToNativeProb,
+                truncateProb,
+                tableDropProb,
+                setTtlProb,
+                replaceInsertProb,
+                symbolAccessValidationProb,
+                queryProb,
+                setParquetEncodingProb,
+                0.0
+        );
+    }
+
+    public void setFuzzProbabilities(
+            double cancelRowsProb,
+            double notSetProb,
+            double nullSetProb,
+            double rollbackProb,
+            double colAddProb,
+            double colRemoveProb,
+            double colRenameProb,
+            double colTypeChangeProb,
+            double dataAddProb,
+            double equalTsRowsProb,
+            double partitionDropProb,
+            double partitionToParquetProb,
+            double partitionToNativeProb,
+            double truncateProb,
+            double tableDropProb,
+            double setTtlProb,
+            double replaceInsertProb,
+            double symbolAccessValidationProb,
+            double queryProb,
+            double setParquetEncodingProb,
+            double setDefaultPartitionFormatProb
+    ) {
         this.cancelRowsProb = cancelRowsProb;
         this.notSetProb = notSetProb;
         this.nullSetProb = nullSetProb;
@@ -724,6 +783,7 @@ public class FuzzRunner {
         this.symbolAccessValidationProb = symbolAccessValidationProb;
         this.queryProb = queryProb;
         this.setParquetEncodingProb = setParquetEncodingProb;
+        this.setDefaultPartitionFormatProb = setDefaultPartitionFormatProb;
     }
 
     public void withDb(CairoEngine engine, SqlExecutionContext sqlExecutionContext) {
@@ -906,10 +966,16 @@ public class FuzzRunner {
         }
 
         if (engine.getTableTokenIfExists(tableName) == null) {
+            String tail;
+            if (isWal) {
+                tail = createWalAsParquet ? "FORMAT PARQUET WAL" : "WAL";
+            } else {
+                tail = "BYPASS WAL";
+            }
             engine.execute(
                     "create atomic table " + tableName + " as (" +
                             "select * from data_temp" +
-                            "), index(sym2 " + randomIndexTypeClause() + ") timestamp(ts) partition by DAY " + (isWal ? "WAL" : "BYPASS WAL"),
+                            "), index(sym2 " + randomIndexTypeClause() + ") timestamp(ts) partition by DAY " + tail,
                     sqlExecutionContext
             );
             // force few column tops
@@ -948,7 +1014,8 @@ public class FuzzRunner {
             engine.execute(
                     "create atomic table " + tableName + " as (" +
                             "select * from data_temp" +
-                            "), index(sym2 " + randomIndexTypeClause() + ") timestamp(ts) partition by DAY WAL",
+                            "), index(sym2 " + randomIndexTypeClause() + ") timestamp(ts) partition by DAY "
+                            + (createWalAsParquet ? "FORMAT PARQUET WAL" : "WAL"),
                     sqlExecutionContext
             );
             // force few column tops

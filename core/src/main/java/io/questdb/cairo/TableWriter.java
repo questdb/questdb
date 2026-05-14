@@ -7332,7 +7332,11 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
                 txWriter.minTimestamp = isFirstPartitionReplaced ? timestampMin : Math.min(timestampMin, txWriter.minTimestamp);
                 int partitionIndexRaw = txWriter.findAttachedPartitionRawIndexByLoTimestamp(partitionTimestamp);
-                boolean isParquet = partitionIndexRaw > -1 && txWriter.isPartitionParquet(partitionIndexRaw / LONGS_PER_TX_ATTACHED_PARTITION);
+                // Existing partitions inherit their own format. Brand-new
+                // partitions on a FORMAT PARQUET table are born parquet.
+                boolean isParquet = partitionIndexRaw > -1
+                        ? txWriter.isPartitionParquet(partitionIndexRaw / LONGS_PER_TX_ATTACHED_PARTITION)
+                        : metadata.getDefaultPartitionFormat() == TableUtils.DEFAULT_PARTITION_FORMAT_PARQUET;
 
                 final long newPartitionTimestamp = partitionTimestamp;
                 final int newPartitionIndex = partitionIndexRaw;
@@ -7497,7 +7501,15 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     }
                 } else {
                     final long parquetFileSize = Unsafe.getLong(blockAddress + 7 * Long.BYTES);
-                    if (isParquet && parquetFileSize > -1) {
+                    if (isParquet && parquetFileSize > -1 && partitionIndexRaw < 0) {
+                        // Brand-new parquet partition emitted by writeFreshParquetFromO3
+                        // for a FORMAT PARQUET table. Insert it into the attached
+                        // partitions list and mark it as parquet from inception.
+                        final long partitionNameTxn = txWriter.getTxn() - 1;
+                        txWriter.updateAttachedPartitionSizeByRawIndex(partitionIndexRaw, partitionTimestamp, srcDataNewPartitionSize, partitionNameTxn);
+                        txWriter.setPartitionParquetFormat(partitionTimestamp, parquetFileSize);
+                        txWriter.bumpPartitionTableVersion();
+                    } else if (isParquet && parquetFileSize > -1) {
                         // Parquet rewrite: new file is in a txn-named directory.
                         // Bump the partition name txn and queue old dir for removal.
                         final long srcNameTxn = txWriter.getPartitionNameTxnByRawIndex(partitionIndexRaw);
@@ -8374,7 +8386,11 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
                     // check partition read-only state
                     final boolean partitionIsReadOnly = partitionIndexRaw > -1 && txWriter.isPartitionReadOnlyByRawIndex(partitionIndexRaw);
-                    final boolean isParquet = partitionIndexRaw > -1 && txWriter.isPartitionParquetByRawIndex(partitionIndexRaw);
+                    // Existing partitions inherit their own format. Brand-new
+                    // partitions on a FORMAT PARQUET table are born parquet.
+                    final boolean isParquet = partitionIndexRaw > -1
+                            ? txWriter.isPartitionParquetByRawIndex(partitionIndexRaw)
+                            : metadata.getDefaultPartitionFormat() == TableUtils.DEFAULT_PARTITION_FORMAT_PARQUET;
 
                     // We're appending onto the last (active) partition.
                     // Cannot append to parquet partitions — they must go through the O3 merge path.
@@ -8975,6 +8991,14 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         long rowLo = walTxnDetails.getSegmentRowLo(seqTxn);
         long rowHi = walTxnDetails.getSegmentRowHi(seqTxn);
         boolean inOrder = walTxnDetails.getTxnInOrder(seqTxn);
+        // FORMAT PARQUET tables cannot use the in-order LAG fast path: that
+        // path appends into native column files of the active partition, but
+        // parquet partitions have no append-friendly column files. Force the
+        // commit through the O3 path so every partition (existing parquet,
+        // brand-new parquet) is handled uniformly via O3PartitionJob.
+        if (inOrder && metadata.getDefaultPartitionFormat() == TableUtils.DEFAULT_PARTITION_FORMAT_PARQUET) {
+            inOrder = false;
+        }
         byte dedupMode = walTxnDetails.getDedupMode(seqTxn);
         long replaceRangeTsLo = walTxnDetails.getReplaceRangeTsLow(seqTxn);
         long replaceRangeTsHi = walTxnDetails.getReplaceRangeTsHi(seqTxn);

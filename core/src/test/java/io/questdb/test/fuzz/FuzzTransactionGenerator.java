@@ -76,6 +76,55 @@ public class FuzzTransactionGenerator {
             int metaVersion,
             double probabilityOfSetParquetEncoding
     ) {
+        return generateSet(
+                initialRowCount, sequencerMetadata, tableMetadata, rnd, minTimestamp, maxTimestamp,
+                rowCount, transactionCount, o3,
+                probabilityOfCancelRow, probabilityOfUnassignedColumnValue, probabilityOfAssigningNull,
+                probabilityOfTransactionRollback, probabilityOfAddingNewColumn, probabilityOfRemovingColumn,
+                probabilityOfRenamingColumn, probabilityOfColumnTypeChange, probabilityOfDataInsert,
+                probabilityOfSameTimestamp, probabilityOfDropPartition, probabilityOfConvertPartitionToParquet,
+                probabilityOfConvertPartitionToNative, probabilityOfTruncate, probabilityOfDropTable,
+                probabilityOfSetTtl, replaceInsertProb, probabilityOfSymbolAccessValidation, probabilityOfQuery,
+                maxStrLenForStrColumns, symbols, metaVersion, probabilityOfSetParquetEncoding,
+                0.0
+        );
+    }
+
+    public static ObjList<FuzzTransaction> generateSet(
+            long initialRowCount,
+            TableRecordMetadata sequencerMetadata,
+            TableMetadata tableMetadata,
+            Rnd rnd,
+            long minTimestamp,
+            long maxTimestamp,
+            int rowCount,
+            int transactionCount,
+            boolean o3,
+            double probabilityOfCancelRow,
+            double probabilityOfUnassignedColumnValue,
+            double probabilityOfAssigningNull,
+            double probabilityOfTransactionRollback,
+            double probabilityOfAddingNewColumn,
+            double probabilityOfRemovingColumn,
+            double probabilityOfRenamingColumn,
+            double probabilityOfColumnTypeChange,
+            double probabilityOfDataInsert,
+            double probabilityOfSameTimestamp,
+            double probabilityOfDropPartition,
+            double probabilityOfConvertPartitionToParquet,
+            double probabilityOfConvertPartitionToNative,
+            double probabilityOfTruncate,
+            double probabilityOfDropTable,
+            double probabilityOfSetTtl,
+            double replaceInsertProb,
+            double probabilityOfSymbolAccessValidation,
+            double probabilityOfQuery,
+            int maxStrLenForStrColumns,
+            String[] symbols,
+            int metaVersion,
+            double probabilityOfSetParquetEncoding,
+            double probabilityOfSetDefaultPartitionFormat
+    ) {
         ObjList<FuzzTransaction> transactionList = new ObjList<>();
         int waitBarrierVersion = 0;
         RecordMetadata meta = deepMetadataCopyOf(sequencerMetadata, tableMetadata);
@@ -133,6 +182,13 @@ public class FuzzTransactionGenerator {
             transactionCount++;
         }
 
+        // Decide if SET FORMAT PARQUET|NATIVE will be generated
+        boolean generateSetDefaultPartitionFormat = rnd.nextDouble() < probabilityOfSetDefaultPartitionFormat;
+        int setDefaultPartitionFormatIteration = generateSetDefaultPartitionFormat ? rnd.nextInt(transactionCount) : -1;
+        if (generateSetDefaultPartitionFormat) {
+            transactionCount++;
+        }
+
         long estimatedTotalRows = rowCount + initialRowCount;
 
         for (int i = 0; i < transactionCount; i++) {
@@ -147,6 +203,10 @@ public class FuzzTransactionGenerator {
             }
             if (i == setParquetEncodingIteration) {
                 generateSetParquetEncoding(transactionList, metaVersion, waitBarrierVersion++, rnd, meta);
+                continue;
+            }
+            if (i == setDefaultPartitionFormatIteration) {
+                generateSetDefaultPartitionFormat(transactionList, metaVersion, waitBarrierVersion++, rnd);
                 continue;
             }
             final double rndDouble = rnd.nextDouble();
@@ -515,6 +575,17 @@ public class FuzzTransactionGenerator {
             transactionList.add(transaction);
             return;
         }
+    }
+
+    private static void generateSetDefaultPartitionFormat(ObjList<FuzzTransaction> transactionList, int metadataVersion, int waitBarrierVersion, Rnd rnd) {
+        boolean parquet = rnd.nextBoolean();
+        FuzzTransaction transaction = new FuzzTransaction();
+        transaction.waitBarrierVersion = waitBarrierVersion;
+        transaction.structureVersion = metadataVersion;
+        transaction.waitAllDone = true;
+        transaction.reopenTable = true;
+        transaction.operationList.add(new FuzzSetDefaultPartitionFormatOperation(parquet));
+        transactionList.add(transaction);
     }
 
     private static void generateSetTtl(ObjList<FuzzTransaction> transactionList, int metadataVersion, int waitBarrierVersion, Rnd rnd) {
