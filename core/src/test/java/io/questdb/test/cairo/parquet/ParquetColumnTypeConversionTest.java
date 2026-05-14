@@ -141,6 +141,74 @@ public class ParquetColumnTypeConversionTest extends AbstractCairoTest {
     }
 
     /**
+     * Exercises Decimal sources across the six physical backing widths (Decimal8 / Decimal16
+     * / Decimal32 / Decimal64 / Decimal128 / Decimal256) which map respectively to parquet
+     * Int32, Int32, Int32, Int64, FixedLenByteArray(16), FixedLenByteArray(32). Each row
+     * lands on a different dispatch arm in {@code decode_int32_dispatch},
+     * {@code decode_int64_dispatch} or {@code decode_fixed_len_dispatch}. The Fixed-to-Var
+     * conversion path passes the source type to Rust (Java post-converts), so the matched
+     * arm is the source {@code ColumnTypeTag::DecimalN} arm at the column's natural width.
+     */
+    @Test
+    public void testDecimalSourceWidthsToString() throws Exception {
+        assertMemoryLeak(() -> {
+            // Decimal8 (Int32 physical, fits in i8 after scaling)
+            assertConversion("DECIMAL(2, 0)", "STRING", """
+                    (12m, '2024-01-01T00:00:01.000000Z'),
+                    (-99m, '2024-01-01T00:00:02.000000Z'),
+                    (NULL, '2024-01-01T00:00:03.000000Z')""");
+            assertConversion("DECIMAL(2, 1)", "VARCHAR", """
+                    (1.2m, '2024-01-01T00:00:01.000000Z'),
+                    (-9.9m, '2024-01-01T00:00:02.000000Z'),
+                    (NULL, '2024-01-01T00:00:03.000000Z')""");
+
+            // Decimal16 (Int32 physical, fits in i16 after scaling)
+            assertConversion("DECIMAL(4, 0)", "STRING", """
+                    (1234m, '2024-01-01T00:00:01.000000Z'),
+                    (-9999m, '2024-01-01T00:00:02.000000Z'),
+                    (NULL, '2024-01-01T00:00:03.000000Z')""");
+            assertConversion("DECIMAL(4, 2)", "VARCHAR", """
+                    (12.34m, '2024-01-01T00:00:01.000000Z'),
+                    (-99.99m, '2024-01-01T00:00:02.000000Z'),
+                    (NULL, '2024-01-01T00:00:03.000000Z')""");
+
+            // Decimal32 (Int32 physical)
+            assertConversion("DECIMAL(9, 0)", "STRING", """
+                    (123456789m, '2024-01-01T00:00:01.000000Z'),
+                    (-987654321m, '2024-01-01T00:00:02.000000Z'),
+                    (NULL, '2024-01-01T00:00:03.000000Z')""");
+            assertConversion("DECIMAL(9, 3)", "VARCHAR", """
+                    (123456.789m, '2024-01-01T00:00:01.000000Z'),
+                    (-987654.321m, '2024-01-01T00:00:02.000000Z'),
+                    (NULL, '2024-01-01T00:00:03.000000Z')""");
+
+            // Decimal64 (Int64 physical)
+            assertConversion("DECIMAL(18, 0)", "STRING", """
+                    (123456789012345678m, '2024-01-01T00:00:01.000000Z'),
+                    (-999999999999999999m, '2024-01-01T00:00:02.000000Z'),
+                    (NULL, '2024-01-01T00:00:03.000000Z')""");
+
+            // Decimal128 (FixedLenByteArray(16))
+            assertConversion("DECIMAL(38, 0)", "STRING", """
+                    (12345678901234567890123456789012345678m, '2024-01-01T00:00:01.000000Z'),
+                    (-99999999999999999999999999999999999999m, '2024-01-01T00:00:02.000000Z'),
+                    (NULL, '2024-01-01T00:00:03.000000Z')""");
+            assertConversion("DECIMAL(38, 4)", "VARCHAR", """
+                    (1234567890123456789012345678901234.5678m, '2024-01-01T00:00:01.000000Z'),
+                    (-9999999999999999999999999999999999.9999m, '2024-01-01T00:00:02.000000Z'),
+                    (NULL, '2024-01-01T00:00:03.000000Z')""");
+
+            // Decimal256 (FixedLenByteArray(32))
+            assertConversion("DECIMAL(76, 0)", "STRING", """
+                    (1234567890123456789012345678901234567890123456789012345678901234567890123456m, '2024-01-01T00:00:01.000000Z'),
+                    (NULL, '2024-01-01T00:00:02.000000Z')""");
+            assertConversion("DECIMAL(76, 1)", "VARCHAR", """
+                    (123456789012345678901234567890123456789012345678901234567890123456789012345.6m, '2024-01-01T00:00:01.000000Z'),
+                    (NULL, '2024-01-01T00:00:02.000000Z')""");
+        });
+    }
+
+    /**
      * Pins lazy parquet behavior for DOUBLE-&gt;LONG/DATE/TIMESTAMP at the upper i64
      * boundary. The Rust converter in
      * {@code core/rust/qdbr/src/parquet_read/decode.rs} stores the bound as
@@ -303,7 +371,9 @@ public class ParquetColumnTypeConversionTest extends AbstractCairoTest {
 
             // Integer sources support default, plain, rle_dictionary, delta_binary_packed.
             String[] intEncodings = {"default", "plain", "rle_dictionary", "delta_binary_packed"};
-            String[] intTargets = {"BYTE", "SHORT", "INT", "LONG", "FLOAT", "DOUBLE", "DATE", "TIMESTAMP"};
+            // BOOLEAN target exercises the new Int32/Int64-to-Boolean dispatch arms in
+            // decode_int32_dispatch / decode_int64_dispatch for every encoding.
+            String[] intTargets = {"BYTE", "SHORT", "INT", "LONG", "FLOAT", "DOUBLE", "DATE", "TIMESTAMP", "BOOLEAN"};
             for (String encoding : intEncodings) {
                 for (String source : new String[]{"BYTE", "SHORT", "INT", "LONG"}) {
                     for (String target : intTargets) {
@@ -323,13 +393,108 @@ public class ParquetColumnTypeConversionTest extends AbstractCairoTest {
 
             // Float sources support default, plain, rle_dictionary (delta_binary_packed is integer-only).
             String[] floatEncodings = {"default", "plain", "rle_dictionary"};
-            String[] floatTargets = {"BYTE", "SHORT", "INT", "LONG", "FLOAT", "DOUBLE", "DATE", "TIMESTAMP"};
+            // BOOLEAN target exercises the range-checked Double-to-Byte/Boolean and Float-to-Byte/Boolean
+            // dispatch arms (decode_double_dispatch, decode_other_fixed_dispatch) for every encoding.
+            String[] floatTargets = {"BYTE", "SHORT", "INT", "LONG", "FLOAT", "DOUBLE", "DATE", "TIMESTAMP", "BOOLEAN"};
             for (String encoding : floatEncodings) {
                 for (String source : new String[]{"FLOAT", "DOUBLE"}) {
                     for (String target : floatTargets) {
                         if (source.equals(target)) continue;
                         assertConversionWithEncoding(source, target, floatValues, encoding);
                     }
+                }
+            }
+        });
+    }
+
+    /**
+     * Var-source mirror of {@link #testFixedWithAllEncodings}. STRING and VARCHAR columns
+     * stored under each writer-supported parquet encoding must round-trip identically
+     * through both the native and lazy-parquet conversion paths. This exercises the
+     * encoding axis of {@code decode_byte_array_dispatch} in {@code decode.rs}:
+     * <ul>
+     *     <li>{@code (RleDictionary | PlainDictionary, _, String/Varchar)}</li>
+     *     <li>{@code (DeltaLengthByteArray, _, String/Varchar)}</li>
+     * </ul>
+     * The Plain and DeltaByteArray dispatch arms only fire for externally produced parquet
+     * (the QuestDB writer rejects {@code plain} on var-size columns and does not emit
+     * {@code delta_byte_array}) and are out of scope for a writer-driven test.
+     */
+    @Test
+    public void testVarTypesWithAllEncodings() throws Exception {
+        assertMemoryLeak(() -> {
+            String numericValues = """
+                    ('42', '2024-01-01T00:00:01.000000Z'),
+                    ('0', '2024-01-01T00:00:02.000000Z'),
+                    ('-1', '2024-01-01T00:00:03.000000Z'),
+                    (NULL, '2024-01-01T00:00:04.000000Z')""";
+            String floatValues = """
+                    ('1.5', '2024-01-01T00:00:01.000000Z'),
+                    ('0.0', '2024-01-01T00:00:02.000000Z'),
+                    ('-1.5', '2024-01-01T00:00:03.000000Z'),
+                    (NULL, '2024-01-01T00:00:04.000000Z')""";
+            String boolValues = """
+                    ('true', '2024-01-01T00:00:01.000000Z'),
+                    ('false', '2024-01-01T00:00:02.000000Z'),
+                    (NULL, '2024-01-01T00:00:03.000000Z')""";
+            String charValues = """
+                    ('a', '2024-01-01T00:00:01.000000Z'),
+                    ('Z', '2024-01-01T00:00:02.000000Z'),
+                    (NULL, '2024-01-01T00:00:03.000000Z')""";
+            String ipv4Values = """
+                    ('192.168.1.1', '2024-01-01T00:00:01.000000Z'),
+                    ('10.0.0.1', '2024-01-01T00:00:02.000000Z'),
+                    (NULL, '2024-01-01T00:00:03.000000Z')""";
+            String uuidValues = """
+                    ('a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11', '2024-01-01T00:00:01.000000Z'),
+                    ('11111111-1111-1111-1111-111111111111', '2024-01-01T00:00:02.000000Z'),
+                    (NULL, '2024-01-01T00:00:03.000000Z')""";
+            String dateValues = """
+                    ('2020-06-15T12:00:00.000Z', '2024-01-01T00:00:01.000000Z'),
+                    ('1970-01-01T00:00:00.000Z', '2024-01-01T00:00:02.000000Z'),
+                    (NULL, '2024-01-01T00:00:03.000000Z')""";
+            String tsValues = """
+                    ('2020-06-15T12:30:00.123456Z', '2024-01-01T00:00:01.000000Z'),
+                    ('1970-01-01T00:00:00.000000Z', '2024-01-01T00:00:02.000000Z'),
+                    (NULL, '2024-01-01T00:00:03.000000Z')""";
+            String unicodeValues = """
+                    ('hello', '2024-01-01T00:00:01.000000Z'),
+                    ('café', '2024-01-01T00:00:02.000000Z'),
+                    ('日本語', '2024-01-01T00:00:03.000000Z'),
+                    (NULL, '2024-01-01T00:00:04.000000Z')""";
+
+            // Encodings the QuestDB writer can emit for var-size columns. Var-to-fixed and
+            // var-to-var conversions both pass the SOURCE var type to the Rust decoder
+            // (Java post-converts), so each combination lands on a different dispatch arm.
+            // The writer rejects {@code plain} for var-size columns and never emits
+            // {@code delta_binary_packed} for them, so we stick to the supported set.
+            String[] varEncodings = {"default", "rle_dictionary", "delta_length_byte_array"};
+            for (String source : new String[]{"STRING", "VARCHAR"}) {
+                String otherVar = "STRING".equals(source) ? "VARCHAR" : "STRING";
+                for (String encoding : varEncodings) {
+                    // Var → Var transcode (UTF-16 ↔ UTF-8) across each encoding.
+                    assertConversionWithEncoding(source, otherVar, unicodeValues, encoding);
+
+                    // Var → Fixed: small integer family
+                    for (String target : new String[]{"BYTE", "SHORT", "INT", "LONG"}) {
+                        assertConversionWithEncoding(source, target, numericValues, encoding);
+                    }
+                    // Var → Fixed: float family
+                    for (String target : new String[]{"FLOAT", "DOUBLE"}) {
+                        assertConversionWithEncoding(source, target, floatValues, encoding);
+                    }
+                    // Var → Fixed: BOOLEAN (no null sentinel — NULL maps to false).
+                    assertConversionWithEncoding(source, "BOOLEAN", boolValues, encoding);
+                    // Var → Fixed: CHAR (single code unit). Multi-byte UTF-8 already covered
+                    // by testVarcharToCharPreservesNonAsciiCodepoint.
+                    assertConversionWithEncoding(source, "CHAR", charValues, encoding);
+                    // Var → Fixed: IPv4
+                    assertConversionWithEncoding(source, "IPV4", ipv4Values, encoding);
+                    // Var → Fixed: UUID
+                    assertConversionWithEncoding(source, "UUID", uuidValues, encoding);
+                    // Var → Fixed: temporal types
+                    assertConversionWithEncoding(source, "DATE", dateValues, encoding);
+                    assertConversionWithEncoding(source, "TIMESTAMP", tsValues, encoding);
                 }
             }
         });
