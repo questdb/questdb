@@ -78,6 +78,8 @@ public class GroupByHistogram implements Mutable {
     private int numberOfSignificantValueDigits;
 
     public GroupByHistogram(int numberOfSignificantValueDigits) {
+        // We pre-size the histogram for [1, 1000] range to avoid resizes in some basic use cases
+        // like CPU load percentile or latency in millis.
         this(1, 1000, numberOfSignificantValueDigits);
         this.autoResize = true;
     }
