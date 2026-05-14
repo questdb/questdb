@@ -704,6 +704,124 @@ public class PostingIndexCriticalIssuesTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testReaderHidesHeadEntryTailGensAbovePin() throws Exception {
+        assertMemoryLeak(() -> {
+            final String name = "reader_pin_tail_gen_visibility";
+            try (Path path = new Path().of(configuration.getDbRoot())) {
+                final int plen = path.size();
+                try (PostingIndexWriter writer = new PostingIndexWriter(configuration)) {
+                    writer.of(path.trimTo(plen), name, COLUMN_NAME_TXN_NONE, true);
+                    writer.setNextTxnAtSeal(1L);
+                    writer.add(0, 0);
+                    writer.add(0, 1);
+                    writer.setMaxValue(1);
+                    writer.commit();
+
+                    // currentTableTxn=2 so neither slot is trimmed -- we want
+                    // both gens persisted to disk so the reader-side pin
+                    // filter is what hides slot[1] for low-pinned readers.
+                    writer.setCurrentTableTxn(2L);
+                    writer.of(path.trimTo(plen), name, COLUMN_NAME_TXN_NONE, false);
+
+                    writer.setNextTxnAtSeal(2L);
+                    writer.add(1, 2);
+                    writer.add(1, 3);
+                    writer.setMaxValue(3);
+                    writer.commit();
+                }
+
+                try (PostingIndexFwdReader reader = new PostingIndexFwdReader(
+                        configuration, path.trimTo(plen), name,
+                        COLUMN_NAME_TXN_NONE, /* partitionTxn */ 0, /* columnTop */ 0);
+                     DirectBitSet foundKeys = new DirectBitSet(8)) {
+                    reader.setPinnedTableTxn(2L);
+                    reader.reloadConditionally();
+                    int distinct = reader.collectDistinctKeys(foundKeys);
+                    Assert.assertEquals(
+                            "pin >= slot[1].TXN_AT_SEAL: both gens visible",
+                            2, distinct);
+                    Assert.assertTrue(foundKeys.get(0));
+                    Assert.assertTrue(foundKeys.get(1));
+                }
+
+                try (PostingIndexFwdReader reader = new PostingIndexFwdReader(
+                        configuration, path.trimTo(plen), name,
+                        COLUMN_NAME_TXN_NONE, /* partitionTxn */ 0, /* columnTop */ 0);
+                     DirectBitSet foundKeys = new DirectBitSet(8)) {
+                    reader.setPinnedTableTxn(1L);
+                    reader.reloadConditionally();
+                    int distinct = reader.collectDistinctKeys(foundKeys);
+                    Assert.assertEquals(
+                            "pin = slot[0].TXN_AT_SEAL: only gen 0 visible",
+                            1, distinct);
+                    Assert.assertTrue(foundKeys.get(0));
+                    Assert.assertFalse(
+                            "key=1 lives in gen 1 (slot[1].TXN_AT_SEAL=2 > pin)",
+                            foundKeys.get(1)
+                    );
+
+                    try (RowCursor cursor = reader.getCursor(/* key */ 1, /* minValue */ 0, /* maxValue */ Long.MAX_VALUE)) {
+                        Assert.assertFalse(
+                                "rowids from the pin-hidden gen must not surface through getCursor",
+                                cursor.hasNext()
+                        );
+                    }
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testReaderPinChangeViaReloadConditionallyRePicks() throws Exception {
+        assertMemoryLeak(() -> {
+            final String name = "reader_pin_reload_repick";
+            try (Path path = new Path().of(configuration.getDbRoot())) {
+                final int plen = path.size();
+                try (PostingIndexWriter writer = new PostingIndexWriter(configuration)) {
+                    writer.of(path.trimTo(plen), name, COLUMN_NAME_TXN_NONE, true);
+                    writer.setNextTxnAtSeal(1L);
+                    writer.add(0, 0);
+                    writer.setMaxValue(0);
+                    writer.commit();
+
+                    writer.setCurrentTableTxn(2L);
+                    writer.of(path.trimTo(plen), name, COLUMN_NAME_TXN_NONE, false);
+
+                    writer.setNextTxnAtSeal(2L);
+                    writer.add(1, 1);
+                    writer.setMaxValue(1);
+                    writer.commit();
+                }
+
+                try (PostingIndexFwdReader reader = new PostingIndexFwdReader(
+                        configuration, path.trimTo(plen), name,
+                        COLUMN_NAME_TXN_NONE, /* partitionTxn */ 0, /* columnTop */ 0);
+                     DirectBitSet foundKeys = new DirectBitSet(8)) {
+                    // Default Long.MAX_VALUE pin: both gens visible.
+                    Assert.assertEquals(2, reader.collectDistinctKeys(foundKeys));
+                    foundKeys.clear();
+
+                    // Lower the pin under slot[1]; reloadConditionally must
+                    // re-pick even though the chain header has not advanced.
+                    reader.setPinnedTableTxn(1L);
+                    reader.reloadConditionally();
+                    Assert.assertEquals(1, reader.collectDistinctKeys(foundKeys));
+                    Assert.assertTrue(foundKeys.get(0));
+                    Assert.assertFalse(foundKeys.get(1));
+                    foundKeys.clear();
+
+                    // Raise the pin back above slot[1]; re-pick exposes gen 1.
+                    reader.setPinnedTableTxn(Long.MAX_VALUE);
+                    reader.reloadConditionally();
+                    Assert.assertEquals(2, reader.collectDistinctKeys(foundKeys));
+                    Assert.assertTrue(foundKeys.get(0));
+                    Assert.assertTrue(foundKeys.get(1));
+                }
+            }
+        });
+    }
+
+    @Test
     public void testRecoveryHidesFailedExtendHeadFromReader() throws Exception {
         assertMemoryLeak(() -> {
             final String name = "extend_head_failed_recovery_query";

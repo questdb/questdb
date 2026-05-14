@@ -32,16 +32,8 @@ import io.questdb.cairo.TableUtils;
  */
 public class FrameAlgebra {
 
-    public static void append(Frame target, Frame source, int commitMode) {
-        append(target, source, 0, source.getRowCount(), -1L, commitMode);
-    }
-
     public static void append(Frame target, Frame source, long upcomingTableTxn, int commitMode) {
         append(target, source, 0, source.getRowCount(), upcomingTableTxn, commitMode);
-    }
-
-    public static void append(Frame target, Frame source, long sourceLo, long sourceHi, int commitMode) {
-        append(target, source, sourceLo, sourceHi, -1L, commitMode);
     }
 
     /**
@@ -50,8 +42,7 @@ public class FrameAlgebra {
      *                         columns tag posting-index chain entries
      *                         published during this append with the value
      *                         so a partial publish (commit fails before
-     *                         landing) is droppable by recovery. Pass
-     *                         {@code -1L} for the legacy unwired path.
+     *                         landing) is droppable by recovery.
      */
     public static void append(Frame target, Frame source, long sourceLo, long sourceHi, long upcomingTableTxn, int commitMode) {
         if (sourceLo < sourceHi) {

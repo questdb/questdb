@@ -562,17 +562,22 @@ chain.
   if `sealTxn` advanced (new `.pv.{N}` filename) or the previous
   open found an empty chain, otherwise just `changeSize(...)` if
   same file grew/shrank.
-- `pinnedTableTxn` is the private field on `AbstractPostingIndexReader`
-  that gates per-gen visibility via `slot.TXN_AT_SEAL`. The picker walk
-  filters entries by `entry.txnAtSeal <= pinnedTableTxn`, and
-  `computeVisibleGenCount` (run once at pick time inside
-  `readIndexMetadataFromChain`) trims the reader's `genCount` to the
-  visible prefix. No setter exists yet — `IndexFactory.createReader`
-  plumbing touches O3OpenColumnJob, SymbolMapReaderImpl, and other call
-  sites and is deferred to a follow-up PR. Until then every reader uses
-  the default `Long.MAX_VALUE` pin and sees the head; the recovery walk
-  at writer reopen (`recoveryDropAbandoned` plus `trimInFlightTailGens`)
-  is the load-bearing defence against partial-publish failures.
+- `pinnedTableTxn` on `AbstractPostingIndexReader` gates per-gen visibility
+  via `slot.TXN_AT_SEAL`. The picker walk filters entries by
+  `entry.txnAtSeal <= pinnedTableTxn`; `computeVisibleGenCount` (run at
+  pick time inside `readIndexMetadataFromChain`) trims `genCount` to the
+  visible prefix; `computeVisibleEntryMaxValue` derives the matching
+  cumulative max from the surviving slots.
+  `IndexReader.setPinnedTableTxn` is the public setter; `IndexFactory.createReader`
+  takes the pin as a parameter (applied before the reader returns), and
+  `TableReader.getIndexReader` refreshes the pin on every cache access
+  (so `TableReader.txn` advances via `goActive` / `reload` propagate to
+  every cached reader without chasing the mutating paths individually).
+  `reloadConditionally` re-picks on either a chain advance or a pin
+  change. The writer-side recovery walk (`recoveryDropAbandoned` plus
+  `trimInFlightTailGens`) remains in place; reader-side filtering
+  closes the brief in-flight window between a writer's `extendHead`
+  and its `_txn` advance / crash.
 - `PostingIndexUtils.readSealTxnFromKeyFd` was already migrated to
   walk the v2 chain via `fd` reads in Phase 2b; Phase 3 confirms
   the symmetry between the mapped-memory picker and the fd-based

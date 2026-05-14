@@ -108,16 +108,17 @@ public abstract class AbstractPostingIndexReader implements IndexReader {
     private long headEntryOffset = PostingIndexUtils.V2_NO_HEAD;
     private CharSequence indexColumnName;
     private int keyCountIncludingNulls;
+    // Pin value used at the most recent successful pick. reloadConditionally
+    // compares against pinnedTableTxn to force a re-pick on pin change even
+    // when the chain seqlock has not advanced.
+    private long lastPickedPinnedTxn = Long.MIN_VALUE;
     private long partitionTimestamp;
     private long partitionTxn;
-    // Strict-pin: the table txn that this reader is pinned at via the
-    // scoreboard. Picker selects the chain entry with the largest
-    // {@code txnAtSeal <= pinnedTableTxn}; within the picked entry,
-    // {@link #computeVisibleGenCount} (run once at pick time) trims
-    // {@link #genCount} to the visible prefix of gens with
-    // {@code slot.TXN_AT_SEAL <= pinnedTableTxn}. Default {@code Long.MAX_VALUE}
-    // means "see the head and all its gens"; scoreboard plumbing that lowers
-    // the pin is deferred to a follow-up.
+    // Strict-pin: the table txn this reader is pinned at via the scoreboard.
+    // Picker selects the entry with the largest {@code txnAtSeal <= pinnedTableTxn};
+    // computeVisibleGenCount trims the head entry's visible genCount to slots
+    // with {@code slot.TXN_AT_SEAL <= pinnedTableTxn}. Default Long.MAX_VALUE
+    // is "unpinned"; production callers replace it via setPinnedTableTxn.
     private long pinnedTableTxn = Long.MAX_VALUE;
     private long spinLockTimeoutMs;
     private long valueFileTxn;
@@ -139,6 +140,7 @@ public abstract class AbstractPostingIndexReader implements IndexReader {
         entryMaxValue = -1L;
         headEntryOffset = PostingIndexUtils.V2_NO_HEAD;
         pinnedTableTxn = Long.MAX_VALUE;
+        lastPickedPinnedTxn = Long.MIN_VALUE;
     }
 
     @Override
@@ -331,14 +333,16 @@ public abstract class AbstractPostingIndexReader implements IndexReader {
             // again. We keep the existing snapshot in the meantime.
             return;
         }
-        if (headerScratch.sequence == chainSequence) {
+        // A pin change can move the picker to a different entry even when
+        // the chain hasn't been republished.
+        boolean chainAdvanced = headerScratch.sequence != chainSequence;
+        boolean pinChanged = lastPickedPinnedTxn != pinnedTableTxn;
+        if (!chainAdvanced && !pinChanged) {
             return;
         }
 
-        // The writer may have appended new chain entries past our current
-        // keyMem mapping. Extend the mapping to cover the whole file before
-        // re-picking. ff.length() is cheap on modern OSes.
-        if (ff != null) {
+        // File can only have grown when the chain advanced.
+        if (chainAdvanced && ff != null) {
             long fd = keyMem.getFd();
             if (fd > 0) {
                 long fileLen = ff.length(fd);
@@ -394,6 +398,11 @@ public abstract class AbstractPostingIndexReader implements IndexReader {
     @TestOnly
     public void setGenLookupCacheBudget(long budget) {
         genLookup.setCacheMemoryBudget(budget);
+    }
+
+    @Override
+    public void setPinnedTableTxn(long pinnedTableTxn) {
+        this.pinnedTableTxn = pinnedTableTxn;
     }
 
     private static boolean deltaKeyHasValueInRange(long baseAddr, long encodedOffset, long rowLo, long rowHi) {
@@ -927,6 +936,7 @@ public abstract class AbstractPostingIndexReader implements IndexReader {
                 for (int c = 0; c < coverCount; c++) {
                     sidecarFileEndOffsets.setQuick(c, c < picked ? entryScratch.coverFileEndOffsets.getQuick(c) : 0L);
                 }
+                this.lastPickedPinnedTxn = this.pinnedTableTxn;
                 return;
             }
 
@@ -952,6 +962,7 @@ public abstract class AbstractPostingIndexReader implements IndexReader {
             genLookup.snapshotMetadata(keyMem, 0, 0L);
             genLookup.commitSnapshot();
             genLookup.invalidateCache();
+            this.lastPickedPinnedTxn = this.pinnedTableTxn;
             return;
         }
     }
