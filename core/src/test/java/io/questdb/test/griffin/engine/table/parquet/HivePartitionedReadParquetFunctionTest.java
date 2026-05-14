@@ -928,6 +928,31 @@ public class HivePartitionedReadParquetFunctionTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testCheapToTopReusesOpenFiles() throws Exception {
+        // The cursor caches a finalised pass across toTop calls. Running the same
+        // query twice on the same cached factory must produce identical results
+        // (this is what assertFactoryCursor's two-pass exercise is meant to verify,
+        // and what an earlier attempt at the optimisation broke). A self cross-join
+        // forces the cursor's frame iteration to be re-driven from scratch.
+        assertMemoryLeak(() -> {
+            execute("create table src as (select cast(x as int) as id from long_sequence(2))");
+            writeParquet("ctop/day=2026-12-01/data.parquet", "src");
+            writeParquet("ctop/day=2026-12-02/data.parquet", "src");
+            writeParquet("ctop/day=2026-12-03/data.parquet", "src");
+
+            assertQueryNoLeakCheck(
+                    "cnt\n36\n",
+                    "select count(*) cnt " +
+                            "from read_parquet('ctop/day=*/data.parquet') a " +
+                            "cross join read_parquet('ctop/day=*/data.parquet') b",
+                    null,
+                    false,
+                    true
+            );
+        });
+    }
+
+    @Test
     public void testFileLevelPruningEqAvoidsOpeningOtherFiles() throws Exception {
         // Use a glob that matches three files. With a partition-column equality filter,
         // the page-frame cursor should skip the two non-matching files entirely - the

@@ -120,7 +120,9 @@ public class HivePartitionedReadParquetPageFrameCursor implements PageFrameCurso
     private final IntList partitionColumnTypes;
     private final int partitionColumnCount;
     private final int nonGlobRootLen;
-    private final Path path = new Path(MemoryTag.NATIVE_PATH);
+    // Lazy: freed in close, re-allocated on next openNextFile so the cursor can
+    // survive close-reopen cycles via the factory's caching pattern.
+    private Path path;
     private final @Nullable ObjList<PushdownFilterExtractor.PushdownFilterCondition> pushdownFilterConditions;
     private SqlExecutionContext executionContext;
     // Scratch arrays for per-file partition value parsing during file pruning and
@@ -132,6 +134,10 @@ public class HivePartitionedReadParquetPageFrameCursor implements PageFrameCurso
     private int currentFileIndex = -1;
     private long cumulativePartitionLo = 0;
     private boolean isFilterConditionsInitialised = false;
+    // If releaseOpenPartitions retired any decoder, cheap toTop reuse is unsafe
+    // (a released decoder is null in the list and we'd need to reopen — orders
+    // of complexity beyond the simple advance-through-list path).
+    private boolean isAnyFileReleased = false;
     // Row counts are accumulated as files open during normal iteration so that
     // size() after a full scan does not need a separate probe walk.
     private boolean isTotalRowCountFinalised = false;
@@ -176,8 +182,38 @@ public class HivePartitionedReadParquetPageFrameCursor implements PageFrameCurso
     @Override
     public void close() {
         closeAllOpenFiles();
-        Misc.free(globCursor);
-        Misc.free(path);
+        // Do not free globCursor here: the factory reuses this cursor across
+        // getCursor() calls, and the next of() will call globCursor.toTop() on it.
+        // The globCursor's owner is the underlying globCursorFactory and gets
+        // freed when that factory is closed.
+        path = Misc.free(path);
+        // The factory caches this cursor and re-calls of(ctx) on a fresh getCursor.
+        // After close the globCursor handle is gone and decoder slots are nulled, so
+        // any cheap-toTop reuse must fall back to a full reset. Clearing the lists
+        // makes toTop's `decoders.size() > 0` reuse condition fail naturally; resetting
+        // isTotalRowCountFinalised stops size() from returning a value backed by freed
+        // state.
+        decoders.clear();
+        fds.clear();
+        fileAddrs.clear();
+        fileSizes.clear();
+        filterLists.clear();
+        filterValues.clear();
+        filterBufEnds.clear();
+        filterPrepared.clear();
+        partitionBufferAddrs.clear();
+        partitionBufferSizes.clear();
+        partitionBufferTypeWidths.clear();
+        partitionAuxBufferAddrs.clear();
+        partitionAuxBufferSizes.clear();
+        isTotalRowCountFinalised = false;
+        runningRowCount = 0;
+        totalRowCount = -1;
+        isFilterConditionsInitialised = false;
+        isAnyFileReleased = false;
+        currentFileIndex = -1;
+        lowestOpenFileIndex = 0;
+        cumulativePartitionLo = 0;
     }
 
     @Override
@@ -231,7 +267,7 @@ public class HivePartitionedReadParquetPageFrameCursor implements PageFrameCurso
                     return frame;
                 }
             }
-            if (!openNextFile()) {
+            if (!moveToNextFile()) {
                 // Cursor exhausted: every file has now passed through openNextFile, so the
                 // running total is the authoritative row count. Cache it and skip the
                 // re-walk that computeTotalRowCount would otherwise do for a later size().
@@ -253,6 +289,9 @@ public class HivePartitionedReadParquetPageFrameCursor implements PageFrameCurso
     public void releaseOpenPartitions() {
         // Close every file strictly below the currently-yielded one; their frames
         // are guaranteed to have been consumed before the cursor advanced.
+        if (lowestOpenFileIndex < currentFileIndex) {
+            isAnyFileReleased = true;
+        }
         for (int i = lowestOpenFileIndex; i < currentFileIndex; i++) {
             closeFile(i);
         }
@@ -274,6 +313,19 @@ public class HivePartitionedReadParquetPageFrameCursor implements PageFrameCurso
 
     @Override
     public void toTop() {
+        // Cheap path: the previous pass walked every file and no decoder was
+        // retired by releaseOpenPartitions. The whole pool of open decoders +
+        // filter prep + partition buffers is still valid — just rewind the
+        // iteration cursors. moveToNextFile will walk the existing decoders
+        // list instead of pulling fresh paths from the glob cursor. close()
+        // resets the flag/list so a close-reopen cycle takes the full path.
+        if (isTotalRowCountFinalised && !isAnyFileReleased && decoders.size() > 0) {
+            currentFileIndex = -1;
+            cumulativePartitionLo = 0;
+            frame.rowGroupIndex = -1;
+            return;
+        }
+        // Full reset: tear down and re-open from the glob.
         closeAllOpenFiles();
         decoders.clear();
         fds.clear();
@@ -293,6 +345,7 @@ public class HivePartitionedReadParquetPageFrameCursor implements PageFrameCurso
         lowestOpenFileIndex = 0;
         cumulativePartitionLo = 0;
         isFilterConditionsInitialised = false;
+        isAnyFileReleased = false;
         // Preserve the finalised row count across toTop calls: file row counts are
         // immutable, so once we've seen them once we can keep reusing the total.
         if (!isTotalRowCountFinalised) {
@@ -450,6 +503,22 @@ public class HivePartitionedReadParquetPageFrameCursor implements PageFrameCurso
         }
     }
 
+    /**
+     * Advance to the next file. If a previous pass has already populated the decoder
+     * pool (cheap toTop reuse), advance to the next live decoder in the list. Only
+     * fall through to {@link #openNextFile()} when no pre-opened file remains, which
+     * also handles the fresh-pass case where the list is empty.
+     */
+    private boolean moveToNextFile() {
+        int next = currentFileIndex + 1;
+        if (next < decoders.size() && decoders.getQuick(next) != null) {
+            currentFileIndex = next;
+            frame.rowGroupIndex = -1;
+            return true;
+        }
+        return openNextFile();
+    }
+
     private boolean openNextFile() {
         // Cheap pre-screen: parse partition values from the path and check if any
         // pushdown filter condition rejects them. If so, skip the file entirely
@@ -462,6 +531,9 @@ public class HivePartitionedReadParquetPageFrameCursor implements PageFrameCurso
             filePath = globCursor.getRecord().getVarcharA(0);
         } while (partitionColumnCount > 0 && canPruneFileByPartition(filePath));
         final int fileIndex = ++currentFileIndex;
+        if (path == null) {
+            path = new Path(MemoryTag.NATIVE_PATH);
+        }
         path.of(filePath);
         final long fd = TableUtils.openRO(ff, path.$(), LOG);
         long addr = 0;
