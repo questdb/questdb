@@ -65,6 +65,22 @@ public class PostingIndexFwdReader extends AbstractPostingIndexReader {
         of(configuration, path, name, columnNameTxn, partitionTxn, columnTop, metadata, columnVersionReader, partitionTimestamp);
     }
 
+    public PostingIndexFwdReader(
+            CairoConfiguration configuration,
+            Path path,
+            CharSequence name,
+            long columnNameTxn,
+            long partitionTxn,
+            long columnTop,
+            io.questdb.cairo.sql.RecordMetadata metadata,
+            io.questdb.cairo.ColumnVersionReader columnVersionReader,
+            long partitionTimestamp,
+            long pinnedTableTxn
+    ) {
+        setPinnedTableTxn(pinnedTableTxn);
+        of(configuration, path, name, columnNameTxn, partitionTxn, columnTop, metadata, columnVersionReader, partitionTimestamp);
+    }
+
     @Override
     public void close() {
         super.close();
