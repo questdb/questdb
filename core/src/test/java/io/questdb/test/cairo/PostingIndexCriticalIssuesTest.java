@@ -2022,9 +2022,13 @@ public class PostingIndexCriticalIssuesTest extends AbstractCairoTest {
      * The fix hoists {@code setNextTxnAtSeal(txWriter.getTxn() + 1L)}
      * BEFORE the rebuild commit so the intermediate REBUILD entry is
      * tagged out of every current reader's visibility window
-     * ({@code T_pin <= getTxn() < getTxn()+1}). The trailing
-     * {@code setNextTxnAtSeal(txWriter.getTxn())} for the SEAL entry
-     * keeps its existing tag.
+     * ({@code T_pin <= getTxn() < getTxn()+1}). The trailing SEAL entry
+     * (published after {@code rebuildSidecars}) now uses the same
+     * {@code getTxn()+1L} tag: per-gen visibility via {@code slot[0].TXN_AT_SEAL}
+     * keeps T-pinned readers on the prev entry until {@code txWriter.commit}
+     * lands, and {@code publishPendingPurges} clamps {@code toTableTxn} back
+     * to {@code getTxn()} so the scoreboard max is not pushed past the
+     * not-yet-committed table txn.
      * <p>
      * This test mirrors the FIXED call order at the writer-fixture
      * level and verifies the chain shape: REBUILD inherits the

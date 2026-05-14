@@ -33,10 +33,27 @@ import io.questdb.cairo.TableUtils;
 public class FrameAlgebra {
 
     public static void append(Frame target, Frame source, int commitMode) {
-        append(target, source, 0, source.getRowCount(), commitMode);
+        append(target, source, 0, source.getRowCount(), -1L, commitMode);
+    }
+
+    public static void append(Frame target, Frame source, long upcomingTableTxn, int commitMode) {
+        append(target, source, 0, source.getRowCount(), upcomingTableTxn, commitMode);
     }
 
     public static void append(Frame target, Frame source, long sourceLo, long sourceHi, int commitMode) {
+        append(target, source, sourceLo, sourceHi, -1L, commitMode);
+    }
+
+    /**
+     * @param upcomingTableTxn the upcoming table {@code _txn} (typically
+     *                         {@code txWriter.getTxn() + 1L}). Indexed
+     *                         columns tag posting-index chain entries
+     *                         published during this append with the value
+     *                         so a partial publish (commit fails before
+     *                         landing) is droppable by recovery. Pass
+     *                         {@code -1L} for the legacy unwired path.
+     */
+    public static void append(Frame target, Frame source, long sourceLo, long sourceHi, long upcomingTableTxn, int commitMode) {
         if (sourceLo < sourceHi) {
             for (int i = 0, n = source.columnCount(); i < n; i++) {
                 try (
@@ -44,6 +61,7 @@ public class FrameAlgebra {
                         FrameColumn targetColumn = target.createColumn(i)
                 ) {
                     if (sourceColumn.getColumnType() >= 0) {
+                        targetColumn.setUpcomingTableTxn(upcomingTableTxn);
                         append(targetColumn, target.getRowCount(), sourceColumn, sourceLo, sourceHi, commitMode);
                         target.saveChanges(targetColumn);
                     }

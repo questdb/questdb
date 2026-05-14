@@ -38,24 +38,29 @@ import io.questdb.std.Unsafe;
  * GC — at which point the entry is no longer reachable from the chain head
  * and no reader can be pinned on it.
  * <p>
- * Entry layout (header is V2_ENTRY_HEADER_SIZE = 64 bytes):
+ * Entry layout (header is V2_ENTRY_HEADER_SIZE = 56 bytes):
  * <pre>
  *   [0..7]                                              LEN
  *   [8..15]                                             SEAL_TXN
- *   [16..23]                                            TXN_AT_SEAL
- *   [24..31]                                            VALUE_MEM_SIZE
- *   [32..39]                                            MAX_VALUE
- *   [40..43]                                            KEY_COUNT
- *   [44..47]                                            GEN_COUNT
- *   [48..51]                                            BLOCK_CAPACITY
- *   [52..55]                                            COVERING_FORMAT (reserved)
- *   [56..63]                                            PREV_ENTRY_OFFSET
- *   [64 ..)                                             GEN_DIR (GEN_COUNT * GEN_DIR_ENTRY_SIZE)
- *   [64 + GEN_COUNT*GEN_DIR_ENTRY_SIZE ..)              COVER_END_OFFSETS (COVER_COUNT * 8 bytes)
+ *   [16..23]                                            VALUE_MEM_SIZE
+ *   [24..31]                                            MAX_VALUE
+ *   [32..35]                                            KEY_COUNT
+ *   [36..39]                                            GEN_COUNT
+ *   [40..43]                                            BLOCK_CAPACITY
+ *   [44..47]                                            COVERING_FORMAT (reserved)
+ *   [48..55]                                            PREV_ENTRY_OFFSET
+ *   [56 ..)                                             GEN_DIR (GEN_COUNT * GEN_DIR_ENTRY_SIZE)
+ *   [56 + GEN_COUNT*GEN_DIR_ENTRY_SIZE ..)              COVER_END_OFFSETS (COVER_COUNT * 8 bytes)
  * </pre>
  * COVER_COUNT is constant for the .pk file's posting column instance and is
  * published in the .pci sidecar header, so every entry in this .pk shares the
  * same cover footer length.
+ * <p>
+ * The entry-level "table _txn this entry takes effect at" (txnAtSeal) is NOT a
+ * header field: it lives in slot[0]'s TXN_AT_SEAL within the gen-dir region.
+ * Entries written with {@code genCount == 0} therefore have no on-disk
+ * txnAtSeal and {@link #read} returns 0 for that case; production writers
+ * always pass {@code genCount >= 1}.
  */
 public final class PostingIndexChainEntry {
 

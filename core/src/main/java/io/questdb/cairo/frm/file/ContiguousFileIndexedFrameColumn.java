@@ -39,6 +39,7 @@ public class ContiguousFileIndexedFrameColumn extends ContiguousFileFixFrameColu
     private final CairoConfiguration configuration;
     private byte indexType = IndexType.NONE;
     private IndexWriter indexWriter;
+    private long upcomingTableTxn = -1L;
 
     public ContiguousFileIndexedFrameColumn(CairoConfiguration configuration) {
         super(configuration);
@@ -62,6 +63,9 @@ public class ContiguousFileIndexedFrameColumn extends ContiguousFileFixFrameColu
                     indexWriter.add(TableUtils.toIndexKey(Unsafe.getInt(mappedAddress + (i << shl))), appendOffsetRowCount + i);
                 }
                 indexWriter.setMaxValue(appendOffsetRowCount + size - 1);
+                if (upcomingTableTxn >= 0) {
+                    indexWriter.setNextTxnAtSeal(upcomingTableTxn);
+                }
                 indexWriter.commit();
             } finally {
                 TableUtils.mapAppendColumnBufferRelease(ff, mappedAddress, (appendOffsetRowCount - getColumnTop()) << shl, size << shl, MEMORY_TAG);
@@ -77,6 +81,9 @@ public class ContiguousFileIndexedFrameColumn extends ContiguousFileFixFrameColu
             indexWriter.add(0, rowCount + i);
         }
         indexWriter.setMaxValue(rowCount + sourceColumnTop - 1);
+        if (upcomingTableTxn >= 0) {
+            indexWriter.setNextTxnAtSeal(upcomingTableTxn);
+        }
         indexWriter.commit();
     }
 
@@ -98,6 +105,7 @@ public class ContiguousFileIndexedFrameColumn extends ContiguousFileFixFrameColu
             boolean isEmpty
     ) {
         super.ofRW(partitionPath, columnName, columnTxn, columnType, columnTop, columnIndex);
+        this.upcomingTableTxn = -1L;
         try {
             if (indexWriter == null || this.indexType != indexType) {
                 if (indexWriter != null) {
@@ -140,6 +148,11 @@ public class ContiguousFileIndexedFrameColumn extends ContiguousFileFixFrameColu
         closed = false;
         super.close();
         throw new UnsupportedOperationException();
+    }
+
+    @Override
+    public void setUpcomingTableTxn(long upcomingTableTxn) {
+        this.upcomingTableTxn = upcomingTableTxn;
     }
 
     // Useful for debugging

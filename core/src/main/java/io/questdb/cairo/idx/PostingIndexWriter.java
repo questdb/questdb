@@ -2722,8 +2722,9 @@ public class PostingIndexWriter implements IndexWriter {
         hasPendingData = false;
         activeKeyCount = 0;
 
-        // Seal at >= MAX_GEN_COUNT (not >). Entry MAX_GEN_COUNT-1 (index 124)
-        // ends at page offset 4064. Entry 125 would overlap sequence_end at 4088.
+        // Seal at >= MAX_GEN_COUNT (not >). With MAX_GEN_COUNT=91, slot
+        // index 90 ends at entry offset 56 + 91*44 = 4060. Slot 91 would
+        // overlap the seqlock sequence_end at 4088.
         if (genCount >= MAX_GEN_COUNT) {
             seal();
         }
@@ -4779,20 +4780,23 @@ public class PostingIndexWriter implements IndexWriter {
         }
         recoveryOrphanScratch.clear();
         int dropped;
+        boolean headTrimmed;
         try {
             dropped = chain.recoveryDropAbandoned(keyMem, currentTableTxn, recoveryOrphanScratch);
+            headTrimmed = chain.isHeadTrimmedOnLastRecovery();
         } finally {
             // Single-shot consumption — next reopen must call the setter
             // again or recovery is skipped.
             currentTableTxn = -1L;
         }
-        if (dropped <= 0) {
+        if (dropped <= 0 && !headTrimmed) {
             return;
         }
-        LOG.info().$("posting index recovery dropped abandoned chain entries [")
+        LOG.info().$("posting index recovery [")
                 .$("indexName=").$(indexName)
                 .$(", postingColumnNameTxn=").$(postingColumnNameTxn)
                 .$(", dropped=").$(dropped)
+                .$(", headTrimmed=").$(headTrimmed)
                 .$(']').$();
         // Conservatively schedule each orphan .pv.{N} (and .pc{i}.{N}) for
         // purge with the widest possible reader window. Orphans were

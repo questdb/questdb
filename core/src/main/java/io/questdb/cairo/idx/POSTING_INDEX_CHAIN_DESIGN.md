@@ -562,13 +562,14 @@ chain.
   if `sealTxn` advanced (new `.pv.{N}` filename) or the previous
   open found an empty chain, otherwise just `changeSize(...)` if
   same file grew/shrank.
-- Public setter `setPinnedTableTxn(long)` is exposed for future
-  Phase-2c plumbing. It is intentionally not threaded through
-  `IndexFactory.createReader` yet — that touches O3OpenColumnJob,
-  SymbolMapReaderImpl, and other call sites and is best done as
-  part of the table-writer ordering work in Phase 4. Until then
-  every reader uses the default `Long.MAX_VALUE` pin and sees the
-  head.
+- `pinnedTableTxn` is the protected field on `AbstractPostingIndexReader`
+  that gates per-gen visibility via `slot.TXN_AT_SEAL`. No setter exists
+  yet — `IndexFactory.createReader` plumbing touches O3OpenColumnJob,
+  SymbolMapReaderImpl, and other call sites and is deferred to a follow-up
+  PR. Until then every reader uses the default `Long.MAX_VALUE` pin and
+  sees the head; the recovery walk at writer reopen (`recoveryDropAbandoned`
+  plus `trimInFlightTailGens`) is the load-bearing defence against
+  partial-publish failures.
 - `PostingIndexUtils.readSealTxnFromKeyFd` was already migrated to
   walk the v2 chain via `fd` reads in Phase 2b; Phase 3 confirms
   the symmetry between the mapped-memory picker and the fd-based

@@ -198,10 +198,10 @@ public final class PostingIndexUtils {
     public static final int KEY_FILE_RESERVED = 8192;
     public static final int LONG_OFFSETS_FLAG = 0x4000_0000;
     public static final int MAX_BLOCK_COUNT = 1_000_000; // corruption guard: 64M values at BLOCK_CAPACITY=64
-    // Maximum number of generations a single chain entry can carry. The
-    // bound comes from the per-entry gen-dir region, which lives in the
-    // remaining bytes of an entry's 4KB seqlock page (4088 - 64 header
-    // bytes) divided by GEN_DIR_ENTRY_SIZE = 44.
+    // Maximum number of generations a single chain entry can carry. An
+    // entry's gen-dir region must fit alongside the entry header within the
+    // 4088-byte usable area of a 4KB seqlock page: floor((4088 - 56) / 44)
+    // = 91, matching V2_ENTRY_HEADER_SIZE = 56 and GEN_DIR_ENTRY_SIZE = 44.
     public static final int MAX_GEN_COUNT = 91;
     public static final int PACKED_BATCH_SIZE = BLOCK_CAPACITY;
     public static final long PAGE_A_OFFSET = 0;
