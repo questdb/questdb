@@ -2,7 +2,7 @@
 
 This document specifies QWP's egress mode: SQL queries in, columnar query
 results out, over a dedicated WebSocket endpoint. It extends the ingress
-specification ([`QWP_SPECIFICATION.md`](QWP_SPECIFICATION.md)) by reusing the
+specification ([`wire-ingress.md`](wire-ingress.md)) by reusing the
 header, type system, and column encodings unchanged. The deltas are limited to:
 
 - a new endpoint and version namespace,
@@ -90,7 +90,7 @@ are negotiated at the HTTP upgrade:
 | `X-QWP-Content-Encoding` | S -> C    | No       | Server's selected encoding from the client's accept list. Omitted means `raw`.    |
 
 Egress was introduced at version 1. Version 2 adds an unsolicited
-`SERVER_INFO` frame (§11.7) delivered as the first WebSocket frame after the
+`SERVER_INFO` frame (§11.8) delivered as the first WebSocket frame after the
 upgrade response; the frame carries the server's replication role,
 cluster/node identity, and a capabilities bitfield so clients can route reads
 to primary vs replica. Ingest is pinned to version 1 because the v2 bump has
@@ -235,7 +235,7 @@ The server rejects any second `QUERY_REQUEST` that arrives before the active
 query has terminated (`RESULT_END`, `EXEC_DONE`, or `QUERY_ERROR`) with a
 `QUERY_ERROR` carrying `STATUS_PARSE_ERROR` and a message naming the
 limitation. Multi-query multiplexing requires a fair scheduler on the server
-and is tracked in the [Phase 2 backlog](QWP_EGRESS_PHASE2_BACKLOG.md). SDK authors targeting Phase 1 should
+and is tracked in the [Phase 2 backlog](design/egress-phase2-backlog.md). SDK authors targeting Phase 1 should
 serialise queries on a per-connection basis or open additional connections.
 
 ## 7. RESULT_BATCH (0x11)
@@ -527,13 +527,16 @@ submitting the first `QUERY_REQUEST`.
 | msg_kind:        uint8    0x18                          |
 | role:            uint8    see role table below          |
 | epoch:           uint64   monotonic role epoch          |
-| capabilities:    uint32   reserved bitfield (0 in v2)   |
+| capabilities:    uint32   bitfield, see below           |
 | server_wall_ns:  int64    server wall-clock, ns since   |
 |                           1970-01-01T00:00Z             |
 | cluster_id_len:  uint16   UTF-8 byte length             |
 | cluster_id:      bytes    UTF-8, up to 65535 bytes      |
 | node_id_len:     uint16   UTF-8 byte length             |
 | node_id:         bytes    UTF-8, up to 65535 bytes      |
+| --- present iff capabilities & CAP_ZONE ---             |
+| zone_id_len:     uint16   UTF-8 byte length             |
+| zone_id:         bytes    UTF-8, up to 65535 bytes      |
 +---------------------------------------------------------+
 ```
 
@@ -555,9 +558,19 @@ for clients to ignore it as a hint rather than a guarantee.
 operator. Clients may surface them in diagnostics and in error messages
 produced by the role filter (§"Client routing" below).
 
-The `capabilities` field is a reserved bitfield for future protocol
-extensions (freshness-watermark reads, multi-query multiplexing, etc.). v2
-servers and clients set it to zero.
+The `capabilities` field is a bitfield of optional fields and protocol
+extensions. v2.0 servers and clients set it to zero. Defined bits:
+
+| Bit | Name | Meaning |
+|---|---|---|
+| `0x00000001` | `CAP_ZONE` | Server appends `zone_id_len` + `zone_id` after `node_id`. Identifies the server's geographic / logical zone (e.g. `eu-west-1a`, `dc-amsterdam`); used by clients with `zone=` set on the connection string to prefer same-zone endpoints. See `failover.md` §2 and §5. |
+
+Higher bits remain reserved for future protocol extensions
+(freshness-watermark reads, multi-query multiplexing, etc.). Clients
+encountering an unknown capability bit MUST ignore it; servers MUST
+only set bits the negotiated wire revision defines. Trailing fields
+gated by unset bits are absent from the frame, so a v2.0 client reading
+a v2.1 server with `CAP_ZONE=0` sees the same byte layout it always did.
 
 `SERVER_INFO` is delivered in the same TCP/WebSocket send buffer as the 101
 upgrade response, so on a healthy connection the frame is already in the
@@ -565,36 +578,195 @@ client's kernel recv buffer by the time the client parses the upgrade. If the
 server negotiates v1 it omits the frame entirely and clients fall back to
 the "role unknown" path (equivalent to `STANDALONE` for routing purposes).
 
-### Client routing (`target=` and `failover=`)
+### Client routing (`target=`, `zone=`, `failover=`)
 
-Clients that support v2 accept a comma-separated list of endpoints and a
-`target=` filter on the connection string:
+Egress clients that support v2 accept a comma-separated list of endpoints
+plus role and zone preferences on the connection string:
 
 ```
-ws::addr=db-a:9000,db-b:9000,db-c:9000;target=primary;failover=on;
+ws::addr=db-a:9000,db-b:9000,db-c:9000;target=any;zone=eu-west-1a;failover=on;
 ```
 
-| Target        | Accepted roles                                                                                 |
-|---------------|-----------------------------------------------------------------------------------------------|
-| `any` (default) | `STANDALONE`, `PRIMARY`, `PRIMARY_CATCHUP`, `REPLICA`                                         |
-| `primary`     | `STANDALONE`, `PRIMARY`, `PRIMARY_CATCHUP`                                                     |
-| `replica`     | `REPLICA`                                                                                      |
+The per-Execute reconnect loop and `WalkTracker` helper that consume
+`SERVER_INFO` (and the `421 + X-QuestDB-Role` / `X-QuestDB-Zone`
+upgrade-reject convention) are specified in §11.9. The shared
+primitives that both consume — host-health model, backoff function,
+role filter, error classification — live in
+[`failover.md`](failover.md). At the wire level §11.8 only fixes:
 
-On `connect()` the client walks the endpoint list in order, reads each
-endpoint's `SERVER_INFO`, and picks the first one whose role passes the
-filter. Endpoints that don't match are closed and skipped. When every
-endpoint is tried and none matches the filter, the client raises a
-role-mismatch error and attaches the most recent `SERVER_INFO` observed so
-callers can distinguish "no primary available" from "all endpoints
-unreachable".
+- The `Role` byte values inside `SERVER_INFO` (the role table above)
+  and their mapping to the `target=` filter (see `failover.md` §5).
+- The `CAP_ZONE` capability bit and the optional `zone_id` field that
+  follows `node_id` when the bit is set; clients compare `zone_id`
+  case-insensitively against their configured `zone=`.
+- The `OnFailoverReset` handler callback contract: fired between a
+  successful reconnect and the first replayed batch on the new node.
+  `batch_seq` restarts at `0` after the callback returns. See §11.9.
+- The `421 + X-QuestDB-Role` (and optional `X-QuestDB-Zone`)
+  upgrade-reject convention shared with ingress (see `failover.md` §5).
 
-With `failover=on` (the default), a transport failure mid-query triggers a
-transparent reconnect to another endpoint that still matches the filter, and
-the client re-submits the in-flight `QUERY_REQUEST`. Accumulating handlers
-observe a `onFailoverReset` callback (in the Java client) just before
-replayed batches start arriving with `batch_seq` restarting at 0 on the new
-node. `failover=off` restores the pre-v2 behaviour where transport failures
-surface directly through `onError`.
+`failover=off` restores the pre-v2 behaviour where transport failures
+surface directly through `onError` (no automatic reconnect).
+
+## 11.9 Multi-host failover (per-Execute loop)
+
+Egress clients drive a per-`Execute()` reconnect loop on top of the
+shared primitives in [`failover.md`](failover.md). The connect-string
+knobs are owned here; the host tracker (§2 of `failover.md`), the
+backoff function (§3), the role filter (§5), and the error
+classification (§6) are imported.
+
+### 11.9.1 Connect-string keys
+
+| Key | Type | Default | Notes |
+|---|---|---|---|
+| `target` | `any \| primary \| replica` | `any` | Server-role filter applied per-endpoint after the upgrade reads `SERVER_INFO` (§11.8). |
+| `failover` | `on \| off` | `on` | Master switch for the per-Execute reconnect loop. `off` surfaces transport errors directly through `onError`. |
+| `failover_max_attempts` | int | `8` | Cap on reconnects per `Execute()` (initial attempt + `N-1` failovers). |
+| `failover_backoff_initial_ms` | int | `50` | First post-failure sleep. |
+| `failover_backoff_max_ms` | int | `1_000` | Cap on per-attempt sleep. |
+| `failover_max_duration_ms` | int | `30_000` | Total wall-clock budget per `Execute()`; `0` = unbounded. |
+
+Common keys (`addr`, `auth_timeout_ms`, `zone`) live in `failover.md`
+§1.1.
+
+### 11.9.2 Per-Execute loop
+
+```
+on QueryClient.New(): connect once via WalkTracker (§11.9.3); fail loud if no endpoint matches
+on Execute(sql, handler):
+    if execute already in flight on this client: throw "one query at a time"
+    tracker.BeginRound(forgetClassifications=false)
+    attempt = 0
+    backoffMs = failover_backoff_initial_ms
+    deadline = now + failover_max_duration_ms (∞ if 0)
+    loop:
+        send QUERY_REQUEST(rid, sql, binds)
+        drive receive loop until terminator
+        on success: return
+        on transport-error AND failover=on AND attempt+1 < failover_max_attempts AND now < deadline:
+            tracker.RecordMidStreamFailure(activeIdx)
+            sleep clamp(FullJitter(backoffMs), deadline - now)
+            backoffMs = min(2 × backoffMs, failover_backoff_max_ms)
+            attempt++
+            ReconnectAsync(attempt)         # uses WalkTracker (§11.9.3) with BeginRound(forget=false)
+            handler.OnFailoverReset(serverInfo)
+            continue
+        else: rethrow (failover not eligible or budget exhausted)
+```
+
+Key properties:
+
+- **Per-Execute round reset uses `forgetClassifications=false`.**
+  Every `Execute()` enters with `BeginRound(false)` — the
+  attempted-this-round flags are cleared but topology classifications
+  observed in prior Executes are preserved. A previously
+  role-rejected endpoint stays at the bottom of the priority order;
+  it is reconsidered once the current round walks off the end (see
+  §11.9.3 fall-through reset). This is "lazy forget": the cost is one
+  extra reconnect attempt the first time topology actually changes,
+  the benefit is no per-Execute thundering against a known-bad host.
+- **Reconnect inside the loop also uses `forgetClassifications=false`**:
+  the topology classifications observed during this `Execute()`'s
+  reconnects accumulate. Once the round exhausts within a single
+  `Execute()`, `WalkTracker` calls `BeginRound(forgetClassifications=true)`
+  once and walks the list one more time. If still no endpoint matches,
+  fail with a role-mismatch error (carries the most recent observed
+  `SERVER_INFO`).
+- **`failover_max_duration_ms` bounds failover eligibility, not total
+  Execute wall-clock.** The deadline check (`now < deadline`) gates
+  whether the loop will sleep + reconnect; the sleep itself is clamped
+  to `deadline - now`. But `WalkTracker` is bounded only by `hostCount
+  × auth_timeout_ms`, with no internal deadline. With the defaults
+  (`failover_max_attempts = 8`, `auth_timeout_ms = 15_000`), a
+  single reconnect round can run up to ~120s after the deadline-check
+  passed. Total wall-clock for a failing `Execute()` is therefore
+  bounded by `failover_max_duration_ms + (last WalkTracker round)`,
+  not `failover_max_duration_ms` alone. Operators sizing the budget
+  for user-visible latency should pick `failover_max_duration_ms` such
+  that budget + worst-case walk fits the SLA.
+- **Egress backoff uses full-jitter** `[0, base)` per `failover.md`
+  §3.1. A query client is single-user and benefits from the lowest
+  expected recovery time; thundering herd is not a concern at one
+  client per workload.
+- **`OnFailoverReset` callback** fires after a successful reconnect
+  but **before** any replayed batches arrive. Handlers reset their
+  per-`batch_seq` state here (the new node restarts `batch_seq` at 0).
+  Clients that omit the callback MUST instead surface the failure
+  and have the user re-issue `Execute` from a clean accumulator.
+- **AuthError is terminal** at any host (see `failover.md` §6).
+- **Upgrade-time version mismatch is per-endpoint, not terminal**
+  (see `failover.md` §6). A host whose upgrade response advertises a
+  QWP version outside `[1, ClientMaxVersion]` is recorded as a
+  transport error and the walk continues; if every host disagrees the
+  round-exhaustion error surfaces the version detail. There is no
+  separate mid-stream "version mismatch" — once an upgrade negotiates
+  a version, it is fixed for the connection's lifetime, and a bad
+  version byte appearing in a later frame is frame corruption (handled
+  by the generic decode-error path).
+- **Cooperative cancel** (`Cancel()` API, out of scope for this spec)
+  sends a `CANCEL` frame; the server replies with a `QUERY_ERROR`
+  carrying `STATUS_CANCELLED`. That reply routes through the normal
+  error path, not the transport-error path, so it never triggers
+  failover.
+
+### 11.9.3 WalkTracker (connect / reconnect helper)
+
+Shared between initial `QueryClient.New()` and `ReconnectAsync`:
+
+```
+WalkTracker():
+    retriedAfterReset = false
+    loop:
+        idx = tracker.PickNext()
+        if idx < 0:
+            if !retriedAfterReset:
+                tracker.BeginRound(forgetClassifications=true)
+                retriedAfterReset = true
+                continue
+            return (lastInfo, lastError, anyRoleMismatch)
+        candidate = build transport for hosts[idx]
+        try connect with auth_timeout_ms budget:
+            ServerInfo = (negotiatedVersion >= 2) ? read SERVER_INFO frame : null
+            if ServerInfo and (ServerInfo.capabilities & CAP_ZONE):
+                tracker.RecordZone(idx, ServerInfo.zone_id)
+        on success:
+            if EndpointMatchesTarget(ServerInfo):
+                RecordSuccess(idx); install transport; return (info, null, false)
+            else:
+                RecordRoleReject(idx, transient = (ServerInfo.Role == PRIMARY_CATCHUP))
+                lastInfo = ServerInfo; anyRoleMismatch = true
+                continue
+        on AuthError: rethrow (do NOT continue past this host)
+        on 421 + X-QuestDB-Role <known role>:
+            tracker.RecordZone(idx, response.X-QuestDB-Zone)   # null/empty header → no-op
+            RecordRoleReject(idx, transient = (role == PRIMARY_CATCHUP))
+            anyRoleMismatch = true; continue
+        on other error:
+            RecordTransportError(idx); continue
+```
+
+The fall-through reset (when `PickNext` returns `-1` for the first
+time in this walk) gives stale `TransientReject` / `TopologyReject`
+hosts from prior outages another shot before declaring the entire
+walk failed. Unlike the SF reconnect loop ([`sf-client.md`](sf-client.md)
+§13.6), `WalkTracker` is bounded by `hostCount × auth_timeout_ms`
+rather than a wall-clock budget; only one reset, then fail.
+
+When `WalkTracker` returns no transport: if any role mismatch was
+observed, raise a role-mismatch error with the last `SERVER_INFO`
+attached so callers can distinguish "no endpoint matched target=" from
+"all endpoints unreachable". Otherwise raise a transport error
+summarising attempts × endpoints. The reconnect path uses the same
+helper and wraps the outcome with "failover exhausted after N attempts
+across M endpoints".
+
+When `target=primary`, `RecordZone` is still called per the
+pseudocode, but every host's zone tier is treated as `Same` for
+selection purposes (the master must be followed across zones). The
+`(state, zone)` priority lattice degenerates to state-only ordering;
+same as if `zone=` were unset. See `failover.md` §2 for the zone-tier
+collapse rule.
 
 ## 12. Schema and Symbol Dictionary Scope
 
