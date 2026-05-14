@@ -27,7 +27,9 @@ package io.questdb.cairo;
 import io.questdb.MessageBus;
 import io.questdb.cairo.file.BlockFileReader;
 import io.questdb.cairo.file.BlockFileWriter;
+import io.questdb.cairo.lv.LiveViewCheckpointWriter;
 import io.questdb.cairo.lv.LiveViewDefinition;
+import io.questdb.cairo.lv.LiveViewState;
 import io.questdb.cairo.mv.MatViewDefinition;
 import io.questdb.cairo.mv.MatViewGraph;
 import io.questdb.cairo.mv.MatViewState;
@@ -51,6 +53,7 @@ import io.questdb.preferences.SettingsStore;
 import io.questdb.std.CharSequenceLongHashMap;
 import io.questdb.std.CharSequenceObjHashMap;
 import io.questdb.std.Chars;
+import io.questdb.std.Files;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.LongList;
 import io.questdb.std.MemoryTag;
@@ -131,6 +134,52 @@ public class DatabaseCheckpointAgent implements DatabaseCheckpointStatus, QuietC
     @Override
     public long startedAtTimestamp() {
         return startedAtTimestamp.get();
+    }
+
+    /*
+     * Copies <root>/<lv_dir>/_checkpoints/ entries into the snapshot. Skips
+     * .cp.tmp orphan files from interrupted writes. The recovery sweep at
+     * startup later retires anything > applied_watermark, so all valid .cp
+     * files survive a round-trip. Individual file copy errors log-and-
+     * continue: a single corrupt .cp does not abort the checkpoint - the
+     * recovery sweep recovers from missing or stale head files.
+     */
+    private static void copyLiveViewCheckpointDir(
+            FilesFacade ff,
+            CairoConfiguration configuration,
+            CharSequence checkpointRoot,
+            TableToken tableToken,
+            Path auxPath,
+            Path path
+    ) {
+        auxPath.of(configuration.getDbRoot()).concat(tableToken).concat(LiveViewCheckpointWriter.CHECKPOINT_DIR_NAME).slash$();
+        if (!ff.exists(auxPath.$())) {
+            return;
+        }
+        path.of(checkpointRoot).concat(configuration.getDbDirectory()).concat(tableToken).concat(LiveViewCheckpointWriter.CHECKPOINT_DIR_NAME).slash$();
+        if (ff.mkdirs(path, configuration.getMkDirMode()) != 0) {
+            LOG.error().$("could not create _checkpoints/ dir in snapshot, skipping live view checkpoint copy [view=").$(tableToken).$(", path=").$(path).I$();
+            return;
+        }
+
+        final int srcDirLen = auxPath.size();
+        final int dstDirLen = path.size();
+        ff.iterateDir(auxPath.$(), (pUtf8NameZ, type) -> {
+            if (type != Files.DT_FILE) {
+                return;
+            }
+            auxPath.trimTo(srcDirLen).concat(pUtf8NameZ).$();
+            // Skip .cp.tmp orphans from prior crashes - the recovery sweep
+            // would unlink them anyway.
+            if (Utf8s.endsWithAscii(auxPath, LiveViewCheckpointWriter.CP_TMP_FILE_EXT)) {
+                return;
+            }
+            path.trimTo(dstDirLen).concat(pUtf8NameZ).$();
+            if (ff.copy(auxPath.$(), path.$()) < 0) {
+                LOG.error().$("could not copy live view checkpoint file [view=").$(tableToken)
+                        .$(", file=").$(auxPath).$(", errno=").$(ff.errno()).I$();
+            }
+        });
     }
 
     /*
@@ -407,34 +456,53 @@ public class DatabaseCheckpointAgent implements DatabaseCheckpointStatus, QuietC
                                 }
 
                                 if (tableToken.isLiveView()) {
-                                    // Live views have _meta and _lv files but no data.
-                                    // Their in-memory state is reconstructed from the base table on startup.
+                                    // Live views are WAL-backed tables with two extra files: _lv
+                                    // (immutable definition) and _lv.s (mutable state). Phase 2a
+                                    // also adds _checkpoints/<head>.cp once the flush-cycle
+                                    // write hook lands.
+                                    //
+                                    // The state-before-data ordering mirrors the mat view path
+                                    // (above): copy _lv / _lv.s first, then fall through to the
+                                    // standard TableReader path for _meta, _txn, _cv, _name,
+                                    // partition data, and wal<n>/ segments. _lv.s uses
+                                    // BlockFile's versioned region pointer, so the file is
+                                    // self-consistent even if the refresh worker is mid-write.
+                                    //
+                                    // Without explicit freeze coordination (deferred to a
+                                    // follow-up), _lv.s.lastProcessedSeqTxn captured here may be
+                                    // older than _txn.applied_watermark captured by the standard
+                                    // path. On recovery the refresh worker re-processes the
+                                    // gap; LV apply does not yet deduplicate row-level output,
+                                    // so duplicates are the trade-off vs. the missing-rows risk
+                                    // of data-before-state ordering.
                                     final Path auxPath = Path.PATH2.get();
 
-                                    // Copy _lv definition file.
+                                    // Copy _lv definition file (immutable after CREATE).
                                     auxPath.of(configuration.getDbRoot()).concat(tableToken).concat(LiveViewDefinition.LIVE_VIEW_DEFINITION_FILE_NAME).$();
                                     path.of(checkpointRoot).concat(configuration.getDbDirectory()).concat(tableToken).concat(LiveViewDefinition.LIVE_VIEW_DEFINITION_FILE_NAME).$();
                                     if (ff.copy(auxPath.$(), path.$()) < 0) {
                                         throw CairoException.critical(ff.errno()).put("could not copy live view definition file [view=").put(tableToken).put(']');
                                     }
 
-                                    // Copy _meta file.
-                                    auxPath.of(configuration.getDbRoot()).concat(tableToken).concat(TableUtils.META_FILE_NAME).$();
-                                    path.of(checkpointRoot).concat(configuration.getDbDirectory()).concat(tableToken).concat(TableUtils.META_FILE_NAME).$();
+                                    // Copy _lv.s state file.
+                                    auxPath.of(configuration.getDbRoot()).concat(tableToken).concat(LiveViewState.LIVE_VIEW_STATE_FILE_NAME).$();
+                                    path.of(checkpointRoot).concat(configuration.getDbDirectory()).concat(tableToken).concat(LiveViewState.LIVE_VIEW_STATE_FILE_NAME).$();
                                     if (ff.copy(auxPath.$(), path.$()) < 0) {
-                                        throw CairoException.critical(ff.errno()).put("could not copy live view metadata file [view=").put(tableToken).put(']');
+                                        throw CairoException.critical(ff.errno()).put("could not copy live view state file [view=").put(tableToken).put(']');
                                     }
 
-                                    // Generate _name file.
-                                    path.of(checkpointRoot).concat(configuration.getDbDirectory()).concat(tableToken).concat(TableUtils.TABLE_NAME_FILE);
-                                    mem.smallFile(ff, path.$(), MemoryTag.MMAP_DEFAULT);
-                                    TableUtils.createTableNameFile(mem, tableToken.getTableName());
-                                    mem.close(false);
+                                    // Copy _checkpoints/<head>.cp if present. The directory was
+                                    // created at CREATE LIVE VIEW (Phase 2a.3); the head file
+                                    // appears once the flush-cycle write hook lands (Phase 2a.4).
+                                    // Steady-state has at most one .cp file; any .cp.tmp orphans
+                                    // are skipped. mat-view-style log-and-continue on individual
+                                    // file copy errors keeps the checkpoint progressing.
+                                    copyLiveViewCheckpointDir(ff, configuration, checkpointRoot, tableToken, auxPath, path);
 
-                                    tableNameRegistryStore.logAddTable(tableToken);
-
-                                    LOG.info().$("live view included in the checkpoint [view=").$(tableToken).I$();
-                                    break;
+                                    LOG.info().$("live view definition + state included in the checkpoint [view=").$(tableToken).I$();
+                                    // Fall through (no break) to the standard WAL-backed-table
+                                    // copy below: _meta, _txn, _cv, _name, partition data, and
+                                    // wal<n>/ segments come from the TableReader path.
                                 }
 
                                 TableReader reader = null;
