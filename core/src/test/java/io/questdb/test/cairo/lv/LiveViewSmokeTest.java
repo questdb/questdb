@@ -54,6 +54,7 @@ import io.questdb.std.MemoryTag;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 import io.questdb.std.datetime.microtime.Micros;
+import io.questdb.std.datetime.microtime.MicrosFormatUtils;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
@@ -3208,6 +3209,73 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
                     preFunctionMapSize,
                     reloaded.getAnchorWindow().getFunctions().getQuick(0).getPartitionMap().size()
             );
+
+            execute("DROP LIVE VIEW lv");
+        });
+    }
+
+    @Test
+    public void testLatestSeenTsAdvancesAcrossRows() throws Exception {
+        // Phase 2a.8: the anchor-dispatch cursor stamps the per-LV latestSeenTs
+        // watermark on every base row consumed by the refresh worker. This is
+        // the input the O3 detection path will read in a later commit; for now
+        // we just verify the cursor feeds the setter with the max ts in the
+        // batch.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (ts TIMESTAMP, sym SYMBOL, x DOUBLE) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms AS " +
+                    "SELECT ts, sym, sum(x) OVER w AS s FROM base " +
+                    "WINDOW w AS (PARTITION BY sym ORDER BY ts ANCHOR EXPRESSION timestamp_floor('1d', ts))");
+
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                LiveViewInstance lv = engine.getLiveViewRegistry().getViewInstance("lv");
+                Assert.assertNotNull(lv);
+                Assert.assertEquals(
+                        "latestSeenTs starts at LONG_NULL on a fresh LV",
+                        Numbers.LONG_NULL,
+                        lv.getLatestSeenTs()
+                );
+
+                setCurrentMicros(0L);
+                execute("INSERT INTO base (ts, sym, x) VALUES " +
+                        "('2026-10-01T00:00:00.000000Z', 'a', 1.0), " +
+                        "('2026-10-01T00:00:05.000000Z', 'b', 3.0), " +
+                        "('2026-10-01T00:00:10.000000Z', 'a', 2.0)");
+                drainWalQueue();
+                drainJob(job);
+                drainWalQueue();
+
+                Assert.assertEquals(
+                        "latestSeenTs equals max(ts) of the batch consumed by the refresh worker",
+                        MicrosFormatUtils.parseUTCTimestamp("2026-10-01T00:00:10.000000Z"),
+                        lv.getLatestSeenTs()
+                );
+
+                // A subsequent in-order batch advances the watermark; advance
+                // microtime past the FLUSH EVERY gate so the second refresh
+                // actually fires rather than no-oping on the rate limiter.
+                setCurrentMicros(200_000L);
+                execute("INSERT INTO base (ts, sym, x) VALUES " +
+                        "('2026-10-01T00:01:00.000000Z', 'a', 4.0)");
+                drainWalQueue();
+                drainJob(job);
+                drainWalQueue();
+                Assert.assertEquals(
+                        "latestSeenTs advances on the next in-order batch",
+                        MicrosFormatUtils.parseUTCTimestamp("2026-10-01T00:01:00.000000Z"),
+                        lv.getLatestSeenTs()
+                );
+
+                // The setter's monotonic clamp is asserted directly so the
+                // contract is pinned independently of the cursor wiring.
+                long beforeClampAttempt = lv.getLatestSeenTs();
+                lv.setLatestSeenTs(beforeClampAttempt - 1_000_000L);
+                Assert.assertEquals(
+                        "setLatestSeenTs is monotonic; a lower value is ignored",
+                        beforeClampAttempt,
+                        lv.getLatestSeenTs()
+                );
+            }
 
             execute("DROP LIVE VIEW lv");
         });

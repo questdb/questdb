@@ -508,7 +508,13 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                         // Anchor dispatch sits between the filter (or raw WAL cursor)
                         // and the window cursor so window functions see resetPartition
                         // before pass1 evaluates the row.
-                        anchorDispatchingCursor.of(source, anchorWindow, executionContext);
+                        anchorDispatchingCursor.of(
+                                source,
+                                anchorWindow,
+                                instance,
+                                baseMetadata.getTimestampIndex(),
+                                executionContext
+                        );
                         source = anchorDispatchingCursor;
                     }
 

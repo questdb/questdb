@@ -43,12 +43,16 @@ import io.questdb.griffin.SqlExecutionContext;
  */
 final class AnchorDispatchingCursor implements RecordCursor {
     private RecordCursor base;
+    private int baseTimestampIndex = -1;
+    private LiveViewInstance instance;
     private LiveViewWindow window;
 
     @Override
     public void close() {
         base = null;
         window = null;
+        instance = null;
+        baseTimestampIndex = -1;
     }
 
     @Override
@@ -71,7 +75,13 @@ final class AnchorDispatchingCursor implements RecordCursor {
         if (!base.hasNext()) {
             return false;
         }
-        window.processRow(base.getRecord());
+        Record record = base.getRecord();
+        window.processRow(record);
+        // The O3 detection path compares the next batch's min ts against the
+        // watermark this maintains. The setter clamps so the update is
+        // monotonic - a late row arriving after we've already detected it
+        // won't lower the watermark and mask further late rows behind it.
+        instance.setLatestSeenTs(record.getTimestamp(baseTimestampIndex));
         return true;
     }
 
@@ -80,9 +90,17 @@ final class AnchorDispatchingCursor implements RecordCursor {
         return base.newSymbolTable(columnIndex);
     }
 
-    public void of(RecordCursor base, LiveViewWindow window, SqlExecutionContext executionContext) throws SqlException {
+    public void of(
+            RecordCursor base,
+            LiveViewWindow window,
+            LiveViewInstance instance,
+            int baseTimestampIndex,
+            SqlExecutionContext executionContext
+    ) throws SqlException {
         this.base = base;
         this.window = window;
+        this.instance = instance;
+        this.baseTimestampIndex = baseTimestampIndex;
         // The anchor expression is initialised once per refresh cycle so that bind
         // variables and any per-cursor cached state pick up the current source.
         window.init(base, executionContext);
