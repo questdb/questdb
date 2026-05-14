@@ -2722,9 +2722,11 @@ public class PostingIndexWriter implements IndexWriter {
         hasPendingData = false;
         activeKeyCount = 0;
 
-        // Seal at >= MAX_GEN_COUNT (not >). With MAX_GEN_COUNT=91, slot
-        // index 90 ends at entry offset 56 + 91*44 = 4060. Slot 91 would
-        // overlap the seqlock sequence_end at 4088.
+        // Seal at >= MAX_GEN_COUNT (not >). MAX_GEN_COUNT is sized so the
+        // entry header + gen-dir region fits within a 4KB page: at 91 gens
+        // the gen-dir tail ends at entry offset 56 + 91 * 44 = 4060, leaving
+        // room for the cover-end-offset footer; one more gen would push the
+        // footer past the 4096-byte boundary.
         if (genCount >= MAX_GEN_COUNT) {
             seal();
         }
@@ -3510,8 +3512,9 @@ public class PostingIndexWriter implements IndexWriter {
         keyMem.putInt(dirOffset + PostingIndexUtils.GEN_DIR_OFFSET_MIN_KEY, overrideMinKey);
         keyMem.putInt(dirOffset + PostingIndexUtils.GEN_DIR_OFFSET_MAX_KEY, overrideMaxKey);
         keyMem.putLong(dirOffset + PostingIndexUtils.GEN_DIR_OFFSET_MAX_VALUE, maxValue);
-        // TXN_AT_SEAL is the slot's last-write-wins latch for recovery's
-        // tail trim. Must be the last store + storeFence.
+        // storeFence pairs with the loadFence in trimInFlightTailGens so a
+        // recovery walk that finds slot.TXN_AT_SEAL > currentTableTxn sees
+        // the matching slot payload too.
         Unsafe.storeFence();
         keyMem.putLong(dirOffset + PostingIndexUtils.GEN_DIR_OFFSET_TXN_AT_SEAL, slotTxnAtSeal);
 
@@ -4780,23 +4783,23 @@ public class PostingIndexWriter implements IndexWriter {
         }
         recoveryOrphanScratch.clear();
         int dropped;
-        boolean headTrimmed;
+        boolean isHeadTrimmed;
         try {
             dropped = chain.recoveryDropAbandoned(keyMem, currentTableTxn, recoveryOrphanScratch);
-            headTrimmed = chain.isHeadTrimmedOnLastRecovery();
+            isHeadTrimmed = chain.isHeadTrimmedOnLastRecovery();
         } finally {
             // Single-shot consumption — next reopen must call the setter
             // again or recovery is skipped.
             currentTableTxn = -1L;
         }
-        if (dropped <= 0 && !headTrimmed) {
+        if (dropped <= 0 && !isHeadTrimmed) {
             return;
         }
         LOG.info().$("posting index recovery [")
                 .$("indexName=").$(indexName)
                 .$(", postingColumnNameTxn=").$(postingColumnNameTxn)
                 .$(", dropped=").$(dropped)
-                .$(", headTrimmed=").$(headTrimmed)
+                .$(", isHeadTrimmed=").$(isHeadTrimmed)
                 .$(']').$();
         // Conservatively schedule each orphan .pv.{N} (and .pc{i}.{N}) for
         // purge with the widest possible reader window. Orphans were

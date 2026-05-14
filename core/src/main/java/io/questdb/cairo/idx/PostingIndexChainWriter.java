@@ -71,7 +71,7 @@ public final class PostingIndexChainWriter {
     private long entryCount;
     private long genCounter;
     private long headEntryOffset;
-    private boolean headTrimmedOnLastRecovery;
+    private boolean isHeadTrimmedOnLastRecovery;
     // Cached sealTxn of the current head entry. Distinct from genCounter:
     // recoveryDropAbandoned can rewind headEntryOffset to a surviving
     // entry whose sealTxn is below the high-water genCounter (it cannot
@@ -357,10 +357,6 @@ public final class PostingIndexChainWriter {
         return headEntryOffset != PostingIndexUtils.V2_NO_HEAD;
     }
 
-    public boolean isHeadTrimmedOnLastRecovery() {
-        return headTrimmedOnLastRecovery;
-    }
-
     /**
      * Initialise both header pages on a fresh .pk file. Resets in-memory
      * state to the empty-chain defaults: the first append will use
@@ -380,6 +376,10 @@ public final class PostingIndexChainWriter {
         PostingIndexChainHeader.initialiseEmpty(keyMem, startSealTxn);
         resetState();
         genCounter = startSealTxn - 1L;
+    }
+
+    public boolean isHeadTrimmedOnLastRecovery() {
+        return isHeadTrimmedOnLastRecovery;
     }
 
     /**
@@ -465,7 +465,7 @@ public final class PostingIndexChainWriter {
      * @return the number of entries that were dropped.
      */
     public int recoveryDropAbandoned(MemoryARW keyMem, long currentTableTxn, LongList orphanSealTxns) {
-        headTrimmedOnLastRecovery = false;
+        isHeadTrimmedOnLastRecovery = false;
         if (headEntryOffset == PostingIndexUtils.V2_NO_HEAD) {
             return 0;
         }
@@ -474,7 +474,7 @@ public final class PostingIndexChainWriter {
         long newHead = headEntryOffset;
         long newEntryCount = entryCount;
         long newRegionLimit = regionLimit;
-        boolean headTrimmed = false;
+        boolean isHeadTrimmed = false;
         // Walk strictly bounded by entryCount: a corrupted prev pointer that
         // loops back on itself would otherwise drop more entries than the
         // chain contains and, for an unbounded cycle, never terminate. The
@@ -507,7 +507,7 @@ public final class PostingIndexChainWriter {
                     newRegionLimit = offset;
                     dropped++;
                 } else if (trimmedTo < entryScratch.genCount) {
-                    headTrimmed = true;
+                    isHeadTrimmed = true;
                     long trimmedEntryLen = applyHeadTrim(keyMem, offset, trimmedTo, entryScratch.len);
                     newRegionLimit = offset + trimmedEntryLen;
                 }
@@ -522,10 +522,10 @@ public final class PostingIndexChainWriter {
             offset = entryScratch.prevEntryOffset;
             dropped++;
         }
-        if (dropped == 0 && !headTrimmed) {
+        if (dropped == 0 && !isHeadTrimmed) {
             return 0;
         }
-        headTrimmedOnLastRecovery = headTrimmed;
+        isHeadTrimmedOnLastRecovery = isHeadTrimmed;
         headEntryOffset = newHead;
         entryCount = newEntryCount;
         regionLimit = newRegionLimit;
@@ -599,14 +599,25 @@ public final class PostingIndexChainWriter {
     }
 
     /**
-     * Shrink the head entry's gen dir to {@code keepGenCount} after the
-     * recovery walk trimmed in-flight tail gens. Uses <b>GEN_COUNT-first</b>
-     * write order (the inverse of {@link #extendHead}) so a concurrent
-     * reader never sees OLD large GEN_COUNT paired with NEW small
-     * VALUE_MEM_SIZE -- which would let the reader read past the trimmed
-     * valueMem mapping.
+     * Shrink the head entry's gen dir to {@code keepGenCount}. Stale readers
+     * holding a mapping from before the writer's crash can walk this entry
+     * during the mutation (the chain seqlock is only republished at the end
+     * of {@link #recoveryDropAbandoned}), so the writes must publish in an
+     * order that is safe to observe at any point:
+     * <ol>
+     *   <li>Copy cover footer to its new offset under the OLD {@code GEN_COUNT}
+     *       (readers using OLD count don't read the new-offset bytes).</li>
+     *   <li>storeFence; store new {@code GEN_COUNT}.</li>
+     *   <li>storeFence; store LEN / VALUE_MEM_SIZE / MAX_VALUE / KEY_COUNT.</li>
+     * </ol>
+     * NEW-{@code GEN_COUNT} readers observing the window between steps 2 and
+     * 3 see the just-copied footer at the right offset and OLD (always larger)
+     * tail-header values, all of which are benign: larger VALUE_MEM_SIZE still
+     * fits on disk (.pv is not truncated), larger KEY_COUNT leaves trailing
+     * keys empty, larger MAX_VALUE only inflates size estimates.
      */
     private long applyHeadTrim(MemoryARW keyMem, long entryOffset, int keepGenCount, long oldEntryLen) {
+        assert keepGenCount >= 1;
         long lastSlot = entryOffset + PostingIndexUtils.V2_ENTRY_HEADER_SIZE
                 + (long) (keepGenCount - 1) * PostingIndexUtils.GEN_DIR_ENTRY_SIZE;
         long lastFileOffset = keyMem.getLong(lastSlot + PostingIndexUtils.GEN_DIR_OFFSET_FILE_OFFSET);
@@ -633,9 +644,6 @@ public final class PostingIndexChainWriter {
                 : 0;
         long newLen = PostingIndexChainEntry.entrySize(keepGenCount, coverCount);
 
-        keyMem.putInt(entryOffset + PostingIndexUtils.V2_ENTRY_OFFSET_GEN_COUNT, keepGenCount);
-        Unsafe.storeFence();
-
         if (coverCount > 0) {
             long oldFooterOffset = entryOffset + PostingIndexUtils.V2_ENTRY_HEADER_SIZE
                     + (long) oldGenCount * PostingIndexUtils.GEN_DIR_ENTRY_SIZE;
@@ -648,6 +656,10 @@ public final class PostingIndexChainWriter {
                 keyMem.putLong(dst, keyMem.getLong(src));
             }
         }
+        Unsafe.storeFence();
+
+        keyMem.putInt(entryOffset + PostingIndexUtils.V2_ENTRY_OFFSET_GEN_COUNT, keepGenCount);
+        Unsafe.storeFence();
 
         keyMem.putLong(entryOffset + PostingIndexUtils.V2_ENTRY_OFFSET_LEN, newLen);
         keyMem.putLong(entryOffset + PostingIndexUtils.V2_ENTRY_OFFSET_VALUE_MEM_SIZE,

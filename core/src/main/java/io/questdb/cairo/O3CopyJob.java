@@ -821,6 +821,7 @@ public class O3CopyJob extends AbstractQueueConsumerJob<O3CopyTask> {
                     }
                 }
                 updateIndex(dstFixAddr, Math.abs(dstFixSize), indexWriter, dstIndexOffset / Integer.BYTES, dstIndexAdjust);
+                indexWriter.setNextTxnAtSeal(tableWriter.getTxn() + 1L);
                 indexWriter.commit();
             } finally {
                 if (closed) {

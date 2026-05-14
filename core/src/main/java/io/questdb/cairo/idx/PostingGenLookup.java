@@ -257,6 +257,7 @@ public class PostingGenLookup implements Closeable {
     public void snapshotMetadata(MemoryMR keyMem, int genCount, long entryOffset) {
         Snapshot s = staging;
         s.clear();
+        long prevTxnAtSeal = Long.MIN_VALUE;
         for (int i = 0; i < genCount; i++) {
             long dirOffset = PostingIndexChainEntry.resolveGenDirOffset(entryOffset, i);
             s.genFileOffsets.add(keyMem.getLong(dirOffset + PostingIndexUtils.GEN_DIR_OFFSET_FILE_OFFSET));
@@ -269,7 +270,10 @@ public class PostingGenLookup implements Closeable {
             s.genMinKeys.add(keyMem.getInt(dirOffset + PostingIndexUtils.GEN_DIR_OFFSET_MIN_KEY));
             s.genMaxKeys.add(keyMem.getInt(dirOffset + PostingIndexUtils.GEN_DIR_OFFSET_MAX_KEY));
             s.genMaxValues.add(keyMem.getLong(dirOffset + PostingIndexUtils.GEN_DIR_OFFSET_MAX_VALUE));
-            s.genTxnAtSeals.add(keyMem.getLong(dirOffset + PostingIndexUtils.GEN_DIR_OFFSET_TXN_AT_SEAL));
+            long txnAtSeal = keyMem.getLong(dirOffset + PostingIndexUtils.GEN_DIR_OFFSET_TXN_AT_SEAL);
+            assert txnAtSeal >= prevTxnAtSeal;
+            prevTxnAtSeal = txnAtSeal;
+            s.genTxnAtSeals.add(txnAtSeal);
         }
     }
 

@@ -174,45 +174,6 @@ public class PostingIndexCriticalIssuesTest extends AbstractCairoTest {
         });
     }
 
-    @Test
-    public void testExtendHeadFailedCommitNotDroppedByRecovery() throws Exception {
-        assertMemoryLeak(() -> {
-            final String name = "extend_head_failed_recovery";
-            try (Path path = new Path().of(configuration.getDbRoot())) {
-                final int plen = path.size();
-                try (PostingIndexWriter writer = new PostingIndexWriter(configuration)) {
-                    writer.of(path.trimTo(plen), name, COLUMN_NAME_TXN_NONE, true);
-                    writer.setNextTxnAtSeal(1L);
-                    writer.add(0, 0);
-                    writer.add(0, 1);
-                    writer.setMaxValue(1);
-                    writer.commit(); // appendNewEntry -> txnAtSeal=1, genCount=1
-
-                    // Successful commit at table layer would advance committedTxn to 1.
-                    // The reopen below is what TableWriter does between WAL transactions:
-                    // close + open from disk, then drive recovery via setCurrentTableTxn.
-                    writer.setCurrentTableTxn(1L);
-                    writer.of(path.trimTo(plen), name, COLUMN_NAME_TXN_NONE, false);
-
-                    // Batch 2 anticipates txn 2 but the table commit will not run.
-                    writer.setNextTxnAtSeal(2L);
-                    writer.add(1, 2);
-                    writer.add(1, 3);
-                    writer.setMaxValue(3);
-                    writer.commit(); // extendHead -> genCount=2, txnAtSeal STAYS at 1
-                }
-
-                try (PostingIndexWriter writer = new PostingIndexWriter(configuration)) {
-                    writer.setCurrentTableTxn(1L);
-                    writer.of(path.trimTo(plen), name, COLUMN_NAME_TXN_NONE, false);
-                    Assert.assertEquals(
-                            "recovery walk should drop the failed batch 2 gen because batch 2 anticipated txn 2 > committedTxn 1",
-                            1, writer.getGenCount());
-                }
-            }
-        });
-    }
-
     /**
      * Critical #1: PostingIndexNative Java fallback silently corrupts data
      * at bitWidth=64 because of the 64-bit shift no-op in
@@ -737,6 +698,101 @@ public class PostingIndexCriticalIssuesTest extends AbstractCairoTest {
                                     + "[size=" + advertisedSize + ", iterated=" + iterated + "]",
                             advertisedSize < 0 || advertisedSize == iterated
                     );
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testRecoveryHidesFailedExtendHeadFromReader() throws Exception {
+        assertMemoryLeak(() -> {
+            final String name = "extend_head_failed_recovery_query";
+            try (Path path = new Path().of(configuration.getDbRoot())) {
+                final int plen = path.size();
+                try (PostingIndexWriter writer = new PostingIndexWriter(configuration)) {
+                    writer.of(path.trimTo(plen), name, COLUMN_NAME_TXN_NONE, true);
+                    writer.setNextTxnAtSeal(1L);
+                    for (long row = 0; row < 10; row++) {
+                        writer.add(0, row);
+                    }
+                    writer.setMaxValue(9);
+                    writer.commit();
+
+                    writer.setCurrentTableTxn(1L);
+                    writer.of(path.trimTo(plen), name, COLUMN_NAME_TXN_NONE, false);
+
+                    writer.setNextTxnAtSeal(2L);
+                    for (long row = 10; row < 20; row++) {
+                        writer.add(1, row);
+                    }
+                    writer.setMaxValue(19);
+                    writer.commit();
+                }
+
+                try (PostingIndexWriter writer = new PostingIndexWriter(configuration)) {
+                    writer.setCurrentTableTxn(1L);
+                    writer.of(path.trimTo(plen), name, COLUMN_NAME_TXN_NONE, false);
+                }
+
+                try (PostingIndexFwdReader reader = new PostingIndexFwdReader(
+                        configuration, path.trimTo(plen), name,
+                        COLUMN_NAME_TXN_NONE, /* partitionTxn */ 0, /* columnTop */ 0);
+                     DirectBitSet foundKeys = new DirectBitSet(8)) {
+                    int distinct = reader.collectDistinctKeys(foundKeys);
+                    Assert.assertEquals(
+                            "only the committed key (0) should remain after recovery",
+                            1, distinct);
+                    Assert.assertTrue(foundKeys.get(0));
+                    Assert.assertFalse(
+                            "key=1 belongs to an uncommitted txn; must not be visible",
+                            foundKeys.get(1)
+                    );
+
+                    try (RowCursor cursor = reader.getCursor(/* key */ 1, /* minValue */ 0, /* maxValue */ Long.MAX_VALUE)) {
+                        Assert.assertFalse(
+                                "uncommitted rowids for key=1 must not surface through getCursor",
+                                cursor.hasNext()
+                        );
+                    }
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testRecoveryTrimsExtendHeadFailedTailGens() throws Exception {
+        assertMemoryLeak(() -> {
+            final String name = "extend_head_failed_recovery";
+            try (Path path = new Path().of(configuration.getDbRoot())) {
+                final int plen = path.size();
+                try (PostingIndexWriter writer = new PostingIndexWriter(configuration)) {
+                    writer.of(path.trimTo(plen), name, COLUMN_NAME_TXN_NONE, true);
+                    writer.setNextTxnAtSeal(1L);
+                    writer.add(0, 0);
+                    writer.add(0, 1);
+                    writer.setMaxValue(1);
+                    writer.commit(); // appendNewEntry -> txnAtSeal=1, genCount=1
+
+                    // Successful commit at table layer would advance committedTxn to 1.
+                    // The reopen below is what TableWriter does between WAL transactions:
+                    // close + open from disk, then drive recovery via setCurrentTableTxn.
+                    writer.setCurrentTableTxn(1L);
+                    writer.of(path.trimTo(plen), name, COLUMN_NAME_TXN_NONE, false);
+
+                    // Batch 2 anticipates txn 2 but the table commit will not run.
+                    writer.setNextTxnAtSeal(2L);
+                    writer.add(1, 2);
+                    writer.add(1, 3);
+                    writer.setMaxValue(3);
+                    writer.commit(); // extendHead -> genCount=2, txnAtSeal STAYS at 1
+                }
+
+                try (PostingIndexWriter writer = new PostingIndexWriter(configuration)) {
+                    writer.setCurrentTableTxn(1L);
+                    writer.of(path.trimTo(plen), name, COLUMN_NAME_TXN_NONE, false);
+                    Assert.assertEquals(
+                            "recovery walk should drop the failed batch 2 gen because batch 2 anticipated txn 2 > committedTxn 1",
+                            1, writer.getGenCount());
                 }
             }
         });

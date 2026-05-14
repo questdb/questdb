@@ -94,14 +94,6 @@ public abstract class AbstractPostingIndexReader implements IndexReader {
     protected int genCount;
     protected int keyCount;
     protected RecordMetadata metadata;
-    // Strict-pin: the table txn that this reader is pinned at via the
-    // scoreboard. Picker selects the chain entry with the largest
-    // {@code txnAtSeal <= pinnedTableTxn}, and the per-gen filter in
-    // {@link Cursor#advanceToNextRelevantGen} skips gens with
-    // {@code slot.TXN_AT_SEAL > pinnedTableTxn}. Defaults to Long.MAX_VALUE
-    // so a reader opened without explicit plumbing falls back to "see the
-    // head and all its gens".
-    protected long pinnedTableTxn = Long.MAX_VALUE;
     // Last successfully observed seqlock value of the chain header's active
     // page. Used by reloadConditionally to detect any publish (appendNewEntry
     // or extendHead — both republish the header) and skip the picker walk
@@ -118,6 +110,15 @@ public abstract class AbstractPostingIndexReader implements IndexReader {
     private int keyCountIncludingNulls;
     private long partitionTimestamp;
     private long partitionTxn;
+    // Strict-pin: the table txn that this reader is pinned at via the
+    // scoreboard. Picker selects the chain entry with the largest
+    // {@code txnAtSeal <= pinnedTableTxn}; within the picked entry,
+    // {@link #computeVisibleGenCount} (run once at pick time) trims
+    // {@link #genCount} to the visible prefix of gens with
+    // {@code slot.TXN_AT_SEAL <= pinnedTableTxn}. Default {@code Long.MAX_VALUE}
+    // means "see the head and all its gens"; scoreboard plumbing that lowers
+    // the pin is deferred to a follow-up.
+    private long pinnedTableTxn = Long.MAX_VALUE;
     private long spinLockTimeoutMs;
     private long valueFileTxn;
     private long valueMemSize = -1;

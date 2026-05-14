@@ -463,6 +463,60 @@ public class PostingIndexChainWriterTest {
     }
 
     @Test
+    public void testRecoveryHeadTrimSingleTailGenNoCover() {
+        PostingIndexChainWriter w = new PostingIndexChainWriter();
+        w.initialiseEmpty(mem);
+
+        long entryOffset = w.appendNewEntry(
+                mem,
+                /* sealTxn */ 1, /* txnAtSeal */ 10,
+                /* valueMemSize */ 0, /* maxValue */ -1,
+                /* keyCount */ 0, /* genCount */ 2,
+                /* blockCapacity */ 64, /* coveringFormat */ 0
+        );
+        long slot0 = entryOffset + PostingIndexUtils.V2_ENTRY_HEADER_SIZE;
+        long slot1 = slot0 + PostingIndexUtils.GEN_DIR_ENTRY_SIZE;
+        mem.putLong(slot1 + PostingIndexUtils.GEN_DIR_OFFSET_TXN_AT_SEAL, 11L);
+        mem.putLong(slot0 + PostingIndexUtils.GEN_DIR_OFFSET_FILE_OFFSET, 0L);
+        mem.putLong(slot0 + PostingIndexUtils.GEN_DIR_OFFSET_SIZE, 64L);
+        mem.putLong(slot0 + PostingIndexUtils.GEN_DIR_OFFSET_MAX_VALUE, 42L);
+        mem.putInt(slot0 + PostingIndexUtils.GEN_DIR_OFFSET_MAX_KEY, 4);
+
+        int dropped = w.recoveryDropAbandoned(mem, /* currentTableTxn */ 10L, new LongList());
+
+        Assert.assertEquals(0, dropped);
+        Assert.assertTrue(w.isHeadTrimmedOnLastRecovery());
+        Assert.assertEquals(1, mem.getInt(entryOffset + PostingIndexUtils.V2_ENTRY_OFFSET_GEN_COUNT));
+        Assert.assertEquals(
+                PostingIndexChainEntry.entrySize(1, 0),
+                mem.getLong(entryOffset + PostingIndexUtils.V2_ENTRY_OFFSET_LEN)
+        );
+        Assert.assertEquals(42L, mem.getLong(entryOffset + PostingIndexUtils.V2_ENTRY_OFFSET_MAX_VALUE));
+        Assert.assertEquals(64L, mem.getLong(entryOffset + PostingIndexUtils.V2_ENTRY_OFFSET_VALUE_MEM_SIZE));
+        Assert.assertEquals(5, mem.getInt(entryOffset + PostingIndexUtils.V2_ENTRY_OFFSET_KEY_COUNT));
+    }
+
+    @Test
+    public void testRecoveryWholeEntryDroppedWhenSlot0InFlight() {
+        PostingIndexChainWriter w = new PostingIndexChainWriter();
+        w.initialiseEmpty(mem);
+
+        w.appendNewEntry(mem, 1, 10, 0, 0, 0, 1, 64, 0);
+        long inFlightOffset = w.appendNewEntry(mem, 2, 20, 0, 0, 0, 1, 64, 0);
+        long inFlightSlot0 = inFlightOffset + PostingIndexUtils.V2_ENTRY_HEADER_SIZE;
+        mem.putLong(inFlightSlot0 + PostingIndexUtils.GEN_DIR_OFFSET_TXN_AT_SEAL, 20L);
+
+        LongList orphans = new LongList();
+        int dropped = w.recoveryDropAbandoned(mem, /* currentTableTxn */ 10L, orphans);
+
+        Assert.assertEquals(1, dropped);
+        Assert.assertFalse(w.isHeadTrimmedOnLastRecovery());
+        Assert.assertEquals(1, orphans.size());
+        Assert.assertEquals(2L, orphans.getQuick(0));
+        Assert.assertEquals(1L, w.getEntryCount());
+    }
+
+    @Test
     public void testResetStateClearsInMemoryMirror() {
         PostingIndexChainWriter w = new PostingIndexChainWriter();
         w.initialiseEmpty(mem);
