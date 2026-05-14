@@ -35,6 +35,7 @@ import io.questdb.cairo.frm.file.FrameFactory;
 import io.questdb.cairo.lv.LiveViewCheckpointWriter;
 import io.questdb.cairo.lv.LiveViewDefinition;
 import io.questdb.cairo.lv.LiveViewInstance;
+import io.questdb.cairo.lv.LiveViewRecovery;
 import io.questdb.cairo.lv.LiveViewRegistry;
 import io.questdb.cairo.lv.LiveViewState;
 import io.questdb.cairo.lv.LiveViewStateReader;
@@ -509,6 +510,8 @@ public class CairoEngine implements Closeable, WriterSource {
 
         try (
                 Path path = new Path();
+                Path sweepPath = new Path();
+                Path liveViewDirPath = new Path();
                 BlockFileReader reader = new BlockFileReader(configuration);
                 WalEventReader walEventReader = new WalEventReader(configuration);
                 MemoryCMR txnMem = Vm.getCMRInstance(configuration.getBypassWalFdCache())
@@ -516,6 +519,9 @@ public class CairoEngine implements Closeable, WriterSource {
             path.of(configuration.getDbRoot());
             final int pathLen = path.size();
             final MatViewStateReader matViewStateReader = new MatViewStateReader();
+            // Reusable scratch for the per-LV checkpoint sweep (see the LV
+            // branch below). Allocated once per buildViewGraphs() call.
+            final StringSink sweepNameSink = new StringSink();
             for (int i = 0, n = tableTokenBucket.size(); i < n; i++) {
                 final TableToken tableToken = tableTokenBucket.get(i);
                 if (tableToken.isView() && TableUtils.isViewDefinitionFileExists(configuration, path, tableToken.getDirName())) {
@@ -701,6 +707,19 @@ public class CairoEngine implements Closeable, WriterSource {
                             // over the same base.
                             dependentViewGraph.addLiveView(tableToken, definition.getBaseTableName());
                             liveViewStateStore.registerBaseTable(definition.getBaseTableName());
+                            // Phase 2a.7 startup sweep: clean .cp.tmp orphans
+                            // and any .cp whose lvSeqTxn outran the applied
+                            // watermark, then retain only the highest survivor.
+                            // The first refresh cycle for this LV will open
+                            // that survivor (if any) and run the restore.
+                            liveViewDirPath.of(configuration.getDbRoot()).concat(tableToken);
+                            LiveViewRecovery.sweepCheckpoints(
+                                    configuration.getFilesFacade(),
+                                    sweepPath,
+                                    liveViewDirPath,
+                                    stateReader.getAppliedWatermark(),
+                                    sweepNameSink
+                            );
                         }
                     } catch (Throwable th) {
                         final LogRecord rec = LOG.error().$("could not load live view [view=").$(tableToken);
