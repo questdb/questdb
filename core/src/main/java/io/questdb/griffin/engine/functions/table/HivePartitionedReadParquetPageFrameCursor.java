@@ -111,7 +111,11 @@ public class HivePartitionedReadParquetPageFrameCursor implements PageFrameCurso
     private SqlExecutionContext executionContext;
     private int currentFileIndex = -1;
     private long cumulativePartitionLo = 0;
+    // Row counts are accumulated as files open during normal iteration so that
+    // size() after a full scan does not need a separate probe walk.
+    private boolean isTotalRowCountFinalised = false;
     private int lowestOpenFileIndex = 0;
+    private long runningRowCount = 0;
     private long totalRowCount = -1;
 
     public HivePartitionedReadParquetPageFrameCursor(
@@ -203,6 +207,13 @@ public class HivePartitionedReadParquetPageFrameCursor implements PageFrameCurso
                 }
             }
             if (!openNextFile()) {
+                // Cursor exhausted: every file has now passed through openNextFile, so the
+                // running total is the authoritative row count. Cache it and skip the
+                // re-walk that computeTotalRowCount would otherwise do for a later size().
+                if (!isTotalRowCountFinalised) {
+                    totalRowCount = runningRowCount;
+                    isTotalRowCountFinalised = true;
+                }
                 return null;
             }
         }
@@ -254,7 +265,12 @@ public class HivePartitionedReadParquetPageFrameCursor implements PageFrameCurso
         currentFileIndex = -1;
         lowestOpenFileIndex = 0;
         cumulativePartitionLo = 0;
-        totalRowCount = -1;
+        // Preserve the finalised row count across toTop calls: file row counts are
+        // immutable, so once we've seen them once we can keep reusing the total.
+        if (!isTotalRowCountFinalised) {
+            totalRowCount = -1;
+            runningRowCount = 0;
+        }
         frame.rowGroupIndex = -1;
         buildColumnMapping();
     }
@@ -440,6 +456,10 @@ public class HivePartitionedReadParquetPageFrameCursor implements PageFrameCurso
 
         prepareFilterListForFile(fileIndex, decoder);
         allocatePartitionBuffersForFile(fileIndex, filePath, decoder);
+
+        if (!isTotalRowCountFinalised) {
+            runningRowCount += decoder.metadata().getRowCount();
+        }
 
         frame.rowGroupIndex = -1;
         return true;
