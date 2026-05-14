@@ -137,6 +137,20 @@ public class LiveViewInstance implements QuietCloseable {
     private volatile long lastFlushTimeUs = Numbers.LONG_NULL;
     // Last refresh-worker tick wall-clock (micros). Used by catalogue / lag metrics.
     private volatile long lastRefreshTimeUs = Numbers.LONG_NULL;
+    // Maximum base-row timestamp the refresh worker has observed so far, across
+    // every cycle since startup or the last restore. Updated row-by-row by the
+    // anchor-dispatch cursor. The refresh worker compares each incoming WAL
+    // commit's min ts against this to detect out-of-order arrivals: a row with
+    // ts strictly less than latestSeenTs means the commit needs the O3 replay
+    // path instead of the append-only steady-state path.
+    // <p>
+    // Reset to {@link Numbers#LONG_NULL} on construction (a fresh LV has seen
+    // no rows yet). On restart-restore, the value re-derives naturally from the
+    // first post-restore commit; we deliberately don't persist this in
+    // {@code _lv.s} because (a) the head .cp's maxTimestamp already plays the
+    // gating role for O3 head-hit and (b) trailing this in {@code _lv.s} would
+    // add a write per commit.
+    private volatile long latestSeenTs = Numbers.LONG_NULL;
     // Live-view's own table token. Populated at construction.
     private final TableToken liveViewToken;
     // Cached RecordToRowCopier (compiled bytecode bridging the SELECT cursor's record
@@ -292,6 +306,16 @@ public class LiveViewInstance implements QuietCloseable {
 
     public long getLastRefreshTimeUs() {
         return lastRefreshTimeUs;
+    }
+
+    /**
+     * @return the highest base-row timestamp the refresh worker has fed
+     * through the window pipeline since startup, or {@link Numbers#LONG_NULL}
+     * if no row has been processed yet. The O3 detection path reads this to
+     * decide whether an incoming commit is in-order.
+     */
+    public long getLatestSeenTs() {
+        return latestSeenTs;
     }
 
     public LiveViewLifecycleState getLifecycleState() {
@@ -518,6 +542,21 @@ public class LiveViewInstance implements QuietCloseable {
 
     public void setLastRefreshTimeUs(long lastRefreshTimeUs) {
         this.lastRefreshTimeUs = lastRefreshTimeUs;
+    }
+
+    /**
+     * Monotonic update of {@link #getLatestSeenTs()}. Skips the store if
+     * {@code ts <= latestSeenTs} so an O3 row (the very thing we want to
+     * detect) does not retroactively lower the watermark. Called from the
+     * anchor-dispatch cursor on every base row consumed by the refresh
+     * worker; the only writer is the refresh-worker thread, so the read +
+     * compare + write needs no extra synchronisation beyond the field's
+     * own volatility for the catalogue / detection reader.
+     */
+    public void setLatestSeenTs(long ts) {
+        if (ts > latestSeenTs) {
+            latestSeenTs = ts;
+        }
     }
 
     public void setLvConsumedSeqTxn(long lvConsumedSeqTxn) {
