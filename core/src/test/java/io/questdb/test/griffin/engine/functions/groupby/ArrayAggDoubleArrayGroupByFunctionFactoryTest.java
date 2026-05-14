@@ -26,9 +26,18 @@ package io.questdb.test.griffin.engine.functions.groupby;
 
 import io.questdb.PropertyKey;
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.SingleColumnType;
+import io.questdb.cairo.map.MapKey;
+import io.questdb.cairo.map.MapValue;
+import io.questdb.cairo.map.OrderedMap;
+import io.questdb.griffin.engine.functions.constants.DoubleConstant;
+import io.questdb.griffin.engine.functions.groupby.ArrayAggDoubleArrayGroupByFunction;
+import io.questdb.griffin.engine.groupby.FastGroupByAllocator;
 import io.questdb.mp.WorkerPool;
+import io.questdb.std.Unsafe;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
+import org.junit.Assert;
 import org.junit.Test;
 
 public class ArrayAggDoubleArrayGroupByFunctionFactoryTest extends AbstractCairoTest {
@@ -355,6 +364,78 @@ public class ArrayAggDoubleArrayGroupByFunctionFactoryTest extends AbstractCairo
                     0,
                     "array_agg: array size exceeds configured maximum [maxArrayElementCount=5]"
             );
+        });
+    }
+
+    @Test
+    public void testMergeDeepCopyEmptyDest() throws Exception {
+        // White-box test for the destPtr==0 deep-copy branch in
+        // AbstractArrayAggDoubleGroupByFunction.merge() (L247-256). The
+        // parallel framework only reaches this branch when work-stealing
+        // assigns the destination accumulator a ptr=0 contribution before
+        // any real data lands; that ordering is not controllable from SQL,
+        // so testParallelMergeEmptyWorkerState above triggers it only
+        // probabilistically. To exercise the branch deterministically this
+        // test constructs the two MapValue inputs directly (one with the
+        // long slot at 0, the other pointing at a synthesized 3-element
+        // build buffer), bypasses the parallel dispatch path, and calls
+        // merge() directly. The branch must allocate a fresh buffer in
+        // dest's allocator and deep-copy src's entries verbatim - a shallow
+        // copy of srcPtr would dangle once src's allocator was reclaimed.
+        assertMemoryLeak(() -> {
+            try (
+                    OrderedMap destMap = new OrderedMap(4 * 1024, new SingleColumnType(ColumnType.INT),
+                            new SingleColumnType(ColumnType.LONG), 16, 0.8, 24);
+                    OrderedMap srcMap = new OrderedMap(4 * 1024, new SingleColumnType(ColumnType.INT),
+                            new SingleColumnType(ColumnType.LONG), 16, 0.8, 24);
+                    FastGroupByAllocator allocator = new FastGroupByAllocator(1024, 1024 * 1024)
+            ) {
+                ArrayAggDoubleArrayGroupByFunction fn = new ArrayAggDoubleArrayGroupByFunction(
+                        DoubleConstant.NULL, configuration);
+                try {
+                    fn.initValueIndex(0);
+                    fn.setAllocator(allocator);
+
+                    // Source buffer layout: |count:INT|capacity:INT|(rowId:LONG, value:DOUBLE) x N|
+                    final int srcCount = 3;
+                    final long headerSize = 8L;
+                    final long entrySize = 16L;
+                    final long srcPtr = allocator.malloc(headerSize + (long) srcCount * entrySize);
+                    Unsafe.putInt(srcPtr, srcCount);
+                    Unsafe.putInt(srcPtr + 4, srcCount);
+                    for (int i = 0; i < srcCount; i++) {
+                        long entry = srcPtr + headerSize + (long) i * entrySize;
+                        Unsafe.putLong(entry, (long) i);
+                        Unsafe.putDouble(entry + 8, 10.0 + i);
+                    }
+
+                    MapKey destKey = destMap.withKey();
+                    destKey.putInt(1);
+                    MapValue destValue = destKey.createValue();
+                    destValue.putLong(0, 0L);
+
+                    MapKey srcKey = srcMap.withKey();
+                    srcKey.putInt(2);
+                    MapValue srcValue = srcKey.createValue();
+                    srcValue.putLong(0, srcPtr);
+
+                    fn.merge(destValue, srcValue);
+
+                    final long newDestPtr = destValue.getLong(0);
+                    Assert.assertNotEquals("destValue must hold a fresh non-zero pointer", 0L, newDestPtr);
+                    Assert.assertNotEquals("destValue must own a fresh buffer rather than shallow-copying srcPtr",
+                            srcPtr, newDestPtr);
+                    Assert.assertEquals(srcCount, Unsafe.getInt(newDestPtr));
+                    Assert.assertEquals(srcCount, Unsafe.getInt(newDestPtr + 4));
+                    for (int i = 0; i < srcCount; i++) {
+                        long entry = newDestPtr + headerSize + (long) i * entrySize;
+                        Assert.assertEquals((long) i, Unsafe.getLong(entry));
+                        Assert.assertEquals(10.0 + i, Unsafe.getDouble(entry + 8), 0.0);
+                    }
+                } finally {
+                    fn.close();
+                }
+            }
         });
     }
 
