@@ -756,11 +756,6 @@ public abstract class AbstractPostingIndexReader implements IndexReader {
                 : genLookup.getGenMaxValue(visibleGenCount - 1);
     }
 
-    // Returns the visible prefix length. Relies on slot.TXN_AT_SEAL being
-    // monotonically non-decreasing across an entry's gens; snapshotMetadata
-    // asserts the invariant in debug builds. The trimmed this.genCount then
-    // bounds every gen-iterating read path, so callers do not repeat the
-    // per-slot check.
     private int computeVisibleGenCount(PostingIndexChainEntry.Snapshot e) {
         for (int g = 0; g < e.genCount; g++) {
             if (genLookup.getGenTxnAtSeal(g) > pinnedTableTxn) {
