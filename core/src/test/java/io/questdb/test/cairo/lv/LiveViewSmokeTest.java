@@ -2744,6 +2744,56 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testMaxOverUnboundedPartitionRowsSnapshotRoundTrip() throws Exception {
+        // Phase 2a.5 Group #2: max() over unbounded partition rows + ANCHOR.
+        // State per partition is [value: DOUBLE, initialized: BYTE]. The same
+        // class handles min() via a swapped comparator.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (ts TIMESTAMP, x DOUBLE, sym SYMBOL) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms AS " +
+                    "SELECT ts, sym, max(x) OVER w AS m FROM base " +
+                    "WINDOW w AS (PARTITION BY sym ORDER BY ts ANCHOR EXPRESSION timestamp_floor('1d', ts))");
+
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                setCurrentMicros(0L);
+                execute("INSERT INTO base (ts, x, sym) VALUES " +
+                        "('2026-08-01T00:00:00.000000Z', 5.0, 'a'), " +
+                        "('2026-08-01T01:00:00.000000Z', 50.0, 'a'), " +
+                        "('2026-08-01T02:00:00.000000Z', 20.0, 'a'), " +
+                        "('2026-08-01T00:00:00.000000Z', 7.0, 'b')");
+                drainWalQueue();
+                drainJob(job);
+                drainWalQueue();
+
+                LiveViewInstance lv = engine.getLiveViewRegistry().getViewInstance("lv");
+                WindowFunction maxFunc = lv.getAnchorWindow().getFunctions().getQuick(0);
+                Assert.assertTrue(maxFunc.supportsSnapshot());
+                Map fnMap = maxFunc.getPartitionMap();
+                Assert.assertEquals(2L, fnMap.size());
+
+                try (MemoryCARW sink = Vm.getCARWInstance(4096L, Integer.MAX_VALUE, MemoryTag.NATIVE_DEFAULT)) {
+                    maxFunc.snapshot(sink);
+                    maxFunc.toTop();
+                    Assert.assertEquals(0L, fnMap.size());
+                    maxFunc.restore(sink, 1);
+                    Assert.assertEquals(2L, fnMap.size());
+
+                    // 'a' max is 50.0, 'b' max is 7.0. Sum 57.0.
+                    MapRecordCursor mc = fnMap.getCursor();
+                    MapRecord rec = fnMap.getRecord();
+                    double total = 0;
+                    while (mc.hasNext()) {
+                        total += rec.getValue().getDouble(0);
+                    }
+                    Assert.assertEquals(57.0, total, 0.0);
+                }
+            }
+
+            execute("DROP LIVE VIEW lv");
+        });
+    }
+
+    @Test
     public void testKSumOverUnboundedPartitionRowsSnapshotRoundTrip() throws Exception {
         // Phase 2a.5 Group #2: ksum() (Kahan-compensated sum) over unbounded
         // partition rows + ANCHOR. State per partition is [sum: DOUBLE,

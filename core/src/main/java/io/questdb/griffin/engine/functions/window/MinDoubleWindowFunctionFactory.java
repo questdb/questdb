@@ -110,7 +110,8 @@ public class MinDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
                             partitionBySink,
                             args.get(0),
                             LESS_THAN,
-                            NAME
+                            NAME,
+                            partitionByKeyTypes
                     );
                 } // range between [unbounded | x] preceding and [x preceding | current row], except unbounded preceding to current row
                 else {
@@ -180,7 +181,8 @@ public class MinDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
                             partitionBySink,
                             args.get(0),
                             LESS_THAN,
-                            NAME
+                            NAME,
+                            partitionByKeyTypes
                     );
                 } // between current row and current row
                 else if (rowsLo == 0 && rowsHi == 0) {

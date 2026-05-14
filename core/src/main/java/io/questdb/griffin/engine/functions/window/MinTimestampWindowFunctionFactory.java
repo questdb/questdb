@@ -138,7 +138,8 @@ public class MinTimestampWindowFunctionFactory extends AbstractWindowFunctionFac
                                 partitionBySink,
                                 args.get(0),
                                 LESS_THAN,
-                                NAME
+                                NAME,
+                                partitionByKeyTypes
                         );
                     } catch (Throwable e) {
                         Misc.free(map);
@@ -214,7 +215,8 @@ public class MinTimestampWindowFunctionFactory extends AbstractWindowFunctionFac
                                 partitionBySink,
                                 args.get(0),
                                 LESS_THAN,
-                                NAME
+                                NAME,
+                                partitionByKeyTypes
                         );
                     } catch (Throwable e) {
                         Misc.free(map);
