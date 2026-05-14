@@ -90,6 +90,7 @@ public class ContiguousFileIndexedFrameColumn extends ContiguousFileFixFrameColu
     @Override
     public void close() {
         Misc.free(indexWriter);
+        upcomingTableTxn = -1L;
         super.close();
     }
 

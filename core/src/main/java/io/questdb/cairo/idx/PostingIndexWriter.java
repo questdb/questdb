@@ -431,6 +431,7 @@ public class PostingIndexWriter implements IndexWriter {
                     hasPendingData = false;
                     activeKeyCount = 0;
                     coverCount = 0;
+                    pendingTxnAtSeal = -1;
                     chain.resetState();
                 }
             }

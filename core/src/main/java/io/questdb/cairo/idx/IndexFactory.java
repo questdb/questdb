@@ -52,19 +52,16 @@ public final class IndexFactory {
             long partitionTimestamp,
             long pinnedTableTxn
     ) {
-        IndexReader reader = switch (indexType) {
+        return switch (indexType) {
             case IndexType.BITMAP -> direction == IndexReader.DIR_FORWARD
                     ? new BitmapIndexFwdReader(configuration, path, columnName, columnNameTxn, partitionTxn, columnTop)
                     : new BitmapIndexBwdReader(configuration, path, columnName, columnNameTxn, partitionTxn, columnTop);
             case IndexType.POSTING, IndexType.POSTING_DELTA, IndexType.POSTING_EF ->
                     direction == IndexReader.DIR_FORWARD
-                            ? new PostingIndexFwdReader(configuration, path, columnName, columnNameTxn, partitionTxn, columnTop, metadata, columnVersionReader, partitionTimestamp)
-                            : new PostingIndexBwdReader(configuration, path, columnName, columnNameTxn, partitionTxn, columnTop, metadata, columnVersionReader, partitionTimestamp);
+                            ? new PostingIndexFwdReader(configuration, path, columnName, columnNameTxn, partitionTxn, columnTop, metadata, columnVersionReader, partitionTimestamp, pinnedTableTxn)
+                            : new PostingIndexBwdReader(configuration, path, columnName, columnNameTxn, partitionTxn, columnTop, metadata, columnVersionReader, partitionTimestamp, pinnedTableTxn);
             default -> throw unsupportedIndexType(indexType);
         };
-        reader.setPinnedTableTxn(pinnedTableTxn);
-        reader.reloadConditionally();
-        return reader;
     }
 
     public static IndexWriter createWriter(byte indexType, CairoConfiguration configuration) {
