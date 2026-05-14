@@ -223,14 +223,7 @@ public class ReadParquetRecordCursor implements NoRandomAccessRecordCursor {
         Misc.free(record);
         Misc.free(filterList);
         Misc.free(filterValues);
-        if (fd != -1) {
-            ff.close(fd);
-            fd = -1;
-        }
-        if (addr != 0) {
-            ff.munmap(addr, fileSize, MemoryTag.MMAP_PARQUET_PARTITION_DECODER);
-            addr = 0;
-        }
+        closeFile();
     }
 
     @Override
@@ -252,7 +245,9 @@ public class ReadParquetRecordCursor implements NoRandomAccessRecordCursor {
     }
 
     public void of(LPSZ path, SqlExecutionContext executionContext) throws SqlException {
-        // Reopen the file, it could have changed
+        // Reopen the file; it could have changed since the last call, or this cursor may
+        // be reused across files by HivePartitionedReadParquetRecordCursor.
+        closeFile();
         this.fd = TableUtils.openRO(ff, path, LOG);
         this.fileSize = ff.length(fd);
         this.addr = TableUtils.mapRO(ff, fd, fileSize, MemoryTag.MMAP_PARQUET_PARTITION_DECODER);
@@ -283,6 +278,22 @@ public class ReadParquetRecordCursor implements NoRandomAccessRecordCursor {
             }
         }
 
+        toTop();
+    }
+
+    /**
+     * Opens just enough of a parquet file to expose its metadata via the decoder.
+     * Use when the caller only needs row counts (calculateSize) or wants to skip
+     * past whole files (skipRows) without paying to decode row groups.
+     * After this, hasNext() must not be called until of() initialises columns
+     * and filter state for actual reading.
+     */
+    public void ofMetadata(LPSZ path) {
+        closeFile();
+        this.fd = TableUtils.openRO(ff, path, LOG);
+        this.fileSize = ff.length(fd);
+        this.addr = TableUtils.mapRO(ff, fd, fileSize, MemoryTag.MMAP_PARQUET_PARTITION_DECODER);
+        decoder.of(addr, fileSize, MemoryTag.NATIVE_PARQUET_PARTITION_DECODER);
         toTop();
     }
 
@@ -329,6 +340,18 @@ public class ReadParquetRecordCursor implements NoRandomAccessRecordCursor {
         rowGroupIndex = -1;
         rowGroupRowCount = -1;
         currentRowInRowGroup = -1;
+    }
+
+    private void closeFile() {
+        if (fd != -1) {
+            ff.close(fd);
+            fd = -1;
+        }
+        if (addr != 0) {
+            ff.munmap(addr, fileSize, MemoryTag.MMAP_PARQUET_PARTITION_DECODER);
+            addr = 0;
+            fileSize = 0;
+        }
     }
 
     private long getStrAddr(int col) {

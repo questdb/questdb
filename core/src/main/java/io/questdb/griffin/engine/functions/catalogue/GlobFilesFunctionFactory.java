@@ -69,6 +69,47 @@ import org.jetbrains.annotations.NotNull;
 public class GlobFilesFunctionFactory implements FunctionFactory {
 
     /**
+     * Returns the leading portion of {@code pattern} that contains no glob
+     * meta-characters, up to and including the last path separator before the
+     * first such character. If the pattern contains no glob characters, the
+     * entire pattern is returned unchanged.
+     * <p>
+     * Examples (assuming {@code Files.SEPARATOR == '/'}):
+     * <ul>
+     *   <li>{@code /data/hive/**}{@code /*.parquet} -> {@code /data/hive/}</li>
+     *   <li>{@code /data/hits.parquet} -> {@code /data/hits.parquet}</li>
+     *   <li>{@code *.parquet} -> empty</li>
+     * </ul>
+     * Used by {@code read_parquet()} to find a stable root for hive partition
+     * key extraction.
+     */
+    public static CharSequence extractNonGlobPrefix(CharSequence pattern) {
+        int lastSep = -1;
+        int n = pattern.length();
+        for (int i = 0; i < n; i++) {
+            char c = pattern.charAt(i);
+            if (c == '\\' && Files.SEPARATOR != '\\' && i + 1 < n) {
+                char next = pattern.charAt(i + 1);
+                if (next == '*' || next == '?' || next == '[' || next == ']' || next == '\\') {
+                    i++;
+                    continue;
+                }
+            }
+            if (c == '/' || c == Files.SEPARATOR) {
+                lastSep = i;
+                continue;
+            }
+            if (c == '*' || c == '?' || c == '[') {
+                if (lastSep < 0) {
+                    return "";
+                }
+                return pattern.subSequence(0, lastSep + 1);
+            }
+        }
+        return pattern;
+    }
+
+    /**
      * Find all files matching the glob pattern.
      *
      * @param ff             FilesFacade for file operations
