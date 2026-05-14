@@ -166,14 +166,10 @@ public class HivePartitionedReadParquetRecordCursorFactory extends MutableMetada
     }
 
     private static boolean computeCanPageFrame(IntList partitionColumnTypes) {
-        // VARCHAR partition values need an aux+data layout that the page-frame
-        // path doesn't yet supply. Until that lands, fall back to the sequential
-        // record cursor when any partition column is VARCHAR.
-        for (int i = 0, n = partitionColumnTypes.size(); i < n; i++) {
-            if (ColumnType.tagOf(partitionColumnTypes.getQuick(i)) == ColumnType.VARCHAR) {
-                return false;
-            }
-        }
+        // All inferred partition types (INT, LONG, DATE, TIMESTAMP, DOUBLE, VARCHAR)
+        // are now supported on the parallel page-frame path. VARCHAR partition
+        // values are surfaced through hand-encoded aux+data pages in
+        // HivePartitionedReadParquetPageFrameCursor#fillVarcharPartitionBuffer.
         return true;
     }
 

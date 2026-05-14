@@ -181,7 +181,7 @@ public class HivePartitionedReadParquetFunctionTest extends AbstractCairoTest {
                     "select id, day, sym from read_parquet('hive/day=*/sym=*/data.parquet') order by day, sym, id",
                     null,
                     true,
-                    false
+                    true
             );
         });
     }
@@ -564,7 +564,7 @@ public class HivePartitionedReadParquetFunctionTest extends AbstractCairoTest {
                     "select tag from read_parquet('mix/tag=*/data.parquet') order by tag",
                     null,
                     true,
-                    false
+                    true
             );
         });
     }
@@ -868,6 +868,60 @@ public class HivePartitionedReadParquetFunctionTest extends AbstractCairoTest {
                         ctx
                 ).getRecordCursorFactory()) {
                     assertCursor("count\n4\n", factory, false, true, false, ctx);
+                }
+            });
+        });
+    }
+
+    @Test
+    public void testParallelVarcharPartitionEqFilter() throws Exception {
+        // VARCHAR partition values used to force the sequential path; they now ride
+        // through the parallel page-frame cursor via hand-encoded VARCHAR_SLICE aux
+        // pages. Filter on the VARCHAR partition value and confirm the right rows
+        // come back through the async filter pipeline.
+        assertMemoryLeak(() -> {
+            execute("create table src as (select cast(x as int) as id from long_sequence(4))");
+            writeParquet("pvc/sym=BTC-USD/data.parquet", "src");
+            writeParquet("pvc/sym=ETH-USD/data.parquet", "src");
+            writeParquet("pvc/sym=DOGE/data.parquet", "src");
+
+            withWorkerPool(4, (compiler, ctx) -> {
+                try (RecordCursorFactory factory = compiler.compile(
+                        "select id, sym from read_parquet('pvc/sym=*/data.parquet') " +
+                                "where sym = 'ETH-USD' order by id",
+                        ctx
+                ).getRecordCursorFactory()) {
+                    assertCursor(
+                            "id\tsym\n1\tETH-USD\n2\tETH-USD\n3\tETH-USD\n4\tETH-USD\n",
+                            factory, true, false, false, ctx
+                    );
+                }
+            });
+        });
+    }
+
+    @Test
+    public void testParallelVarcharPartitionProjection() throws Exception {
+        // Projection that includes a VARCHAR partition virtual column. Ensures the
+        // overlay's aux+data pages return the right bytes for every row across files.
+        assertMemoryLeak(() -> {
+            execute("create table src as (select cast(x as int) as id from long_sequence(2))");
+            writeParquet("pvp/region=eu-west-1/data.parquet", "src");
+            writeParquet("pvp/region=us-east-2/data.parquet", "src");
+
+            withWorkerPool(2, (compiler, ctx) -> {
+                try (RecordCursorFactory factory = compiler.compile(
+                        "select id, region from read_parquet('pvp/region=*/data.parquet') order by region, id",
+                        ctx
+                ).getRecordCursorFactory()) {
+                    assertCursor(
+                            "id\tregion\n" +
+                                    "1\teu-west-1\n" +
+                                    "2\teu-west-1\n" +
+                                    "1\tus-east-2\n" +
+                                    "2\tus-east-2\n",
+                            factory, true, true, false, ctx
+                    );
                 }
             });
         });

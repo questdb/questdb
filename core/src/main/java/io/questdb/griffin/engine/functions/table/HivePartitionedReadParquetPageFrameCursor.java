@@ -27,6 +27,7 @@ package io.questdb.griffin.engine.functions.table;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.TableUtils;
+import io.questdb.cairo.VarcharTypeDriver;
 import io.questdb.cairo.sql.ColumnMapping;
 import io.questdb.cairo.sql.PageFrame;
 import io.questdb.cairo.sql.PageFrameCursor;
@@ -84,6 +85,13 @@ import static io.questdb.griffin.engine.functions.table.ReadParquetRecordCursor.
  * any partition column is VARCHAR.
  */
 public class HivePartitionedReadParquetPageFrameCursor implements PageFrameCursor {
+    // Mirrors VarcharTypeDriver private constants; kept in sync so we can encode
+    // aux entries by hand for the partition virtual columns. Format reference:
+    // VarcharTypeDriver#appendValue.
+    private static final int VARCHAR_HEADER_FLAG_ASCII = 2;
+    private static final int VARCHAR_HEADER_FLAG_INLINED = 1;
+    private static final int VARCHAR_HEADER_FLAGS_WIDTH = 4;
+    private static final int VARCHAR_AUX_ENTRY_BYTES = 16;
     private static final Log LOG = LogFactory.getLog(HivePartitionedReadParquetPageFrameCursor.class);
     private final ColumnMapping columnMapping = new ColumnMapping();
     private final ObjList<ParquetFileDecoder> decoders = new ObjList<>();
@@ -100,6 +108,11 @@ public class HivePartitionedReadParquetPageFrameCursor implements PageFrameCurso
     private final RecordMetadata parquetMetadata;
     private final int parquetColumnCount;
     // Per-file partition buffers, flat-indexed by fileIndex * partitionColumnCount + partitionCol.
+    // For fixed-size types, partitionBufferAddrs/Sizes is the only buffer; aux is unused (0).
+    // For VARCHAR, partitionBufferAddrs/Sizes is the data page and partitionAuxBufferAddrs/Sizes
+    // is the aux page.
+    private final LongList partitionAuxBufferAddrs = new LongList();
+    private final LongList partitionAuxBufferSizes = new LongList();
     private final LongList partitionBufferAddrs = new LongList();
     private final IntList partitionBufferTypeWidths = new IntList();
     private final LongList partitionBufferSizes = new LongList();
@@ -110,8 +123,10 @@ public class HivePartitionedReadParquetPageFrameCursor implements PageFrameCurso
     private final Path path = new Path(MemoryTag.NATIVE_PATH);
     private final @Nullable ObjList<PushdownFilterExtractor.PushdownFilterCondition> pushdownFilterConditions;
     private SqlExecutionContext executionContext;
-    // Scratch arrays for per-file partition value parsing during file pruning.
-    // Sized to partitionColumnCount; reused across files.
+    // Scratch arrays for per-file partition value parsing during file pruning and
+    // VARCHAR buffer fill. Sized to partitionColumnCount; reused across files.
+    private int[] prunePartitionByteHi;
+    private int[] prunePartitionByteLo;
     private boolean[] prunePartitionPresent;
     private long[] prunePartitionValues;
     private int currentFileIndex = -1;
@@ -145,6 +160,8 @@ public class HivePartitionedReadParquetPageFrameCursor implements PageFrameCurso
         this.pushdownFilterConditions = pushdownFilterConditions;
         this.prunePartitionValues = new long[this.partitionColumnCount];
         this.prunePartitionPresent = new boolean[this.partitionColumnCount];
+        this.prunePartitionByteLo = new int[this.partitionColumnCount];
+        this.prunePartitionByteHi = new int[this.partitionColumnCount];
     }
 
     @Override
@@ -269,6 +286,8 @@ public class HivePartitionedReadParquetPageFrameCursor implements PageFrameCurso
         partitionBufferAddrs.clear();
         partitionBufferSizes.clear();
         partitionBufferTypeWidths.clear();
+        partitionAuxBufferAddrs.clear();
+        partitionAuxBufferSizes.clear();
         globCursor.toTop();
         currentFileIndex = -1;
         lowestOpenFileIndex = 0;
@@ -344,6 +363,13 @@ public class HivePartitionedReadParquetPageFrameCursor implements PageFrameCurso
                 Unsafe.free(pAddr, pSize, MemoryTag.NATIVE_DEFAULT);
                 partitionBufferAddrs.setQuick(slot, 0);
                 partitionBufferSizes.setQuick(slot, 0);
+            }
+            long pAuxAddr = partitionAuxBufferAddrs.getQuick(slot);
+            long pAuxSize = partitionAuxBufferSizes.getQuick(slot);
+            if (pAuxAddr != 0) {
+                Unsafe.free(pAuxAddr, pAuxSize, MemoryTag.NATIVE_DEFAULT);
+                partitionAuxBufferAddrs.setQuick(slot, 0);
+                partitionAuxBufferSizes.setQuick(slot, 0);
             }
         }
     }
@@ -486,6 +512,8 @@ public class HivePartitionedReadParquetPageFrameCursor implements PageFrameCurso
             partitionBufferAddrs.add(0);
             partitionBufferSizes.add(0);
             partitionBufferTypeWidths.add(0);
+            partitionAuxBufferAddrs.add(0);
+            partitionAuxBufferSizes.add(0);
         }
         if (partitionColumnCount == 0) {
             return;
@@ -501,15 +529,39 @@ public class HivePartitionedReadParquetPageFrameCursor implements PageFrameCurso
         if (maxRowGroupSize == 0) {
             return;
         }
+        // Parse partition values once so we know each VARCHAR value's byte range before
+        // sizing its data buffer.
+        parsePartitionValues(filePath, prunePartitionValues, prunePartitionPresent);
         for (int c = 0; c < partitionColumnCount; c++) {
             int type = partitionColumnTypes.getQuick(c);
-            int typeWidth = ColumnType.sizeOf(type);
-            long bufferSize = (long) maxRowGroupSize * typeWidth;
-            long bufferAddr = Unsafe.malloc(bufferSize, MemoryTag.NATIVE_DEFAULT);
             int slot = fileIndex * partitionColumnCount + c;
-            partitionBufferAddrs.setQuick(slot, bufferAddr);
-            partitionBufferSizes.setQuick(slot, bufferSize);
-            partitionBufferTypeWidths.setQuick(slot, typeWidth);
+            if (ColumnType.tagOf(type) == ColumnType.VARCHAR) {
+                final long auxSize = (long) maxRowGroupSize * VARCHAR_AUX_ENTRY_BYTES;
+                final long auxAddr = Unsafe.malloc(auxSize, MemoryTag.NATIVE_DEFAULT);
+                // Slice format: the aux entry holds an absolute pointer into the data
+                // buffer plus a length. We allocate enough room for the value bytes
+                // once (every aux entry will point at the same start). Null/empty
+                // values get a 1-byte allocation so the data pointer is non-zero —
+                // the virtual-page overlay only fires when the data address is non-zero.
+                int valueBytes = 0;
+                if (prunePartitionPresent[c]) {
+                    valueBytes = prunePartitionByteHi[c] - prunePartitionByteLo[c];
+                }
+                final long dataSize = Math.max(valueBytes, 1);
+                final long dataAddr = Unsafe.malloc(dataSize, MemoryTag.NATIVE_DEFAULT);
+                partitionAuxBufferAddrs.setQuick(slot, auxAddr);
+                partitionAuxBufferSizes.setQuick(slot, auxSize);
+                partitionBufferAddrs.setQuick(slot, dataAddr);
+                partitionBufferSizes.setQuick(slot, dataSize);
+                partitionBufferTypeWidths.setQuick(slot, VARCHAR_AUX_ENTRY_BYTES);
+            } else {
+                int typeWidth = ColumnType.sizeOf(type);
+                long bufferSize = (long) maxRowGroupSize * typeWidth;
+                long bufferAddr = Unsafe.malloc(bufferSize, MemoryTag.NATIVE_DEFAULT);
+                partitionBufferAddrs.setQuick(slot, bufferAddr);
+                partitionBufferSizes.setQuick(slot, bufferSize);
+                partitionBufferTypeWidths.setQuick(slot, typeWidth);
+            }
         }
         // Populate buffers by parsing partition values from the file path.
         populatePartitionBuffersFromPath(fileIndex, filePath, maxRowGroupSize);
@@ -521,21 +573,92 @@ public class HivePartitionedReadParquetPageFrameCursor implements PageFrameCurso
         for (int c = 0; c < partitionColumnCount; c++) {
             int slot = fileIndex * partitionColumnCount + c;
             long addr = partitionBufferAddrs.getQuick(slot);
-            if (addr != 0) {
-                fillPartitionBuffer(addr, rowCount, partitionColumnTypes.getQuick(c),
+            if (addr == 0) {
+                continue;
+            }
+            int type = partitionColumnTypes.getQuick(c);
+            if (ColumnType.tagOf(type) == ColumnType.VARCHAR) {
+                long auxAddr = partitionAuxBufferAddrs.getQuick(slot);
+                fillVarcharPartitionBuffer(
+                        auxAddr,
+                        addr,
+                        rowCount,
+                        prunePartitionPresent[c] ? filePath : null,
+                        prunePartitionPresent[c] ? prunePartitionByteLo[c] : 0,
+                        prunePartitionPresent[c] ? prunePartitionByteHi[c] : 0
+                );
+            } else {
+                fillPartitionBuffer(addr, rowCount, type,
                         prunePartitionValues[c], prunePartitionPresent[c]);
             }
         }
     }
 
     /**
+     * Encodes the VARCHAR_SLICE aux+data pages for a constant partition value
+     * across {@code rowCount} rows. PARQUET-format frames read VARCHAR columns
+     * through {@link VarcharTypeDriver#getSliceValue}, which expects the slice
+     * layout (not the full append-value layout that table partitions use):
+     * <pre>
+     *   bytes 0-3: header = (size &lt;&lt; 4) | (ascii ? 2 : 0) | (null ? 4 : 0)
+     *   bytes 4-7: reserved (zero)
+     *   bytes 8-15: absolute pointer to value bytes
+     * </pre>
+     * All aux entries are identical and point to the same start of
+     * {@code dataAddr}; the value bytes are written once.
+     */
+    private void fillVarcharPartitionBuffer(
+            long auxAddr,
+            long dataAddr,
+            int rowCount,
+            @Nullable Utf8Sequence value,
+            int valueLo,
+            int valueHi
+    ) {
+        final long entryHi;
+        final long entryLo;
+        if (value == null) {
+            entryLo = VarcharTypeDriver.VARCHAR_HEADER_FLAG_NULL & 0xFFFFFFFFL;
+            entryHi = 0L;
+        } else {
+            final int valueSize = valueHi - valueLo;
+            boolean ascii = true;
+            for (int i = valueLo; i < valueHi; i++) {
+                if (value.byteAt(i) < 0) {
+                    ascii = false;
+                    break;
+                }
+            }
+            // Write value bytes once at the start of the data buffer; every aux
+            // entry will point here.
+            for (int i = 0; i < valueSize; i++) {
+                Unsafe.getUnsafe().putByte(dataAddr + i, value.byteAt(valueLo + i));
+            }
+            final int header = (valueSize << 4) | (ascii ? VARCHAR_HEADER_FLAG_ASCII : 0);
+            // bytes 0-3: header, bytes 4-7: reserved (zero)
+            entryLo = ((long) header) & 0xFFFFFFFFL;
+            entryHi = dataAddr;
+        }
+        for (int i = 0; i < rowCount; i++) {
+            final long entryAddr = auxAddr + (long) i * VARCHAR_AUX_ENTRY_BYTES;
+            Unsafe.getUnsafe().putLong(entryAddr, entryLo);
+            Unsafe.getUnsafe().putLong(entryAddr + 8, entryHi);
+        }
+    }
+
+    /**
      * Parses partition values from {@code filePath} into the supplied arrays.
      * Missing or unparseable values leave {@code present[i]} false.
+     * Byte offsets into {@code filePath} are recorded for every matched segment,
+     * regardless of whether typed parsing succeeded — VARCHAR buffer fill uses them
+     * directly.
      */
     private void parsePartitionValues(Utf8Sequence filePath, long[] values, boolean[] present) {
         for (int c = 0; c < partitionColumnCount; c++) {
             values[c] = 0L;
             present[c] = false;
+            prunePartitionByteLo[c] = -1;
+            prunePartitionByteHi[c] = -1;
         }
         if (partitionColumnCount == 0) {
             return;
@@ -579,13 +702,21 @@ public class HivePartitionedReadParquetPageFrameCursor implements PageFrameCurso
                     }
                 }
                 if (matchedIdx >= 0) {
-                    sink.clear();
-                    Utf8s.utf8ToUtf16(filePath, eqIdx + 1, segEnd, sink);
-                    try {
-                        values[matchedIdx] = parseTyped(sink, partitionColumnTypes.getQuick(matchedIdx));
+                    prunePartitionByteLo[matchedIdx] = eqIdx + 1;
+                    prunePartitionByteHi[matchedIdx] = segEnd;
+                    final int type = partitionColumnTypes.getQuick(matchedIdx);
+                    if (ColumnType.tagOf(type) == ColumnType.VARCHAR) {
+                        // VARCHAR uses the raw byte range, no typed parse needed.
                         present[matchedIdx] = true;
-                    } catch (NumericException ignored) {
-                        // leave as missing -> NULL fill
+                    } else {
+                        sink.clear();
+                        Utf8s.utf8ToUtf16(filePath, eqIdx + 1, segEnd, sink);
+                        try {
+                            values[matchedIdx] = parseTyped(sink, type);
+                            present[matchedIdx] = true;
+                        } catch (NumericException ignored) {
+                            // leave as missing -> NULL fill
+                        }
                     }
                 }
             }
@@ -847,6 +978,28 @@ public class HivePartitionedReadParquetPageFrameCursor implements PageFrameCurso
         }
 
         @Override
+        public long getVirtualAuxPageAddress(int columnIndex) {
+            if (columnIndex < parquetColumnCount) {
+                return 0;
+            }
+            int partCol = columnIndex - parquetColumnCount;
+            return partitionAuxBufferAddrs.getQuick(partitionIndex * partitionColumnCount + partCol);
+        }
+
+        @Override
+        public long getVirtualAuxPageSize(int columnIndex) {
+            if (columnIndex < parquetColumnCount) {
+                return 0;
+            }
+            int partCol = columnIndex - parquetColumnCount;
+            if (partitionAuxBufferAddrs.getQuick(partitionIndex * partitionColumnCount + partCol) == 0) {
+                return 0;
+            }
+            // For VARCHAR aux: rowGroupSize entries of VARCHAR_AUX_ENTRY_BYTES bytes each.
+            return (long) rowGroupSize * VARCHAR_AUX_ENTRY_BYTES;
+        }
+
+        @Override
         public long getVirtualPageAddress(int columnIndex) {
             if (columnIndex < parquetColumnCount) {
                 return 0;
@@ -861,7 +1014,13 @@ public class HivePartitionedReadParquetPageFrameCursor implements PageFrameCurso
                 return 0;
             }
             int partCol = columnIndex - parquetColumnCount;
-            int typeWidth = partitionBufferTypeWidths.getQuick(partitionIndex * partitionColumnCount + partCol);
+            final int slot = partitionIndex * partitionColumnCount + partCol;
+            // For VARCHAR, the data page size is the allocated value byte count, independent
+            // of row group size. For fixed-size types it scales with the row group.
+            if (ColumnType.tagOf(partitionColumnTypes.getQuick(partCol)) == ColumnType.VARCHAR) {
+                return partitionBufferSizes.getQuick(slot);
+            }
+            int typeWidth = partitionBufferTypeWidths.getQuick(slot);
             return (long) rowGroupSize * typeWidth;
         }
     }
