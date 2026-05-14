@@ -3805,8 +3805,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
             case ColumnType.BOOLEAN, ColumnType.BYTE -> Unsafe.putByte(dstPtr + rowIndex, (byte) 0);
             case ColumnType.SHORT -> Unsafe.putShort(dstPtr + ((long) rowIndex << 1), (short) 0);
             case ColumnType.CHAR -> Unsafe.putChar(dstPtr + ((long) rowIndex << 1), (char) 0);
-            case ColumnType.INT, ColumnType.IPv4 ->
-                    Unsafe.putInt(dstPtr + ((long) rowIndex << 2), Numbers.INT_NULL);
+            case ColumnType.INT, ColumnType.IPv4 -> Unsafe.putInt(dstPtr + ((long) rowIndex << 2), Numbers.INT_NULL);
             case ColumnType.LONG, ColumnType.DATE, ColumnType.TIMESTAMP ->
                     Unsafe.putLong(dstPtr + ((long) rowIndex << 3), Numbers.LONG_NULL);
             case ColumnType.FLOAT -> Unsafe.putFloat(dstPtr + ((long) rowIndex << 2), Float.NaN);
@@ -3833,14 +3832,10 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                     char c = value.length() > 0 ? value.charAt(0) : 0;
                     Unsafe.putChar(dstPtr + ((long) rowIndex << 1), c);
                 }
-                case ColumnType.INT ->
-                        Unsafe.putInt(dstPtr + ((long) rowIndex << 2), Numbers.parseInt(value));
-                case ColumnType.LONG ->
-                        Unsafe.putLong(dstPtr + ((long) rowIndex << 3), Numbers.parseLong(value));
-                case ColumnType.FLOAT ->
-                        Unsafe.putFloat(dstPtr + ((long) rowIndex << 2), Numbers.parseFloat(value));
-                case ColumnType.DOUBLE ->
-                        Unsafe.putDouble(dstPtr + ((long) rowIndex << 3), Numbers.parseDouble(value));
+                case ColumnType.INT -> Unsafe.putInt(dstPtr + ((long) rowIndex << 2), Numbers.parseInt(value));
+                case ColumnType.LONG -> Unsafe.putLong(dstPtr + ((long) rowIndex << 3), Numbers.parseLong(value));
+                case ColumnType.FLOAT -> Unsafe.putFloat(dstPtr + ((long) rowIndex << 2), Numbers.parseFloat(value));
+                case ColumnType.DOUBLE -> Unsafe.putDouble(dstPtr + ((long) rowIndex << 3), Numbers.parseDouble(value));
                 // parseFloorLiteral accepts higher-precision input (micros/nanos) by
                 // truncating extras, matching ColumnTypeConverter's STRING->DATE/TIMESTAMP path.
                 case ColumnType.DATE ->
@@ -3849,8 +3844,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                 // so dispatch on the full dstType to pick the correct driver.
                 case ColumnType.TIMESTAMP ->
                         Unsafe.putLong(dstPtr + ((long) rowIndex << 3), ColumnType.getTimestampDriver(dstType).parseFloorLiteral(value));
-                case ColumnType.IPv4 ->
-                        Unsafe.putInt(dstPtr + ((long) rowIndex << 2), Numbers.parseIPv4Quiet(value));
+                case ColumnType.IPv4 -> Unsafe.putInt(dstPtr + ((long) rowIndex << 2), Numbers.parseIPv4Quiet(value));
                 case ColumnType.UUID -> {
                     long addr = dstPtr + ((long) rowIndex << 4);
                     Unsafe.putLong(addr, Uuid.parseLo(value));

@@ -234,7 +234,7 @@ public class ConvertOperatorImpl implements Closeable {
                     int parquetColType = tableWriter.getParquetColumnType(pi, existingColIndex);
                     if (!ColumnType.isUndefined(parquetColType)
                             && (isTargetSymbol
-                                || !isParquetStorageCompatible(parquetColType, existingType))) {
+                            || !isParquetStorageCompatible(parquetColType, existingType))) {
                         long pts = tableWriter.getPartitionTimestamp(pi);
                         LOG.info()
                                 .$("converting parquet partition to native before type change [partition=").$ts(pts)

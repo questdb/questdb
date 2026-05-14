@@ -2243,8 +2243,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
      * parquet partition. Looks the column up by its originalWriterIndex, which is what
      * the parquet write path stores as the per-column id.
      *
-     * @param partitionIndex        partition to inspect (must be a parquet partition)
-     * @param metadataColumnIndex   current table metadata column index
+     * @param partitionIndex      partition to inspect (must be a parquet partition)
+     * @param metadataColumnIndex current table metadata column index
      * @return the column type stored in the parquet file, or {@link ColumnType#UNDEFINED}
      * if the column is not present in the parquet file
      */
