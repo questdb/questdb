@@ -103,11 +103,11 @@ public class PostingIndexChainTest {
     public void testCircularChainDetected() {
         PostingIndexChainHeader.initialiseEmpty(mem);
         long off1 = PostingIndexUtils.V2_ENTRY_REGION_BASE;
-        long off2 = off1 + PostingIndexChainEntry.entrySize(0);
+        long off2 = off1 + PostingIndexChainEntry.entrySize(1);
 
-        PostingIndexChainEntry.writeHeader(mem, off1, 1, 10, 0, 0, 0, 0, 64, 0, off2);
-        PostingIndexChainEntry.writeHeader(mem, off2, 2, 20, 0, 0, 0, 0, 64, 0, off1);
-        publishHead(off2, /* count */ 2, 2, off2 + PostingIndexChainEntry.entrySize(0));
+        PostingIndexChainEntry.writeHeader(mem, off1, 1, 10, 0, 0, 0, 1, 64, 0, off2);
+        PostingIndexChainEntry.writeHeader(mem, off2, 2, 20, 0, 0, 0, 1, 64, 0, off1);
+        publishHead(off2, /* count */ 2, 2, off2 + PostingIndexChainEntry.entrySize(1));
 
         PostingIndexChainHeader.Snapshot header = new PostingIndexChainHeader.Snapshot();
         PostingIndexChainEntry.Snapshot entry = new PostingIndexChainEntry.Snapshot();
@@ -128,8 +128,8 @@ public class PostingIndexChainTest {
     public void testConcurrentReaderObservesConsistentSnapshot() throws Exception {
         PostingIndexChainHeader.initialiseEmpty(mem);
         long off1 = PostingIndexUtils.V2_ENTRY_REGION_BASE;
-        PostingIndexChainEntry.writeHeader(mem, off1, 1, 10, 0, 0, 0, 0, 64, 0, PostingIndexUtils.V2_NO_HEAD);
-        long limit = off1 + PostingIndexChainEntry.entrySize(0);
+        PostingIndexChainEntry.writeHeader(mem, off1, 1, 10, 0, 0, 0, 1, 64, 0, PostingIndexUtils.V2_NO_HEAD);
+        long limit = off1 + PostingIndexChainEntry.entrySize(1);
         publishHead(off1, 1, 1, limit);
 
         AtomicBoolean stop = new AtomicBoolean(false);
@@ -146,15 +146,15 @@ public class PostingIndexChainTest {
                 long nextOffset = limit;
                 long sealTxn = 1;
                 long entryCount = 1;
-                long bufferEnd = 64 * 1024 - PostingIndexChainEntry.entrySize(0);
+                long bufferEnd = 64 * 1024 - PostingIndexChainEntry.entrySize(1);
                 while (!stop.get() && nextOffset < bufferEnd) {
                     sealTxn++;
                     long txnAtSeal = sealTxn * 10;
                     PostingIndexChainEntry.writeHeader(
-                            mem, nextOffset, sealTxn, txnAtSeal, 0, 0, 0, 0, 64, 0, prevOffset
+                            mem, nextOffset, sealTxn, txnAtSeal, 0, 0, 0, 1, 64, 0, prevOffset
                     );
                     long thisOffset = nextOffset;
-                    nextOffset += PostingIndexChainEntry.entrySize(0);
+                    nextOffset += PostingIndexChainEntry.entrySize(1);
                     entryCount++;
                     activePage = PostingIndexChainHeader.publish(
                             mem, activePage, thisOffset, entryCount,
@@ -241,12 +241,12 @@ public class PostingIndexChainTest {
         long entryOffset = PostingIndexUtils.V2_ENTRY_REGION_BASE;
         PostingIndexChainEntry.writeHeader(
                 mem, entryOffset,
-                1, 10, 0, 0, 0, 0, 64, 0,
+                1, 10, 0, 0, 0, 1, 64, 0,
                 PostingIndexUtils.V2_NO_HEAD
         );
         // Stomp LEN to a wildly out-of-range value.
         mem.putLong(entryOffset + PostingIndexUtils.V2_ENTRY_OFFSET_LEN, 99_999_999L);
-        publishHead(entryOffset, 1, 1, entryOffset + PostingIndexChainEntry.entrySize(0));
+        publishHead(entryOffset, 1, 1, entryOffset + PostingIndexChainEntry.entrySize(1));
 
         PostingIndexChainHeader.Snapshot header = new PostingIndexChainHeader.Snapshot();
         PostingIndexChainEntry.Snapshot entry = new PostingIndexChainEntry.Snapshot();
@@ -260,10 +260,10 @@ public class PostingIndexChainTest {
         long entryOffset = PostingIndexUtils.V2_ENTRY_REGION_BASE;
         PostingIndexChainEntry.writeHeader(
                 mem, entryOffset,
-                1, 10, 0, 0, 0, 0, 64, 0,
+                1, 10, 0, 0, 0, 1, 64, 0,
                 /* prevEntryOffset */ 999_999L
         );
-        publishHead(entryOffset, 1, 1, entryOffset + PostingIndexChainEntry.entrySize(0));
+        publishHead(entryOffset, 1, 1, entryOffset + PostingIndexChainEntry.entrySize(1));
 
         PostingIndexChainHeader.Snapshot header = new PostingIndexChainHeader.Snapshot();
         PostingIndexChainEntry.Snapshot entry = new PostingIndexChainEntry.Snapshot();
@@ -297,7 +297,7 @@ public class PostingIndexChainTest {
         PostingIndexChainEntry.Snapshot entry = new PostingIndexChainEntry.Snapshot();
         long endOffset = PostingIndexChainEntry.read(mem, entryOffset, /* coverCount */ 3, entry);
 
-        Assert.assertEquals(96, entry.len);
+        Assert.assertEquals(104, entry.len);
         Assert.assertEquals(entryOffset + entry.len, endOffset);
         Assert.assertEquals(3, entry.coverFileEndOffsets.size());
         Assert.assertEquals(0L, entry.coverFileEndOffsets.getQuick(0));
@@ -391,16 +391,16 @@ public class PostingIndexChainTest {
 
     @Test
     public void testEntrySizeIsAlignedToEightBytes() {
-        Assert.assertEquals(64, PostingIndexChainEntry.entrySize(0));
-        Assert.assertEquals(96, PostingIndexChainEntry.entrySize(1)); // 64+28=92 → 96
-        Assert.assertEquals(120, PostingIndexChainEntry.entrySize(2)); // 64+56=120
-        Assert.assertEquals(152, PostingIndexChainEntry.entrySize(3)); // 64+84=148 → 152
+        Assert.assertEquals(56, PostingIndexChainEntry.entrySize(0));
+        Assert.assertEquals(104, PostingIndexChainEntry.entrySize(1)); // 56+44=100 → 104
+        Assert.assertEquals(144, PostingIndexChainEntry.entrySize(2)); // 56+88=144
+        Assert.assertEquals(192, PostingIndexChainEntry.entrySize(3)); // 56+132=188 → 192
         for (int n = 0; n < 50; n++) {
             int sz = PostingIndexChainEntry.entrySize(n);
             Assert.assertEquals("entry size for genCount=" + n + " must be 8-aligned",
                     0, sz & 7);
-            Assert.assertTrue(sz >= 64 + n * 28);
-            Assert.assertTrue(sz < 64 + n * 28 + 8);
+            Assert.assertTrue(sz >= 56 + n * 44);
+            Assert.assertTrue(sz < 56 + n * 44 + 8);
         }
     }
 
@@ -482,11 +482,11 @@ public class PostingIndexChainTest {
         long entryOffset = PostingIndexUtils.V2_ENTRY_REGION_BASE;
         PostingIndexChainEntry.writeHeader(
                 mem, entryOffset,
-                1, 10, 0, 0, 0, 0, 64, 0,
+                1, 10, 0, 0, 0, 1, 64, 0,
                 PostingIndexUtils.V2_NO_HEAD
         );
         mem.putLong(entryOffset + PostingIndexUtils.V2_ENTRY_OFFSET_LEN, 0L);
-        publishHead(entryOffset, 1, 1, entryOffset + PostingIndexChainEntry.entrySize(0));
+        publishHead(entryOffset, 1, 1, entryOffset + PostingIndexChainEntry.entrySize(1));
 
         PostingIndexChainHeader.Snapshot header = new PostingIndexChainHeader.Snapshot();
         PostingIndexChainEntry.Snapshot entry = new PostingIndexChainEntry.Snapshot();
@@ -519,7 +519,7 @@ public class PostingIndexChainTest {
         PostingIndexChainHeader.initialiseEmpty(mem);
         long entryOffset = PostingIndexUtils.V2_ENTRY_REGION_BASE;
         // genCount=1, coverEndOffsets=null - entry is written with no cover
-        // footer (LEN = entrySize(1, 0) = 96).
+        // footer (LEN = entrySize(1, 0) = 104).
         PostingIndexChainEntry.writeHeader(
                 mem, entryOffset,
                 /* sealTxn */ 1, /* txnAtSeal */ 5,
@@ -530,7 +530,7 @@ public class PostingIndexChainTest {
                 /* coverEndOffsets */ null
         );
         long entryLen = PostingIndexChainEntry.entrySize(1, 0);
-        Assert.assertEquals(96, entryLen);
+        Assert.assertEquals(104, entryLen);
         publishHead(entryOffset, 1, 1, entryOffset + entryLen);
 
         PostingIndexChainHeader.Snapshot header = new PostingIndexChainHeader.Snapshot();
@@ -560,11 +560,13 @@ public class PostingIndexChainTest {
         PostingIndexChainEntry.Snapshot entry = new PostingIndexChainEntry.Snapshot();
 
         for (int i = 1; i <= 64; i++) {
+            // genCount=1 so writeHeader populates slot[0].TXN_AT_SEAL; the
+            // entry-level txnAtSeal sourced by read() comes from slot[0].
             PostingIndexChainEntry.writeHeader(
                     mem, offset, /* sealTxn */ i, /* txnAtSeal */ i * 7L,
-                    0, 0, 0, 0, 64, 0, prevOffset
+                    0, 0, 0, /* genCount */ 1, 64, 0, prevOffset
             );
-            long entryLen = PostingIndexChainEntry.entrySize(0);
+            long entryLen = PostingIndexChainEntry.entrySize(1);
             entryCount++;
             activePage = PostingIndexChainHeader.publish(
                     mem, activePage, offset, entryCount,
@@ -618,9 +620,12 @@ public class PostingIndexChainTest {
         } else {
             offset = prevOffset + PostingIndexChainEntry.entrySize(readGenCount(prevOffset));
         }
+        // genCount=1 so writeHeader populates slot[0].TXN_AT_SEAL (the
+        // single on-disk source of entry-level visibility). Tests that read
+        // entry.txnAtSeal back need an actual slot to source it from.
         PostingIndexChainEntry.writeHeader(
                 mem, offset, sealTxn, txnAtSeal, /* valueMemSize */ 0,
-                /* maxValue */ 0, /* keyCount */ 0, 0,
+                /* maxValue */ 0, /* keyCount */ 0, /* genCount */ 1,
                 /* blockCapacity */ 64, /* coveringFormat */ 0, prevOffset
         );
         return offset;
