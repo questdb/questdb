@@ -42,8 +42,8 @@ import io.questdb.cairo.lv.LiveViewStateStore;
 import io.questdb.cairo.lv.LiveViewStateStoreImpl;
 import io.questdb.cairo.lv.LiveViewTableStructure;
 import io.questdb.cairo.mig.EngineMigration;
+import io.questdb.cairo.mv.DependentViewGraph;
 import io.questdb.cairo.mv.MatViewDefinition;
-import io.questdb.cairo.mv.MatViewGraph;
 import io.questdb.cairo.mv.MatViewRefreshTask;
 import io.questdb.cairo.mv.MatViewState;
 import io.questdb.cairo.mv.MatViewStateReader;
@@ -198,7 +198,7 @@ public class CairoEngine implements Closeable, WriterSource {
     private final FunctionFactoryCache ffCache;
     private final LiveViewRegistry liveViewRegistry = new LiveViewRegistry();
     private final LiveViewStateStore liveViewStateStore = new LiveViewStateStoreImpl();
-    private final MatViewGraph matViewGraph;
+    private final DependentViewGraph dependentViewGraph;
     private final Queue<MatViewTimerTask> matViewTimerQueue;
     private final MessageBusImpl messageBus;
     private final MetadataCache metadataCache;
@@ -293,7 +293,7 @@ public class CairoEngine implements Closeable, WriterSource {
             this.queryRegistry = new QueryRegistry(configuration);
             this.rootExecutionContext = createRootExecutionContext();
             this.matViewTimerQueue = createMatViewTimerQueue();
-            this.matViewGraph = createMatViewGraph();
+            this.dependentViewGraph = createDependentViewGraph();
             this.viewGraph = createViewGraph();
             this.frameFactory = new FrameFactory(configuration);
             this.dataID = DataID.open(configuration);
@@ -439,7 +439,7 @@ public class CairoEngine implements Closeable, WriterSource {
     }
 
     public void applyTableRename(TableToken token, TableToken updatedTableToken) {
-        if (updatedTableToken.isMatView() && matViewGraph.getViewDefinition(updatedTableToken) == null) {
+        if (updatedTableToken.isMatView() && dependentViewGraph.getViewDefinition(updatedTableToken) == null) {
             throw CairoException.nonCritical().put("materialized view has not been registered yet [name=").put(updatedTableToken.getTableName()).put(']');
         }
         tableNameRegistry.rename(token.getTableName(), updatedTableToken.getTableName(), token);
@@ -447,7 +447,7 @@ public class CairoEngine implements Closeable, WriterSource {
             tableSequencerAPI.applyRename(updatedTableToken);
         }
         if (updatedTableToken.isMatView()) {
-            matViewGraph.updateToken(updatedTableToken);
+            dependentViewGraph.updateToken(updatedTableToken);
         }
         enqueueCompileView(token);
         enqueueCompileView(updatedTableToken);
@@ -547,7 +547,7 @@ public class CairoEngine implements Closeable, WriterSource {
                 }
                 if (tableToken.isMatView() && TableUtils.isMatViewDefinitionFileExists(configuration, path, tableToken.getDirName())) {
                     try {
-                        MatViewDefinition viewDefinition = matViewGraph.getViewDefinition(tableToken);
+                        MatViewDefinition viewDefinition = dependentViewGraph.getViewDefinition(tableToken);
                         if (viewDefinition == null) {
                             viewDefinition = new MatViewDefinition();
                             MatViewDefinition.readFrom(
@@ -558,7 +558,7 @@ public class CairoEngine implements Closeable, WriterSource {
                                     pathLen,
                                     tableToken
                             );
-                            if (matViewGraph.addView(viewDefinition)) {
+                            if (dependentViewGraph.addView(viewDefinition)) {
                                 matViewStateStore.createViewState(viewDefinition);
                             }
                         }
@@ -734,7 +734,7 @@ public class CairoEngine implements Closeable, WriterSource {
             w.clearCache();
         }
         viewGraph.clear();
-        matViewGraph.clear();
+        dependentViewGraph.clear();
         matViewStateStore.clear();
         matViewTimerQueue.clear();
         liveViewRegistry.clear();
@@ -1040,7 +1040,7 @@ public class CairoEngine implements Closeable, WriterSource {
         final TableToken matViewToken = createTableOrViewOrMatViewUnsecure(securityContext, mem, blockFileWriter, path, ifNotExists, operation, keepLock, inVolume, TableUtils.TABLE_KIND_REGULAR_TABLE);
         final MatViewDefinition matViewDefinition = operation.getMatViewDefinition();
         try {
-            if (matViewGraph.addView(matViewDefinition)) {
+            if (dependentViewGraph.addView(matViewDefinition)) {
                 matViewStateStore.createViewState(matViewDefinition);
                 if (!matViewDefinition.isDeferred()) {
                     matViewStateStore.enqueueIncrementalRefresh(matViewToken);
@@ -1152,7 +1152,7 @@ public class CairoEngine implements Closeable, WriterSource {
                 tableSequencerAPI.dropTable(tableToken, false);
                 notifyViewStoresAboutDrop(tableToken);
                 matViewStateStore.removeViewState(tableToken);
-                matViewGraph.removeView(tableToken);
+                dependentViewGraph.removeView(tableToken);
                 invalidateLiveViewsForBaseTable(tableToken, "base table drop");
                 recentWriteTracker.removeTable(tableToken);
             } else {
@@ -1308,8 +1308,8 @@ public class CairoEngine implements Closeable, WriterSource {
         return liveViewStateStore;
     }
 
-    public @NotNull MatViewGraph getMatViewGraph() {
-        return matViewGraph;
+    public @NotNull DependentViewGraph getDependentViewGraph() {
+        return dependentViewGraph;
     }
 
     public @NotNull MatViewStateStore getMatViewStateStore() {
@@ -2989,8 +2989,8 @@ public class CairoEngine implements Closeable, WriterSource {
         ddlListener.clear();
     }
 
-    protected @NotNull MatViewGraph createMatViewGraph() {
-        return new MatViewGraph();
+    protected @NotNull DependentViewGraph createDependentViewGraph() {
+        return new DependentViewGraph();
     }
 
     // used in ent

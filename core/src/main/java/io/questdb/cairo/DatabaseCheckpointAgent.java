@@ -30,8 +30,8 @@ import io.questdb.cairo.file.BlockFileWriter;
 import io.questdb.cairo.lv.LiveViewCheckpointWriter;
 import io.questdb.cairo.lv.LiveViewDefinition;
 import io.questdb.cairo.lv.LiveViewState;
+import io.questdb.cairo.mv.DependentViewGraph;
 import io.questdb.cairo.mv.MatViewDefinition;
-import io.questdb.cairo.mv.MatViewGraph;
 import io.questdb.cairo.mv.MatViewState;
 import io.questdb.cairo.mv.MatViewStateReader;
 import io.questdb.cairo.mv.WalTxnRangeLoader;
@@ -286,7 +286,7 @@ public class DatabaseCheckpointAgent implements DatabaseCheckpointStatus, QuietC
                     final ObjHashSet<TableToken> tables = new ObjHashSet<>();
                     final ObjList<TableToken> ordered = new ObjList<>();
                     engine.getTableTokens(tables, false);
-                    engine.getMatViewGraph().orderByDependentViews(tables, ordered);
+                    engine.getDependentViewGraph().orderByDependentViews(tables, ordered);
 
                     try (
                             MemoryCMARW mem = Vm.getCMARWInstance();
@@ -333,8 +333,8 @@ public class DatabaseCheckpointAgent implements DatabaseCheckpointStatus, QuietC
                                 // in the table copy (otherwise, such a situation may lead to lost view refresh data).
                                 long mvBaseTableTxn = -1;
                                 if (tableToken.isMatView()) {
-                                    final MatViewGraph matViewGraph = engine.getMatViewGraph();
-                                    final MatViewDefinition matViewDefinition = matViewGraph.getViewDefinition(tableToken);
+                                    final DependentViewGraph dependentViewGraph = engine.getDependentViewGraph();
+                                    final MatViewDefinition matViewDefinition = dependentViewGraph.getViewDefinition(tableToken);
                                     if (matViewDefinition != null) {
                                         matViewFileWriter.of(path.trimTo(rootLen).concat(MatViewDefinition.MAT_VIEW_DEFINITION_FILE_NAME).$());
                                         MatViewDefinition.append(matViewDefinition, matViewFileWriter);
@@ -720,8 +720,8 @@ public class DatabaseCheckpointAgent implements DatabaseCheckpointStatus, QuietC
 
         for (int m = 0, n = matViewsToUpdate.size(); m < n; m++) {
             TableToken matViewToken = matViewsToUpdate.get(m);
-            final MatViewGraph matViewGraph = engine.getMatViewGraph();
-            final MatViewDefinition matViewDefinition = matViewGraph.getViewDefinition(matViewToken);
+            final DependentViewGraph dependentViewGraph = engine.getDependentViewGraph();
+            final MatViewDefinition matViewDefinition = dependentViewGraph.getViewDefinition(matViewToken);
             if (matViewDefinition == null) {
                 continue;
             }

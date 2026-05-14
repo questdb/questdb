@@ -7444,7 +7444,7 @@ public class MatViewTest extends AbstractCairoTest {
 
             final TableToken viewToken = engine.getTableTokenIfExists("price_1h");
             Assert.assertNotNull(viewToken);
-            final MatViewDefinition viewDefinition = engine.getMatViewGraph().getViewDefinition(viewToken);
+            final MatViewDefinition viewDefinition = engine.getDependentViewGraph().getViewDefinition(viewToken);
             Assert.assertNotNull(viewDefinition);
             final MatViewState viewState = engine.getMatViewStateStore().getViewState(viewToken);
             Assert.assertNotNull(viewState);

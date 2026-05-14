@@ -3044,7 +3044,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     ) {
         assert tableToken.isMatView();
 
-        final MatViewDefinition oldDefinition = engine.getMatViewGraph().getViewDefinition(tableToken);
+        final MatViewDefinition oldDefinition = engine.getDependentViewGraph().getViewDefinition(tableToken);
         if (oldDefinition == null) {
             throw CairoException.nonCritical().put("could not find definition [view=").put(tableToken.getTableName()).put(']');
         }
@@ -3067,7 +3067,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     public void setMatViewRefreshLimit(int limitHoursOrMonths) {
         assert tableToken.isMatView();
 
-        final MatViewDefinition oldDefinition = engine.getMatViewGraph().getViewDefinition(tableToken);
+        final MatViewDefinition oldDefinition = engine.getDependentViewGraph().getViewDefinition(tableToken);
         if (oldDefinition == null) {
             throw CairoException.nonCritical().put("could not find definition [view=").put(tableToken.getTableName()).put(']');
         }
@@ -3080,7 +3080,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     public void setMatViewRefreshTimer(long startUs, int interval, char unit) {
         assert tableToken.isMatView();
 
-        final MatViewDefinition oldDefinition = engine.getMatViewGraph().getViewDefinition(tableToken);
+        final MatViewDefinition oldDefinition = engine.getDependentViewGraph().getViewDefinition(tableToken);
         if (oldDefinition == null) {
             throw CairoException.nonCritical().put("could not find definition [view=").put(tableToken.getTableName()).put(']');
         }
@@ -12377,7 +12377,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
         // Unlike mat view state write-through behavior, we update the in-memory definition
         // object here, after updating the definition file.
-        engine.getMatViewGraph().updateViewDefinition(tableToken, newDefinition);
+        engine.getDependentViewGraph().updateViewDefinition(tableToken, newDefinition);
         engine.getMatViewStateStore().updateViewDefinition(tableToken, newDefinition);
     }
 

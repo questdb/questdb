@@ -28,7 +28,7 @@ import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.mv.MatViewDefinition;
-import io.questdb.cairo.mv.MatViewGraph;
+import io.questdb.cairo.mv.DependentViewGraph;
 import io.questdb.cairo.mv.MatViewState;
 import io.questdb.cairo.mv.MatViewStateStoreImpl;
 import io.questdb.std.Numbers;
@@ -40,8 +40,8 @@ import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Test;
 
-public class MatViewGraphAndStateStoreTest extends AbstractCairoTest {
-    private final MatViewGraph graph = new MatViewGraph();
+public class DependentViewGraphAndStateStoreTest extends AbstractCairoTest {
+    private final DependentViewGraph graph = new DependentViewGraph();
     private final ObjList<TableToken> ordered = new ObjList<>();
     private final MatViewStateStoreImpl stateStore = new MatViewStateStoreImpl(engine);
     private final ObjHashSet<TableToken> tableTokens = new ObjHashSet<>();

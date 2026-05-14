@@ -1912,7 +1912,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             throw SqlException.$(lexer.lastTokenPosition(), "materialized view name expected");
         }
         final SecurityContext securityContext = executionContext.getSecurityContext();
-        final MatViewDefinition viewDefinition = engine.getMatViewGraph().getViewDefinition(matViewToken);
+        final MatViewDefinition viewDefinition = engine.getDependentViewGraph().getViewDefinition(matViewToken);
         if (viewDefinition == null) {
             throw SqlException.$(lexer.lastTokenPosition(), "materialized view does not exist");
         }
@@ -3474,7 +3474,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             throw SqlException.$(lexer.lastTokenPosition(), "materialized view name expected, got table name");
         }
 
-        final MatViewDefinition matViewDefinition = engine.getMatViewGraph().getViewDefinition(matViewToken);
+        final MatViewDefinition matViewDefinition = engine.getDependentViewGraph().getViewDefinition(matViewToken);
         if (matViewDefinition == null) {
             throw SqlException.$(lexer.lastTokenPosition(), "materialized view does not exist or is not ready for refresh");
         }

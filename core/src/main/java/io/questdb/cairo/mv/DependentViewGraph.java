@@ -43,10 +43,18 @@ import java.util.function.BiFunction;
 import java.util.function.Function;
 
 /**
- * Holds mat view definitions and dependency lists, i.e. mat view graph.
- * This object is always in-use, even when mat views are disabled or the node is a read-only replica.
+ * Holds mat view definitions and the dependency list shared across mat views and
+ * live views. The class is named for its broader responsibility: ordering
+ * dependents (mat views, live views) after their base tables for snapshot and
+ * recovery flows. Mat-view-specific storage ({@link MatViewDefinition} cache)
+ * still lives here; the same {@code dependentViewsByTableName} map is
+ * generic-by-{@link TableToken}, so live views participate in ordering without
+ * additional graph state.
+ * <p>
+ * This object is always in-use, even when mat views are disabled or the node is
+ * a read-only replica.
  */
-public class MatViewGraph implements Mutable {
+public class DependentViewGraph implements Mutable {
     private static final java.lang.ThreadLocal<MatViewDefinition> tlDefinitionTask = new java.lang.ThreadLocal<>();
     private static final ThreadLocal<LowerCaseCharSequenceHashSet> tlSeen = new ThreadLocal<>(LowerCaseCharSequenceHashSet::new);
     private static final ThreadLocal<ArrayDeque<CharSequence>> tlStack = new ThreadLocal<>(ArrayDeque::new);
@@ -56,7 +64,7 @@ public class MatViewGraph implements Mutable {
     private final ConcurrentHashMap<ViewDependencyList> dependentViewsByTableName = new ConcurrentHashMap<>(false);
     private final BiFunction<CharSequence, MatViewDefinition, MatViewDefinition> updateDefinitionRef;
 
-    public MatViewGraph() {
+    public DependentViewGraph() {
         this.createDependencyList = name -> new ViewDependencyList();
         this.updateDefinitionRef = this::updateDefinition;
     }
