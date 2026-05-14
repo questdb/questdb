@@ -2582,6 +2582,89 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testRowNumberSnapshotRoundTrip() throws Exception {
+        // Phase 2a.5 Group #1: row_number() implements snapshot/restore.
+        // Drive a single refresh cycle so the function's Map is populated with
+        // partition state, then snapshot to an in-memory sink, reset via
+        // toTop(), restore from the sink, and verify the Map content matches
+        // by iterating partition entries directly. End-to-end snapshot/restore
+        // through the LV refresh pipeline is gated on Phase 2a.4 (the write
+        // hook) and Phase 2a.7 (the restart restore path) and the cross-cycle
+        // anchor-map reset behaviour is a separate concern.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (ts TIMESTAMP, sym SYMBOL) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms AS " +
+                    "SELECT ts, sym, row_number() OVER w AS rn FROM base " +
+                    "WINDOW w AS (PARTITION BY sym ORDER BY ts ANCHOR EXPRESSION timestamp_floor('1d', ts))");
+
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                setCurrentMicros(0L);
+                execute("INSERT INTO base (ts, sym) VALUES " +
+                        "('2026-08-01T00:00:00.000000Z', 'a'), " +
+                        "('2026-08-01T01:00:00.000000Z', 'a'), " +
+                        "('2026-08-01T00:00:00.000000Z', 'b')");
+                drainWalQueue();
+                drainJob(job);
+                drainWalQueue();
+
+                LiveViewInstance lv = engine.getLiveViewRegistry().getViewInstance("lv");
+                io.questdb.std.ObjList<io.questdb.griffin.engine.window.WindowFunction> funcs =
+                        lv.getAnchorWindow().getFunctions();
+                io.questdb.griffin.engine.window.WindowFunction rowNumberFunc = funcs.getQuick(0);
+                Assert.assertTrue(
+                        "row_number must support snapshot for SYMBOL partition keys",
+                        rowNumberFunc.supportsSnapshot()
+                );
+                Assert.assertEquals(1, rowNumberFunc.snapshotFormatVersion());
+                io.questdb.cairo.map.Map fnMap = rowNumberFunc.getPartitionMap();
+                Assert.assertNotNull("getPartitionMap exposes the function's partition Map", fnMap);
+                Assert.assertEquals("two partitions seeded", 2L, fnMap.size());
+
+                // Snapshot the entire partition Map into an in-memory sink.
+                try (io.questdb.cairo.vm.api.MemoryCARW sink = io.questdb.cairo.vm.Vm.getCARWInstance(
+                        4096L,
+                        Integer.MAX_VALUE,
+                        io.questdb.std.MemoryTag.NATIVE_DEFAULT
+                )) {
+                    rowNumberFunc.snapshot(sink);
+
+                    // Reset wipes the Map. After reset the function has no
+                    // partitions; any future computeNext on a known partition
+                    // would treat it as new and start at rn=1.
+                    rowNumberFunc.toTop();
+                    Assert.assertEquals(0L, fnMap.size());
+
+                    // Restore must rebuild the Map identically. Verify by
+                    // walking the cursor and tallying the row_number values
+                    // per symbol id.
+                    rowNumberFunc.restore(sink, 1);
+                    Assert.assertEquals("restore brought back both partitions", 2L, fnMap.size());
+
+                    // The restored Map's partition values must match the
+                    // pre-snapshot counters: partition 'a' had two rows
+                    // (rn=2 final), partition 'b' had one (rn=1 final).
+                    io.questdb.cairo.map.MapRecordCursor mc = fnMap.getCursor();
+                    io.questdb.cairo.map.MapRecord rec = fnMap.getRecord();
+                    long sumRn = 0;
+                    long minRn = Long.MAX_VALUE;
+                    long maxRn = Long.MIN_VALUE;
+                    while (mc.hasNext()) {
+                        long rn = rec.getValue().getLong(0); // ROW_NUMBER_VALUE_INDEX
+                        sumRn += rn;
+                        minRn = Math.min(minRn, rn);
+                        maxRn = Math.max(maxRn, rn);
+                    }
+                    Assert.assertEquals("partition counters sum to 1+2=3", 3L, sumRn);
+                    Assert.assertEquals("smallest counter is 1 (partition 'b')", 1L, minRn);
+                    Assert.assertEquals("largest counter is 2 (partition 'a')", 2L, maxRn);
+                }
+            }
+
+            execute("DROP LIVE VIEW lv");
+        });
+    }
+
+    @Test
     public void testFreezeGateSkipsRefreshTurn() throws Exception {
         // Phase 2a.9c: DatabaseCheckpointAgent toggles freezeInProgress around
         // its per-LV file copy so the refresh worker does not advance _lv.s /

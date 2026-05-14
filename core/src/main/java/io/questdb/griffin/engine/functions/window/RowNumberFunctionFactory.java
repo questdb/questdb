@@ -30,15 +30,20 @@ import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.ColumnTypes;
 import io.questdb.cairo.RecordSink;
 import io.questdb.cairo.Reopenable;
+import io.questdb.cairo.lv.LiveViewSnapshotKeyCodec;
 import io.questdb.cairo.map.Map;
 import io.questdb.cairo.map.MapFactory;
 import io.questdb.cairo.map.MapKey;
+import io.questdb.cairo.map.MapRecord;
+import io.questdb.cairo.map.MapRecordCursor;
 import io.questdb.cairo.map.MapValue;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.SymbolTableSource;
 import io.questdb.cairo.sql.VirtualRecord;
 import io.questdb.cairo.sql.WindowSPI;
+import io.questdb.cairo.vm.api.MemoryA;
+import io.questdb.cairo.vm.api.MemoryR;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
@@ -236,6 +241,11 @@ public class RowNumberFunctionFactory implements FunctionFactory {
         }
 
         @Override
+        public Map getPartitionMap() {
+            return map;
+        }
+
+        @Override
         public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
             super.init(symbolTableSource, executionContext);
             Function.init(partitionByRecord.getFunctions(), symbolTableSource, executionContext, null);
@@ -261,8 +271,61 @@ public class RowNumberFunctionFactory implements FunctionFactory {
         }
 
         @Override
+        public void restore(MemoryR source, int formatVersion) {
+            // formatVersion check is handled by the caller: the framework
+            // unlinks the head and falls into head-miss replay when version
+            // is below snapshotMinSupportedVersion(). Future format bumps add
+            // version-dispatch here.
+            map.clear();
+            long offset = 0;
+            final long partitionCount = source.getLong(offset);
+            offset += Long.BYTES;
+            for (long p = 0; p < partitionCount; p++) {
+                MapKey key = map.withKey();
+                offset = LiveViewSnapshotKeyCodec.readKey(key, source, offset, keyColumnTypes);
+                MapValue value = key.createValue();
+                value.putLong(ROW_NUMBER_VALUE_INDEX, source.getLong(offset));
+                offset += Long.BYTES;
+                if (lastActivityTsValueIndex >= 0) {
+                    value.putLong(lastActivityTsValueIndex, source.getLong(offset));
+                    offset += Long.BYTES;
+                }
+            }
+        }
+
+        @Override
         public void setColumnIndex(int columnIndex) {
             this.columnIndex = columnIndex;
+        }
+
+        @Override
+        public void snapshot(MemoryA sink) {
+            sink.putLong(map.size());
+            MapRecordCursor cursor = map.getCursor();
+            MapRecord record = map.getRecord();
+            while (cursor.hasNext()) {
+                LiveViewSnapshotKeyCodec.writeKey(sink, record, keyColumnTypes);
+                final MapValue value = record.getValue();
+                sink.putLong(value.getLong(ROW_NUMBER_VALUE_INDEX));
+                if (lastActivityTsValueIndex >= 0) {
+                    sink.putLong(value.getLong(lastActivityTsValueIndex));
+                }
+            }
+        }
+
+        @Override
+        public int snapshotFormatVersion() {
+            return 1;
+        }
+
+        @Override
+        public int snapshotMinSupportedVersion() {
+            return 1;
+        }
+
+        @Override
+        public boolean supportsSnapshot() {
+            return LiveViewSnapshotKeyCodec.isAllTypesSupported(keyColumnTypes);
         }
 
         @Override
