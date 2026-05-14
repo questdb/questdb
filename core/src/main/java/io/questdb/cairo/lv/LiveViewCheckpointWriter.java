@@ -288,6 +288,17 @@ public class LiveViewCheckpointWriter implements Closeable {
     }
 
     /**
+     * @return total bytes written into the in-flight {@code .cp.tmp},
+     * including the file header and (once {@link #commit(long)} fires) the
+     * trailer. Read it before {@code commit()} for use in the
+     * {@code head_checkpoint_state_bytes} catalogue column - after commit
+     * the writer resets and this returns zero.
+     */
+    public long getAppendOffset() {
+        return isOpen ? mem.getAppendOffset() + FILE_TRAILER_SIZE : 0;
+    }
+
+    /**
      * Opens {@code <liveViewDir>/_checkpoints/<lvSeqTxn>.cp.tmp} for writing
      * and writes the file header (with a placeholder
      * {@code blockCount = 0} field, patched at {@link #commit(long)}).

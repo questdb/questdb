@@ -36,6 +36,7 @@ import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.TimestampDriver;
 import io.questdb.cairo.file.BlockFileWriter;
+import io.questdb.cairo.vm.api.MemoryA;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.PageFrameAddressCache;
 import io.questdb.cairo.sql.PageFrameMemoryPool;
@@ -57,6 +58,7 @@ import io.questdb.griffin.RecordToRowCopierUtils;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.engine.QueryProgress;
+import io.questdb.griffin.engine.window.WindowFunction;
 import io.questdb.griffin.engine.window.WindowRecordCursorFactory;
 import io.questdb.griffin.model.ExpressionNode;
 import io.questdb.log.Log;
@@ -110,6 +112,14 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
     private final AnchorDispatchingCursor anchorDispatchingCursor = new AnchorDispatchingCursor();
     private final ApplyWal2TableJob applyJob;
     private final BlockFileWriter blockFileWriter;
+    // Reusable manifest bean for the head-checkpoint write hook. Mutated only
+    // on the refresh-worker thread between clear() and writeManifestBlock().
+    private final LiveViewCheckpointManifest checkpointManifest = new LiveViewCheckpointManifest();
+    // Per-worker reusable checkpoint writer. Lazily allocated on the first
+    // cycle that triggers a head write; reused across cycles via of() / commit().
+    // Memory pages stay mmapped between writes so a frequently-checkpointed LV
+    // does not pay reopen cost. Freed at job close.
+    private LiveViewCheckpointWriter checkpointWriter;
     private final EntityColumnFilter columnFilter = new EntityColumnFilter();
     private final IntList columnIndexes = new IntList();
     private final IntList columnSizeShifts = new IntList();
@@ -174,6 +184,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
         Misc.free(addressCache);
         Misc.free(memoryPool);
         Misc.free(applyJob);
+        checkpointWriter = Misc.free(checkpointWriter);
         stagingBuffer = Misc.free(stagingBuffer);
     }
 
@@ -400,6 +411,12 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
         // whether the apply path will publish the new lvConsumedSeqTxn (rows emitted)
         // or whether we must publish it directly (no LIVE_VIEW_DATA block written).
         long appendedRows = 0;
+        // Max ts observed across every applied row in this cycle, in base-table
+        // timestamp units. Drives the {@code .cp} manifest's {@code maxTimestamp}
+        // field which the 2a.8 O3 path consults to decide head-hit vs head-miss.
+        // Tracked here unconditionally (the staging path tracks stagingMaxTs only
+        // when populateTier is true, so we cannot reuse it).
+        long batchMaxTs = Numbers.LONG_NULL;
         long stagingMaxTs = Numbers.LONG_NULL;
         long stagingMinTs = Numbers.LONG_NULL;
         try (WalWriter walWriter = engine.getWalWriter(instance.getLiveViewToken())) {
@@ -482,6 +499,9 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                         Record outRecord = windowCursor.getRecord();
                         while (windowCursor.hasNext()) {
                             long ts = outRecord.getTimestamp(cursorTimestampIndex);
+                            if (batchMaxTs == Numbers.LONG_NULL || ts > batchMaxTs) {
+                                batchMaxTs = ts;
+                            }
                             TableWriter.Row row = walWriter.newRow(ts);
                             copier.copy(executionContext, outRecord, row);
                             row.append();
@@ -589,7 +609,153 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                 // advanced, the in-mem tier just trails for this cycle.
                 publishToInMemoryTier(instance, stagingMaxTs);
             }
+            if (lvConsumedPersisted && appendedRows > 0) {
+                // 2a.4 head-checkpoint write hook. Ordered after the apply's
+                // _txn advance and the lvConsumedSeqTxn publish so the .cp on
+                // disk reflects state that is also durably committed in the
+                // LV's own table. A failure here does not invalidate the view
+                // (RFC 123 "Flush" step 4): the prior head remains addressable
+                // and the next eligible cycle retries.
+                maybeWriteHeadCheckpoint(instance, windowFactory, advanceTo, batchMaxTs, appendedRows);
+            }
         }
+    }
+
+    /**
+     * Phase 2a.4 head-checkpoint write hook. Computes the per-LV snapshot
+     * capability on the first call, accumulates the cycle's row count into
+     * the cadence counter, and writes a fresh {@code <lvSeqTxn>.cp} when
+     * either trigger has fired (or this is the first commit and no head
+     * exists yet).
+     * <p>
+     * Capability gate: AND of every compiled window function's
+     * {@code supportsSnapshot()} plus, when the LV has an anchored window,
+     * codec support for the partition-key column shape. Computed once and
+     * cached on the {@link LiveViewInstance}. A {@code false} cap stays false
+     * for the LV's lifetime and the hook is a permanent no-op: the LV emits
+     * no checkpoints and routes restart / O3 through the head-miss replay
+     * path in 2a.7 / 2a.8.
+     * <p>
+     * Cadence triggers (whichever fires first):
+     * <ul>
+     *     <li>{@code rowsSinceLastCheckpointWritten >= cairo.live.view.checkpoint.rows}.</li>
+     *     <li>Wall-clock distance from the prior head's commit time exceeds
+     *     {@code cairo.live.view.checkpoint.max.duration.micros}.</li>
+     *     <li>No head exists yet (first cp ever for this LV) and at least
+     *     one row landed - guarantees a usable head ASAP for restart-replay
+     *     bounding, with the duration trigger floor active from then on.</li>
+     * </ul>
+     * <p>
+     * A failure here does not invalidate the view (RFC 123 "Flush" step 4).
+     * The prior head, if any, remains addressable; we log critical and
+     * continue. The writer is closed defensively so the next cycle reopens
+     * cleanly.
+     */
+    private void maybeWriteHeadCheckpoint(
+            LiveViewInstance instance,
+            WindowRecordCursorFactory windowFactory,
+            long lvSeqTxn,
+            long batchMaxTs,
+            long appendedRows
+    ) {
+        if (!instance.isSnapshotCapabilityComputed()) {
+            instance.setSnapshotCapability(computeSnapshotCapability(instance, windowFactory));
+        }
+        if (!instance.isSnapshotCapability()) {
+            return;
+        }
+
+        instance.addRowsSinceLastCheckpointWritten(appendedRows);
+
+        final long rowsCadence = engine.getConfiguration().getLiveViewCheckpointRows();
+        final long durationCadence = engine.getConfiguration().getLiveViewCheckpointMaxDurationMicros();
+        final long nowUs = engine.getConfiguration().getMicrosecondClock().getTicks();
+        final long lastWrittenUs = instance.getLastCheckpointWrittenUs();
+        final long priorLvSeqTxn = instance.getHeadCheckpointLvSeqTxn();
+        final boolean firstCp = priorLvSeqTxn == Numbers.LONG_NULL;
+        final boolean rowTrigger = instance.getRowsSinceLastCheckpointWritten() >= rowsCadence;
+        final boolean durationTrigger = !firstCp
+                && lastWrittenUs != Numbers.LONG_NULL
+                && (nowUs - lastWrittenUs) >= durationCadence;
+        if (!(firstCp || rowTrigger || durationTrigger)) {
+            return;
+        }
+
+        try {
+            if (checkpointWriter == null) {
+                checkpointWriter = new LiveViewCheckpointWriter(engine.getConfiguration());
+            }
+            path.of(engine.getConfiguration().getDbRoot()).concat(instance.getLiveViewToken());
+            checkpointWriter.of(path.$(), lvSeqTxn);
+
+            checkpointManifest.clear();
+            checkpointManifest.setLvSeqTxn(lvSeqTxn);
+            checkpointManifest.setBaseSeqTxn(instance.getLastProcessedSeqTxn());
+            checkpointManifest.setMaxTimestamp(batchMaxTs);
+            checkpointManifest.setLvRowPosition(0L);
+            checkpointManifest.setKind(LiveViewCheckpointManifest.KIND_STEADY);
+            final LiveViewWindow anchorWindow = instance.getAnchorWindow();
+            if (anchorWindow != null) {
+                checkpointManifest.addWindowName(anchorWindow.getWindowName());
+            }
+            checkpointWriter.writeManifestBlock(checkpointManifest);
+
+            if (anchorWindow != null) {
+                MemoryA anchorSink = checkpointWriter.beginBlock(LiveViewCheckpointBlockType.BLOCK_ANCHOR);
+                anchorWindow.snapshot(anchorSink);
+                checkpointWriter.endBlock();
+            }
+
+            final ObjList<WindowFunction> functions = windowFactory.getWindowFunctions();
+            final String windowName = anchorWindow != null ? anchorWindow.getWindowName() : "";
+            for (int i = 0, n = functions.size(); i < n; i++) {
+                final WindowFunction f = functions.getQuick(i);
+                if (!f.supportsSnapshot()) {
+                    continue;
+                }
+                final MemoryA fnSink = checkpointWriter.beginBlock(LiveViewCheckpointBlockType.BLOCK_FUNCTION_SNAPSHOT);
+                fnSink.putStr(windowName);
+                fnSink.putStr(f.getClass().getName());
+                fnSink.putInt(f.snapshotFormatVersion());
+                f.snapshot(fnSink);
+                checkpointWriter.endBlock();
+            }
+
+            // Capture before commit(): commit() truncates the mmap and resets
+            // the writer for reuse.
+            final long stateBytes = checkpointWriter.getAppendOffset();
+            checkpointWriter.commit(firstCp ? Numbers.LONG_NULL : priorLvSeqTxn);
+
+            instance.setHeadCheckpoint(lvSeqTxn, batchMaxTs, stateBytes, nowUs);
+        } catch (Throwable t) {
+            LOG.critical().$("could not write live view head checkpoint [view=")
+                    .$(instance.getDefinition().getViewName())
+                    .$(", lvSeqTxn=").$(lvSeqTxn)
+                    .$(", error=").$(t).I$();
+            // Drop the half-open writer; the next cycle reallocates a fresh
+            // one. The on-disk .cp.tmp (if any) is swept on next startup.
+            checkpointWriter = Misc.free(checkpointWriter);
+        }
+    }
+
+    /**
+     * Computes the AND of (a) anchor-map key codec support and (b) every
+     * compiled window function's {@code supportsSnapshot()}. Called once
+     * per LV lifetime on the first refresh after the compiled factory is
+     * available; subsequent calls short-circuit on the cached flag.
+     */
+    private static boolean computeSnapshotCapability(LiveViewInstance instance, WindowRecordCursorFactory windowFactory) {
+        final LiveViewWindow anchorWindow = instance.getAnchorWindow();
+        if (anchorWindow != null && !LiveViewSnapshotKeyCodec.isAllTypesSupported(anchorWindow.getPartitionKeyTypes())) {
+            return false;
+        }
+        final ObjList<WindowFunction> functions = windowFactory.getWindowFunctions();
+        for (int i = 0, n = functions.size(); i < n; i++) {
+            if (!functions.getQuick(i).supportsSnapshot()) {
+                return false;
+            }
+        }
+        return true;
     }
 
     /**

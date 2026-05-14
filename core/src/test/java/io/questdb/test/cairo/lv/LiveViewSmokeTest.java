@@ -56,6 +56,7 @@ import io.questdb.std.ObjList;
 import io.questdb.std.datetime.microtime.Micros;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
+import io.questdb.std.str.StringSink;
 import io.questdb.std.str.Utf8s;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.std.TestFilesFacadeImpl;
@@ -3039,6 +3040,86 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
                     drainWalQueue();
                     drainJob(job);
                     drainWalQueue();
+                }
+            }
+
+            execute("DROP LIVE VIEW lv");
+        });
+    }
+
+    @Test
+    public void testHeadCheckpointWrittenOnFirstCommit() throws Exception {
+        // Phase 2a.4: the refresh worker writes a head .cp on the first cycle
+        // that lands rows, so subsequent restart / O3 paths have a head to
+        // restore from. The cadence triggers (rows / max.duration) gate
+        // subsequent writes; this test only proves the first one fires.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (ts TIMESTAMP, sym SYMBOL, x DOUBLE) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms AS " +
+                    "SELECT ts, sym, sum(x) OVER w AS s FROM base " +
+                    "WINDOW w AS (PARTITION BY sym ORDER BY ts ANCHOR EXPRESSION timestamp_floor('1d', ts))");
+
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                setCurrentMicros(0L);
+                execute("INSERT INTO base (ts, sym, x) VALUES " +
+                        "('2026-08-01T00:00:00.000000Z', 'a', 1.0), " +
+                        "('2026-08-01T00:00:00.000000Z', 'b', 3.0)");
+                drainWalQueue();
+                drainJob(job);
+                drainWalQueue();
+
+                LiveViewInstance lv = engine.getLiveViewRegistry().getViewInstance("lv");
+                Assert.assertNotNull(lv);
+
+                // Cap was true (anchor SYMBOL + sum(DOUBLE) is fully migrated),
+                // so the first commit wrote a head; subsequent cycles will
+                // honor the row / duration cadence.
+                Assert.assertTrue("snapshot capability computed and true", lv.isSnapshotCapability());
+                Assert.assertNotEquals(
+                        "head_checkpoint_lv_seqtxn populated after first commit",
+                        Numbers.LONG_NULL,
+                        lv.getHeadCheckpointLvSeqTxn()
+                );
+                Assert.assertTrue(
+                        "head_checkpoint_state_bytes is positive",
+                        lv.getHeadCheckpointStateBytes() > 0
+                );
+                Assert.assertEquals(
+                        "rows counter reset after head write",
+                        0L,
+                        lv.getRowsSinceLastCheckpointWritten()
+                );
+
+                // A .cp file lives under <lv_dir>/_checkpoints/.
+                TableToken token = lv.getLiveViewToken();
+                FilesFacade ff = engine.getConfiguration().getFilesFacade();
+                try (Path cpDir = new Path()) {
+                    cpDir.of(engine.getConfiguration().getDbRoot())
+                            .concat(token)
+                            .concat(LiveViewCheckpointWriter.CHECKPOINT_DIR_NAME);
+                    Assert.assertTrue("_checkpoints/ exists", ff.exists(cpDir.$()));
+                    // Enumerate; expect exactly one .cp file (and zero .cp.tmp).
+                    final StringSink nameSink = new StringSink();
+                    boolean foundCp = false;
+                    long pFind = ff.findFirst(cpDir.$());
+                    Assert.assertNotEquals("can iterate _checkpoints/", 0L, pFind);
+                    try {
+                        do {
+                            long namePtr = ff.findName(pFind);
+                            if (namePtr == 0) {
+                                continue;
+                            }
+                            nameSink.clear();
+                            Utf8s.utf8ToUtf16Z(namePtr, nameSink);
+                            if (Chars.endsWith(nameSink, LiveViewCheckpointWriter.CP_FILE_EXT)
+                                    && !Chars.endsWith(nameSink, LiveViewCheckpointWriter.CP_TMP_FILE_EXT)) {
+                                foundCp = true;
+                            }
+                        } while (ff.findNext(pFind) > 0);
+                    } finally {
+                        ff.findClose(pFind);
+                    }
+                    Assert.assertTrue("at least one .cp file exists", foundCp);
                 }
             }
 

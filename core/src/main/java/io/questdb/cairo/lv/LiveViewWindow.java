@@ -234,6 +234,15 @@ public class LiveViewWindow implements QuietCloseable {
     }
 
     /**
+     * @return the anchor map's partition-key column types. Consumed by the
+     * head-checkpoint capability gate ({@link LiveViewSnapshotKeyCodec#isAllTypesSupported})
+     * and tests.
+     */
+    public ColumnTypes getPartitionKeyTypes() {
+        return partitionKeyTypes;
+    }
+
+    /**
      * @return number of anchor-map entries currently marked tombstoned
      * (SLOT_TOMBSTONE == 1). Consumed by the Phase 2a.11 compaction trigger.
      */
