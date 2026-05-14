@@ -25,7 +25,6 @@
 package io.questdb.griffin.engine.functions.groupby;
 
 import io.questdb.cairo.CairoConfiguration;
-import io.questdb.cairo.CairoException;
 import io.questdb.cairo.map.MapValue;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
@@ -61,9 +60,6 @@ public class ArrayAggDoubleGroupByFunction extends AbstractArrayAggDoubleGroupBy
         checkCapacityLimit(count + 1);
         int capacity = Unsafe.getInt(ptr + CAPACITY_OFFSET);
         if (count == capacity) {
-            if (capacity > (Integer.MAX_VALUE >> 1)) {
-                throw CairoException.nonCritical().put("array_agg: array size exceeds maximum supported size");
-            }
             int newCapacity = capacity << 1;
             long oldSize = HEADER_SIZE + (long) capacity * ENTRY_SIZE;
             long newSize = HEADER_SIZE + (long) newCapacity * ENTRY_SIZE;

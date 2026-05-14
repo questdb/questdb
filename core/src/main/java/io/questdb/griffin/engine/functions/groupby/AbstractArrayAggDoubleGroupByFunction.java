@@ -257,10 +257,9 @@ public abstract class AbstractArrayAggDoubleGroupByFunction extends ArrayFunctio
         }
 
         int destCount = Unsafe.getInt(destPtr);
+        checkCapacityLimit(destCount);
+        checkCapacityLimit(srcCount);
         int mergedCount = destCount + srcCount;
-        if (mergedCount < 0) {
-            throw CairoException.nonCritical().put("array_agg: array size exceeds maximum supported size");
-        }
         checkCapacityLimit(mergedCount);
         long mergedPtr = allocator.malloc(HEADER_SIZE + (long) mergedCount * ENTRY_SIZE);
         if (tryMergeDisjointRuns(destValue, mergedPtr, destPtr, destCount, srcPtr, srcCount, mergedCount)

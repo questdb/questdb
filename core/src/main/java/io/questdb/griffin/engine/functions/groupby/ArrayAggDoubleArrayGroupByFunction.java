@@ -88,16 +88,12 @@ public class ArrayAggDoubleArrayGroupByFunction extends AbstractArrayAggDoubleGr
         }
         int count = Unsafe.getInt(ptr);
         int capacity = Unsafe.getInt(ptr + CAPACITY_OFFSET);
+        checkCapacityLimit(count);
+        checkCapacityLimit(len);
         int newCount = count + len;
-        if (newCount < 0) {
-            throw CairoException.nonCritical().put("array_agg: array size exceeds maximum supported size");
-        }
         checkCapacityLimit(newCount);
         if (newCount > capacity) {
             int newCapacity = Numbers.ceilPow2(newCount);
-            if (newCapacity < newCount) {
-                throw CairoException.nonCritical().put("array_agg: array size exceeds maximum supported size");
-            }
             long oldSize = HEADER_SIZE + (long) capacity * ENTRY_SIZE;
             long newSize = HEADER_SIZE + (long) newCapacity * ENTRY_SIZE;
             ptr = allocator.realloc(ptr, oldSize, newSize);
