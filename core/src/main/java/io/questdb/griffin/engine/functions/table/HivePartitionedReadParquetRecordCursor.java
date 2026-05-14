@@ -25,6 +25,7 @@
 package io.questdb.griffin.engine.functions.table;
 
 import io.questdb.cairo.CairoException;
+import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.arr.ArrayView;
 import io.questdb.cairo.sql.NoRandomAccessRecordCursor;
@@ -38,24 +39,34 @@ import io.questdb.std.BoolList;
 import io.questdb.std.Decimal128;
 import io.questdb.std.Decimal256;
 import io.questdb.std.Files;
+import io.questdb.std.IntList;
 import io.questdb.std.Interval;
 import io.questdb.std.Long256;
+import io.questdb.std.LongList;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
+import io.questdb.std.Numbers;
+import io.questdb.std.NumericException;
 import io.questdb.std.ObjList;
+import io.questdb.std.datetime.microtime.MicrosFormatUtils;
+import io.questdb.std.datetime.millitime.DateFormatUtils;
 import io.questdb.std.str.CharSink;
 import io.questdb.std.str.Path;
+import io.questdb.std.str.StringSink;
 import io.questdb.std.str.Utf16Sink;
 import io.questdb.std.str.Utf8Sequence;
 import io.questdb.std.str.Utf8StringSink;
+import io.questdb.std.str.Utf8s;
 
 /**
  * Iterates parquet files matched by a glob, exposing their rows as a single cursor.
  * Wraps a {@link ReadParquetRecordCursor} that is repointed at each file in turn.
  * <p>
  * Hive-style {@code key=value} segments in the directory path between
- * {@code nonGlobRoot} and the file name become VARCHAR virtual columns appended
- * after the parquet schema columns.
+ * {@code nonGlobRoot} and the file name become virtual columns appended after the
+ * parquet schema columns. Column types are inferred from observed values at
+ * factory creation; this cursor only parses values into the typed slot decided
+ * upstream.
  */
 public class HivePartitionedReadParquetRecordCursor implements NoRandomAccessRecordCursor {
     private final RecordCursor globCursor;
@@ -63,8 +74,10 @@ public class HivePartitionedReadParquetRecordCursor implements NoRandomAccessRec
     private final int parquetColumnCount;
     private final ReadParquetRecordCursor parquetCursor;
     private final ObjList<String> partitionColumnNames;
+    private final IntList partitionColumnTypes;
+    private final LongList partitionLongValues = new LongList();
     private final BoolList partitionValuePresent = new BoolList();
-    private final ObjList<Utf8StringSink> partitionValueSinks;
+    private final ObjList<Utf8StringSink> partitionVarcharValues;
     private final Path path = new Path(MemoryTag.NATIVE_PATH);
     private final HivePartitionedRecord wrappingRecord;
     private SqlExecutionContext executionContext;
@@ -76,18 +89,23 @@ public class HivePartitionedReadParquetRecordCursor implements NoRandomAccessRec
             ReadParquetRecordCursor parquetCursor,
             CharSequence nonGlobRoot,
             int parquetColumnCount,
-            ObjList<String> partitionColumnNames
+            ObjList<String> partitionColumnNames,
+            IntList partitionColumnTypes
     ) {
         this.globCursor = globCursor;
         this.parquetCursor = parquetCursor;
         this.nonGlobRootLen = nonGlobRoot.length();
         this.parquetColumnCount = parquetColumnCount;
         this.partitionColumnNames = partitionColumnNames;
+        this.partitionColumnTypes = partitionColumnTypes;
         final int partitionCount = partitionColumnNames.size();
-        this.partitionValueSinks = new ObjList<>(partitionCount);
+        this.partitionVarcharValues = new ObjList<>(partitionCount);
         for (int i = 0; i < partitionCount; i++) {
-            partitionValueSinks.add(new Utf8StringSink());
+            partitionLongValues.add(0L);
             partitionValuePresent.add(false);
+            // Only varchar columns need a backing sink, but allocating one per column
+            // keeps lookup branchless and partition column counts are tiny.
+            partitionVarcharValues.add(new Utf8StringSink());
         }
         this.wrappingRecord = new HivePartitionedRecord();
     }
@@ -113,8 +131,8 @@ public class HivePartitionedReadParquetRecordCursor implements NoRandomAccessRec
             Misc.free(parquetCursor);
             Misc.free(globCursor);
             Misc.free(path);
-            for (int i = 0, n = partitionValueSinks.size(); i < n; i++) {
-                partitionValueSinks.getQuick(i).clear();
+            for (int i = 0, n = partitionVarcharValues.size(); i < n; i++) {
+                partitionVarcharValues.getQuick(i).clear();
             }
         }
     }
@@ -182,8 +200,9 @@ public class HivePartitionedReadParquetRecordCursor implements NoRandomAccessRec
     private void parsePartitionValues(Utf8Sequence filePath) {
         final int partitionCount = partitionColumnNames.size();
         for (int i = 0; i < partitionCount; i++) {
-            partitionValueSinks.getQuick(i).clear();
             partitionValuePresent.setQuick(i, false);
+            partitionLongValues.setQuick(i, 0L);
+            partitionVarcharValues.getQuick(i).clear();
         }
         if (partitionCount == 0) {
             return;
@@ -226,15 +245,53 @@ public class HivePartitionedReadParquetRecordCursor implements NoRandomAccessRec
                     }
                 }
                 if (matchedIdx >= 0) {
-                    Utf8StringSink sink = partitionValueSinks.getQuick(matchedIdx);
-                    sink.put(filePath, eqIdx + 1, segEnd);
-                    partitionValuePresent.setQuick(matchedIdx, true);
+                    storePartitionValue(matchedIdx, filePath, eqIdx + 1, segEnd);
                 }
             }
             if (segEnd >= n) {
                 break;
             }
             segStart = segEnd + 1;
+        }
+    }
+
+    private void storePartitionValue(int idx, Utf8Sequence filePath, int lo, int hi) {
+        final int type = partitionColumnTypes.getQuick(idx);
+        if (type == ColumnType.VARCHAR) {
+            partitionVarcharValues.getQuick(idx).put(filePath, lo, hi);
+            partitionValuePresent.setQuick(idx, true);
+            return;
+        }
+        // Numeric/temporal types: decode to UTF-16 then parse. If parsing fails for any reason
+        // (unexpected new file written after planning), record the column as NULL for this file
+        // rather than aborting the entire query.
+        final StringSink sink = Misc.getThreadLocalSink();
+        Utf8s.utf8ToUtf16(filePath, lo, hi, sink);
+        try {
+            long value;
+            switch (type) {
+                case ColumnType.INT:
+                    value = Numbers.parseInt(sink);
+                    break;
+                case ColumnType.LONG:
+                    value = Numbers.parseLong(sink);
+                    break;
+                case ColumnType.DATE:
+                    value = DateFormatUtils.parseDate(sink);
+                    break;
+                case ColumnType.TIMESTAMP:
+                    value = MicrosFormatUtils.parseTimestamp(sink);
+                    break;
+                case ColumnType.DOUBLE:
+                    value = Double.doubleToLongBits(Numbers.parseDouble(sink));
+                    break;
+                default:
+                    return;
+            }
+            partitionLongValues.setQuick(idx, value);
+            partitionValuePresent.setQuick(idx, true);
+        } catch (NumericException ignored) {
+            // Leave the value marked as absent.
         }
     }
 
@@ -296,7 +353,11 @@ public class HivePartitionedReadParquetRecordCursor implements NoRandomAccessRec
 
         @Override
         public long getDate(int col) {
-            return parquetCursor.getRecord().getDate(col);
+            if (col < parquetColumnCount) {
+                return parquetCursor.getRecord().getDate(col);
+            }
+            int idx = col - parquetColumnCount;
+            return partitionValuePresent.get(idx) ? partitionLongValues.getQuick(idx) : Numbers.LONG_NULL;
         }
 
         @Override
@@ -331,7 +392,11 @@ public class HivePartitionedReadParquetRecordCursor implements NoRandomAccessRec
 
         @Override
         public double getDouble(int col) {
-            return parquetCursor.getRecord().getDouble(col);
+            if (col < parquetColumnCount) {
+                return parquetCursor.getRecord().getDouble(col);
+            }
+            int idx = col - parquetColumnCount;
+            return partitionValuePresent.get(idx) ? Double.longBitsToDouble(partitionLongValues.getQuick(idx)) : Double.NaN;
         }
 
         @Override
@@ -366,7 +431,11 @@ public class HivePartitionedReadParquetRecordCursor implements NoRandomAccessRec
 
         @Override
         public int getInt(int col) {
-            return parquetCursor.getRecord().getInt(col);
+            if (col < parquetColumnCount) {
+                return parquetCursor.getRecord().getInt(col);
+            }
+            int idx = col - parquetColumnCount;
+            return partitionValuePresent.get(idx) ? (int) partitionLongValues.getQuick(idx) : Numbers.INT_NULL;
         }
 
         @Override
@@ -376,7 +445,11 @@ public class HivePartitionedReadParquetRecordCursor implements NoRandomAccessRec
 
         @Override
         public long getLong(int col) {
-            return parquetCursor.getRecord().getLong(col);
+            if (col < parquetColumnCount) {
+                return parquetCursor.getRecord().getLong(col);
+            }
+            int idx = col - parquetColumnCount;
+            return partitionValuePresent.get(idx) ? partitionLongValues.getQuick(idx) : Numbers.LONG_NULL;
         }
 
         @Override
@@ -426,7 +499,11 @@ public class HivePartitionedReadParquetRecordCursor implements NoRandomAccessRec
 
         @Override
         public long getTimestamp(int col) {
-            return parquetCursor.getRecord().getTimestamp(col);
+            if (col < parquetColumnCount) {
+                return parquetCursor.getRecord().getTimestamp(col);
+            }
+            int idx = col - parquetColumnCount;
+            return partitionValuePresent.get(idx) ? partitionLongValues.getQuick(idx) : Numbers.LONG_NULL;
         }
 
         @Override
@@ -437,10 +514,8 @@ public class HivePartitionedReadParquetRecordCursor implements NoRandomAccessRec
             }
             int idx = col - parquetColumnCount;
             if (partitionValuePresent.get(idx)) {
-                Utf8StringSink value = partitionValueSinks.getQuick(idx);
-                for (int i = 0, n = value.size(); i < n; i++) {
-                    utf16Sink.put((char) (value.byteAt(i) & 0xff));
-                }
+                Utf8StringSink value = partitionVarcharValues.getQuick(idx);
+                Utf8s.utf8ToUtf16(value, utf16Sink);
             }
         }
 
@@ -450,7 +525,7 @@ public class HivePartitionedReadParquetRecordCursor implements NoRandomAccessRec
                 return parquetCursor.getRecord().getVarcharA(col);
             }
             int idx = col - parquetColumnCount;
-            return partitionValuePresent.get(idx) ? partitionValueSinks.getQuick(idx) : null;
+            return partitionValuePresent.get(idx) ? partitionVarcharValues.getQuick(idx) : null;
         }
 
         @Override
@@ -459,7 +534,7 @@ public class HivePartitionedReadParquetRecordCursor implements NoRandomAccessRec
                 return parquetCursor.getRecord().getVarcharB(col);
             }
             int idx = col - parquetColumnCount;
-            return partitionValuePresent.get(idx) ? partitionValueSinks.getQuick(idx) : null;
+            return partitionValuePresent.get(idx) ? partitionVarcharValues.getQuick(idx) : null;
         }
 
         @Override
@@ -468,7 +543,7 @@ public class HivePartitionedReadParquetRecordCursor implements NoRandomAccessRec
                 return parquetCursor.getRecord().getVarcharSize(col);
             }
             int idx = col - parquetColumnCount;
-            return partitionValuePresent.get(idx) ? partitionValueSinks.getQuick(idx).size() : TableUtils.NULL_LEN;
+            return partitionValuePresent.get(idx) ? partitionVarcharValues.getQuick(idx).size() : TableUtils.NULL_LEN;
         }
     }
 }

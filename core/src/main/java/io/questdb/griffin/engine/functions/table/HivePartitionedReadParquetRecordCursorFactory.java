@@ -33,6 +33,7 @@ import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.table.PushdownFilterExtractor;
+import io.questdb.std.IntList;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 import org.jetbrains.annotations.NotNull;
@@ -44,7 +45,8 @@ import org.jetbrains.annotations.Nullable;
  * <p>
  * The factory's metadata is the parquet schema (first {@code parquetColumnCount}
  * columns) concatenated with hive partition columns derived from {@code key=value}
- * segments in the directory path.
+ * segments in the directory path. Partition column types are inferred from the
+ * values encountered across all matched files.
  */
 public class HivePartitionedReadParquetRecordCursorFactory extends MutableMetadataRecordCursorFactory {
     private final CairoConfiguration configuration;
@@ -54,6 +56,7 @@ public class HivePartitionedReadParquetRecordCursorFactory extends MutableMetada
     private final int parquetColumnCount;
     private final GenericRecordMetadata parquetMetadata;
     private final ObjList<String> partitionColumnNames;
+    private final IntList partitionColumnTypes;
     private @Nullable ObjList<PushdownFilterExtractor.PushdownFilterCondition> pushdownFilterConditions;
 
     public HivePartitionedReadParquetRecordCursorFactory(
@@ -63,7 +66,8 @@ public class HivePartitionedReadParquetRecordCursorFactory extends MutableMetada
             @NotNull CharSequence nonGlobRoot,
             @NotNull GenericRecordMetadata wrappingMetadata,
             @NotNull GenericRecordMetadata parquetMetadata,
-            @NotNull ObjList<String> partitionColumnNames
+            @NotNull ObjList<String> partitionColumnNames,
+            @NotNull IntList partitionColumnTypes
     ) {
         super(wrappingMetadata);
         this.configuration = configuration;
@@ -73,6 +77,7 @@ public class HivePartitionedReadParquetRecordCursorFactory extends MutableMetada
         this.parquetColumnCount = parquetMetadata.getColumnCount();
         this.parquetMetadata = parquetMetadata;
         this.partitionColumnNames = partitionColumnNames;
+        this.partitionColumnTypes = partitionColumnTypes;
     }
 
     @Override
@@ -93,7 +98,8 @@ public class HivePartitionedReadParquetRecordCursorFactory extends MutableMetada
                     parquetCursor,
                     nonGlobRoot,
                     parquetColumnCount,
-                    partitionColumnNames
+                    partitionColumnNames,
+                    partitionColumnTypes
             );
             cursor.of(executionContext);
             return cursor;

@@ -93,12 +93,13 @@ public class HivePartitionedReadParquetFunctionTest extends AbstractCairoTest {
             writeParquet("hive/day=2026-05-01/sym=BTC-USD/data.parquet", "src");
             writeParquet("hive/day=2026-05-02/sym=ETH-USD/data.parquet", "src");
 
+            // day=YYYY-MM-DD values are inferred as DATE; sym=BTC-USD stays VARCHAR.
             assertQueryNoLeakCheck(
                     "id\tday\tsym\n" +
-                            "1\t2026-05-01\tBTC-USD\n" +
-                            "2\t2026-05-01\tBTC-USD\n" +
-                            "1\t2026-05-02\tETH-USD\n" +
-                            "2\t2026-05-02\tETH-USD\n",
+                            "1\t2026-05-01T00:00:00.000Z\tBTC-USD\n" +
+                            "2\t2026-05-01T00:00:00.000Z\tBTC-USD\n" +
+                            "1\t2026-05-02T00:00:00.000Z\tETH-USD\n" +
+                            "2\t2026-05-02T00:00:00.000Z\tETH-USD\n",
                     "select id, day, sym from read_parquet('hive/day=*/sym=*/data.parquet') order by day, sym, id",
                     null,
                     true,
@@ -163,12 +164,12 @@ public class HivePartitionedReadParquetFunctionTest extends AbstractCairoTest {
 
             assertQueryNoLeakCheck(
                     "id\tlabel\tratio\tts\tday\n" +
-                            "1\trow_1\t1.5\t1970-01-01T00:00:01.000000Z\t2026-01-01\n" +
-                            "2\trow_2\t3.0\t1970-01-01T00:00:02.000000Z\t2026-01-01\n" +
-                            "3\trow_3\t4.5\t1970-01-01T00:00:03.000000Z\t2026-01-01\n" +
-                            "1\trow_1\t1.5\t1970-01-01T00:00:01.000000Z\t2026-01-02\n" +
-                            "2\trow_2\t3.0\t1970-01-01T00:00:02.000000Z\t2026-01-02\n" +
-                            "3\trow_3\t4.5\t1970-01-01T00:00:03.000000Z\t2026-01-02\n",
+                            "1\trow_1\t1.5\t1970-01-01T00:00:01.000000Z\t2026-01-01T00:00:00.000Z\n" +
+                            "2\trow_2\t3.0\t1970-01-01T00:00:02.000000Z\t2026-01-01T00:00:00.000Z\n" +
+                            "3\trow_3\t4.5\t1970-01-01T00:00:03.000000Z\t2026-01-01T00:00:00.000Z\n" +
+                            "1\trow_1\t1.5\t1970-01-01T00:00:01.000000Z\t2026-01-02T00:00:00.000Z\n" +
+                            "2\trow_2\t3.0\t1970-01-01T00:00:02.000000Z\t2026-01-02T00:00:00.000Z\n" +
+                            "3\trow_3\t4.5\t1970-01-01T00:00:03.000000Z\t2026-01-02T00:00:00.000Z\n",
                     "select id, label, ratio, ts, day from read_parquet('mt/day=*/data.parquet') order by day, id",
                     null,
                     true,
@@ -211,8 +212,8 @@ public class HivePartitionedReadParquetFunctionTest extends AbstractCairoTest {
 
             assertQueryNoLeakCheck(
                     "id\tday\n" +
-                            "5\t2026-01-01\n" +
-                            "5\t2026-01-02\n",
+                            "5\t2026-01-01T00:00:00.000Z\n" +
+                            "5\t2026-01-02T00:00:00.000Z\n",
                     "select id, day from read_parquet('pc/day=*/data.parquet') where id = 5 order by day",
                     null,
                     true,
@@ -230,7 +231,7 @@ public class HivePartitionedReadParquetFunctionTest extends AbstractCairoTest {
             writeParquet("comb/day=2026-01-03/data.parquet", "src");
 
             assertQueryNoLeakCheck(
-                    "id\tday\n3\t2026-01-02\n",
+                    "id\tday\n3\t2026-01-02T00:00:00.000Z\n",
                     "select id, day from read_parquet('comb/day=*/data.parquet') where day = '2026-01-02' and id = 3",
                     null,
                     false,
@@ -271,11 +272,11 @@ public class HivePartitionedReadParquetFunctionTest extends AbstractCairoTest {
 
             assertQueryNoLeakCheck(
                     "id\tday\n" +
-                            "3\t2026-01-02\n" +
-                            "4\t2026-01-02\n" +
-                            "5\t2026-01-02\n" +
-                            "6\t2026-01-02\n" +
-                            "7\t2026-01-02\n",
+                            "3\t2026-01-02T00:00:00.000Z\n" +
+                            "4\t2026-01-02T00:00:00.000Z\n" +
+                            "5\t2026-01-02T00:00:00.000Z\n" +
+                            "6\t2026-01-02T00:00:00.000Z\n" +
+                            "7\t2026-01-02T00:00:00.000Z\n",
                     "select id, day from read_parquet('lo/day=*/data.parquet') order by day, id limit 12, 17",
                     null,
                     true,
@@ -403,8 +404,101 @@ public class HivePartitionedReadParquetFunctionTest extends AbstractCairoTest {
             writeParquet("pdp/day=2026-01-02/data.parquet", "src");
 
             assertQueryNoLeakCheck(
-                    "id\tday\n1\t2026-01-02\n2\t2026-01-02\n3\t2026-01-02\n",
+                    "id\tday\n" +
+                            "1\t2026-01-02T00:00:00.000Z\n" +
+                            "2\t2026-01-02T00:00:00.000Z\n" +
+                            "3\t2026-01-02T00:00:00.000Z\n",
                     "select id, day from read_parquet('pdp/day=*/data.parquet') where day = '2026-01-02' order by id",
+                    null,
+                    true,
+                    false
+            );
+        });
+    }
+
+    @Test
+    public void testInferInt() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table src as (select cast(x as int) as id from long_sequence(1))");
+            writeParquet("infInt/yr=2024/data.parquet", "src");
+            writeParquet("infInt/yr=2025/data.parquet", "src");
+            writeParquet("infInt/yr=2026/data.parquet", "src");
+
+            // INT arithmetic must work, not just string comparison.
+            assertQueryNoLeakCheck(
+                    "count\n2\n",
+                    "select count(*) from read_parquet('infInt/yr=*/data.parquet') where yr >= 2025",
+                    null,
+                    false,
+                    true
+            );
+        });
+    }
+
+    @Test
+    public void testInferLongOnOverflow() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table src as (select cast(x as int) as id from long_sequence(1))");
+            // 5_000_000_000 exceeds INT range but fits in LONG; the column demotes to LONG.
+            writeParquet("infLong/n=42/data.parquet", "src");
+            writeParquet("infLong/n=5000000000/data.parquet", "src");
+
+            assertQueryNoLeakCheck(
+                    "n\n42\n5000000000\n",
+                    "select n from read_parquet('infLong/n=*/data.parquet') order by n",
+                    null,
+                    true,
+                    false
+            );
+        });
+    }
+
+    @Test
+    public void testInferDouble() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table src as (select cast(x as int) as id from long_sequence(1))");
+            writeParquet("infDbl/r=1.5/data.parquet", "src");
+            writeParquet("infDbl/r=2.25/data.parquet", "src");
+
+            assertQueryNoLeakCheck(
+                    "r\n1.5\n2.25\n",
+                    "select r from read_parquet('infDbl/r=*/data.parquet') order by r",
+                    null,
+                    true,
+                    false
+            );
+        });
+    }
+
+    @Test
+    public void testInferDemotesToVarcharOnMixed() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table src as (select cast(x as int) as id from long_sequence(1))");
+            // First file looks like INT, second forces demotion all the way to VARCHAR.
+            writeParquet("mix/tag=42/data.parquet", "src");
+            writeParquet("mix/tag=hello/data.parquet", "src");
+
+            assertQueryNoLeakCheck(
+                    "tag\n42\nhello\n",
+                    "select tag from read_parquet('mix/tag=*/data.parquet') order by tag",
+                    null,
+                    true,
+                    false
+            );
+        });
+    }
+
+    @Test
+    public void testInferPicksLatestType() throws Exception {
+        // First file fits INT; second file appears that requires DOUBLE. Final type is DOUBLE.
+        assertMemoryLeak(() -> {
+            execute("create table src as (select cast(x as int) as id from long_sequence(1))");
+            writeParquet("mix2/v=10/data.parquet", "src");
+            writeParquet("mix2/v=1.25/data.parquet", "src");
+
+            assertQueryNoLeakCheck(
+                    "v\n1.25\n10.0\n",
+                    "select v from read_parquet('mix2/v=*/data.parquet') order by v",
                     null,
                     true,
                     false
@@ -420,7 +514,9 @@ public class HivePartitionedReadParquetFunctionTest extends AbstractCairoTest {
             writeParquet("emp/day=2026-01-01/data.parquet", "src");
 
             assertQueryNoLeakCheck(
-                    "id\tday\n1\t2026-01-01\n2\t2026-01-01\n",
+                    "id\tday\n" +
+                            "1\t2026-01-01T00:00:00.000Z\n" +
+                            "2\t2026-01-01T00:00:00.000Z\n",
                     "select id, day from read_parquet('emp/day=*/data.parquet') order by id",
                     null,
                     true,

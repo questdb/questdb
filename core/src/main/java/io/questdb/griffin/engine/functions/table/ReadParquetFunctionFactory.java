@@ -50,8 +50,12 @@ import io.questdb.std.FilesFacade;
 import io.questdb.std.IntList;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
+import io.questdb.std.Numbers;
+import io.questdb.std.NumericException;
 import io.questdb.std.ObjList;
 import io.questdb.std.Os;
+import io.questdb.std.datetime.microtime.MicrosFormatUtils;
+import io.questdb.std.datetime.millitime.DateFormatUtils;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
 import io.questdb.std.str.Utf8Sequence;
@@ -148,6 +152,7 @@ public class ReadParquetFunctionFactory implements FunctionFactory {
         try {
             final GenericRecordMetadata parquetMetadata = new GenericRecordMetadata();
             final ObjList<String> partitionColumnNames = new ObjList<>();
+            final IntList partitionColumnTypes = new IntList();
             try (RecordCursor globCursor = globFactory.getCursor(context)) {
                 if (!globCursor.hasNext()) {
                     throw SqlException.$(argPos.getQuick(0), "glob did not match any files: ").put(originalPattern);
@@ -174,15 +179,18 @@ public class ReadParquetFunctionFactory implements FunctionFactory {
                     }
                 }
                 // Take the union of key=value partition keys seen across all matched files,
-                // so files that happen to be enumerated first without partitions don't hide
-                // the schema. Names that would shadow real parquet columns are dropped.
-                parsePartitionColumnNames(firstFile, nonGlobRoot.length(), parquetMetadata, partitionColumnNames);
+                // and demote each column's inferred type to the loosest one that fits every
+                // value observed. Files that happen to be enumerated first without partitions
+                // don't hide the schema; names that would shadow real parquet columns are dropped.
+                parsePartitionColumns(firstFile, nonGlobRoot.length(), parquetMetadata,
+                        partitionColumnNames, partitionColumnTypes);
                 while (globCursor.hasNext()) {
-                    parsePartitionColumnNames(
+                    parsePartitionColumns(
                             globCursor.getRecord().getVarcharA(0),
                             nonGlobRoot.length(),
                             parquetMetadata,
-                            partitionColumnNames
+                            partitionColumnNames,
+                            partitionColumnTypes
                     );
                 }
             }
@@ -191,7 +199,10 @@ public class ReadParquetFunctionFactory implements FunctionFactory {
                 wrappingMetadata.add(parquetMetadata.getColumnMetadata(i));
             }
             for (int i = 0, n = partitionColumnNames.size(); i < n; i++) {
-                wrappingMetadata.add(new TableColumnMetadata(partitionColumnNames.getQuick(i), ColumnType.VARCHAR));
+                wrappingMetadata.add(new TableColumnMetadata(
+                        partitionColumnNames.getQuick(i),
+                        partitionColumnTypes.getQuick(i)
+                ));
             }
             context.storeTelemetry(TelemetryEvent.READ_PARQUET, TelemetryOrigin.NO_MATTERS);
             return new CursorFunction(new HivePartitionedReadParquetRecordCursorFactory(
@@ -201,7 +212,8 @@ public class ReadParquetFunctionFactory implements FunctionFactory {
                     nonGlobRoot,
                     wrappingMetadata,
                     parquetMetadata,
-                    partitionColumnNames
+                    partitionColumnNames,
+                    partitionColumnTypes
             ));
         } catch (Throwable th) {
             Misc.free(globFactory);
@@ -209,13 +221,23 @@ public class ReadParquetFunctionFactory implements FunctionFactory {
         }
     }
 
-    private static void parsePartitionColumnNames(
+    /**
+     * Walks {@code key=value} segments of {@code path} below {@code rootLen}, registering
+     * each new key in {@code outNames} (in order of first appearance) and demoting its
+     * inferred type in {@code outTypes} (parallel list) to the loosest type that still
+     * fits every value observed so far. Type chain is:
+     * INT -> LONG -> DATE -> TIMESTAMP -> DOUBLE -> VARCHAR.
+     * <p>
+     * Keys that collide with existing parquet columns are skipped entirely.
+     */
+    private static void parsePartitionColumns(
             Utf8Sequence path,
             int rootLen,
             GenericRecordMetadata parquetMetadata,
-            ObjList<String> outNames
+            ObjList<String> outNames,
+            IntList outTypes
     ) {
-        final StringSink sink = Misc.getThreadLocalSink();
+        final StringSink keySink = Misc.getThreadLocalSink();
         final int n = path.size();
         int segStart = Math.min(rootLen, n);
         while (segStart < n) {
@@ -235,18 +257,87 @@ public class ReadParquetFunctionFactory implements FunctionFactory {
                 }
             }
             if (eqIdx > segStart && eqIdx < segEnd - 1) {
-                sink.clear();
-                Utf8s.utf8ToUtf16(path, segStart, eqIdx, sink);
-                final String key = sink.toString();
-                // Skip keys that would collide with real parquet columns or that we've already collected.
-                if (parquetMetadata.getColumnIndexQuiet(key) < 0 && outNames.indexOf(key) < 0) {
-                    outNames.add(key);
+                keySink.clear();
+                Utf8s.utf8ToUtf16(path, segStart, eqIdx, keySink);
+                final String key = keySink.toString();
+                if (parquetMetadata.getColumnIndexQuiet(key) < 0) {
+                    int idx = outNames.indexOf(key);
+                    if (idx < 0) {
+                        outNames.add(key);
+                        outTypes.add(ColumnType.INT);
+                        idx = outNames.size() - 1;
+                    }
+                    int currentType = outTypes.getQuick(idx);
+                    int demotedType = demoteTypeToFit(path, eqIdx + 1, segEnd, currentType);
+                    if (demotedType != currentType) {
+                        outTypes.setQuick(idx, demotedType);
+                    }
                 }
             }
             if (segEnd >= n) {
                 break;
             }
             segStart = segEnd + 1;
+        }
+    }
+
+    private static int demoteTypeToFit(Utf8Sequence path, int lo, int hi, int currentType) {
+        if (currentType == ColumnType.VARCHAR) {
+            return ColumnType.VARCHAR;
+        }
+        // Safe to reuse the same thread-local sink as parsePartitionColumns: the key string
+        // it built has already been retained as a heap String at this point.
+        final StringSink sink = Misc.getThreadLocalSink();
+        Utf8s.utf8ToUtf16(path, lo, hi, sink);
+        int type = currentType;
+        while (type != ColumnType.VARCHAR) {
+            if (canParseAs(sink, type)) {
+                return type;
+            }
+            type = nextLooserType(type);
+        }
+        return ColumnType.VARCHAR;
+    }
+
+    private static boolean canParseAs(CharSequence cs, int type) {
+        try {
+            switch (type) {
+                case ColumnType.INT:
+                    Numbers.parseInt(cs);
+                    return true;
+                case ColumnType.LONG:
+                    Numbers.parseLong(cs);
+                    return true;
+                case ColumnType.DATE:
+                    DateFormatUtils.parseDate(cs);
+                    return true;
+                case ColumnType.TIMESTAMP:
+                    MicrosFormatUtils.parseTimestamp(cs);
+                    return true;
+                case ColumnType.DOUBLE:
+                    Numbers.parseDouble(cs);
+                    return true;
+                default:
+                    return false;
+            }
+        } catch (NumericException e) {
+            return false;
+        }
+    }
+
+    private static int nextLooserType(int type) {
+        switch (type) {
+            case ColumnType.INT:
+                return ColumnType.LONG;
+            case ColumnType.LONG:
+                return ColumnType.DATE;
+            case ColumnType.DATE:
+                return ColumnType.TIMESTAMP;
+            case ColumnType.TIMESTAMP:
+                return ColumnType.DOUBLE;
+            case ColumnType.DOUBLE:
+            default:
+                return ColumnType.VARCHAR;
         }
     }
 
