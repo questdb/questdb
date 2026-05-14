@@ -32,10 +32,12 @@ import io.questdb.griffin.engine.functions.groupby.AvgDoubleGroupByFunction;
 import io.questdb.griffin.engine.functions.groupby.CountDoubleGroupByFunction;
 import io.questdb.griffin.engine.functions.groupby.FirstDoubleGroupByFunction;
 import io.questdb.griffin.engine.functions.groupby.FirstNotNullDoubleGroupByFunction;
+import io.questdb.griffin.engine.functions.groupby.KSumDoubleGroupByFunction;
 import io.questdb.griffin.engine.functions.groupby.LastDoubleGroupByFunction;
 import io.questdb.griffin.engine.functions.groupby.LastNotNullDoubleGroupByFunction;
 import io.questdb.griffin.engine.functions.groupby.MaxDoubleGroupByFunction;
 import io.questdb.griffin.engine.functions.groupby.MinDoubleGroupByFunction;
+import io.questdb.griffin.engine.functions.groupby.NSumDoubleGroupByFunction;
 import io.questdb.griffin.engine.functions.groupby.SumDoubleGroupByFunction;
 import io.questdb.griffin.engine.groupby.SimpleMapValue;
 import io.questdb.std.MemoryTag;
@@ -232,6 +234,95 @@ public class DoubleGroupByFunctionBatchTest {
     }
 
     @Test
+    public void testKSumDoubleBatch() {
+        KSumDoubleGroupByFunction function = new KSumDoubleGroupByFunction(DoubleColumn.newInstance(COLUMN_INDEX));
+        try (SimpleMapValue value = prepare(function)) {
+            long ptr = allocateDoubles(1.0, Double.NaN, 2.5, 3.5);
+            function.computeBatch(value, ptr, 4, 0);
+
+            Assert.assertEquals(7.0, function.getDouble(value), 0.0);
+            Assert.assertTrue(function.supportsBatchComputation());
+        }
+    }
+
+    @Test
+    public void testKSumDoubleBatchAccumulates() {
+        KSumDoubleGroupByFunction function = new KSumDoubleGroupByFunction(DoubleColumn.newInstance(COLUMN_INDEX));
+        try (SimpleMapValue value = prepare(function)) {
+            long ptr = allocateDoubles(1.0, 2.0);
+            function.computeBatch(value, ptr, 2, 0);
+
+            ptr = allocateDoubles(3.0, 4.0);
+            function.computeBatch(value, ptr, 2, 0);
+
+            Assert.assertEquals(10.0, function.getDouble(value), 0.0);
+        }
+    }
+
+    @Test
+    public void testKSumDoubleBatchAllNaN() {
+        KSumDoubleGroupByFunction function = new KSumDoubleGroupByFunction(DoubleColumn.newInstance(COLUMN_INDEX));
+        try (SimpleMapValue value = prepare(function)) {
+            long ptr = allocateDoubles(Double.NaN, Double.NaN);
+            function.computeBatch(value, ptr, 2, 0);
+
+            Assert.assertTrue(Double.isNaN(function.getDouble(value)));
+        }
+    }
+
+    // Kahan compensation should be applied across batch boundaries: many small values
+    // added one big value should produce a more accurate result than naive sum.
+    @Test
+    public void testKSumDoubleBatchKahanCompensationAcrossBatches() {
+        KSumDoubleGroupByFunction function = new KSumDoubleGroupByFunction(DoubleColumn.newInstance(COLUMN_INDEX));
+        try (SimpleMapValue value = prepare(function)) {
+            // Batch 1: one large value.
+            long ptr = allocateDoubles(1e16);
+            function.computeBatch(value, ptr, 1, 0);
+
+            // Batch 2: many small values that would lose precision in naive accumulation.
+            double[] smalls = new double[100];
+            for (int i = 0; i < smalls.length; i++) {
+                smalls[i] = 1.0;
+            }
+            ptr = allocateDoubles(smalls);
+            function.computeBatch(value, ptr, smalls.length, 0);
+
+            // Kahan should preserve the smalls. Naive double-add would lose them.
+            Assert.assertEquals(1e16 + 100.0, function.getDouble(value), 0.0);
+        }
+    }
+
+    @Test
+    public void testKSumDoubleBatchMixedNaN() {
+        KSumDoubleGroupByFunction function = new KSumDoubleGroupByFunction(DoubleColumn.newInstance(COLUMN_INDEX));
+        try (SimpleMapValue value = prepare(function)) {
+            long ptr = allocateDoubles(1.0, Double.NaN, 2.0);
+            function.computeBatch(value, ptr, 3, 0);
+
+            Assert.assertEquals(3.0, function.getDouble(value), 0.0);
+        }
+    }
+
+    @Test
+    public void testKSumDoubleBatchZeroCountKeepsNaN() {
+        KSumDoubleGroupByFunction function = new KSumDoubleGroupByFunction(DoubleColumn.newInstance(COLUMN_INDEX));
+        try (SimpleMapValue value = prepare(function)) {
+            function.computeBatch(value, 0, 0, 0);
+
+            Assert.assertTrue(Double.isNaN(function.getDouble(value)));
+        }
+    }
+
+    @Test
+    public void testKSumDoubleSetEmpty() {
+        KSumDoubleGroupByFunction function = new KSumDoubleGroupByFunction(DoubleColumn.newInstance(COLUMN_INDEX));
+        try (SimpleMapValue value = prepare(function)) {
+            Assert.assertTrue(Double.isNaN(function.getDouble(value)));
+        }
+    }
+
+    @Test
     public void testLastDoubleBatch() {
         LastDoubleGroupByFunction function = new LastDoubleGroupByFunction(DoubleColumn.newInstance(COLUMN_INDEX));
         try (SimpleMapValue value = prepare(function)) {
@@ -403,6 +494,95 @@ public class DoubleGroupByFunctionBatchTest {
     @Test
     public void testMinDoubleSetEmpty() {
         MinDoubleGroupByFunction function = new MinDoubleGroupByFunction(DoubleColumn.newInstance(COLUMN_INDEX));
+        try (SimpleMapValue value = prepare(function)) {
+            Assert.assertTrue(Double.isNaN(function.getDouble(value)));
+        }
+    }
+
+    @Test
+    public void testNSumDoubleBatch() {
+        NSumDoubleGroupByFunction function = new NSumDoubleGroupByFunction(DoubleColumn.newInstance(COLUMN_INDEX));
+        try (SimpleMapValue value = prepare(function)) {
+            long ptr = allocateDoubles(1.0, Double.NaN, 2.5, 3.5);
+            function.computeBatch(value, ptr, 4, 0);
+
+            Assert.assertEquals(7.0, function.getDouble(value), 0.0);
+            Assert.assertTrue(function.supportsBatchComputation());
+        }
+    }
+
+    @Test
+    public void testNSumDoubleBatchAccumulates() {
+        NSumDoubleGroupByFunction function = new NSumDoubleGroupByFunction(DoubleColumn.newInstance(COLUMN_INDEX));
+        try (SimpleMapValue value = prepare(function)) {
+            long ptr = allocateDoubles(1.0, 2.0);
+            function.computeBatch(value, ptr, 2, 0);
+
+            ptr = allocateDoubles(3.0, 4.0);
+            function.computeBatch(value, ptr, 2, 0);
+
+            Assert.assertEquals(10.0, function.getDouble(value), 0.0);
+        }
+    }
+
+    @Test
+    public void testNSumDoubleBatchAllNaN() {
+        NSumDoubleGroupByFunction function = new NSumDoubleGroupByFunction(DoubleColumn.newInstance(COLUMN_INDEX));
+        try (SimpleMapValue value = prepare(function)) {
+            long ptr = allocateDoubles(Double.NaN, Double.NaN);
+            function.computeBatch(value, ptr, 2, 0);
+
+            Assert.assertTrue(Double.isNaN(function.getDouble(value)));
+        }
+    }
+
+    // Neumaier compensation should be applied across batch boundaries. Unlike Kahan,
+    // Neumaier handles the case where the running sum is smaller than the increment.
+    @Test
+    public void testNSumDoubleBatchNeumaierCompensationAcrossBatches() {
+        NSumDoubleGroupByFunction function = new NSumDoubleGroupByFunction(DoubleColumn.newInstance(COLUMN_INDEX));
+        try (SimpleMapValue value = prepare(function)) {
+            // Batch 1: many small values, running sum starts small.
+            double[] smalls = new double[100];
+            for (int i = 0; i < smalls.length; i++) {
+                smalls[i] = 1.0;
+            }
+            long ptr = allocateDoubles(smalls);
+            function.computeBatch(value, ptr, smalls.length, 0);
+
+            // Batch 2: one large value. Without Neumaier, the small running sum
+            // would be lost when adding to the much larger batch sum.
+            ptr = allocateDoubles(1e16);
+            function.computeBatch(value, ptr, 1, 0);
+
+            Assert.assertEquals(100.0 + 1e16, function.getDouble(value), 0.0);
+        }
+    }
+
+    @Test
+    public void testNSumDoubleBatchMixedNaN() {
+        NSumDoubleGroupByFunction function = new NSumDoubleGroupByFunction(DoubleColumn.newInstance(COLUMN_INDEX));
+        try (SimpleMapValue value = prepare(function)) {
+            long ptr = allocateDoubles(1.0, Double.NaN, 2.0);
+            function.computeBatch(value, ptr, 3, 0);
+
+            Assert.assertEquals(3.0, function.getDouble(value), 0.0);
+        }
+    }
+
+    @Test
+    public void testNSumDoubleBatchZeroCountKeepsNaN() {
+        NSumDoubleGroupByFunction function = new NSumDoubleGroupByFunction(DoubleColumn.newInstance(COLUMN_INDEX));
+        try (SimpleMapValue value = prepare(function)) {
+            function.computeBatch(value, 0, 0, 0);
+
+            Assert.assertTrue(Double.isNaN(function.getDouble(value)));
+        }
+    }
+
+    @Test
+    public void testNSumDoubleSetEmpty() {
+        NSumDoubleGroupByFunction function = new NSumDoubleGroupByFunction(DoubleColumn.newInstance(COLUMN_INDEX));
         try (SimpleMapValue value = prepare(function)) {
             Assert.assertTrue(Double.isNaN(function.getDouble(value)));
         }

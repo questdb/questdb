@@ -194,7 +194,6 @@ import io.questdb.griffin.engine.groupby.vect.CountDoubleVectorAggregateFunction
 import io.questdb.griffin.engine.groupby.vect.CountIntVectorAggregateFunction;
 import io.questdb.griffin.engine.groupby.vect.CountLongVectorAggregateFunction;
 import io.questdb.griffin.engine.groupby.vect.CountVectorAggregateFunction;
-import io.questdb.griffin.engine.groupby.vect.GroupByNotKeyedVectorRecordCursorFactory;
 import io.questdb.griffin.engine.groupby.vect.GroupByRecordCursorFactory;
 import io.questdb.griffin.engine.groupby.vect.KSumDoubleVectorAggregateFunction;
 import io.questdb.griffin.engine.groupby.vect.MaxDateVectorAggregateFunction;
@@ -8641,22 +8640,6 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                     vaf.getType(),
                                     null
                             )
-                    );
-                }
-
-                if (tempKeyIndexesInBase.size() == 0) {
-                    // vectorized non-keyed tasks are lightweight, so it's fine to use larger frame sizes
-                    factory.changePageFrameSizes(
-                            Math.min(2 * configuration.getSqlPageFrameMinRows(), configuration.getSqlPageFrameMaxRows()),
-                            configuration.getSqlPageFrameMaxRows()
-                    );
-                    return new GroupByNotKeyedVectorRecordCursorFactory(
-                            executionContext.getCairoEngine(),
-                            configuration,
-                            factory,
-                            meta,
-                            executionContext.getSharedQueryWorkerCount(),
-                            tempVaf
                     );
                 }
 

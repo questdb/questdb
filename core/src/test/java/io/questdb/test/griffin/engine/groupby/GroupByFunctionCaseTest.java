@@ -238,29 +238,39 @@ public class GroupByFunctionCaseTest extends AbstractCairoTest {
     }
 
     private void prepareExpectedPlan(int t, int f, String keys, String function, String expectedFunction) {
-        boolean rosti = (t >= INT && t <= TIMESTAMP && f > 1) || t == DOUBLE || (t == SHORT && !function.contains("KSum") && !function.contains("NSum"));
+        // Single-key vectorized path uses the rosti-backed GroupByRecordCursorFactory.
+        boolean keyedVectorized = keys != null && (
+                (t >= INT && t <= TIMESTAMP && f > 1)
+                        || t == DOUBLE
+                        || (t == SHORT && !function.contains("KSum") && !function.contains("NSum"))
+        );
 
-        // For non-keyed, non-rosti queries the factory is AsyncGroupByNotKeyedRecordCursorFactory
-        // which reports whether it uses vectorized (batch) computation. Batch is eligible when
-        // the function supports batch computation AND the batch arg type matches the physical column type.
-        boolean asyncVectorized = !rosti && keys == null
-                && ((t == CHAR && f >= 4)                    // min/max on char
-                || (t == FLOAT && (f == 2 || f >= 4)));      // sum/min/max on float
+        // Non-keyed queries always go through AsyncGroupByNotKeyedRecordCursorFactory, which
+        // reports vectorized=true when batch computation is eligible for every aggregate function.
+        // Batch is eligible when the function supports batch computation AND the batch arg type
+        // matches the physical column type.
+        boolean asyncNonKeyedVectorized = keys == null && (
+                (t >= INT && t <= TIMESTAMP && f > 1)
+                        || t == DOUBLE
+                        || (t == SHORT && !function.contains("KSum") && !function.contains("NSum"))
+                        || (t == CHAR && f >= 4)
+                        || (t == FLOAT && (f == 2 || f >= 4))
+        );
 
         planSink.clear();
-        if (rosti) {
+        if (keyedVectorized) {
             planSink.put("GroupBy vectorized: true workers: 1\n");
         } else {
             planSink.put("Async Group By workers: 1\n");
             if (keys == null) {
-                planSink.put("  vectorized: ").put(asyncVectorized).put('\n');
+                planSink.put("  vectorized: ").put(asyncNonKeyedVectorized).put('\n');
             }
         }
         if (keys != null) {
             planSink.put("  keys: [").put(keys).put("]\n");
         }
         planSink.put("  values: [").put(expectedFunction).put("]\n");
-        if (!rosti) {
+        if (!keyedVectorized) {
             planSink.put("  filter: null\n");
         }
         planSink.put(
