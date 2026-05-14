@@ -24,6 +24,7 @@
 
 package io.questdb.test.cairo.parquet;
 
+import io.questdb.PropertyKey;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
@@ -662,6 +663,93 @@ public class ParquetColumnTypeConversionTest extends AbstractCairoTest {
                     (NULL, '2024-01-01T00:00:06.000000Z')""";
             for (String target : new String[]{"BOOLEAN", "BYTE", "SHORT", "LONG", "DATE", "TIMESTAMP", "FLOAT", "DOUBLE"}) {
                 assertConversion("INT", target, values);
+            }
+        });
+    }
+
+    /**
+     * Reproduces a corruption in {@code TableWriter.produceNativeFromParquet} on the
+     * fixed-to-var arm when the source parquet has more than one row group. Two
+     * compounded defects:
+     * <ol>
+     *     <li>{@code appendBuffer(dstDataFd, dataBuf, dataSize)} writes the full
+     *         {@code estimateStringDataSize / estimateVarcharDataSize} estimate to
+     *         disk. {@code convertFixedColumnToString / convertFixedColumnToVarchar}
+     *         only populates the actual prefix of that buffer, so the trailing
+     *         {@code dataSize - actualBytes} bytes are uninitialized memory from
+     *         {@code Unsafe.malloc} leaking into the column data file.</li>
+     *     <li>The fixed-to-var arm does not track {@code dataVecBytesWritten} across
+     *         row groups, unlike the var-to-var arm at the same call site. Aux
+     *         entries produced for row groups beyond the first carry offsets that
+     *         are relative to the start of their own local data buffer (i.e. zero
+     *         for the first entry of each row group), so subsequent row groups
+     *         read back the bytes of row group 0.</li>
+     * </ol>
+     * <p>
+     * The default test row group size is 1_000 rows; the existing fixed-to-var
+     * coverage uses fewer rows so the entire partition fits in one row group and
+     * neither defect is exercised. This test forces a tiny row group size and
+     * uses 12 rows with distinct integer values, so the partition spans three row
+     * groups. After {@code ALTER COLUMN ... TYPE STRING/VARCHAR} and
+     * {@code CONVERT PARTITION TO NATIVE}, every row must read back as its
+     * original integer formatted as a string.
+     */
+    @Test
+    public void testIntToStringConvertToNativeMultiRowGroup() throws Exception {
+        node1.setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_ROW_GROUP_SIZE, 4);
+        assertMemoryLeak(() -> {
+            for (String target : new String[]{"STRING", "VARCHAR"}) {
+                try {
+                    execute("CREATE TABLE pt (val INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+                    // 12 rows in one partition, row group size 4 => three row groups.
+                    execute("""
+                            INSERT INTO pt VALUES
+                            (1,    '2024-01-01T00:00:01.000000Z'),
+                            (2,    '2024-01-01T00:00:02.000000Z'),
+                            (3,    '2024-01-01T00:00:03.000000Z'),
+                            (4,    '2024-01-01T00:00:04.000000Z'),
+                            (5,    '2024-01-01T00:00:05.000000Z'),
+                            (6,    '2024-01-01T00:00:06.000000Z'),
+                            (7,    '2024-01-01T00:00:07.000000Z'),
+                            (8,    '2024-01-01T00:00:08.000000Z'),
+                            (9,    '2024-01-01T00:00:09.000000Z'),
+                            (10,   '2024-01-01T00:00:10.000000Z'),
+                            (11,   '2024-01-01T00:00:11.000000Z'),
+                            (NULL, '2024-01-01T00:00:12.000000Z')""");
+                    drainWalQueue();
+
+                    execute("ALTER TABLE pt CONVERT PARTITION TO PARQUET LIST '2024-01-01'");
+                    drainWalQueue();
+
+                    execute("ALTER TABLE pt ALTER COLUMN val TYPE " + target);
+                    drainWalQueue();
+
+                    // Materializes the fixed->var conversion through produceNativeFromParquet,
+                    // so subsequent reads hit the native files, not the lazy parquet path.
+                    execute("ALTER TABLE pt CONVERT PARTITION TO NATIVE LIST '2024-01-01'");
+                    drainWalQueue();
+
+                    assertSql(
+                            """
+                                    val\tts
+                                    1\t2024-01-01T00:00:01.000000Z
+                                    2\t2024-01-01T00:00:02.000000Z
+                                    3\t2024-01-01T00:00:03.000000Z
+                                    4\t2024-01-01T00:00:04.000000Z
+                                    5\t2024-01-01T00:00:05.000000Z
+                                    6\t2024-01-01T00:00:06.000000Z
+                                    7\t2024-01-01T00:00:07.000000Z
+                                    8\t2024-01-01T00:00:08.000000Z
+                                    9\t2024-01-01T00:00:09.000000Z
+                                    10\t2024-01-01T00:00:10.000000Z
+                                    11\t2024-01-01T00:00:11.000000Z
+                                    \t2024-01-01T00:00:12.000000Z
+                                    """,
+                            "SELECT val, ts FROM pt"
+                    );
+                } finally {
+                    tryDrop("pt");
+                }
             }
         });
     }
@@ -1445,6 +1533,49 @@ public class ParquetColumnTypeConversionTest extends AbstractCairoTest {
     }
 
     /**
+     * The async multi-horizon-join factory with no {@code GROUP BY} keys -- a single
+     * aggregated output row. Two HORIZON JOIN clauses share a single offset {@code LIST},
+     * which routes the query through {@code AsyncMultiHorizonJoinNotKeyedRecordCursorFactory}.
+     * The {@code WHERE t.val > 50} predicate is JIT-compiled against the current INT
+     * metadata, but the parquet frame still stores {@code val} as STRING. Without the
+     * {@code needsColumnTypeCast()} fallback the compiled filter would read VARCHAR aux
+     * bytes as INT and select wrong rows -- the parity check against the native control
+     * pins the bug.
+     */
+    @Test
+    public void testAsyncMultiHorizonJoinNotKeyedOverAlteredParquetColumn() throws Exception {
+        assertMemoryLeak(() -> assertAsyncMultiJoinFactoryParity(
+                """
+                        SELECT count() n, sum(t.val) sum_val, avg(b.price) avg_bid, avg(a.price) avg_ask
+                        FROM $T t
+                        HORIZON JOIN bids b ON (t.sym = b.sym)
+                        HORIZON JOIN asks a ON (t.sym = a.sym)
+                            LIST (0s, 5s, 30s) AS h
+                        WHERE t.val > 50"""
+        ));
+    }
+
+    /**
+     * The async multi-horizon-join factory with {@code GROUP BY} keys. Same gate as the
+     * not-keyed variant; selects {@code AsyncMultiHorizonJoinRecordCursorFactory}.
+     */
+    @Test
+    public void testAsyncMultiHorizonJoinKeyedOverAlteredParquetColumn() throws Exception {
+        assertMemoryLeak(() -> assertAsyncMultiJoinFactoryParity(
+                """
+                        SELECT t.sym, h.offset, count() n, sum(t.val) sum_val,
+                               avg(b.price) avg_bid, avg(a.price) avg_ask
+                        FROM $T t
+                        HORIZON JOIN bids b ON (t.sym = b.sym)
+                        HORIZON JOIN asks a ON (t.sym = a.sym)
+                            LIST (0s, 5s, 30s) AS h
+                        WHERE t.val > 50
+                        GROUP BY t.sym, h.offset
+                        ORDER BY t.sym, h.offset"""
+        ));
+    }
+
+    /**
      * The async window-join FAST factory ({@code WINDOW JOIN ... ON (key)}). The left
      * frame is the parquet+ALTER'd table; the join key is the symbol column. Aggregation
      * references both the lazy-converted left column {@code t.val} and the right table's
@@ -1643,6 +1774,64 @@ public class ParquetColumnTypeConversionTest extends AbstractCairoTest {
             tryDrop("nt");
             tryDrop("pt");
             tryDrop("prices");
+        }
+    }
+
+    /**
+     * Same as {@link #assertAsyncJoinFactoryParity(String)} but builds two native slave
+     * tables ({@code bids} and {@code asks}) so MULTI HORIZON JOIN queries route through
+     * the {@code AsyncMultiHorizonJoin(NotKeyed)RecordCursorFactory} pair.
+     * <p>
+     * Spreads data across many daily partitions on the master side. The compiled-filter
+     * fallback under {@code needsColumnTypeCast()} only fires when {@link SelectivityStats}
+     * decides against late materialization (selectivity above 20% with at least two
+     * recorded samples). A single-partition setup keeps every frame on the late-material
+     * path, where {@code hasColumnTops()} already routes around the compiled filter and
+     * the cast bug stays hidden. Spreading rows over ~20 days produces enough frames per
+     * worker for the SelectivityStats EMA to disable late materialization on subsequent
+     * frames.
+     */
+    private void assertAsyncMultiJoinFactoryParity(String queryTemplate) throws Exception {
+        try {
+            execute("CREATE TABLE nt (val STRING, sym SYMBOL, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE TABLE pt (val STRING, sym SYMBOL, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE TABLE bids (price DOUBLE, sym SYMBOL, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE TABLE asks (price DOUBLE, sym SYMBOL, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            String insertLeft = """
+                    INSERT INTO $T
+                    SELECT x::STRING AS val,
+                           ('s' || (x % 5)::STRING)::SYMBOL AS sym,
+                           timestamp_sequence('2024-01-01T00:00:00.000000Z', 60_000_000_000L) AS ts
+                    FROM long_sequence(200)""";
+            execute(insertLeft.replace("$T", "nt"));
+            execute(insertLeft.replace("$T", "pt"));
+            execute("""
+                    INSERT INTO bids
+                    SELECT (x * 1.5) AS price,
+                           ('s' || (x % 5)::STRING)::SYMBOL AS sym,
+                           timestamp_sequence('2024-01-01T00:00:00.000000Z', 30_000_000_000L) AS ts
+                    FROM long_sequence(400)""");
+            execute("""
+                    INSERT INTO asks
+                    SELECT (x * 2.5) AS price,
+                           ('s' || (x % 5)::STRING)::SYMBOL AS sym,
+                           timestamp_sequence('2024-01-01T00:00:00.000000Z', 30_000_000_000L) AS ts
+                    FROM long_sequence(400)""");
+            drainWalQueue();
+            execute("ALTER TABLE pt CONVERT PARTITION TO PARQUET WHERE ts >= 0");
+            drainWalQueue();
+            execute("ALTER TABLE nt ALTER COLUMN val TYPE INT");
+            execute("ALTER TABLE pt ALTER COLUMN val TYPE INT");
+            drainWalQueue();
+            assertSqlCursors(
+                    queryTemplate.replace("$T", "nt"),
+                    queryTemplate.replace("$T", "pt")
+            );
+        } finally {
+            tryDrop("nt");
+            tryDrop("pt");
+            tryDrop("bids");
+            tryDrop("asks");
         }
     }
 

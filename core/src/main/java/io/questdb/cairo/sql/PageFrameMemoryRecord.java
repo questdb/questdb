@@ -1086,7 +1086,20 @@ public class PageFrameMemoryRecord implements Record, StableStringSource, QuietC
     }
 
     private CharSequence convertVarToStr(int srcTag, int columnIndex, StringSink sink) {
-        CharSequence cs = readVarValueForConversion(srcTag, columnIndex);
+        if (srcTag == ColumnType.VARCHAR) {
+            // Decode UTF-8 straight into the destination sink. Going through
+            // readVarValueForConversion would route the decode via utf16DecodeSink
+            // and then copy from it into sink, which both wastes a copy and creates
+            // a latent aliasing risk if the two sinks ever become the same instance.
+            Utf8Sequence utf8 = getVarchar(columnIndex, utf8ViewA(columnIndex));
+            if (utf8 == null) {
+                return null;
+            }
+            sink.clear();
+            Utf8s.utf8ToUtf16(utf8, sink);
+            return sink;
+        }
+        CharSequence cs = getStr0(columnIndex, csViewA(columnIndex));
         if (cs == null) {
             return null;
         }

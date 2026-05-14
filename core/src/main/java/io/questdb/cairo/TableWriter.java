@@ -10039,33 +10039,58 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                             // Batch-convert fixed data to target var format in Java.
                             final long dstAuxFd = columnFdAndDataSize.get(3L * columnIndex);
                             final long dstDataFd = columnFdAndDataSize.get(3L * columnIndex + 1);
+                            final long dataVecBytesWritten = columnFdAndDataSize.get(3L * columnIndex + 2);
                             final ColumnTypeDriver ctd = ColumnType.getDriver(tableColumnType);
                             final long auxSize = ctd.getAuxVectorSize((int) rowGroupRowCount);
                             final long auxBuf = Unsafe.malloc(auxSize, MemoryTag.NATIVE_DEFAULT);
                             try {
+                                // The estimate is an upper bound; the converters only fill the
+                                // actual bytes needed and store the true end in the last aux
+                                // entry. Use the estimate as buffer capacity, but the actual
+                                // size as the amount to append to the data file.
+                                final long dataBufCap;
+                                final long dataBuf;
                                 if (ColumnType.isVarchar(tableColumnType)) {
-                                    final long dataSize = O3PartitionJob.estimateVarcharDataSize(parquetColumnType, (int) rowGroupRowCount);
-                                    final long dataBuf = dataSize > 0 ? Unsafe.malloc(dataSize, MemoryTag.NATIVE_DEFAULT) : 0;
-                                    try {
-                                        O3PartitionJob.convertFixedColumnToVarchar(parquetColumnType, srcDataPtr, (int) rowGroupRowCount, auxBuf, dataBuf);
-                                        if (dataBuf != 0) {
-                                            appendBuffer(dstDataFd, dataBuf, dataSize);
-                                        }
-                                        appendBuffer(dstAuxFd, auxBuf, auxSize);
-                                    } finally {
-                                        if (dataBuf != 0) {
-                                            Unsafe.free(dataBuf, dataSize, MemoryTag.NATIVE_DEFAULT);
-                                        }
-                                    }
+                                    dataBufCap = O3PartitionJob.estimateVarcharDataSize(parquetColumnType, (int) rowGroupRowCount);
+                                    dataBuf = dataBufCap > 0 ? Unsafe.malloc(dataBufCap, MemoryTag.NATIVE_DEFAULT) : 0;
                                 } else {
-                                    final long dataSize = O3PartitionJob.estimateStringDataSize(parquetColumnType, (int) rowGroupRowCount);
-                                    final long dataBuf = Unsafe.malloc(dataSize, MemoryTag.NATIVE_DEFAULT);
-                                    try {
+                                    dataBufCap = O3PartitionJob.estimateStringDataSize(parquetColumnType, (int) rowGroupRowCount);
+                                    dataBuf = Unsafe.malloc(dataBufCap, MemoryTag.NATIVE_DEFAULT);
+                                }
+                                try {
+                                    if (ColumnType.isVarchar(tableColumnType)) {
+                                        O3PartitionJob.convertFixedColumnToVarchar(parquetColumnType, srcDataPtr, (int) rowGroupRowCount, auxBuf, dataBuf);
+                                    } else {
                                         O3PartitionJob.convertFixedColumnToString(parquetColumnType, srcDataPtr, (int) rowGroupRowCount, auxBuf, dataBuf);
-                                        appendBuffer(dstDataFd, dataBuf, dataSize);
-                                        appendBuffer(dstAuxFd, auxBuf, auxSize);
-                                    } finally {
-                                        Unsafe.free(dataBuf, dataSize, MemoryTag.NATIVE_DEFAULT);
+                                    }
+
+                                    // Compute actual bytes from the aux vector *before* shifting,
+                                    // since the shift inflates the recorded offsets.
+                                    final long actualDataSize = ctd.getDataVectorSizeAt(auxBuf, rowGroupRowCount - 1);
+
+                                    long auxWritePtr = auxBuf;
+                                    long auxWriteSize = auxSize;
+                                    if (rowGroupIndex > 0) {
+                                        // Aux entries from convertFixedColumnTo* are relative to
+                                        // the start of the local data buffer (offset 0). Shift
+                                        // them to be relative to the start of the destination
+                                        // data file. Same convention as the var-to-var arm below.
+                                        ctd.shiftCopyAuxVector(-dataVecBytesWritten, auxBuf, 0, rowGroupRowCount - 1, auxBuf, auxSize);
+                                        // STRING aux has a leading entry equal to the initial
+                                        // offset; it was already written as the trailing entry
+                                        // of the previous row group's aux block.
+                                        final long adjust = ctd.getMinAuxVectorSize();
+                                        auxWritePtr += adjust;
+                                        auxWriteSize -= adjust;
+                                    }
+                                    if (actualDataSize > 0) {
+                                        appendBuffer(dstDataFd, dataBuf, actualDataSize);
+                                    }
+                                    appendBuffer(dstAuxFd, auxWritePtr, auxWriteSize);
+                                    columnFdAndDataSize.set(3L * columnIndex + 2, dataVecBytesWritten + actualDataSize);
+                                } finally {
+                                    if (dataBuf != 0) {
+                                        Unsafe.free(dataBuf, dataBufCap, MemoryTag.NATIVE_DEFAULT);
                                     }
                                 }
                             } finally {
