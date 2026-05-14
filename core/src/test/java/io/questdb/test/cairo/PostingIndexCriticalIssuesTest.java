@@ -2712,6 +2712,136 @@ public class PostingIndexCriticalIssuesTest extends AbstractCairoTest {
     }
 
     /**
+     * Red test for review finding M3: the reseal call added inside
+     * squashSplitPartitions (TableWriter:11920) can throw from file
+     * I/O (here: an mmap of the covering column inside
+     * mapCoveringColumnsForSeal). The throw unwinds through
+     * squashSplitPartitions and squashPartitionForce out to the caller.
+     * <p>
+     * housekeep() wraps its call to squashSplitPartitions in a
+     * try/catch that runs handleHousekeepingException, which sets
+     * distressed=true before rethrowing. The non-housekeep callers
+     * (convertPartitionNativeToParquet, detachPartition,
+     * generateParquetPartition, public squashPartitions(),
+     * switchNativePartitionWithParquet) do not. By the time the
+     * reseal runs, squashSplitPartitions has already mutated
+     * txWriter (removeAttachedPartitions,
+     * updatePartitionSizeByTimestamp) and columnVersionWriter
+     * (squashPartition) in memory but has not yet run their
+     * commit(), so a throw here leaves the writer's in-memory
+     * state diverged from on-disk _txn while the pool keeps
+     * handing the same writer out.
+     * <p>
+     * This test exercises the public squashPartitions() entry
+     * point (reached from ALTER TABLE x SQUASH PARTITIONS via
+     * AlterOperation). The fix wraps the reseal call in a
+     * try/catch that mirrors finishO3Commit at TableWriter:6042
+     * and sets distressed=true before rethrowing. Without that
+     * wrap, isDistressed() stays false after the throw.
+     */
+    @Test
+    public void testSquashPartitionsResealFailureMarksWriterDistressed() throws Exception {
+        // Allow splits to form and persist:
+        //  - SPLIT_MIN_SIZE=1 makes the writer split even tiny inserts.
+        //  - MAX_SPLITS=20 keeps the housekeep auto-merge from collapsing
+        //    them before we reach the explicit squashPartitions() call.
+        node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_SPLIT_MIN_SIZE, 1);
+        node1.setProperty(PropertyKey.CAIRO_O3_LAST_PARTITION_MAX_SPLITS, 20);
+        node1.setProperty(PropertyKey.CAIRO_O3_MID_PARTITION_MAX_SPLITS, 20);
+
+        final AtomicBoolean failArmed = new AtomicBoolean(false);
+        // squashSplitPartitions opens columns through FrameAlgebra twice
+        // per merge step (source RO + target RW) and the reseal then
+        // opens the target's covering column RO via
+        // mapCoveringColumnsForSeal. The first openRO of price.d after
+        // armed corresponds to the FrameAlgebra source frame; subsequent
+        // openRO calls (>=2) are the seal. Track only the latter and
+        // fail their mmap so FrameAlgebra completes successfully and
+        // the throw is localised to the reseal call.
+        final AtomicInteger priceDopenROCount = new AtomicInteger(0);
+        final AtomicLong sealFd = new AtomicLong(-1);
+        ff = new TestFilesFacadeImpl() {
+            @Override
+            public long mmap(long fd, long len, long offset, int flags, int memoryTag) {
+                if (failArmed.get() && fd == sealFd.get()) {
+                    return FilesFacade.MAP_FAILED;
+                }
+                return super.mmap(fd, len, offset, flags, memoryTag);
+            }
+
+            @Override
+            public long openRO(LPSZ name) {
+                long fd = super.openRO(name);
+                if (failArmed.get() && fd != -1 && name != null
+                        && Utf8s.endsWithAscii(name, "price.d")) {
+                    if (priceDopenROCount.incrementAndGet() >= 2) {
+                        sealFd.set(fd);
+                    }
+                }
+                return fd;
+            }
+        };
+
+        assertMemoryLeak(ff, () -> {
+            execute("""
+                    CREATE TABLE t_squash_reseal_fail (
+                        ts TIMESTAMP,
+                        sym SYMBOL INDEX TYPE POSTING INCLUDE (price),
+                        price DOUBLE
+                    ) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL
+                    """);
+            // Seed 2024-01-01.
+            execute("""
+                    INSERT INTO t_squash_reseal_fail VALUES
+                    ('2024-01-01T00:00:00Z', 'A', 10.0),
+                    ('2024-01-01T01:00:00Z', 'B', 20.0),
+                    ('2024-01-01T02:00:00Z', 'A', 30.0),
+                    ('2024-01-01T20:00:00Z', 'A', 40.0)
+                    """);
+            // O3 into a late prefix of the same logical partition creates
+            // a split sub-partition. With SPLIT_MIN_SIZE=1 the writer
+            // splits even at this tiny scale.
+            execute("""
+                    INSERT INTO t_squash_reseal_fail VALUES
+                    ('2024-01-01T19:00:00Z', 'C', 99.0)
+                    """);
+
+            // Confirm the table has two sub-partitions for the same
+            // logical day before arming the fault; otherwise
+            // squashPartitions() short-circuits and the reseal at
+            // TableWriter:11920 is never reached.
+            assertSql(
+                    """
+                            count
+                            2
+                            """,
+                    "SELECT count() FROM table_partitions('t_squash_reseal_fail')"
+            );
+
+            engine.releaseAllWriters();
+
+            try (TableWriter w = TestUtils.getWriter(engine, "t_squash_reseal_fail")) {
+                failArmed.set(true);
+                try {
+                    w.squashPartitions();
+                    Assert.fail("expected reseal failure to surface from squashPartitions()");
+                } catch (AssertionError ae) {
+                    throw ae;
+                } catch (Throwable ignore) {
+                    // expected: CairoException from TableUtils.mapRO
+                    // when the seal's mmap returns MAP_FAILED.
+                }
+                failArmed.set(false);
+                Assert.assertTrue(
+                        "writer must be distressed after a reseal throw inside squashPartitions(): " +
+                                "txWriter/columnVersionWriter were mutated in memory but their " +
+                                "commit() never ran, so the in-memory state diverged from on-disk _txn",
+                        w.isDistressed());
+            }
+        });
+    }
+
+    /**
      * Reproduces the SIGSEGV from the JMH walFastLag bench (hs_err_pid19555):
      * MemoryCR.getLong over-read inside PostingIndexChainEntry.read on a
      * covering posting index. The bench ran walFastLagInsertAndQuery in a
