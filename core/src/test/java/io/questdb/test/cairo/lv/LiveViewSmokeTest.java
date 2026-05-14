@@ -3043,7 +3043,7 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
                 // Direct mutation via the setter (the 2a.4 write hook will call this).
                 LiveViewInstance lv = engine.getLiveViewRegistry().getViewInstance("lv");
                 Assert.assertNotNull(lv);
-                lv.setHeadCheckpoint(42L, 1_700_000_000_000_000L, 4096L);
+                lv.setHeadCheckpoint(42L, 1_700_000_000_000_000L, 4096L, 0L);
 
                 assertSql(
                         "view_name\thead_checkpoint_lv_seqtxn\thead_checkpoint_max_ts\thead_checkpoint_state_bytes\n" +

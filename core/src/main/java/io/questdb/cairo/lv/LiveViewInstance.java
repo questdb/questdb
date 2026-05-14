@@ -116,6 +116,13 @@ public class LiveViewInstance implements QuietCloseable {
     private volatile long headCheckpointStateBytes = 0;
     private volatile LiveViewInMemoryTier inMemoryTier;
     private volatile boolean isClosed;
+    // Wall-clock (micros) of the most recent head-checkpoint commit. Numbers.LONG_NULL
+    // until the first cycle that writes a .cp. The refresh worker compares
+    // (nowUs - lastCheckpointWrittenUs) against
+    // cairo.live.view.checkpoint.max.duration to decide whether the duration
+    // trigger has fired this cycle. Mirrored as volatile because the catalogue
+    // may surface it via live_views() later.
+    private volatile long lastCheckpointWrittenUs = Numbers.LONG_NULL;
     // Wall-clock (micros) of the most recent successful LV WAL commit. Used by
     // LiveViewRefreshJob to enforce FLUSH EVERY: a refresh that arrives within
     // flushEveryMicros of the previous commit is skipped, so high-rate base
@@ -131,6 +138,19 @@ public class LiveViewInstance implements QuietCloseable {
     // moves past recordRowCopierMetadataVersion. Accessed only while the refresh latch is held.
     private RecordToRowCopier recordToRowCopier;
     private long recordRowCopierMetadataVersion = -1;
+    // Live-view-row count applied since the most recent head-checkpoint commit.
+    // The refresh worker compares this against cairo.live.view.checkpoint.rows
+    // each cycle to decide whether the row-count trigger has fired. Mutated
+    // only on the refresh-worker thread under the refresh latch; not volatile
+    // because no other thread reads it.
+    private long rowsSinceLastCheckpointWritten;
+    // AND of every compiled window function's WindowFunction.supportsSnapshot().
+    // Computed once on the first refresh cycle after the LV's compiled factory
+    // is ready, then cached. False means the flush cycle emits no checkpoints
+    // (every restart / O3 falls back to the head-miss replay path); the LV's
+    // live_views().head_checkpoint_lv_seqtxn stays LONG_NULL for its lifetime.
+    private volatile boolean snapshotCapability;
+    private volatile boolean snapshotCapabilityComputed;
     // Wall-clock (micros) when the in-mem tier's slow-path tryAcquireWrite first
     // observed both slots reader-pinned. Numbers.LONG_NULL when not stalled.
     // Cleared on the next successful acquire. Surfaces via
@@ -141,6 +161,16 @@ public class LiveViewInstance implements QuietCloseable {
     public LiveViewInstance(LiveViewDefinition definition, TableToken liveViewToken) {
         this.definition = definition;
         this.liveViewToken = liveViewToken;
+    }
+
+    /**
+     * Accumulates {@code n} into {@link #rowsSinceLastCheckpointWritten}. Called
+     * from the refresh worker after each successful LV WAL apply commit; the
+     * counter resets when {@link #setHeadCheckpoint(long, long, long, long)}
+     * stamps a fresh head.
+     */
+    public void addRowsSinceLastCheckpointWritten(long n) {
+        rowsSinceLastCheckpointWritten += n;
     }
 
     @Override
@@ -242,6 +272,10 @@ public class LiveViewInstance implements QuietCloseable {
         return stateReader.getInvalidationReason();
     }
 
+    public long getLastCheckpointWrittenUs() {
+        return lastCheckpointWrittenUs;
+    }
+
     public long getLastFlushTimeUs() {
         return lastFlushTimeUs;
     }
@@ -278,6 +312,10 @@ public class LiveViewInstance implements QuietCloseable {
 
     public RecordToRowCopier getRecordToRowCopier() {
         return recordToRowCopier;
+    }
+
+    public long getRowsSinceLastCheckpointWritten() {
+        return rowsSinceLastCheckpointWritten;
     }
 
     public LiveViewStateReader getStateReader() {
@@ -320,6 +358,25 @@ public class LiveViewInstance implements QuietCloseable {
 
     public boolean isInvalid() {
         return stateReader.isInvalid();
+    }
+
+    /**
+     * @return the cached AND of every compiled window function's
+     * {@code supportsSnapshot()}. Meaningful only when
+     * {@link #isSnapshotCapabilityComputed()} returns {@code true}.
+     */
+    public boolean isSnapshotCapability() {
+        return snapshotCapability;
+    }
+
+    /**
+     * @return {@code true} once the first refresh cycle has evaluated
+     * {@link #isSnapshotCapability()} from the compiled SELECT's window
+     * functions. The refresh worker computes the AND exactly once per LV
+     * lifetime, then routes every subsequent cycle through the cached value.
+     */
+    public boolean isSnapshotCapabilityComputed() {
+        return snapshotCapabilityComputed;
     }
 
     /**
@@ -399,17 +456,24 @@ public class LiveViewInstance implements QuietCloseable {
      * frees the old one first, mirroring {@link #setCompiledFactory}.
      */
     /**
-     * Sets the head-checkpoint trio in a single store. Called by the Phase
-     * 2a.4 flush-cycle write hook (deferred) once a new {@code .cp} is
-     * committed; values are mirrored into the {@code live_views()}
-     * catalogue and consulted by the O3 / restart paths. Passing
-     * {@code Numbers.LONG_NULL} for {@code lvSeqTxn} clears the head
-     * (e.g. when the {@code .cp} is unlinked).
+     * Records a committed head checkpoint in one atomic store. Mirrors the
+     * head metadata into the {@code live_views()} catalogue, resets the
+     * cadence counter ({@link #rowsSinceLastCheckpointWritten} back to zero),
+     * and stamps {@link #lastCheckpointWrittenUs}. Called by the flush-cycle
+     * write hook after the {@code <lvSeqTxn>.cp.tmp} -> {@code <lvSeqTxn>.cp}
+     * rename succeeds.
+     * <p>
+     * Passing {@code Numbers.LONG_NULL} for {@code lvSeqTxn} clears the head
+     * (e.g. when the {@code .cp} is unlinked by a recovery sweep); cadence
+     * counters reset too so the next eligible cycle writes a fresh head
+     * immediately rather than waiting for the row-count trigger to re-fire.
      */
-    public void setHeadCheckpoint(long lvSeqTxn, long maxTs, long stateBytes) {
+    public void setHeadCheckpoint(long lvSeqTxn, long maxTs, long stateBytes, long writtenUs) {
         this.headCheckpointLvSeqTxn = lvSeqTxn;
         this.headCheckpointMaxTs = maxTs;
         this.headCheckpointStateBytes = stateBytes;
+        this.rowsSinceLastCheckpointWritten = 0;
+        this.lastCheckpointWrittenUs = writtenUs;
     }
 
     public void setInMemoryTier(LiveViewInMemoryTier tier) {
@@ -438,6 +502,20 @@ public class LiveViewInstance implements QuietCloseable {
     public void setRecordToRowCopier(RecordToRowCopier copier, long metadataVersion) {
         this.recordToRowCopier = copier;
         this.recordRowCopierMetadataVersion = metadataVersion;
+    }
+
+    /**
+     * Caches the AND of every compiled window function's
+     * {@code supportsSnapshot()}, evaluated once after the LV's compiled
+     * factory becomes available. Subsequent refresh cycles short-circuit on
+     * {@link #isSnapshotCapabilityComputed()} and read the cached
+     * {@link #isSnapshotCapability()} value. Setting writes both fields in
+     * the right order so a concurrent reader on the catalogue thread never
+     * observes {@code computed=true} with the default {@code capability=false}.
+     */
+    public void setSnapshotCapability(boolean value) {
+        this.snapshotCapability = value;
+        this.snapshotCapabilityComputed = true;
     }
 
     public void setSubscribeFromSeqTxn(long subscribeFromSeqTxn) {
