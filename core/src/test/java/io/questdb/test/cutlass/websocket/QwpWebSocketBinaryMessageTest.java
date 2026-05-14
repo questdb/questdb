@@ -25,6 +25,8 @@
 package io.questdb.test.cutlass.websocket;
 
 import io.questdb.PropertyKey;
+import io.questdb.client.Sender;
+import io.questdb.client.SenderError;
 import io.questdb.client.cutlass.line.LineSenderException;
 import io.questdb.client.cutlass.qwp.client.QwpWebSocketSender;
 import io.questdb.test.AbstractBootstrapTest;
@@ -131,7 +133,7 @@ public class QwpWebSocketBinaryMessageTest extends AbstractBootstrapTest {
                         .get(5, TimeUnit.SECONDS);
 
                 // Step 2: send real rows on a fresh connection
-                try (QwpWebSocketSender sender = QwpWebSocketSender.connect("localhost", httpPort)) {
+                try (QwpWebSocketSender sender = (QwpWebSocketSender) Sender.fromConfig("ws::addr=localhost:" + httpPort + ";")) {
                     for (int i = 0; i < 5; i++) {
                         sender.table("zero_row_test")
                                 .longColumn("value", i)
@@ -283,18 +285,25 @@ public class QwpWebSocketBinaryMessageTest extends AbstractBootstrapTest {
             )) {
                 int httpPort = serverMain.getHttpServerPort();
 
-                try (QwpWebSocketSender sender = QwpWebSocketSender.connect("localhost", httpPort)) {
-                    sender.table("nonexistent_table_xyz")
-                            .longColumn("value", 42)
-                            .at(1_000_000_000_000L, ChronoUnit.MICROS);
-                    try {
+                // Server-side rejection arrives asynchronously through the
+                // error handler. close() additionally rethrows on HALT-policy
+                // categories; both paths are tolerated.
+                CompletableFuture<SenderError> errorFut = new CompletableFuture<>();
+                try {
+                    try (QwpWebSocketSender sender = (QwpWebSocketSender) Sender.builder(Sender.Transport.WEBSOCKET)
+                            .address("localhost:" + httpPort)
+                            .errorHandler(errorFut::complete)
+                            .build()) {
+                        sender.table("nonexistent_table_xyz")
+                                .longColumn("value", 42)
+                                .at(1_000_000_000_000L, ChronoUnit.MICROS);
                         sender.flush();
-                        Assert.fail("Expected LineSenderException for missing table");
-                    } catch (LineSenderException e) {
-                        // Server returns INTERNAL_ERROR because table does not exist
-                        // and auto-creation is disabled
                     }
+                } catch (LineSenderException ignore) {
+                    // close() rethrew the latched terminal error on HALT.
                 }
+                SenderError err = errorFut.get(10, TimeUnit.SECONDS);
+                Assert.assertNotNull("Expected server-side rejection notification", err);
             }
         });
     }
@@ -564,18 +573,24 @@ public class QwpWebSocketBinaryMessageTest extends AbstractBootstrapTest {
             )) {
                 int httpPort = serverMain.getHttpServerPort();
 
-                try (QwpWebSocketSender sender = QwpWebSocketSender.connect("localhost", httpPort)) {
-                    sender.table("readonly_test_table")
-                            .longColumn("value", 42)
-                            .at(1_000_000_000_000L, ChronoUnit.MICROS);
-                    try {
+                // SECURITY_ERROR is HALT-policy: error handler fires AND
+                // close() rethrows the latched terminal error.
+                CompletableFuture<SenderError> errorFut = new CompletableFuture<>();
+                try {
+                    try (QwpWebSocketSender sender = (QwpWebSocketSender) Sender.builder(Sender.Transport.WEBSOCKET)
+                            .address("localhost:" + httpPort)
+                            .errorHandler(errorFut::complete)
+                            .build()) {
+                        sender.table("readonly_test_table")
+                                .longColumn("value", 42)
+                                .at(1_000_000_000_000L, ChronoUnit.MICROS);
                         sender.flush();
-                        Assert.fail("Expected LineSenderException for readonly server");
-                    } catch (LineSenderException e) {
-                        // Server returns SECURITY_ERROR because ReadOnlySecurityContext
-                        // denies authorizeTableCreate/authorizeInsert
                     }
+                } catch (LineSenderException ignore) {
+                    // close() rethrew the latched terminal error.
                 }
+                SenderError err = errorFut.get(10, TimeUnit.SECONDS);
+                Assert.assertNotNull("Expected server-side rejection notification", err);
             }
         });
     }

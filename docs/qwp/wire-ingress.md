@@ -90,6 +90,19 @@ byte (offset 4) of the message header. The server validates every incoming
 message against the negotiated version and rejects any message whose version
 byte does not match with a parse error.
 
+### Ingress is pinned to version 1
+
+Ingress senders advertise `X-QWP-Max-Version: 1` because no v2 ingest semantics
+exist. The v2 bump is purely an egress addition — an unsolicited `SERVER_INFO`
+frame on the upgrade carrying server role and zone metadata for read-side
+routing (see [`wire-egress.md`](wire-egress.md) §11.8 and
+[`failover.md`](failover.md) §5). Ingress clients do NOT read `SERVER_INFO`,
+ignore zone advertising, and rely on the `421 + X-QuestDB-Role` upgrade-reject
+convention alone for primary-vs-replica routing. The `zone=` connect-string
+knob is accepted but silently ignored on ingress so a single connect string
+can be reused across ingress and egress clients without per-startup noise;
+see `failover.md` §1.1.
+
 ## 4. Byte Ordering
 
 All multi-byte numeric values are **little-endian**. Variable-length integers
@@ -761,21 +774,69 @@ commit has reached the configured object store, a client includes
 `X-QWP-Request-Durable-Ack: true` (case-insensitive) in the WebSocket
 upgrade request.
 
-Behavior:
+#### Server Behaviour
 
-- Servers without primary replication enabled silently ignore the header and
-  never emit `STATUS_DURABLE_ACK` frames.
-- Servers with primary replication emit cumulative `STATUS_DURABLE_ACK` frames
-  as the upload watermark advances. Delivery is piggy-backed on connection
-  activity: frames are flushed whenever the connection next sends or receives
-  a message, a PING, or a CLOSE. Idle connections that need prompt
-  notification should send a WebSocket PING periodically.
+- Servers without primary replication enabled silently ignore the request
+  header and never emit `STATUS_DURABLE_ACK` frames.
+- Servers with primary replication that accept the opt-in echo
+  `X-QWP-Durable-Ack: enabled` in the 101 upgrade response. The presence
+  of this confirmation header is the only handshake-time signal that a
+  given connection will receive durable-ack frames -- absence means the
+  registry is not installed for this engine.
+- Confirming servers emit cumulative `STATUS_DURABLE_ACK` frames as the
+  upload watermark advances. Delivery is piggy-backed on connection
+  activity: frames are flushed whenever the connection next sends or
+  receives a message, a PING, or a CLOSE. Idle connections that need
+  prompt notification should send a WebSocket PING periodically.
 - The durable-ack watermark always trails the regular OK watermark.
-- There is no durable-failure status; persistent upload failures surface only
-  as absence of a durable-ack frame within an expected window.
+- There is no durable-failure status; persistent upload failures surface
+  only as absence of a durable-ack frame within an expected window.
 - Empty messages (those that produced no WAL commit, e.g. only referencing
-  materialized views) are trivially durable and their sequence advances the
-  durable watermark as soon as all preceding messages are durable.
+  materialized views) are trivially durable and their sequence advances
+  the durable watermark as soon as all preceding messages are durable.
+
+#### Client Behaviour
+
+- A client that opts in via the request header MUST verify the
+  `X-QWP-Durable-Ack: enabled` confirmation in the 101 response, and MUST
+  fail the connect attempt loudly when it is absent. Silently waiting for
+  durable-ack frames against a server that will never emit them lets the
+  client's store-and-forward log grow unbounded until disk fills.
+- A client that opted in MUST drive its store-and-forward trim from
+  `STATUS_DURABLE_ACK` frames only -- regular OK frames acknowledge that
+  the bytes are safely committed to the primary's WAL but not that they
+  are durable beyond it, so trimming on OK in this mode would lose data
+  on a primary failure. OK frames are still tracked (they identify the
+  per-table seqTxns later durable acks must cover) but they do not
+  advance the trim watermark.
+- A client that opted in SHOULD send a WebSocket PING periodically
+  while there are pending durable confirmations and there is no
+  organic outbound traffic. The OSS server has no background flush
+  queue for durable-ack frames; it only flushes them when the
+  connection's file descriptor wakes on inbound activity (binary
+  message, PING, or CLOSE). An idle connection that has finished
+  publishing would otherwise never see the watermark advance and its
+  store-and-forward log would not trim. Organic frames count as
+  inbound activity and suppress the PING; the PING is a filler, not a
+  fixed-cadence keepalive. The reference Java client sends a 2-byte
+  PING every `durable_ack_keepalive_interval_millis` (default 200 ms)
+  while `pendingDurable` is non-empty AND no other frame has been sent
+  in the interval; see `sf-client.md` §11.
+- Reconnects discard any in-flight durable-ack tracking. The new
+  connection re-OKs replayed batches and the server re-emits cumulative
+  durable-ack watermarks from scratch, so trim must restart against the
+  new connection's wire sequencing.
+
+#### Connect-string
+
+The QuestDB ILP client exposes the opt-in via the `request_durable_ack`
+parameter. Allowed values are `on` and `off` (default `off`); any other
+value is a configuration error. The parameter is meaningful only on the
+WebSocket transport.
+
+```
+ws::addr=host:9000;sf_dir=/var/lib/qwp;request_durable_ack=on;
+```
 
 ## 14. Protocol Limits
 
@@ -801,7 +862,15 @@ the server to reject the message with `PARSE_ERROR`.
 
 ## 15. Client Operation
 
-### Double-Buffered Async I/O
+This section describes the high-level batching and registry behaviour every
+client implements. The full client-side substrate — on-disk Store-and-Forward
+storage, frame-sequence-number model, ACK-driven trim, durable-ack handshake,
+keepalive PING, reconnect/replay semantics, error categories and policies — is
+specified separately in [`sf-client.md`](sf-client.md). Cross-language client
+implementers should treat that document as normative for SF-mode behaviour;
+this section is a sketch.
+
+### 15.1 Double-Buffered Async I/O
 
 The client uses double-buffered microbatches:
 
@@ -812,7 +881,7 @@ The client uses double-buffered microbatches:
 4. The client swaps to the other buffer so writing can continue without
    blocking.
 
-### Auto-Flush Triggers
+### 15.2 Auto-Flush Triggers
 
 | Trigger              | Default    |
 |----------------------|------------|
@@ -820,7 +889,7 @@ The client uses double-buffered microbatches:
 | Byte size            | disabled   |
 | Time since first row | 100 ms     |
 
-### Schema Registry
+### 15.3 Schema Registry
 
 - First batch for a given table: full schema mode (0x00) with a new schema ID.
 - Subsequent batches with an unchanged column set: schema reference mode (0x01)
@@ -832,7 +901,7 @@ The client uses double-buffered microbatches:
 - On reconnect both sides reset: the client reassigns IDs from 0 and the server
   clears its registry.
 
-### Symbol Dictionary Lifecycle
+### 15.4 Symbol Dictionary Lifecycle
 
 - The client maintains a global symbol dictionary across all tables/columns.
 - Symbol IDs are assigned sequentially starting from 0.
@@ -840,6 +909,59 @@ The client uses double-buffered microbatches:
   batch).
 - The server accumulates these deltas for the lifetime of the connection.
 - Upon connection loss, both sides reset the dictionary.
+
+### 15.5 Initial Connect and Failover
+
+Ingress senders use the cursor-engine reconnect loop documented in
+[`sf-client.md`](sf-client.md) §13.6, regardless of whether `sf_dir`
+is configured. The two storage modes share identical failover
+semantics — host tracker, equal-jitter backoff, `initial_connect_retry`
+policy, `reconnect_max_duration_millis` outage budget, mid-stream
+demote, role-reject handling, terminal classification. They differ
+only in where the unacked buffer lives:
+
+- **`sf_dir` set** (store-and-forward): segments are mmap'd files
+  under `sf_dir`. Unacked data survives sender restarts and is
+  replayed by the next sender bound to the same slot. Orphan slots
+  from prior sender processes can be adopted (see
+  [`sf-client.md`](sf-client.md) §18).
+- **`sf_dir` unset** (memory-mode): segments are malloc'd in process
+  memory. Unacked data is lost if the sender process dies. The
+  reconnect loop still spans transient server outages such as rolling
+  upgrades, but the RAM buffer caps how much data can pile up during
+  the outage. Operators who want to surface a stuck server sooner
+  should lower `reconnect_max_duration_millis` below the 5-minute
+  default; senders that need durability across sender restarts must
+  opt into SF (`sf_dir=...`).
+
+Host selection consumes the shared primitives in
+[`failover.md`](failover.md): connect-string keys (§1.1), host-health
+model and `(state, zone_tier)` priority lattice (§2), role filter
+(§5), and error classification (§6). Ingress is zone-blind in both
+storage modes — it pins QWP v1 and never reads `SERVER_INFO`, so
+every host's zone tier is `Same` and selection degenerates to
+state-only ordering. The `zone=` connect-string key is accepted but
+silently ignored, so a connect string shared with egress clients
+works unchanged on ingress.
+
+Connect-string knobs are documented at their canonical home in
+[`sf-client.md`](sf-client.md) §4.2 — the same keys apply whether or
+not `sf_dir` is set:
+
+- `reconnect_max_duration_millis` (default `300_000`)
+- `reconnect_initial_backoff_millis` (default `100`)
+- `reconnect_max_backoff_millis` (default `5_000`)
+- `initial_connect_retry` (default `off`; `on` / `sync` / `async`)
+
+Per-host upgrade-error classification follows
+[`failover.md`](failover.md) §6: `401`/`403` → `AuthError` (terminal),
+`421 + X-QuestDB-Role` → role reject (transient if `PRIMARY_CATCHUP`,
+topology otherwise). All other upgrade errors are transient and feed
+into the reconnect loop, including `404`, `426`, `503`, generic
+4xx/5xx, TCP/TLS failures, mid-stream send/recv errors, and an upgrade
+response that advertises a QWP version outside the client's supported
+range — the last one is per-endpoint, so a host on an in-flight rolling
+upgrade does not lock the client out of compatible peers.
 
 ## 16. Examples
 
