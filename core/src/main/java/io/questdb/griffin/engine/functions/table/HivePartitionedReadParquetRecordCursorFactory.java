@@ -25,19 +25,25 @@
 package io.questdb.griffin.engine.functions.table;
 
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.GenericRecordMetadata;
 import io.questdb.cairo.MutableMetadataRecordCursorFactory;
+import io.questdb.cairo.sql.PageFrameCursor;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.engine.table.PageFrameRecordCursorImpl;
+import io.questdb.griffin.engine.table.PageFrameRowCursorFactory;
 import io.questdb.griffin.engine.table.PushdownFilterExtractor;
 import io.questdb.std.IntList;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
+
+import static io.questdb.cairo.sql.PartitionFrameCursorFactory.ORDER_ASC;
 
 /**
  * Reads many parquet files matched by a glob pattern as a single result set.
@@ -47,8 +53,19 @@ import org.jetbrains.annotations.Nullable;
  * columns) concatenated with hive partition columns derived from {@code key=value}
  * segments in the directory path. Partition column types are inferred from the
  * values encountered across all matched files.
+ * <p>
+ * Two execution paths coexist:
+ * <ul>
+ *   <li>Parallel page frame path when no partition column is VARCHAR. Emits one
+ *       frame per parquet row group across all files; partition values come from
+ *       per-file native buffers via the virtual page overlay.</li>
+ *   <li>Sequential record cursor path when any partition column is VARCHAR.
+ *       Walks files single-threaded and materialises partition values on the
+ *       wrapping {@link io.questdb.cairo.sql.Record}.</li>
+ * </ul>
  */
 public class HivePartitionedReadParquetRecordCursorFactory extends MutableMetadataRecordCursorFactory {
+    private final boolean canPageFrame;
     private final CairoConfiguration configuration;
     private final RecordCursorFactory globCursorFactory;
     private final CharSequence globPattern;
@@ -57,6 +74,8 @@ public class HivePartitionedReadParquetRecordCursorFactory extends MutableMetada
     private final GenericRecordMetadata parquetMetadata;
     private final ObjList<String> partitionColumnNames;
     private final IntList partitionColumnTypes;
+    private PageFrameRecordCursorImpl pageFrameRecordCursor;
+    private HivePartitionedReadParquetPageFrameCursor pageFrameCursor;
     private @Nullable ObjList<PushdownFilterExtractor.PushdownFilterCondition> pushdownFilterConditions;
 
     public HivePartitionedReadParquetRecordCursorFactory(
@@ -78,16 +97,90 @@ public class HivePartitionedReadParquetRecordCursorFactory extends MutableMetada
         this.parquetMetadata = parquetMetadata;
         this.partitionColumnNames = partitionColumnNames;
         this.partitionColumnTypes = partitionColumnTypes;
+        this.canPageFrame = computeCanPageFrame(partitionColumnTypes);
     }
 
     @Override
     public RecordCursor getCursor(SqlExecutionContext executionContext) throws SqlException {
+        if (canPageFrame) {
+            return getPageFrameBackedCursor(executionContext);
+        }
+        return getLegacyCursor(executionContext);
+    }
+
+    @Override
+    public PageFrameCursor getPageFrameCursor(SqlExecutionContext executionContext, int order) throws SqlException {
+        if (!canPageFrame) {
+            return null;
+        }
+        if (pageFrameCursor == null) {
+            pageFrameCursor = new HivePartitionedReadParquetPageFrameCursor(
+                    configuration.getFilesFacade(),
+                    globCursorFactory.getCursor(executionContext),
+                    parquetMetadata,
+                    parquetColumnCount,
+                    partitionColumnNames,
+                    partitionColumnTypes,
+                    nonGlobRoot,
+                    pushdownFilterConditions
+            );
+        }
+        pageFrameCursor.of(executionContext);
+        return pageFrameCursor;
+    }
+
+    @Override
+    public boolean mayHaveParquetPartitions(SqlExecutionContext executionContext) {
+        return true;
+    }
+
+    @Override
+    public boolean recordCursorSupportsRandomAccess() {
+        // The page-frame-backed cursor (used when no VARCHAR partition columns are present)
+        // wraps a PageFrameRecordCursorImpl which supports random access. The legacy path
+        // walks files sequentially and does not.
+        return canPageFrame;
+    }
+
+    @Override
+    public void setPushdownFilterCondition(ObjList<PushdownFilterExtractor.PushdownFilterCondition> pushdownFilterConditions) {
+        this.pushdownFilterConditions = pushdownFilterConditions;
+    }
+
+    @Override
+    public boolean supportsPageFrameCursor() {
+        return canPageFrame;
+    }
+
+    @Override
+    public void toPlan(PlanSink sink) {
+        sink.type("Parquet glob scan").attr("glob").val(globPattern);
+    }
+
+    @Override
+    protected void _close() {
+        Misc.free(globCursorFactory);
+        Misc.free(pageFrameRecordCursor);
+        Misc.free(pageFrameCursor);
+        Misc.freeObjListAndClear(pushdownFilterConditions);
+    }
+
+    private static boolean computeCanPageFrame(IntList partitionColumnTypes) {
+        // VARCHAR partition values need an aux+data layout that the page-frame
+        // path doesn't yet supply. Until that lands, fall back to the sequential
+        // record cursor when any partition column is VARCHAR.
+        for (int i = 0, n = partitionColumnTypes.size(); i < n; i++) {
+            if (ColumnType.tagOf(partitionColumnTypes.getQuick(i)) == ColumnType.VARCHAR) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    private RecordCursor getLegacyCursor(SqlExecutionContext executionContext) throws SqlException {
         final RecordCursor globCursor = globCursorFactory.getCursor(executionContext);
         ReadParquetRecordCursor parquetCursor = null;
         try {
-            // Filter conditions referencing the wrapping factory's partition columns are
-            // silently skipped by ParquetRowGroupFilter.prepareFilterList; only filters on
-            // real parquet columns end up pruning row groups.
             parquetCursor = new ReadParquetRecordCursor(
                     configuration.getFilesFacade(),
                     parquetMetadata,
@@ -110,29 +203,35 @@ public class HivePartitionedReadParquetRecordCursorFactory extends MutableMetada
         }
     }
 
-    @Override
-    public boolean mayHaveParquetPartitions(SqlExecutionContext executionContext) {
-        return true;
-    }
-
-    @Override
-    public boolean recordCursorSupportsRandomAccess() {
-        return false;
-    }
-
-    @Override
-    public void setPushdownFilterCondition(ObjList<PushdownFilterExtractor.PushdownFilterCondition> pushdownFilterConditions) {
-        this.pushdownFilterConditions = pushdownFilterConditions;
-    }
-
-    @Override
-    public void toPlan(PlanSink sink) {
-        sink.type("Parquet glob scan").attr("glob").val(globPattern);
-    }
-
-    @Override
-    protected void _close() {
-        Misc.free(globCursorFactory);
-        Misc.freeObjListAndClear(pushdownFilterConditions);
+    private RecordCursor getPageFrameBackedCursor(SqlExecutionContext executionContext) throws SqlException {
+        if (pageFrameCursor == null) {
+            pageFrameCursor = new HivePartitionedReadParquetPageFrameCursor(
+                    configuration.getFilesFacade(),
+                    globCursorFactory.getCursor(executionContext),
+                    parquetMetadata,
+                    parquetColumnCount,
+                    partitionColumnNames,
+                    partitionColumnTypes,
+                    nonGlobRoot,
+                    pushdownFilterConditions
+            );
+        }
+        if (pageFrameRecordCursor == null) {
+            pageFrameRecordCursor = new PageFrameRecordCursorImpl(
+                    configuration,
+                    getMetadata(),
+                    new PageFrameRowCursorFactory(ORDER_ASC),
+                    true,
+                    null
+            );
+        }
+        pageFrameCursor.of(executionContext);
+        try {
+            pageFrameRecordCursor.of(pageFrameCursor, executionContext);
+            return pageFrameRecordCursor;
+        } catch (Throwable th) {
+            pageFrameRecordCursor.close();
+            throw th;
+        }
     }
 }
