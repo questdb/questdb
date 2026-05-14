@@ -216,6 +216,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     private final ObjList<ColumnIndexer> denseIndexers = new ObjList<>();
     private final ObjList<MapWriter> denseSymbolMapWriters;
     private final int detachedMkDirMode;
+    private final DetachedPostingFileRemover detachedPostingFileRemover = new DetachedPostingFileRemover();
     private final CairoEngine engine;
     private final FilesFacade ff;
     private final int fileOperationRetryCount;
@@ -4055,11 +4056,25 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                             .put(partitionPath)
                             .put(']');
                 }
-                long sealTxn = columnNameTxn;
+                long sealTxn;
                 if (IndexType.isPosting(indexType)) {
-                    long fromPk = PostingIndexUtils.readSealTxnFromKeyFile(
-                            ff, keyFileName(indexType, partitionPath.trimTo(pathLen), columnName, columnNameTxn));
-                    if (fromPk >= 0) sealTxn = fromPk;
+                    // Strict read: throws if .pk is persistently unreadable AND a .pv
+                    // matching columnNameTxn exists, instead of falling back to
+                    // sealTxn=columnNameTxn and surfacing the .pk read failure as a
+                    // misleading "Index value file does not exist" further down.
+                    // Returns -1 only when the chain is legitimately empty
+                    // (V2_NO_HEAD), in which case the live .pv sits at sealTxn=0.
+                    long fromPk = PostingIndexUtils.readLiveSealTxnFromKeyFileOrThrow(
+                            ff,
+                            partitionPath,
+                            pathLen,
+                            columnName,
+                            columnNameTxn,
+                            keyFileName(indexType, partitionPath.trimTo(pathLen), columnName, columnNameTxn));
+                    sealTxn = fromPk >= 0 ? fromPk : 0;
+                } else {
+                    // BITMAP: valueFileName ignores the sealTxn arg.
+                    sealTxn = columnNameTxn;
                 }
                 valueFileName(indexType, partitionPath.trimTo(pathLen), columnName, columnNameTxn, sealTxn);
                 if (!ff.exists(partitionPath.$())) {
@@ -4201,33 +4216,21 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                         long columnNameTxn = attachColumnVersionReader.getColumnNameTxn(partitionTimestamp, colIdx);
                         long sealTxn = columnNameTxn;
                         if (IndexType.isPosting(indexTypeAtDetached)) {
-                            // Read sealTxn before removing .pk, then remove sealed .pv and sidecars
+                            // Best-effort read of the live sealTxn for the BITMAP-style
+                            // explicit removal at the end of this branch. If the .pk is
+                            // unreadable we no longer rely on this value -- the scan
+                            // below enumerates every .pv.<columnNameTxn>.<sealTxn> and
+                            // every .pc<N>.<columnNameTxn>.<C>.<sealTxn> for the column
+                            // and removes them, so a -1 from readSealTxnFromKeyFile no
+                            // longer leaves the sealed .pv behind in the detached dir.
                             long fromPk = PostingIndexUtils.readSealTxnFromKeyFile(
                                     ff, keyFileName(indexTypeAtDetached, detachedPath.trimTo(detachedPartitionRoot), columnName, columnNameTxn));
                             if (fromPk >= 0) {
                                 sealTxn = fromPk;
-                                if (fromPk != columnNameTxn) {
-                                    removeFileOrLog(ff, PostingIndexUtils.valueFileName(
-                                            detachedPath.trimTo(detachedPartitionRoot), columnName, columnNameTxn, fromPk));
-                                }
                             }
                             removeFileOrLog(ff, PostingIndexUtils.coverInfoFileName(detachedPath.trimTo(detachedPartitionRoot), columnName, columnNameTxn));
-                            // Enumerate every .pc<N>.<C>.<S> belonging to this column instance (any sealTxn).
-                            PostingIndexUtils.scanSealedFiles(ff, detachedPath, detachedPartitionRoot, columnName, new PostingIndexUtils.SealedFileVisitor() {
-                                @Override
-                                public void onCoverDataFile(int includeIdx, long postingColumnNameTxn, long coveredColumnNameTxn, long sTxn) {
-                                    if (postingColumnNameTxn != columnNameTxn) {
-                                        return;
-                                    }
-                                    detachedPath.trimTo(detachedPartitionRoot);
-                                    removeFileOrLog(ff, PostingIndexUtils.coverDataFileName(detachedPath, columnName, includeIdx, postingColumnNameTxn, coveredColumnNameTxn, sTxn));
-                                }
-
-                                @Override
-                                public void onValueFile(long postingColumnNameTxn, long sTxn) {
-                                    // .pv is removed via the explicit valueFileName call below.
-                                }
-                            });
+                            detachedPostingFileRemover.of(ff, detachedPath, detachedPartitionRoot, columnName, columnNameTxn);
+                            PostingIndexUtils.scanSealedFiles(ff, detachedPath, detachedPartitionRoot, columnName, detachedPostingFileRemover);
                         }
                         keyFileName(indexTypeAtDetached, detachedPath.trimTo(detachedPartitionRoot), columnName, columnNameTxn);
                         removeFileOrLog(ff, detachedPath.$());
@@ -12991,6 +12994,48 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         void putVarchar(int columnIndex, char value);
 
         void putVarchar(int columnIndex, Utf8Sequence value);
+    }
+
+    /**
+     * Reusable {@link PostingIndexUtils.SealedFileVisitor} that removes every
+     * {@code .pv.<columnNameTxn>.<sealTxn>} and
+     * {@code .pc<N>.<columnNameTxn>.<C>.<sealTxn>} file belonging to a given
+     * column instance from the detached partition directory. Used by
+     * {@link #attachPrepare} when the column was indexed at detach time but
+     * is no longer indexed in the live schema.
+     */
+    private static final class DetachedPostingFileRemover implements PostingIndexUtils.SealedFileVisitor {
+        private CharSequence columnName;
+        private long columnNameTxn;
+        private Path detachedPath;
+        private int detachedPartitionRoot;
+        private FilesFacade ff;
+
+        public void of(FilesFacade ff, Path detachedPath, int detachedPartitionRoot, CharSequence columnName, long columnNameTxn) {
+            this.ff = ff;
+            this.detachedPath = detachedPath;
+            this.detachedPartitionRoot = detachedPartitionRoot;
+            this.columnName = columnName;
+            this.columnNameTxn = columnNameTxn;
+        }
+
+        @Override
+        public void onCoverDataFile(int includeIdx, long postingColumnNameTxn, long coveredColumnNameTxn, long sealTxn) {
+            if (postingColumnNameTxn != columnNameTxn) {
+                return;
+            }
+            detachedPath.trimTo(detachedPartitionRoot);
+            removeFileOrLog(ff, PostingIndexUtils.coverDataFileName(detachedPath, columnName, includeIdx, postingColumnNameTxn, coveredColumnNameTxn, sealTxn));
+        }
+
+        @Override
+        public void onValueFile(long postingColumnNameTxn, long sealTxn) {
+            if (postingColumnNameTxn != columnNameTxn) {
+                return;
+            }
+            detachedPath.trimTo(detachedPartitionRoot);
+            removeFileOrLog(ff, PostingIndexUtils.valueFileName(detachedPath, columnName, postingColumnNameTxn, sealTxn));
+        }
     }
 
     private static class NoOpRow implements Row {
