@@ -227,6 +227,48 @@ public class WalWriterFuzzTest extends AbstractFuzzTest {
         runFuzz(rnd);
     }
 
+    // Regression for the non-WAL POSTING column rename bug where
+    // linkPostingIndexAuxFiles silently fell through when readSealTxnFromKeyFile
+    // returned -1, leaving the renamed column with .d + .pk but no .pv linked.
+    // A later indexed predicate on the renamed column then resolved sealTxn
+    // from the linked .pk's chain entry and failed opening the never-linked
+    // .pv.<columnNameTxn>.<sealTxn>. Seeds captured from a CI failure of
+    // testConvertPartitionToParquet. The fuzz harness's FailureFileFacade
+    // injects the .pk read failure that the silent-skip code path used to
+    // swallow; the strict reader's tri-state retry now re-opens the .pk on
+    // the second attempt, sees the real chain head, and links the matching
+    // .pv before the rename commits.
+    @Test
+    public void testConvertPartitionToParquetRenameMissingPostingValue() throws Exception {
+        Rnd rnd = generateRandom(LOG, 7_759_823_511_215_046L, 1_778_689_403_692L);
+        setTestParams(rnd);
+
+        setFuzzProbabilities(
+                0.01,
+                0.01,
+                0.01,
+                0.1,
+                0.05,
+                0.05,
+                0.1,
+                0.0,
+                1.0,
+                0.01,
+                0.01,
+                0.5,
+                0.5,
+                0.1,
+                0.0,
+                0.8,
+                0.00,
+                0,
+                0.01,
+                0.1
+        );
+        setFuzzCounts(rnd.nextBoolean(), 10_000, 300, 20, 10, 1000, 100, 3);
+        runFuzz(rnd);
+    }
+
     @Test
     public void testChunkedSequencerWriting() throws Exception {
         Rnd rnd = generateRandom(LOG);
