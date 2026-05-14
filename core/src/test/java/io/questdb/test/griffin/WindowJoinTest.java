@@ -6811,6 +6811,176 @@ public class WindowJoinTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testWithProjectedMasterSymbol() throws Exception {
+        // https://github.com/questdb/questdb/issues/7097
+        // The master is a sub-select with a virtual column, which forces the master
+        // factory to wrap and expose the SYMBOL column through a SymbolColumn rather
+        // than a StaticSymbolTable. The fast path must unwrap to the underlying static
+        // symbol table instead of crashing with a ClassCastException.
+        Assume.assumeTrue(leftTableTimestampType == TestTimestampType.MICRO);
+        Assume.assumeTrue(rightTableTimestampType == TestTimestampType.MICRO);
+        assertMemoryLeak(() -> {
+            execute(
+                    "create table trades (" +
+                            "  sym symbol," +
+                            "  price double," +
+                            "  ts timestamp" +
+                            ") timestamp(ts) partition by day;"
+            );
+            execute(
+                    "create table prices (" +
+                            "  sym symbol," +
+                            "  bid double," +
+                            "  ts timestamp" +
+                            ") timestamp(ts) partition by day;"
+            );
+
+            execute(
+                    "insert into trades values " +
+                            "('A', 1.0, '2023-01-01T09:00:00.000000Z')," +
+                            "('A', 2.0, '2023-01-01T09:01:00.000000Z')," +
+                            "('B', 3.0, '2023-01-01T09:00:00.000000Z')," +
+                            "('B', 4.0, '2023-01-01T09:02:00.000000Z');"
+            );
+            execute(
+                    "insert into prices values " +
+                            "('A', 10.0, '2023-01-01T08:59:30.000000Z')," +
+                            "('A', 20.0, '2023-01-01T09:00:30.000000Z')," +
+                            "('A', 30.0, '2023-01-01T09:01:30.000000Z')," +
+                            "('B', 40.0, '2023-01-01T09:00:00.000000Z')," +
+                            "('B', 50.0, '2023-01-01T09:02:30.000000Z');"
+            );
+
+            // The virtual `p2` column wraps the master in a VirtualRecordCursorFactory,
+            // which does not support page frames, so the single-threaded fast path is used.
+            final String query = "SELECT a.sym, a.ts, sum(p.bid) AS s " +
+                    "FROM (SELECT sym, ts, price + 0 AS p2 FROM trades) a " +
+                    "WINDOW JOIN prices p " +
+                    "ON (a.sym = p.sym) " +
+                    "RANGE BETWEEN 1 MINUTE PRECEDING AND 1 MINUTE FOLLOWING EXCLUDE PREVAILING " +
+                    "ORDER BY a.ts, a.sym";
+
+            assertPlanNoLeakCheck(
+                    query,
+                    """
+                            Encode sort
+                              keys: [ts, sym]
+                                Window Fast Join
+                                  vectorized: true
+                                  symbol: sym=sym
+                                  window lo: 60000000 preceding (exclude prevailing)
+                                  window hi: 60000000 following
+                                    VirtualRecord
+                                      functions: [sym,ts]
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: trades
+                                    PageFrame
+                                        Row forward scan
+                                        Frame forward scan on: prices
+                            """
+            );
+
+            assertQueryNoLeakCheck(
+                    """
+                            sym\tts\ts
+                            A\t2023-01-01T09:00:00.000000Z\t30.0
+                            B\t2023-01-01T09:00:00.000000Z\t40.0
+                            A\t2023-01-01T09:01:00.000000Z\t50.0
+                            B\t2023-01-01T09:02:00.000000Z\t50.0
+                            """,
+                    query,
+                    "ts",
+                    true,
+                    true
+            );
+        });
+    }
+
+    @Test
+    public void testWithProjectedMasterSymbolAsync() throws Exception {
+        // Smoke test for the async fast path counterpart of testWithProjectedMasterSymbol.
+        // The bug as reported only triggers in the single-threaded path because async
+        // requires page frame support on the master (which masks the SymbolColumn wrap),
+        // but AsyncWindowJoinFastAtom carries the same defensive unwrap.
+        Assume.assumeTrue(leftTableTimestampType == TestTimestampType.MICRO);
+        Assume.assumeTrue(rightTableTimestampType == TestTimestampType.MICRO);
+        assertMemoryLeak(() -> {
+            execute(
+                    "create table trades (" +
+                            "  sym symbol," +
+                            "  price double," +
+                            "  ts timestamp" +
+                            ") timestamp(ts) partition by day;"
+            );
+            execute(
+                    "create table prices (" +
+                            "  sym symbol," +
+                            "  bid double," +
+                            "  ts timestamp" +
+                            ") timestamp(ts) partition by day;"
+            );
+
+            execute(
+                    "insert into trades values " +
+                            "('A', 1.0, '2023-01-01T09:00:00.000000Z')," +
+                            "('A', 2.0, '2023-01-01T09:01:00.000000Z')," +
+                            "('B', 3.0, '2023-01-01T09:00:00.000000Z')," +
+                            "('B', 4.0, '2023-01-01T09:02:00.000000Z');"
+            );
+            execute(
+                    "insert into prices values " +
+                            "('A', 10.0, '2023-01-01T08:59:30.000000Z')," +
+                            "('A', 20.0, '2023-01-01T09:00:30.000000Z')," +
+                            "('A', 30.0, '2023-01-01T09:01:30.000000Z')," +
+                            "('B', 40.0, '2023-01-01T09:00:00.000000Z')," +
+                            "('B', 50.0, '2023-01-01T09:02:30.000000Z');"
+            );
+
+            // Column-only sub-select keeps page frame support, so the async fast path is used.
+            final String query = "SELECT a.sym, a.ts, sum(p.bid) AS s " +
+                    "FROM (SELECT sym, ts FROM trades) a " +
+                    "WINDOW JOIN prices p " +
+                    "ON (a.sym = p.sym) " +
+                    "RANGE BETWEEN 1 MINUTE PRECEDING AND 1 MINUTE FOLLOWING EXCLUDE PREVAILING " +
+                    "ORDER BY a.ts, a.sym";
+
+            assertPlanNoLeakCheck(
+                    query,
+                    """
+                            Encode sort
+                              keys: [ts, sym]
+                                Async Window Fast Join workers: 1
+                                  vectorized: true
+                                  symbol: sym=sym
+                                  window lo: 60000000 preceding (exclude prevailing)
+                                  window hi: 60000000 following
+                                    PageFrame
+                                        Row forward scan
+                                        Frame forward scan on: trades
+                                    PageFrame
+                                        Row forward scan
+                                        Frame forward scan on: prices
+                            """
+            );
+
+            assertQueryNoLeakCheck(
+                    """
+                            sym\tts\ts
+                            A\t2023-01-01T09:00:00.000000Z\t30.0
+                            B\t2023-01-01T09:00:00.000000Z\t40.0
+                            A\t2023-01-01T09:01:00.000000Z\t50.0
+                            B\t2023-01-01T09:02:00.000000Z\t50.0
+                            """,
+                    query,
+                    "ts",
+                    true,
+                    false
+            );
+        });
+    }
+
+    @Test
     public void testWithSymbolEqualConditionInSameTable() throws Exception {
         // timestamp types don't matter for this test
         Assume.assumeTrue(leftTableTimestampType == TestTimestampType.MICRO);

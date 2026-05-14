@@ -351,7 +351,8 @@ public class WindowJoinFastRecordCursorFactory extends AbstractRecordCursorFacto
 
         protected void setupSlaveLookupMap(RecordCursor masterCursor, TimeFrameCursor slaveCursor) {
             slaveSymbolLookupMap.reopen();
-            StaticSymbolTable masterSymbolTable = (StaticSymbolTable) masterCursor.getSymbolTable(masterSymbolIndex);
+            // Master may project the symbol through a SymbolColumn (e.g. CTE / sub-select), so unwrap.
+            StaticSymbolTable masterSymbolTable = asStaticSymbolTable(masterCursor.getSymbolTable(masterSymbolIndex));
             StaticSymbolTable slaveSymbolTable = slaveCursor.getSymbolTable(slaveSymbolIndex);
             for (int masterKey = 0, n = masterSymbolTable.getSymbolCount(); masterKey < n; masterKey++) {
                 final CharSequence masterSym = masterSymbolTable.valueOf(masterKey);
