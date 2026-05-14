@@ -1620,6 +1620,46 @@ public class ParquetTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testVarcharAsciiFlagAfterRewriteWithNonAsciiAppend() throws Exception {
+        // Regression test: VARCHAR column-level ascii flag must not stay stale
+        // across a parquet rewrite that adds non-ASCII bytes.
+        //
+        // When the partition is converted to parquet while the column is
+        // all-ASCII, to_parquet_schema records ascii=Some(true) in the
+        // parquet file's QDB metadata. A later O3 insert with non-ASCII data
+        // triggers processParquetPartition, which goes through
+        // ParquetUpdater::end. Without the fix, end() reuses the old
+        // qdb_meta and preserves the stale ascii=Some(true). The new parquet
+        // file then claims the column is ASCII, and on read every aux header
+        // gets HEADER_FLAG_ASCII set, so isAscii() returns true for bytes
+        // that are not ASCII. TestUtils.println calls assertAsciiCompliance
+        // per VARCHAR row, so the assertSql below fails on the non-ASCII row
+        // without the fix.
+        assertMemoryLeak(() -> {
+            execute("create table x (s varchar, ts timestamp) timestamp(ts) partition by day wal;");
+            execute("insert into x values ('hello', '2020-01-01T00:00:00.000Z');");
+            execute("insert into x values ('world', '2020-01-01T12:00:00.000Z');");
+            drainWalQueue();
+
+            execute("alter table x convert partition to parquet list '2020-01-01';");
+            drainWalQueue();
+
+            // Backdated insert forces an O3 rewrite through ParquetUpdater::end.
+            // 'héllo' has a non-ASCII codepoint (e-acute, U+00E9).
+            execute("insert into x values ('héllo', '2020-01-01T06:00:00.000Z');");
+            drainWalQueue();
+
+            assertSql(
+                    "s\tts\n" +
+                            "hello\t2020-01-01T00:00:00.000000Z\n" +
+                            "héllo\t2020-01-01T06:00:00.000000Z\n" +
+                            "world\t2020-01-01T12:00:00.000000Z\n",
+                    "x order by ts"
+            );
+        });
+    }
+
+    @Test
     public void testWalAlterColumnTypeWithParquetPartition() throws Exception {
         // Regression test: ALTER TABLE ALTER COLUMN TYPE on a WAL table with
         // parquet partitions.
