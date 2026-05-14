@@ -703,6 +703,219 @@ public class PostingIndexCriticalIssuesTest extends AbstractCairoTest {
         });
     }
 
+    @Test
+    public void testReaderHidesHeadEntryTailGensAbovePin() throws Exception {
+        assertMemoryLeak(() -> {
+            final String name = "reader_pin_tail_gen_visibility";
+            try (Path path = new Path().of(configuration.getDbRoot())) {
+                final int plen = path.size();
+                try (PostingIndexWriter writer = new PostingIndexWriter(configuration)) {
+                    writer.of(path.trimTo(plen), name, COLUMN_NAME_TXN_NONE, true);
+                    writer.setNextTxnAtSeal(1L);
+                    writer.add(0, 0);
+                    writer.add(0, 1);
+                    writer.setMaxValue(1);
+                    writer.commit();
+
+                    // currentTableTxn=2 so neither slot is trimmed -- we want
+                    // both gens persisted to disk so the reader-side pin
+                    // filter is what hides slot[1] for low-pinned readers.
+                    writer.setCurrentTableTxn(2L);
+                    writer.of(path.trimTo(plen), name, COLUMN_NAME_TXN_NONE, false);
+
+                    writer.setNextTxnAtSeal(2L);
+                    writer.add(1, 2);
+                    writer.add(1, 3);
+                    writer.setMaxValue(3);
+                    writer.commit();
+                }
+
+                try (PostingIndexFwdReader reader = new PostingIndexFwdReader(
+                        configuration, path.trimTo(plen), name,
+                        COLUMN_NAME_TXN_NONE, /* partitionTxn */ 0, /* columnTop */ 0);
+                     DirectBitSet foundKeys = new DirectBitSet(8)) {
+                    reader.setPinnedTableTxn(2L);
+                    reader.reloadConditionally();
+                    int distinct = reader.collectDistinctKeys(foundKeys);
+                    Assert.assertEquals(
+                            "pin >= slot[1].TXN_AT_SEAL: both gens visible",
+                            2, distinct);
+                    Assert.assertTrue(foundKeys.get(0));
+                    Assert.assertTrue(foundKeys.get(1));
+                }
+
+                try (PostingIndexFwdReader reader = new PostingIndexFwdReader(
+                        configuration, path.trimTo(plen), name,
+                        COLUMN_NAME_TXN_NONE, /* partitionTxn */ 0, /* columnTop */ 0);
+                     DirectBitSet foundKeys = new DirectBitSet(8)) {
+                    reader.setPinnedTableTxn(1L);
+                    reader.reloadConditionally();
+                    int distinct = reader.collectDistinctKeys(foundKeys);
+                    Assert.assertEquals(
+                            "pin = slot[0].TXN_AT_SEAL: only gen 0 visible",
+                            1, distinct);
+                    Assert.assertTrue(foundKeys.get(0));
+                    Assert.assertFalse(
+                            "key=1 lives in gen 1 (slot[1].TXN_AT_SEAL=2 > pin)",
+                            foundKeys.get(1)
+                    );
+
+                    try (RowCursor cursor = reader.getCursor(/* key */ 1, /* minValue */ 0, /* maxValue */ Long.MAX_VALUE)) {
+                        Assert.assertFalse(
+                                "rowids from the pin-hidden gen must not surface through getCursor",
+                                cursor.hasNext()
+                        );
+                    }
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testReaderPinChangeViaReloadConditionallyRePicks() throws Exception {
+        assertMemoryLeak(() -> {
+            final String name = "reader_pin_reload_repick";
+            try (Path path = new Path().of(configuration.getDbRoot())) {
+                final int plen = path.size();
+                try (PostingIndexWriter writer = new PostingIndexWriter(configuration)) {
+                    writer.of(path.trimTo(plen), name, COLUMN_NAME_TXN_NONE, true);
+                    writer.setNextTxnAtSeal(1L);
+                    writer.add(0, 0);
+                    writer.setMaxValue(0);
+                    writer.commit();
+
+                    writer.setCurrentTableTxn(2L);
+                    writer.of(path.trimTo(plen), name, COLUMN_NAME_TXN_NONE, false);
+
+                    writer.setNextTxnAtSeal(2L);
+                    writer.add(1, 1);
+                    writer.setMaxValue(1);
+                    writer.commit();
+                }
+
+                try (PostingIndexFwdReader reader = new PostingIndexFwdReader(
+                        configuration, path.trimTo(plen), name,
+                        COLUMN_NAME_TXN_NONE, /* partitionTxn */ 0, /* columnTop */ 0);
+                     DirectBitSet foundKeys = new DirectBitSet(8)) {
+                    // Default Long.MAX_VALUE pin: both gens visible.
+                    Assert.assertEquals(2, reader.collectDistinctKeys(foundKeys));
+                    foundKeys.clear();
+
+                    // Lower the pin under slot[1]; reloadConditionally must
+                    // re-pick even though the chain header has not advanced.
+                    reader.setPinnedTableTxn(1L);
+                    reader.reloadConditionally();
+                    Assert.assertEquals(1, reader.collectDistinctKeys(foundKeys));
+                    Assert.assertTrue(foundKeys.get(0));
+                    Assert.assertFalse(foundKeys.get(1));
+                    foundKeys.clear();
+
+                    // Raise the pin back above slot[1]; re-pick exposes gen 1.
+                    reader.setPinnedTableTxn(Long.MAX_VALUE);
+                    reader.reloadConditionally();
+                    Assert.assertEquals(2, reader.collectDistinctKeys(foundKeys));
+                    Assert.assertTrue(foundKeys.get(0));
+                    Assert.assertTrue(foundKeys.get(1));
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testRecoveryHidesFailedExtendHeadFromReader() throws Exception {
+        assertMemoryLeak(() -> {
+            final String name = "extend_head_failed_recovery_query";
+            try (Path path = new Path().of(configuration.getDbRoot())) {
+                final int plen = path.size();
+                try (PostingIndexWriter writer = new PostingIndexWriter(configuration)) {
+                    writer.of(path.trimTo(plen), name, COLUMN_NAME_TXN_NONE, true);
+                    writer.setNextTxnAtSeal(1L);
+                    for (long row = 0; row < 10; row++) {
+                        writer.add(0, row);
+                    }
+                    writer.setMaxValue(9);
+                    writer.commit();
+
+                    writer.setCurrentTableTxn(1L);
+                    writer.of(path.trimTo(plen), name, COLUMN_NAME_TXN_NONE, false);
+
+                    writer.setNextTxnAtSeal(2L);
+                    for (long row = 10; row < 20; row++) {
+                        writer.add(1, row);
+                    }
+                    writer.setMaxValue(19);
+                    writer.commit();
+                }
+
+                try (PostingIndexWriter writer = new PostingIndexWriter(configuration)) {
+                    writer.setCurrentTableTxn(1L);
+                    writer.of(path.trimTo(plen), name, COLUMN_NAME_TXN_NONE, false);
+                }
+
+                try (PostingIndexFwdReader reader = new PostingIndexFwdReader(
+                        configuration, path.trimTo(plen), name,
+                        COLUMN_NAME_TXN_NONE, /* partitionTxn */ 0, /* columnTop */ 0);
+                     DirectBitSet foundKeys = new DirectBitSet(8)) {
+                    int distinct = reader.collectDistinctKeys(foundKeys);
+                    Assert.assertEquals(
+                            "only the committed key (0) should remain after recovery",
+                            1, distinct);
+                    Assert.assertTrue(foundKeys.get(0));
+                    Assert.assertFalse(
+                            "key=1 belongs to an uncommitted txn; must not be visible",
+                            foundKeys.get(1)
+                    );
+
+                    try (RowCursor cursor = reader.getCursor(/* key */ 1, /* minValue */ 0, /* maxValue */ Long.MAX_VALUE)) {
+                        Assert.assertFalse(
+                                "uncommitted rowids for key=1 must not surface through getCursor",
+                                cursor.hasNext()
+                        );
+                    }
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testRecoveryTrimsExtendHeadFailedTailGens() throws Exception {
+        assertMemoryLeak(() -> {
+            final String name = "extend_head_failed_recovery";
+            try (Path path = new Path().of(configuration.getDbRoot())) {
+                final int plen = path.size();
+                try (PostingIndexWriter writer = new PostingIndexWriter(configuration)) {
+                    writer.of(path.trimTo(plen), name, COLUMN_NAME_TXN_NONE, true);
+                    writer.setNextTxnAtSeal(1L);
+                    writer.add(0, 0);
+                    writer.add(0, 1);
+                    writer.setMaxValue(1);
+                    writer.commit(); // appendNewEntry -> txnAtSeal=1, genCount=1
+
+                    // Successful commit at table layer would advance committedTxn to 1.
+                    // The reopen below is what TableWriter does between WAL transactions:
+                    // close + open from disk, then drive recovery via setCurrentTableTxn.
+                    writer.setCurrentTableTxn(1L);
+                    writer.of(path.trimTo(plen), name, COLUMN_NAME_TXN_NONE, false);
+
+                    // Batch 2 anticipates txn 2 but the table commit will not run.
+                    writer.setNextTxnAtSeal(2L);
+                    writer.add(1, 2);
+                    writer.add(1, 3);
+                    writer.setMaxValue(3);
+                    writer.commit(); // extendHead -> genCount=2, txnAtSeal STAYS at 1
+                }
+
+                try (PostingIndexWriter writer = new PostingIndexWriter(configuration)) {
+                    writer.setCurrentTableTxn(1L);
+                    writer.of(path.trimTo(plen), name, COLUMN_NAME_TXN_NONE, false);
+                    Assert.assertEquals(
+                            "recovery walk should drop the failed batch 2 gen because batch 2 anticipated txn 2 > committedTxn 1",
+                            1, writer.getGenCount());
+                }
+            }
+        });
+    }
+
     /**
      * {@code TableWriter.linkPostingIndexAuxFiles} must hardlink only the
      * live seal generation's {@code .pc<N>} files to the dst column's
@@ -1983,9 +2196,13 @@ public class PostingIndexCriticalIssuesTest extends AbstractCairoTest {
      * The fix hoists {@code setNextTxnAtSeal(txWriter.getTxn() + 1L)}
      * BEFORE the rebuild commit so the intermediate REBUILD entry is
      * tagged out of every current reader's visibility window
-     * ({@code T_pin <= getTxn() < getTxn()+1}). The trailing
-     * {@code setNextTxnAtSeal(txWriter.getTxn())} for the SEAL entry
-     * keeps its existing tag.
+     * ({@code T_pin <= getTxn() < getTxn()+1}). The trailing SEAL entry
+     * (published after {@code rebuildSidecars}) now uses the same
+     * {@code getTxn()+1L} tag: per-gen visibility via {@code slot[0].TXN_AT_SEAL}
+     * keeps T-pinned readers on the prev entry until {@code txWriter.commit}
+     * lands, and {@code publishPendingPurges} clamps {@code toTableTxn} back
+     * to {@code getTxn()} so the scoreboard max is not pushed past the
+     * not-yet-committed table txn.
      * <p>
      * This test mirrors the FIXED call order at the writer-fixture
      * level and verifies the chain shape: REBUILD inherits the
@@ -3018,7 +3235,7 @@ public class PostingIndexCriticalIssuesTest extends AbstractCairoTest {
      * Reproduces the writer-side root cause of the GraalVM SIGSEGV in
      * hs_err_pid19555 (PostingIndexBenchmarkSuite.walFastLagInsertAndQuery
      * on bench/posting-wal-fastlag): a covering posting index whose chain
-     * head had LEN=96 (= entrySize(genCount=1, coverCount=0)) while .pci
+     * head had LEN=104 (= entrySize(genCount=1, coverCount=0)) while .pci
      * advertised coverCount=1. This test drives PostingIndexWriter through
      * the same lifecycle the WAL fast-lag path follows in production:
      * <ol>
@@ -3095,8 +3312,8 @@ public class PostingIndexCriticalIssuesTest extends AbstractCairoTest {
                         }
                         Assert.assertEquals(
                                 "post-seal head LEN must include the cover footer "
-                                        + "(64 header + genCount*28 gen-dir + coverCount*8 footer, "
-                                        + "padded to 8): expected entrySize(genCount=1, coverCount=1)=104",
+                                        + "(56 header + genCount*44 gen-dir + coverCount*8 footer, "
+                                        + "padded to 8): expected entrySize(genCount=1, coverCount=1)=112",
                                 PostingIndexChainEntry.entrySize(1, coverCount), lenAfterSeal
                         );
 

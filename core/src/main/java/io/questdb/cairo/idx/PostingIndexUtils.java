@@ -175,20 +175,35 @@ public final class PostingIndexUtils {
     public static final byte ENCODING_ADAPTIVE = 0;
     public static final byte ENCODING_DELTA = 1;
     public static final byte ENCODING_EF = 2;
-    public static final int GEN_DIR_ENTRY_SIZE = 28;
+    public static final int GEN_DIR_ENTRY_SIZE = 44;
     public static final int GEN_DIR_OFFSET_FILE_OFFSET = 0;
     public static final int GEN_DIR_OFFSET_KEY_COUNT = 16;
     public static final int GEN_DIR_OFFSET_MAX_KEY = 24;
+    // Cumulative max row id covered by this gen (the entry-level MAX_VALUE
+    // at the moment the writer published this gen). Lets recovery restore
+    // the entry header's MAX_VALUE after trimming in-flight gens off the
+    // tail without rescanning the gen's encoded row ids.
+    public static final int GEN_DIR_OFFSET_MAX_VALUE = 36;
     public static final int GEN_DIR_OFFSET_MIN_KEY = 20;
     public static final int GEN_DIR_OFFSET_SIZE = 8;
+    // Table _txn the gen anticipated when extendHead/appendNewEntry wrote
+    // it. The writer-open recovery walk trims trailing slots with
+    // txnAtSeal > committedTxn before loading head state, so a commit that
+    // bumped GEN_COUNT but never had its txWriter.commit run gets evicted
+    // instead of surfacing as ghost (key, rowId) pairs to readers. Must be
+    // written LAST in publishToChain (after all the other slot fields,
+    // under a storeFence) so a torn write cannot leave a slot with new
+    // metadata but stale txnAtSeal.
+    public static final int GEN_DIR_OFFSET_TXN_AT_SEAL = 28;
     public static final int KEY_FILE_RESERVED = 8192;
     public static final int LONG_OFFSETS_FLAG = 0x4000_0000;
     public static final int MAX_BLOCK_COUNT = 1_000_000; // corruption guard: 64M values at BLOCK_CAPACITY=64
-    // Maximum number of generations a single chain entry can carry. The
-    // bound comes from the per-entry gen-dir region, which lives in the
-    // remaining bytes of an entry's 4KB seqlock page (4088 - 64 header
-    // bytes) divided by GEN_DIR_ENTRY_SIZE = 28.
-    public static final int MAX_GEN_COUNT = 143;
+    // Maximum number of generations a single chain entry can carry before
+    // the writer force-seals. Soft cap: trades seal frequency (lower with
+    // a larger cap, better write throughput) against entry size (gen-dir
+    // grows linearly, inflating reader snapshot cost). PC_HEADER_SIZE is
+    // sized off this constant (one long per gen).
+    public static final int MAX_GEN_COUNT = 128;
     public static final int PACKED_BATCH_SIZE = BLOCK_CAPACITY;
     public static final long PAGE_A_OFFSET = 0;
     public static final long PAGE_B_OFFSET = 4096;
@@ -207,7 +222,7 @@ public final class PostingIndexUtils {
     public static final int PAGE_OFFSET_SEQUENCE_START = 0;
     public static final int PAGE_OFFSET_VALUE_MEM_SIZE = 8;
     public static final int PAGE_SIZE = 4096;
-    public static final int PC_HEADER_SIZE = MAX_GEN_COUNT * Long.BYTES; // 1144
+    public static final int PC_HEADER_SIZE = MAX_GEN_COUNT * Long.BYTES;
     public static final byte SIGNATURE = (byte) 0xfb;
     public static final double SPARSE_SBBF_DEFAULT_FPP = 0.01;
     public static final int SPARSE_SBBF_NUM_BLOCKS_FOOTER_SIZE = Integer.BYTES;
@@ -241,27 +256,27 @@ public final class PostingIndexUtils {
     //   [56..4087]  reserved
     //   [4088..4095] V2_HEADER_OFFSET_SEQUENCE_END
     //
-    // Entry header (V2_ENTRY_HEADER_SIZE = 64 bytes; gen dir follows):
+    // Entry header (V2_ENTRY_HEADER_SIZE = 56 bytes; gen dir follows):
     //   [0..7]      V2_ENTRY_OFFSET_LEN
     //                 total entry size in bytes (header + gen dir).
     //   [8..15]     V2_ENTRY_OFFSET_SEAL_TXN  (>= 1, monotonic per .pk).
-    //   [16..23]    V2_ENTRY_OFFSET_TXN_AT_SEAL
-    //                 the table _txn this entry takes effect at.
-    //                 Readers pick the entry where TXN_AT_SEAL <= pinned _txn
-    //                 (highest such). Entries with TXN_AT_SEAL > _txn are
-    //                 either uncommitted or abandoned.
-    //   [24..31]    V2_ENTRY_OFFSET_VALUE_MEM_SIZE  (.pv.{sealTxn} bytes).
-    //   [32..39]    V2_ENTRY_OFFSET_MAX_VALUE        (highest row id).
-    //   [40..43]    V2_ENTRY_OFFSET_KEY_COUNT
-    //   [44..47]    V2_ENTRY_OFFSET_GEN_COUNT
-    //   [48..51]    V2_ENTRY_OFFSET_BLOCK_CAPACITY
-    //   [52..55]    V2_ENTRY_OFFSET_COVERING_FORMAT (reserved; 0 for now).
-    //   [56..63]    V2_ENTRY_OFFSET_PREV_ENTRY_OFFSET
+    //                 The entry-level "table _txn this entry takes effect at"
+    //                 lives in slot[0]'s TXN_AT_SEAL field. Fast-path multi-
+    //                 commit shares an entry, so visibility / recovery is
+    //                 per-gen; entry-level uses slot[0] (the earliest gen)
+    //                 as the picker's coarse filter.
+    //   [16..23]    V2_ENTRY_OFFSET_VALUE_MEM_SIZE  (.pv.{sealTxn} bytes).
+    //   [24..31]    V2_ENTRY_OFFSET_MAX_VALUE        (highest row id).
+    //   [32..35]    V2_ENTRY_OFFSET_KEY_COUNT
+    //   [36..39]    V2_ENTRY_OFFSET_GEN_COUNT
+    //   [40..43]    V2_ENTRY_OFFSET_BLOCK_CAPACITY
+    //   [44..47]    V2_ENTRY_OFFSET_COVERING_FORMAT (reserved; 0 for now).
+    //   [48..55]    V2_ENTRY_OFFSET_PREV_ENTRY_OFFSET
     //                 byte offset of the previous entry, or V2_NO_HEAD if
     //                 this is the oldest entry. Lets readers walk backwards
     //                 from head without scanning the whole region.
-    //   [64..]      gen dir, GEN_COUNT * GEN_DIR_ENTRY_SIZE bytes.
-    //   [64 + GEN_COUNT * GEN_DIR_ENTRY_SIZE ..]
+    //   [56..]      gen dir, GEN_COUNT * GEN_DIR_ENTRY_SIZE bytes.
+    //   [56 + GEN_COUNT * GEN_DIR_ENTRY_SIZE ..]
     //               cover end-offset footer, COVER_COUNT * COVER_END_OFFSET_ENTRY_SIZE
     //               bytes. The c-th long is the writer's append offset in
     //               .pc{c}.<...>.<SEAL_TXN> at the moment this entry was
@@ -271,17 +286,16 @@ public final class PostingIndexUtils {
     //               every entry in this .pk file. The footer is empty when
     //               COVER_COUNT == 0. The whole entry is then 8-byte aligned
     //               via PostingIndexChainEntry.entrySize.
-    public static final int V2_ENTRY_HEADER_SIZE = 64;
-    public static final int V2_ENTRY_OFFSET_BLOCK_CAPACITY = 48;
-    public static final int V2_ENTRY_OFFSET_COVERING_FORMAT = 52;
-    public static final int V2_ENTRY_OFFSET_GEN_COUNT = 44;
-    public static final int V2_ENTRY_OFFSET_KEY_COUNT = 40;
+    public static final int V2_ENTRY_HEADER_SIZE = 56;
+    public static final int V2_ENTRY_OFFSET_BLOCK_CAPACITY = 40;
+    public static final int V2_ENTRY_OFFSET_COVERING_FORMAT = 44;
+    public static final int V2_ENTRY_OFFSET_GEN_COUNT = 36;
+    public static final int V2_ENTRY_OFFSET_KEY_COUNT = 32;
     public static final int V2_ENTRY_OFFSET_LEN = 0;
-    public static final int V2_ENTRY_OFFSET_MAX_VALUE = 32;
-    public static final int V2_ENTRY_OFFSET_PREV_ENTRY_OFFSET = 56;
+    public static final int V2_ENTRY_OFFSET_MAX_VALUE = 24;
+    public static final int V2_ENTRY_OFFSET_PREV_ENTRY_OFFSET = 48;
     public static final int V2_ENTRY_OFFSET_SEAL_TXN = 8;
-    public static final int V2_ENTRY_OFFSET_TXN_AT_SEAL = 16;
-    public static final int V2_ENTRY_OFFSET_VALUE_MEM_SIZE = 24;
+    public static final int V2_ENTRY_OFFSET_VALUE_MEM_SIZE = 16;
     public static final long V2_ENTRY_REGION_BASE = 8192L;
     public static final int V2_FORMAT_VERSION = 2;
     public static final int V2_HEADER_OFFSET_ENTRY_COUNT = 24;

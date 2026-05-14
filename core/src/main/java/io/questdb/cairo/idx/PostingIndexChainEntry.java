@@ -38,24 +38,29 @@ import io.questdb.std.Unsafe;
  * GC — at which point the entry is no longer reachable from the chain head
  * and no reader can be pinned on it.
  * <p>
- * Entry layout (header is V2_ENTRY_HEADER_SIZE = 64 bytes):
+ * Entry layout (header is V2_ENTRY_HEADER_SIZE = 56 bytes):
  * <pre>
  *   [0..7]                                              LEN
  *   [8..15]                                             SEAL_TXN
- *   [16..23]                                            TXN_AT_SEAL
- *   [24..31]                                            VALUE_MEM_SIZE
- *   [32..39]                                            MAX_VALUE
- *   [40..43]                                            KEY_COUNT
- *   [44..47]                                            GEN_COUNT
- *   [48..51]                                            BLOCK_CAPACITY
- *   [52..55]                                            COVERING_FORMAT (reserved)
- *   [56..63]                                            PREV_ENTRY_OFFSET
- *   [64 ..)                                             GEN_DIR (GEN_COUNT * GEN_DIR_ENTRY_SIZE)
- *   [64 + GEN_COUNT*GEN_DIR_ENTRY_SIZE ..)              COVER_END_OFFSETS (COVER_COUNT * 8 bytes)
+ *   [16..23]                                            VALUE_MEM_SIZE
+ *   [24..31]                                            MAX_VALUE
+ *   [32..35]                                            KEY_COUNT
+ *   [36..39]                                            GEN_COUNT
+ *   [40..43]                                            BLOCK_CAPACITY
+ *   [44..47]                                            COVERING_FORMAT (reserved)
+ *   [48..55]                                            PREV_ENTRY_OFFSET
+ *   [56 ..)                                             GEN_DIR (GEN_COUNT * GEN_DIR_ENTRY_SIZE)
+ *   [56 + GEN_COUNT*GEN_DIR_ENTRY_SIZE ..)              COVER_END_OFFSETS (COVER_COUNT * 8 bytes)
  * </pre>
  * COVER_COUNT is constant for the .pk file's posting column instance and is
  * published in the .pci sidecar header, so every entry in this .pk shares the
  * same cover footer length.
+ * <p>
+ * The entry-level "table _txn this entry takes effect at" (txnAtSeal) is NOT a
+ * header field: it lives in slot[0]'s TXN_AT_SEAL within the gen-dir region.
+ * Entries written with {@code genCount == 0} therefore have no on-disk
+ * txnAtSeal and {@link #read} returns 0 for that case; production writers
+ * always pass {@code genCount >= 1}.
  */
 public final class PostingIndexChainEntry {
 
@@ -116,7 +121,6 @@ public final class PostingIndexChainEntry {
         Unsafe.loadFence();
         into.len = keyMem.getLong(entryOffset + PostingIndexUtils.V2_ENTRY_OFFSET_LEN);
         into.sealTxn = keyMem.getLong(entryOffset + PostingIndexUtils.V2_ENTRY_OFFSET_SEAL_TXN);
-        into.txnAtSeal = keyMem.getLong(entryOffset + PostingIndexUtils.V2_ENTRY_OFFSET_TXN_AT_SEAL);
         into.valueMemSize = keyMem.getLong(entryOffset + PostingIndexUtils.V2_ENTRY_OFFSET_VALUE_MEM_SIZE);
         into.maxValue = keyMem.getLong(entryOffset + PostingIndexUtils.V2_ENTRY_OFFSET_MAX_VALUE);
         into.keyCount = keyMem.getInt(entryOffset + PostingIndexUtils.V2_ENTRY_OFFSET_KEY_COUNT);
@@ -124,6 +128,10 @@ public final class PostingIndexChainEntry {
         into.coveringFormat = keyMem.getInt(entryOffset + PostingIndexUtils.V2_ENTRY_OFFSET_COVERING_FORMAT);
         into.prevEntryOffset = keyMem.getLong(entryOffset + PostingIndexUtils.V2_ENTRY_OFFSET_PREV_ENTRY_OFFSET);
         into.genDirOffset = entryOffset + PostingIndexUtils.V2_ENTRY_HEADER_SIZE;
+        // Entry-level txnAtSeal sources from slot[0] (single source of truth).
+        into.txnAtSeal = into.genCount > 0
+                ? keyMem.getLong(into.genDirOffset + PostingIndexUtils.GEN_DIR_OFFSET_TXN_AT_SEAL)
+                : 0L;
         into.coverFileEndOffsets.clear();
         if (coverCount > 0) {
             long footerOffset = resolveCoverFooterOffset(entryOffset, into.genCount);
@@ -204,14 +212,14 @@ public final class PostingIndexChainEntry {
     }
 
     /**
-     * Write a complete entry header at {@code entryOffset}. Caller must
-     * write the gen dir payload itself afterward (or before the entry is
-     * made visible by publishing the chain head). When {@code coverEndOffsets}
-     * is non-null, this method also fills the cover end-offset footer.
+     * Write a complete entry header at {@code entryOffset}. {@code txnAtSeal}
+     * lands in slot[0]'s {@code TXN_AT_SEAL} field (single on-disk source of
+     * truth for entry-level visibility) when {@code genCount > 0}. Callers
+     * must write the rest of the gen dir payload separately. When
+     * {@code coverEndOffsets} is non-null, also fills the cover footer.
      * <p>
-     * The entry must be fully written and durable on disk before
-     * {@link PostingIndexChainHeader#publish} advances the chain head;
-     * otherwise a reader could observe a stale entry.
+     * The entry must be fully written and durable before
+     * {@link PostingIndexChainHeader#publish} advances the chain head.
      */
     public static void writeHeader(
             MemoryW keyMem,
@@ -231,7 +239,6 @@ public final class PostingIndexChainEntry {
         long len = entrySize(genCount, coverCount);
         keyMem.putLong(entryOffset + PostingIndexUtils.V2_ENTRY_OFFSET_LEN, len);
         keyMem.putLong(entryOffset + PostingIndexUtils.V2_ENTRY_OFFSET_SEAL_TXN, sealTxn);
-        keyMem.putLong(entryOffset + PostingIndexUtils.V2_ENTRY_OFFSET_TXN_AT_SEAL, txnAtSeal);
         keyMem.putLong(entryOffset + PostingIndexUtils.V2_ENTRY_OFFSET_VALUE_MEM_SIZE, valueMemSize);
         keyMem.putLong(entryOffset + PostingIndexUtils.V2_ENTRY_OFFSET_MAX_VALUE, maxValue);
         keyMem.putInt(entryOffset + PostingIndexUtils.V2_ENTRY_OFFSET_KEY_COUNT, keyCount);
@@ -239,6 +246,10 @@ public final class PostingIndexChainEntry {
         keyMem.putInt(entryOffset + PostingIndexUtils.V2_ENTRY_OFFSET_BLOCK_CAPACITY, blockCapacity);
         keyMem.putInt(entryOffset + PostingIndexUtils.V2_ENTRY_OFFSET_COVERING_FORMAT, coveringFormat);
         keyMem.putLong(entryOffset + PostingIndexUtils.V2_ENTRY_OFFSET_PREV_ENTRY_OFFSET, prevEntryOffset);
+        if (genCount > 0) {
+            long slot0Offset = entryOffset + PostingIndexUtils.V2_ENTRY_HEADER_SIZE;
+            keyMem.putLong(slot0Offset + PostingIndexUtils.GEN_DIR_OFFSET_TXN_AT_SEAL, txnAtSeal);
+        }
         if (coverCount > 0) {
             long footerOffset = resolveCoverFooterOffset(entryOffset, genCount);
             for (int c = 0; c < coverCount; c++) {
