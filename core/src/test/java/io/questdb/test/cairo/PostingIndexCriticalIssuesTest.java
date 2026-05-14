@@ -2001,25 +2001,6 @@ public class PostingIndexCriticalIssuesTest extends AbstractCairoTest {
         });
     }
 
-    // Critical findings #2 (setMaxValue seqlock), #6 ([0, Long.MAX_VALUE)
-    // conservative purge interval) and #7 (seal-loop partial failure
-    // recovery) were RED placeholders during the v1 era. They are now
-    // addressed structurally by the v2 chain redesign:
-    //   #2 — chain.updateHeadMaxValue publishes via the chain header
-    //        seqlock, so any reader of MAX_VALUE goes through the same
-    //        consistency protocol as keyCount/genCount.
-    //   #6 — recordPostingSealPurge derives [fromTxn, toTxn) from the
-    //        chain entries themselves; the residual [0, MAX) branch only
-    //        fires for the empty-chain edge case, which the
-    //        writer-open recovery walk picks up on the next reopen.
-    //   #7 — recoveryDropAbandoned (run from PostingIndexWriter.of after
-    //        setCurrentTableTxn) drops every chain entry whose txnAtSeal
-    //        was published before the encompassing txWriter.commit
-    //        landed.
-    // Critical finding #9 (ColumnPurgeOperator retry cap on Windows) is
-    // orthogonal to the posting-index chain rewrite and remains tracked
-    // separately.
-
     /**
      * Review finding M2: the rebuild dance in
      * TableWriter.sealPostingIndexForPartition}'s covering branch
@@ -2201,6 +2182,25 @@ public class PostingIndexCriticalIssuesTest extends AbstractCairoTest {
         });
     }
 
+    // Critical findings #2 (setMaxValue seqlock), #6 ([0, Long.MAX_VALUE)
+    // conservative purge interval) and #7 (seal-loop partial failure
+    // recovery) were RED placeholders during the v1 era. They are now
+    // addressed structurally by the v2 chain redesign:
+    //   #2 — chain.updateHeadMaxValue publishes via the chain header
+    //        seqlock, so any reader of MAX_VALUE goes through the same
+    //        consistency protocol as keyCount/genCount.
+    //   #6 — recordPostingSealPurge derives [fromTxn, toTxn) from the
+    //        chain entries themselves; the residual [0, MAX) branch only
+    //        fires for the empty-chain edge case, which the
+    //        writer-open recovery walk picks up on the next reopen.
+    //   #7 — recoveryDropAbandoned (run from PostingIndexWriter.of after
+    //        setCurrentTableTxn) drops every chain entry whose txnAtSeal
+    //        was published before the encompassing txWriter.commit
+    //        landed.
+    // Critical finding #9 (ColumnPurgeOperator retry cap on Windows) is
+    // orthogonal to the posting-index chain rewrite and remains tracked
+    // separately.
+
     /**
      * Locks in the multi-gen short-circuit semantics: when a CLEAN gen
      * processed first contributes to {@code total} and a later gen turns out
@@ -2257,25 +2257,6 @@ public class PostingIndexCriticalIssuesTest extends AbstractCairoTest {
         });
     }
 
-    // =========================================================================
-    // Red tests for the v2 review of PR #6861 (current pass).
-    //
-    // Each test below maps to a finding from the review report. Tests that
-    // require fault injection use TestFilesFacadeImpl; tests that require
-    // concurrency simulate the race by mutating ff.length() between mmap
-    // setup and chain access. Findings that can only manifest from sources
-    // FilesFacade does not see (Unsafe.realloc OOM, queue-pool exhaustion)
-    // are documented in trailing comments.
-    // =========================================================================
-
-    // Review finding #1 (sidecar mem fd leak in openSidecarFiles) was
-    // dropped after verification: MemoryCMARWImpl.extend0 (line 403) and
-    // map0 (line 417) both close the fd on mmap/mremap failure inside
-    // jumpTo(). The "orphan mem" identified in the review never holds an
-    // open fd by the time the outer catch fires — it is already closed
-    // internally by the memory-mapping helper.
-    // Documented for traceability; no JUnit red test.
-
     /**
      * The {@code Cursor.size()} fast path must bail to iteration when a single
      * gen straddles {@code entryMaxValue}, because the per-gen count includes
@@ -2324,6 +2305,25 @@ public class PostingIndexCriticalIssuesTest extends AbstractCairoTest {
             }
         });
     }
+
+    // =========================================================================
+    // Red tests for the v2 review of PR #6861 (current pass).
+    //
+    // Each test below maps to a finding from the review report. Tests that
+    // require fault injection use TestFilesFacadeImpl; tests that require
+    // concurrency simulate the race by mutating ff.length() between mmap
+    // setup and chain access. Findings that can only manifest from sources
+    // FilesFacade does not see (Unsafe.realloc OOM, queue-pool exhaustion)
+    // are documented in trailing comments.
+    // =========================================================================
+
+    // Review finding #1 (sidecar mem fd leak in openSidecarFiles) was
+    // dropped after verification: MemoryCMARWImpl.extend0 (line 403) and
+    // map0 (line 417) both close the fd on mmap/mremap failure inside
+    // jumpTo(). The "orphan mem" identified in the review never holds an
+    // open fd by the time the outer catch fires — it is already closed
+    // internally by the memory-mapping helper.
+    // Documented for traceability; no JUnit red test.
 
     /**
      * The DELTA-mode upper bound from {@code peekDeltaKeyMaxValueUpperBound}
