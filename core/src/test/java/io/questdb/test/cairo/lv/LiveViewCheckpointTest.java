@@ -30,12 +30,15 @@ import io.questdb.cairo.lv.LiveViewCheckpointBlockType;
 import io.questdb.cairo.lv.LiveViewCheckpointManifest;
 import io.questdb.cairo.lv.LiveViewCheckpointReader;
 import io.questdb.cairo.lv.LiveViewCheckpointWriter;
+import io.questdb.cairo.lv.LiveViewRecovery;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryA;
 import io.questdb.cairo.vm.api.MemoryCMARW;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.MemoryTag;
+import io.questdb.std.Numbers;
 import io.questdb.std.str.Path;
+import io.questdb.std.str.StringSink;
 import io.questdb.test.AbstractCairoTest;
 import org.junit.Assert;
 import org.junit.Test;
@@ -208,6 +211,96 @@ public class LiveViewCheckpointTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testSweepEmptyDirReturnsLongNull() throws Exception {
+        assertMemoryLeak(() -> {
+            try (Path liveViewDir = newLiveViewDir();
+                 Path scratch = new Path()) {
+                final StringSink nameSink = new StringSink();
+                final long head = LiveViewRecovery.sweepCheckpoints(
+                        configuration.getFilesFacade(),
+                        scratch,
+                        liveViewDir,
+                        100L,
+                        nameSink
+                );
+                Assert.assertEquals(Numbers.LONG_NULL, head);
+            }
+        });
+    }
+
+    @Test
+    public void testSweepKeepsOnlyHighestWithinWatermark() throws Exception {
+        assertMemoryLeak(() -> {
+            try (Path liveViewDir = newLiveViewDir();
+                 Path scratch = new Path()) {
+                // Write three valid .cp files at lvSeqTxn 1, 2, 3.
+                for (long n = 1; n <= 3; n++) {
+                    writeMinimalCheckpoint(liveViewDir, n);
+                }
+                final StringSink nameSink = new StringSink();
+                final long head = LiveViewRecovery.sweepCheckpoints(
+                        configuration.getFilesFacade(),
+                        scratch,
+                        liveViewDir,
+                        5L,
+                        nameSink
+                );
+                Assert.assertEquals(3L, head);
+                Assert.assertTrue("highest .cp survives", existsCp(liveViewDir, 3L));
+                Assert.assertFalse("older .cp retired", existsCp(liveViewDir, 1L));
+                Assert.assertFalse("older .cp retired", existsCp(liveViewDir, 2L));
+            }
+        });
+    }
+
+    @Test
+    public void testSweepUnlinksCpAheadOfWatermark() throws Exception {
+        assertMemoryLeak(() -> {
+            try (Path liveViewDir = newLiveViewDir();
+                 Path scratch = new Path()) {
+                writeMinimalCheckpoint(liveViewDir, 7L);
+                writeMinimalCheckpoint(liveViewDir, 15L);
+                final StringSink nameSink = new StringSink();
+                final long head = LiveViewRecovery.sweepCheckpoints(
+                        configuration.getFilesFacade(),
+                        scratch,
+                        liveViewDir,
+                        10L,
+                        nameSink
+                );
+                // 15 was ahead of the watermark (lost _txn advance scenario);
+                // sweep removes it. 7 survives as the head.
+                Assert.assertEquals(7L, head);
+                Assert.assertTrue("watermark-aligned .cp survives", existsCp(liveViewDir, 7L));
+                Assert.assertFalse(".cp ahead of watermark unlinked", existsCp(liveViewDir, 15L));
+            }
+        });
+    }
+
+    @Test
+    public void testSweepRemovesCpTmpOrphans() throws Exception {
+        assertMemoryLeak(() -> {
+            try (Path liveViewDir = newLiveViewDir();
+                 Path scratch = new Path()) {
+                // Plant a .cp.tmp orphan and a valid .cp side by side.
+                touchEmptyFile(liveViewDir, "0000000000000004.cp.tmp");
+                writeMinimalCheckpoint(liveViewDir, 4L);
+                final StringSink nameSink = new StringSink();
+                final long head = LiveViewRecovery.sweepCheckpoints(
+                        configuration.getFilesFacade(),
+                        scratch,
+                        liveViewDir,
+                        100L,
+                        nameSink
+                );
+                Assert.assertEquals(4L, head);
+                Assert.assertFalse(".cp.tmp orphan unlinked", existsRaw(liveViewDir, "0000000000000004.cp.tmp"));
+                Assert.assertTrue(".cp survives", existsCp(liveViewDir, 4L));
+            }
+        });
+    }
+
+    @Test
     public void testWriterCommitWithBlockOpenThrows() throws Exception {
         assertMemoryLeak(() -> {
             try (Path liveViewDir = newLiveViewDir();
@@ -262,6 +355,43 @@ public class LiveViewCheckpointTest extends AbstractCairoTest {
                 .slash();
         LiveViewCheckpointWriter.appendCpFileName(path, lvSeqTxn);
         return path;
+    }
+
+    private static boolean existsCp(Path liveViewDir, long lvSeqTxn) {
+        try (Path probe = openHeadPath(liveViewDir, lvSeqTxn)) {
+            return configuration.getFilesFacade().exists(probe.$());
+        }
+    }
+
+    private static boolean existsRaw(Path liveViewDir, CharSequence fileName) {
+        try (Path probe = new Path()) {
+            probe.of(liveViewDir).concat(LiveViewCheckpointWriter.CHECKPOINT_DIR_NAME).slash().put(fileName);
+            return configuration.getFilesFacade().exists(probe.$());
+        }
+    }
+
+    private static void touchEmptyFile(Path liveViewDir, CharSequence fileName) {
+        final FilesFacade ff = configuration.getFilesFacade();
+        try (Path probe = new Path()) {
+            probe.of(liveViewDir).concat(LiveViewCheckpointWriter.CHECKPOINT_DIR_NAME).slash().put(fileName);
+            long fd = ff.openRW(probe.$(), CairoConfiguration.O_NONE);
+            ff.close(fd);
+        }
+    }
+
+    private static void writeMinimalCheckpoint(Path liveViewDir, long lvSeqTxn) {
+        try (LiveViewCheckpointWriter w = new LiveViewCheckpointWriter(configuration)) {
+            w.of(liveViewDir.$(), lvSeqTxn);
+            w.writeManifestBlock(new LiveViewCheckpointManifest()
+                    .setLvSeqTxn(lvSeqTxn)
+                    .setLvRowPosition(0)
+                    .setBaseSeqTxn(0)
+                    .setMaxTimestamp(0)
+                    .setKind(LiveViewCheckpointManifest.KIND_STEADY));
+            // commit with no prior; the sweep is the unlink driver, not the
+            // writer.
+            w.commit(Long.MIN_VALUE);
+        }
     }
 
     private Path newLiveViewDir() {
