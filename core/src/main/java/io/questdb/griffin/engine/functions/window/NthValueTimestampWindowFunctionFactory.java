@@ -444,7 +444,7 @@ public class NthValueTimestampWindowFunctionFactory extends AbstractWindowFuncti
 
         @Override
         public void toPlan(PlanSink sink) {
-            sink.val(NAME);
+            sink.val(getName());
             sink.val('(').val(arg).val(',').val(n).val(')');
             sink.val(" over (rows between current row and current row)");
         }
@@ -512,7 +512,7 @@ public class NthValueTimestampWindowFunctionFactory extends AbstractWindowFuncti
 
         @Override
         public void toPlan(PlanSink sink) {
-            sink.val(NAME);
+            sink.val(getName());
             sink.val('(').val(arg).val(',').val(n).val(')');
             sink.val(" over (");
             sink.val("partition by ");
@@ -1634,7 +1634,7 @@ public class NthValueTimestampWindowFunctionFactory extends AbstractWindowFuncti
 
         @Override
         public void toPlan(PlanSink sink) {
-            sink.val(NAME);
+            sink.val(getName());
             sink.val('(').val(arg).val(',').val(n).val(')');
             sink.val(" over (rows between unbounded preceding and current row)");
         }
@@ -1702,7 +1702,7 @@ public class NthValueTimestampWindowFunctionFactory extends AbstractWindowFuncti
 
         @Override
         public void toPlan(PlanSink sink) {
-            sink.val(NAME);
+            sink.val(getName());
             sink.val('(').val(arg).val(',').val(n).val(')');
             sink.val(" over ()");
         }

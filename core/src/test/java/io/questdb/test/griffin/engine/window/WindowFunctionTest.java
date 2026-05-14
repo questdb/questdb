@@ -15544,21 +15544,23 @@ public class WindowFunctionTest extends AbstractCairoTest {
     @Test
     public void testNthValueLongPass1ViaMixedWindowPlan() throws Exception {
         // Long-type analogue of testNthValuePass1ViaMixedWindowPlan. Pairs a TWO_PASS
-        // cume_dist column with the eight ZERO_PASS nth_value(long) frame shapes so the
-        // CachedWindowRecordCursorFactory dispatch invokes pass1() on every Long variant.
+        // cume_dist column with the nine ZERO_PASS nth_value(long) frame shapes so the
+        // CachedWindowRecordCursorFactory dispatch invokes pass1() on every Long variant
+        // including NthValueOverUnboundedRowsFrameFunction (nv9, rows between unbounded
+        // preceding and current row).
         assertMemoryLeak(() -> {
             executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, i long, val long) timestamp(ts)", timestampType.getTypeName());
             execute("insert into tab values (1, 1, 10), (2, 1, 20), (3, 1, 30), (4, 2, 40), (5, 2, 50), (6, 2, 60)");
 
             assertQueryNoLeakCheck(
                     replaceTimestampSuffix1("""
-                            ts\tcd\tcd_no\tnv1\tnv2\tnv3\tnv4\tnv5\tnv6\tnv7\tnv8
-                            1970-01-01T00:00:00.000001Z\t0.16666666666666666\t1.0\t10\tnull\tnull\tnull\tnull\tnull\tnull\tnull
-                            1970-01-01T00:00:00.000002Z\t0.3333333333333333\t1.0\t20\t20\t20\t10\t20\t20\tnull\t20
-                            1970-01-01T00:00:00.000003Z\t0.5\t1.0\t30\t20\t20\t10\t20\t20\t20\t20
-                            1970-01-01T00:00:00.000004Z\t0.6666666666666666\t1.0\t40\tnull\tnull\tnull\t20\t30\t20\tnull
-                            1970-01-01T00:00:00.000005Z\t0.8333333333333334\t1.0\t50\t50\t50\t40\t20\t40\t20\t50
-                            1970-01-01T00:00:00.000006Z\t1.0\t1.0\t60\t50\t50\t40\t20\t50\t20\t50
+                            ts\tcd\tcd_no\tnv1\tnv2\tnv3\tnv4\tnv5\tnv6\tnv7\tnv8\tnv9
+                            1970-01-01T00:00:00.000001Z\t0.16666666666666666\t1.0\t10\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull
+                            1970-01-01T00:00:00.000002Z\t0.3333333333333333\t1.0\t20\t20\t20\t10\t20\t20\tnull\t20\t20
+                            1970-01-01T00:00:00.000003Z\t0.5\t1.0\t30\t20\t20\t10\t20\t20\t20\t20\t20
+                            1970-01-01T00:00:00.000004Z\t0.6666666666666666\t1.0\t40\tnull\tnull\tnull\t20\t30\t20\tnull\t20
+                            1970-01-01T00:00:00.000005Z\t0.8333333333333334\t1.0\t50\t50\t50\t40\t20\t40\t20\t50\t20
+                            1970-01-01T00:00:00.000006Z\t1.0\t1.0\t60\t50\t50\t40\t20\t50\t20\t50\t20
                             """),
                     "select ts, " +
                             "cume_dist() over (order by ts) cd, " +
@@ -15570,7 +15572,8 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             "nth_value(val, 2) over (order by ts range between 1 second preceding and current row) nv5, " +
                             "nth_value(val, 2) over (order by ts rows between 2 preceding and current row) nv6, " +
                             "nth_value(val, 2) over (order by ts rows between unbounded preceding and 1 preceding) nv7, " +
-                            "nth_value(val, 2) over (partition by i order by ts) nv8 " +
+                            "nth_value(val, 2) over (partition by i order by ts) nv8, " +
+                            "nth_value(val, 2) over (order by ts rows between unbounded preceding and current row) nv9 " +
                             "from tab",
                     "ts",
                     true,
@@ -16828,6 +16831,60 @@ public class WindowFunctionTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testNthValueLongRangeUnboundedToUnbounded() throws Exception {
+        // Long-type analogue. RANGE BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING
+        // (no partition) routes to NthValueOverWholeResultSetFunction through the
+        // (rowsLo == Long.MIN_VALUE && rowsHi == Long.MAX_VALUE) branch of the RANGE
+        // dispatch -- a different factory line from the syntactic `over ()` form.
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, val long) timestamp(ts)", timestampType.getTypeName());
+            execute("insert into tab values (1, 10), (2, 20), (3, 30), (4, 40)");
+
+            assertQueryNoLeakCheck(
+                    replaceTimestampSuffix1("""
+                            ts\tnv
+                            1970-01-01T00:00:00.000001Z\t30
+                            1970-01-01T00:00:00.000002Z\t30
+                            1970-01-01T00:00:00.000003Z\t30
+                            1970-01-01T00:00:00.000004Z\t30
+                            """),
+                    "select ts, nth_value(val, 3) over (" +
+                            "order by ts range between unbounded preceding and unbounded following) nv from tab",
+                    "ts",
+                    true,
+                    true
+            );
+        });
+    }
+
+    @Test
+    public void testNthValueLongPartitionedN1WholePartition() throws Exception {
+        // Long-type analogue of testNthValuePartitionedN1WholePartition. Whole-partition
+        // default frame with n=1 pins the value.isNew() && n == 1 branch of
+        // NthValueOverPartitionFunction.pass1 where the first row's value is stored
+        // immediately rather than initialised to LONG_NULL.
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, i long, val long) timestamp(ts)", timestampType.getTypeName());
+            execute("insert into tab values (1, 1, 10), (2, 1, 20), (3, 1, 30), (4, 2, 40), (5, 2, 50)");
+
+            assertQueryNoLeakCheck(
+                    """
+                            i\tnv
+                            1\t10
+                            1\t10
+                            1\t10
+                            2\t40
+                            2\t40
+                            """,
+                    "select i, nth_value(val, 1) over (partition by i) nv from tab order by i, ts",
+                    null,
+                    true,
+                    true
+            );
+        });
+    }
+
+    @Test
     public void testNthValueLongPartitionedRangeFrameEvictWithoutEntry() throws Exception {
         // Long-type analogue. Partition + bounded RANGE with sparse rows so each
         // predecessor is evicted in the shrink loop while frameSize is still 0. Pins
@@ -17093,21 +17150,23 @@ public class WindowFunctionTest extends AbstractCairoTest {
     @Test
     public void testNthValueTimestampPass1ViaMixedWindowPlan() throws Exception {
         // Timestamp-type analogue of testNthValuePass1ViaMixedWindowPlan. Pairs a TWO_PASS
-        // cume_dist column with the eight ZERO_PASS nth_value(timestamp) frame shapes so
-        // CachedWindowRecordCursorFactory dispatch invokes pass1() on every Timestamp variant.
+        // cume_dist column with the nine ZERO_PASS nth_value(timestamp) frame shapes so
+        // CachedWindowRecordCursorFactory dispatch invokes pass1() on every Timestamp variant
+        // including NthValueOverUnboundedRowsFrameFunction (nv9, rows between unbounded
+        // preceding and current row).
         assertMemoryLeak(() -> {
             executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, i long, val timestamp) timestamp(ts)", timestampType.getTypeName());
             execute("insert into tab values (1, 1, 100), (2, 1, 200), (3, 1, 300), (4, 2, 400), (5, 2, 500), (6, 2, 600)");
 
             assertQueryNoLeakCheck(
                     replaceTimestampSuffix1("""
-                            ts\tcd\tcd_no\tnv1\tnv2\tnv3\tnv4\tnv5\tnv6\tnv7\tnv8
-                            1970-01-01T00:00:00.000001Z\t0.16666666666666666\t1.0\t1970-01-01T00:00:00.000100Z\t\t\t\t\t\t\t
-                            1970-01-01T00:00:00.000002Z\t0.3333333333333333\t1.0\t1970-01-01T00:00:00.000200Z\t1970-01-01T00:00:00.000200Z\t1970-01-01T00:00:00.000200Z\t1970-01-01T00:00:00.000100Z\t1970-01-01T00:00:00.000200Z\t1970-01-01T00:00:00.000200Z\t\t1970-01-01T00:00:00.000200Z
-                            1970-01-01T00:00:00.000003Z\t0.5\t1.0\t1970-01-01T00:00:00.000300Z\t1970-01-01T00:00:00.000200Z\t1970-01-01T00:00:00.000200Z\t1970-01-01T00:00:00.000100Z\t1970-01-01T00:00:00.000200Z\t1970-01-01T00:00:00.000200Z\t1970-01-01T00:00:00.000200Z\t1970-01-01T00:00:00.000200Z
-                            1970-01-01T00:00:00.000004Z\t0.6666666666666666\t1.0\t1970-01-01T00:00:00.000400Z\t\t\t\t1970-01-01T00:00:00.000200Z\t1970-01-01T00:00:00.000300Z\t1970-01-01T00:00:00.000200Z\t
-                            1970-01-01T00:00:00.000005Z\t0.8333333333333334\t1.0\t1970-01-01T00:00:00.000500Z\t1970-01-01T00:00:00.000500Z\t1970-01-01T00:00:00.000500Z\t1970-01-01T00:00:00.000400Z\t1970-01-01T00:00:00.000200Z\t1970-01-01T00:00:00.000400Z\t1970-01-01T00:00:00.000200Z\t1970-01-01T00:00:00.000500Z
-                            1970-01-01T00:00:00.000006Z\t1.0\t1.0\t1970-01-01T00:00:00.000600Z\t1970-01-01T00:00:00.000500Z\t1970-01-01T00:00:00.000500Z\t1970-01-01T00:00:00.000400Z\t1970-01-01T00:00:00.000200Z\t1970-01-01T00:00:00.000500Z\t1970-01-01T00:00:00.000200Z\t1970-01-01T00:00:00.000500Z
+                            ts\tcd\tcd_no\tnv1\tnv2\tnv3\tnv4\tnv5\tnv6\tnv7\tnv8\tnv9
+                            1970-01-01T00:00:00.000001Z\t0.16666666666666666\t1.0\t1970-01-01T00:00:00.000100Z\t\t\t\t\t\t\t\t
+                            1970-01-01T00:00:00.000002Z\t0.3333333333333333\t1.0\t1970-01-01T00:00:00.000200Z\t1970-01-01T00:00:00.000200Z\t1970-01-01T00:00:00.000200Z\t1970-01-01T00:00:00.000100Z\t1970-01-01T00:00:00.000200Z\t1970-01-01T00:00:00.000200Z\t\t1970-01-01T00:00:00.000200Z\t1970-01-01T00:00:00.000200Z
+                            1970-01-01T00:00:00.000003Z\t0.5\t1.0\t1970-01-01T00:00:00.000300Z\t1970-01-01T00:00:00.000200Z\t1970-01-01T00:00:00.000200Z\t1970-01-01T00:00:00.000100Z\t1970-01-01T00:00:00.000200Z\t1970-01-01T00:00:00.000200Z\t1970-01-01T00:00:00.000200Z\t1970-01-01T00:00:00.000200Z\t1970-01-01T00:00:00.000200Z
+                            1970-01-01T00:00:00.000004Z\t0.6666666666666666\t1.0\t1970-01-01T00:00:00.000400Z\t\t\t\t1970-01-01T00:00:00.000200Z\t1970-01-01T00:00:00.000300Z\t1970-01-01T00:00:00.000200Z\t\t1970-01-01T00:00:00.000200Z
+                            1970-01-01T00:00:00.000005Z\t0.8333333333333334\t1.0\t1970-01-01T00:00:00.000500Z\t1970-01-01T00:00:00.000500Z\t1970-01-01T00:00:00.000500Z\t1970-01-01T00:00:00.000400Z\t1970-01-01T00:00:00.000200Z\t1970-01-01T00:00:00.000400Z\t1970-01-01T00:00:00.000200Z\t1970-01-01T00:00:00.000500Z\t1970-01-01T00:00:00.000200Z
+                            1970-01-01T00:00:00.000006Z\t1.0\t1.0\t1970-01-01T00:00:00.000600Z\t1970-01-01T00:00:00.000500Z\t1970-01-01T00:00:00.000500Z\t1970-01-01T00:00:00.000400Z\t1970-01-01T00:00:00.000200Z\t1970-01-01T00:00:00.000500Z\t1970-01-01T00:00:00.000200Z\t1970-01-01T00:00:00.000500Z\t1970-01-01T00:00:00.000200Z
                             """),
                     "select ts, " +
                             "cume_dist() over (order by ts) cd, " +
@@ -17119,7 +17178,8 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             "nth_value(val, 2) over (order by ts range between 1 second preceding and current row) nv5, " +
                             "nth_value(val, 2) over (order by ts rows between 2 preceding and current row) nv6, " +
                             "nth_value(val, 2) over (order by ts rows between unbounded preceding and 1 preceding) nv7, " +
-                            "nth_value(val, 2) over (partition by i order by ts) nv8 " +
+                            "nth_value(val, 2) over (partition by i order by ts) nv8, " +
+                            "nth_value(val, 2) over (order by ts rows between unbounded preceding and current row) nv9 " +
                             "from tab",
                     "ts",
                     true,
@@ -18420,6 +18480,59 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             "order by ts range between 100 microseconds preceding and 50 microseconds preceding) nv from tab",
                     "ts",
                     false,
+                    true
+            );
+        });
+    }
+
+    @Test
+    public void testNthValueTimestampRangeUnboundedToUnbounded() throws Exception {
+        // Timestamp-type analogue. RANGE BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING
+        // (no partition) routes to NthValueOverWholeResultSetFunction through the
+        // (rowsLo == Long.MIN_VALUE && rowsHi == Long.MAX_VALUE) branch of the RANGE
+        // dispatch in the Timestamp factory.
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, val timestamp) timestamp(ts)", timestampType.getTypeName());
+            execute("insert into tab values (1, 100), (2, 200), (3, 300), (4, 400)");
+
+            assertQueryNoLeakCheck(
+                    replaceTimestampSuffix1("""
+                            ts\tnv
+                            1970-01-01T00:00:00.000001Z\t1970-01-01T00:00:00.000300Z
+                            1970-01-01T00:00:00.000002Z\t1970-01-01T00:00:00.000300Z
+                            1970-01-01T00:00:00.000003Z\t1970-01-01T00:00:00.000300Z
+                            1970-01-01T00:00:00.000004Z\t1970-01-01T00:00:00.000300Z
+                            """),
+                    "select ts, nth_value(val, 3) over (" +
+                            "order by ts range between unbounded preceding and unbounded following) nv from tab",
+                    "ts",
+                    true,
+                    true
+            );
+        });
+    }
+
+    @Test
+    public void testNthValueTimestampPartitionedN1WholePartition() throws Exception {
+        // Timestamp-type analogue of testNthValuePartitionedN1WholePartition. Whole-partition
+        // default frame with n=1 pins the value.isNew() && n == 1 branch of
+        // NthValueOverPartitionFunction.pass1 in the Timestamp factory.
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, i long, val timestamp) timestamp(ts)", timestampType.getTypeName());
+            execute("insert into tab values (1, 1, 100), (2, 1, 200), (3, 1, 300), (4, 2, 400), (5, 2, 500)");
+
+            assertQueryNoLeakCheck(
+                    """
+                            i\tnv
+                            1\t1970-01-01T00:00:00.000100Z
+                            1\t1970-01-01T00:00:00.000100Z
+                            1\t1970-01-01T00:00:00.000100Z
+                            2\t1970-01-01T00:00:00.000400Z
+                            2\t1970-01-01T00:00:00.000400Z
+                            """,
+                    "select i, nth_value(val, 1) over (partition by i) nv from tab order by i, ts",
+                    null,
+                    true,
                     true
             );
         });
