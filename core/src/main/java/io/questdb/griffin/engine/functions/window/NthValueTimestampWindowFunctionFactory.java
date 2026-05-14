@@ -838,7 +838,7 @@ public class NthValueTimestampWindowFunctionFactory extends AbstractWindowFuncti
             if (frameIncludesCurrentValue) {
                 currentFrameSize = Math.min(effectiveCount, frameSize);
             } else {
-                currentFrameSize = Math.max(0, Math.min(count + 1 - excludeCount, frameSize));
+                currentFrameSize = Math.clamp(count + 1 - excludeCount, 0, frameSize);
             }
 
             if (currentFrameSize > 0 || (count == 0 && frameIncludesCurrentValue)) {
@@ -1287,7 +1287,7 @@ public class NthValueTimestampWindowFunctionFactory extends AbstractWindowFuncti
             if (frameIncludesCurrentValue) {
                 currentFrameElements = Math.min(effectiveCount, frameSize);
             } else {
-                currentFrameElements = Math.max(0, Math.min(count + 1 - excludeCount, frameSize));
+                currentFrameElements = Math.clamp(count + 1 - excludeCount, 0, frameSize);
             }
 
             if (currentFrameElements > 0 || (count == 0 && frameIncludesCurrentValue)) {
@@ -1695,9 +1695,7 @@ public class NthValueTimestampWindowFunctionFactory extends AbstractWindowFuncti
         @Override
         public void reset() {
             super.reset();
-            count = 0;
-            isFound = false;
-            value = Numbers.LONG_NULL;
+            clearState();
         }
 
         @Override
@@ -1710,6 +1708,10 @@ public class NthValueTimestampWindowFunctionFactory extends AbstractWindowFuncti
         @Override
         public void toTop() {
             super.toTop();
+            clearState();
+        }
+
+        private void clearState() {
             count = 0;
             isFound = false;
             value = Numbers.LONG_NULL;
