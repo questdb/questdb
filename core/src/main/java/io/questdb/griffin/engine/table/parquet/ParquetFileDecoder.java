@@ -61,7 +61,12 @@ public class ParquetFileDecoder implements ParquetDecoder, ParquetRowGroupSkippe
     private final ObjectPool<DirectString> directStringPool = new ObjectPool<>(DirectString::new, 16);
     private final Metadata metadata = new Metadata();
     private long columnsPtr;
-    private long decodeContextPtr;
+    // Volatile so the double-checked read in decodeRowGroup* and the synchronized
+    // write in ensureDecodeContext are properly published across threads. Workers
+    // call decodeRowGroup concurrently on a single decoder; without this guarantee
+    // each could observe decodeContextPtr == 0 and race to allocate, leaking one
+    // context per race.
+    private volatile long decodeContextPtr;
     private long fileAddr; // mmapped parquet file's address
     private long fileSize; // mmapped parquet file's size
     private boolean owned;
@@ -115,10 +120,7 @@ public class ParquetFileDecoder implements ParquetDecoder, ParquetRowGroupSkippe
             int rowHi // high row index within the row group, exclusive
     ) {
         assert ptr != 0;
-        if (decodeContextPtr == 0) {
-            // lazy init
-            decodeContextPtr = createDecodeContext(fileAddr, fileSize);
-        }
+        ensureDecodeContext();
         return decodeRowGroup( // throws CairoException on error
                 ptr,
                 decodeContextPtr,
@@ -141,10 +143,7 @@ public class ParquetFileDecoder implements ParquetDecoder, ParquetRowGroupSkippe
             DirectLongList filteredRows
     ) {
         assert ptr != 0;
-        if (decodeContextPtr == 0) {
-            // lazy init
-            decodeContextPtr = createDecodeContext(fileAddr, fileSize);
-        }
+        ensureDecodeContext();
         decodeRowGroupWithRowFilter(
                 ptr,
                 decodeContextPtr,
@@ -170,10 +169,7 @@ public class ParquetFileDecoder implements ParquetDecoder, ParquetRowGroupSkippe
             DirectLongList filteredRows
     ) {
         assert ptr != 0;
-        if (decodeContextPtr == 0) {
-            // lazy init
-            decodeContextPtr = createDecodeContext(fileAddr, fileSize);
-        }
+        ensureDecodeContext();
         decodeRowGroupWithRowFilterFillNulls(
                 ptr,
                 decodeContextPtr,
@@ -381,6 +377,24 @@ public class ParquetFileDecoder implements ParquetDecoder, ParquetRowGroupSkippe
     private static native long timestampIndexOffset();
 
     private static native long unusedBytesOffset();
+
+    /**
+     * Initialises the decode context lazily and safely under concurrent callers.
+     * The double-checked read on a volatile field plus the synchronized write
+     * means workers calling {@code decodeRowGroup*} concurrently on a freshly
+     * opened decoder can no longer race to allocate two contexts.
+     */
+    private synchronized void ensureDecodeContextLocked() {
+        if (decodeContextPtr == 0) {
+            decodeContextPtr = createDecodeContext(fileAddr, fileSize);
+        }
+    }
+
+    private void ensureDecodeContext() {
+        if (decodeContextPtr == 0) {
+            ensureDecodeContextLocked();
+        }
+    }
 
     private void destroy() {
         if (owned && ptr != 0) {
