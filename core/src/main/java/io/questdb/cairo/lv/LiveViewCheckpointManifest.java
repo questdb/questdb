@@ -30,8 +30,7 @@ import io.questdb.std.ObjList;
 import org.jetbrains.annotations.NotNull;
 
 /**
- * Mutable bean carrying the contents of a checkpoint MANIFEST block (RFC 123
- * §"Checkpoint manifest" - MANIFEST block).
+ * Mutable bean carrying the contents of a checkpoint MANIFEST block.
  * <p>
  * Reused across reads and writes by callers that want zero-alloc on the
  * checkpoint hot path. Field semantics:

@@ -27,29 +27,27 @@ package io.questdb.cairo.lv;
 /**
  * Block-type identifiers for live-view checkpoint ({@code .cp}) files.
  * <p>
- * The file layout is defined in RFC 123 (Appendix - Checkpoint manifest +
- * {@code .cp} file framing). Each block in a checkpoint file is prefixed with
- * a {@code blockType} INT (one of the constants below) and a {@code blockLength}
- * INT (payload byte length, excluding the 8-byte block header). Unknown block
- * types must be skipped by readers - new block types are content-defined and
- * do not require a file-format version bump.
+ * Each block in a checkpoint file is prefixed with a {@code blockType} INT
+ * (one of the constants below) and a {@code blockLength} INT (payload byte
+ * length, excluding the 8-byte block header). Unknown block types must be
+ * skipped by readers - new block types are content-defined and do not
+ * require a file-format version bump.
  */
 public final class LiveViewCheckpointBlockType {
 
     /**
-     * One per anchored named WINDOW block (RFC 123 §"Checkpoint manifest" -
-     * WINDOW_ANCHOR block). Payload carries {@code windowName}, partition-key
-     * column types, the anchor value type, and per-partition
-     * {@code (keyValues..., lastAnchorValue)} tuples. Non-anchored named
-     * windows do not produce a WINDOW_ANCHOR block.
+     * One per anchored named WINDOW block. Payload carries
+     * {@code windowName}, partition-key column types, the anchor value type,
+     * and per-partition {@code (keyValues..., lastAnchorValue)} tuples.
+     * Non-anchored named windows do not produce a WINDOW_ANCHOR block.
      */
     public static final int BLOCK_ANCHOR = 2;
 
     /**
      * Present iff the checkpoint covers an in-progress backfill sweep
-     * ({@link LiveViewCheckpointManifest#getKind() kind == BACKFILL}). RFC 123
-     * Phase 2a reserves this block type but does not write any
-     * BACKFILL_CURSOR blocks - backfill lands in Phase 3.
+     * ({@link LiveViewCheckpointManifest#getKind() kind == BACKFILL}). Phase
+     * 2a reserves this block type but does not write any BACKFILL_CURSOR
+     * blocks - backfill lands in Phase 3.
      */
     public static final int BLOCK_BACKFILL_CURSOR = 1;
 

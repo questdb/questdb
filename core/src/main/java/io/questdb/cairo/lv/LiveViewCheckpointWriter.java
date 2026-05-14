@@ -53,10 +53,10 @@ import java.io.Closeable;
  *     // ... append manifest payload via sink.putXxx() ...
  *     writer.endBlock();
  *     // ... more blocks ...
- *     writer.commit(priorLvSeqTxn);   // tmp+rename atomicity per RFC 123
+ *     writer.commit(priorLvSeqTxn);   // tmp+rename atomicity
  * </pre>
  * <p>
- * File layout (RFC 123 §"{@code .cp} file framing"):
+ * File layout:
  * <pre>
  *   File header (16 bytes):
  *     magic: INT          (0x4C56_4350 - "LVCP")
@@ -75,7 +75,7 @@ import java.io.Closeable;
  * {@link MemoryMARW}, fsyncs per {@link CairoConfiguration#getCommitMode()},
  * renames to {@code <lvSeqTxn>.cp}, then unlinks the prior
  * {@code <priorLvSeqTxn>.cp}. Crash anywhere in this sequence is recovered
- * by the startup sweep (RFC 123 §"{@code .cp} file framing - Atomicity").
+ * by the startup sweep.
  */
 public class LiveViewCheckpointWriter implements Closeable {
 
@@ -101,8 +101,8 @@ public class LiveViewCheckpointWriter implements Closeable {
     public static final String CP_TMP_FILE_EXT = ".cp.tmp";
     /**
      * 16-digit zero-padded lvSeqTxn, matching the filename convention in
-     * RFC 123 §"{@code .cp} file framing - Filename" so lexical enumeration
-     * equals numeric ordering during the startup recovery sweep.
+     * so lexical enumeration equals numeric ordering during the startup
+     * recovery sweep.
      */
     public static final int LV_SEQTXN_PAD_LEN = 16;
     private final int commitMode;
@@ -134,8 +134,8 @@ public class LiveViewCheckpointWriter implements Closeable {
 
     /**
      * Appends a {@code <lvSeqTxn>.cp} filename onto {@code path}, with the
-     * 16-digit zero-padded prefix RFC 123 specifies for lexical-equals-numeric
-     * enumeration during recovery.
+     * 16-digit zero-padded prefix that makes lexical enumeration equal
+     * numeric ordering during the startup recovery sweep.
      */
     public static void appendCpFileName(@NotNull Path path, long lvSeqTxn) {
         appendPaddedLvSeqTxn(path, lvSeqTxn);
@@ -191,8 +191,8 @@ public class LiveViewCheckpointWriter implements Closeable {
      * unlinks the prior head iff {@code priorLvSeqTxn != LONG_NULL}.
      * <p>
      * On rename failure throws {@link CairoException}; the caller is the
-     * refresh worker, which logs critical and continues (RFC 123 §"Flush"
-     * step 4 - {@code .cp} write failure does not invalidate the view).
+     * refresh worker, which logs critical and continues (a {@code .cp} write
+     * failure does not invalidate the view).
      * <p>
      * On unlink failure (prior {@code .cp} could not be removed) the new
      * {@code .cp} stays in place and the prior leaks until the next startup
@@ -332,8 +332,7 @@ public class LiveViewCheckpointWriter implements Closeable {
     /**
      * Writes a MANIFEST block from the populated {@code manifest} bean.
      * Wraps {@link #beginBlock(int)} / {@link #endBlock()} for the
-     * caller; the body matches the RFC 123 §"Checkpoint manifest - MANIFEST
-     * block" field order.
+     * caller.
      */
     public void writeManifestBlock(@NotNull LiveViewCheckpointManifest manifest) {
         final MemoryA sink = beginBlock(LiveViewCheckpointBlockType.BLOCK_MANIFEST);

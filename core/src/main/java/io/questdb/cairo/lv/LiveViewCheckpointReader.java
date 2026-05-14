@@ -72,7 +72,8 @@ import static io.questdb.cairo.lv.LiveViewCheckpointWriter.FILE_TRAILER_SIZE;
  * mismatch makes {@code of} throw {@link CairoException}; the caller in
  * {@code LiveViewRefreshJob} catches it, unlinks the head, and falls back to
  * the {@code viewLowerBoundTimestamp} replay path. The live view is not
- * invalidated by corruption - the {@code .cp} is derived state.
+ * invalidated by corruption - the {@code .cp} is derived state, recoverable
+ * by re-running the refresh from the last applied watermark.
  * <p>
  * A {@code formatVersion} strictly greater than {@link #SUPPORTED_VERSION_MAX}
  * means the file was written by a newer server; the reader throws
@@ -120,8 +121,7 @@ public class LiveViewCheckpointReader implements Closeable {
      * Opens the {@code .cp} file at {@code path} for reading. Validates
      * magic, format version, and the CRC32 trailer. Throws
      * {@link CairoException} on any structural error - the caller is
-     * expected to unlink the file and fall into the head-miss replay path
-     * (RFC 123 §"{@code .cp} file framing - Corruption handling").
+     * expected to unlink the file and fall into the head-miss replay path.
      */
     public void of(@NotNull LPSZ path) {
         if (isOpen) {

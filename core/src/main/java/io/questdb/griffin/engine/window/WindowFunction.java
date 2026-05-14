@@ -238,8 +238,8 @@ public interface WindowFunction extends Function {
      * tombstone-compaction routine to rebuild the function's state container.
      * Returns {@code null} by default; window functions that maintain per-partition
      * state in a Map keyed by the named window's PARTITION BY columns override this
-     * once they sign up for full compaction (per the RFC 123 Phase 2b function
-     * migration train).
+     * once they sign up for full compaction (the Phase 2b function migration
+     * train).
      * <p>
      * Phase 2a only consumes the anchor-map compaction trigger; per-function map
      * rebuild lands as each group's 2b commit overrides this method. While the
@@ -397,7 +397,7 @@ public interface WindowFunction extends Function {
      * the same partition shape, so the per-record cost of re-keying is just a
      * memcpy.
      * <p>
-     * Phase 1 of RFC 123 wires this from {@link io.questdb.cairo.lv.LiveViewInstance};
+     * The live-view ANCHOR runtime drives this from {@link io.questdb.cairo.lv.LiveViewInstance};
      * non-live-view queries never invoke it.
      */
     default void resetPartition(Record record) {
@@ -410,7 +410,7 @@ public interface WindowFunction extends Function {
      * new fields, and discard removed ones. A version lower than
      * {@link #snapshotMinSupportedVersion()} must not reach this method — the live view caller
      * unlinks the head checkpoint and falls into the head-miss path instead of attempting
-     * restore (RFC 123 §"Per-window-function snapshot framework").
+     * restore.
      * <p>
      * The default throws — only window functions that {@link #supportsSnapshot()} override.
      * Functions on the default-throw path force their containing live view onto the head-miss
@@ -431,8 +431,7 @@ public interface WindowFunction extends Function {
     /**
      * Serialises the function's per-partition accumulator state into {@code sink} for later
      * {@link #restore(MemoryR, int)}. The framework writes the resulting bytes into the live
-     * view's head {@code _checkpoints/<lvSeqTxn>.cp} file (RFC 123 §"Checkpoint manifest" —
-     * FUNCTION_SNAPSHOT block).
+     * view's head {@code _checkpoints/<lvSeqTxn>.cp} file as a FUNCTION_SNAPSHOT block.
      * <p>
      * The default throws — only window functions that {@link #supportsSnapshot()} override.
      * The live-view refresh path checks {@link #supportsSnapshot()} at first refresh and
@@ -459,8 +458,7 @@ public interface WindowFunction extends Function {
      * @return the lowest snapshot {@code formatVersion} this build can {@link #restore(MemoryR, int)}.
      * A head checkpoint whose recorded version is strictly less than this value cannot be replayed;
      * the live view layer surfaces it as {@code "checkpoint format version unsupported"} via the
-     * unified invalidation path (RFC 123 §"Per-window-function snapshot framework — Function
-     * contract additions").
+     * unified invalidation path.
      */
     default int snapshotMinSupportedVersion() {
         return 0;
