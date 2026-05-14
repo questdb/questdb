@@ -3121,6 +3121,16 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
                     }
                     Assert.assertTrue("at least one .cp file exists", foundCp);
                 }
+
+                // The live_views() catalogue surfaces the same trio the
+                // refresh worker stamped via setHeadCheckpoint(). Asserting
+                // here closes the end-to-end loop: write hook -> instance
+                // setter -> LiveViewsFunctionFactory -> SQL.
+                assertSql(
+                        "view_name\thead_checkpoint_lv_seqtxn\thead_checkpoint_state_bytes\n" +
+                                "lv\t" + lv.getHeadCheckpointLvSeqTxn() + '\t' + lv.getHeadCheckpointStateBytes() + '\n',
+                        "SELECT view_name, head_checkpoint_lv_seqtxn, head_checkpoint_state_bytes FROM live_views()"
+                );
             }
 
             execute("DROP LIVE VIEW lv");
