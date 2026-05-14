@@ -35,7 +35,6 @@ import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cairo.sql.StaticSymbolTable;
 import io.questdb.cairo.sql.SymbolTable;
-import io.questdb.cairo.sql.TableReferenceOutOfDateException;
 import io.questdb.cairo.vm.MemoryCARWImpl;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
@@ -417,7 +416,10 @@ public class HivePartitionedReadParquetPageFrameCursor implements PageFrameCurso
             decoder = new ParquetFileDecoder();
             decoder.of(addr, size, MemoryTag.NATIVE_PARQUET_PARTITION_DECODER);
             if (parquetColumnCount > 0 && !canProjectMetadata(parquetMetadata, decoder, null, null)) {
-                throw TableReferenceOutOfDateException.of(path);
+                throw CairoException.nonCritical()
+                        .put("parquet schema mismatch: file '")
+                        .put(path)
+                        .put("' is incompatible with the schema of the first matched file");
             }
         } catch (Throwable th) {
             if (addr != 0) {

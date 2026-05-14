@@ -423,8 +423,11 @@ public class HivePartitionedReadParquetFunctionTest extends AbstractCairoTest {
                     cursor.getRecord().getInt(0);
                 }
                 Assert.fail("expected schema mismatch error");
-            } catch (io.questdb.cairo.sql.TableReferenceOutOfDateException expected) {
-                // expected - first file's schema does not match the second file's
+            } catch (io.questdb.cairo.CairoException expected) {
+                TestUtils.assertContains(expected.getFlyweightMessage(), "parquet schema mismatch");
+                // Whichever file is opened second is the offender; both have a "day=" segment
+                // so the path naming check works regardless of enumeration order.
+                TestUtils.assertContains(expected.getFlyweightMessage(), "/mm/day=");
             }
         });
     }

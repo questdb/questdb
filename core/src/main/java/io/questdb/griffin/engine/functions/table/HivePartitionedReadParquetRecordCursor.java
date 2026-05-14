@@ -299,6 +299,11 @@ public class HivePartitionedReadParquetRecordCursor implements NoRandomAccessRec
         try {
             parquetCursor.of(path.$(), executionContext);
             parquetCursorPositioned = true;
+        } catch (io.questdb.cairo.sql.TableReferenceOutOfDateException e) {
+            throw CairoException.nonCritical()
+                    .put("parquet schema mismatch: file '")
+                    .put(path)
+                    .put("' is incompatible with the schema of the first matched file");
         } catch (SqlException e) {
             throw CairoException.nonCritical()
                     .put("failed to read parquet file [path=")
