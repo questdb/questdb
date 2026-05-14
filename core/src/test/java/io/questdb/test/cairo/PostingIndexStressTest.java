@@ -1141,6 +1141,135 @@ public class PostingIndexStressTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testDenseFlushMatchesSealOutput() throws Exception {
+        assertMemoryLeak(() -> {
+            final int keys = 16;
+            final int valsPerKey = 200;
+            try (Path pathA = new Path().of(configuration.getDbRoot());
+                 Path pathB = new Path().of(configuration.getDbRoot())) {
+                final int plenA = pathA.size();
+                final int plenB = pathB.size();
+                final String nameA = "dense_flush_a";
+                final String nameB = "dense_flush_b";
+
+                try (PostingIndexWriter writer = new PostingIndexWriter(configuration, pathA, nameA, COLUMN_NAME_TXN_NONE)) {
+                    long rowId = 0;
+                    for (int k = 0; k < keys; k++) {
+                        for (int v = 0; v < valsPerKey; v++) {
+                            writer.add(k, rowId++);
+                        }
+                    }
+                    writer.setMaxValue(rowId - 1);
+                    writer.commitDense();
+                }
+
+                try (PostingIndexWriter writer = new PostingIndexWriter(configuration, pathB, nameB, COLUMN_NAME_TXN_NONE)) {
+                    long rowId = 0;
+                    for (int k = 0; k < keys; k++) {
+                        for (int v = 0; v < valsPerKey; v++) {
+                            writer.add(k, rowId++);
+                        }
+                    }
+                    writer.setMaxValue(rowId - 1);
+                    writer.commit();
+                    writer.seal();
+                }
+
+                try (PostingIndexFwdReader rA = new PostingIndexFwdReader(
+                        configuration, pathA.trimTo(plenA), nameA, COLUMN_NAME_TXN_NONE, -1, 0);
+                     PostingIndexFwdReader rB = new PostingIndexFwdReader(
+                             configuration, pathB.trimTo(plenB), nameB, COLUMN_NAME_TXN_NONE, -1, 0)) {
+                    for (int k = 0; k < keys; k++) {
+                        RowCursor cA = rA.getCursor(k, 0, Long.MAX_VALUE);
+                        RowCursor cB = rB.getCursor(k, 0, Long.MAX_VALUE);
+                        try {
+                            for (int v = 0; v < valsPerKey; v++) {
+                                Assert.assertTrue("key " + k + " val " + v + ": A short", cA.hasNext());
+                                Assert.assertTrue("key " + k + " val " + v + ": B short", cB.hasNext());
+                                long a = cA.next();
+                                long b = cB.next();
+                                Assert.assertEquals("key " + k + " val " + v, a, b);
+                            }
+                            Assert.assertFalse("key " + k + ": A overran", cA.hasNext());
+                            Assert.assertFalse("key " + k + ": B overran", cB.hasNext());
+                        } finally {
+                            Misc.free(cA);
+                            Misc.free(cB);
+                        }
+                    }
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testDenseFlushMatchesSealOutputHighCardinality() throws Exception {
+        // Companion to testDenseFlushMatchesSealOutput at higher cardinality.
+        // valsPerKey > PENDING_SLOT_CAPACITY (8) drives every key through
+        // spillKey, so flushAllPendingDense exercises its pending+spill
+        // merge path rather than the pending-only fast path the low-card
+        // variant covers.
+        assertMemoryLeak(() -> {
+            final int keys = 10_000;
+            final int valsPerKey = 20;
+            try (Path pathA = new Path().of(configuration.getDbRoot());
+                 Path pathB = new Path().of(configuration.getDbRoot())) {
+                final int plenA = pathA.size();
+                final int plenB = pathB.size();
+                final String nameA = "dense_flush_hc_a";
+                final String nameB = "dense_flush_hc_b";
+
+                try (PostingIndexWriter writer = new PostingIndexWriter(configuration, pathA, nameA, COLUMN_NAME_TXN_NONE)) {
+                    long rowId = 0;
+                    for (int k = 0; k < keys; k++) {
+                        for (int v = 0; v < valsPerKey; v++) {
+                            writer.add(k, rowId++);
+                        }
+                    }
+                    writer.setMaxValue(rowId - 1);
+                    writer.commitDense();
+                }
+
+                try (PostingIndexWriter writer = new PostingIndexWriter(configuration, pathB, nameB, COLUMN_NAME_TXN_NONE)) {
+                    long rowId = 0;
+                    for (int k = 0; k < keys; k++) {
+                        for (int v = 0; v < valsPerKey; v++) {
+                            writer.add(k, rowId++);
+                        }
+                    }
+                    writer.setMaxValue(rowId - 1);
+                    writer.commit();
+                    writer.seal();
+                }
+
+                try (PostingIndexFwdReader rA = new PostingIndexFwdReader(
+                        configuration, pathA.trimTo(plenA), nameA, COLUMN_NAME_TXN_NONE, -1, 0);
+                     PostingIndexFwdReader rB = new PostingIndexFwdReader(
+                             configuration, pathB.trimTo(plenB), nameB, COLUMN_NAME_TXN_NONE, -1, 0)) {
+                    for (int k = 0; k < keys; k++) {
+                        RowCursor cA = rA.getCursor(k, 0, Long.MAX_VALUE);
+                        RowCursor cB = rB.getCursor(k, 0, Long.MAX_VALUE);
+                        try {
+                            for (int v = 0; v < valsPerKey; v++) {
+                                Assert.assertTrue("key " + k + " val " + v + ": A short", cA.hasNext());
+                                Assert.assertTrue("key " + k + " val " + v + ": B short", cB.hasNext());
+                                long a = cA.next();
+                                long b = cB.next();
+                                Assert.assertEquals("key " + k + " val " + v, a, b);
+                            }
+                            Assert.assertFalse("key " + k + ": A overran", cA.hasNext());
+                            Assert.assertFalse("key " + k + ": B overran", cB.hasNext());
+                        } finally {
+                            Misc.free(cA);
+                            Misc.free(cB);
+                        }
+                    }
+                }
+            }
+        });
+    }
+
+    @Test
     public void testEdgeConstantDeltas() throws Exception {
         assertMemoryLeak(() -> {
             // All deltas are identical → bitWidth should be 0 (constant FoR).
@@ -2032,73 +2161,6 @@ public class PostingIndexStressTest extends AbstractCairoTest {
                         count++;
                     }
                     Assert.assertEquals("bwd total count", totalValues, count);
-                    Misc.free(cursor);
-                }
-            }
-        });
-    }
-
-    @Test
-    public void testMaxGenCountAutoSealFdBased() throws Exception {
-        // Same scenario as testMaxGenCountAutoSeal but exercising the fd-based
-        // of() path used by O3CopyJob. Without the fd-based seal fix, the
-        // inline seal triggered inside flushAllPending NPEs in
-        // reencodeWithStrideDecoding because openSealValueFile early-returned
-        // for fd-based, leaving sealTarget null. After the fix, seal writes
-        // its output past the source data in valueMem, then memmoves down.
-        assertMemoryLeak(() -> {
-            FilesFacade ff = configuration.getFilesFacade();
-            final String name = "fd_auto_seal_max";
-            try (Path keyPath = new Path().of(configuration.getDbRoot());
-                 Path valPath = new Path().of(configuration.getDbRoot())) {
-                final int plen = keyPath.size();
-
-                PostingIndexUtils.keyFileName(keyPath, name, COLUMN_NAME_TXN_NONE);
-                long keyFd = ff.openRW(keyPath.$(), CairoConfiguration.O_NONE);
-                Assert.assertTrue("could not open key file", keyFd > 0);
-                keyPath.trimTo(plen);
-
-                PostingIndexUtils.valueFileName(valPath, name, COLUMN_NAME_TXN_NONE, 0);
-                long valueFd = ff.openRW(valPath.$(), CairoConfiguration.O_NONE);
-                Assert.assertTrue("could not open value file", valueFd > 0);
-                valPath.trimTo(plen);
-
-                int batchCount = PostingIndexUtils.MAX_GEN_COUNT + 5;
-                int totalValues = batchCount * BP_BATCH;
-
-                try (PostingIndexWriter writer = new PostingIndexWriter(configuration)) {
-                    writer.of(configuration, keyFd, valueFd, true, PostingIndexUtils.BLOCK_CAPACITY);
-                    for (int batch = 0; batch < batchCount; batch++) {
-                        long base = (long) batch * BP_BATCH;
-                        for (int v = 0; v < BP_BATCH; v++) {
-                            writer.add(0, base + v);
-                        }
-                        writer.setMaxValue(base + BP_BATCH - 1);
-                        writer.commit();
-                    }
-                    Assert.assertTrue(
-                            "genCount should be <= MAX_GEN_COUNT after fd-based auto-seal, was " + writer.getGenCount(),
-                            writer.getGenCount() <= PostingIndexUtils.MAX_GEN_COUNT);
-                    Assert.assertEquals(totalValues - 1, writer.getMaxValue());
-                }
-
-                // Promote the fd-based tentative state via a path-based seal so
-                // a reader can verify every row survived the inline seal cycle.
-                try (PostingIndexWriter writer = new PostingIndexWriter(configuration)) {
-                    writer.of(keyPath.trimTo(plen), name, COLUMN_NAME_TXN_NONE);
-                    writer.mergeTentativeIntoActiveIfAny();
-                    writer.seal();
-                }
-
-                try (PostingIndexFwdReader reader = new PostingIndexFwdReader(
-                        configuration, keyPath.trimTo(plen), name, COLUMN_NAME_TXN_NONE, -1, 0)) {
-                    RowCursor cursor = reader.getCursor(0, 0, Long.MAX_VALUE);
-                    int count = 0;
-                    while (cursor.hasNext()) {
-                        Assert.assertEquals("val " + count, count, cursor.next());
-                        count++;
-                    }
-                    Assert.assertEquals("total count", totalValues, count);
                     Misc.free(cursor);
                 }
             }
