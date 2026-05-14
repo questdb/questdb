@@ -66,10 +66,9 @@ public class ApproxPercentileLongGroupByFunction extends DoubleFunction implemen
     public void computeFirst(MapValue mapValue, Record record, long rowId) {
         final long val = exprFunc.getLong(record);
         if (val != Numbers.LONG_NULL) {
-            histogramA.of(0);
             // We pre-size the histogram for [1, 1000] range to avoid resizes in some basic use cases
             // like CPU load percentile or latency in millis.
-            histogramA.resize(1000);
+            histogramA.of(0);
             histogramA.recordValue(val);
             mapValue.putLong(valueIndex, histogramA.ptr());
         } else {
