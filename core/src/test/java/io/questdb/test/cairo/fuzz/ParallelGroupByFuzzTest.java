@@ -2156,6 +2156,11 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testParallelNonKeyedGroupByFaultTolerance() throws Exception {
+        testParallelGroupByFaultTolerance("select vwap(price, quantity) from tab where npe();");
+    }
+
+    @Test
     public void testParallelApproxPercentileFuzz() throws Exception {
         Assume.assumeTrue(enableParallelGroupBy);
         assertMemoryLeak(() -> {
