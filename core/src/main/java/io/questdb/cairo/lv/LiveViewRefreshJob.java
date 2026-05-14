@@ -807,6 +807,14 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             if (instance.isDropped() || instance.isInvalid()) {
                 return;
             }
+            // Snapshot freeze: DatabaseCheckpointAgent is mid-copy of this LV's
+            // files. Skip this turn so _lv.s and the on-disk tier do not
+            // advance while the agent is reading them. The agent clears the
+            // flag via endCheckpoint() once the per-LV copy completes; the
+            // next fallback or notification tick picks the worker back up.
+            if (instance.isFreezeInProgress()) {
+                return;
+            }
             boolean attempted = false;
             try {
                 long lastSeqTxn = instance.getLastProcessedSeqTxn();

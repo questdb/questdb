@@ -2582,6 +2582,61 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testFreezeGateSkipsRefreshTurn() throws Exception {
+        // Phase 2a.9c: DatabaseCheckpointAgent toggles freezeInProgress around
+        // its per-LV file copy so the refresh worker does not advance _lv.s /
+        // the on-disk tier mid-snapshot. This test exercises the gate without
+        // running the full agent: set startCheckpoint manually, drive a
+        // refresh - the worker must skip and lastProcessedSeqTxn must not
+        // advance. After endCheckpoint(), a subsequent refresh processes the
+        // pending commit.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms AS " +
+                    "SELECT ts, x, row_number() OVER () AS rn FROM base WHERE x > 0");
+
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                setCurrentMicros(0L);
+
+                LiveViewInstance lv = engine.getLiveViewRegistry().getViewInstance("lv");
+                Assert.assertNotNull(lv);
+                long beforeProcessed = lv.getLastProcessedSeqTxn();
+
+                // Insert a row + ingest the WAL; refresh has NOT run yet.
+                execute("INSERT INTO base (ts, x) VALUES ('2026-04-01T00:00:00.000000Z', 1)");
+                drainWalQueue();
+
+                // Freeze the LV. The refresh worker's next turn must see the
+                // flag, skip, and leave lastProcessedSeqTxn unchanged.
+                lv.startCheckpoint(lv.getStateReader().getAppliedWatermark());
+                Assert.assertTrue("freeze in progress after startCheckpoint", lv.isFreezeInProgress());
+                drainJob(job);
+                Assert.assertEquals(
+                        "frozen refresh did not advance lastProcessedSeqTxn",
+                        beforeProcessed,
+                        lv.getLastProcessedSeqTxn()
+                );
+
+                // Unfreeze, drive a fresh refresh. The pending commit should
+                // land in the LV.
+                lv.endCheckpoint();
+                Assert.assertFalse("freeze cleared after endCheckpoint", lv.isFreezeInProgress());
+                setCurrentMicros(200_000L);
+                drainJob(job);
+                drainWalQueue();
+
+                Assert.assertTrue(
+                        "post-unfreeze refresh advanced lastProcessedSeqTxn",
+                        lv.getLastProcessedSeqTxn() > beforeProcessed
+                );
+                assertSql("count\n1\n", "SELECT count() FROM lv");
+            }
+
+            execute("DROP LIVE VIEW lv");
+        });
+    }
+
+    @Test
     public void testLiveViewsCatalogueExposesHeadCheckpointColumns() throws Exception {
         // Phase 2a.10: head_checkpoint_* columns are preallocated; values stay
         // at LONG_NULL / 0 until the Phase 2a.4 flush-cycle write hook starts

@@ -322,6 +322,15 @@ public class DatabaseCheckpointAgent implements DatabaseCheckpointStatus, QuietC
                                 throw CairoException.critical(ff.errno()).put("could not create [dir=").put(path).put(']');
                             }
 
+                            // Holds the LV instance for the current outer-loop iteration when
+                            // tableToken.isLiveView(); null otherwise. Freeze is set inside the
+                            // LV branch of the inner for(;;) and cleared in the finally below,
+                            // so _lv.s + _txn + partition data all capture a single consistent
+                            // refresh-worker state. Refresh worker observes
+                            // isFreezeInProgress() at the top of refreshInstance and skips
+                            // the cycle.
+                            io.questdb.cairo.lv.LiveViewInstance freezeLvInstance = null;
+                            try {
                             for (; ; ) {
                                 if (engine.isTableDropped(tableToken)) {
                                     LOG.info().$("skipping, table is concurrently dropped [table=").$(tableToken).I$();
@@ -461,20 +470,20 @@ public class DatabaseCheckpointAgent implements DatabaseCheckpointStatus, QuietC
                                     // also adds _checkpoints/<head>.cp once the flush-cycle
                                     // write hook lands.
                                     //
-                                    // The state-before-data ordering mirrors the mat view path
-                                    // (above): copy _lv / _lv.s first, then fall through to the
-                                    // standard TableReader path for _meta, _txn, _cv, _name,
-                                    // partition data, and wal<n>/ segments. _lv.s uses
-                                    // BlockFile's versioned region pointer, so the file is
-                                    // self-consistent even if the refresh worker is mid-write.
-                                    //
-                                    // Without explicit freeze coordination (deferred to a
-                                    // follow-up), _lv.s.lastProcessedSeqTxn captured here may be
-                                    // older than _txn.applied_watermark captured by the standard
-                                    // path. On recovery the refresh worker re-processes the
-                                    // gap; LV apply does not yet deduplicate row-level output,
-                                    // so duplicates are the trade-off vs. the missing-rows risk
-                                    // of data-before-state ordering.
+                                    // Freeze the view's refresh worker first so _lv.s + the
+                                    // standard path's _txn / partition data all capture a
+                                    // consistent state. The flag is cleared in the outer
+                                    // try/finally below once the inner for(;;) exits for this
+                                    // table - covering both the LV-specific copy and the
+                                    // fall-through TableReader path.
+                                    freezeLvInstance = engine.getLiveViewRegistry().getViewInstance(tableToken.getTableName());
+                                    if (freezeLvInstance != null) {
+                                        freezeLvInstance.startCheckpoint(freezeLvInstance.getStateReader().getAppliedWatermark());
+                                    }
+
+                                    // The LV-specific copy follows. Standard TableReader path
+                                    // copies _meta / _txn / _cv / _name / partitions / wal<n>/
+                                    // after fall-through.
                                     final Path auxPath = Path.PATH2.get();
 
                                     // Copy _lv definition file (immutable after CREATE).
@@ -606,6 +615,11 @@ public class DatabaseCheckpointAgent implements DatabaseCheckpointStatus, QuietC
                                     break;
                                 } finally {
                                     Misc.free(reader);
+                                }
+                            }
+                            } finally {
+                                if (freezeLvInstance != null) {
+                                    freezeLvInstance.endCheckpoint();
                                 }
                             }
                         }

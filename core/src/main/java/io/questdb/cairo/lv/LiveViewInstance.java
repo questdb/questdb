@@ -91,6 +91,14 @@ public class LiveViewInstance implements QuietCloseable {
     // streak; Numbers.LONG_NULL when no streak is in progress. Same write-only
     // discipline as flushRetryCount.
     private long flushRetryStartUs = Numbers.LONG_NULL;
+    // Snapshot-freeze gate. DatabaseCheckpointAgent sets this true before
+    // copying an LV's file set and clears it afterwards; the refresh worker
+    // observes the flag at the top of refreshInstance (after the latch +
+    // dropped/invalid checks) and skips the cycle. The frozen lvSeqTxn at
+    // the time of freeze is captured so post-restore consistency can be
+    // asserted; the field is informational for tests and diagnostics.
+    private volatile long freezeFrozenLvSeqTxn = Numbers.LONG_NULL;
+    private volatile boolean freezeInProgress;
     // N=2 in-memory tier (RFC 123 §"In-memory tier"); lazily allocated on the
     // first refresh cycle after the LV's compiled factory + projected metadata
     // are known. Reads route through it via LiveViewRecordCursor (Phase 1b
@@ -148,6 +156,15 @@ public class LiveViewInstance implements QuietCloseable {
         }
     }
 
+    /**
+     * Companion to {@link #startCheckpoint(long)}. Clears the freeze gate so
+     * the refresh worker resumes on its next turn. Idempotent.
+     */
+    public void endCheckpoint() {
+        freezeInProgress = false;
+        freezeFrozenLvSeqTxn = Numbers.LONG_NULL;
+    }
+
     public Function getAnchorFunction() {
         return anchorFunction;
     }
@@ -194,6 +211,15 @@ public class LiveViewInstance implements QuietCloseable {
 
     public long getFlushRetryStartUs() {
         return flushRetryStartUs;
+    }
+
+    /**
+     * @return the lvSeqTxn captured at {@link #startCheckpoint(long)}, or
+     * {@link Numbers#LONG_NULL} when no freeze is in progress. Useful for tests
+     * and post-restore consistency assertions.
+     */
+    public long getFreezeFrozenLvSeqTxn() {
+        return freezeFrozenLvSeqTxn;
     }
 
     public long getHeadCheckpointLvSeqTxn() {
@@ -280,6 +306,16 @@ public class LiveViewInstance implements QuietCloseable {
 
     public boolean isDropped() {
         return dropped;
+    }
+
+    /**
+     * @return true while a snapshot freeze is active for this view. Callers
+     * that mutate {@code _lv.s} or advance any LV watermark MUST honour
+     * this flag and back off until {@link #endCheckpoint()} clears it. The
+     * refresh worker observes it at the top of its turn.
+     */
+    public boolean isFreezeInProgress() {
+        return freezeInProgress;
     }
 
     public boolean isInvalid() {
@@ -410,6 +446,19 @@ public class LiveViewInstance implements QuietCloseable {
 
     public void setWriterStallStartUs(long writerStallStartUs) {
         this.writerStallStartUs = writerStallStartUs;
+    }
+
+    /**
+     * Marks the view frozen for the duration of a {@code DatabaseCheckpointAgent}
+     * file copy. {@code frozenLvSeqTxn} is the {@code appliedWatermark} at the
+     * time of freeze; recorded for diagnostics. Refresh-worker turns that
+     * observe {@link #isFreezeInProgress()} short-circuit before mutating
+     * {@code _lv.s} or advancing any LV watermark. The caller is responsible
+     * for pairing this with a {@link #endCheckpoint()} after the copy completes.
+     */
+    public void startCheckpoint(long frozenLvSeqTxn) {
+        freezeFrozenLvSeqTxn = frozenLvSeqTxn;
+        freezeInProgress = true;
     }
 
     public void tryCloseIfDropped() {
