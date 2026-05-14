@@ -85,6 +85,13 @@ import static io.questdb.griffin.engine.functions.table.ReadParquetRecordCursor.
  * any partition column is VARCHAR.
  */
 public class HivePartitionedReadParquetPageFrameCursor implements PageFrameCursor {
+    // Safety net for runaway-glob scenarios. The cursor cannot proactively close
+    // older files because their frames may still be in flight on worker threads;
+    // we rely on the consumer's releaseOpenPartitions calls to bound memory. If
+    // a consumer never calls release (or it's heavily delayed), a glob over many
+    // thousands of files could exhaust fds / address space. Fail fast with a
+    // pointer at the cause when the in-flight file count crosses this threshold.
+    private static final int MAX_CONCURRENT_OPEN_FILES = 4096;
     // Mirrors VarcharTypeDriver private constants; kept in sync so we can encode
     // aux entries by hand for the partition virtual columns. Format reference:
     // VarcharTypeDriver#appendValue.
@@ -520,6 +527,14 @@ public class HivePartitionedReadParquetPageFrameCursor implements PageFrameCurso
     }
 
     private boolean openNextFile() {
+        // Safety net against runaway globs where the consumer never calls
+        // releaseOpenPartitions: bound the in-flight open file count.
+        if (decoders.size() - lowestOpenFileIndex >= MAX_CONCURRENT_OPEN_FILES) {
+            throw CairoException.nonCritical()
+                    .put("hive glob has too many concurrently open files (")
+                    .put(decoders.size() - lowestOpenFileIndex)
+                    .put("); narrow the glob or reduce the page frame reduce queue capacity");
+        }
         // Cheap pre-screen: parse partition values from the path and check if any
         // pushdown filter condition rejects them. If so, skip the file entirely
         // without opening an fd or mmaping the parquet content.
