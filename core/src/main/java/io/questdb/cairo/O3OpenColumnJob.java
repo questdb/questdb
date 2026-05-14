@@ -27,7 +27,6 @@ package io.questdb.cairo;
 import io.questdb.MessageBus;
 import io.questdb.cairo.idx.IndexFactory;
 import io.questdb.cairo.idx.IndexWriter;
-import io.questdb.cairo.idx.PostingIndexUtils;
 import io.questdb.cairo.vm.api.MemoryMA;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
@@ -1870,8 +1869,7 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
                     );
                 } else {
                     dstKFd = openRW(ff, IndexFactory.keyFileName(indexType, pathToNewPartition.trimTo(pNewLen), columnName, columnNameTxn), LOG, tableWriter.getConfiguration().getWriterFileOpenOpts());
-                    long valueTxn = resolvePostingValueFileTxn(ff, dstKFd, indexType, columnNameTxn);
-                    dstVFd = openRW(ff, IndexFactory.valueFileName(indexType, pathToNewPartition.trimTo(pNewLen), columnName, columnNameTxn, valueTxn), LOG, tableWriter.getConfiguration().getWriterFileOpenOpts());
+                    dstVFd = openRW(ff, IndexFactory.valueFileName(indexType, pathToNewPartition.trimTo(pNewLen), columnName, columnNameTxn, columnNameTxn), LOG, tableWriter.getConfiguration().getWriterFileOpenOpts());
                 }
             }
         } catch (Throwable e) {
@@ -2210,8 +2208,7 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
                         );
                     } else {
                         dstKFd = openRW(ff, IndexFactory.keyFileName(indexType, pathToNewPartition.trimTo(pNewLen), columnName, columnNameTxn), LOG, tableWriter.getConfiguration().getWriterFileOpenOpts());
-                        long valueTxn = resolvePostingValueFileTxn(ff, dstKFd, indexType, columnNameTxn);
-                        dstVFd = openRW(ff, IndexFactory.valueFileName(indexType, pathToNewPartition.trimTo(pNewLen), columnName, columnNameTxn, valueTxn), LOG, tableWriter.getConfiguration().getWriterFileOpenOpts());
+                        dstVFd = openRW(ff, IndexFactory.valueFileName(indexType, pathToNewPartition.trimTo(pNewLen), columnName, columnNameTxn, columnNameTxn), LOG, tableWriter.getConfiguration().getWriterFileOpenOpts());
                     }
                 }
             }
@@ -2583,8 +2580,7 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
                     );
                 } else {
                     dstKFd = openRW(ff, IndexFactory.keyFileName(indexType, pathToNewPartition.trimTo(pNewLen), columnName, columnNameTxn), LOG, tableWriter.getConfiguration().getWriterFileOpenOpts());
-                    long valueTxn = resolvePostingValueFileTxn(ff, dstKFd, indexType, columnNameTxn);
-                    dstVFd = openRW(ff, IndexFactory.valueFileName(indexType, pathToNewPartition.trimTo(pNewLen), columnName, columnNameTxn, valueTxn), LOG, tableWriter.getConfiguration().getWriterFileOpenOpts());
+                    dstVFd = openRW(ff, IndexFactory.valueFileName(indexType, pathToNewPartition.trimTo(pNewLen), columnName, columnNameTxn, columnNameTxn), LOG, tableWriter.getConfiguration().getWriterFileOpenOpts());
                 }
             }
 
@@ -3316,21 +3312,6 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
                 partitionUpdateSinkAddr
         );
         tableWriter.getO3CopyPubSeq().done(cursor);
-    }
-
-    /**
-     * For posting indexes, seal records the sealed-version txn (sealTxn) in the
-     * .pk metadata. O3 append must open the correct sealed .pv file, not the
-     * canonical one, to avoid a data/metadata mismatch that leads to SIGSEGV
-     * during sidecar rebuild. For non-posting indexes this is a no-op and
-     * returns columnNameTxn.
-     */
-    static long resolvePostingValueFileTxn(FilesFacade ff, long keyFd, byte indexType, long columnNameTxn) {
-        if (!IndexType.isPosting(indexType)) {
-            return columnNameTxn;
-        }
-        long sealTxn = PostingIndexUtils.readSealTxnFromKeyFd(ff, keyFd);
-        return sealTxn >= 0 ? sealTxn : 0;
     }
 
     @Override
