@@ -16683,6 +16683,197 @@ public class WindowFunctionTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testNthValueLongRowsFrameInsufficientPreceding() throws Exception {
+        // Long-type analogue. ROWS BETWEEN X PRECEDING AND Y PRECEDING (excludeCount > 0)
+        // produces a frame whose currentFrameElements is below n for the early rows.
+        // Pins the !frameIncludesCurrentValue && currentFrameElements > 0 && n > currentFrameElements
+        // branch in NthValueOverRowsFrameFunction.computeNext that returns LONG_NULL.
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, val long) timestamp(ts)", timestampType.getTypeName());
+            execute("insert into tab values (1, 10), (2, 20), (3, 30), (4, 40), (5, 50), (6, 60)");
+
+            // Frame = rows [5..1] preceding current row, n=3:
+            //   ts=1: currentFrameElements=0 -> outer else -> null
+            //   ts=2: currentFrameElements=1, n=3 > 1 -> null (target branch)
+            //   ts=3: currentFrameElements=2, n=3 > 2 -> null (target branch)
+            //   ts=4: currentFrameElements=3, n=3 <= 3 -> frame[2] = val of row 3 = 30
+            //   ts=5..6: still nth = row 3 val = 30 (sliding window keeps row 1..3 in frame)
+            assertQueryNoLeakCheck(
+                    replaceTimestampSuffix1("""
+                            ts\tnv
+                            1970-01-01T00:00:00.000001Z\tnull
+                            1970-01-01T00:00:00.000002Z\tnull
+                            1970-01-01T00:00:00.000003Z\tnull
+                            1970-01-01T00:00:00.000004Z\t30
+                            1970-01-01T00:00:00.000005Z\t30
+                            1970-01-01T00:00:00.000006Z\t30
+                            """),
+                    "select ts, nth_value(val, 3) over (order by ts rows between 5 preceding and 1 preceding) nv from tab",
+                    "ts",
+                    false,
+                    true
+            );
+        });
+    }
+
+    @Test
+    public void testNthValueLongPartitionedRowsFrameInsufficientPreceding() throws Exception {
+        // Long-type analogue. Partition + ROWS BETWEEN X PRECEDING AND Y PRECEDING. Pins
+        // the !frameIncludesCurrentValue && currentFrameSize > 0 && n > currentFrameSize
+        // branch in NthValueOverPartitionRowsFrameFunction.computeNext plus the outer
+        // (currentFrameSize == 0 && count > 0) -> else branch for the first few rows in
+        // each partition.
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, i long, val long) timestamp(ts)", timestampType.getTypeName());
+            execute("insert into tab values " +
+                    "(1, 1, 10), (2, 1, 20), (3, 1, 30), (4, 1, 40), (5, 1, 50), (6, 1, 60), " +
+                    "(7, 2, 100), (8, 2, 200), (9, 2, 300), (10, 2, 400), (11, 2, 500), (12, 2, 600)");
+
+            // Same per-partition shape as the non-partitioned variant: rows 1..3 -> null,
+            // row 4 first hits n <= currentFrameSize=3, subsequent rows keep nth = row 3 val.
+            assertQueryNoLeakCheck(
+                    replaceTimestampSuffix1("""
+                            ts\ti\tnv
+                            1970-01-01T00:00:00.000001Z\t1\tnull
+                            1970-01-01T00:00:00.000002Z\t1\tnull
+                            1970-01-01T00:00:00.000003Z\t1\tnull
+                            1970-01-01T00:00:00.000004Z\t1\t30
+                            1970-01-01T00:00:00.000005Z\t1\t30
+                            1970-01-01T00:00:00.000006Z\t1\t30
+                            1970-01-01T00:00:00.000007Z\t2\tnull
+                            1970-01-01T00:00:00.000008Z\t2\tnull
+                            1970-01-01T00:00:00.000009Z\t2\tnull
+                            1970-01-01T00:00:00.000010Z\t2\t300
+                            1970-01-01T00:00:00.000011Z\t2\t300
+                            1970-01-01T00:00:00.000012Z\t2\t300
+                            """),
+                    "select ts, i, nth_value(val, 3) over (" +
+                            "partition by i order by ts rows between 5 preceding and 1 preceding) nv from tab",
+                    "ts",
+                    false,
+                    true
+            );
+        });
+    }
+
+    @Test
+    public void testNthValueLongPartitionedRowsUnboundedToCurrentN3() throws Exception {
+        // Long-type analogue. Partition + ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW
+        // with n=3 and 4 rows per partition. Pins the
+        // (count++ followed by count != n) branch in
+        // NthValueOverUnboundedPartitionFrameFunction.computeNext: on row 2 of each
+        // partition count goes 1 -> 2 but does not equal n=3, so value = LONG_NULL.
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, i long, val long) timestamp(ts)", timestampType.getTypeName());
+            execute("insert into tab values " +
+                    "(1, 1, 10), (2, 1, 20), (3, 1, 30), (4, 1, 40), " +
+                    "(5, 2, 100), (6, 2, 200), (7, 2, 300), (8, 2, 400)");
+
+            assertQueryNoLeakCheck(
+                    replaceTimestampSuffix1("""
+                            ts\ti\tnv
+                            1970-01-01T00:00:00.000001Z\t1\tnull
+                            1970-01-01T00:00:00.000002Z\t1\tnull
+                            1970-01-01T00:00:00.000003Z\t1\t30
+                            1970-01-01T00:00:00.000004Z\t1\t30
+                            1970-01-01T00:00:00.000005Z\t2\tnull
+                            1970-01-01T00:00:00.000006Z\t2\tnull
+                            1970-01-01T00:00:00.000007Z\t2\t300
+                            1970-01-01T00:00:00.000008Z\t2\t300
+                            """),
+                    "select ts, i, nth_value(val, 3) over (" +
+                            "partition by i order by ts rows between unbounded preceding and current row) nv from tab",
+                    "ts",
+                    false,
+                    true
+            );
+        });
+    }
+
+    @Test
+    public void testNthValueLongRangeFrameEvictWithoutEntry() throws Exception {
+        // Long-type analogue. Bounded RANGE with sparse rows: each new row's predecessor is
+        // beyond maxDiff and gets evicted in the shrink loop while frameSize is still 0.
+        // Pins the if (frameSize > 0) false branch inside the bounded shrink loop of
+        // NthValueOverRangeFrameFunction.computeNext.
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, val long) timestamp(ts)", timestampType.getTypeName());
+            execute(timestampType == TestTimestampType.MICRO
+                    ? "insert into tab values (1, 10), (1_000_000, 20), (2_000_000, 30)"
+                    : "insert into tab values (1_000, 10), (1_000_000_000, 20), (2_000_000_000, 30)");
+
+            // Frame = [100us..50us] preceding. Inter-row gaps are ~1s -> every prior row
+            // is beyond maxDiff and evicted before ever entering the frame.
+            assertQueryNoLeakCheck(
+                    timestampType == TestTimestampType.MICRO
+                            ? """
+                            ts\tnv
+                            1970-01-01T00:00:00.000001Z\tnull
+                            1970-01-01T00:00:01.000000Z\tnull
+                            1970-01-01T00:00:02.000000Z\tnull
+                            """
+                            : """
+                            ts\tnv
+                            1970-01-01T00:00:00.000001000Z\tnull
+                            1970-01-01T00:00:01.000000000Z\tnull
+                            1970-01-01T00:00:02.000000000Z\tnull
+                            """,
+                    "select ts, nth_value(val, 1) over (" +
+                            "order by ts range between 100 microseconds preceding and 50 microseconds preceding) nv from tab",
+                    "ts",
+                    false,
+                    true
+            );
+        });
+    }
+
+    @Test
+    public void testNthValueLongPartitionedRangeFrameEvictWithoutEntry() throws Exception {
+        // Long-type analogue. Partition + bounded RANGE with sparse rows so each
+        // predecessor is evicted in the shrink loop while frameSize is still 0. Pins
+        // the if (frameSize > 0) false branch in NthValueOverPartitionRangeFrameFunction
+        // .computeNext.
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, i long, val long) timestamp(ts)", timestampType.getTypeName());
+            execute(timestampType == TestTimestampType.MICRO
+                    ? "insert into tab values " +
+                      "(1, 1, 10), (1_000_000, 1, 20), (2_000_000, 1, 30), " +
+                      "(3_000_001, 2, 100), (4_000_001, 2, 200), (5_000_001, 2, 300)"
+                    : "insert into tab values " +
+                      "(1_000, 1, 10), (1_000_000_000, 1, 20), (2_000_000_000, 1, 30), " +
+                      "(3_000_000_001, 2, 100), (4_000_000_001, 2, 200), (5_000_000_001, 2, 300)");
+
+            assertQueryNoLeakCheck(
+                    timestampType == TestTimestampType.MICRO
+                            ? """
+                            ts\ti\tnv
+                            1970-01-01T00:00:00.000001Z\t1\tnull
+                            1970-01-01T00:00:01.000000Z\t1\tnull
+                            1970-01-01T00:00:02.000000Z\t1\tnull
+                            1970-01-01T00:00:03.000001Z\t2\tnull
+                            1970-01-01T00:00:04.000001Z\t2\tnull
+                            1970-01-01T00:00:05.000001Z\t2\tnull
+                            """
+                            : """
+                            ts\ti\tnv
+                            1970-01-01T00:00:00.000001000Z\t1\tnull
+                            1970-01-01T00:00:01.000000000Z\t1\tnull
+                            1970-01-01T00:00:02.000000000Z\t1\tnull
+                            1970-01-01T00:00:03.000000001Z\t2\tnull
+                            1970-01-01T00:00:04.000000001Z\t2\tnull
+                            1970-01-01T00:00:05.000000001Z\t2\tnull
+                            """,
+                    "select ts, i, nth_value(val, 1) over (" +
+                            "partition by i order by ts " +
+                            "range between 100 microseconds preceding and 50 microseconds preceding) nv from tab",
+                    "ts",
+                    false,
+                    true
+            );
+        });
+    }
+
+    @Test
     public void testNthValueTimestampBasic() throws Exception {
         assertMemoryLeak(() -> {
             executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, val timestamp) timestamp(ts)", timestampType.getTypeName());
@@ -18097,6 +18288,182 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             """,
                     "select ts, nth_value(val, 3) over (" +
                             "order by ts range between unbounded preceding and 1000 microseconds preceding) nv from tab",
+                    "ts",
+                    false,
+                    true
+            );
+        });
+    }
+
+    @Test
+    public void testNthValueTimestampRowsFrameInsufficientPreceding() throws Exception {
+        // Timestamp-type analogue of testNthValueLongRowsFrameInsufficientPreceding. Pins
+        // the !frameIncludesCurrentValue && currentFrameElements > 0 && n > currentFrameElements
+        // branch in NthValueOverRowsFrameFunction.computeNext (Timestamp variant).
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, val timestamp) timestamp(ts)", timestampType.getTypeName());
+            execute("insert into tab values (1, 100), (2, 200), (3, 300), (4, 400), (5, 500), (6, 600)");
+
+            assertQueryNoLeakCheck(
+                    replaceTimestampSuffix1("""
+                            ts\tnv
+                            1970-01-01T00:00:00.000001Z\t
+                            1970-01-01T00:00:00.000002Z\t
+                            1970-01-01T00:00:00.000003Z\t
+                            1970-01-01T00:00:00.000004Z\t1970-01-01T00:00:00.000300Z
+                            1970-01-01T00:00:00.000005Z\t1970-01-01T00:00:00.000300Z
+                            1970-01-01T00:00:00.000006Z\t1970-01-01T00:00:00.000300Z
+                            """),
+                    "select ts, nth_value(val, 3) over (order by ts rows between 5 preceding and 1 preceding) nv from tab",
+                    "ts",
+                    false,
+                    true
+            );
+        });
+    }
+
+    @Test
+    public void testNthValueTimestampPartitionedRowsFrameInsufficientPreceding() throws Exception {
+        // Timestamp-type analogue. Partition + ROWS BETWEEN X PRECEDING AND Y PRECEDING.
+        // Pins the !frameIncludesCurrentValue && currentFrameSize > 0 && n > currentFrameSize
+        // branch in NthValueOverPartitionRowsFrameFunction.computeNext (Timestamp variant).
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, i long, val timestamp) timestamp(ts)", timestampType.getTypeName());
+            execute("insert into tab values " +
+                    "(1, 1, 100), (2, 1, 200), (3, 1, 300), (4, 1, 400), (5, 1, 500), (6, 1, 600), " +
+                    "(7, 2, 1000), (8, 2, 2000), (9, 2, 3000), (10, 2, 4000), (11, 2, 5000), (12, 2, 6000)");
+
+            assertQueryNoLeakCheck(
+                    replaceTimestampSuffix1("""
+                            ts\ti\tnv
+                            1970-01-01T00:00:00.000001Z\t1\t
+                            1970-01-01T00:00:00.000002Z\t1\t
+                            1970-01-01T00:00:00.000003Z\t1\t
+                            1970-01-01T00:00:00.000004Z\t1\t1970-01-01T00:00:00.000300Z
+                            1970-01-01T00:00:00.000005Z\t1\t1970-01-01T00:00:00.000300Z
+                            1970-01-01T00:00:00.000006Z\t1\t1970-01-01T00:00:00.000300Z
+                            1970-01-01T00:00:00.000007Z\t2\t
+                            1970-01-01T00:00:00.000008Z\t2\t
+                            1970-01-01T00:00:00.000009Z\t2\t
+                            1970-01-01T00:00:00.000010Z\t2\t1970-01-01T00:00:00.003000Z
+                            1970-01-01T00:00:00.000011Z\t2\t1970-01-01T00:00:00.003000Z
+                            1970-01-01T00:00:00.000012Z\t2\t1970-01-01T00:00:00.003000Z
+                            """),
+                    "select ts, i, nth_value(val, 3) over (" +
+                            "partition by i order by ts rows between 5 preceding and 1 preceding) nv from tab",
+                    "ts",
+                    false,
+                    true
+            );
+        });
+    }
+
+    @Test
+    public void testNthValueTimestampPartitionedRowsUnboundedToCurrentN3() throws Exception {
+        // Timestamp-type analogue. Partition + ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT
+        // ROW with n=3 and 4 rows per partition. Pins the (count++ followed by count != n)
+        // branch in NthValueOverUnboundedPartitionFrameFunction.computeNext (Timestamp).
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, i long, val timestamp) timestamp(ts)", timestampType.getTypeName());
+            execute("insert into tab values " +
+                    "(1, 1, 100), (2, 1, 200), (3, 1, 300), (4, 1, 400), " +
+                    "(5, 2, 1000), (6, 2, 2000), (7, 2, 3000), (8, 2, 4000)");
+
+            assertQueryNoLeakCheck(
+                    replaceTimestampSuffix1("""
+                            ts\ti\tnv
+                            1970-01-01T00:00:00.000001Z\t1\t
+                            1970-01-01T00:00:00.000002Z\t1\t
+                            1970-01-01T00:00:00.000003Z\t1\t1970-01-01T00:00:00.000300Z
+                            1970-01-01T00:00:00.000004Z\t1\t1970-01-01T00:00:00.000300Z
+                            1970-01-01T00:00:00.000005Z\t2\t
+                            1970-01-01T00:00:00.000006Z\t2\t
+                            1970-01-01T00:00:00.000007Z\t2\t1970-01-01T00:00:00.003000Z
+                            1970-01-01T00:00:00.000008Z\t2\t1970-01-01T00:00:00.003000Z
+                            """),
+                    "select ts, i, nth_value(val, 3) over (" +
+                            "partition by i order by ts rows between unbounded preceding and current row) nv from tab",
+                    "ts",
+                    false,
+                    true
+            );
+        });
+    }
+
+    @Test
+    public void testNthValueTimestampRangeFrameEvictWithoutEntry() throws Exception {
+        // Timestamp-type analogue. Bounded RANGE with sparse rows: each new row's
+        // predecessor is beyond maxDiff and gets evicted in the shrink loop while
+        // frameSize is still 0. Pins the if (frameSize > 0) false branch inside the
+        // bounded shrink loop of NthValueOverRangeFrameFunction.computeNext (Timestamp).
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, val timestamp) timestamp(ts)", timestampType.getTypeName());
+            execute(timestampType == TestTimestampType.MICRO
+                    ? "insert into tab values (1, 100), (1_000_000, 200), (2_000_000, 300)"
+                    : "insert into tab values (1_000, 100), (1_000_000_000, 200), (2_000_000_000, 300)");
+
+            assertQueryNoLeakCheck(
+                    timestampType == TestTimestampType.MICRO
+                            ? """
+                            ts\tnv
+                            1970-01-01T00:00:00.000001Z\t
+                            1970-01-01T00:00:01.000000Z\t
+                            1970-01-01T00:00:02.000000Z\t
+                            """
+                            : """
+                            ts\tnv
+                            1970-01-01T00:00:00.000001000Z\t
+                            1970-01-01T00:00:01.000000000Z\t
+                            1970-01-01T00:00:02.000000000Z\t
+                            """,
+                    "select ts, nth_value(val, 1) over (" +
+                            "order by ts range between 100 microseconds preceding and 50 microseconds preceding) nv from tab",
+                    "ts",
+                    false,
+                    true
+            );
+        });
+    }
+
+    @Test
+    public void testNthValueTimestampPartitionedRangeFrameEvictWithoutEntry() throws Exception {
+        // Timestamp-type analogue. Partition + bounded RANGE with sparse rows so each
+        // predecessor is evicted in the shrink loop while frameSize is still 0. Pins
+        // the if (frameSize > 0) false branch in NthValueOverPartitionRangeFrameFunction
+        // .computeNext (Timestamp variant).
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, i long, val timestamp) timestamp(ts)", timestampType.getTypeName());
+            execute(timestampType == TestTimestampType.MICRO
+                    ? "insert into tab values " +
+                      "(1, 1, 100), (1_000_000, 1, 200), (2_000_000, 1, 300), " +
+                      "(3_000_001, 2, 1000), (4_000_001, 2, 2000), (5_000_001, 2, 3000)"
+                    : "insert into tab values " +
+                      "(1_000, 1, 100), (1_000_000_000, 1, 200), (2_000_000_000, 1, 300), " +
+                      "(3_000_000_001, 2, 1000), (4_000_000_001, 2, 2000), (5_000_000_001, 2, 3000)");
+
+            assertQueryNoLeakCheck(
+                    timestampType == TestTimestampType.MICRO
+                            ? """
+                            ts\ti\tnv
+                            1970-01-01T00:00:00.000001Z\t1\t
+                            1970-01-01T00:00:01.000000Z\t1\t
+                            1970-01-01T00:00:02.000000Z\t1\t
+                            1970-01-01T00:00:03.000001Z\t2\t
+                            1970-01-01T00:00:04.000001Z\t2\t
+                            1970-01-01T00:00:05.000001Z\t2\t
+                            """
+                            : """
+                            ts\ti\tnv
+                            1970-01-01T00:00:00.000001000Z\t1\t
+                            1970-01-01T00:00:01.000000000Z\t1\t
+                            1970-01-01T00:00:02.000000000Z\t1\t
+                            1970-01-01T00:00:03.000000001Z\t2\t
+                            1970-01-01T00:00:04.000000001Z\t2\t
+                            1970-01-01T00:00:05.000000001Z\t2\t
+                            """,
+                    "select ts, i, nth_value(val, 1) over (" +
+                            "partition by i order by ts " +
+                            "range between 100 microseconds preceding and 50 microseconds preceding) nv from tab",
                     "ts",
                     false,
                     true
