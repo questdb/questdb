@@ -2582,6 +2582,66 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testAvgOverUnboundedPartitionRowsSnapshotRoundTrip() throws Exception {
+        // Phase 2a.5 Group #2: avg() over (PARTITION BY ... ROWS UNBOUNDED
+        // PRECEDING ... ANCHOR ...) implements snapshot/restore. State per
+        // partition is [sum: DOUBLE, count: LONG]. Round-trip via direct
+        // snapshot to in-memory sink + toTop + restore; verify Map content.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (ts TIMESTAMP, x DOUBLE, sym SYMBOL) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms AS " +
+                    "SELECT ts, sym, avg(x) OVER w AS a FROM base " +
+                    "WINDOW w AS (PARTITION BY sym ORDER BY ts ANCHOR EXPRESSION timestamp_floor('1d', ts))");
+
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                setCurrentMicros(0L);
+                execute("INSERT INTO base (ts, x, sym) VALUES " +
+                        "('2026-08-01T00:00:00.000000Z', 10.0, 'a'), " +
+                        "('2026-08-01T01:00:00.000000Z', 30.0, 'a'), " +
+                        "('2026-08-01T00:00:00.000000Z', 5.0, 'b')");
+                drainWalQueue();
+                drainJob(job);
+                drainWalQueue();
+
+                LiveViewInstance lv = engine.getLiveViewRegistry().getViewInstance("lv");
+                io.questdb.std.ObjList<io.questdb.griffin.engine.window.WindowFunction> funcs =
+                        lv.getAnchorWindow().getFunctions();
+                io.questdb.griffin.engine.window.WindowFunction avgFunc = funcs.getQuick(0);
+                Assert.assertTrue("avg supports snapshot for SYMBOL key", avgFunc.supportsSnapshot());
+                io.questdb.cairo.map.Map fnMap = avgFunc.getPartitionMap();
+                Assert.assertNotNull(fnMap);
+                Assert.assertEquals("two partitions seeded", 2L, fnMap.size());
+
+                try (io.questdb.cairo.vm.api.MemoryCARW sink = io.questdb.cairo.vm.Vm.getCARWInstance(
+                        4096L,
+                        Integer.MAX_VALUE,
+                        io.questdb.std.MemoryTag.NATIVE_DEFAULT
+                )) {
+                    avgFunc.snapshot(sink);
+                    avgFunc.toTop();
+                    Assert.assertEquals(0L, fnMap.size());
+                    avgFunc.restore(sink, 1);
+                    Assert.assertEquals(2L, fnMap.size());
+
+                    // Sum of all sums must equal 10+30+5 = 45, total count = 3.
+                    io.questdb.cairo.map.MapRecordCursor mc = fnMap.getCursor();
+                    io.questdb.cairo.map.MapRecord rec = fnMap.getRecord();
+                    double totalSum = 0;
+                    long totalCount = 0;
+                    while (mc.hasNext()) {
+                        totalSum += rec.getValue().getDouble(0);
+                        totalCount += rec.getValue().getLong(1);
+                    }
+                    Assert.assertEquals(45.0, totalSum, 0.0);
+                    Assert.assertEquals(3L, totalCount);
+                }
+            }
+
+            execute("DROP LIVE VIEW lv");
+        });
+    }
+
+    @Test
     public void testRowNumberSnapshotRoundTrip() throws Exception {
         // Phase 2a.5 Group #1: row_number() implements snapshot/restore.
         // Drive a single refresh cycle so the function's Map is populated with

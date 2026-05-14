@@ -150,46 +150,54 @@ public final class LiveViewSnapshotKeyCodec {
     }
 
     /**
-     * Writes one key row from {@code record} (which exposes its columns at
-     * indexes {@code 0..keyTypes.getColumnCount()-1}) into {@code sink}, in
-     * the same byte order {@link #readKey} consumes.
+     * Writes one key row from {@code record} (which exposes its key columns at
+     * indexes {@code [keyStartIndex, keyStartIndex + keyTypes.getColumnCount())})
+     * into {@code sink}, in the same byte order {@link #readKey} consumes.
+     * <p>
+     * Hash {@link io.questdb.cairo.map.Map} implementations
+     * ({@link io.questdb.cairo.map.Unordered4Map},
+     * {@link io.questdb.cairo.map.Unordered8Map}, {@code OrderedMap}, etc.) lay
+     * out their records as {@code [value0, ..., valueN, key0, ..., keyM]}, so
+     * the caller passes {@code valueCount} as {@code keyStartIndex} when
+     * iterating the Map's cursor.
      */
-    public static void writeKey(MemoryA sink, Record record, ColumnTypes keyTypes) {
+    public static void writeKey(MemoryA sink, Record record, ColumnTypes keyTypes, int keyStartIndex) {
         for (int i = 0, n = keyTypes.getColumnCount(); i < n; i++) {
+            final int columnIndex = keyStartIndex + i;
             final int type = ColumnType.tagOf(keyTypes.getColumnType(i));
             switch (type) {
                 case ColumnType.BYTE:
-                    sink.putByte(record.getByte(i));
+                    sink.putByte(record.getByte(columnIndex));
                     break;
                 case ColumnType.BOOLEAN:
-                    sink.putByte((byte) (record.getBool(i) ? 1 : 0));
+                    sink.putByte((byte) (record.getBool(columnIndex) ? 1 : 0));
                     break;
                 case ColumnType.SHORT:
-                    sink.putShort(record.getShort(i));
+                    sink.putShort(record.getShort(columnIndex));
                     break;
                 case ColumnType.CHAR:
-                    sink.putChar(record.getChar(i));
+                    sink.putChar(record.getChar(columnIndex));
                     break;
                 case ColumnType.INT:
-                    sink.putInt(record.getInt(i));
+                    sink.putInt(record.getInt(columnIndex));
                     break;
                 case ColumnType.SYMBOL:
-                    sink.putInt(record.getInt(i));
+                    sink.putInt(record.getInt(columnIndex));
                     break;
                 case ColumnType.FLOAT:
-                    sink.putFloat(record.getFloat(i));
+                    sink.putFloat(record.getFloat(columnIndex));
                     break;
                 case ColumnType.LONG:
-                    sink.putLong(record.getLong(i));
+                    sink.putLong(record.getLong(columnIndex));
                     break;
                 case ColumnType.TIMESTAMP:
-                    sink.putLong(record.getTimestamp(i));
+                    sink.putLong(record.getTimestamp(columnIndex));
                     break;
                 case ColumnType.DATE:
-                    sink.putLong(record.getDate(i));
+                    sink.putLong(record.getDate(columnIndex));
                     break;
                 case ColumnType.DOUBLE:
-                    sink.putDouble(record.getDouble(i));
+                    sink.putDouble(record.getDouble(columnIndex));
                     break;
                 default:
                     throw unsupportedType(type);

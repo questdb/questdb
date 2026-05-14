@@ -126,7 +126,8 @@ public class AvgDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
                             map,
                             partitionByRecord,
                             partitionBySink,
-                            args.get(0)
+                            args.get(0),
+                            partitionByKeyTypes
                     );
                 } // range between [unbounded | x] preceding and [x preceding | current row], except unbounded preceding to current row
                 else {
@@ -181,7 +182,8 @@ public class AvgDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
                             map,
                             partitionByRecord,
                             partitionBySink,
-                            args.get(0)
+                            args.get(0),
+                            partitionByKeyTypes
                     );
                 } // between current row and current row
                 else if (rowsLo == 0 && rowsHi == 0) {
@@ -1292,10 +1294,26 @@ public class AvgDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
     // - avg(a) over (partition by x order by ts range between unbounded preceding and current row)
     // Doesn't require value buffering.
     static class AvgOverUnboundedPartitionRowsFrameFunction extends BasePartitionedWindowFunction implements WindowDoubleFunction {
+        // Stable snapshot of the partition-by key column types, taken at
+        // construction. The factory passes the live WindowContext buffer
+        // which it reuses across window-function compiles; the function's
+        // own copy keeps the types available after compilation has moved
+        // on (live-view snapshot, Phase 5 eviction).
+        private final ArrayColumnTypes keyColumnTypes;
         private double avg;
 
-        public AvgOverUnboundedPartitionRowsFrameFunction(Map map, VirtualRecord partitionByRecord, RecordSink partitionBySink, Function arg) {
+        public AvgOverUnboundedPartitionRowsFrameFunction(
+                Map map,
+                VirtualRecord partitionByRecord,
+                RecordSink partitionBySink,
+                Function arg,
+                ColumnTypes partitionByKeyTypes
+        ) {
             super(map, partitionByRecord, partitionBySink, arg);
+            this.keyColumnTypes = new ArrayColumnTypes();
+            for (int i = 0, n = partitionByKeyTypes.getColumnCount(); i < n; i++) {
+                this.keyColumnTypes.add(partitionByKeyTypes.getColumnType(i));
+            }
         }
 
         @Override
@@ -1342,6 +1360,10 @@ public class AvgDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
             return WindowFunction.ZERO_PASS;
         }
 
+        @Override
+        public Map getPartitionMap() {
+            return map;
+        }
 
         @Override
         public void pass1(Record record, long recordOffset, WindowSPI spi) {
@@ -1361,6 +1383,54 @@ public class AvgDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
                 value.putDouble(0, 0.0);
                 value.putLong(1, 0L);
             }
+        }
+
+        @Override
+        public void restore(io.questdb.cairo.vm.api.MemoryR source, int formatVersion) {
+            map.clear();
+            long offset = 0;
+            final long partitionCount = source.getLong(offset);
+            offset += Long.BYTES;
+            for (long p = 0; p < partitionCount; p++) {
+                MapKey key = map.withKey();
+                offset = io.questdb.cairo.lv.LiveViewSnapshotKeyCodec.readKey(key, source, offset, keyColumnTypes);
+                MapValue value = key.createValue();
+                value.putDouble(0, source.getDouble(offset));
+                offset += Double.BYTES;
+                value.putLong(1, source.getLong(offset));
+                offset += Long.BYTES;
+            }
+        }
+
+        @Override
+        public void snapshot(io.questdb.cairo.vm.api.MemoryA sink) {
+            sink.putLong(map.size());
+            io.questdb.cairo.map.MapRecordCursor cursor = map.getCursor();
+            io.questdb.cairo.map.MapRecord record = map.getRecord();
+            // AVG_COLUMN_TYPES = [DOUBLE sum, LONG count], so the key column
+            // sits at record index 2 in the Map's [values, key] record layout.
+            final int keyStartIndex = AVG_COLUMN_TYPES.getColumnCount();
+            while (cursor.hasNext()) {
+                io.questdb.cairo.lv.LiveViewSnapshotKeyCodec.writeKey(sink, record, keyColumnTypes, keyStartIndex);
+                final MapValue value = record.getValue();
+                sink.putDouble(value.getDouble(0));
+                sink.putLong(value.getLong(1));
+            }
+        }
+
+        @Override
+        public int snapshotFormatVersion() {
+            return 1;
+        }
+
+        @Override
+        public int snapshotMinSupportedVersion() {
+            return 1;
+        }
+
+        @Override
+        public boolean supportsSnapshot() {
+            return io.questdb.cairo.lv.LiveViewSnapshotKeyCodec.isAllTypesSupported(keyColumnTypes);
         }
 
         @Override

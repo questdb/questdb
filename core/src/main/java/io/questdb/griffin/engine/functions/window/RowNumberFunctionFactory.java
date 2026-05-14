@@ -303,8 +303,9 @@ public class RowNumberFunctionFactory implements FunctionFactory {
             sink.putLong(map.size());
             MapRecordCursor cursor = map.getCursor();
             MapRecord record = map.getRecord();
+            final int keyStartIndex = valueColumnTypes.getColumnCount();
             while (cursor.hasNext()) {
-                LiveViewSnapshotKeyCodec.writeKey(sink, record, keyColumnTypes);
+                LiveViewSnapshotKeyCodec.writeKey(sink, record, keyColumnTypes, keyStartIndex);
                 final MapValue value = record.getValue();
                 sink.putLong(value.getLong(ROW_NUMBER_VALUE_INDEX));
                 if (lastActivityTsValueIndex >= 0) {
