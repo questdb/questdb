@@ -2115,7 +2115,7 @@ public class PostingIndexStressTest extends AbstractCairoTest {
                 final int plen = path.size();
                 String name = "auto_seal_max";
 
-                int batchCount = PostingIndexUtils.MAX_GEN_COUNT + 1; // 92 (91 + 1)
+                int batchCount = PostingIndexUtils.MAX_GEN_COUNT + 1;
 
                 try (PostingIndexWriter writer = new PostingIndexWriter(configuration, path, name, COLUMN_NAME_TXN_NONE)) {
                     for (int batch = 0; batch < batchCount; batch++) {

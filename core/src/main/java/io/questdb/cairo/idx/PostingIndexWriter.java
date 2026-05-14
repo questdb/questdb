@@ -2722,11 +2722,8 @@ public class PostingIndexWriter implements IndexWriter {
         hasPendingData = false;
         activeKeyCount = 0;
 
-        // Seal at >= MAX_GEN_COUNT (not >). MAX_GEN_COUNT is sized so the
-        // entry header + gen-dir region fits within a 4KB page: at 91 gens
-        // the gen-dir tail ends at entry offset 56 + 91 * 44 = 4060, leaving
-        // room for the cover-end-offset footer; one more gen would push the
-        // footer past the 4096-byte boundary.
+        // Soft cap on per-entry gen count; trades seal frequency against
+        // entry size.
         if (genCount >= MAX_GEN_COUNT) {
             seal();
         }
@@ -3718,12 +3715,13 @@ public class PostingIndexWriter implements IndexWriter {
         // pendingTxnAtSeal is intentionally NOT reset here: a single logical
         // TableWriter operation (e.g. sealPostingIndexForPartition) calls
         // setNextTxnAtSeal once and then runs through rollbackConditionally,
-        // rebuildSidecars/seal in sequence — every one of which may reach
-        // publishToChain. The publishToChain assert catches the
-        // never-set case (pendingTxnAtSeal=-1 after open or close); leaving
-        // the value live across sub-operations preserves the right
-        // txnAtSeal. close() resets the field so a future of(...) starts
-        // clean.
+        // rebuildSidecars/seal in sequence -- every one of which may reach
+        // publishToChain. Leaving the value live across sub-operations
+        // preserves the right txnAtSeal. close() resets the field to -1
+        // so a future of(...) starts clean; publishToChain's fallback
+        // turns the never-set case (-1) into slot.TXN_AT_SEAL=0, leaving
+        // the entry undroppable by recovery -- a deliberate trade-off for
+        // test/legacy paths that never wire the setter.
         // Cap the in-memory outbox to prevent unbounded growth when the
         // global PostingSealPurge job is disabled, the queue is permanently
         // saturated, or publishPendingPurges() is never called. When at the

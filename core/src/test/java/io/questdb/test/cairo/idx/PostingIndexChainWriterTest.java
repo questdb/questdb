@@ -421,6 +421,8 @@ public class PostingIndexChainWriterTest {
         mem.putLong(slot2 + PostingIndexUtils.GEN_DIR_OFFSET_FILE_OFFSET, 100L);
         mem.putLong(slot2 + PostingIndexUtils.GEN_DIR_OFFSET_SIZE, 50L);
 
+        long preRecoveryRegionLimit = w.getRegionLimit();
+
         LongList orphans = new LongList();
         int dropped = w.recoveryDropAbandoned(mem, /* currentTableTxn */ 10L, orphans);
 
@@ -429,33 +431,33 @@ public class PostingIndexChainWriterTest {
         Assert.assertTrue("head must be flagged as trimmed", w.isHeadTrimmedOnLastRecovery());
         Assert.assertEquals(1L, w.getEntryCount());
 
-        // Entry shrank to one gen + cover footer; LEN must match entrySize.
-        int newGenCount = mem.getInt(entryOffset + PostingIndexUtils.V2_ENTRY_OFFSET_GEN_COUNT);
-        Assert.assertEquals(1, newGenCount);
+        // Copy-on-write: the source entry's bytes are untouched; a new
+        // trimmed entry sits at the post-recovery region tail.
+        Assert.assertEquals(3, mem.getInt(entryOffset + PostingIndexUtils.V2_ENTRY_OFFSET_GEN_COUNT));
+
+        long newHead = w.getHeadEntryOffset();
+        Assert.assertEquals(preRecoveryRegionLimit, newHead);
+        Assert.assertNotEquals(entryOffset, newHead);
+
         long expectedLen = PostingIndexChainEntry.entrySize(1, 2);
-        Assert.assertEquals(expectedLen, mem.getLong(entryOffset + PostingIndexUtils.V2_ENTRY_OFFSET_LEN));
-        Assert.assertEquals(entryOffset + expectedLen, w.getRegionLimit());
+        Assert.assertEquals(1, mem.getInt(newHead + PostingIndexUtils.V2_ENTRY_OFFSET_GEN_COUNT));
+        Assert.assertEquals(expectedLen, mem.getLong(newHead + PostingIndexUtils.V2_ENTRY_OFFSET_LEN));
+        Assert.assertEquals(newHead + expectedLen, w.getRegionLimit());
+        Assert.assertEquals(100L, mem.getLong(newHead + PostingIndexUtils.V2_ENTRY_OFFSET_MAX_VALUE));
+        Assert.assertEquals(50L, mem.getLong(newHead + PostingIndexUtils.V2_ENTRY_OFFSET_VALUE_MEM_SIZE));
 
-        // Entry-level MAX_VALUE / VALUE_MEM_SIZE / KEY_COUNT recovered from
-        // slot[0]'s recorded extents.
-        Assert.assertEquals(100L, mem.getLong(entryOffset + PostingIndexUtils.V2_ENTRY_OFFSET_MAX_VALUE));
-        Assert.assertEquals(50L, mem.getLong(entryOffset + PostingIndexUtils.V2_ENTRY_OFFSET_VALUE_MEM_SIZE));
-
-        // Cover footer relocated from offset (header + 3*GEN_DIR_ENTRY_SIZE)
-        // to offset (header + 1*GEN_DIR_ENTRY_SIZE), preserving both cover
-        // end-offsets verbatim.
-        long newFooterOffset = entryOffset + PostingIndexUtils.V2_ENTRY_HEADER_SIZE
+        long newFooterOffset = newHead + PostingIndexUtils.V2_ENTRY_HEADER_SIZE
                 + (long) PostingIndexUtils.GEN_DIR_ENTRY_SIZE;
         Assert.assertEquals(7777L, mem.getLong(newFooterOffset));
         Assert.assertEquals(8888L, mem.getLong(newFooterOffset + PostingIndexUtils.COVER_END_OFFSET_ENTRY_SIZE));
 
-        // Picker observes the trimmed entry through the chain header.
         PostingIndexChainHeader.Snapshot header = new PostingIndexChainHeader.Snapshot();
         PostingIndexChainEntry.Snapshot picked = new PostingIndexChainEntry.Snapshot();
         Assert.assertEquals(
                 PostingIndexChainPicker.RESULT_OK,
                 PostingIndexChainPicker.pick(mem, Long.MAX_VALUE, /* coverCount */ 2, header, picked)
         );
+        Assert.assertEquals(newHead, picked.offset);
         Assert.assertEquals(1, picked.genCount);
         Assert.assertEquals(2, picked.coverFileEndOffsets.size());
         Assert.assertEquals(7777L, picked.coverFileEndOffsets.getQuick(0));
@@ -482,18 +484,24 @@ public class PostingIndexChainWriterTest {
         mem.putLong(slot0 + PostingIndexUtils.GEN_DIR_OFFSET_MAX_VALUE, 42L);
         mem.putInt(slot0 + PostingIndexUtils.GEN_DIR_OFFSET_MAX_KEY, 4);
 
+        long preRecoveryRegionLimit = w.getRegionLimit();
         int dropped = w.recoveryDropAbandoned(mem, /* currentTableTxn */ 10L, new LongList());
 
         Assert.assertEquals(0, dropped);
         Assert.assertTrue(w.isHeadTrimmedOnLastRecovery());
-        Assert.assertEquals(1, mem.getInt(entryOffset + PostingIndexUtils.V2_ENTRY_OFFSET_GEN_COUNT));
+        // Source untouched, new head at region tail.
+        Assert.assertEquals(2, mem.getInt(entryOffset + PostingIndexUtils.V2_ENTRY_OFFSET_GEN_COUNT));
+
+        long newHead = w.getHeadEntryOffset();
+        Assert.assertEquals(preRecoveryRegionLimit, newHead);
+        Assert.assertEquals(1, mem.getInt(newHead + PostingIndexUtils.V2_ENTRY_OFFSET_GEN_COUNT));
         Assert.assertEquals(
                 PostingIndexChainEntry.entrySize(1, 0),
-                mem.getLong(entryOffset + PostingIndexUtils.V2_ENTRY_OFFSET_LEN)
+                mem.getLong(newHead + PostingIndexUtils.V2_ENTRY_OFFSET_LEN)
         );
-        Assert.assertEquals(42L, mem.getLong(entryOffset + PostingIndexUtils.V2_ENTRY_OFFSET_MAX_VALUE));
-        Assert.assertEquals(64L, mem.getLong(entryOffset + PostingIndexUtils.V2_ENTRY_OFFSET_VALUE_MEM_SIZE));
-        Assert.assertEquals(5, mem.getInt(entryOffset + PostingIndexUtils.V2_ENTRY_OFFSET_KEY_COUNT));
+        Assert.assertEquals(42L, mem.getLong(newHead + PostingIndexUtils.V2_ENTRY_OFFSET_MAX_VALUE));
+        Assert.assertEquals(64L, mem.getLong(newHead + PostingIndexUtils.V2_ENTRY_OFFSET_VALUE_MEM_SIZE));
+        Assert.assertEquals(5, mem.getInt(newHead + PostingIndexUtils.V2_ENTRY_OFFSET_KEY_COUNT));
     }
 
     @Test
@@ -552,19 +560,24 @@ public class PostingIndexChainWriterTest {
             mem.putLong(slot + PostingIndexUtils.GEN_DIR_OFFSET_TXN_AT_SEAL, 5L + g);
         }
 
+        long preRecoveryRegionLimit = w.getRegionLimit();
         int dropped = w.recoveryDropAbandoned(mem, /* currentTableTxn */ 5L, new LongList());
 
         Assert.assertEquals(0, dropped);
         Assert.assertTrue(w.isHeadTrimmedOnLastRecovery());
-        Assert.assertEquals(1, mem.getInt(entryOffset + PostingIndexUtils.V2_ENTRY_OFFSET_GEN_COUNT));
+        Assert.assertEquals(5, mem.getInt(entryOffset + PostingIndexUtils.V2_ENTRY_OFFSET_GEN_COUNT));
+
+        long newHead = w.getHeadEntryOffset();
+        Assert.assertEquals(preRecoveryRegionLimit, newHead);
+        Assert.assertEquals(1, mem.getInt(newHead + PostingIndexUtils.V2_ENTRY_OFFSET_GEN_COUNT));
         Assert.assertEquals(
                 PostingIndexChainEntry.entrySize(1, 0),
-                mem.getLong(entryOffset + PostingIndexUtils.V2_ENTRY_OFFSET_LEN)
+                mem.getLong(newHead + PostingIndexUtils.V2_ENTRY_OFFSET_LEN)
         );
-        Assert.assertEquals(7L, mem.getLong(entryOffset + PostingIndexUtils.V2_ENTRY_OFFSET_MAX_VALUE));
-        Assert.assertEquals(80L, mem.getLong(entryOffset + PostingIndexUtils.V2_ENTRY_OFFSET_VALUE_MEM_SIZE));
-        Assert.assertEquals(3, mem.getInt(entryOffset + PostingIndexUtils.V2_ENTRY_OFFSET_KEY_COUNT));
-        Assert.assertEquals(entryOffset + PostingIndexChainEntry.entrySize(1, 0), w.getRegionLimit());
+        Assert.assertEquals(7L, mem.getLong(newHead + PostingIndexUtils.V2_ENTRY_OFFSET_MAX_VALUE));
+        Assert.assertEquals(80L, mem.getLong(newHead + PostingIndexUtils.V2_ENTRY_OFFSET_VALUE_MEM_SIZE));
+        Assert.assertEquals(3, mem.getInt(newHead + PostingIndexUtils.V2_ENTRY_OFFSET_KEY_COUNT));
+        Assert.assertEquals(newHead + PostingIndexChainEntry.entrySize(1, 0), w.getRegionLimit());
     }
 
     @Test
@@ -603,20 +616,25 @@ public class PostingIndexChainWriterTest {
         mem.putLong(slot3 + PostingIndexUtils.GEN_DIR_OFFSET_TXN_AT_SEAL, 11L);
         mem.putLong(slot4 + PostingIndexUtils.GEN_DIR_OFFSET_TXN_AT_SEAL, 12L);
 
+        long preRecoveryRegionLimit = w.getRegionLimit();
         int dropped = w.recoveryDropAbandoned(mem, /* currentTableTxn */ 10L, new LongList());
 
         Assert.assertEquals(0, dropped);
         Assert.assertTrue(w.isHeadTrimmedOnLastRecovery());
-        Assert.assertEquals(3, mem.getInt(entryOffset + PostingIndexUtils.V2_ENTRY_OFFSET_GEN_COUNT));
+        Assert.assertEquals(5, mem.getInt(entryOffset + PostingIndexUtils.V2_ENTRY_OFFSET_GEN_COUNT));
+
+        long newHead = w.getHeadEntryOffset();
+        Assert.assertEquals(preRecoveryRegionLimit, newHead);
+        Assert.assertEquals(3, mem.getInt(newHead + PostingIndexUtils.V2_ENTRY_OFFSET_GEN_COUNT));
         Assert.assertEquals(
                 PostingIndexChainEntry.entrySize(3, 2),
-                mem.getLong(entryOffset + PostingIndexUtils.V2_ENTRY_OFFSET_LEN)
+                mem.getLong(newHead + PostingIndexUtils.V2_ENTRY_OFFSET_LEN)
         );
-        Assert.assertEquals(150L, mem.getLong(entryOffset + PostingIndexUtils.V2_ENTRY_OFFSET_MAX_VALUE));
-        Assert.assertEquals(300L, mem.getLong(entryOffset + PostingIndexUtils.V2_ENTRY_OFFSET_VALUE_MEM_SIZE));
-        Assert.assertEquals(3, mem.getInt(entryOffset + PostingIndexUtils.V2_ENTRY_OFFSET_KEY_COUNT));
+        Assert.assertEquals(150L, mem.getLong(newHead + PostingIndexUtils.V2_ENTRY_OFFSET_MAX_VALUE));
+        Assert.assertEquals(300L, mem.getLong(newHead + PostingIndexUtils.V2_ENTRY_OFFSET_VALUE_MEM_SIZE));
+        Assert.assertEquals(3, mem.getInt(newHead + PostingIndexUtils.V2_ENTRY_OFFSET_KEY_COUNT));
 
-        long newFooterOffset = entryOffset + PostingIndexUtils.V2_ENTRY_HEADER_SIZE
+        long newFooterOffset = newHead + PostingIndexUtils.V2_ENTRY_HEADER_SIZE
                 + 3L * PostingIndexUtils.GEN_DIR_ENTRY_SIZE;
         Assert.assertEquals(1111L, mem.getLong(newFooterOffset));
         Assert.assertEquals(2222L, mem.getLong(newFooterOffset + PostingIndexUtils.COVER_END_OFFSET_ENTRY_SIZE));
@@ -625,10 +643,79 @@ public class PostingIndexChainWriterTest {
         PostingIndexChainEntry.Snapshot picked = new PostingIndexChainEntry.Snapshot();
         Assert.assertEquals(PostingIndexChainPicker.RESULT_OK,
                 PostingIndexChainPicker.pick(mem, Long.MAX_VALUE, /* coverCount */ 2, header, picked));
+        Assert.assertEquals(newHead, picked.offset);
         Assert.assertEquals(3, picked.genCount);
         Assert.assertEquals(2, picked.coverFileEndOffsets.size());
         Assert.assertEquals(1111L, picked.coverFileEndOffsets.getQuick(0));
         Assert.assertEquals(2222L, picked.coverFileEndOffsets.getQuick(1));
+    }
+
+    @Test
+    public void testRecoveryHeadTrimLeavesSourceEntryBytesIntact() {
+        PostingIndexChainWriter w = new PostingIndexChainWriter();
+        w.initialiseEmpty(mem);
+
+        LongList coverEnds = new LongList();
+        coverEnds.add(5555L);
+        long sourceOffset = w.appendNewEntry(
+                mem, /* sealTxn */ 1, /* txnAtSeal */ 10,
+                /* valueMemSize */ 0, /* maxValue */ -1,
+                /* keyCount */ 0, /* genCount */ 3,
+                /* blockCapacity */ 64, /* coveringFormat */ 0,
+                coverEnds
+        );
+        long slot1 = sourceOffset + PostingIndexUtils.V2_ENTRY_HEADER_SIZE
+                + (long) PostingIndexUtils.GEN_DIR_ENTRY_SIZE;
+        long slot2 = slot1 + PostingIndexUtils.GEN_DIR_ENTRY_SIZE;
+        mem.putLong(slot1 + PostingIndexUtils.GEN_DIR_OFFSET_TXN_AT_SEAL, 11L);
+        mem.putLong(slot2 + PostingIndexUtils.GEN_DIR_OFFSET_TXN_AT_SEAL, 12L);
+
+        long sourceEntryLen = PostingIndexChainEntry.entrySize(3, 1);
+        long[] sourceBytes = new long[(int) (sourceEntryLen / Long.BYTES)];
+        for (int i = 0; i < sourceBytes.length; i++) {
+            sourceBytes[i] = mem.getLong(sourceOffset + (long) i * Long.BYTES);
+        }
+
+        int dropped = w.recoveryDropAbandoned(mem, /* currentTableTxn */ 10L, new LongList());
+
+        Assert.assertEquals(0, dropped);
+        Assert.assertTrue(w.isHeadTrimmedOnLastRecovery());
+        Assert.assertNotEquals(sourceOffset, w.getHeadEntryOffset());
+
+        // Source entry bytes must be byte-for-byte unchanged: a concurrent
+        // reader holding a cached head pointer = sourceOffset must observe
+        // the original consistent snapshot, not a half-mutated state.
+        for (int i = 0; i < sourceBytes.length; i++) {
+            Assert.assertEquals(
+                    "source byte at index " + i + " was mutated by applyHeadTrim",
+                    sourceBytes[i], mem.getLong(sourceOffset + (long) i * Long.BYTES)
+            );
+        }
+    }
+
+    @Test
+    public void testRecoveryHeadTrimPreservesPrevPointerChain() {
+        PostingIndexChainWriter w = new PostingIndexChainWriter();
+        w.initialiseEmpty(mem);
+
+        long olderOffset = w.appendNewEntry(mem, 1, 5, 0, 0, 0, 1, 64, 0);
+        long headOffset = w.appendNewEntry(mem, 2, 10, 0, 0, 0, 2, 64, 0);
+        long headSlot1 = headOffset + PostingIndexUtils.V2_ENTRY_HEADER_SIZE
+                + (long) PostingIndexUtils.GEN_DIR_ENTRY_SIZE;
+        mem.putLong(headSlot1 + PostingIndexUtils.GEN_DIR_OFFSET_TXN_AT_SEAL, 11L);
+
+        int dropped = w.recoveryDropAbandoned(mem, /* currentTableTxn */ 10L, new LongList());
+
+        Assert.assertEquals(0, dropped);
+        Assert.assertTrue(w.isHeadTrimmedOnLastRecovery());
+        Assert.assertEquals(2L, w.getEntryCount());
+
+        long newHead = w.getHeadEntryOffset();
+        Assert.assertNotEquals(headOffset, newHead);
+        Assert.assertEquals(
+                "new head's prev must skip the source entry and point at the older entry",
+                olderOffset, mem.getLong(newHead + PostingIndexUtils.V2_ENTRY_OFFSET_PREV_ENTRY_OFFSET)
+        );
     }
 
     @Test

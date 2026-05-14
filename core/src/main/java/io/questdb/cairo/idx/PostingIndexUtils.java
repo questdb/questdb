@@ -199,13 +199,11 @@ public final class PostingIndexUtils {
     public static final int LONG_OFFSETS_FLAG = 0x4000_0000;
     public static final int MAX_BLOCK_COUNT = 1_000_000; // corruption guard: 64M values at BLOCK_CAPACITY=64
     // Maximum number of generations a single chain entry can carry before
-    // the writer force-seals. Picked so an entry's header + gen-dir region
-    // fits within a 4KB page: 56 + 91 * 44 = 4060 bytes, leaving room for
-    // cover-end-offset footer + 8-byte alignment within the same page.
-    // PC_HEADER_SIZE is sized off this constant (one long per gen), so any
-    // change here must keep PC_HEADER_SIZE within the .pci sidecar's header
-    // region.
-    public static final int MAX_GEN_COUNT = 91;
+    // the writer force-seals. Soft cap: trades seal frequency (lower with
+    // a larger cap, better write throughput) against entry size (gen-dir
+    // grows linearly, inflating reader snapshot cost). PC_HEADER_SIZE is
+    // sized off this constant (one long per gen).
+    public static final int MAX_GEN_COUNT = 128;
     public static final int PACKED_BATCH_SIZE = BLOCK_CAPACITY;
     public static final long PAGE_A_OFFSET = 0;
     public static final long PAGE_B_OFFSET = 4096;
@@ -224,7 +222,7 @@ public final class PostingIndexUtils {
     public static final int PAGE_OFFSET_SEQUENCE_START = 0;
     public static final int PAGE_OFFSET_VALUE_MEM_SIZE = 8;
     public static final int PAGE_SIZE = 4096;
-    public static final int PC_HEADER_SIZE = MAX_GEN_COUNT * Long.BYTES; // 728 = 91 * 8
+    public static final int PC_HEADER_SIZE = MAX_GEN_COUNT * Long.BYTES;
     public static final byte SIGNATURE = (byte) 0xfb;
     public static final double SPARSE_SBBF_DEFAULT_FPP = 0.01;
     public static final int SPARSE_SBBF_NUM_BLOCKS_FOOTER_SIZE = Integer.BYTES;
