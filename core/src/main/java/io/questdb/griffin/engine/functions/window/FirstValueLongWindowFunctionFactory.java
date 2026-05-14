@@ -30,16 +30,21 @@ import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.ColumnTypes;
 import io.questdb.cairo.RecordSink;
 import io.questdb.cairo.Reopenable;
+import io.questdb.cairo.lv.LiveViewSnapshotKeyCodec;
 import io.questdb.cairo.map.Map;
 import io.questdb.cairo.map.MapFactory;
 import io.questdb.cairo.map.MapKey;
+import io.questdb.cairo.map.MapRecord;
+import io.questdb.cairo.map.MapRecordCursor;
 import io.questdb.cairo.map.MapValue;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.VirtualRecord;
 import io.questdb.cairo.sql.WindowSPI;
 import io.questdb.cairo.vm.Vm;
+import io.questdb.cairo.vm.api.MemoryA;
 import io.questdb.cairo.vm.api.MemoryARW;
+import io.questdb.cairo.vm.api.MemoryR;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
@@ -176,7 +181,8 @@ public class FirstValueLongWindowFunctionFactory extends AbstractWindowFunctionF
                             map,
                             partitionByRecord,
                             partitionBySink,
-                            args.get(0)
+                            args.get(0),
+                            partitionByKeyTypes
                     );
                 } // range between [unbounded | x] preceding and [x preceding | current row]
                 else {
@@ -232,7 +238,8 @@ public class FirstValueLongWindowFunctionFactory extends AbstractWindowFunctionF
                             map,
                             partitionByRecord,
                             partitionBySink,
-                            args.get(0)
+                            args.get(0),
+                            partitionByKeyTypes
                     );
                 } // between current row and current row
                 else if (rowsLo == 0 && rowsHi == 0) {
@@ -397,7 +404,8 @@ public class FirstValueLongWindowFunctionFactory extends AbstractWindowFunctionF
                             map,
                             partitionByRecord,
                             partitionBySink,
-                            args.get(0)
+                            args.get(0),
+                            partitionByKeyTypes
                     );
                 } // range between [unbounded | x] preceding and [x preceding | current row]
                 else {
@@ -453,7 +461,8 @@ public class FirstValueLongWindowFunctionFactory extends AbstractWindowFunctionF
                             map,
                             partitionByRecord,
                             partitionBySink,
-                            args.get(0)
+                            args.get(0),
+                            partitionByKeyTypes
                     );
                 } // between current row and current row
                 else if (rowsLo == 0 && rowsHi == 0) {
@@ -1250,8 +1259,8 @@ public class FirstValueLongWindowFunctionFactory extends AbstractWindowFunctionF
          * @param partitionBySink   sink used to write/read partition key values into map keys
          * @param arg               argument function that produces the long values to inspect
          */
-        public FirstNotNullValueOverUnboundedPartitionRowsFrameFunction(Map map, VirtualRecord partitionByRecord, RecordSink partitionBySink, Function arg) {
-            super(map, partitionByRecord, partitionBySink, arg);
+        public FirstNotNullValueOverUnboundedPartitionRowsFrameFunction(Map map, VirtualRecord partitionByRecord, RecordSink partitionBySink, Function arg, ColumnTypes partitionByKeyTypes) {
+            super(map, partitionByRecord, partitionBySink, arg, partitionByKeyTypes);
         }
 
         /**
@@ -2683,26 +2692,17 @@ public class FirstValueLongWindowFunctionFactory extends AbstractWindowFunctionF
     // - first_value(a) over (partition by x order by ts range between unbounded preceding and [current row | x preceding])
     static class FirstValueOverUnboundedPartitionRowsFrameFunction extends BasePartitionedWindowFunction implements WindowLongFunction {
 
+        protected final ArrayColumnTypes keyColumnTypes;
         protected long value;
 
-        /**
-         * Create a FirstValueOverUnboundedPartitionRowsFrameFunction bound to a per-partition state map.
-         *
-         * @param arg the input value expression whose first value (within the partition's unbounded-rows frame)
-         *            this function will produce
-         */
-        public FirstValueOverUnboundedPartitionRowsFrameFunction(Map map, VirtualRecord partitionByRecord, RecordSink partitionBySink, Function arg) {
+        public FirstValueOverUnboundedPartitionRowsFrameFunction(Map map, VirtualRecord partitionByRecord, RecordSink partitionBySink, Function arg, ColumnTypes partitionByKeyTypes) {
             super(map, partitionByRecord, partitionBySink, arg);
+            this.keyColumnTypes = new ArrayColumnTypes();
+            for (int i = 0, n = partitionByKeyTypes.getColumnCount(); i < n; i++) {
+                this.keyColumnTypes.add(partitionByKeyTypes.getColumnType(i));
+            }
         }
 
-        /**
-         * Processes the next input record by locating or creating the partition entry and producing the partition's first value.
-         * <p>
-         * If the partition key does not exist yet, reads the long argument from the supplied record, stores it as the partition's value,
-         * and updates the instance field `value`. If the partition entry already exists, loads that stored value into `value`.
-         *
-         * @param record the input row used to derive the partition key and, for new partitions, the first_value to store
-         */
         @Override
         public void computeNext(Record record) {
             partitionByRecord.of(record);
@@ -2720,17 +2720,30 @@ public class FirstValueLongWindowFunctionFactory extends AbstractWindowFunctionF
             }
         }
 
-        /**
-         * Returns the function's current long result.
-         * <p>
-         * This implementation ignores the supplied Record and always returns the internally stored value.
-         *
-         * @param rec ignored
-         * @return the stored long value
-         */
         @Override
         public long getLong(Record rec) {
             return value;
+        }
+
+        @Override
+        public String getName() {
+            return NAME;
+        }
+
+        @Override
+        public int getPassCount() {
+            return WindowFunction.ZERO_PASS;
+        }
+
+        @Override
+        public Map getPartitionMap() {
+            return map;
+        }
+
+        @Override
+        public void pass1(Record record, long recordOffset, WindowSPI spi) {
+            computeNext(record);
+            Unsafe.putLong(spi.getAddress(recordOffset, columnIndex), value);
         }
 
         @Override
@@ -2742,47 +2755,52 @@ public class FirstValueLongWindowFunctionFactory extends AbstractWindowFunctionF
             mapValue.putByte(1, (byte) 0);
         }
 
-        /**
-         * Returns the function name exposed by this factory.
-         *
-         * @return the function name ("first_value")
-         */
         @Override
-        public String getName() {
-            return NAME;
+        public void restore(MemoryR source, int formatVersion) {
+            map.clear();
+            long offset = 0;
+            final long partitionCount = source.getLong(offset);
+            offset += Long.BYTES;
+            for (long p = 0; p < partitionCount; p++) {
+                MapKey key = map.withKey();
+                offset = LiveViewSnapshotKeyCodec.readKey(key, source, offset, keyColumnTypes);
+                MapValue value = key.createValue();
+                value.putLong(0, source.getLong(offset));
+                offset += Long.BYTES;
+                value.putByte(1, source.getByte(offset));
+                offset += Byte.BYTES;
+            }
         }
 
-        /**
-         * Number of processing passes required by this window function.
-         *
-         * @return WindowFunction.ZERO_PASS indicating the function does not require any window-processing passes
-         */
         @Override
-        public int getPassCount() {
-            return WindowFunction.ZERO_PASS;
+        public void snapshot(MemoryA sink) {
+            sink.putLong(map.size());
+            MapRecordCursor cursor = map.getCursor();
+            MapRecord record = map.getRecord();
+            final int keyStartIndex = FIRST_VALUE_COLUMN_TYPES.getColumnCount();
+            while (cursor.hasNext()) {
+                LiveViewSnapshotKeyCodec.writeKey(sink, record, keyColumnTypes, keyStartIndex);
+                final MapValue value = record.getValue();
+                sink.putLong(value.getLong(0));
+                sink.putByte(value.getByte(1));
+            }
         }
 
-        /**
-         * First pass for the window function: computes the next value for the given input record
-         * and writes the resulting long into the WindowSPI's memory at the supplied record offset
-         * and the instance's columnIndex.
-         *
-         * @param record       the input record to compute the value from
-         * @param recordOffset the memory offset (as returned by WindowSPI.getAddress) where the
-         *                     computed long should be written
-         */
         @Override
-        public void pass1(Record record, long recordOffset, WindowSPI spi) {
-            computeNext(record);
-            Unsafe.putLong(spi.getAddress(recordOffset, columnIndex), value);
+        public int snapshotFormatVersion() {
+            return 1;
         }
 
-        /**
-         * Append a textual plan representation of this window function to the provided sink.
-         * <p>
-         * The rendered form is: `name(arg)` optionally followed by ` ignore nulls`, then
-         * ` over (partition by <partition expressions> rows between unbounded preceding and current row)`.
-         */
+        @Override
+        public int snapshotMinSupportedVersion() {
+            return 1;
+        }
+
+        @Override
+        public boolean supportsSnapshot() {
+            return LiveViewSnapshotKeyCodec.isAllTypesSupported(keyColumnTypes);
+        }
+
         @Override
         public void toPlan(PlanSink sink) {
             sink.val(getName());

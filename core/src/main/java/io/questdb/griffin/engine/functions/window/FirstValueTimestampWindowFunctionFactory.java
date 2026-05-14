@@ -30,16 +30,21 @@ import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.ColumnTypes;
 import io.questdb.cairo.RecordSink;
 import io.questdb.cairo.Reopenable;
+import io.questdb.cairo.lv.LiveViewSnapshotKeyCodec;
 import io.questdb.cairo.map.Map;
 import io.questdb.cairo.map.MapFactory;
 import io.questdb.cairo.map.MapKey;
+import io.questdb.cairo.map.MapRecord;
+import io.questdb.cairo.map.MapRecordCursor;
 import io.questdb.cairo.map.MapValue;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.VirtualRecord;
 import io.questdb.cairo.sql.WindowSPI;
 import io.questdb.cairo.vm.Vm;
+import io.questdb.cairo.vm.api.MemoryA;
 import io.questdb.cairo.vm.api.MemoryARW;
+import io.questdb.cairo.vm.api.MemoryR;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
@@ -177,7 +182,8 @@ public class FirstValueTimestampWindowFunctionFactory extends AbstractWindowFunc
                             map,
                             partitionByRecord,
                             partitionBySink,
-                            args.get(0)
+                            args.get(0),
+                            partitionByKeyTypes
                     );
                 } // range between [unbounded | x] preceding and [x preceding | current row]
                 else {
@@ -233,7 +239,8 @@ public class FirstValueTimestampWindowFunctionFactory extends AbstractWindowFunc
                             map,
                             partitionByRecord,
                             partitionBySink,
-                            args.get(0)
+                            args.get(0),
+                            partitionByKeyTypes
                     );
                 } // between current row and current row
                 else if (rowsLo == 0 && rowsHi == 0) {
@@ -397,7 +404,8 @@ public class FirstValueTimestampWindowFunctionFactory extends AbstractWindowFunc
                             map,
                             partitionByRecord,
                             partitionBySink,
-                            args.get(0)
+                            args.get(0),
+                            partitionByKeyTypes
                     );
                 } // range between [unbounded | x] preceding and [x preceding | current row]
                 else {
@@ -453,7 +461,8 @@ public class FirstValueTimestampWindowFunctionFactory extends AbstractWindowFunc
                             map,
                             partitionByRecord,
                             partitionBySink,
-                            args.get(0)
+                            args.get(0),
+                            partitionByKeyTypes
                     );
                 } // between current row and current row
                 else if (rowsLo == 0 && rowsHi == 0) {
@@ -1280,8 +1289,8 @@ public class FirstValueTimestampWindowFunctionFactory extends AbstractWindowFunc
          * @param partitionBySink   serializes the partition key into map key form
          * @param arg               the argument function that produces the timestamp value for the current row
          */
-        public FirstNotNullValueOverUnboundedPartitionRowsFrameFunction(Map map, VirtualRecord partitionByRecord, RecordSink partitionBySink, Function arg) {
-            super(map, partitionByRecord, partitionBySink, arg);
+        public FirstNotNullValueOverUnboundedPartitionRowsFrameFunction(Map map, VirtualRecord partitionByRecord, RecordSink partitionBySink, Function arg, ColumnTypes partitionByKeyTypes) {
+            super(map, partitionByRecord, partitionBySink, arg, partitionByKeyTypes);
         }
 
         /**
@@ -2769,33 +2778,17 @@ public class FirstValueTimestampWindowFunctionFactory extends AbstractWindowFunc
     // - first_value(a) over (partition by x rows between unbounded preceding and [current row | x preceding ])
     // - first_value(a) over (partition by x order by ts range between unbounded preceding and [current row | x preceding])
     static class FirstValueOverUnboundedPartitionRowsFrameFunction extends BasePartitionedWindowFunction implements WindowTimestampFunction {
+        protected final ArrayColumnTypes keyColumnTypes;
         protected long value;
 
-        /**
-         * Constructs a first_value window function for partitioned, row-based frames that are unbounded
-         * in the preceding direction (per-partition unbounded preceding to current row). The function
-         * produces the first (earliest) timestamp value per partition, respecting NULL values.
-         *
-         * @param map               map used to store per-partition state
-         * @param partitionByRecord record representing the partition key for the current row
-         * @param partitionBySink   sink used to serialize the partition key into the map
-         * @param arg               argument function that produces the timestamp value for each row
-         */
-        public FirstValueOverUnboundedPartitionRowsFrameFunction(Map map, VirtualRecord partitionByRecord, RecordSink partitionBySink, Function arg) {
+        public FirstValueOverUnboundedPartitionRowsFrameFunction(Map map, VirtualRecord partitionByRecord, RecordSink partitionBySink, Function arg, ColumnTypes partitionByKeyTypes) {
             super(map, partitionByRecord, partitionBySink, arg);
+            this.keyColumnTypes = new ArrayColumnTypes();
+            for (int i = 0, n = partitionByKeyTypes.getColumnCount(); i < n; i++) {
+                this.keyColumnTypes.add(partitionByKeyTypes.getColumnType(i));
+            }
         }
 
-        /**
-         * Advance state using the supplied input record: determine the partition key for the record,
-         * look up (or create) the per-partition map entry, and ensure the partition's first timestamp
-         * value is recorded.
-         * <p>
-         * If the partition entry is new, the method reads the timestamp from `arg` for the current
-         * record, stores it into the map entry and updates the instance `value` field. If the entry
-         * already exists, it loads the stored timestamp into `value` without modifying the map.
-         *
-         * @param record the input record whose partition key and candidate timestamp are processed
-         */
         @Override
         public void computeNext(Record record) {
             partitionByRecord.of(record);
@@ -2814,43 +2807,20 @@ public class FirstValueTimestampWindowFunctionFactory extends AbstractWindowFunc
         }
 
         @Override
-        public void resetPartition(Record record) {
-            partitionByRecord.of(record);
-            MapKey key = map.withKey();
-            key.put(partitionByRecord, partitionBySink);
-            MapValue mapValue = key.createValue();
-            mapValue.putByte(1, (byte) 0);
-        }
-
-        /**
-         * Returns the window function name.
-         *
-         * @return the function name (\"first_value\")
-         */
-        @Override
         public String getName() {
             return NAME;
         }
 
-        /**
-         * Returns the number of evaluation passes required by this window function.
-         *
-         * @return WindowFunction.ZERO_PASS indicating the function does not require additional evaluation passes
-         */
         @Override
         public int getPassCount() {
             return WindowFunction.ZERO_PASS;
         }
 
-        /**
-         * Return the cached timestamp value for this function.
-         * <p>
-         * The input record is ignored; this function always returns the stored first-value
-         * timestamp for the current window state.
-         *
-         * @param rec ignored
-         * @return the stored timestamp value
-         */
+        @Override
+        public Map getPartitionMap() {
+            return map;
+        }
+
         @Override
         public long getTimestamp(Record rec) {
             return value;
@@ -2861,33 +2831,67 @@ public class FirstValueTimestampWindowFunctionFactory extends AbstractWindowFunc
             return arg.getType();
         }
 
-        /**
-         * Advances the window computation for the given input record and writes the current
-         * computed timestamp value into the SPI output column for that record.
-         * <p>
-         * This method updates internal state by invoking {@code computeNext(record)} and
-         * then stores the resulting long timestamp value into the SPI memory at
-         * {@code spi.getAddress(recordOffset, columnIndex)}.
-         *
-         * @param record       the input record to process
-         * @param recordOffset the SPI record offset (used to locate the output slot in SPI memory)
-         */
         @Override
         public void pass1(Record record, long recordOffset, WindowSPI spi) {
             computeNext(record);
             Unsafe.putLong(spi.getAddress(recordOffset, columnIndex), value);
         }
 
-        /**
-         * Writes a textual plan representation of this window function into the given PlanSink.
-         * <p>
-         * The produced plan has the form:
-         * `functionName(arg)[ ignore nulls] over (partition by <partition-exprs> rows between unbounded preceding and current row)`
-         * <p>
-         * This method emits the function name and argument, appends " ignore nulls" when configured,
-         * and includes the partition expressions taken from {@code partitionByRecord} followed by the
-         * fixed rows frame "rows between unbounded preceding and current row".
-         */
+        @Override
+        public void resetPartition(Record record) {
+            partitionByRecord.of(record);
+            MapKey key = map.withKey();
+            key.put(partitionByRecord, partitionBySink);
+            MapValue mapValue = key.createValue();
+            mapValue.putByte(1, (byte) 0);
+        }
+
+        @Override
+        public void restore(MemoryR source, int formatVersion) {
+            map.clear();
+            long offset = 0;
+            final long partitionCount = source.getLong(offset);
+            offset += Long.BYTES;
+            for (long p = 0; p < partitionCount; p++) {
+                MapKey key = map.withKey();
+                offset = LiveViewSnapshotKeyCodec.readKey(key, source, offset, keyColumnTypes);
+                MapValue value = key.createValue();
+                value.putLong(0, source.getLong(offset));
+                offset += Long.BYTES;
+                value.putByte(1, source.getByte(offset));
+                offset += Byte.BYTES;
+            }
+        }
+
+        @Override
+        public void snapshot(MemoryA sink) {
+            sink.putLong(map.size());
+            MapRecordCursor cursor = map.getCursor();
+            MapRecord record = map.getRecord();
+            final int keyStartIndex = FIRST_VALUE_COLUMN_TYPES.getColumnCount();
+            while (cursor.hasNext()) {
+                LiveViewSnapshotKeyCodec.writeKey(sink, record, keyColumnTypes, keyStartIndex);
+                final MapValue value = record.getValue();
+                sink.putLong(value.getLong(0));
+                sink.putByte(value.getByte(1));
+            }
+        }
+
+        @Override
+        public int snapshotFormatVersion() {
+            return 1;
+        }
+
+        @Override
+        public int snapshotMinSupportedVersion() {
+            return 1;
+        }
+
+        @Override
+        public boolean supportsSnapshot() {
+            return LiveViewSnapshotKeyCodec.isAllTypesSupported(keyColumnTypes);
+        }
+
         @Override
         public void toPlan(PlanSink sink) {
             sink.val(getName());
