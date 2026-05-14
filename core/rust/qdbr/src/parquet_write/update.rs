@@ -757,8 +757,15 @@ impl ParquetUpdater {
             // file-level column_top is therefore safe: the decoder will read
             // the (null) pages instead of skipping them, which is correct
             // albeit slightly less optimal.
+            //
+            // The VARCHAR column-level ascii flag is similarly stale: the
+            // original file may have been all-ASCII (ascii=Some(true)) at
+            // birth, but the merged data may now contain non-ASCII bytes.
+            // Reset to None so the decoder treats per-value ASCII as unknown
+            // and never marks a non-ASCII value as ASCII on read.
             for col in &mut meta.schema {
                 col.column_top = 0;
+                col.ascii = None;
             }
             meta
         };
