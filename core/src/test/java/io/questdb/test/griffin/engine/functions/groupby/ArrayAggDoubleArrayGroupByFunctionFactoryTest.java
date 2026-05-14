@@ -159,6 +159,35 @@ public class ArrayAggDoubleArrayGroupByFunctionFactoryTest extends AbstractCairo
     }
 
     @Test
+    public void testEmptyFirstThenNonEmpty() throws Exception {
+        // computeFirst() must handle an empty input array on the very first row
+        // of a group: the array variant writes ptr=0 (concat identity), and a
+        // later non-empty row re-enters computeFirst via the ptr==0 branch in
+        // computeNext. Existing testEmptyArraysSkipped places the empty array
+        // in the middle, which only exercises computeNext's empty-array path.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE tab (arr DOUBLE[])");
+            execute("""
+                    INSERT INTO tab VALUES
+                    (ARRAY[]),
+                    (ARRAY[]),
+                    (ARRAY[1.0, 2.0]),
+                    (ARRAY[3.0])
+                    """);
+            assertQueryNoLeakCheck(
+                    """
+                            agg
+                            [1.0,2.0,3.0]
+                            """,
+                    "SELECT array_agg(arr) agg FROM tab",
+                    null,
+                    false,
+                    true
+            );
+        });
+    }
+
+    @Test
     public void testEmptyTable() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE tab (arr DOUBLE[])");
@@ -522,6 +551,95 @@ public class ArrayAggDoubleArrayGroupByFunctionFactoryTest extends AbstractCairo
                                 g2\t400\t200000.0
                                 g3\t400\t200400.0
                                 g4\t400\t200800.0
+                                """
+                );
+            }, configuration, LOG);
+        });
+    }
+
+    @Test
+    public void testParallelDisjointMerge() throws Exception {
+        // When each worker accumulates rowIds from contiguous, non-overlapping
+        // page frames, the per-worker buffers form pairwise disjoint sorted
+        // runs (one worker's max rowId is below the next worker's min). In
+        // that arrangement merge() takes the bulk-memcpy fast path via
+        // tryMergeDisjointRuns instead of the two-pointer merge-sort.
+        //
+        // The layout below allocates exactly 4 page frames (one frame per
+        // worker, single group key) so each worker is guaranteed a contiguous
+        // single-frame rowId block.
+        setProperty(PropertyKey.CAIRO_SQL_PAGE_FRAME_MAX_ROWS, 100);
+        assertMemoryLeak(() -> {
+            final WorkerPool pool = new WorkerPool(() -> 4);
+            TestUtils.execute(pool, (engine, _, sqlExecutionContext) -> {
+                engine.execute("CREATE TABLE tab (grp SYMBOL, arr DOUBLE[])", sqlExecutionContext);
+                StringBuilder sb = new StringBuilder("INSERT INTO tab VALUES\n");
+                for (int i = 0; i < 400; i++) {
+                    if (i > 0) {
+                        sb.append(",\n");
+                    }
+                    sb.append("('g0', ARRAY[").append(i).append(".0])");
+                }
+                engine.execute(sb.toString(), sqlExecutionContext);
+                // sum(0..399) = 399 * 400 / 2 = 79800
+                TestUtils.assertSql(
+                        engine,
+                        sqlExecutionContext,
+                        "SELECT grp, array_count(array_agg(arr)) cnt, array_sum(array_agg(arr)) total FROM tab",
+                        sink,
+                        """
+                                grp\tcnt\ttotal
+                                g0\t400\t79800.0
+                                """
+                );
+            }, configuration, LOG);
+        });
+    }
+
+    @Test
+    public void testParallelMergeEmptyWorkerState() throws Exception {
+        // For the array variant, computeFirst() on a NULL or empty input writes
+        // ptr=0 into the map slot rather than allocating a buffer. When the
+        // parallel framework folds per-worker maps into the destination map,
+        // the resulting merge() call can see either side at ptr=0:
+        //   - srcPtr==0: a worker that observed only NULL inputs for the key
+        //   - destPtr==0: the destination accumulator started with a NULL-only
+        //     worker for the key, and a later worker brings real data.
+        //
+        // Layout: 4 page frames under a single group key. Frames 0 and 2 hold
+        // NULL arrays (worker stays at ptr=0); frames 1 and 3 hold real values
+        // (worker reaches ptr=data). The exact merge order depends on the
+        // worker pool, but with both empty-worker and real-worker maps in the
+        // pool at least one merge call hits srcPtr==0 and at least one hits
+        // destPtr==0.
+        setProperty(PropertyKey.CAIRO_SQL_PAGE_FRAME_MAX_ROWS, 100);
+        assertMemoryLeak(() -> {
+            final WorkerPool pool = new WorkerPool(() -> 4);
+            TestUtils.execute(pool, (engine, _, sqlExecutionContext) -> {
+                engine.execute("CREATE TABLE tab (grp SYMBOL, arr DOUBLE[])", sqlExecutionContext);
+                StringBuilder sb = new StringBuilder("INSERT INTO tab VALUES\n");
+                for (int i = 0; i < 400; i++) {
+                    if (i > 0) {
+                        sb.append(",\n");
+                    }
+                    int frame = i / 100;
+                    if (frame % 2 == 0) {
+                        sb.append("('g0', null::double[])");
+                    } else {
+                        sb.append("('g0', ARRAY[").append(i).append(".0])");
+                    }
+                }
+                engine.execute(sb.toString(), sqlExecutionContext);
+                // Only frames 1 and 3 (200 real values) contribute to the result.
+                // sum = (100+199)*100/2 + (300+399)*100/2 = 14_950 + 34_950 = 49_900
+                TestUtils.assertSql(
+                        engine,
+                        sqlExecutionContext,
+                        "SELECT grp, array_count(array_agg(arr)) cnt, array_sum(array_agg(arr)) total FROM tab",
+                        sink,
+                        """
+                                grp\tcnt\ttotal
+                                g0\t200\t49900.0
                                 """
                 );
             }, configuration, LOG);
