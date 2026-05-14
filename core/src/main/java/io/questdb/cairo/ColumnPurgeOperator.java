@@ -56,6 +56,7 @@ public class ColumnPurgeOperator implements Closeable {
     private final int pathRootLen;
     private final TableWriter purgeLogWriter;
     private final ScoreboardUseMode scoreboardUseMode;
+    private final SealedPostingFileScanProbe sealedPostingFileScanProbe = new SealedPostingFileScanProbe();
     private final String updateCompleteColumnName;
     private final int updateCompleteColumnWriterIndex;
     private long longBytes;
@@ -214,20 +215,37 @@ public class ColumnPurgeOperator implements Closeable {
             if (ff.exists(IndexFactory.keyFileName(indexType, path, columnName, columnVersion))) {
                 return true;
             }
-            // For POSTING, the live .pv has its sealTxn recorded in .pk. We need to check that file.
-            // For BITMAP, the second arg (sealTxn) is ignored.
-            long sealTxn = columnVersion;
             if (IndexType.isPosting(indexType)) {
                 path.trimTo(pathTrimToPartition);
                 long fromPk = PostingIndexUtils.readSealTxnFromKeyFile(
                         ff, PostingIndexUtils.keyFileName(path, columnName, columnVersion));
                 if (fromPk >= 0) {
-                    sealTxn = fromPk;
+                    // .pk gave us the live sealTxn; probe the exact .pv path.
+                    path.trimTo(pathTrimToPartition);
+                    if (ff.exists(PostingIndexUtils.valueFileName(path, columnName, columnVersion, fromPk))) {
+                        return true;
+                    }
+                } else {
+                    // .pk is gone or unreadable -- cannot resolve the live
+                    // sealTxn, and the previous fallback to
+                    // sealTxn = columnVersion probed a path that almost
+                    // never matched. Scan the partition for any orphan
+                    // .pv.<columnVersion>.<sealTxn> or
+                    // .pc<N>.<columnVersion>.<C>.<sealTxn>; if one exists
+                    // the purge is not complete and must retry, otherwise
+                    // the caller's "files all gone" shortcut leaks them.
+                    sealedPostingFileScanProbe.of(columnVersion);
+                    PostingIndexUtils.scanSealedFiles(ff, path, pathTrimToPartition, columnName, sealedPostingFileScanProbe);
+                    if (sealedPostingFileScanProbe.hasMatch()) {
+                        return true;
+                    }
                 }
-            }
-            path.trimTo(pathTrimToPartition);
-            if (ff.exists(IndexFactory.valueFileName(indexType, path, columnName, columnVersion, sealTxn))) {
-                return true;
+            } else {
+                // BITMAP: valueFileName ignores the sealTxn arg.
+                path.trimTo(pathTrimToPartition);
+                if (ff.exists(IndexFactory.valueFileName(indexType, path, columnName, columnVersion, columnVersion))) {
+                    return true;
+                }
             }
         }
         // Always check legacy .k/.v
@@ -544,6 +562,42 @@ public class ColumnPurgeOperator implements Closeable {
     private void setUpPartitionPath(int timestampType, int partitionBy, long partitionTimestamp, long partitionTxnName) {
         path.trimTo(pathTableLen);
         TableUtils.setPathForNativePartition(path, timestampType, partitionBy, partitionTimestamp, partitionTxnName);
+    }
+
+    /**
+     * Reusable {@link PostingIndexUtils.SealedFileVisitor} that flags
+     * whether any sealed POSTING file (.pv or .pc&lt;N&gt;) for a target
+     * columnVersion exists in the scanned partition. Stateful but
+     * non-allocating: callers call {@link #of(long)} to reset state for
+     * a new probe, run {@link PostingIndexUtils#scanSealedFiles}, then
+     * read {@link #hasMatch()}.
+     */
+    private static final class SealedPostingFileScanProbe implements PostingIndexUtils.SealedFileVisitor {
+        private long columnVersion;
+        private boolean hasMatch;
+
+        public boolean hasMatch() {
+            return hasMatch;
+        }
+
+        public void of(long columnVersion) {
+            this.columnVersion = columnVersion;
+            this.hasMatch = false;
+        }
+
+        @Override
+        public void onCoverDataFile(int includeIdx, long postingColumnNameTxn, long coveredColumnNameTxn, long sealTxn) {
+            if (postingColumnNameTxn == columnVersion) {
+                hasMatch = true;
+            }
+        }
+
+        @Override
+        public void onValueFile(long postingColumnNameTxn, long sealTxn) {
+            if (postingColumnNameTxn == columnVersion) {
+                hasMatch = true;
+            }
+        }
     }
 
     public enum ScoreboardUseMode {
