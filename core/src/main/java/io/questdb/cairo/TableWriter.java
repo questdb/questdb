@@ -6421,6 +6421,16 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         }
     }
 
+    private boolean hasPostingIndex() {
+        for (int i = 0; i < columnCount; i++) {
+            if (metadata.getColumnType(i) > 0 && metadata.isColumnIndexed(i)
+                    && IndexType.isPosting(metadata.getColumnIndexType(i))) {
+                return true;
+            }
+        }
+        return false;
+    }
+
     /**
      * House keeps table after commit. The tricky bit is to run this housekeeping on each commit. Commit() itself
      * has a contract that if exception is thrown, the data is not committed. However, if this housekeeping fails,
@@ -11014,6 +11024,53 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         }
     }
 
+    private void restorePostingIndexersToLastPartition() {
+        // Reset writer.partitionPath back to lastOpenPartitionTs regardless of
+        // whether each POSTING-indexed column has data in the last partition yet.
+        // The caller's per-partition seal loop may have left partitionPath pointing
+        // at a partition the next housekeep step squashes or deletes; a stale path
+        // strands the next rollback's openSealValueFile on a missing dir.
+        if (lastOpenPartitionTs == Long.MIN_VALUE || !PartitionBy.isPartitioned(partitionBy)
+                || txWriter.isPartitionParquetByPartitionTimestamp(lastOpenPartitionTs)) {
+            return;
+        }
+        long currentNameTxn = txWriter.getPartitionNameTxnByPartitionTimestamp(lastOpenPartitionTs, Long.MIN_VALUE);
+        if (currentNameTxn == Long.MIN_VALUE) {
+            return;
+        }
+        path.trimTo(pathSize);
+        setPathForNativePartition(path, timestampType, partitionBy, lastOpenPartitionTs, currentNameTxn);
+        int plen = path.size();
+        try {
+            for (int colIdx = 0; colIdx < columnCount; colIdx++) {
+                if (metadata.getColumnType(colIdx) <= 0 || !metadata.isColumnIndexed(colIdx)
+                        || !IndexType.isPosting(metadata.getColumnIndexType(colIdx))) {
+                    continue;
+                }
+                ColumnIndexer indexer = indexers.getQuick(colIdx);
+                if (indexer == null) {
+                    continue;
+                }
+                // columnTop == -1 means the column does not exist on this partition at
+                // all (no .pk file), so skip those.
+                long columnTop = columnVersionWriter.getColumnTopQuick(lastOpenPartitionTs, colIdx);
+                if (columnTop < 0) {
+                    continue;
+                }
+                CharSequence colName = metadata.getColumnName(colIdx);
+                long colNameTxn = columnVersionWriter.getColumnNameTxn(lastOpenPartitionTs, colIdx);
+                indexer.configureFollowerAndWriter(
+                        path.trimTo(plen), colName, colNameTxn,
+                        getPrimaryColumn(colIdx), columnTop,
+                        lastOpenPartitionTs, currentNameTxn
+                );
+                configureCoveringIfNeeded(indexer, colIdx, lastOpenPartitionTs);
+            }
+        } finally {
+            path.trimTo(pathSize);
+        }
+    }
+
     private void rewriteAndSwapMetadata(TableWriterMetadata metadata) {
         // create new _meta.swp
         this.metaSwapIndex = rewriteMetadata(metadata);
@@ -11243,6 +11300,12 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
      * @return true if at least one column indexer was touched.
      */
     private boolean sealPostingIndexForPartition(long partitionTimestamp, boolean canSkipRebuild) {
+        // Tables without any POSTING index incur per-call filesystem and
+        // metadata work below, including a stat(2). Bail out before any of
+        // that when no POSTING index column exists.
+        if (!hasPostingIndex()) {
+            return false;
+        }
         // Range-replace can fully drop a partition during this commit; the
         // sink block still references the defunct partition, but there is
         // nothing left to index.
@@ -11461,15 +11524,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         if (o3PartitionUpdateSink == null) {
             return;
         }
-        boolean hasPostingIndex = false;
-        for (int i = 0; i < columnCount; i++) {
-            if (metadata.getColumnType(i) > 0 && metadata.isColumnIndexed(i)
-                    && IndexType.isPosting(metadata.getColumnIndexType(i))) {
-                hasPostingIndex = true;
-                break;
-            }
-        }
-        if (!hasPostingIndex) {
+        if (!hasPostingIndex()) {
             return;
         }
 
@@ -11505,47 +11560,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             }
         }
 
-        if (anyPartitionProcessed && lastOpenPartitionTs != Long.MIN_VALUE && PartitionBy.isPartitioned(partitionBy)
-                && !txWriter.isPartitionParquetByPartitionTimestamp(lastOpenPartitionTs)) {
-            long currentNameTxn = txWriter.getPartitionNameTxnByPartitionTimestamp(lastOpenPartitionTs, Long.MIN_VALUE);
-            if (currentNameTxn != Long.MIN_VALUE) {
-                path.trimTo(pathSize);
-                setPathForNativePartition(path, timestampType, partitionBy, lastOpenPartitionTs, currentNameTxn);
-                int plen = path.size();
-                try {
-                    for (int colIdx = 0; colIdx < columnCount; colIdx++) {
-                        if (metadata.getColumnType(colIdx) <= 0 || !metadata.isColumnIndexed(colIdx)
-                                || !IndexType.isPosting(metadata.getColumnIndexType(colIdx))) {
-                            continue;
-                        }
-                        ColumnIndexer indexer = indexers.getQuick(colIdx);
-                        if (indexer == null) {
-                            continue;
-                        }
-                        // Reset writer.partitionPath back to lastOpenPartitionTs regardless
-                        // of whether this column has data in the last partition yet. The per-
-                        // partition seal loop above may have left partitionPath pointing at a
-                        // split partition that housekeep() squashes and deletes next; a stale
-                        // path strands the next rollback's openSealValueFile on a missing dir.
-                        // columnTop == -1 means the column does not exist on this partition at
-                        // all (no .pk file), so skip those.
-                        long columnTop = columnVersionWriter.getColumnTopQuick(lastOpenPartitionTs, colIdx);
-                        if (columnTop < 0) {
-                            continue;
-                        }
-                        CharSequence colName = metadata.getColumnName(colIdx);
-                        long colNameTxn = columnVersionWriter.getColumnNameTxn(lastOpenPartitionTs, colIdx);
-                        indexer.configureFollowerAndWriter(
-                                path.trimTo(plen), colName, colNameTxn,
-                                getPrimaryColumn(colIdx), columnTop,
-                                lastOpenPartitionTs, currentNameTxn
-                        );
-                        configureCoveringIfNeeded(indexer, colIdx, lastOpenPartitionTs);
-                    }
-                } finally {
-                    path.trimTo(pathSize);
-                }
-            }
+        if (anyPartitionProcessed) {
+            restorePostingIndexersToLastPartition();
         }
     }
 
@@ -11883,6 +11899,45 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
         if (lastPartitionSquashed) {
             openLastPartition();
+        }
+
+        // The squash grew the target partition's .d files via FrameAlgebra.append.
+        // FrameAlgebra's short-lived IndexWriter calls commit() after the per-row
+        // add() loop, and that commit() does publish entries to the chain: via
+        // extendHead in the non-copy squash (chain already open, head sealTxn
+        // matches) or via appendNewEntry with txnAtSeal=0 in the copy squash
+        // (fresh chain; pendingTxnAtSeal is never set, so the fallback at
+        // PostingIndexWriter#publishToChain fires). The IndexWriter never sees
+        // configureCovering, however, so coverCount=0 when captureCoverEndOffsets
+        // runs and the new gens land with an empty cover footer. For COVERING
+        // POSTING indexes this is what drops rows from indexed predicates: the
+        // reader can resolve the index key but cannot resolve the covering
+        // columns for any rowid the squash merged in, so the rows fall out of
+        // the result.
+        //
+        // Reseal the target's POSTING indexes from .d. That republishes the
+        // chain head with a real cover footer captured from the live MA columns
+        // and tags the entry with txWriter.getTxn() -- the current committed
+        // txn, not the upcoming one (see sealPostingIndexForPartition for why
+        // getTxn()+1 would corrupt covering reads). After seal, restore the
+        // table's indexers to lastOpenPartitionTs so the next append writes to
+        // the active partition rather than the just-sealed target.
+        // Mirror finishO3Commit's seal-failure handling: at this point txWriter,
+        // columnVersionWriter and the in-memory partition tables already reflect
+        // the squash (removeAttachedPartitions, squashPartition,
+        // updatePartitionSizeByTimestamp, transient/fixed row count adjustments
+        // all ran above) but neither commit() has fired yet. A throw here would
+        // leave the writer with in-memory state diverged from the on-disk _txn,
+        // so distress it before propagating so the pool replaces it instead of
+        // handing it back to the next caller.
+        try {
+            if (sealPostingIndexForPartition(targetPartition, false)) {
+                restorePostingIndexersToLastPartition();
+            }
+        } catch (Throwable e) {
+            LOG.critical().$("squash succeeded but posting-index reseal failed `").$(e).$('`').$();
+            distressed = true;
+            throw e;
         }
 
         // Commit the new transaction with the partitions squashed
