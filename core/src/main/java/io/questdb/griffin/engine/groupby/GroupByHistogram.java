@@ -78,9 +78,12 @@ public class GroupByHistogram implements Mutable {
     private int numberOfSignificantValueDigits;
 
     public GroupByHistogram(int numberOfSignificantValueDigits) {
-        // We pre-size the histogram for [1, 1000] range to avoid resizes in some basic use cases
-        // like CPU load percentile or latency in millis.
-        this(1, 1000, numberOfSignificantValueDigits);
+        this(1, 2, numberOfSignificantValueDigits);
+        this.autoResize = true;
+    }
+
+    public GroupByHistogram(int numberOfSignificantValueDigits, long initialHighestTrackableValue) {
+        this(1, initialHighestTrackableValue, numberOfSignificantValueDigits);
         this.autoResize = true;
     }
 
@@ -233,7 +236,7 @@ public class GroupByHistogram implements Mutable {
         }
     }
 
-    private void resize(long newHighestTrackableValue) {
+    void resize(long newHighestTrackableValue) {
         int oldNormalizingIndexOffset = (ptr != 0) ? Unsafe.getUnsafe().getInt(ptr + normalizingIndexOffsetPosition) : 0;
         int oldNormalizedZeroIndex = normalizeIndex(0, oldNormalizingIndexOffset, countsArrayLength);
         int oldCountsArrayLength = countsArrayLength;

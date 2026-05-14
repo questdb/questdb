@@ -52,8 +52,10 @@ public class ApproxPercentileLongGroupByFunction extends DoubleFunction implemen
         this.exprFunc = exprFunc;
         this.percentileFunc = percentileFunc;
         this.funcPosition = funcPosition;
-        this.histogramA = new GroupByHistogram(precision);
-        this.histogramB = new GroupByHistogram(precision);
+        // We pre-size the histogram for [1, 1000] range to avoid resizes in some basic use cases
+        // like CPU load percentile or latency in millis.
+        this.histogramA = new GroupByHistogram(precision, 1000);
+        this.histogramB = new GroupByHistogram(precision, 1000);
     }
 
     @Override
@@ -66,8 +68,6 @@ public class ApproxPercentileLongGroupByFunction extends DoubleFunction implemen
     public void computeFirst(MapValue mapValue, Record record, long rowId) {
         final long val = exprFunc.getLong(record);
         if (val != Numbers.LONG_NULL) {
-            // We pre-size the histogram for [1, 1000] range to avoid resizes in some basic use cases
-            // like CPU load percentile or latency in millis.
             histogramA.of(0);
             histogramA.recordValue(val);
             mapValue.putLong(valueIndex, histogramA.ptr());
