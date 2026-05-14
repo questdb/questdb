@@ -3138,6 +3138,82 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testRestartRestoresFromHeadCheckpoint() throws Exception {
+        // Phase 2a.7: a simulated restart should re-discover the head .cp
+        // via the startup sweep, then the first refresh-worker tick rehydrates
+        // the LV's window-function state from the head and advances
+        // lastProcessedSeqTxn to the manifest's baseSeqTxn.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (ts TIMESTAMP, sym SYMBOL, x DOUBLE) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms AS " +
+                    "SELECT ts, sym, sum(x) OVER w AS s FROM base " +
+                    "WINDOW w AS (PARTITION BY sym ORDER BY ts ANCHOR EXPRESSION timestamp_floor('1d', ts))");
+
+            final long preHeadLvSeqTxn;
+            final long preLastProcessed;
+            final long preFunctionMapSize;
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                setCurrentMicros(0L);
+                execute("INSERT INTO base (ts, sym, x) VALUES " +
+                        "('2026-09-01T00:00:00.000000Z', 'a', 1.0), " +
+                        "('2026-09-01T00:00:00.000000Z', 'b', 3.0)");
+                drainWalQueue();
+                drainJob(job);
+                drainWalQueue();
+
+                LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("lv");
+                preHeadLvSeqTxn = instance.getHeadCheckpointLvSeqTxn();
+                preLastProcessed = instance.getLastProcessedSeqTxn();
+                preFunctionMapSize = instance.getAnchorWindow().getFunctions().getQuick(0).getPartitionMap().size();
+                Assert.assertNotEquals("head .cp was written before restart", Numbers.LONG_NULL, preHeadLvSeqTxn);
+                Assert.assertEquals("two partitions seeded pre-restart", 2L, preFunctionMapSize);
+            }
+
+            // Simulate restart: clear the in-memory registry and rebuild
+            // from on-disk _lv + _lv.s. The sweep should re-discover the
+            // head .cp via the lvSeqTxn embedded in its filename.
+            engine.getLiveViewRegistry().clear();
+            engine.buildViewGraphs();
+
+            LiveViewInstance reloaded = engine.getLiveViewRegistry().getViewInstance("lv");
+            Assert.assertNotNull(reloaded);
+            Assert.assertEquals(
+                    "startup sweep stamped head lvSeqTxn from filename",
+                    preHeadLvSeqTxn,
+                    reloaded.getHeadCheckpointLvSeqTxn()
+            );
+            Assert.assertFalse(
+                    "restore not attempted yet (no refresh cycle has run)",
+                    reloaded.isCheckpointRestoreAttempted()
+            );
+
+            // Drive a single refresh cycle. There are no new base commits, but
+            // the fallback scan still calls refreshInstance, which runs the
+            // restore on the first cycle for an LV with a stamped head.
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                drainJob(job);
+            }
+
+            Assert.assertTrue(
+                    "refresh worker attempted the restore on the first post-restart cycle",
+                    reloaded.isCheckpointRestoreAttempted()
+            );
+            Assert.assertEquals(
+                    "lastProcessedSeqTxn matches manifest.baseSeqTxn after restore",
+                    preLastProcessed,
+                    reloaded.getLastProcessedSeqTxn()
+            );
+            Assert.assertEquals(
+                    "function partition map rehydrated to its pre-restart size",
+                    preFunctionMapSize,
+                    reloaded.getAnchorWindow().getFunctions().getQuick(0).getPartitionMap().size()
+            );
+
+            execute("DROP LIVE VIEW lv");
+        });
+    }
+
+    @Test
     public void testFreezeGateSkipsRefreshTurn() throws Exception {
         // Phase 2a.9c: DatabaseCheckpointAgent toggles freezeInProgress around
         // its per-LV file copy so the refresh worker does not advance _lv.s /

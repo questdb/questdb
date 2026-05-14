@@ -36,7 +36,9 @@ import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.TimestampDriver;
 import io.questdb.cairo.file.BlockFileWriter;
+import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryA;
+import io.questdb.cairo.vm.api.MemoryCARW;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.PageFrameAddressCache;
 import io.questdb.cairo.sql.PageFrameMemoryPool;
@@ -64,7 +66,9 @@ import io.questdb.griffin.model.ExpressionNode;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.mp.Job;
+import io.questdb.std.Chars;
 import io.questdb.std.IntList;
+import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
@@ -112,9 +116,21 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
     private final AnchorDispatchingCursor anchorDispatchingCursor = new AnchorDispatchingCursor();
     private final ApplyWal2TableJob applyJob;
     private final BlockFileWriter blockFileWriter;
-    // Reusable manifest bean for the head-checkpoint write hook. Mutated only
-    // on the refresh-worker thread between clear() and writeManifestBlock().
+    // Reusable manifest bean for the head-checkpoint write hook and the
+    // restore path. Mutated only on the refresh-worker thread between clear()
+    // and use.
     private final LiveViewCheckpointManifest checkpointManifest = new LiveViewCheckpointManifest();
+    // Per-worker reusable checkpoint reader for the 2a.7 restart-restore
+    // path. Lazily allocated on the first LV with a head .cp to restore;
+    // reused for subsequent LVs by re-opening on a different file.
+    private LiveViewCheckpointReader checkpointReader;
+    // Bulk-copy buffer for restoring per-function snapshot blocks. The
+    // WindowFunction.restore(MemoryR, int) contract reads from offset 0,
+    // so the framework copies a function's payload bytes here from the
+    // checkpoint file and hands the scratch to the function. Lazily
+    // allocated; reused across functions and across cycles. Freed at
+    // job close.
+    private MemoryCARW checkpointRestoreScratch;
     // Per-worker reusable checkpoint writer. Lazily allocated on the first
     // cycle that triggers a head write; reused across cycles via of() / commit().
     // Memory pages stay mmapped between writes so a frequently-checkpointed LV
@@ -184,6 +200,8 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
         Misc.free(addressCache);
         Misc.free(memoryPool);
         Misc.free(applyJob);
+        checkpointReader = Misc.free(checkpointReader);
+        checkpointRestoreScratch = Misc.free(checkpointRestoreScratch);
         checkpointWriter = Misc.free(checkpointWriter);
         stagingBuffer = Misc.free(stagingBuffer);
     }
@@ -739,6 +757,194 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
     }
 
     /**
+     * Phase 2a.7 restart-restore: opens the head {@code .cp} (stamped on the
+     * instance by the startup sweep), rehydrates the LV's window state from
+     * the manifest + anchor block + per-function blocks, then advances
+     * {@code lastProcessedSeqTxn} to the manifest's {@code baseSeqTxn} so the
+     * upcoming incremental refresh resumes one step past the head.
+     * <p>
+     * Failure handling: any structural error (CRC fail, magic mismatch,
+     * missing function class, anchor type mismatch) unlinks the head .cp
+     * and clears the head metadata on the instance. The LV is not
+     * invalidated - {@code .cp} is derived state, and the upcoming refresh
+     * cycle falls through to the head-miss replay path
+     * (RFC 123 §"Checkpoint stream", §"Corruption handling"). A fresh head
+     * is written by the same cycle once it lands rows.
+     */
+    private void tryRestoreFromHead(LiveViewInstance instance, WindowRecordCursorFactory windowFactory) {
+        final long headLvSeqTxn = instance.getHeadCheckpointLvSeqTxn();
+        path.of(engine.getConfiguration().getDbRoot())
+                .concat(instance.getLiveViewToken())
+                .concat(LiveViewCheckpointWriter.CHECKPOINT_DIR_NAME)
+                .slash();
+        LiveViewCheckpointWriter.appendCpFileName(path, headLvSeqTxn);
+
+        if (checkpointReader == null) {
+            checkpointReader = new LiveViewCheckpointReader(engine.getConfiguration());
+        }
+        if (checkpointRestoreScratch == null) {
+            checkpointRestoreScratch = Vm.getCARWInstance(
+                    64 * 1024L,
+                    Integer.MAX_VALUE,
+                    MemoryTag.NATIVE_DEFAULT
+            );
+        }
+
+        long restoredMaxTs = Numbers.LONG_NULL;
+        long restoredStateBytes = 0L;
+        try {
+            checkpointReader.of(path.$());
+            checkpointReader.readManifestInto(checkpointManifest);
+            final long manifestBaseSeqTxn = checkpointManifest.getBaseSeqTxn();
+            restoredMaxTs = checkpointManifest.getMaxTimestamp();
+            restoredStateBytes = engine.getConfiguration().getFilesFacade().length(path.$());
+
+            final LiveViewWindow anchorWindow = instance.getAnchorWindow();
+            final ObjList<WindowFunction> functions = windowFactory.getWindowFunctions();
+            final LiveViewCheckpointReader.BlockCursor cursor = checkpointReader.getCursor();
+            // The MANIFEST is the first block; skip it - readManifestInto
+            // already consumed it conceptually but resets the cursor.
+            // Walk forward and dispatch by type.
+            cursor.hasNext();
+            cursor.next();
+            while (cursor.hasNext()) {
+                final LiveViewCheckpointReader.ReadableBlock block = cursor.next();
+                switch (block.type()) {
+                    case LiveViewCheckpointBlockType.BLOCK_ANCHOR:
+                        if (anchorWindow == null) {
+                            throw CairoException.critical(0)
+                                    .put("checkpoint anchor block but LV has no anchored window");
+                        }
+                        copyBlockToScratch(block, 0L, block.size());
+                        anchorWindow.restore(checkpointRestoreScratch);
+                        break;
+                    case LiveViewCheckpointBlockType.BLOCK_FUNCTION_SNAPSHOT:
+                        restoreFunctionBlock(block, functions);
+                        break;
+                    case LiveViewCheckpointBlockType.BLOCK_MANIFEST:
+                        // Re-encountering manifest mid-file is malformed.
+                        throw CairoException.critical(0)
+                                .put("duplicate MANIFEST block in live view checkpoint");
+                    default:
+                        // Unknown block type: per the file-format contract
+                        // (block types are content-defined, new types do not
+                        // require a file-version bump), readers skip silently.
+                        break;
+                }
+            }
+
+            // Advance the refresh worker's view of the base position to the
+            // manifest's baseSeqTxn; the next incrementalRefresh resumes one
+            // step past it. appliedWatermark mirrors lastProcessed in
+            // Phase 1b (the seam_ts is anchored at the WAL commit boundary,
+            // see incrementalRefresh).
+            instance.setLastProcessedSeqTxn(manifestBaseSeqTxn);
+            instance.setAppliedWatermark(manifestBaseSeqTxn);
+            // Refresh the head metadata trio with the real maxTs + stateBytes
+            // we just read; the startup sweep stamped placeholder values.
+            // writtenUs stays LONG_NULL so the next cycle's cadence check
+            // treats this as "first commit" and writes a fresh head soon
+            // after - RFC 123 §"Restart recovery": re-emit a fresh .cp after
+            // the first post-restart refresh cycle.
+            instance.setHeadCheckpoint(headLvSeqTxn, restoredMaxTs, restoredStateBytes, Numbers.LONG_NULL);
+        } catch (Throwable t) {
+            LOG.critical().$("could not restore live view from head checkpoint [view=")
+                    .$(instance.getDefinition().getViewName())
+                    .$(", lvSeqTxn=").$(headLvSeqTxn)
+                    .$(", error=").$(t).I$();
+            // Best-effort: unlink the corrupt .cp and clear head metadata.
+            // The next refresh cycle falls through to the head-miss replay
+            // path (which restarts from viewLowerBoundTimestamp).
+            try {
+                engine.getConfiguration().getFilesFacade().removeQuiet(path.$());
+            } catch (Throwable rmErr) {
+                LOG.error().$("could not unlink corrupt head checkpoint [view=")
+                        .$(instance.getDefinition().getViewName())
+                        .$(", error=").$(rmErr).I$();
+            }
+            instance.setHeadCheckpoint(Numbers.LONG_NULL, Numbers.LONG_NULL, 0L, Numbers.LONG_NULL);
+        } finally {
+            try {
+                checkpointReader.close();
+            } catch (Throwable ignored) {
+            }
+        }
+    }
+
+    /**
+     * Decodes a single FUNCTION_SNAPSHOT block:
+     * <pre>
+     *     STR windowName
+     *     STR functionClassName  (matches f.getClass().getName())
+     *     INT formatVersion
+     *     ...function-private state bytes (consumed by WindowFunction.restore)
+     * </pre>
+     * Then bulk-copies the trailing state bytes into the per-worker scratch
+     * buffer (so {@link WindowFunction#restore(MemoryR, int)} reads from
+     * offset 0 as the contract requires) and dispatches by matching the
+     * function class name against the compiled SELECT's window functions.
+     */
+    private void restoreFunctionBlock(LiveViewCheckpointReader.ReadableBlock block, ObjList<WindowFunction> functions) {
+        long offset = 0;
+        // windowName: STR. We only need to skip past it - the manifest
+        // already captured window names; cross-validation belongs in a
+        // later commit if needed.
+        offset += strByteSize(block, offset);
+        final CharSequence storedClassName = block.getStr(offset);
+        final long classNameByteSize = strByteSize(block, offset);
+        offset += classNameByteSize;
+        final int formatVersion = block.getInt(offset);
+        offset += Integer.BYTES;
+
+        WindowFunction match = null;
+        for (int i = 0, n = functions.size(); i < n; i++) {
+            final WindowFunction candidate = functions.getQuick(i);
+            final String candidateName = candidate.getClass().getName();
+            if (Chars.equals(storedClassName, candidateName)) {
+                match = candidate;
+                break;
+            }
+        }
+        if (match == null) {
+            throw CairoException.critical(0)
+                    .put("function not found in compiled live view SELECT, name=")
+                    .put(storedClassName);
+        }
+        if (formatVersion < match.snapshotMinSupportedVersion()
+                || formatVersion > match.snapshotFormatVersion()) {
+            throw CairoException.critical(0)
+                    .put("function snapshot format version out of range, function=")
+                    .put(storedClassName)
+                    .put(", got=")
+                    .put(formatVersion)
+                    .put(", minSupported=")
+                    .put(match.snapshotMinSupportedVersion())
+                    .put(", current=")
+                    .put(match.snapshotFormatVersion());
+        }
+
+        final long payloadStart = offset;
+        final long payloadLength = block.size() - payloadStart;
+        copyBlockToScratch(block, payloadStart, payloadLength);
+        match.restore(checkpointRestoreScratch, formatVersion);
+    }
+
+    private void copyBlockToScratch(LiveViewCheckpointReader.ReadableBlock block, long offsetInBlock, long length) {
+        checkpointRestoreScratch.jumpTo(0);
+        if (length == 0) {
+            return;
+        }
+        checkpointRestoreScratch.putBlockOfBytes(block.addressOf(offsetInBlock), length);
+        checkpointRestoreScratch.jumpTo(0);
+    }
+
+    private static long strByteSize(LiveViewCheckpointReader.ReadableBlock block, long offset) {
+        // STR encoding: INT length prefix + length * CHAR (2 bytes each).
+        final int len = block.getInt(offset);
+        return Integer.BYTES + (long) len * Character.BYTES;
+    }
+
+    /**
      * Computes the AND of (a) anchor-map key codec support and (b) every
      * compiled window function's {@code supportsSnapshot()}. Called once
      * per LV lifetime on the first refresh after the compiled factory is
@@ -957,7 +1163,14 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                 continue;
             }
             long head = engine.getTableSequencerAPI().getTxnTracker(baseToken).getWriterTxn();
-            if (head > instance.getLastProcessedSeqTxn()) {
+            // The 2a.7 restart-restore runs inside refreshInstance on the
+            // first cycle for any LV with a stamped head .cp - even when
+            // there are no new base commits to consume. Letting the worker
+            // skip such LVs would defer restore to the next inbound commit,
+            // which for a quiescent base could be hours away.
+            final boolean needsRestore = !instance.isCheckpointRestoreAttempted()
+                    && instance.getHeadCheckpointLvSeqTxn() != Numbers.LONG_NULL;
+            if (head > instance.getLastProcessedSeqTxn() || needsRestore) {
                 refreshInstance(instance, head);
                 didWork = true;
             }
@@ -983,6 +1196,15 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             }
             boolean attempted = false;
             try {
+                // Phase 2a.7: first cycle after restart restores from the head
+                // .cp (if any). Single-shot per LV lifetime - the flag flips
+                // true whether the restore succeeded, missed, or failed.
+                if (!instance.isCheckpointRestoreAttempted()) {
+                    instance.setCheckpointRestoreAttempted();
+                    if (instance.getHeadCheckpointLvSeqTxn() != Numbers.LONG_NULL) {
+                        tryRestoreFromHead(instance, getWindowFactory(instance));
+                    }
+                }
                 long lastSeqTxn = instance.getLastProcessedSeqTxn();
                 if (seqTxn > lastSeqTxn) {
                     // FLUSH EVERY rate-limit: skip if the previous commit was within

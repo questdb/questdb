@@ -116,6 +116,12 @@ public class LiveViewInstance implements QuietCloseable {
     private volatile long headCheckpointStateBytes = 0;
     private volatile LiveViewInMemoryTier inMemoryTier;
     private volatile boolean isClosed;
+    // Restart-restore single-shot flag. The refresh worker flips it true on
+    // the first cycle after CREATE / restart, regardless of whether a head
+    // .cp was found - one attempt is the contract, no retries. Mutated only
+    // under the refresh latch; volatile so the catalogue thread can read
+    // the latest value without additional synchronisation.
+    private volatile boolean checkpointRestoreAttempted;
     // Wall-clock (micros) of the most recent head-checkpoint commit. Numbers.LONG_NULL
     // until the first cycle that writes a .cp. The refresh worker compares
     // (nowUs - lastCheckpointWrittenUs) against
@@ -356,6 +362,15 @@ public class LiveViewInstance implements QuietCloseable {
         return freezeInProgress;
     }
 
+    /**
+     * @return {@code true} once the refresh worker has attempted a head
+     * checkpoint restore for this LV (whether the restore succeeded, found
+     * no head, or failed on a corrupt file). Single-shot per LV lifetime.
+     */
+    public boolean isCheckpointRestoreAttempted() {
+        return checkpointRestoreAttempted;
+    }
+
     public boolean isInvalid() {
         return stateReader.isInvalid();
     }
@@ -440,6 +455,16 @@ public class LiveViewInstance implements QuietCloseable {
             Misc.free(anchorWindow);
             anchorWindow = window;
         }
+    }
+
+    /**
+     * Single-shot setter for {@link #isCheckpointRestoreAttempted()}.
+     * The refresh worker calls this on the first cycle after the LV's
+     * compiled factory becomes available, regardless of the restore
+     * outcome.
+     */
+    public void setCheckpointRestoreAttempted() {
+        this.checkpointRestoreAttempted = true;
     }
 
     public void setCompiledFactory(RecordCursorFactory factory) {

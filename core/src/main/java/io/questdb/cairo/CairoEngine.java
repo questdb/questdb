@@ -710,16 +710,21 @@ public class CairoEngine implements Closeable, WriterSource {
                             // Phase 2a.7 startup sweep: clean .cp.tmp orphans
                             // and any .cp whose lvSeqTxn outran the applied
                             // watermark, then retain only the highest survivor.
-                            // The first refresh cycle for this LV will open
-                            // that survivor (if any) and run the restore.
+                            // Stamp the survivor's lvSeqTxn on the instance so
+                            // the first refresh cycle knows to attempt restore;
+                            // maxTs / stateBytes stay LONG_NULL / 0 until that
+                            // cycle reads the manifest.
                             liveViewDirPath.of(configuration.getDbRoot()).concat(tableToken);
-                            LiveViewRecovery.sweepCheckpoints(
+                            final long headSeqTxn = LiveViewRecovery.sweepCheckpoints(
                                     configuration.getFilesFacade(),
                                     sweepPath,
                                     liveViewDirPath,
                                     stateReader.getAppliedWatermark(),
                                     sweepNameSink
                             );
+                            if (headSeqTxn != Numbers.LONG_NULL) {
+                                instance.setHeadCheckpoint(headSeqTxn, Numbers.LONG_NULL, 0L, Numbers.LONG_NULL);
+                            }
                         }
                     } catch (Throwable th) {
                         final LogRecord rec = LOG.error().$("could not load live view [view=").$(tableToken);
