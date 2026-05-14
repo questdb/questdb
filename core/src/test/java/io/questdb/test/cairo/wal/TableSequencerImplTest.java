@@ -25,10 +25,12 @@
 package io.questdb.test.cairo.wal;
 
 import io.questdb.PropertyKey;
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.sql.TableRecordMetadata;
+import io.questdb.cairo.wal.WalPurgeJob;
 import io.questdb.cairo.wal.WalUtils;
 import io.questdb.cairo.wal.WalWriter;
 import io.questdb.cairo.wal.seq.TableTransactionLog;
@@ -209,6 +211,44 @@ public class TableSequencerImplTest extends AbstractCairoTest {
                     }
                 }
         );
+    }
+
+    @Test
+    public void testOpenSequencerAfterFullDropTranslatesEnoentToTableDropped() throws Exception {
+        assertMemoryLeak(() -> {
+            String tableName = testName.getMethodName();
+            execute("create table " + tableName + " (i int, ts timestamp) timestamp(ts) partition by day WAL");
+            TableToken staleToken = engine.verifyTableName(tableName);
+
+            execute("drop table " + tableName);
+            drainWalQueue();
+
+            try (WalPurgeJob job = new WalPurgeJob(
+                    engine,
+                    engine.getConfiguration().getFilesFacade(),
+                    engine.getConfiguration().getMicrosecondClock())
+            ) {
+                //noinspection StatementWithEmptyBody
+                while (job.run(0)) {
+                }
+            }
+
+            Assert.assertNull(
+                    "test setup: WalPurgeJob did not sweep the reverse-map entry",
+                    engine.getTableTokenByDirName(staleToken.getDirName())
+            );
+
+            try {
+                engine.getTableSequencerAPI().getNextWalId(staleToken);
+                Assert.fail("Expected CairoException with isTableDropped()");
+            } catch (CairoException ex) {
+                Assert.assertTrue(
+                        "Expected isTableDropped() but got errno=" + ex.getErrno()
+                                + ", msg=" + ex.getFlyweightMessage(),
+                        ex.isTableDropped()
+                );
+            }
+        });
     }
 
     @Test
