@@ -719,6 +719,74 @@ public class PostingIndexChainWriterTest {
     }
 
     @Test
+    public void testRecoveryHeadTrimAfterDropsCopiesToVirginSpace() {
+        // Drop-then-trim: the head entry is abandoned (dropped), and the
+        // entry below it is visible but carries an in-flight tail gen
+        // (trimmed). The trimmed copy must land in virgin space past the
+        // ORIGINAL regionLimit, never on the just-dropped entry's bytes --
+        // that entry was a previously-published head and a concurrent
+        // reader may still have it cached; overwriting it before the
+        // header republish would expose torn bytes to a straddling reader.
+        PostingIndexChainWriter w = new PostingIndexChainWriter();
+        w.initialiseEmpty(mem);
+
+        // E1: visible (txnAtSeal=10), genCount=2 with an in-flight slot[1].
+        long trimmedOffset = w.appendNewEntry(mem, 1, 10, 0, 0, 0, 2, 64, 0);
+        long e1Slot0 = trimmedOffset + PostingIndexUtils.V2_ENTRY_HEADER_SIZE;
+        long e1Slot1 = e1Slot0 + PostingIndexUtils.GEN_DIR_ENTRY_SIZE;
+        mem.putLong(e1Slot0 + PostingIndexUtils.GEN_DIR_OFFSET_FILE_OFFSET, 0L);
+        mem.putLong(e1Slot0 + PostingIndexUtils.GEN_DIR_OFFSET_SIZE, 64L);
+        mem.putLong(e1Slot0 + PostingIndexUtils.GEN_DIR_OFFSET_MAX_VALUE, 42L);
+        mem.putInt(e1Slot0 + PostingIndexUtils.GEN_DIR_OFFSET_MAX_KEY, 4);
+        mem.putLong(e1Slot1 + PostingIndexUtils.GEN_DIR_OFFSET_TXN_AT_SEAL, 11L);
+
+        // E2: abandoned head (txnAtSeal=20 > committedTxn 10), gets dropped.
+        long droppedOffset = w.appendNewEntry(mem, 2, 20, 0, 0, 0, 1, 64, 0);
+        long preRecoveryRegionLimit = w.getRegionLimit();
+
+        // Snapshot E2's bytes: recovery must leave them byte-for-byte intact.
+        long droppedEntryLen = PostingIndexChainEntry.entrySize(1, 0);
+        long[] droppedBytes = new long[(int) (droppedEntryLen / Long.BYTES)];
+        for (int i = 0; i < droppedBytes.length; i++) {
+            droppedBytes[i] = mem.getLong(droppedOffset + (long) i * Long.BYTES);
+        }
+
+        LongList orphans = new LongList();
+        int dropped = w.recoveryDropAbandoned(mem, /* currentTableTxn */ 10L, orphans);
+
+        Assert.assertEquals(1, dropped);
+        Assert.assertEquals(1, orphans.size());
+        Assert.assertEquals(2L, orphans.getQuick(0));
+        Assert.assertTrue(w.isHeadTrimmedOnLastRecovery());
+        Assert.assertEquals(1L, w.getEntryCount());
+
+        // The trimmed copy lands past the original regionLimit, not on the
+        // dropped entry's bytes.
+        long newHead = w.getHeadEntryOffset();
+        Assert.assertEquals(preRecoveryRegionLimit, newHead);
+        Assert.assertNotEquals(droppedOffset, newHead);
+        Assert.assertEquals(1, mem.getInt(newHead + PostingIndexUtils.V2_ENTRY_OFFSET_GEN_COUNT));
+        Assert.assertEquals(
+                PostingIndexChainEntry.entrySize(1, 0),
+                mem.getLong(newHead + PostingIndexUtils.V2_ENTRY_OFFSET_LEN)
+        );
+        Assert.assertEquals(42L, mem.getLong(newHead + PostingIndexUtils.V2_ENTRY_OFFSET_MAX_VALUE));
+        Assert.assertEquals(64L, mem.getLong(newHead + PostingIndexUtils.V2_ENTRY_OFFSET_VALUE_MEM_SIZE));
+        Assert.assertEquals(5, mem.getInt(newHead + PostingIndexUtils.V2_ENTRY_OFFSET_KEY_COUNT));
+
+        // Regression guard: the dropped entry's bytes must be untouched. A
+        // concurrent reader with headEntryOffset == droppedOffset cached
+        // must keep observing a consistent snapshot until it re-reads the
+        // republished header.
+        for (int i = 0; i < droppedBytes.length; i++) {
+            Assert.assertEquals(
+                    "dropped entry byte at index " + i + " was overwritten by applyHeadTrim",
+                    droppedBytes[i], mem.getLong(droppedOffset + (long) i * Long.BYTES)
+            );
+        }
+    }
+
+    @Test
     public void testRecoveryWholeEntryDroppedWhenSlot0InFlight() {
         PostingIndexChainWriter w = new PostingIndexChainWriter();
         w.initialiseEmpty(mem);

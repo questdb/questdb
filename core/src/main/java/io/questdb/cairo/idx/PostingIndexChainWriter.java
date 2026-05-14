@@ -508,7 +508,18 @@ public final class PostingIndexChainWriter {
                     dropped++;
                 } else if (trimmedTo < entryScratch.genCount) {
                     isHeadTrimmed = true;
-                    long copyAt = newRegionLimit;
+                    // Copy to virgin space past the ORIGINAL regionLimit, not
+                    // newRegionLimit. When entries were dropped ahead of this
+                    // one, newRegionLimit has been rewound onto the bytes of
+                    // those just-dropped entries -- and those entries were
+                    // previously published heads that a concurrent reader may
+                    // still have cached. Writing the trimmed copy there would
+                    // overwrite their bytes before the header republish below,
+                    // letting a straddling reader pass its stillStable re-check
+                    // on torn bytes. regionLimit is always virgin space past
+                    // the head, so the source and every dropped entry stay
+                    // byte-intact as unreachable gaps until GC.
+                    long copyAt = regionLimit;
                     long copyLen = applyHeadTrim(keyMem, offset, trimmedTo, entryScratch.len, copyAt);
                     newHead = copyAt;
                     newRegionLimit = copyAt + copyLen;
