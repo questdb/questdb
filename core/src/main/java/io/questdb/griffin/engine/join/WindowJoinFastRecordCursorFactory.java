@@ -305,6 +305,19 @@ public class WindowJoinFastRecordCursorFactory extends AbstractRecordCursorFacto
         Misc.free(value);
     }
 
+    private static StaticSymbolTable asStaticSymbolTable(SymbolTable symbolTable) {
+        if (symbolTable instanceof StaticSymbolTable sst) {
+            return sst;
+        }
+        if (symbolTable instanceof SymbolFunction sf) {
+            StaticSymbolTable sst = sf.getStaticSymbolTable();
+            if (sst != null) {
+                return sst;
+            }
+        }
+        throw new AssertionError("Failed to get static symbol table from " + symbolTable);
+    }
+
     private abstract class AbstractWindowJoinFastRecordCursor implements NoRandomAccessRecordCursor {
         protected final GroupByFunctionsUpdater groupByFunctionsUpdater;
         // Stores metadata about storage of slave underlying records

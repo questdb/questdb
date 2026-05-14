@@ -29,13 +29,11 @@ import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.StaticSymbolTable;
-import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.cairo.sql.SymbolTableSource;
 import io.questdb.cairo.vm.api.MemoryCARW;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.GroupByFunction;
-import io.questdb.griffin.engine.functions.SymbolFunction;
 import io.questdb.griffin.engine.table.ConcurrentTimeFrameState;
 import io.questdb.griffin.engine.table.TablePageFrameCursor;
 import io.questdb.jit.CompiledFilter;
@@ -259,9 +257,8 @@ public class AsyncWindowJoinFastAtom extends AsyncWindowJoinAtom {
         }
 
         final SymbolTableSource slaveSymbolTableSource = ownerSlaveTimeFrameHelper.getSymbolTableSource();
-        // Master may project the symbol through a SymbolColumn (e.g. CTE / sub-select), so unwrap.
-        StaticSymbolTable masterSymbolTable = asStaticSymbolTable(masterSymbolTableSource.getSymbolTable(masterSymbolIndex));
-        StaticSymbolTable slaveSymbolTable = asStaticSymbolTable(slaveSymbolTableSource.getSymbolTable(slaveSymbolIndex));
+        StaticSymbolTable masterSymbolTable = (StaticSymbolTable) masterSymbolTableSource.getSymbolTable(masterSymbolIndex);
+        StaticSymbolTable slaveSymbolTable = (StaticSymbolTable) slaveSymbolTableSource.getSymbolTable(slaveSymbolIndex);
         for (int masterKey = 0, n = masterSymbolTable.getSymbolCount(); masterKey < n; masterKey++) {
             final CharSequence masterSym = masterSymbolTable.valueOf(masterKey);
             final int slaveKey = slaveSymbolTable.keyOf(masterSym);
@@ -272,16 +269,6 @@ public class AsyncWindowJoinFastAtom extends AsyncWindowJoinAtom {
         if (masterSymbolTable.containsNullValue() && slaveSymbolTable.containsNullValue()) {
             slaveSymbolLookupMap.put(NULL_KEY, StaticSymbolTable.VALUE_IS_NULL);
         }
-    }
-
-    static StaticSymbolTable asStaticSymbolTable(SymbolTable symbolTable) {
-        if (symbolTable instanceof StaticSymbolTable) {
-            return (StaticSymbolTable) symbolTable;
-        }
-        if (symbolTable instanceof SymbolFunction) {
-            return ((SymbolFunction) symbolTable).getStaticSymbolTable();
-        }
-        return null;
     }
 
     static int toSymbolMapKey(int key) {
