@@ -2744,6 +2744,55 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testKSumOverUnboundedPartitionRowsSnapshotRoundTrip() throws Exception {
+        // Phase 2a.5 Group #2: ksum() (Kahan-compensated sum) over unbounded
+        // partition rows + ANCHOR. State per partition is [sum: DOUBLE,
+        // compensation: DOUBLE, count: LONG].
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (ts TIMESTAMP, x DOUBLE, sym SYMBOL) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms AS " +
+                    "SELECT ts, sym, ksum(x) OVER w AS s FROM base " +
+                    "WINDOW w AS (PARTITION BY sym ORDER BY ts ANCHOR EXPRESSION timestamp_floor('1d', ts))");
+
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                setCurrentMicros(0L);
+                execute("INSERT INTO base (ts, x, sym) VALUES " +
+                        "('2026-08-01T00:00:00.000000Z', 1.0, 'a'), " +
+                        "('2026-08-01T01:00:00.000000Z', 1e16, 'a'), " +
+                        "('2026-08-01T02:00:00.000000Z', 1.0, 'a'), " +
+                        "('2026-08-01T00:00:00.000000Z', 7.0, 'b')");
+                drainWalQueue();
+                drainJob(job);
+                drainWalQueue();
+
+                LiveViewInstance lv = engine.getLiveViewRegistry().getViewInstance("lv");
+                WindowFunction ksumFunc = lv.getAnchorWindow().getFunctions().getQuick(0);
+                Assert.assertTrue(ksumFunc.supportsSnapshot());
+                Map fnMap = ksumFunc.getPartitionMap();
+                Assert.assertEquals(2L, fnMap.size());
+
+                try (MemoryCARW sink = Vm.getCARWInstance(4096L, Integer.MAX_VALUE, MemoryTag.NATIVE_DEFAULT)) {
+                    ksumFunc.snapshot(sink);
+                    ksumFunc.toTop();
+                    Assert.assertEquals(0L, fnMap.size());
+                    ksumFunc.restore(sink, 1);
+                    Assert.assertEquals(2L, fnMap.size());
+
+                    MapRecordCursor mc = fnMap.getCursor();
+                    MapRecord rec = fnMap.getRecord();
+                    long totalCount = 0;
+                    while (mc.hasNext()) {
+                        totalCount += rec.getValue().getLong(2);
+                    }
+                    Assert.assertEquals(4L, totalCount);
+                }
+            }
+
+            execute("DROP LIVE VIEW lv");
+        });
+    }
+
+    @Test
     public void testRowNumberSnapshotRoundTrip() throws Exception {
         // Phase 2a.5 Group #1: row_number() implements snapshot/restore.
         // Drive a single refresh cycle so the function's Map is populated with
