@@ -611,6 +611,296 @@ public class HivePartitionedReadParquetFunctionTest extends AbstractCairoTest {
         });
     }
 
+    @Test
+    public void testParallelCountAcrossManyFilesManyWorkers() throws Exception {
+        // Stress: 25 partitions, 4 workers, count(*) must match the sum of file row counts.
+        assertMemoryLeak(() -> {
+            execute("create table src as (select cast(x as int) as id from long_sequence(7))");
+            final int n = 25;
+            for (int i = 0; i < n; i++) {
+                writeParquet("pmany/day=2026-04-" + String.format("%02d", i + 1) + "/data.parquet", "src");
+            }
+            withWorkerPool(4, (compiler, ctx) -> {
+                try (RecordCursorFactory factory = compiler.compile(
+                        "select count(*) from read_parquet('pmany/day=*/data.parquet') where id >= 0",
+                        ctx
+                ).getRecordCursorFactory()) {
+                    assertCursor(
+                            "count\n" + (n * 7) + "\n",
+                            factory, false, true, false, ctx
+                    );
+                }
+            });
+        });
+    }
+
+    @Test
+    public void testParallelGroupByOnPartitionColumn() throws Exception {
+        // Aggregation keyed by a partition virtual column. Each worker decodes its file's
+        // row group(s); the virtual page overlay supplies the day value for every row,
+        // so the group-by hash table builds the right keys regardless of worker assignment.
+        assertMemoryLeak(() -> {
+            execute("create table src as (select cast(x as int) as id from long_sequence(4))");
+            writeParquet("pgb/day=2026-05-01/data.parquet", "src");
+            writeParquet("pgb/day=2026-05-02/data.parquet", "src");
+            writeParquet("pgb/day=2026-05-03/data.parquet", "src");
+            withWorkerPool(4, (compiler, ctx) -> {
+                try (RecordCursorFactory factory = compiler.compile(
+                        "select day, count(*) cnt, sum(id) tot " +
+                                "from read_parquet('pgb/day=*/data.parquet') " +
+                                "group by day order by day",
+                        ctx
+                ).getRecordCursorFactory()) {
+                    assertCursor(
+                            "day\tcnt\ttot\n" +
+                                    "2026-05-01T00:00:00.000Z\t4\t10\n" +
+                                    "2026-05-02T00:00:00.000Z\t4\t10\n" +
+                                    "2026-05-03T00:00:00.000Z\t4\t10\n",
+                            factory, true, true, false, ctx
+                    );
+                }
+            });
+        });
+    }
+
+    @Test
+    public void testParallelMixedPartitionTypes() throws Exception {
+        // Three partition columns of three different types alongside parquet data.
+        // Verifies typed buffers are filled correctly per file and the overlay routes
+        // each column to the right slot.
+        assertMemoryLeak(() -> {
+            execute("create table src as (select cast(x as int) as id from long_sequence(2))");
+            writeParquet("pmix/yr=2024/region=1/score=1.5/data.parquet", "src");
+            writeParquet("pmix/yr=2025/region=2/score=2.5/data.parquet", "src");
+            withWorkerPool(2, (compiler, ctx) -> {
+                try (RecordCursorFactory factory = compiler.compile(
+                        "select id, yr, region, score " +
+                                "from read_parquet('pmix/yr=*/region=*/score=*/data.parquet') " +
+                                "order by yr, id",
+                        ctx
+                ).getRecordCursorFactory()) {
+                    assertCursor(
+                            "id\tyr\tregion\tscore\n" +
+                                    "1\t2024\t1\t1.5\n" +
+                                    "2\t2024\t1\t1.5\n" +
+                                    "1\t2025\t2\t2.5\n" +
+                                    "2\t2025\t2\t2.5\n",
+                            factory, true, true, false, ctx
+                    );
+                }
+            });
+        });
+    }
+
+    @Test
+    public void testParallelNullPartitionInSomeFiles() throws Exception {
+        // One file lacks the `day` segment; its rows must surface day as DATE NULL under
+        // parallel iteration (typed long buffer filled with Numbers.LONG_NULL).
+        assertMemoryLeak(() -> {
+            execute("create table src as (select cast(x as int) as id from long_sequence(3))");
+            writeParquet("pnp/day=2026-06-01/data.parquet", "src");
+            writeParquet("pnp/plain.parquet", "src");
+            withWorkerPool(2, (compiler, ctx) -> {
+                try (RecordCursorFactory factoryNull = compiler.compile(
+                        "select count(*) from read_parquet('pnp/**/*.parquet') where day is null",
+                        ctx
+                ).getRecordCursorFactory()) {
+                    assertCursor("count\n3\n", factoryNull, false, true, false, ctx);
+                }
+                try (RecordCursorFactory factoryDate = compiler.compile(
+                        "select count(*) from read_parquet('pnp/**/*.parquet') where day = '2026-06-01'",
+                        ctx
+                ).getRecordCursorFactory()) {
+                    assertCursor("count\n3\n", factoryDate, false, true, false, ctx);
+                }
+            });
+        });
+    }
+
+    @Test
+    public void testParallelOneFile() throws Exception {
+        // Degenerate single-file case for the parallel path. Ensures the cursor handles
+        // a glob that matches exactly one file without partition columns.
+        assertMemoryLeak(() -> {
+            execute("create table src as (select cast(x as int) as id from long_sequence(50))");
+            writeParquet("pone/flat.parquet", "src");
+            withWorkerPool(4, (compiler, ctx) -> {
+                try (RecordCursorFactory factory = compiler.compile(
+                        "select count(*) from read_parquet('pone/*.parquet')",
+                        ctx
+                ).getRecordCursorFactory()) {
+                    assertCursor("count\n50\n", factory, false, true, false, ctx);
+                }
+            });
+        });
+    }
+
+    @Test
+    public void testParallelSequentialParitySelectAll() throws Exception {
+        // Same query in sequential and parallel modes must yield identical results.
+        // ORDER BY keys make the comparison deterministic regardless of worker scheduling.
+        assertMemoryLeak(() -> {
+            execute("create table src as (select cast(x as int) as id from long_sequence(8))");
+            writeParquet("ppar/day=2026-07-01/data.parquet", "src");
+            writeParquet("ppar/day=2026-07-02/data.parquet", "src");
+            writeParquet("ppar/day=2026-07-03/data.parquet", "src");
+
+            final String sql = "select id, day from read_parquet('ppar/day=*/data.parquet') order by day, id";
+            final String sequentialExpected = capture(sql);
+            withWorkerPool(4, (compiler, ctx) -> {
+                try (RecordCursorFactory factory = compiler.compile(sql, ctx).getRecordCursorFactory()) {
+                    assertCursor(sequentialExpected, factory, true, true, false, ctx);
+                }
+            });
+        });
+    }
+
+    @Test
+    public void testParallelSequentialParityWithFilter() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table src as (select cast(x as int) as id from long_sequence(10))");
+            writeParquet("pparf/day=2026-08-01/data.parquet", "src");
+            writeParquet("pparf/day=2026-08-02/data.parquet", "src");
+            writeParquet("pparf/day=2026-08-03/data.parquet", "src");
+
+            final String sql = "select id, day from read_parquet('pparf/day=*/data.parquet') " +
+                    "where id < 4 and day != '2026-08-01' order by day, id";
+            final String sequentialExpected = capture(sql);
+            withWorkerPool(4, (compiler, ctx) -> {
+                try (RecordCursorFactory factory = compiler.compile(sql, ctx).getRecordCursorFactory()) {
+                    assertCursor(sequentialExpected, factory, true, false, false, ctx);
+                }
+            });
+        });
+    }
+
+    @Test
+    public void testParallelWorkerCountParity() throws Exception {
+        // Same query at 1, 2, and 4 workers must produce identical results.
+        assertMemoryLeak(() -> {
+            execute("create table src as (select cast(x as int) as id from long_sequence(6))");
+            writeParquet("pwc/day=2026-09-01/data.parquet", "src");
+            writeParquet("pwc/day=2026-09-02/data.parquet", "src");
+            writeParquet("pwc/day=2026-09-03/data.parquet", "src");
+
+            final String sql = "select id, day from read_parquet('pwc/day=*/data.parquet') where id >= 4 order by day, id";
+            final String[] results = new String[3];
+            final int[] workerCounts = {1, 2, 4};
+            for (int i = 0; i < workerCounts.length; i++) {
+                final int idx = i;
+                withWorkerPool(workerCounts[i], (compiler, ctx) -> {
+                    io.questdb.std.str.StringSink sink = new io.questdb.std.str.StringSink();
+                    TestUtils.printSql(compiler, ctx, sql, sink);
+                    results[idx] = sink.toString();
+                });
+            }
+            Assert.assertEquals(results[0], results[1]);
+            Assert.assertEquals(results[1], results[2]);
+        });
+    }
+
+    @Test
+    public void testParallelOrderByOnPartitionColumn() throws Exception {
+        // ORDER BY a partition virtual column must produce stable, sorted output even
+        // though files may be enumerated and consumed in non-sorted order under
+        // parallel iteration.
+        assertMemoryLeak(() -> {
+            execute("create table src as (select cast(x as int) as id from long_sequence(2))");
+            writeParquet("pord/day=2026-10-03/data.parquet", "src");
+            writeParquet("pord/day=2026-10-01/data.parquet", "src");
+            writeParquet("pord/day=2026-10-02/data.parquet", "src");
+            withWorkerPool(4, (compiler, ctx) -> {
+                try (RecordCursorFactory factory = compiler.compile(
+                        "select day from read_parquet('pord/day=*/data.parquet') order by day",
+                        ctx
+                ).getRecordCursorFactory()) {
+                    assertCursor(
+                            "day\n" +
+                                    "2026-10-01T00:00:00.000Z\n" +
+                                    "2026-10-01T00:00:00.000Z\n" +
+                                    "2026-10-02T00:00:00.000Z\n" +
+                                    "2026-10-02T00:00:00.000Z\n" +
+                                    "2026-10-03T00:00:00.000Z\n" +
+                                    "2026-10-03T00:00:00.000Z\n",
+                            factory, true, true, false, ctx
+                    );
+                }
+            });
+        });
+    }
+
+    @Test
+    public void testParallelRepeatedCursorReuse() throws Exception {
+        // Self cross-join exercises factory.getCursor() being called twice on the
+        // cached page-frame cursor, so toTop() must reset state cleanly.
+        assertMemoryLeak(() -> {
+            execute("create table src as (select cast(x as int) as id from long_sequence(3))");
+            writeParquet("prep/day=2026-11-01/data.parquet", "src");
+            writeParquet("prep/day=2026-11-02/data.parquet", "src");
+            withWorkerPool(2, (compiler, ctx) -> {
+                try (RecordCursorFactory factory = compiler.compile(
+                        "select count(*) cnt " +
+                                "from read_parquet('prep/day=*/data.parquet') a " +
+                                "cross join read_parquet('prep/day=*/data.parquet') b",
+                        ctx
+                ).getRecordCursorFactory()) {
+                    assertCursor("cnt\n36\n", factory, false, true, false, ctx);
+                }
+            });
+        });
+    }
+
+    @Test
+    public void testParallelInferredIntPartitionFilter() throws Exception {
+        // Confirms the parallel path filters correctly on an inferred INT partition column
+        // (arithmetic comparison, not string compare).
+        assertMemoryLeak(() -> {
+            execute("create table src as (select cast(x as int) as id from long_sequence(2))");
+            writeParquet("pint/yr=2024/data.parquet", "src");
+            writeParquet("pint/yr=2025/data.parquet", "src");
+            writeParquet("pint/yr=2026/data.parquet", "src");
+            withWorkerPool(4, (compiler, ctx) -> {
+                try (RecordCursorFactory factory = compiler.compile(
+                        "select count(*) from read_parquet('pint/yr=*/data.parquet') where yr >= 2025",
+                        ctx
+                ).getRecordCursorFactory()) {
+                    assertCursor("count\n4\n", factory, false, true, false, ctx);
+                }
+            });
+        });
+    }
+
+    /**
+     * Convenience for parallel test cases: runs the given block with a fresh worker pool of
+     * {@code workerCount}, then halts the pool. The runnable receives a compiler and the
+     * shared execution context so query compilation goes through the pool's reduce queues.
+     */
+    private void withWorkerPool(int workerCount, ParallelTestBody body) throws Exception {
+        WorkerPool pool = new TestWorkerPool(workerCount);
+        TestUtils.setupWorkerPool(pool, engine);
+        pool.start();
+        try (SqlCompiler compiler = engine.getSqlCompiler()) {
+            body.run(compiler, sqlExecutionContext);
+        } finally {
+            pool.halt();
+        }
+    }
+
+    /**
+     * Returns the textual result of {@code sql} in sequential mode (default test setup
+     * without a worker pool). Used to seed expected output for parity tests.
+     */
+    private String capture(String sql) throws Exception {
+        io.questdb.std.str.StringSink sink = new io.questdb.std.str.StringSink();
+        TestUtils.printSql(engine, sqlExecutionContext, sql, sink);
+        return sink.toString();
+    }
+
+    @FunctionalInterface
+    private interface ParallelTestBody {
+        void run(SqlCompiler compiler, io.questdb.griffin.SqlExecutionContext ctx) throws Exception;
+    }
+
     private void writeParquetWithBloomFilter(String relativePath, String tableName) {
         FilesFacade ff = configuration.getFilesFacade();
         try (
