@@ -62,6 +62,7 @@ import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.griffin.engine.ops.Operation;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
+import io.questdb.network.Net;
 import io.questdb.network.PeerDisconnectedException;
 import io.questdb.network.PeerIsSlowToReadException;
 import io.questdb.network.PeerIsSlowToWriteException;
@@ -427,7 +428,9 @@ public class QwpEgressUpgradeProcessor implements HttpRequestProcessor, QuietClo
             if (recvBufferLen >= recvBufferSize) {
                 LOG.error().$("Egress WebSocket frame too large for recv buffer [fd=").$(context.getFd())
                         .$(", bufferSize=").$(recvBufferSize).I$();
-                throw ServerDisconnectException.INSTANCE;
+                sendFatalClose(context,
+                        "frame payload exceeds receive buffer capacity");
+                return; // unreachable -- sendFatalClose always throws.
             }
 
             int remaining = recvBufferSize - recvBufferLen;
@@ -770,6 +773,23 @@ public class QwpEgressUpgradeProcessor implements HttpRequestProcessor, QuietClo
         LOG.info().$("Egress WebSocket handshake sent [fd=").$(context.getFd())
                 .$(", qwpVersion=").$(state.getNegotiatedVersion() & 0xFF).I$();
         context.switchProtocol();
+    }
+
+    /**
+     * Half-closes the write side of the socket so the kernel emits FIN instead
+     * of an abortive RST, then raises ServerDisconnect so the framework tears
+     * the connection down. shutdown(WR) is best-effort.
+     */
+    private void gracefulCloseAndDisconnect(HttpConnectionContext context)
+            throws ServerDisconnectException {
+        try {
+            Socket socket = context.getSocket();
+            if (socket != null) {
+                socket.shutdown(Net.SHUT_WR);
+            }
+        } catch (Throwable ignored) {
+        }
+        throw ServerDisconnectException.INSTANCE;
     }
 
     // Egress message dispatch and query execution
@@ -1253,7 +1273,9 @@ public class QwpEgressUpgradeProcessor implements HttpRequestProcessor, QuietClo
                         LOG.error().$("Egress WebSocket frame too large [fd=").$(context.getFd())
                                 .$(", payloadLength=").$(frameParser.getPayloadLength())
                                 .$(", bufferSize=").$(recvBufferSize).I$();
-                        throw ServerDisconnectException.INSTANCE;
+                        sendFatalClose(context,
+                                "frame payload exceeds maximum size");
+                        return; // unreachable -- sendFatalClose always throws.
                     }
                     break;
                 }
@@ -1301,6 +1323,39 @@ public class QwpEgressUpgradeProcessor implements HttpRequestProcessor, QuietClo
         int qwpPayloadLen = qwpSize - QwpConstants.HEADER_SIZE;
         QwpEgressFrameWriter.patchPayloadLength(qwpStart, qwpPayloadLen);
         sendFrame(rawSocket, bufAddr, qwpStart, qwpSize);
+    }
+
+    /**
+     * Best-effort emission of a WebSocket-protocol CLOSE frame followed by a
+     * graceful half-close before disconnection. Used for irrecoverable framing
+     * errors (oversized frame, exhausted recv buffer) where the client must be
+     * told the reason rather than just seeing ECONNRESET.
+     * <p>
+     * The egress send path lacks the granular state machine the ingress side
+     * uses, so when the send buffer is mid-stream and the inline write returns
+     * {@code PeerIsSlowToReadException} / {@code PeerDisconnectedException} we
+     * fall through to the half-close and disconnect rather than attempting to
+     * defer. The framework still flushes whatever bytes it queued before
+     * teardown; clients tolerant of a missing CLOSE see the same behaviour as
+     * before, while the common ready-buffer case now lands the diagnostic.
+     */
+    private void sendFatalClose(HttpConnectionContext context, CharSequence reason) throws ServerDisconnectException {
+        try {
+            HttpRawSocket rawSocket = context.getRawResponseSocket();
+            int written = WebSocketFrameWriter.writeCloseFrame(
+                    rawSocket.getBufferAddress(),
+                    rawSocket.getBufferSize(),
+                    WebSocketCloseCode.MESSAGE_TOO_BIG,
+                    reason
+            );
+            if (written > 0) {
+                rawSocket.send(written);
+            }
+        } catch (PeerDisconnectedException | PeerIsSlowToReadException ignored) {
+            // Best effort -- we're disconnecting anyway. Anything queued in the
+            // framework send buffer flushes naturally during teardown.
+        }
+        gracefulCloseAndDisconnect(context);
     }
 
     private void sendQueryError(
