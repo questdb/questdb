@@ -694,6 +694,12 @@ public class CairoEngine implements Closeable, WriterSource {
                                 }
                             }
                             liveViewRegistry.registerView(instance);
+                            // Register the LV with the shared dependents graph so
+                            // orderByDependentViews honors LV-after-base ordering
+                            // during DatabaseCheckpointAgent snapshots. Skipping this
+                            // would deadlock the snapshot agent on multi-LV chains
+                            // over the same base.
+                            dependentViewGraph.addLiveView(tableToken, definition.getBaseTableName());
                             liveViewStateStore.registerBaseTable(definition.getBaseTableName());
                         }
                     } catch (Throwable th) {
@@ -1001,6 +1007,7 @@ public class CairoEngine implements Closeable, WriterSource {
                 instance.setAppliedWatermark(-1L);
                 instance.setLvConsumedSeqTxn(subscribeFromSeqTxn - 1);
                 liveViewRegistry.registerView(instance);
+                dependentViewGraph.addLiveView(liveViewToken, definition.getBaseTableName());
                 liveViewStateStore.registerBaseTable(definition.getBaseTableName());
             } catch (Throwable t) {
                 // Best-effort rollback. Failures here just leave the orphan in place;
@@ -1008,8 +1015,11 @@ public class CairoEngine implements Closeable, WriterSource {
                 try {
                     // If we got past liveViewRegistry.registerView before failing,
                     // remove the in-memory entry so the registry does not leak the
-                    // freed instance after the table-drop below succeeds.
+                    // freed instance after the table-drop below succeeds. The
+                    // graph-side entry is removed in the same pass so a retried
+                    // CREATE does not see a stale dependent.
                     LiveViewInstance partial = liveViewRegistry.removeView(op.getViewName());
+                    dependentViewGraph.removeLiveView(liveViewToken, op.getBaseTableName());
                     Misc.free(partial);
                 } catch (Throwable rollbackErr) {
                     LOG.error().$("could not unregister partially-created live view [view=").$(liveViewToken)
@@ -1130,6 +1140,9 @@ public class CairoEngine implements Closeable, WriterSource {
     public void dropLiveView(CharSequence name) {
         LiveViewInstance instance = liveViewRegistry.removeView(name);
         if (instance != null) {
+            // Drop the LV from the dependents graph too so a multi-LV chain's
+            // snapshot ordering does not still see the dropped view.
+            dependentViewGraph.removeLiveView(instance.getLiveViewToken(), instance.getDefinition().getBaseTableName());
             // Mark the instance dropped and attempt an immediate free. If a refresh or
             // reader is currently holding a lock, tryCloseIfDropped() bails and the
             // winning party (refresh finally hook or cursor close) performs the free.

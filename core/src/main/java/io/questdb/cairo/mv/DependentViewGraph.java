@@ -69,6 +69,37 @@ public class DependentViewGraph implements Mutable {
         this.updateDefinitionRef = this::updateDefinition;
     }
 
+    /**
+     * Registers a live view as a dependent of {@code baseTableName} so
+     * {@link #orderByDependentViews} sees the LV when ordering tables for
+     * checkpoint/snapshot flows. Unlike {@link #addView(MatViewDefinition)},
+     * this does not cache a definition - LV definitions live in
+     * {@code LiveViewRegistry}. The graph only needs the LV's token to honor
+     * the "dependents-after-bases" ordering rule.
+     * <p>
+     * Rejects circular dependencies via {@link #hasDependencyLoop} - the same
+     * walk used for mat views, so a mixed mat/live chain catches loops that
+     * cross view types.
+     */
+    public boolean addLiveView(@NotNull TableToken liveViewToken, @NotNull CharSequence baseTableName) {
+        synchronized (this) {
+            if (hasDependencyLoop(baseTableName, liveViewToken)) {
+                throw CairoException.critical(0)
+                        .put("circular dependency detected for live view [view=").put(liveViewToken.getTableName())
+                        .put(", baseTable=").put(baseTableName)
+                        .put(']');
+            }
+            final ViewDependencyList list = getOrCreateDependentViews(baseTableName);
+            final ObjList<TableToken> dependents = list.lockForWrite();
+            try {
+                dependents.add(liveViewToken);
+            } finally {
+                list.unlockAfterWrite();
+            }
+        }
+        return true;
+    }
+
     public boolean addView(MatViewDefinition viewDefinition) {
         final TableToken viewToken = viewDefinition.getMatViewToken();
         final MatViewDefinition prevDefinition = definitionsByTableDirName.putIfAbsent(viewToken.getDirName(), viewDefinition);
@@ -142,6 +173,28 @@ public class DependentViewGraph implements Mutable {
             if (!seen.contains(token)) {
                 orderByDependentViews(token, seen, stack, orderedSink);
             }
+        }
+    }
+
+    /**
+     * Removes a live view from its base's dependent list. Idempotent - a
+     * missing entry is silently ignored, mirroring the mat-view path.
+     */
+    public void removeLiveView(@NotNull TableToken liveViewToken, @NotNull CharSequence baseTableName) {
+        final ViewDependencyList dependents = dependentViewsByTableName.get(baseTableName);
+        if (dependents == null) {
+            return;
+        }
+        final ObjList<TableToken> list = dependents.lockForWrite();
+        try {
+            for (int i = 0, n = list.size(); i < n; i++) {
+                if (list.get(i).equals(liveViewToken)) {
+                    list.remove(i);
+                    break;
+                }
+            }
+        } finally {
+            dependents.unlockAfterWrite();
         }
     }
 
