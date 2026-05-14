@@ -45,8 +45,10 @@ import io.questdb.network.PeerIsSlowToReadException;
 import io.questdb.network.PeerIsSlowToWriteException;
 import io.questdb.network.ServerDisconnectException;
 import io.questdb.network.Socket;
+import io.questdb.cutlass.qwp.server.egress.QwpEgressExtension;
 import io.questdb.std.CharSequenceLongHashMap;
 import io.questdb.std.Numbers;
+import io.questdb.std.ObjList;
 import io.questdb.std.Unsafe;
 import io.questdb.std.str.Utf8Sequence;
 import io.questdb.std.str.Utf8s;
@@ -307,6 +309,17 @@ public class QwpWebSocketUpgradeProcessor implements HttpRequestProcessor {
         boolean durableAckRequested = durableAckHeader != null
                 && Utf8s.equalsIgnoreCaseAscii(durableAckHeader, QwpWebSocketHttpProcessor.HEADER_VALUE_DURABLE_ACK_ENABLED);
         state.setDurableAckEnabled(durableAckRequested && engine.getDurableAckRegistry().isEnabled());
+
+        // Opt-in flag for STATUS_OK_WITH_HINTS ack frames. Producer-credit
+        // hints are surfaced by the engine's QWP egress extension. The
+        // default extension returns Integer.MAX_VALUE so opting in never
+        // harms throughput and never throttles unless an alternative
+        // extension is installed.
+        Utf8Sequence hintsHeader = requestHeader.getHeader(
+                QwpWebSocketHttpProcessor.HEADER_X_QWP_REQUEST_HINTS);
+        boolean hintsRequested = hintsHeader != null
+                && Utf8s.equalsIgnoreCaseAscii(hintsHeader, QwpWebSocketHttpProcessor.HEADER_VALUE_HINTS_CREDITS);
+        state.setHintsEnabled(hintsRequested);
 
         // Write the 101 Switching Protocols response (reuse the pre-computed accept key)
         int bytesWritten = QwpWebSocketHttpProcessor.writeResponse(bufferAddr, acceptKey, negotiatedVersion, null, roleBytes);
@@ -1000,7 +1013,12 @@ public class QwpWebSocketUpgradeProcessor implements HttpRequestProcessor {
         long bufferAddr = rawSocket.getBufferAddress();
         int bufferSize = rawSocket.getBufferSize();
 
-        int payloadLen = state.computeAckPayloadSize();
+        int basePayloadLen = state.computeAckPayloadSize();
+        boolean hintsOn = state.isHintsEnabled();
+        // STATUS_OK_WITH_HINTS appends 4 bytes of producer-credit hint
+        // after the table entries. Compute size up front so the frame
+        // header carries the correct length.
+        int payloadLen = basePayloadLen + (hintsOn ? CREDITS_TRAILER_SIZE : 0);
         int frameSize = WebSocketFrameWriter.headerSize(payloadLen, false) + payloadLen;
 
         if (frameSize > bufferSize) {
@@ -1014,9 +1032,18 @@ public class QwpWebSocketUpgradeProcessor implements HttpRequestProcessor {
         long sequence = state.getHighestProcessedSequence();
         int headerLen = WebSocketFrameWriter.writeBinaryFrameHeader(bufferAddr, payloadLen);
         long writeAddr = bufferAddr + headerLen;
-        Unsafe.putByte(writeAddr, STATUS_OK);
+        Unsafe.putByte(writeAddr, hintsOn ? STATUS_OK_WITH_HINTS : STATUS_OK);
         Unsafe.putLong(writeAddr + 1, sequence);
         QwpProcessorState.writeTableSeqTxnEntries(writeAddr + 9, state.getPendingAckSeqTxns());
+        if (hintsOn) {
+            // Producer-credit hint: minimum credits across every table the
+            // ack covers, so the tightest downstream constraint paces the
+            // producer for that ack. The default engine extension returns
+            // Integer.MAX_VALUE per table, so the min stays unbounded and
+            // the producer never throttles unless an alternative extension
+            // is installed.
+            Unsafe.putInt(writeAddr + basePayloadLen, computeMinCreditsForAck(state));
+        }
 
         try {
             rawSocket.send(headerLen + payloadLen);
@@ -1029,6 +1056,31 @@ public class QwpWebSocketUpgradeProcessor implements HttpRequestProcessor {
                     .$(", seq=").$(sequence).I$();
             throw e;
         }
+    }
+
+    /**
+     * Computes the minimum producer-credit hint across every table covered
+     * by the pending ack. The producer pacing decision must be made on the
+     * tightest constraint of any of those tables, otherwise a single
+     * back-pressured table would let the producer keep pushing rows on
+     * the others.
+     * <p>
+     * Returns {@link Integer#MAX_VALUE} when no alternative extension is
+     * registered or every covered table resolves to MAX_VALUE credits
+     * (no back-pressure pressure on any of them).
+     */
+    private int computeMinCreditsForAck(QwpProcessorState state) {
+        QwpEgressExtension extension = engine.getQwpEgressExtension();
+        int minCredits = Integer.MAX_VALUE;
+        ObjList<CharSequence> keys = state.getPendingAckSeqTxns().keys();
+        for (int i = 0, n = keys.size(); i < n; i++) {
+            CharSequence tableName = keys.getQuick(i);
+            io.questdb.cairo.TableToken token = engine.getTableTokenIfExists(tableName);
+            if (token == null) continue;
+            int credits = extension.computeIngestCredits(token);
+            if (credits < minCredits) minCredits = credits;
+        }
+        return minCredits;
     }
 
     private void trySendDurableAck(HttpConnectionContext context, QwpProcessorState state)

@@ -57,6 +57,10 @@ public class QwpWebSocketHttpProcessor implements HttpRequestHandler {
     public static final Utf8String HEADER_UPGRADE = new Utf8String("Upgrade");
     // Expected value for HEADER_X_QWP_REQUEST_DURABLE_ACK to enable durable-ack; compared case-insensitively.
     public static final Utf8String HEADER_VALUE_DURABLE_ACK_ENABLED = new Utf8String("true");
+    // Expected value for HEADER_X_QWP_REQUEST_HINTS to enable producer-credit hints
+    // on STATUS_OK ack frames; compared case-insensitively. Any other value leaves
+    // the feature disabled for the connection.
+    public static final Utf8String HEADER_VALUE_HINTS_CREDITS = new Utf8String("credits");
     // QWP version negotiation headers
     public static final Utf8String HEADER_X_QWP_ACCEPT_ENCODING = new Utf8String("X-QWP-Accept-Encoding");
     public static final Utf8String HEADER_X_QWP_CLIENT_ID = new Utf8String("X-QWP-Client-Id");
@@ -65,6 +69,10 @@ public class QwpWebSocketHttpProcessor implements HttpRequestHandler {
     // Client opt-in for STATUS_DURABLE_ACK frames. Value "true" (case-insensitive) enables.
     // Any other value, or header absent, leaves the feature disabled for this connection.
     public static final Utf8String HEADER_X_QWP_REQUEST_DURABLE_ACK = new Utf8String("X-QWP-Request-Durable-Ack");
+    // Client opt-in for producer-credit hints. Value "credits" (case-insensitive)
+    // enables STATUS_OK_WITH_HINTS frames carrying a creditsRemaining trailer.
+    // Header absent or any other value falls back to plain STATUS_OK.
+    public static final Utf8String HEADER_X_QWP_REQUEST_HINTS = new Utf8String("X-QWP-Request-Hints");
     // Header values
     public static final Utf8String VALUE_WEBSOCKET = new Utf8String("websocket");
     /**

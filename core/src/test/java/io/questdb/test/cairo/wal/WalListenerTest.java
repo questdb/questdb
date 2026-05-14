@@ -31,7 +31,6 @@ import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.security.AllowAllSecurityContext;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryMARW;
-import io.questdb.cairo.wal.DefaultWalListener;
 import io.questdb.cairo.wal.WalListener;
 import io.questdb.cairo.wal.WalWriter;
 import io.questdb.std.str.Path;
@@ -56,12 +55,12 @@ public class WalListenerTest extends AbstractCairoTest {
     public static void setUpStatic() throws Exception {
         AbstractCairoTest.setUpStatic();
         listener.events.clear();
-        engine.setWalListener(listener);
+        engine.addWalListener(listener);
     }
 
     @AfterClass
     public static void tearDownStatic() {
-        engine.setWalListener(DefaultWalListener.INSTANCE);
+        engine.removeWalListener(listener);
         if (!listener.events.isEmpty()) {
             System.err.println("Unexpected or unasserted WalListener events:");
             for (WalListenerEvent event : listener.events) {

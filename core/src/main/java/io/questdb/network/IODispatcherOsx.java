@@ -26,11 +26,26 @@ package io.questdb.network;
 
 import io.questdb.KqueueAccessor;
 import io.questdb.std.Files;
-import io.questdb.std.IntHashSet;
+import io.questdb.std.IntList;
+import io.questdb.std.LongList;
 import io.questdb.std.Misc;
 
 public class IODispatcherOsx<C extends IOContext<C>> extends AbstractIODispatcher<C> {
-    private final IntHashSet alreadyHandledFds = new IntHashSet();
+    /**
+     * Per-poll scratch state for de-duplicating kevents on the same fd
+     * within a single {@code kqueue.poll()} return. When the kernel marks
+     * both READ and WRITE ready on the same fd, two kevents come back in
+     * one poll; without this combining, the second filter was previously
+     * swallowed by an {@code alreadyHandledFds} guard and only re-armed
+     * for the next poll, costing a dispatcher cycle of latency on
+     * back-to-back READ+WRITE. Parallel triples
+     * {@code (kevtFds[i], kevtIds[i], kevtMasks[i])} hold the unique fds,
+     * their pending-row opIds, and the OR-combined "ready" filter bits.
+     * Cleared at the start of every {@code runSerially}.
+     */
+    private final IntList kevtFds = new IntList(16);
+    private final LongList kevtIds = new LongList(16);
+    private final IntList kevtMasks = new IntList(16);
     private final int capacity;
     private final KeventWriter keventWriter = new KeventWriter();
     private final Kqueue kqueue;
@@ -78,7 +93,7 @@ public class IODispatcherOsx<C extends IOContext<C>> extends AbstractIODispatche
         keventWriter.done();
     }
 
-    private boolean handleSocketOperation(long id) {
+    private boolean handleSocketOperation(long id, int readyMask) {
         // find row in pending for two reasons:
         // 1. find payload
         // 2. remove row from pending, remaining rows will be timed out
@@ -89,23 +104,49 @@ public class IODispatcherOsx<C extends IOContext<C>> extends AbstractIODispatche
         }
 
         final C context = pending.get(row);
-        final int requestedOp = (int) pending.get(row, OPM_OPERATION);
-        final boolean readyForWrite = kqueue.getFilter() == KqueueAccessor.EVFILT_WRITE;
-        final boolean readyForRead = kqueue.getFilter() == KqueueAccessor.EVFILT_READ;
+        // OPM_OPERATION is a bitmask of armed ops (READ / WRITE) accumulated
+        // by processRegistrations's dedupe-by-fd path. Mirrors the Linux
+        // dispatcher fix that closed the "two concurrent registerChannel
+        // calls for the same fd overwrite each other's opId" race.
+        // {@code readyMask} is the OR-combined "ready" filter mask
+        // accumulated across all kevents for this fd in the current
+        // {@code kqueue.poll()} return.
+        final int requestedMask = (int) pending.get(row, OPM_OPERATION);
+        final boolean readyForRead = (readyMask & IOOperation.READ) != 0;
+        final boolean readyForWrite = (readyMask & IOOperation.WRITE) != 0;
 
-        if ((requestedOp == IOOperation.WRITE && readyForWrite) || (requestedOp == IOOperation.READ && readyForRead)) {
-            // disarm extra filter in case it was previously set and haven't fired yet
+        boolean writeReady = (requestedMask & IOOperation.WRITE) != 0 && readyForWrite;
+        boolean readReady = (requestedMask & IOOperation.READ) != 0 && readyForRead;
+
+        if (writeReady || readReady) {
+            int satisfiedMask = 0;
             keventWriter.prepare().tolerateErrors();
-            if (requestedOp == IOOperation.READ && context.getSocket().wantsTlsWrite()) {
-                keventWriter.removeWriteFD(context.getFd());
-            }
-            if (requestedOp == IOOperation.WRITE && context.getSocket().wantsTlsRead()) {
+            // When only one ready bit lines up with the requested mask
+            // (the typical case under EV_ONESHOT - the other filter
+            // didn't fire in this poll), pre-disarm the opposite filter
+            // if the TLS layer would otherwise leave it armed.
+            if (writeReady && !readReady && context.getSocket().wantsTlsRead()) {
                 keventWriter.removeReadFD(context.getFd());
             }
+            if (readReady && !writeReady && context.getSocket().wantsTlsWrite()) {
+                keventWriter.removeWriteFD(context.getFd());
+            }
             keventWriter.done();
-            // publish the operation and we're done
-            publishOperation(requestedOp, context);
-            pending.deleteRow(row);
+            if (writeReady) {
+                publishOperation(IOOperation.WRITE, context);
+                satisfiedMask |= IOOperation.WRITE;
+            }
+            if (readReady) {
+                publishOperation(IOOperation.READ, context);
+                satisfiedMask |= IOOperation.READ;
+            }
+            int remainingMask = requestedMask & ~satisfiedMask;
+            if (remainingMask == 0) {
+                pending.deleteRow(row);
+            } else {
+                pending.set(row, OPM_OPERATION, remainingMask);
+                rearmKqueue(context, id, remainingMask);
+            }
             return true;
         } else {
             // that's not the requested operation, but something wanted by the socket
@@ -114,9 +155,26 @@ public class IODispatcherOsx<C extends IOContext<C>> extends AbstractIODispatche
                 pending.deleteRow(row);
                 return true;
             }
-            rearmKqueue(context, id, requestedOp);
+            rearmKqueue(context, id, requestedMask);
         }
         return false;
+    }
+
+    /**
+     * Linear scan for a pending row whose {@code OPM_FD} matches. Returns
+     * the row index, or -1 when no row exists for this fd. See
+     * IODispatcherLinux for the full rationale; in short, the kqueue
+     * back-end has the same "two concurrent registerChannels for the same
+     * fd overwrite each other's opId" race the Linux dispatcher had, and
+     * the fix is the same: dedupe pending rows by fd, OR-combine ops.
+     */
+    private int findPendingRowByFd(long fd) {
+        for (int i = 0, n = pending.size(); i < n; i++) {
+            if (pending.get(i, OPM_FD) == fd) {
+                return i;
+            }
+        }
+        return -1;
     }
 
     private void processHeartbeats(int watermark, long timestamp) {
@@ -125,14 +183,18 @@ public class IODispatcherOsx<C extends IOContext<C>> extends AbstractIODispatche
             final C context = pending.get(i);
 
             // De-register pending operation from kqueue. We'll register it later when we get a heartbeat pong.
+            // OPM_OPERATION is a bitmask after the dedupe-by-fd port; tests
+            // must mask each bit individually rather than equality-match
+            // a single op (a combined READ|WRITE row would match neither
+            // == READ nor == WRITE, leaving stale kevent state behind).
             final long fd = context.getFd();
             final long opId = pending.get(i, OPM_ID);
             long op = pending.get(i, OPM_OPERATION);
             keventWriter.prepare().tolerateErrors();
-            if (op == IOOperation.READ || context.getSocket().wantsTlsRead()) {
+            if ((op & IOOperation.READ) != 0 || context.getSocket().wantsTlsRead()) {
                 keventWriter.removeReadFD(fd);
             }
-            if (op == IOOperation.WRITE || context.getSocket().wantsTlsWrite()) {
+            if ((op & IOOperation.WRITE) != 0 || context.getSocket().wantsTlsWrite()) {
                 keventWriter.removeWriteFD(fd);
             }
             if (keventWriter.done() != 0) {
@@ -176,6 +238,13 @@ public class IODispatcherOsx<C extends IOContext<C>> extends AbstractIODispatche
             final IOEvent<C> event = interestQueue.get(cursor);
             final C context = event.context;
             final int requestedOperation = event.operation;
+            if (event.deferredRepublish) {
+                event.deferredRepublish = false;
+                interestSubSeq.done(cursor);
+                publishOperation(requestedOperation, context);
+                useful = true;
+                continue;
+            }
             final long srcOpId = context.getAndResetHeartbeatId();
             interestSubSeq.done(cursor);
 
@@ -218,6 +287,36 @@ public class IODispatcherOsx<C extends IOContext<C>> extends AbstractIODispatche
                     continue;
                 }
 
+                // Dedupe by fd: see IODispatcherLinux.processRegistrations for
+                // the full motivation. If a pending row already exists for
+                // this fd, OR the new op into its bitmask and reuse the
+                // existing opId rather than letting kqueue's udata get
+                // overwritten by a second registration.
+                int existingRow = findPendingRowByFd(fd);
+                if (existingRow >= 0) {
+                    int existingMask = (int) pending.get(existingRow, OPM_OPERATION);
+                    int combinedMask = existingMask | requestedOperation;
+                    pending.set(existingRow, OPM_OPERATION, combinedMask);
+                    pending.set(existingRow, OPM_HEARTBEAT_TIMESTAMP, timestamp);
+                    long existingOpId = pending.get(existingRow, OPM_ID);
+                    LOG.debug().$("merging registration [fd=").$(fd)
+                            .$(", existingMask=").$(existingMask)
+                            .$(", addedOp=").$(requestedOperation)
+                            .$(", combinedMask=").$(combinedMask)
+                            .$(", id=").$(existingOpId).I$();
+                    // Register the kevent(s) for the combined mask using the
+                    // existing opId. Add only the newly-armed filters; the
+                    // ones already armed under existing opId stay valid.
+                    int newlyArmed = requestedOperation & ~existingMask;
+                    if ((newlyArmed & IOOperation.WRITE) != 0 || context.getSocket().wantsTlsWrite()) {
+                        keventWriter.writeFD(fd, existingOpId);
+                    }
+                    if ((newlyArmed & IOOperation.READ) != 0 || context.getSocket().wantsTlsRead()) {
+                        keventWriter.readFD(fd, existingOpId);
+                    }
+                    continue;
+                }
+
                 LOG.debug().$("processing registration [fd=").$(fd)
                         .$(", op=").$(operation)
                         .$(", id=").$(opId)
@@ -240,10 +339,13 @@ public class IODispatcherOsx<C extends IOContext<C>> extends AbstractIODispatche
             // and while processing the read event we have to deregister from write events.
             // This can create a loop where we keep deregistering and registering for write events without ever
             // writing out the encrypted data.
-            if (operation == IOOperation.WRITE || context.getSocket().wantsTlsWrite()) {
+            //
+            // OPM_OPERATION is a bitmask after the dedupe-by-fd port; tests
+            // must mask each bit individually rather than equality-match.
+            if ((operation & IOOperation.WRITE) != 0 || context.getSocket().wantsTlsWrite()) {
                 keventWriter.writeFD(fd, opId);
             }
-            if (operation == IOOperation.READ || context.getSocket().wantsTlsRead()) {
+            if ((operation & IOOperation.READ) != 0 || context.getSocket().wantsTlsRead()) {
                 keventWriter.readFD(fd, opId);
             }
         }
@@ -256,12 +358,19 @@ public class IODispatcherOsx<C extends IOContext<C>> extends AbstractIODispatche
     private void rearmKqueue(C context, long id, int operation) {
         keventWriter.prepare();
 
-        // Important: We must register for writing *before* registering for reading
-        // see #processRegistrations() for details.
-        if (operation == IOOperation.WRITE || context.getSocket().wantsTlsWrite()) {
+        // {@code operation} is a bitmask of IOOperation bits accumulated by
+        // {@link #processRegistrations}'s dedupe-by-fd path. Translating
+        // bit-by-bit keeps both halves of a combined READ+WRITE arm
+        // alive on the kqueue instead of losing one to the udata
+        // overwrite that bit our Linux dispatcher (the kqueue analogue
+        // of EPOLL_CTL_MOD's last-arm-wins).
+        //
+        // Important: We must register for writing *before* registering
+        // for reading - see #processRegistrations() for details.
+        if ((operation & IOOperation.WRITE) != 0 || context.getSocket().wantsTlsWrite()) {
             keventWriter.writeFD(context.getFd(), id);
         }
-        if (operation == IOOperation.READ || context.getSocket().wantsTlsRead()) {
+        if ((operation & IOOperation.READ) != 0 || context.getSocket().wantsTlsRead()) {
             keventWriter.readFD(context.getFd(), id);
         }
         keventWriter.done();
@@ -278,31 +387,56 @@ public class IODispatcherOsx<C extends IOContext<C>> extends AbstractIODispatche
     protected boolean runSerially() {
         final long timestamp = clock.getTicks();
         boolean useful = processDisconnects(timestamp);
-        alreadyHandledFds.clear();
+        kevtFds.clear();
+        kevtIds.clear();
+        kevtMasks.clear();
         final int n = kqueue.poll(0);
         int watermark = pending.size();
         int offset = 0;
         if (n > 0) {
-            // check all activated FDs
+            // Pass 1: scan all kevents and combine ready masks per fd.
+            // The kernel can return TWO kevents in one poll for the same
+            // fd (one EVFILT_READ + one EVFILT_WRITE) when both filters
+            // are ready simultaneously. The previous implementation
+            // dropped the second kevent via {@code alreadyHandledFds},
+            // satisfied only the first filter's op, and re-armed the
+            // other; the kernel would then re-deliver the second filter
+            // in the NEXT poll, costing a dispatcher cycle of latency on
+            // back-to-back READ+WRITE. OR'ing the ready bits per fd lets
+            // {@link #handleSocketOperation} satisfy both ops in one go.
             LOG.debug().$("poll [n=").$(n).I$();
             for (int i = 0; i < n; i++) {
                 kqueue.setReadOffset(offset);
                 offset += KqueueAccessor.SIZEOF_KEVENT;
                 final int osFd = kqueue.getOsFd();
-                final long id = kqueue.getData();
                 // this is server socket, accept if there aren't too many already
                 if (osFd == Files.toOsFd(serverFd)) {
                     accept(timestamp);
                     useful = true;
                     continue;
                 }
-                if (!alreadyHandledFds.add(osFd)) {
-                    // we already handled this fd (socket), but for another event;
-                    // ignore this one as we already removed/re-armed kqueue filter
-                    continue;
+                final long id = kqueue.getData();
+                final int filter = kqueue.getFilter();
+                final int opBit;
+                if (filter == KqueueAccessor.EVFILT_WRITE) {
+                    opBit = IOOperation.WRITE;
+                } else if (filter == KqueueAccessor.EVFILT_READ) {
+                    opBit = IOOperation.READ;
+                } else {
+                    opBit = 0;
                 }
-                // since we may register multiple times
-                if (handleSocketOperation(id)) {
+                int existingSlot = kevtFds.indexOf(osFd, 0, kevtFds.size());
+                if (existingSlot < 0) {
+                    kevtFds.add(osFd);
+                    kevtIds.add(id);
+                    kevtMasks.add(opBit);
+                } else {
+                    kevtMasks.setQuick(existingSlot, kevtMasks.getQuick(existingSlot) | opBit);
+                }
+            }
+            // Pass 2: dispatch each unique fd once with its combined mask.
+            for (int i = 0, m = kevtFds.size(); i < m; i++) {
+                if (handleSocketOperation(kevtIds.getQuick(i), kevtMasks.getQuick(i))) {
                     useful = true;
                     watermark--;
                 }

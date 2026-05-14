@@ -78,11 +78,12 @@ import io.questdb.cairo.view.ViewStateStoreImpl;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryCMR;
 import io.questdb.cairo.vm.api.MemoryMARW;
+import io.questdb.cairo.wal.CompositeWalListener;
 import io.questdb.cairo.wal.DefaultDurableAckRegistry;
 import io.questdb.cairo.wal.DefaultWalDirectoryPolicy;
-import io.questdb.cairo.wal.DefaultWalListener;
 import io.questdb.cairo.wal.DurableAckRegistry;
 import io.questdb.cairo.wal.QdbrWalLocker;
+import io.questdb.cairo.wal.SegmentPurgeBlocker;
 import io.questdb.cairo.wal.ViewWalWriter;
 import io.questdb.cairo.wal.WalDirectoryPolicy;
 import io.questdb.cairo.wal.WalEventReader;
@@ -95,6 +96,8 @@ import io.questdb.cairo.wal.seq.SeqTxnTracker;
 import io.questdb.cairo.wal.seq.SequencerMetadata;
 import io.questdb.cairo.wal.seq.TableSequencerAPI;
 import io.questdb.cutlass.qwp.codec.QwpServerInfoProvider;
+import io.questdb.cutlass.qwp.server.egress.DefaultQwpEgressExtension;
+import io.questdb.cutlass.qwp.server.egress.QwpEgressExtension;
 import io.questdb.cutlass.text.CopyExportContext;
 import io.questdb.cutlass.text.CopyImportContext;
 import io.questdb.griffin.CompiledQuery;
@@ -223,11 +226,14 @@ public class CairoEngine implements Closeable, WriterSource {
     private volatile @NotNull DurableAckRegistry durableAckRegistry = DefaultDurableAckRegistry.INSTANCE;
     private FrameFactory frameFactory;
     private @NotNull MatViewStateStore matViewStateStore = NoOpMatViewStateStore.INSTANCE;
+    private volatile @NotNull QwpEgressExtension qwpEgressExtension = DefaultQwpEgressExtension.INSTANCE;
     private volatile QwpServerInfoProvider qwpServerInfoProvider;
+    private volatile @NotNull SegmentPurgeBlocker segmentPurgeBlocker = SegmentPurgeBlocker.DEFAULT;
     private volatile Runnable recentWriteTrackerHydrationCallback;
     private @NotNull ViewStateStore viewStateStore = NoOpViewStateStore.INSTANCE;
     private @NotNull WalDirectoryPolicy walDirectoryPolicy = DefaultWalDirectoryPolicy.INSTANCE;
-    private @NotNull WalListener walListener = DefaultWalListener.INSTANCE;
+    private final @NotNull CompositeWalListener walListener = new CompositeWalListener();
+    private @Nullable LegacyWalListenerShim walListenerLegacyShim;
     private @NotNull WalLocker walLocker;
 
     public CairoEngine(CairoConfiguration configuration) {
@@ -910,9 +916,17 @@ public class CairoEngine implements Closeable, WriterSource {
         return queryRegistry;
     }
 
+    public @NotNull QwpEgressExtension getQwpEgressExtension() {
+        return qwpEgressExtension;
+    }
+
     public @NotNull QwpServerInfoProvider getQwpServerInfoProvider() {
         QwpServerInfoProvider provider = qwpServerInfoProvider;
         return provider != null ? provider : configuration.getQwpServerInfoProvider();
+    }
+
+    public @NotNull SegmentPurgeBlocker getSegmentPurgeBlocker() {
+        return segmentPurgeBlocker;
     }
 
     public TableReader getReader(CharSequence tableName) {
@@ -1785,8 +1799,16 @@ public class CairoEngine implements Closeable, WriterSource {
         this.viewWalWriterPool.setPoolListener(poolListener);
     }
 
+    public void setQwpEgressExtension(@NotNull QwpEgressExtension extension) {
+        this.qwpEgressExtension = extension;
+    }
+
     public void setQwpServerInfoProvider(@NotNull QwpServerInfoProvider provider) {
         this.qwpServerInfoProvider = provider;
+    }
+
+    public void setSegmentPurgeBlocker(@NotNull SegmentPurgeBlocker blocker) {
+        this.segmentPurgeBlocker = blocker;
     }
 
     @TestOnly
@@ -1813,8 +1835,62 @@ public class CairoEngine implements Closeable, WriterSource {
         this.walDirectoryPolicy = walDirectoryPolicy;
     }
 
-    public void setWalListener(@NotNull WalListener walListener) {
-        this.walListener = walListener;
+    public void addWalListener(@NotNull WalListener listener) {
+        walListener.add(listener);
+    }
+
+    /**
+     * Test hook for {@link #setWalListener(WalListener)}: removes the
+     * legacy shim wrapper from the composite (if any) and clears the
+     * tracking field. Tests that exercise the deprecated setter against
+     * the shared static engine must call this in their teardown so the
+     * shim does not leak into subsequent tests.
+     */
+    @TestOnly
+    public synchronized void clearWalListenerLegacyShim() {
+        if (walListenerLegacyShim != null) {
+            this.walListener.remove(walListenerLegacyShim);
+            walListenerLegacyShim = null;
+        }
+    }
+
+    public void removeWalListener(@NotNull WalListener listener) {
+        walListener.remove(listener);
+    }
+
+    /**
+     * Backward-compatibility shim for the pre-{@link CompositeWalListener}
+     * single-listener API. Each call evicts the listener installed by the
+     * previous {@code setWalListener} call (if any) and registers
+     * {@code walListener} in its place. The shim wraps the supplied listener
+     * in an internal delegate so the registration is reference-distinct from
+     * any registration made via {@link #addWalListener(WalListener)} -
+     * calling {@code addWalListener(X)} and later {@code setWalListener(X)}
+     * leaves the {@code addWalListener} registration intact.
+     * <p>
+     * Thread-safe: concurrent {@code setWalListener} calls serialise on this
+     * engine's monitor. Note that the replace is implemented as a remove
+     * followed by an add on {@link CompositeWalListener}; a commit thread
+     * iterating mid-call will see exactly one of the snapshots, never both
+     * and never neither (each is published atomically), but cannot count on
+     * seeing the new listener fire for events emitted strictly between the
+     * two operations from another thread.
+     *
+     * @param walListener the listener to install; must not be null.
+     * @deprecated since 9.0, slated for removal in 10.0. Use
+     * {@link #addWalListener(WalListener)} and
+     * {@link #removeWalListener(WalListener)} so multiple listeners can
+     * coexist; pre-existing callers that relied on single-listener replace
+     * semantics continue to work via this shim.
+     */
+    @Deprecated
+    public synchronized void setWalListener(@NotNull WalListener walListener) {
+        if (walListenerLegacyShim != null) {
+            this.walListener.remove(walListenerLegacyShim);
+        }
+        LegacyWalListenerShim shim = new LegacyWalListenerShim(walListener);
+        this.walListener.add(shim);
+        walListenerLegacyShim = shim;
     }
 
     @TestOnly
@@ -2362,5 +2438,57 @@ public class CairoEngine implements Closeable, WriterSource {
 
     protected void restoreBackup() {
         // Hook for backup functionality. See enterprise subclass.
+    }
+
+    /**
+     * Reference-distinct wrapper for {@link #setWalListener(WalListener)}.
+     * Each call to that deprecated setter creates a fresh wrapper around the
+     * caller-supplied listener, so the registration in
+     * {@link CompositeWalListener} is never mistaken for a separate
+     * {@link #addWalListener(WalListener)} registration of the same instance.
+     * Pure delegation; adds one virtual call per event on the legacy path.
+     */
+    private static final class LegacyWalListenerShim implements WalListener {
+        private final WalListener delegate;
+
+        LegacyWalListenerShim(WalListener delegate) {
+            this.delegate = delegate;
+        }
+
+        @Override
+        public void dataTxnCommitted(TableToken tableToken, long txn, long timestamp,
+                                     int walId, int segmentId, int segmentTxn) {
+            delegate.dataTxnCommitted(tableToken, txn, timestamp, walId, segmentId, segmentTxn);
+        }
+
+        @Override
+        public void nonDataTxnCommitted(TableToken tableToken, long txn, long timestamp) {
+            delegate.nonDataTxnCommitted(tableToken, txn, timestamp);
+        }
+
+        @Override
+        public void segmentClosed(TableToken tableToken, long txn, int walId, int segmentId) {
+            delegate.segmentClosed(tableToken, txn, walId, segmentId);
+        }
+
+        @Override
+        public void tableCreated(TableToken tableToken, long timestamp) {
+            delegate.tableCreated(tableToken, timestamp);
+        }
+
+        @Override
+        public void tableDropped(TableToken tableToken, long txn, long timestamp) {
+            delegate.tableDropped(tableToken, txn, timestamp);
+        }
+
+        @Override
+        public void tableRenamed(TableToken tableToken, long txn, long timestamp, TableToken oldTableToken) {
+            delegate.tableRenamed(tableToken, txn, timestamp, oldTableToken);
+        }
+
+        @Override
+        public void walClosed(TableToken tableToken, long txn, int walId) {
+            delegate.walClosed(tableToken, txn, walId);
+        }
     }
 }

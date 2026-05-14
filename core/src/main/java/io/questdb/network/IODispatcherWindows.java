@@ -63,6 +63,13 @@ public class IODispatcherWindows<C extends IOContext<C>> extends AbstractIODispa
             final IOEvent<C> evt = interestQueue.get(cursor);
             final C context = evt.context;
             int operation = evt.operation;
+            if (evt.deferredRepublish) {
+                evt.deferredRepublish = false;
+                interestSubSeq.done(cursor);
+                publishOperation(operation, context);
+                useful = true;
+                continue;
+            }
             final long srcOpId = context.getAndResetHeartbeatId();
 
             final long opId = nextOpId();
@@ -103,6 +110,27 @@ public class IODispatcherWindows<C extends IOContext<C>> extends AbstractIODispa
                     continue;
                 }
 
+                // Dedupe by fd: see IODispatcherLinux.processRegistrations for
+                // the full motivation. Windows's select-FDSet is content-
+                // addressable so the Linux opId-overwrite race manifests
+                // here as double-publish on the same fd; the fix is the
+                // same shape - dedupe to one pending row per fd and treat
+                // OPM_OPERATION as a bitmask.
+                int existingRow = findPendingRowByFd(fd);
+                if (existingRow >= 0) {
+                    int existingMask = (int) pending.get(existingRow, OPM_OPERATION);
+                    int combinedMask = existingMask | operation;
+                    pending.set(existingRow, OPM_OPERATION, combinedMask);
+                    pending.set(existingRow, OPM_HEARTBEAT_TIMESTAMP, timestamp);
+                    LOG.debug().$("merging registration [fd=").$(fd)
+                            .$(", existingMask=").$(existingMask)
+                            .$(", addedOp=").$(operation)
+                            .$(", combinedMask=").$(combinedMask)
+                            .I$();
+                    useful = true;
+                    continue;
+                }
+
                 LOG.debug().$("processing registration [fd=").$(fd)
                         .$(", op=").$(operation)
                         .$(", id=").$(opId)
@@ -119,6 +147,20 @@ public class IODispatcherWindows<C extends IOContext<C>> extends AbstractIODispa
             useful = true;
         }
         return useful;
+    }
+
+    /**
+     * Linear scan for a pending row whose {@code OPM_FD} matches. Returns
+     * the row index, or -1 when no row exists for this fd. See
+     * IODispatcherLinux for the full rationale.
+     */
+    private int findPendingRowByFd(long fd) {
+        for (int i = 0, n = pending.size(); i < n; i++) {
+            if (pending.get(i, OPM_FD) == fd) {
+                return i;
+            }
+        }
+        return -1;
     }
 
     private void queryFdSets(long timestamp) {
@@ -228,14 +270,14 @@ public class IODispatcherWindows<C extends IOContext<C>> extends AbstractIODispa
                     watermark--;
                     useful = true;
                 } else {
-                    int operation = (int) pending.get(i, OPM_OPERATION);
+                    int operationMask = (int) pending.get(i, OPM_OPERATION);
                     i++;
 
-                    if (operation == IOOperation.READ || context.getSocket().wantsTlsRead()) {
+                    if ((operationMask & IOOperation.READ) != 0 || context.getSocket().wantsTlsRead()) {
                         readFdSet.add(fd);
                         readFdCount++;
                     }
-                    if (operation == IOOperation.WRITE || context.getSocket().wantsTlsWrite()) {
+                    if ((operationMask & IOOperation.WRITE) != 0 || context.getSocket().wantsTlsWrite()) {
                         writeFdSet.add(fd);
                         writeFdCount++;
                     }
@@ -246,26 +288,54 @@ public class IODispatcherWindows<C extends IOContext<C>> extends AbstractIODispa
                 // we got a (potentially requested) event
                 useful = true;
 
-                final int requestedOp = (int) pending.get(i, OPM_OPERATION);
+                // OPM_OPERATION is a bitmask of armed ops (READ / WRITE)
+                // accumulated by processRegistrations's dedupe-by-fd path.
+                final int requestedMask = (int) pending.get(i, OPM_OPERATION);
                 final boolean readyForWrite = (newOp & SelectAccessor.FD_WRITE) > 0;
                 final boolean readyForRead = (newOp & SelectAccessor.FD_READ) > 0;
 
-                if ((requestedOp == IOOperation.WRITE && readyForWrite) || (requestedOp == IOOperation.READ && readyForRead)) {
-                    // If the socket is also ready for another operation type, do it.
-                    if (context.getSocket().tlsIO(tlsIOFlags(requestedOp, readyForRead, readyForWrite)) < 0) {
+                boolean writeReady = (requestedMask & IOOperation.WRITE) != 0 && readyForWrite;
+                boolean readReady = (requestedMask & IOOperation.READ) != 0 && readyForRead;
+
+                if (writeReady || readReady) {
+                    int primaryOp = writeReady ? IOOperation.WRITE : IOOperation.READ;
+                    if (context.getSocket().tlsIO(tlsIOFlags(primaryOp, readyForRead, readyForWrite)) < 0) {
                         doDisconnect(context, DISCONNECT_SRC_TLS_ERROR);
                         pending.deleteRow(i);
                         n--;
                         watermark--;
                         continue;
                     }
-                    // publish event and remove from pending
-                    publishOperation(requestedOp, context);
-                    pending.deleteRow(i);
-                    n--;
-                    watermark--;
+                    int satisfiedMask = 0;
+                    if (writeReady) {
+                        publishOperation(IOOperation.WRITE, context);
+                        satisfiedMask |= IOOperation.WRITE;
+                    }
+                    if (readReady) {
+                        publishOperation(IOOperation.READ, context);
+                        satisfiedMask |= IOOperation.READ;
+                    }
+                    int remainingMask = requestedMask & ~satisfiedMask;
+                    if (remainingMask == 0) {
+                        pending.deleteRow(i);
+                        n--;
+                        watermark--;
+                    } else {
+                        // Some armed ops still pending; keep the row and
+                        // re-arm select for what's left.
+                        pending.set(i, OPM_OPERATION, remainingMask);
+                        if ((remainingMask & IOOperation.READ) != 0 || context.getSocket().wantsTlsRead()) {
+                            readFdSet.add(fd);
+                            readFdCount++;
+                        }
+                        if ((remainingMask & IOOperation.WRITE) != 0 || context.getSocket().wantsTlsWrite()) {
+                            writeFdSet.add(fd);
+                            writeFdCount++;
+                        }
+                        i++; // advance past this row, keep iterating
+                    }
                 } else {
-                    // It's something different from the requested operation.
+                    // It's something different from the requested operations.
                     if (context.getSocket().tlsIO(tlsIOFlags(readyForRead, readyForWrite)) < 0) {
                         doDisconnect(context, DISCONNECT_SRC_TLS_ERROR);
                         pending.deleteRow(i);
@@ -273,12 +343,12 @@ public class IODispatcherWindows<C extends IOContext<C>> extends AbstractIODispa
                         watermark--;
                         continue;
                     }
-                    // Now we need to re-arm poll.
-                    if (requestedOp == IOOperation.READ || context.getSocket().wantsTlsRead()) {
+                    // Now we need to re-arm poll for the full requested mask.
+                    if ((requestedMask & IOOperation.READ) != 0 || context.getSocket().wantsTlsRead()) {
                         readFdSet.add(fd);
                         readFdCount++;
                     }
-                    if (requestedOp == IOOperation.WRITE || context.getSocket().wantsTlsWrite()) {
+                    if ((requestedMask & IOOperation.WRITE) != 0 || context.getSocket().wantsTlsWrite()) {
                         writeFdSet.add(fd);
                         writeFdCount++;
                     }

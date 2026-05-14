@@ -372,6 +372,16 @@ public class HttpServer implements Closeable {
         return activeConnectionTracker;
     }
 
+    /**
+     * Exposes the connection dispatcher so server-initiated push paths
+     * (e.g. an {@link io.questdb.cutlass.qwp.server.egress.QwpEgressExtension}
+     * that needs to wake an idle WebSocket fd) can call
+     * {@link IODispatcher#registerChannel(io.questdb.network.IOContext, int)}.
+     */
+    public IODispatcher<HttpConnectionContext> getDispatcher() {
+        return dispatcher;
+    }
+
     public int getPort() {
         return dispatcher.getPort();
     }

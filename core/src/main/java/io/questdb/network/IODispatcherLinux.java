@@ -62,14 +62,76 @@ public class IODispatcherLinux<C extends IOContext<C>> extends AbstractIODispatc
     }
 
     private int epollOp(int operation, C context) {
-        int op = operation == IOOperation.READ ? EpollAccessor.EPOLLIN : EpollAccessor.EPOLLOUT;
+        // {@code operation} is a bitmask of {@link IOOperation} bits
+        // (READ / WRITE / HEARTBEAT) accumulated by
+        // {@link #processRegistrations} when concurrent registrations
+        // arrive for the same fd. Translating bit-by-bit (rather than the
+        // legacy single-op switch) is what keeps both halves of an
+        // {@code (READ, WRITE)} registration pair armed in the kernel
+        // instead of losing the earlier one to {@code EPOLL_CTL_MOD}'s
+        // last-arm-wins overwrite.
+        int op = 0;
+        if ((operation & IOOperation.READ) != 0) op |= EpollAccessor.EPOLLIN;
+        if ((operation & IOOperation.WRITE) != 0) op |= EpollAccessor.EPOLLOUT;
         if (context.getSocket().wantsTlsRead()) {
             op |= EpollAccessor.EPOLLIN;
         }
         if (context.getSocket().wantsTlsWrite()) {
             op |= EpollAccessor.EPOLLOUT;
         }
+        // EPOLLONESHOT: the kernel disarms the fd after firing this event
+        // exactly once, until something calls epoll_ctl(MOD) again. This
+        // eliminates the concurrent-handler race that fires when a
+        // publisher's registerChannel(WRITE) re-arms an fd while a worker
+        // is still mid-handleClientOperation for that fd: the kernel would
+        // otherwise fire a second event (level-triggered, fd still ready)
+        // and another worker would pick it up via processIOQueue,
+        // producing two threads writing to the same response sink. With
+        // ONESHOT, the next event only fires after the worker (or a
+        // publisher) explicitly re-arms via registerChannel, which the
+        // existing code already does on every exit path.
+        //
+        // The other dispatcher backends use the equivalent semantic:
+        // {@link IODispatcherOsx} sets {@code EV_ADD | EV_ONESHOT} in
+        // {@link Kqueue#readFD} and {@link Kqueue#writeFD};
+        // {@link IODispatcherWindows} drops the fd from its select FDSet
+        // after fire and only re-arms via {@code registerChannel}. So the
+        // "no second-fire while a worker is mid-handler" invariant holds
+        // identically on all three platforms.
+        op |= EpollAccessor.EPOLLONESHOT;
         return op;
+    }
+
+    /**
+     * Linear scan for a pending row whose {@code OPM_FD} matches. Returns
+     * the row index, or -1 when no row exists for this fd. Called from the
+     * dispatcher thread only, so the read-then-act sequence is race-free
+     * against other {@code pending} mutations.
+     * <p>
+     * Used by {@link #processRegistrations} to dedupe concurrent
+     * registrations for the same fd into a single pending row with an
+     * OR-combined op mask. Without dedupe, two {@code registerChannel}
+     * calls for the same fd would each allocate a fresh {@code opId} and
+     * issue {@code EPOLL_CTL_MOD}; the kernel keeps only the last
+     * {@code epoll_data}, orphaning the earlier pending row whose
+     * {@code opId} is no longer recognised. This surfaces as a
+     * server-initiated WRITE arm being silently dropped when it races
+     * with the framework's PISR-driven re-register on the same fd.
+     * <p>
+     * Linear scan is O(n) over {@code pending.size()}. At ~20-1000
+     * connections that is fine on the dispatcher hot path; for larger
+     * deployments a {@code (fd -> rowId)} index would amortise the cost,
+     * but ObjLongMatrix's row indices shift on {@code deleteRow}/
+     * {@code zapTop}, so the index would need {@code opId} as the stable
+     * key plus a binary-search step. Not done here.
+     */
+    private int findPendingRowByFd(long fd) {
+        for (int i = 0, n = pending.size(); i < n; i++) {
+            if (pending.get(i, OPM_FD) == fd) {
+                return i;
+            }
+        }
+        return -1;
     }
 
     private boolean handleSocketOperation(long id) {
@@ -83,30 +145,65 @@ public class IODispatcherLinux<C extends IOContext<C>> extends AbstractIODispatc
         }
 
         final C context = pending.get(row);
-        final int requestedOp = (int) pending.get(row, OPM_OPERATION);
+        context.incrementEpollFireCount();
+        // {@code requestedMask} is a bitmask of {@link IOOperation} bits
+        // accumulated by {@link #processRegistrations}'s dedupe path. A
+        // single registration is just one bit; concurrent (READ, WRITE)
+        // arms for the same fd land here as both bits set.
+        final int requestedMask = (int) pending.get(row, OPM_OPERATION);
         // We check EPOLLOUT flag and treat all other events, including EPOLLIN and EPOLLHUP, as a read.
         final boolean readyForWrite = (epoll.getEvent() & EpollAccessor.EPOLLOUT) > 0;
         final boolean readyForRead = !readyForWrite || (epoll.getEvent() & EpollAccessor.EPOLLIN) > 0;
 
-        if ((requestedOp == IOOperation.WRITE && readyForWrite) || (requestedOp == IOOperation.READ && readyForRead)) {
-            // If the socket is also ready for another operation type, do it.
-            if (context.getSocket().tlsIO(tlsIOFlags(requestedOp, readyForRead, readyForWrite)) < 0) {
+        // Determine which armed ops are now satisfied by the kernel's
+        // event report. Publish each one independently so concurrent
+        // arms each get their own ioEvent (one drain pass per published
+        // op). Build {@code satisfiedMask} so we can clear those bits and
+        // either delete the row (all arms satisfied) or re-arm with the
+        // remaining mask.
+        int satisfiedMask = 0;
+        boolean writeReady = (requestedMask & IOOperation.WRITE) != 0 && readyForWrite;
+        boolean readReady = (requestedMask & IOOperation.READ) != 0 && readyForRead;
+
+        if (writeReady || readReady) {
+            // TLS plumbing: tlsIOFlags wants the operation we will
+            // publish. When both are ready, prefer WRITE so a partial
+            // write that still has bytes to send is drained ASAP; READ
+            // satisfaction will land on the next epoll fire.
+            int primaryOp = writeReady ? IOOperation.WRITE : IOOperation.READ;
+            if (context.getSocket().tlsIO(tlsIOFlags(primaryOp, readyForRead, readyForWrite)) < 0) {
                 doDisconnect(context, DISCONNECT_SRC_TLS_ERROR);
                 pending.deleteRow(row);
                 return true;
             }
-            publishOperation(requestedOp, context);
-            pending.deleteRow(row);
+            if (writeReady) {
+                publishOperation(IOOperation.WRITE, context);
+                satisfiedMask |= IOOperation.WRITE;
+            }
+            if (readReady) {
+                publishOperation(IOOperation.READ, context);
+                satisfiedMask |= IOOperation.READ;
+            }
+            int remainingMask = requestedMask & ~satisfiedMask;
+            if (remainingMask == 0) {
+                pending.deleteRow(row);
+            } else {
+                // Some armed ops still pending. Keep the row, clear the
+                // satisfied bits, re-arm with what's left so the next
+                // epoll fire only delivers the remaining ops.
+                pending.set(row, OPM_OPERATION, remainingMask);
+                rearmEpoll(context, id, remainingMask);
+            }
             return true;
         }
 
-        // It's something different from the requested operation.
+        // It's something different from the requested operations.
         if (context.getSocket().tlsIO(tlsIOFlags(readyForRead, readyForWrite)) < 0) {
             doDisconnect(context, DISCONNECT_SRC_TLS_ERROR);
             pending.deleteRow(row);
             return true;
         }
-        rearmEpoll(context, id, requestedOp);
+        rearmEpoll(context, id, requestedMask);
         return false;
     }
 
@@ -159,6 +256,14 @@ public class IODispatcherLinux<C extends IOContext<C>> extends AbstractIODispatc
             final IOEvent<C> event = interestQueue.get(cursor);
             final C context = event.context;
             final int requestedOperation = event.operation;
+            context.incrementInterestQueueConsumeCount();
+            if (event.deferredRepublish) {
+                event.deferredRepublish = false;
+                interestSubSeq.done(cursor);
+                publishOperation(requestedOperation, context);
+                useful = true;
+                continue;
+            }
             final long srcOpId = context.getAndResetHeartbeatId();
             interestSubSeq.done(cursor);
 
@@ -181,6 +286,47 @@ public class IODispatcherLinux<C extends IOContext<C>> extends AbstractIODispatc
                     epollCmd = EpollAccessor.EPOLL_CTL_ADD;
                     operation = (int) pendingHeartbeats.get(heartbeatRow, OPM_OPERATION);
 
+                    // Dedupe by fd: a regular {@code registerChannel(WRITE)}
+                    // from any server-initiated publisher may have raced
+                    // ahead of this heartbeat re-register in the interest
+                    // queue and already added a {@code pending} row for
+                    // this fd. Without merging, the heartbeat branch's
+                    // unconditional {@code addRow} would create a second
+                    // row for the same fd, and the kernel's
+                    // {@code EPOLL_CTL_ADD} here would overwrite the
+                    // regular row's {@code opId} in {@code epoll_data},
+                    // orphaning that row's IOEvent. OR the heartbeat's
+                    // mask into the existing row instead.
+                    int existingRow = findPendingRowByFd(fd);
+                    if (existingRow >= 0) {
+                        int existingMask = (int) pending.get(existingRow, OPM_OPERATION);
+                        int combinedMask = existingMask | operation;
+                        pending.set(existingRow, OPM_OPERATION, combinedMask);
+                        pending.set(existingRow, OPM_HEARTBEAT_TIMESTAMP, timestamp);
+                        long existingOpId = pending.get(existingRow, OPM_ID);
+                        LOG.debug().$("merging heartbeat registration [fd=").$(fd)
+                                .$(", existingMask=").$(existingMask)
+                                .$(", addedOp=").$(operation)
+                                .$(", combinedMask=").$(combinedMask)
+                                .$(", id=").$(existingOpId).I$();
+                        // The regular branch that added the existing row will
+                        // have issued EPOLL_CTL_MOD; if the heartbeat-driven
+                        // DEL happened first, that MOD failed with ENOENT and
+                        // an ADD here is required. If the MOD succeeded
+                        // somehow, the ADD will fail with EEXIST. Either way
+                        // we record the combined mask in {@code pending}; a
+                        // subsequent registration on this fd will use the
+                        // merged state.
+                        if (epoll.control(fd, existingOpId, EpollAccessor.EPOLL_CTL_ADD, epollOp(combinedMask, context)) < 0) {
+                            if (epoll.control(fd, existingOpId, EpollAccessor.EPOLL_CTL_MOD, epollOp(combinedMask, context)) < 0) {
+                                LOG.critical().$("internal error: epoll_ctl heartbeat merge failed [id=").$(existingOpId)
+                                        .$(", err=").$(nf.errno()).I$();
+                            }
+                        }
+                        pendingHeartbeats.deleteRow(heartbeatRow);
+                        continue;
+                    }
+
                     LOG.debug().$("processing heartbeat registration [fd=").$(fd)
                             .$(", op=").$(operation)
                             .$(", srcId=").$(srcOpId)
@@ -200,6 +346,39 @@ public class IODispatcherLinux<C extends IOContext<C>> extends AbstractIODispatc
             } else {
                 if (requestedOperation == IOOperation.READ && context.getSocket().isMorePlaintextBuffered()) {
                     publishOperation(IOOperation.READ, context);
+                    continue;
+                }
+
+                // Dedupe by fd: if a pending row already exists for this
+                // connection (e.g. the publisher's wakeLocked just armed
+                // WRITE while the worker's PISR catch is also arming
+                // WRITE, or the framework's READ rearm is racing the
+                // publisher's WRITE), OR the new op into the existing
+                // row's mask and re-issue {@code EPOLL_CTL_MOD} with the
+                // combined mask instead of allocating a fresh {@code opId}.
+                // The kernel's {@code epoll_data} stays bound to the
+                // existing row's {@code opId}, so the next epoll fire
+                // routes to the row that's still in {@code pending}.
+                // Without this dedupe, the second EPOLL_CTL_MOD overwrites
+                // the kernel's data field; the first row is orphaned and
+                // its IOEvent is permanently lost. See
+                // {@link #findPendingRowByFd} for context.
+                int existingRow = findPendingRowByFd(fd);
+                if (existingRow >= 0) {
+                    int existingMask = (int) pending.get(existingRow, OPM_OPERATION);
+                    int combinedMask = existingMask | requestedOperation;
+                    pending.set(existingRow, OPM_OPERATION, combinedMask);
+                    pending.set(existingRow, OPM_HEARTBEAT_TIMESTAMP, timestamp);
+                    long existingOpId = pending.get(existingRow, OPM_ID);
+                    LOG.debug().$("merging registration [fd=").$(fd)
+                            .$(", existingMask=").$(existingMask)
+                            .$(", addedOp=").$(requestedOperation)
+                            .$(", combinedMask=").$(combinedMask)
+                            .$(", id=").$(existingOpId).I$();
+                    if (epoll.control(fd, existingOpId, EpollAccessor.EPOLL_CTL_MOD, epollOp(combinedMask, context)) < 0) {
+                        LOG.critical().$("internal error: epoll_ctl modify operation failure [id=").$(existingOpId)
+                                .$(", err=").$(nf.errno()).I$();
+                    }
                     continue;
                 }
 

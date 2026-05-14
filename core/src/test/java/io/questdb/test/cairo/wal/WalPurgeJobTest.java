@@ -84,6 +84,88 @@ public class WalPurgeJobTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testSegmentPurgeBlockerPinsSegmentAcrossPurge() throws Exception {
+        // Contract test for the SegmentPurgeBlocker SPI: a blocker that
+        // reports a specific (token, walId, segmentId) as in-use must
+        // cause the purge job to skip that segment, even when the
+        // sequencer's normal "applied + closed" preconditions are met.
+        // Enterprise installs this SPI from QwpSubscriptionHub to hold
+        // back deletion of segments whose events are still queued to
+        // subscribers; without coverage here, an OSS-only change to
+        // the purge loop could silently regress the contract.
+        assertMemoryLeak(() -> {
+            String tableName = testName.getMethodName();
+            execute("create table " + tableName + "("
+                    + "x long,"
+                    + "ts timestamp"
+                    + ") timestamp(ts) partition by DAY WAL");
+            execute("insert into " + tableName + " values (1, '2022-02-24T00:00:00.000000Z')");
+            execute("alter table " + tableName + " add column s1 string");
+            execute("insert into " + tableName + " values (2, '2022-02-24T00:00:01.000000Z', 'x')");
+
+            assertWalExistence(true, tableName, 1);
+            assertSegmentExistence(true, tableName, 1, 0);
+            assertSegmentExistence(true, tableName, 1, 1);
+
+            TableToken token = engine.verifyTableName(tableName);
+            AtomicInteger isUseQueries = new AtomicInteger();
+            io.questdb.cairo.wal.SegmentPurgeBlocker installed = engine.getSegmentPurgeBlocker();
+            try {
+                // Pin segment 0 only; segment 1 must be free to purge.
+                engine.setSegmentPurgeBlocker((tok, walId, segId) -> {
+                    isUseQueries.incrementAndGet();
+                    return Objects.equals(tok, token) && walId == 1 && segId == 0;
+                });
+
+                drainWalQueue();
+                engine.releaseInactive();
+                drainPurgeJob();
+
+                Assert.assertTrue("blocker must be queried during purge", isUseQueries.get() > 0);
+                assertSegmentExistence(true, tableName, 1, 0);
+                assertSegmentExistence(false, tableName, 1, 1);
+
+                // Now unpin the segment and re-run the purge; it must disappear.
+                engine.setSegmentPurgeBlocker(io.questdb.cairo.wal.SegmentPurgeBlocker.DEFAULT);
+                drainPurgeJob();
+                assertSegmentExistence(false, tableName, 1, 0);
+            } finally {
+                engine.setSegmentPurgeBlocker(installed);
+            }
+        });
+    }
+
+    @Test
+    public void testSegmentPurgeBlockerDefaultPurgesEverything() throws Exception {
+        // Sanity-check the OSS default ({@link SegmentPurgeBlocker#DEFAULT}):
+        // it returns false for every query, so the purge loop deletes every
+        // segment whose preconditions are met. This is the contract OSS
+        // users rely on when they have NOT installed a custom blocker.
+        assertMemoryLeak(() -> {
+            String tableName = testName.getMethodName();
+            execute("create table " + tableName + "("
+                    + "x long,"
+                    + "ts timestamp"
+                    + ") timestamp(ts) partition by DAY WAL");
+            execute("insert into " + tableName + " values (1, '2022-02-24T00:00:00.000000Z')");
+            execute("alter table " + tableName + " add column s1 string");
+            execute("insert into " + tableName + " values (2, '2022-02-24T00:00:01.000000Z', 'x')");
+            assertSegmentExistence(true, tableName, 1, 0);
+            assertSegmentExistence(true, tableName, 1, 1);
+
+            Assert.assertSame("default blocker must be the singleton no-op",
+                    io.questdb.cairo.wal.SegmentPurgeBlocker.DEFAULT, engine.getSegmentPurgeBlocker());
+
+            drainWalQueue();
+            engine.releaseInactive();
+            drainPurgeJob();
+
+            assertSegmentExistence(false, tableName, 1, 0);
+            assertSegmentExistence(false, tableName, 1, 1);
+        });
+    }
+
+    @Test
     public void testChunkedSequencerPartsRemoved() throws Exception {
         assertMemoryLeak(() -> {
             int txnChunkSize = 10;

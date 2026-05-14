@@ -217,6 +217,28 @@ public abstract class AbstractIODispatcher<C extends IOContext<C>> extends Synch
             C connectionContext = event.context;
             final int operation = event.operation;
             ioEventSubSeq.done(cursor);
+
+            // Per-context in-flight gate: at most one worker handles a
+            // given context at a time. If another worker is already on
+            // it, stash the operation as deferred and bail. The worker
+            // holding the gate reads and re-publishes deferred ops in
+            // its finally block below, so no event is lost.
+            //
+            // This is the single source of truth for the
+            // "no two workers per context" invariant. Without it, a
+            // server-initiated registerChannel(WRITE) issued while a
+            // worker is mid-handler can deliver a second event to a
+            // different worker, producing concurrent access to the same
+            // response sink. Protocol extensions that publish from
+            // arbitrary threads would otherwise need their own
+            // publisher-side gates and worker-side CAS locks to defend
+            // against this.
+            if (!connectionContext.tryAcquireOrDefer(operation)) {
+                // Loser path: our op is now in the holder's deferred
+                // bitmask via the same CAS that observed the gate held.
+                // Holder will republish it on releaseAndConsume.
+                return false;
+            }
             try {
                 connectionContext.init();
                 useful = processor.onRequest(operation, connectionContext, this);
@@ -225,6 +247,24 @@ public abstract class AbstractIODispatcher<C extends IOContext<C>> extends Synch
                         .$(", e=").$safe(e.getFlyweightMessage())
                         .I$();
                 disconnect(connectionContext, DISCONNECT_REASON_TLS_SESSION_INIT_FAILED);
+            } finally {
+                // Atomic release-and-consume: clears in-flight AND reads
+                // the deferred bitmask in one CAS. Any loser whose CAS
+                // observed our held bit before this is in the returned
+                // mask; any loser whose CAS lands after this finds the
+                // gate clear and acquires for themselves. Republish each
+                // accumulated bit as its own ioEvent through the MP
+                // interestQueue (single-producer ioEventPubSeq).
+                int deferredMask = connectionContext.releaseAndConsume();
+                if ((deferredMask & IOOperation.READ) != 0) {
+                    republishDeferred(connectionContext, IOOperation.READ);
+                }
+                if ((deferredMask & IOOperation.WRITE) != 0) {
+                    republishDeferred(connectionContext, IOOperation.WRITE);
+                }
+                if ((deferredMask & IOOperation.HEARTBEAT) != 0) {
+                    republishDeferred(connectionContext, IOOperation.HEARTBEAT);
+                }
             }
         }
 
@@ -241,8 +281,13 @@ public abstract class AbstractIODispatcher<C extends IOContext<C>> extends Synch
         IOEvent<C> evt = interestQueue.get(cursor);
         evt.context = context;
         evt.operation = operation;
+        // Defensive producer-side clear: a slot reused after a deferred
+        // republish path may carry deferredRepublish=true if a future
+        // change ever skipped the consumer-side clear. Belt-and-braces.
+        evt.deferredRepublish = false;
         LOG.debug().$("queuing [fd=").$(context.getFd()).$(", op=").$(operation).I$();
         interestPubSeq.done(cursor);
+        context.incrementInterestQueuePublishCount();
     }
 
     @Override
@@ -505,10 +550,32 @@ public abstract class AbstractIODispatcher<C extends IOContext<C>> extends Synch
         evt.context = context;
         evt.operation = operation;
         ioEventPubSeq.done(cursor);
+        context.incrementIoEventPublishCount();
         LOG.debug().$("fired [fd=").$(context.getFd())
                 .$(", op=").$(operation)
                 .$(", pos=").$(cursor)
                 .I$();
+    }
+
+    /**
+     * Worker-side hand-off for an op that was about to be delivered to this
+     * context but found the in-flight gate held. Routes through the MP
+     * {@link #interestPubSeq} so {@link #ioEventPubSeq} stays single-producer.
+     * Each dispatcher subclass's {@code processRegistrations} consumes the
+     * tagged entry and forwards it via {@link #publishOperation} on the
+     * dispatcher thread.
+     */
+    protected void republishDeferred(C context, int operation) {
+        final long cursor = bullyUntilClosed(interestPubSeq);
+        if (cursor < 0) {
+            assert closed;
+            return;
+        }
+        IOEvent<C> evt = interestQueue.get(cursor);
+        evt.context = context;
+        evt.operation = operation;
+        evt.deferredRepublish = true;
+        interestPubSeq.done(cursor);
     }
 
     protected abstract void registerListenerFd();
