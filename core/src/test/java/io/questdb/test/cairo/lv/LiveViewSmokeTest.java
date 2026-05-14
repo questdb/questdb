@@ -2582,6 +2582,38 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testLiveViewsCatalogueExposesHeadCheckpointColumns() throws Exception {
+        // Phase 2a.10: head_checkpoint_* columns are preallocated; values stay
+        // at LONG_NULL / 0 until the Phase 2a.4 flush-cycle write hook starts
+        // populating them.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 1s AS " +
+                    "SELECT ts, x, row_number() OVER () AS rn FROM base WHERE x > 0");
+            try {
+                assertSql(
+                        "view_name\thead_checkpoint_lv_seqtxn\thead_checkpoint_max_ts\thead_checkpoint_state_bytes\n" +
+                                "lv\tnull\t\t0\n",
+                        "SELECT view_name, head_checkpoint_lv_seqtxn, head_checkpoint_max_ts, head_checkpoint_state_bytes FROM live_views()"
+                );
+
+                // Direct mutation via the setter (the 2a.4 write hook will call this).
+                LiveViewInstance lv = engine.getLiveViewRegistry().getViewInstance("lv");
+                Assert.assertNotNull(lv);
+                lv.setHeadCheckpoint(42L, 1_700_000_000_000_000L, 4096L);
+
+                assertSql(
+                        "view_name\thead_checkpoint_lv_seqtxn\thead_checkpoint_max_ts\thead_checkpoint_state_bytes\n" +
+                                "lv\t42\t2023-11-14T22:13:20.000000Z\t4096\n",
+                        "SELECT view_name, head_checkpoint_lv_seqtxn, head_checkpoint_max_ts, head_checkpoint_state_bytes FROM live_views()"
+                );
+            } finally {
+                execute("DROP LIVE VIEW lv");
+            }
+        });
+    }
+
+    @Test
     public void testTablesIntegrationReportsLiveView() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE base (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");

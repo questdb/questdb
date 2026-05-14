@@ -97,6 +97,15 @@ public class LiveViewInstance implements QuietCloseable {
     // Commit 4); the refresh worker drives the slow-path swap from
     // LiveViewRefreshJob. Null when no refresh has happened yet, or when the LV
     // was just constructed at startup.
+    // Head-checkpoint metadata mirrored from the most recently committed
+    // _checkpoints/<lvSeqTxn>.cp. Populated by the Phase 2a.4 flush-cycle
+    // write hook (deferred) and consumed by the live_views() catalogue and
+    // by the O3 head-hit / restart-restore decision paths. Preallocated
+    // here so the catalogue surface lands first and stays stable when the
+    // write hook is wired.
+    private volatile long headCheckpointLvSeqTxn = Numbers.LONG_NULL;
+    private volatile long headCheckpointMaxTs = Numbers.LONG_NULL;
+    private volatile long headCheckpointStateBytes = 0;
     private volatile LiveViewInMemoryTier inMemoryTier;
     private volatile boolean isClosed;
     // Wall-clock (micros) of the most recent successful LV WAL commit. Used by
@@ -185,6 +194,18 @@ public class LiveViewInstance implements QuietCloseable {
 
     public long getFlushRetryStartUs() {
         return flushRetryStartUs;
+    }
+
+    public long getHeadCheckpointLvSeqTxn() {
+        return headCheckpointLvSeqTxn;
+    }
+
+    public long getHeadCheckpointMaxTs() {
+        return headCheckpointMaxTs;
+    }
+
+    public long getHeadCheckpointStateBytes() {
+        return headCheckpointStateBytes;
     }
 
     public LiveViewInMemoryTier getInMemoryTier() {
@@ -341,6 +362,20 @@ public class LiveViewInstance implements QuietCloseable {
      * with the existing tier passed back in (no-op); a different non-null tier
      * frees the old one first, mirroring {@link #setCompiledFactory}.
      */
+    /**
+     * Sets the head-checkpoint trio in a single store. Called by the Phase
+     * 2a.4 flush-cycle write hook (deferred) once a new {@code .cp} is
+     * committed; values are mirrored into the {@code live_views()}
+     * catalogue and consulted by the O3 / restart paths. Passing
+     * {@code Numbers.LONG_NULL} for {@code lvSeqTxn} clears the head
+     * (e.g. when the {@code .cp} is unlinked).
+     */
+    public void setHeadCheckpoint(long lvSeqTxn, long maxTs, long stateBytes) {
+        this.headCheckpointLvSeqTxn = lvSeqTxn;
+        this.headCheckpointMaxTs = maxTs;
+        this.headCheckpointStateBytes = stateBytes;
+    }
+
     public void setInMemoryTier(LiveViewInMemoryTier tier) {
         if (inMemoryTier != tier) {
             Misc.free(inMemoryTier);

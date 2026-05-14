@@ -49,19 +49,17 @@ import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 
 /**
- * Phase 1 {@code live_views()} catalogue. Exposes per-view operator state derived
- * from {@link LiveViewInstance}'s in-memory mirror of {@code _lv} + {@code _lv.s}.
+ * {@code live_views()} catalogue. Exposes per-view operator state derived from
+ * {@link LiveViewInstance}'s in-memory mirror of {@code _lv} + {@code _lv.s},
+ * with three head-checkpoint columns (Phase 2a.10) that stay at
+ * {@code LONG_NULL} / 0 until the flush-cycle write hook lands in Phase 2a.4.
  * <p>
- * Phase 1 omits checkpoint columns (no {@code .cp}), backfill columns (BACKFILL is
- * rejected at CREATE), {@code symbol_translation_size} (no T table yet),
- * {@code o3_rejected_count} (O3 rejects land in a later phase), and
- * {@code in_mem_bytes} (no in-mem tier in Phase 1a). {@code writer_stall_micros}
- * is exposed but always zero in Phase 1a since stalls are an in-mem-tier concern
- * and that tier doesn't exist yet (Phase 1b will populate the field).
- * <p>
+ * Still omitted vs. the RFC's V1 set: backfill columns (BACKFILL is rejected at
+ * CREATE), {@code symbol_translation_size} (no T table yet), and
+ * {@code o3_rejected_count} (O3 rejects land in a later phase).
  * {@code last_processed_seqtxn} and {@code applied_watermark} are surfaced as
  * debug columns beyond the RFC's V1 set; both are useful for operators tracking
- * refresh worker progress before the corresponding {@code lvConsumed} flow
+ * refresh-worker progress before the corresponding {@code lvConsumed} flow
  * catches up.
  */
 public class LiveViewsFunctionFactory implements FunctionFactory {
@@ -103,6 +101,9 @@ public class LiveViewsFunctionFactory implements FunctionFactory {
         private static final int COLUMN_BASE_TABLE_NAME = 2;
         private static final int COLUMN_FLUSH_EVERY_INTERVAL = 5;
         private static final int COLUMN_FLUSH_EVERY_INTERVAL_UNIT = 6;
+        private static final int COLUMN_HEAD_CHECKPOINT_LV_SEQTXN = 18;
+        private static final int COLUMN_HEAD_CHECKPOINT_MAX_TS = 19;
+        private static final int COLUMN_HEAD_CHECKPOINT_STATE_BYTES = 20;
         private static final int COLUMN_INVALIDATION_REASON = 4;
         private static final int COLUMN_IN_MEMORY_INTERVAL = 7;
         private static final int COLUMN_IN_MEMORY_INTERVAL_UNIT = 8;
@@ -229,6 +230,19 @@ public class LiveViewsFunctionFactory implements FunctionFactory {
                         case COLUMN_LAST_PROCESSED_SEQTXN -> instance.getLastProcessedSeqTxn();
                         case COLUMN_APPLIED_WATERMARK -> instance.getStateReader().getAppliedWatermark();
                         case COLUMN_LV_CONSUMED_SEQTXN -> instance.getStateReader().getLvConsumedSeqTxn();
+                        case COLUMN_HEAD_CHECKPOINT_LV_SEQTXN -> instance.getHeadCheckpointLvSeqTxn();
+                        case COLUMN_HEAD_CHECKPOINT_MAX_TS -> {
+                            // Stored in base-table timestamp units; surface as TIMESTAMP_MICRO,
+                            // identity for MICRO bases and NS-to-MICRO rounding for NS bases.
+                            // LONG_NULL passes through unchanged so operators see a clear
+                            // "no head" sentinel.
+                            long raw = instance.getHeadCheckpointMaxTs();
+                            yield raw == Numbers.LONG_NULL ? Numbers.LONG_NULL :
+                                    io.questdb.cairo.ColumnType
+                                            .getTimestampDriver(definition.getBaseTimestampType())
+                                            .toMicros(raw);
+                        }
+                        case COLUMN_HEAD_CHECKPOINT_STATE_BYTES -> instance.getHeadCheckpointStateBytes();
                         case COLUMN_VIEW_LOWER_BOUND_TIMESTAMP ->
                                 // Persisted in base-table units (RFC 123 §"On-disk tier"); convert back to
                                 // TIMESTAMP_MICRO per the catalogue column's declared type. Identity for
@@ -306,6 +320,9 @@ public class LiveViewsFunctionFactory implements FunctionFactory {
             metadata.add(new TableColumnMetadata("lv_consumed_seqtxn", ColumnType.LONG));                   // 15
             metadata.add(new TableColumnMetadata("view_lower_bound_timestamp", ColumnType.TIMESTAMP_MICRO));// 16
             metadata.add(new TableColumnMetadata("writer_stall_micros", ColumnType.LONG));                  // 17
+            metadata.add(new TableColumnMetadata("head_checkpoint_lv_seqtxn", ColumnType.LONG));            // 18
+            metadata.add(new TableColumnMetadata("head_checkpoint_max_ts", ColumnType.TIMESTAMP_MICRO));    // 19
+            metadata.add(new TableColumnMetadata("head_checkpoint_state_bytes", ColumnType.LONG));          // 20
             METADATA = metadata;
         }
     }
