@@ -11303,32 +11303,11 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                                 getPrimaryColumn(colIdx), columnTop,
                                 partitionTimestamp, partitionNameTxn
                         );
-                        // Tag the rebuild's intermediate commit (the
-                        // discardForRebuild + commit dance below) with
-                        // getTxn()+1, NOT getTxn(). discardForRebuild
-                        // rotates sealTxn so the trailing commit takes
-                        // appendNewEntry rather than mutating the OLD
-                        // entry in place; that fresh REBUILD entry sits
-                        // as the chain head from commit() until
-                        // rebuildSidecars() supersedes it. During that
-                        // window, and afterwards as a prev entry, REBUILD
-                        // has no cover footer (configureCovering runs
-                        // after commit), so any reader that picks it
-                        // resolves all cover columns to NULL. Tagging
-                        // with getTxn()+1 keeps REBUILD invisible to
-                        // every snapshot-isolated reader pinned at any
-                        // committed txn (T_pin <= getTxn() < getTxn()+1):
-                        // the picker walks past it to OLD (which still
-                        // has its proper footer) until rebuildSidecars
-                        // publishes SEAL with txnAtSeal=getTxn() and a
-                        // real footer. recoveryDropAbandoned can also
-                        // drop REBUILD on a partial-publish reopen
-                        // (predicate txnAtSeal > committedTxn fires when
-                        // the rebuild aborts before txWriter.commit).
-                        // The non-covering branch below uses getTxn()
-                        // because it has no covering footer to lose;
-                        // the brief-window picker hit there returns the
-                        // posting index alone, which is correct.
+                        // REBUILD intermediate entry: getTxn()+1 keeps it
+                        // invisible to T-pinned readers (it lacks a cover
+                        // footer until rebuildSidecars() supersedes it),
+                        // and recoveryDropAbandoned can drop it on a
+                        // partial-publish distress.
                         indexer.getWriter().setNextTxnAtSeal(txWriter.getTxn() + 1L);
                         // Fold the fd-based O3 tentative state into
                         // the writer view before the reseal.
@@ -11375,23 +11354,16 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                         indexer.configureCovering(o3SealAddrs, o3SealAuxAddrs, o3SealTops, o3SealShifts, coveringCols, o3SealTypes, coverCount,
                                 metadata.getTimestampIndex());
                         indexer.setCoveredColumnNameTxns(o3SealNameTxns);
-                        // sealPostingIndexesForO3Partitions runs inside
-                        // finishO3Commit, BEFORE txWriter.commit. The
-                        // chain entry rebuildSidecars publishes is tagged
-                        // with the current committed txn (not the upcoming
-                        // one): tagging with getTxn()+1 corrupts covering
-                        // reads, because publishPendingPurges' purge bound
-                        // would push the scoreboard's max ahead of the
-                        // not-yet-committed table txn and shorten the
-                        // window in which an existing reader can still
-                        // resolve the previous-seal sidecar files. Using
-                        // getTxn() leaves a partial-publish chain entry
-                        // undroppable by the recovery walk for this code
-                        // path; the trade-off is accepted here because the
-                        // failure mode (orphan chain head referencing the
-                        // committed state) is data-correct, while
-                        // getTxn()+1 produces wrong query results.
-                        indexer.getWriter().setNextTxnAtSeal(txWriter.getTxn());
+                        // Same getTxn()+1 convention as the REBUILD entry
+                        // above and as O3CopyJob's setO3PathContext. Picker
+                        // (per-gen visibility via slot[0].TXN_AT_SEAL) keeps
+                        // T-pinned readers on the prev entry until
+                        // txWriter.commit lands, and recoveryDropAbandoned
+                        // can drop the SEAL entry on a partial-publish
+                        // distress. publishPendingPurges clamps toTableTxn
+                        // back to getTxn() so the scoreboard max is not
+                        // pushed past the not-yet-committed table txn.
+                        indexer.getWriter().setNextTxnAtSeal(txWriter.getTxn() + 1L);
                         indexer.rebuildSidecars();
                         indexer.publishPendingPurges(messageBus, tableToken, partitionBy, timestampType, txWriter.getTxn());
                     } finally {
@@ -11413,17 +11385,9 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                             getPrimaryColumn(colIdx), columnTop,
                             partitionTimestamp, partitionNameTxn
                     );
-                    // See covering branch above: sealPostingIndexesForO3Partitions
-                    // runs inside finishO3Commit BEFORE txWriter.commit, and
-                    // publishPendingPurges below uses txWriter.getTxn() (the
-                    // current committed txn) for its purge bound. Tagging the
-                    // chain entry with getTxn()+1 here would push the
-                    // scoreboard's max past the not-yet-committed table txn,
-                    // shrinking the window in which an existing reader can
-                    // resolve the previous-seal .pv file. The covering branch
-                    // accepts the partial-publish-leaves-orphan trade-off; the
-                    // same trade-off is correct here.
-                    indexer.getWriter().setNextTxnAtSeal(txWriter.getTxn());
+                    // Same getTxn()+1 convention as O3CopyJob and the
+                    // covering branch above. See comment there.
+                    indexer.getWriter().setNextTxnAtSeal(txWriter.getTxn() + 1L);
                     indexer.mergeTentativeIntoActiveIfAny();
                     if (canSkipRebuild) {
                         // See pure-append fast-path comment in the covering branch above.

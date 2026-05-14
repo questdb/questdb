@@ -68,9 +68,9 @@ public class PostingIndexChainWriterTest {
         PostingIndexChainWriter w = new PostingIndexChainWriter();
         w.initialiseEmpty(mem);
 
-        long off1 = w.appendNewEntry(mem, 1, 10, 0, 0, 0, 0, 64, 0);
-        long off2 = w.appendNewEntry(mem, 2, 20, 0, 0, 0, 0, 64, 0);
-        long off3 = w.appendNewEntry(mem, 3, 30, 0, 0, 0, 0, 64, 0);
+        long off1 = w.appendNewEntry(mem, 1, 10, 0, 0, 0, 1, 64, 0);
+        long off2 = w.appendNewEntry(mem, 2, 20, 0, 0, 0, 1, 64, 0);
+        long off3 = w.appendNewEntry(mem, 3, 30, 0, 0, 0, 1, 64, 0);
 
         PostingIndexChainEntry.Snapshot snap = new PostingIndexChainEntry.Snapshot();
         PostingIndexChainEntry.read(mem, off3, snap);
@@ -90,17 +90,17 @@ public class PostingIndexChainWriterTest {
     public void testAppendNewEntryRejectsNonMonotonicSealTxn() {
         PostingIndexChainWriter w = new PostingIndexChainWriter();
         w.initialiseEmpty(mem);
-        w.appendNewEntry(mem, 5, 10, 0, 0, 0, 0, 64, 0);
+        w.appendNewEntry(mem, 5, 10, 0, 0, 0, 1, 64, 0);
 
         try {
-            w.appendNewEntry(mem, 5, 11, 0, 0, 0, 0, 64, 0);
+            w.appendNewEntry(mem, 5, 11, 0, 0, 0, 1, 64, 0);
             Assert.fail("expected CairoException for non-monotonic sealTxn");
         } catch (CairoException expected) {
             Assert.assertTrue(expected.getMessage().contains("sealTxn must advance"));
         }
 
         try {
-            w.appendNewEntry(mem, 4, 12, 0, 0, 0, 0, 64, 0);
+            w.appendNewEntry(mem, 4, 12, 0, 0, 0, 1, 64, 0);
             Assert.fail("expected CairoException for backward sealTxn");
         } catch (CairoException expected) {
             Assert.assertTrue(expected.getMessage().contains("sealTxn must advance"));
@@ -141,11 +141,11 @@ public class PostingIndexChainWriterTest {
         w.initialiseEmpty(mem);
 
         long off1 = PostingIndexUtils.V2_ENTRY_REGION_BASE;
-        long off2 = off1 + PostingIndexChainEntry.entrySize(0);
+        long off2 = off1 + PostingIndexChainEntry.entrySize(1);
 
-        PostingIndexChainEntry.writeHeader(mem, off1, 1, 100, 0, 0, 0, 0, 64, 0, off2);
-        PostingIndexChainEntry.writeHeader(mem, off2, 2, 200, 0, 0, 0, 0, 64, 0, off1);
-        long limit = off2 + PostingIndexChainEntry.entrySize(0);
+        PostingIndexChainEntry.writeHeader(mem, off1, 1, 100, 0, 0, 0, 1, 64, 0, off2);
+        PostingIndexChainEntry.writeHeader(mem, off2, 2, 200, 0, 0, 0, 1, 64, 0, off1);
+        long limit = off2 + PostingIndexChainEntry.entrySize(1);
         PostingIndexChainHeader.publish(
                 mem, PostingIndexUtils.PAGE_A_OFFSET, off2, /* entryCount */ 2,
                 PostingIndexUtils.V2_ENTRY_REGION_BASE, limit, 2L
@@ -279,8 +279,8 @@ public class PostingIndexChainWriterTest {
     public void testOpenExistingPopulatesStateFromHead() {
         PostingIndexChainWriter writer = new PostingIndexChainWriter();
         writer.initialiseEmpty(mem);
-        writer.appendNewEntry(mem, 1, 10, 0, 0, 0, 0, 64, 0);
-        writer.appendNewEntry(mem, 2, 20, 0, 0, 0, 0, 64, 0);
+        writer.appendNewEntry(mem, 1, 10, 0, 0, 0, 1, 64, 0);
+        writer.appendNewEntry(mem, 2, 20, 0, 0, 0, 1, 64, 0);
 
         // Simulate writer reopen: a fresh instance reads from the same memory.
         PostingIndexChainWriter reopened = new PostingIndexChainWriter();
@@ -314,12 +314,12 @@ public class PostingIndexChainWriterTest {
         w.initialiseEmpty(mem);
 
         // Healthy entries — txnAtSeal at 10, 20, 30.
-        w.appendNewEntry(mem, 1, 10, 0, 0, 0, 0, 64, 0);
-        w.appendNewEntry(mem, 2, 20, 0, 0, 0, 0, 64, 0);
-        w.appendNewEntry(mem, 3, 30, 0, 0, 0, 0, 64, 0);
+        w.appendNewEntry(mem, 1, 10, 0, 0, 0, 1, 64, 0);
+        w.appendNewEntry(mem, 2, 20, 0, 0, 0, 1, 64, 0);
+        w.appendNewEntry(mem, 3, 30, 0, 0, 0, 1, 64, 0);
         // Two abandoned entries — txnAtSeal beyond what _txn ever committed.
-        long expectedRegionLimitAfter = w.appendNewEntry(mem, 4, 99, 0, 0, 0, 0, 64, 0);
-        w.appendNewEntry(mem, 5, 100, 0, 0, 0, 0, 64, 0);
+        long expectedRegionLimitAfter = w.appendNewEntry(mem, 4, 99, 0, 0, 0, 1, 64, 0);
+        w.appendNewEntry(mem, 5, 100, 0, 0, 0, 1, 64, 0);
 
         // entry #4's start
 
@@ -363,8 +363,8 @@ public class PostingIndexChainWriterTest {
     public void testRecoveryDropAbandonedNoOpWhenAllEntriesCommitted() {
         PostingIndexChainWriter w = new PostingIndexChainWriter();
         w.initialiseEmpty(mem);
-        w.appendNewEntry(mem, 1, 10, 0, 0, 0, 0, 64, 0);
-        w.appendNewEntry(mem, 2, 20, 0, 0, 0, 0, 64, 0);
+        w.appendNewEntry(mem, 1, 10, 0, 0, 0, 1, 64, 0);
+        w.appendNewEntry(mem, 2, 20, 0, 0, 0, 1, 64, 0);
         long headBefore = w.getHeadEntryOffset();
         long limitBefore = w.getRegionLimit();
         long counterBefore = w.getGenCounter();
@@ -381,7 +381,7 @@ public class PostingIndexChainWriterTest {
     public void testResetStateClearsInMemoryMirror() {
         PostingIndexChainWriter w = new PostingIndexChainWriter();
         w.initialiseEmpty(mem);
-        w.appendNewEntry(mem, 1, 10, 0, 0, 0, 0, 64, 0);
+        w.appendNewEntry(mem, 1, 10, 0, 0, 0, 1, 64, 0);
 
         w.resetState();
 

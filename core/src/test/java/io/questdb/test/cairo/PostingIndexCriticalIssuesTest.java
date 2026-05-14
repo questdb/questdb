@@ -174,6 +174,45 @@ public class PostingIndexCriticalIssuesTest extends AbstractCairoTest {
         });
     }
 
+    @Test
+    public void testExtendHeadFailedCommitNotDroppedByRecovery() throws Exception {
+        assertMemoryLeak(() -> {
+            final String name = "extend_head_failed_recovery";
+            try (Path path = new Path().of(configuration.getDbRoot())) {
+                final int plen = path.size();
+                try (PostingIndexWriter writer = new PostingIndexWriter(configuration)) {
+                    writer.of(path.trimTo(plen), name, COLUMN_NAME_TXN_NONE, true);
+                    writer.setNextTxnAtSeal(1L);
+                    writer.add(0, 0);
+                    writer.add(0, 1);
+                    writer.setMaxValue(1);
+                    writer.commit(); // appendNewEntry -> txnAtSeal=1, genCount=1
+
+                    // Successful commit at table layer would advance committedTxn to 1.
+                    // The reopen below is what TableWriter does between WAL transactions:
+                    // close + open from disk, then drive recovery via setCurrentTableTxn.
+                    writer.setCurrentTableTxn(1L);
+                    writer.of(path.trimTo(plen), name, COLUMN_NAME_TXN_NONE, false);
+
+                    // Batch 2 anticipates txn 2 but the table commit will not run.
+                    writer.setNextTxnAtSeal(2L);
+                    writer.add(1, 2);
+                    writer.add(1, 3);
+                    writer.setMaxValue(3);
+                    writer.commit(); // extendHead -> genCount=2, txnAtSeal STAYS at 1
+                }
+
+                try (PostingIndexWriter writer = new PostingIndexWriter(configuration)) {
+                    writer.setCurrentTableTxn(1L);
+                    writer.of(path.trimTo(plen), name, COLUMN_NAME_TXN_NONE, false);
+                    Assert.assertEquals(
+                            "recovery walk should drop the failed batch 2 gen because batch 2 anticipated txn 2 > committedTxn 1",
+                            1, writer.getGenCount());
+                }
+            }
+        });
+    }
+
     /**
      * Critical #1: PostingIndexNative Java fallback silently corrupts data
      * at bitWidth=64 because of the 64-bit shift no-op in
@@ -1962,6 +2001,25 @@ public class PostingIndexCriticalIssuesTest extends AbstractCairoTest {
         });
     }
 
+    // Critical findings #2 (setMaxValue seqlock), #6 ([0, Long.MAX_VALUE)
+    // conservative purge interval) and #7 (seal-loop partial failure
+    // recovery) were RED placeholders during the v1 era. They are now
+    // addressed structurally by the v2 chain redesign:
+    //   #2 — chain.updateHeadMaxValue publishes via the chain header
+    //        seqlock, so any reader of MAX_VALUE goes through the same
+    //        consistency protocol as keyCount/genCount.
+    //   #6 — recordPostingSealPurge derives [fromTxn, toTxn) from the
+    //        chain entries themselves; the residual [0, MAX) branch only
+    //        fires for the empty-chain edge case, which the
+    //        writer-open recovery walk picks up on the next reopen.
+    //   #7 — recoveryDropAbandoned (run from PostingIndexWriter.of after
+    //        setCurrentTableTxn) drops every chain entry whose txnAtSeal
+    //        was published before the encompassing txWriter.commit
+    //        landed.
+    // Critical finding #9 (ColumnPurgeOperator retry cap on Windows) is
+    // orthogonal to the posting-index chain rewrite and remains tracked
+    // separately.
+
     /**
      * Review finding M2: the rebuild dance in
      * TableWriter.sealPostingIndexForPartition}'s covering branch
@@ -2143,25 +2201,6 @@ public class PostingIndexCriticalIssuesTest extends AbstractCairoTest {
         });
     }
 
-    // Critical findings #2 (setMaxValue seqlock), #6 ([0, Long.MAX_VALUE)
-    // conservative purge interval) and #7 (seal-loop partial failure
-    // recovery) were RED placeholders during the v1 era. They are now
-    // addressed structurally by the v2 chain redesign:
-    //   #2 — chain.updateHeadMaxValue publishes via the chain header
-    //        seqlock, so any reader of MAX_VALUE goes through the same
-    //        consistency protocol as keyCount/genCount.
-    //   #6 — recordPostingSealPurge derives [fromTxn, toTxn) from the
-    //        chain entries themselves; the residual [0, MAX) branch only
-    //        fires for the empty-chain edge case, which the
-    //        writer-open recovery walk picks up on the next reopen.
-    //   #7 — recoveryDropAbandoned (run from PostingIndexWriter.of after
-    //        setCurrentTableTxn) drops every chain entry whose txnAtSeal
-    //        was published before the encompassing txWriter.commit
-    //        landed.
-    // Critical finding #9 (ColumnPurgeOperator retry cap on Windows) is
-    // orthogonal to the posting-index chain rewrite and remains tracked
-    // separately.
-
     /**
      * Locks in the multi-gen short-circuit semantics: when a CLEAN gen
      * processed first contributes to {@code total} and a later gen turns out
@@ -2218,6 +2257,25 @@ public class PostingIndexCriticalIssuesTest extends AbstractCairoTest {
         });
     }
 
+    // =========================================================================
+    // Red tests for the v2 review of PR #6861 (current pass).
+    //
+    // Each test below maps to a finding from the review report. Tests that
+    // require fault injection use TestFilesFacadeImpl; tests that require
+    // concurrency simulate the race by mutating ff.length() between mmap
+    // setup and chain access. Findings that can only manifest from sources
+    // FilesFacade does not see (Unsafe.realloc OOM, queue-pool exhaustion)
+    // are documented in trailing comments.
+    // =========================================================================
+
+    // Review finding #1 (sidecar mem fd leak in openSidecarFiles) was
+    // dropped after verification: MemoryCMARWImpl.extend0 (line 403) and
+    // map0 (line 417) both close the fd on mmap/mremap failure inside
+    // jumpTo(). The "orphan mem" identified in the review never holds an
+    // open fd by the time the outer catch fires — it is already closed
+    // internally by the memory-mapping helper.
+    // Documented for traceability; no JUnit red test.
+
     /**
      * The {@code Cursor.size()} fast path must bail to iteration when a single
      * gen straddles {@code entryMaxValue}, because the per-gen count includes
@@ -2266,25 +2324,6 @@ public class PostingIndexCriticalIssuesTest extends AbstractCairoTest {
             }
         });
     }
-
-    // =========================================================================
-    // Red tests for the v2 review of PR #6861 (current pass).
-    //
-    // Each test below maps to a finding from the review report. Tests that
-    // require fault injection use TestFilesFacadeImpl; tests that require
-    // concurrency simulate the race by mutating ff.length() between mmap
-    // setup and chain access. Findings that can only manifest from sources
-    // FilesFacade does not see (Unsafe.realloc OOM, queue-pool exhaustion)
-    // are documented in trailing comments.
-    // =========================================================================
-
-    // Review finding #1 (sidecar mem fd leak in openSidecarFiles) was
-    // dropped after verification: MemoryCMARWImpl.extend0 (line 403) and
-    // map0 (line 417) both close the fd on mmap/mremap failure inside
-    // jumpTo(). The "orphan mem" identified in the review never holds an
-    // open fd by the time the outer catch fires — it is already closed
-    // internally by the memory-mapping helper.
-    // Documented for traceability; no JUnit red test.
 
     /**
      * The DELTA-mode upper bound from {@code peekDeltaKeyMaxValueUpperBound}
@@ -2888,7 +2927,7 @@ public class PostingIndexCriticalIssuesTest extends AbstractCairoTest {
      * Reproduces the writer-side root cause of the GraalVM SIGSEGV in
      * hs_err_pid19555 (PostingIndexBenchmarkSuite.walFastLagInsertAndQuery
      * on bench/posting-wal-fastlag): a covering posting index whose chain
-     * head had LEN=96 (= entrySize(genCount=1, coverCount=0)) while .pci
+     * head had LEN=104 (= entrySize(genCount=1, coverCount=0)) while .pci
      * advertised coverCount=1. This test drives PostingIndexWriter through
      * the same lifecycle the WAL fast-lag path follows in production:
      * <ol>
@@ -2965,8 +3004,8 @@ public class PostingIndexCriticalIssuesTest extends AbstractCairoTest {
                         }
                         Assert.assertEquals(
                                 "post-seal head LEN must include the cover footer "
-                                        + "(64 header + genCount*28 gen-dir + coverCount*8 footer, "
-                                        + "padded to 8): expected entrySize(genCount=1, coverCount=1)=104",
+                                        + "(56 header + genCount*44 gen-dir + coverCount*8 footer, "
+                                        + "padded to 8): expected entrySize(genCount=1, coverCount=1)=112",
                                 PostingIndexChainEntry.entrySize(1, coverCount), lenAfterSeal
                         );
 

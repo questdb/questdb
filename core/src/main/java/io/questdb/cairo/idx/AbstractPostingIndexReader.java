@@ -94,6 +94,14 @@ public abstract class AbstractPostingIndexReader implements IndexReader {
     protected int genCount;
     protected int keyCount;
     protected RecordMetadata metadata;
+    // Strict-pin: the table txn that this reader is pinned at via the
+    // scoreboard. Picker selects the chain entry with the largest
+    // {@code txnAtSeal <= pinnedTableTxn}, and the per-gen filter in
+    // {@link Cursor#advanceToNextRelevantGen} skips gens with
+    // {@code slot.TXN_AT_SEAL > pinnedTableTxn}. Defaults to Long.MAX_VALUE
+    // so a reader opened without explicit plumbing falls back to "see the
+    // head and all its gens".
+    protected long pinnedTableTxn = Long.MAX_VALUE;
     // Last successfully observed seqlock value of the chain header's active
     // page. Used by reloadConditionally to detect any publish (appendNewEntry
     // or extendHead — both republish the header) and skip the picker walk
@@ -110,11 +118,6 @@ public abstract class AbstractPostingIndexReader implements IndexReader {
     private int keyCountIncludingNulls;
     private long partitionTimestamp;
     private long partitionTxn;
-    // Strict-pin: the table txn that this reader is pinned at via the
-    // scoreboard. Picker selects the chain entry with the largest
-    // {@code txnAtSeal <= pinnedTableTxn}. Defaults to Long.MAX_VALUE so a
-    // reader opened without explicit plumbing falls back to "see the head".
-    private long pinnedTableTxn = Long.MAX_VALUE;
     private long spinLockTimeoutMs;
     private long valueFileTxn;
     private long valueMemSize = -1;
@@ -151,6 +154,9 @@ public abstract class AbstractPostingIndexReader implements IndexReader {
         }
         int newlyFound = 0;
         for (int g = 0; g < genCount; g++) {
+            if (genLookup.getGenTxnAtSeal(g) > pinnedTableTxn) {
+                continue;
+            }
             int genKeyCount = genLookup.getGenKeyCount(g);
             long genFileOffset = genLookup.getGenFileOffset(g);
             if (genKeyCount >= 0) {
@@ -179,6 +185,9 @@ public abstract class AbstractPostingIndexReader implements IndexReader {
         }
         int newlyFound = 0;
         for (int g = 0; g < genCount; g++) {
+            if (genLookup.getGenTxnAtSeal(g) > pinnedTableTxn) {
+                continue;
+            }
             int genKeyCount = genLookup.getGenKeyCount(g);
             long genFileOffset = genLookup.getGenFileOffset(g);
             if (genKeyCount >= 0) {
@@ -744,6 +753,24 @@ public abstract class AbstractPostingIndexReader implements IndexReader {
         return newlyFound;
     }
 
+    private long computeVisibleEntryMaxValue(PostingIndexChainEntry.Snapshot e, int visibleGenCount) {
+        if (visibleGenCount == 0) {
+            return -1L;
+        }
+        return visibleGenCount == e.genCount
+                ? e.maxValue
+                : genLookup.getGenMaxValue(visibleGenCount - 1);
+    }
+
+    private int computeVisibleGenCount(PostingIndexChainEntry.Snapshot e) {
+        for (int g = 0; g < e.genCount; g++) {
+            if (genLookup.getGenTxnAtSeal(g) > pinnedTableTxn) {
+                return g;
+            }
+        }
+        return e.genCount;
+    }
+
     /**
      * Open the .pv value file using the picked entry's sealTxn-suffixed
      * filename and the entry's recorded valueMemSize. The path is taken from
@@ -890,10 +917,10 @@ public abstract class AbstractPostingIndexReader implements IndexReader {
 
                 this.headEntryOffset = entryScratch.offset;
                 this.chainSequence = headerScratch.sequence;
-                this.entryMaxValue = entryScratch.maxValue;
+                this.genCount = computeVisibleGenCount(entryScratch);
+                this.entryMaxValue = computeVisibleEntryMaxValue(entryScratch, this.genCount);
                 this.valueMemSize = entryScratch.valueMemSize;
                 this.keyCount = entryScratch.keyCount;
-                this.genCount = entryScratch.genCount;
                 this.valueFileTxn = entryScratch.sealTxn;
                 this.keyCountIncludingNulls = columnTop > 0 ? keyCount + 1 : keyCount;
                 // Promote the picked entry's per-cover end offsets into the
@@ -1346,6 +1373,9 @@ public abstract class AbstractPostingIndexReader implements IndexReader {
             // applies; the original count fast path is taken verbatim.
             long total = 0;
             for (int g = 0; g < cursorGenCount; g++) {
+                if (genLookup.getGenTxnAtSeal(g) > pinnedTableTxn) {
+                    continue;
+                }
                 int gkc = genLookup.getGenKeyCount(g);
                 if (gkc >= 0) {
                     if (entryMaxValue >= 0) {

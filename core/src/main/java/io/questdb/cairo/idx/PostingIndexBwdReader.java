@@ -277,6 +277,10 @@ public class PostingIndexBwdReader extends AbstractPostingIndexReader {
             }
             currentGen--;
             while (currentGen >= 0) {
+                if (genLookup.getGenTxnAtSeal(currentGen) > pinnedTableTxn) {
+                    currentGen--;
+                    continue;
+                }
                 int gkc = genLookup.getGenKeyCount(currentGen);
                 if (gkc >= 0) {
                     loadDenseGenerationCached(currentGen);

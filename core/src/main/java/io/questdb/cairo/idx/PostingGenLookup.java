@@ -149,8 +149,16 @@ public class PostingGenLookup implements Closeable {
         return active.genMaxKeys.getQuick(gen);
     }
 
+    public long getGenMaxValue(int gen) {
+        return active.genMaxValues.getQuick(gen);
+    }
+
     public int getGenMinKey(int gen) {
         return active.genMinKeys.getQuick(gen);
+    }
+
+    public long getGenTxnAtSeal(int gen) {
+        return active.genTxnAtSeals.getQuick(gen);
     }
 
     // prefix-sum sits between encoded data and the SBBF+footer trailer, so
@@ -248,12 +256,7 @@ public class PostingGenLookup implements Closeable {
      */
     public void snapshotMetadata(MemoryMR keyMem, int genCount, long entryOffset) {
         Snapshot s = staging;
-        s.genFileOffsets.clear();
-        s.genDataSizes.clear();
-        s.genKeyCounts.clear();
-        s.genMinKeys.clear();
-        s.genMaxKeys.clear();
-        s.anySparseGen = false;
+        s.clear();
         for (int i = 0; i < genCount; i++) {
             long dirOffset = PostingIndexChainEntry.resolveGenDirOffset(entryOffset, i);
             s.genFileOffsets.add(keyMem.getLong(dirOffset + PostingIndexUtils.GEN_DIR_OFFSET_FILE_OFFSET));
@@ -265,6 +268,8 @@ public class PostingGenLookup implements Closeable {
             }
             s.genMinKeys.add(keyMem.getInt(dirOffset + PostingIndexUtils.GEN_DIR_OFFSET_MIN_KEY));
             s.genMaxKeys.add(keyMem.getInt(dirOffset + PostingIndexUtils.GEN_DIR_OFFSET_MAX_KEY));
+            s.genMaxValues.add(keyMem.getLong(dirOffset + PostingIndexUtils.GEN_DIR_OFFSET_MAX_VALUE));
+            s.genTxnAtSeals.add(keyMem.getLong(dirOffset + PostingIndexUtils.GEN_DIR_OFFSET_TXN_AT_SEAL));
         }
     }
 
@@ -294,7 +299,9 @@ public class PostingGenLookup implements Closeable {
         final LongList genFileOffsets = new LongList();
         final IntList genKeyCounts = new IntList(); // negative = sparse
         final IntList genMaxKeys = new IntList();
+        final LongList genMaxValues = new LongList();
         final IntList genMinKeys = new IntList();
+        final LongList genTxnAtSeals = new LongList();
         boolean anySparseGen;
 
         void clear() {
@@ -303,6 +310,8 @@ public class PostingGenLookup implements Closeable {
             genKeyCounts.clear();
             genMinKeys.clear();
             genMaxKeys.clear();
+            genMaxValues.clear();
+            genTxnAtSeals.clear();
             anySparseGen = false;
         }
     }

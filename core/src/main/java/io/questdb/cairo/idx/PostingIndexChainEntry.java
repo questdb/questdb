@@ -116,7 +116,6 @@ public final class PostingIndexChainEntry {
         Unsafe.loadFence();
         into.len = keyMem.getLong(entryOffset + PostingIndexUtils.V2_ENTRY_OFFSET_LEN);
         into.sealTxn = keyMem.getLong(entryOffset + PostingIndexUtils.V2_ENTRY_OFFSET_SEAL_TXN);
-        into.txnAtSeal = keyMem.getLong(entryOffset + PostingIndexUtils.V2_ENTRY_OFFSET_TXN_AT_SEAL);
         into.valueMemSize = keyMem.getLong(entryOffset + PostingIndexUtils.V2_ENTRY_OFFSET_VALUE_MEM_SIZE);
         into.maxValue = keyMem.getLong(entryOffset + PostingIndexUtils.V2_ENTRY_OFFSET_MAX_VALUE);
         into.keyCount = keyMem.getInt(entryOffset + PostingIndexUtils.V2_ENTRY_OFFSET_KEY_COUNT);
@@ -124,6 +123,10 @@ public final class PostingIndexChainEntry {
         into.coveringFormat = keyMem.getInt(entryOffset + PostingIndexUtils.V2_ENTRY_OFFSET_COVERING_FORMAT);
         into.prevEntryOffset = keyMem.getLong(entryOffset + PostingIndexUtils.V2_ENTRY_OFFSET_PREV_ENTRY_OFFSET);
         into.genDirOffset = entryOffset + PostingIndexUtils.V2_ENTRY_HEADER_SIZE;
+        // Entry-level txnAtSeal sources from slot[0] (single source of truth).
+        into.txnAtSeal = into.genCount > 0
+                ? keyMem.getLong(into.genDirOffset + PostingIndexUtils.GEN_DIR_OFFSET_TXN_AT_SEAL)
+                : 0L;
         into.coverFileEndOffsets.clear();
         if (coverCount > 0) {
             long footerOffset = resolveCoverFooterOffset(entryOffset, into.genCount);
@@ -204,14 +207,14 @@ public final class PostingIndexChainEntry {
     }
 
     /**
-     * Write a complete entry header at {@code entryOffset}. Caller must
-     * write the gen dir payload itself afterward (or before the entry is
-     * made visible by publishing the chain head). When {@code coverEndOffsets}
-     * is non-null, this method also fills the cover end-offset footer.
+     * Write a complete entry header at {@code entryOffset}. {@code txnAtSeal}
+     * lands in slot[0]'s {@code TXN_AT_SEAL} field (single on-disk source of
+     * truth for entry-level visibility) when {@code genCount > 0}. Callers
+     * must write the rest of the gen dir payload separately. When
+     * {@code coverEndOffsets} is non-null, also fills the cover footer.
      * <p>
-     * The entry must be fully written and durable on disk before
-     * {@link PostingIndexChainHeader#publish} advances the chain head;
-     * otherwise a reader could observe a stale entry.
+     * The entry must be fully written and durable before
+     * {@link PostingIndexChainHeader#publish} advances the chain head.
      */
     public static void writeHeader(
             MemoryW keyMem,
@@ -231,7 +234,6 @@ public final class PostingIndexChainEntry {
         long len = entrySize(genCount, coverCount);
         keyMem.putLong(entryOffset + PostingIndexUtils.V2_ENTRY_OFFSET_LEN, len);
         keyMem.putLong(entryOffset + PostingIndexUtils.V2_ENTRY_OFFSET_SEAL_TXN, sealTxn);
-        keyMem.putLong(entryOffset + PostingIndexUtils.V2_ENTRY_OFFSET_TXN_AT_SEAL, txnAtSeal);
         keyMem.putLong(entryOffset + PostingIndexUtils.V2_ENTRY_OFFSET_VALUE_MEM_SIZE, valueMemSize);
         keyMem.putLong(entryOffset + PostingIndexUtils.V2_ENTRY_OFFSET_MAX_VALUE, maxValue);
         keyMem.putInt(entryOffset + PostingIndexUtils.V2_ENTRY_OFFSET_KEY_COUNT, keyCount);
@@ -239,6 +241,10 @@ public final class PostingIndexChainEntry {
         keyMem.putInt(entryOffset + PostingIndexUtils.V2_ENTRY_OFFSET_BLOCK_CAPACITY, blockCapacity);
         keyMem.putInt(entryOffset + PostingIndexUtils.V2_ENTRY_OFFSET_COVERING_FORMAT, coveringFormat);
         keyMem.putLong(entryOffset + PostingIndexUtils.V2_ENTRY_OFFSET_PREV_ENTRY_OFFSET, prevEntryOffset);
+        if (genCount > 0) {
+            long slot0Offset = entryOffset + PostingIndexUtils.V2_ENTRY_HEADER_SIZE;
+            keyMem.putLong(slot0Offset + PostingIndexUtils.GEN_DIR_OFFSET_TXN_AT_SEAL, txnAtSeal);
+        }
         if (coverCount > 0) {
             long footerOffset = resolveCoverFooterOffset(entryOffset, genCount);
             for (int c = 0; c < coverCount; c++) {

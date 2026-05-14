@@ -148,21 +148,28 @@ and to leave room for future fields without a format bump.
 ### 4.3 Entry layout
 
 Entries are variable-size because each carries its own gen dir. Entry
-header is `V2_ENTRY_HEADER_SIZE = 64` bytes; the gen dir follows.
+header is `V2_ENTRY_HEADER_SIZE = 56` bytes; the gen dir follows.
 
 | Offset | Size | Field | Purpose |
 |---|---|---|---|
 | 0 | 8 | `V2_ENTRY_OFFSET_LEN` | Total entry size (header + gen dir, padded to 8). |
 | 8 | 8 | `V2_ENTRY_OFFSET_SEAL_TXN` | Suffix for `.pv.{sealTxn}` and `.pc{i}.{sealTxn}` files. >= 1, monotonic per `.pk`. |
-| 16 | 8 | `V2_ENTRY_OFFSET_TXN_AT_SEAL` | Table `_txn` value at which this entry takes effect. Reader picks entry where this `<= pinned _txn`. |
-| 24 | 8 | `V2_ENTRY_OFFSET_VALUE_MEM_SIZE` | Bytes in `.pv.{sealTxn}`. |
-| 32 | 8 | `V2_ENTRY_OFFSET_MAX_VALUE` | Highest row id covered by this entry's index data. |
-| 40 | 4 | `V2_ENTRY_OFFSET_KEY_COUNT` | Distinct keys at seal time. |
-| 44 | 4 | `V2_ENTRY_OFFSET_GEN_COUNT` | Number of gen-dir entries. |
-| 48 | 4 | `V2_ENTRY_OFFSET_BLOCK_CAPACITY` | Block capacity for this seal. |
-| 52 | 4 | `V2_ENTRY_OFFSET_COVERING_FORMAT` | Reserved (currently 0). Lets sidecar formats evolve per-seal. |
-| 56 | 8 | `V2_ENTRY_OFFSET_PREV_ENTRY_OFFSET` | Byte offset of the previous entry, or `V2_NO_HEAD` if oldest. |
-| 64+ | `genCount * GEN_DIR_ENTRY_SIZE` | Gen dir entries (existing 28-byte records). |
+| 16 | 8 | `V2_ENTRY_OFFSET_VALUE_MEM_SIZE` | Bytes in `.pv.{sealTxn}`. |
+| 24 | 8 | `V2_ENTRY_OFFSET_MAX_VALUE` | Highest row id covered by this entry's index data. |
+| 32 | 4 | `V2_ENTRY_OFFSET_KEY_COUNT` | Distinct keys at seal time. |
+| 36 | 4 | `V2_ENTRY_OFFSET_GEN_COUNT` | Number of gen-dir entries. |
+| 40 | 4 | `V2_ENTRY_OFFSET_BLOCK_CAPACITY` | Block capacity for this seal. |
+| 44 | 4 | `V2_ENTRY_OFFSET_COVERING_FORMAT` | Reserved (currently 0). Lets sidecar formats evolve per-seal. |
+| 48 | 8 | `V2_ENTRY_OFFSET_PREV_ENTRY_OFFSET` | Byte offset of the previous entry, or `V2_NO_HEAD` if oldest. |
+| 56+ | `genCount * GEN_DIR_ENTRY_SIZE` | Gen dir entries (44-byte records, see 4.5.1). |
+
+The table `_txn` at which the entry takes effect is **not** an entry header
+field — it lives in the first gen-dir slot's `TXN_AT_SEAL` field
+(`slot[0].TXN_AT_SEAL`). With fast-path multi-commit-shares-entry, gens
+within one entry can have different `TXN_AT_SEAL` values; the picker's
+coarse "is this entry visible at all" filter uses the earliest gen
+(slot[0]), and within a visible entry the reader does per-gen filtering
+against pinned `_txn`. See section 4.5.1.
 
 `PostingIndexChainEntry.entrySize(genCount)` returns the total bytes,
 rounded up to 8.

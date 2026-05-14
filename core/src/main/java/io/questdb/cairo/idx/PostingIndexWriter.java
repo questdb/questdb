@@ -3502,11 +3502,17 @@ public class PostingIndexWriter implements IndexWriter {
         long entryBase = newEntry ? chain.getRegionLimit() : chain.getHeadEntryOffset();
 
         long dirOffset = PostingIndexChainEntry.resolveGenDirOffset(entryBase, overrideGenIndex);
+        long slotTxnAtSeal = pendingTxnAtSeal >= 0 ? pendingTxnAtSeal : 0L;
         keyMem.putLong(dirOffset + GEN_DIR_OFFSET_FILE_OFFSET, overrideFileOffset);
         keyMem.putLong(dirOffset + GEN_DIR_OFFSET_SIZE, overrideSize);
         keyMem.putInt(dirOffset + PostingIndexUtils.GEN_DIR_OFFSET_KEY_COUNT, overrideKeyCount);
         keyMem.putInt(dirOffset + PostingIndexUtils.GEN_DIR_OFFSET_MIN_KEY, overrideMinKey);
         keyMem.putInt(dirOffset + PostingIndexUtils.GEN_DIR_OFFSET_MAX_KEY, overrideMaxKey);
+        keyMem.putLong(dirOffset + PostingIndexUtils.GEN_DIR_OFFSET_MAX_VALUE, maxValue);
+        // TXN_AT_SEAL is the slot's last-write-wins latch for recovery's
+        // tail trim. Must be the last store + storeFence.
+        Unsafe.storeFence();
+        keyMem.putLong(dirOffset + PostingIndexUtils.GEN_DIR_OFFSET_TXN_AT_SEAL, slotTxnAtSeal);
 
         // Snapshot the current append offset of each open sidecar. Tombstoned
         // and not-yet-opened slots publish 0; readers treat them as "no file

@@ -468,6 +468,7 @@ public final class PostingIndexChainWriter {
         long newHead = headEntryOffset;
         long newEntryCount = entryCount;
         long newRegionLimit = regionLimit;
+        boolean headTrimmed = false;
         // Walk strictly bounded by entryCount: a corrupted prev pointer that
         // loops back on itself would otherwise drop more entries than the
         // chain contains and, for an unbounded cycle, never terminate. The
@@ -489,6 +490,21 @@ public final class PostingIndexChainWriter {
             }
             PostingIndexChainEntry.read(keyMem, offset, 0, entryScratch);
             if (entryScratch.txnAtSeal <= currentTableTxn) {
+                // entry-level visible, but fast-path may have stuffed
+                // in-flight gens in this entry's tail via extendHead. Trim
+                // them off via per-slot TXN_AT_SEAL.
+                int trimmedTo = trimInFlightTailGens(keyMem, offset, entryScratch.genCount, currentTableTxn);
+                if (trimmedTo == 0) {
+                    orphanSealTxns.add(entryScratch.sealTxn);
+                    newHead = entryScratch.prevEntryOffset;
+                    newEntryCount--;
+                    newRegionLimit = offset;
+                    dropped++;
+                } else if (trimmedTo < entryScratch.genCount) {
+                    headTrimmed = true;
+                    long trimmedEntryLen = applyHeadTrim(keyMem, offset, trimmedTo, entryScratch.len);
+                    newRegionLimit = offset + trimmedEntryLen;
+                }
                 break;
             }
             orphanSealTxns.add(entryScratch.sealTxn);
@@ -500,7 +516,7 @@ public final class PostingIndexChainWriter {
             offset = entryScratch.prevEntryOffset;
             dropped++;
         }
-        if (dropped == 0) {
+        if (dropped == 0 && !headTrimmed) {
             return 0;
         }
         headEntryOffset = newHead;
@@ -525,6 +541,89 @@ public final class PostingIndexChainWriter {
                 genCounter
         );
         return dropped;
+    }
+
+    /**
+     * Shrink the head entry's gen dir to {@code keepGenCount} after the
+     * recovery walk trimmed in-flight tail gens. Uses <b>GEN_COUNT-first</b>
+     * write order (the inverse of {@link #extendHead}) so a concurrent
+     * reader never sees OLD large GEN_COUNT paired with NEW small
+     * VALUE_MEM_SIZE -- which would let the reader read past the trimmed
+     * valueMem mapping.
+     */
+    private long applyHeadTrim(MemoryARW keyMem, long entryOffset, int keepGenCount, long oldEntryLen) {
+        long lastSlot = entryOffset + PostingIndexUtils.V2_ENTRY_HEADER_SIZE
+                + (long) (keepGenCount - 1) * PostingIndexUtils.GEN_DIR_ENTRY_SIZE;
+        long lastFileOffset = keyMem.getLong(lastSlot + PostingIndexUtils.GEN_DIR_OFFSET_FILE_OFFSET);
+        long lastSize = keyMem.getLong(lastSlot + PostingIndexUtils.GEN_DIR_OFFSET_SIZE);
+        long lastMaxValue = keyMem.getLong(lastSlot + PostingIndexUtils.GEN_DIR_OFFSET_MAX_VALUE);
+        int newKeyCount = 0;
+        for (int g = 0; g < keepGenCount; g++) {
+            long slot = entryOffset + PostingIndexUtils.V2_ENTRY_HEADER_SIZE
+                    + (long) g * PostingIndexUtils.GEN_DIR_ENTRY_SIZE;
+            int slotMaxKey = keyMem.getInt(slot + PostingIndexUtils.GEN_DIR_OFFSET_MAX_KEY);
+            if (slotMaxKey + 1 > newKeyCount) {
+                newKeyCount = slotMaxKey + 1;
+            }
+        }
+        // Preserve the existing cover footer position. The new LEN is the
+        // header + the kept gen dir + the cover footer (sized from oldEntryLen
+        // minus the old gen-dir region and rounded the same way as
+        // entrySize()).
+        long oldGenDirBytes = oldEntryLen - PostingIndexUtils.V2_ENTRY_HEADER_SIZE;
+        // Cover footer + alignment padding sits after the gen dir; preserve
+        // it by computing remaining bytes and appending after the trimmed
+        // gen dir region.
+        int oldGenCount = keyMem.getInt(entryOffset + PostingIndexUtils.V2_ENTRY_OFFSET_GEN_COUNT);
+        long coverPlusPadding = oldGenDirBytes - (long) oldGenCount * PostingIndexUtils.GEN_DIR_ENTRY_SIZE;
+        if (coverPlusPadding < 0) {
+            coverPlusPadding = 0;
+        }
+        long newLen = (long) PostingIndexUtils.V2_ENTRY_HEADER_SIZE
+                + (long) keepGenCount * PostingIndexUtils.GEN_DIR_ENTRY_SIZE
+                + coverPlusPadding;
+        newLen = (newLen + 7L) & ~7L;
+
+        keyMem.putInt(entryOffset + PostingIndexUtils.V2_ENTRY_OFFSET_GEN_COUNT, keepGenCount);
+        Unsafe.storeFence();
+
+        if (coverPlusPadding > 0) {
+            long oldFooterOffset = entryOffset + PostingIndexUtils.V2_ENTRY_HEADER_SIZE
+                    + (long) oldGenCount * PostingIndexUtils.GEN_DIR_ENTRY_SIZE;
+            long newFooterOffset = entryOffset + PostingIndexUtils.V2_ENTRY_HEADER_SIZE
+                    + (long) keepGenCount * PostingIndexUtils.GEN_DIR_ENTRY_SIZE;
+            for (long b = 0; b < coverPlusPadding; b += Long.BYTES) {
+                long v = keyMem.getLong(oldFooterOffset + b);
+                keyMem.putLong(newFooterOffset + b, v);
+            }
+        }
+
+        keyMem.putLong(entryOffset + PostingIndexUtils.V2_ENTRY_OFFSET_LEN, newLen);
+        keyMem.putLong(entryOffset + PostingIndexUtils.V2_ENTRY_OFFSET_VALUE_MEM_SIZE,
+                lastFileOffset + lastSize);
+        keyMem.putLong(entryOffset + PostingIndexUtils.V2_ENTRY_OFFSET_MAX_VALUE, lastMaxValue);
+        keyMem.putInt(entryOffset + PostingIndexUtils.V2_ENTRY_OFFSET_KEY_COUNT, newKeyCount);
+        Unsafe.storeFence();
+        return newLen;
+    }
+
+    /**
+     * Returns the number of head-entry gen-dir slots to keep, trimming the
+     * tail of slots whose TXN_AT_SEAL exceeds {@code currentTableTxn}.
+     */
+    private int trimInFlightTailGens(MemoryARW keyMem, long entryOffset, int genCount, long currentTableTxn) {
+        int keep = genCount;
+        while (keep > 0) {
+            long slotOffset = entryOffset + PostingIndexUtils.V2_ENTRY_HEADER_SIZE
+                    + (long) (keep - 1) * PostingIndexUtils.GEN_DIR_ENTRY_SIZE;
+            Unsafe.loadFence();
+            long slotTxnAtSeal = keyMem.getLong(slotOffset + PostingIndexUtils.GEN_DIR_OFFSET_TXN_AT_SEAL);
+            if (slotTxnAtSeal <= currentTableTxn) {
+                break;
+            }
+            keep--;
+        }
+        return keep;
     }
 
     /**
