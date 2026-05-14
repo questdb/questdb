@@ -16931,6 +16931,36 @@ public class WindowFunctionTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testNthValueLongRowsFrameLocksRowN() throws Exception {
+        // Long-type analogue of testNthValueRowsFrameLocksRowN. ROWS BETWEEN UNBOUNDED
+        // PRECEDING AND K PRECEDING (K > 0) routes to NthValueOverRowsFrameUnboundedFunction,
+        // a ZERO_PASS class that uses WindowRecordCursorFactory. assertQueryNoLeakCheck
+        // restarts the cursor (cursor.toTop()), propagating to the function's toTop() and
+        // exercising the getLong() accessor on the second iteration.
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, val long) timestamp(ts)", timestampType.getTypeName());
+            execute("insert into tab values (1, 10), (2, 20), (3, 30), (4, 40), (5, 50), (6, 60)");
+
+            assertQueryNoLeakCheck(
+                    replaceTimestampSuffix1("""
+                            ts\tnv
+                            1970-01-01T00:00:00.000001Z\tnull
+                            1970-01-01T00:00:00.000002Z\tnull
+                            1970-01-01T00:00:00.000003Z\t10
+                            1970-01-01T00:00:00.000004Z\t10
+                            1970-01-01T00:00:00.000005Z\t10
+                            1970-01-01T00:00:00.000006Z\t10
+                            """),
+                    "select ts, nth_value(val, 1) over (" +
+                            "order by ts rows between unbounded preceding and 2 preceding) nv from tab",
+                    "ts",
+                    false,
+                    true
+            );
+        });
+    }
+
+    @Test
     public void testNthValueTimestampBasic() throws Exception {
         assertMemoryLeak(() -> {
             executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, val timestamp) timestamp(ts)", timestampType.getTypeName());
@@ -18577,6 +18607,37 @@ public class WindowFunctionTest extends AbstractCairoTest {
                     "select ts, i, nth_value(val, 1) over (" +
                             "partition by i order by ts " +
                             "range between 100 microseconds preceding and 50 microseconds preceding) nv from tab",
+                    "ts",
+                    false,
+                    true
+            );
+        });
+    }
+
+    @Test
+    public void testNthValueTimestampRowsFrameLocksRowN() throws Exception {
+        // Timestamp-type analogue of testNthValueRowsFrameLocksRowN. ROWS BETWEEN
+        // UNBOUNDED PRECEDING AND K PRECEDING (K > 0) routes to
+        // NthValueOverRowsFrameUnboundedFunction (Timestamp variant), a ZERO_PASS class
+        // that uses WindowRecordCursorFactory. assertQueryNoLeakCheck restarts the cursor
+        // (cursor.toTop()), propagating to the function's toTop() and exercising the
+        // getLong() accessor on the second iteration.
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, val timestamp) timestamp(ts)", timestampType.getTypeName());
+            execute("insert into tab values (1, 100), (2, 200), (3, 300), (4, 400), (5, 500), (6, 600)");
+
+            assertQueryNoLeakCheck(
+                    replaceTimestampSuffix1("""
+                            ts\tnv
+                            1970-01-01T00:00:00.000001Z\t
+                            1970-01-01T00:00:00.000002Z\t
+                            1970-01-01T00:00:00.000003Z\t1970-01-01T00:00:00.000100Z
+                            1970-01-01T00:00:00.000004Z\t1970-01-01T00:00:00.000100Z
+                            1970-01-01T00:00:00.000005Z\t1970-01-01T00:00:00.000100Z
+                            1970-01-01T00:00:00.000006Z\t1970-01-01T00:00:00.000100Z
+                            """),
+                    "select ts, nth_value(val, 1) over (" +
+                            "order by ts rows between unbounded preceding and 2 preceding) nv from tab",
                     "ts",
                     false,
                     true
