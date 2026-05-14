@@ -38,6 +38,7 @@ import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.cairo.vm.MemoryCARWImpl;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.cairo.sql.Function;
 import io.questdb.griffin.engine.table.ParquetRowGroupFilter;
 import io.questdb.griffin.engine.table.PushdownFilterExtractor;
 import io.questdb.griffin.engine.table.parquet.ParquetFileDecoder;
@@ -109,8 +110,13 @@ public class HivePartitionedReadParquetPageFrameCursor implements PageFrameCurso
     private final Path path = new Path(MemoryTag.NATIVE_PATH);
     private final @Nullable ObjList<PushdownFilterExtractor.PushdownFilterCondition> pushdownFilterConditions;
     private SqlExecutionContext executionContext;
+    // Scratch arrays for per-file partition value parsing during file pruning.
+    // Sized to partitionColumnCount; reused across files.
+    private boolean[] prunePartitionPresent;
+    private long[] prunePartitionValues;
     private int currentFileIndex = -1;
     private long cumulativePartitionLo = 0;
+    private boolean isFilterConditionsInitialised = false;
     // Row counts are accumulated as files open during normal iteration so that
     // size() after a full scan does not need a separate probe walk.
     private boolean isTotalRowCountFinalised = false;
@@ -137,6 +143,8 @@ public class HivePartitionedReadParquetPageFrameCursor implements PageFrameCurso
         this.partitionColumnCount = partitionColumnNames.size();
         this.nonGlobRootLen = nonGlobRoot.length();
         this.pushdownFilterConditions = pushdownFilterConditions;
+        this.prunePartitionValues = new long[this.partitionColumnCount];
+        this.prunePartitionPresent = new boolean[this.partitionColumnCount];
     }
 
     @Override
@@ -265,6 +273,7 @@ public class HivePartitionedReadParquetPageFrameCursor implements PageFrameCurso
         currentFileIndex = -1;
         lowestOpenFileIndex = 0;
         cumulativePartitionLo = 0;
+        isFilterConditionsInitialised = false;
         // Preserve the finalised row count across toTop calls: file row counts are
         // immutable, so once we've seen them once we can keep reusing the total.
         if (!isTotalRowCountFinalised) {
@@ -416,11 +425,17 @@ public class HivePartitionedReadParquetPageFrameCursor implements PageFrameCurso
     }
 
     private boolean openNextFile() {
-        if (!globCursor.hasNext()) {
-            return false;
-        }
+        // Cheap pre-screen: parse partition values from the path and check if any
+        // pushdown filter condition rejects them. If so, skip the file entirely
+        // without opening an fd or mmaping the parquet content.
+        Utf8Sequence filePath;
+        do {
+            if (!globCursor.hasNext()) {
+                return false;
+            }
+            filePath = globCursor.getRecord().getVarcharA(0);
+        } while (partitionColumnCount > 0 && canPruneFileByPartition(filePath));
         final int fileIndex = ++currentFileIndex;
-        final Utf8Sequence filePath = globCursor.getRecord().getVarcharA(0);
         path.of(filePath);
         final long fd = TableUtils.openRO(ff, path.$(), LOG);
         long addr = 0;
@@ -501,9 +516,30 @@ public class HivePartitionedReadParquetPageFrameCursor implements PageFrameCurso
     }
 
     private void populatePartitionBuffersFromPath(int fileIndex, Utf8Sequence filePath, int rowCount) {
-        // Start every column marked as missing; flip to present when we find a matching segment.
-        final boolean[] present = new boolean[partitionColumnCount];
-        final long[] values = new long[partitionColumnCount];
+        // Parse into scratch arrays (reused for pruning).
+        parsePartitionValues(filePath, prunePartitionValues, prunePartitionPresent);
+        for (int c = 0; c < partitionColumnCount; c++) {
+            int slot = fileIndex * partitionColumnCount + c;
+            long addr = partitionBufferAddrs.getQuick(slot);
+            if (addr != 0) {
+                fillPartitionBuffer(addr, rowCount, partitionColumnTypes.getQuick(c),
+                        prunePartitionValues[c], prunePartitionPresent[c]);
+            }
+        }
+    }
+
+    /**
+     * Parses partition values from {@code filePath} into the supplied arrays.
+     * Missing or unparseable values leave {@code present[i]} false.
+     */
+    private void parsePartitionValues(Utf8Sequence filePath, long[] values, boolean[] present) {
+        for (int c = 0; c < partitionColumnCount; c++) {
+            values[c] = 0L;
+            present[c] = false;
+        }
+        if (partitionColumnCount == 0) {
+            return;
+        }
         final int n = filePath.size();
         int segStart = Math.min(nonGlobRootLen, n);
         final StringSink sink = Misc.getThreadLocalSink();
@@ -558,13 +594,128 @@ public class HivePartitionedReadParquetPageFrameCursor implements PageFrameCurso
             }
             segStart = segEnd + 1;
         }
-        for (int c = 0; c < partitionColumnCount; c++) {
-            int slot = fileIndex * partitionColumnCount + c;
-            long addr = partitionBufferAddrs.getQuick(slot);
-            if (addr != 0) {
-                fillPartitionBuffer(addr, rowCount, partitionColumnTypes.getQuick(c), values[c], present[c]);
+    }
+
+    /**
+     * Returns true if pushdown filter conditions referencing partition columns
+     * rule out every row of the file at {@code filePath}. Conservative: any
+     * unsupported operator yields false (file kept). Conditions referencing
+     * parquet columns are ignored here; row-group statistics handle those once
+     * the file is open.
+     */
+    private boolean canPruneFileByPartition(Utf8Sequence filePath) {
+        if (pushdownFilterConditions == null || pushdownFilterConditions.size() == 0) {
+            return false;
+        }
+        ensureFilterConditionsInitialised();
+        parsePartitionValues(filePath, prunePartitionValues, prunePartitionPresent);
+
+        for (int i = 0, n = pushdownFilterConditions.size(); i < n; i++) {
+            PushdownFilterExtractor.PushdownFilterCondition cond = pushdownFilterConditions.getQuick(i);
+            int partCol = indexOfPartitionColumn(cond.getColumnName());
+            if (partCol < 0) {
+                continue;
+            }
+            int op = cond.getOperationType();
+            boolean present = prunePartitionPresent[partCol];
+
+            if (op == PushdownFilterExtractor.OP_IS_NULL) {
+                if (present) return true;
+                continue;
+            }
+            if (op == PushdownFilterExtractor.OP_IS_NOT_NULL) {
+                if (!present) return true;
+                continue;
+            }
+            if (op != PushdownFilterExtractor.OP_EQ) {
+                // Other ops (LT, GT, BETWEEN, NEQ) - skip conservatively. Could be added
+                // later but the IN/=/IS NULL cases cover the common hive query shape.
+                continue;
+            }
+            if (!present) {
+                // OP_EQ against a NULL partition value never matches.
+                return true;
+            }
+            final int type = partitionColumnTypes.getQuick(partCol);
+            if (!canCompareTyped(type)) {
+                continue;
+            }
+            final ObjList<Function> vals = cond.getValueFunctions();
+            if (vals.size() == 0) {
+                continue;
+            }
+            boolean anyMatch = false;
+            for (int v = 0, vn = vals.size(); v < vn; v++) {
+                if (functionMatchesPartition(vals.getQuick(v), type, prunePartitionValues[partCol])) {
+                    anyMatch = true;
+                    break;
+                }
+            }
+            if (!anyMatch) {
+                return true;
             }
         }
+        return false;
+    }
+
+    private boolean canCompareTyped(int columnType) {
+        switch (ColumnType.tagOf(columnType)) {
+            case ColumnType.INT:
+            case ColumnType.LONG:
+            case ColumnType.DATE:
+            case ColumnType.TIMESTAMP:
+                return true;
+            default:
+                return false;
+        }
+    }
+
+    /**
+     * Compares one value-function from a pushdown condition against the typed
+     * partition value. Returns true if the function's value matches the
+     * partition value under the partition column's type.
+     */
+    private boolean functionMatchesPartition(Function f, int partitionType, long partitionValue) {
+        try {
+            switch (ColumnType.tagOf(partitionType)) {
+                case ColumnType.INT:
+                    return f.getInt(null) == (int) partitionValue;
+                case ColumnType.LONG:
+                    return f.getLong(null) == partitionValue;
+                case ColumnType.DATE:
+                    return f.getDate(null) == partitionValue;
+                case ColumnType.TIMESTAMP:
+                    return f.getTimestamp(null) == partitionValue;
+                default:
+                    return false;
+            }
+        } catch (Throwable ignored) {
+            // If the function can't be evaluated as the expected type, be conservative.
+            return false;
+        }
+    }
+
+    private int indexOfPartitionColumn(CharSequence name) {
+        for (int i = 0; i < partitionColumnCount; i++) {
+            if (io.questdb.std.Chars.equalsIgnoreCase(partitionColumnNames.getQuick(i), name)) {
+                return i;
+            }
+        }
+        return -1;
+    }
+
+    private void ensureFilterConditionsInitialised() {
+        if (isFilterConditionsInitialised || pushdownFilterConditions == null) {
+            return;
+        }
+        try {
+            for (int i = 0, n = pushdownFilterConditions.size(); i < n; i++) {
+                pushdownFilterConditions.getQuick(i).init(executionContext);
+            }
+        } catch (SqlException e) {
+            throw CairoException.nonCritical().put("failed to init pushdown filter: ").put(e.getFlyweightMessage());
+        }
+        isFilterConditionsInitialised = true;
     }
 
     private long parseTyped(CharSequence cs, int columnType) throws NumericException {
@@ -588,13 +739,8 @@ public class HivePartitionedReadParquetPageFrameCursor implements PageFrameCurso
         if (pushdownFilterConditions == null || pushdownFilterConditions.size() == 0) {
             return;
         }
-        try {
-            for (int i = 0, sz = pushdownFilterConditions.size(); i < sz; i++) {
-                pushdownFilterConditions.getQuick(i).init(executionContext);
-            }
-        } catch (SqlException e) {
-            throw CairoException.nonCritical().put("failed to init pushdown filter: ").put(e.getFlyweightMessage());
-        }
+        // Filter init runs at most once per cursor lifetime - see ensureFilterConditionsInitialised.
+        ensureFilterConditionsInitialised();
         DirectLongList filterList = new DirectLongList(
                 (long) pushdownFilterConditions.size() * ParquetRowGroupFilter.LONGS_PER_FILTER,
                 MemoryTag.NATIVE_PARQUET_PARTITION_DECODER,

@@ -873,6 +873,47 @@ public class HivePartitionedReadParquetFunctionTest extends AbstractCairoTest {
         });
     }
 
+    @Test
+    public void testFileLevelPruningEqAvoidsOpeningOtherFiles() throws Exception {
+        // Use a glob that matches three files. With a partition-column equality filter,
+        // the page-frame cursor should skip the two non-matching files entirely - the
+        // count and decoded rows must come from one file only.
+        assertMemoryLeak(() -> {
+            execute("create table src as (select cast(x as int) as id from long_sequence(5))");
+            writeParquet("plev/day=2026-12-01/data.parquet", "src");
+            writeParquet("plev/day=2026-12-02/data.parquet", "src");
+            writeParquet("plev/day=2026-12-03/data.parquet", "src");
+
+            withWorkerPool(4, (compiler, ctx) -> {
+                try (RecordCursorFactory factory = compiler.compile(
+                        "select id from read_parquet('plev/day=*/data.parquet') where day = '2026-12-02'",
+                        ctx
+                ).getRecordCursorFactory()) {
+                    assertCursor("id\n1\n2\n3\n4\n5\n", factory, true, false, false, ctx);
+                }
+            });
+        });
+    }
+
+    @Test
+    public void testFileLevelPruningIsNullSkipsPresentFiles() throws Exception {
+        // `day IS NULL` should keep only the file that lacks the day= segment.
+        assertMemoryLeak(() -> {
+            execute("create table src as (select cast(x as int) as id from long_sequence(3))");
+            writeParquet("pisn/day=2027-01-01/data.parquet", "src");
+            writeParquet("pisn/plain.parquet", "src");
+
+            withWorkerPool(2, (compiler, ctx) -> {
+                try (RecordCursorFactory factory = compiler.compile(
+                        "select count(*) from read_parquet('pisn/**/*.parquet') where day is null",
+                        ctx
+                ).getRecordCursorFactory()) {
+                    assertCursor("count\n3\n", factory, false, true, false, ctx);
+                }
+            });
+        });
+    }
+
     /**
      * Convenience for parallel test cases: runs the given block with a fresh worker pool of
      * {@code workerCount}, then halts the pool. The runnable receives a compiler and the
