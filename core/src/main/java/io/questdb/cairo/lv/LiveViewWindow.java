@@ -35,6 +35,8 @@ import io.questdb.cairo.RecordSinkFactory;
 import io.questdb.cairo.map.Map;
 import io.questdb.cairo.map.MapFactory;
 import io.questdb.cairo.map.MapKey;
+import io.questdb.cairo.map.MapRecord;
+import io.questdb.cairo.map.MapRecordCursor;
 import io.questdb.cairo.map.MapValue;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
@@ -48,6 +50,7 @@ import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 import io.questdb.std.QuietCloseable;
 import org.jetbrains.annotations.NotNull;
+import org.jetbrains.annotations.TestOnly;
 
 /**
  * Per-row driver that wires a named WINDOW's ANCHOR clause to live-view window
@@ -86,38 +89,55 @@ public class LiveViewWindow implements QuietCloseable {
     // "anchor changed between rows."
     // Slot 2: byte tombstone — 0 means "alive" (partition saw a row recently), 1
     // means "stale" (anchor crossed and no follow-up row visited the partition
-    // since). RFC 123 §"Tombstone tracking and periodic compaction" — the
-    // anchor-map compaction trigger in Phase 2a.11 reclaims tombstoned entries.
+    // since). The anchor-map compaction trigger (Phase 2a.11) reclaims
+    // tombstoned entries.
     private static final int SLOT_ANCHOR_VALUE = 0;
     private static final int SLOT_INITIALIZED = 1;
     private static final int SLOT_TOMBSTONE = 2;
 
     private final Function anchorExpression;
-    private final Map anchorMap;
     private final int anchorValueType;
+    private final CairoConfiguration cairoConfiguration;
+    // Cached snapshot of cairo.live.view.partition.compact.threshold so the
+    // future auto-trigger does not chase the configuration on every row.
+    // The auto-trigger inside processRow is deferred to Phase 2b: dropping
+    // an anchor-map entry leaves the corresponding per-function-map state
+    // dangling, and the function maps grow tombstone bits only as each
+    // group's 2b migration lands. Until then, compact() exists for tests
+    // and direct invocation but is not wired into the per-row path.
+    private final int compactThreshold;
     private final ObjList<WindowFunction> functions;
+    // Static reference to the anchor map's key-column types. Held so compact()
+    // can allocate a replacement Map with the same shape without re-deriving
+    // it from build()-time inputs.
+    private final ColumnTypes partitionKeyTypes;
     private final RecordSink partitionKeySink;
     private final String windowName;
+    private Map anchorMap;
     // Number of anchor-map entries currently flagged SLOT_TOMBSTONE = 1. Mutated
-    // only on the refresh-worker thread inside processRow / toTop; not volatile.
-    // Phase 2a.11 consumes this to decide when to fire compaction (threshold
-    // configured via cairo.live.view.partition.compact.threshold).
+    // only on the refresh-worker thread inside processRow / toTop / compact;
+    // not volatile.
     private long tombstoneCount;
 
     public LiveViewWindow(
+            @NotNull CairoConfiguration cairoConfiguration,
             @NotNull String windowName,
             @NotNull Function anchorExpression,
             int anchorValueType,
+            @NotNull ColumnTypes partitionKeyTypes,
             @NotNull Map anchorMap,
             @NotNull RecordSink partitionKeySink,
             @NotNull ObjList<WindowFunction> functions
     ) {
+        this.cairoConfiguration = cairoConfiguration;
         this.windowName = windowName;
         this.anchorExpression = anchorExpression;
         this.anchorValueType = anchorValueType;
+        this.partitionKeyTypes = partitionKeyTypes;
         this.anchorMap = anchorMap;
         this.partitionKeySink = partitionKeySink;
         this.functions = functions;
+        this.compactThreshold = cairoConfiguration.getLiveViewPartitionCompactThreshold();
     }
 
     /**
@@ -187,7 +207,7 @@ public class LiveViewWindow implements QuietCloseable {
                     .put("live-view ANCHOR EXPRESSION must return TIMESTAMP or LONG, got ")
                     .put(ColumnType.nameOf(returnType));
         }
-        return new LiveViewWindow(windowName, anchorExpression, returnType, map, sink, functions);
+        return new LiveViewWindow(configuration, windowName, anchorExpression, returnType, mapKeyTypes, map, sink, functions);
     }
 
     @Override
@@ -197,6 +217,14 @@ public class LiveViewWindow implements QuietCloseable {
         // (LiveViewInstance and WindowRecordCursorFactory respectively); freeing
         // them here would double-free.
         Misc.free(anchorMap);
+    }
+
+    /**
+     * @return current live (non-tombstoned + tombstoned) entry count in the
+     * anchor map. Useful for tests and the {@code live_views()} catalogue.
+     */
+    public long getAnchorMapSize() {
+        return anchorMap.size();
     }
 
     public ObjList<WindowFunction> getFunctions() {
@@ -255,7 +283,6 @@ public class LiveViewWindow implements QuietCloseable {
         } else {
             // Visiting an existing partition is evidence the partition is alive again -
             // clear any prior tombstone so the compaction trigger does not reclaim it.
-            // RFC 123 §"Tombstone tracking and periodic compaction".
             if (value.getByte(SLOT_TOMBSTONE) == 1) {
                 value.putByte(SLOT_TOMBSTONE, (byte) 0);
                 tombstoneCount--;
@@ -296,6 +323,47 @@ public class LiveViewWindow implements QuietCloseable {
         anchorMap.clear();
         tombstoneCount = 0;
         anchorExpression.toTop();
+    }
+
+    /**
+     * Rebuilds the anchor map without tombstoned entries. Allocates a fresh
+     * {@link Map} with the same key shape, walks the existing map's cursor,
+     * copies non-tombstoned entries via {@code MapRecord.copyToKey} /
+     * {@code copyValue}, then swaps the reference and frees the old map.
+     * <p>
+     * Not auto-triggered in Phase 2a: dropping an anchor-map entry leaves the
+     * corresponding per-function-map state dangling, and a future row for the
+     * dropped partition would re-clear the function-map state via
+     * {@code resetPartition}. The auto-trigger lands in Phase 2b once each
+     * function migration adds tombstone bookkeeping to its own Map. The
+     * threshold field is preallocated to let that wiring land without a
+     * config-shape change.
+     */
+    @TestOnly
+    public void compact() {
+        Map newMap = MapFactory.createOrderedMap(cairoConfiguration, partitionKeyTypes, anchorMapValueTypes());
+        Map oldMap = anchorMap;
+        try {
+            MapRecordCursor cursor = oldMap.getCursor();
+            MapRecord record = oldMap.getRecord();
+            while (cursor.hasNext()) {
+                MapValue srcValue = record.getValue();
+                if (srcValue.getByte(SLOT_TOMBSTONE) == 1) {
+                    continue;
+                }
+                long srcKeyHash = record.keyHashCode();
+                MapKey dstKey = newMap.withKey();
+                record.copyToKey(dstKey);
+                MapValue dstValue = dstKey.createValue(srcKeyHash);
+                record.copyValue(dstValue);
+            }
+            anchorMap = newMap;
+            tombstoneCount = 0;
+        } catch (Throwable t) {
+            Misc.free(newMap);
+            throw t;
+        }
+        Misc.free(oldMap);
     }
 
     private long readAnchorValue(Record record) {

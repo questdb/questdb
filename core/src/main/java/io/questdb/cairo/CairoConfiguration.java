@@ -347,6 +347,14 @@ public interface CairoConfiguration {
 
     long getLiveViewInMemoryMaxMicros();
 
+    /**
+     * Anchor-map tombstone count threshold above which {@code LiveViewWindow}
+     * fires compaction. The compaction also fires when
+     * {@code tombstoneCount > 0.5 * anchorMap.size()}, regardless of this
+     * absolute threshold.
+     */
+    int getLiveViewPartitionCompactThreshold();
+
     int getLiveViewRefreshTurnMaxCommits();
 
     long getLiveViewRefreshTurnMaxDurationMicros();

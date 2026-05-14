@@ -526,6 +526,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
+    public int getLiveViewPartitionCompactThreshold() {
+        return 100_000;
+    }
+
+    @Override
     public int getLiveViewRefreshTurnMaxCommits() {
         return 64;
     }

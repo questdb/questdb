@@ -303,6 +303,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final long liveViewFlushRetryMaxDurationMicros;
     private final long liveViewInMemoryBufferInitialBytes;
     private final long liveViewInMemoryMaxMicros;
+    private final int liveViewPartitionCompactThreshold;
     private final int liveViewRefreshTurnMaxCommits;
     private final long liveViewRefreshTurnMaxDurationMicros;
     private final boolean lineHttpEnabled;
@@ -1475,6 +1476,7 @@ public class PropServerConfiguration implements ServerConfiguration {
             this.liveViewFlushRetryMaxDurationMicros = getMicros(properties, env, PropertyKey.CAIRO_LIVE_VIEW_FLUSH_RETRY_MAX_DURATION_MICROS, 60L * Micros.SECOND_MICROS);
             this.liveViewInMemoryBufferInitialBytes = getLongSize(properties, env, PropertyKey.CAIRO_LIVE_VIEW_IN_MEMORY_BUFFER_INITIAL_BYTES, 64L * 1024L);
             this.liveViewInMemoryMaxMicros = getMicros(properties, env, PropertyKey.CAIRO_LIVE_VIEW_IN_MEMORY_MAX, 60L * Micros.MINUTE_MICROS);
+            this.liveViewPartitionCompactThreshold = getInt(properties, env, PropertyKey.CAIRO_LIVE_VIEW_PARTITION_COMPACT_THRESHOLD, 100_000);
             this.liveViewRefreshTurnMaxCommits = getInt(properties, env, PropertyKey.CAIRO_LIVE_VIEW_REFRESH_TURN_MAX_COMMITS, 64);
             this.liveViewRefreshTurnMaxDurationMicros = getMicros(properties, env, PropertyKey.CAIRO_LIVE_VIEW_REFRESH_TURN_MAX_DURATION_MICROS, 50_000L);
 
@@ -3893,6 +3895,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public long getLiveViewInMemoryMaxMicros() {
             return liveViewInMemoryMaxMicros;
+        }
+
+        @Override
+        public int getLiveViewPartitionCompactThreshold() {
+            return liveViewPartitionCompactThreshold;
         }
 
         @Override

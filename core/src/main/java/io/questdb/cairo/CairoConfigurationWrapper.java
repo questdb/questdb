@@ -503,6 +503,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
+    public int getLiveViewPartitionCompactThreshold() {
+        return getDelegate().getLiveViewPartitionCompactThreshold();
+    }
+
+    @Override
     public int getLiveViewRefreshTurnMaxCommits() {
         return getDelegate().getLiveViewRefreshTurnMaxCommits();
     }

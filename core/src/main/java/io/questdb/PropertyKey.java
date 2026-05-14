@@ -225,6 +225,7 @@ public enum PropertyKey implements ConfigPropertyKey {
     CAIRO_LIVE_VIEW_FLUSH_RETRY_MAX_DURATION_MICROS("cairo.live.view.flush.retry.max.duration.micros"),
     CAIRO_LIVE_VIEW_IN_MEMORY_BUFFER_INITIAL_BYTES("cairo.live.view.in.memory.buffer.initial.bytes"),
     CAIRO_LIVE_VIEW_IN_MEMORY_MAX("cairo.live.view.in.memory.max"),
+    CAIRO_LIVE_VIEW_PARTITION_COMPACT_THRESHOLD("cairo.live.view.partition.compact.threshold"),
     CAIRO_LIVE_VIEW_REFRESH_TURN_MAX_COMMITS("cairo.live.view.refresh.turn.max.commits"),
     CAIRO_LIVE_VIEW_REFRESH_TURN_MAX_DURATION_MICROS("cairo.live.view.refresh.turn.max.duration.micros"),
     CAIRO_ATTACH_PARTITION_SUFFIX("cairo.attach.partition.suffix"),
