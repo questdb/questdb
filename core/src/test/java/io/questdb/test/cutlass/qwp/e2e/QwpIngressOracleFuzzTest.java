@@ -53,12 +53,13 @@ import java.util.concurrent.atomic.AtomicReferenceArray;
 /**
  * QWP ingress fuzz tests that compare the actual table contents against an
  * in-memory oracle built up front. Every row that the test intends to publish
- * is materialized as a {@link QwpRow} (with all data types — booleans, longs,
- * doubles, strings, symbols, 1D/2D double and long arrays) and added to the
- * {@link QwpTable} oracle. Producer threads then call {@link QwpRow#publishTo}
- * to send the row through QWP. After ingestion completes, every cell of every
- * row in the table is asserted against the oracle's typed values via
- * {@link QwpTable#assertCursor}.
+ * is materialized as a {@link QwpRow} (covering booleans, all integer widths
+ * (byte/short/int/long), floats, doubles, chars, strings, symbols, UUIDs,
+ * LONG256, nanosecond timestamps, decimals, and 1D/2D/3D double arrays) and
+ * added to the {@link QwpTable} oracle. Producer threads then call
+ * {@link QwpRow#publishTo} to send the row through QWP. After ingestion
+ * completes, every cell of every row in the table is asserted against the
+ * oracle's typed values via {@link QwpTable#assertCursor}.
  *
  * <p>Two scenarios:
  * <ul>
@@ -788,17 +789,40 @@ public class QwpIngressOracleFuzzTest extends AbstractCairoTest {
 
     private static QwpRow generateRow(Rnd rnd, long id, long tsMicros) {
         QwpRow row = new QwpRow(id, tsMicros);
-        // BOOLEAN is mandatory: it has no NULL representation, so an absent
-        // BOOLEAN cell would be indistinguishable from a stored 'false'.
+        // BOOLEAN, BYTE, SHORT and CHAR are mandatory: none of them have a NULL
+        // representation, so an absent cell would be indistinguishable from a
+        // stored 0/false/'\0'.
         row.setBool("b", (id & 1L) == 0L);
+        row.setByte("b8", (byte) ((id & 0x7FL) - (rnd.nextBoolean() ? 0 : 0x40)));
+        row.setShort("s16", (short) maybeNegate(rnd, (id * 31L) & 0x7FFFL));
+        row.setChar("c", (char) ('A' + (int) (id & 0x1FL)));
         // Sign flips are independent per column to maximize coverage of
         // sign-bit handling in the SF wire encoder. id stays positive
         // because it's the dedup key and sorting alongside ts gives a
         // single deterministic interpretation.
+        if (!shouldFuzz(rnd, COLUMN_SKIP_FACTOR)) row.setInt("i", (int) maybeNegate(rnd, (id * 65537L) & 0x7FFF_FFFFL));
         if (!shouldFuzz(rnd, COLUMN_SKIP_FACTOR)) row.setLong("l", maybeNegate(rnd, id * 1_000_003L));
+        if (!shouldFuzz(rnd, COLUMN_SKIP_FACTOR)) row.setFloat("f", (float) maybeNegate(rnd, id * 0.125));
         if (!shouldFuzz(rnd, COLUMN_SKIP_FACTOR)) row.setDouble("d", maybeNegate(rnd, id * 1.5));
         if (!shouldFuzz(rnd, COLUMN_SKIP_FACTOR)) row.setString("s", "s_" + id + maybeNonAscii(rnd));
         if (!shouldFuzz(rnd, COLUMN_SKIP_FACTOR)) row.setSymbol("sym", "sym_" + (id & 0xFL) + maybeNonAscii(rnd));
+        if (!shouldFuzz(rnd, COLUMN_SKIP_FACTOR)) {
+            // UUID limbs use distinct mixing so hi != lo, exercising both halves
+            // of the 128-bit wire payload independently.
+            row.setUuid("u", id * 0xCAFEBABEL + 17L, id * 0xDEADBEEFL - 13L);
+        }
+        if (!shouldFuzz(rnd, COLUMN_SKIP_FACTOR)) {
+            row.setLong256("l256",
+                    id * 0x11111111L + 1L,
+                    id * 0x22222222L + 2L,
+                    id * 0x33333333L + 3L,
+                    id * 0x44444444L + 4L);
+        }
+        if (!shouldFuzz(rnd, COLUMN_SKIP_FACTOR)) {
+            // TIMESTAMP_NANO: pick a value distinct from the designated ts to make
+            // sure assertions hit the nanos path, not the row's micros payload.
+            row.setTimestampNano("tn", tsMicros * 1_000L + (id & 0x3FFL));
+        }
         if (!shouldFuzz(rnd, COLUMN_SKIP_FACTOR))
             row.setDoubleArray1d("da", deriveDoubleArr1d(id, rnd.nextBoolean() ? -1.0 : 1.0));
         if (!shouldFuzz(rnd, COLUMN_SKIP_FACTOR))
@@ -851,7 +875,7 @@ public class QwpIngressOracleFuzzTest extends AbstractCairoTest {
         // write the extra expect type-default NULL at assertion time.
         // Numeric extras get the same independent sign-flip treatment as
         // base columns.
-        switch (rnd.nextInt(14)) {
+        switch (rnd.nextInt(19)) {
             case 0:
                 row.setLong("ex_l_0", maybeNegate(rnd, id * 7L));
                 break;
@@ -922,6 +946,27 @@ public class QwpIngressOracleFuzzTest extends AbstractCairoTest {
                         rnd.nextBoolean());
                 break;
             }
+            case 14:
+                row.setInt("ex_i_0", (int) maybeNegate(rnd, (id * 65537L) & 0x7FFF_FFFFL));
+                break;
+            case 15:
+                row.setFloat("ex_f_0", (float) maybeNegate(rnd, id * 0.0625));
+                break;
+            case 16:
+                row.setUuid("ex_u_0",
+                        id * 0xABCD_1234L + 5L,
+                        id * 0x5678_FEDCL + 11L);
+                break;
+            case 17:
+                row.setLong256("ex_l256_0",
+                        id * 0x0F0F_0F0FL + 1L,
+                        id * 0x1E1E_1E1EL + 2L,
+                        id * 0x2D2D_2D2DL + 3L,
+                        id * 0x3C3C_3C3CL + 4L);
+                break;
+            case 18:
+                row.setTimestampNano("ex_tn_0", row.getTimestampMicros() * 1_000L + (id & 0x1FFL));
+                break;
         }
     }
 
@@ -947,7 +992,14 @@ public class QwpIngressOracleFuzzTest extends AbstractCairoTest {
      * {@link #slotCapFor} so the post-close assertion scales accordingly.
      */
     private static long pickSfMaxBytes(Rnd rnd) {
-        long[] pool = {64L * 1024, 256L * 1024, 1024L * 1024, 4L * 1024 * 1024};
+        // Smallest segment must comfortably fit one max-chunk frame. With all
+        // the row's typed columns set (LONG256, UUID, three array dims,
+        // three decimal widths, etc.) a wide row's wire payload runs around
+        // 500 bytes, and testOracleSenderRestartReplaysAcrossBounces flushes
+        // up to ~230 rows in one shot. 64 KiB used to be enough back when
+        // rows were ~6 columns; with the current schema it overflows with
+        // MmapSegmentException("payload too large for segment").
+        long[] pool = {256L * 1024, 1024L * 1024, 4L * 1024 * 1024};
         return pool[rnd.nextInt(pool.length)];
     }
 
@@ -1024,10 +1076,18 @@ public class QwpIngressOracleFuzzTest extends AbstractCairoTest {
                     "CREATE TABLE " + TABLE_NAME + " ("
                             + "id LONG, "
                             + "b BOOLEAN, "
+                            + "b8 BYTE, "
+                            + "s16 SHORT, "
+                            + "c CHAR, "
+                            + "i INT, "
                             + "l LONG, "
+                            + "f FLOAT, "
                             + "d DOUBLE, "
                             + "s STRING, "
                             + "sym SYMBOL, "
+                            + "u UUID, "
+                            + "l256 LONG256, "
+                            + "tn TIMESTAMP_NS, "
                             + "da DOUBLE[], "
                             + "da2 DOUBLE[][], "
                             + "da3 DOUBLE[][][], "
