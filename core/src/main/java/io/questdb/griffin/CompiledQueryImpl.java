@@ -282,8 +282,18 @@ public class CompiledQueryImpl implements CompiledQuery, Mutable {
         this.isExecutedAtParseTime = false;
     }
 
+    public void ofCreateSecret() {
+        of(CREATE_SECRET);
+        this.isExecutedAtParseTime = true;
+    }
+
     public void ofCreateUser() {
         of(CREATE_USER);
+        this.isExecutedAtParseTime = true;
+    }
+
+    public void ofDropSecret() {
+        of(DROP_SECRET);
         this.isExecutedAtParseTime = true;
     }
 

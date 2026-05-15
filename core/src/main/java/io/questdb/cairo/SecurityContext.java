@@ -107,6 +107,31 @@ public interface SecurityContext extends Mutable {
     default void authorizeReadRemoteParquet(@org.jetbrains.annotations.NotNull CharSequence uri) {
     }
 
+    /**
+     * Authorise {@code CREATE SECRET name (TYPE 'x', PARAMS '...')}. Enterprise
+     * deployments gate this on the {@code CREATE SECRET} permission. Secrets
+     * carry remote-storage credentials so we keep this isolated from broader
+     * admin permissions.
+     */
+    default void authorizeCreateSecret() {
+    }
+
+    /**
+     * Authorise {@code DROP SECRET name}. Distinct permission from
+     * {@link #authorizeCreateSecret} so an operator can be granted creation
+     * without the matching removal.
+     */
+    default void authorizeDropSecret() {
+    }
+
+    /**
+     * Authorise {@code SHOW SECRETS}. Lists registered secret names (never
+     * values). Separate permission from create/drop so audit-only roles can
+     * see the registry without the ability to modify it.
+     */
+    default void authorizeShowSecrets() {
+    }
+
     void authorizeHttp();
 
     void authorizeInsert(TableToken tableToken);

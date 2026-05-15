@@ -176,6 +176,26 @@ public class ReadOnlySecurityContext implements SecurityContext {
     }
 
     @Override
+    public void authorizeCreateSecret() {
+        // Secrets carry remote-storage credentials; never writable from a
+        // read-only role.
+        throw CairoException.authorization().put("Write permission denied").setCacheable(true);
+    }
+
+    @Override
+    public void authorizeDropSecret() {
+        throw CairoException.authorization().put("Write permission denied").setCacheable(true);
+    }
+
+    @Override
+    public void authorizeShowSecrets() {
+        // SHOW SECRETS only lists names but the existence of named secrets is
+        // itself sensitive (it reveals what backends are configured). Keep
+        // gated behind the explicit SHOW SECRETS permission.
+        throw CairoException.authorization().put("permission denied").setCacheable(true);
+    }
+
+    @Override
     public void authorizeHttp() {
     }
 
